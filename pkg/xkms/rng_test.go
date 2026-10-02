@@ -484,13 +484,20 @@ func setupFullTestXKMS(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Key-version records, so keys can be rotated.
+	versionStorage, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	keyVersions, err := xkmssdk.NewKeyVersionStore(versionStorage)
+	require.NoError(t, err)
+
 	// Initialize QuicBaaS xkms with the backend
 	err = Initialize(&Config{
 		DefaultBackend: "software",
 		Backends: map[string]xkmssdk.ServiceBackend{
 			"software": ks,
 		},
-		Logger: &mockLogger{},
+		KeyVersions: keyVersions,
+		Logger:      &mockLogger{},
 	})
 	require.NoError(t, err)
 }
@@ -884,29 +891,75 @@ func TestRotateKey_Success(t *testing.T) {
 	origSig, err := origSigner.Sign(rand.Reader, testData[:], crypto.SHA256)
 	require.NoError(t, err)
 
-	// Rotate using fullKeyID
+	// Rotate using fullKeyID. go-xkms rotates by creating the next version
+	// as its own backend key ("<name>--v2") and making it current; the
+	// original version is kept.
 	newKey, err := RotateKey(context.Background(), fullKeyID)
 	require.NoError(t, err)
-	assert.NotNil(t, newKey)
+	rotatedSigner, ok := newKey.(crypto.Signer)
+	require.True(t, ok, "rotated ECDSA key must be a crypto.Signer, got %T", newKey)
+	rotatedPublic, ok := rotatedSigner.Public().(*ecdsa.PublicKey)
+	require.True(t, ok, "rotated key must have an ECDSA public key")
 
-	// Get new signer to verify rotation
-	newSigner, err := Signer(context.Background(), attrs)
+	// The new version is a different key.
+	assert.False(t, rotatedPublic.Equal(origPublicKey),
+		"rotation must produce a new key, not re-issue the original")
+
+	// The new version is addressable under its version name, and it is the
+	// key RotateKey returned.
+	v2Attrs := *attrs
+	v2Attrs.CN = xkmssdk.KeyVersionName(attrs.CN, 2)
+	newSigner, err := Signer(context.Background(), &v2Attrs)
 	require.NoError(t, err)
 	newPublicKey := newSigner.Public().(*ecdsa.PublicKey)
+	assert.True(t, newPublicKey.Equal(rotatedPublic),
+		"the v2 signer must be the rotated key")
 
-	// Verify the public keys are different (key was actually rotated)
-	assert.NotEqual(t, origPublicKey.X.Bytes(), newPublicKey.X.Bytes(),
-		"key should have been rotated to a new key")
+	// The original signature does not verify under the new version...
+	assert.False(t, ecdsa.VerifyASN1(newPublicKey, testData[:], origSig),
+		"original signature should not verify with the new key")
+	// ...but the original version is kept, so what it signed still verifies.
+	keptSigner, err := Signer(context.Background(), attrs)
+	require.NoError(t, err)
+	assert.True(t, keptSigner.Public().(*ecdsa.PublicKey).Equal(origPublicKey),
+		"rotation must keep the original version")
 
-	// Verify the original signature does not verify with the new key
-	valid := ecdsa.VerifyASN1(newPublicKey, testData[:], origSig)
-	assert.False(t, valid, "original signature should not verify with new key")
-
-	// Sign with new key and verify it works
+	// Sign with the new version and verify it works.
 	newSig, err := newSigner.Sign(rand.Reader, testData[:], crypto.SHA256)
 	require.NoError(t, err)
-	valid = ecdsa.VerifyASN1(newPublicKey, testData[:], newSig)
-	assert.True(t, valid, "new signature should verify with new key")
+	assert.True(t, ecdsa.VerifyASN1(newPublicKey, testData[:], newSig),
+		"new signature should verify with new key")
+}
+
+// TestRotateKey_WithoutKeyVersionStore pins the go-xkms contract: rotation
+// needs the key-version store, and a service initialized without one refuses
+// rather than replacing key material in place.
+func TestRotateKey_WithoutKeyVersionStore(t *testing.T) {
+	Reset()
+	ResetRNG()
+	t.Cleanup(Reset)
+
+	keyStorage, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	pkcs8Backend, err := xkmssdk.NewPKCS8Backend(&xkmssdk.PKCS8BackendConfig{
+		KeyStorage:         keyStorage,
+		AllowPlaintextKeys: true,
+	})
+	require.NoError(t, err)
+	ks, err := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
+		Backend:     pkcs8Backend,
+		CertStorage: keyStorage,
+	})
+	require.NoError(t, err)
+	require.NoError(t, Initialize(&Config{
+		DefaultBackend: "software",
+		Backends:       map[string]xkmssdk.ServiceBackend{"software": ks},
+		Logger:         &mockLogger{},
+	}))
+
+	_, fullKeyID := createTestECDSAKey(t, "rotate-without-versions")
+	_, err = RotateKey(context.Background(), fullKeyID)
+	require.ErrorIs(t, err, xkmssdk.ErrKeyVersionsNotConfigured)
 }
 
 func TestRotateKey_NotFound(t *testing.T) {

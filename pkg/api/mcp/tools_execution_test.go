@@ -385,6 +385,24 @@ func TestExecuteAddNode(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "identity reaches the service",
+			args: map[string]interface{}{
+				"nodeID":   float64(3),
+				"address":  "localhost:5003",
+				"shardID":  float64(1),
+				"identity": "spki:0123abcd",
+			},
+			setupMock: func(m *mockService) {
+				m.addNodeFunc = func(ctx context.Context, req *service.AddNodeRequest) (*service.AddNodeResponse, error) {
+					if req.Identity != "spki:0123abcd" || req.NodeID != 3 {
+						return nil, &errors.MessageError{Message: "identity not carried: " + req.Identity}
+					}
+					return &service.AddNodeResponse{Success: true}, nil
+				}
+			},
+			wantErr: false,
+		},
+		{
 			name: "add node error",
 			args: map[string]interface{}{
 				"nodeID":  float64(2),

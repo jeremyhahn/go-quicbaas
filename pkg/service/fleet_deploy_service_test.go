@@ -28,9 +28,11 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"golang.org/x/crypto/ssh"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
 
@@ -40,6 +42,10 @@ import (
 
 // fakeSession satisfies sshSession.
 type fakeSession struct{ closed bool }
+
+// acmeCtx is a caller authenticated in tenant acme, the tenant the test specs
+// deploy into: a node is deployed only in the caller's own tenant.
+var acmeCtx = tenantctx.WithTenant(context.Background(), "acme")
 
 func (s *fakeSession) Close() error { s.closed = true; return nil }
 
@@ -314,7 +320,7 @@ func TestDeploy_Validate(t *testing.T) {
 			spec := *base
 			tc.mutate(&spec)
 			svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, &fakeLister{}, time.Now())
-			_, err := svc.Deploy(context.Background(), &spec)
+			_, err := svc.Deploy(acmeCtx, &spec)
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -331,7 +337,7 @@ func TestDeploy_Validate(t *testing.T) {
 
 func TestDeploy_ValidateNilSpec(t *testing.T) {
 	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, &fakeLister{}, time.Now())
-	_, err := svc.Deploy(context.Background(), nil)
+	_, err := svc.Deploy(acmeCtx, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -347,7 +353,7 @@ func TestDeploy_ValidateNilSpec(t *testing.T) {
 func TestDeploy_ValidateRequiresCertIssuer(t *testing.T) {
 	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
 	svc.certIssuer = nil
-	_, err := svc.Deploy(context.Background(), validSpec())
+	_, err := svc.Deploy(acmeCtx, validSpec())
 	if err == nil {
 		t.Fatal("expected error when cert issuer is nil")
 	}
@@ -374,7 +380,7 @@ func TestDeploy_SuccessSystemd_ExplicitFlag(t *testing.T) {
 	no := &fakeNohup{}
 	svc := newTestService(dialer, up, sys, no, nil, time.Now())
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -411,7 +417,7 @@ func TestDeploy_SuccessNohup_ExplicitFlag(t *testing.T) {
 	no := &fakeNohup{}
 	svc := newTestService(dialer, up, sys, no, nil, time.Now())
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -434,7 +440,7 @@ func TestDeploy_AutoDetectSystemd(t *testing.T) {
 	no := &fakeNohup{}
 	svc := newTestService(dialer, up, sys, no, nil, time.Now())
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +457,7 @@ func TestDeploy_AutoDetectFallbackNohup(t *testing.T) {
 	no := &fakeNohup{}
 	svc := newTestService(dialer, up, sys, no, nil, time.Now())
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +487,7 @@ func TestDeploy_UploadsIdentityFiles(t *testing.T) {
 		resolveHome: func(ctx context.Context, sess sshSession) (string, error) { return "/home/deploy", nil },
 	}
 
-	_, err := svc.Deploy(context.Background(), spec)
+	_, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -520,7 +526,7 @@ func TestDeploy_CertIssuerError(t *testing.T) {
 	// allows; with it skipped, the host is not dialed at all.
 	spec := validSpec()
 	spec.SkipPreflight = true
-	_, err := svc.Deploy(context.Background(), spec)
+	_, err := svc.Deploy(acmeCtx, spec)
 	if !errors.Is(err, want) {
 		t.Fatalf("got %v, want %v", err, want)
 	}
@@ -529,7 +535,7 @@ func TestDeploy_CertIssuerError(t *testing.T) {
 	}
 
 	// With preflight, the node is probed but nothing is installed.
-	if _, err := svc.Deploy(context.Background(), validSpec()); !errors.Is(err, want) {
+	if _, err := svc.Deploy(acmeCtx, validSpec()); !errors.Is(err, want) {
 		t.Fatalf("got %v, want %v", err, want)
 	}
 	if up.calls != 0 {
@@ -545,7 +551,7 @@ func TestDeploy_DialError(t *testing.T) {
 	want := &deploy.SSHDialError{Host: "h"}
 	dialer := &fakeDialer{err: want}
 	svc := newTestService(dialer, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
-	_, err := svc.Deploy(context.Background(), validSpec())
+	_, err := svc.Deploy(acmeCtx, validSpec())
 	if !errors.Is(err, want) {
 		t.Fatalf("got %v", err)
 	}
@@ -555,7 +561,7 @@ func TestDeploy_UploadError(t *testing.T) {
 	want := &deploy.SFTPUploadError{RemotePath: "/x"}
 	up := &fakeUploader{err: want}
 	svc := newTestService(&fakeDialer{}, up, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
-	_, err := svc.Deploy(context.Background(), validSpec())
+	_, err := svc.Deploy(acmeCtx, validSpec())
 	if !errors.Is(err, want) {
 		t.Fatalf("got %v", err)
 	}
@@ -577,7 +583,7 @@ func TestDeploy_IdentityUploadError(t *testing.T) {
 		sleep:       func(ctx context.Context, d time.Duration) error { return nil },
 		resolveHome: func(ctx context.Context, sess sshSession) (string, error) { return "", nil },
 	}
-	_, err := svc.Deploy(context.Background(), validSpec())
+	_, err := svc.Deploy(acmeCtx, validSpec())
 	var identErr *FleetNodeIdentityUploadError
 	if !errors.As(err, &identErr) {
 		t.Fatalf("want FleetNodeIdentityUploadError, got %T: %v", err, err)
@@ -591,7 +597,7 @@ func TestDeploy_SystemdError(t *testing.T) {
 	want := &deploy.SystemdInstallError{Unit: "u"}
 	sys := &fakeSystemd{err: want}
 	svc := newTestService(&fakeDialer{}, &fakeUploader{}, sys, &fakeNohup{}, nil, time.Now())
-	_, err := svc.Deploy(context.Background(), spec)
+	_, err := svc.Deploy(acmeCtx, spec)
 	if !errors.Is(err, want) {
 		t.Fatalf("got %v", err)
 	}
@@ -604,7 +610,7 @@ func TestDeploy_NohupError(t *testing.T) {
 	want := &deploy.RemoteExecError{Command: "x"}
 	no := &fakeNohup{err: want}
 	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, no, nil, time.Now())
-	_, err := svc.Deploy(context.Background(), spec)
+	_, err := svc.Deploy(acmeCtx, spec)
 	if !errors.Is(err, want) {
 		t.Fatalf("got %v", err)
 	}
@@ -631,7 +637,7 @@ func TestDeploy_WaitOnline_Success(t *testing.T) {
 	lst := &fakeLister{responses: []*orchestratorSDK.ListFleetNodesResponse{resp}}
 	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, lst, now)
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -665,7 +671,7 @@ func TestDeploy_WaitOnline_Timeout(t *testing.T) {
 		return advancing
 	}
 
-	_, err := svc.Deploy(context.Background(), spec)
+	_, err := svc.Deploy(acmeCtx, spec)
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -706,7 +712,7 @@ func TestDeploy_WaitOnline_ProbesAfterSessionClosed(t *testing.T) {
 		return nil
 	}
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -755,7 +761,7 @@ func TestDeploy_WaitOnline_RejectsUnreachableAgent(t *testing.T) {
 		return advancing
 	}
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	var timeoutErr *deploy.StartTimeoutError
 	if !errors.As(err, &timeoutErr) {
 		t.Fatalf("want StartTimeoutError, got %T: %v", err, err)
@@ -802,7 +808,7 @@ func TestDeploy_RejectsUndialableBindWhenWaitOnline(t *testing.T) {
 				return nil
 			}
 
-			result, err := svc.Deploy(context.Background(), spec)
+			result, err := svc.Deploy(acmeCtx, spec)
 			var invalid *deploy.InvalidSpecError
 			if !errors.As(err, &invalid) {
 				t.Fatalf("want InvalidSpecError, got %T: %v", err, err)
@@ -967,7 +973,7 @@ func TestDeploy_WaitOnline_SkipWhenZero(t *testing.T) {
 	// WaitOnline=0 → no poll.
 	lst := &fakeLister{}
 	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, lst, time.Now())
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -985,7 +991,7 @@ func TestDeploy_WaitOnline_NilListerSkipped(t *testing.T) {
 	spec.Systemd = &off
 	spec.WaitOnline = time.Second
 	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1170,7 +1176,7 @@ func TestNewAgentDeployService_DefaultWiring(t *testing.T) {
 	}
 	// Calling Deploy with an invalid spec must surface a typed error
 	// without touching the network.
-	_, err := svc.Deploy(context.Background(), &deploy.Spec{})
+	_, err := svc.Deploy(acmeCtx, &deploy.Spec{})
 	var ise *deploy.InvalidSpecError
 	if !errors.As(err, &ise) {
 		t.Fatalf("want InvalidSpecError, got %T: %v", err, err)
@@ -1205,7 +1211,7 @@ func TestDeploy_PrivateKeyDestroyedAfterDeploy(t *testing.T) {
 	wrapped := &capturingCertIssuer{inner: issuer, sink: &captured}
 	svc.certIssuer = wrapped
 
-	if _, err := svc.Deploy(context.Background(), spec); err != nil {
+	if _, err := svc.Deploy(acmeCtx, spec); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 	if captured == nil {
@@ -1392,7 +1398,7 @@ func TestDeploy_WaitOnline_MatchesByExpectedID(t *testing.T) {
 	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, lst, now)
 	svc.certIssuer = &cnCertIssuer{cn: cn}
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -1428,7 +1434,7 @@ func TestDeploy_WaitOnline_ScopedToTenantOnly(t *testing.T) {
 	svc.agents = lst
 	svc.certIssuer = &cnCertIssuer{cn: cn}
 
-	if _, err := svc.Deploy(context.Background(), spec); err != nil {
+	if _, err := svc.Deploy(acmeCtx, spec); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 	if lst.lastReq == nil {
@@ -1452,4 +1458,43 @@ type recordingLister struct {
 func (l *recordingLister) ListFleetNodes(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error) {
 	l.lastReq = req
 	return l.inner.ListFleetNodes(ctx, req)
+}
+
+// TestDeploy_RefusesAnotherTenant pins go-qrdb v0.28's confinement: no caller,
+// the system tenant included, deploys a node (and mints its certificate) in
+// another tenant.
+func TestDeploy_RefusesAnotherTenant(t *testing.T) {
+	for name, ctx := range map[string]context.Context{
+		"system tenant":  tenantctx.WithSystem(context.Background()),
+		"another tenant": tenantctx.WithTenant(context.Background(), "globex"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dialer := &fakeDialer{}
+			svc := newTestService(dialer, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
+			_, err := svc.Deploy(ctx, validSpec())
+			var qb *qberrors.QBError
+			var cross *tenantctx.CrossTenantError
+			if !errors.As(err, &qb) || qb.Code != qberrors.ErrForbidden || !errors.As(err, &cross) {
+				t.Fatalf("Deploy into acme as %s = %v, want ErrForbidden wrapping *tenantctx.CrossTenantError", name, err)
+			}
+			if dialer.seen != nil {
+				t.Fatal("a refused deploy dialled the host")
+			}
+		})
+	}
+}
+
+// TestDeploy_RefusesAnUnboundCaller proves a deploy with no authenticated
+// tenant is refused before any host is touched.
+func TestDeploy_RefusesAnUnboundCaller(t *testing.T) {
+	dialer := &fakeDialer{}
+	svc := newTestService(dialer, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
+	_, err := svc.Deploy(context.Background(), validSpec())
+	var missing *tenantctx.MissingTenantError
+	if !errors.As(err, &missing) {
+		t.Fatalf("Deploy with no tenant = %v, want *tenantctx.MissingTenantError", err)
+	}
+	if dialer.seen != nil {
+		t.Fatal("a refused deploy dialled the host")
+	}
 }

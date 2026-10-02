@@ -115,6 +115,14 @@ func provisionSwtpm(t *testing.T, host string, port int) {
 		t.Fatalf("swtpm provision: NewStorageFactory: %v", err)
 	}
 
+	ekAuth, err := xkmstypes.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD))
+	if err != nil {
+		t.Fatalf("swtpm provision: seal EK hierarchy auth: %v", err)
+	}
+	srkAuth, err := xkmstypes.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD))
+	if err != nil {
+		t.Fatalf("swtpm provision: seal SRK hierarchy auth: %v", err)
+	}
 	cfg := &pkgtpm2.Config{
 		CommandAddress:               fmt.Sprintf("%s:%d", host, port),
 		PlatformAddress:              fmt.Sprintf("%s:%d", host, port+1),
@@ -124,13 +132,13 @@ func provisionSwtpm(t *testing.T, host string, port int) {
 		EK: &pkgtpm2.EKConfig{
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
-			HierarchyAuth: xkmstypes.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD)),
+			HierarchyAuth: ekAuth,
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
 		},
 		SSRK: &pkgtpm2.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: xkmstypes.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD)),
+			HierarchyAuth: srkAuth,
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
 		},
@@ -179,9 +187,7 @@ func provisionSwtpm(t *testing.T, host string, port int) {
 // tpm2ConfigYAML renders the daemon seal config for the tpm2 strategy. The
 // use_simulator flag tells the go-xkms tpm2 backend to connect to an external
 // software TPM over TCP (simulator_host:simulator_port) rather than opening a
-// hardware /dev/tpmrm0 device. platform_policy is disabled so the seal does
-// not bind to PCR values — a fresh swtpm does not have meaningful platform
-// measurements.
+// hardware /dev/tpmrm0 device.
 func tpm2ConfigYAML(host string, port int) string {
 	return fmt.Sprintf(`seal:
   enabled: true
@@ -190,7 +196,6 @@ func tpm2ConfigYAML(host string, port int) string {
     use_simulator: true
     simulator_host: %q
     simulator_port: %d
-    platform_policy: false
     key_dir: /tmp/tpm2-seal-keys
 `, host, port)
 }

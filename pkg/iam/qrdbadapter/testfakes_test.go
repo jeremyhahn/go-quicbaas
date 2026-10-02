@@ -409,8 +409,6 @@ func onlyReassertsLifecycle(req *qrdbsdk.UpdateUserRequest) bool {
 		req.RoleIDs == nil &&
 		req.RoleBindings == nil &&
 		req.Attributes == nil &&
-		req.CertBindings == nil &&
-		req.Factors == nil &&
 		req.AuthMethods == nil
 }
 

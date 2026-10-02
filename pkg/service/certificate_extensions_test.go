@@ -23,6 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -236,20 +239,32 @@ func TestCertificateService_IssueDeviceIdentity(t *testing.T) {
 	}
 }
 
-func TestCertificateService_IssueDeviceIdentity_PropagatesRequestTenant(t *testing.T) {
+// A device identity is issued in the caller's own tenant only (go-qrdb v0.28:
+// no caller mints another tenant's certificates, the system tenant included).
+func TestCertificateService_IssueDeviceIdentity_IsConfinedToTheCallerTenant(t *testing.T) {
+	req := func() *IssueDeviceIdentityRequest {
+		return &IssueDeviceIdentityRequest{Type: DeviceIdentityTypeEK, DeviceID: "dev-tenant", EKPub: []byte("ek"), TenantID: "tenant-a"}
+	}
+
 	stub := &extCAStub{issued: &IssuedDeviceIdentity{CertificatePEM: []byte("cert")}}
 	svc := newExtService(t, stub)
-
-	_, err := svc.IssueDeviceIdentity(systemTenantCtx(), &IssueDeviceIdentityRequest{
-		Type:     DeviceIdentityTypeEK,
-		DeviceID: "dev-tenant",
-		EKPub:    []byte("ek"),
-		TenantID: "tenant-a",
-	})
-	require.NoError(t, err)
+	_, err := svc.IssueDeviceIdentity(tenantctx.WithTenant(context.Background(), "tenant-a"), req())
+	require.NoError(t, err, "the caller's own tenant is accepted")
 	require.NotNil(t, stub.issuedReq)
-	assert.Equal(t, "tenant-a", stub.issuedReq.TenantID,
-		"an explicit request tenant must override the context tenant")
+	assert.Equal(t, "tenant-a", stub.issuedReq.TenantID)
+
+	for name, ctx := range map[string]context.Context{
+		"system caller":  systemTenantCtx(),
+		"another tenant": tenantctx.WithTenant(context.Background(), "tenant-b"),
+	} {
+		stub := &extCAStub{issued: &IssuedDeviceIdentity{CertificatePEM: []byte("cert")}}
+		_, err := newExtService(t, stub).IssueDeviceIdentity(ctx, req())
+		var cross *tenantctx.CrossTenantError
+		var qb *errors.QBError
+		require.Truef(t, stderrors.As(err, &cross) && stderrors.As(err, &qb) && qb.Code == errors.ErrForbidden,
+			"%s issuing in tenant-a = %v, want ErrForbidden wrapping *tenantctx.CrossTenantError", name, err)
+		assert.Nilf(t, stub.issuedReq, "%s: nothing may reach the CA", name)
+	}
 }
 
 func TestCertificateService_IssueDeviceIdentity_Errors(t *testing.T) {

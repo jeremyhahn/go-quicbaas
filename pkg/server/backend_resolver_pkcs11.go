@@ -34,7 +34,10 @@ import (
 // key material never leaves the token, the backend's key-metadata store is
 // backed by keyStore so per-key references survive restarts.
 func buildPKCS11ServiceBackend(cfg *config.Config, spec BackendSpec, keyStore xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
-	backendCfg := pkcs11BackendConfig(cfg.Seal.PKCS11, keyStore)
+	backendCfg, err := pkcs11BackendConfig(cfg.Seal.PKCS11, keyStore)
+	if err != nil {
+		return nil, &BackendConstructError{Backend: config.BackendTypePKCS11, Cause: err}
+	}
 	backend, err := xkmssdk.NewPKCS11Backend(backendCfg)
 	if err != nil {
 		backendCfg.PIN.Clear()

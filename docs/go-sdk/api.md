@@ -2657,3 +2657,44 @@ leaks every one of those resources for the lifetime of its process.
 fully, and on one that stopped anywhere in between, and it is idempotent. So
 the deferred call belongs immediately after `NewServer`, before the `Start`
 error check — as in the *Mount it* example above.
+
+## go-xkms re-exports (`sdk/go/xkms/...`)
+
+`sdk/go/xkms` and its sub-packages give a consumer that must not import go-xkms
+(go-trusted-platform's layer guard forbids it) the go-xkms surface it needs.
+Every name is a type, constant or function **alias** of the go-xkms SDK name,
+never a wrapper, so a value crosses the boundary without conversion and
+`errors.Is` matches the upstream sentinels. Each package has a
+`*_reexport_test.go` that asserts assignability in both directions.
+
+| Package | Re-exports |
+|---|---|
+| `sdk/go/xkms` | The general go-xkms SDK surface (TPM, key attributes, sealing, PIV, peer attestation, DICE, TPM lifecycle and EK credential challenge, TPM policies) |
+| `sdk/go/xkms/acme` | ACME entities, client and server types, challenge verifiers, and the External Account Binding vocabulary: `EABPurposeAccountBinding`, `EABPurposeEndorse01`, `EABPurposeEnroll01`, `EABStatusActive`, `EABStatusUsed`, `EABStatusRevoked`, `EABStatusExpired`, `EABDeviceInfo` |
+| `sdk/go/xkms/ca` | TrustedCA types and certificate-profile selection: `ProfileName*` (including `ProfileNameIPsecVTEP` and `ProfileNameX509SVID`), `NewIPsecVTEPProfile`, `NewX509SVIDProfile`, `ProfileProvider`, `ProfileRegistry`, `NewDefaultProfileRegistry`, `NameConstraints`, `SubordinateCARequest`, `SubordinateIssuer`, `DefaultSubordinateLifetime`, `CallerSANProfile`, `LifetimeBoundedProfile`, `TemplateValidator`, `OIDIPsecIKE`, `AttestationEvidence`, `OIDAttestationEvidence`, `CreateAttestationEvidenceExtension`, `ParseAttestationEvidenceExtension`, `ErrCA*` |
+| `sdk/go/xkms/evidence` | RFC 9334 evidence primitives: `ParseQuote`, `VerifyQuote`, `ComparePCRs`, AK/EK certificate checks, `ParseEventLog`, `VerifyEventLog`, `VerifyCertify*`, `VerifyIAK`, `VerifyIDevID`, and signed reference values (`VerifySignedCoRIM`, `CoRIMVerifyOptions`, `ReferenceManifest`, `ReferenceValue`, `ErrCoRIM*`). Appraisal is the Verifier's job, not this package's |
+| `sdk/go/xkms/signserver` | The node-local, sign-only xkms server a remote-mode PKCS#11 module signs through (`Server`, `Config`, `Slot`, `New`), and KMS key-create with PKCS#11 identity: `ProvisionECKeyPair`, `KeyRequest`, `KeyPairRequest`, `ProvisionConfig`, `NewRemoteStorage` create a key with exactly the `CKA_LABEL` and `CKA_ID` the module exposes |
+| `sdk/go/xkms/spiffe` | SPIFFE IDs: `ParseTrustDomain`, `ParseWorkloadID`, `WorkloadIDFromURL`, `BuildURI`, `ParseID`, `TenantFromURIs`, `ID`, `WorkloadID`, `TrustDomain` |
+| `sdk/go/xkms/{backend,certstore,fido2,luks,secure,ssh,storage,transport,trust}` | Keystore backends, certificate stores, FIDO2, LUKS, protected memory, SSH, storage, transport and trust bootstrap |
+
+### Obtaining the PKCS#11 provider module (`libxkms_pkcs11.so`)
+
+The module the `signserver` keys are used through is **not** a published
+go-xkms release asset: every go-xkms release carries only the `xkmsd`,
+`xkmsctl` and `xkey` binaries and their checksums (measured against the Gitea
+releases of v0.42.0-alpha through v0.46.0-alpha). A consumer builds it from
+the go-xkms source at the tag it pins, with go-xkms's own target:
+
+```bash
+git clone --branch <go-xkms tag> <go-xkms repository> go-xkms
+make -C go-xkms build-pkcs11-module          # CGO_ENABLED=1, -buildmode=c-shared ./cmd/pkcs11-module
+# or build-pkcs11-module-fips for libxkms_pkcs11_fips.so
+```
+
+Build it against **glibc**. A Go c-shared object cannot be `dlopen`ed by a musl
+process (golang/go#13492; musl rejects initial-exec TLS at `dlopen`, measured
+in go-xkms#1387), so an IKE daemon on musl (strongSwan `charon` in Alpine)
+loads `p11-kit-client.so`, and `p11-kit server`, running on glibc, hosts
+`libxkms_pkcs11.so`. `p11-kit server` initializes, finalizes and
+re-initializes the module, which needs go-xkms#1387 (offline re-initialization
+after `C_Finalize`, and raw `CKM_ECDSA` signing) in the tag that is built.

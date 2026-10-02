@@ -40,6 +40,7 @@ import (
 	"sync"
 
 	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -121,6 +122,10 @@ var (
 	initialized bool
 	initMu      sync.RWMutex
 	logger      interfaces.Logger
+
+	// defaultBackend is the backend a key with no StoreType lives in; it
+	// names the version record CurrentSigner reads.
+	defaultBackend string
 )
 
 // -----------------------------------------------------------------------------
@@ -134,6 +139,12 @@ type Config struct {
 
 	// Backends is a map of backend configurations
 	Backends map[string]xkmssdk.ServiceBackend
+
+	// KeyVersions is the store of key-version records go-xkms needs to
+	// rotate a key: a rotation creates the next version as its own backend
+	// key and records it as current. Without one, every key is its own
+	// version 1 and RotateKey returns ErrKeyVersionsNotConfigured.
+	KeyVersions *xkmssdk.KeyVersionStore
 
 	// Logger for structured logging
 	Logger interfaces.Logger
@@ -166,6 +177,7 @@ func Initialize(cfg *Config) error {
 	}
 
 	logger = cfg.Logger
+	defaultBackend = cfg.DefaultBackend
 
 	// Initialize go-xkms service
 	serviceConfig := &xkmssdk.ServiceConfig{
@@ -175,6 +187,14 @@ func Initialize(cfg *Config) error {
 
 	if err := xkmssdk.ServiceInitialize(serviceConfig); err != nil {
 		return api.NewXKMSInitializationError(err)
+	}
+
+	if cfg.KeyVersions != nil {
+		svc, err := xkmssdk.Get()
+		if err != nil {
+			return api.NewXKMSInitializationError(err)
+		}
+		svc.SetKeyVersionStore(cfg.KeyVersions)
 	}
 
 	initialized = true
@@ -202,6 +222,7 @@ func Reset() {
 	xkmssdk.ServiceReset()
 	initialized = false
 	logger = nil
+	defaultBackend = ""
 }
 
 // checkInitialized is a helper to check initialization status.
@@ -334,7 +355,11 @@ func DeleteKeyByID(ctx context.Context, kid string) error {
 	return xkmssdk.ServiceDeleteKeyByID(ctx, kid)
 }
 
-// RotateKey rotates (replaces) an existing key with a new one.
+// RotateKey creates the next version of an existing key and makes it
+// current. go-xkms keeps every earlier version (the new version is its own
+// backend key, "<name>--v<n>"), and records the versions in the store wired
+// through Config.KeyVersions; without one it returns
+// xkmssdk.ErrKeyVersionsNotConfigured.
 func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 	if err := checkInitialized(); err != nil {
 		return nil, err
@@ -364,6 +389,60 @@ func Signer(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, e
 	}
 
 	return xkmssdk.ServiceSigner(ctx, attrs)
+}
+
+// CurrentSigner returns a crypto.Signer for the CURRENT version of the key
+// attrs names. go-xkms rotates a key by creating its next version as its own
+// backend key ("<CN>--v<n>"), so Signer(attrs) keeps answering with version
+// 1; a caller that signs with whatever the key currently is (an OIDC token
+// signer) resolves it here, from the version record go-xkms keeps. A key
+// that was never rotated, or a service with no version store, is its own
+// current version.
+func CurrentSigner(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
+	if err := checkInitialized(); err != nil {
+		return nil, err
+	}
+	current, err := currentVersionAttrs(ctx, attrs)
+	if err != nil {
+		return nil, err
+	}
+	return xkmssdk.ServiceSigner(ctx, current)
+}
+
+// currentVersionAttrs returns attrs re-addressed to the key's current
+// version, read from the service's key-version store.
+func currentVersionAttrs(ctx context.Context, attrs *xkmssdk.KeyAttributes) (*xkmssdk.KeyAttributes, error) {
+	if attrs == nil {
+		return nil, &api.XKMSInvalidConfigError{Detail: "key attributes cannot be nil"}
+	}
+	svc, err := xkmssdk.Get()
+	if err != nil {
+		return nil, err
+	}
+	store := svc.KeyVersionStore()
+	if store == nil {
+		return attrs, nil
+	}
+
+	backend := string(attrs.StoreType)
+	if backend == "" {
+		backend = defaultBackend
+	}
+	tenant := attrs.TenantID
+	if qrdbsdk.IsSystemTenant(tenant) {
+		tenant = ""
+	}
+	rec, found, err := store.Load(ctx, tenant, backend, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+	if !found || rec.Current <= 1 {
+		return attrs, nil
+	}
+
+	current := *attrs
+	current.CN = xkmssdk.KeyVersionName(attrs.CN, rec.Current)
+	return &current, nil
 }
 
 // SignerByID returns a crypto.Signer for the specified key ID (kid).

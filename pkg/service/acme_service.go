@@ -311,6 +311,13 @@ type ACMEServiceParams struct {
 	// When empty, http-01 is enabled by default.
 	Challenges []string
 
+	// AllowPrivateChallengeTargets lets the shared challenge-validation
+	// client connect to reserved addresses (loopback, private, link-local,
+	// metadata). go-xkms refuses them by default to keep a client-named
+	// challenge target from reaching internal services (SSRF); a deployment
+	// whose devices enroll from a private network sets it.
+	AllowPrivateChallengeTargets bool
+
 	// OrderPreSignHooks registers pre-sign extension hooks. For cluster ACME
 	// enrollment it carries the SPIFFE node-identity URI-SAN hook so enrolling
 	// nodes' transport certificates are stamped with their SPIFFE identity. Nil
@@ -336,28 +343,32 @@ type acmeService struct {
 	certResolver ACMECertResolver
 	mu           sync.Mutex
 	challenge    map[string]xkmsacme.ACMEChallengeVerifierFunc
+
+	// canonical is every challenge verifier this server can register, all
+	// bound to the one challenge-validation client built at construction.
+	canonical map[string]xkmsacme.ACMEChallengeVerifierFunc
 }
 
 // canonicalChallengeVerifiers maps challenge names to their canonical xkms
-// verifier functions. Map-based dispatch keeps challenge registration O(1)
-// and avoids a growing switch as new challenge families are added. The TPM
-// attestation challenges (enroll-01/endorse-01) come from the shared xkms SDK
-// helper so quicbaas enables attestation identically to xkmsd; which challenges
-// are actually offered is selected per-deployment via ACMEServiceParams.Challenges.
-var canonicalChallengeVerifiers = buildCanonicalChallengeVerifiers()
-
-func buildCanonicalChallengeVerifiers() map[string]xkmsacme.ACMEChallengeVerifierFunc {
+// verifier functions, every one bound to client: the shared, SSRF-safe
+// challenge-validation client go-xkms requires for any verifier that contacts
+// a client-named target (http-01, enroll-01). Map-based dispatch keeps
+// challenge registration O(1). The TPM attestation challenges
+// (enroll-01/endorse-01) come from the shared xkms SDK helper so quicbaas
+// enables attestation identically to xkmsd; which challenges are actually
+// offered is selected per-deployment via ACMEServiceParams.Challenges.
+func canonicalChallengeVerifiers(client *xkmsacme.ACMEChallengeClient) map[string]xkmsacme.ACMEChallengeVerifierFunc {
 	m := map[string]xkmsacme.ACMEChallengeVerifierFunc{
-		xkmsacme.ACMEChallengeTypeHTTP01: func(resolver *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
+		xkmsacme.ACMEChallengeTypeHTTP01: func(_ *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			return xkmsacme.ACMEVerifyHTTP01(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return xkmsacme.ACMEVerifyHTTP01(client, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		},
 		xkmsacme.ACMEChallengeTypeDNS01: func(resolver *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return xkmsacme.ACMEVerifyDNS01(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		},
 	}
-	for name, verifier := range xkmsacme.ACMEAttestationVerifiers(true, true) {
+	for name, verifier := range xkmsacme.ACMEAttestationVerifiers(client, true, true) {
 		m[name] = verifier
 	}
 	return m
@@ -378,13 +389,16 @@ func NewACMEService(params *ACMEServiceParams) (ACMEServicer, error) {
 		logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
+	canonical := canonicalChallengeVerifiers(xkmsacme.NewACMEChallengeClient(xkmsacme.ACMEChallengeClientConfig{
+		AllowPrivateTargets: params.AllowPrivateChallengeTargets,
+	}))
 	challengeMap := make(map[string]xkmsacme.ACMEChallengeVerifierFunc)
 	names := params.Challenges
 	if len(names) == 0 {
 		names = []string{xkmsacme.ACMEChallengeTypeHTTP01}
 	}
 	for _, name := range names {
-		if verifier, ok := canonicalChallengeVerifiers[name]; ok {
+		if verifier, ok := canonical[name]; ok {
 			challengeMap[name] = verifier
 		}
 	}
@@ -409,6 +423,7 @@ func NewACMEService(params *ACMEServiceParams) (ACMEServicer, error) {
 		issueCA:      params.IssueCA,
 		certResolver: params.CertResolver,
 		challenge:    challengeMap,
+		canonical:    canonical,
 	}, nil
 }
 
@@ -431,7 +446,7 @@ func (s *acmeService) RegisterChallenge(ctx context.Context, req *ACMERegisterCh
 		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "ACMEService.RegisterChallenge", Err: err}
 	}
 
-	verifier, ok := canonicalChallengeVerifiers[req.Name]
+	verifier, ok := s.canonical[req.Name]
 	if !ok {
 		return nil, ErrACMEUnknownChallenge
 	}

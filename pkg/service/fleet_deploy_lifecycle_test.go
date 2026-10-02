@@ -157,7 +157,7 @@ func TestDeploy_PreflightFailureChangesNothing(t *testing.T) {
 		deploy.FailedCheck(deploy.CheckLinger, &deploy.LingerNotEnabledError{User: "deploy", Command: "sudo loginctl enable-linger deploy"}),
 	}}
 
-	_, err := svc.Deploy(context.Background(), validSpec())
+	_, err := svc.Deploy(acmeCtx, validSpec())
 	var failed *deploy.PreflightFailedError
 	var linger *deploy.LingerNotEnabledError
 	if !errors.As(err, &failed) || !errors.As(err, &linger) {
@@ -173,7 +173,7 @@ func TestDeploy_RunsPreflightUnlessSkipped(t *testing.T) {
 	node := &fakeNode{}
 	svc.node = node
 
-	result, err := svc.Deploy(context.Background(), validSpec())
+	result, err := svc.Deploy(acmeCtx, validSpec())
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestDeploy_RunsPreflightUnlessSkipped(t *testing.T) {
 	node.preflightIn = nil
 	spec := validSpec()
 	spec.SkipPreflight = true
-	result, err = svc.Deploy(context.Background(), spec)
+	result, err = svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestDeploy_UploadsRenderedConfig(t *testing.T) {
 	spec.SkipPreflight = true
 	spec.Node.AllowedMountRoots = []string{"/srv/sockets"}
 
-	result, err := svc.Deploy(context.Background(), spec)
+	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestDeploy_UploadsRenderedConfig(t *testing.T) {
 
 	svc.files = &fakeFileUploader{files: map[string]fakeFile{}, err: errors.New("disk full")}
 	var identityErr *FleetNodeIdentityUploadError
-	if _, err := svc.Deploy(context.Background(), spec); !errors.As(err, &identityErr) {
+	if _, err := svc.Deploy(acmeCtx, spec); !errors.As(err, &identityErr) {
 		t.Fatalf("want the first upload failure typed, got %v", err)
 	}
 }
@@ -243,7 +243,7 @@ func TestDeploy_RefusesUndeclaredCapacity(t *testing.T) {
 	spec.Node.MaxConcurrentJobs = 0
 
 	var undeclared *deploy.CapacityUndeclaredError
-	if _, err := svc.Deploy(context.Background(), spec); !errors.As(err, &undeclared) {
+	if _, err := svc.Deploy(acmeCtx, spec); !errors.As(err, &undeclared) {
 		t.Fatalf("want CapacityUndeclaredError, got %v", err)
 	}
 	if _, err := svc.Preflight(context.Background(), spec); !errors.As(err, &undeclared) {

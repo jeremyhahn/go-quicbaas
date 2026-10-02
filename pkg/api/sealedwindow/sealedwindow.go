@@ -96,12 +96,10 @@ const (
 	VerbShamirUnsealShares Verb = "shamir-unseal-shares"
 	VerbShamirVerify       Verb = "shamir-verify"
 
-	VerbRekey Verb = "rekey"
-
-	VerbRecoveryGenerate Verb = "recovery-generate"
-	VerbRecoveryRecover  Verb = "recovery-recover"
-	VerbRecoveryDelete   Verb = "recovery-delete"
-	VerbRecoveryStatus   Verb = "recovery-status"
+	// Rekey and the recovery-key generate / delete / status verbs left the
+	// sealed window with go-qrdb v0.25: they are not justified as anonymous,
+	// and they already refused while sealed.
+	VerbRecoveryRecover Verb = "recovery-recover"
 
 	VerbRootToken Verb = "root-token"
 
@@ -204,11 +202,7 @@ const (
 	subBarrierShamirInitialize   byte = 0x05
 	subBarrierShamirUnsealShare  byte = 0x06
 	subBarrierShamirUnsealShares byte = 0x07
-	subBarrierRekey              byte = 0x0C
-	subBarrierRecoveryGenerate   byte = 0x0D
 	subBarrierRecoveryRecover    byte = 0x0E
-	subBarrierRecoveryDelete     byte = 0x0F
-	subBarrierRecoveryStatus     byte = 0x10
 	subBarrierRootToken          byte = 0x11
 
 	subCeremonyInitialize            byte = 0x01
@@ -234,11 +228,7 @@ var Verbs = []Verb{
 	VerbShamirUnsealShare,
 	VerbShamirUnsealShares,
 	VerbShamirVerify,
-	VerbRekey,
-	VerbRecoveryGenerate,
 	VerbRecoveryRecover,
-	VerbRecoveryDelete,
-	VerbRecoveryStatus,
 	VerbRootToken,
 	VerbOfficerRegister,
 	VerbOfficerList,
@@ -263,7 +253,8 @@ var Verbs = []Verb{
 
 // StrictCeremonyExclusions names the canonical verbs quicbaas withholds from
 // its sealed window on EVERY transport, mapped to the reason. qrdb allowlists
-// all three; quicbaas does not (owner decision — adopt go-xkms's strict
+// ceremony initialize and sign-csr (it withdrew external officer enrollment
+// itself in v0.25); quicbaas withholds all three (owner decision — adopt go-xkms's strict
 // model).
 //
 // The verbs keep their full entries in Table so the quicbaas table still
@@ -371,26 +362,10 @@ var Table = map[Verb]Names{
 	// shamir-verify has no qrdb gRPC RPC or MCP tool; quicbaas additionally
 	// exposes it on its own quicbaas.barrier.v1 mirror (BarrierShamirVerify).
 	VerbShamirVerify: {
-		REST:     []string{"/v1/barrier/shamir/verify"},
-		GRPC:     []string{"BarrierShamirVerify"},
-		QRDBQUIC: []string{"barrier.ShamirVerify"},
+		REST: []string{"/v1/barrier/shamir/verify"},
+		GRPC: []string{"BarrierShamirVerify"},
 	},
 
-	VerbRekey: {
-		REST:     []string{"/v1/barrier/rekey", "/api/v1/barrier/rekey"},
-		GRPC:     []string{"BarrierRekey"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierRekey}},
-		QRDBQUIC: []string{"barrier.Rekey"},
-		MCP:      []string{"qrdb_barrier_rekey"},
-	},
-
-	VerbRecoveryGenerate: {
-		REST:     []string{"/v1/barrier/recovery/generate", "/api/v1/barrier/recovery/generate"},
-		GRPC:     []string{"BarrierRecoveryGenerate"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierRecoveryGenerate}},
-		QRDBQUIC: []string{"barrier.RecoveryGenerate"},
-		MCP:      []string{"qrdb_barrier_recovery_generate"},
-	},
 	VerbRecoveryRecover: {
 		REST:     []string{"/v1/barrier/recovery/recover", "/api/v1/barrier/recovery/recover"},
 		GRPC:     []string{"BarrierRecoveryRecover"},
@@ -398,22 +373,6 @@ var Table = map[Verb]Names{
 		QRDBQUIC: []string{"barrier.RecoveryRecover"},
 		MCP:      []string{"qrdb_barrier_recovery_recover"},
 	},
-	// REST recovery-delete is DELETE /v1/barrier/recovery (exact path).
-	VerbRecoveryDelete: {
-		REST:     []string{"/v1/barrier/recovery", "/api/v1/barrier/recovery"},
-		GRPC:     []string{"BarrierRecoveryDelete"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierRecoveryDelete}},
-		QRDBQUIC: []string{"barrier.RecoveryDelete"},
-		MCP:      []string{"qrdb_barrier_recovery_delete"},
-	},
-	VerbRecoveryStatus: {
-		REST:     []string{"/v1/barrier/recovery/status", "/api/v1/barrier/recovery/status"},
-		GRPC:     []string{"BarrierRecoveryStatus"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierRecoveryStatus}},
-		QRDBQUIC: []string{"barrier.RecoveryStatus"},
-		MCP:      []string{"qrdb_barrier_recovery_status"},
-	},
-
 	VerbRootToken: {
 		REST:     []string{"/v1/barrier/root-token", "/api/v1/barrier/root-token"},
 		GRPC:     []string{"BarrierRootToken"},
@@ -430,18 +389,20 @@ var Table = map[Verb]Names{
 	// officer during any restart-while-sealed. Officer enrollment belongs to
 	// the enrollment ceremony; the exemption lapses at operational.
 	VerbOfficerRegister: {
-		REST:               []string{"/v1/barrier/officers"},
+		REST:               []string{"POST /v1/barrier/officers"},
 		GRPC:               []string{"BarrierOfficerRegister"},
 		QRDBQUIC:           []string{"barrier.OfficerRegister"},
 		MCP:                []string{"qrdb_barrier_officer_register"},
 		PreOperationalOnly: true,
 	},
+	// The ceremony officer list is quicbaas's own (CeremonyListOfficers); go-qrdb
+	// v0.25 withdrew its barrier officer list from the sealed window, so only
+	// the ceremony names remain here.
 	VerbOfficerList: {
-		REST:     []string{"/v1/barrier/officers", "/v1/ceremony/officers", "/api/v1/init/officers"},
-		GRPC:     []string{"BarrierOfficerList", "CeremonyListOfficers"},
-		QUIC:     []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyListOfficers}},
-		QRDBQUIC: []string{"barrier.OfficerList"},
-		MCP:      []string{"qrdb_barrier_officer_list", "quicbaas_ceremony_list_officers"},
+		REST: []string{"/v1/ceremony/officers", "/api/v1/init/officers"},
+		GRPC: []string{"CeremonyListOfficers"},
+		QUIC: []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyListOfficers}},
+		MCP:  []string{"quicbaas_ceremony_list_officers"},
 	},
 	VerbOfficerClaimStatus: {
 		REST:     []string{"/v1/barrier/officers/claim-status"},
@@ -468,7 +429,7 @@ var Table = map[Verb]Names{
 	// rationale: it enrolls a recovery officer via the same
 	// CSR-sign-and-assign-share flow with no service-layer auth.
 	VerbRecoveryOfficerRegister: {
-		REST:               []string{"/v1/barrier/recovery/officers"},
+		REST:               []string{"POST /v1/barrier/recovery/officers"},
 		GRPC:               []string{"BarrierRecoveryOfficerRegister"},
 		QRDBQUIC:           []string{"barrier.RecoveryOfficerRegister"},
 		MCP:                []string{"qrdb_barrier_recovery_officer_register"},

@@ -35,10 +35,9 @@ func flushCoverage() { flushCoverageProfile() }
 //
 // It previously installed a memguard.CatchSignal handler so the profile was
 // written before memguard's secure-wipe os.Exit(1). That is no longer needed
-// — and must not be reinstated — because main() now arms the secure subsystem
-// with secure.EnablePurge() instead of secure.CatchInterrupt(): no memguard
-// signal handler is installed at all, so SIGINT/SIGTERM reach runDaemon's own
-// handler, which runs Server.Shutdown (closing the embedded qrdb node and its
+// — and must not be reinstated — because the secure subsystem no longer
+// installs any signal handler (main() only defers secure.WipeAll), so
+// SIGINT/SIGTERM reach runDaemon's own handler, which runs Server.Shutdown (closing the embedded qrdb node and its
 // PebbleDB) and then calls flushCoverage. Registering memguard.CatchSignal
 // here would reintroduce the hard os.Exit(1) that skipped the graceful
 // shutdown and dropped every unflushed PebbleDB write.

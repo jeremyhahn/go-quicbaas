@@ -14,6 +14,7 @@
 package sealedwindow
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -201,56 +202,72 @@ func TestAuthBypass_GRPC(t *testing.T) {
 // ceremony states.
 func TestAuthBypass_RESTPath(t *testing.T) {
 	cases := []struct {
-		name  string
-		path  string
-		preOp bool
-		op    bool
+		name   string
+		path   string
+		preOp  bool
+		op     bool
+		method string // empty means POST
 	}{
 		// ScopeAlways.
-		{"unseal wire mount", "/v1/barrier/unseal", true, true},
-		{"unseal api mirror", "/api/v1/barrier/unseal", true, true},
-		{"barrier status", "/v1/barrier/status", true, true},
-		{"shamir unseal-share", "/v1/barrier/shamir/unseal-share", true, true},
-		{"submit unseal-share", "/v1/barrier/unseal-share", true, true},
-		{"recovery recover", "/v1/barrier/recovery/recover", true, true},
-		{"officer claim prefix", "/v1/barrier/officers/alice/claim/begin", true, true},
-		{"officer list init mirror", "/api/v1/init/officers", true, true},
-		{"bootstrap prefix", "/v1/bootstrap/trust", true, true},
-		{"cluster secret", "/api/v1/cluster/secret", true, true},
-		{"health", "/health", true, true},
+		{"unseal wire mount", "/v1/barrier/unseal", true, true, ""},
+		{"unseal api mirror", "/api/v1/barrier/unseal", true, true, ""},
+		{"barrier status", "/v1/barrier/status", true, true, ""},
+		{"shamir unseal-share", "/v1/barrier/shamir/unseal-share", true, true, ""},
+		{"submit unseal-share", "/v1/barrier/unseal-share", true, true, ""},
+		{"recovery recover", "/v1/barrier/recovery/recover", true, true, ""},
+		{"officer claim prefix", "/v1/barrier/officers/alice/claim/begin", true, true, ""},
+		{"officer list init mirror", "/api/v1/init/officers", true, true, ""},
+		{"bootstrap prefix", "/v1/bootstrap/trust", true, true, ""},
+		{"cluster secret", "/api/v1/cluster/secret", true, true, ""},
+		{"health", "/health", true, true, ""},
 
 		// ScopePreOperational.
-		{"ceremony status", "/v1/ceremony/status", true, false},
-		{"init status mirror", "/api/v1/init/status", true, false},
-		{"claim-cert begin", "/v1/ceremony/claim-cert/begin", true, false},
-		{"claim-cert begin mirror", "/api/v1/init/claim-cert/begin", true, false},
-		{"claim-cert complete mirror", "/api/v1/init/claim-cert/complete", true, false},
-		{"officer-share begin", "/v1/ceremony/officer-share/begin", true, false},
-		{"officer-share complete mirror", "/api/v1/init/officer-share/complete", true, false},
-		{"custodian claim-share begin", "/v1/ceremony/claim-share/begin", true, false},
-		{"custodian claim-share complete", "/v1/ceremony/claim-share/complete", true, false},
+		{"ceremony status", "/v1/ceremony/status", true, false, ""},
+		{"init status mirror", "/api/v1/init/status", true, false, ""},
+		{"claim-cert begin", "/v1/ceremony/claim-cert/begin", true, false, ""},
+		{"claim-cert begin mirror", "/api/v1/init/claim-cert/begin", true, false, ""},
+		{"claim-cert complete mirror", "/api/v1/init/claim-cert/complete", true, false, ""},
+		{"officer-share begin", "/v1/ceremony/officer-share/begin", true, false, ""},
+		{"officer-share complete mirror", "/api/v1/init/officer-share/complete", true, false, ""},
+		{"custodian claim-share begin", "/v1/ceremony/claim-share/begin", true, false, ""},
+		{"custodian claim-share complete", "/v1/ceremony/claim-share/complete", true, false, ""},
 
 		// Strict exclusions and off-allowlist paths, denied in every state.
-		{"ceremony initialize excluded", "/v1/ceremony/initialize", false, false},
-		{"init initialize mirror excluded", "/api/v1/init/initialize", false, false},
-		{"sign-csr excluded", "/v1/ceremony/sign-csr", false, false},
-		{"enroll-external-officer excluded", "/v1/init/enroll-external-officer", false, false},
-		{"kms denied", "/api/v1/kms/keys", false, false},
-		{"credentials excluded", "/v1/credentials", false, false},
-		{"exact-entry subpath not prefix", "/v1/barrier/unseal/extra", false, false},
-		{"tenant barrier excluded", "/api/v1/tenants/t1/barrier/unseal", false, false},
+		{"ceremony initialize excluded", "/v1/ceremony/initialize", false, false, ""},
+		{"init initialize mirror excluded", "/api/v1/init/initialize", false, false, ""},
+		{"sign-csr excluded", "/v1/ceremony/sign-csr", false, false, ""},
+		{"enroll-external-officer excluded", "/v1/init/enroll-external-officer", false, false, ""},
+		{"kms denied", "/api/v1/kms/keys", false, false, ""},
+		{"credentials excluded", "/v1/credentials", false, false, ""},
+		{"exact-entry subpath not prefix", "/v1/barrier/unseal/extra", false, false, ""},
+
+		// go-qrdb v0.25 method-qualified the officer registrations and withdrew
+		// the barrier officer list, rekey and the recovery-key verbs.
+		{"officer register", "/v1/barrier/officers", true, false, http.MethodPost},
+		{"barrier officer list withdrawn", "/v1/barrier/officers", false, false, http.MethodGet},
+		{"recovery officer register", "/v1/barrier/recovery/officers", true, false, http.MethodPost},
+		{"recovery officer list not admitted", "/v1/barrier/recovery/officers", false, false, http.MethodGet},
+		{"rekey withdrawn", "/v1/barrier/rekey", false, false, ""},
+		{"recovery generate withdrawn", "/v1/barrier/recovery/generate", false, false, ""},
+		{"recovery status withdrawn", "/v1/barrier/recovery/status", false, false, http.MethodGet},
+		{"recovery delete withdrawn", "/v1/barrier/recovery", false, false, http.MethodDelete},
+		{"tenant barrier excluded", "/api/v1/tenants/t1/barrier/unseal", false, false, ""},
 	}
 	for _, tc := range cases {
+		method := tc.method
+		if method == "" {
+			method = http.MethodPost
+		}
 		for _, st := range []state{statePreOperational, stateOperational} {
 			want := wantFor(st, tc.preOp, tc.op)
 			t.Run(tc.name+" sealed "+st.String(), func(t *testing.T) {
 				b, _, _, sink := newBypassFixture(true, st)
-				assertBypass(t, sink, "rest", tc.path, want, b.BypassesRESTPath(tc.path))
+				assertBypass(t, sink, "rest", tc.path, want, b.BypassesRESTPath(method, tc.path))
 			})
 		}
 		t.Run(tc.name+" unsealed", func(t *testing.T) {
 			b, _, _, sink := newBypassFixture(false, statePreOperational)
-			assertBypass(t, sink, "rest", tc.path, false, b.BypassesRESTPath(tc.path))
+			assertBypass(t, sink, "rest", tc.path, false, b.BypassesRESTPath(method, tc.path))
 		})
 	}
 }
@@ -438,14 +455,10 @@ func TestAuthBypass_UnsealFlowSurvivesOperational(t *testing.T) {
 
 	restPaths := RESTAllowlistScoped(ScopeAlways)
 	require.NotEmpty(t, restPaths)
-	for _, path := range restPaths {
-		probe := path
-		if strings.HasSuffix(path, "/") {
-			// Prefix entry: exercise a representative sub-path.
-			probe = path + "example"
-		}
-		assert.Truef(t, b.BypassesRESTPath(probe),
-			"operational+sealed daemon must still admit REST %q", probe)
+	for _, entry := range restPaths {
+		method, probe := restProbe(entry)
+		assert.Truef(t, b.BypassesRESTPath(method, probe),
+			"operational+sealed daemon must still admit REST %s %q", method, probe)
 	}
 
 	grpcMethods := GRPCFullMethodAllowlistScoped(ScopeAlways)
@@ -492,9 +505,10 @@ func TestAuthBypass_PreOperationalExemptionExpires(t *testing.T) {
 
 	restPaths := RESTAllowlistScoped(ScopePreOperational)
 	require.NotEmpty(t, restPaths)
-	for _, path := range restPaths {
-		assert.Truef(t, pre.BypassesRESTPath(path), "pre-operational must admit REST %q", path)
-		assert.Falsef(t, post.BypassesRESTPath(path), "operational must DENY REST %q", path)
+	for _, entry := range restPaths {
+		method, probe := restProbe(entry)
+		assert.Truef(t, pre.BypassesRESTPath(method, probe), "pre-operational must admit REST %s %q", method, probe)
+		assert.Falsef(t, post.BypassesRESTPath(method, probe), "operational must DENY REST %s %q", method, probe)
 	}
 
 	grpcMethods := GRPCFullMethodAllowlistScoped(ScopePreOperational)
@@ -542,9 +556,10 @@ func TestAuthBypass_StrictExclusionsDeniedInEveryState(t *testing.T) {
 
 			for v, reason := range StrictCeremonyExclusions {
 				names := Table[v]
-				for _, path := range names.REST {
-					assert.Falsef(t, b.BypassesRESTPath(path),
-						"REST %q must never bypass (%s)", path, reason)
+				for _, entry := range names.REST {
+					method, probe := restProbe(entry)
+					assert.Falsef(t, b.BypassesRESTPath(method, probe),
+						"REST %s %q must never bypass (%s)", method, probe, reason)
 				}
 				for _, tail := range names.GRPC {
 					for _, service := range []string{
@@ -637,14 +652,14 @@ func TestAuthBypass_OperationalProbeFailsClosed(t *testing.T) {
 
 			// ScopeAlways is unaffected — recovery must stay possible.
 			assert.True(t, b.BypassesGRPC("/qrdb.v1.QRDBService/BarrierUnseal"))
-			assert.True(t, b.BypassesRESTPath("/v1/barrier/unseal"))
+			assert.True(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/unseal"))
 			assert.True(t, b.BypassesNativeQUIC(opBarrier, []byte{subBarrierUnseal}))
 			assert.True(t, b.BypassesQRDBQUIC("barrier.Unseal"))
 			assert.True(t, b.BypassesMCPTool("qrdb_barrier_unseal"))
 
 			// ScopePreOperational is withheld.
 			assert.False(t, b.BypassesGRPC("/qrdb.v1.QRDBService/CeremonyClaimCertBegin"))
-			assert.False(t, b.BypassesRESTPath("/api/v1/init/claim-cert/begin"))
+			assert.False(t, b.BypassesRESTPath(http.MethodPost, "/api/v1/init/claim-cert/begin"))
 			assert.False(t, b.BypassesNativeQUIC(opCeremony, []byte{subCeremonyClaimCertBegin}))
 			assert.False(t, b.BypassesQRDBQUIC("ceremony.ClaimCertBegin"))
 			assert.False(t, b.BypassesMCPTool("qrdb_ceremony_claim_cert_begin"))
@@ -660,7 +675,7 @@ func TestAuthBypass_ResealCycle(t *testing.T) {
 
 	// Unsealed: full enforcement, no bypass, no audit.
 	assert.False(t, b.BypassesGRPC("/qrdb.v1.QRDBService/BarrierUnseal"))
-	assert.False(t, b.BypassesRESTPath("/v1/barrier/unseal"))
+	assert.False(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/unseal"))
 	assert.Empty(t, sink.events)
 
 	// Re-seal: the window opens for allowlisted verbs only.
@@ -683,15 +698,15 @@ func TestAuthBypass_ResealCycle(t *testing.T) {
 func TestAuthBypass_CeremonyCompletionNarrowsLiveInstance(t *testing.T) {
 	b, _, operational, sink := newBypassFixture(true, statePreOperational)
 
-	assert.True(t, b.BypassesRESTPath("/api/v1/init/claim-cert/begin"))
-	assert.True(t, b.BypassesRESTPath("/v1/barrier/unseal"))
+	assert.True(t, b.BypassesRESTPath(http.MethodPost, "/api/v1/init/claim-cert/begin"))
+	assert.True(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/unseal"))
 	assert.Len(t, sink.events, 2)
 
 	operational.operationalState = true
 
-	assert.False(t, b.BypassesRESTPath("/api/v1/init/claim-cert/begin"),
+	assert.False(t, b.BypassesRESTPath(http.MethodPost, "/api/v1/init/claim-cert/begin"),
 		"ceremony claim must stop bypassing once operational")
-	assert.True(t, b.BypassesRESTPath("/v1/barrier/unseal"),
+	assert.True(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/unseal"),
 		"unseal must keep bypassing after the ceremony completes")
 	assert.Len(t, sink.events, 3, "only the unseal admit is audited after completion")
 }
@@ -701,7 +716,7 @@ func TestAuthBypass_CeremonyCompletionNarrowsLiveInstance(t *testing.T) {
 func TestAuthBypass_NilSafety(t *testing.T) {
 	var nilBypass *AuthBypass
 	assert.False(t, nilBypass.BypassesGRPC("/qrdb.v1.QRDBService/BarrierUnseal"))
-	assert.False(t, nilBypass.BypassesRESTPath("/v1/barrier/unseal"))
+	assert.False(t, nilBypass.BypassesRESTPath(http.MethodPost, "/v1/barrier/unseal"))
 	assert.False(t, nilBypass.BypassesNativeQUIC(opBarrier, []byte{subBarrierUnseal}))
 	assert.False(t, nilBypass.BypassesQRDBQUIC("barrier.Unseal"))
 	assert.False(t, nilBypass.BypassesMCPTool("qrdb_barrier_unseal"))
@@ -712,7 +727,7 @@ func TestAuthBypass_NilSafety(t *testing.T) {
 	// A nil sink must not panic on a bypass, in either scope.
 	nilSink := NewAuthBypass(&togglableProbe{sealedState: true}, &togglableOperational{}, nil)
 	assert.True(t, nilSink.BypassesGRPC("/qrdb.v1.QRDBService/BarrierUnseal"))
-	assert.True(t, nilSink.BypassesRESTPath("/api/v1/init/status"))
+	assert.True(t, nilSink.BypassesRESTPath(http.MethodPost, "/api/v1/init/status"))
 }
 
 // TestNewLoggerAuditSink covers both the nil-logger contract and a real
@@ -726,4 +741,18 @@ func TestNewLoggerAuditSink(t *testing.T) {
 	sink := NewLoggerAuditSink(log)
 	require.NotNil(t, sink)
 	sink.SealedWindowAuthBypass("grpc", "/qrdb.v1.QRDBService/BarrierUnseal")
+}
+
+// restProbe turns an allowlist entry into a request that exercises it: the
+// method it names (POST when it names none) and its path, with a
+// representative sub-path for a prefix entry.
+func restProbe(entry string) (method, path string) {
+	method, path = http.MethodPost, entry
+	if m, p, qualified := strings.Cut(entry, " "); qualified {
+		method, path = m, p
+	}
+	if strings.HasSuffix(path, "/") {
+		path += "example"
+	}
+	return method, path
 }

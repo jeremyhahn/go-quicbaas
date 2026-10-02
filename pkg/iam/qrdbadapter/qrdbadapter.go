@@ -449,6 +449,32 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 	}, nil
 }
 
+// GetUserByUsername satisfies qrdbfirstboot.UserResolver. go-qrdb v0.25's
+// first boot verifies an already-existing admin by reading it back — the
+// username, tenant, admin role grant and a live lifecycle — before it treats a
+// re-run's "username already exists" as idempotent success. Without a
+// resolver it cannot verify, so a first boot that failed after creating the
+// admin could never be resumed. The projection matches what CreateUser
+// returns.
+func (a *UserAdapter) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error) {
+	if a == nil || a.store == nil {
+		return nil, &NilDependencyError{Name: "IdentityStore"}
+	}
+	if tenantID == "" {
+		tenantID = qrdbsdk.SystemTenantID
+	}
+	u, err := a.store.GetUserByUsername(ctx, tenantID, username)
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbsdk.User{
+		Username:  u.Username,
+		TenantID:  u.TenantID,
+		RoleIDs:   u.Roles,
+		Lifecycle: u.Lifecycle,
+	}, nil
+}
+
 // CreatedUser returns the quicbaas user record CreateUser most recently wrote,
 // or nil when this adapter has not created one. First-boot callers use it to
 // reach the admin they just provisioned without re-querying the store.

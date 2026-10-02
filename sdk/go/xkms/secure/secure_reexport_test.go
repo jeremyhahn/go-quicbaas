@@ -16,6 +16,8 @@ package secure_test
 import (
 	"bytes"
 	"errors"
+	"os"
+	"os/exec"
 	"testing"
 
 	xkmssecure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -146,5 +148,48 @@ func TestAliasedValuesCrossTheModuleBoundary(t *testing.T) {
 
 	if !bytes.Equal(opened.Bytes(), []byte(plaintext)) {
 		t.Errorf("round trip = %q, want %q", opened.Bytes(), plaintext)
+	}
+}
+
+// wipeAllChildEnv marks the child process TestWipeAll re-executes. WipeAll
+// destroys the process sealer, so it runs where no other test can observe it.
+const wipeAllChildEnv = "QUICBAAS_SECURE_WIPEALL_CHILD"
+
+// TestWipeAll proves the deferred shutdown wipe works through the re-export:
+// a live Secret becomes unopenable and every live enclave is reclaimed.
+func TestWipeAll(t *testing.T) {
+	if os.Getenv(wipeAllChildEnv) == "1" {
+		wipeAllChild(t)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWipeAll$", "-test.v")
+	cmd.Env = append(os.Environ(), wipeAllChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("WipeAll child failed: %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("--- PASS: TestWipeAll")) {
+		t.Fatalf("WipeAll child did not run its test:\n%s", out)
+	}
+}
+
+func wipeAllChild(t *testing.T) {
+	sec, err := secure.NewSecret([]byte("shutdown-wiped"))
+	if err != nil {
+		t.Fatalf("NewSecret: %v", err)
+	}
+	remaining, err := secure.WipeAll()
+	if err != nil {
+		t.Fatalf("WipeAll: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("WipeAll left %d enclaves held", remaining)
+	}
+	if opened, err := sec.Open(); err == nil {
+		opened.Destroy()
+		t.Fatal("a Secret opened after WipeAll destroyed the process sealer")
+	}
+	if remaining, err := secure.WipeAll(); err != nil || remaining != 0 {
+		t.Fatalf("a second WipeAll = %d, %v; want an idempotent 0, nil", remaining, err)
 	}
 }

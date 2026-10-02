@@ -124,6 +124,7 @@ embedded. See the matrix in [api.md](api.md). Until it is fixed, reach them with
 | `GenerateCRL` / `IsRevoked` / `IsInitialized` fail over REST but work elsewhere | Known route mismatch — see above and [api.md](api.md). Use `--transport grpc`. |
 | `ca revoke` rejects the argument | It takes the certificate **serial**. Get it from `ca list`. |
 | ACME order fails validation | The challenge could not be served. ACME validates reachability; a private deployment usually needs DNS-01 rather than HTTP-01. |
+| http-01 or enroll-01 validation is refused for a device on a private network | Challenge validation refuses reserved addresses (loopback, private, link-local, metadata) by default, so a client-named target cannot reach internal services. Set `server.acme.allow_private_challenge_targets: true` when devices enroll from a private network. |
 | `permission denied` reading the bundle | `certs:read` is separate from `certs:generate`. Grant the narrower one. |
 
 ## What this feature does not do

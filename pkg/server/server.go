@@ -267,6 +267,12 @@ type Server struct {
 	// in-memory or freshly-created file-backed store.
 	xkmsKeyStorage xkmssdk.StorageBackend
 
+	// xkmsKeyVersions is the key-version record store the process-global
+	// xkms service rotates keys through. It is built once (keyVersionStore)
+	// and shared by every initXKMS call, so whichever registers the
+	// singleton wires the same store.
+	xkmsKeyVersions *xkmssdk.KeyVersionStore
+
 	// Fleet registry - shared between IAM enrollment (publisher on
 	// redeem) and orchestration (publisher on heartbeat + consumer for
 	// dispatch). Constructed during IAM init so the enrollment service can

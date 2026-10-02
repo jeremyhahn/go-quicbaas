@@ -25,6 +25,10 @@ import (
 	"encoding/pem"
 	stderrors "errors"
 	"math/big"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -63,7 +67,14 @@ func newTestACMEService(issueCA ACMECA) *acmeService {
 		directoryURL: "https://acme.test.example/acme/directory",
 		issueCA:      issueCA,
 		challenge:    map[string]xkmsacme.ACMEChallengeVerifierFunc{},
+		canonical:    testCanonicalVerifiers(),
 	}
+}
+
+// testCanonicalVerifiers is the production verifier set, bound to a challenge
+// client at go-xkms's secure default.
+func testCanonicalVerifiers() map[string]xkmsacme.ACMEChallengeVerifierFunc {
+	return canonicalChallengeVerifiers(xkmsacme.NewACMEChallengeClient(xkmsacme.ACMEChallengeClientConfig{}))
 }
 
 // selfSignedLeafPEM generates a throwaway self-signed certificate PEM whose
@@ -249,6 +260,7 @@ func newTestACMEServiceFull(issueCA ACMECA, resolver ACMECertResolver) *acmeServ
 		issueCA:      issueCA,
 		certResolver: resolver,
 		challenge:    map[string]xkmsacme.ACMEChallengeVerifierFunc{},
+		canonical:    testCanonicalVerifiers(),
 	}
 }
 
@@ -446,4 +458,33 @@ func TestACMEService_Renew(t *testing.T) {
 		_, err := svc.Renew(ctx, &ACMERenewRequest{CertURL: "ff"})
 		assert.ErrorIs(t, err, ErrACMEResolverMissing)
 	})
+}
+
+// TestCanonicalChallengeVerifiers_PrivateTargets pins the SSRF guard the
+// http-01 verifier now runs behind: a challenge-validation client at go-xkms's
+// default refuses a loopback target, and one built with
+// AllowPrivateChallengeTargets (server.acme.allow_private_challenge_targets)
+// reaches it and validates the key authorization.
+func TestCanonicalChallengeVerifiers_PrivateTargets(t *testing.T) {
+	const token, keyAuth = "challenge-token", "challenge-token.thumbprint"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/acme-challenge/"+token {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(keyAuth))
+	}))
+	defer srv.Close()
+	u, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	host, port, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+
+	guarded := canonicalChallengeVerifiers(xkmsacme.NewACMEChallengeClient(xkmsacme.ACMEChallengeClientConfig{}))
+	err = guarded[xkmsacme.ACMEChallengeTypeHTTP01](nil, nil, host, port, token, keyAuth)
+	require.Error(t, err, "the default client must refuse a loopback challenge target")
+
+	private := canonicalChallengeVerifiers(xkmsacme.NewACMEChallengeClient(xkmsacme.ACMEChallengeClientConfig{AllowPrivateTargets: true}))
+	require.NoError(t, private[xkmsacme.ACMEChallengeTypeHTTP01](nil, nil, host, port, token, keyAuth),
+		"a client allowing private targets must validate a loopback challenge")
 }

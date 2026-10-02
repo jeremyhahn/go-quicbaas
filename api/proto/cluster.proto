@@ -23,6 +23,11 @@ message AddNodeRequest {
 
   // address is the Raft address of the new node (host:port).
   string address = 3;
+
+  // identity is the new node's Raft member identity (spki:<sha256-hex>, as
+  // `qrdbd node-identity --cert` prints it). Optional when the cluster has
+  // already committed one for the node or its host.
+  string identity = 4;
 }
 
 // AddNodeResponse confirms node addition.

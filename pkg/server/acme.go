@@ -77,7 +77,9 @@ func (s *Server) buildACMEService(caAdapter *caServiceAdapter) (service.ACMEServ
 		IssueCA:           caAdapter,
 		CertResolver:      caAdapter,
 		OrderPreSignHooks: s.buildClusterPreSignHooks(),
-		ClusterCACN:       s.clusterACMEIssuerCN(),
+
+		AllowPrivateChallengeTargets: s.config.Server.ACME.AllowPrivateChallengeTargets,
+		ClusterCACN:                  s.clusterACMEIssuerCN(),
 	})
 	if err != nil {
 		return nil, err

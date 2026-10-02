@@ -90,6 +90,21 @@ func TestHandleAddNode(t *testing.T) {
 			},
 		},
 		{
+			name: "identity reaches the service",
+			body: AddNodeRequest{
+				ShardID:  1,
+				NodeID:   3,
+				Address:  "192.168.1.3:5001",
+				Identity: "spki:0123abcd",
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("AddNode", mock.Anything, mock.MatchedBy(func(req *service.AddNodeRequest) bool {
+					return req.NodeID == 3 && req.Identity == "spki:0123abcd"
+				})).Return(&service.AddNodeResponse{Success: true}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
 			name: "missing node_id",
 			body: AddNodeRequest{
 				ShardID: 1,

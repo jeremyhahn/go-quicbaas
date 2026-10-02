@@ -101,7 +101,6 @@ func TestSDK_M10_Surface_Reachable(t *testing.T) {
 		_ quicbaas.ACMEChallengeVerifierFunc  = nil
 		_ quicbaas.ACMEClientConfig           = quicbaas.ACMEClientConfig{}
 		_ quicbaas.ACMECertificateRequest     = quicbaas.ACMECertificateRequest{}
-		_ quicbaas.ACMERenewalConfig          = quicbaas.ACMERenewalConfig{}
 		_ quicbaas.ACMECrossSignConfig        = quicbaas.ACMECrossSignConfig{}
 		_ quicbaas.ACMEEnrollmentConfig       = quicbaas.ACMEEnrollmentConfig{}
 

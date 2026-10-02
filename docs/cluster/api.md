@@ -37,12 +37,21 @@ Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes regis
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `AddNode` | `POST /api/v1/cluster/nodes` | **no** | yes | yes | yes | — |
+| `AddNode` | `POST /api/v1/cluster/nodes` | yes | yes | yes | yes | `admin:add_member` |
 | `GetRebalanceStatus` | `GET /api/v1/cluster/rebalance/status` | yes | yes | yes | yes | `rebalance:report` |
 | `Nodes` | `POST /api/v1/cluster/nodes` *(default branch)* | **no** | yes | yes | MISSING | — |
 | `Rebalance` | `POST /api/v1/cluster/rebalance` | **no** | yes | yes | yes | — |
 | `RemoveNode` | `DELETE /api/v1/cluster/nodes/{nodeId}` | yes | yes | yes | yes | `admin:remove_member` |
 | `Status` | `GET /api/v1/cluster/status` | yes | yes | yes | yes | `admin:status` |
+
+`AddNode` takes the shard, the new replica's node ID and Raft address, and its
+Raft member `identity` (`spki:<sha256-hex>`, as `qrdbd node-identity --cert`
+prints it). The identity is optional when the cluster has already committed one
+for the replica or its host, and required for a node no committed membership
+names (go-qrdb v0.25 / go-quicraft v0.15 admit a member only with its
+identity). The same field is `identity` on REST and gRPC (`AddNodeRequest`
+field 4) and on the `quicbaas_add_node` MCP tool; node replace takes
+`replacement_identity`.
 
 ### `quicbaas.Operations` — SDK package `sdk/go/client/operations`
 

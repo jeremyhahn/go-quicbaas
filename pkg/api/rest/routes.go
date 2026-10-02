@@ -890,9 +890,44 @@ var moduleExcludedPathPrefixes = []string{
 	"/api/v1/init/",
 }
 
+// qrdbNativeWireRoutes are the go-qrdb wire routes (GroupBarrierWire,
+// GroupCeremonyWire, GroupInitWire) that go-qrdb's unified REST server serves
+// natively from go-qrdb v0.25: the /v1/barrier, /v1/ceremony and /v1/init
+// mounts are go-qrdb's protocol, and go-qrdb registers them itself on the
+// unified server. quicbaas's copies stay in Routes() for the standalone
+// sealed-window listener, which serves before the unified server exists, but
+// they must not be registered on the unified server too: a REST route has one
+// owner there, and go-qrdb's registrar panics on the duplicate. GET
+// /v1/ceremony/officers is quicbaas's own and stays on the module surface.
+var qrdbNativeWireRoutes = map[string]bool{
+	"POST /v1/barrier/enable-encryption":       true,
+	"POST /v1/barrier/initialize":              true,
+	"DELETE /v1/barrier/recovery":              true,
+	"POST /v1/barrier/recovery/generate":       true,
+	"POST /v1/barrier/recovery/recover":        true,
+	"GET /v1/barrier/recovery/status":          true,
+	"POST /v1/barrier/rekey":                   true,
+	"POST /v1/barrier/root-token":              true,
+	"POST /v1/barrier/seal":                    true,
+	"POST /v1/barrier/shamir/initialize":       true,
+	"POST /v1/barrier/shamir/unseal-share":     true,
+	"POST /v1/barrier/shamir/unseal-shares":    true,
+	"GET /v1/barrier/status":                   true,
+	"POST /v1/barrier/unseal":                  true,
+	"POST /v1/ceremony/claim-cert/begin":       true,
+	"POST /v1/ceremony/claim-cert/complete":    true,
+	"POST /v1/ceremony/initialize":             true,
+	"POST /v1/ceremony/officer-share/begin":    true,
+	"POST /v1/ceremony/officer-share/complete": true,
+	"POST /v1/ceremony/sign-csr":               true,
+	"GET /v1/ceremony/status":                  true,
+	"POST /v1/init/enroll-external-officer":    true,
+}
+
 // ModuleRoutes returns the subset of Routes() safe to register on the
 // unified-API-server ServiceModule surface (pkg/apimodule module_http.go
-// RegisterHTTP): every entry EXCEPT the moduleExcludedPathPrefixes routes.
+// RegisterHTTP): every entry EXCEPT the moduleExcludedPathPrefixes routes and
+// the qrdbNativeWireRoutes go-qrdb serves there itself.
 // The standalone sealed-window REST listener
 // (pkg/server/sealed_window_rest.go) consumes Routes() directly, so it is
 // unaffected by this filter — barrier and init remain fully served there for
@@ -901,7 +936,7 @@ func ModuleRoutes() []RouteSpec {
 	all := Routes()
 	out := make([]RouteSpec, 0, len(all))
 	for _, spec := range all {
-		excluded := false
+		excluded := qrdbNativeWireRoutes[spec.Method+" "+spec.Pattern]
 		for _, prefix := range moduleExcludedPathPrefixes {
 			if strings.HasPrefix(spec.Pattern, prefix) {
 				excluded = true

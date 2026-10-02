@@ -80,7 +80,7 @@ func TestDeploy_StampsMCPEndpoint(t *testing.T) {
 	rec := &capturingRenderer{}
 	svc := newMCPTestService(endpoint, rec)
 
-	if _, err := svc.Deploy(context.Background(), spec); err != nil {
+	if _, err := svc.Deploy(acmeCtx, spec); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 	if rec.spec == nil {
@@ -101,7 +101,7 @@ func TestDeploy_MCPEndpointEmptyWhenUnconfigured(t *testing.T) {
 	rec := &capturingRenderer{}
 	svc := newMCPTestService("", rec)
 
-	if _, err := svc.Deploy(context.Background(), spec); err != nil {
+	if _, err := svc.Deploy(acmeCtx, spec); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 	if rec.spec == nil {
@@ -125,7 +125,7 @@ func TestDeploy_SpecMCPEndpointWins(t *testing.T) {
 	rec := &capturingRenderer{}
 	svc := newMCPTestService(svcEndpoint, rec)
 
-	if _, err := svc.Deploy(context.Background(), spec); err != nil {
+	if _, err := svc.Deploy(acmeCtx, spec); err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
 	if rec.spec.MCPEndpoint != specEndpoint {

@@ -419,13 +419,14 @@ func captureModuleRoutes(m qrdbsdk.ServiceModule, routesAlreadyMounted bool) (ou
 	name := m.Name()
 	probe := chi.NewRouter()
 
-	// A host module registers AFTER quicbaas's and go-xkms's, so by then the
-	// shared router already holds routes and chi refuses any further
-	// router-level middleware ("all middlewares must be defined before routes
-	// on a mux"). An empty probe would accept that Use and let the mount
-	// proceed to a panic during real registration, so the probe is seeded to
-	// match the state the module will actually meet. The mounted modules
-	// register first and legitimately meet an empty router, so they are probed
+	// go-qrdb's registrar refuses Use from every module (v0.25). A module can
+	// still reach past it onto the embedded chi.Router, and a host module
+	// registers AFTER quicbaas's and go-xkms's, when the shared router already
+	// holds routes and chi refuses router-level middleware ("all middlewares
+	// must be defined before routes on a mux"). The probe is seeded to match
+	// the state that module will actually meet, so such a call fails here, by
+	// name, rather than as a panic during real registration. The mounted
+	// modules register first and meet an empty router, so they are probed
 	// against one.
 	const middlewareSentinelPath = "/__quicbaas_module_host_probe__"
 	var sentinel http.Handler

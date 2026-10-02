@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Stack: go-xkms v0.49.0-alpha (go-xkms#1388, merge train #1383, #1387),
+go-qrdb v0.30.0-alpha, go-quicraft v0.15.0-alpha (hold lifted: go-qrdb#566 is
+resolved in go-qrdb v0.25.1).
+
 ### Added
 
 - **Service registry on every transport (go-quicbaas#1143, handbook 13 G9).**
@@ -32,13 +36,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and embedded; CLI `quicbaas scheduler node …` / `placement …`; TypeScript
   `scheduler.registerNode` … `listPlacements`. New permission family
   `placement:read|place|manage`.
+- `sdk/go/xkms/acme`: the External Account Binding vocabulary go-xkms owns
+  (go-quicbaas#1090) -- `EABPurposeAccountBinding`, `EABPurposeEndorse01`,
+  `EABPurposeEnroll01`, `EABStatusActive`, `EABStatusUsed`,
+  `EABStatusRevoked`, `EABStatusExpired` and `EABDeviceInfo`, aliased so a
+  consumer writing bindings through to the ACME EAB store uses go-xkms's
+  values rather than copies. The TPM lifecycle and EK credential challenge
+  half of #1090 shipped in v0.13.0-alpha.
+- `sdk/go/xkms/signserver`: the node-local, sign-only xkms server a
+  remote-mode PKCS#11 module signs through, and KMS key-create with PKCS#11
+  identity (`ProvisionECKeyPair`, `KeyRequest`), go-xkms#1385.
+- `sdk/go/xkms/spiffe`: SPIFFE ID building and validation.
+- `sdk/go/xkms/evidence`: the RFC 9334 evidence primitives (TPM2_Quote, AK/EK
+  certificates, TCG event logs, TPM2_Certify, IAK/IDevID) and signed CoRIM
+  reference values.
+- `sdk/go/xkms/ca`: certificate-profile selection -- the `ipsec-vtep` and
+  `x509-svid` profiles, name-constrained subordinate CAs and the
+  `tp-attestationEvidence` extension.
+- `sdk/go/xkms`: the TPM-policy wire types (`TPMPolicy*`, `TPMObjectPolicy*`,
+  `TPMAuthorityRotate*`, tenant TPM mode and vTPM) that replace go-xkms's
+  removed `Policy*` service; and `ACMEChallengeClient`,
+  `ACMEChallengeClientConfig`, `NewACMEChallengeClient` in the SDK root.
+- `server.acme.allow_private_challenge_targets` (default `false`): lets ACME
+  http-01 and enroll-01 validation reach reserved addresses, for devices that
+  enroll from a private network.
+- docs/go-sdk/api.md records how to obtain `libxkms_pkcs11.so`: go-xkms does
+  not publish it as a release asset, so a consumer builds it from the go-xkms
+  tag with `make build-pkcs11-module` (glibc; a musl IKE daemon reaches it
+  through `p11-kit`).
 
 ### Changed
 
+- **go-qrdb v0.20.6 → v0.30.0-alpha and go-quicraft v0.13.1 → v0.15.0**
+  (go-xkms v0.48.0-alpha requires v0.25.1; v0.27 adds durable leases and moves a
+  re-put key to its new lease, go-qrdb#581, so re-registering a service
+  instance while its old lease is still alive no longer loses the new
+  registration when the old lease expires). Absorbed:
+  - `Admin().AddMember` takes the replica's Raft member identity. AddNode now
+    carries it: `identity` on REST `POST /api/v1/cluster/nodes` (and
+    `replacement_identity` on node replace), `identity` (field 4) on gRPC
+    `AddNodeRequest`, the `identity` argument of `quicbaas_add_node`. It is
+    optional when the cluster has already committed the replica's identity.
+  - `secret.NewSecretValue` and `NewLiteralSecretValue` report a sealing
+    failure as an error instead of returning a value that reads as empty;
+    resolvers and the SDK secret borrow propagate it.
+  - quicbaasd defers `secure.WipeAll` on every orderly exit in place of the
+    memguard-era `EnablePurge`/`Purge` pair.
+  - go-qrdb's unified REST server serves its `/v1/barrier`, `/v1/ceremony`
+    and `/v1/init` wire routes itself. quicbaas no longer registers its
+    copies on the unified server, where the duplicate made go-qrdb's
+    registrar panic and the node fail to boot. The standalone sealed-window
+    listener still serves them; `GET /v1/ceremony/officers` (quicbaas's own)
+    stays.
+  - **Sealed window narrowed with go-qrdb:** rekey, the recovery-key
+    generate / delete / status verbs and the barrier officer list are no
+    longer reachable while sealed, on any transport. Officer and
+    recovery-officer registration are method-qualified (`POST
+    /v1/barrier/officers`), and the REST bypass matches with go-qrdb's
+    `sealedwindow.RESTEntryMatches`.
+  - First boot resumes again after a failure that followed admin creation.
+    go-qrdb v0.25 verifies an existing admin by reading it back before it
+    treats "username already exists" as success, so the quicbaas user
+    adapter implements `firstboot.UserResolver`.
+  - Modules may not install router middleware (go-qrdb's registrar refuses
+    `Use`); the host-module route probe reports it by name.
+  - **Strict tenant confinement (go-qrdb v0.28):** no caller, the system
+    tenant included, acts on another tenant's certificates or audit.
+    `IssueDeviceIdentity` and fleet `Deploy` issue only in the caller's own
+    tenant (`tenantctx.Target`): a request naming another tenant is refused
+    with `ErrForbidden` wrapping `*tenantctx.CrossTenantError` (it used to
+    override the caller's tenant). Fleet operators deploy into a tenant as
+    that tenant. `audit:read:cross` is gone; the dead serial-namespace
+    helpers that let the system tenant reach every tenant's certificates are
+    deleted.
+- **Breaking (SDK):** `sdk/go/xkms/secure` follows go-xkms v0.48: `WipeAll`
+  replaces `CatchInterrupt`, `EnablePurge`, `Purge`, `PurgeOrPanic` and
+  `NotInitializedError`; `NestedBorrowError` and `EmptyBorrowError` are new.
+- **Breaking (SDK):** `cluster.AddNodeRequest` is `{ShardID, NodeID, Address,
+  Identity}`. It used to carry only an address and a name, so `AddNode` sent
+  shard and node 0 on gRPC, a body REST rejected, and a type the embedded
+  transport refused; it now works on gRPC, Unix, REST, QUIC and embedded.
 - **Breaking (SDK):** `Client.Discovery()` and `DiscoveryRegistry` are removed.
   The registry used to be composed client-side over raw qrdb lease, KV and watch
   calls with an unauthenticated context tenant; it is now a server-side service
   scoped to the authenticated tenant. Use `Client.Registry()`.
+- **Breaking (SDK):** `sdk/go/xkms/luks` follows go-xkms v0.47.0-alpha's
+  one-LUKS unification (go-xkms#917, merge train #1383). The TPM sealer is
+  built over a `TPMSealUnsealer` (go-xkms's TPM) with a `TPMSealerConfig`
+  choosing the storage parent: `SealParentPSRK` (default, platform PCR
+  policy, `XKMSTPMTokenType` token) or `SealParentSSRK` (plain PolicyPCR,
+  systemd-tpm2 `TPMTokenType` token). `TPMOpener`, `TPMOpenerFunc`,
+  `DefaultTPMOpener`, `TPMToken`, `DefaultTPMParentHandle` and
+  `ErrTPMInvalidHandle` are gone upstream and from the re-export; new are
+  `SealParent`, `ParseSealParent`, `LibExecutor`/`NewLibExecutor`,
+  `EnsureKeyringAvailable` and their errors. `sdk/go/xkms.TPMSealPolicy` is
+  removed (go-xkms dropped the type).
+- A composed node keeps quicbaas's `/api/v1/backups` surface: go-xkms
+  v0.47 (go-xkms#728) registers its own node-backup routes on the same
+  paths, four of which collide outright (a live qrdb registrar panics on
+  them), so the co-hosted xkms module's `/api/v1/backups/` subtree joins
+  `XKMSRouteExclusions`.
+- **ACME challenge validation refuses reserved addresses by default.** go-xkms
+  now validates http-01 and enroll-01 through one SSRF-safe client; set
+  `server.acme.allow_private_challenge_targets` where devices are on a
+  private network.
+- Container attestation binds the PCR read to the signed quote through
+  go-xkms's evidence primitives (`ParseQuote`, `VerifyQualifyingData`,
+  `VerifyPCRValues`); the local digest recomputation is gone. A quote over
+  more than one PCR bank, or over the SHA-1 bank, is now refused as unbound
+  rather than accepted. `QuotedPCRDigestMismatchError` carries the go-xkms
+  cause instead of a recomputed digest (`Recomputed` is replaced by `Cause`).
+- TPM 2.0 key blobs persist through a file-based go-xkms storage backend at
+  `seal.tpm2.key_dir` (go-xkms takes TPM key storage only as a
+  `storage.Backend`).
+
+### Removed
+
+- `seal.tpm2.platform_policy`: go-xkms always binds the Platform SRK to the
+  platform PCR policy (go-xkms#681), so the switch no longer existed upstream.
+- `sdk/go`: `ACMERenewalConfig` (go-xkms deleted the unused RenewalService,
+  go-xkms#1271).
+- `sdk/go/xkms`: the `Policy*` request and response aliases (go-xkms removed
+  the policy service for TPM policies).
 
 ### Security
 

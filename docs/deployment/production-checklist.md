@@ -668,12 +668,13 @@ the last flush.
 - [ ] The shutdown log contains `Performing graceful shutdown...` followed by
       `Embedded qrdb node shutdown complete`.
 
-`main()` arms the secure-memory subsystem with `secure.EnablePurge()`, which
-wipes mlocked key material via the deferred `Purge` without installing a signal
-handler. Do **not** switch it to `secure.CatchInterrupt()`: that handler calls
-`os.Exit(1)` from inside the signal handler, always beats the graceful path, and
-reintroduces the data loss. The invariant is pinned by
-`test/integration/durability`.
+`main()` defers `secure.WipeAll()`, which destroys every live locked-memory
+enclave and the process sealer on every orderly exit, and installs no signal
+handler: SIGTERM reaches the daemon's own graceful shutdown. Never reintroduce a
+handler that exits from inside the signal handler (the memguard-era
+`CatchInterrupt` did): it always beats the graceful path and reintroduces the
+data loss. The invariant is pinned by `test/integration/durability` and
+`TestSecureSubsystem_DoesNotInstallProcessKillingSignalHandler`.
 
 ### 6.4 Raft Timeouts
 

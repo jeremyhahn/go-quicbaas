@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -145,12 +147,27 @@ func handleGetLeader(ctx context.Context, svc service.QuicBaaS, req interface{})
 	return svc.GetLeader(ctx, r)
 }
 
+// handleAddNode adds a replica. It takes the SDK cluster client's request,
+// which is what Cluster().AddNode sends, as well as the service request an
+// embedder calling the transport directly passes.
 func handleAddNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AddNodeRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "AddNode", "*service.AddNodeRequest", reflect.TypeOf(req).String())
+	switch r := req.(type) {
+	case *cluster.AddNodeRequest:
+		// The SDK client takes a nil response as success, exactly as the
+		// gRPC transport returns it.
+		resp, err := svc.AddNode(ctx, &service.AddNodeRequest{ShardID: r.ShardID, NodeID: r.NodeID, Address: r.Address, Identity: r.Identity})
+		if err != nil {
+			return nil, err
+		}
+		if !resp.Success {
+			return nil, errors.NewInternal("embedded.AddNode", resp.Message)
+		}
+		return nil, nil
+	case *service.AddNodeRequest:
+		return svc.AddNode(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "AddNode", "*cluster.AddNodeRequest", reflect.TypeOf(req).String())
 	}
-	return svc.AddNode(ctx, r)
 }
 
 func handleRemoveNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

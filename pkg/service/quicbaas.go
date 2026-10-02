@@ -2403,7 +2403,7 @@ func (c *clusterService) AddNode(ctx context.Context, req *AddNodeRequest) (*Add
 			Err:  err,
 		}
 	}
-	if err := client.Admin().AddMember(ctx, req.ShardID, req.NodeID, req.Address); err != nil {
+	if err := client.Admin().AddMember(ctx, req.ShardID, req.NodeID, req.Address, req.Identity); err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrRaft,
 			Op:   "service.AddNode",

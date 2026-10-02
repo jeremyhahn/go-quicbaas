@@ -145,8 +145,8 @@ type VaultSealConfig struct {
 }
 
 // TPM2SealConfig configures the TPM 2.0 sealing strategy (strategy "tpm2").
-// The barrier root key is sealed under the TPM's storage hierarchy and,
-// when PlatformPolicy is set, bound to the current PCR state. The TPM2
+// The barrier root key is sealed under the TPM's Platform SRK, whose use
+// go-xkms always binds to the platform PCR policy (go-xkms#681). The TPM2
 // strategy is always compiled in — it carries no build tag.
 //
 // The fields mirror go-xkms/pkg/backend/tpm2.Config so the factory can
@@ -157,10 +157,6 @@ type TPM2SealConfig struct {
 	// Device is the path to the TPM character device. Default: "/dev/tpmrm0".
 	// Ignored when UseSimulator is true.
 	Device string `mapstructure:"device"`
-
-	// PlatformPolicy binds sealed data to a PCR policy, requiring the same PCR
-	// state at unseal time. Default: false.
-	PlatformPolicy bool `mapstructure:"platform_policy"`
 
 	// PCR is the PCR index used for platform policy. Default: 0.
 	PCR uint `mapstructure:"pcr"`
@@ -173,8 +169,7 @@ type TPM2SealConfig struct {
 	SRKHandle uint32 `mapstructure:"srk_handle"`
 
 	// KeyDir is the directory where the TPM backend stores key blob metadata.
-	// The sealed key material itself stays in the TPM. Default: "./tpm2-keys"
-	// (applied by the go-xkms backend).
+	// The sealed key material itself stays in the TPM. Default: "./tpm2-keys".
 	KeyDir string `mapstructure:"key_dir"`
 
 	// UseSimulator selects the in-memory TPM simulator instead of hardware.

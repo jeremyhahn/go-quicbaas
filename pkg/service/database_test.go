@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/database"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
@@ -118,6 +119,10 @@ func (m *mockDBServicer) UpdateConnection(name string, c *qrdbsdk.DatabaseConnec
 	return &qrdbsdk.DatabaseInfo{Name: name, Status: qrdbsdk.StatusOpen}, nil
 }
 
+func (m *mockDBServicer) UpdateSQL(name string, _ *database.SQLConfig) (*qrdbsdk.DatabaseInfo, error) {
+	return &qrdbsdk.DatabaseInfo{Name: name, Status: qrdbsdk.StatusOpen}, nil
+}
+
 func (m *mockDBServicer) SealDatabase(_ context.Context, _ string) error { return nil }
 func (m *mockDBServicer) UnsealDatabase(_ context.Context, _ string, _ qrdbsdk.Credentials) error {
 	return nil
@@ -192,6 +197,10 @@ func (m *mockDBServicer) UpdateConnectionForTenant(ctx context.Context, name str
 	if m.updateConnectionForTenantFn != nil {
 		return m.updateConnectionForTenantFn(ctx, name, c)
 	}
+	return &qrdbsdk.DatabaseInfo{Name: name, Status: qrdbsdk.StatusOpen}, nil
+}
+
+func (m *mockDBServicer) UpdateSQLForTenant(_ context.Context, name string, _ *database.SQLConfig) (*qrdbsdk.DatabaseInfo, error) {
 	return &qrdbsdk.DatabaseInfo{Name: name, Status: qrdbsdk.StatusOpen}, nil
 }
 

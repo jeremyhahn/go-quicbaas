@@ -235,18 +235,9 @@ func buildTPM2Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 // Provisioning is idempotent: subsequent starts find a provisioned TPM and
 // NewTPM2Backend succeeds without reaching the provisioning path.
 func buildTPM2Backend(cfg *config.Config) (*xkmssdk.TPM2Backend, error) {
-	tpmCfg := cfg.Seal.TPM2
-
-	backendCfg := &xkmssdk.TPM2BackendConfig{
-		Device:          tpmCfg.Device,
-		KeyDir:          tpmCfg.KeyDir,
-		UseSimulator:    tpmCfg.UseSimulator,
-		SimulatorHost:   tpmCfg.SimulatorHost,
-		SimulatorPort:   tpmCfg.SimulatorPort,
-		SRKHandle:       tpmCfg.SRKHandle,
-		PlatformPolicy:  tpmCfg.PlatformPolicy,
-		PlatformPCR:     tpmCfg.PCR,
-		PlatformPCRBank: tpmCfg.PCRBank,
+	backendCfg, err := newTPM2BackendConfig(cfg.Seal.TPM2)
+	if err != nil {
+		return nil, &StrategyBuildError{Backend: "tpm2", Cause: err}
 	}
 
 	backend, err := xkmssdk.NewTPM2Backend(backendCfg)
@@ -259,7 +250,7 @@ func buildTPM2Backend(cfg *config.Config) (*xkmssdk.TPM2Backend, error) {
 		return nil, &StrategyBuildError{Backend: "tpm2", Cause: err}
 	}
 
-	backend, err = provisionTPM2Backend(backendCfg)
+	backend, err = provisionTPM2Backend(backendCfg, tpm2KeyDir(cfg.Seal.TPM2))
 	if err != nil {
 		return nil, &StrategyBuildError{Backend: "tpm2", Cause: err}
 	}
@@ -277,15 +268,12 @@ func buildTPM2Backend(cfg *config.Config) (*xkmssdk.TPM2Backend, error) {
 //
 // provisionTPM2Backend is called at most once per daemon boot (subsequent starts
 // find a provisioned TPM and NewBackend succeeds without reaching this path).
-func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig) (*xkmssdk.TPM2Backend, error) {
-	if cfg.KeyDir == "" {
-		cfg.KeyDir = "./tpm2-keys"
-	}
-	if err := os.MkdirAll(cfg.KeyDir, 0o700); err != nil {
+func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig, keyDir string) (*xkmssdk.TPM2Backend, error) {
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
 		return nil, err
 	}
 
-	storageFactory, err := xkmssdk.NewTPMStorageFactory(nil, cfg.KeyDir)
+	storageFactory, err := xkmssdk.NewTPMStorageFactory(nil, keyDir)
 	if err != nil {
 		return nil, err
 	}
@@ -298,18 +286,26 @@ func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig) (*xkmssdk.TPM2Backend,
 		tpmConfig.PlatformPCRBank = xkmssdk.PCRBankSHA256
 	}
 	if tpmConfig.EK == nil {
+		hierarchyAuth, err := xkmssdk.NewLiteralSecretValue([]byte(xkmssdk.TPM_DEFAULT_PASSWORD))
+		if err != nil {
+			return nil, err
+		}
 		tpmConfig.EK = &xkmssdk.EKConfig{
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
-			HierarchyAuth: xkmssdk.NewLiteralSecretValue([]byte(xkmssdk.TPM_DEFAULT_PASSWORD)),
+			HierarchyAuth: hierarchyAuth,
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &xkmssdk.RSAConfig{KeySize: 2048},
 		}
 	}
 	if tpmConfig.SSRK == nil {
+		hierarchyAuth, err := xkmssdk.NewLiteralSecretValue([]byte(xkmssdk.TPM_DEFAULT_PASSWORD))
+		if err != nil {
+			return nil, err
+		}
 		tpmConfig.SSRK = &xkmssdk.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: xkmssdk.NewLiteralSecretValue([]byte(xkmssdk.TPM_DEFAULT_PASSWORD)),
+			HierarchyAuth: hierarchyAuth,
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &xkmssdk.RSAConfig{KeySize: 2048},
 		}
@@ -360,6 +356,50 @@ func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig) (*xkmssdk.TPM2Backend,
 		return nil, err
 	}
 	return backend, nil
+}
+
+// defaultTPM2KeyDir is where TPM key blobs persist when seal.tpm2.key_dir is
+// unset.
+const defaultTPM2KeyDir = "./tpm2-keys"
+
+// tpm2KeyDir returns the configured TPM key-blob directory, or the default.
+func tpm2KeyDir(c config.TPM2SealConfig) string {
+	if c.KeyDir == "" {
+		return defaultTPM2KeyDir
+	}
+	return c.KeyDir
+}
+
+// tpm2BackendFields maps seal.tpm2 onto the go-xkms TPM2 backend config,
+// without key storage. go-xkms always binds the Platform SRK to the platform
+// PCR policy (go-xkms#681), so there is no per-deployment switch for it.
+func tpm2BackendFields(c config.TPM2SealConfig) *xkmssdk.TPM2BackendConfig {
+	return &xkmssdk.TPM2BackendConfig{
+		Device:          c.Device,
+		UseSimulator:    c.UseSimulator,
+		SimulatorHost:   c.SimulatorHost,
+		SimulatorPort:   c.SimulatorPort,
+		SRKHandle:       c.SRKHandle,
+		PlatformPCR:     c.PCR,
+		PlatformPCRBank: c.PCRBank,
+	}
+}
+
+// newTPM2BackendConfig builds the go-xkms TPM2 backend config from seal.tpm2,
+// resolving key_dir to a file-based storage backend: go-xkms takes TPM key
+// storage only as a storage.Backend (go-xkms#1345). The directory stays a
+// real file engine rather than a view of the datastore because it is
+// pre-datastore material: the barrier seal key must exist before -- and seals
+// -- the datastore it protects. go-xkms's own seal autodetect resolves it the
+// same way.
+func newTPM2BackendConfig(c config.TPM2SealConfig) (*xkmssdk.TPM2BackendConfig, error) {
+	keyStorage, err := xkmssdk.NewFileStorageBackend(tpm2KeyDir(c))
+	if err != nil {
+		return nil, err
+	}
+	backendCfg := tpm2BackendFields(c)
+	backendCfg.KeyStorage = keyStorage
+	return backendCfg, nil
 }
 
 // init registers the build-tag-free TPM2 strategy factory. The build-tagged

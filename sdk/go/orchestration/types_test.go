@@ -252,10 +252,10 @@ func TestUlimitsCrossBoundaryAndMeasure(t *testing.T) {
 // from "the evidence does not hang together".
 func TestQuoteBindingErrorsCrossBoundary(t *testing.T) {
 	var mismatch error = &sdkorch.QuotedPCRDigestMismatchError{
-		Image:      "agent",
-		Bank:       "sha256",
-		Signed:     []byte{0x01},
-		Recomputed: []byte{0x02},
+		Image:  "agent",
+		Bank:   "sha256",
+		Signed: []byte{0x01},
+		Cause:  errors.New("reported PCR values do not hash to the signed PCR digest"),
 	}
 	if !errors.Is(mismatch, sdkorch.ErrQuotedPCRDigestMismatch) {
 		t.Error("errors.Is(err, sdk.ErrQuotedPCRDigestMismatch) = false")

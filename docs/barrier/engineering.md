@@ -171,7 +171,14 @@ QUIC opcodes + qrdb-quic bridge methods, MCP tool names), so the
 transports cannot drift. Deliberate exclusions match qrdb: `seal`,
 `enable-encryption`, share management, custodian enroll/revoke, the
 per-tenant barrier surface, and credential rotation are never
-reachable while sealed.
+reachable while sealed. Since go-qrdb v0.25 neither are rekey, the
+recovery-key generate / delete / status verbs or the barrier officer
+list: they are not justified as anonymous. Use `barrier officer
+claim-status` during first boot and `barrier officer list` once the node
+is unsealed. Officer and recovery-officer registration are
+method-qualified REST entries (`POST /v1/barrier/officers`), matched with
+go-qrdb's `sealedwindow.RESTEntryMatches`, so a `GET` of the same path is
+not admitted.
 
 The gRPC allowlist is **service-qualified**. `GRPCAllowlist()` yields
 the bare method tails that diff mechanically against qrdb's table, but
@@ -206,8 +213,8 @@ them from one derivation:
    still SERVED while sealed, but their AUTHENTICATION EXEMPTION is scoped:
 
    - `ScopeAlways` — barrier status/initialize/unseal, the Shamir and recovery
-     unseal flow, root-token, officer register/list/claim, submit-unseal-share
-     and health. Exempt in EVERY ceremony state. A daemon restarted after a
+     unseal flow, root-token, officer claim-status and share claims, the
+     ceremony officer list (quicbaas's own), submit-unseal-share and health. Exempt in EVERY ceremony state. A daemon restarted after a
      completed ceremony is operational AND sealed, and these verbs are the
      only way back to a usable data plane, so they must never depend on
      ceremony state.

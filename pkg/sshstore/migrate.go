@@ -29,8 +29,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
+	sshscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	gossh "golang.org/x/crypto/ssh"
@@ -46,11 +46,10 @@ const (
 	wipingSuffix = ".wiping"
 
 	// recordPrefix is the namespace go-xkms keeps every SSH record under.
-	recordPrefix = "ssh/"
-
-	keysPrefix           = "ssh/keys/"
-	knownHostsPrefix     = "ssh/known_hosts/"
-	authorizedKeysPrefix = "ssh/authorized_keys/"
+	// Within it, go-xkms's scope layout (pkg/ssh/scope) places a record at
+	// ssh/{shared|users/<owner>|services/<owner>}/<kind>/<name>; the kinds
+	// are classified with that layout's own matcher, never re-derived here.
+	recordPrefix = sshscope.Feature + "/"
 
 	// challengeSize is the length of the random message each migrated key
 	// signs to prove the sealed copy holds the legacy private key.
@@ -200,11 +199,11 @@ func migrate(ctx context.Context, legacyDir string, sealed xkmssdk.StorageBacken
 			return err
 		}
 		switch {
-		case strings.HasPrefix(r.key, keysPrefix):
+		case sshscope.KindKeys.Match(r.key):
 			report.Keys++
-		case strings.HasPrefix(r.key, knownHostsPrefix):
+		case sshscope.KindKnownHosts.Match(r.key):
 			report.KnownHosts++
-		case strings.HasPrefix(r.key, authorizedKeysPrefix):
+		case sshscope.KindAuthorizedKeys.Match(r.key):
 			report.AuthorizedKeys++
 		default:
 			report.Other++
@@ -261,7 +260,7 @@ func copyRecord(ctx context.Context, sealed xkmssdk.StorageBackend, r record) er
 func verifyKeys(ctx context.Context, legacy xkmsssh.Client, sealed xkmssdk.StorageBackend, provider xkmsssh.BackendProvider, keyRecords int) error {
 	keys, err := legacy.Keys().List(ctx, xkmsssh.ListKeysRequest{})
 	if err != nil {
-		return &KeyVerificationError{Key: keysPrefix, Reason: "list legacy keys", Err: err}
+		return &KeyVerificationError{Key: string(sshscope.KindKeys), Reason: "list legacy keys", Err: err}
 	}
 	if len(keys) != keyRecords {
 		return &UnparsedKeysError{Records: keyRecords, Parsed: len(keys)}
@@ -271,7 +270,7 @@ func verifyKeys(ctx context.Context, legacy xkmsssh.Client, sealed xkmssdk.Stora
 	// which the caller owns.
 	verifier, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Backend: sealed, BackendProvider: provider})
 	if err != nil {
-		return &KeyVerificationError{Key: keysPrefix, Reason: "open sealed store", Err: err}
+		return &KeyVerificationError{Key: string(sshscope.KindKeys), Reason: "open sealed store", Err: err}
 	}
 	for _, k := range keys {
 		if err := verifyKey(ctx, verifier.Keys(), k); err != nil {

@@ -50,13 +50,11 @@ import (
 // ending in "/" excludes that whole subtree; any other entry excludes exactly
 // that pattern.
 //
-// /api/v1/barrier/ is the canonical QuicBaaS system-barrier surface. The
-// barrier is go-qrdb's (CLAUDE.md: "Identity / barrier / bootstrap are qrdb's,
-// not quicbaas's"), quicbaas's handlers reach it through the qrdb SDK
-// BarrierClient, and every other transport already answers from that same
-// facade. The xkms module's same-path handlers operate xkms's OWN barrier,
-// which a host composition never wires — so leaving them mounted reports
-// "no barrier" for a barrier that exists.
+// /api/v1/barrier/ is no longer excluded: go-xkms stopped registering its
+// own barrier routes in a host composition, so quicbaas's canonical
+// system-barrier surface (go-qrdb's barrier, go-quicbaas#405) has no
+// co-hosted claimant left. TestRouteExcludingModule_XKMSBarrierCollisionIsReal
+// pins that, so the exclusion comes back if go-xkms ever registers them again.
 //
 // /api/v1/cluster/status is the composed node's cluster view. QuicBaaS's
 // handler (pkg/api/rest HandleClusterStatus) answers from the service
@@ -78,8 +76,18 @@ import (
 // the registrar's duplicate check nor the overlap test below saw a collision,
 // and the router served xkms's 501 for GET /api/v1/tenants/{id}/barrier/status
 // on a node whose tenant barrier answers normally everywhere else.
+//
+// /api/v1/backups/ is the composed node's backup surface, quicbaas's
+// (pkg/api/rest handlers_backup.go over the service layer's BackupManager:
+// list, create, delete, restore, status, verify), which the quicbaas SDK and
+// UI decode. go-xkms v0.47 (go-xkms#728) registers its own node-backup
+// table on the same paths for xkmsd; on a composed node four of its routes
+// collide outright (GET/POST /api/v1/backups, DELETE /{id}, POST
+// /{id}/verify) and the rest (GET /{id}, POST /restore) would answer a
+// different wire shape beside quicbaas's. A live qrdb registrar panics on
+// the duplicates, so the whole subtree stays quicbaas's.
 var XKMSRouteExclusions = []string{
-	"/api/v1/barrier/",
+	"/api/v1/backups/",
 	"/api/v1/cluster/status",
 	"/api/v1/tenants/",
 }

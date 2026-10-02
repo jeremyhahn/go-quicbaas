@@ -42,6 +42,10 @@ func (f *fakeWebAuthnManager) BeginRegistration(_ context.Context, _, _ string) 
 	return map[string]interface{}{"challenge": "reg-challenge"}, nil
 }
 
+func (f *fakeWebAuthnManager) BeginInviteRegistration(_ context.Context, _, _ string) (map[string]interface{}, error) {
+	return map[string]interface{}{"challenge": "invite-challenge"}, nil
+}
+
 func (f *fakeWebAuthnManager) FinishRegistration(_ context.Context, _, _ string, _ map[string]interface{}) (*iam.AttestationResult, error) {
 	return nil, nil
 }
@@ -121,6 +125,9 @@ func webAuthnReq(method string, body interface{}, params map[string]string) *htt
 type errWebAuthnManager struct{}
 
 func (errWebAuthnManager) BeginRegistration(context.Context, string, string) (map[string]interface{}, error) {
+	return nil, errFakeWebAuthn
+}
+func (errWebAuthnManager) BeginInviteRegistration(context.Context, string, string) (map[string]interface{}, error) {
 	return nil, errFakeWebAuthn
 }
 func (errWebAuthnManager) FinishRegistration(context.Context, string, string, map[string]interface{}) (*iam.AttestationResult, error) {

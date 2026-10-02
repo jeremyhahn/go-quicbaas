@@ -397,9 +397,9 @@ When limit is reached, oldest events are automatically evicted (FIFO).
   tenant is rejected before reaching storage, regardless of who the caller
   is — the system-tenant principal included (go-quicbaas#356). A tenant's
   audit chain is tenant data; the platform operator holds no implicit right
-  to it. Cross-tenant audit reads would require a dedicated surface gated on
-  an explicitly cross-scoped permission (qrdb's `audit:read:cross`), which
-  does not currently ship.
+  to it. go-qrdb v0.28 makes this absolute: every audit query is confined to
+  the caller's own tenant on every transport, and `audit:read:cross` no
+  longer exists, so there is no cross-tenant audit read at all.
 
 ### Compliance
 

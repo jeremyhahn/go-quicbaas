@@ -2974,28 +2974,30 @@ func TestRunDaemon_ServerStartError(t *testing.T) {
 }
 
 // =============================================================================
-// Secure subsystem arming — graceful-shutdown invariant
+// Secure subsystem — graceful-shutdown invariant
 //
-// Regression: main() previously called secure.CatchInterrupt(), which installs
-// memguard's signal handler. That handler wipes mlocked memory and then hard
-// os.Exit(1)s from INSIDE the signal handler, so it always beat the daemon's
+// Regression: main() once called secure.CatchInterrupt(), which installed
+// memguard's signal handler. That handler wiped mlocked memory and then hard
+// os.Exit(1)ed from INSIDE the signal handler, so it always beat the daemon's
 // own SIGTERM handler and Server.Shutdown never ran. The embedded qrdb node
 // was therefore never closed, and every PebbleDB write still sitting in the
 // memtable / unsynced WAL block was discarded — API-created IAM users vanished
 // across a restart while the already-flushed first-boot admin survived.
 //
-// main() now calls secure.EnablePurge(), which arms the subsystem (so the
-// deferred Purge still wipes key material) WITHOUT installing any process
-// signal handler. These tests pin both halves of that contract.
+// The secure subsystem now installs no signal handler at all: run() defers
+// secure.WipeAll, which the daemon's own graceful shutdown reaches on every
+// orderly exit. This test pins that the daemon still owns SIGTERM.
 // =============================================================================
 
-// TestEnablePurge_DoesNotInstallProcessKillingSignalHandler is the regression
-// test for the data-loss bug: arming the secure subsystem must leave
-// SIGINT/SIGTERM deliverable to the daemon's own handler. If a handler that
-// exits the process is ever reinstated, this test kills the test binary
-// instead of passing, which is exactly the signal a reviewer needs.
-func TestEnablePurge_DoesNotInstallProcessKillingSignalHandler(t *testing.T) {
-	secure.EnablePurge()
+// TestSecureSubsystem_DoesNotInstallProcessKillingSignalHandler is the
+// regression test for the data-loss bug: SIGINT/SIGTERM must reach the
+// daemon's own handler. If a handler that exits the process is ever
+// reinstated, this test kills the test binary instead of passing, which is
+// exactly the signal a reviewer needs.
+func TestSecureSubsystem_DoesNotInstallProcessKillingSignalHandler(t *testing.T) {
+	sec, err := secure.NewSecret([]byte("held across a SIGTERM"))
+	require.NoError(t, err)
+	t.Cleanup(sec.Destroy)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM)
@@ -3014,22 +3016,12 @@ func TestEnablePurge_DoesNotInstallProcessKillingSignalHandler(t *testing.T) {
 			"closes the embedded qrdb node will never run")
 	}
 
-	// Delivery alone is not enough: memguard's handler also delivers the
-	// signal to registered channels and THEN calls os.Exit(1), so the daemon
-	// can observe SIGTERM and still be killed mid-shutdown. Hold the goroutine
-	// past that window; surviving it is the assertion. Under the old
-	// secure.CatchInterrupt() wiring the test binary is terminated here and
-	// the package reports FAIL.
+	// Delivery alone is not enough: memguard's old handler also delivered the
+	// signal to registered channels and THEN called os.Exit(1), so the daemon
+	// could observe SIGTERM and still be killed mid-shutdown. Hold the
+	// goroutine past that window; surviving it is the assertion.
 	<-time.After(250 * time.Millisecond)
-	assert.True(t, true, "process must still be alive after SIGTERM so Server.Shutdown can complete")
-}
-
-// TestEnablePurge_ArmsPurge is the companion assertion: suppressing the signal
-// handler must not disarm secure memory wiping. Purge must succeed (rather
-// than return NotInitializedError) so the deferred Purge in main() still
-// zeroes mlocked key material on every orderly exit path.
-func TestEnablePurge_ArmsPurge(t *testing.T) {
-	secure.EnablePurge()
-	assert.NoError(t, secure.Purge(),
-		"EnablePurge must arm the secure subsystem so deferred Purge wipes key material")
+	opened, err := sec.Open()
+	require.NoError(t, err, "the process must still be alive, with its secrets, after SIGTERM")
+	opened.Destroy()
 }

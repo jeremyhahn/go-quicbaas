@@ -231,7 +231,10 @@ func (h *IAMHandler) ActivateFIDO2Begin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	options, err := mgr.BeginRegistration(ctx, record.TenantID, email)
+	// The invite's account already exists and is pending: its first passkey
+	// is enrolled through the invitation ceremony, the one unauthenticated
+	// path go-xkms allows for a pre-existing account (go-xkms#1294).
+	options, err := mgr.BeginInviteRegistration(ctx, record.TenantID, email)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return

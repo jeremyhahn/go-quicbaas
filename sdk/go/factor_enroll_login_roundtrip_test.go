@@ -18,6 +18,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -59,6 +61,23 @@ type memKV struct {
 }
 
 func newMemKV() *memKV { return &memKV{m: make(map[string][]byte)} }
+
+// List returns the keys under prefix in sorted order, as the real servicer
+// does. The auth-factor service lists a user's factor index on every Add
+// (go-qrdb v0.25 projects the user's factor view through it), so the fake
+// must answer from the map rather than refuse.
+func (k *memKV) List(_ context.Context, prefix string) ([]string, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	var keys []string
+	for key := range k.m {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
 
 func (k *memKV) Put(_ context.Context, key string, val []byte) error {
 	k.mu.Lock()

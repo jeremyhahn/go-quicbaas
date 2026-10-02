@@ -61,13 +61,21 @@ func setupTestXKMS(t *testing.T) {
 		t.Fatalf("failed to create service backend: %v", err)
 	}
 
+	// Key-version records, as the server wires them: rotation creates the
+	// key's next version and records it as current.
+	keyVersions, err := xkmssdk.NewKeyVersionStore(xkmssdk.NewStorageMemory())
+	if err != nil {
+		t.Fatalf("failed to create key version store: %v", err)
+	}
+
 	const backendName = "software"
 	if err := xkms.Initialize(&xkms.Config{
 		DefaultBackend: backendName,
 		Backends: map[string]xkmssdk.ServiceBackend{
 			backendName: ks,
 		},
-		Logger: logger.NewAdapter(log),
+		KeyVersions: keyVersions,
+		Logger:      logger.NewAdapter(log),
 	}); err != nil {
 		t.Fatalf("failed to initialize xkms: %v", err)
 	}
@@ -330,5 +338,31 @@ func TestRotatePrunesBeyondOverlap(t *testing.T) {
 	jwks := mgr.JWKS()
 	if len(jwks.Keys) != 1+rotationOverlap {
 		t.Fatalf("expected %d JWKS keys after two rotations, got %d", 1+rotationOverlap, len(jwks.Keys))
+	}
+}
+
+// TestRotate_SurvivesARestart is the regression guard for go-xkms key
+// versions: a rotation creates the key's next version under its own backend
+// name, so a manager rebuilt from the same key (a restart) must load the
+// CURRENT version. Loading version 1 would silently sign with the key the
+// operator rotated away from.
+func TestRotate_SurvivesARestart(t *testing.T) {
+	setupTestXKMS(t)
+
+	mgr, err := NewSigningKeyManagerFromXKMS("oidc-signing-restart", "")
+	if err != nil {
+		t.Fatalf("manager init failed: %v", err)
+	}
+	if err := mgr.Rotate(); err != nil {
+		t.Fatalf("Rotate failed: %v", err)
+	}
+	rotatedKID, _, _ := mgr.Current()
+
+	restarted, err := NewSigningKeyManagerFromXKMS("oidc-signing-restart", "")
+	if err != nil {
+		t.Fatalf("manager re-init failed: %v", err)
+	}
+	if kid, _, _ := restarted.Current(); kid != rotatedKID {
+		t.Fatalf("restarted manager signs with kid %q, want the rotated %q", kid, rotatedKID)
 	}
 }

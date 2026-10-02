@@ -15,7 +15,8 @@ package sealedwindow
 
 import (
 	"fmt"
-	"strings"
+
+	qrdbsealedwindow "github.com/jeremyhahn/go-qrdb/pkg/api/sealedwindow"
 )
 
 // Probe reports whether the storage barrier is currently sealed. It mirrors
@@ -58,36 +59,24 @@ type AuditSink interface {
 	SealedWindowAuthBypass(transport, operation string)
 }
 
-// restPathSet is one scope's REST allowlist in qrdb's matching form: exact
-// paths plus the "/"-suffixed prefix entries. It mirrors qrdb's REST
-// sealed-window middleware exactly — entries ending in "/" are prefix
-// matches, everything else matches the request path in full.
+// restPathSet is one scope's REST allowlist, matched exactly as go-qrdb's
+// REST sealed-window middleware matches it: an entry is "/path" (any method)
+// or "METHOD /path", and a path ending in "/" is a prefix (go-qrdb's
+// sealedwindow.RESTEntryMatches, which composers must use since go-qrdb v0.25
+// made entries method-qualified).
 type restPathSet struct {
-	exact    map[string]struct{}
-	prefixes []string
+	entries []string
 }
 
-// newRESTPathSet splits a derived REST allowlist into its exact and prefix
-// halves.
-func newRESTPathSet(paths []string) restPathSet {
-	set := restPathSet{exact: make(map[string]struct{}, len(paths))}
-	for _, path := range paths {
-		if strings.HasSuffix(path, "/") {
-			set.prefixes = append(set.prefixes, path)
-			continue
-		}
-		set.exact[path] = struct{}{}
-	}
-	return set
+// newRESTPathSet holds a derived REST allowlist.
+func newRESTPathSet(entries []string) restPathSet {
+	return restPathSet{entries: entries}
 }
 
-// matches reports whether path is admitted by this set.
-func (s restPathSet) matches(path string) bool {
-	if _, ok := s.exact[path]; ok {
-		return true
-	}
-	for _, prefix := range s.prefixes {
-		if strings.HasPrefix(path, prefix) {
+// matches reports whether a request with method and path is admitted.
+func (s restPathSet) matches(method, path string) bool {
+	for _, entry := range s.entries {
+		if qrdbsealedwindow.RESTEntryMatches(entry, method, path) {
 			return true
 		}
 	}
@@ -264,18 +253,18 @@ func (b *AuthBypass) BypassesGRPC(fullMethod string) bool {
 	return true
 }
 
-// BypassesRESTPath reports whether the REST request path bypasses
-// authentication because the barrier is sealed and the path is exempt in the
-// daemon's current ceremony state. Path matching mirrors qrdb's REST
-// sealed-window middleware exactly: allowlist entries ending in "/" are
-// prefix matches, everything else matches exactly. Emits the audit event on
+// BypassesRESTPath reports whether the REST request (method and path)
+// bypasses authentication because the barrier is sealed and the request is
+// exempt in the daemon's current ceremony state. Matching is go-qrdb's
+// (sealedwindow.RESTEntryMatches): an entry admits every method unless it
+// names one, and an entry ending in "/" is a prefix. Emits the audit event on
 // every bypass.
-func (b *AuthBypass) BypassesRESTPath(path string) bool {
+func (b *AuthBypass) BypassesRESTPath(method, path string) bool {
 	if !b.sealed() {
 		return false
 	}
-	exempt := b.restAlways.matches(path) ||
-		(b.restPreOp.matches(path) && b.preOperational())
+	exempt := b.restAlways.matches(method, path) ||
+		(b.restPreOp.matches(method, path) && b.preOperational())
 	if !exempt {
 		return false
 	}

@@ -1095,8 +1095,9 @@ func TestClusterClient_AddNode(t *testing.T) {
 
 	ctx := context.Background()
 	req := &cluster.AddNodeRequest{
+		ShardID: 1,
+		NodeID:  4,
 		Address: "10.0.0.4:5001",
-		Name:    "quicbaas-4",
 	}
 
 	err := client.AddNode(ctx, req)
@@ -1116,8 +1117,8 @@ func TestClusterClient_AddNode(t *testing.T) {
 	if payload.Address != req.Address {
 		t.Errorf("expected address %q, got %q", req.Address, payload.Address)
 	}
-	if payload.Name != req.Name {
-		t.Errorf("expected name %q, got %q", req.Name, payload.Name)
+	if payload.ShardID != req.ShardID || payload.NodeID != req.NodeID {
+		t.Errorf("expected shard %d node %d, got shard %d node %d", req.ShardID, req.NodeID, payload.ShardID, payload.NodeID)
 	}
 }
 
@@ -1168,7 +1169,7 @@ func TestClusterClient_AddNodeValidationErrors(t *testing.T) {
 		},
 		{
 			name:    "empty address",
-			req:     &cluster.AddNodeRequest{Name: "node-4"},
+			req:     &cluster.AddNodeRequest{ShardID: 1, NodeID: 4},
 			wantErr: "address is required",
 		},
 	}

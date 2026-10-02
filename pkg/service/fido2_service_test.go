@@ -43,6 +43,10 @@ func (f *fakeLegacyWebAuthnManager) BeginRegistration(_ context.Context, _, _ st
 	return nil, nil
 }
 
+func (f *fakeLegacyWebAuthnManager) BeginInviteRegistration(_ context.Context, _, _ string) (map[string]interface{}, error) {
+	return nil, nil
+}
+
 func (f *fakeLegacyWebAuthnManager) FinishRegistration(_ context.Context, _, _ string, _ map[string]interface{}) (*iam.AttestationResult, error) {
 	return nil, nil
 }

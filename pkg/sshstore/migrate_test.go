@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	sshscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	"github.com/stretchr/testify/assert"
@@ -75,6 +76,15 @@ func seedLegacyStore(t *testing.T) (string, map[string]string) {
 
 	require.NoError(t, client.Close())
 	return dir, pubs
+}
+
+// keyRecordPath is where go-xkms's scope layout stores a user-scoped SSH
+// key record.
+func keyRecordPath(t *testing.T, owner, name string) string {
+	t.Helper()
+	path, err := sshscope.KindKeys.RecordPath(sshscope.User, owner, name)
+	require.NoError(t, err)
+	return path
 }
 
 func newSealed(t *testing.T) xkmssdk.StorageBackend {
@@ -166,7 +176,7 @@ func TestMigrateLegacy_RetryAcceptsIdenticalRecords(t *testing.T) {
 	sealed := newSealed(t)
 
 	// A previous run copied this record and then failed.
-	key := keysPrefix + "user/alice/fleet-deploy"
+	key := keyRecordPath(t, "alice", "fleet-deploy")
 	require.NoError(t, sealed.Put(ctx, key, recordBytes(t, dir, key)))
 
 	report, err := MigrateLegacy(ctx, dir, sealed, nil)
@@ -180,7 +190,7 @@ func TestMigrateLegacy_ConflictLeavesLegacyIntact(t *testing.T) {
 	dir, _ := seedLegacyStore(t)
 	sealed := newSealed(t)
 
-	key := keysPrefix + "user/alice/fleet-deploy"
+	key := keyRecordPath(t, "alice", "fleet-deploy")
 	require.NoError(t, sealed.Put(ctx, key, []byte(`{"v":2,"name":"someone-else"}`)))
 
 	_, err := MigrateLegacy(ctx, dir, sealed, nil)
@@ -200,7 +210,7 @@ func TestMigrateLegacy_UnparseableKeyRecordLeavesLegacyIntact(t *testing.T) {
 
 	backend, err := xkmsssh.NewFileStorage(dir)
 	require.NoError(t, err)
-	require.NoError(t, backend.Put(ctx, keysPrefix+"user/alice/corrupt", []byte("not an envelope")))
+	require.NoError(t, backend.Put(ctx, keyRecordPath(t, "alice", "corrupt"), []byte("not an envelope")))
 	require.NoError(t, backend.Close())
 
 	_, err = MigrateLegacy(ctx, dir, newSealed(t), nil)
@@ -310,7 +320,7 @@ func TestVerifyKey_RejectsForeignPrivateKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Graft "other"'s public half onto "real"'s private half.
-	key := keysPrefix + "user/alice/real"
+	key := keyRecordPath(t, "alice", "real")
 	raw, err := sealed.Get(ctx, key)
 	require.NoError(t, err)
 	var envelope map[string]any

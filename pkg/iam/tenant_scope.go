@@ -44,7 +44,8 @@ func (e *TenantScopeMismatchError) Error() string {
 // scope model is authoritative (go-qrdb pkg/permission: ScopeSelf /
 // ScopeCross / ScopeTenantOnly): a system-tenant principal reaches another
 // tenant's data only through a surface gated on a permission explicitly
-// registered ScopeCross (e.g. qrdb's audit:read:cross), and no surface
+// registered ScopeCross (go-qrdb v0.28 removed audit:read:cross and confines
+// every audit query to the caller's own tenant), and no surface
 // routed through this helper is gated on one — the REST PEP maps the
 // audit routes onto the self-scoped audit:query / audit:read /
 // audit_events:record (plus the handler-level audit:delete check), and

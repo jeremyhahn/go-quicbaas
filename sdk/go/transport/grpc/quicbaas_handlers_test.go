@@ -110,7 +110,7 @@ func TestClusterHandler_AllMethods_Success(t *testing.T) {
 	}{
 		{"Status", "Status", nil},
 		{"Nodes", "Nodes", nil},
-		{"AddNode", "AddNode", &cluster.AddNodeRequest{Address: "addr"}},
+		{"AddNode", "AddNode", &cluster.AddNodeRequest{ShardID: 1, NodeID: 4, Address: "addr", Identity: "spki:ab"}},
 		{"RemoveNode", "RemoveNode", &cluster.RemoveNodeRequest{NodeID: "5"}},
 		{"Rebalance", "Rebalance", &cluster.RebalanceClusterRequest{Strategy: "even"}},
 		{"GetRebalanceStatus", "GetRebalanceStatus", &cluster.GetRebalanceProgressRequest{OperationID: "op1"}},

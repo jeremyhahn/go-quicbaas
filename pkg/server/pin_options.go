@@ -277,19 +277,7 @@ func (p sealSharedTPMPINProvider) enroll(operatorPIN []byte, logger *slog.Logger
 // directory, and handles. A nil PlatformSRK sub-config is tolerated by go-xkms
 // (it falls back to its default platform SRK handle).
 func (p sealSharedTPMPINProvider) platformTPMConfig() *xkmssdk.TPMConfig {
-	tpmCfg := p.cfg.Seal.TPM2
-	backendCfg := &xkmssdk.TPM2BackendConfig{
-		Device:          tpmCfg.Device,
-		KeyDir:          tpmCfg.KeyDir,
-		UseSimulator:    tpmCfg.UseSimulator,
-		SimulatorHost:   tpmCfg.SimulatorHost,
-		SimulatorPort:   tpmCfg.SimulatorPort,
-		SRKHandle:       tpmCfg.SRKHandle,
-		PlatformPolicy:  tpmCfg.PlatformPolicy,
-		PlatformPCR:     tpmCfg.PCR,
-		PlatformPCRBank: tpmCfg.PCRBank,
-	}
-	return backendCfg.ToTPMConfig()
+	return tpm2BackendFields(p.cfg.Seal.TPM2).ToTPMConfig()
 }
 
 // newSealSharedTPMPINProvider builds the TPM PIN provider that shares the seal

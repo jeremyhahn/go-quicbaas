@@ -61,43 +61,57 @@ func (s *stream) Send(msg interface{}) error {
 // Recv receives a message from the stream.
 // It allows draining buffered messages even after the stream is closed.
 func (s *stream) Recv() (interface{}, error) {
-	// First, try to receive any buffered messages without blocking.
-	// This allows draining the buffer even after the stream is marked as closed.
+	// Drain a buffered message first: buffered values outlive Close.
 	select {
 	case msg, ok := <-s.recvCh:
-		if !ok {
-			// Channel is closed. Check if it was explicitly closed via Close()
-			// or if it's a natural end of stream.
-			if s.closed.Load() {
-				return nil, ErrRecvOnClosedStream
-			}
-			return nil, io.EOF
-		}
-		return msg, nil
+		return s.received(msg, ok)
 	default:
-		// No message available, check if we should block or return error
 	}
 
-	// If closed and no buffered messages, return error
+	if s.closed.Load() {
+		return s.drainAfterClose()
+	}
+
+	select {
+	case <-s.ctx.Done():
+		// Close cancels the context, so a closed stream lands here too. The
+		// handler sends its last value BEFORE it calls Close, so that value is
+		// buffered by the time the close is observable and must still be
+		// handed out rather than lost to the cancellation.
+		if s.closed.Load() {
+			return s.drainAfterClose()
+		}
+		return nil, s.ctx.Err()
+	case msg, ok := <-s.recvCh:
+		return s.received(msg, ok)
+	}
+}
+
+// drainAfterClose returns a message still buffered when the stream was
+// closed, or ErrRecvOnClosedStream once there is none. A receiver that found
+// the buffer empty and then observed the close can race the handler's last
+// send-then-Close; checking the buffer once more after the close is observed
+// closes that window, because the value was sent before the close flag was set.
+func (s *stream) drainAfterClose() (interface{}, error) {
+	select {
+	case msg, ok := <-s.recvCh:
+		return s.received(msg, ok)
+	default:
+		return nil, ErrRecvOnClosedStream
+	}
+}
+
+// received maps one receive from recvCh to Recv's result: the message, or the
+// terminal for a closed channel — ErrRecvOnClosedStream when Close closed it,
+// io.EOF for a natural end of stream.
+func (s *stream) received(msg interface{}, ok bool) (interface{}, error) {
+	if ok {
+		return msg, nil
+	}
 	if s.closed.Load() {
 		return nil, ErrRecvOnClosedStream
 	}
-
-	// Block waiting for a message or context cancellation
-	select {
-	case <-s.ctx.Done():
-		return nil, s.ctx.Err()
-	case msg, ok := <-s.recvCh:
-		if !ok {
-			// Channel is closed. Check if it was explicitly closed via Close()
-			// or if it's a natural end of stream.
-			if s.closed.Load() {
-				return nil, ErrRecvOnClosedStream
-			}
-			return nil, io.EOF
-		}
-		return msg, nil
-	}
+	return nil, io.EOF
 }
 
 // CloseSend closes the send side of the stream.

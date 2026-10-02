@@ -239,7 +239,7 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 		if _, covered := registry.Lookup(tool); !covered {
 			t.Fatalf("%s is not in the tool registry; the floor names a tool nothing enforces", tool)
 		}
-		if err := am.AuthorizeMCP(ctx, registry, tool); err != nil {
+		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err != nil {
 			t.Errorf("%s must be admitted for an enrolled session: %v", tool, err)
 		}
 	}
@@ -252,7 +252,7 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 		if allowed[tool] {
 			continue
 		}
-		if err := am.AuthorizeMCP(ctx, registry, tool); err == nil {
+		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err == nil {
 			admitted++
 			t.Errorf("%s is OUTSIDE the session floor and must be refused", tool)
 		} else {
@@ -288,7 +288,7 @@ func TestAgentSession_UnenrolledCertificateIsRefused(t *testing.T) {
 	}
 
 	for _, tool := range []string{"quicbaas_orchestrator_inference", qrdbGetTool, qrdbPutTool, qrdbListTool} {
-		if err := am.AuthorizeMCP(ctx, registry, tool); err == nil {
+		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err == nil {
 			t.Errorf("%s was admitted for an unenrolled certificate", tool)
 		}
 	}
@@ -322,7 +322,7 @@ func TestAgentSession_RevokedCertificateCannotAct(t *testing.T) {
 	registry := agentSessionToolRegistry(t)
 
 	ctx, _ := agentSessionCallContext(t, am, cert)
-	if err := am.AuthorizeMCP(ctx, registry, qrdbGetTool); err != nil {
+	if err := am.AuthorizeMCP(ctx, registry, qrdbGetTool, nil); err != nil {
 		t.Fatalf("precondition: an open session must be admitted on %s: %v", qrdbGetTool, err)
 	}
 
@@ -339,7 +339,7 @@ func TestAgentSession_RevokedCertificateCannotAct(t *testing.T) {
 		t.Fatalf("a closed session must hold no roles, got %v", closedIdentity.Roles)
 	}
 	for _, tool := range []string{"quicbaas_orchestrator_inference", qrdbGetTool, qrdbPutTool, qrdbListTool} {
-		if err := am.AuthorizeMCP(closedCtx, registry, tool); err == nil {
+		if err := am.AuthorizeMCP(closedCtx, registry, tool, nil); err == nil {
 			t.Errorf("%s was admitted after the session closed", tool)
 		}
 	}
@@ -371,7 +371,7 @@ func TestAgentSession_IsNotADaemon(t *testing.T) {
 
 	ctx, _ := agentSessionCallContext(t, am, cert)
 	for tool := range daemonOnly {
-		if err := am.AuthorizeMCP(ctx, registry, tool); err == nil {
+		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err == nil {
 			t.Errorf("a session was admitted on the daemon-only verb behind %s", tool)
 		}
 	}

@@ -29,7 +29,7 @@
 // These tests pin the storage half of that invariant: a full
 // Shutdown -> re-open over the same data dir must round-trip the user record,
 // its roles, and its tenant. The signal-handling half is pinned by
-// TestEnablePurge_DoesNotInstallProcessKillingSignalHandler in
+// TestSecureSubsystem_DoesNotInstallProcessKillingSignalHandler in
 // cmd/quicbaasd.
 package durability
 

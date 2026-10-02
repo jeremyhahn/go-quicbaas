@@ -319,12 +319,12 @@ func (p *sealedAdminServicerProxy) Peers(ctx context.Context) (*qrdbsdk.PeersInf
 	return svc.Peers(ctx)
 }
 
-func (p *sealedAdminServicerProxy) AddMember(ctx context.Context, shardID, replicaID uint64, raftAddr string) error {
+func (p *sealedAdminServicerProxy) AddMember(ctx context.Context, shardID, replicaID uint64, raftAddr, identity string) error {
 	svc, err := p.resolve()
 	if err != nil {
 		return err
 	}
-	return svc.AddMember(ctx, shardID, replicaID, raftAddr)
+	return svc.AddMember(ctx, shardID, replicaID, raftAddr, identity)
 }
 
 func (p *sealedAdminServicerProxy) RemoveMember(ctx context.Context, shardID, replicaID uint64) error {

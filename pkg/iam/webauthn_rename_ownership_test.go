@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"slices"
@@ -285,7 +286,47 @@ func (k *renameTestKV) Exists(_ context.Context, key string, _ ...qrdbtransport.
 	return ok, nil
 }
 
-var _ qrdbtransport.KVClient = (*renameTestKV)(nil)
+// PutIfAbsent stores value only when key is unset: the guarded create the
+// go-xkms WebAuthn adapter claims a credential ID with.
+func (k *renameTestKV) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if _, ok := k.data[key]; ok {
+		return false, nil
+	}
+	k.data[key] = append([]byte(nil), value...)
+	return true, nil
+}
+
+// CompareAndSwap replaces key's value only when it still equals expected:
+// the guarded update the adapter writes credential counters with.
+func (k *renameTestKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	current, ok := k.data[key]
+	if !ok || !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	k.data[key] = append([]byte(nil), next...)
+	return true, nil
+}
+
+// CompareAndDelete removes key only when it still equals expected.
+func (k *renameTestKV) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	current, ok := k.data[key]
+	if !ok || !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	delete(k.data, key)
+	return true, nil
+}
+
+var (
+	_ qrdbtransport.KVClient        = (*renameTestKV)(nil)
+	_ qrdbtransport.GuardedKVClient = (*renameTestKV)(nil)
+)
 
 // =============================================================================
 // Fixture

@@ -14,6 +14,7 @@
 package sealedwindow
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,7 +94,7 @@ func TestAuthBypass_UnsealedNodeExemptsNothing(t *testing.T) {
 			assert.False(t, bypass.BypassesGRPC(grpcBarrierInitialize))
 			assert.False(t, bypass.BypassesGRPC(grpcBarrierUnseal))
 			assert.False(t, bypass.BypassesGRPC(grpcCeremonyStatus))
-			assert.False(t, bypass.BypassesRESTPath("/api/v1/barrier/status"))
+			assert.False(t, bypass.BypassesRESTPath(http.MethodGet, "/api/v1/barrier/status"))
 			assert.Empty(t, sink.events, "an unsealed daemon must never audit a bypass")
 		})
 	}

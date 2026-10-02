@@ -739,16 +739,12 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 
 	// Route precedence: the composer decides who owns a path when both
 	// modules carry it (see apimodule.XKMSRouteExclusions). QuicBaaS owns
-	// /api/v1/barrier/* — its handlers reach the go-qrdb SDK BarrierClient
-	// bound to the platform shard, the SAME barrier gRPC/unix/MCP/QUIC/embedded
-	// already answer from. The xkms module's same-path handlers operate xkms's
-	// own barrier, which go-xkms itself documents as host-inert ("Barrier,
-	// custodian, ceremony, SSH, and CA surfaces are xkmsd-only and stay
-	// disabled", its pkg/api/rest/host.go NewHostServer), so mounted here they
-	// only answer "no barrier" for a barrier that exists — go-quicbaas#405.
-	// QuicBaaS also owns GET /api/v1/cluster/status, which go-xkms v0.30
-	// registers too: the quicbaas handler reports every shard the composed
-	// node hosts, in the shape quicbaas's SDK clients and UI decode.
+	// GET /api/v1/cluster/status, which go-xkms registers too: the quicbaas
+	// handler reports every shard the composed node hosts, in the shape
+	// quicbaas's SDK clients and UI decode; and the /api/v1/tenants/ control
+	// plane. go-xkms no longer registers /api/v1/barrier/* in a host
+	// composition, so quicbaas's barrier surface (go-quicbaas#405) needs no
+	// exclusion.
 	hostedXKMSModule, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSRouteExclusions)
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}

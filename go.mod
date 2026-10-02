@@ -27,12 +27,12 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-libsignal v0.2.0-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.20.6-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.20.6-alpha
+	github.com/jeremyhahn/go-qrdb v0.30.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.0-alpha
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.13.1-alpha
 	github.com/jeremyhahn/go-signal v0.2.0-alpha
-	github.com/jeremyhahn/go-xkms v0.31.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.31.0-alpha
+	github.com/jeremyhahn/go-xkms v0.49.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha
 	github.com/klauspost/compress v1.19.1
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
@@ -188,11 +188,11 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-enclave v0.6.0-alpha // indirect
+	github.com/jeremyhahn/go-enclave v0.6.1-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.13.1-alpha // indirect; held below v0.14.1-alpha: go-qrdb v0.20.6-alpha sdk/go/node builds its quicraft host with no WithBarrier/WithoutEncryption choice, so v0.14 refuses every in-process node (ErrAtRestEncryptionUnspecified). Unpin when a go-qrdb tag declares the at-rest choice (go-qrdb#566).
+	github.com/jeremyhahn/go-quicraft v0.15.0-alpha // indirect; hold lifted: go-qrdb v0.25.1-alpha declares the at-rest choice for in-process nodes (database.NewRaftWAL: barrier, or WithoutEncryption when seal is off), go-qrdb#566 — the real-node tests in pkg/scheduler/placement start a clustered in-process node on quicraft v0.15.0-alpha.
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.31.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.49.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

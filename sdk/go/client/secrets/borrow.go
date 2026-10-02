@@ -102,7 +102,11 @@ func (c *client) GetWithBytes(ctx context.Context, path, field string, fn func([
 		defer wipe(value)
 	}
 
-	protected := secret.NewSecretValue(path, value, "")
+	protected, err := secret.NewSecretValue(path, value, "")
+	if err != nil {
+		// A value that cannot be sealed is never lent out in the clear.
+		return errors.Wrap(err, errors.CodeInternal, getWithBytesOp, "seal the secret value")
+	}
 	defer protected.Clear()
 	size := len(value)
 

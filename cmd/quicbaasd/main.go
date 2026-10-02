@@ -944,31 +944,22 @@ func main() {
 
 // run executes the root command and returns the process exit code. main must
 // not call os.Exit itself: os.Exit skips deferred calls, and the deferred
-// secure.Purge below is what wipes mlocked memory on every orderly exit.
+// secure.WipeAll below is what wipes locked memory on every orderly exit.
 func run() int {
-	// Arm the secure subsystem so the deferred Purge below wipes all mlocked
-	// memory on every orderly exit path, WITHOUT installing memguard's
-	// process signal handler. quicbaasd owns its own signal handling:
-	// runDaemon registers SIGINT/SIGTERM and drives Server.Shutdown, which
-	// closes the embedded qrdb node and therefore its PebbleDB.
+	// quicbaasd owns its own signal handling: runDaemon registers
+	// SIGINT/SIGTERM and drives Server.Shutdown, which closes the embedded
+	// qrdb node and therefore its PebbleDB. The secure subsystem installs no
+	// signal handler (its memguard-era CatchInterrupt hard os.Exit(1)ed from
+	// inside the handler, beat the graceful shutdown and dropped every
+	// unflushed PebbleDB write); it only needs WipeAll deferred here, which
+	// destroys every live enclave and the process sealer on the way out.
 	//
-	// memguard's CatchSignal handler (installed by secure.CatchInterrupt)
-	// wipes memory and then hard os.Exit(1)s from inside the signal handler.
-	// That races ahead of — and always beats — the graceful-shutdown path, so
-	// the embedded qrdb node was never closed and every PebbleDB write still
-	// buffered in the memtable / unsynced WAL block was discarded on SIGTERM.
-	// Concretely: IAM entities created through the API (users, roles, groups,
-	// apps, invites) vanished across a daemon restart while the already-flushed
-	// first-boot bootstrap admin survived. Mirrors the qrdbd pattern
-	// (go-qrdb/cmd/qrdbd/main.go), and lets a graceful SIGTERM exit 0 as
-	// systemd / docker / k8s expect.
-	secure.EnablePurge()
 	// In coverage builds, flush the Go coverage profile on SIGINT/SIGTERM.
 	// No-op in production builds.
 	setupCoverageSignalHook()
 	defer func() {
-		if err := secure.Purge(); err != nil {
-			fmt.Fprintf(os.Stderr, "quicbaasd: secure.Purge: %v\n", err)
+		if remaining, err := secure.WipeAll(); err != nil || remaining != 0 {
+			fmt.Fprintf(os.Stderr, "quicbaasd: secure.WipeAll: %d enclaves still held: %v\n", remaining, err)
 		}
 	}()
 

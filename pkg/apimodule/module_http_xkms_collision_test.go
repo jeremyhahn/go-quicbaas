@@ -224,6 +224,20 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 	require.True(t, ok, "the composed unified surface must serve the tenant barrier status")
 	require.Equal(t, "quicbaas", tenantBarrier.module)
 
+	// The backup surface is quicbaas's (go-xkms v0.47 registers its own
+	// node-backup table on the same paths for xkmsd). Every backup route the
+	// composed node serves must be quicbaas's, including the two xkms-only
+	// shapes that would otherwise sit beside it with a different wire shape.
+	for key, o := range registered {
+		if strings.HasPrefix(strings.SplitN(key, " ", 2)[1], "/api/v1/backups") {
+			require.Equal(t, "quicbaas", o.module, "%s must be owned by the quicbaas module", key)
+		}
+	}
+	for _, key := range []string{"GET /api/v1/backups", "POST /api/v1/backups/{id}/restore"} {
+		_, ok := registered[key]
+		require.True(t, ok, "the composed unified surface must serve %s", key)
+	}
+
 	// SHAPE, NOT SPELLING. Two patterns that differ only in a wildcard's name
 	// ({tenant_id} against {tenantID}) are different registrar keys and the same
 	// route to the router, which is how the tenant overlap hid from the exact
@@ -252,15 +266,15 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 
 // TestRouteExcludingModule_XKMSBarrierCollisionIsReal is the non-vacuousness
 // proof for the wrapper above: registered WITHOUT the composer's route
-// precedence, the go-xkms module claims the canonical
-// /api/v1/barrier/* surface, and co-hosting it with the quicbaas module —
-// which now carries the same paths — is a duplicate registration that go-qrdb's
-// registrar fails construction on.
+// precedence, the go-xkms module claims GET /api/v1/cluster/status and the
+// /api/v1/tenants/ and /api/v1/backups/ subtrees, which the quicbaas module
+// also serves, and
+// co-hosting both unwrapped resolves those paths to xkms's handlers.
 //
-// This is the server-side half of go-quicbaas#405 reproduced as a unit test:
-// the path resolved to xkms's host-inert barrier handler, which answers
-// `503 {"error":"rest: barrier not configured"}` however healthy the real
-// (go-qrdb) barrier is.
+// It also pins that go-xkms no longer claims the canonical /api/v1/barrier/*
+// surface (the server-side half of go-quicbaas#405): that exclusion was
+// dropped because nothing co-hosted registers it, and this fails if go-xkms
+// starts registering it again.
 func TestRouteExcludingModule_XKMSBarrierCollisionIsReal(t *testing.T) {
 	xkmsModule, err := xkmssdk.NewServiceModule(
 		func() *xkmslib.XKMSService { return nil },
@@ -270,15 +284,20 @@ func TestRouteExcludingModule_XKMSBarrierCollisionIsReal(t *testing.T) {
 	require.NoError(t, err)
 
 	raw := collectModuleRoutes(t, xkmsModule.RegisterHTTP)
-	require.Contains(t, raw, "GET /api/v1/barrier/status",
-		"sanity: the unwrapped xkms module must still claim the canonical barrier surface; "+
-			"if go-xkms has since gated these routes on its nil Barrier, the wrapper is redundant and should go")
+	for key := range raw {
+		pattern := strings.SplitN(key, " ", 2)[1]
+		require.False(t, strings.HasPrefix(pattern, "/api/v1/barrier/"),
+			"the unwrapped xkms module claims %s; the /api/v1/barrier/ exclusion must come back", key)
+	}
 	require.Contains(t, raw, "GET /api/v1/cluster/status",
 		"sanity: the unwrapped xkms module must still claim the cluster status route; "+
 			"if go-xkms has since dropped it, its exclusion is redundant and should go")
 	require.Contains(t, raw, "GET /api/v1/tenants/{tenantID}/barrier/status",
 		"sanity: the unwrapped xkms module must still claim the tenant barrier status route; "+
 			"if go-xkms has since dropped its tenant routes, the tenant exclusion is redundant and should go")
+	require.Contains(t, raw, "POST /api/v1/backups",
+		"sanity: the unwrapped xkms module must still claim the backup routes; "+
+			"if go-xkms has since dropped them, the backup exclusion is redundant and should go")
 
 	hosted, err := NewRouteExcludingModule(xkmsModule, XKMSRouteExclusions)
 	require.NoError(t, err)
@@ -286,8 +305,8 @@ func TestRouteExcludingModule_XKMSBarrierCollisionIsReal(t *testing.T) {
 
 	for key := range raw {
 		pattern := strings.SplitN(key, " ", 2)[1]
-		if strings.HasPrefix(pattern, "/api/v1/barrier/") || pattern == "/api/v1/cluster/status" ||
-			strings.HasPrefix(pattern, "/api/v1/tenants/") {
+		if pattern == "/api/v1/cluster/status" || strings.HasPrefix(pattern, "/api/v1/tenants/") ||
+			pattern == "/api/v1/backups" || strings.HasPrefix(pattern, "/api/v1/backups/") {
 			require.NotContains(t, filtered, key,
 				"the route-precedence wrapper must drop the xkms module's %s registration", key)
 			continue

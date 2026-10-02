@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
+	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // =============================================================================
@@ -1138,6 +1139,12 @@ func TestFT2_InitializeIAMComponents_Full(t *testing.T) {
 	// the WebAuthn manager).
 	cfg.IAM.AAGUID.Mode = "enforce"
 
+	// The xkms service is process-global: start from a clean one, so this
+	// test does not inherit a service whose key storage points into another
+	// test's (since removed) temp directory.
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
+
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
@@ -1183,6 +1190,14 @@ func TestFT2_InitializeIAMComponents_NoPasswordAuth(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeStandalone
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Auth.AllowPasswordAuth = false
+	// startKMS initializes xkms only when KMS is enabled; see the Full test.
+	cfg.KMS.Enabled = true
+
+	// The xkms service is process-global: start from a clean one, so this
+	// test does not inherit a service whose key storage points into another
+	// test's (since removed) temp directory.
+	dbxkms.Reset()
+	t.Cleanup(dbxkms.Reset)
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -1190,6 +1205,10 @@ func TestFT2_InitializeIAMComponents_NoPasswordAuth(t *testing.T) {
 	// Initialize storage and indexes so qrdbClient is available
 	require.NoError(t, srv.startStorage())
 	require.NoError(t, srv.startIndexes())
+
+	// Initialize xkms so the OIDC ES256 signing key can be created, in the
+	// production startup order (as TestFT2_InitializeIAMComponents_Full does).
+	require.NoError(t, srv.startKMS(), "KMS init must succeed for OIDC signing key")
 	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init must succeed")
 	t.Cleanup(func() { _ = srv.stopQRDBNode() })
 	require.NoError(t, srv.startService())

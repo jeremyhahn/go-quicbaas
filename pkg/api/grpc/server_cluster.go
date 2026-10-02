@@ -43,9 +43,10 @@ func (s *Server) AddNode(ctx context.Context, req *pb.AddNodeRequest) (*pb.AddNo
 
 	// Call service
 	serviceReq := &service.AddNodeRequest{
-		ShardID: req.ShardId,
-		NodeID:  req.NodeId,
-		Address: req.Address,
+		ShardID:  req.ShardId,
+		NodeID:   req.NodeId,
+		Address:  req.Address,
+		Identity: req.GetIdentity(),
 	}
 
 	serviceResp, err := s.service.AddNode(ctx, serviceReq)

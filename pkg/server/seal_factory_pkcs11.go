@@ -113,7 +113,10 @@ func buildPKCS11Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		return nil, &StrategyBuildError{Backend: "pkcs11", Cause: &PKCS11ConfigError{Field: "key_label"}}
 	}
 
-	backendCfg := pkcs11BackendConfig(p11, xkmssdk.NewStorageMemory())
+	backendCfg, err := pkcs11BackendConfig(p11, xkmssdk.NewStorageMemory())
+	if err != nil {
+		return nil, &StrategyBuildError{Backend: "pkcs11", Cause: err}
+	}
 
 	backend, err := xkmssdk.NewPKCS11Backend(backendCfg)
 	if err != nil {
@@ -139,26 +142,32 @@ func buildPKCS11Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 // backend, which reads it on every login for its whole lifetime; a caller that
 // abandons the config (construction failed) must Clear it, and a caller that
 // abandons a constructed backend must release it with releasePKCS11Backend.
-func pkcs11BackendConfig(p11 config.PKCS11SealConfig, keyStorage xkmssdk.StorageBackend) *xkmssdk.PKCS11BackendConfig {
+// A PIN that cannot be sealed fails the build rather than reaching the
+// backend as an empty value it would read as "no PIN configured".
+func pkcs11BackendConfig(p11 config.PKCS11SealConfig, keyStorage xkmssdk.StorageBackend) (*xkmssdk.PKCS11BackendConfig, error) {
+	pin, err := sealPKCS11PIN(p11.PIN)
+	if err != nil {
+		return nil, err
+	}
 	return &xkmssdk.PKCS11BackendConfig{
 		CN:          p11.KeyLabel,
 		Library:     p11.Library,
 		TokenLabel:  p11.TokenLabel,
 		Slot:        p11.Slot,
-		PIN:         sealPKCS11PIN(p11.PIN),
+		PIN:         pin,
 		KeyStorage:  keyStorage,
 		CertStorage: xkmssdk.NewStorageMemory(),
-	}
+	}, nil
 }
 
 // sealPKCS11PIN seals pin into a SecretValue enclave and wipes the transient
 // byte copy it made on the way in. An empty pin yields an empty SecretValue,
 // which the backend treats as "no PIN configured".
-func sealPKCS11PIN(pin string) *xkmssdk.SecretValue {
+func sealPKCS11PIN(pin string) (*xkmssdk.SecretValue, error) {
 	b := []byte(pin)
-	sv := xkmssdk.NewLiteralSecretValue(b)
+	sv, err := xkmssdk.NewLiteralSecretValue(b)
 	clear(b)
-	return sv
+	return sv, err
 }
 
 // releasePKCS11Backend closes a backend the caller is abandoning and destroys

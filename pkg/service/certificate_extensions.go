@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -383,8 +384,11 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 	if err != nil {
 		return nil, err
 	}
-	if req.TenantID != "" {
-		tenantID = req.TenantID
+	// A device identity is issued in the caller's own tenant only. A request
+	// naming another tenant is refused, the system tenant included: go-qrdb
+	// v0.28 lets no caller mint another tenant's certificates.
+	if _, err := tenantctx.Target(ctx, "CertificateService.IssueDeviceIdentity", req.TenantID); err != nil {
+		return nil, err
 	}
 
 	ca, err := s.extensionsCA()

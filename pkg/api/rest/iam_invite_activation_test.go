@@ -49,8 +49,11 @@ var errUserStoreUnavailable = &iam.IAMMessageError{Message: "user store unavaila
 // invite is spent. It counts calls so a test can assert the ceremony was not
 // re-run.
 type stubWebAuthn struct {
-	beginCalls  int
-	finishCalls int
+	// beginCalls counts the invitation ceremony; publicBeginCalls counts
+	// the public one, which invite activation must never use.
+	beginCalls       int
+	publicBeginCalls int
+	finishCalls      int
 
 	// finishErr, when set, is what the ceremony refuses with. It is how a test
 	// drives the attestation gate's policy refusals through the handlers
@@ -59,6 +62,13 @@ type stubWebAuthn struct {
 }
 
 func (s *stubWebAuthn) BeginRegistration(context.Context, string, string) (map[string]interface{}, error) {
+	s.publicBeginCalls++
+	return map[string]interface{}{"publicKey": map[string]interface{}{}}, nil
+}
+
+// BeginInviteRegistration is the ceremony invite activation must use: the
+// account already exists and is pending (go-xkms#1294).
+func (s *stubWebAuthn) BeginInviteRegistration(context.Context, string, string) (map[string]interface{}, error) {
 	s.beginCalls++
 	return map[string]interface{}{"publicKey": map[string]interface{}{}}, nil
 }
@@ -337,6 +347,21 @@ func TestActivateFIDO2Begin_AbandonedCeremonyLeavesInviteUnspent(t *testing.T) {
 	// The ceremony stops here — finish is never called.
 	_, err := f.invites.Redeem(context.Background(), inviteTenant, f.token)
 	assert.NoError(t, err, "begin consumed the invite")
+}
+
+// TestActivateFIDO2Begin_UsesTheInvitationCeremony pins the go-xkms#1294
+// contract: the invitee's account already exists and is pending, and go-xkms
+// refuses the public registration ceremony for any existing account, so
+// invite activation must open the invitation ceremony and never the public
+// one.
+func TestActivateFIDO2Begin_UsesTheInvitationCeremony(t *testing.T) {
+	f, cleanup := setupActivation(t, writeSucceeds)
+	defer cleanup()
+
+	w := f.begin(t)
+	require.Equal(t, http.StatusOK, w.Code, "begin failed: %s", w.Body.String())
+	assert.Equal(t, 1, f.webauthn.beginCalls, "invite activation must open the invitation ceremony")
+	assert.Zero(t, f.webauthn.publicBeginCalls, "invite activation must never open the public ceremony")
 }
 
 // TestInviteRoutes_SpentTokenIsOpaque proves a spent token gets the SAME

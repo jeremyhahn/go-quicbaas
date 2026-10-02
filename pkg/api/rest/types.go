@@ -631,6 +631,11 @@ type AddNodeRequest struct {
 
 	// Address is the Raft address of the new node (host:port)
 	Address string `json:"address"`
+
+	// Identity is the new node's Raft member identity (spki:<sha256-hex>,
+	// as `qrdbd node-identity --cert` prints it). Optional when the cluster
+	// has already committed one for the node or its host.
+	Identity string `json:"identity,omitempty"`
 }
 
 // AddNodeResponse represents the response from adding a node.
@@ -676,6 +681,10 @@ type ReplaceNodeRequest struct {
 
 	// ReplacementAddress is the address of the replacement node
 	ReplacementAddress string `json:"replacement_address"`
+
+	// ReplacementIdentity is the replacement node's Raft member identity
+	// (spki:<sha256-hex>); optional when the cluster already committed one.
+	ReplacementIdentity string `json:"replacement_identity,omitempty"`
 }
 
 // ReplaceNodeResponse represents the response from replacing a node.

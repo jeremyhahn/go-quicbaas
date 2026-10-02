@@ -163,13 +163,11 @@ func (h *clusterHandler) handleAddNode(ctx context.Context, client pb.QuicBaaSCl
 			"invalid request type, expected *cluster.AddNodeRequest")
 	}
 
-	// The SDK AddNodeRequest uses a simple string address.
-	// The protobuf AddNodeRequest requires shard_id, node_id, and address.
-	// For SDK compatibility, we use shard_id=0 (default shard) and auto-assign node_id.
 	pbReq := &pb.AddNodeRequest{
-		ShardId: 0, // Default shard
-		NodeId:  0, // Auto-assign
-		Address: sdkReq.Address,
+		ShardId:  sdkReq.ShardID,
+		NodeId:   sdkReq.NodeID,
+		Address:  sdkReq.Address,
+		Identity: sdkReq.Identity,
 	}
 
 	// Call gRPC.

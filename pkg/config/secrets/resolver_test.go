@@ -151,7 +151,7 @@ func TestResolverRegistry_Resolve_MatchingResolver(t *testing.T) {
 			return len(raw) > 7 && raw[:7] == "test://"
 		},
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("resolved-value"), StrategyLocalKMS), nil
+			return NewSecretValue(raw, []byte("resolved-value"), StrategyLocalKMS)
 		},
 	}
 	registry.Register(resolver)
@@ -206,14 +206,14 @@ func TestResolverRegistry_Resolve_FirstMatchWins(t *testing.T) {
 		schemeName:     "first",
 		canResolveFunc: func(raw string) bool { return true },
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("from-first"), StrategyLiteral), nil
+			return NewSecretValue(raw, []byte("from-first"), StrategyLiteral)
 		},
 	}
 	resolver2 := &testResolver{
 		schemeName:     "second",
 		canResolveFunc: func(raw string) bool { return true },
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("from-second"), StrategyLiteral), nil
+			return NewSecretValue(raw, []byte("from-second"), StrategyLiteral)
 		},
 	}
 	registry.Register(resolver1)

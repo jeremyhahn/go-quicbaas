@@ -377,12 +377,17 @@ func (s *Server) initializeCA() error {
 	// Register the unified backend as the process-global xkms service. This
 	// runs whenever the CA key universe exists — independent of the optional
 	// KMS service.
+	keyVersions, err := s.keyVersionStore()
+	if err != nil {
+		return api.NewOperationFailedError("create key version store", err)
+	}
 	if err := initXKMS(&dbxkms.Config{
 		DefaultBackend: string(xkmssdk.StoreSoftware),
 		Backends: map[string]xkmssdk.ServiceBackend{
 			string(xkmssdk.StoreSoftware): globalXKMSBackend,
 		},
-		Logger: logger.NewAdapter(s.logger),
+		KeyVersions: keyVersions,
+		Logger:      logger.NewAdapter(s.logger),
 	}); err != nil {
 		if !errors.Is(err, dbxkms.ErrAlreadyInitialized) {
 			return api.NewOperationFailedError("initialize XKMS from CA backend", err)
@@ -1155,12 +1160,17 @@ func (s *Server) startKMS() error {
 	s.logger.WithField("backend", backendName).Info("KMS crypto backend resolved")
 
 	// Initialize XKMS with the resolved backend, registered under its type name.
+	keyVersions, err := s.keyVersionStore()
+	if err != nil {
+		return api.NewOperationFailedError("create key version store", err)
+	}
 	xkmsConfig := &dbxkms.Config{
 		DefaultBackend: backendName,
 		Backends: map[string]xkmssdk.ServiceBackend{
 			backendName: primaryBackend,
 		},
-		Logger: logAdapter,
+		KeyVersions: keyVersions,
+		Logger:      logAdapter,
 	}
 
 	if err := initXKMS(xkmsConfig); err != nil {
@@ -2768,4 +2778,33 @@ func (s *Server) startWatchBridge() error {
 	s.logger.Infof("Watch bridge started with %d mappings", len(mappings))
 
 	return nil
+}
+
+// keyVersionStore returns the key-version record store the process-global
+// xkms service rotates keys through, building it on first use. go-xkms rotates
+// a key by creating its next version as a new backend key and recording it as
+// current, so rotation needs this store; xkmsd keeps it as its own
+// "key-versions" storage, and so does this server: a file store at
+// $DATA_DIR/key-versions, or memory when no data directory is configured
+// (unit tests), matching how the key storage beside it is chosen.
+func (s *Server) keyVersionStore() (*xkmssdk.KeyVersionStore, error) {
+	if s.xkmsKeyVersions != nil {
+		return s.xkmsKeyVersions, nil
+	}
+	var backend xkmssdk.StorageBackend
+	var err error
+	if dataDir := s.config.Storage.DataDir; dataDir != "" {
+		backend, err = xkmssdk.NewFileStorageBackend(filepath.Join(dataDir, "key-versions"))
+	} else {
+		backend, err = xkmssdk.NewMemoryBackend()
+	}
+	if err != nil {
+		return nil, err
+	}
+	store, err := xkmssdk.NewKeyVersionStore(backend)
+	if err != nil {
+		return nil, err
+	}
+	s.xkmsKeyVersions = store
+	return store, nil
 }

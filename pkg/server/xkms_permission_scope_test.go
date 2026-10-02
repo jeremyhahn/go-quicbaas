@@ -51,10 +51,12 @@ import (
 // keeps this composition root from regressing once it consumes the fix.
 // ---------------------------------------------------------------------------
 
-// xkmsScopedPermission is the permission the login failure was measured on. It
-// is named rather than derived: a derived list would pass over the exact name
-// the outage was reported under if the derivation ever changed.
-const xkmsScopedPermission = qrdbsdk.Permission("keys:read")
+// xkmsScopedPermission is a permission go-xkms contributes AND declares the
+// scope of itself. The outage (go-xkms#617) was measured on keys:read;
+// go-xkms#1249 retired keys:read/keys:write for per-verb actions qrdb scopes,
+// leaving keys:update as the keys:* verb whose scope go-xkms alone declares
+// (its pkg/apimodule selfScopedPermissions), so the property is pinned on it.
+const xkmsScopedPermission = qrdbsdk.Permission("keys:update")
 
 // composeXKMSServiceModule performs the same construction the composition root
 // does in qrdb_node.go — xkmssdk.NewServiceModule — which is what contributes

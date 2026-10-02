@@ -1,4 +1,4 @@
-// Package secure re-exports go-xkms's memguard-protected memory surface, so a
+// Package secure re-exports go-xkms's protected-memory surface, so a
 // consumer above Layer 3 can hold keys, passwords and tokens in protected
 // storage without importing go-xkms, go-qrdb or raw memguard — all three of
 // which the layered protected-memory rule forbids it.
@@ -11,7 +11,7 @@
 // The operations are thin forwarding declarations rather than function-valued
 // variables, mirroring the upstream package. That is deliberate for a
 // protected-memory surface: a package-level var is assignable by any importer,
-// so Wipe could be replaced with a no-op or Purge with one that returns nil,
+// so Wipe could be replaced with a no-op or WipeAll with one that returns nil,
 // silently defeating the guarantees these names exist to provide.
 //
 // The two containers are not interchangeable, and the distinction is the whole
@@ -85,9 +85,12 @@ type (
 	// failure.
 	ProviderError = xkmssecure.ProviderError
 
-	// NotInitializedError is returned by Purge when the subsystem has not been
-	// armed by CatchInterrupt or EnablePurge.
-	NotInitializedError = xkmssecure.NotInitializedError
+	// NestedBorrowError is returned when a borrow is opened inside another
+	// borrow of the same value.
+	NestedBorrowError = xkmssecure.NestedBorrowError
+
+	// EmptyBorrowError is returned when a borrow yields no bytes.
+	EmptyBorrowError = xkmssecure.EmptyBorrowError
 )
 
 // =============================================================================
@@ -131,23 +134,12 @@ func NewCallbackProvider(fn func(ctx context.Context, prompt string) ([]byte, er
 // Process-wide lifecycle
 // =============================================================================
 
-// CatchInterrupt wires SIGINT/SIGTERM to purge all mlocked memory before
-// process exit. Call once, early in main().
-//
-// The installed handler hard os.Exit(1)s from inside the signal handler, so a
-// daemon that drives its own graceful shutdown must use EnablePurge instead:
-// CatchInterrupt's exit always wins the race and the shutdown path never runs.
-func CatchInterrupt() { xkmssecure.CatchInterrupt() }
-
-// EnablePurge arms the subsystem so Purge works, WITHOUT installing memguard's
-// process signal handler. Use it in daemons that own their own signal
-// handling, paired with a deferred Purge in main().
-func EnablePurge() { xkmssecure.EnablePurge() }
-
-// Purge performs an immediate, synchronous wipe of all mlocked memory. Returns
-// NotInitializedError if the subsystem was never armed.
-func Purge() error { return xkmssecure.Purge() }
-
-// PurgeOrPanic is a convenience for deferred cleanup in main(). Panics if the
-// subsystem was never armed.
-func PurgeOrPanic() { xkmssecure.PurgeOrPanic() }
+// WipeAll destroys every live locked-memory enclave the process holds --
+// every outstanding Buffer and every plaintext a Secret.Open produced -- and
+// the process sealer's key material, so every live Secret becomes
+// unopenable. It returns how many enclaves were still held. It belongs to the
+// binary that owns the process, deferred at startup so it runs on every
+// orderly exit; library code never calls it. It replaces the memguard-era
+// CatchInterrupt/EnablePurge/Purge lifecycle: the binary drives its own
+// signal handling and graceful shutdown, which runs the deferred WipeAll.
+func WipeAll() (int, error) { return xkmssecure.WipeAll() }

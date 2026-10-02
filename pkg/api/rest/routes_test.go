@@ -440,7 +440,7 @@ func TestModuleRoutes_ExcludesInitOnly(t *testing.T) {
 
 	var excludedFromAll, barrierInAll int
 	for _, spec := range all {
-		if strings.HasPrefix(spec.Pattern, "/api/v1/init/") {
+		if strings.HasPrefix(spec.Pattern, "/api/v1/init/") || qrdbNativeWireRoutes[spec.Method+" "+spec.Pattern] {
 			excludedFromAll++
 		}
 		if strings.HasPrefix(spec.Pattern, "/api/v1/barrier/") {
@@ -463,10 +463,10 @@ func TestModuleRoutes_ExcludesInitOnly(t *testing.T) {
 	}
 	for _, spec := range all {
 		key := spec.Method + " " + spec.Pattern
-		excluded := strings.HasPrefix(spec.Pattern, "/api/v1/init/")
+		excluded := strings.HasPrefix(spec.Pattern, "/api/v1/init/") || qrdbNativeWireRoutes[key]
 		_, present := moduleSet[key]
 		if excluded && present {
-			t.Errorf("ModuleRoutes() must NOT carry %s (init is module-excluded)", key)
+			t.Errorf("ModuleRoutes() must NOT carry %s (module-excluded: init, or a wire route go-qrdb serves natively)", key)
 		}
 		if !excluded && !present {
 			t.Errorf("ModuleRoutes() dropped non-excluded route %s", key)

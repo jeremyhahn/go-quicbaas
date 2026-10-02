@@ -84,7 +84,18 @@ type OIDCProvider interface {
 
 // WebAuthnManager interface defines WebAuthn operations.
 type WebAuthnManager interface {
+	// BeginRegistration starts the public registration ceremony: it enrols
+	// the first passkey of an account the ceremony itself creates. go-xkms
+	// refuses it for an account that already exists (go-xkms#1294).
 	BeginRegistration(ctx context.Context, tenantID, userID string) (map[string]interface{}, error)
+
+	// BeginInviteRegistration starts the registration ceremony that enrols
+	// the first passkey of an existing PENDING account, authorized by an
+	// invitation the caller has already validated. It is the only
+	// unauthenticated path that may enrol a pre-existing account's first
+	// passkey, and go-xkms refuses it for any account that is not pending or
+	// already holds a credential. FinishRegistration completes it.
+	BeginInviteRegistration(ctx context.Context, tenantID, email string) (map[string]interface{}, error)
 
 	// FinishRegistration completes the ceremony and returns what the assurance
 	// gate PROVED about the authenticator.

@@ -1142,6 +1142,11 @@ type (
 		ShardID uint64
 		NodeID  uint64
 		Address string
+		// Identity is the replica's Raft member identity
+		// (spki:<sha256-hex>, as `qrdbd node-identity --cert` prints it),
+		// or "" to use the identity the cluster already committed for the
+		// replica or its host. A node no committed membership names needs it.
+		Identity string
 	}
 	AddNodeResponse struct {
 		Success bool

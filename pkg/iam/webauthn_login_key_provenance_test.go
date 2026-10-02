@@ -87,11 +87,19 @@ func newProvenanceHarness(t *testing.T) *provenanceHarness {
 	users := xkmswebauthn.NewMemoryUserStore()
 	creds := xkmswebauthn.NewMemoryCredentialStore()
 
+	// Public registration enrols the first passkey of a NEW account in one
+	// real ceremony. go-xkms#1294 closed the other unauthenticated path --
+	// a pre-provisioned account enrolling its first passkey through
+	// BeginRegistration -- so the account is created by the ceremony itself.
+	// Which path enrolled the credential is immaterial to what this harness
+	// tests (the provenance of the key a LOGIN verifies with).
+	allowPublic := true
 	service, err := xkmssdk.NewWebAuthnService(xkmssdk.WebAuthnServiceParams{
 		Config: &xkmssdk.WebAuthnConfig{
-			RPID:          provenanceRPID,
-			RPDisplayName: "QuicBaaS",
-			RPOrigins:     []string{provenanceOrigin},
+			RPID:                    provenanceRPID,
+			RPDisplayName:           "QuicBaaS",
+			RPOrigins:               []string{provenanceOrigin},
+			AllowPublicRegistration: &allowPublic,
 		},
 		UserStore:       users,
 		SessionStore:    xkmssdk.NewWebAuthnMemorySessionStore(),
@@ -99,17 +107,6 @@ func newProvenanceHarness(t *testing.T) *provenanceHarness {
 	})
 	if err != nil {
 		t.Fatalf("build relying party: %v", err)
-	}
-
-	// Provision the account BEFORE the ceremony, the way a closed deployment
-	// onboards: go-xkms v0.9.2-alpha withholds implicit account creation
-	// unless the relying party explicitly opts into public registration, and
-	// this relying party deliberately does not — the burn-in node it mirrors
-	// has self-service registration off. An account that already exists
-	// enrols its first passkey through the same BeginRegistration entry point,
-	// so the ceremony below is the real one either way.
-	if _, err := users.Create(ctx, provenanceEmail, "Provenance User"); err != nil {
-		t.Fatalf("provision registrant: %v", err)
 	}
 
 	options, sessionID, err := service.BeginRegistration(ctx, provenanceEmail, "Provenance User")

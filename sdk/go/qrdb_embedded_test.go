@@ -116,10 +116,12 @@ func (stubAdminService) Status(context.Context) (*qrdbsdk.StatusInfo, error) {
 func (stubAdminService) Peers(context.Context) (*qrdbsdk.PeersInfo, error) {
 	return &qrdbsdk.PeersInfo{}, nil
 }
-func (stubAdminService) AddMember(context.Context, uint64, uint64, string) error { return stubErr }
-func (stubAdminService) RemoveMember(context.Context, uint64, uint64) error      { return stubErr }
-func (stubAdminService) RequestSnapshot(context.Context, uint64) error           { return stubErr }
-func (stubAdminService) Drain(context.Context) error                             { return stubErr }
+func (stubAdminService) AddMember(context.Context, uint64, uint64, string, string) error {
+	return stubErr
+}
+func (stubAdminService) RemoveMember(context.Context, uint64, uint64) error { return stubErr }
+func (stubAdminService) RequestSnapshot(context.Context, uint64) error      { return stubErr }
+func (stubAdminService) Drain(context.Context) error                        { return stubErr }
 func (stubAdminService) Capabilities(context.Context) (*qrdbsdk.Capabilities, error) {
 	return &qrdbsdk.Capabilities{}, nil
 }

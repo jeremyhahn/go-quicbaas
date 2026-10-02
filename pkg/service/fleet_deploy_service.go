@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
 
@@ -272,6 +273,12 @@ func NewFleetDeployService(deps FleetDeployServiceDeps) FleetDeployService {
 // is always closed on exit.
 func (s *fleetDeployService) Deploy(ctx context.Context, spec *deploy.Spec) (*deploy.Result, error) {
 	if err := s.validate(spec); err != nil {
+		return nil, err
+	}
+	// A node is deployed, and its identity certificate minted, in the caller's
+	// own tenant only — the system tenant included (go-qrdb v0.28: no caller
+	// mints another tenant's certificates).
+	if _, err := tenantctx.Target(ctx, "FleetDeployService.Deploy", spec.Tenant); err != nil {
 		return nil, err
 	}
 	s.stampMCPEndpoint(spec)

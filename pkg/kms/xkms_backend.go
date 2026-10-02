@@ -465,9 +465,10 @@ func (kb *XKMSBackend) ListKeys(ctx context.Context, prefix string, limit int) (
 	return result, "", nil
 }
 
-// RotateKey rotates a key to a new version.
-// Unlike go-xkms's RotateKey (which destroys the old key), this implementation
-// creates versioned keys (e.g., "my-key:v2") while preserving old versions for decryption.
+// RotateKey rotates a key to a new version, creating versioned keys
+// ("<id>_v<n>") while preserving old versions for decryption. This predates
+// go-xkms's own key versions (its RotateKey now keeps earlier versions too,
+// as "<id>--v<n>" with a version record); the two schemes are independent.
 func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadata, error) {
 	if !kb.IsAvailable(ctx) {
 		return nil, ErrBackendNotReady
@@ -491,7 +492,7 @@ func (kb *XKMSBackend) RotateKey(ctx context.Context, keyID string) (*KeyMetadat
 	attrs := kb.algorithmToKeyAttributes(versionedKeyID, meta.Algorithm)
 
 	// Generate new key with versioned ID
-	// Note: We don't use go-xkms's RotateKey because it destroys the old key
+	// This backend's own version scheme (see the method comment).
 	if kb.isSymmetricAlgorithm(meta.Algorithm) {
 		_, err := xkms.GenerateSymmetricKey(ctx, string(kb.backendType), attrs)
 		if err != nil {

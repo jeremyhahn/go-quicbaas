@@ -14,19 +14,24 @@
 package sealedwindow
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsealedwindow "github.com/jeremyhahn/go-qrdb/pkg/api/sealedwindow"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // TestTable_EveryVerbPresent asserts every canonical verb has a Table entry
-// and the verb count matches qrdb's canonical 34-verb table.
+// and the verb count is go-qrdb's canonical 27-verb table (v0.25) plus
+// quicbaas's three documented divergences: shamir-verify and the ceremony
+// officer list (quicbaas extras) and the strictly excluded external officer
+// enrollment.
 func TestTable_EveryVerbPresent(t *testing.T) {
-	require.Len(t, Verbs, 34, "verb set must mirror qrdb's canonical 34-verb table")
+	require.Len(t, Verbs, 30, "verb set must be qrdb's 27-verb table plus quicbaas's three documented divergences")
 	seen := make(map[Verb]struct{}, len(Verbs))
 	for _, v := range Verbs {
 		_, dup := seen[v]
@@ -434,26 +439,18 @@ func TestRESTAllowlist_ExactSet(t *testing.T) {
 		"/v1/barrier/shamir/unseal-shares",
 		"/api/v1/barrier/shamir/unseal-shares",
 		"/v1/barrier/shamir/verify",
-		"/v1/barrier/rekey",
-		"/api/v1/barrier/rekey",
-		"/v1/barrier/recovery/generate",
-		"/api/v1/barrier/recovery/generate",
 		"/v1/barrier/recovery/recover",
 		"/api/v1/barrier/recovery/recover",
-		"/v1/barrier/recovery",
-		"/api/v1/barrier/recovery",
-		"/v1/barrier/recovery/status",
-		"/api/v1/barrier/recovery/status",
 		"/v1/barrier/root-token",
 		"/api/v1/barrier/root-token",
 
 		// Officer / custodian registries.
-		"/v1/barrier/officers",
+		"POST /v1/barrier/officers",
 		"/v1/ceremony/officers",
 		"/api/v1/init/officers",
 		"/v1/barrier/officers/claim-status",
 		"/v1/barrier/officers/",
-		"/v1/barrier/recovery/officers",
+		"POST /v1/barrier/recovery/officers",
 		"/v1/barrier/recovery/officers/",
 
 		// Ceremony: the read-only status probe and the self-authorizing claim
@@ -628,32 +625,23 @@ func TestPreOperationalOnlyFlags(t *testing.T) {
 	}
 }
 
-// TestRESTAllowlistScoped_SharedPathTakesStrictestScope pins the shared-path
-// collapse: GET and POST /v1/barrier/officers are officer-list and
-// officer-register behind ONE method-dispatched path, and the REST bypass
-// matches on path alone. Because officer-register is PreOperationalOnly, the
-// shared path must be pre-operational-gated for every method it serves —
-// listing it in ScopeAlways through officer-list would leave registration
-// authentication-exempt on an operational sealed daemon.
-func TestRESTAllowlistScoped_SharedPathTakesStrictestScope(t *testing.T) {
-	const shared = "/v1/barrier/officers"
-
-	require.Contains(t, Table[VerbOfficerList].REST, shared,
-		"fixture drift: officer-list no longer contributes the shared path")
-	require.Contains(t, Table[VerbOfficerRegister].REST, shared,
-		"fixture drift: officer-register no longer contributes the shared path")
-
-	assert.NotContains(t, RESTAllowlistScoped(ScopeAlways), shared,
-		"shared officer path must not be state-independently exempt")
-	assert.Contains(t, RESTAllowlistScoped(ScopePreOperational), shared,
-		"shared officer path must remain exempt while the ceremony is unfinished")
-	assert.Contains(t, RESTAllowlistScoped(ScopeAll), shared,
-		"shared officer path must remain servable while sealed (deny gate unchanged)")
-
-	// The recovery register path is not shared; it must move scope wholesale.
-	const recovery = "/v1/barrier/recovery/officers"
-	assert.NotContains(t, RESTAllowlistScoped(ScopeAlways), recovery)
-	assert.Contains(t, RESTAllowlistScoped(ScopePreOperational), recovery)
+// TestRESTAllowlistScoped_OfficerRegistrationIsMethodQualified pins how the
+// officer path is admitted since go-qrdb v0.25: only POST (registration, a
+// PreOperationalOnly verb) is on the allowlist, as a method-qualified entry, so
+// a GET of the same path (the barrier officer list, withdrawn from the sealed
+// window) is never admitted, and registration is exempt only while the
+// ceremony is unfinished.
+func TestRESTAllowlistScoped_OfficerRegistrationIsMethodQualified(t *testing.T) {
+	for _, entry := range []string{"POST /v1/barrier/officers", "POST /v1/barrier/recovery/officers"} {
+		assert.NotContains(t, RESTAllowlistScoped(ScopeAlways), entry, "registration must not be state-independently exempt")
+		assert.Contains(t, RESTAllowlistScoped(ScopePreOperational), entry, "registration stays exempt while the ceremony is unfinished")
+	}
+	for _, path := range []string{"/v1/barrier/officers", "/v1/barrier/recovery/officers"} {
+		for _, entry := range RESTAllowlist() {
+			assert.Falsef(t, qrdbsealedwindow.RESTEntryMatches(entry, http.MethodGet, path),
+				"entry %q admits GET %s, which left the sealed window", entry, path)
+		}
+	}
 }
 
 // TestOfficerRegister_PreOperationalOnEveryTransport asserts the officer

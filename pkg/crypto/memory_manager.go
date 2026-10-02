@@ -259,13 +259,25 @@ func CreateDefaultManagers(log interfaces.Logger) (interfaces.KMSManager, interf
 		return nil, nil, nil, errors.Wrapf(err, errors.ErrInternal, "crypto.CreateDefaultManagers", "failed to create keystore")
 	}
 
+	// Key-version records, in their own store, so the default keys can be
+	// rotated.
+	versionStorage, err := xkmssdk.NewMemoryBackend()
+	if err != nil {
+		return nil, nil, nil, errors.Wrapf(err, errors.ErrInternal, "crypto.CreateDefaultManagers", "failed to create key version storage")
+	}
+	keyVersions, err := xkmssdk.NewKeyVersionStore(versionStorage)
+	if err != nil {
+		return nil, nil, nil, errors.Wrapf(err, errors.ErrInternal, "crypto.CreateDefaultManagers", "failed to create key version store")
+	}
+
 	// Initialize XKMS with the software backend
 	if err := dbxkms.Initialize(&dbxkms.Config{
 		DefaultBackend: "software",
 		Backends: map[string]xkmssdk.ServiceBackend{
 			"software": keyStore,
 		},
-		Logger: log,
+		KeyVersions: keyVersions,
+		Logger:      log,
 	}); err != nil {
 		// If already initialized (e.g., in tests), continue
 		if !stderrors.Is(err, dbxkms.ErrAlreadyInitialized) {

@@ -122,6 +122,6 @@
 //
 //	func (r *MyResolver) Resolve(ctx context.Context, raw string) (*SecretValue, error) {
 //	    // extract path from URI and fetch secret; pass secret bytes directly
-//	    return NewSecretValue(raw, fetchedBytes, StrategyLiteral), nil
+//	    return NewSecretValue(raw, fetchedBytes, StrategyLiteral)
 //	}
 package secrets

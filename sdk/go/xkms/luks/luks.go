@@ -11,11 +11,13 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package luks re-exports go-xkms's canonical LUKS surface — FIPS-aware
-// volume lifecycle management plus the TPM 2.0 passphrase sealer that
-// produces systemd-tpm2 compatible LUKS2 tokens — so downstream callers
-// (go-trusted-platform's LUKS backend) reach it through the SDK path
-// rather than importing go-xkms directly.
+// Package luks re-exports go-xkms's canonical LUKS surface: the FIPS-aware
+// volume configuration and lifecycle manager, its production go-luks2
+// backed Executor, and the TPM 2.0 passphrase sealer with its configurable
+// storage parent (Platform SRK, the default, or the Shared SRK for
+// systemd-cryptsetup compatibility). Downstream callers
+// (go-trusted-platform's LUKS backend) reach it through the SDK path rather
+// than importing go-xkms directly.
 //
 // All symbols are pure aliases of `xkms/sdk/go/luks`.
 package luks
@@ -38,6 +40,9 @@ type (
 
 	// Manager manages the lifecycle of a LUKS encrypted volume.
 	Manager = xkmsluks.Manager
+
+	// LibExecutor is the production Executor, implemented on go-luks2.
+	LibExecutor = xkmsluks.LibExecutor
 )
 
 const (
@@ -58,24 +63,42 @@ var (
 	// NewFIPSAwareManager constructs a Manager with FIPS-appropriate KDF
 	// defaults.
 	NewFIPSAwareManager = xkmsluks.NewFIPSAwareManager
+
+	// NewLibExecutor constructs the production Executor.
+	NewLibExecutor = xkmsluks.NewLibExecutor
+
+	// IsLUKSVolume reports whether a file begins with the LUKS2 magic bytes.
+	IsLUKSVolume = xkmsluks.IsLUKSVolume
+
+	// IsMounted reports whether a path is currently a mount point.
+	IsMounted = xkmsluks.IsMounted
+
+	// IsUnlocked reports whether a LUKS device-mapper mapping exists.
+	IsUnlocked = xkmsluks.IsUnlocked
+
+	// EnsureKeyringAvailable proves the kernel keyring is usable by this
+	// process before a volume key is handled.
+	EnsureKeyringAvailable = xkmsluks.EnsureKeyringAvailable
 )
 
 // =============================================================================
-// TPM 2.0 passphrase sealing (systemd-tpm2 token format)
+// TPM 2.0 passphrase sealing
 // =============================================================================
 
 type (
-	// TPMOpener opens a go-tpm transport for a sealing / unsealing operation.
-	TPMOpener = xkmsluks.TPMOpener
+	// SealParent identifies which TPM storage hierarchy a LUKS passphrase
+	// seal is parented to: the Platform SRK (default) or the Shared SRK.
+	SealParent = xkmsluks.SealParent
 
-	// TPMOpenerFunc adapts a function to the TPMOpener interface.
-	TPMOpenerFunc = xkmsluks.TPMOpenerFunc
+	// TPMSealerConfig configures a TPMSealer's storage parent and PCR bank.
+	TPMSealerConfig = xkmsluks.TPMSealerConfig
 
-	// TPMToken is the systemd-tpm2 compatible LUKS2 token payload.
-	TPMToken = xkmsluks.TPMToken
+	// TPMSealUnsealer is the subset of pkg/tpm2.TPM2's behavior TPMSealer
+	// depends on.
+	TPMSealUnsealer = xkmsluks.TPMSealUnsealer
 
-	// TPMSealResult is the richer seal output: passphrase, token JSON, and
-	// raw sealed blobs.
+	// TPMSealResult is the sealed passphrase plus the LUKS2 token to persist
+	// in the volume's header and the raw sealed blobs.
 	TPMSealResult = xkmsluks.TPMSealResult
 
 	// TPMSealer seals and unseals LUKS volume passphrases against a TPM 2.0.
@@ -83,20 +106,29 @@ type (
 )
 
 const (
-	// TPMTokenType is the LUKS2 token type written for TPM-sealed keyslots.
+	// SealParentPSRK seals under go-xkms's own Platform Storage Root Key,
+	// bound to go-xkms's platform PCR policy. This is the default.
+	SealParentPSRK = xkmsluks.SealParentPSRK
+
+	// SealParentSSRK seals under the TCG-standard Shared Storage Root Key
+	// with empty parent auth, for systemd-cryptsetup compatibility.
+	SealParentSSRK = xkmsluks.SealParentSSRK
+
+	// TPMTokenType is the LUKS2 token type written for a SealParentSSRK
+	// seal, matching systemd-cryptsetup's "systemd-tpm2" token.
 	TPMTokenType = xkmsluks.TPMTokenType
 
-	// DefaultTPMParentHandle is the default persistent sealing parent
-	// handle (the TCG storage SRK, 0x81000001).
-	DefaultTPMParentHandle = xkmsluks.DefaultTPMParentHandle
+	// XKMSTPMTokenType is the LUKS2 token type written for a SealParentPSRK
+	// seal.
+	XKMSTPMTokenType = xkmsluks.XKMSTPMTokenType
 )
 
 var (
+	// ParseSealParent parses the config-file spelling of a seal parent.
+	ParseSealParent = xkmsluks.ParseSealParent
+
 	// NewTPMSealer constructs a TPM-backed LUKS passphrase sealer.
 	NewTPMSealer = xkmsluks.NewTPMSealer
-
-	// DefaultTPMOpener returns a TPMOpener that opens /dev/tpmrm0 on Linux.
-	DefaultTPMOpener = xkmsluks.DefaultTPMOpener
 
 	// EncodeTPMSealBlobs packs sealed public/private blobs into the single
 	// base64 tpm2-blob token field.
@@ -122,10 +154,30 @@ var (
 	ErrOperationFailed = xkmsluks.ErrOperationFailed
 	ErrNilExecutor     = xkmsluks.ErrNilExecutor
 
-	ErrTPMNoTransport   = xkmsluks.ErrTPMNoTransport
-	ErrTPMPolicyFailed  = xkmsluks.ErrTPMPolicyFailed
-	ErrTPMSealFailed    = xkmsluks.ErrTPMSealFailed
-	ErrTPMUnsealFailed  = xkmsluks.ErrTPMUnsealFailed
-	ErrTPMInvalidHandle = xkmsluks.ErrTPMInvalidHandle
-	ErrTPMInvalidToken  = xkmsluks.ErrTPMInvalidToken
+	ErrVolumeAlreadyExists = xkmsluks.ErrVolumeAlreadyExists
+	ErrVolumeNotFound      = xkmsluks.ErrVolumeNotFound
+
+	ErrTPMNoTransport              = xkmsluks.ErrTPMNoTransport
+	ErrTPMPolicyFailed             = xkmsluks.ErrTPMPolicyFailed
+	ErrTPMSealFailed               = xkmsluks.ErrTPMSealFailed
+	ErrTPMUnsealFailed             = xkmsluks.ErrTPMUnsealFailed
+	ErrTPMInvalidToken             = xkmsluks.ErrTPMInvalidToken
+	ErrInvalidSealParent           = xkmsluks.ErrInvalidSealParent
+	ErrInvalidPCRBank              = xkmsluks.ErrInvalidPCRBank
+	ErrTPMSSRKUnsealUnsupported    = xkmsluks.ErrTPMSSRKUnsealUnsupported
+	ErrTPMPCRSelectionNotSupported = xkmsluks.ErrTPMPCRSelectionNotSupported
+	ErrKeyringUnavailable          = xkmsluks.ErrKeyringUnavailable
+)
+
+type (
+	// SealParentInvalidError reports a SealParent value or raw config
+	// string that names neither "psrk" nor "ssrk".
+	SealParentInvalidError = xkmsluks.SealParentInvalidError
+
+	// ExecutorError reports which production LUKS operation failed and
+	// against which path or device.
+	ExecutorError = xkmsluks.ExecutorError
+
+	// KeyringError reports a failed kernel keyring preflight.
+	KeyringError = xkmsluks.KeyringError
 )

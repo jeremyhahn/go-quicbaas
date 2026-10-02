@@ -112,6 +112,10 @@ func (stubWebAuthnManager) BeginRegistration(context.Context, string, string) (m
 	return nil, nil
 }
 
+func (stubWebAuthnManager) BeginInviteRegistration(context.Context, string, string) (map[string]interface{}, error) {
+	return nil, nil
+}
+
 func (stubWebAuthnManager) FinishRegistration(context.Context, string, string, map[string]interface{}) (*iam.AttestationResult, error) {
 	return nil, nil
 }

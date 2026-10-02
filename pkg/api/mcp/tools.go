@@ -494,6 +494,10 @@ func (r *ToolRegistry) registerTools() {
 				"shardID": map[string]interface{}{"type": "integer"},
 				"nodeID":  map[string]interface{}{"type": "integer"},
 				"address": map[string]interface{}{"type": "string"},
+				"identity": map[string]interface{}{
+					"type":        "string",
+					"description": "Raft member identity spki:<sha256-hex>; optional when the cluster already committed one",
+				},
 			},
 			"required": []string{"shardID", "nodeID", "address"},
 		},
@@ -2230,9 +2234,10 @@ func (r *ToolRegistry) executeGetLeader(ctx context.Context, args map[string]int
 
 func (r *ToolRegistry) executeAddNode(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	req := &service.AddNodeRequest{
-		ShardID: getUint64(args, "shardID"),
-		NodeID:  getUint64(args, "nodeID"),
-		Address: getString(args, "address"),
+		ShardID:  getUint64(args, "shardID"),
+		NodeID:   getUint64(args, "nodeID"),
+		Address:  getString(args, "address"),
+		Identity: getString(args, "identity"),
 	}
 	resp, err := r.service.AddNode(ctx, req)
 	if err != nil {

@@ -59,6 +59,23 @@ func TestServer_AddNode(t *testing.T) {
 			},
 		},
 		{
+			name: "identity_reaches_the_service",
+			request: &pb.AddNodeRequest{
+				ShardId:  1,
+				NodeId:   3,
+				Address:  "10.0.0.3:5001",
+				Identity: "spki:0123abcd",
+			},
+			mockSetup: func(m *mock.Mock) {
+				m.On("AddNode", mock.Anything, mock.MatchedBy(func(req *service.AddNodeRequest) bool {
+					return req.NodeID == 3 && req.Identity == "spki:0123abcd"
+				})).Return(&service.AddNodeResponse{Success: true}, nil).Once()
+			},
+			validate: func(t *testing.T, resp *pb.AddNodeResponse) {
+				assert.True(t, resp.Success)
+			},
+		},
+		{
 			name:        "nil_request",
 			request:     nil,
 			mockSetup:   func(m *mock.Mock) {},

@@ -81,7 +81,7 @@ func TestDeploy_PasswordDialCarriesTheResolvedHostKeyPolicy(t *testing.T) {
 	svc := newTestService(dialer, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
 	svc.hostKeys = resolver
 
-	_, err := svc.Deploy(context.Background(), spec)
+	_, err := svc.Deploy(acmeCtx, spec)
 	require.NoError(t, err)
 
 	require.NotNil(t, dialer.seenHostKey, "the dial must carry a host-key policy")
@@ -107,7 +107,7 @@ func TestDeploy_StoredKeyDialCarriesTheResolvedHostKeyPolicy(t *testing.T) {
 	svc.hostKeys = resolver
 	svc.sshKeys = &fakeSignerResolver{signer: sshfixture.User(t).Signer}
 
-	_, err := svc.Deploy(context.Background(), spec)
+	_, err := svc.Deploy(acmeCtx, spec)
 	require.NoError(t, err)
 
 	require.NotNil(t, dialer.seenHostKey, "the dial must carry a host-key policy")
@@ -125,7 +125,7 @@ func TestDeploy_UnpinnedHostFailsBeforeTheDial(t *testing.T) {
 	svc := newTestService(dialer, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
 	svc.hostKeys = &fakeHostKeyResolver{err: notPinned}
 
-	_, err := svc.Deploy(context.Background(), pinnedSpec())
+	_, err := svc.Deploy(acmeCtx, pinnedSpec())
 
 	var typed *SSHHostKeyNotPinnedError
 	require.True(t, stderrors.As(err, &typed), "want SSHHostKeyNotPinnedError, got %T: %v", err, err)
@@ -139,7 +139,7 @@ func TestDeploy_InsecureHostKeySkipsThePinLookup(t *testing.T) {
 	svc.hostKeys = resolver
 
 	// validSpec() carries InsecureHostKey: the operator opted out.
-	_, err := svc.Deploy(context.Background(), validSpec())
+	_, err := svc.Deploy(acmeCtx, validSpec())
 	require.NoError(t, err)
 
 	assert.Empty(t, resolver.seen, "the insecure opt-out never reads the pin store")
@@ -150,7 +150,7 @@ func TestDeploy_NoResolverLeavesThePolicyToTheSpec(t *testing.T) {
 	dialer := &fakeDialer{}
 	svc := newTestService(dialer, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
 
-	_, err := svc.Deploy(context.Background(), pinnedSpec())
+	_, err := svc.Deploy(acmeCtx, pinnedSpec())
 	require.NoError(t, err)
 	assert.Nil(t, dialer.seenHostKey,
 		"with no resolver the dialer sees no policy and deploy.Spec decides")

@@ -2106,6 +2106,10 @@ type ServerConfig struct {
 	// listeners; they carry no Unix-domain-socket transport of their own).
 	Unix ServerUnixConfig `mapstructure:"unix"`
 
+	// ACME configures the Security().ACME() RFC 8555 server's challenge
+	// validation.
+	ACME ServerACMEConfig `mapstructure:"acme"`
+
 	// Timeouts and limits
 	ReadTimeout     time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout    time.Duration `mapstructure:"write_timeout"`
@@ -2118,6 +2122,18 @@ type ServerConfig struct {
 	Shards []uint64 `mapstructure:"shards"`
 	// EntityShardPins maps entity type to a fixed shard ID.
 	EntityShardPins map[string]uint64 `mapstructure:"entity_shard_pins"`
+}
+
+// ServerACMEConfig configures the ACME server behind Security().ACME().
+type ServerACMEConfig struct {
+	// AllowPrivateChallengeTargets lets challenge validation (http-01,
+	// enroll-01) connect to reserved addresses: loopback, private,
+	// link-local, metadata and the other special-purpose ranges. go-xkms
+	// validates every challenge through one SSRF-safe client that refuses
+	// those addresses by default (go-xkms acme.challenges.allow_private_targets);
+	// a deployment whose devices enroll from a private network sets this.
+	// Production on a public network leaves it false.
+	AllowPrivateChallengeTargets bool `mapstructure:"allow_private_challenge_targets"`
 }
 
 // ResolveBindHost returns the listen host for a protocol listener: the

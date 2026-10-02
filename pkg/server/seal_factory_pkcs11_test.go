@@ -383,7 +383,10 @@ func TestPKCS11BackendConfig_SealsPIN(t *testing.T) {
 	p11 := fullPKCS11Config(t).Seal.PKCS11
 	keyStorage := xkmssdk.NewStorageMemory()
 
-	got := pkcs11BackendConfig(p11, keyStorage)
+	got, err := pkcs11BackendConfig(p11, keyStorage)
+	if err != nil {
+		t.Fatalf("pkcs11BackendConfig: %v", err)
+	}
 	t.Cleanup(got.PIN.Clear)
 
 	pin, err := xkmssdk.SecretValueBytes(got.PIN)
@@ -411,7 +414,10 @@ func TestPKCS11BackendConfig_EmptyPIN(t *testing.T) {
 	p11 := fullPKCS11Config(t).Seal.PKCS11
 	p11.PIN = ""
 
-	got := pkcs11BackendConfig(p11, xkmssdk.NewStorageMemory())
+	got, err := pkcs11BackendConfig(p11, xkmssdk.NewStorageMemory())
+	if err != nil {
+		t.Fatalf("pkcs11BackendConfig: %v", err)
+	}
 
 	pin, err := xkmssdk.SecretValueBytes(got.PIN)
 	if err != nil {
@@ -426,7 +432,10 @@ func TestPKCS11BackendConfig_EmptyPIN(t *testing.T) {
 // backend closes it and destroys the PIN enclave it held, so a failed build
 // leaves no PIN in memory.
 func TestReleasePKCS11Backend_DestroysPIN(t *testing.T) {
-	backendCfg := pkcs11BackendConfig(fullPKCS11Config(t).Seal.PKCS11, xkmssdk.NewStorageMemory())
+	backendCfg, err := pkcs11BackendConfig(fullPKCS11Config(t).Seal.PKCS11, xkmssdk.NewStorageMemory())
+	if err != nil {
+		t.Fatalf("pkcs11BackendConfig: %v", err)
+	}
 	backend, err := xkmssdk.NewPKCS11Backend(backendCfg)
 	if err != nil {
 		t.Fatalf("NewPKCS11Backend: %v", err)

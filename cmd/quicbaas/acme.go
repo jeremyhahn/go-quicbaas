@@ -168,6 +168,13 @@ func (e *ACMEEnrollCAUnsupportedError) Error() string {
 // xkms verifier the server installs — no forked verification logic.
 //
 // Map-based dispatch keeps lookup O(1) as the challenge vocabulary grows.
+//
+// http-01 and enroll-01 contact a client-named target, so go-xkms requires
+// them to go through one SSRF-safe challenge client; the CLI's process-local
+// verifiers share this one, at go-xkms's secure default (reserved addresses
+// refused).
+var acmeChallengeClient = quicbaas.NewACMEChallengeClient(quicbaas.ACMEChallengeClientConfig{})
+
 var acmeVerifiers = map[string]quicbaas.ACMEChallengeVerifierFunc{
 	quicbaas.ACMEChallengeTypeHTTP01:    acmeVerifyHTTP01,
 	quicbaas.ACMEChallengeTypeDNS01:     acmeVerifyDNS01,
@@ -175,11 +182,12 @@ var acmeVerifiers = map[string]quicbaas.ACMEChallengeVerifierFunc{
 	quicbaas.ACMEChallengeTypeEndorse01: acmeVerifyEndorse01,
 }
 
-// acmeVerifyHTTP01 adapts the SDK http-01 verifier, which takes no CA handle,
-// to the uniform ACMEChallengeVerifierFunc signature.
-func acmeVerifyHTTP01(resolver *net.Resolver, _ quicbaas.ACMECertificateAuthority,
+// acmeVerifyHTTP01 adapts the SDK http-01 verifier, which takes no CA handle
+// and dials through the shared challenge client, to the uniform
+// ACMEChallengeVerifierFunc signature.
+func acmeVerifyHTTP01(_ *net.Resolver, _ quicbaas.ACMECertificateAuthority,
 	authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-	return quicbaas.ACMEVerifyHTTP01(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
+	return quicbaas.ACMEVerifyHTTP01(acmeChallengeClient, authzValue, challengePort, challengeToken, expectedKeyAuth)
 }
 
 // acmeVerifyDNS01 adapts the SDK dns-01 verifier. *net.Resolver satisfies the
@@ -198,14 +206,14 @@ func acmeVerifyEndorse01(resolver *net.Resolver, _ quicbaas.ACMECertificateAutho
 
 // acmeVerifyEnroll01 adapts the SDK enroll-01 verifier, which needs the CA to
 // support TCG-CSR-IDEVID verification. It fails closed when the supplied CA
-// does not.
-func acmeVerifyEnroll01(resolver *net.Resolver, ca quicbaas.ACMECertificateAuthority,
+// does not, and contacts the device through the shared challenge client.
+func acmeVerifyEnroll01(_ *net.Resolver, ca quicbaas.ACMECertificateAuthority,
 	authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 	tcgCA, ok := ca.(quicbaas.ACMEEnroll01TCGCSRVerifier)
 	if !ok {
 		return &ACMEEnrollCAUnsupportedError{}
 	}
-	return quicbaas.ACMEVerifyEnroll01(resolver, tcgCA, authzValue, challengePort, challengeToken, expectedKeyAuth)
+	return quicbaas.ACMEVerifyEnroll01(acmeChallengeClient, tcgCA, authzValue, challengePort, challengeToken, expectedKeyAuth)
 }
 
 // acmeChallengeNames returns the sorted registered challenge names, used in

@@ -40,8 +40,10 @@
 //
 //	// Add a node
 //	err := client.AddNode(ctx, &cluster.AddNodeRequest{
-//	    Address: "192.168.1.100:50051",
-//	    Name:    "node-4",
+//	    ShardID:  1,
+//	    NodeID:   4,
+//	    Address:  "node-4.example.com:63001",
+//	    Identity: "spki:<sha256-hex>", // from `qrdbd node-identity --cert`
 //	})
 //
 //	// Remove a node

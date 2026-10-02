@@ -79,3 +79,18 @@ MCP tools: `quicbaas_attestation_attest_container`, `quicbaas_attestation_verify
 
 
 
+
+## Certificate profiles
+
+A caller selects a profile by name on `SignOptions.Profile`; the names are the
+`ProfileName*` constants re-exported in `sdk/go/xkms/ca` from go-xkms. Two are
+for the platform's overlay and service identity (go-xkms#1385):
+
+| Profile | Constant | Certificate |
+|---|---|---|
+| `ipsec-vtep` | `ProfileNameIPsecVTEP` | IKEv2 tunnel endpoint: EKU `id-kp-ipsecIKE` (`OIDIPsecIKE`), IP SANs supplied by the issuing caller and never copied from the CSR, 30-day default lifetime. May carry the `tp-attestationEvidence` extension (`CreateAttestationEvidenceExtension`). |
+| `x509-svid` | `ProfileNameX509SVID` | SPIFFE X.509-SVID: one caller-supplied SPIFFE URI SAN, serverAuth + clientAuth, not a CA, 1-hour default lifetime. |
+
+Both are issued under a name-constrained subordinate CA for a caller-held key
+(`SubordinateIssuer`, `SubordinateCARequest`, `NameConstraints`); a leaf
+outside the constraints fails with `ErrCANameConstraintViolation`.

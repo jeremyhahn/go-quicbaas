@@ -157,7 +157,9 @@ func es256KeyAttributes(cn, tenantID, storeType string) *xkmssdk.KeyAttributes {
 // restarts because xkms keystores persist key material; the first Signer call
 // succeeds for any previously created key.
 func loadSignerForAttrs(ctx context.Context, attrs *xkmssdk.KeyAttributes) (crypto.Signer, error) {
-	signer, err := xkms.Signer(ctx, attrs)
+	// The current version: after a rotation the key's live material is a
+	// later version, and a restart must sign with it, not with version 1.
+	signer, err := xkms.CurrentSigner(ctx, attrs)
 	if err == nil {
 		return signer, nil
 	}
@@ -332,15 +334,15 @@ func (m *SigningKeyManager) Rotate() error {
 
 	attrs := es256KeyAttributes(m.cn, m.tenantID, m.storeType)
 
-	// RotateKey replaces the stored key material under the same identity with
-	// fresh material (a new key with a new public key, hence a new derived
-	// kid). We then fetch the signer for that material; backends may return a
-	// handle whose private key never leaves the device.
+	// RotateKey creates the key's next version -- a new key with a new
+	// public key, hence a new derived kid -- and makes it current; earlier
+	// versions are kept. We then fetch the signer for the current version;
+	// backends may return a handle whose private key never leaves the device.
 	if _, err := xkms.RotateKey(context.Background(), m.rotationKID()); err != nil {
 		return err
 	}
 
-	signer, err := xkms.Signer(context.Background(), attrs)
+	signer, err := xkms.CurrentSigner(context.Background(), attrs)
 	if err != nil {
 		return err
 	}

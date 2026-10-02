@@ -168,6 +168,12 @@ func (m *mockTenantClient) ListTenants(context.Context) (*qrdbtransport.ListTena
 	return nil, nil
 }
 func (m *mockTenantClient) DeleteTenant(context.Context, string) error { return nil }
+func (m *mockTenantClient) ListDeletedTenants(context.Context, *qrdbtransport.ListDeletedTenantsRequest) (*qrdbtransport.ListDeletedTenantsResponse, error) {
+	return nil, nil
+}
+func (m *mockTenantClient) ReconcileDeletedTenants(context.Context) (*qrdbtransport.ReconcileDeletedTenantsResponse, error) {
+	return nil, nil
+}
 func (m *mockTenantClient) UpdateTenant(context.Context, *qrdbtransport.UpdateTenantRequest) (*qrdbtransport.UpdateTenantResponse, error) {
 	return nil, nil
 }

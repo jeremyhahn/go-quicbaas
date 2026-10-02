@@ -83,9 +83,10 @@ func (s *Server) HandleAddNode(w http.ResponseWriter, r *http.Request) {
 
 	// Call service
 	serviceReq := &service.AddNodeRequest{
-		ShardID: req.ShardID,
-		NodeID:  req.NodeID,
-		Address: req.Address,
+		ShardID:  req.ShardID,
+		NodeID:   req.NodeID,
+		Address:  req.Address,
+		Identity: req.Identity,
 	}
 
 	serviceResp, err := s.service.AddNode(ctx, serviceReq)
@@ -260,9 +261,10 @@ func (s *Server) HandleReplaceNode(w http.ResponseWriter, r *http.Request) {
 	for _, shardID := range affectedShards {
 		// Add replacement node
 		addReq := &service.AddNodeRequest{
-			ShardID: shardID,
-			NodeID:  req.ReplacementNodeID,
-			Address: req.ReplacementAddress,
+			ShardID:  shardID,
+			NodeID:   req.ReplacementNodeID,
+			Address:  req.ReplacementAddress,
+			Identity: req.ReplacementIdentity,
 		}
 
 		_, err := s.service.AddNode(ctx, addReq)

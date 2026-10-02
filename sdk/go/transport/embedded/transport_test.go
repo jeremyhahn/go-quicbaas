@@ -101,6 +101,7 @@ func requireStreamInvalidRequestType(t *testing.T, s recvStream) {
 // =============================================================================
 
 type mockQuicBaaS struct {
+	addNodeFunc          func(ctx context.Context, req *service.AddNodeRequest) (*service.AddNodeResponse, error)
 	putFunc              func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	getFunc              func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
 	deleteFunc           func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
@@ -227,6 +228,9 @@ func (m *mockQuicBaaS) GetLeader(ctx context.Context, req *service.GetLeaderRequ
 }
 
 func (m *mockQuicBaaS) AddNode(ctx context.Context, req *service.AddNodeRequest) (*service.AddNodeResponse, error) {
+	if m.addNodeFunc != nil {
+		return m.addNodeFunc(ctx, req)
+	}
 	return &service.AddNodeResponse{Success: true}, nil
 }
 

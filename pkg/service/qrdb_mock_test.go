@@ -108,7 +108,7 @@ func (t *svcBoostMockTransport) Status(_ context.Context) (*transport.StatusResp
 func (t *svcBoostMockTransport) Peers(_ context.Context) (*transport.PeersResponse, error) {
 	return &transport.PeersResponse{}, nil
 }
-func (t *svcBoostMockTransport) AddMember(_ context.Context, _, _ uint64, _ string) error {
+func (t *svcBoostMockTransport) AddMember(_ context.Context, _, _ uint64, _, _ string) error {
 	return t.addMemberErr
 }
 func (t *svcBoostMockTransport) RemoveMember(_ context.Context, _, _ uint64) error {

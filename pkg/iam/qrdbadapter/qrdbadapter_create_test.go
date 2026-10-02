@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	qrdbfirstboot "github.com/jeremyhahn/go-qrdb/pkg/firstboot"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -282,5 +283,43 @@ func TestRoleAdapter_GetRoleByName_NilStore(t *testing.T) {
 	a := &RoleAdapter{}
 	if _, err := a.GetRoleByName(context.Background(), "system", "admin"); err == nil {
 		t.Fatal("expected NilDependencyError")
+	}
+}
+
+// TestUserAdapter_GetUserByUsername_ReadsBackTheAdmin proves the adapter is the
+// first-boot UserResolver go-qrdb needs to verify an existing admin on re-run:
+// it returns the record CreateUser wrote, with its role grant and lifecycle,
+// and an empty tenant means the system tenant.
+func TestUserAdapter_GetUserByUsername_ReadsBackTheAdmin(t *testing.T) {
+	store := newStore()
+	if _, err := store.CreateRole(context.Background(), "system", iam.CreateRoleOptions{ID: "role-admin", Name: "admin"}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	a := WrapUser(store)
+	if _, err := a.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{Username: "admin", TenantID: "system", RoleIDs: []string{"role-admin"}}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	var _ qrdbfirstboot.UserResolver = a
+
+	got, err := a.GetUserByUsername(context.Background(), "", "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if got.Username != "admin" || got.TenantID != "system" || len(got.RoleIDs) != 1 || got.RoleIDs[0] != "role-admin" {
+		t.Fatalf("read back %+v", got)
+	}
+	if !got.Lifecycle.Valid() || got.Lifecycle.Terminal() {
+		t.Fatalf("Lifecycle %q must be live for first boot to accept the admin", got.Lifecycle)
+	}
+}
+
+func TestUserAdapter_GetUserByUsername_Errors(t *testing.T) {
+	if _, err := WrapUser(newStore()).GetUserByUsername(context.Background(), "system", "nobody"); err == nil {
+		t.Fatal("an unknown user must be an error, not an empty record")
+	}
+	var nilAdapter *UserAdapter
+	var dep *NilDependencyError
+	if _, err := nilAdapter.GetUserByUsername(context.Background(), "system", "admin"); !errors.As(err, &dep) {
+		t.Fatalf("nil adapter = %v, want NilDependencyError", err)
 	}
 }

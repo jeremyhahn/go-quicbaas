@@ -107,10 +107,22 @@ func (s NodeState) String() string {
 	}
 }
 
-// AddNodeRequest is a request to add a node.
+// AddNodeRequest is a request to add a replica to a Raft shard.
 type AddNodeRequest struct {
-	Address string
-	Name    string
+	// ShardID is the shard the replica joins.
+	ShardID uint64 `json:"shard_id"`
+
+	// NodeID is the new replica's ID.
+	NodeID uint64 `json:"node_id"`
+
+	// Address is the replica's Raft address (host:port).
+	Address string `json:"address"`
+
+	// Identity is the replica's Raft member identity (spki:<sha256-hex>, as
+	// `qrdbd node-identity --cert` prints it). Optional when the cluster has
+	// already committed one for the replica or its host; a node no committed
+	// membership names needs it.
+	Identity string `json:"identity,omitempty"`
 }
 
 // RemoveNodeRequest is a request to remove a node.
@@ -330,6 +342,12 @@ func (c *client) GetRebalanceProgress(ctx context.Context, req *GetRebalanceProg
 func validateAddNodeRequest(req *AddNodeRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("cluster.AddNode", "request is required")
+	}
+	if req.ShardID == 0 {
+		return errors.NewInvalidInput("cluster.AddNode", "shard ID is required")
+	}
+	if req.NodeID == 0 {
+		return errors.NewInvalidInput("cluster.AddNode", "node ID is required")
 	}
 	if req.Address == "" {
 		return errors.NewInvalidInput("cluster.AddNode", "address is required")

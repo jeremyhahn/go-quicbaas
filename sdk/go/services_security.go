@@ -84,6 +84,15 @@ type (
 	// challenge verifier.
 	ACMEChallengeVerifierFunc = trustedca.ACMEChallengeVerifierFunc
 
+	// ACMEChallengeClient is the shared, SSRF-safe HTTP client the
+	// http-01 and enroll-01 verifiers contact a client-named target
+	// through. It refuses reserved addresses (loopback, private,
+	// link-local, metadata) unless its config allows them.
+	ACMEChallengeClient = trustedca.ACMEChallengeClient
+
+	// ACMEChallengeClientConfig configures an ACMEChallengeClient.
+	ACMEChallengeClientConfig = trustedca.ACMEChallengeClientConfig
+
 	// ACMEEnroll01TCGCSRVerifier is the TCG-CSR-IDEVID verification
 	// interface required by enroll-01 challenges (TCG TPM enrollment).
 	ACMEEnroll01TCGCSRVerifier = trustedca.ACMEEnroll01TCGCSRVerifier
@@ -100,9 +109,6 @@ type (
 	// ACMECertificateRequest describes a certificate request for the
 	// ACME client (used by Issue/Renew/CrossSign).
 	ACMECertificateRequest = trustedca.ACMECertificateRequest
-
-	// ACMERenewalConfig configures certificate renewal via ACME ARI.
-	ACMERenewalConfig = trustedca.ACMERenewalConfig
 
 	// ACMERenewalInfo carries server-side renewal recommendations.
 	ACMERenewalInfo = trustedca.ACMERenewalInfo
@@ -153,13 +159,19 @@ const (
 // ACME challenge verifier function re-exports. These are pure functions
 // that consumers register on their ACME server via ACMEServer.RegisterChallenge.
 var (
-	// ACMEVerifyHTTP01 verifies an HTTP-01 ACME challenge.
+	// NewACMEChallengeClient builds the challenge-validation client the
+	// http-01 and enroll-01 verifiers require.
+	NewACMEChallengeClient = trustedca.NewACMEChallengeClient
+
+	// ACMEVerifyHTTP01 verifies an HTTP-01 ACME challenge through an
+	// ACMEChallengeClient.
 	ACMEVerifyHTTP01 = trustedca.ACMEVerifyHTTP01
 
 	// ACMEVerifyDNS01 verifies a DNS-01 ACME challenge.
 	ACMEVerifyDNS01 = trustedca.ACMEVerifyDNS01
 
-	// ACMEVerifyEnroll01 verifies an enroll-01 (TCG TPM) ACME challenge.
+	// ACMEVerifyEnroll01 verifies an enroll-01 (TCG TPM) ACME challenge
+	// through an ACMEChallengeClient.
 	ACMEVerifyEnroll01 = trustedca.ACMEVerifyEnroll01
 
 	// ACMEVerifyEndorse01 verifies an endorse-01 ACME challenge.

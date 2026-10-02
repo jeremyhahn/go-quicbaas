@@ -1415,6 +1415,13 @@ func initXKMSForTest(t *testing.T) func() {
 	require.NoError(t, err)
 	require.True(t, xkmssdk.ServiceIsInitialized())
 
+	// Key-version records, as the server wires them, so RotateKey works.
+	keyVersions, err := xkmssdk.NewKeyVersionStore(xkmssdk.NewStorageMemory())
+	require.NoError(t, err)
+	svc, err := xkmssdk.Get()
+	require.NoError(t, err)
+	svc.SetKeyVersionStore(keyVersions)
+
 	return func() {
 		xkmssdk.ServiceReset()
 	}

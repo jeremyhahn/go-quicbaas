@@ -168,6 +168,25 @@ func (m *XKMSWebAuthnManager) BeginRegistration(ctx context.Context, tenantID, u
 	return marshalToMap(options)
 }
 
+// BeginInviteRegistration starts the registration ceremony for an existing
+// PENDING account, authorized by an invitation the caller already validated.
+// The account is resolved by email; go-xkms refuses unless it is pending and
+// holds no credential (go-xkms#1294 part B). The session is stashed under the
+// same (tenant, email) key BeginRegistration uses, so FinishRegistration
+// completes either ceremony.
+func (m *XKMSWebAuthnManager) BeginInviteRegistration(ctx context.Context, tenantID, email string) (map[string]interface{}, error) {
+	svc, err := m.factory.ServiceFor(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	options, sessionID, err := svc.BeginInviteRegistration(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	m.regSessions.Store(m.regKey(tenantID, email), sessionID)
+	return marshalToMap(options)
+}
+
 // FinishRegistration completes the registration ceremony by resolving
 // the stashed xkms session id and forwarding the parsed credential.
 //

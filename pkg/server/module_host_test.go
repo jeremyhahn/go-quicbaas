@@ -472,10 +472,10 @@ func TestAssertNoHostModuleRouteConflicts_PanicInsideRegisterHTTPIsTyped(t *test
 	assert.Contains(t, invalid.Reason, "BOGUS")
 }
 
-// A host module registers AFTER quicbaas's and go-xkms's, so the shared router
-// already holds routes and chi refuses further router-level middleware. The
-// probe is seeded to match that state, so a host calling Use fails the mount
-// here instead of panicking during real registration.
+// A host module may not install router-level middleware: go-qrdb's registrar
+// refuses Use from every module (v0.25 — middleware would serve requests no
+// permission registration covers), so a host calling Use fails the mount here
+// with a named error instead of panicking during real registration.
 func TestAssertNoHostModuleRouteConflicts_HostMiddlewareIsRejected(t *testing.T) {
 	mod := &rawRouterModule{name: "platform", run: func(r *qrdbsdk.ModuleHTTPRegistrar) {
 		r.Use(func(next http.Handler) http.Handler { return next })
@@ -489,13 +489,13 @@ func TestAssertNoHostModuleRouteConflicts_HostMiddlewareIsRejected(t *testing.T)
 	var invalid *HostModuleInvalidRouteError
 	require.ErrorAs(t, err, &invalid)
 	assert.Equal(t, "platform", invalid.Module)
-	assert.Contains(t, invalid.Reason, "middlewares")
+	assert.Contains(t, invalid.Reason, "Use is not available to a module")
 }
 
-// The mounted modules register first and legitimately meet an EMPTY router, so
-// they are probed against one: middleware from quicbaas or go-xkms must not be
-// reported as a failure just because a host module is also being mounted.
-func TestAssertNoHostModuleRouteConflicts_MountedMiddlewareIsAllowed(t *testing.T) {
+// Middleware is refused from a mounted module too: go-qrdb's registrar refuses
+// Use from every module, so the probe reports it as the invalid registration
+// the real mount would panic on, naming the module.
+func TestAssertNoHostModuleRouteConflicts_MountedMiddlewareIsRefused(t *testing.T) {
 	mounted := []qrdbsdk.ServiceModule{&rawRouterModule{
 		name: "quicbaas-like",
 		run: func(r *qrdbsdk.ModuleHTTPRegistrar) {
@@ -505,7 +505,10 @@ func TestAssertNoHostModuleRouteConflicts_MountedMiddlewareIsAllowed(t *testing.
 
 	err := assertNoHostModuleRouteConflicts(mounted,
 		[]qrdbsdk.ServiceModule{newHostTestModule("platform", "/api/v1/platform")})
-	assert.NoError(t, err)
+	var invalid *HostModuleInvalidRouteError
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, "quicbaas-like", invalid.Module)
+	assert.Contains(t, invalid.Reason, "Use is not available to a module")
 }
 
 // The probe's own seed route is invisible: it must not be reported as a

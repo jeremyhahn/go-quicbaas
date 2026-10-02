@@ -32,21 +32,13 @@ import (
 // as a ServiceBackend. No TPM crypto is reimplemented here.
 //
 // keyStore is accepted for signature uniformity but not used for key material:
-// TPM 2.0 keys live in the TPM and their wrapped blobs persist via
-// cfg.Seal.TPM2.KeyDir, not in a go-xkms StorageBackend.
+// TPM 2.0 keys live in the TPM and their wrapped blobs persist in the
+// file-based store at cfg.Seal.TPM2.KeyDir (see newTPM2BackendConfig).
 func buildTPM2ServiceBackend(cfg *config.Config, spec BackendSpec, keyStore xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
 	_ = keyStore // TPM keys persist in hardware / KeyDir, not in keyStore.
-	tpmCfg := cfg.Seal.TPM2
-	backendCfg := &xkmssdk.TPM2BackendConfig{
-		Device:          tpmCfg.Device,
-		KeyDir:          tpmCfg.KeyDir,
-		UseSimulator:    tpmCfg.UseSimulator,
-		SimulatorHost:   tpmCfg.SimulatorHost,
-		SimulatorPort:   tpmCfg.SimulatorPort,
-		SRKHandle:       tpmCfg.SRKHandle,
-		PlatformPolicy:  tpmCfg.PlatformPolicy,
-		PlatformPCR:     tpmCfg.PCR,
-		PlatformPCRBank: tpmCfg.PCRBank,
+	backendCfg, err := newTPM2BackendConfig(cfg.Seal.TPM2)
+	if err != nil {
+		return nil, &BackendConstructError{Backend: config.BackendTypeTPM2, Cause: err}
 	}
 
 	backend, err := xkmssdk.NewTPM2Backend(backendCfg)
@@ -56,7 +48,7 @@ func buildTPM2ServiceBackend(cfg *config.Config, spec BackendSpec, keyStore xkms
 		}
 		// First-boot path: provision the uninitialised TPM and retry. Shared
 		// with the TPM2 seal strategy (provisionTPM2Backend in seal_factories.go).
-		backend, err = provisionTPM2Backend(backendCfg)
+		backend, err = provisionTPM2Backend(backendCfg, tpm2KeyDir(cfg.Seal.TPM2))
 		if err != nil {
 			return nil, &BackendConstructError{Backend: config.BackendTypeTPM2, Cause: err}
 		}

@@ -262,18 +262,28 @@ func TestClient_AddNode_Validation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "empty address",
-			req:     &AddNodeRequest{Name: "node-4"},
+			name:    "missing shard",
+			req:     &AddNodeRequest{NodeID: 4, Address: "localhost:50054"},
 			wantErr: true,
 		},
 		{
-			name:    "valid request with name",
-			req:     &AddNodeRequest{Address: "localhost:50054", Name: "node-4"},
+			name:    "missing node",
+			req:     &AddNodeRequest{ShardID: 1, Address: "localhost:50054"},
+			wantErr: true,
+		},
+		{
+			name:    "empty address",
+			req:     &AddNodeRequest{ShardID: 1, NodeID: 4},
+			wantErr: true,
+		},
+		{
+			name:    "valid request with identity",
+			req:     &AddNodeRequest{ShardID: 1, NodeID: 4, Address: "localhost:50054", Identity: "spki:ab"},
 			wantErr: false,
 		},
 		{
-			name:    "valid request without name",
-			req:     &AddNodeRequest{Address: "localhost:50054"},
+			name:    "valid request using the committed identity",
+			req:     &AddNodeRequest{ShardID: 1, NodeID: 4, Address: "localhost:50054"},
 			wantErr: false,
 		},
 	}
@@ -365,7 +375,7 @@ func TestClient_AddNode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := NewClient(tt.transport)
-			err := client.AddNode(tt.ctx, &AddNodeRequest{Address: "localhost:50054"})
+			err := client.AddNode(tt.ctx, &AddNodeRequest{ShardID: 1, NodeID: 4, Address: "localhost:50054"})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("AddNode() error = %v, wantErr %v", err, tt.wantErr)
 			}

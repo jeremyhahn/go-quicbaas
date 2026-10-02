@@ -114,7 +114,6 @@ func buildTPM2AutoSealStrategy(cfg *config.Config, logger *slog.Logger) (qrdbsdk
 			SimulatorHost:   tpmCfg.SimulatorHost,
 			SimulatorPort:   tpmCfg.SimulatorPort,
 			SRKHandle:       tpmCfg.SRKHandle,
-			PlatformPolicy:  tpmCfg.PlatformPolicy,
 			PlatformPCR:     tpmCfg.PCR,
 			PlatformPCRBank: tpmCfg.PCRBank,
 		},
