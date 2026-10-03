@@ -32,6 +32,10 @@ import (
 // server unit tests. It records its input so the proto conversion can be
 // asserted in both directions.
 type stubAttestationService struct {
+	// The embedded interface supplies the Verifier verbs this stub does not
+	// exercise; they are tested against the real service elsewhere.
+	service.AttestationService
+
 	verifyErr      error
 	verifyChainErr error
 	attestErr      error
@@ -345,6 +349,17 @@ func TestAttestationGRPCPermissions(t *testing.T) {
 		"/quicbaas.attestation.v1.AttestationService/Verify":          {"attestation", "verify"},
 		"/quicbaas.attestation.v1.AttestationService/VerifyChain":     {"attestation", "verify"},
 		"/quicbaas.attestation.v1.AttestationService/AttestContainer": {"attestation", "attest"},
+
+		// The Verifier: managing what it trusts is provision (Admin);
+		// reading those records and appraising against them is verify.
+		"/quicbaas.attestation.v1.AttestationService/PutEndorsement":        {"attestation", "provision"},
+		"/quicbaas.attestation.v1.AttestationService/ListEndorsements":      {"attestation", "verify"},
+		"/quicbaas.attestation.v1.AttestationService/DeleteEndorsement":     {"attestation", "provision"},
+		"/quicbaas.attestation.v1.AttestationService/PutReferenceValues":    {"attestation", "provision"},
+		"/quicbaas.attestation.v1.AttestationService/GetReferenceValues":    {"attestation", "verify"},
+		"/quicbaas.attestation.v1.AttestationService/ListReferenceValues":   {"attestation", "verify"},
+		"/quicbaas.attestation.v1.AttestationService/DeleteReferenceValues": {"attestation", "provision"},
+		"/quicbaas.attestation.v1.AttestationService/AppraiseQuote":         {"attestation", "verify"},
 	}
 
 	for method, expected := range want {

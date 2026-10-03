@@ -44,6 +44,146 @@ service AttestationService {
   rpc AttestContainer(AttestContainerRequest) returns (AttestContainerResponse) {
       option (qrdb.v1.permission) = "attestation:attest";
   }
+
+  // PutEndorsement stores (or replaces) a Verifier trust anchor: a
+  // reference-value signer or an attestation-key root.
+  rpc PutEndorsement(PutEndorsementRequest) returns (Endorsement) {
+      option (qrdb.v1.permission) = "attestation:provision";
+  }
+
+  // ListEndorsements lists the caller tenant's endorsements.
+  rpc ListEndorsements(ListEndorsementsRequest) returns (ListEndorsementsResponse) {
+      option (qrdb.v1.permission) = "attestation:verify";
+  }
+
+  // DeleteEndorsement removes an endorsement.
+  rpc DeleteEndorsement(DeleteEndorsementRequest) returns (DeleteEndorsementResponse) {
+      option (qrdb.v1.permission) = "attestation:provision";
+  }
+
+  // PutReferenceValues stores a signed CoRIM that a stored reference-signer
+  // endorsement verifies. Unendorsed reference values are refused.
+  rpc PutReferenceValues(PutReferenceValuesRequest) returns (ReferenceValues) {
+      option (qrdb.v1.permission) = "attestation:provision";
+  }
+
+  // GetReferenceValues returns stored reference values.
+  rpc GetReferenceValues(GetReferenceValuesRequest) returns (ReferenceValues) {
+      option (qrdb.v1.permission) = "attestation:verify";
+  }
+
+  // ListReferenceValues lists stored reference values (without bodies).
+  rpc ListReferenceValues(ListReferenceValuesRequest) returns (ListReferenceValuesResponse) {
+      option (qrdb.v1.permission) = "attestation:verify";
+  }
+
+  // DeleteReferenceValues removes stored reference values.
+  rpc DeleteReferenceValues(DeleteReferenceValuesRequest) returns (DeleteReferenceValuesResponse) {
+      option (qrdb.v1.permission) = "attestation:provision";
+  }
+
+  // AppraiseQuote appraises TPM quote evidence against stored, signed
+  // reference values and returns the attestation result.
+  rpc AppraiseQuote(AppraiseQuoteRequest) returns (AttestationResult) {
+      option (qrdb.v1.permission) = "attestation:verify";
+  }
+}
+
+// Endorsement is a Verifier trust anchor.
+message Endorsement {
+  string name = 1;
+  // Kind is "reference-signer" or "ak-root".
+  string kind = 2;
+  bytes certificate_pem = 3;
+  bytes public_key_pem = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message PutEndorsementRequest {
+  string name = 1;
+  string kind = 2;
+  bytes certificate_pem = 3;
+  bytes public_key_pem = 4;
+}
+
+message ListEndorsementsRequest {
+  // Kind filters by kind; empty lists all.
+  string kind = 1;
+}
+
+message ListEndorsementsResponse {
+  repeated Endorsement endorsements = 1;
+}
+
+message DeleteEndorsementRequest {
+  string name = 1;
+}
+
+message DeleteEndorsementResponse {}
+
+// ReferenceValues describes a stored, verified signed CoRIM.
+message ReferenceValues {
+  string name = 1;
+  string manifest_id = 2;
+  string profile = 3;
+  string signer = 4;
+  google.protobuf.Timestamp not_before = 5;
+  google.protobuf.Timestamp not_after = 6;
+  repeated uint32 pcr_indices = 7;
+  google.protobuf.Timestamp stored_at = 8;
+  bytes signed_corim = 9;
+}
+
+message PutReferenceValuesRequest {
+  string name = 1;
+  bytes signed_corim = 2;
+}
+
+message GetReferenceValuesRequest {
+  string name = 1;
+}
+
+message ListReferenceValuesRequest {}
+
+message ListReferenceValuesResponse {
+  repeated ReferenceValues reference_values = 1;
+}
+
+message DeleteReferenceValuesRequest {
+  string name = 1;
+}
+
+message DeleteReferenceValuesResponse {}
+
+message AppraiseQuoteRequest {
+  // AkCertificatePem is the AK certificate, leaf first, then intermediates.
+  bytes ak_certificate_pem = 1;
+  bytes quote = 2;
+  bytes signature = 3;
+  bytes nonce = 4;
+  map<uint32, bytes> pcrs = 5;
+  bytes event_log = 6;
+  string reference_values = 7;
+}
+
+// AppraisalCheck is one check of an appraisal.
+message AppraisalCheck {
+  string name = 1;
+  // Outcome is "pass", "forged", "absent" or "skipped".
+  string outcome = 2;
+  string reason = 3;
+}
+
+// AttestationResult is the Verifier's result for one appraisal.
+message AttestationResult {
+  bool verified = 1;
+  bool cryptographic_failure = 2;
+  repeated AppraisalCheck checks = 3;
+  string reference_values = 4;
+  string manifest_id = 5;
+  string signer = 6;
+  string baseline_source = 7;
+  google.protobuf.Timestamp appraised_at = 8;
 }
 
 // AttestationVerifyOptions is the wire form of the go-xkms attestation

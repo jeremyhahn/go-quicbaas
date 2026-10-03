@@ -4,6 +4,8 @@ DELETE /api/v1/agent-accounts/{id} permission credentials:delete
 DELETE /api/v1/agent-accounts/{id}/reservations/{rid} permission agent_accounts:materialize
 DELETE /api/v1/agent-pools/{poolID} permission agents:write
 DELETE /api/v1/agents/{agentID} permission agents:write
+DELETE /api/v1/attestation/endorsements/{name} permission attestation:provision
+DELETE /api/v1/attestation/reference-values/{name} permission attestation:provision
 DELETE /api/v1/backups/{id} permission backup:delete
 DELETE /api/v1/barrier/recovery permission seal:generate_recovery
 DELETE /api/v1/cluster/migrate/ permission admin:drain
@@ -90,6 +92,9 @@ GET /api/v1/agent-pools/{poolID}/used-by permission agents:read
 GET /api/v1/agents permission agents:read
 GET /api/v1/agents/{agentID} permission agents:read
 GET /api/v1/agents/{agentID}/used-by permission agents:read
+GET /api/v1/attestation/endorsements permission attestation:verify
+GET /api/v1/attestation/reference-values permission attestation:verify
+GET /api/v1/attestation/reference-values/{name} permission attestation:verify
 GET /api/v1/auth/providers/{tenant_id}/{provider_name}/callback public -:-
 GET /api/v1/auth/providers/{tenant_id}/{provider_name}/login public -:-
 GET /api/v1/backups permission backup:list
@@ -328,6 +333,7 @@ POST /api/v1/agent-accounts/{id}/revoke permission credentials:delete
 POST /api/v1/agent-accounts/{id}/rotate permission credentials:rotate
 POST /api/v1/agent-pools permission agents:write
 POST /api/v1/agents permission agents:write
+POST /api/v1/attestation/appraise-quote permission attestation:verify
 POST /api/v1/fleet/enroll public -:-
 POST /api/v1/attestation/attest-container permission attestation:attest
 POST /api/v1/attestation/verify permission attestation:verify
@@ -607,6 +613,8 @@ PUT /api/v1/admin/object-backends/{name}/status permission roles:assign
 PUT /api/v1/agent-accounts/{id} permission credentials:store
 PUT /api/v1/agent-pools/{poolID} permission agents:write
 PUT /api/v1/agents/{agentID} permission agents:write
+PUT /api/v1/attestation/endorsements/{name} permission attestation:provision
+PUT /api/v1/attestation/reference-values/{name} permission attestation:provision
 PUT /api/v1/cache/config permission admin:capabilities
 PUT /api/v1/cluster/nodes/{nodeId}/replace permission admin:add_member
 PUT /api/v1/embedding/providers/default permission embedding:list_models

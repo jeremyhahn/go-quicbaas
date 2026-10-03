@@ -1194,6 +1194,41 @@ type (
 	AttestContainerResponse = pkgservice.AttestContainerResponse
 )
 
+// Attestation Verifier types (RFC 9334): endorsements, signed reference
+// values and attestation results.
+type (
+	AttestationOption            = pkgservice.AttestationOption
+	AttestationStore             = pkgservice.AttestationStore
+	EndorsementKind              = pkgservice.EndorsementKind
+	Endorsement                  = pkgservice.Endorsement
+	PutEndorsementRequest        = pkgservice.PutEndorsementRequest
+	ListEndorsementsRequest      = pkgservice.ListEndorsementsRequest
+	ListEndorsementsResponse     = pkgservice.ListEndorsementsResponse
+	DeleteEndorsementRequest     = pkgservice.DeleteEndorsementRequest
+	ReferenceValues              = pkgservice.ReferenceValues
+	PutReferenceValuesRequest    = pkgservice.PutReferenceValuesRequest
+	GetReferenceValuesRequest    = pkgservice.GetReferenceValuesRequest
+	ListReferenceValuesResponse  = pkgservice.ListReferenceValuesResponse
+	DeleteReferenceValuesRequest = pkgservice.DeleteReferenceValuesRequest
+	AppraiseQuoteRequest         = pkgservice.AppraiseQuoteRequest
+	AppraisalCheck               = pkgservice.AppraisalCheck
+	AppraisalOutcome             = pkgservice.AppraisalOutcome
+	AttestationResult            = pkgservice.AttestationResult
+)
+
+// Attestation Verifier constructors and options.
+var (
+	// WithAttestationStore gives the Verifier its endorsement and
+	// reference-value store.
+	WithAttestationStore = pkgservice.WithAttestationStore
+
+	// WithAttestationClock sets the appraisal clock.
+	WithAttestationClock = pkgservice.WithAttestationClock
+
+	// NewQRDBAttestationStore stores Verifier records in qrdb KV.
+	NewQRDBAttestationStore = pkgservice.NewQRDBAttestationStore
+)
+
 // NewAttestationService creates the attestation service over the supplied
 // trust anchors and container attestor. A nil attestor leaves the
 // orchestration seam empty and AttestContainer returns

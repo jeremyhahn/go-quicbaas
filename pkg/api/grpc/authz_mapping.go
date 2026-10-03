@@ -440,6 +440,18 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.registry.v1.RegistryService/Resolve":    {"service_registry", "read"},
 	"/quicbaas.registry.v1.RegistryService/Watch":      {"service_registry", "read"},
 
+	// The Verifier: reading endorsements and reference values, and appraising
+	// evidence against them, are reads (attestation:verify); storing or
+	// deleting what the Verifier trusts is attestation:provision (Admin).
+	"/quicbaas.attestation.v1.AttestationService/PutEndorsement":        {"attestation", "provision"},
+	"/quicbaas.attestation.v1.AttestationService/ListEndorsements":      {"attestation", "verify"},
+	"/quicbaas.attestation.v1.AttestationService/DeleteEndorsement":     {"attestation", "provision"},
+	"/quicbaas.attestation.v1.AttestationService/PutReferenceValues":    {"attestation", "provision"},
+	"/quicbaas.attestation.v1.AttestationService/GetReferenceValues":    {"attestation", "verify"},
+	"/quicbaas.attestation.v1.AttestationService/ListReferenceValues":   {"attestation", "verify"},
+	"/quicbaas.attestation.v1.AttestationService/DeleteReferenceValues": {"attestation", "provision"},
+	"/quicbaas.attestation.v1.AttestationService/AppraiseQuote":         {"attestation", "verify"},
+
 	// ---- quicbaas.certificate.v1.TrustService ----
 	"/quicbaas.certificate.v1.TrustService/CrossSignedRootPool": {"certs", "read"},
 	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"certs", "generate"},

@@ -35,6 +35,16 @@ var attestationMethods = map[string]func(*securityRESTHandler, context.Context, 
 	"Verify":          (*securityRESTHandler).attestationVerify,
 	"VerifyChain":     (*securityRESTHandler).attestationVerifyChain,
 	"AttestContainer": (*securityRESTHandler).attestationAttestContainer,
+
+	// The Verifier (security_handler_attestation_verifier.go).
+	"PutEndorsement":        (*securityRESTHandler).attestationPutEndorsement,
+	"ListEndorsements":      (*securityRESTHandler).attestationListEndorsements,
+	"DeleteEndorsement":     (*securityRESTHandler).attestationDeleteEndorsement,
+	"PutReferenceValues":    (*securityRESTHandler).attestationPutReferenceValues,
+	"GetReferenceValues":    (*securityRESTHandler).attestationGetReferenceValues,
+	"ListReferenceValues":   (*securityRESTHandler).attestationListReferenceValues,
+	"DeleteReferenceValues": (*securityRESTHandler).attestationDeleteReferenceValues,
+	"AppraiseQuote":         (*securityRESTHandler).attestationAppraiseQuote,
 }
 
 // handleAttestation dispatches a Security().Attestation() method to its REST

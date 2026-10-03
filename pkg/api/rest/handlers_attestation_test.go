@@ -35,6 +35,10 @@ import (
 // REST server handler tests. It records its input so the JSON decoding can be
 // asserted end to end.
 type stubAttestationService struct {
+	// The embedded interface supplies the Verifier verbs this stub does not
+	// exercise; they are tested against the real service elsewhere.
+	service.AttestationService
+
 	verifyErr      error
 	verifyChainErr error
 	attestErr      error

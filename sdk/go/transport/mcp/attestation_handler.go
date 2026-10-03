@@ -60,6 +60,9 @@ func (h *attestationHandler) transformRequest(method string, req interface{}) (m
 	case "AttestContainer":
 		return h.transformAttestContainerRequest(req)
 	default:
+		if transform, ok := verifierRequestTransforms[method]; ok {
+			return transform(req)
+		}
 		return nil, errors.NewUnimplemented("mcp.attestation."+method,
 			"method not exposed by the Attestation MCP tool set")
 	}
@@ -75,7 +78,16 @@ func (h *attestationHandler) transformResponse(method string, result interface{}
 		return h.transformVerifyChainResponse(result)
 	case "AttestContainer":
 		return h.transformAttestContainerResponse(result)
+	case "DeleteEndorsement", "DeleteReferenceValues":
+		return nil, nil
 	default:
+		if transform, ok := verifierResponseTransforms[method]; ok {
+			m, err := asResultMap(result, "mcp.attestation."+method)
+			if err != nil {
+				return nil, err
+			}
+			return transform(m), nil
+		}
 		return nil, errors.NewUnimplemented("mcp.attestation."+method,
 			"method not exposed by the Attestation MCP tool set")
 	}

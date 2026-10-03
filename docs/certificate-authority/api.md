@@ -70,12 +70,12 @@ MCP tools: `quicbaas_trust_auto_import_aia`, `quicbaas_trust_cross_signed_root_p
 
 ### `quicbaas.Attestation` — SDK package `sdk/go/client/attestation`
 
-Dedicated transport handlers: rest=no, grpc=yes, mcp=yes; embedded routes registered: 3; MCP tools registered server-side: 3.
-
-MCP tools: `quicbaas_attestation_attest_container`, `quicbaas_attestation_verify`, `quicbaas_attestation_verify_chain`
-
-| SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
-|---|---|---|---|---|---|---|
+The attestation service — statement and chain verification, the container
+attestation seam, and the RFC 9334 Verifier (endorsements, signed reference
+values, quote appraisal) — has its own feature folder:
+[docs/attestation/api.md](../attestation/api.md). Dedicated transport handlers:
+rest=yes, grpc=yes, mcp=yes; embedded routes registered: 11; MCP tools
+registered server-side: 11.
 
 
 

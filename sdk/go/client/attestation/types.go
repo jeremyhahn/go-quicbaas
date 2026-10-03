@@ -140,3 +140,120 @@ type AttestContainerResponse struct {
 	LaunchMeasurement []byte            `json:"launch_measurement,omitempty"`
 	AttestedAt        string            `json:"attested_at,omitempty"`
 }
+
+// =============================================================================
+// Verifier (RFC 9334): endorsements, signed reference values, appraisal.
+// Timestamps are RFC 3339 strings so the shape is identical on every
+// transport, including the proto-backed ones.
+// =============================================================================
+
+// Endorsement kinds.
+const (
+	// EndorsementReferenceSigner anchors signed reference values.
+	EndorsementReferenceSigner = "reference-signer"
+
+	// EndorsementAKRoot anchors attestation-key certificates.
+	EndorsementAKRoot = "ak-root"
+)
+
+// Appraisal outcomes.
+const (
+	AppraisalPass    = "pass"
+	AppraisalForged  = "forged"
+	AppraisalAbsent  = "absent"
+	AppraisalSkipped = "skipped"
+)
+
+// Endorsement is a Verifier trust anchor.
+type Endorsement struct {
+	Name           string `json:"name"`
+	Kind           string `json:"kind"`
+	CertificatePEM []byte `json:"certificate_pem,omitempty"`
+	PublicKeyPEM   []byte `json:"public_key_pem,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
+}
+
+// PutEndorsementRequest stores (or replaces) an endorsement. Exactly one of
+// CertificatePEM and PublicKeyPEM is set; an ak-root is a CA certificate.
+type PutEndorsementRequest struct {
+	Name           string `json:"name"`
+	Kind           string `json:"kind"`
+	CertificatePEM []byte `json:"certificate_pem,omitempty"`
+	PublicKeyPEM   []byte `json:"public_key_pem,omitempty"`
+}
+
+// ListEndorsementsResponse lists endorsements, ordered by name.
+type ListEndorsementsResponse struct {
+	Endorsements []*Endorsement `json:"endorsements"`
+}
+
+// ReferenceValues describes stored, endorsed, signed reference values.
+type ReferenceValues struct {
+	Name        string   `json:"name"`
+	ManifestID  string   `json:"manifest_id"`
+	Profile     string   `json:"profile,omitempty"`
+	Signer      string   `json:"signer,omitempty"`
+	NotBefore   string   `json:"not_before,omitempty"`
+	NotAfter    string   `json:"not_after,omitempty"`
+	PCRIndices  []uint32 `json:"pcr_indices"`
+	StoredAt    string   `json:"stored_at,omitempty"`
+	SignedCoRIM []byte   `json:"signed_corim,omitempty"`
+}
+
+// ListReferenceValuesResponse lists stored reference values (without the
+// signed CoRIM bodies).
+type ListReferenceValuesResponse struct {
+	ReferenceValues []*ReferenceValues `json:"reference_values"`
+}
+
+// AppraiseQuoteRequest is TPM quote evidence plus the reference values to
+// appraise it against.
+type AppraiseQuoteRequest struct {
+	AKCertificatePEM []byte            `json:"ak_certificate_pem"`
+	Quote            []byte            `json:"quote"`
+	Signature        []byte            `json:"signature"`
+	Nonce            []byte            `json:"nonce"`
+	PCRs             map[uint32][]byte `json:"pcrs"`
+	EventLog         []byte            `json:"event_log,omitempty"`
+	ReferenceValues  string            `json:"reference_values"`
+}
+
+// AppraisalCheck is one check of an appraisal.
+type AppraisalCheck struct {
+	Name    string `json:"name"`
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// AttestationResult is the Verifier's result for one appraisal. Verified is
+// true only when every check passed; CryptographicFailure marks evidence that
+// was present and wrong (grounds for quarantine) as opposed to absent.
+type AttestationResult struct {
+	Verified             bool             `json:"verified"`
+	CryptographicFailure bool             `json:"cryptographic_failure"`
+	Checks               []AppraisalCheck `json:"checks"`
+	ReferenceValues      string           `json:"reference_values,omitempty"`
+	ManifestID           string           `json:"manifest_id,omitempty"`
+	Signer               string           `json:"signer,omitempty"`
+	BaselineSource       string           `json:"baseline_source,omitempty"`
+	AppraisedAt          string           `json:"appraised_at,omitempty"`
+}
+
+// The Verifier's request envelopes that carry only a name or a filter.
+type (
+	// ListEndorsementsRequest filters endorsements by kind.
+	ListEndorsementsRequest struct {
+		Kind string `json:"kind,omitempty"`
+	}
+
+	// NameRequest names an endorsement or reference values.
+	NameRequest struct {
+		Name string `json:"name"`
+	}
+
+	// PutReferenceValuesRequest stores signed reference values.
+	PutReferenceValuesRequest struct {
+		Name        string `json:"name"`
+		SignedCoRIM []byte `json:"signed_corim"`
+	}
+)

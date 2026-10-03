@@ -64,6 +64,9 @@ func (h *attestationHandler) handleRequest(ctx context.Context, _ string, method
 	case "AttestContainer":
 		return h.handleAttestContainer(ctx, client, req)
 	default:
+		if verifier, ok := attestationVerifierHandlers[method]; ok {
+			return verifier(ctx, client, req)
+		}
 		return nil, errors.NewUnimplemented("attestationHandler.handleRequest",
 			"method not exposed by AttestationService gRPC proto: "+method)
 	}

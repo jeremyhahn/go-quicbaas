@@ -34,6 +34,10 @@ var errAttestation = errors.New("attestation: boom")
 // is set every method returns errAttestation; otherwise it echoes its input
 // back so the handlers' field mapping can be asserted.
 type fakeAttestationService struct {
+	// The embedded interface supplies the Verifier verbs this stub does not
+	// exercise; they are tested against the real service elsewhere.
+	service.AttestationService
+
 	failNext bool
 
 	lastVerify      *service.VerifyAttestationRequest

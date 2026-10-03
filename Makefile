@@ -4440,6 +4440,26 @@ bench-registry: ## Run service registry benchmarks
 integration-test-registry: ## Run service registry CLI integration tests (all transports, in the devcontainer)
 	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestServiceRegistry ./test/integration/cli/..."
 
+.PHONY: test-attestation
+test-attestation: ## Run attestation Verifier unit tests (service, every transport, SDK, CLI)
+	@echo "$(BLUE)Running attestation unit tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Attestation|Verifier|ComparePCRBaseline' ./pkg/service/... ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -run 'Attestation' . ./transport/...
+
+.PHONY: coverage-attestation
+coverage-attestation: ## Generate coverage report for the attestation Verifier
+	@mkdir -p $(COVERAGE_DIR)
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -run 'Verifier|ComparePCRBaseline|Attestation' -coverprofile=$(COVERAGE_DIR)/coverage-attestation.out -covermode=atomic ./pkg/service/
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-attestation.out | grep -E 'attestation_verifier.go|total'
+
+.PHONY: bench-attestation
+bench-attestation: ## Run attestation Verifier benchmarks
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -bench='Appraise' -benchmem -run=^$$ ./pkg/service/
+
+.PHONY: integration-test-attestation
+integration-test-attestation: ## Run attestation Verifier CLI integration tests (all transports, in the devcontainer)
+	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestAttestationVerifier ./test/integration/cli/..."
+
 .PHONY: integration-test-account
 integration-test-account: ## Run pooled provider account CLI integration tests (all transports, in the devcontainer)
 	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestAgentAccount ./test/integration/cli/..."

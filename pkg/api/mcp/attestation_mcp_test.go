@@ -34,6 +34,10 @@ var errFakeAttestation = errors.New("attestation: boom")
 
 // fakeAttestationService records its input and replays a fixed response.
 type fakeAttestationService struct {
+	// The embedded interface supplies the Verifier verbs this stub does not
+	// exercise; they are tested against the real service elsewhere.
+	service.AttestationService
+
 	failNext bool
 
 	lastVerify      *service.VerifyAttestationRequest

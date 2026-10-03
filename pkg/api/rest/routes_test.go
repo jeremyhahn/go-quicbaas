@@ -135,7 +135,11 @@ import (
 // cordon, uncordon, drain) and four placement routes under
 // /api/v1/scheduler/placements (place, list, get, release), in the
 // "placement" permission family.
-const baseRouteTableSize = 660
+// PLUS 8 for the attestation Verifier (/api/v1/attestation/endorsements,
+// /reference-values and /appraise-quote, handlers_attestation_verifier.go):
+// managing what it trusts under attestation:provision, reading and
+// appraising under attestation:verify.
+const baseRouteTableSize = 668
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

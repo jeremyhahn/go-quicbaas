@@ -830,6 +830,16 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"quicbaas_attestation_verify":           {"attestation", "verify"},
 	"quicbaas_attestation_verify_chain":     {"attestation", "verify"},
 	"quicbaas_attestation_attest_container": {"attestation", "attest"},
+	// The Verifier: provision (Admin) manages what it trusts; verify reads
+	// those records and appraises evidence against them.
+	"quicbaas_attestation_put_endorsement":         {"attestation", "provision"},
+	"quicbaas_attestation_list_endorsements":       {"attestation", "verify"},
+	"quicbaas_attestation_delete_endorsement":      {"attestation", "provision"},
+	"quicbaas_attestation_put_reference_values":    {"attestation", "provision"},
+	"quicbaas_attestation_get_reference_values":    {"attestation", "verify"},
+	"quicbaas_attestation_list_reference_values":   {"attestation", "verify"},
+	"quicbaas_attestation_delete_reference_values": {"attestation", "provision"},
+	"quicbaas_attestation_appraise_quote":          {"attestation", "verify"},
 
 	"quicbaas_trust_cross_signed_root_pool": {"certs", "read"},
 	"quicbaas_trust_auto_import_aia":        {"certs", "generate"},

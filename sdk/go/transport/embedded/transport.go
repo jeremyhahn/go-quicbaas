@@ -239,6 +239,16 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Attestation/VerifyChain":     handleAttestationVerifyChain,
 	"quicbaas.Attestation/AttestContainer": handleAttestationAttestContainer,
 
+	// The attestation Verifier (handlers_attestation_verifier.go).
+	attestationService + "/PutEndorsement":        handleAttestationPutEndorsement,
+	attestationService + "/ListEndorsements":      handleAttestationListEndorsements,
+	attestationService + "/DeleteEndorsement":     handleAttestationDeleteEndorsement,
+	attestationService + "/PutReferenceValues":    handleAttestationPutReferenceValues,
+	attestationService + "/GetReferenceValues":    handleAttestationGetReferenceValues,
+	attestationService + "/ListReferenceValues":   handleAttestationListReferenceValues,
+	attestationService + "/DeleteReferenceValues": handleAttestationDeleteReferenceValues,
+	attestationService + "/AppraiseQuote":         handleAttestationAppraiseQuote,
+
 	// Dynamic secrets: lease-backed credential generation
 	// (Security().DynamicSecrets()).
 	"quicbaas.DynamicSecrets/CreateRole":         handleDynamicSecretsCreateRole,

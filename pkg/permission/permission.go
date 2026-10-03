@@ -99,6 +99,15 @@ const (
 	// with AttestationVerify.
 	AttestationAttest qrdbsdk.Permission = "attestation:attest"
 
+	// AttestationProvision ("attestation:provision") authorizes managing the
+	// Verifier's trust: storing and deleting endorsements (the anchors that
+	// attestation-key certificates and signed reference values must chain or
+	// verify to) and the signed reference values appraisal compares against.
+	// It decides what every later appraisal will accept, so it is the
+	// administrative verb of the family. Reading those records and appraising
+	// evidence against them carry AttestationVerify.
+	AttestationProvision qrdbsdk.Permission = "attestation:provision"
+
 	// AuditRecord ("audit_events:record") authorizes emitting (writing) a
 	// new event onto the audit chain — the remote-write counterpart to
 	// go-qrdb's own audit:read / audit:query (pkg/permission.AuditRead /
@@ -465,6 +474,20 @@ var contributions = []contribution{
 			qrdbsdk.PermissionRoleAdmin,
 		},
 		duty: dutyCryptoUse,
+	},
+	{
+		// attestation:provision decides what the Verifier trusts. It is held
+		// by Admin alone: an Operator appraises evidence (attestation:verify)
+		// but must not be able to install the anchors or baselines that
+		// evidence is judged against, or it could approve its own hosts.
+		// Not granted to the Security Officer: the duty is declared outside
+		// the SO's module-governance set, deliberately, so that installing
+		// attestation trust stays with the platform administrator rather than
+		// the role that holds the module's own keys and barrier.
+		permission: AttestationProvision,
+		scope:      scopeSelf,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin},
+		duty:       dutyOutsideSecurityOfficer,
 	},
 	{
 		// audit:record is granted to Admin and Operator — the day-to-day

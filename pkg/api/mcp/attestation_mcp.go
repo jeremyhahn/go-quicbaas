@@ -41,7 +41,7 @@ var attestationExecutors = map[string]attestationToolExecutor{
 // registerAttestationTools registers all Attestation tool handlers on the
 // ToolRegistry.
 func (r *ToolRegistry) registerAttestationTools() {
-	for _, tool := range getAllAttestationTools() {
+	for _, tool := range append(getAllAttestationTools(), getAllAttestationVerifierTools()...) {
 		r.addTool(ToolDefinition{
 			Name:        tool.Name,
 			Description: tool.Description,
@@ -58,6 +58,9 @@ func (r *ToolRegistry) executeAttestationTool(ctx context.Context, name string, 
 	}
 
 	executor, ok := attestationExecutors[name]
+	if !ok {
+		executor, ok = attestationVerifierExecutors[name]
+	}
 	if !ok {
 		return nil, api.NewUnknownToolError(name)
 	}
@@ -240,6 +243,9 @@ func intToDecimal(v uint32) string {
 
 // isAttestationTool returns true if the tool name is an Attestation tool.
 func isAttestationTool(name string) bool {
-	_, ok := attestationExecutors[name]
+	if _, ok := attestationExecutors[name]; ok {
+		return true
+	}
+	_, ok := attestationVerifierExecutors[name]
 	return ok
 }

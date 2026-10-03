@@ -612,6 +612,7 @@ func resetFactories() {
 	projectClientFactory = createSDKProjectClient
 	accountClientFactory = createSDKAccountClient
 	registryClientFactory = createSDKRegistryClient
+	attestationClientFactory = createSDKAttestationClient
 	mcpCallerFactory = createSDKMCPCaller
 	sdkDEKClientFactory = createSDKDEKServiceClient
 	dynamicSecretsClientFactory = createSDKDynamicSecretsClient

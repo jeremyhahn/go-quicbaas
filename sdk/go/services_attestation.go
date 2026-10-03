@@ -70,6 +70,40 @@ type (
 
 	// AttestContainerResponse is the evidence produced for a container.
 	AttestContainerResponse = attestationclient.AttestContainerResponse
+
+	// AttestationEndorsement is a Verifier trust anchor.
+	AttestationEndorsement = attestationclient.Endorsement
+
+	// AttestationPutEndorsementRequest stores an endorsement.
+	AttestationPutEndorsementRequest = attestationclient.PutEndorsementRequest
+
+	// AttestationListEndorsementsResponse lists endorsements.
+	AttestationListEndorsementsResponse = attestationclient.ListEndorsementsResponse
+
+	// AttestationReferenceValues describes stored, signed reference values.
+	AttestationReferenceValues = attestationclient.ReferenceValues
+
+	// AttestationListReferenceValuesResponse lists stored reference values.
+	AttestationListReferenceValuesResponse = attestationclient.ListReferenceValuesResponse
+
+	// AttestationAppraiseQuoteRequest is TPM quote evidence to appraise.
+	AttestationAppraiseQuoteRequest = attestationclient.AppraiseQuoteRequest
+
+	// AttestationAppraisalCheck is one check of an appraisal.
+	AttestationAppraisalCheck = attestationclient.AppraisalCheck
+
+	// AttestationResult is the Verifier's attestation result.
+	AttestationResult = attestationclient.AttestationResult
+)
+
+// Verifier endorsement kinds and appraisal outcomes.
+const (
+	AttestationEndorsementReferenceSigner = attestationclient.EndorsementReferenceSigner
+	AttestationEndorsementAKRoot          = attestationclient.EndorsementAKRoot
+	AttestationAppraisalPass              = attestationclient.AppraisalPass
+	AttestationAppraisalForged            = attestationclient.AppraisalForged
+	AttestationAppraisalAbsent            = attestationclient.AppraisalAbsent
+	AttestationAppraisalSkipped           = attestationclient.AppraisalSkipped
 )
 
 // ImageEndorsement is the Tier 0 detached endorsement of a pinned container
@@ -121,6 +155,34 @@ type AttestationService interface {
 	// the attestor registered on the server. Returns a typed
 	// not-configured error when none is registered.
 	AttestContainer(ctx context.Context, req *AttestContainerRequest) (*AttestContainerResponse, error)
+
+	// PutEndorsement stores (or replaces) a Verifier trust anchor: a
+	// reference-value signer or an attestation-key root.
+	PutEndorsement(ctx context.Context, req *AttestationPutEndorsementRequest) (*AttestationEndorsement, error)
+
+	// ListEndorsements lists endorsements; an empty kind lists all.
+	ListEndorsements(ctx context.Context, kind string) (*AttestationListEndorsementsResponse, error)
+
+	// DeleteEndorsement removes an endorsement.
+	DeleteEndorsement(ctx context.Context, name string) error
+
+	// PutReferenceValues stores a signed CoRIM that a stored
+	// reference-signer endorsement verifies; unendorsed values are refused.
+	PutReferenceValues(ctx context.Context, name string, signedCoRIM []byte) (*AttestationReferenceValues, error)
+
+	// GetReferenceValues returns stored reference values.
+	GetReferenceValues(ctx context.Context, name string) (*AttestationReferenceValues, error)
+
+	// ListReferenceValues lists stored reference values.
+	ListReferenceValues(ctx context.Context) (*AttestationListReferenceValuesResponse, error)
+
+	// DeleteReferenceValues removes stored reference values.
+	DeleteReferenceValues(ctx context.Context, name string) error
+
+	// AppraiseQuote appraises TPM quote evidence against stored, signed
+	// reference values and returns the attestation result. Evidence that
+	// fails is a successful call whose result says Verified=false.
+	AppraiseQuote(ctx context.Context, req *AttestationAppraiseQuoteRequest) (*AttestationResult, error)
 }
 
 // attestationServiceImpl is the transport-backed AttestationService.
@@ -263,4 +325,105 @@ func leafPublicKeyDER(certBlob []byte) ([]byte, error) {
 			"attestation.VerifyImageSignature", "failed to parse signer certificate")
 	}
 	return cert.RawSubjectPublicKeyInfo, nil
+}
+
+// verifierCall sends one Verifier request and asserts the response type.
+func verifierCall[T any](ctx context.Context, t transport.Transport, method string, req interface{}) (*T, error) {
+	op := "attestation." + method
+	if ctx == nil {
+		return nil, sdkerrors.NewInvalidInput(op, "context is required")
+	}
+	resp, err := t.Request(ctx, attestationServiceName, method, req)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*T)
+	if !ok {
+		return nil, sdkerrors.NewInternal(op, "invalid response type")
+	}
+	return out, nil
+}
+
+// requireName rejects an empty endorsement or reference-values name.
+func requireName(op, name string) error {
+	if name == "" {
+		return sdkerrors.NewInvalidInput(op, "name is required")
+	}
+	return nil
+}
+
+// PutEndorsement stores a Verifier trust anchor.
+func (s *attestationServiceImpl) PutEndorsement(ctx context.Context, req *AttestationPutEndorsementRequest) (*AttestationEndorsement, error) {
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("attestation.PutEndorsement", "request is required")
+	}
+	if err := requireName("attestation.PutEndorsement", req.Name); err != nil {
+		return nil, err
+	}
+	return verifierCall[AttestationEndorsement](ctx, s.t, "PutEndorsement", req)
+}
+
+// ListEndorsements lists endorsements.
+func (s *attestationServiceImpl) ListEndorsements(ctx context.Context, kind string) (*AttestationListEndorsementsResponse, error) {
+	return verifierCall[AttestationListEndorsementsResponse](ctx, s.t, "ListEndorsements", &attestationclient.ListEndorsementsRequest{Kind: kind})
+}
+
+// DeleteEndorsement removes an endorsement.
+func (s *attestationServiceImpl) DeleteEndorsement(ctx context.Context, name string) error {
+	if err := requireName("attestation.DeleteEndorsement", name); err != nil {
+		return err
+	}
+	if ctx == nil {
+		return sdkerrors.NewInvalidInput("attestation.DeleteEndorsement", "context is required")
+	}
+	_, err := s.t.Request(ctx, attestationServiceName, "DeleteEndorsement", &attestationclient.NameRequest{Name: name})
+	return err
+}
+
+// PutReferenceValues stores endorsed, signed reference values.
+func (s *attestationServiceImpl) PutReferenceValues(ctx context.Context, name string, signedCoRIM []byte) (*AttestationReferenceValues, error) {
+	if err := requireName("attestation.PutReferenceValues", name); err != nil {
+		return nil, err
+	}
+	if len(signedCoRIM) == 0 {
+		return nil, sdkerrors.NewInvalidInput("attestation.PutReferenceValues", "signed CoRIM is required")
+	}
+	return verifierCall[AttestationReferenceValues](ctx, s.t, "PutReferenceValues",
+		&attestationclient.PutReferenceValuesRequest{Name: name, SignedCoRIM: signedCoRIM})
+}
+
+// GetReferenceValues returns stored reference values.
+func (s *attestationServiceImpl) GetReferenceValues(ctx context.Context, name string) (*AttestationReferenceValues, error) {
+	if err := requireName("attestation.GetReferenceValues", name); err != nil {
+		return nil, err
+	}
+	return verifierCall[AttestationReferenceValues](ctx, s.t, "GetReferenceValues", &attestationclient.NameRequest{Name: name})
+}
+
+// ListReferenceValues lists stored reference values.
+func (s *attestationServiceImpl) ListReferenceValues(ctx context.Context) (*AttestationListReferenceValuesResponse, error) {
+	return verifierCall[AttestationListReferenceValuesResponse](ctx, s.t, "ListReferenceValues", &attestationclient.ListEndorsementsRequest{})
+}
+
+// DeleteReferenceValues removes stored reference values.
+func (s *attestationServiceImpl) DeleteReferenceValues(ctx context.Context, name string) error {
+	if err := requireName("attestation.DeleteReferenceValues", name); err != nil {
+		return err
+	}
+	if ctx == nil {
+		return sdkerrors.NewInvalidInput("attestation.DeleteReferenceValues", "context is required")
+	}
+	_, err := s.t.Request(ctx, attestationServiceName, "DeleteReferenceValues", &attestationclient.NameRequest{Name: name})
+	return err
+}
+
+// AppraiseQuote appraises TPM quote evidence.
+func (s *attestationServiceImpl) AppraiseQuote(ctx context.Context, req *AttestationAppraiseQuoteRequest) (*AttestationResult, error) {
+	if req == nil {
+		return nil, sdkerrors.NewInvalidInput("attestation.AppraiseQuote", "request is required")
+	}
+	if req.ReferenceValues == "" {
+		return nil, sdkerrors.NewInvalidInput("attestation.AppraiseQuote", "reference values name is required")
+	}
+	return verifierCall[AttestationResult](ctx, s.t, "AppraiseQuote", req)
 }

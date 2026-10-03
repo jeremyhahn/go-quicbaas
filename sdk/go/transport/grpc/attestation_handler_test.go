@@ -141,8 +141,20 @@ func TestAttestationServicePrefixMatchesProto(t *testing.T) {
 		t.Fatalf("proto service name = %q, want %q",
 			pb.AttestationService_ServiceDesc.ServiceName, wantProtoService)
 	}
-	if len(pb.AttestationService_ServiceDesc.Methods) != 3 {
-		t.Fatalf("AttestationService exposes %d RPCs, want 3",
-			len(pb.AttestationService_ServiceDesc.Methods))
+	// Every RPC the server registers must be routed by this handler — the
+	// three verification verbs or one of the Verifier verbs — so no verb is
+	// reachable on the wire but missing from the SDK.
+	routed := map[string]bool{"Verify": true, "VerifyChain": true, "AttestContainer": true}
+	for method := range attestationVerifierHandlers {
+		routed[method] = true
+	}
+	for _, method := range pb.AttestationService_ServiceDesc.Methods {
+		if !routed[method.MethodName] {
+			t.Errorf("RPC %s has no SDK gRPC route", method.MethodName)
+		}
+	}
+	if len(pb.AttestationService_ServiceDesc.Methods) != len(routed) {
+		t.Fatalf("AttestationService exposes %d RPCs, the SDK routes %d",
+			len(pb.AttestationService_ServiceDesc.Methods), len(routed))
 	}
 }

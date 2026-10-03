@@ -36,6 +36,21 @@ resolved in go-qrdb v0.25.1).
   and embedded; CLI `quicbaas scheduler node …` / `placement …`; TypeScript
   `scheduler.registerNode` … `listPlacements`. New permission family
   `placement:read|place|manage`.
+- The attestation **Verifier** (go-quicbaas#1143; handbook doc 00 §R and
+  13 G10): `Security().Attestation()` gains `PutEndorsement`,
+  `ListEndorsements`, `DeleteEndorsement`, `PutReferenceValues`,
+  `GetReferenceValues`, `ListReferenceValues`, `DeleteReferenceValues` and
+  `AppraiseQuote` on REST, QUIC, gRPC, Unix, MCP and embedded, plus the
+  `quicbaas attestation` CLI. Endorsements (`ak-root`, `reference-signer`)
+  and signed CoRIM reference values are stored per tenant in qrdb; reference
+  values are accepted only under a stored reference-signer — never trusted on
+  first use — and re-verified at every appraisal. `AppraiseQuote` checks the
+  AK certificate, the quote, an optional event log and the signed PCR
+  baseline with go-xkms's evidence primitives and returns an attestation
+  result that separates forged evidence (`cryptographic_failure`) from
+  absent evidence. New permission `attestation:provision` (Admin).
+  `pkg/service/attestationtest` builds real AK, quote and CoRIM fixtures.
+  Docs: docs/attestation/.
 - `sdk/go/xkms/acme`: the External Account Binding vocabulary go-xkms owns
   (go-quicbaas#1090) -- `EABPurposeAccountBinding`, `EABPurposeEndorse01`,
   `EABPurposeEnroll01`, `EABStatusActive`, `EABStatusUsed`,

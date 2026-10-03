@@ -6,6 +6,8 @@ DELETE /api/v1/agent-accounts/{id}
 DELETE /api/v1/agent-accounts/{id}/reservations/{rid}
 DELETE /api/v1/agent-pools/{poolID}
 DELETE /api/v1/agents/{agentID}
+DELETE /api/v1/attestation/endorsements/{name}
+DELETE /api/v1/attestation/reference-values/{name}
 DELETE /api/v1/backups/{id}
 DELETE /api/v1/barrier/recovery
 DELETE /api/v1/cluster/migrate/
@@ -95,6 +97,9 @@ GET /api/v1/agent-pools/{poolID}/used-by
 GET /api/v1/agents
 GET /api/v1/agents/{agentID}
 GET /api/v1/agents/{agentID}/used-by
+GET /api/v1/attestation/endorsements
+GET /api/v1/attestation/reference-values
+GET /api/v1/attestation/reference-values/{name}
 GET /api/v1/auth/providers/{tenant_id}/{provider_name}/callback
 GET /api/v1/auth/providers/{tenant_id}/{provider_name}/login
 GET /api/v1/backups
@@ -337,6 +342,7 @@ POST /api/v1/agent-accounts/{id}/revoke
 POST /api/v1/agent-accounts/{id}/rotate
 POST /api/v1/agent-pools
 POST /api/v1/agents
+POST /api/v1/attestation/appraise-quote
 POST /api/v1/fleet/enroll
 POST /api/v1/attestation/attest-container
 POST /api/v1/attestation/verify
@@ -616,6 +622,8 @@ PUT /api/v1/admin/object-backends/{name}/status
 PUT /api/v1/agent-accounts/{id}
 PUT /api/v1/agent-pools/{poolID}
 PUT /api/v1/agents/{agentID}
+PUT /api/v1/attestation/endorsements/{name}
+PUT /api/v1/attestation/reference-values/{name}
 PUT /api/v1/cache/config
 PUT /api/v1/cluster/nodes/{nodeId}/replace
 PUT /api/v1/embedding/providers/default
