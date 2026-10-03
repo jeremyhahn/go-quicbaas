@@ -392,10 +392,10 @@ github.com/jeremyhahn/go-libsignal v0.2.0-alpha h1:HluFvvJdR2oxEjny9xwrCdfS70m66
 github.com/jeremyhahn/go-libsignal v0.2.0-alpha/go.mod h1:FrdrZ496SIfOCnoSoMVCLbyVU9b6VviHVatnfan7Zjg=
 github.com/jeremyhahn/go-objstore v0.3.0-alpha h1:G/KiZBLcojP9rFnH+UuqyTk1CM8ogM2ZRfrt0Ps3WcI=
 github.com/jeremyhahn/go-objstore v0.3.0-alpha/go.mod h1:bLqSB64gltrsEsxMx7DyNjjxcHXz82grpkyZJ0gv+tw=
-github.com/jeremyhahn/go-qrdb v0.30.0-alpha h1:qte0rSBSIcgXM6so7L7DEgeum4CMcio7Gcz7aCldu9Y=
-github.com/jeremyhahn/go-qrdb v0.30.0-alpha/go.mod h1:lX2XxzGv/3KFqAx1gvpjEgRDa2KX4jfMv/5tshUji0o=
-github.com/jeremyhahn/go-qrdb/sdk/go v0.30.0-alpha h1:DvzGX1G2mf6dhxgbfvnPGs50zW5fnL8CCfekCjGEPzI=
-github.com/jeremyhahn/go-qrdb/sdk/go v0.30.0-alpha/go.mod h1:urvrFvLpcfOO2Oh7CtgAdGnSXtlpNctb9H0wYM2rFOA=
+github.com/jeremyhahn/go-qrdb v0.30.1-alpha h1:pL6WQSJk5q2ZHQedxzHjAcHPRYnobywglrRWLHxAuvI=
+github.com/jeremyhahn/go-qrdb v0.30.1-alpha/go.mod h1:NJT7z8GzmxQsEZXpSBZSgWCslCc3hol1cq5+YxMDlO4=
+github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha h1:k3vwcg702M8k+wuX8wZ+T8EwOs/poucg7Wejsuh8+O8=
+github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha/go.mod h1:md5ug2LrI+0EyP0ic9f8RYDGP6CPb0YfIX4sIMY3v4o=
 github.com/jeremyhahn/go-quicraft v0.15.0-alpha h1:3GBGhN8fZOtkLuc5jpPdJLRH6r7GvD1DsxWdQkUxCKc=
 github.com/jeremyhahn/go-quicraft v0.15.0-alpha/go.mod h1:TOCT7knr4Wxho6x2rQxkIgjXF+st+diRFmyLhn8AKJg=
 github.com/jeremyhahn/go-signal v0.2.0-alpha h1:EEshx/LDUPH0dHZlgvp6zGYPs/qx4Nf6RviFjVkbM/o=

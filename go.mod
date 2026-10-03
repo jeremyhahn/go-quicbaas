@@ -28,9 +28,9 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-libsignal v0.2.0-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.30.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.0-alpha
-	github.com/jeremyhahn/go-quicbaas/sdk/go v0.13.1-alpha
+	github.com/jeremyhahn/go-qrdb v0.30.1-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha
+	github.com/jeremyhahn/go-quicbaas/sdk/go v0.14.0-alpha
 	github.com/jeremyhahn/go-signal v0.2.0-alpha
 	github.com/jeremyhahn/go-xkms v0.49.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha

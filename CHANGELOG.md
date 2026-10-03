@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0-alpha] - 2026-10-02
+
+go-trusted-platform v0.2.0-alpha upstream step U3. Highlights: service registry,
+workload placement engine, RFC 9334 attestation Verifier, go-xkms
+v0.49.0-alpha / go-qrdb v0.30.1-alpha / go-quicraft v0.15.0-alpha, and tenant
+isolation that fails closed on every transport (pkg/tenantctx; go-qrdb v0.28
+strict certificate and audit confinement). BREAKING changes are marked below.
+
+- **go-qrdb v0.30.1-alpha** (patch over v0.30.0): a shard is handed out only
+  once it can serve a linearizable read; `NewClusteredNode` blocks until a
+  quorum has elected and committed. No go-quicbaas change.
+- **go-qrdb v0.31.0-alpha is not adopted in this release.** It compiles (vet
+  clean on every tag set; MVS selects go-quicraft v0.16.0 and go-truststrap
+  v0.4.0-alpha), but its third-party updates bring go-chi v5.3.2, which also
+  registers the HTTP `QUERY` method on all-method routes:
+  `TestRouteSurfaceParity` reports new `QUERY /api/v1/metrics`,
+  `QUERY /api/v1/metrics/` and `QUERY /ui/*` routes. Whether those routes may
+  answer `QUERY` is a surface decision, not a golden refresh; it is left to
+  the next go-quicbaas release.
+
 Stack: go-xkms v0.49.0-alpha (go-xkms#1388, merge train #1383, #1387),
-go-qrdb v0.30.0-alpha, go-quicraft v0.15.0-alpha (hold lifted: go-qrdb#566 is
+go-qrdb v0.30.1-alpha, go-quicraft v0.15.0-alpha (hold lifted: go-qrdb#566 is
 resolved in go-qrdb v0.25.1).
 
 ### Added
@@ -82,7 +102,7 @@ resolved in go-qrdb v0.25.1).
 
 ### Changed
 
-- **go-qrdb v0.20.6 → v0.30.0-alpha and go-quicraft v0.13.1 → v0.15.0**
+- **go-qrdb v0.20.6 → v0.30.1-alpha and go-quicraft v0.13.1 → v0.15.0**
   (go-xkms v0.48.0-alpha requires v0.25.1; v0.27 adds durable leases and moves a
   re-put key to its new lease, go-qrdb#581, so re-registering a service
   instance while its old lease is still alive no longer loses the new

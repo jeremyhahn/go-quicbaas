@@ -9,9 +9,9 @@ require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/jeremyhahn/go-qrdb v0.30.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.0-alpha
-	github.com/jeremyhahn/go-quicbaas v0.13.1-alpha
+	github.com/jeremyhahn/go-qrdb v0.30.1-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha
+	github.com/jeremyhahn/go-quicbaas v0.14.0-alpha
 	github.com/jeremyhahn/go-xkms v0.49.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha
 	github.com/mark3labs/mcp-go v0.45.0
