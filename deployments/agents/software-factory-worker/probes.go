@@ -131,6 +131,7 @@ func ProbeEnv(b Build) map[string]string {
 func Probes() []Probe {
 	return []Probe{
 		{Name: "toolchain, signing and every agent", Script: toolchainProbe},
+		{Name: "devcache-env changes nothing when unconfigured", Script: devcacheEnvProbe, NetworkNone: true},
 		{Name: "serena answers an MCP initialize", Script: serenaHandshakeProbe, NetworkNone: true},
 		{Name: "serena resolves a Go symbol", Script: serenaGoProbe, NetworkNone: true},
 		{Name: "lint and scan a Go module", Script: lintProbe, NetworkNone: true},
@@ -163,6 +164,19 @@ git -c user.name=worker -c user.email=worker@invalid -c gpg.format=ssh -c user.s
 git config gpg.ssh.allowedSignersFile /tmp/allowed
 printf "worker@invalid %s" "$(cat /tmp/signing-key.pub)" > /tmp/allowed
 git verify-commit HEAD`
+
+// devcacheEnvProbe proves the image carries an executable devcache-env
+// (go-quicbaas#1159) and that, unconfigured, it is a no-op: with no
+// DEVCACHE_* variable set -- the state of every build that does not pass the
+// cache build arguments -- it must set neither GOPROXY nor
+// npm_config_registry, so a worker spawned from this image reaches the public
+// proxy and the public npm registry exactly as it did before the caches
+// existed.
+const devcacheEnvProbe = `test -x /usr/local/bin/devcache-env || { echo "devcache-env is missing or not executable"; exit 1; }
+unset DEVCACHE_GOPROXY DEVCACHE_GOPRIVATE DEVCACHE_NPM_REGISTRY DEVCACHE_CONFIG
+out="$(devcache-env)"
+case "$out" in *GOPROXY=*) echo "devcache-env set GOPROXY with no DEVCACHE_GOPROXY configured: $out"; exit 1;; esac
+case "$out" in *npm_config_registry=*) echo "devcache-env set npm_config_registry with no DEVCACHE_NPM_REGISTRY configured: $out"; exit 1;; esac`
 
 // serenaHandshakeProbe proves serena STARTS, not merely that it was installed:
 // psutil is compiled from source here (no musl wheel), so the failure worth

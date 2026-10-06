@@ -3387,6 +3387,17 @@ WORKER_IMAGE_TAG := $(DOCKER_TAG)-cc$(CLAUDE_CODE_VERSION)-cx$(CODEX_VERSION)
 # host[:port]/owner/name. It has no default: the registry is the operator's.
 WORKER_IMAGE_REGISTRY ?=
 
+# DEVCACHE_GOPROXY / DEVCACHE_GOPRIVATE / DEVCACHE_NPM_REGISTRY: the fleet's
+# dev caches (../handbook/software/conventions/devops.md section 2a). NEVER
+# given a value here -- an operator off the fleet leaves them unset and the
+# build behaves exactly as it always has. `export` with no value passes
+# through whatever the caller's environment or command line already set
+# (`make build-worker-image DEVCACHE_GOPROXY=http://...`), without writing a
+# host, port or path into this file.
+export DEVCACHE_GOPROXY
+export DEVCACHE_GOPRIVATE
+export DEVCACHE_NPM_REGISTRY
+
 .PHONY: build-worker-image
 build-worker-image: ## Build the Software Factory worker image (quicbaas-software-factory-worker:<version>-cc<claude>-cx<codex>)
 	@echo "$(BLUE)Building the Software Factory worker image ($(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG))...$(NC)"
@@ -3410,6 +3421,9 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg QUICBAAS_VERSION=$(VERSION) \
 		--build-arg AGENT_UID=$(WORKER_IMAGE_UID) \
 		--build-arg AGENT_GID=$(WORKER_IMAGE_GID) \
+		--build-arg DEVCACHE_GOPROXY \
+		--build-arg DEVCACHE_GOPRIVATE \
+		--build-arg DEVCACHE_NPM_REGISTRY \
 		-f $(WORKER_IMAGE_DIR)/Dockerfile \
 		-t $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) \
 		-t $(WORKER_IMAGE_REPO):$(DOCKER_TAG) \

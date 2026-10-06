@@ -14,12 +14,30 @@
 package softwarefactoryworker
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/version"
 )
+
+// dockerfileArgPattern matches a DEFAULT-LESS ARG declaration's name: one
+// whose value can only come from the outside, which is what makes it a
+// build-environment input worth tracking. An ARG with its own `=default` (a
+// fixed path, a version baked into the Dockerfile text) is not: its value
+// never varies without an edit to the Dockerfile itself.
+var dockerfileArgPattern = regexp.MustCompile(`(?m)^ARG\s+([A-Za-z_][A-Za-z0-9_]*)\s*$`)
+
+// dockerfileCopyPattern matches a COPY instruction's own line (not the
+// heredoc body that may follow it).
+var dockerfileCopyPattern = regexp.MustCompile(`(?m)^COPY\s+\S.*$`)
+
+// dockerfileHeredocPattern captures the devcache-env heredoc's body: between
+// the line that opens it and the line that is exactly the closing delimiter.
+var dockerfileHeredocPattern = regexp.MustCompile(`(?s)COPY --chmod=0755 <<'DEVCACHE_ENV_SCRIPT' /usr/local/bin/devcache-env\n(.*?)\nDEVCACHE_ENV_SCRIPT\n`)
 
 func testPins() Pins {
 	return Pins{Go: "1.27.0", Golangci: "v2.13.2", Gosec: "v2.29.0", Govulncheck: "v1.8.0", Gopls: "v0.23.0", Serena: "v1.7.0",
@@ -102,7 +120,8 @@ func TestDockerfile_DeclaresEveryBuildArgAndLabel(t *testing.T) {
 	if dockerfile == "" {
 		t.Fatal("the Dockerfile was not embedded")
 	}
-	for arg := range testBuild().BuildArgs() {
+	buildArgs := testBuild().BuildArgs()
+	for arg := range buildArgs {
 		if !strings.Contains(dockerfile, "ARG "+arg) {
 			t.Errorf("the Dockerfile does not declare ARG %s", arg)
 		}
@@ -115,8 +134,122 @@ func TestDockerfile_DeclaresEveryBuildArgAndLabel(t *testing.T) {
 	if strings.Contains(dockerfile, "claude-code@latest") || strings.Contains(dockerfile, "codex@latest") {
 		t.Error("the agent CLIs must be installed at their pinned versions, never @latest")
 	}
-	if strings.Contains(dockerfile, "\nCOPY ") && !strings.Contains(dockerfile, "COPY --from=") {
-		t.Error("the Dockerfile must build from an empty context: it may COPY only between its own stages")
+
+	// Every ARG the Dockerfile declares is either one of the content-tag
+	// inputs in Build.BuildArgs(), or named on this allow-list: a build-host
+	// property (the dev caches, go-quicbaas#1159) that never changes the
+	// image's content tag. An ARG that is neither is a hole: nobody reviewed
+	// whether it belongs on the tag.
+	optionalBuildEnvArgs := map[string]bool{
+		"DEVCACHE_GOPROXY":      true,
+		"DEVCACHE_GOPRIVATE":    true,
+		"DEVCACHE_NPM_REGISTRY": true,
+	}
+	for _, arg := range dockerfileArgNames(dockerfile) {
+		if _, ok := buildArgs[arg]; ok {
+			continue
+		}
+		if !optionalBuildEnvArgs[arg] {
+			t.Errorf("ARG %s is declared but is neither a Build.BuildArgs() input nor on the optional build-environment allow-list", arg)
+		}
+	}
+	for arg := range optionalBuildEnvArgs {
+		if !strings.Contains(dockerfile, "ARG "+arg) {
+			t.Errorf("the Dockerfile does not declare ARG %s", arg)
+		}
+		if strings.Contains(dockerfile, "ENV "+arg) {
+			t.Errorf("ARG %s must never become an ENV: it would outlive the RUN that needs it", arg)
+		}
+	}
+	for _, name := range []string{"GOPROXY", "GOPRIVATE", "GONOPROXY", "GONOSUMDB", "npm_config_registry"} {
+		if strings.Contains(dockerfile, "ENV "+name) {
+			t.Errorf("the Dockerfile must never ENV %s: an empty/unset cache must build exactly as it did before the caches existed", name)
+		}
+	}
+
+	// The Dockerfile builds from an EMPTY context (pkg/orchestration/
+	// container_image.go buildImageArgs builds it with `docker build --file -`
+	// and no context directory): every COPY instruction may only move bytes
+	// between its own stages (--from=) or embed a heredoc (<<), never pull
+	// from a build directory it does not have.
+	for _, line := range copyLines(dockerfile) {
+		if !strings.Contains(line, "--from=") && !strings.Contains(line, "<<") {
+			t.Errorf("the Dockerfile must build from an empty context: COPY must use --from= or a heredoc, got %q", line)
+		}
+	}
+}
+
+// dockerfileArgNames returns the name of every ARG the Dockerfile declares,
+// deduplicated.
+func dockerfileArgNames(dockerfile string) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, match := range dockerfileArgPattern.FindAllStringSubmatch(dockerfile, -1) {
+		name := match[1]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names
+}
+
+// copyLines returns every COPY instruction line in the Dockerfile.
+func copyLines(dockerfile string) []string {
+	return dockerfileCopyPattern.FindAllString(dockerfile, -1)
+}
+
+// TestDockerfile_EmbedsDevcacheEnvAtThePinnedDigest proves the devcache-env
+// bytes the Dockerfile's heredoc embeds are exactly the ones go-quicbaas#1159
+// pinned (dev-cache v0.1.0, client/devcache-env) -- not a copy that drifted
+// from the vendored script -- and that the Dockerfile's own `sha256sum -c`
+// line checks the image's copy against that same digest.
+func TestDockerfile_EmbedsDevcacheEnvAtThePinnedDigest(t *testing.T) {
+	dockerfile := string(Dockerfile)
+	match := dockerfileHeredocPattern.FindStringSubmatch(dockerfile)
+	if match == nil {
+		t.Fatal("the Dockerfile does not embed a devcache-env heredoc at /usr/local/bin/devcache-env")
+	}
+	body := match[1] + "\n"
+	sum := sha256.Sum256([]byte(body))
+	if got := hex.EncodeToString(sum[:]); got != DevcacheEnvSHA256 {
+		t.Fatalf("the embedded devcache-env script's SHA-256 is %s, want the pinned %s", got, DevcacheEnvSHA256)
+	}
+	if !strings.Contains(dockerfile, "echo \""+DevcacheEnvSHA256+"  /usr/local/bin/devcache-env\" | sha256sum -c -") {
+		t.Errorf("the Dockerfile's sha256sum -c line does not check the pinned digest %s", DevcacheEnvSHA256)
+	}
+}
+
+// TestDockerfile_GoInstallUsesDevcacheProxyChain proves the toolchain stage's
+// `go install` / `go get` / `go build` RUN feeds DEVCACHE_GOPROXY through
+// Go's `|` fallback chain -- never `,`, which fails a build outright on a
+// cache outage -- and sets GOPRIVATE/GONOPROXY/GONOSUMDB from
+// DEVCACHE_GOPRIVATE, so a private module path never reaches a public proxy
+// on a cache miss (../handbook/software/conventions/devops.md section 2a).
+func TestDockerfile_GoInstallUsesDevcacheProxyChain(t *testing.T) {
+	dockerfile := string(Dockerfile)
+	if !strings.Contains(dockerfile, `GOPROXY="${DEVCACHE_GOPROXY:+${DEVCACHE_GOPROXY%/}|https://proxy.golang.org|direct}"`) {
+		t.Error("the Go install RUN does not build GOPROXY from DEVCACHE_GOPROXY with the | fallback chain")
+	}
+	if !strings.Contains(dockerfile, `export GOPRIVATE="${DEVCACHE_GOPRIVATE}" GONOPROXY="${DEVCACHE_GOPRIVATE}" GONOSUMDB="${DEVCACHE_GOPRIVATE}"`) {
+		t.Error("the Go install RUN does not set GOPRIVATE, GONOPROXY and GONOSUMDB from DEVCACHE_GOPRIVATE")
+	}
+}
+
+// TestDockerfile_NpmInstallEvalsDevcacheEnvFirst proves the agent-CLI npm
+// install reads the dev caches before it installs, and that devcache-env
+// lands in the image before that RUN needs it.
+func TestDockerfile_NpmInstallEvalsDevcacheEnvFirst(t *testing.T) {
+	dockerfile := string(Dockerfile)
+	heredocAt := strings.Index(dockerfile, "COPY --chmod=0755 <<'DEVCACHE_ENV_SCRIPT'")
+	evalAt := strings.Index(dockerfile, `eval "$(devcache-env)"`)
+	installAt := strings.Index(dockerfile, `npm install -g "@anthropic-ai/claude-code@`)
+	if heredocAt == -1 || evalAt == -1 || installAt == -1 {
+		t.Fatalf("heredoc at %d, eval at %d, npm install at %d: expected all three present", heredocAt, evalAt, installAt)
+	}
+	if !(heredocAt < evalAt && evalAt < installAt) {
+		t.Errorf("expected devcache-env embedded, then eval'd, then npm install -g; got offsets %d, %d, %d", heredocAt, evalAt, installAt)
 	}
 }
 

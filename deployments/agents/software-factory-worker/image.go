@@ -175,6 +175,14 @@ const (
 	CodexPackage      = "@openai/codex"
 )
 
+// DevcacheEnvSHA256 is the SHA-256 of the devcache-env client script the
+// Dockerfile embeds byte-for-byte via a heredoc (dev-cache v0.1.0,
+// client/devcache-env). The Dockerfile's own `sha256sum -c` line checks the
+// copy that lands in the image against this same digest; it is recorded here
+// too so the test suite can check the Dockerfile's embedded bytes against it
+// independently of the build.
+const DevcacheEnvSHA256 = "54ebcd1955daa328f31ebe8c93b50b71fcb9489a4a45a0a2986c530d4517cd29"
+
 // Agents are the two agent-CLI versions an image carries.
 type Agents struct {
 	ClaudeCode string `json:"claude_code"`

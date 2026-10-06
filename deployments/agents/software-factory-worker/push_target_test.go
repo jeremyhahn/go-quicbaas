@@ -80,6 +80,18 @@ func runFakeTool(args []string) int {
 			fmt.Fprintln(os.Stdout, tag+": digest: "+digest+" size: 4321")
 		}
 		return 0
+	case args[0] == "docker" && len(args) > 1 && args[1] == "build":
+		// A bare `--build-arg NAME` (no "=value") is real docker's own
+		// convention for reading the value from docker's process
+		// environment. This fake stands in for that lookup, so a test can
+		// prove the Makefile actually exported the variable down to this
+		// process rather than merely naming it on the command line.
+		for _, name := range []string{"DEVCACHE_GOPROXY", "DEVCACHE_GOPRIVATE", "DEVCACHE_NPM_REGISTRY"} {
+			if v, ok := os.LookupEnv(name); ok {
+				fmt.Fprintln(logFile, "ENV "+name+"="+v)
+			}
+		}
+		return 0
 	default:
 		return 0
 	}
@@ -99,6 +111,23 @@ func environWithout(name string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, name+"=") {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
+// environWithoutAny is this process's environment less every named variable,
+// so a host that already exports a dev-cache variable for its own use (apt,
+// docker's own mirror, ...) cannot stand in for what a test passes.
+func environWithoutAny(names ...string) []string {
+	drop := map[string]bool{}
+	for _, n := range names {
+		drop[n] = true
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if k := kv[:strings.Index(kv, "=")]; !drop[k] {
 			env = append(env, kv)
 		}
 	}

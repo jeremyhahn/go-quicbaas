@@ -129,6 +129,16 @@ ARG GOPLS_VERSION
 # module@version pairs; no default, for the same reason as the pins above.
 ARG GO_TOOL_DEPENDENCY_FLOORS
 
+# DEVCACHE_GOPROXY and DEVCACHE_GOPRIVATE are the fleet's dev caches
+# (../handbook/software/conventions/devops.md section 2a). NO DEFAULT, and
+# NEVER an ENV: unset (the common case away from the fleet) must build exactly
+# as it did before the caches existed, and a value here would outlive the RUN
+# that needs it. They are turned into GOPROXY / GOPRIVATE / GONOPROXY /
+# GONOSUMDB for the one RUN below that runs `go install` / `go get` / `go
+# build`, and nowhere else.
+ARG DEVCACHE_GOPROXY
+ARG DEVCACHE_GOPRIVATE
+
 ENV CGO_ENABLED=0 GOBIN=/toolchain/bin
 
 RUN set -eux; \
@@ -136,6 +146,11 @@ RUN set -eux; \
         echo "GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION, GOPLS_VERSION and GO_TOOL_DEPENDENCY_FLOORS are required build arguments." >&2; \
         echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
+    fi; \
+    GOPROXY="${DEVCACHE_GOPROXY:+${DEVCACHE_GOPROXY%/}|https://proxy.golang.org|direct}"; \
+    [ -z "${GOPROXY}" ] || export GOPROXY; \
+    if [ -n "${DEVCACHE_GOPRIVATE:-}" ]; then \
+        export GOPRIVATE="${DEVCACHE_GOPRIVATE}" GONOPROXY="${DEVCACHE_GOPRIVATE}" GONOSUMDB="${DEVCACHE_GOPRIVATE}"; \
     fi; \
     go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_VERSION}"; \
     go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; \
@@ -201,6 +216,241 @@ RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     sudo
+
+# DEVCACHE-ENV, the dev caches' client (../handbook/software/conventions/
+# devops.md section 2a). Embedded byte-for-byte via a BuildKit heredoc so it
+# lands in the image with NO build context -- this Dockerfile is built with
+# `docker build --file -` and an EMPTY context directory (see
+# pkg/orchestration/container_image.go buildImageArgs), which rules out a
+# plain COPY from a build directory. Unconfigured -- no DEVCACHE_* build arg
+# set, or a cache that does not answer -- it changes nothing: every tool it
+# feeds keeps its default behaviour.
+#
+# PROVENANCE: dev-cache v0.1.0, client/devcache-env, SHA-256
+# 54ebcd1955daa328f31ebe8c93b50b71fcb9489a4a45a0a2986c530d4517cd29. The RUN
+# below checks the copy that landed in this layer against that exact digest,
+# so a byte this was not vendored from fails the build rather than the image.
+COPY --chmod=0755 <<'DEVCACHE_ENV_SCRIPT' /usr/local/bin/devcache-env
+#!/bin/sh
+# devcache-env: turn the DEVCACHE_* variables into tool settings.
+#
+#   devcache-env [FORMAT]      FORMAT: sh (default) | env | apt-conf | apt-detect | daemon-json | report
+#   devcache-apt-proxy URI     (a symlink to this script) apt's Proxy-Auto-Detect hook
+#
+# Each cache has its own variable. A variable that is unset or empty, or
+# whose server does not answer, produces NO setting for its tool, so the tool
+# keeps its default behaviour (no proxy). Nothing is ever forced.
+#
+#   DEVCACHE_GOPROXY          Go module proxy URL          -> GOPROXY="<url>|https://proxy.golang.org|direct"
+#   DEVCACHE_GOPRIVATE        private module patterns      -> GOPRIVATE, GONOPROXY, GONOSUMDB (always, merged
+#                                                             with any already set; never sent to a proxy)
+#   DEVCACHE_NPM_REGISTRY     npm registry cache URL       -> npm_config_registry
+#   DEVCACHE_APT_PROXY        apt cache URL                -> apt-conf / apt-detect output
+#   DEVCACHE_DOCKER_MIRROR    Docker Hub pull-through URL  -> DEVCACHE_DOCKERHUB_REGISTRY, daemon-json registry-mirrors
+#   DEVCACHE_MCR_MIRROR       mcr.microsoft.com cache URL  -> DEVCACHE_MCR_REGISTRY
+#   DEVCACHE_GHCR_MIRROR      ghcr.io cache URL            -> DEVCACHE_GHCR_REGISTRY, TRIVY_DB_REPOSITORY,
+#                                                             TRIVY_JAVA_DB_REPOSITORY (+ TRIVY_INSECURE for http)
+#   DEVCACHE_PLAYWRIGHT_HOST  Playwright browser cache URL -> PLAYWRIGHT_DOWNLOAD_HOST
+#
+#   DEVCACHE_PROBE_TIMEOUT    seconds per reachability probe (default 2)
+#   DEVCACHE_CONFIG           file of DEVCACHE_*=value lines (default /etc/devcache/client.env). A
+#                             variable present in the environment, even empty, wins over the file.
+#
+# Formats:
+#   sh           `export K='v'` lines:   eval "$(devcache-env)"
+#   env          `K=v` lines, for docker --env-file and $GITHUB_ENV:  devcache-env env >> "$GITHUB_ENV"
+#   apt-conf     an apt.conf line with the proxy, or nothing:  devcache-env apt-conf > /etc/apt/apt.conf.d/01devcache
+#   apt-detect   the apt proxy URL, or DIRECT (what apt's Proxy-Auto-Detect expects)
+#   daemon-json  a dockerd daemon.json fragment (registry-mirrors, insecure-registries); not probed,
+#                because dockerd falls back to the upstream itself when a mirror fails
+#   report       one line per cache: configured value and whether it answers
+set -u
+
+VARS="DEVCACHE_GOPROXY DEVCACHE_GOPRIVATE DEVCACHE_NPM_REGISTRY DEVCACHE_APT_PROXY DEVCACHE_DOCKER_MIRROR DEVCACHE_MCR_MIRROR DEVCACHE_GHCR_MIRROR DEVCACHE_PLAYWRIGHT_HOST DEVCACHE_PROBE_TIMEOUT"
+
+die() { echo "devcache-env: $*" >&2; exit 2; }
+
+# load_config: fill DEVCACHE_* variables that are absent from the
+# environment from DEVCACHE_CONFIG. Only KEY=value lines for known keys are
+# read; the file is never sourced.
+load_config() {
+	f="${DEVCACHE_CONFIG:-/etc/devcache/client.env}"
+	[ -r "$f" ] || return 0
+	for v in $VARS; do
+		eval "isset=\${$v+x}"
+		[ -z "$isset" ] || continue
+		line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?$v=" "$f" | tail -n 1)" || continue
+		[ -n "$line" ] || continue
+		val="${line#*=}"
+		val="$(printf '%s' "$val" | sed -e 's/[[:space:]]*$//' -e "s/^'\(.*\)'\$/\1/" -e 's/^"\(.*\)"$/\1/')"
+		case "$val" in *[\'\"\`\$\\]*) die "$f: $v: quotes, backticks, \$ and \\ are not allowed in values" ;; esac
+		eval "$v=\$val"
+	done
+}
+
+# url_hostport URL: host:port of an http(s) URL, with the scheme's default port.
+url_hostport() {
+	rest="${1#*://}"
+	rest="${rest%%/*}"
+	case "$rest" in
+	*\]:*) printf '%s\n' "$rest" ;;                       # [v6]:port
+	\[*\]) printf '%s:%s\n' "$rest" "$(default_port "$1")" ;; # [v6]
+	*:*) printf '%s\n' "$rest" ;;
+	*) printf '%s:%s\n' "$rest" "$(default_port "$1")" ;;
+	esac
+}
+default_port() { case "$1" in https://*) echo 443 ;; *) echo 80 ;; esac; }
+
+# registry_host URL: what an image reference uses: host[:port], no scheme.
+registry_host() { r="${1#*://}"; printf '%s\n' "${r%%/*}"; }
+
+valid_url() { case "$1" in http://?* | https://?*) return 0 ;; *) return 1 ;; esac; }
+
+# reachable URL: any HTTP answer within the timeout. curl, then wget, then a
+# bare TCP connect through bash; with none of them, unreachable (no proxy).
+reachable() {
+	t="${DEVCACHE_PROBE_TIMEOUT:-2}"
+	if command -v curl >/dev/null 2>&1; then
+		curl -s -o /dev/null --connect-timeout "$t" --max-time "$((t + 1))" "$1" 2>/dev/null
+		return $?
+	fi
+	if command -v wget >/dev/null 2>&1; then
+		wget -S --spider -q -T "$t" -t 1 "$1" 2>&1 | grep -q 'HTTP/'
+		return $?
+	fi
+	if command -v bash >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+		hp="$(url_hostport "$1")"
+		h="${hp%:*}"; p="${hp##*:}"; h="${h#[}"; h="${h%]}"
+		# shellcheck disable=SC2016 # expanded by the inner bash, from its arguments
+		timeout "$t" bash -c ': < "/dev/tcp/$0/$1"' "$h" "$p" 2>/dev/null
+		return $?
+	fi
+	return 1
+}
+
+# use VAR: succeed when VAR is a set, valid, reachable URL.
+use() {
+	eval "u=\${$1:-}"
+	[ -n "$u" ] || return 1
+	valid_url "$u" || { echo "devcache-env: $1=$u is not an http(s) URL; ignored" >&2; return 1; }
+	reachable "$u"
+}
+
+# merge_patterns A B: comma-separated union, order kept, duplicates dropped.
+merge_patterns() {
+	printf '%s,%s\n' "$1" "$2" | tr ',' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' |
+		awk 'length($0) && !seen[$0]++' | paste -sd, -
+}
+
+OUT=""
+add() { OUT="$OUT$1=$2
+"; }
+
+# settings: the KEY=value lines every env-style format prints.
+settings() {
+	for v in $VARS; do
+		eval "val=\${$v:-}"
+		[ -z "$val" ] || add "$v" "$val"
+	done
+	priv="$(merge_patterns "${GOPRIVATE:-}" "${DEVCACHE_GOPRIVATE:-}")"
+	if [ -n "$priv" ]; then
+		# GOPRIVATE implies GONOPROXY and GONOSUMDB only while those are
+		# unset, so all three are set: private module paths never reach a
+		# proxy or the checksum database, even on a cache miss.
+		add GOPRIVATE "$priv"
+		add GONOPROXY "$(merge_patterns "${GONOPROXY:-}" "$priv")"
+		add GONOSUMDB "$(merge_patterns "${GONOSUMDB:-}" "$priv")"
+	fi
+	if use DEVCACHE_GOPROXY; then
+		add GOPROXY "${DEVCACHE_GOPROXY%/}|https://proxy.golang.org|direct"
+	fi
+	if use DEVCACHE_NPM_REGISTRY; then
+		add npm_config_registry "${DEVCACHE_NPM_REGISTRY%/}/"
+	fi
+	if use DEVCACHE_PLAYWRIGHT_HOST; then
+		add PLAYWRIGHT_DOWNLOAD_HOST "${DEVCACHE_PLAYWRIGHT_HOST%/}"
+	fi
+	hub=docker.io mcr=mcr.microsoft.com ghcr=ghcr.io
+	if use DEVCACHE_DOCKER_MIRROR; then hub="$(registry_host "$DEVCACHE_DOCKER_MIRROR")"; fi
+	if use DEVCACHE_MCR_MIRROR; then mcr="$(registry_host "$DEVCACHE_MCR_MIRROR")"; fi
+	add DEVCACHE_DOCKERHUB_REGISTRY "$hub"
+	add DEVCACHE_MCR_REGISTRY "$mcr"
+	if use DEVCACHE_GHCR_MIRROR; then
+		ghcr="$(registry_host "$DEVCACHE_GHCR_MIRROR")"
+		add TRIVY_DB_REPOSITORY "$ghcr/aquasecurity/trivy-db:2"
+		add TRIVY_JAVA_DB_REPOSITORY "$ghcr/aquasecurity/trivy-java-db:1"
+		case "$DEVCACHE_GHCR_MIRROR" in http://*) add TRIVY_INSECURE true ;; esac
+	fi
+	add DEVCACHE_GHCR_REGISTRY "$ghcr"
+}
+
+# apt_proxy: the apt proxy URL when usable, else nothing.
+apt_proxy() { if use DEVCACHE_APT_PROXY; then printf '%s\n' "${DEVCACHE_APT_PROXY%/}"; fi; }
+
+json_list() {
+	first=1
+	printf '['
+	for x in "$@"; do
+		[ "$first" = 1 ] || printf ', '
+		first=0
+		printf '"%s"' "$x"
+	done
+	printf ']'
+}
+
+daemon_json() {
+	mirrors="" insecure=""
+	for v in DEVCACHE_DOCKER_MIRROR DEVCACHE_MCR_MIRROR DEVCACHE_GHCR_MIRROR; do
+		eval "u=\${$v:-}"
+		[ -n "$u" ] || continue
+		valid_url "$u" || { echo "devcache-env: $v=$u is not an http(s) URL; ignored" >&2; continue; }
+		[ "$v" != DEVCACHE_DOCKER_MIRROR ] || mirrors="${u%/}"
+		case "$u" in http://*) insecure="$insecure $(registry_host "$u")" ;; esac
+	done
+	# shellcheck disable=SC2086
+	printf '{"registry-mirrors": %s, "insecure-registries": %s}\n' \
+		"$(if [ -n "$mirrors" ]; then json_list "$mirrors"; else printf '[]'; fi)" \
+		"$(set -f; json_list $insecure)"
+}
+
+report() {
+	for v in DEVCACHE_GOPROXY DEVCACHE_NPM_REGISTRY DEVCACHE_APT_PROXY DEVCACHE_DOCKER_MIRROR DEVCACHE_MCR_MIRROR DEVCACHE_GHCR_MIRROR DEVCACHE_PLAYWRIGHT_HOST; do
+		eval "u=\${$v:-}"
+		if [ -z "$u" ]; then s="unset (no proxy)"
+		elif ! valid_url "$u"; then s="INVALID (no proxy)"
+		elif reachable "$u"; then s="up"
+		else s="UNREACHABLE (no proxy)"; fi
+		printf '%-26s %-40s %s\n' "$v" "${u:--}" "$s"
+	done
+	printf '%-26s %s\n' DEVCACHE_GOPRIVATE "${DEVCACHE_GOPRIVATE:--}"
+}
+
+load_config
+fmt="${1:-sh}"
+case "${0##*/}" in devcache-apt-proxy) fmt=apt-detect ;; esac
+
+case "$fmt" in
+sh)
+	settings
+	printf '%s' "$OUT" | while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		k="${line%%=*}" val="${line#*=}"
+		printf "export %s='%s'\n" "$k" "$(printf '%s' "$val" | sed "s/'/'\\\\''/g")"
+	done
+	;;
+env) settings; printf '%s' "$OUT" ;;
+apt-conf)
+	p="$(apt_proxy)"
+	if [ -n "$p" ]; then printf 'Acquire::http::Proxy "%s";\n' "$p"; fi
+	;;
+apt-detect) p="$(apt_proxy)"; printf '%s\n' "${p:-DIRECT}" ;;
+daemon-json) daemon_json ;;
+report) report ;;
+-h | --help | help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) die "unknown format '$fmt' (sh, env, apt-conf, apt-detect, daemon-json, report)" ;;
+esac
+DEVCACHE_ENV_SCRIPT
+RUN echo "54ebcd1955daa328f31ebe8c93b50b71fcb9489a4a45a0a2986c530d4517cd29  /usr/local/bin/devcache-env" | sha256sum -c -
 
 # pkgconf, gtk+3.0-dev and webkit2gtk-4.1-dev are what `make build` needs to
 # link the client's embedded desktop GUI (CGO + Wails/GTK/WebKit): the same
@@ -273,12 +523,19 @@ RUN set -eux; \
 # a bound image carries without running it.
 ARG CLAUDE_CODE_VERSION
 ARG CODEX_VERSION
+# DEVCACHE_NPM_REGISTRY: the fleet's npm cache (devops.md section 2a). NO
+# DEFAULT and NEVER an ENV, for the same reason as the Go caches above.
+# devcache-env (installed earlier in this stage) sets npm_config_registry
+# only when it is set and the cache answers; unset or unreachable, npm keeps
+# its own default registry.
+ARG DEVCACHE_NPM_REGISTRY
 RUN set -eux; \
     if [ -z "${CLAUDE_CODE_VERSION:-}" ] || [ -z "${CODEX_VERSION:-}" ]; then \
         echo "CLAUDE_CODE_VERSION and CODEX_VERSION are required build arguments." >&2; \
         echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
     fi; \
+    eval "$(devcache-env)"; \
     npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}"; \
     claude --version; \
     codex --version
