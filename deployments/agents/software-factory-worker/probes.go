@@ -90,14 +90,17 @@ var pidsLimitProbeScript []byte
 
 // The environment variables a probe reads its expectations from.
 const (
-	EnvExpectedClaudeCode = "EXPECTED_CLAUDE_CODE_VERSION"
-	EnvExpectedCodex      = "EXPECTED_CODEX_VERSION"
-	EnvExpectedGopls      = "EXPECTED_GOPLS_VERSION"
-	EnvExpectedGolangci   = "EXPECTED_GOLANGCI_VERSION"
-	EnvExpectedActionlint = "EXPECTED_ACTIONLINT_VERSION"
-	EnvExpectedShellcheck = "EXPECTED_SHELLCHECK_VERSION"
-	EnvExpectedOpencode   = "EXPECTED_OPENCODE_VERSION"
-	EnvProbePidsLimit     = "PROBE_PIDS_LIMIT"
+	EnvExpectedClaudeCode      = "EXPECTED_CLAUDE_CODE_VERSION"
+	EnvExpectedCodex           = "EXPECTED_CODEX_VERSION"
+	EnvExpectedGopls           = "EXPECTED_GOPLS_VERSION"
+	EnvExpectedGolangci        = "EXPECTED_GOLANGCI_VERSION"
+	EnvExpectedActionlint      = "EXPECTED_ACTIONLINT_VERSION"
+	EnvExpectedShellcheck      = "EXPECTED_SHELLCHECK_VERSION"
+	EnvExpectedOpencode        = "EXPECTED_OPENCODE_VERSION"
+	EnvExpectedProtoc          = "EXPECTED_PROTOC_VERSION"
+	EnvExpectedProtocGenGo     = "EXPECTED_PROTOC_GEN_GO_VERSION"
+	EnvExpectedProtocGenGoGRPC = "EXPECTED_PROTOC_GEN_GO_GRPC_VERSION"
+	EnvProbePidsLimit          = "PROBE_PIDS_LIMIT"
 
 	// EnvExpectedMemlockKiB is the locked-memory limit, in KiB as `ulimit -l`
 	// reports it, a Sandboxed probe must see. It is not set by ProbeEnv: this
@@ -121,7 +124,14 @@ func ProbeEnv(b Build) map[string]string {
 		EnvExpectedShellcheck: strings.TrimPrefix(b.Pins.Shellcheck, "v"),
 		// opencode reports "1.18.32", without the tag's "v".
 		EnvExpectedOpencode: strings.TrimPrefix(b.Pins.Opencode, "v"),
-		EnvProbePidsLimit:   strconv.Itoa(ProbePidsLimit),
+		// protoc reports "libprotoc 3.<version>", e.g. "libprotoc 3.21.12" for
+		// the pinned 21.12 release: every 3.x protobuf release carries that
+		// same leading major. protoc-gen-go reports its tag ("v1.36.12");
+		// protoc-gen-go-grpc reports its version without the tag's "v".
+		EnvExpectedProtoc:          "3." + b.Pins.Protoc,
+		EnvExpectedProtocGenGo:     b.Pins.ProtocGenGo,
+		EnvExpectedProtocGenGoGRPC: strings.TrimPrefix(b.Pins.ProtocGenGoGRPC, "v"),
+		EnvProbePidsLimit:          strconv.Itoa(ProbePidsLimit),
 	}
 }
 
@@ -136,6 +146,7 @@ func Probes() []Probe {
 		{Name: "serena resolves a Go symbol", Script: serenaGoProbe, NetworkNone: true},
 		{Name: "lint and scan a Go module", Script: lintProbe, NetworkNone: true},
 		{Name: "lint GitHub Actions workflows", Script: workflowLintProbe, NetworkNone: true},
+		{Name: "protoc generates Go and gRPC code for a proto importing the well-known types", Script: protocProbe, NetworkNone: true},
 		{Name: "full control of the container, under the production boundary", Script: fullControlProbe, Sandboxed: true},
 		{Name: "a fork past the pids limit fails cleanly", Script: pidsLimitProbe, Sandboxed: true,
 			PidsLimit: ProbePidsLimit, Stdin: pidsLimitProbeScript},
@@ -238,6 +249,21 @@ actionlint .github/workflows/ok.yml
 printf "%s\n" "on: push" "jobs:" "  probe:" "    runs-on: ubuntu-latest" "    steps:" '      - run: ls $(pwd)' > .github/workflows/bad.yml
 if out="$(actionlint .github/workflows/bad.yml 2>&1)"; then echo "actionlint passed a workflow with an SC2046 word-split -- shellcheck is not being reached"; exit 1; fi
 echo "$out" | grep -q SC2046 || { echo "actionlint failed without reporting SC2046: $out"; exit 1; }`
+
+// protocProbe proves protoc and its two Go code-generator plugins are the
+// pinned versions and that the TRIO works, not that three binaries exist: a
+// proto importing a well-known type (google/protobuf/timestamp.proto, which
+// ships in protoc's own include/ tree) and declaring a service must generate
+// both a .pb.go and a _grpc.pb.go, offline.
+const protocProbe = `protoc --version; protoc-gen-go --version; protoc-gen-go-grpc --version
+protoc --version | grep -qF "$EXPECTED_PROTOC_VERSION" || { echo "protoc is not the pinned $EXPECTED_PROTOC_VERSION: $(protoc --version)"; exit 1; }
+protoc-gen-go --version | grep -qF "$EXPECTED_PROTOC_GEN_GO_VERSION" || { echo "protoc-gen-go is not the pinned $EXPECTED_PROTOC_GEN_GO_VERSION: $(protoc-gen-go --version)"; exit 1; }
+protoc-gen-go-grpc --version | grep -qF "$EXPECTED_PROTOC_GEN_GO_GRPC_VERSION" || { echo "protoc-gen-go-grpc is not the pinned $EXPECTED_PROTOC_GEN_GO_GRPC_VERSION: $(protoc-gen-go-grpc --version)"; exit 1; }
+mkdir -p /tmp/protocprobe; cd /tmp/protocprobe
+printf "%s\n" 'syntax = "proto3";' '' 'package protocprobe;' '' 'import "google/protobuf/timestamp.proto";' '' 'option go_package = "example.com/protocprobe;protocprobe";' '' 'message Ping { google.protobuf.Timestamp sent_at = 1; }' '' 'service Prober { rpc Probe(Ping) returns (Ping); }' > probe.proto
+protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative probe.proto
+test -f probe.pb.go || { echo "protoc did not generate probe.pb.go"; exit 1; }
+test -f probe_grpc.pb.go || { echo "protoc did not generate probe_grpc.pb.go"; exit 1; }`
 
 // fullControlProbe: the container is the boundary, so the worker has full
 // control inside it (go-quicbaas#927). A worker that cannot install a package

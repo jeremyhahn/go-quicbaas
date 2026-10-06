@@ -11,6 +11,14 @@ UI's **Check for updates now** (Software Factory → Fleet → Worker image).
 
 Package: `pkg/sdlc/workerimage`. Issue: go-quicbaas#1021.
 
+Besides the two agent CLIs, the image carries the verification toolchain CI
+reaches the same verdicts with (Go, golangci-lint, gosec, govulncheck,
+actionlint, shellcheck), serena and gopls, and the protobuf toolchain (protoc,
+protoc-gen-go, protoc-gen-go-grpc) a Go project with `.proto` files regenerates
+code with — rather than host-mounting `protoc`, which the container-only
+tooling rule forbids. Every one of these is a pin in `pkg/version/toolchain.mk`,
+carried into `deployments/agents/software-factory-worker/image.go`'s `Pins`.
+
 ## One pass
 
 | step | what happens |
@@ -206,8 +214,18 @@ make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-wor
 list compiled into every Go binary, so a tool whose newest release requires a
 vulnerable module fails the gate too. gopls and gosec are therefore built from a
 throwaway module that raises `GO_TOOL_DEPENDENCY_FLOORS`
-(`pkg/version/toolchain.mk`), not `go install`ed. The fix for such a finding is a
-floor there, never a trivy exception. The digest is taken from
+(`pkg/version/toolchain.mk`), not `go install`ed; serena's own `uv tool install`
+environment is raised the same way with `SERENA_DEPENDENCY_FLOORS`, through
+uv's `--overrides` rather than `--with` (serena-agent pins its dependencies
+exactly, so `--with` only adds a second, unsatisfiable constraint; `--overrides`
+replaces the pin instead) (go-quicbaas#1161: a fixable urllib3 finding in
+serena's Python environment).
+trivy also reads the base image's own OS packages (openssl's libssl3/libcrypto3,
+go-quicbaas#1161), which is why the final stage runs `apk upgrade --no-cache`
+before anything else is added, and `build-worker-image` builds with `--pull` so
+a stale local `alpine:3.21` or `golang:*-alpine` cannot slip a fixed finding
+back in. The fix for any such finding is a floor or an upgrade, never a trivy
+exception. The digest is taken from
 the push's own output, since `RepoDigests` can be empty for a locally built
 image, and the target ends on one machine-readable line:
 

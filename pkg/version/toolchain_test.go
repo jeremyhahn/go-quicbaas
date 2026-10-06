@@ -27,7 +27,9 @@ func TestToolchain_EveryLineIsAnAssignment(t *testing.T) {
 		t.Fatalf("Toolchain: %v", err)
 	}
 	for _, name := range []string{"GO_VERSION", "GOLANGCI_VERSION", "GOSEC_VERSION", "GOVULNCHECK_VERSION", "SERENA_VERSION", "GOPLS_VERSION", "GO_TOOL_DEPENDENCY_FLOORS",
-		"OPENCODE_VERSION", "OPENCODE_SHA256_X86_64", "OPENCODE_SHA256_AARCH64"} {
+		"OPENCODE_VERSION", "OPENCODE_SHA256_X86_64", "OPENCODE_SHA256_AARCH64",
+		"PROTOC_VERSION", "PROTOC_SHA256_X86_64", "PROTOC_SHA256_AARCH64",
+		"PROTOC_GEN_GO_VERSION", "PROTOC_GEN_GO_GRPC_VERSION", "SERENA_DEPENDENCY_FLOORS"} {
 		if pins[name] == "" {
 			t.Errorf("toolchain.mk does not pin %s", name)
 		}

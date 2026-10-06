@@ -76,3 +76,28 @@ SHELLCHECK_SHA256_AARCH64 := 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e26
 OPENCODE_VERSION := v1.18.32
 OPENCODE_SHA256_X86_64 := 1ce4699c8a9470ad806fa824112cd30b5d51b4038c29231189486302ef394d94
 OPENCODE_SHA256_AARCH64 := abf302edbc996548e28417dcdf7f67109fd95c7344f813a312633a818986204d
+# protoc, so a Go project with .proto files regenerates code inside the worker
+# image instead of host-mounting protoc (the container-only tooling rule).
+# 21.12 = `libprotoc 3.21.12`, the version named in the `// protoc v3.21.12`
+# header of this fleet's generated .pb.go files; Alpine's own protobuf package
+# is a different major and is not used. Upstream publishes no checksum file
+# for the release zip, so the SHA-256 of each architecture's asset is pinned
+# beside the version, like shellcheck's: change all three together.
+PROTOC_VERSION := 21.12
+PROTOC_SHA256_X86_64 := 3a4c1e5f2516c639d3079b1586e703fc7bcfa2136d58bda24d1d54f949c315e8
+PROTOC_SHA256_AARCH64 := 2dd17f75d66a682640b136e31848da9fb2eefe68d55303baf8b32617374f6711
+# protoc-gen-go and protoc-gen-go-grpc are the Go code-generator plugins protoc
+# invokes; each is `go install`ed in the toolchain stage like golangci-lint,
+# from its own module at its own pin.
+PROTOC_GEN_GO_VERSION := v1.36.12
+PROTOC_GEN_GO_GRPC_VERSION := v1.6.1
+# Dependency floor for Serena's own Python tool environment, the same idea as
+# GO_TOOL_DEPENDENCY_FLOORS above but applied through `uv tool install
+# --overrides` rather than a Go build: urllib3 < 2.8.0 is a fixable finding
+# `make push-worker-image`'s trivy gate reads out of Serena's installed
+# packages (go-quicbaas#1161). `--overrides`, not `--with`: serena-agent
+# 1.7.0 depends on urllib3==2.7.0 exactly, and `--with` only adds a second,
+# conflicting constraint uv then refuses to resolve -- `--overrides` replaces
+# the declared pin instead. Space-separated requirement specifiers. Drop an
+# entry once serena's own release requires that version or newer.
+SERENA_DEPENDENCY_FLOORS := urllib3>=2.8.0

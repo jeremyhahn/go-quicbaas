@@ -107,6 +107,13 @@ ARG GOSEC_VERSION
 ARG GOVULNCHECK_VERSION
 ARG ACTIONLINT_VERSION
 
+# protoc-gen-go and protoc-gen-go-grpc are the Go code-generator plugins protoc
+# invokes to turn a .proto file into Go and gRPC code. Each is its own module,
+# `go install`ed below exactly like the three tools above, at the tag a Go
+# project's generated code is checked in against.
+ARG PROTOC_GEN_GO_VERSION
+ARG PROTOC_GEN_GO_GRPC_VERSION
+
 FROM golang:${GO_VERSION}-alpine AS toolchain
 
 # `go install`, the way the CI runner installs the same three tools, so the
@@ -117,6 +124,8 @@ ARG GOLANGCI_VERSION
 ARG GOSEC_VERSION
 ARG GOVULNCHECK_VERSION
 ARG ACTIONLINT_VERSION
+ARG PROTOC_GEN_GO_VERSION
+ARG PROTOC_GEN_GO_GRPC_VERSION
 
 # gopls is not a verdict tool — it is SERENA'S GO LANGUAGE SERVER, and serena is
 # how an agent reads this codebase without burning its context on whole files.
@@ -142,8 +151,8 @@ ARG DEVCACHE_GOPRIVATE
 ENV CGO_ENABLED=0 GOBIN=/toolchain/bin
 
 RUN set -eux; \
-    if [ -z "${GOLANGCI_VERSION:-}" ] || [ -z "${GOSEC_VERSION:-}" ] || [ -z "${GOVULNCHECK_VERSION:-}" ] || [ -z "${ACTIONLINT_VERSION:-}" ] || [ -z "${GOPLS_VERSION:-}" ] || [ -z "${GO_TOOL_DEPENDENCY_FLOORS:-}" ]; then \
-        echo "GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION, GOPLS_VERSION and GO_TOOL_DEPENDENCY_FLOORS are required build arguments." >&2; \
+    if [ -z "${GOLANGCI_VERSION:-}" ] || [ -z "${GOSEC_VERSION:-}" ] || [ -z "${GOVULNCHECK_VERSION:-}" ] || [ -z "${ACTIONLINT_VERSION:-}" ] || [ -z "${GOPLS_VERSION:-}" ] || [ -z "${GO_TOOL_DEPENDENCY_FLOORS:-}" ] || [ -z "${PROTOC_GEN_GO_VERSION:-}" ] || [ -z "${PROTOC_GEN_GO_GRPC_VERSION:-}" ]; then \
+        echo "GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION, GOPLS_VERSION, GO_TOOL_DEPENDENCY_FLOORS, PROTOC_GEN_GO_VERSION and PROTOC_GEN_GO_GRPC_VERSION are required build arguments." >&2; \
         echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
     fi; \
@@ -155,6 +164,8 @@ RUN set -eux; \
     go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_VERSION}"; \
     go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; \
     go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"; \
+    go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"; \
+    go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}"; \
     # gopls and gosec are the two tools this image ships whose own newest
     # releases carry vulnerable dependencies, and `go install tool@version`
     # cannot change a dependency. So each is built from a throwaway module:
@@ -196,6 +207,13 @@ RUN set -eux; \
     "${GOBIN}/gosec" -version
 
 FROM alpine:3.21
+
+# Fixed packages already in Alpine's apk repository reach this image without
+# waiting for a new alpine:3.21 base tag to pick them up -- e.g. the openssl
+# 3.3.7-r2 fix for the libssl3/libcrypto3 finding `make push-worker-image`'s
+# trivy gate reported (go-quicbaas#1161). Must run before anything else is
+# added, so every package below installs at the upgraded version too.
+RUN apk upgrade --no-cache
 
 RUN apk add --no-cache \
     nodejs \
@@ -499,6 +517,54 @@ RUN set -eux; \
     rm -rf "/tmp/$tarball" "/tmp/shellcheck-${SHELLCHECK_VERSION}"; \
     shellcheck --version
 
+# PROTOC, the protobuf compiler a Go project with .proto files regenerates
+# code with inside this image, instead of host-mounting protoc (which breaks
+# the container-only tooling rule). Pinned at 21.12 -- `libprotoc 3.21.12`,
+# the version named in the `// protoc v3.21.12` header of this fleet's
+# generated .pb.go files. Alpine's own protobuf package is a different major
+# and is not used.
+#
+# FROM THE RELEASE ZIP, GLIBC-LINKED. The upstream binary needs libpthread,
+# libm, libstdc++ and libgcc_s; gcompat and libstdc++ are what let it run on
+# this musl base (verified: alpine:3.21 + gcompat + libstdc++ runs `protoc
+# --version` and compiles a proto importing google/protobuf/timestamp.proto).
+# Upstream publishes no checksum file for the release asset, so the SHA-256 of
+# each architecture's zip is pinned beside the version, like shellcheck's --
+# passed in by `make build-worker-image` with no default here, for the same
+# reason as every other pin: a default is a second copy that drifts.
+#
+# include/google/protobuf/*.proto (the well-known types) lands at
+# /usr/local/include, which protoc searches by default relative to its own
+# bin directory (<bin>/../include) -- no -I needed for them. unzip is a
+# build-only dependency, added and removed in this one layer.
+ARG PROTOC_VERSION
+ARG PROTOC_SHA256_X86_64
+ARG PROTOC_SHA256_AARCH64
+RUN set -eux; \
+    if [ -z "${PROTOC_VERSION:-}" ] || [ -z "${PROTOC_SHA256_X86_64:-}" ] || [ -z "${PROTOC_SHA256_AARCH64:-}" ]; then \
+        echo "PROTOC_VERSION, PROTOC_SHA256_X86_64 and PROTOC_SHA256_AARCH64 are required build arguments." >&2; \
+        echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
+        exit 1; \
+    fi; \
+    apk add --no-cache gcompat libstdc++; \
+    apk add --no-cache --virtual .protoc-build unzip; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) zipname="protoc-${PROTOC_VERSION}-linux-x86_64.zip"; sum="$PROTOC_SHA256_X86_64" ;; \
+        aarch64) zipname="protoc-${PROTOC_VERSION}-linux-aarch_64.zip"; sum="$PROTOC_SHA256_AARCH64" ;; \
+        *) echo "no pinned protoc release for $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o "/tmp/$zipname" "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/$zipname"; \
+    echo "$sum  /tmp/$zipname" | sha256sum -c -; \
+    mkdir -p /tmp/protoc; \
+    unzip -q "/tmp/$zipname" -d /tmp/protoc; \
+    install -m 0755 /tmp/protoc/bin/protoc /usr/local/bin/protoc; \
+    mkdir -p /usr/local/include; \
+    cp -r /tmp/protoc/include/. /usr/local/include/; \
+    rm -rf "/tmp/$zipname" /tmp/protoc; \
+    apk del .protoc-build; \
+    protoc --version
+
 # The agents themselves, exactly as deployments/agents/claude-code and
 # deployments/agents/codex install them.
 #
@@ -609,6 +675,21 @@ RUN set -eux; \
 # A virtual package installed and deleted inside one RUN keeps the compiler
 # inputs out of the shipped layers; the compiled extension stays.
 ARG SERENA_VERSION
+# SERENA_DEPENDENCY_FLOORS raises a dependency in serena's own `uv tool
+# install` environment past a fixed CVE that trivy reads out of the installed
+# package list the same way it reads a Go binary's module list -- urllib3 <
+# 2.8.0 (go-quicbaas#1161). Space-separated requirement specifiers (toolchain.mk
+# SERENA_DEPENDENCY_FLOORS), no default for the same reason as every other
+# pin: a default is a second copy that drifts.
+#
+# `--overrides`, NOT `--with`. serena-agent 1.7.0 depends on urllib3==2.7.0
+# EXACTLY, and `--with` only ADDS a constraint alongside the package's own
+# declared dependencies -- uv then has two conflicting requirements on
+# urllib3 and refuses to resolve at all ("No solution found ... your
+# requirements are unsatisfiable"). `--overrides <file>` REPLACES the
+# declared pin instead, which is the uv analogue of what the throwaway
+# module above does for gopls/gosec's go.mod requirements.
+ARG SERENA_DEPENDENCY_FLOORS
 # UV_TOOL_DIR IS THE ONE THAT MATTERS, AND ITS DEFAULT IS UNREADABLE HERE.
 # `uv tool install` runs as root during the build, and by default puts the
 # tool's virtualenv under /root/.local/share/uv/tools with the shim in
@@ -623,15 +704,18 @@ ENV UV_TOOL_DIR=/opt/uv/tools \
     UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_NO_PROGRESS=1
 RUN set -eux; \
-    if [ -z "${SERENA_VERSION:-}" ]; then \
-        echo "SERENA_VERSION is a required build argument." >&2; \
-        echo "Build with 'make build-worker-image', which passes the Makefile's pin." >&2; \
+    if [ -z "${SERENA_VERSION:-}" ] || [ -z "${SERENA_DEPENDENCY_FLOORS:-}" ]; then \
+        echo "SERENA_VERSION and SERENA_DEPENDENCY_FLOORS are required build arguments." >&2; \
+        echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
     fi; \
     apk add --no-cache python3 py3-pip uv; \
     apk add --no-cache --virtual .serena-build python3-dev linux-headers; \
+    printf '%s\n' ${SERENA_DEPENDENCY_FLOORS} > /tmp/serena-overrides.txt; \
     uv tool install --python python3 \
-        --from "git+https://github.com/oraios/serena@${SERENA_VERSION}" serena-agent; \
+        --from "git+https://github.com/oraios/serena@${SERENA_VERSION}" serena-agent \
+        --overrides /tmp/serena-overrides.txt; \
+    rm -f /tmp/serena-overrides.txt; \
     apk del .serena-build; \
     chmod -R a+rX /opt/uv; \
     serena --version
@@ -912,9 +996,12 @@ ARG GOVULNCHECK_VERSION
 ARG GOPLS_VERSION
 ARG ACTIONLINT_VERSION
 ARG OPENCODE_VERSION
+ARG PROTOC_VERSION
+ARG PROTOC_GEN_GO_VERSION
+ARG PROTOC_GEN_GO_GRPC_VERSION
 ARG QUICBAAS_VERSION
 LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
-      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, opencode, git, ssh, ssh-keygen, make, the Go toolchain and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
+      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, opencode, git, ssh, ssh-keygen, make, the Go toolchain, protoc and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
       org.opencontainers.image.vendor="QuicBaaS" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="${QUICBAAS_VERSION}" \
@@ -929,4 +1016,7 @@ LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
       io.quicbaas.worker.serena.version="${SERENA_VERSION}" \
       io.quicbaas.worker.actionlint.version="${ACTIONLINT_VERSION}" \
       io.quicbaas.worker.shellcheck.version="${SHELLCHECK_VERSION}" \
-      io.quicbaas.worker.opencode.version="${OPENCODE_VERSION}"
+      io.quicbaas.worker.opencode.version="${OPENCODE_VERSION}" \
+      io.quicbaas.worker.protoc.version="${PROTOC_VERSION}" \
+      io.quicbaas.worker.protoc-gen-go.version="${PROTOC_GEN_GO_VERSION}" \
+      io.quicbaas.worker.protoc-gen-go-grpc.version="${PROTOC_GEN_GO_GRPC_VERSION}"

@@ -43,7 +43,9 @@ func testPins() Pins {
 	return Pins{Go: "1.27.0", Golangci: "v2.13.2", Gosec: "v2.29.0", Govulncheck: "v1.8.0", Gopls: "v0.23.0", Serena: "v1.7.0",
 		Actionlint: "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
 		Opencode: "v1.18.32", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
-		ToolDependencyFloors: "golang.org/x/mod@v0.41.0"}
+		Protoc: "21.12", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
+		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.1",
+		ToolDependencyFloors: "golang.org/x/mod@v0.41.0", SerenaDependencyFloors: "urllib3>=2.8.0"}
 }
 
 func testBuild() Build {
@@ -97,9 +99,12 @@ func TestBuild_BuildArgsCarryEveryInput(t *testing.T) {
 		"AGENT_UID": "1000", "AGENT_GID": "1000", "GO_VERSION": "1.27.0", "GOLANGCI_VERSION": "v2.13.2",
 		"GOSEC_VERSION": "v2.29.0", "GOVULNCHECK_VERSION": "v1.8.0", "GOPLS_VERSION": "v0.23.0", "SERENA_VERSION": "v1.7.0",
 		"GO_TOOL_DEPENDENCY_FLOORS": "golang.org/x/mod@v0.41.0",
+		"SERENA_DEPENDENCY_FLOORS":  "urllib3>=2.8.0",
 		"ACTIONLINT_VERSION":        "v1.7.12", "SHELLCHECK_VERSION": "v0.11.0",
 		"SHELLCHECK_SHA256_X86_64": "8c3b", "SHELLCHECK_SHA256_AARCH64": "12b3",
 		"OPENCODE_VERSION": "v1.18.32", "OPENCODE_SHA256_X86_64": "1ce4", "OPENCODE_SHA256_AARCH64": "abf3",
+		"PROTOC_VERSION": "21.12", "PROTOC_SHA256_X86_64": "aaaa", "PROTOC_SHA256_AARCH64": "bbbb",
+		"PROTOC_GEN_GO_VERSION": "v1.36.12", "PROTOC_GEN_GO_GRPC_VERSION": "v1.6.1",
 	}
 	for k, v := range want {
 		if args[k] != v {
@@ -272,10 +277,12 @@ func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	var missing *PinsMissingError
 	err := Pins{}.Validate()
-	if !errors.As(err, &missing) || len(missing.Missing) != 14 ||
+	if !errors.As(err, &missing) || len(missing.Missing) != 20 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
-		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") {
-		t.Fatalf("Validate() = %v, want all fourteen pins named", err)
+		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
+		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
+		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") {
+		t.Fatalf("Validate() = %v, want all twenty pins named", err)
 	}
 }
 
@@ -285,8 +292,13 @@ func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 		labels[LabelOpencodeVersion] != "v1.18.32" {
 		t.Fatalf("labels = %v, want actionlint, shellcheck and opencode versions recorded", labels)
 	}
+	if labels[LabelProtocVersion] != "21.12" || labels[LabelProtocGenGoVersion] != "v1.36.12" ||
+		labels[LabelProtocGenGoGRPCVersion] != "v1.6.1" {
+		t.Fatalf("labels = %v, want protoc, protoc-gen-go and protoc-gen-go-grpc versions recorded", labels)
+	}
 	for key, value := range labels {
-		if key == "" || value == "8c3b" || value == "12b3" || value == "1ce4" || value == "abf3" || value == "golang.org/x/mod@v0.41.0" {
+		switch value {
+		case "8c3b", "12b3", "1ce4", "abf3", "aaaa", "bbbb", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
 			t.Fatalf("label %q=%q: a tarball digest or dependency floor is a build input, not a label", key, value)
 		}
 	}
@@ -376,6 +388,12 @@ func TestProbeEnv_CarriesExpectationsNotShell(t *testing.T) {
 	}
 	if env[EnvExpectedOpencode] != "1.18.32" {
 		t.Fatalf("opencode reports its version without the v: got %q", env[EnvExpectedOpencode])
+	}
+	if env[EnvExpectedProtoc] != "3.21.12" {
+		t.Fatalf("protoc reports libprotoc 3.<version>: got %q", env[EnvExpectedProtoc])
+	}
+	if env[EnvExpectedProtocGenGo] != "v1.36.12" || env[EnvExpectedProtocGenGoGRPC] != "1.6.1" {
+		t.Fatalf("protoc-gen-go reports its tag, protoc-gen-go-grpc its version without the v: got %v", env)
 	}
 	if env[EnvExpectedClaudeCode] != "2.1.280" || env[EnvExpectedCodex] != "0.156.0" || env["HOME"] != "/tmp" {
 		t.Fatalf("env = %v", env)

@@ -47,9 +47,12 @@ GOFMT ?= gofmt
 GOLINT := $(shell go env GOPATH)/bin/golangci-lint
 # GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION,
 # SHELLCHECK_VERSION (with its tarball digests), SERENA_VERSION, GOPLS_VERSION,
-# GO_TOOL_DEPENDENCY_FLOORS (what gopls and gosec are built with) and
-# OPENCODE_VERSION (with its tarball digests) are included above from
-# pkg/version/toolchain.mk, the repository's only copy of them. `make install-tools` installs them, CI reads
+# GO_TOOL_DEPENDENCY_FLOORS (what gopls and gosec are built with),
+# SERENA_DEPENDENCY_FLOORS (what serena's own uv tool environment is built
+# with), OPENCODE_VERSION (with its tarball digests) and PROTOC_VERSION /
+# PROTOC_GEN_GO_VERSION / PROTOC_GEN_GO_GRPC_VERSION (with protoc's tarball
+# digests) are included above from pkg/version/toolchain.mk, the repository's
+# only copy of them. `make install-tools` installs them, CI reads
 # them through `make print-<VAR>` (.github/workflows/ci.yml), and the Software
 # Factory worker image is built with them — by `make build-worker-image` and by
 # the daemon's worker image refresh, which embeds the same file.
@@ -3401,7 +3404,7 @@ export DEVCACHE_NPM_REGISTRY
 .PHONY: build-worker-image
 build-worker-image: ## Build the Software Factory worker image (quicbaas-software-factory-worker:<version>-cc<claude>-cx<codex>)
 	@echo "$(BLUE)Building the Software Factory worker image ($(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG))...$(NC)"
-	$(DOCKER) build \
+	$(DOCKER) build --pull \
 		--build-arg GO_VERSION=$(GO_VERSION) \
 		--build-arg GOLANGCI_VERSION=$(GOLANGCI_VERSION) \
 		--build-arg GOSEC_VERSION=$(GOSEC_VERSION) \
@@ -3413,9 +3416,15 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg GOPLS_VERSION=$(GOPLS_VERSION) \
 		--build-arg GO_TOOL_DEPENDENCY_FLOORS="$(GO_TOOL_DEPENDENCY_FLOORS)" \
 		--build-arg SERENA_VERSION=$(SERENA_VERSION) \
+		--build-arg SERENA_DEPENDENCY_FLOORS="$(SERENA_DEPENDENCY_FLOORS)" \
 		--build-arg OPENCODE_VERSION=$(OPENCODE_VERSION) \
 		--build-arg OPENCODE_SHA256_X86_64=$(OPENCODE_SHA256_X86_64) \
 		--build-arg OPENCODE_SHA256_AARCH64=$(OPENCODE_SHA256_AARCH64) \
+		--build-arg PROTOC_VERSION=$(PROTOC_VERSION) \
+		--build-arg PROTOC_SHA256_X86_64=$(PROTOC_SHA256_X86_64) \
+		--build-arg PROTOC_SHA256_AARCH64=$(PROTOC_SHA256_AARCH64) \
+		--build-arg PROTOC_GEN_GO_VERSION=$(PROTOC_GEN_GO_VERSION) \
+		--build-arg PROTOC_GEN_GO_GRPC_VERSION=$(PROTOC_GEN_GO_GRPC_VERSION) \
 		--build-arg CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION) \
 		--build-arg CODEX_VERSION=$(CODEX_VERSION) \
 		--build-arg QUICBAAS_VERSION=$(VERSION) \

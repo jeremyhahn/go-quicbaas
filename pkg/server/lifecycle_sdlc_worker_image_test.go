@@ -101,8 +101,11 @@ func (fakeProjectReader) Get(context.Context, string, string) (*orchestration.Pr
 func workerImageTestPins() softwarefactoryworker.Pins {
 	return softwarefactoryworker.Pins{Go: "1.27.0", Golangci: "v2.13.2", Gosec: "v2.29.0",
 		Govulncheck: "v1.8.0", Gopls: "v0.23.0", Serena: "v1.7.0", ToolDependencyFloors: "golang.org/x/mod@v0.41.0",
-		Actionlint: "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
-		Opencode: "v1.18.32", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3"}
+		SerenaDependencyFloors: "urllib3>=2.8.0",
+		Actionlint:             "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
+		Opencode: "v1.18.32", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
+		Protoc: "21.12", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
+		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.1"}
 }
 
 func workerImageTestDeps() workerimage.Deps {

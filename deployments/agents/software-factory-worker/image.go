@@ -58,6 +58,15 @@ type Pins struct {
 	// INPUT rather than a tool version, so it carries no label.
 	ToolDependencyFloors string
 
+	// SerenaDependencyFloors raises a dependency in Serena's own `uv tool
+	// install` environment past a fixed CVE (toolchain.mk's
+	// SERENA_DEPENDENCY_FLOORS, go-quicbaas#1161), the same idea as
+	// ToolDependencyFloors but applied through uv's `--overrides` rather than
+	// a Go build: serena-agent pins its dependencies exactly, so `--with`
+	// (an addition) cannot raise one -- only `--overrides` (a replacement)
+	// can. A build INPUT, so it carries no label.
+	SerenaDependencyFloors string
+
 	// Actionlint and Shellcheck lint GitHub Actions workflows, which the
 	// fleet's `make lint` does (go-quicbaas#1039). shellcheck is installed from
 	// its release tarball, whose SHA-256 per architecture is pinned beside the
@@ -74,6 +83,20 @@ type Pins struct {
 	Opencode              string
 	OpencodeSHA256X86_64  string
 	OpencodeSHA256Aarch64 string
+
+	// Protoc is the protobuf compiler a Go project's .proto files regenerate
+	// code with inside this image, rather than a host-mounted protoc (the
+	// container-only tooling rule). Installed from its release zip, whose
+	// SHA-256 per architecture is pinned beside the version because upstream
+	// publishes no checksum file.
+	Protoc              string
+	ProtocSHA256X86_64  string
+	ProtocSHA256Aarch64 string
+
+	// ProtocGenGo and ProtocGenGoGRPC are the Go code-generator plugins protoc
+	// invokes, `go install`ed in the toolchain stage like golangci-lint.
+	ProtocGenGo     string
+	ProtocGenGoGRPC string
 }
 
 // ToolchainPins returns the repository's toolchain pins, as this binary
@@ -91,7 +114,8 @@ func ToolchainPins() (Pins, error) {
 		Gopls:       toolchain["GOPLS_VERSION"],
 		Serena:      toolchain["SERENA_VERSION"],
 
-		ToolDependencyFloors: toolchain["GO_TOOL_DEPENDENCY_FLOORS"],
+		ToolDependencyFloors:   toolchain["GO_TOOL_DEPENDENCY_FLOORS"],
+		SerenaDependencyFloors: toolchain["SERENA_DEPENDENCY_FLOORS"],
 
 		Actionlint:              toolchain["ACTIONLINT_VERSION"],
 		Shellcheck:              toolchain["SHELLCHECK_VERSION"],
@@ -101,6 +125,13 @@ func ToolchainPins() (Pins, error) {
 		Opencode:              toolchain["OPENCODE_VERSION"],
 		OpencodeSHA256X86_64:  toolchain["OPENCODE_SHA256_X86_64"],
 		OpencodeSHA256Aarch64: toolchain["OPENCODE_SHA256_AARCH64"],
+
+		Protoc:              toolchain["PROTOC_VERSION"],
+		ProtocSHA256X86_64:  toolchain["PROTOC_SHA256_X86_64"],
+		ProtocSHA256Aarch64: toolchain["PROTOC_SHA256_AARCH64"],
+
+		ProtocGenGo:     toolchain["PROTOC_GEN_GO_VERSION"],
+		ProtocGenGoGRPC: toolchain["PROTOC_GEN_GO_GRPC_VERSION"],
 	}
 	return pins, pins.Validate()
 }
@@ -138,6 +169,7 @@ func (p Pins) named() []namedPin {
 		{buildArg: "GOPLS_VERSION", label: LabelGoplsVersion, value: p.Gopls},
 		{buildArg: "SERENA_VERSION", label: LabelSerenaVersion, value: p.Serena},
 		{buildArg: "GO_TOOL_DEPENDENCY_FLOORS", value: p.ToolDependencyFloors},
+		{buildArg: "SERENA_DEPENDENCY_FLOORS", value: p.SerenaDependencyFloors},
 		{buildArg: "ACTIONLINT_VERSION", label: LabelActionlintVersion, value: p.Actionlint},
 		{buildArg: "SHELLCHECK_VERSION", label: LabelShellcheckVersion, value: p.Shellcheck},
 		{buildArg: "SHELLCHECK_SHA256_X86_64", value: p.ShellcheckSHA256X86_64},
@@ -145,6 +177,11 @@ func (p Pins) named() []namedPin {
 		{buildArg: "OPENCODE_VERSION", label: LabelOpencodeVersion, value: p.Opencode},
 		{buildArg: "OPENCODE_SHA256_X86_64", value: p.OpencodeSHA256X86_64},
 		{buildArg: "OPENCODE_SHA256_AARCH64", value: p.OpencodeSHA256Aarch64},
+		{buildArg: "PROTOC_VERSION", label: LabelProtocVersion, value: p.Protoc},
+		{buildArg: "PROTOC_SHA256_X86_64", value: p.ProtocSHA256X86_64},
+		{buildArg: "PROTOC_SHA256_AARCH64", value: p.ProtocSHA256Aarch64},
+		{buildArg: "PROTOC_GEN_GO_VERSION", label: LabelProtocGenGoVersion, value: p.ProtocGenGo},
+		{buildArg: "PROTOC_GEN_GO_GRPC_VERSION", label: LabelProtocGenGoGRPCVersion, value: p.ProtocGenGoGRPC},
 	}
 }
 
@@ -155,18 +192,21 @@ func (p Pins) named() []namedPin {
 // The two agent-CLI labels are the ones a refresh READS: they are how the
 // daemon knows what a bound image carries without running it.
 const (
-	LabelClaudeCodeVersion  = "io.quicbaas.worker.claude-code.version"
-	LabelCodexVersion       = "io.quicbaas.worker.codex.version"
-	LabelBaseVersion        = "io.quicbaas.worker.base.version"
-	LabelGoVersion          = "io.quicbaas.worker.go.version"
-	LabelGolangciVersion    = "io.quicbaas.worker.golangci-lint.version"
-	LabelGosecVersion       = "io.quicbaas.worker.gosec.version"
-	LabelGovulncheckVersion = "io.quicbaas.worker.govulncheck.version"
-	LabelGoplsVersion       = "io.quicbaas.worker.gopls.version"
-	LabelSerenaVersion      = "io.quicbaas.worker.serena.version"
-	LabelActionlintVersion  = "io.quicbaas.worker.actionlint.version"
-	LabelShellcheckVersion  = "io.quicbaas.worker.shellcheck.version"
-	LabelOpencodeVersion    = "io.quicbaas.worker.opencode.version"
+	LabelClaudeCodeVersion      = "io.quicbaas.worker.claude-code.version"
+	LabelCodexVersion           = "io.quicbaas.worker.codex.version"
+	LabelBaseVersion            = "io.quicbaas.worker.base.version"
+	LabelGoVersion              = "io.quicbaas.worker.go.version"
+	LabelGolangciVersion        = "io.quicbaas.worker.golangci-lint.version"
+	LabelGosecVersion           = "io.quicbaas.worker.gosec.version"
+	LabelGovulncheckVersion     = "io.quicbaas.worker.govulncheck.version"
+	LabelGoplsVersion           = "io.quicbaas.worker.gopls.version"
+	LabelSerenaVersion          = "io.quicbaas.worker.serena.version"
+	LabelActionlintVersion      = "io.quicbaas.worker.actionlint.version"
+	LabelShellcheckVersion      = "io.quicbaas.worker.shellcheck.version"
+	LabelOpencodeVersion        = "io.quicbaas.worker.opencode.version"
+	LabelProtocVersion          = "io.quicbaas.worker.protoc.version"
+	LabelProtocGenGoVersion     = "io.quicbaas.worker.protoc-gen-go.version"
+	LabelProtocGenGoGRPCVersion = "io.quicbaas.worker.protoc-gen-go-grpc.version"
 )
 
 // The npm packages the image installs the agents from.
