@@ -97,6 +97,44 @@ type Pins struct {
 	// invokes, `go install`ed in the toolchain stage like golangci-lint.
 	ProtocGenGo     string
 	ProtocGenGoGRPC string
+
+	// Node runs the npm-installed agent CLIs and language servers; Npm is the
+	// npm the bundled one is upgraded to. Uv installs Serena. Each comes from
+	// its release tarball, with the SHA-256 per architecture pinned beside it.
+	Node              string
+	NodeSHA256X86_64  string
+	NodeSHA256Aarch64 string
+	Npm               string
+	Uv                string
+	UvSHA256X86_64    string
+	UvSHA256Aarch64   string
+
+	// NpmBundledDependencyFloors raises packages npm bundles in its own
+	// node_modules past a fixed CVE (toolchain.mk's
+	// NPM_BUNDLED_DEPENDENCY_FLOORS): space-separated name@version=integrity
+	// entries, each a patch release of the bundled package, verified against
+	// its registry integrity. A build INPUT, so it carries no label.
+	NpmBundledDependencyFloors string
+
+	// The language servers Serena drives, baked in so a session with an empty
+	// HOME and no network reads code by symbol. The npm and gem servers are
+	// pinned by version; the release binaries carry their SHA-256 per
+	// architecture too. clangd publishes no aarch64 Linux build, so an aarch64
+	// image uses Debian's and only the x86_64 digest is pinned.
+	Pyright                   string
+	Typescript                string
+	TypescriptLanguageServer  string
+	BashLanguageServer        string
+	YamlLanguageServer        string
+	RubyLsp                   string
+	Clangd                    string
+	ClangdSHA256X86_64        string
+	RustAnalyzer              string
+	RustAnalyzerSHA256X86_64  string
+	RustAnalyzerSHA256Aarch64 string
+	Marksman                  string
+	MarksmanSHA256X86_64      string
+	MarksmanSHA256Aarch64     string
 }
 
 // ToolchainPins returns the repository's toolchain pins, as this binary
@@ -132,6 +170,31 @@ func ToolchainPins() (Pins, error) {
 
 		ProtocGenGo:     toolchain["PROTOC_GEN_GO_VERSION"],
 		ProtocGenGoGRPC: toolchain["PROTOC_GEN_GO_GRPC_VERSION"],
+
+		Node:              toolchain["NODE_VERSION"],
+		NodeSHA256X86_64:  toolchain["NODE_SHA256_X86_64"],
+		NodeSHA256Aarch64: toolchain["NODE_SHA256_AARCH64"],
+		Npm:               toolchain["NPM_VERSION"],
+		Uv:                toolchain["UV_VERSION"],
+		UvSHA256X86_64:    toolchain["UV_SHA256_X86_64"],
+		UvSHA256Aarch64:   toolchain["UV_SHA256_AARCH64"],
+
+		NpmBundledDependencyFloors: toolchain["NPM_BUNDLED_DEPENDENCY_FLOORS"],
+
+		Pyright:                   toolchain["PYRIGHT_VERSION"],
+		Typescript:                toolchain["TYPESCRIPT_VERSION"],
+		TypescriptLanguageServer:  toolchain["TYPESCRIPT_LANGUAGE_SERVER_VERSION"],
+		BashLanguageServer:        toolchain["BASH_LANGUAGE_SERVER_VERSION"],
+		YamlLanguageServer:        toolchain["YAML_LANGUAGE_SERVER_VERSION"],
+		RubyLsp:                   toolchain["RUBY_LSP_VERSION"],
+		Clangd:                    toolchain["CLANGD_VERSION"],
+		ClangdSHA256X86_64:        toolchain["CLANGD_SHA256_X86_64"],
+		RustAnalyzer:              toolchain["RUST_ANALYZER_VERSION"],
+		RustAnalyzerSHA256X86_64:  toolchain["RUST_ANALYZER_SHA256_X86_64"],
+		RustAnalyzerSHA256Aarch64: toolchain["RUST_ANALYZER_SHA256_AARCH64"],
+		Marksman:                  toolchain["MARKSMAN_VERSION"],
+		MarksmanSHA256X86_64:      toolchain["MARKSMAN_SHA256_X86_64"],
+		MarksmanSHA256Aarch64:     toolchain["MARKSMAN_SHA256_AARCH64"],
 	}
 	return pins, pins.Validate()
 }
@@ -182,6 +245,28 @@ func (p Pins) named() []namedPin {
 		{buildArg: "PROTOC_SHA256_AARCH64", value: p.ProtocSHA256Aarch64},
 		{buildArg: "PROTOC_GEN_GO_VERSION", label: LabelProtocGenGoVersion, value: p.ProtocGenGo},
 		{buildArg: "PROTOC_GEN_GO_GRPC_VERSION", label: LabelProtocGenGoGRPCVersion, value: p.ProtocGenGoGRPC},
+		{buildArg: "NODE_VERSION", label: LabelNodeVersion, value: p.Node},
+		{buildArg: "NODE_SHA256_X86_64", value: p.NodeSHA256X86_64},
+		{buildArg: "NODE_SHA256_AARCH64", value: p.NodeSHA256Aarch64},
+		{buildArg: "NPM_VERSION", label: LabelNpmVersion, value: p.Npm},
+		{buildArg: "NPM_BUNDLED_DEPENDENCY_FLOORS", value: p.NpmBundledDependencyFloors},
+		{buildArg: "UV_VERSION", label: LabelUvVersion, value: p.Uv},
+		{buildArg: "UV_SHA256_X86_64", value: p.UvSHA256X86_64},
+		{buildArg: "UV_SHA256_AARCH64", value: p.UvSHA256Aarch64},
+		{buildArg: "PYRIGHT_VERSION", label: LabelPyrightVersion, value: p.Pyright},
+		{buildArg: "TYPESCRIPT_VERSION", label: LabelTypescriptVersion, value: p.Typescript},
+		{buildArg: "TYPESCRIPT_LANGUAGE_SERVER_VERSION", label: LabelTypescriptLanguageServerVersion, value: p.TypescriptLanguageServer},
+		{buildArg: "BASH_LANGUAGE_SERVER_VERSION", label: LabelBashLanguageServerVersion, value: p.BashLanguageServer},
+		{buildArg: "YAML_LANGUAGE_SERVER_VERSION", label: LabelYamlLanguageServerVersion, value: p.YamlLanguageServer},
+		{buildArg: "RUBY_LSP_VERSION", label: LabelRubyLspVersion, value: p.RubyLsp},
+		{buildArg: "CLANGD_VERSION", label: LabelClangdVersion, value: p.Clangd},
+		{buildArg: "CLANGD_SHA256_X86_64", value: p.ClangdSHA256X86_64},
+		{buildArg: "RUST_ANALYZER_VERSION", label: LabelRustAnalyzerVersion, value: p.RustAnalyzer},
+		{buildArg: "RUST_ANALYZER_SHA256_X86_64", value: p.RustAnalyzerSHA256X86_64},
+		{buildArg: "RUST_ANALYZER_SHA256_AARCH64", value: p.RustAnalyzerSHA256Aarch64},
+		{buildArg: "MARKSMAN_VERSION", label: LabelMarksmanVersion, value: p.Marksman},
+		{buildArg: "MARKSMAN_SHA256_X86_64", value: p.MarksmanSHA256X86_64},
+		{buildArg: "MARKSMAN_SHA256_AARCH64", value: p.MarksmanSHA256Aarch64},
 	}
 }
 
@@ -207,6 +292,19 @@ const (
 	LabelProtocVersion          = "io.quicbaas.worker.protoc.version"
 	LabelProtocGenGoVersion     = "io.quicbaas.worker.protoc-gen-go.version"
 	LabelProtocGenGoGRPCVersion = "io.quicbaas.worker.protoc-gen-go-grpc.version"
+
+	LabelNodeVersion                     = "io.quicbaas.worker.node.version"
+	LabelNpmVersion                      = "io.quicbaas.worker.npm.version"
+	LabelUvVersion                       = "io.quicbaas.worker.uv.version"
+	LabelPyrightVersion                  = "io.quicbaas.worker.pyright.version"
+	LabelTypescriptVersion               = "io.quicbaas.worker.typescript.version"
+	LabelTypescriptLanguageServerVersion = "io.quicbaas.worker.typescript-language-server.version"
+	LabelBashLanguageServerVersion       = "io.quicbaas.worker.bash-language-server.version"
+	LabelYamlLanguageServerVersion       = "io.quicbaas.worker.yaml-language-server.version"
+	LabelRubyLspVersion                  = "io.quicbaas.worker.ruby-lsp.version"
+	LabelClangdVersion                   = "io.quicbaas.worker.clangd.version"
+	LabelRustAnalyzerVersion             = "io.quicbaas.worker.rust-analyzer.version"
+	LabelMarksmanVersion                 = "io.quicbaas.worker.marksman.version"
 )
 
 // The npm packages the image installs the agents from.

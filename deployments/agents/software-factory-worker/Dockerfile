@@ -28,7 +28,7 @@
 #   go + make      the binding's verification commands are the project's own
 #                  (`make build`, `make test`, `make lint`), and a Go project's
 #                  are what this factory builds.
-#   build-base     `go test -race` and any cgo dependency need a C toolchain;
+#   build-essential `go test -race` and any cgo dependency need a C toolchain;
 #                  a project whose tests do not build cannot be verified.
 #   sudo           the agent has passwordless sudo inside this container, so it
 #                  can install a toolchain the image does not carry and run
@@ -64,6 +64,19 @@
 #                  sandbox whose network policy is the operator's to decide it
 #                  would fail for the environment rather than for the diff. A
 #                  binding that needs it must name an image that carries it.
+#   serena         the semantic code-retrieval MCP server, and the language
+#   language       servers it drives -- Go, Python, TypeScript/JavaScript,
+#   servers        Rust, C/C++, Ruby, bash, markdown and YAML -- BAKED IN, so a
+#                  session with an empty HOME and no network still reads code
+#                  by symbol (see the serena block below).
+#
+# THE BASE IS debian:trixie-slim: the smallest standard glibc image with a
+# shell. bookworm-slim is 2 MB smaller compressed but oldstable; ubuntu:24.04
+# is the same size with a shorter-lived stable line; distroless has no shell,
+# and every tool here runs through one. It was Alpine until the image carried
+# language servers: they, opencode, protoc and clangd are all published as
+# glibc builds, and on musl each needed gcompat or a patch to serena's own
+# platform detection.
 #
 # THERE IS NO ENTRYPOINT THAT MATTERS. Every sandboxed spawn path clears the
 # image's entrypoint and runs the agent binary as the container's command
@@ -85,8 +98,9 @@
 
 # The Go toolchain the projects this factory builds pin in their go.mod. It is
 # passed by `make build-worker-image` from the Makefile's own GO_VERSION, so
-# the image and the repository never disagree about it.
-ARG GO_VERSION=1.27.0
+# the image and the repository never disagree about it. No default, for the
+# reason the verification pins below give.
+ARG GO_VERSION
 
 # The verification toolchain's pins. THEY HAVE NO DEFAULT ON PURPOSE.
 #
@@ -114,12 +128,12 @@ ARG ACTIONLINT_VERSION
 ARG PROTOC_GEN_GO_VERSION
 ARG PROTOC_GEN_GO_GRPC_VERSION
 
-FROM golang:${GO_VERSION}-alpine AS toolchain
+FROM golang:${GO_VERSION}-trixie AS toolchain
 
 # `go install`, the way the CI runner installs the same three tools, so the
 # worker and CI reach their verdicts with binaries built from the same source
-# at the same tag by the same toolchain. CGO_ENABLED=0 keeps them static, which
-# is what lets them be copied into a runtime stage that shares only musl.
+# at the same tag by the same toolchain. CGO_ENABLED=0 keeps them static, so
+# they run in the runtime stage unchanged.
 ARG GOLANGCI_VERSION
 ARG GOSEC_VERSION
 ARG GOVULNCHECK_VERSION
@@ -130,7 +144,7 @@ ARG PROTOC_GEN_GO_GRPC_VERSION
 # gopls is not a verdict tool — it is SERENA'S GO LANGUAGE SERVER, and serena is
 # how an agent reads this codebase without burning its context on whole files.
 # It is built here for the same reason as the three above: static, from source,
-# by this toolchain, so it can be copied into a runtime stage sharing only musl.
+# by this toolchain, at the pin CI's own gopls would be.
 ARG GOPLS_VERSION
 
 # The dependency floors gopls and gosec are built with (toolchain.mk's
@@ -206,34 +220,51 @@ RUN set -eux; \
     "${GOBIN}/gopls" version; \
     "${GOBIN}/gosec" -version
 
-FROM alpine:3.21
+FROM debian:trixie-slim
 
-# Fixed packages already in Alpine's apk repository reach this image without
-# waiting for a new alpine:3.21 base tag to pick them up -- e.g. the openssl
-# 3.3.7-r2 fix for the libssl3/libcrypto3 finding `make push-worker-image`'s
-# trivy gate reported (go-quicbaas#1161). Must run before anything else is
-# added, so every package below installs at the upgraded version too.
-RUN apk upgrade --no-cache
-
-RUN apk add --no-cache \
-    nodejs \
-    npm \
-    git \
-    openssh-keygen \
-    openssh-client \
-    make \
-    build-base \
-    bash \
-    grep \
-    rsync \
-    pkgconf \
-    gtk+3.0-dev \
-    webkit2gtk-4.1-dev \
-    cryptsetup \
-    curl \
-    ca-certificates \
-    tzdata \
-    sudo
+# `apt-get upgrade` FIRST: fixed packages already in Debian's archive reach this
+# image without waiting for a new debian:trixie-slim tag to pick them up -- the
+# trivy gate `make push-worker-image` runs reads the installed versions, not the
+# base tag (go-quicbaas#1161). --no-install-recommends keeps what is installed
+# to what is named here; the package lists are removed in the same layer, so
+# anything that installs later (sudo's proof below, a worker's own install)
+# runs `apt-get update` first.
+#
+# What the names below are for, beyond the header: xz-utils and unzip unpack
+# the release tarballs and zips below; python3 runs serena (uv installs it);
+# ruby, ruby-dev and ruby-bundler are what ruby-lsp installs against and
+# re-execs through; libicu76 is the ICU marksman's .NET runtime loads (it is
+# not built invariant-globalization), named rather than left to arrive with
+# WebKit.
+RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update; \
+    apt-get upgrade -y; \
+    apt-get install -y --no-install-recommends \
+        git \
+        openssh-client \
+        make \
+        build-essential \
+        bash \
+        grep \
+        rsync \
+        pkgconf \
+        libgtk-3-dev \
+        libwebkit2gtk-4.1-dev \
+        cryptsetup-bin \
+        curl \
+        ca-certificates \
+        tzdata \
+        sudo \
+        xz-utils \
+        unzip \
+        python3 \
+        python3-pip \
+        ruby \
+        ruby-dev \
+        ruby-bundler \
+        libicu76; \
+    rm -rf /var/lib/apt/lists/*
 
 # DEVCACHE-ENV, the dev caches' client (../handbook/software/conventions/
 # devops.md section 2a). Embedded byte-for-byte via a BuildKit heredoc so it
@@ -470,7 +501,7 @@ esac
 DEVCACHE_ENV_SCRIPT
 RUN echo "54ebcd1955daa328f31ebe8c93b50b71fcb9489a4a45a0a2986c530d4517cd29  /usr/local/bin/devcache-env" | sha256sum -c -
 
-# pkgconf, gtk+3.0-dev and webkit2gtk-4.1-dev are what `make build` needs to
+# pkgconf, libgtk-3-dev and libwebkit2gtk-4.1-dev are what `make build` needs to
 # link the client's embedded desktop GUI (CGO + Wails/GTK/WebKit): the same
 # packages CI's Build job installs before `make build`, and provisioned here
 # for the same reason CI gives — rather than narrowing what the Build gate
@@ -483,11 +514,13 @@ RUN echo "54ebcd1955daa328f31ebe8c93b50b71fcb9489a4a45a0a2986c530d4517cd29  /usr
 # implementation and fails them on purpose when the binary is absent (they
 # read and write image files; no loop device, no root). Without it every
 # go-luks2 delivery failed `make test` on six TestConformance_* cases however
-# correct the change was (go-quicbaas #1003, go-luks2 #12 and #114).
+# correct the change was (go-quicbaas #1003, go-luks2 #12 and #114). Debian
+# ships the binary in cryptsetup-bin, at /usr/sbin/cryptsetup -- a directory a
+# non-root login shell's PATH lacks until the profile.d file below adds it.
 #
 # SHELLCHECK, actionlint's SC* backend (see the header). It is a Haskell
 # program, so unlike the Go tools it cannot be `go install`ed; the upstream
-# release binary is statically linked and runs on musl unchanged. The version
+# release binary is statically linked. The version
 # and the SHA-256 of each architecture's tarball are the Makefile's
 # (SHELLCHECK_VERSION, SHELLCHECK_SHA256_*), passed in by `make
 # build-worker-image` with no default here for the same reason as the Go pins:
@@ -519,24 +552,20 @@ RUN set -eux; \
 
 # PROTOC, the protobuf compiler a Go project with .proto files regenerates
 # code with inside this image, instead of host-mounting protoc (which breaks
-# the container-only tooling rule). Pinned at 21.12 -- `libprotoc 3.21.12`,
-# the version named in the `// protoc v3.21.12` header of this fleet's
-# generated .pb.go files. Alpine's own protobuf package is a different major
-# and is not used.
+# the container-only tooling rule). `protoc --version` prints `libprotoc
+# <PROTOC_VERSION>`, the version a generated .pb.go names in its `// protoc`
+# header -- so moving the pin means a project with committed .pb.go files
+# regenerates them (pkg/version/toolchain.mk).
 #
-# FROM THE RELEASE ZIP, GLIBC-LINKED. The upstream binary needs libpthread,
-# libm, libstdc++ and libgcc_s; gcompat and libstdc++ are what let it run on
-# this musl base (verified: alpine:3.21 + gcompat + libstdc++ runs `protoc
-# --version` and compiles a proto importing google/protobuf/timestamp.proto).
-# Upstream publishes no checksum file for the release asset, so the SHA-256 of
-# each architecture's zip is pinned beside the version, like shellcheck's --
-# passed in by `make build-worker-image` with no default here, for the same
-# reason as every other pin: a default is a second copy that drifts.
+# FROM THE RELEASE ZIP. Upstream publishes no checksum file for the release
+# asset, so the SHA-256 of each architecture's zip is pinned beside the
+# version, like shellcheck's -- passed in by `make build-worker-image` with no
+# default here, for the same reason as every other pin: a default is a second
+# copy that drifts.
 #
 # include/google/protobuf/*.proto (the well-known types) lands at
 # /usr/local/include, which protoc searches by default relative to its own
-# bin directory (<bin>/../include) -- no -I needed for them. unzip is a
-# build-only dependency, added and removed in this one layer.
+# bin directory (<bin>/../include) -- no -I needed for them.
 ARG PROTOC_VERSION
 ARG PROTOC_SHA256_X86_64
 ARG PROTOC_SHA256_AARCH64
@@ -546,8 +575,6 @@ RUN set -eux; \
         echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
     fi; \
-    apk add --no-cache gcompat libstdc++; \
-    apk add --no-cache --virtual .protoc-build unzip; \
     arch="$(uname -m)"; \
     case "$arch" in \
         x86_64) zipname="protoc-${PROTOC_VERSION}-linux-x86_64.zip"; sum="$PROTOC_SHA256_X86_64" ;; \
@@ -562,8 +589,190 @@ RUN set -eux; \
     mkdir -p /usr/local/include; \
     cp -r /tmp/protoc/include/. /usr/local/include/; \
     rm -rf "/tmp/$zipname" /tmp/protoc; \
-    apk del .protoc-build; \
-    protoc --version
+    test "$(protoc --version)" = "libprotoc ${PROTOC_VERSION}"
+
+# NODE.JS runs the claude and codex CLIs, the npm-built language servers
+# below and a project's own frontend build. FROM THE nodejs.org RELEASE
+# TARBALL, because Debian's nodejs is a major behind the line the agent CLIs
+# track. Each architecture's SHA-256 is pinned beside the version, as the
+# release's SHASUMS256.txt publishes it (toolchain.mk NODE_*), and the bundled
+# npm is upgraded to NPM_VERSION in the npm layer below.
+ARG NODE_VERSION
+ARG NODE_SHA256_X86_64
+ARG NODE_SHA256_AARCH64
+RUN set -eux; \
+    if [ -z "${NODE_VERSION:-}" ] || [ -z "${NODE_SHA256_X86_64:-}" ] || [ -z "${NODE_SHA256_AARCH64:-}" ]; then \
+        echo "NODE_VERSION, NODE_SHA256_X86_64 and NODE_SHA256_AARCH64 are required build arguments." >&2; \
+        echo "Build with 'make build-worker-image', which passes the repository's pins." >&2; \
+        exit 1; \
+    fi; \
+    case "$(uname -m)" in \
+        x86_64) platform="linux-x64"; sum="$NODE_SHA256_X86_64" ;; \
+        aarch64) platform="linux-arm64"; sum="$NODE_SHA256_AARCH64" ;; \
+        *) echo "no pinned node release for $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    tarball="node-${NODE_VERSION}-${platform}.tar.xz"; \
+    curl -fsSL -o "/tmp/$tarball" "https://nodejs.org/dist/${NODE_VERSION}/$tarball"; \
+    echo "$sum  /tmp/$tarball" | sha256sum -c -; \
+    tar -xJf "/tmp/$tarball" -C /usr/local --strip-components=1 --no-same-owner; \
+    rm -f "/tmp/$tarball" /usr/local/CHANGELOG.md /usr/local/README.md /usr/local/LICENSE; \
+    test "$(node --version)" = "${NODE_VERSION}"
+
+# THE RELEASE-BINARY LANGUAGE SERVERS serena drives: clangd (C/C++),
+# rust-analyzer (Rust) and marksman (markdown). Each from its project's own
+# release, its SHA-256 per architecture pinned beside the version as the
+# release's asset digest publishes it (toolchain.mk), checked here.
+#
+# clangd ships only bin/clangd and its builtin headers (lib/clang/<major>/
+# include) from the release's 220 MB: the rest is compiler-rt, which a
+# language server never links. clangd publishes no aarch64 Linux build, so an
+# aarch64 image takes Debian's clangd instead, at the same /usr/local/bin path
+# serena's settings name.
+#
+# rust-analyzer runs WITHOUT cargo: there is no Rust toolchain here, so it
+# reads a crate's syntax -- symbols, definitions, references within the
+# workspace -- and logs that it cannot load the sysroot. That is what serena
+# needs; a project that builds Rust installs rustup with sudo.
+ARG CLANGD_VERSION
+ARG CLANGD_SHA256_X86_64
+ARG RUST_ANALYZER_VERSION
+ARG RUST_ANALYZER_SHA256_X86_64
+ARG RUST_ANALYZER_SHA256_AARCH64
+ARG MARKSMAN_VERSION
+ARG MARKSMAN_SHA256_X86_64
+ARG MARKSMAN_SHA256_AARCH64
+RUN set -eux; \
+    for pin in CLANGD_VERSION CLANGD_SHA256_X86_64 RUST_ANALYZER_VERSION RUST_ANALYZER_SHA256_X86_64 RUST_ANALYZER_SHA256_AARCH64 \
+               MARKSMAN_VERSION MARKSMAN_SHA256_X86_64 MARKSMAN_SHA256_AARCH64; do \
+        if [ -z "$(printenv "$pin")" ]; then \
+            echo "$pin is a required build argument. Build with 'make build-worker-image', which passes the repository's pins." >&2; \
+            exit 1; \
+        fi; \
+    done; \
+    case "$(uname -m)" in \
+        x86_64) ra="x86_64-unknown-linux-gnu"; ra_sum="$RUST_ANALYZER_SHA256_X86_64"; mk="linux-x64"; mk_sum="$MARKSMAN_SHA256_X86_64" ;; \
+        aarch64) ra="aarch64-unknown-linux-gnu"; ra_sum="$RUST_ANALYZER_SHA256_AARCH64"; mk="linux-arm64"; mk_sum="$MARKSMAN_SHA256_AARCH64" ;; \
+        *) echo "no pinned language-server releases for $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    if [ "$(uname -m)" = x86_64 ]; then \
+        zipname="clangd-linux-${CLANGD_VERSION}.zip"; \
+        curl -fsSL -o "/tmp/$zipname" "https://github.com/clangd/clangd/releases/download/${CLANGD_VERSION}/$zipname"; \
+        echo "$CLANGD_SHA256_X86_64  /tmp/$zipname" | sha256sum -c -; \
+        unzip -q "/tmp/$zipname" "clangd_${CLANGD_VERSION}/bin/clangd" "clangd_${CLANGD_VERSION}/lib/clang/*/include/*" -d /tmp/clangd; \
+        mkdir -p /opt/clangd; \
+        cp -r "/tmp/clangd/clangd_${CLANGD_VERSION}/bin" "/tmp/clangd/clangd_${CLANGD_VERSION}/lib" /opt/clangd/; \
+        ln -s /opt/clangd/bin/clangd /usr/local/bin/clangd; \
+        rm -rf "/tmp/$zipname" /tmp/clangd; \
+        clangd --version | grep -qF "clangd version ${CLANGD_VERSION}"; \
+    else \
+        export DEBIAN_FRONTEND=noninteractive; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends clangd; \
+        rm -rf /var/lib/apt/lists/*; \
+        ln -s /usr/bin/clangd /usr/local/bin/clangd; \
+        clangd --version; \
+    fi; \
+    curl -fsSL -o /tmp/rust-analyzer.gz "https://github.com/rust-lang/rust-analyzer/releases/download/${RUST_ANALYZER_VERSION}/rust-analyzer-${ra}.gz"; \
+    echo "$ra_sum  /tmp/rust-analyzer.gz" | sha256sum -c -; \
+    gunzip -c /tmp/rust-analyzer.gz > /usr/local/bin/rust-analyzer; \
+    chmod 0755 /usr/local/bin/rust-analyzer; \
+    rm -f /tmp/rust-analyzer.gz; \
+    rust-analyzer --version; \
+    curl -fsSL -o /tmp/marksman "https://github.com/artempyanykh/marksman/releases/download/${MARKSMAN_VERSION}/marksman-${mk}"; \
+    echo "$mk_sum  /tmp/marksman" | sha256sum -c -; \
+    install -m 0755 /tmp/marksman /usr/local/bin/marksman; \
+    rm -f /tmp/marksman; \
+    test "$(marksman --version)" = "${MARKSMAN_VERSION}"
+
+# NPM, AND THE npm-PUBLISHED LANGUAGE SERVERS serena drives: pyright (Python),
+# typescript-language-server with the TypeScript it drives (TypeScript and
+# JavaScript), bash-language-server and yaml-language-server. Each at its pin
+# (toolchain.mk), into a prefix of their own rather than the global one, so
+# they are serena's servers and not tools a project's build picks up: serena's
+# settings name their bin/ paths (the serena block below).
+#
+# TYPESCRIPT STAYS ON 6.x: typescript-language-server drives tsserver.js, which
+# TypeScript 7 (the native rewrite) no longer ships. The server resolves
+# `typescript` from its own prefix, where this install puts it.
+#
+# DEVCACHE_NPM_REGISTRY: the fleet's npm cache (devops.md section 2a). NO
+# DEFAULT and NEVER an ENV, for the same reason as the Go caches above.
+# devcache-env (installed earlier in this stage) sets npm_config_registry
+# only when it is set and the cache answers; unset or unreachable, npm keeps
+# its own default registry. It is eval'd in every RUN that installs from npm.
+#
+# NPM_BUNDLED_DEPENDENCY_FLOORS replaces packages npm bundles in its own
+# node_modules with the patch release that fixes a CVE the trivy gate reads
+# there (toolchain.mk). Each name@version=integrity entry is fetched with
+# `npm pack` -- through the same registry as every other npm fetch here -- its
+# tarball checked against the pinned registry integrity, and unpacked over
+# npm's copy. The build fails when npm already bundles the floor or newer, or
+# no longer bundles the package, so a stale floor cannot outlive the npm
+# release that fixed it; and when a floor is more than a patch release of
+# npm's copy, so npm keeps the major and minor its own dependents declared.
+# The language-server install that follows is the proof npm still works.
+ARG NPM_VERSION
+ARG NPM_BUNDLED_DEPENDENCY_FLOORS
+ARG PYRIGHT_VERSION
+ARG TYPESCRIPT_VERSION
+ARG TYPESCRIPT_LANGUAGE_SERVER_VERSION
+ARG BASH_LANGUAGE_SERVER_VERSION
+ARG YAML_LANGUAGE_SERVER_VERSION
+ARG DEVCACHE_NPM_REGISTRY
+RUN set -eux; \
+    for pin in NPM_VERSION NPM_BUNDLED_DEPENDENCY_FLOORS PYRIGHT_VERSION TYPESCRIPT_VERSION TYPESCRIPT_LANGUAGE_SERVER_VERSION BASH_LANGUAGE_SERVER_VERSION YAML_LANGUAGE_SERVER_VERSION; do \
+        if [ -z "$(printenv "$pin")" ]; then \
+            echo "$pin is a required build argument. Build with 'make build-worker-image', which passes the repository's pins." >&2; \
+            exit 1; \
+        fi; \
+    done; \
+    eval "$(devcache-env)"; \
+    npm install -g "npm@${NPM_VERSION}"; \
+    test "$(npm --version)" = "${NPM_VERSION}"; \
+    npm_modules="$(npm root -g)/npm/node_modules"; \
+    floors_dir="$(mktemp -d)"; \
+    for floor in ${NPM_BUNDLED_DEPENDENCY_FLOORS}; do \
+        spec="${floor%%=*}"; \
+        integrity="${floor#*=}"; \
+        name="${spec%@*}"; \
+        want="${spec##*@}"; \
+        if [ ! -f "$npm_modules/$name/package.json" ]; then \
+            echo "npm ${NPM_VERSION} no longer bundles $name: drop it from NPM_BUNDLED_DEPENDENCY_FLOORS." >&2; \
+            exit 1; \
+        fi; \
+        have="$(node -p 'require(process.argv[1]).version' "$npm_modules/$name/package.json")"; \
+        if [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | tail -n 1)" = "$have" ]; then \
+            echo "npm ${NPM_VERSION} bundles $name $have, at or above the floor $want: drop it from NPM_BUNDLED_DEPENDENCY_FLOORS." >&2; \
+            exit 1; \
+        fi; \
+        if [ "${have%.*}" != "${want%.*}" ]; then \
+            echo "The $name floor $want is not a patch release of npm's bundled $have." >&2; \
+            exit 1; \
+        fi; \
+        tarball="$floors_dir/$(npm pack --silent --pack-destination "$floors_dir" "$spec")"; \
+        actual="$(node -p '"sha512-" + require("crypto").createHash("sha512").update(require("fs").readFileSync(process.argv[1])).digest("base64")' "$tarball")"; \
+        if [ "$actual" != "$integrity" ]; then \
+            echo "$spec: tarball integrity $actual, pinned $integrity." >&2; \
+            exit 1; \
+        fi; \
+        rm -rf "${npm_modules:?}/$name"; \
+        mkdir "$npm_modules/$name"; \
+        tar -xzf "$tarball" -C "$npm_modules/$name" --strip-components=1 --no-same-owner; \
+        test "$(node -p 'require(process.argv[1]).version' "$npm_modules/$name/package.json")" = "$want"; \
+    done; \
+    rm -rf "$floors_dir"; \
+    test "$(npm --version)" = "${NPM_VERSION}"; \
+    npm install -g --prefix /opt/serena/language-servers \
+        "pyright@${PYRIGHT_VERSION}" \
+        "typescript@${TYPESCRIPT_VERSION}" \
+        "typescript-language-server@${TYPESCRIPT_LANGUAGE_SERVER_VERSION}" \
+        "bash-language-server@${BASH_LANGUAGE_SERVER_VERSION}" \
+        "yaml-language-server@${YAML_LANGUAGE_SERVER_VERSION}"; \
+    npm cache clean --force; \
+    for server in pyright-langserver typescript-language-server bash-language-server yaml-language-server; do \
+        test -x "/opt/serena/language-servers/bin/$server"; \
+    done; \
+    /opt/serena/language-servers/bin/typescript-language-server --version
 
 # The agents themselves, exactly as deployments/agents/claude-code and
 # deployments/agents/codex install them.
@@ -587,14 +796,19 @@ RUN set -eux; \
 # versions, gates the result and only then rebinds projects to it. The
 # versions are recorded as labels below, which is how that refresh knows what
 # a bound image carries without running it.
+#
+# ONE PACKAGE MAY RUN ITS INSTALL SCRIPT. npm 12 runs no install-time script
+# a package does not name on --allow-scripts. Claude Code needs its own: its
+# postinstall (install.cjs, offline) puts the native binary from its platform
+# package (@anthropic-ai/claude-code-linux-*) over the bin/claude placeholder,
+# and without it `claude` only reports "native binary not installed". The
+# allowance names that package at its pin, so no other package, nor another
+# version of this one, runs a script. Codex needs none: its native binaries
+# arrive as plain platform packages. The npm and language-server installs
+# above need none either; the only script in their tree is fsevents, which is
+# macOS-only and never installed here.
 ARG CLAUDE_CODE_VERSION
 ARG CODEX_VERSION
-# DEVCACHE_NPM_REGISTRY: the fleet's npm cache (devops.md section 2a). NO
-# DEFAULT and NEVER an ENV, for the same reason as the Go caches above.
-# devcache-env (installed earlier in this stage) sets npm_config_registry
-# only when it is set and the cache answers; unset or unreachable, npm keeps
-# its own default registry.
-ARG DEVCACHE_NPM_REGISTRY
 RUN set -eux; \
     if [ -z "${CLAUDE_CODE_VERSION:-}" ] || [ -z "${CODEX_VERSION:-}" ]; then \
         echo "CLAUDE_CODE_VERSION and CODEX_VERSION are required build arguments." >&2; \
@@ -602,7 +816,9 @@ RUN set -eux; \
         exit 1; \
     fi; \
     eval "$(devcache-env)"; \
-    npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}"; \
+    npm install -g --allow-scripts="@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}"; \
+    npm cache clean --force; \
     claude --version; \
     codex --version
 
@@ -612,16 +828,14 @@ RUN set -eux; \
 # placed there runs this binary in this image -- so an image without it is a
 # node that advertises a backend it cannot run.
 #
-# FROM THE RELEASE TARBALL, NOT FROM npm. opencode ships as one static Bun
-# binary per platform, and the musl build is the one this Alpine image runs.
+# FROM THE RELEASE TARBALL, NOT FROM npm. opencode ships as one Bun binary per
+# platform, and the glibc build is the one this Debian image runs.
 # The version and each architecture's SHA-256 are the repository's pins
 # (pkg/version/toolchain.mk: OPENCODE_VERSION, OPENCODE_SHA256_*), taken from
 # the digests the release itself publishes and passed in by `make
 # build-worker-image` and the daemon's refresh with no default here, for the
 # same reason as every other pin: a default is a second copy that drifts. The
 # digest is CHECKED, so a tarball that is not the release's fails the build.
-#
-# libstdc++ and libgcc are the Bun runtime's own shared dependencies on musl.
 ARG OPENCODE_VERSION
 ARG OPENCODE_SHA256_X86_64
 ARG OPENCODE_SHA256_AARCH64
@@ -631,11 +845,10 @@ RUN set -eux; \
         echo "Build with 'make build-worker-image', which passes the repository's pins." >&2; \
         exit 1; \
     fi; \
-    apk add --no-cache libstdc++ libgcc; \
     arch="$(uname -m)"; \
     case "$arch" in \
-        x86_64) platform="linux-x64-musl"; sum="$OPENCODE_SHA256_X86_64" ;; \
-        aarch64) platform="linux-arm64-musl"; sum="$OPENCODE_SHA256_AARCH64" ;; \
+        x86_64) platform="linux-x64"; sum="$OPENCODE_SHA256_X86_64" ;; \
+        aarch64) platform="linux-arm64"; sum="$OPENCODE_SHA256_AARCH64" ;; \
         *) echo "no pinned opencode release for $arch" >&2; exit 1 ;; \
     esac; \
     tarball="opencode-${platform}.tar.gz"; \
@@ -647,6 +860,49 @@ RUN set -eux; \
     rm -rf "/tmp/$tarball" /tmp/opencode; \
     test "$(opencode --version)" = "${OPENCODE_VERSION#v}"
 
+# RUBY-LSP, Ruby's language server: a gem, installed against Debian's ruby at
+# its pin (toolchain.mk RUBY_LSP_VERSION), into /usr/local/bin where serena
+# finds it on the PATH. Offline and with an empty HOME it cannot compose a
+# bundle for a project and falls back to the gems installed here -- which is
+# all reading by symbol needs. It re-execs through `bundle`, which is Debian's
+# ruby-bundler, installed above.
+ARG RUBY_LSP_VERSION
+RUN set -eux; \
+    if [ -z "${RUBY_LSP_VERSION:-}" ]; then \
+        echo "RUBY_LSP_VERSION is a required build argument." >&2; \
+        echo "Build with 'make build-worker-image', which passes the repository's pins." >&2; \
+        exit 1; \
+    fi; \
+    gem install --no-document ruby-lsp -v "${RUBY_LSP_VERSION}"; \
+    rm -rf "$(gem env gemdir)/cache"; \
+    test "$(ruby-lsp --version)" = "${RUBY_LSP_VERSION}"
+
+# UV, which installs serena below and is on the PATH for a Python project.
+# From its release tarball -- Debian packages no uv -- with each
+# architecture's SHA-256 pinned beside the version, as the release's own
+# .sha256 files publish it (toolchain.mk UV_*).
+ARG UV_VERSION
+ARG UV_SHA256_X86_64
+ARG UV_SHA256_AARCH64
+RUN set -eux; \
+    if [ -z "${UV_VERSION:-}" ] || [ -z "${UV_SHA256_X86_64:-}" ] || [ -z "${UV_SHA256_AARCH64:-}" ]; then \
+        echo "UV_VERSION, UV_SHA256_X86_64 and UV_SHA256_AARCH64 are required build arguments." >&2; \
+        echo "Build with 'make build-worker-image', which passes the repository's pins." >&2; \
+        exit 1; \
+    fi; \
+    case "$(uname -m)" in \
+        x86_64) target="x86_64-unknown-linux-gnu"; sum="$UV_SHA256_X86_64" ;; \
+        aarch64) target="aarch64-unknown-linux-gnu"; sum="$UV_SHA256_AARCH64" ;; \
+        *) echo "no pinned uv release for $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    tarball="uv-${target}.tar.gz"; \
+    curl -fsSL -o "/tmp/$tarball" "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/$tarball"; \
+    echo "$sum  /tmp/$tarball" | sha256sum -c -; \
+    tar -xzf "/tmp/$tarball" -C /tmp; \
+    install -m 0755 "/tmp/uv-${target}/uv" "/tmp/uv-${target}/uvx" /usr/local/bin/; \
+    rm -rf "/tmp/$tarball" "/tmp/uv-${target}"; \
+    test "$(uv --version | cut -d' ' -f2)" = "${UV_VERSION}"
+
 # SERENA, the semantic code-retrieval MCP server, so an agent reads this
 # codebase by symbol instead of by whole file.
 #
@@ -654,26 +910,16 @@ RUN set -eux; \
 # developer runs serena on a workstation, and it is wrong here twice over: a
 # sandboxed spawn is not promised egress to GitHub, and a clone-per-spawn makes
 # every session pay for it and fail whenever the network does. `uv tool install`
-# resolves it once, into the image, at a pinned tag.
+# resolves it once, into the image, at a pinned tag, against Debian's python3.
 #
 # PINNED, because an image that installs @latest cannot be rebuilt to the same
 # bytes, and an agent's search behaviour changing under a rebuild is a change
 # nobody authored.
 #
-# The language servers serena drives are NOT vendored here. Go's is gopls,
-# copied from the toolchain stage below; a project in another language gets
-# serena's own on-demand download, which is why python3 and the cache directory
-# are present rather than only the binary.
-#
-# THE DEV HEADERS ARE BUILD-ONLY AND REMOVED IN THE SAME LAYER. serena depends
-# on psutil, which publishes no musl wheel, so uv compiles it from source and
-# needs Python.h and the kernel headers:
-#
-#   hint: This error likely indicates that you need to install a library
-#         that provides "Python.h" for `psutil@7.0.0`
-#
-# A virtual package installed and deleted inside one RUN keeps the compiler
-# inputs out of the shipped layers; the compiled extension stays.
+# THE LANGUAGE SERVERS IT DRIVES ARE BAKED IN, not left to serena's on-demand
+# download: gopls (copied from the toolchain stage below), the npm servers,
+# clangd, rust-analyzer, marksman and ruby-lsp, all installed above. The
+# settings block after this one is what makes serena use them.
 ARG SERENA_VERSION
 # SERENA_DEPENDENCY_FLOORS raises a dependency in serena's own `uv tool
 # install` environment past a fixed CVE that trivy reads out of the installed
@@ -709,48 +955,58 @@ RUN set -eux; \
         echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
     fi; \
-    apk add --no-cache python3 py3-pip uv; \
-    apk add --no-cache --virtual .serena-build python3-dev linux-headers; \
     printf '%s\n' ${SERENA_DEPENDENCY_FLOORS} > /tmp/serena-overrides.txt; \
-    uv tool install --python python3 \
+    uv tool install --python /usr/bin/python3 \
         --from "git+https://github.com/oraios/serena@${SERENA_VERSION}" serena-agent \
         --overrides /tmp/serena-overrides.txt; \
     rm -f /tmp/serena-overrides.txt; \
-    apk del .serena-build; \
+    uv cache clean; \
     chmod -R a+rX /opt/uv; \
     serena --version
 
-# SERENA CANNOT DETECT MUSL, AND ON THIS IMAGE THAT BREAKS EVERY LANGUAGE.
+# SERENA'S GLOBAL LANGUAGE-SERVER SETTINGS, so a FRESH HOME USES THE BAKED-IN
+# SERVERS.
 #
-# solidlsp builds its platform id as "<os>-<libc>-<arch>" whenever the libc is
-# not glibc, reading the libc from Python's platform.libc_ver(). That function
-# only ever detects glibc -- it scans the executable for a glibc version string
-# -- so on musl it returns "" and the id comes out "linux--x64", which is not a
-# member of the PlatformId enum and raises ValueError. "linux-musl-x64" IS a
-# member; nothing is missing but the detection.
+# Serena reads ~/.serena/serena_config.yml and, when there is none -- every
+# lane, whose HOME starts empty -- writes one from the template it ships. Left
+# alone, that template names no server, and serena downloads each one into
+# ~/.serena/language_servers on first use: a fetch per session, and a failure
+# in a sandbox without egress. So the template's one `ls_specific_settings: {}`
+# line is replaced with the block below, and every config serena generates
+# points at the servers this image carries. Go (gopls, in GOPATH/bin), Rust
+# (rust-analyzer) and Ruby (ruby-lsp) need no entry: serena runs them from the
+# PATH. A project's own ls_specific_settings (.serena/project.yml) replace
+# these language by language.
 #
-# IT BREAKS GO EVEN THOUGH NOTHING ABOUT GO ASKS FOR A PLATFORM. Resolving any
-# language server calls LanguageServerId.from_ls_class, which walks every enum
-# member and IMPORTS every language-server module to compare classes, and
-# typescript_language_server.py evaluates get_platform_id() at import time. So
-# starting the GO server imports the TypeScript module and dies there:
-#   go: 'linux--x64' is not a valid PlatformId
-# The reviewer then loses symbol and reference lookup and says it cannot
-# complete the review -- a verdict that decides nothing.
+# THE COPY AT /etc/serena IS THE DOCUMENTED DEFAULT for a HOME that already
+# holds a serena_config.yml, which serena never regenerates: splice the block
+# into it (docs/software-factory/worker-image.md).
 #
-# The patch fills in the libc only when Python found none, so a glibc base
-# image is unaffected, and the build asserts the result rather than trusting
-# the substitution: if a serena upgrade rewrites this line the replacement
-# silently matches nothing, and the assertion is what turns that into a failed
-# build instead of a reviewer that cannot read code.
-ARG SOLIDLSP_UTILS=/opt/uv/tools/serena-agent/lib/python3.12/site-packages/solidlsp/ls_utils.py
+# THE BUILD ASSERTS THE RESULT rather than trusting the substitution: a serena
+# release that reshapes its template fails the build here, and a config loaded
+# under an empty HOME must carry exactly these settings.
+COPY <<'SERENA_LS_SETTINGS' /etc/serena/ls_specific_settings.yml
+ls_specific_settings:
+  python:
+    ls_path: /opt/serena/language-servers/bin/pyright-langserver
+  typescript:
+    ls_path: /opt/serena/language-servers/bin/typescript-language-server
+  bash:
+    ls_path: /opt/serena/language-servers/bin/bash-language-server
+  yaml:
+    ls_path: /opt/serena/language-servers/bin/yaml-language-server
+  markdown:
+    ls_path: /usr/local/bin/marksman
+  cpp:
+    ls_path: /usr/local/bin/clangd
+SERENA_LS_SETTINGS
 RUN set -eux; \
-    sed -i 's|libc = platform\.libc_ver()\[0\]$|libc = platform.libc_ver()[0] or ("musl" if __import__("glob").glob("/lib/ld-musl-*.so.1") else "")|' "$SOLIDLSP_UTILS"; \
-    grep -q 'ld-musl' "$SOLIDLSP_UTILS" \
-      || { echo "solidlsp libc detection line not found; serena changed it -- re-check the musl patch" >&2; exit 1; }; \
-    find /opt/uv -name '__pycache__' -type d -exec rm -rf {} +; \
-    chmod -R a+rX /opt/uv; \
-    python3 -c "import sys; sys.path.insert(0, '/opt/uv/tools/serena-agent/lib/python3.12/site-packages'); from solidlsp.ls_utils import PlatformUtils; got = PlatformUtils.get_platform_id().value; print('serena platform id:', got); sys.exit(0 if got == 'linux-musl-x64' else 'expected linux-musl-x64, got ' + got)"
+    serena_python=/opt/uv/tools/serena-agent/bin/python; \
+    "$serena_python" -c 'import os, sys, serena; template = os.path.join(os.path.dirname(serena.__file__), "resources", "serena_config.template.yml"); text = open(template).read(); line = "\nls_specific_settings: {}\n"; text.count(line) == 1 or sys.exit("serena config template " + template + " no longer has exactly one ls_specific_settings: {} line; re-check the language-server settings"); open(template, "w").write(text.replace(line, "\n" + open("/etc/serena/ls_specific_settings.yml").read()))'; \
+    chmod -R a+rX /opt/uv /etc/serena; \
+    fresh_home="$(mktemp -d)"; \
+    HOME="$fresh_home" "$serena_python" -c 'import json, sys; from ruamel.yaml import YAML; from serena.config.serena_config import SerenaConfig; want = YAML(typ="safe").load(open("/etc/serena/ls_specific_settings.yml"))["ls_specific_settings"]; got = json.loads(json.dumps(SerenaConfig.from_config_file().ls_specific_settings)); got == want or sys.exit("a fresh HOME does not inherit the language-server settings: " + json.dumps(got))'; \
+    rm -rf "$fresh_home"
 
 # THE MCP REGISTRATION IS NOT IN THIS IMAGE, and that is deliberate. Claude Code
 # takes `--mcp-config` as "JSON files or strings" and codex takes
@@ -782,19 +1038,19 @@ ENV GOPATH=/home/agent/go
 # build` and `make test`, whose TypeScript SDK and frontend install their
 # compilers as devDependencies; under NODE_ENV=production `npm ci` omits
 # devDependencies, tsc never lands, and `make build` fails on every project
-# that builds a frontend (go-quicbaas #966, 2026-09-21). GNU grep is installed
-# above for the same reason: the Makefile's checks use --include/--exclude-dir
-# and -E, which busybox grep rejects, and a rejected grep in a `|| true`
-# pipeline passes a security check that never ran.
+# that builds a frontend (go-quicbaas #966, 2026-09-21). The grep is GNU grep,
+# Debian's essential one, for the same reason: the Makefile's checks use
+# --include/--exclude-dir and -E, which a minimal grep rejects, and a rejected
+# grep in a `|| true` pipeline passes a security check that never ran.
 ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}" \
     GOTOOLCHAIN=local
 
 # ENV PATH IS NOT ENOUGH, BECAUSE THE AGENT EXECS THROUGH A LOGIN SHELL.
 #
 # Every tool the factory runs in this container arrives as `sh -lc <command>`.
-# The -l makes it a LOGIN shell, which sources /etc/profile, whose first line
-# on this base image is an unconditional
-#     export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# The -l makes it a LOGIN shell, which sources /etc/profile, which on this base
+# image unconditionally assigns PATH -- for a non-root user
+#     PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"
 # — so the PATH declared above is discarded before the command runs. Measured
 # on this image: `sh -c "command -v go"` finds /usr/local/go/bin/go and
 # `sh -lc "command -v go"` finds nothing.
@@ -810,20 +1066,23 @@ ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}" \
 # "job stalled", which points at the agent rather than at PATH.
 #
 # Restoring it from /etc/profile.d is what survives the reset: the directory is
-# sourced by /etc/profile AFTER that assignment.
+# sourced by /etc/profile AFTER that assignment. The sbin directories are
+# appended because Debian's non-root PATH omits them, and cryptsetup -- which
+# a sealed-volume task runs -- lives in /usr/sbin.
 RUN printf '%s\n' \
       '# Restores the toolchain PATH that /etc/profile unconditionally clears.' \
       '# The agent runs every command as `sh -lc`, so this file is what makes' \
-      '# go, gofmt and the GOPATH/bin tools resolvable to it.' \
-      'export PATH="/usr/local/go/bin:/home/agent/go/bin:$PATH"' \
+      '# go, gofmt, the GOPATH/bin tools and the sbin tools resolvable to it.' \
+      'export PATH="/usr/local/go/bin:/home/agent/go/bin:$PATH:/usr/local/sbin:/usr/sbin:/sbin"' \
       > /etc/profile.d/10-go-toolchain.sh \
     && chmod 0644 /etc/profile.d/10-go-toolchain.sh \
     && sh -lc 'command -v go >/dev/null' \
-    && sh -lc 'command -v gofmt >/dev/null'
+    && sh -lc 'command -v gofmt >/dev/null' \
+    && sh -lc 'command -v cryptsetup >/dev/null'
 
 # Into GOPATH/bin, which is both what `go install` would have written and what
-# the projects' Makefiles probe. The runtime stage shares musl with the builder
-# and the binaries are static, so they run here unchanged.
+# the projects' Makefiles probe. The builder is the same Debian release as the
+# runtime stage and the binaries are static, so they run here unchanged.
 COPY --from=toolchain /toolchain/bin/ ${GOPATH}/bin/
 
 # THE USER IS THE ONE THE SPAWN WILL RUN AS, AND IT MUST EXIST IN /etc/passwd.
@@ -834,8 +1093,8 @@ COPY --from=toolchain /toolchain/bin/ ${GOPATH}/bin/
 # /etc/passwd has no entry for that uid is not merely untidy: ssh-keygen —
 # which git invokes for every `gpg.format=ssh` signature — calls getpwuid at
 # start and exits "No user exists for uid" without one, so EVERY signed commit
-# would fail. musl resolves users from /etc/passwd and nothing else, and no
-# entrypoint runs to add one (the spawn clears it), so the entry has to be in
+# would fail. No NSS module in the image resolves users anywhere but
+# /etc/passwd, and no entrypoint runs to add one (the spawn clears it), so the entry has to be in
 # the image.
 #
 # Hence the build argument: `make build-worker-image` passes the building
@@ -847,9 +1106,9 @@ ARG AGENT_UID=1001
 ARG AGENT_GID=1001
 
 RUN set -eu; \
-    if ! getent group "${AGENT_GID}" >/dev/null; then addgroup -g "${AGENT_GID}" agent; fi; \
+    if ! getent group "${AGENT_GID}" >/dev/null; then groupadd -g "${AGENT_GID}" agent; fi; \
     if ! getent passwd "${AGENT_UID}" >/dev/null; then \
-        adduser -D -u "${AGENT_UID}" -G "$(getent group "${AGENT_GID}" | cut -d: -f1)" -h /home/agent agent; \
+        useradd -l -m -u "${AGENT_UID}" -g "${AGENT_GID}" -d /home/agent -s /bin/bash agent; \
     fi; \
     mkdir -p /workspace "${GOPATH}/bin"; \
     chown "${AGENT_UID}:${AGENT_GID}" /workspace; \
@@ -936,14 +1195,16 @@ RUN set -eux; \
 #
 # The install is proved END TO END rather than by `command -v sudo`, because
 # "can escalate" and "can install" are different claims and the second is the
-# one a worker needs. jq is added and removed again in the same layer, so the
-# proof leaves the image exactly as it found it.
+# one a worker needs. jq is added and purged again in the same layer, with the
+# package lists it fetched, so the proof leaves the image exactly as it found it.
 RUN set -eux; \
     sudo -n true; \
     test "$(sudo -n id -u)" = "0"; \
-    sudo -n apk add --no-cache jq; \
+    sudo -n apt-get update -q; \
+    sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends jq; \
     jq --version; \
-    sudo -n apk del jq
+    sudo -n apt-get purge -y -q --autoremove jq; \
+    sudo -n rm -rf /var/lib/apt/lists/*
 
 # A SIGNED COMMIT SUCCEEDS AS THIS UID. This is the regression that would break
 # publishing silently, so the build proves it.
@@ -951,7 +1212,7 @@ RUN set -eux; \
 # git signs with `gpg.format=ssh`, which means it execs ssh-keygen — and
 # ssh-keygen calls getpwuid before it does anything else, exiting "No user
 # exists for uid" when /etc/passwd has no entry for the uid it is running as.
-# musl resolves users from /etc/passwd and nothing else, and the spawn clears
+# Nothing in the image resolves users but /etc/passwd, and the spawn clears
 # the image's entrypoint, so no start-up script can add an entry later. The
 # failure is not a warning: EVERY commit the publish step makes is signed, so an
 # image that cannot sign is an image whose every task ends after the work is
@@ -1001,7 +1262,7 @@ ARG PROTOC_GEN_GO_VERSION
 ARG PROTOC_GEN_GO_GRPC_VERSION
 ARG QUICBAAS_VERSION
 LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
-      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, opencode, git, ssh, ssh-keygen, make, the Go toolchain, protoc and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
+      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, opencode, serena and its language servers, git, ssh, ssh-keygen, make, the Go toolchain, node, python, protoc and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
       org.opencontainers.image.vendor="QuicBaaS" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="${QUICBAAS_VERSION}" \
@@ -1019,4 +1280,16 @@ LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
       io.quicbaas.worker.opencode.version="${OPENCODE_VERSION}" \
       io.quicbaas.worker.protoc.version="${PROTOC_VERSION}" \
       io.quicbaas.worker.protoc-gen-go.version="${PROTOC_GEN_GO_VERSION}" \
-      io.quicbaas.worker.protoc-gen-go-grpc.version="${PROTOC_GEN_GO_GRPC_VERSION}"
+      io.quicbaas.worker.protoc-gen-go-grpc.version="${PROTOC_GEN_GO_GRPC_VERSION}" \
+      io.quicbaas.worker.node.version="${NODE_VERSION}" \
+      io.quicbaas.worker.npm.version="${NPM_VERSION}" \
+      io.quicbaas.worker.uv.version="${UV_VERSION}" \
+      io.quicbaas.worker.pyright.version="${PYRIGHT_VERSION}" \
+      io.quicbaas.worker.typescript.version="${TYPESCRIPT_VERSION}" \
+      io.quicbaas.worker.typescript-language-server.version="${TYPESCRIPT_LANGUAGE_SERVER_VERSION}" \
+      io.quicbaas.worker.bash-language-server.version="${BASH_LANGUAGE_SERVER_VERSION}" \
+      io.quicbaas.worker.yaml-language-server.version="${YAML_LANGUAGE_SERVER_VERSION}" \
+      io.quicbaas.worker.ruby-lsp.version="${RUBY_LSP_VERSION}" \
+      io.quicbaas.worker.clangd.version="${CLANGD_VERSION}" \
+      io.quicbaas.worker.rust-analyzer.version="${RUST_ANALYZER_VERSION}" \
+      io.quicbaas.worker.marksman.version="${MARKSMAN_VERSION}"

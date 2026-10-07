@@ -117,6 +117,20 @@ jobs:
             --skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build --skip-dirs data \
             --skip-files 'pkg/server/certs/*.key' --ignorefile .trivyignore .
 
+  # Every worker-image toolchain pin at its upstream's latest release
+  # (devops.md: track the latest). The pins move by hand, so this is what
+  # notices when one falls behind; it names each stale pin and its latest
+  # release. A slow-moving property, so nightly rather than per push.
+  worker-toolchain-currency:
+    name: Worker toolchain currency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check every worker-image pin against upstream
+        run: make check-worker-toolchain-currency
+
   # The sdk/go docker-compose harness (sdk/go/test/integration). Known-red and
   # tracked as #50: its compose file builds the server from
   # test/integration/Dockerfile.dev, which still copies sibling repos out of a

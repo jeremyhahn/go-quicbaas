@@ -11,13 +11,113 @@ UI's **Check for updates now** (Software Factory → Fleet → Worker image).
 
 Package: `pkg/sdlc/workerimage`. Issue: go-quicbaas#1021.
 
-Besides the two agent CLIs, the image carries the verification toolchain CI
-reaches the same verdicts with (Go, golangci-lint, gosec, govulncheck,
-actionlint, shellcheck), serena and gopls, and the protobuf toolchain (protoc,
-protoc-gen-go, protoc-gen-go-grpc) a Go project with `.proto` files regenerates
-code with — rather than host-mounting `protoc`, which the container-only
-tooling rule forbids. Every one of these is a pin in `pkg/version/toolchain.mk`,
-carried into `deployments/agents/software-factory-worker/image.go`'s `Pins`.
+Besides the two agent CLIs and opencode, the image carries the verification
+toolchain CI reaches the same verdicts with (Go, golangci-lint, gosec,
+govulncheck, actionlint, shellcheck), serena and the language servers it drives
+(see [Serena's language servers](#serenas-language-servers)), Node.js, Python
+with pip and uv, and the protobuf toolchain (protoc, protoc-gen-go,
+protoc-gen-go-grpc) a Go project with `.proto` files regenerates code with —
+rather than host-mounting `protoc`, which the container-only tooling rule
+forbids. Every one of these is a pin in `pkg/version/toolchain.mk`, carried into
+`deployments/agents/software-factory-worker/image.go`'s `Pins` and recorded as
+an `io.quicbaas.worker.<tool>.version` label.
+
+## The base image
+
+The final stage is **`debian:trixie-slim`**, the smallest standard glibc image
+that has a shell. The build runs `apt-get upgrade` before it installs anything
+else.
+
+| candidate | why not |
+|---|---|
+| `debian:bookworm-slim` | 2 MB smaller compressed, but it is oldstable |
+| `ubuntu:24.04` | about the same size, with a shorter-lived stable line |
+| distroless | no shell, and every tool here runs through one |
+| `alpine` (the previous base) | the language servers, opencode, protoc and clangd ship glibc builds; on musl each needed gcompat or a patch to serena's platform detection |
+
+The toolchain stage is `golang:<GO_VERSION>-trixie`, the same Debian release.
+The agent runs every command as `sh -lc`, and on Debian `/etc/profile` resets
+`PATH` for that login shell. `/etc/profile.d/10-go-toolchain.sh` restores Go and
+`GOPATH/bin` and appends the sbin directories, which Debian's non-root `PATH`
+leaves out and which hold `cryptsetup`.
+
+## Serena's language servers
+
+Each server is baked in at a pin, so a lane with an empty HOME and no network
+still reads code by symbol. Nothing downloads at runtime.
+
+| language | server | installed as |
+|---|---|---|
+| Go | gopls | `GOPATH/bin`, on the `PATH` |
+| Python | pyright | npm, `/opt/serena/language-servers` |
+| TypeScript / JavaScript | typescript-language-server + TypeScript 6.x | npm, `/opt/serena/language-servers` |
+| bash | bash-language-server | npm, `/opt/serena/language-servers` |
+| YAML | yaml-language-server | npm, `/opt/serena/language-servers` |
+| Rust | rust-analyzer | release binary, `/usr/local/bin` |
+| C / C++ | clangd | release zip on x86_64, Debian's `clangd` on aarch64 |
+| Ruby | ruby-lsp | gem, `/usr/local/bin` |
+| markdown | marksman | release binary, `/usr/local/bin` (needs `libicu76`) |
+
+Serena 1.7 has no protobuf language server, so there is none to bake in.
+TypeScript stays on 6.x because TypeScript 7 no longer ships the `tsserver.js`
+that typescript-language-server drives. rust-analyzer runs without cargo; it
+reads symbols but cannot load a crate's dependencies. bash-language-server lints
+through the image's pinned shellcheck, which it finds on the `PATH` (its
+`SHELLCHECK_PATH` default); set `SHELLCHECK_PATH=` to turn that off.
+
+**The settings are global, not per-HOME.** When `~/.serena/serena_config.yml`
+does not exist, serena generates it from a template it ships. That is the case
+for every lane, because each lane starts with an empty HOME. The build replaces
+the template's empty `ls_specific_settings: {}` with the block in
+`/etc/serena/ls_specific_settings.yml`, which sets the `ls_path` of each server
+serena would otherwise download. gopls, rust-analyzer and ruby-lsp need no entry
+because serena finds them on the `PATH`. The build fails in either of these
+cases:
+
+- a serena release reshapes the template;
+- a config generated under a fresh HOME does not carry exactly these settings.
+
+To override a server for one project, set `ls_specific_settings` in that
+project's `.serena/project.yml`. For each language it names, the project's entry
+replaces the global one. A HOME that
+already has a `serena_config.yml` keeps it, because serena never regenerates an
+existing file. In that case, copy the block from
+`/etc/serena/ls_specific_settings.yml` into that file.
+
+The probe `serena reads every baked-in language by symbol, offline from an empty
+HOME` (`probes.go`) checks this end to end. It runs sandboxed with no network
+and feeds one fixture project per language (`testdata/serena/<language>`) to
+serena under a fresh HOME. It fails when a language's server does not start or
+does not return the fixture's symbol, and also when anything lands in
+`~/.serena/language_servers`.
+
+## Keeping the pins current
+
+```
+make check-worker-toolchain-currency
+```
+
+This compares each of the following with the latest release its upstream
+publishes, and fails naming every pin that is behind:
+
+- every `*_VERSION` in `pkg/version/toolchain.mk`;
+- each module in `GO_TOOL_DEPENDENCY_FLOORS`;
+- the Makefile's `CLAUDE_CODE_VERSION` and `CODEX_VERSION`.
+
+The upstreams are the Go module proxy, go.dev, nodejs.org, the npm registry,
+rubygems.org and GitHub releases. A pin that has no source in the script fails
+too. The `>=` floors in `SERENA_DEPENDENCY_FLOORS` are lower bounds that uv
+already resolves to the newest release, so they are not checked. Each
+`NPM_BUNDLED_DEPENDENCY_FLOORS` entry is checked the other way round: it fails
+as OBSOLETE once the latest npm release already bundles that version or newer,
+or no longer bundles the package. Nightly CI
+runs the same target (`.github/workflows/nightly.yml`, job
+`worker-toolchain-currency`).
+
+Bump a pin together with its SHA-256s. Moving `PROTOC_VERSION` changes the
+`// protoc v<version>` header of generated `.pb.go` files, so a project with
+committed `.pb.go` files (go-qrdb) must regenerate them in the new image.
+Otherwise its next regeneration produces a diff nobody asked for.
 
 ## One pass
 
@@ -202,7 +302,7 @@ queued is refused (409 / `Aborted`); a node without the loop answers 503 /
 
 ```
 make build-worker-image                               # CLAUDE_CODE_VERSION / CODEX_VERSION pins in the Makefile
-make build-worker-image CLAUDE_CODE_VERSION=2.1.281   # a newer CLI by hand
+make build-worker-image CLAUDE_CODE_VERSION=2.1.293   # a newer CLI by hand
 make test-worker-image                                # the gate's probes, via ./deployments/agents/software-factory-worker/probe
 make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-worker   # scan, push, print the reference
 ```
@@ -220,11 +320,20 @@ uv's `--overrides` rather than `--with` (serena-agent pins its dependencies
 exactly, so `--with` only adds a second, unsatisfiable constraint; `--overrides`
 replaces the pin instead) (go-quicbaas#1161: a fixable urllib3 finding in
 serena's Python environment).
+npm's own bundled packages are raised with `NPM_BUNDLED_DEPENDENCY_FLOORS`:
+every npm release up to 12.2.0 ships brace-expansion 5.0.9 and undici 6.28.0,
+both with fixable HIGHs. After the npm upgrade, the build `npm pack`s each
+`name@version=integrity` entry through the same registry as the rest of the npm
+layer, checks the tarball against the pinned registry integrity, and unpacks
+it over npm's copy. It fails if npm already bundles the floor or newer, no
+longer bundles the package, or the floor is more than a patch release of npm's
+copy. The probe "npm's bundled dependencies meet their floors" checks every
+bundled copy and has npm glob through the replacements, offline.
 trivy also reads the base image's own OS packages (openssl's libssl3/libcrypto3,
-go-quicbaas#1161), which is why the final stage runs `apk upgrade --no-cache`
-before anything else is added, and `build-worker-image` builds with `--pull` so
-a stale local `alpine:3.21` or `golang:*-alpine` cannot slip a fixed finding
-back in. The fix for any such finding is a floor or an upgrade, never a trivy
+go-quicbaas#1161), which is why the final stage runs `apt-get upgrade` before
+anything else is added, and `build-worker-image` builds with `--pull` so a
+stale local `debian:trixie-slim` or `golang:*-trixie` cannot slip a fixed
+finding back in. The fix for any such finding is a floor or an upgrade, never a trivy
 exception. The digest is taken from
 the push's own output, since `RepoDigests` can be empty for a locally built
 image, and the target ends on one machine-readable line:
@@ -255,4 +364,13 @@ Unset, or with a cache unreachable, the build is exactly what it always was:
 Go's own default proxy chain, npm's own default registry. The image also
 carries `devcache-env` at `/usr/local/bin/devcache-env` (dev-cache v0.1.0,
 embedded byte-for-byte and checked against its pinned SHA-256 at build time),
-which is what the agent-CLI `npm install` evaluates before it installs.
+which is what the agent-CLI and language-server `npm install`s evaluate
+before they install.
+
+npm 12 runs no install script a package is not allowed by name. Exactly one
+is: `--allow-scripts="@anthropic-ai/claude-code@<pin>"`, because Claude Code's
+postinstall is what puts its native binary in place. Codex ships its binaries
+as plain platform packages, and the npm and language-server trees carry no
+script that installs on Linux, so none of them is allowed one. A new package
+whose script is blocked shows as an `npm warn install-scripts` line in the
+build log; if it needs that script, allow it the same way, by name and pin.

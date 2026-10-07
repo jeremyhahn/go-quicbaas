@@ -66,3 +66,17 @@ func (e *InvalidBuildError) Error() string {
 
 // Unwrap returns the sentinel.
 func (e *InvalidBuildError) Unwrap() error { return ErrInvalidBuild }
+
+// FixtureArchiveError reports probe fixtures that could not be archived.
+type FixtureArchiveError struct {
+	Root  string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *FixtureArchiveError) Error() string {
+	return "worker image: archiving the probe fixtures under " + e.Root + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the cause.
+func (e *FixtureArchiveError) Unwrap() error { return e.Cause }

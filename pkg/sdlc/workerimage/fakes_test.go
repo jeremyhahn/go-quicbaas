@@ -44,7 +44,14 @@ func testPins() softwarefactoryworker.Pins {
 		Actionlint:             "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
 		Opencode: "v1.18.32", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
 		Protoc: "21.12", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
-		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.1"}
+		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.1",
+		Node: "v26.10.0", NodeSHA256X86_64: "cccc", NodeSHA256Aarch64: "dddd", Npm: "12.2.0",
+		Uv: "0.12.23", UvSHA256X86_64: "eeee", UvSHA256Aarch64: "ffff", NpmBundledDependencyFloors: "undici@6.28.1=sha512-YmJi",
+		Pyright: "1.1.414", Typescript: "6.0.3", TypescriptLanguageServer: "6.0.1",
+		BashLanguageServer: "5.8.1", YamlLanguageServer: "1.24.0", RubyLsp: "0.26.11",
+		Clangd: "23.1.0", ClangdSHA256X86_64: "a1a1",
+		RustAnalyzer: "2026-10-05", RustAnalyzerSHA256X86_64: "b2b2", RustAnalyzerSHA256Aarch64: "c3c3",
+		Marksman: "2026-02-08", MarksmanSHA256X86_64: "d4d4", MarksmanSHA256Aarch64: "e5e5"}
 }
 
 func testConfig() Config {

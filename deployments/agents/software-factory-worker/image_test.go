@@ -39,13 +39,23 @@ var dockerfileCopyPattern = regexp.MustCompile(`(?m)^COPY\s+\S.*$`)
 // the line that opens it and the line that is exactly the closing delimiter.
 var dockerfileHeredocPattern = regexp.MustCompile(`(?s)COPY --chmod=0755 <<'DEVCACHE_ENV_SCRIPT' /usr/local/bin/devcache-env\n(.*?)\nDEVCACHE_ENV_SCRIPT\n`)
 
+const testNpmBundledFloors = "brace-expansion@5.0.11=sha512-YWFh undici@6.28.1=sha512-YmJi"
+
 func testPins() Pins {
-	return Pins{Go: "1.27.0", Golangci: "v2.13.2", Gosec: "v2.29.0", Govulncheck: "v1.8.0", Gopls: "v0.23.0", Serena: "v1.7.0",
+	return Pins{Go: "1.27.1", Golangci: "v2.14.0", Gosec: "v2.29.0", Govulncheck: "v1.8.0", Gopls: "v0.23.0", Serena: "v1.7.0",
 		Actionlint: "v1.7.12", Shellcheck: "v0.11.0", ShellcheckSHA256X86_64: "8c3b", ShellcheckSHA256Aarch64: "12b3",
-		Opencode: "v1.18.32", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
-		Protoc: "21.12", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
-		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.1",
-		ToolDependencyFloors: "golang.org/x/mod@v0.41.0", SerenaDependencyFloors: "urllib3>=2.8.0"}
+		Opencode: "v1.18.35", OpencodeSHA256X86_64: "1ce4", OpencodeSHA256Aarch64: "abf3",
+		Protoc: "36.2", ProtocSHA256X86_64: "aaaa", ProtocSHA256Aarch64: "bbbb",
+		ProtocGenGo: "v1.36.12", ProtocGenGoGRPC: "v1.6.2",
+		ToolDependencyFloors: "golang.org/x/mod@v0.41.0", SerenaDependencyFloors: "urllib3>=2.8.0",
+		Node: "v26.10.0", NodeSHA256X86_64: "cccc", NodeSHA256Aarch64: "dddd", Npm: "12.2.0",
+		NpmBundledDependencyFloors: testNpmBundledFloors,
+		Uv:                         "0.12.23", UvSHA256X86_64: "eeee", UvSHA256Aarch64: "ffff",
+		Pyright: "1.1.414", Typescript: "6.0.3", TypescriptLanguageServer: "6.0.1",
+		BashLanguageServer: "5.8.1", YamlLanguageServer: "1.24.0", RubyLsp: "0.26.11",
+		Clangd: "23.1.0", ClangdSHA256X86_64: "a1a1",
+		RustAnalyzer: "2026-10-05", RustAnalyzerSHA256X86_64: "b2b2", RustAnalyzerSHA256Aarch64: "c3c3",
+		Marksman: "2026-02-08", MarksmanSHA256X86_64: "d4d4", MarksmanSHA256Aarch64: "e5e5"}
 }
 
 func testBuild() Build {
@@ -96,15 +106,23 @@ func TestBuild_BuildArgsCarryEveryInput(t *testing.T) {
 	args := testBuild().BuildArgs()
 	want := map[string]string{
 		"CLAUDE_CODE_VERSION": "2.1.280", "CODEX_VERSION": "0.156.0", "QUICBAAS_VERSION": "0.11.0-alpha",
-		"AGENT_UID": "1000", "AGENT_GID": "1000", "GO_VERSION": "1.27.0", "GOLANGCI_VERSION": "v2.13.2",
+		"AGENT_UID": "1000", "AGENT_GID": "1000", "GO_VERSION": "1.27.1", "GOLANGCI_VERSION": "v2.14.0",
 		"GOSEC_VERSION": "v2.29.0", "GOVULNCHECK_VERSION": "v1.8.0", "GOPLS_VERSION": "v0.23.0", "SERENA_VERSION": "v1.7.0",
 		"GO_TOOL_DEPENDENCY_FLOORS": "golang.org/x/mod@v0.41.0",
 		"SERENA_DEPENDENCY_FLOORS":  "urllib3>=2.8.0",
 		"ACTIONLINT_VERSION":        "v1.7.12", "SHELLCHECK_VERSION": "v0.11.0",
 		"SHELLCHECK_SHA256_X86_64": "8c3b", "SHELLCHECK_SHA256_AARCH64": "12b3",
-		"OPENCODE_VERSION": "v1.18.32", "OPENCODE_SHA256_X86_64": "1ce4", "OPENCODE_SHA256_AARCH64": "abf3",
-		"PROTOC_VERSION": "21.12", "PROTOC_SHA256_X86_64": "aaaa", "PROTOC_SHA256_AARCH64": "bbbb",
-		"PROTOC_GEN_GO_VERSION": "v1.36.12", "PROTOC_GEN_GO_GRPC_VERSION": "v1.6.1",
+		"OPENCODE_VERSION": "v1.18.35", "OPENCODE_SHA256_X86_64": "1ce4", "OPENCODE_SHA256_AARCH64": "abf3",
+		"PROTOC_VERSION": "36.2", "PROTOC_SHA256_X86_64": "aaaa", "PROTOC_SHA256_AARCH64": "bbbb",
+		"PROTOC_GEN_GO_VERSION": "v1.36.12", "PROTOC_GEN_GO_GRPC_VERSION": "v1.6.2",
+		"NODE_VERSION": "v26.10.0", "NODE_SHA256_X86_64": "cccc", "NODE_SHA256_AARCH64": "dddd", "NPM_VERSION": "12.2.0",
+		"NPM_BUNDLED_DEPENDENCY_FLOORS": testNpmBundledFloors,
+		"UV_VERSION":                    "0.12.23", "UV_SHA256_X86_64": "eeee", "UV_SHA256_AARCH64": "ffff",
+		"PYRIGHT_VERSION": "1.1.414", "TYPESCRIPT_VERSION": "6.0.3", "TYPESCRIPT_LANGUAGE_SERVER_VERSION": "6.0.1",
+		"BASH_LANGUAGE_SERVER_VERSION": "5.8.1", "YAML_LANGUAGE_SERVER_VERSION": "1.24.0", "RUBY_LSP_VERSION": "0.26.11",
+		"CLANGD_VERSION": "23.1.0", "CLANGD_SHA256_X86_64": "a1a1",
+		"RUST_ANALYZER_VERSION": "2026-10-05", "RUST_ANALYZER_SHA256_X86_64": "b2b2", "RUST_ANALYZER_SHA256_AARCH64": "c3c3",
+		"MARKSMAN_VERSION": "2026-02-08", "MARKSMAN_SHA256_X86_64": "d4d4", "MARKSMAN_SHA256_AARCH64": "e5e5",
 	}
 	for k, v := range want {
 		if args[k] != v {
@@ -249,12 +267,31 @@ func TestDockerfile_NpmInstallEvalsDevcacheEnvFirst(t *testing.T) {
 	dockerfile := string(Dockerfile)
 	heredocAt := strings.Index(dockerfile, "COPY --chmod=0755 <<'DEVCACHE_ENV_SCRIPT'")
 	evalAt := strings.Index(dockerfile, `eval "$(devcache-env)"`)
-	installAt := strings.Index(dockerfile, `npm install -g "@anthropic-ai/claude-code@`)
+	installAt := strings.Index(dockerfile, `npm install -g --allow-scripts="@anthropic-ai/claude-code@`)
 	if heredocAt == -1 || evalAt == -1 || installAt == -1 {
 		t.Fatalf("heredoc at %d, eval at %d, npm install at %d: expected all three present", heredocAt, evalAt, installAt)
 	}
 	if !(heredocAt < evalAt && evalAt < installAt) {
 		t.Errorf("expected devcache-env embedded, then eval'd, then npm install -g; got offsets %d, %d, %d", heredocAt, evalAt, installAt)
+	}
+}
+
+// TestDockerfile_OnlyClaudeCodeRunsAnInstallScript proves npm 12's script
+// policy is opened for exactly one package at its pin: Claude Code, whose
+// postinstall places its native binary. A wider allowance would let any
+// package in the image's npm trees run code at build time.
+func TestDockerfile_OnlyClaudeCodeRunsAnInstallScript(t *testing.T) {
+	dockerfile := string(Dockerfile)
+	if got := strings.Count(dockerfile, "--allow-scripts="); got != 1 {
+		t.Fatalf("--allow-scripts appears %d times, want once (the Claude Code install)", got)
+	}
+	if !strings.Contains(dockerfile, `--allow-scripts="@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"`) {
+		t.Error("the allowance must name Claude Code at its pinned version, not the bare package or a list")
+	}
+	for _, wide := range []string{"--dangerously-allow-all-scripts", "--ignore-scripts=false", "allow-scripts=true"} {
+		if strings.Contains(dockerfile, wide) {
+			t.Errorf("the Dockerfile opens install scripts to every package with %q", wide)
+		}
 	}
 }
 
@@ -277,28 +314,37 @@ func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	var missing *PinsMissingError
 	err := Pins{}.Validate()
-	if !errors.As(err, &missing) || len(missing.Missing) != 20 ||
+	if !errors.As(err, &missing) || len(missing.Missing) != 42 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
 		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
-		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") {
-		t.Fatalf("Validate() = %v, want all twenty pins named", err)
+		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") ||
+		!strings.Contains(err.Error(), "NODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "UV_VERSION") ||
+		!strings.Contains(err.Error(), "TYPESCRIPT_LANGUAGE_SERVER_VERSION") || !strings.Contains(err.Error(), "CLANGD_SHA256_X86_64") ||
+		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") {
+		t.Fatalf("Validate() = %v, want all forty-two pins named", err)
 	}
 }
 
 func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 	labels := testBuild().Labels()
 	if labels[LabelActionlintVersion] != "v1.7.12" || labels[LabelShellcheckVersion] != "v0.11.0" ||
-		labels[LabelOpencodeVersion] != "v1.18.32" {
+		labels[LabelOpencodeVersion] != "v1.18.35" {
 		t.Fatalf("labels = %v, want actionlint, shellcheck and opencode versions recorded", labels)
 	}
-	if labels[LabelProtocVersion] != "21.12" || labels[LabelProtocGenGoVersion] != "v1.36.12" ||
-		labels[LabelProtocGenGoGRPCVersion] != "v1.6.1" {
+	if labels[LabelProtocVersion] != "36.2" || labels[LabelProtocGenGoVersion] != "v1.36.12" ||
+		labels[LabelProtocGenGoGRPCVersion] != "v1.6.2" {
 		t.Fatalf("labels = %v, want protoc, protoc-gen-go and protoc-gen-go-grpc versions recorded", labels)
+	}
+	if labels[LabelNodeVersion] != "v26.10.0" || labels[LabelUvVersion] != "0.12.23" ||
+		labels[LabelTypescriptVersion] != "6.0.3" || labels[LabelClangdVersion] != "23.1.0" ||
+		labels[LabelRustAnalyzerVersion] != "2026-10-05" || labels[LabelMarksmanVersion] != "2026-02-08" {
+		t.Fatalf("labels = %v, want node, uv and language-server versions recorded", labels)
 	}
 	for key, value := range labels {
 		switch value {
-		case "8c3b", "12b3", "1ce4", "abf3", "aaaa", "bbbb", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
+		case "8c3b", "12b3", "1ce4", "abf3", "aaaa", "bbbb", "cccc", "dddd", "eeee", "ffff",
+			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
 			t.Fatalf("label %q=%q: a tarball digest or dependency floor is a build input, not a label", key, value)
 		}
 	}
@@ -348,7 +394,7 @@ func TestProbes_ProveTheProductionSandboxBoundary(t *testing.T) {
 		switch {
 		case strings.Contains(p.Script, "CapEff"):
 			fullControl = &p
-		case len(p.Stdin) > 0:
+		case strings.Contains(string(p.Stdin), "EAGAIN"):
 			pids = &p
 		case strings.Contains(p.Script, "actionlint"):
 			workflow = &p
@@ -370,9 +416,6 @@ func TestProbes_ProveTheProductionSandboxBoundary(t *testing.T) {
 	if pids == nil || !pids.Sandboxed || pids.PidsLimit != ProbePidsLimit || !strings.Contains(pids.Script, "python3 -") {
 		t.Fatalf("the pids probe must feed pids-limit-probe.py to python3 under a lowered bound, got %+v", pids)
 	}
-	if !strings.Contains(string(pids.Stdin), "EAGAIN") {
-		t.Fatal("the pids probe's stdin must be pids-limit-probe.py")
-	}
 	if workflow == nil || !workflow.NetworkNone || !strings.Contains(workflow.Script, "SC2046") {
 		t.Fatalf("the workflow-lint probe must prove actionlint reaches shellcheck, offline, got %+v", workflow)
 	}
@@ -380,27 +423,95 @@ func TestProbes_ProveTheProductionSandboxBoundary(t *testing.T) {
 
 func TestProbeEnv_CarriesExpectationsNotShell(t *testing.T) {
 	env := ProbeEnv(testBuild())
-	if env[EnvExpectedGolangci] != "2.13.2" {
+	if env[EnvExpectedGolangci] != "2.14.0" {
 		t.Fatalf("golangci-lint reports its version without the v: got %q", env[EnvExpectedGolangci])
 	}
 	if env[EnvExpectedActionlint] != "v1.7.12" || env[EnvExpectedShellcheck] != "0.11.0" {
 		t.Fatalf("actionlint reports its tag, shellcheck its version without the v: got %v", env)
 	}
-	if env[EnvExpectedOpencode] != "1.18.32" {
+	if env[EnvExpectedOpencode] != "1.18.35" {
 		t.Fatalf("opencode reports its version without the v: got %q", env[EnvExpectedOpencode])
 	}
-	if env[EnvExpectedProtoc] != "3.21.12" {
-		t.Fatalf("protoc reports libprotoc 3.<version>: got %q", env[EnvExpectedProtoc])
+	if env[EnvExpectedProtoc] != "36.2" {
+		t.Fatalf("protoc reports libprotoc <version>: got %q", env[EnvExpectedProtoc])
 	}
-	if env[EnvExpectedProtocGenGo] != "v1.36.12" || env[EnvExpectedProtocGenGoGRPC] != "1.6.1" {
+	if env[EnvExpectedProtocGenGo] != "v1.36.12" || env[EnvExpectedProtocGenGoGRPC] != "1.6.2" {
 		t.Fatalf("protoc-gen-go reports its tag, protoc-gen-go-grpc its version without the v: got %v", env)
 	}
 	if env[EnvExpectedClaudeCode] != "2.1.280" || env[EnvExpectedCodex] != "0.156.0" || env["HOME"] != "/tmp" {
 		t.Fatalf("env = %v", env)
 	}
+	if env[EnvExpectedNpmBundledFloors] != "brace-expansion@5.0.11 undici@6.28.1" {
+		t.Fatalf("the npm floors reach the probe as name@version, without integrities: got %q", env[EnvExpectedNpmBundledFloors])
+	}
 	for _, p := range Probes() {
-		if strings.Contains(p.Script, "2.1.280") {
+		if strings.Contains(p.Script, "2.1.280") || strings.Contains(p.Script, "5.0.11") {
 			t.Fatal("expected versions must reach a probe through its environment, not its text")
+		}
+	}
+}
+
+func TestNpmBundledFloorSpecs_DropsIntegrities(t *testing.T) {
+	got := npmBundledFloorSpecs("  brace-expansion@5.0.11=sha512-YW== \n undici@6.28.1=sha512-Ym== ")
+	if want := "brace-expansion@5.0.11 undici@6.28.1"; got != want {
+		t.Fatalf("npmBundledFloorSpecs = %q, want %q", got, want)
+	}
+}
+
+func TestNpmBundledFloorSpecs_EmptyOrUnpinnedInput(t *testing.T) {
+	if got := npmBundledFloorSpecs(" \t"); got != "" {
+		t.Fatalf("blank floors must yield no specs, got %q", got)
+	}
+	// An entry with no integrity passes through for the probe to compare;
+	// the build, not this helper, refuses it for having nothing to verify.
+	if got := npmBundledFloorSpecs("undici@6.28.1"); got != "undici@6.28.1" {
+		t.Fatalf("an entry without an integrity = %q, want it unchanged", got)
+	}
+}
+
+// TestProbes_NpmBundledFloorsAreCheckedOfflineFromTheEnvironment pins the
+// probe that holds npm's own brace-expansion and undici at their floors: it
+// reads the floors from its environment, checks every bundled copy, and runs
+// with no network, as a sandboxed lane would.
+func TestProbes_NpmBundledFloorsAreCheckedOfflineFromTheEnvironment(t *testing.T) {
+	var floors *Probe
+	for _, p := range Probes() {
+		if strings.Contains(p.Script, "$"+EnvExpectedNpmBundledFloors) {
+			floors = &p
+		}
+	}
+	if floors == nil || !floors.NetworkNone {
+		t.Fatalf("want an offline probe reading $%s, got %+v", EnvExpectedNpmBundledFloors, floors)
+	}
+	for _, want := range []string{`npm root -g`, `find "$modules"`, `sort -V`, `npm pack --dry-run`} {
+		if !strings.Contains(floors.Script, want) {
+			t.Errorf("the npm floors probe does not run %q", want)
+		}
+	}
+}
+
+// TestDockerfile_RaisesNpmBundledDependenciesBetweenUpgradeAndUse proves the
+// floors are applied after the npm upgrade (which would otherwise restore the
+// vulnerable copies) and before the language-server install that proves npm
+// still works, and that the step verifies what it fetched and refuses a floor
+// npm already meets.
+func TestDockerfile_RaisesNpmBundledDependenciesBetweenUpgradeAndUse(t *testing.T) {
+	dockerfile := string(Dockerfile)
+	upgradeAt := strings.Index(dockerfile, `npm install -g "npm@${NPM_VERSION}"`)
+	packAt := strings.Index(dockerfile, `npm pack --silent --pack-destination "$floors_dir" "$spec"`)
+	serversAt := strings.Index(dockerfile, `npm install -g --prefix /opt/serena/language-servers`)
+	if upgradeAt == -1 || packAt == -1 || serversAt == -1 || !(upgradeAt < packAt && packAt < serversAt) {
+		t.Fatalf("want npm upgrade, then the floors, then the language servers; got offsets %d, %d, %d", upgradeAt, packAt, serversAt)
+	}
+	for _, want := range []string{
+		`for floor in ${NPM_BUNDLED_DEPENDENCY_FLOORS}; do`,
+		`if [ "$actual" != "$integrity" ]; then`,
+		`at or above the floor $want: drop it from NPM_BUNDLED_DEPENDENCY_FLOORS.`,
+		`no longer bundles $name: drop it from NPM_BUNDLED_DEPENDENCY_FLOORS.`,
+		`is not a patch release of npm's bundled $have.`,
+	} {
+		if !strings.Contains(dockerfile, want) {
+			t.Errorf("the npm floors step is missing %q", want)
 		}
 	}
 }

@@ -14,9 +14,14 @@
 package softwarefactoryworker
 
 import (
-	_ "embed"
+	"archive/tar"
+	"bytes"
+	"embed"
+	"io/fs"
+	"path"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // =============================================================================
@@ -102,6 +107,11 @@ const (
 	EnvExpectedProtocGenGoGRPC = "EXPECTED_PROTOC_GEN_GO_GRPC_VERSION"
 	EnvProbePidsLimit          = "PROBE_PIDS_LIMIT"
 
+	// EnvExpectedNpmBundledFloors is the space-separated name@version floors
+	// npm's bundled packages must meet: NPM_BUNDLED_DEPENDENCY_FLOORS without
+	// the integrities, which only the build needs.
+	EnvExpectedNpmBundledFloors = "EXPECTED_NPM_BUNDLED_DEPENDENCY_FLOORS"
+
 	// EnvExpectedMemlockKiB is the locked-memory limit, in KiB as `ulimit -l`
 	// reports it, a Sandboxed probe must see. It is not set by ProbeEnv: this
 	// package holds no policy, so the probe runner derives it from the policy
@@ -124,15 +134,26 @@ func ProbeEnv(b Build) map[string]string {
 		EnvExpectedShellcheck: strings.TrimPrefix(b.Pins.Shellcheck, "v"),
 		// opencode reports "1.18.32", without the tag's "v".
 		EnvExpectedOpencode: strings.TrimPrefix(b.Pins.Opencode, "v"),
-		// protoc reports "libprotoc 3.<version>", e.g. "libprotoc 3.21.12" for
-		// the pinned 21.12 release: every 3.x protobuf release carries that
-		// same leading major. protoc-gen-go reports its tag ("v1.36.12");
-		// protoc-gen-go-grpc reports its version without the tag's "v".
-		EnvExpectedProtoc:          "3." + b.Pins.Protoc,
+		// protoc reports "libprotoc <version>", e.g. "libprotoc 36.2".
+		// protoc-gen-go reports its tag ("v1.36.12"); protoc-gen-go-grpc
+		// reports its version without the tag's "v".
+		EnvExpectedProtoc:          b.Pins.Protoc,
 		EnvExpectedProtocGenGo:     b.Pins.ProtocGenGo,
 		EnvExpectedProtocGenGoGRPC: strings.TrimPrefix(b.Pins.ProtocGenGoGRPC, "v"),
 		EnvProbePidsLimit:          strconv.Itoa(ProbePidsLimit),
+
+		EnvExpectedNpmBundledFloors: npmBundledFloorSpecs(b.Pins.NpmBundledDependencyFloors),
 	}
+}
+
+// npmBundledFloorSpecs drops the integrity from each name@version=integrity
+// floor, leaving the name@version pairs a probe compares installs with.
+func npmBundledFloorSpecs(floors string) string {
+	specs := strings.Fields(floors)
+	for i, floor := range specs {
+		specs[i], _, _ = strings.Cut(floor, "=")
+	}
+	return strings.Join(specs, " ")
 }
 
 // Probes are the checks, in the order they are run: cheapest and most
@@ -143,10 +164,12 @@ func Probes() []Probe {
 		{Name: "toolchain, signing and every agent", Script: toolchainProbe},
 		{Name: "devcache-env changes nothing when unconfigured", Script: devcacheEnvProbe, NetworkNone: true},
 		{Name: "serena answers an MCP initialize", Script: serenaHandshakeProbe, NetworkNone: true},
-		{Name: "serena resolves a Go symbol", Script: serenaGoProbe, NetworkNone: true},
+		{Name: "serena reads every baked-in language by symbol, offline from an empty HOME",
+			Script: serenaLanguageServersProbe, Sandboxed: true, NetworkNone: true, Stdin: serenaFixtureArchive},
 		{Name: "lint and scan a Go module", Script: lintProbe, NetworkNone: true},
 		{Name: "lint GitHub Actions workflows", Script: workflowLintProbe, NetworkNone: true},
 		{Name: "protoc generates Go and gRPC code for a proto importing the well-known types", Script: protocProbe, NetworkNone: true},
+		{Name: "npm's bundled dependencies meet their floors, and npm still globs", Script: npmBundledFloorsProbe, NetworkNone: true},
 		{Name: "full control of the container, under the production boundary", Script: fullControlProbe, Sandboxed: true},
 		{Name: "a fork past the pids limit fails cleanly", Script: pidsLimitProbe, Sandboxed: true,
 			PidsLimit: ProbePidsLimit, Stdin: pidsLimitProbeScript},
@@ -190,9 +213,9 @@ case "$out" in *GOPROXY=*) echo "devcache-env set GOPROXY with no DEVCACHE_GOPRO
 case "$out" in *npm_config_registry=*) echo "devcache-env set npm_config_registry with no DEVCACHE_NPM_REGISTRY configured: $out"; exit 1;; esac`
 
 // serenaHandshakeProbe proves serena STARTS, not merely that it was installed:
-// psutil is compiled from source here (no musl wheel), so the failure worth
-// catching is a native extension that builds and then will not import — which
-// a version string does not exercise and an initialize request does.
+// the failure worth catching is a native extension (psutil) that installs and
+// then will not import — which a version string does not exercise and an
+// initialize request does.
 //
 // The project root is a directory HOLDING repositories, because that is what a
 // real spawn hands it: the project and its context repositories side by side.
@@ -201,20 +224,113 @@ gopls version | grep -qF "$EXPECTED_GOPLS_VERSION" || { echo "gopls is not the p
 mkdir -p /tmp/wsroot/a-repo /tmp/wsroot/a-context-repo
 printf "%s\n" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' | timeout 120 serena start-mcp-server --transport stdio --context claude-code --project /tmp/wsroot 2>/dev/null | head -c 2000 | grep -q '"name":"Serena"' || { echo "serena did not answer an MCP initialize request"; exit 1; }`
 
-// serenaGoProbe proves serena can resolve a GO language server, not merely
-// answer a handshake. The handshake passed for weeks while serena could not
-// read Go at all: solidlsp cannot detect musl, computed the platform id
-// "linux--x64", and raised before gopls was reached, so every review lost
-// symbol lookup and returned a verdict that decided nothing.
-const serenaGoProbe = `mkdir -p /tmp/goprobe; cd /tmp/goprobe
-printf "module example.com/probe\n\ngo 1.26\n" > go.mod
-printf "package probe\n\nfunc ProbeSymbol() string { return \"found\" }\n" > probe.go
-python3 -c 'import sys; sys.path.insert(0, "/opt/uv/tools/serena-agent/lib/python3.12/site-packages")
-from solidlsp.ls_config import LanguageServerConfig, LanguageServerId
-from solidlsp import SolidLanguageServer
-from solidlsp.settings import SolidLSPSettings
-ls = SolidLanguageServer.create(LanguageServerConfig(ls_id=LanguageServerId.GO), "/tmp/goprobe", solidlsp_settings=SolidLSPSettings())
-print("go language server:", type(ls).__name__)' || { echo "serena cannot resolve Go in this image; the reviewer would lose symbol lookup"; exit 1; }`
+// serenaLanguageServersProbe proves every language server the image bakes in
+// RETURNS A SYMBOL through serena, not merely that it is installed. The
+// handshake once passed for weeks while serena could not read Go at all, so
+// every review lost symbol lookup and returned a verdict that decided nothing.
+//
+// It runs the way a lane does: under the production boundary, with no network
+// and a fresh, empty HOME per language — so a server serena would otherwise
+// download into ~/.serena on first use fails here, and so does one the image's
+// global settings (the ls_path entries in serena's config template) do not
+// point at. The fixtures (testdata/serena: one module, one function, one
+// caller per language) arrive on stdin as a tar stream. Every language is
+// tried before the probe fails, so one run names every broken server.
+const serenaLanguageServersProbe = `fixtures="$(mktemp -d)"
+tar -xf - -C "$fixtures"
+symbol_from() {
+	lang="$1" file="$2" symbol="$3" home="$(mktemp -d)"
+	project="$fixtures/$lang"
+	if ! HOME="$home" serena project create "$project" --language "$lang" > "$home/create.log" 2>&1; then
+		echo "serena could not create a $lang project:"; tail -n 20 "$home/create.log"; return 1
+	fi
+	if ! HOME="$home" timeout 300 serena project index-file "$project/$file" "$project" -v > "$home/index.log" 2>&1; then
+		echo "serena could not index the $lang fixture $file:"; tail -n 20 "$home/index.log"; return 1
+	fi
+	if ! grep -qF -- "- $symbol at line" "$home/index.log"; then
+		echo "the $lang language server did not return $symbol from $file:"; tail -n 20 "$home/index.log"; return 1
+	fi
+	if [ -n "$(find "$home" -path '*/language_servers/*' -type f | head -n 1)" ]; then
+		echo "serena downloaded a $lang language server into the empty HOME instead of using the baked-in one"; return 1
+	fi
+	echo "$lang: $symbol"
+}
+failed=""
+symbol_from go greeter.go Greet || failed="$failed go"
+symbol_from python greeter.py greet || failed="$failed python"
+symbol_from typescript greeter.ts greet || failed="$failed typescript"
+symbol_from rust src/lib.rs greet || failed="$failed rust"
+symbol_from cpp greeter.cpp greet || failed="$failed cpp"
+symbol_from ruby greeter.rb self.greet || failed="$failed ruby"
+symbol_from bash greeter.sh greet || failed="$failed bash"
+symbol_from markdown greeting.md Greeting || failed="$failed markdown"
+symbol_from yaml greeting.yaml greeting || failed="$failed yaml"
+test -z "$failed" || { echo "serena read no symbol in:$failed"; exit 1; }`
+
+// serenaFixtures are the fixture repositories serenaLanguageServersProbe
+// reads, one per language.
+//
+//go:embed testdata/serena
+var serenaFixtures embed.FS
+
+// serenaFixtureArchive is serenaFixtures as the tar stream the probe reads on
+// stdin. Built once: the fixtures are compiled in, so a failure to archive them
+// is a defect in this package, not a runtime condition.
+var serenaFixtureArchive = mustFixtureArchive(serenaFixtures, "testdata/serena")
+
+// fixtureGoMod is the name the Go fixture's go.mod is stored under. go:embed
+// refuses a directory holding a go.mod (it is another module), so the file is
+// renamed back to go.mod as it is archived.
+const fixtureGoMod = "go.mod.fixture"
+
+// fixtureArchive tars the tree under root in fsys, with names relative to
+// root, directories 0755, files 0644 and every timestamp the epoch, so the
+// same fixtures always make the same bytes.
+func fixtureArchive(fsys fs.FS, root string) ([]byte, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	walkErr := fs.WalkDir(fsys, root, func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimPrefix(strings.TrimPrefix(name, root), "/")
+		if rel == "" {
+			return nil
+		}
+		if entry.IsDir() {
+			return tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: rel + "/", Mode: 0o755, ModTime: time.Unix(0, 0)})
+		}
+		data, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return err
+		}
+		if path.Base(rel) == fixtureGoMod {
+			rel = path.Join(path.Dir(rel), "go.mod")
+		}
+		header := &tar.Header{Typeflag: tar.TypeReg, Name: rel, Mode: 0o644, Size: int64(len(data)), ModTime: time.Unix(0, 0)}
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		_, err = tw.Write(data)
+		return err
+	})
+	if walkErr != nil {
+		return nil, &FixtureArchiveError{Root: root, Cause: walkErr}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, &FixtureArchiveError{Root: root, Cause: err}
+	}
+	return buf.Bytes(), nil
+}
+
+// mustFixtureArchive is fixtureArchive for fixtures compiled into the binary.
+func mustFixtureArchive(fsys fs.FS, root string) []byte {
+	archive, err := fixtureArchive(fsys, root)
+	if err != nil {
+		panic(err)
+	}
+	return archive
+}
 
 // lintProbe is the verification half (go-quicbaas#772). A worker that cannot
 // run `make lint` fails every review round on a clean tree, so the tools are
@@ -265,6 +381,31 @@ protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=p
 test -f probe.pb.go || { echo "protoc did not generate probe.pb.go"; exit 1; }
 test -f probe_grpc.pb.go || { echo "protoc did not generate probe_grpc.pb.go"; exit 1; }`
 
+// npmBundledFloorsProbe proves the build's replacement of npm's own
+// brace-expansion and undici took (toolchain.mk's
+// NPM_BUNDLED_DEPENDENCY_FLOORS): every copy of each floored package under
+// npm's node_modules is at or above its floor, since the trivy gate reads
+// every copy. Then npm itself runs on the replacements: undici loads, and
+// `npm pack` expands a brace glob in "files" (minimatch, through
+// brace-expansion) to exactly the files it names.
+const npmBundledFloorsProbe = `modules="$(npm root -g)/npm/node_modules"
+for floor in $EXPECTED_NPM_BUNDLED_DEPENDENCY_FLOORS; do
+  name="${floor%@*}"; want="${floor##*@}"
+  copies="$(find "$modules" -path "*/node_modules/$name/package.json")"
+  [ -n "$copies" ] || { echo "npm bundles no $name"; exit 1; }
+  for manifest in $copies; do
+    have="$(node -p 'require(process.argv[1]).version' "$manifest")"
+    [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -n 1)" = "$want" ] || { echo "$manifest is $name $have, below the floor $want"; exit 1; }
+  done
+done
+node -e 'require(process.argv[1])' "$modules/undici"
+mkdir -p /tmp/npmprobe; cd /tmp/npmprobe
+printf '%s\n' '{"name": "npmprobe", "version": "1.0.0", "files": ["*.{js,md}"]}' > package.json
+touch index.js notes.md left-out.txt
+packed="$(npm pack --dry-run --json)"
+case "$packed" in *'"index.js"'*'"notes.md"'*) ;; *) echo "npm pack did not expand *.{js,md}: $packed"; exit 1;; esac
+case "$packed" in *left-out.txt*) echo "npm pack packed a file *.{js,md} excludes: $packed"; exit 1;; esac`
+
 // fullControlProbe: the container is the boundary, so the worker has full
 // control inside it (go-quicbaas#927). A worker that cannot install a package
 // cannot finish a task whose toolchain the image does not carry. Proved as the
@@ -273,12 +414,13 @@ test -f probe_grpc.pb.go || { echo "protoc did not generate probe_grpc.pb.go"; e
 //
 // AND PROVED UNDER THE BOUNDARY PRODUCTION DRAWS AROUND IT (go-quicbaas#1040):
 // the probe runs Sandboxed, so a missing add-back fails here as the command it
-// breaks — sudo's setresuid, apk's chown — rather than as a stalled delivery.
+// breaks — sudo's setresuid, apt's drop to its _apt sandbox user, apt's chown
+// — rather than as a stalled delivery.
 // Root must hold exactly CHOWN, DAC_OVERRIDE, FOWNER, SETGID and SETUID (0xcb):
 // no NET_RAW, no MKNOD, and no device node can be created.
 const fullControlProbe = `sudo -n true
 test "$(sudo -n id -u)" = "0" || { echo "sudo did not reach root"; exit 1; }
-sudo -n apk add --no-cache jq; jq --version
+sudo -n apt-get update -q; sudo -n apt-get install -y -q --no-install-recommends jq; jq --version
 sudo -n sh -c "echo arbitrary > /etc/quicbaas-full-control-probe"
 test -f /etc/quicbaas-full-control-probe
 eff="$(sudo -n awk '/^CapEff:/ {print $2}' /proc/self/status)"

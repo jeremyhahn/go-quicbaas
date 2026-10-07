@@ -1,0 +1,3 @@
+# The YAML fixture the worker image's Serena probe indexes.
+greeting:
+  name: fixture

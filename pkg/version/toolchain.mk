@@ -17,7 +17,7 @@
 # more (pkg/version, TestToolchain_EveryLineIsAnAssignment).
 
 # The Go toolchain the projects this factory builds pin in their go.mod.
-GO_VERSION := 1.27.0
+GO_VERSION := 1.27.1
 
 # Pinned per devops.md §9 and company task #122. $(GOBIN) is shared across
 # checkouts on the build hosts, so an unpinned install in one tree silently
@@ -27,7 +27,7 @@ GO_VERSION := 1.27.0
 # variables, and the Software Factory worker image is built with them. A
 # worker that linted with a different version than CI would produce review
 # verdicts a merge then contradicts (go-quicbaas#772).
-GOLANGCI_VERSION := v2.13.2
+GOLANGCI_VERSION := v2.14.0
 # Pinned by the fleet ruling of 2026-08-26: an unpinned gosec self-updated
 # mid-day and turned unrelated branches red, so nobody could say which commit
 # owned the new findings.
@@ -68,29 +68,31 @@ SHELLCHECK_SHA256_AARCH64 := 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e26
 # opencode, the third agent CLI the worker image carries: the ACP agent a fleet
 # node drives against a LOCAL model server (the review model on ollama), where
 # claude and codex drive hosted ones. It is installed from its release tarball
-# -- a single static Bun binary, the musl build for this Alpine image -- and the
+# -- a single Bun binary, the glibc build for this Debian image -- and the
 # SHA-256 of each architecture's tarball is pinned beside the version, taken
 # from the digests the release itself publishes
-# (github.com/anomalyco/opencode/releases/tag/v1.18.32): change all three
+# (github.com/anomalyco/opencode/releases/tag/v1.18.35): change all three
 # together.
-OPENCODE_VERSION := v1.18.32
-OPENCODE_SHA256_X86_64 := 1ce4699c8a9470ad806fa824112cd30b5d51b4038c29231189486302ef394d94
-OPENCODE_SHA256_AARCH64 := abf302edbc996548e28417dcdf7f67109fd95c7344f813a312633a818986204d
+OPENCODE_VERSION := v1.18.35
+OPENCODE_SHA256_X86_64 := c8f888b451f5494a18f858fffb0e0b68f4e4baa9c241761c5f206884f0fa640d
+OPENCODE_SHA256_AARCH64 := f7f2ba59ee8aa94d388f9696575a32d20e71c2ee48def9f80fc693a60fec6c72
 # protoc, so a Go project with .proto files regenerates code inside the worker
 # image instead of host-mounting protoc (the container-only tooling rule).
-# 21.12 = `libprotoc 3.21.12`, the version named in the `// protoc v3.21.12`
-# header of this fleet's generated .pb.go files; Alpine's own protobuf package
-# is a different major and is not used. Upstream publishes no checksum file
-# for the release zip, so the SHA-256 of each architecture's asset is pinned
-# beside the version, like shellcheck's: change all three together.
-PROTOC_VERSION := 21.12
-PROTOC_SHA256_X86_64 := 3a4c1e5f2516c639d3079b1586e703fc7bcfa2136d58bda24d1d54f949c315e8
-PROTOC_SHA256_AARCH64 := 2dd17f75d66a682640b136e31848da9fb2eefe68d55303baf8b32617374f6711
+# `protoc --version` prints `libprotoc <PROTOC_VERSION>`, and generated .pb.go
+# files name it in their `// protoc v<version>` header -- so moving this pin
+# means a project with committed .pb.go files (go-qrdb) regenerates them, or
+# its next regeneration in this image is a diff nobody asked for. Upstream
+# publishes no checksum file for the release zip, so the SHA-256 of each
+# architecture's asset is pinned beside the version, like shellcheck's: change
+# all three together.
+PROTOC_VERSION := 36.2
+PROTOC_SHA256_X86_64 := 121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278
+PROTOC_SHA256_AARCH64 := 8b8f18bd2b30346efbc698dd5a73dd7c805f3ef8380f6dfc95c768f3f1852f6a
 # protoc-gen-go and protoc-gen-go-grpc are the Go code-generator plugins protoc
 # invokes; each is `go install`ed in the toolchain stage like golangci-lint,
 # from its own module at its own pin.
 PROTOC_GEN_GO_VERSION := v1.36.12
-PROTOC_GEN_GO_GRPC_VERSION := v1.6.1
+PROTOC_GEN_GO_GRPC_VERSION := v1.6.2
 # Dependency floor for Serena's own Python tool environment, the same idea as
 # GO_TOOL_DEPENDENCY_FLOORS above but applied through `uv tool install
 # --overrides` rather than a Go build: urllib3 < 2.8.0 is a fixable finding
@@ -101,3 +103,61 @@ PROTOC_GEN_GO_GRPC_VERSION := v1.6.1
 # the declared pin instead. Space-separated requirement specifiers. Drop an
 # entry once serena's own release requires that version or newer.
 SERENA_DEPENDENCY_FLOORS := urllib3>=2.8.0
+
+# Node.js, which runs the claude and codex CLIs and the npm-built language
+# servers below, and a project's own frontend build. Installed from the
+# nodejs.org release tarball (Debian's nodejs is a major behind), with the
+# SHA-256 of each architecture's tarball -- as published in the release's
+# SHASUMS256.txt -- pinned beside the version: change all three together.
+# NPM_VERSION is the npm the image upgrades the bundled one to.
+NODE_VERSION := v26.10.0
+NODE_SHA256_X86_64 := ca70e9e349de048b9522abb3adc05b3bd6f43c5ffd3ec57916c7da292f59f022
+NODE_SHA256_AARCH64 := 7a6353f63eb3d04765004b4adf172616243e4522434635cb1d26288658b04ab5
+NPM_VERSION := 12.2.0
+# Dependency floors for the packages npm BUNDLES in its own node_modules, the
+# same idea as SERENA_DEPENDENCY_FLOORS: npm 12.2.0 (and every npm before it,
+# back to Node 26.10's 11.19.1) ships brace-expansion 5.0.9 (CVE-2026-102276,
+# CVE-2026-102278) and undici 6.28.0 (CVE-2026-19534), which the image's trivy
+# gate reads as fixable findings. The image replaces exactly these packages
+# after its npm upgrade. Each entry is name@version=integrity, the integrity
+# being the tarball's sha512 as the npm registry publishes it (dist.integrity),
+# so the build verifies what it fetched: change version and integrity
+# together. A floor is a patch release of what npm bundles and nothing more;
+# the build refuses one npm already meets, so an entry is dropped as soon as
+# an npm release carries the fix.
+NPM_BUNDLED_DEPENDENCY_FLOORS := brace-expansion@5.0.11=sha512-awigjhi6cLTh90bdw6+QJ9CtmJmyYhEIi70iCbc8Rozn04Fw9FeQIBjv/E22FFGuCGx1bLJyUfB64x/szUSXUg== undici@6.28.1=sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==
+# uv, which installs Serena (and is on the PATH for a Python project). From its
+# release tarball -- Debian packages no uv -- with each architecture's SHA-256
+# pinned beside the version, as the release's own .sha256 files publish it.
+UV_VERSION := 0.12.23
+UV_SHA256_X86_64 := 9167d72b3319674b6303c4cbe071854bba13ebdf3d76b1a7cbdc175471fb66d6
+UV_SHA256_AARCH64 := 6524bd338177ed50d035d39354e12545e993bbeba2ecbddf0480c5b3a81d313f
+
+# The language servers Serena drives, baked into the image so a session with an
+# empty HOME and no network still reads code by symbol. Left to itself Serena
+# downloads each one into ~/.serena on first use; the image's global Serena
+# settings point it at these instead (docs/software-factory/worker-image.md).
+# gopls is pinned above.
+#
+# The npm-published servers. TYPESCRIPT_VERSION stays on the 6.x line on
+# purpose: typescript-language-server drives tsserver.js, which TypeScript 7
+# (the native rewrite) no longer ships -- the currency check tracks 6.x for it.
+PYRIGHT_VERSION := 1.1.414
+TYPESCRIPT_VERSION := 6.0.3
+TYPESCRIPT_LANGUAGE_SERVER_VERSION := 6.0.1
+BASH_LANGUAGE_SERVER_VERSION := 5.8.1
+YAML_LANGUAGE_SERVER_VERSION := 1.24.0
+# Ruby's server, a gem installed against Debian's ruby.
+RUBY_LSP_VERSION := 0.26.11
+# The release binaries, each with its architecture's SHA-256 as the release's
+# own asset digest publishes it: change each group together. clangd publishes
+# no aarch64 Linux build, so an aarch64 image uses Debian's clangd instead and
+# only the x86_64 digest is pinned.
+CLANGD_VERSION := 23.1.0
+CLANGD_SHA256_X86_64 := e53b1a96196095faedb7642cf64964f7fb9ad4a0c1f00dd2c172a3d9dcbafdfd
+RUST_ANALYZER_VERSION := 2026-10-05
+RUST_ANALYZER_SHA256_X86_64 := 28070188df63b6f217768040781decc8db43bc9d29b126847acb365575b09bc9
+RUST_ANALYZER_SHA256_AARCH64 := 3974c863acbbd96ef2cc02a7aaa79123935b05f27ffe4fd393fc229522f75cb9
+MARKSMAN_VERSION := 2026-02-08
+MARKSMAN_SHA256_X86_64 := be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087
+MARKSMAN_SHA256_AARCH64 := db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb

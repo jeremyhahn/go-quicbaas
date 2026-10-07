@@ -1,0 +1,4 @@
+greeter: &greeter
+  greets: fixture
+caller:
+  <<: *greeter

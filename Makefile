@@ -49,7 +49,8 @@ GOLINT := $(shell go env GOPATH)/bin/golangci-lint
 # SHELLCHECK_VERSION (with its tarball digests), SERENA_VERSION, GOPLS_VERSION,
 # GO_TOOL_DEPENDENCY_FLOORS (what gopls and gosec are built with),
 # SERENA_DEPENDENCY_FLOORS (what serena's own uv tool environment is built
-# with), OPENCODE_VERSION (with its tarball digests) and PROTOC_VERSION /
+# with), NPM_BUNDLED_DEPENDENCY_FLOORS (what the image's npm bundles in place
+# of its own vulnerable copies), OPENCODE_VERSION (with its tarball digests) and PROTOC_VERSION /
 # PROTOC_GEN_GO_VERSION / PROTOC_GEN_GO_GRPC_VERSION (with protoc's tarball
 # digests) are included above from pkg/version/toolchain.mk, the repository's
 # only copy of them. `make install-tools` installs them, CI reads
@@ -3372,7 +3373,7 @@ endif
 # the result and rebinds projects to it. Override them on the command line to
 # build a newer image by hand:
 #
-#   make build-worker-image CLAUDE_CODE_VERSION=2.1.281 CODEX_VERSION=0.157.0
+#   make build-worker-image CLAUDE_CODE_VERSION=2.1.293 CODEX_VERSION=0.161.0
 #
 # THE TAG NAMES THE CONTENTS: <version>-cc<claude-code>-cx<codex>, the same
 # content tag the refresh uses (softwarefactoryworker.Build.Tag), so a manual
@@ -3383,8 +3384,8 @@ WORKER_IMAGE_DIR := deployments/agents/software-factory-worker
 WORKER_IMAGE_REPO := $(DOCKER_IMAGE)-software-factory-worker
 WORKER_IMAGE_UID ?= $(shell id -u)
 WORKER_IMAGE_GID ?= $(shell id -g)
-CLAUDE_CODE_VERSION ?= 2.1.280
-CODEX_VERSION ?= 0.156.0
+CLAUDE_CODE_VERSION ?= 2.1.292
+CODEX_VERSION ?= 0.160.1
 WORKER_IMAGE_TAG := $(DOCKER_TAG)-cc$(CLAUDE_CODE_VERSION)-cx$(CODEX_VERSION)
 # WORKER_IMAGE_REGISTRY is where `make push-worker-image` publishes, as
 # host[:port]/owner/name. It has no default: the registry is the operator's.
@@ -3425,6 +3426,28 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg PROTOC_SHA256_AARCH64=$(PROTOC_SHA256_AARCH64) \
 		--build-arg PROTOC_GEN_GO_VERSION=$(PROTOC_GEN_GO_VERSION) \
 		--build-arg PROTOC_GEN_GO_GRPC_VERSION=$(PROTOC_GEN_GO_GRPC_VERSION) \
+		--build-arg NODE_VERSION=$(NODE_VERSION) \
+		--build-arg NODE_SHA256_X86_64=$(NODE_SHA256_X86_64) \
+		--build-arg NODE_SHA256_AARCH64=$(NODE_SHA256_AARCH64) \
+		--build-arg NPM_VERSION=$(NPM_VERSION) \
+		--build-arg NPM_BUNDLED_DEPENDENCY_FLOORS="$(NPM_BUNDLED_DEPENDENCY_FLOORS)" \
+		--build-arg UV_VERSION=$(UV_VERSION) \
+		--build-arg UV_SHA256_X86_64=$(UV_SHA256_X86_64) \
+		--build-arg UV_SHA256_AARCH64=$(UV_SHA256_AARCH64) \
+		--build-arg PYRIGHT_VERSION=$(PYRIGHT_VERSION) \
+		--build-arg TYPESCRIPT_VERSION=$(TYPESCRIPT_VERSION) \
+		--build-arg TYPESCRIPT_LANGUAGE_SERVER_VERSION=$(TYPESCRIPT_LANGUAGE_SERVER_VERSION) \
+		--build-arg BASH_LANGUAGE_SERVER_VERSION=$(BASH_LANGUAGE_SERVER_VERSION) \
+		--build-arg YAML_LANGUAGE_SERVER_VERSION=$(YAML_LANGUAGE_SERVER_VERSION) \
+		--build-arg RUBY_LSP_VERSION=$(RUBY_LSP_VERSION) \
+		--build-arg CLANGD_VERSION=$(CLANGD_VERSION) \
+		--build-arg CLANGD_SHA256_X86_64=$(CLANGD_SHA256_X86_64) \
+		--build-arg RUST_ANALYZER_VERSION=$(RUST_ANALYZER_VERSION) \
+		--build-arg RUST_ANALYZER_SHA256_X86_64=$(RUST_ANALYZER_SHA256_X86_64) \
+		--build-arg RUST_ANALYZER_SHA256_AARCH64=$(RUST_ANALYZER_SHA256_AARCH64) \
+		--build-arg MARKSMAN_VERSION=$(MARKSMAN_VERSION) \
+		--build-arg MARKSMAN_SHA256_X86_64=$(MARKSMAN_SHA256_X86_64) \
+		--build-arg MARKSMAN_SHA256_AARCH64=$(MARKSMAN_SHA256_AARCH64) \
 		--build-arg CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION) \
 		--build-arg CODEX_VERSION=$(CODEX_VERSION) \
 		--build-arg QUICBAAS_VERSION=$(VERSION) \
@@ -3441,7 +3464,8 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 
 # THE PROBES ARE GO, AND THEY ARE THE REFRESH GATE'S PROBES. Each one — the
 # toolchain on the login PATH and a signed commit, serena's MCP handshake and a
-# Go symbol lookup with no network, a real lint, full control of the container,
+# symbol read in every baked-in language from an empty HOME with no network, a
+# real lint, full control of the container,
 # and a bind-mounted write owned by the spawning uid — is defined once, with
 # the reason it exists, in deployments/agents/software-factory-worker/
 # probes.go. This target and the daemon's worker image refresh both run that
@@ -3458,6 +3482,22 @@ test-worker-image: build-worker-image ## Build the worker image and run its prob
 		-uid $(WORKER_IMAGE_UID) \
 		-gid $(WORKER_IMAGE_GID)
 	@echo "$(GREEN)✓ $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) passed every probe$(NC)"
+
+# The worker image's Go package -- its Dockerfile, pins, labels, probes and
+# fixtures -- unit-tested without an engine. test-% reaches only pkg/ and cmd/.
+.PHONY: test-software-factory-worker
+test-software-factory-worker: ## Run the worker image package's unit tests (no container engine)
+	$(GOTEST) -v -timeout=5m ./$(WORKER_IMAGE_DIR)/...
+
+# EVERY WORKER-IMAGE PIN IS KEPT AT ITS UPSTREAM'S LATEST RELEASE
+# (devops.md: track the latest). This fails when any pin in
+# pkg/version/toolchain.mk, or CLAUDE_CODE_VERSION / CODEX_VERSION above, is
+# behind, naming each one and the release it is behind. Nightly CI runs it.
+# The script's header lists where each pin's latest release is read from.
+.PHONY: check-worker-toolchain-currency
+check-worker-toolchain-currency: ## Fail if any worker-image toolchain pin is behind its latest upstream release
+	CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION) CODEX_VERSION=$(CODEX_VERSION) \
+		$(WORKER_IMAGE_DIR)/check-toolchain-currency.sh pkg/version/toolchain.mk
 
 # Publish a worker image built by hand to the fleet's registry, so every node
 # can pull it rather than having it copied to it. Log in first with the
