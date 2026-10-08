@@ -169,6 +169,7 @@ func Probes() []Probe {
 		{Name: "lint and scan a Go module", Script: lintProbe, NetworkNone: true},
 		{Name: "lint GitHub Actions workflows", Script: workflowLintProbe, NetworkNone: true},
 		{Name: "protoc generates Go and gRPC code for a proto importing the well-known types", Script: protocProbe, NetworkNone: true},
+		{Name: "cgo compiles against the OpenSSL and libusb headers", Script: cgoHeadersProbe, NetworkNone: true},
 		{Name: "npm's bundled dependencies meet their floors, and npm still globs", Script: npmBundledFloorsProbe, NetworkNone: true},
 		{Name: "full control of the container, under the production boundary", Script: fullControlProbe, Sandboxed: true},
 		{Name: "a fork past the pids limit fails cleanly", Script: pidsLimitProbe, Sandboxed: true,
@@ -380,6 +381,14 @@ printf "%s\n" 'syntax = "proto3";' '' 'package protocprobe;' '' 'import "google/
 protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative probe.proto
 test -f probe.pb.go || { echo "protoc did not generate probe.pb.go"; exit 1; }
 test -f probe_grpc.pb.go || { echo "protoc did not generate probe_grpc.pb.go"; exit 1; }`
+
+// cgoHeadersProbe compiles and links a cgo program that includes the C headers
+// portfolio dependencies include: <openssl/aes.h> (go-tpm-tools' TPM simulator,
+// for go-xkms pkg/tpm2) and <libusb-1.0/libusb.h> (go-xkms xkey).
+const cgoHeadersProbe = `d=$(mktemp -d); cd "$d"
+printf "%s\n" 'module example.com/cgoheaders' '' 'go 1.21' > go.mod
+printf "%s\n" 'package main' '' '// #cgo pkg-config: libcrypto libusb-1.0' '// #include <openssl/aes.h>' '// #include <libusb-1.0/libusb.h>' 'import "C"' '' 'func main() { println(C.AES_BLOCK_SIZE, C.libusb_get_version().major) }' > main.go
+CGO_ENABLED=1 GOFLAGS=-mod=mod go run . || { echo "a cgo program including openssl/aes.h and libusb-1.0/libusb.h did not build"; exit 1; }`
 
 // npmBundledFloorsProbe proves the build's replacement of npm's own
 // brace-expansion and undici took (toolchain.mk's

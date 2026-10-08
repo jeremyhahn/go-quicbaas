@@ -30,6 +30,12 @@
 #                  are what this factory builds.
 #   build-essential `go test -race` and any cgo dependency need a C toolchain;
 #                  a project whose tests do not build cannot be verified.
+#   libssl-dev     OpenSSL headers: go-tpm-tools' TPM simulator (go-xkms
+#                  pkg/tpm2) includes <openssl/aes.h>, so without them `make
+#                  lint` fails typechecking with "openssl/aes.h: No such file"
+#                  (go-quicbaas#1164).
+#   libusb-1.0-0-dev  libusb headers and pkg-config file: go-xkms `xkey` is
+#                  cgo over libusb, and fails to typecheck without them.
 #   sudo           the agent has passwordless sudo inside this container, so it
 #                  can install a toolchain the image does not carry and run
 #                  anything a task needs. The container is the isolation
@@ -245,6 +251,8 @@ RUN set -eux; \
         openssh-client \
         make \
         build-essential \
+        libssl-dev \
+        libusb-1.0-0-dev \
         bash \
         grep \
         rsync \
