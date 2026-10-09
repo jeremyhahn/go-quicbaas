@@ -257,13 +257,69 @@ jobs:
       - name: Check module pins (make check-reciprocal-pins)
         run: make check-reciprocal-pins
 
+  # SHARDED (#1006): the six full-suite passes used to run back to back in one
+  # job (~52 min). Each is now its own matrix leg, so they run in parallel and
+  # the job takes as long as its slowest leg. `fail-fast: false` lets every leg
+  # report. `needs.test.result` is success only when every leg succeeded, so
+  # CI Gate and its required context are unchanged.
+  #
+  # Each leg runs one `make` target; what each pass covers and why it exists is
+  # recorded on its matrix entry below.
   test:
-    name: Unit Tests
+    name: Unit Tests (${{ matrix.leg }})
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # No lint/build in `needs` (v1.14): starts with them, not after them.
     # `merge` stays so the job can read needs.merge.outputs.base_sha (#436).
     needs: [merge]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `make test` compiles the MAXIMAL feature set.
+          - leg: default
+            target: test
+          # `make test` compiles the maximal set, so a file gated on a
+          # conjunction of an enabled and a disabled tag -- rag_stub.go is
+          # `rest && !rag` -- is compiled by neither it nor `make test-minimal`
+          # (which has no `rest` either). The REST route goldens froze the
+          # rag-enabled surface and were wrong by six routes for `make
+          # build-standard`, a binary we ship, and no gate could see it (#299).
+          # This pass is that configuration: REST on, AI features off.
+          - leg: standard
+            target: test-standard
+          # Transports on, optional data-model features off. The only pass that
+          # satisfies `mcp && !rag`, `rest && !otel` and `rest && !timeseries` —
+          # each needs one feature ON and another OFF, which the maximal pass
+          # (all on) and the minimal pass (all off) both miss by construction.
+          # `rest && !otel` is the sharpest: `otel` is TEST-ONLY, so the no-op
+          # tracing path it guards is what every shipped binary runs, and
+          # nothing compiled it. `make check-build-tags` now proves the
+          # coverage rather than assuming it (#305).
+          - leg: lean
+            target: test-lean
+          # The disabled-feature side of the tree. This is the ONLY pass that
+          # compiles the !rest / !quic / !mcp / !rag / !vector / !timeseries /
+          # !raft / !otel / !l2_redis / !quicbaas_{mqtt,amqp,stomp} stub and
+          # no-op files and the tests asserting their behaviour — a tag and its
+          # negation cannot coexist in one `go test`, so the maximal pass can
+          # never reach them. It was RED on the trunk because it was never
+          # wired in (#304): a pass nobody runs is a pass nobody notices going
+          # red.
+          - leg: minimal
+            target: test-minimal
+          # `make test` covers ./pkg/... ./cmd/... in the ROOT module only, so
+          # the separate sdk/go module -- the one downstream consumers actually
+          # import -- had no CI coverage at all. It runs with -race and
+          # excludes sdk/go/test/, whose docker-compose harness is known-red and
+          # tracked as #50; it runs off the gate in nightly.yml's
+          # sdk-go-integration job.
+          - leg: sdk-go
+            target: test-sdk-go
+          # Coverage report; this leg alone checks the threshold, uploads the
+          # reports and comments on the PR.
+          - leg: coverage
+            target: coverage
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -285,62 +341,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run unit tests
-        run: make test
-
-      # `make test` compiles the MAXIMAL feature set, so a file gated on a
-      # conjunction of an enabled and a disabled tag -- rag_stub.go is
-      # `rest && !rag` -- is compiled by neither it nor `make test-minimal`
-      # (which has no `rest` either). The REST route goldens froze the
-      # rag-enabled surface and were wrong by six routes for `make
-      # build-standard`, a binary we ship, and no gate could see it (#299).
-      # This pass is that configuration: REST on, AI features off.
-      - name: Run unit tests (build-standard configuration)
-        run: make test-standard
-
-      # Transports on, optional data-model features off. The only pass that
-      # satisfies `mcp && !rag`, `rest && !otel` and `rest && !timeseries` —
-      # each needs one feature ON and another OFF, which the maximal pass (all
-      # on) and the minimal pass (all off) both miss by construction.
-      # `rest && !otel` is the sharpest: `otel` is TEST-ONLY, so the no-op
-      # tracing path it guards is what every shipped binary runs, and nothing
-      # compiled it. `make check-build-tags` now proves the coverage rather
-      # than assuming it (#305).
-      - name: Run unit tests (transports, data-model extras off)
-        run: make test-lean
-
-      # The disabled-feature side of the tree. This is the ONLY pass that
-      # compiles the !rest / !quic / !mcp / !rag / !vector / !timeseries /
-      # !raft / !otel / !l2_redis / !quicbaas_{mqtt,amqp,stomp} stub and no-op
-      # files and the tests asserting their behaviour — a tag and its negation
-      # cannot coexist in one `go test`, so the maximal pass can never reach
-      # them. Without this step every one of those stubs is compiled by
-      # nothing.
-      #
-      # It was never wired in, and it was RED on the trunk for exactly that
-      # reason (#304): the tag set had been hand-written rather than derived
-      # and turned off the codec tags too — which gate no stub, so disabling
-      # them bought no coverage and merely broke pkg/sdlc's DAO with
-      # `codec "json" is not supported in this build`. A pass nobody runs is a
-      # pass nobody notices going red.
-      - name: Run unit tests (build-minimal configuration)
-        run: make test-minimal
-
-      # `make test` covers ./pkg/... ./cmd/... in the ROOT module only, so the
-      # separate sdk/go module -- the one downstream consumers actually import
-      # -- had no CI coverage at all: a dependency bump or a compilation
-      # regression confined to it could merge with this gate green. The target
-      # already existed and was simply never wired in. It runs with -race and
-      # excludes sdk/go/test/, whose docker-compose harness is known-red and
-      # tracked as #50; it runs off the gate in nightly.yml's
-      # sdk-go-integration job.
-      - name: Run SDK module unit tests
-        run: make test-sdk-go
-
-      - name: Generate coverage report
-        run: make coverage
+      - name: Run unit tests (make ${{ matrix.target }})
+        run: make ${{ matrix.target }}
 
       - name: Check coverage threshold
+        if: matrix.leg == 'coverage'
         id: coverage
         run: |
           COVERAGE=$(go tool cover -func=coverage/coverage.out | grep total | awk '{print $3}' | sed 's/%//')
@@ -352,6 +357,7 @@ jobs:
           fi
 
       - name: Upload coverage to Codecov
+        if: matrix.leg == 'coverage'
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage/coverage.out
@@ -365,7 +371,7 @@ jobs:
       # GHES", and Gitea presents as such (devops.md §1). Every such step in
       # this file is guarded; the work it captures has already run.
       - name: Upload coverage reports
-        if: github.server_url == 'https://github.com'
+        if: matrix.leg == 'coverage' && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v6
         with:
           name: coverage-reports
@@ -375,7 +381,7 @@ jobs:
           retention-days: 30
 
       - name: Comment PR with coverage
-        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+        if: matrix.leg == 'coverage' && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
         continue-on-error: true
         uses: actions/github-script@v7
         with:
