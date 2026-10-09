@@ -94,6 +94,7 @@ func TestGetToolQRDBPermission_Unmapped(t *testing.T) {
 		"quicbaas_iam_group_create",
 		"quicbaas_iam_policy_update",
 		"quicbaas_mfa_enroll_begin",
+		// Public: see publicTools; no permission to enforce.
 		"quicbaas_login_begin",
 		// Not registered tools.
 		"quicbaas_kms_generate",

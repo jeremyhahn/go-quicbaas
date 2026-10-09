@@ -66,22 +66,25 @@ table.** The fallback will produce a name nothing registered.
 
 ## Public tools
 
-`isPublicTool` (`transport.go:690-700`) is an exhaustive map:
+`publicTools` (`pkg/api/mcp/authz.go`) is the server's exhaustive set:
 
 ```
-quicbaas_login  quicbaas_login_begin  quicbaas_login_finish
-qrdb_health     quicbaas_liveness     quicbaas_readiness
+quicbaas_login_begin  quicbaas_login_finish
+qrdb_health           quicbaas_liveness     quicbaas_readiness
 ```
 
-Everything else runs `ensureAuthenticated` before dispatch. Adding a name here
-publishes an unauthenticated capability; it is a security change, not a
-convenience.
+The SDK client's `isPublicTool` (`sdk/go/transport/mcp/transport.go`) skips
+`ensureAuthenticated` for these tools, and also for `quicbaas_login`, which its
+password login calls but the server does not register. Everything else runs
+`ensureAuthenticated` before dispatch.
+Adding a name publishes an unauthenticated capability; it is a security change,
+not a convenience.
 
-**Known defect:** stale entries in the `publicTools` set with no guard test are
-a registered boundary-violation item in this repository. A name listed here that
-no longer corresponds to a registered tool is dead weight; a name that does is
-an unauthenticated surface. Any change to this map should land with a test that
-asserts the set matches intent.
+Two tests hold the set to intent. `TestPublicTools_MatchDocumentedSet`
+(`authz_public_test.go`) pins it to the list above, so widening it means changing
+the docs and the test together. `TestMCPPermissions_PublicToolsExist`
+(`authz_qrdb_coverage_test.go`) fails on an entry that names no registered tool,
+which a later tool of the same name would otherwise inherit as public.
 
 ## Transport mechanics
 

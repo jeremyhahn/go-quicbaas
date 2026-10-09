@@ -16,6 +16,7 @@
 package mcp
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,12 +29,15 @@ func TestIsPublicTool(t *testing.T) {
 		expected bool
 	}{
 		{"health tool is public", "qrdb_health", true},
-		{"version tool is public", "quicbaas_version", true},
 		{"liveness tool is public", "quicbaas_liveness", true},
+		{"readiness tool is public", "quicbaas_readiness", true},
+		{"login begin is public", "quicbaas_login_begin", true},
+		{"login finish is public", "quicbaas_login_finish", true},
 		{"get tool is not public", "qrdb_get", false},
 		{"put tool is not public", "qrdb_put", false},
 		{"delete tool is not public", "qrdb_delete", false},
 		{"cluster_status is not public", "quicbaas_cluster_status", false},
+		{"unregistered version tool is not public", "quicbaas_version", false},
 		{"unknown tool is not public", "unknown_tool", false},
 	}
 
@@ -43,4 +47,26 @@ func TestIsPublicTool(t *testing.T) {
 			assert.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+// TestPublicTools_MatchDocumentedSet pins the unauthenticated MCP surface to
+// the set docs/mcp-server/user.md documents. Widening it publishes an
+// unauthenticated capability, so a change must update the docs and this test
+// together, as one reviewed access-control decision.
+func TestPublicTools_MatchDocumentedSet(t *testing.T) {
+	documented := []string{
+		"qrdb_health",
+		"quicbaas_liveness",
+		"quicbaas_login_begin",
+		"quicbaas_login_finish",
+		"quicbaas_readiness",
+	}
+
+	got := make([]string, 0, len(publicTools))
+	for name, public := range publicTools {
+		assert.Truef(t, public, "publicTools entry %q is false; delete it instead", name)
+		got = append(got, name)
+	}
+	sort.Strings(got)
+	assert.Equal(t, documented, got)
 }

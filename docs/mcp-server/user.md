@@ -76,11 +76,19 @@ full registry. Giving an assistant an MCP endpoint is therefore not equivalent
 to giving it a token against the REST API — the containment is in the listing as
 well as the invocation.
 
-Six tools are public and need no token: `quicbaas_login`,
-`quicbaas_login_begin`, `quicbaas_login_finish`, `qrdb_health`,
-`quicbaas_liveness`, `quicbaas_readiness`. Login has to be reachable or there is
+Five tools are public and need no token: `quicbaas_login_begin`,
+`quicbaas_login_finish`, `qrdb_health`, `quicbaas_liveness`,
+`quicbaas_readiness`. Login has to be reachable or there is
 no way in; health has to be reachable or a probe needs a token during exactly
 the states it exists to report.
+
+> **Known gap (go-quicbaas#1127).** The endpoint does not yet behave as this
+> section requires, because the gate is go-qrdb's MCP server. With
+> authentication on, it answers any request that carries no credential with
+> `401` before `initialize` or `tools/list`, so the public tools are not
+> reachable anonymously. It also has no per-principal `tools/list` filter, so an
+> authenticated principal is shown every registered tool and is refused only
+> when it calls one. Fixing either needs go-qrdb support.
 
 ## Before you point an assistant at production
 

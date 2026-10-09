@@ -67,7 +67,9 @@ Dynamic Client Registration flow — was retired (see the package doc in
   the permission the tool registered (`pkg/api/mcp/authz.go`,
   `authz_qrdb.go`, surfaced through `pkg/apimodule`'s
   `MCPToolPermissions`); a tool with no registered permission is refused.
-  There is no HTTP-layer gate in front of `initialize` or `tools/list`.
+- **There is an HTTP-layer gate.** With authentication on, go-qrdb answers a
+  request no authenticator accepts with `401` before mcp-go reads it, so not
+  even `initialize` or `tools/list` reaches an anonymous caller.
 - **An OAuth 2.1 bearer challenge is optional and not enabled.** go-qrdb can
   emit a `401` + `WWW-Authenticate` challenge (`mcp.WithBearerChallenge`, via
   `qrdbsdk.WithMCPServerOptions`); quicbaas does not configure it.
@@ -78,16 +80,23 @@ Dynamic Client Registration flow — was retired (see the package doc in
 
 Two properties worth stating here:
 
-- **A small set of tools is public.** `isPublicTool` in `sdk/go/transport/mcp/transport.go`
-  names them: `quicbaas_login`, `quicbaas_login_begin`,
-  `quicbaas_login_finish`, `qrdb_health`, `quicbaas_liveness`,
-  `quicbaas_readiness`. Everything else calls `ensureAuthenticated` first.
-  Login must be public or there is no way in; health must be public or a probe
-  needs a token during exactly the states it exists to report.
+- **A small set of tools is public.** `publicTools` in `pkg/api/mcp/authz.go`
+  names them: `quicbaas_login_begin`, `quicbaas_login_finish`, `qrdb_health`,
+  `quicbaas_liveness`, `quicbaas_readiness`. The SDK client's `isPublicTool`
+  (`sdk/go/transport/mcp/transport.go`) skips `ensureAuthenticated` for them,
+  and also for `quicbaas_login`, which its password login calls but the server
+  does not register. Login must be public or there is no way in;
+  health must be public or a probe needs a token during exactly the states it
+  exists to report.
 - **Tools are scope-filtered per principal.** An agent is an IAM principal, and
   its `tools/list` reflects what it may call rather than the full 459. That is
   what makes handing an assistant an MCP endpoint different from handing it a
   token.
+
+Neither property holds yet (go-quicbaas#1127): the HTTP-layer gate refuses the
+public tools to an anonymous caller, and go-qrdb has no per-principal
+`tools/list` filter. Both need go-qrdb support: an anonymous pass-through limited
+to the public set, and a listing filtered by the caller's permissions.
 
 ## Component boundaries
 
@@ -124,7 +133,7 @@ over MCP than over REST is a defect.
 
 ## Trust boundaries
 
-- **The public tool set is an unauthenticated surface.** It is deliberately six
+- **The public tool set is an unauthenticated surface.** It is deliberately five
   tools and should stay that way; every addition is an access-control decision.
 - **Tool descriptions and schemas are read by a model.** They are, in effect,
   instructions to an agent. Treat their wording as part of the security surface.
