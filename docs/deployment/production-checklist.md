@@ -1,5 +1,8 @@
 # QuicBaaS Production Deployment Checklist
 
+> **Status: REFERENCE** · Last verified: 2026-10-02
+> Production deployment checklist for QuicBaaS.
+
 A step-by-step checklist for deploying QuicBaaS in production environments.
 
 ## 1. Pre-Deployment Validation

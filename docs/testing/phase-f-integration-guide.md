@@ -1,5 +1,8 @@
 # Phase F Integration Tests: Standalone + Cluster + Seal/Hardware
 
+> **Status: REFERENCE** · Last verified: 2026-08-13
+> Phase F end-to-end integration tests.
+
 Phase F delivers end-to-end integration tests that validate the new architecture
 (quicbaas on qrdb) with real services — no mocks, no stubs, no dead
 reimplementation paths.

@@ -1,5 +1,8 @@
 # Shard Consolidation Design
 
+> **Status: REFERENCE** · Last verified: 2026-04-10
+> Shard consolidation design.
+
 ## Problem Statement
 
 Shard IDs are scattered across 7+ files with no central registry, three direct conflicts,

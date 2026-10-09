@@ -1,5 +1,7 @@
 # Identity & Auth Refactor — Formal Plan
 
+> **Status: ARCHIVE — historical record. Do NOT build from this document.** · Last verified: 2026-05-12
+
 Status: **draft, awaiting sign-off** · Owner: in progress · Last updated: 2026-05-06
 
 ## 1. Context

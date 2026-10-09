@@ -1,5 +1,8 @@
 # Kubernetes Deployment Guide
 
+> **Status: REFERENCE** · Last verified: 2026-08-18
+> Kubernetes deployment of QuicBaaS.
+
 Deploy QuicBaaS in Kubernetes for production-grade distributed key-value storage with multi-Raft consensus, strong consistency, and horizontal scalability.
 
 ## Prerequisites

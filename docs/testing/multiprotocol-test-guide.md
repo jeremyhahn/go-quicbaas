@@ -1,5 +1,8 @@
 # Multi-Protocol Integration Test Guide
 
+> **Status: REFERENCE** · Last verified: 2026-08-18
+> Writing multi-protocol integration tests for QuicBaaS features.
+
 This guide describes how to write multi-protocol integration tests for QuicBaaS features.
 
 ## Overview

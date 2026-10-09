@@ -1,5 +1,8 @@
 # Plan: Per-Tenant Barrier Broker API (quicbaas)
 
+> **Status: REFERENCE** · Last verified: 2026-06-10
+> Implemented plan for the per-tenant barrier broker API.
+
 **Status:** IMPLEMENTED (2026-06-09) — except the docker-harness integration matrix (§4 Phase 4), which remains a CI follow-up.
 **Date:** 2026-06-09
 **Layer:** go-quicbaas (L4 broker). Consumes only `go-qrdb/sdk/go`.

@@ -1,5 +1,8 @@
 # Autonomous control loop
 
+> **Status: REFERENCE** · Last verified: 2026-09-14
+> Proposed design, not built.
+
 **Status:** proposed, 2026-09-12. Not built. Per `docs/README.md`, planned-but-unbuilt
 work lives here and this file is deleted when the feature ships.
 

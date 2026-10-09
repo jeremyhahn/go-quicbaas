@@ -1,5 +1,8 @@
 # Push Notification System Roadmap
 
+> **Status: REFERENCE** · Last verified: 2026-08-18
+> Implementation status of the QuicBaaS messaging system.
+
 This document tracks the implementation status of the QuicBaaS messaging system.
 
 ## Overview

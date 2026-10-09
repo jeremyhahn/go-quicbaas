@@ -1,5 +1,8 @@
 # The UI wire contract
 
+> **Status: REFERENCE** · Last verified: 2026-09-14
+> `pkg/uicontract` check of TypeScript SDK types against Go structs.
+
 `pkg/uicontract` compares the TypeScript SDK's hand-written response types
 against the Go structs the server serialises, and fails when the two disagree
 about a field name.

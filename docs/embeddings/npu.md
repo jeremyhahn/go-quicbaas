@@ -1,5 +1,8 @@
 # NPU embedding provider
 
+> **Status: REFERENCE** · Last verified: 2026-09-29
+> RAG embeddings on an Intel NPU through an OpenVINO sidecar.
+
 Runs RAG embeddings on an Intel NPU through an OpenVINO sidecar, so embedding
 work stops competing with builds, tests and peer review for the CPU cores and
 the GPU.

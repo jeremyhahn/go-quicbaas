@@ -1,5 +1,8 @@
 # Running the Playwright E2E Suite Against a Live Node
 
+> **Status: REFERENCE** · Last verified: 2026-09-14
+> Running the Playwright E2E suite with `make test-e2e`.
+
 `make test-e2e` builds a daemon, boots it on a scratch data dir, and signs the
 browser in as the first-boot **system admin** by walking the one-time invite it
 prints. That is the right shape for CI and the wrong shape for a node that is

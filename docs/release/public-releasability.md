@@ -1,5 +1,8 @@
 # Public releasability
 
+> **Status: REFERENCE** · Last verified: 2026-09-29
+> What the public release of this repository ships.
+
 This repository ships publicly: a module zip, a release tarball, two container
 images, and a web UI built from this tree and embedded in the binary. Everything
 tracked here is published except the private development workflow, which

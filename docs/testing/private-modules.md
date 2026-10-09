@@ -1,5 +1,8 @@
 # Private modules in the Docker test builds
 
+> **Status: REFERENCE** · Last verified: 2026-09-29
+> Private first-party modules in the integration, seal and e2e images.
+
 The integration, seal and e2e images run `go mod download` during their build.
 Private first-party modules -- today `github.com/jeremyhahn/go-auth` -- are
 served by the Gitea origin, not by `proxy.golang.org` or GitHub, so the build

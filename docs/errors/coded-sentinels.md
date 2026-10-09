@@ -1,5 +1,8 @@
 # Coded sentinels: why `errors.Is` does not mean what it reads
 
+> **Status: REFERENCE** · Last verified: 2026-09-14
+> Behaviour of `pkg/errors.QBError` sentinels.
+
 `pkg/errors.QBError` is a **type alias** for go-qrdb's `errors.QRDBError`, and
 `QRDBError.Is` compares the error **code**:
 

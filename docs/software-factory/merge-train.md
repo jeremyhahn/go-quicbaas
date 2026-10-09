@@ -1,5 +1,8 @@
 # The merge train — approved changes verified together, landed together
 
+> **Status: REFERENCE** · Last verified: 2026-09-29
+> The Software Factory merge train.
+
 A project whose target branch refuses an out-of-date pull request (Gitea's
 `block_on_outdated_branch`) pays for every merge twice. Each merge makes every
 other open pull request stale; each of those merges the target in, gets a new

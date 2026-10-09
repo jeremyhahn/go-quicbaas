@@ -1,5 +1,7 @@
 # Phase 5 — Quicbaas Refactor: Consume xkms WebAuthn, Delete Duplicates
 
+> **Status: ARCHIVE — historical record. Do NOT build from this document.** · Last verified: 2026-09-14
+
 Status: completed 2026-05-07
 Plan reference: `parsed-jingling-crane.md` § Phase 5
 

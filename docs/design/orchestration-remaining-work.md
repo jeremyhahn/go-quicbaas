@@ -1,5 +1,8 @@
 # Orchestrator Integration - Remaining Work
 
+> **Status: REFERENCE** · Last verified: 2026-09-14
+> Remaining orchestrator integration work.
+
 ## Current State (2026-03-31; Priority 1 re-verified DONE 2026-08-12)
 - 8765 PASS, 48 FAIL, 0 SKIP across full integration test suite
 - Agent/fleet CLI tests pass on REST transport

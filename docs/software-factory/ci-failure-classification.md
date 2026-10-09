@@ -1,5 +1,8 @@
 # CI-failure classification — deciding who a red check belongs to
 
+> **Status: REFERENCE** · Last verified: 2026-09-29
+> How the Software Factory classifies CI failures.
+
 A red check is three different events wearing one colour:
 
 1. the change's own test failure,

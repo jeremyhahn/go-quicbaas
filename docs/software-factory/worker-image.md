@@ -1,5 +1,8 @@
 # Software Factory — the worker image refresh
 
+> **Status: REFERENCE** · Last verified: 2026-10-07
+> The Software Factory worker image and its refresh.
+
 The worker image (`deployments/agents/software-factory-worker/Dockerfile`) is
 where every sdlc worker, reviewer and triage session runs. It installs the
 **Claude Code** and **Codex** CLIs, and a model release often needs a newer CLI

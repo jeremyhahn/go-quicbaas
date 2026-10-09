@@ -1,5 +1,8 @@
 # Agents and pools
 
+> **Status: REFERENCE** · Last verified: 2026-09-29
+> Software Factory agent and pool definitions.
+
 An **Agent** is a named, tenant-scoped definition of *who works*: a runtime
 (`backend`), a `model`, the provider endpoint that serves it, a container
 `image`, a reasoning effort, an account policy and a prompt. It also declares

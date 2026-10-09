@@ -1,5 +1,7 @@
 # Phase 4 — Layering follow-up
 
+> **Status: ARCHIVE — historical record. Do NOT build from this document.** · Last verified: 2026-08-18
+
 Status: **completed** · Last updated: 2026-05-08
 
 ## 1. The discovery

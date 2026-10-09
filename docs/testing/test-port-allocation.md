@@ -1,5 +1,8 @@
 # Allocating Ports in Tests
 
+> **Status: REFERENCE** · Last verified: 2026-09-29
+> Drawing test ports from `pkg/testutil/netport`.
+
 Tests that hand a port number to a server which binds it later must draw the
 number from `pkg/testutil/netport`. Do not listen on `:0` and close the
 listener.
