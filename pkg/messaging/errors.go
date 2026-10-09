@@ -15,6 +15,7 @@ package messaging
 
 import (
 	stderrors "errors"
+	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
@@ -59,6 +60,9 @@ const (
 
 	// ErrCodePushClientNotRegistered indicates the client is not registered with the hub.
 	ErrCodePushClientNotRegistered
+
+	// ErrCodePushHubStopTimeout indicates a hub was still running when Stop's deadline fired.
+	ErrCodePushHubStopTimeout
 )
 
 // Sentinel errors for the push notification system.
@@ -72,6 +76,9 @@ var (
 
 	// ErrEmptyChannelName indicates an empty channel name was provided.
 	ErrEmptyChannelName = stderrors.New("channel name is empty")
+
+	// ErrHubStopTimeout indicates a hub did not stop before Stop's deadline.
+	ErrHubStopTimeout = stderrors.New("hub did not stop before the deadline")
 
 	// ErrChannelNotFound indicates the channel does not exist.
 	ErrChannelNotFound = stderrors.New("channel not found")
@@ -219,6 +226,22 @@ type ServiceNotRunningError struct {
 // Error implements the error interface.
 func (e *ServiceNotRunningError) Error() string {
 	return "push service not running, cannot perform: " + e.Operation
+}
+
+// HubStopTimeoutError represents hubs that were still running when Stop's
+// deadline fired, so they were abandoned rather than stopped.
+type HubStopTimeoutError struct {
+	Hubs []string
+}
+
+// Error implements the error interface.
+func (e *HubStopTimeoutError) Error() string {
+	return "hubs did not stop before the deadline: " + strings.Join(e.Hubs, ", ")
+}
+
+// Is makes errors.Is(err, ErrHubStopTimeout) match.
+func (e *HubStopTimeoutError) Is(target error) bool {
+	return target == ErrHubStopTimeout
 }
 
 // InvalidChannelNameError represents an error when a channel name is invalid.
@@ -399,6 +422,23 @@ func NewServiceNotRunningError(op, operation string) *errors.QBError {
 			"operation": operation,
 		},
 	}
+}
+
+// NewHubStopTimeoutError creates a new QBError naming the hubs that did not stop.
+func NewHubStopTimeoutError(op string, hubs ...string) *errors.QBError {
+	return &errors.QBError{
+		Code: ErrCodePushHubStopTimeout,
+		Op:   op,
+		Err:  &HubStopTimeoutError{Hubs: hubs},
+		Context: map[string]interface{}{
+			"hubs": hubs,
+		},
+	}
+}
+
+// IsHubStopTimeout returns true if the error reports a hub abandoned at Stop's deadline.
+func IsHubStopTimeout(err error) bool {
+	return isPushError[*HubStopTimeoutError](err, ErrCodePushHubStopTimeout, ErrHubStopTimeout)
 }
 
 // NewInvalidChannelNameError creates a new QBError for invalid channel name.

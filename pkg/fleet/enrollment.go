@@ -343,8 +343,30 @@ func isInvalidClientTokenExchangeError(err error) bool {
 	if exErr.Status != 401 {
 		return false
 	}
-	return strings.Contains(exErr.Detail, `"error":"`+oauthErrInvalidClient+`"`) ||
-		strings.Contains(exErr.Detail, `"error": "`+oauthErrInvalidClient+`"`)
+	return detailHasOAuthError(exErr.Detail, oauthErrInvalidClient)
+}
+
+// oauthErrInvalidScope is the RFC 6749 §5.2 error code emitted when the
+// requested scope is not one the client holds. The agent re-registers so the
+// control plane can issue the grant the daemon does not yet hold.
+const oauthErrInvalidScope = "invalid_scope"
+
+// isInvalidScopeTokenExchangeError reports whether err is a /oauth2/token
+// response carrying the OAuth2 invalid_scope error code. RFC 6749 specifies
+// 400 for this code but the control plane has answered 401, so the status is
+// not part of the match.
+func isInvalidScopeTokenExchangeError(err error) bool {
+	var exErr *EnrollmentTokenExchangeError
+	if !errors.As(err, &exErr) {
+		return false
+	}
+	return detailHasOAuthError(exErr.Detail, oauthErrInvalidScope)
+}
+
+// detailHasOAuthError reports whether an OAuth2 error body names code.
+func detailHasOAuthError(detail, code string) bool {
+	return strings.Contains(detail, `"error":"`+code+`"`) ||
+		strings.Contains(detail, `"error": "`+code+`"`)
 }
 
 // resolveHTTPClient returns the enroller's injected HTTPClient when the

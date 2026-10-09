@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -50,6 +51,7 @@ type mockOrchestrator struct {
 	agents    []*orchestratorSDK.FleetNode
 	jobs      int
 	eventChan chan *orchestratorSDK.SessionEventEnvelope
+	promptErr error
 }
 
 func newMockOrchestrator() *mockOrchestrator {
@@ -69,6 +71,9 @@ func (m *mockOrchestrator) PromptSession(ctx context.Context, req *orchestratorS
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.prompts = append(m.prompts, req)
+	if m.promptErr != nil {
+		return nil, m.promptErr
+	}
 	return &orchestratorSDK.PromptSessionResponse{SessionID: req.SessionID}, nil
 }
 func (m *mockOrchestrator) CloseSession(ctx context.Context, req *orchestratorSDK.CloseSessionRequest) (*orchestratorSDK.CloseSessionResponse, error) {
@@ -211,6 +216,23 @@ func waitFor(t *testing.T, cond func() bool) {
 
 // TestBot_SpawnAndPrompt exercises the happy path: a spawn attaches
 // the new session, implicit prompt sends a PromptSession call.
+// TestBot_SpawnGoalPromptFailureSurfaced ensures a failed goal prompt is
+// reported to the sender instead of being dropped.
+func TestBot_SpawnGoalPromptFailureSurfaced(t *testing.T) {
+	bot, signal, orch, _ := newTestBot(t)
+	orch.promptErr = errors.New("prompt boom")
+	msg := InboundMessage{ConversationID: "conv-1", Kind: ConversationDM, SenderACI: "aci-1"}
+	intent := Intent{Kind: IntentSpawn, Backend: "claude", Goal: "do the thing"}
+	if err := bot.spawnOrDispatch(context.Background(), msg, OperatorIdentity{}, intent); err != nil {
+		t.Fatalf("spawnOrDispatch: %v", err)
+	}
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
+	if len(signal.sends) != 1 || !strings.Contains(signal.sends[0].Body, "goal prompt failed: prompt boom") {
+		t.Fatalf("sends: %+v", signal.sends)
+	}
+}
+
 func TestBot_SpawnAndPrompt(t *testing.T) {
 	bot, signal, orch, mgr := newTestBot(t)
 	ctx, cancel := context.WithCancel(context.Background())

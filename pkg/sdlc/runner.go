@@ -232,7 +232,11 @@ func (*Runner) States() []orchestration.JobStateSpec { return RunnerStates() }
 // the container so the slot it frees is real.
 func RunnerStates() []orchestration.JobStateSpec {
 	return []orchestration.JobStateSpec{
-		{State: orchestration.JobStateInitializing, Label: labelInitializing},
+		// Every state declares a bound, so none inherits the workflow
+		// runner's ceiling. The five states below do short work and keep the
+		// ten minutes they derived before #621; that is pinned by
+		// TestSDLCModule_DerivedIdleThresholdsAreUnchanged.
+		{State: orchestration.JobStateInitializing, Label: labelInitializing, IdleThreshold: 10 * time.Minute},
 		// THE BOUNDS ARE THE WORK'S, NOT THE ENGINE'S DEFAULT. A delivery
 		// turn on a large repository runs an hour; its verification runs
 		// `make test` for twenty-five minutes three times over; and reviewing
@@ -244,10 +248,10 @@ func RunnerStates() []orchestration.JobStateSpec {
 		{State: orchestration.JobStateExecuting, Label: labelExecuting, SessionBacked: true, IdleThreshold: 2 * time.Hour},
 		{State: orchestration.JobStateValidating, Label: labelValidating, IdleThreshold: 2 * time.Hour},
 		{State: orchestration.JobStateReviewing, Label: labelReviewing, IdleThreshold: 4 * time.Hour, OffProjectBudget: true},
-		{State: orchestration.JobStateRedelegating, Label: labelRedelegating},
-		{State: orchestration.JobStateCompleting, Label: labelCompleting},
-		{State: orchestration.JobStateCleanup, Label: labelCleanup, OffProjectBudget: true},
-		{State: orchestration.JobStateEscalating, Label: labelEscalating, OffProjectBudget: true},
+		{State: orchestration.JobStateRedelegating, Label: labelRedelegating, IdleThreshold: 10 * time.Minute},
+		{State: orchestration.JobStateCompleting, Label: labelCompleting, IdleThreshold: 10 * time.Minute},
+		{State: orchestration.JobStateCleanup, Label: labelCleanup, IdleThreshold: 10 * time.Minute, OffProjectBudget: true},
+		{State: orchestration.JobStateEscalating, Label: labelEscalating, IdleThreshold: 10 * time.Minute, OffProjectBudget: true},
 	}
 }
 

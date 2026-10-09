@@ -17,6 +17,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 )
@@ -76,13 +77,36 @@ func (s *Server) startSDLCLabelReconcile(hooks *sdlc.Hooks, bindings sdlc.Bindin
 	cfg := s.config.SDLC.LabelReconcile
 	reconciler, err := sdlc.NewLabelReconciler(sdlc.LabelReconcilerConfig{
 		Tenants: tenants, Bindings: bindings, Tasks: s.orchTaskStore, Hooks: hooks,
-		Pacer: sdlc.NewForgePacer(cfg.ForgeInterval),
+		Pacer:        sdlc.NewForgePacer(cfg.ForgeInterval),
+		Reservations: s.sdlcOutcomeReserver(s.durableKVStore()),
 	})
 	if err != nil {
 		s.logger.WithError(err).Warn("sdlc: label reconciliation not started")
 		return
 	}
 	s.runSDLCLabelReconcile(reconciler, cfg.Interval)
+}
+
+// sdlcOutcomeReserver returns the cross-node reservation over the durable shared
+// store, or nil when there is none.
+//
+// NIL IS THE DOCUMENTED SINGLE-NODE BEHAVIOUR, NOT A FALLBACK TO A LOCAL STORE.
+// An embedded or in-memory node has no durable store another node could also
+// see, so a reservation kept in process memory would arbitrate nothing; the
+// sweep then relies on the comment-marker check alone, which is idempotent
+// within the one node that exists. A durable store that cannot decide a guarded
+// write is refused by the constructor and handled the same way, with a warning.
+func (s *Server) sdlcOutcomeReserver(durable interfaces.KVStore) sdlc.OutcomeReserver {
+	if durable == nil {
+		s.logger.Info("sdlc: no durable shared store; outcome comments are idempotent within this node only")
+		return nil
+	}
+	reserver, err := sdlc.NewOutcomeReserver(durable, s.nodeName(), nil)
+	if err != nil {
+		s.logger.WithError(err).Warn("sdlc: outcome reservation unavailable; outcome comments are idempotent within this node only")
+		return nil
+	}
+	return reserver
 }
 
 // sdlcReconcileTenants returns the tenant lister the sweep enumerates with.

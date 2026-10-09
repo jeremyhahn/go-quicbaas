@@ -270,14 +270,12 @@ func TestTimeoutMiddleware(t *testing.T) {
 	tests := []struct {
 		name           string
 		timeout        time.Duration
-		handlerDelay   time.Duration
 		expectedStatus int
 		shouldTimeout  bool
 	}{
 		{
 			name:           "completes before timeout",
 			timeout:        100 * time.Millisecond,
-			handlerDelay:   10 * time.Millisecond,
 			expectedStatus: http.StatusOK,
 			shouldTimeout:  false,
 		},
@@ -287,7 +285,6 @@ func TestTimeoutMiddleware(t *testing.T) {
 			// for client-side request stalls.
 			name:           "times out",
 			timeout:        50 * time.Millisecond,
-			handlerDelay:   200 * time.Millisecond,
 			expectedStatus: http.StatusServiceUnavailable,
 			shouldTimeout:  true,
 		},
@@ -297,8 +294,13 @@ func TestTimeoutMiddleware(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			middleware := TimeoutMiddleware(tt.timeout)
 
+			handlerStarted := make(chan struct{})
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				time.Sleep(tt.handlerDelay)
+				close(handlerStarted)
+				if tt.shouldTimeout {
+					<-r.Context().Done()
+					return
+				}
 				w.WriteHeader(http.StatusOK)
 			})
 
@@ -309,11 +311,7 @@ func TestTimeoutMiddleware(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			wrappedHandler.ServeHTTP(w, req)
-
-			if tt.shouldTimeout {
-				// Give a bit of time for the timeout to trigger
-				time.Sleep(100 * time.Millisecond)
-			}
+			<-handlerStarted
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
 		})

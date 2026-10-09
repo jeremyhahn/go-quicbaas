@@ -207,6 +207,38 @@ func makeHeartbeatRequestWithBody(t *testing.T, srv *Server, tenantID, agentID s
 // Tests — happy path: heartbeat for unknown agent triggers re-register
 // =============================================================================
 
+// TestHeartbeat_MalformedBodyIs400 asserts a body that is not JSON is rejected
+// as the caller's fault instead of being silently ignored (go-quicbaas#728).
+func TestHeartbeat_MalformedBodyIs400(t *testing.T) {
+	const tenantID = "acme"
+	const cn = "198.51.100.91"
+	agentID := iam.FleetNodeAppName(tenantID, cn)
+
+	srv, _, _ := newRecoveryTestServer(t, 1)
+
+	rec := makeHeartbeatRequestWithBody(t, srv, tenantID, agentID, recoverPeerCert(t, tenantID, cn), "{not json")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHeartbeat_ValidBodyUnchanged asserts a well-formed body still heartbeats.
+func TestHeartbeat_ValidBodyUnchanged(t *testing.T) {
+	const tenantID = "acme"
+	const cn = "198.51.100.91"
+	agentID := iam.FleetNodeAppName(tenantID, cn)
+
+	srv, _, _ := newRecoveryTestServer(t, 1)
+
+	rec := makeHeartbeatRequestWithBody(t, srv, tenantID, agentID, recoverPeerCert(t, tenantID, cn),
+		`{"bind_addr":"198.51.100.91:9091"}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestHeartbeat_AutoRegistersOnUnknownID asserts that a heartbeat for
 // an agent the registry has lost is auto-recovered when the request
 // carries a valid mTLS peer cert whose (tenant, CN) maps to the
@@ -214,6 +246,7 @@ func makeHeartbeatRequestWithBody(t *testing.T, srv *Server, tenantID, agentID s
 //   - Return 200 with the standard heartbeat payload.
 //   - Have asked the registrar to publish the agent exactly once.
 //   - Have re-issued the FleetNodeHeartbeat call against the live row.
+
 func TestHeartbeat_AutoRegistersOnUnknownID(t *testing.T) {
 	const tenantID = "acme"
 	const cn = "198.51.100.91"

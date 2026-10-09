@@ -29,6 +29,8 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,6 +50,8 @@ const reconcileTestTenant = "burnin"
 // ShardedClient -> platform role client resolver -> QRDBRoleStorage ->
 // IdentityStore — and seeds reconcileTestTenant with the built-in roles the
 // build defines RIGHT NOW, which is what a tenant created by this build holds.
+var reconcileGainedPermissionCounter atomic.Uint64
+
 func newReconcileFixture(t *testing.T) (*Server, *iam.IdentityStore, tenantLister) {
 	t.Helper()
 
@@ -129,7 +133,7 @@ func TestReconcileTenantBuiltInRoles_AddsAVerbTheBuildGained(t *testing.T) {
 	srv, store, tenants := newReconcileFixture(t)
 	ctx := context.Background()
 
-	const gained = qrdbsdk.Permission("quicbaas573module:reconcile")
+	gained := qrdbsdk.Permission("quicbaas573module" + strconv.FormatUint(reconcileGainedPermissionCounter.Add(1), 10) + ":reconcile")
 	require.False(t, hasPermission(roleNamed(t, store, reconcileTestTenant, qrdbsdk.RoleNameAdmin), string(gained)),
 		"fixture is only meaningful if the tenant was seeded WITHOUT the verb")
 

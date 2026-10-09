@@ -131,7 +131,7 @@ func TestCachingTokenSource_InvalidClientReregisterBudgetExhausted(t *testing.T)
 
 // TestCachingTokenSource_NonInvalidClient401DoesNotReenroll asserts
 // that a 401 carrying a different OAuth2 error code (e.g.
-// invalid_scope) does NOT trigger client-side re-enrollment. The
+// invalid_grant) does NOT trigger client-side re-enrollment. The
 // recovery path is reserved for the specific case where the control plane
 // repudiates the cached client_secret; other auth failures must
 // propagate to the caller unchanged so the operator sees the actual
@@ -143,10 +143,6 @@ func TestCachingTokenSource_NonInvalidClient401DoesNotReenroll(t *testing.T) {
 		name string
 		body string
 	}{
-		{
-			name: "invalid_scope",
-			body: `{"error":"invalid_scope","error_description":"scope not granted"}`,
-		},
 		{
 			name: "invalid_grant",
 			body: `{"error":"invalid_grant","error_description":"unsupported grant type"}`,

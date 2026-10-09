@@ -585,16 +585,21 @@ func TestClient_StreamFetchObjects_Success(t *testing.T) {
 func TestClient_StreamFetchObjects_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Signal channel: the mock stream will block on receive until we cancel the context.
-	blockCh := make(chan struct{})
+	recvStarted := make(chan struct{})
+	releaseRecv := make(chan struct{})
 
 	c := NewClient(&mockTransport{
 		requestStreamFn: func(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
+			var sent bool
 			return &mockStream{
 				recvFn: func() (interface{}, error) {
-					// Block until test signals us. This simulates a slow stream.
-					<-blockCh
-					return nil, stderrors.New("EOF")
+					if sent {
+						return nil, stderrors.New("EOF")
+					}
+					sent = true
+					close(recvStarted)
+					<-releaseRecv
+					return &FetchObjectResponse{Found: true}, nil
 				},
 			}, nil
 		},
@@ -612,13 +617,10 @@ func TestClient_StreamFetchObjects_ContextCancellation(t *testing.T) {
 		t.Fatal("expected non-nil channel")
 	}
 
-	// Cancel the context; the goroutine should detect cancellation and send an error response.
+	<-recvStarted
 	cancel()
+	close(releaseRecv)
 
-	// Unblock the recv so the goroutine can proceed past the blocking call.
-	close(blockCh)
-
-	// Drain the channel and check for the context cancellation error.
 	var gotCancelErr bool
 	for resp := range ch {
 		if resp.ErrorMessage != "" && strings.Contains(resp.ErrorMessage, "context canceled") {

@@ -816,6 +816,17 @@ func TestRunner_ShapeHasNoLeadAndNoDecomposition(t *testing.T) {
 // runner ALONE — the engine's registry merges the workflow runner's
 // declarations in, and a test that read the merge would pass on the other
 // runner's answer.
+// TestRunnerStates_EveryStateDeclaresAnIdleBound pins go-quicbaas#712: a state
+// with no IdleThreshold inherits the workflow runner's ceiling, which is
+// minutes, and the stall detector ends a job that legitimately waits longer.
+func TestRunnerStates_EveryStateDeclaresAnIdleBound(t *testing.T) {
+	for _, spec := range RunnerStates() {
+		if spec.IdleThreshold <= 0 {
+			t.Errorf("state %q declares no idle bound", spec.State)
+		}
+	}
+}
+
 func declaredSessionBackedStates() map[orchestration.JobState]bool {
 	backed := make(map[orchestration.JobState]bool)
 	for _, spec := range RunnerStates() {

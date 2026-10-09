@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 )
 
@@ -165,6 +167,42 @@ func TestStartSDLCLabelReconcile_RefusesQuietlyWithoutItsCollaborators(t *testin
 	}
 	if _, ok := s.sdlcReconcileTenants(); ok {
 		t.Fatal("a node with no tenant manager offered a tenant lister")
+	}
+}
+
+// TestSDLCOutcomeReserver_DurableStoreGetsAReserver proves production gets the
+// cross-node reservation when a durable store is configured, and that two
+// servers over one store arbitrate between themselves.
+func TestSDLCOutcomeReserver_DurableStoreGetsAReserver(t *testing.T) {
+	kv := orchestration.NewMemoryTaskKV()
+	first, second := testReconcileServer(t), testReconcileServer(t)
+
+	a, b := first.sdlcOutcomeReserver(kv), second.sdlcOutcomeReserver(kv)
+	if a == nil || b == nil {
+		t.Fatal("a durable store must yield a reserver")
+	}
+	ctx := context.Background()
+	if _, err := a.Reserve(ctx, "tenant", "project", 7, "marker", time.Hour); err != nil {
+		t.Fatalf("first reserve: %v", err)
+	}
+	_, err := b.Reserve(ctx, "tenant", "project", 7, "marker", time.Hour)
+	var elsewhere *sdlc.OutcomeReservedElsewhereError
+	if !errors.As(err, &elsewhere) {
+		t.Fatalf("second reserve over the same store: err=%v, want it to lose", err)
+	}
+}
+
+// TestSDLCOutcomeReserver_NoDurableStoreLeavesItNil proves an embedded node
+// keeps the marker-only behaviour, and so does a store that cannot decide a
+// guarded write.
+func TestSDLCOutcomeReserver_NoDurableStoreLeavesItNil(t *testing.T) {
+	s := testReconcileServer(t)
+	if got := s.sdlcOutcomeReserver(nil); got != nil {
+		t.Fatalf("no durable store: got a reserver %v, want nil", got)
+	}
+	unguarded := struct{ interfaces.KVStore }{orchestration.NewMemoryTaskKV()}
+	if got := s.sdlcOutcomeReserver(unguarded); got != nil {
+		t.Fatalf("a store without guarded writes: got a reserver %v, want nil", got)
 	}
 }
 

@@ -291,6 +291,11 @@ func postWithRetry(ctx context.Context, forge ForgeBackend, repo RepoRef, number
 	resolved := policy.Resolved()
 	var last error
 	for attempt := 1; attempt <= resolved.RetryAttempts; attempt++ {
+		// A post made under a cross-node reservation re-confirms it first: the
+		// wait between attempts can outlast a lease another node then takes.
+		if err := holdOutcomeLease(ctx); err != nil {
+			return nil, err
+		}
 		postCtx, cancel := context.WithTimeout(ctx, resolved.PostTimeout)
 		comment, err := forge.CommentOnIssue(postCtx, repo, number, body)
 		cancel()

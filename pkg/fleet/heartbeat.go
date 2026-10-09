@@ -191,21 +191,31 @@ func (s *HTTPHeartbeatSender) SendHeartbeat(ctx context.Context, identity *orche
 		// the daemon turns into a clean exit.
 		return s.handleNotFound(ctx, endpoint, status)
 
+	case errors.Is(firstErr, errHeartbeatForbidden):
+		// 403 → the agent lacks a grant it needs. Re-register, then
+		// retry once, exactly as for 404.
+		return s.reregisterAndRetry(ctx, endpoint, status, http.StatusForbidden)
+
 	default:
 		return firstErr
 	}
 }
 
-// handleNotFound drives the 404 → re-register → retry sequence. The
-// sender keeps an atomic failure counter so transient re-register
-// errors do not hard-fail the daemon — three consecutive failures must
-// occur before ErrNodeReRegisterFailed is surfaced.
+// handleNotFound drives the 404 → re-register → retry sequence.
 func (s *HTTPHeartbeatSender) handleNotFound(ctx context.Context, endpoint string, status HeartbeatStatus) error {
+	return s.reregisterAndRetry(ctx, endpoint, status, http.StatusNotFound)
+}
+
+// reregisterAndRetry drives the rejected (404 or 403) → re-register → retry
+// sequence. The sender keeps an atomic failure counter so transient
+// re-register errors do not hard-fail the daemon — three consecutive
+// failures must occur before ErrNodeReRegisterFailed is surfaced.
+func (s *HTTPHeartbeatSender) reregisterAndRetry(ctx context.Context, endpoint string, status HeartbeatStatus, rejected int) error {
 	if s.reregisterer == nil {
-		return &HeartbeatSendError{Op: "control plane rejected heartbeat", Status: http.StatusNotFound}
+		return &HeartbeatSendError{Op: "control plane rejected heartbeat", Status: rejected}
 	}
 
-	s.logger.Infof("agent heartbeat: control plane returned 404 for known identity; attempting re-register")
+	s.logger.Infof("agent heartbeat: control plane returned %d; attempting re-register", rejected)
 	reCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -339,6 +349,8 @@ func (s *HTTPHeartbeatSender) post(ctx context.Context, endpoint string, status 
 		return errHeartbeatUnauthorized
 	case resp.StatusCode == http.StatusNotFound:
 		return errHeartbeatNotFound
+	case resp.StatusCode == http.StatusForbidden:
+		return errHeartbeatForbidden
 	default:
 		return &HeartbeatSendError{Op: "control plane rejected heartbeat", Status: resp.StatusCode}
 	}
@@ -377,6 +389,11 @@ var errHeartbeatUnauthorized = errors.New("agent heartbeat: 401 unauthorized")
 // errHeartbeatNotFound is an internal sentinel used by post() to signal
 // that SendHeartbeat should drive a re-register flow before retrying.
 var errHeartbeatNotFound = errors.New("agent heartbeat: 404 not found")
+
+// errHeartbeatForbidden is an internal sentinel used by post() to signal a
+// 403: the agent lacks a grant the control plane requires, so SendHeartbeat
+// re-registers to converge on it.
+var errHeartbeatForbidden = errors.New("agent heartbeat: 403 forbidden")
 
 // ErrNodeReRegisterFailed indicates the agent's client-side
 // re-enrollment hook has failed maxConsecutiveReregisterFailures times
@@ -453,9 +470,9 @@ var (
 // *ReregisterFailedError so the daemon exits cleanly and systemd
 // restarts the unit.
 //
-// A 401 with any other OAuth2 error code (invalid_scope, invalid_grant,
-// etc.) is propagated unchanged — only invalid_client is interpreted as
-// a credential trust break warranting re-enrollment.
+// An invalid_scope error also re-enrolls: the daemon does not yet hold a
+// grant the control plane requires, and registering again converges it. Any
+// other OAuth2 error code (invalid_grant, etc.) is propagated unchanged.
 type CachingTokenSource struct {
 	Refresh func(ctx context.Context) (token string, expiresAt time.Time, err error)
 
@@ -521,9 +538,11 @@ func (t *CachingTokenSource) Token(ctx context.Context) (string, error) {
 	}
 
 	// Decide whether the failure warrants client-side re-enrollment.
-	// Only 401 with OAuth2 error=invalid_client triggers the recovery
-	// path; every other failure mode propagates unchanged.
-	if !isInvalidClientTokenExchangeError(err) || t.Reregisterer == nil {
+	// Only 401 with OAuth2 error=invalid_client, or an invalid_scope
+	// error, triggers the recovery path; every other failure mode
+	// propagates unchanged.
+	recoverable := isInvalidClientTokenExchangeError(err) || isInvalidScopeTokenExchangeError(err)
+	if !recoverable || t.Reregisterer == nil {
 		return "", err
 	}
 

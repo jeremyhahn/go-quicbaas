@@ -16,6 +16,7 @@ package sdlc
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,34 +81,34 @@ import (
 // A second vocabulary here would be a second thing to keep in step, and the
 // drift between them would be invisible in exactly the way this defect was.
 //
-// IT IS IDEMPOTENT ON THE COMMENT WITHIN ONE NODE, AND ONLY WITHIN ONE NODE.
-// Before posting, the issue's discussion is read and searched for THIS task's,
-// THIS attempt's, THIS outcome's marker — blockedMarker, the same identity a
-// resumed run checks (runnerRun.parkPosted). That is what stops a sweep running
-// every five minutes against a project whose forge write failed once from
-// leaving five hundred comments behind it, and it is a complete answer to
-// repetition in time.
+// IT IS IDEMPOTENT ON THE COMMENT. Before posting, the issue's discussion is
+// read and searched for THIS task's, THIS attempt's, THIS outcome's marker —
+// blockedMarker, the same identity a resumed run checks (runnerRun.parkPosted).
+// That is what stops a sweep running every five minutes against a project whose
+// forge write failed once from leaving five hundred comments behind it, and it
+// is a complete answer to repetition in time.
 //
-// IT IS NOT AN ANSWER TO TWO NODES AT ONCE, and the honest statement of the
-// gap is this: the sweep starts on every SDLC-enabled server and its boot pass
-// runs immediately, so two nodes can read the same discussion, both find the
-// marker absent, and both post. Read-then-write across a forge that offers no
-// conditional create cannot be made atomic from here.
+// IT IS IDEMPOTENT ACROSS NODES BY A RESERVATION. The sweep starts on every
+// SDLC-enabled server and its boot pass runs immediately, so two nodes can read
+// the same discussion, both find the marker absent, and both post: a read-then-
+// write across a forge with no conditional create cannot be made atomic. So
+// after the marker check and BEFORE the post, the node reserves (issue,
+// reconcile key) in the shared store with a put-if-absent (OutcomeReserver).
+// Only the winner posts; a node that loses skips and its next sweep finds the
+// marker.
 //
-// WHAT THAT COSTS IS A DUPLICATE, NOT A LIE. Both comments are the same
-// rendering of the same ending, and once either lands the marker exists, so
-// the duplication does not compound: every later sweep on every node reads it
-// and posts nothing. The label moves to the same place from either writer.
+// THE RESERVATION CARRIES A TTL, because one without a lease is worse than the
+// duplicate it prevents: a node that dies between reserving and posting would
+// hold the claim for ever and the outcome would never be announced — silent and
+// permanent, the defect class this whole sweep exists to end. When the TTL
+// lapses another node displaces the dead holder, and the comment-marker check is
+// the read-side idempotency for that case: a holder that posted and then
+// expired leaves its marker, and nobody posts again.
 //
-// IT IS DELIBERATELY LEFT OPEN, NOT OVERLOOKED. Closing it needs a durable
-// one-writer reservation taken BEFORE the post, and a reservation without a
-// lease is worse than the duplicate it prevents: a node that dies between
-// reserving and posting holds the claim for ever and the outcome is never
-// announced at all — silent and permanent, which is the defect class this whole
-// sweep exists to end, where a duplicate comment is cosmetic and self-limiting.
-// The reservation therefore needs an explicit TTL, which is durable state with
-// a lifecycle of its own and does not belong in the change that introduced the
-// sweep. It is specified in go-quicbaas#840.
+// A RESERVATION THAT FAILS AT THE STORE SKIPS THE POST. It fails closed and is
+// logged; the finding is deferred and the next sweep tries again. With no
+// OutcomeReserver configured only the marker check applies, which holds within
+// one node and leaves the cosmetic duplicate across nodes.
 //
 // IT IS FAIL-CLOSED AND NEVER FATAL. A forge that cannot be read is a finding
 // the operator sees and the next sweep retries, never a crash and never a hot
@@ -245,6 +246,15 @@ type LabelReconcilerConfig struct {
 
 	// Pacer bounds the forge call rate; nil takes DefaultForgeCallInterval.
 	Pacer ForgePacer
+
+	// Reservations decides which node posts an outcome comment, so two nodes
+	// sweeping one project post it once. Nil leaves only the comment-marker
+	// check, which is idempotent within one node.
+	Reservations OutcomeReserver
+
+	// Logger receives the reservations this node lost or could not take; nil
+	// takes slog.Default.
+	Logger *slog.Logger
 }
 
 // LabelReconciler converges a bound project's forge labels onto the engine's
@@ -255,6 +265,9 @@ type LabelReconciler struct {
 	tasks    TaskRecordLister
 	hooks    *Hooks
 	pacer    ForgePacer
+
+	reservations OutcomeReserver
+	logger       *slog.Logger
 }
 
 // NewLabelReconciler builds the sweep; every collaborator is required.
@@ -273,8 +286,13 @@ func NewLabelReconciler(cfg LabelReconcilerConfig) (*LabelReconciler, error) {
 	if pacer == nil {
 		pacer = &intervalPacer{interval: DefaultForgeCallInterval, now: time.Now}
 	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &LabelReconciler{
 		tenants: cfg.Tenants, bindings: cfg.Bindings, tasks: cfg.Tasks, hooks: cfg.Hooks, pacer: pacer,
+		reservations: cfg.Reservations, logger: logger,
 	}, nil
 }
 
@@ -921,6 +939,10 @@ func (p *labelPass) surfaceTerminal(ctx context.Context, issue ForgeIssue, task 
 		return p.settleLabels(ctx, finding, issue, spec.labelKey,
 			"the `"+string(kind)+"` outcome is already on the issue and only the label had not moved")
 	}
+	ctx, err = p.reserveOutcome(ctx, issue.Number, task, kind)
+	if err != nil {
+		return p.deferFinding(finding, err)
+	}
 
 	if err := p.reconciler.pacer.Pace(ctx); err != nil {
 		return p.deferFinding(finding, err)
@@ -1022,6 +1044,10 @@ func (p *labelPass) surfaceOrphan(ctx context.Context, issue ForgeIssue) LabelRe
 	if posted {
 		return p.settleLabels(ctx, finding, issue, spec.labelKey,
 			"the `abandoned` outcome is already on the issue and only the label had not moved")
+	}
+	ctx, err = p.reserveOutcome(ctx, issue.Number, nil, OutcomeAbandoned)
+	if err != nil {
+		return p.deferFinding(finding, err)
 	}
 
 	if err := p.reconciler.pacer.Pace(ctx); err != nil {
@@ -1243,9 +1269,8 @@ func (p *labelPass) deferFinding(finding LabelReconcileFinding, cause error) Lab
 // cannot post a second comment for the one it already wrote.
 //
 // IT IS A READ, SO IT ORDERS NOTHING AGAINST ANOTHER NODE. Two sweeps can
-// answer false here for the same issue and both go on to post; see the note on
-// idempotence at the top of this file for why that costs a duplicate rather
-// than a wrong comment, and go-quicbaas#840 for the reservation that closes it.
+// answer false here for the same issue; reserveOutcome is what then lets only
+// one of them post. See the note on idempotence at the top of this file.
 func (p *labelPass) outcomePosted(ctx context.Context, number int, task *orchestration.Task, kind OutcomeKind) (bool, error) {
 	if err := p.reconciler.pacer.Pace(ctx); err != nil {
 		return false, err
@@ -1263,6 +1288,39 @@ func (p *labelPass) outcomePosted(ctx context.Context, number int, task *orchest
 		}
 	}
 	return false, nil
+}
+
+// reserveOutcome takes the cross-node reservation for posting THIS outcome and
+// returns nil only when this node won it.
+//
+// IT FAILS CLOSED. A store that cannot answer, or a reservation held by another
+// node, both return an error and nothing is posted; the next sweep asks again,
+// and once the holder's TTL lapses the comment-marker check in outcomePosted
+// tells a posted outcome from one whose holder died.
+//
+// The returned context carries the winner's lease, which postWithRetry confirms
+// and renews before every attempt, so a node whose retry budget outlasts its
+// reservation stops rather than posting beside the node that displaced it. The
+// TTL is derived from the surfacing policy for the same reason.
+func (p *labelPass) reserveOutcome(ctx context.Context, number int, task *orchestration.Task, kind OutcomeKind) (context.Context, error) {
+	if p.reconciler.reservations == nil {
+		return ctx, nil
+	}
+	marker := blockedMarker(taskID(task), taskAttempt(task), kind)
+	ttl := OutcomeReservationTTL(p.reconciler.hooks.surfacing)
+	lease, err := p.reconciler.reservations.Reserve(ctx, p.tenantID, p.projectID, number, marker, ttl)
+	var elsewhere *OutcomeReservedElsewhereError
+	switch {
+	case errors.As(err, &elsewhere):
+		p.reconciler.logger.InfoContext(ctx, "outcome reserved by another node; skipping the post",
+			"repo", p.repo.String(), "issue", number, "kind", string(kind))
+		return ctx, err
+	case err != nil:
+		p.reconciler.logger.ErrorContext(ctx, "outcome reservation failed; skipping the post",
+			"repo", p.repo.String(), "issue", number, "kind", string(kind), "error", err)
+		return ctx, err
+	}
+	return withOutcomeLease(ctx, lease), nil
 }
 
 // taskAttempt is the attempt number an outcome comment is marked with, zero

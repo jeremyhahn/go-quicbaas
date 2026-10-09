@@ -59,8 +59,9 @@ function sessionToken(uid = 'usr_A', tenant = 'burnin'): string {
     JSON.stringify({
       uid,
       tenant_id: tenant,
+      sid: `${tenant}:${uid}:session`,
       roles: ['operator'],
-      exp: Math.floor(Date.now() / 1000) + 900,
+      exp: 1_800_000_000,
     }),
   );
   return `${header}.${payload}.sig`;

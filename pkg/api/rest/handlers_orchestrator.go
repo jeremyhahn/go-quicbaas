@@ -1701,14 +1701,21 @@ func (s *Server) HandleFleetNodeHeartbeat(w http.ResponseWriter, r *http.Request
 	// see the same bytes. The body is small (≤ a few KB) and is only
 	// used for diagnostic-style fields today (bind_addr for recovery,
 	// active_sessions / sandbox_policy / backends for future
-	// telemetry); parse failures are non-fatal because the URL path +
-	// peer cert already authenticate the call.
+	// telemetry). An empty body is a valid bare heartbeat; an unreadable or
+	// malformed one is the caller's fault and answers 400. net/http closes
+	// the request body when the handler returns.
 	var payload heartbeatBody
 	if r.Body != nil {
-		body, _ := io.ReadAll(io.LimitReader(r.Body, 64*1024))
-		_ = r.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+		if err != nil {
+			RespondBadRequest(w, r, "heartbeat body unreadable")
+			return
+		}
 		if len(body) > 0 {
-			_ = json.Unmarshal(body, &payload)
+			if err := json.Unmarshal(body, &payload); err != nil {
+				RespondBadRequest(w, r, "heartbeat body is not valid JSON")
+				return
+			}
 		}
 	}
 

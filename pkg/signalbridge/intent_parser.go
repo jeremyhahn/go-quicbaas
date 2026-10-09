@@ -49,8 +49,8 @@ type Intent struct {
 	Host string
 	// Model is set for IntentSpawn when "with <model>" is present.
 	Model string
-	// Goal is set for IntentSpawn when "for <text>" is present. Used as
-	// a system prompt when spawning.
+	// Goal is set for IntentSpawn when "for <text>" is present. Sent as
+	// a user prompt (PromptSession) to the session once it is spawned.
 	Goal string
 
 	// SessionID is set for IntentAttach.

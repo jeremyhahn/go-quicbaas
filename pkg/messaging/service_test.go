@@ -2835,3 +2835,61 @@ func TestPushService_StopWhoseContextExpiresStillFinishesTheTeardown(t *testing.
 		t.Error("the restarted service does not report running")
 	}
 }
+
+// TestPushService_StopNamesTheHubItAbandonedAtTheDeadline is the regression
+// test for #716: Stop used to break out of its wait when the deadline passed
+// and return nil, so an abandoned hub looked like a clean shutdown.
+func TestPushService_StopNamesTheHubItAbandonedAtTheDeadline(t *testing.T) {
+	t.Parallel()
+
+	ps := NewPushService(newServiceTestLogger(t), nil)
+	park := armHubPark(t, ps)
+	if err := ps.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	park.hold(t, ps)
+
+	// A deadline already in the past makes the timeout arm the first one Stop
+	// reaches, so no clock is waited on.
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	err := ps.Stop(ctx)
+
+	var timeout *HubStopTimeoutError
+	if !errors.As(err, &timeout) {
+		t.Fatalf("Stop = %v, want a HubStopTimeoutError", err)
+	}
+	if !IsHubStopTimeout(err) || !errors.Is(err, ErrHubStopTimeout) {
+		t.Errorf("Stop = %v, want it to match IsHubStopTimeout and ErrHubStopTimeout", err)
+	}
+	if len(timeout.Hubs) != 1 || timeout.Hubs[0] != "notification-hub" {
+		t.Errorf("abandoned hubs = %v, want [notification-hub]", timeout.Hubs)
+	}
+	if ps.IsRunning() {
+		t.Error("the service still reports running after an abandoned-hub Stop")
+	}
+
+	park.unpark()
+	require.Eventually(t, func() bool { return !ps.hub.IsRunning() },
+		testTimeout, testPollInterval, "the hub's loop never left after the park was released")
+}
+
+// TestPushService_StopReturnsNilWhenTheHubStopsInTime pins the other half of
+// #716: a hub that leaves before the deadline is a clean shutdown.
+func TestPushService_StopReturnsNilWhenTheHubStopsInTime(t *testing.T) {
+	t.Parallel()
+
+	ps := NewPushService(newServiceTestLogger(t), nil)
+	if err := ps.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+	if err := ps.Stop(ctx); err != nil {
+		t.Errorf("Stop of a healthy hub = %v, want nil", err)
+	}
+	if IsHubStopTimeout(nil) {
+		t.Error("IsHubStopTimeout(nil) = true, want false")
+	}
+}

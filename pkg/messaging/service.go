@@ -16,6 +16,7 @@ package messaging
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -297,11 +298,17 @@ func (ps *PushService) Stop(ctx context.Context) error {
 	for ps.hub.IsRunning() && waitErr == nil {
 		if time.Now().After(deadline) {
 			ps.logger.Warn("timeout waiting for hub to stop")
+			waitErr = NewHubStopTimeoutError("push.Stop", "notification-hub")
 			break
 		}
 		select {
 		case <-ctx.Done():
+			// The caller's deadline is the same abandonment as the fallback one
+			// above; only a cancellation is reported as the context's own error.
 			waitErr = ctx.Err()
+			if stderrors.Is(waitErr, context.DeadlineExceeded) {
+				waitErr = NewHubStopTimeoutError("push.Stop", "notification-hub")
+			}
 		case <-time.After(10 * time.Millisecond):
 			// Continue waiting
 		}

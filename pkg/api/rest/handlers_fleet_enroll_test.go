@@ -390,10 +390,56 @@ func TestHandleAgentRegister_OmitsEventIngestAddr(t *testing.T) {
 	}
 }
 
+// enrollWithCN posts an enrollment whose client certificate carries cn.
+func enrollWithCN(t *testing.T, srv *Server, cn string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"tenant_id":"acme","bind_addr":"192.168.1.50:9091","hostname":"agent01"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/enroll", strings.NewReader(body))
+	req.Host = "198.51.100.91:18080"
+	req.Header.Set("Content-Type", "application/json")
+	req.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{agentRegisterTestPeerCert(t, "acme", cn)},
+	}
+	w := httptest.NewRecorder()
+	srv.HandleFleetEnroll(w, req)
+	return w
+}
+
+// TestHandleFleetEnroll_UnusableCommonNameIs400 asserts a certificate whose
+// CommonName cannot be an identity is the caller's fault: 400, not 500
+// (go-quicbaas#727).
+func TestHandleFleetEnroll_UnusableCommonNameIs400(t *testing.T) {
+	srv := newFleetEnrollTestServer(t, "https://198.51.100.91:19090")
+
+	w := enrollWithCN(t, srv, "bad cn!")
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleFleetEnroll_InternalEnrollFailureIs500 asserts a server-side
+// failure to enroll the identity (no identity store) stays a 500.
+func TestHandleFleetEnroll_InternalEnrollFailureIs500(t *testing.T) {
+	srv := newFleetEnrollTestServer(t, "https://198.51.100.91:19090")
+	wrapper, ok := srv.service.(*agentRegisterTestService)
+	if !ok {
+		t.Fatalf("unexpected service type %T", srv.service)
+	}
+	wrapper.identityStore = nil
+
+	w := enrollWithCN(t, srv, "agent01")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
 // TestAgentRegister_ReturnsMTLSClientID asserts that when AppStorage is
 // available, the register handler creates a secondary self_signed_tls_client_auth
 // application and returns its client_id as mtls_client_id in the response.
 // This enables new agents to obtain tokens without a client_secret on disk.
+
 func TestAgentRegister_ReturnsMTLSClientID(t *testing.T) {
 	srv := newFleetEnrollTestServer(t, "")
 

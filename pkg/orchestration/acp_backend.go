@@ -446,6 +446,11 @@ type acpSession struct {
 	// cmd.ProcessState. See acp_process_supervisor.go.
 	exit atomic.Pointer[ProcessExit]
 
+	// exitReported is set once a prompt has been handed the typed exit error,
+	// so only the first prompt after the exit gets it and later ones fail fast
+	// as closed.
+	exitReported atomic.Bool
+
 	// cleanup, when non-nil, releases per-session resources provisioned at
 	// spawn (currently the ephemeral QuicBaaS MCP agent-cert directory; the
 	// pooled-account credential directory and the container env file have
@@ -820,6 +825,7 @@ func (b *ACPBackend) agentGoneError(sess *acpSession) error {
 	// reaper at all, so this is a no-op for it.
 	_ = sess.reapProcess()
 	sess.closed.Store(true)
+	sess.exitReported.Store(true)
 	if sess.containerID != "" {
 		return &ContainerStreamClosedError{
 			ContainerID: sess.containerID,
@@ -1882,6 +1888,13 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 	defer sess.mu.Unlock()
 
 	if sess.closed.Load() {
+		// The supervisor records the exit BEFORE it marks the session closed, so
+		// a recorded exit here means the subprocess died: report how, rather than
+		// the bare "session closed" that only a deliberate Close should produce.
+		// Only the first prompt is told; follow-ups fail fast as closed.
+		if sess.exited() != nil && !sess.exitReported.Load() {
+			return nil, &PromptError{SessionID: sess.id, Cause: b.agentGoneError(sess)}
+		}
 		return nil, &PromptError{SessionID: sess.id, Cause: &SessionClosedError{SessionID: sess.id}}
 	}
 

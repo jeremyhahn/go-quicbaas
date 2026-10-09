@@ -256,6 +256,11 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 	// control plane will refuse is not a registration, and the response below
 	// advertises this exact grant.
 	if err := enrollFleetNodeCertIdentity(ctx, s.service, req.TenantID, peer); err != nil {
+		var invalid *iam.ValidationError
+		if errors.As(err, &invalid) {
+			respondFleetEnrollError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
 		respondFleetEnrollError(w, r, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}

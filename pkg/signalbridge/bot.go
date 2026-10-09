@@ -260,10 +260,13 @@ func (b *OrchestratorBot) spawnOrDispatch(ctx context.Context, msg InboundMessag
 	}
 	b.startEventSubscription(ctx, resp.SessionID)
 	if intent.Goal != "" {
-		_, _ = b.orchestrator.PromptSession(ctx, &orchestratorSDK.PromptSessionRequest{
+		if _, err := b.orchestrator.PromptSession(ctx, &orchestratorSDK.PromptSessionRequest{
 			SessionID: resp.SessionID,
 			Prompt:    intent.Goal,
-		})
+		}); err != nil {
+			b.logger.WithError(err).Warn("signalbridge: spawn goal prompt failed", "session_id", resp.SessionID)
+			return b.replyError(ctx, msg, fmt.Sprintf("spawned %s session %s but goal prompt failed: %s", resp.Backend, resp.SessionID, err.Error()))
+		}
 	}
 	return b.reply(ctx, msg, fmt.Sprintf("🚀 spawned %s session %s", resp.Backend, resp.SessionID))
 }
