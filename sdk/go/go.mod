@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-quicbaas/sdk/go
 
-go 1.27.0
+go 1.27.2
 
 // Pin armon/go-metrics to v0.4.1 - newer versions declare as hashicorp/go-metrics
 replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
@@ -252,7 +252,7 @@ require (
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect

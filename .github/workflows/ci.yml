@@ -123,7 +123,7 @@ concurrency:
 # publishing it, so a direct fetch produced a zip whose hash no longer matched
 # the (correct, sum.golang.org-backed) entry in go.sum.
 env:
-  GO_VERSION: '1.27.0'
+  GO_VERSION: '1.27.2'
   COVERAGE_THRESHOLD: 90
   REGISTRY: ghcr.io
   IMAGE_NAME: jeremyhahn/quicbaas
@@ -346,7 +346,7 @@ jobs:
           COVERAGE=$(go tool cover -func=coverage/coverage.out | grep total | awk '{print $3}' | sed 's/%//')
           echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
           echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < ${{ env.COVERAGE_THRESHOLD }}" | bc -l) )); then
+          if ! awk -v c="$COVERAGE" -v t="${{ env.COVERAGE_THRESHOLD }}" 'BEGIN { if (c !~ /^[0-9]+(\.[0-9]+)?$/) exit 1; exit !(c + 0 >= t + 0) }'; then
             echo "Coverage ${COVERAGE}% is below threshold ${{ env.COVERAGE_THRESHOLD }}%"
             exit 1
           fi

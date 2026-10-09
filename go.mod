@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-quicbaas
 
-go 1.27.0
+go 1.27.2
 
 // Exclude old genproto monorepo to avoid conflicts with split packages
 exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
@@ -62,7 +62,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/mod v0.41.0
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
