@@ -62,8 +62,12 @@ func TestGRPCListSessions_ForwardsStatusFilter(t *testing.T) {
 	ctx := transport.ContextWithTenant(context.Background(), "tenant-a")
 
 	if _, err := handleOrchestratorListSessions(ctx, conn, &orchestrator.ListSessionsRequest{
-		Backend: "claude",
-		Status:  "active",
+		Backend:   "claude",
+		Status:    "active",
+		ProjectID: "project-1",
+		JobID:     "job-1",
+		Runner:    "review",
+		AgentID:   "agent-1",
 	}); err != nil {
 		t.Fatalf("handleOrchestratorListSessions: %v", err)
 	}
@@ -77,6 +81,18 @@ func TestGRPCListSessions_ForwardsStatusFilter(t *testing.T) {
 	}
 	if got.GetTenantId() != "tenant-a" {
 		t.Errorf("outbound TenantId = %q, want %q", got.GetTenantId(), "tenant-a")
+	}
+	if got.GetProjectId() != "project-1" {
+		t.Errorf("outbound ProjectId = %q, want %q", got.GetProjectId(), "project-1")
+	}
+	if got.GetJobId() != "job-1" {
+		t.Errorf("outbound JobId = %q, want %q", got.GetJobId(), "job-1")
+	}
+	if got.GetRunner() != "review" {
+		t.Errorf("outbound Runner = %q, want %q", got.GetRunner(), "review")
+	}
+	if got.GetAgentId() != "agent-1" {
+		t.Errorf("outbound AgentId = %q, want %q", got.GetAgentId(), "agent-1")
 	}
 }
 
@@ -98,6 +114,65 @@ func TestGRPCListSessions_EmptyStatusStaysEmpty(t *testing.T) {
 	}
 	if got.GetBackend() != "" {
 		t.Errorf("outbound Backend = %q, want empty", got.GetBackend())
+	}
+}
+
+type capturingListTasksServer struct {
+	pb.UnimplementedOrchestratorServiceServer
+	got chan *pb.ListTasksRequest
+}
+
+func (s *capturingListTasksServer) ListTasks(_ context.Context, req *pb.ListTasksRequest) (*pb.ListTasksResponse, error) {
+	s.got <- req
+	return &pb.ListTasksResponse{}, nil
+}
+
+func newCapturingListTasksConn(t *testing.T) (*grpc.ClientConn, *capturingListTasksServer) {
+	t.Helper()
+	fake := &capturingListTasksServer{got: make(chan *pb.ListTasksRequest, 1)}
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		pb.RegisterOrchestratorServiceServer(s, fake)
+	})
+	return srv.dial(t), fake
+}
+
+func TestGRPCListTasks_ForwardsAttemptFilters(t *testing.T) {
+	conn, fake := newCapturingListTasksConn(t)
+	autoSpawn := false
+
+	if _, err := handleOrchestratorListTasks(context.Background(), conn, &orchestrator.ListTasksRequest{
+		TenantID:  "tenant-a",
+		ProjectID: "project-1",
+		Statuses:  []string{"pending", "blocked"},
+		AutoSpawn: &autoSpawn,
+		AgentID:   "agent-1",
+		JobID:     "job-1",
+	}); err != nil {
+		t.Fatalf("handleOrchestratorListTasks: %v", err)
+	}
+
+	got := <-fake.got
+	filter := got.GetFilter()
+	if filter == nil {
+		t.Fatal("outbound Filter is nil")
+	}
+	if got.GetTenantId() != "tenant-a" {
+		t.Errorf("outbound TenantId = %q, want tenant-a", got.GetTenantId())
+	}
+	if filter.GetProjectId() != "project-1" {
+		t.Errorf("outbound ProjectId = %q, want project-1", filter.GetProjectId())
+	}
+	if filter.AutoSpawn == nil || filter.GetAutoSpawn() {
+		t.Errorf("outbound AutoSpawn = %v, want explicit false", filter.AutoSpawn)
+	}
+	if filter.GetAgentId() != "agent-1" {
+		t.Errorf("outbound AgentId = %q, want agent-1", filter.GetAgentId())
+	}
+	if filter.GetJobId() != "job-1" {
+		t.Errorf("outbound JobId = %q, want job-1", filter.GetJobId())
+	}
+	if len(filter.GetStatuses()) != 2 {
+		t.Fatalf("outbound Statuses = %v, want two statuses", filter.GetStatuses())
 	}
 }
 
@@ -360,7 +435,7 @@ type jobBoundListSessionsServer struct {
 
 func (jobBoundListSessionsServer) ListSessions(context.Context, *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
 	return &pb.ListSessionsResponse{Sessions: []*pb.SessionInfo{
-		{SessionId: "s-job", JobId: "job-1", ContainerId: "ctr-1"},
+		{SessionId: "s-job", Model: "gpt-test", JobId: "job-1", ContainerId: "ctr-1", Runner: "review", AgentId: "agent-1"},
 		{SessionId: "s-direct"},
 	}}, nil
 }
@@ -387,8 +462,8 @@ func TestGRPCListSessions_CarriesTheJobAndTheContainer(t *testing.T) {
 	if len(list.Sessions) != 2 {
 		t.Fatalf("listed %d sessions, want 2", len(list.Sessions))
 	}
-	if got := list.Sessions[0]; got.JobID != "job-1" || got.ContainerID != "ctr-1" {
-		t.Errorf("s-job = job %q container %q, want job-1/ctr-1", got.JobID, got.ContainerID)
+	if got := list.Sessions[0]; got.JobID != "job-1" || got.ContainerID != "ctr-1" || got.Model != "gpt-test" || got.Runner != "review" || got.AgentID != "agent-1" {
+		t.Errorf("s-job = job %q container %q model %q runner %q agent %q, want job-1/ctr-1/gpt-test/review/agent-1", got.JobID, got.ContainerID, got.Model, got.Runner, got.AgentID)
 	}
 	if got := list.Sessions[1]; got.JobID != "" || got.ContainerID != "" {
 		t.Errorf("s-direct = job %q container %q, want neither", got.JobID, got.ContainerID)

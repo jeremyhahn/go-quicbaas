@@ -392,6 +392,10 @@ message SessionInfo {
     // container_id names the container the session's agent runs in; empty
     // when it runs on the host.
     string container_id = 9;
+    // runner is the job runner that drove the session's job.
+    string runner = 10;
+    // agent_id is the fleet node that ran the session's job.
+    string agent_id = 11;
 }
 
 // Task represents an orchestration work item.
@@ -494,6 +498,14 @@ message TaskFilter {
     int32 limit = 5;
     string project_id = 6;
     repeated TaskStatus statuses = 7;
+
+    // auto_spawn narrows to tasks that requested immediate dispatch (true) or
+    // tasks queued for claim (false). Absence means every dispatch mode.
+    optional bool auto_spawn = 8;
+
+    // agent_id and job_id resolve through the task's latest attempt.
+    string agent_id = 9;
+    string job_id = 10;
 }
 
 // OrchestratorWorkItem represents a decomposed unit of work.
@@ -912,6 +924,12 @@ message ListSessionsRequest {
     int32 offset = 5;
     string sort = 6;
     string q = 7;
+
+    // Base and faceted narrowings shared with REST and the SDK.
+    string project_id = 8;
+    string job_id = 9;
+    string runner = 10;
+    string agent_id = 11;
 }
 
 message ListSessionsResponse {

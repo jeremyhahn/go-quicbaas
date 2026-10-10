@@ -663,7 +663,11 @@ type SessionInfo struct {
 	JobId string `protobuf:"bytes,8,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	// container_id names the container the session's agent runs in; empty
 	// when it runs on the host.
-	ContainerId   string `protobuf:"bytes,9,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	ContainerId string `protobuf:"bytes,9,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	// runner is the job runner that drove the session's job.
+	Runner string `protobuf:"bytes,10,opt,name=runner,proto3" json:"runner,omitempty"`
+	// agent_id is the fleet node that ran the session's job.
+	AgentId       string `protobuf:"bytes,11,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -757,6 +761,20 @@ func (x *SessionInfo) GetJobId() string {
 func (x *SessionInfo) GetContainerId() string {
 	if x != nil {
 		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *SessionInfo) GetRunner() string {
+	if x != nil {
+		return x.Runner
+	}
+	return ""
+}
+
+func (x *SessionInfo) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
 	}
 	return ""
 }
@@ -1343,14 +1361,20 @@ func (x *TaskResult) GetMetadata() map[string]string {
 
 // TaskFilter specifies criteria for listing tasks.
 type TaskFilter struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TeamName      string                 `protobuf:"bytes,1,opt,name=team_name,json=teamName,proto3" json:"team_name,omitempty"`
-	Status        TaskStatus             `protobuf:"varint,2,opt,name=status,proto3,enum=quicbaas.orchestrator.v1.TaskStatus" json:"status,omitempty"`
-	AssignedTo    string                 `protobuf:"bytes,3,opt,name=assigned_to,json=assignedTo,proto3" json:"assigned_to,omitempty"`
-	CreatedBy     string                 `protobuf:"bytes,4,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
-	Limit         int32                  `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
-	ProjectId     string                 `protobuf:"bytes,6,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	Statuses      []TaskStatus           `protobuf:"varint,7,rep,packed,name=statuses,proto3,enum=quicbaas.orchestrator.v1.TaskStatus" json:"statuses,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	TeamName   string                 `protobuf:"bytes,1,opt,name=team_name,json=teamName,proto3" json:"team_name,omitempty"`
+	Status     TaskStatus             `protobuf:"varint,2,opt,name=status,proto3,enum=quicbaas.orchestrator.v1.TaskStatus" json:"status,omitempty"`
+	AssignedTo string                 `protobuf:"bytes,3,opt,name=assigned_to,json=assignedTo,proto3" json:"assigned_to,omitempty"`
+	CreatedBy  string                 `protobuf:"bytes,4,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	Limit      int32                  `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
+	ProjectId  string                 `protobuf:"bytes,6,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	Statuses   []TaskStatus           `protobuf:"varint,7,rep,packed,name=statuses,proto3,enum=quicbaas.orchestrator.v1.TaskStatus" json:"statuses,omitempty"`
+	// auto_spawn narrows to tasks that requested immediate dispatch (true) or
+	// tasks queued for claim (false). Absence means every dispatch mode.
+	AutoSpawn *bool `protobuf:"varint,8,opt,name=auto_spawn,json=autoSpawn,proto3,oneof" json:"auto_spawn,omitempty"`
+	// agent_id and job_id resolve through the task's latest attempt.
+	AgentId       string `protobuf:"bytes,9,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	JobId         string `protobuf:"bytes,10,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1432,6 +1456,27 @@ func (x *TaskFilter) GetStatuses() []TaskStatus {
 		return x.Statuses
 	}
 	return nil
+}
+
+func (x *TaskFilter) GetAutoSpawn() bool {
+	if x != nil && x.AutoSpawn != nil {
+		return *x.AutoSpawn
+	}
+	return false
+}
+
+func (x *TaskFilter) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *TaskFilter) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
 }
 
 // OrchestratorWorkItem represents a decomposed unit of work.
@@ -3405,10 +3450,15 @@ type ListSessionsRequest struct {
 	// naming a field from the endpoint's allow-list; an unknown field is
 	// refused with InvalidArgument. q is a case-insensitive substring
 	// matched against the endpoint's documented text fields.
-	Limit         int32  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
-	Sort          string `protobuf:"bytes,6,opt,name=sort,proto3" json:"sort,omitempty"`
-	Q             string `protobuf:"bytes,7,opt,name=q,proto3" json:"q,omitempty"`
+	Limit  int32  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset int32  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	Sort   string `protobuf:"bytes,6,opt,name=sort,proto3" json:"sort,omitempty"`
+	Q      string `protobuf:"bytes,7,opt,name=q,proto3" json:"q,omitempty"`
+	// Base and faceted narrowings shared with REST and the SDK.
+	ProjectId     string `protobuf:"bytes,8,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	JobId         string `protobuf:"bytes,9,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Runner        string `protobuf:"bytes,10,opt,name=runner,proto3" json:"runner,omitempty"`
+	AgentId       string `protobuf:"bytes,11,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3488,6 +3538,34 @@ func (x *ListSessionsRequest) GetSort() string {
 func (x *ListSessionsRequest) GetQ() string {
 	if x != nil {
 		return x.Q
+	}
+	return ""
+}
+
+func (x *ListSessionsRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *ListSessionsRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *ListSessionsRequest) GetRunner() string {
+	if x != nil {
+		return x.Runner
+	}
+	return ""
+}
+
+func (x *ListSessionsRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
 	}
 	return ""
 }
@@ -11179,7 +11257,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
 	"\fContentBlock\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
-	"\x04text\x18\x02 \x01(\tR\x04text\"\xef\x02\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\"\xa2\x03\n" +
 	"\vSessionInfo\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
@@ -11192,7 +11270,10 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12?\n" +
 	"\rlast_activity\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\flastActivity\x12\x15\n" +
 	"\x06job_id\x18\b \x01(\tR\x05jobId\x12!\n" +
-	"\fcontainer_id\x18\t \x01(\tR\vcontainerId\"\xa9\x0e\n" +
+	"\fcontainer_id\x18\t \x01(\tR\vcontainerId\x12\x16\n" +
+	"\x06runner\x18\n" +
+	" \x01(\tR\x06runner\x12\x19\n" +
+	"\bagent_id\x18\v \x01(\tR\aagentId\"\xa9\x0e\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x1b\n" +
@@ -11266,7 +11347,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\bmetadata\x18\x03 \x03(\v22.quicbaas.orchestrator.v1.TaskResult.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9e\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x83\x03\n" +
 	"\n" +
 	"TaskFilter\x12\x1b\n" +
 	"\tteam_name\x18\x01 \x01(\tR\bteamName\x12<\n" +
@@ -11278,7 +11359,13 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x05 \x01(\x05R\x05limit\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x06 \x01(\tR\tprojectId\x12@\n" +
-	"\bstatuses\x18\a \x03(\x0e2$.quicbaas.orchestrator.v1.TaskStatusR\bstatuses\"\xbd\x01\n" +
+	"\bstatuses\x18\a \x03(\x0e2$.quicbaas.orchestrator.v1.TaskStatusR\bstatuses\x12\"\n" +
+	"\n" +
+	"auto_spawn\x18\b \x01(\bH\x00R\tautoSpawn\x88\x01\x01\x12\x19\n" +
+	"\bagent_id\x18\t \x01(\tR\aagentId\x12\x15\n" +
+	"\x06job_id\x18\n" +
+	" \x01(\tR\x05jobIdB\r\n" +
+	"\v_auto_spawn\"\xbd\x01\n" +
 	"\x14OrchestratorWorkItem\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -11472,7 +11559,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"account_id\x18\x03 \x01(\tR\taccountId\x12\x1a\n" +
 	"\bstrategy\x18\x04 \x01(\tR\bstrategy\x12\x12\n" +
 	"\x04mode\x18\x05 \x01(\tR\x04mode\x128\n" +
-	"\ttimestamp\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\xb4\x01\n" +
+	"\ttimestamp\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\x9d\x02\n" +
 	"\x13ListSessionsRequest\x12\x18\n" +
 	"\abackend\x18\x01 \x01(\tR\abackend\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x16\n" +
@@ -11480,7 +11567,13 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x12\n" +
 	"\x04sort\x18\x06 \x01(\tR\x04sort\x12\f\n" +
-	"\x01q\x18\a \x01(\tR\x01q\"\xf8\x01\n" +
+	"\x01q\x18\a \x01(\tR\x01q\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\b \x01(\tR\tprojectId\x12\x15\n" +
+	"\x06job_id\x18\t \x01(\tR\x05jobId\x12\x16\n" +
+	"\x06runner\x18\n" +
+	" \x01(\tR\x06runner\x12\x19\n" +
+	"\bagent_id\x18\v \x01(\tR\aagentId\"\xf8\x01\n" +
 	"\x14ListSessionsResponse\x12A\n" +
 	"\bsessions\x18\x01 \x03(\v2%.quicbaas.orchestrator.v1.SessionInfoR\bsessions\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x14\n" +
@@ -12656,6 +12749,7 @@ func file_api_proto_orchestrator_proto_init() {
 	}
 	file_api_proto_spend_proto_init()
 	file_api_proto_agents_proto_init()
+	file_api_proto_orchestrator_proto_msgTypes[9].OneofWrappers = []any{}
 	file_api_proto_orchestrator_proto_msgTypes[96].OneofWrappers = []any{}
 	file_api_proto_orchestrator_proto_msgTypes[101].OneofWrappers = []any{}
 	file_api_proto_orchestrator_proto_msgTypes[123].OneofWrappers = []any{}

@@ -340,9 +340,13 @@ func (s *OrchestratorServer) ListSessions(ctx context.Context, req *pb.ListSessi
 	}
 
 	svcReq := &orchestration.ListSessionsRequest{
-		Backend: req.Backend,
-		Status:  orchestration.SessionState(req.GetStatus()),
-		Page:    page,
+		Backend:   req.GetBackend(),
+		Status:    orchestration.SessionState(req.GetStatus()),
+		ProjectID: req.GetProjectId(),
+		JobID:     req.GetJobId(),
+		Runner:    req.GetRunner(),
+		AgentID:   req.GetAgentId(),
+		Page:      page,
 	}
 
 	resp, err := s.agentSvc.ListSessions(tenantCtx, svcReq)
@@ -446,16 +450,19 @@ func (s *OrchestratorServer) ListTasks(ctx context.Context, req *pb.ListTasksReq
 		return nil, err
 	}
 
-	var filter *orchestration.TaskFilter
+	filter := &orchestration.TaskFilter{}
 	if req.Filter != nil {
 		filter = &orchestration.TaskFilter{
-			TeamName:   req.Filter.TeamName,
-			Status:     protoTaskStatusToService(req.Filter.Status),
-			AssignedTo: req.Filter.AssignedTo,
-			CreatedBy:  req.Filter.CreatedBy,
-			Limit:      int(req.Filter.Limit),
+			TeamName:   req.Filter.GetTeamName(),
+			Status:     protoTaskStatusToService(req.Filter.GetStatus()),
+			AssignedTo: req.Filter.GetAssignedTo(),
+			CreatedBy:  req.Filter.GetCreatedBy(),
+			Limit:      int(req.Filter.GetLimit()),
 			ProjectID:  req.Filter.GetProjectId(),
 			Statuses:   protoTaskStatusesToService(req.Filter.GetStatuses()),
+			AutoSpawn:  req.Filter.AutoSpawn,
+			AgentID:    req.Filter.GetAgentId(),
+			JobID:      req.Filter.GetJobId(),
 		}
 	}
 
@@ -1479,6 +1486,8 @@ func serviceSessionInfoToProto(info *orchestration.SessionInfo) *pb.SessionInfo 
 		LastActivity: unixNanoTimestamp(info.LastActivity),
 		JobId:        info.JobID,
 		ContainerId:  info.ContainerID,
+		Runner:       info.Runner,
+		AgentId:      info.AgentID,
 	}
 }
 

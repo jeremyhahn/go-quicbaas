@@ -486,6 +486,35 @@ func TestOrchestratorGRPC_ListTasks_Success(t *testing.T) {
 	require.NotNil(t, resp)
 }
 
+func TestOrchestratorGRPC_ListTasks_CarriesAttemptFilters(t *testing.T) {
+	var got *orchestration.TaskFilter
+	agentSvc := &grpcTestAgentService{
+		listTasksFunc: func(_ context.Context, _ string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error) {
+			got = filter
+			return []*orchestration.Task{}, nil
+		},
+	}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+	autoSpawn := false
+
+	_, err := server.ListTasks(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.ListTasksRequest{
+		TenantId: "tenant-1",
+		Filter: &pb.TaskFilter{
+			ProjectId: "project-1",
+			AutoSpawn: &autoSpawn,
+			AgentId:   "agent-1",
+			JobId:     "job-1",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "project-1", got.ProjectID)
+	require.NotNil(t, got.AutoSpawn)
+	assert.False(t, *got.AutoSpawn)
+	assert.Equal(t, "agent-1", got.AgentID)
+	assert.Equal(t, "job-1", got.JobID)
+}
+
 func TestOrchestratorGRPC_ListTasks_EmptyTenant(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
@@ -707,6 +736,35 @@ func TestOrchestratorGRPC_ListSessions_Success(t *testing.T) {
 	resp, err := server.ListSessions(tenantctx.WithSystem(context.Background()), &pb.ListSessionsRequest{})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
+}
+
+func TestOrchestratorGRPC_ListSessions_CarriesNarrowings(t *testing.T) {
+	var got *orchestration.ListSessionsRequest
+	agentSvc := &grpcTestAgentService{
+		listSessionsFunc: func(_ context.Context, req *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error) {
+			got = req
+			return &orchestration.ListSessionsResponse{}, nil
+		},
+	}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	_, err := server.ListSessions(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.ListSessionsRequest{
+		TenantId:  "tenant-1",
+		Backend:   "claude",
+		Status:    "active",
+		ProjectId: "project-1",
+		JobId:     "job-1",
+		Runner:    "review",
+		AgentId:   "agent-1",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "claude", got.Backend)
+	assert.Equal(t, orchestration.SessionState("active"), got.Status)
+	assert.Equal(t, "project-1", got.ProjectID)
+	assert.Equal(t, "job-1", got.JobID)
+	assert.Equal(t, "review", got.Runner)
+	assert.Equal(t, "agent-1", got.AgentID)
 }
 
 // =============================================================================

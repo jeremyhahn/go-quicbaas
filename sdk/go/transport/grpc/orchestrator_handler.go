@@ -516,19 +516,21 @@ func handleOrchestratorListSessions(ctx context.Context, conn *grpc.ClientConn, 
 	tenantID := transport.TenantFromContext(ctx)
 
 	// Status is the lifecycle filter the proto declares and the server
-	// consumes. Dropping it here made every gRPC (and Unix, which delegates
-	// here) caller's filtered list arrive unfiltered, so closed and error
-	// records came back mixed in with the live ones -- the false liveness
-	// this filter exists to remove (go-quicbaas#792).
+	// consumes. The rest of the list narrowings must travel with it, or Unix
+	// and gRPC callers observe a different listing contract than REST.
 	paging := pageFieldsFromParams(sdkReq.Params)
 	protoReq := &pb.ListSessionsRequest{
-		Backend:  sdkReq.Backend,
-		TenantId: tenantID,
-		Status:   sdkReq.Status,
-		Limit:    paging.limit,
-		Offset:   paging.offset,
-		Sort:     paging.sort,
-		Q:        paging.q,
+		Backend:   sdkReq.Backend,
+		TenantId:  tenantID,
+		Status:    sdkReq.Status,
+		Limit:     paging.limit,
+		Offset:    paging.offset,
+		Sort:      paging.sort,
+		Q:         paging.q,
+		ProjectId: sdkReq.ProjectID,
+		JobId:     sdkReq.JobID,
+		Runner:    sdkReq.Runner,
+		AgentId:   sdkReq.AgentID,
 	}
 	protoResp := &pb.ListSessionsResponse{}
 
@@ -542,11 +544,14 @@ func handleOrchestratorListSessions(ctx context.Context, conn *grpc.ClientConn, 
 		sessions = append(sessions, &orchestrator.SessionStatusResponse{
 			SessionID:   s.GetSessionId(),
 			Backend:     s.GetBackend(),
+			Model:       s.GetModel(),
 			Status:      sessionStateName(s.GetState()),
 			ContainerID: s.GetContainerId(),
 			CreatedAt:   timestampToUnixNano(s.GetCreatedAt()),
 			LastActive:  timestampToUnixNano(s.GetLastActivity()),
 			JobID:       s.GetJobId(),
+			Runner:      s.GetRunner(),
+			AgentID:     s.GetAgentId(),
 		})
 	}
 
@@ -632,11 +637,14 @@ func handleOrchestratorListTasks(ctx context.Context, conn *grpc.ClientConn, req
 	}
 
 	// Build filter if any filter fields are set.
-	if sdkReq.Status != "" || sdkReq.TeamName != "" || sdkReq.AssignedTo != "" || sdkReq.ProjectID != "" || len(sdkReq.Statuses) > 0 {
+	if sdkReq.Status != "" || sdkReq.TeamName != "" || sdkReq.AssignedTo != "" || sdkReq.ProjectID != "" || len(sdkReq.Statuses) > 0 || sdkReq.AutoSpawn != nil || sdkReq.AgentID != "" || sdkReq.JobID != "" {
 		filter := &pb.TaskFilter{
 			TeamName:   sdkReq.TeamName,
 			AssignedTo: sdkReq.AssignedTo,
 			ProjectId:  sdkReq.ProjectID,
+			AutoSpawn:  sdkReq.AutoSpawn,
+			AgentId:    sdkReq.AgentID,
+			JobId:      sdkReq.JobID,
 		}
 		if sdkReq.Status != "" {
 			if val, exists := pb.TaskStatus_value[taskStatusToProtoEnum(sdkReq.Status)]; exists {
