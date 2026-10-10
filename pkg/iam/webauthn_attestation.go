@@ -18,6 +18,8 @@ import (
 	"encoding/hex"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -165,10 +167,9 @@ func (e *WebAuthnAssuranceValueError) Error() string {
 }
 
 // WebAuthnAdminResolver reports whether the account a registration is being
-// completed for holds an administrative role. It is satisfied by the canonical
-// UserStorage through adminRoleResolver below, so the gate asks the same store
-// authorization resolves against rather than keeping its own idea of who is an
-// administrator.
+// completed for holds an administrative role. The production resolver asks the
+// same canonical user and role stores authorization resolves against rather
+// than keeping its own idea of who is an administrator.
 type WebAuthnAdminResolver interface {
 	// IsAdministrativeAccount reports whether the account identified by email
 	// within tenantID holds an administrative role.
@@ -180,6 +181,42 @@ type WebAuthnAdminResolver interface {
 	// and then grants that user Admin on the new tenant, so "unknown account"
 	// is precisely the case that must be held to the administrator bar.
 	IsAdministrativeAccount(ctx context.Context, tenantID, email string) (bool, error)
+}
+
+// WebAuthnRoleResolver resolves tenant system role names through qrdb's
+// canonical role-name resolver.
+type WebAuthnRoleResolver interface {
+	qrdbsdk.RoleNameResolver
+}
+
+type WebAuthnRoleResolverError struct {
+	RoleID string
+	Reason string
+	Err    error
+}
+
+func (e *WebAuthnRoleResolverError) Error() string {
+	if e == nil {
+		return "iam.webauthn.admin: role resolution failed"
+	}
+	msg := "iam.webauthn.admin: role resolution failed"
+	if e.RoleID != "" {
+		msg += " for role " + e.RoleID
+	}
+	if e.Reason != "" {
+		msg += ": " + e.Reason
+	}
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+func (e *WebAuthnRoleResolverError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
 }
 
 // WebAuthnAttestationGate decides whether a completed registration may be
@@ -421,40 +458,34 @@ func normalizedAttestationFormat(attestationType string) string {
 // Admin resolution over the canonical user store
 // =============================================================================
 
-// administrativeRoles is the set of roles whose credentials must be
-// hardware-backed. It mirrors the built-in role names the IAM stack grants:
-// Admin is the tenant administrator granted by self-service registration and by
-// invitation, and SO is the security officer that drives barrier and key
-// ceremonies.
-var administrativeRoles = map[string]struct{}{
-	"admin": {},
-	"so":    {},
-}
-
 // adminRoleResolver answers WebAuthnAdminResolver from the canonical broker
-// user store — the same records authorization resolves roles from, so the gate
-// and the PDP cannot disagree about who is an administrator.
+// user store and qrdb's system-role identifier resolver. User.Roles contains
+// role IDs, so the gate only checks membership in qrdb-owned Admin/SO ID sets.
 type adminRoleResolver struct {
 	users WebAuthnUserResolver
+	roles WebAuthnRoleResolver
 }
 
-// NewWebAuthnAdminResolver adapts the canonical user store to the gate's
-// resolver seam. A nil store yields a nil resolver, which the gate treats as
-// "cannot tell" and resolves to administrative.
-func NewWebAuthnAdminResolver(users WebAuthnUserResolver) WebAuthnAdminResolver {
-	if users == nil {
+// NewWebAuthnAdminResolver adapts the canonical user and role stores to the
+// gate's resolver seam. A nil store yields a nil resolver, which the gate
+// treats as "cannot tell" and resolves to administrative.
+func NewWebAuthnAdminResolver(users WebAuthnUserResolver, roles WebAuthnRoleResolver) WebAuthnAdminResolver {
+	if users == nil || roles == nil {
 		return nil
 	}
-	return &adminRoleResolver{users: users}
+	return &adminRoleResolver{users: users, roles: roles}
 }
 
-// IsAdministrativeAccount implements WebAuthnAdminResolver. A lookup failure or
-// an absent account is propagated as an error, NOT reported as "not an
-// administrator": the gate reads an error as the administrator case, which is
-// the fail-safe direction.
+// IsAdministrativeAccount implements WebAuthnAdminResolver. A user lookup
+// failure or absent account is propagated as an error, NOT reported as "not an
+// administrator": the gate reads an error as the administrator case. A system
+// role resolver failure is treated as administrative, which is fail-safe.
 func (r *adminRoleResolver) IsAdministrativeAccount(ctx context.Context, tenantID, email string) (bool, error) {
 	if r == nil || r.users == nil {
 		return false, &WebAuthnUserResolverError{Reason: "canonical user resolver is not configured"}
+	}
+	if r.roles == nil {
+		return false, &WebAuthnRoleResolverError{Reason: "canonical role resolver is not configured"}
 	}
 	// The tenant is passed EXPLICITLY, and also bound into the context.
 	//
@@ -467,15 +498,33 @@ func (r *adminRoleResolver) IsAdministrativeAccount(ctx context.Context, tenantI
 	// the lookup can fall back to a global index and resolve a different
 	// account of the same email in another tenant — answering the "is this an
 	// administrator" question about the wrong person.
-	user, err := r.users.GetUserByEmail(tenantctx.WithTenant(ctx, tenantID), tenantID, email)
+	lookupCtx := tenantctx.WithTenant(ctx, tenantID)
+	user, err := r.users.GetUserByEmail(lookupCtx, tenantID, email)
 	if err != nil {
 		return false, err
 	}
 	if user == nil {
 		return false, &WebAuthnUserResolverError{Reason: "canonical user resolver returned nil user"}
 	}
-	for _, role := range user.Roles {
-		if _, ok := administrativeRoles[strings.ToLower(strings.TrimSpace(role))]; ok {
+
+	adminRoleIDs, err := qrdbsdk.SystemRoleIDs(lookupCtx, r.roles, tenantID, qrdbsdk.RoleNameAdmin)
+	if err != nil {
+		return true, nil
+	}
+	soRoleIDs, err := qrdbsdk.SystemRoleIDs(lookupCtx, r.roles, tenantID, qrdbsdk.RoleNameSO)
+	if err != nil {
+		return true, nil
+	}
+
+	administrativeRoleIDs := make(map[string]struct{}, len(adminRoleIDs)+len(soRoleIDs))
+	for _, roleID := range adminRoleIDs {
+		administrativeRoleIDs[roleID] = struct{}{}
+	}
+	for _, roleID := range soRoleIDs {
+		administrativeRoleIDs[roleID] = struct{}{}
+	}
+	for _, roleID := range user.Roles {
+		if _, ok := administrativeRoleIDs[roleID]; ok {
 			return true, nil
 		}
 	}

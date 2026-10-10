@@ -111,12 +111,9 @@ func (s *Server) adminEnrollmentConfig(
 		Persister: newAdminFactorPersister(
 			s.GetQRDBUserAuthFactorServicer(), userID, slog.Default(),
 		),
-		// FIDO2Handler is left nil: opening a CTAP2 device belongs to the
-		// process that owns the operator's console, not to a server goroutine.
-		// The daemon-side entry point (cmd/quicbaasd) attaches one when the
-		// operator planned a passkey. With no handler the fido2 factor reports
-		// available (the browser path needs no local hardware), matching
-		// go-xkms's documented behaviour.
+		// Hardware enrollment is only available in the console-owning process
+		// that attaches CTAP2 / PIV handlers. Preflight refuses nil handlers before
+		// first boot mutates state.
 	}
 }
 
@@ -151,7 +148,19 @@ func (s *Server) PreflightAdminLoginFactors(ctx context.Context) error {
 	if plan == nil {
 		return nil
 	}
-	if err := xkmssdk.PreflightAdminFactors(ctx, s.adminEnrollmentConfig(plan, 0, nil)); err != nil {
+	cfg := s.adminEnrollmentConfig(plan, 0, nil)
+	if plan.Includes(qrdbsdk.FactorFIDO2) && cfg.FIDO2Handler == nil {
+		// TODO(go-xkms): delete this guard once go-xkms refuses the same case in
+		// preflight. In v0.49, NewAdminFactorRegistry keeps the browser FIDO2
+		// factor when FIDO2Handler is nil, so PreflightAdminFactors reports the
+		// planned local hardware enrollment available and enrollment then panics in
+		// pkg/fido2.(*FIDO2Handler).ListDevices.
+		return &AdminFactorPreflightError{Cause: &qrdbsdk.AdminFactorUnavailableError{
+			Factor: qrdbsdk.FactorFIDO2,
+			Reason: "no CTAP2 handler in this process; enroll from a console",
+		}}
+	}
+	if err := xkmssdk.PreflightAdminFactors(ctx, cfg); err != nil {
 		return &AdminFactorPreflightError{Cause: err}
 	}
 	return nil

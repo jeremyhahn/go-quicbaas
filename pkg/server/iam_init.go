@@ -563,7 +563,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 				Settings:            iam.NewTenantManagerWebAuthnSettings(tenantManager),
 				Assurance:           assurance,
 				AAGUIDAllowlist:     aaguidAllowlist,
-				Admins:              iam.NewWebAuthnAdminResolver(userStorage),
+				Admins:              iam.NewWebAuthnAdminResolver(userStorage, qrdbadapter.WrapRole(identityStore)),
 				AttestationRoots:    attestationRoots,
 			}
 			factory, fErr := iam.NewWebAuthnServiceFactory(factoryParams)
@@ -908,6 +908,14 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	}
 	if len(assignments) > 0 {
 		reportUnusableAdministrators(ctx, c, assignments, s.logger)
+	}
+
+	// Refuse planned hardware login factors before qrdb first-boot creates the
+	// administrator, enrolls mTLS, or initializes barrier state. The actual
+	// availability decision belongs to qrdb/go-xkms FactorAvailability through
+	// the SDK re-exports; quicbaas only chooses the ordering.
+	if err := s.PreflightAdminLoginFactors(ctx); err != nil {
+		return err
 	}
 
 	deps, users, err := s.firstBootDependencies(c)

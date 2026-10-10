@@ -475,6 +475,36 @@ func TestFirstBootBootstrap_FreshStorage_CreatesAdminAssignment(t *testing.T) {
 // "existing-admin-id", a user that was never created, and require the skip
 // anyway; that is the orphaned grant #57 is about, and the test asserting it is
 // now TestFirstBootBootstrap_OrphanedGrantIsNotAnAdministrator below.
+func TestFirstBootBootstrap_PreflightsAdminHardwareBeforeStateChanges(t *testing.T) {
+	srv := withTempServer(t)
+	srv.config.Auth.AllowPasswordAuth = false
+	srv.config.Auth.InsecureDevMode = false
+	srv.config.Auth.AdminFactors = []string{"fido2"}
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+
+	c, factors := buildTestIAMComponentsWithFactors(t)
+
+	err := srv.firstBootBootstrap(context.Background(), c)
+	require.Error(t, err)
+
+	var preflight *AdminFactorPreflightError
+	require.ErrorAs(t, err, &preflight)
+	var unavailable *qrdbsdk.AdminFactorUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	assert.Equal(t, qrdbsdk.FactorFIDO2, unavailable.Factor)
+
+	assignments, listErr := c.adminManager.ListAssignments(context.Background(), iam.ListAdminAssignmentsOptions{
+		ActiveOnly: true,
+		Limit:      10,
+	})
+	require.NoError(t, listErr)
+	assert.Empty(t, assignments, "hardware preflight must refuse before admin assignment")
+
+	stored, listFactorsErr := factors.List(context.Background(), 1)
+	require.NoError(t, listFactorsErr)
+	assert.Empty(t, stored, "hardware preflight must refuse before mTLS or fallback factors are stored")
+}
+
 func TestFirstBootBootstrap_ExistingAdmin_Skipped(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = false

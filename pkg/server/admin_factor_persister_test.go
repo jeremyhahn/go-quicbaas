@@ -24,6 +24,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -290,8 +291,33 @@ func TestAdminFactorPlan_ParsesAndRejects(t *testing.T) {
 	})
 }
 
+func TestPreflightAdminLoginFactors_RefusesFIDO2WithoutLocalHandler(t *testing.T) {
+	s := &Server{config: newTestConfigForFactors([]string{"fido2"})}
+
+	err := s.PreflightAdminLoginFactors(context.Background())
+	require.Error(t, err)
+
+	var typed *AdminFactorPreflightError
+	require.ErrorAs(t, err, &typed)
+	assert.Contains(t, strings.ToLower(err.Error()), "fido2")
+	assert.Contains(t, strings.ToLower(err.Error()), "handler")
+}
+
+func TestPreflightAdminLoginFactors_RefusesPIVWithoutGenerator(t *testing.T) {
+	s := &Server{config: newTestConfigForFactors([]string{"piv"})}
+
+	err := s.PreflightAdminLoginFactors(context.Background())
+	require.Error(t, err)
+
+	var typed *AdminFactorPreflightError
+	require.ErrorAs(t, err, &typed)
+	assert.Contains(t, strings.ToLower(err.Error()), "piv")
+	assert.Contains(t, strings.ToLower(err.Error()), "generator")
+}
+
 // newTestConfigForFactors builds a minimal config carrying only the
 // admin-factor selection under test.
+
 func newTestConfigForFactors(factors []string) *config.Config {
 	cfg := config.Default()
 	cfg.Auth.AdminFactors = factors
