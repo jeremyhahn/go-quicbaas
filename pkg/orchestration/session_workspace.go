@@ -202,7 +202,9 @@ type WorkspaceProvisioner interface {
 	ProvisionSession(ws *SessionWorkspace) (*ProvisionedWorkspace, error)
 
 	// SweepSessionSpecs removes every spec directory under the projects
-	// root. It is called at startup, while the host holds no session.
+	// root, and — when the provisioner knows how task conclusion is decided —
+	// the workspace of every concluded task. It is called at startup, while
+	// the host holds no session.
 	SweepSessionSpecs() ([]string, error)
 }
 
@@ -468,7 +470,17 @@ func (m *WorkspaceManager) sweepTenantSpecs(tenantID string) ([]string, error) {
 			return removed, &WorkspaceIOError{Op: "sweep", Path: filepath.Join(tenantDir, parent), Err: readErr}
 		}
 		for _, entry := range entries {
-			if !entry.IsDir() || !strings.HasPrefix(entry.Name(), workspaceSpecDirName) {
+			if entry.IsDir() && !strings.HasPrefix(entry.Name(), workspaceSpecDirName) {
+				path, sweepErr := m.sweepConcludedWorkspace(root, tenantDir, tenantID, project.Name(), parent, entry)
+				if sweepErr != nil {
+					return removed, sweepErr
+				}
+				if path != "" {
+					removed = append(removed, path)
+				}
+				continue
+			}
+			if !entry.IsDir() {
 				continue
 			}
 			rel := filepath.Join(parent, entry.Name())

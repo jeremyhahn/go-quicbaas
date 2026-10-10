@@ -334,12 +334,14 @@ func (s *Server) startOrchestration() error {
 			// The spec directories an in-process session of a previous run
 			// left behind each hold a forge token; no session survived the
 			// restart to release them, so they go before anything spawns.
+			// The same sweep removes the workspace of every concluded task.
+			workspaces.SetConclusions(orchestration.TaskWorkspaceConclusions{Store: taskStore})
 			specs, sweepErr := workspaces.SweepSessionSpecs()
 			if sweepErr != nil {
 				return sweepErr
 			}
 			if len(specs) > 0 {
-				s.logger.Infof("Removed %d workspace spec(s) a previous run left behind", len(specs))
+				s.logger.Infof("Removed %d workspace spec(s) and concluded workspace(s) a previous run left behind", len(specs))
 			}
 			wirer.SetWorkspaceProvisioner(workspaces)
 			if wireErr := s.wireProjectWorkspaces(projectStore, workspaces); wireErr != nil {

@@ -451,12 +451,14 @@ Newly issued secrets are 160 bits (RFC 4226 recommends at least 128); FIPS
 
 ### Where the TOTP Shared Secret Lives in Memory
 
-The shared secret is a long-lived key, so it reaches the OTP library through
-`otp.Config.SecretKey` — a memguard enclave, decrypted only for the moment a
-code is derived — and never through `otp.Config.Secret`, a Go string that
-cannot be wiped and that the underlying library re-decodes into a fresh
-plaintext key on every generate and verify. `otp.Config` rejects a
-configuration that sets both, so a call site cannot be half-migrated.
+The shared secret is a long-lived key. go-auth's `pkg/otp` accepts it only as
+`otp.Config.Seed`, a go-enclave `*enclave.MemoryEnclave` in locked memory that
+each HMAC borrows for the moment a code is derived; it has no plaintext string
+path. `otp.DecodeSeed` decodes a stored base32 secret straight into the
+enclave, `otp.NewAuthenticator` takes ownership of it, and the manager closes
+the authenticator — wiping the seed — as soon as the check or the provisioning
+URI is done. The submitted code is copied into its own enclave for the
+constant-time compare.
 
 This closes the derivation, not the whole path. The secret's route from
 persistence to code derivation is:
@@ -466,8 +468,7 @@ persistence to code derivation is:
 | At rest in the tenant barrier (encrypted with the tenant DEK) | yes, encrypted at rest |
 | `KVStore.Get` result — plaintext JSON bytes on the Go heap | no |
 | `MFASecret.Secret` / `MFAEnrollment.Secret` — a Go string from `json.Unmarshal` | no; a string cannot be wiped |
-| Decoded key in `otp.Config.SecretKey` | yes — sealed enclave |
-| Per-call decode inside `github.com/pquerna/otp` | eliminated; codes are derived from the enclave |
+| Decoded key in `otp.Config.Seed` | yes — locked enclave, destroyed after each check |
 
 The two unprotected segments are properties of the storage interface handing
 the secret back as a string, not of the MFA manager, and closing them requires

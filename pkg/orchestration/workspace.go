@@ -102,6 +102,10 @@ func (e *WorkspaceIOError) Unwrap() error { return e.Err }
 // every path it touches is validated to stay under the root.
 type WorkspaceManager struct {
 	root string
+
+	// conclusions, when set, lets the startup sweep remove the workspace of a
+	// concluded task (SetConclusions).
+	conclusions WorkspaceConclusions
 }
 
 // NewWorkspaceManager returns a manager rooted at root, which must be an

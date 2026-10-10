@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,6 +50,119 @@ func newTestOrchestratorBinding(t *testing.T, mock *mockOrchestratorClient) *Orc
 	binding := NewOrchestratorBinding(log, conn)
 	binding.ctx = context.Background()
 	return binding
+}
+
+func newFullTaskForBindingParity(t *testing.T) *orchestratorSDK.Task {
+	t.Helper()
+
+	task := &orchestratorSDK.Task{}
+	populateNonZeroValue(t, reflect.ValueOf(task).Elem())
+	return task
+}
+
+func populateNonZeroValue(t *testing.T, value reflect.Value) {
+	t.Helper()
+
+	if !value.CanSet() {
+		return
+	}
+	nonZero := nonZeroValue(t, value.Type())
+	if nonZero.IsValid() && nonZero.Type().AssignableTo(value.Type()) {
+		value.Set(nonZero)
+	}
+}
+
+func nonZeroValue(t *testing.T, typ reflect.Type) reflect.Value {
+	t.Helper()
+
+	switch typ.Kind() {
+	case reflect.Bool:
+		return reflect.ValueOf(true).Convert(typ)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		value := reflect.New(typ).Elem()
+		value.SetInt(1)
+		return value
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		value := reflect.New(typ).Elem()
+		value.SetUint(1)
+		return value
+	case reflect.Float32, reflect.Float64:
+		value := reflect.New(typ).Elem()
+		value.SetFloat(1)
+		return value
+	case reflect.String:
+		return reflect.ValueOf("present").Convert(typ)
+	case reflect.Ptr:
+		value := reflect.New(typ.Elem())
+		populateNonZeroValue(t, value.Elem())
+		return value
+	case reflect.Slice:
+		value := reflect.MakeSlice(typ, 1, 1)
+		populateNonZeroValue(t, value.Index(0))
+		return value
+	case reflect.Map:
+		value := reflect.MakeMapWithSize(typ, 1)
+		key := nonZeroValue(t, typ.Key())
+		element := nonZeroValue(t, typ.Elem())
+		if key.IsValid() && element.IsValid() {
+			value.SetMapIndex(key, element)
+		}
+		return value
+	case reflect.Struct:
+		value := reflect.New(typ).Elem()
+		for i := 0; i < value.NumField(); i++ {
+			populateNonZeroValue(t, value.Field(i))
+		}
+		return value
+	case reflect.Interface:
+		return reflect.ValueOf("present")
+	default:
+		return reflect.Zero(typ)
+	}
+}
+
+func sdkTaskJSONKeys(t *testing.T) map[string]struct{} {
+	t.Helper()
+
+	keys := make(map[string]struct{})
+	typ := reflect.TypeOf(orchestratorSDK.Task{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		name := strings.Split(field.Tag.Get("json"), ",")[0]
+		switch name {
+		case "-":
+			continue
+		case "":
+			name = field.Name
+		}
+		keys[name] = struct{}{}
+	}
+	return keys
+}
+
+func assertSDKTaskJSONParity(t *testing.T, output any) {
+	t.Helper()
+
+	payload, err := json.Marshal(output)
+	require.NoError(t, err)
+
+	var actual map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload, &actual))
+
+	expected := sdkTaskJSONKeys(t)
+	for key := range expected {
+		if _, ok := actual[key]; !ok {
+			t.Fatalf("binding output dropped SDK task JSON field %q", key)
+		}
+	}
+	for key := range actual {
+		if _, ok := expected[key]; !ok {
+			t.Fatalf("binding output exposed unexpected SDK task JSON field %q", key)
+		}
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -452,7 +567,7 @@ func TestOrchestratorBinding_ListTasks_HappyPath(t *testing.T) {
 	result, err := binding.ListTasks(&orchestratorSDK.ListTasksRequest{TenantID: "acme"})
 	require.NoError(t, err)
 	require.Len(t, result, 1)
-	assert.Equal(t, "t1", result[0]["id"])
+	assert.Equal(t, "t1", result[0].ID)
 }
 
 func TestOrchestratorBinding_ListTasks_NilRequest(t *testing.T) {
@@ -478,7 +593,29 @@ func TestOrchestratorBinding_GetTask_HappyPath(t *testing.T) {
 
 	result, err := binding.GetTask(&orchestratorSDK.GetTaskRequest{TenantID: "acme", TaskID: "t-1"})
 	require.NoError(t, err)
-	assert.Equal(t, "t-1", result["id"])
+	assert.Equal(t, "t-1", result.ID)
+}
+
+func TestOrchestratorBinding_TaskResultsCarryEverySDKJSONField(t *testing.T) {
+	task := newFullTaskForBindingParity(t)
+	mock := &mockOrchestratorClient{
+		listTasksFn: func(ctx context.Context, req *orchestratorSDK.ListTasksRequest) (*orchestratorSDK.ListTasksResponse, error) {
+			return &orchestratorSDK.ListTasksResponse{Tasks: []*orchestratorSDK.Task{task}, Count: 1}, nil
+		},
+		getTaskFn: func(ctx context.Context, req *orchestratorSDK.GetTaskRequest) (*orchestratorSDK.Task, error) {
+			return task, nil
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+
+	listResult, err := binding.ListTasks(&orchestratorSDK.ListTasksRequest{TenantID: "acme"})
+	require.NoError(t, err)
+	require.Len(t, listResult, 1)
+	assertSDKTaskJSONParity(t, listResult[0])
+
+	getResult, err := binding.GetTask(&orchestratorSDK.GetTaskRequest{TenantID: "acme", TaskID: task.ID})
+	require.NoError(t, err)
+	assertSDKTaskJSONParity(t, getResult)
 }
 
 func TestOrchestratorBinding_GetTask_NilRequest(t *testing.T) {

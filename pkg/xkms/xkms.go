@@ -1314,6 +1314,12 @@ func Close() error {
 		errs = append(errs, &api.OperationFailedError{Operation: "close xkms", Cause: err})
 	}
 
+	// go-xkms's Close leaves its singleton registered, and its Initialize
+	// runs once per process, so a later Initialize returned success while
+	// every operation still reached the closed backends ("storage is
+	// closed"). Drop the singleton so the next Initialize builds a fresh one.
+	xkmssdk.ServiceReset()
+
 	initialized = false
 	logger = nil
 

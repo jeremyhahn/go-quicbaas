@@ -15,48 +15,77 @@ package iam
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" // #nosec G505 -- RFC 6238 reference derivation for test vectors
 	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base32"
+	"encoding/binary"
 	"encoding/hex"
+	"fmt"
+	"hash"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-auth/pkg/otp"
-	pquerna "github.com/pquerna/otp"
-	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// testTOTPSecret is a 160-bit base32 TOTP secret - the size otp.GenerateSecret
-// issues for a real enrollment. FIPS 140-only mode rejects HMAC keys shorter
-// than 112 bits, so a fixture secret must not be shorter than production's.
+// testTOTPSecret is a 160-bit base32 TOTP secret - the size
+// otp.GenerateProtectedSecret issues for a real enrollment. FIPS 140-only mode
+// rejects HMAC keys shorter than 112 bits, so a fixture secret must not be
+// shorter than production's.
 const testTOTPSecret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
-// pquernaAlgorithms maps the algorithm the manager resolved onto the
-// equivalent in github.com/pquerna/otp.
-var pquernaAlgorithms = map[otp.Algorithm]pquerna.Algorithm{
-	otp.AlgorithmSHA1:   pquerna.AlgorithmSHA1,
-	otp.AlgorithmSHA256: pquerna.AlgorithmSHA256,
-	otp.AlgorithmSHA512: pquerna.AlgorithmSHA512,
+// referenceHashes maps the algorithm the manager resolved onto the standard
+// library hash the reference derivation uses.
+var referenceHashes = map[otp.Algorithm]func() hash.Hash{
+	otp.AlgorithmSHA1:   sha1.New,
+	otp.AlgorithmSHA256: sha256.New,
+	otp.AlgorithmSHA512: sha512.New,
+}
+
+// referenceTOTP is RFC 6238 written out from the RFC over the standard
+// library: HMAC of the big-endian step counter, RFC 4226 §5.3 dynamic
+// truncation, reduced to digits decimal digits. It is independent of go-auth,
+// so a code it derives was produced by something other than the code under
+// test. TestReferenceTOTPMatchesRFC6238Vectors pins it to the RFC.
+func referenceTOTP(t *testing.T, key []byte, newHash func() hash.Hash, counter uint64, digits int) string {
+	t.Helper()
+
+	mac := hmac.New(newHash, key)
+	var message [8]byte
+	binary.BigEndian.PutUint64(message[:], counter)
+	_, err := mac.Write(message[:])
+	require.NoError(t, err)
+	sum := mac.Sum(nil)
+
+	offset := sum[len(sum)-1] & 0x0f
+	truncated := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
+
+	modulus := uint32(1)
+	for range digits {
+		modulus *= 10
+	}
+	return fmt.Sprintf("%0*d", digits, truncated%modulus)
 }
 
 // generateTOTPCodeAt derives the code an enrolled authenticator app would show
 // for secret at the instant `at`.
 //
-// It derives the code with github.com/pquerna/otp rather than with the
-// manager's own OTP library. That is the implementation an authenticator app
-// implements, and the one go-auth's deprecated string path delegated to before
-// the shared secret moved into protected memory, so a code accepted here was
-// produced by something other than the code under test. Deriving the expected
-// code with the same call the manager makes would only prove that call is
-// self-consistent.
+// It derives the code with referenceTOTP rather than with the manager's own
+// OTP library, so a code accepted here was produced by something other than
+// the code under test. Deriving the expected code with the same call the
+// manager makes would only prove that call is self-consistent.
 func generateTOTPCodeAt(t *testing.T, secret string, config MFAConfig, at time.Time) string {
 	t.Helper()
 
 	algorithm, err := convertAlgorithm("test.totp.generate", config.Algorithm)
 	require.NoError(t, err)
-	pquernaAlgorithm, known := pquernaAlgorithms[algorithm]
-	require.True(t, known, "no github.com/pquerna/otp equivalent for %q", algorithm)
+	newHash, known := referenceHashes[algorithm]
+	require.True(t, known, "no reference hash for %q", algorithm)
 
 	// Match the defaults the OTP library applies to an unset field, so a
 	// config the caller has not run ApplyDefaults on still derives the code
@@ -70,15 +99,42 @@ func generateTOTPCodeAt(t *testing.T, secret string, config MFAConfig, at time.T
 		period = 30
 	}
 
-	code, err := totp.GenerateCodeCustom(secret, at, totp.ValidateOpts{
-		Period:    uint(period),
-		Skew:      0,
-		Digits:    pquerna.Digits(digits),
-		Algorithm: pquernaAlgorithm,
-	})
+	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(secret))
 	require.NoError(t, err)
 
-	return code
+	return referenceTOTP(t, key, newHash, uint64(at.Unix()/int64(period)), digits) // #nosec G115 -- test instants are after the epoch
+}
+
+// TestReferenceTOTPMatchesRFC6238Vectors pins referenceTOTP to the RFC 6238
+// Appendix B test vectors, so the oracle the MFA tests check the manager
+// against is itself known to be right.
+func TestReferenceTOTPMatchesRFC6238Vectors(t *testing.T) {
+	seeds := map[otp.Algorithm][]byte{
+		otp.AlgorithmSHA1:   []byte("12345678901234567890"),
+		otp.AlgorithmSHA256: []byte("12345678901234567890123456789012"),
+		otp.AlgorithmSHA512: []byte("1234567890123456789012345678901234567890123456789012345678901234"),
+	}
+	vectors := []struct {
+		at        int64
+		algorithm otp.Algorithm
+		want      string
+	}{
+		{59, otp.AlgorithmSHA1, "94287082"},
+		{59, otp.AlgorithmSHA256, "46119246"},
+		{59, otp.AlgorithmSHA512, "90693936"},
+		{1111111109, otp.AlgorithmSHA1, "07081804"},
+		{1111111109, otp.AlgorithmSHA256, "68084774"},
+		{1111111109, otp.AlgorithmSHA512, "25091201"},
+		{20000000000, otp.AlgorithmSHA1, "65353130"},
+	}
+	for _, v := range vectors {
+		got := referenceTOTP(t, seeds[v.algorithm], referenceHashes[v.algorithm], uint64(v.at/30), 8)
+		assert.Equal(t, v.want, got, "T=%d %s", v.at, v.algorithm)
+	}
+
+	// A wrong key must not reproduce the vector: the oracle is not a constant.
+	wrongKey := []byte("09876543210987654321")
+	assert.NotEqual(t, "94287082", referenceTOTP(t, wrongKey, sha1.New, 1, 8))
 }
 
 // generateValidTOTPCode derives the code for the current instant. It is enough

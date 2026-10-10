@@ -91,6 +91,21 @@ func IsMFANotEnrolled(err error) bool {
 	return errors.As(err, &target)
 }
 
+// MFACodeInvalidError reports that a submitted MFA code did not verify. It is
+// the inner error of ErrMFACodeInvalid.
+type MFACodeInvalidError struct{}
+
+// Error implements the error interface.
+func (e *MFACodeInvalidError) Error() string { return "invalid MFA code" }
+
+// IsMFACodeInvalid reports whether err is (or wraps) ErrMFACodeInvalid -- the
+// user submitted a wrong code -- as opposed to any other unauthorized error,
+// which is not the user's mistake and must not count as a failed attempt.
+func IsMFACodeInvalid(err error) bool {
+	var target *MFACodeInvalidError
+	return errors.As(err, &target)
+}
+
 // InviteUnusableReason names why an invitation cannot be redeemed.
 type InviteUnusableReason string
 

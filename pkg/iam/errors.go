@@ -391,7 +391,7 @@ var (
 	ErrMFACodeInvalid = &dberrors.QBError{
 		Code: dberrors.ErrUnauthorized,
 		Op:   "iam.mfa.verify",
-		Err:  &IAMMessageError{Message: "invalid MFA code"},
+		Err:  &MFACodeInvalidError{},
 	}
 
 	// ErrMFAMaxAttemptsExceeded is returned when max verification attempts are exceeded.

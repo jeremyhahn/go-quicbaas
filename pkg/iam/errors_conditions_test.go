@@ -100,6 +100,7 @@ func TestIAMConditionPredicatesMatchTheirOwnSentinel(t *testing.T) {
 		{"user not found", ErrUserNotFound, IsUserNotFound},
 		{"role not found", ErrRoleNotFound, IsRoleNotFound},
 		{"MFA not enrolled", ErrMFANotEnrolled, IsMFANotEnrolled},
+		{"MFA code invalid", ErrMFACodeInvalid, IsMFACodeInvalid},
 		{"invite absent", ErrInviteNotFound, IsInviteUnusable},
 		{"invite expired", ErrInviteExpired, IsInviteUnusable},
 		{"invite spent", ErrInviteUsed, IsInviteUnusable},
@@ -117,6 +118,17 @@ func TestIAMConditionPredicatesMatchTheirOwnSentinel(t *testing.T) {
 	}
 }
 
+// TestIsMFACodeInvalidRefusesOtherUnauthorized pins the narrowing: a wrong
+// backup code or an mTLS refusal carries the same Unauthorized code, so
+// errors.Is would match them, but they are not a wrong TOTP code and must not
+// count as a failed enrollment attempt.
+func TestIsMFACodeInvalidRefusesOtherUnauthorized(t *testing.T) {
+	for _, err := range []error{ErrMFABackupCodeInvalid, ErrMTLSNoCertificate, ErrWebAuthnAuthenticationFailed} {
+		require.ErrorIs(t, err, ErrMFACodeInvalid, "precondition: the code alone cannot tell these apart")
+		assert.False(t, IsMFACodeInvalid(err), "%v must not read as a wrong MFA code", err)
+	}
+}
+
 // TestIAMSentinelMessagesAreUnchanged guards the swap from IAMMessageError to
 // the dedicated condition types: the rendered text is part of the API surface
 // (it reaches operators through the REST error envelope), so it must not have
@@ -129,6 +141,7 @@ func TestIAMSentinelMessagesAreUnchanged(t *testing.T) {
 		{ErrUserNotFound, "iam.user: not_found: user not found"},
 		{ErrRoleNotFound, "iam.role: not_found: role not found"},
 		{ErrMFANotEnrolled, "iam.mfa: not_found: MFA not enrolled"},
+		{ErrMFACodeInvalid, "iam.mfa.verify: unauthorized: invalid MFA code"},
 		{ErrInviteNotFound, "iam.invite: not_found: invite not found"},
 		{ErrInviteExpired, "iam.invite: forbidden: invite has expired"},
 		{ErrInviteUsed, "iam.invite: forbidden: invite has already been used"},

@@ -21,20 +21,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-auth/pkg/otp"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// The TOTP shared secret is a long-lived key. It reaches the OTP library
-// through Config.SecretKey — a memguard enclave decrypted only for the moment
-// a code is derived — and never through Config.Secret, a Go string that
-// nothing can wipe and that the underlying library re-decodes into a fresh
-// plaintext key on every call.
+// The TOTP shared secret is a long-lived key. It reaches the OTP library only
+// as Config.Seed, a go-enclave locked region the authenticator borrows for the
+// moment a code is derived; the library has no plaintext string path at all.
 //
 // The tests below pin three things: that the enclave derives the same codes an
-// authenticator app enrolled before the change produces, that a half-migrated
-// configuration cannot be built at all, and that the enclave is released
-// rather than left sealed for the process lifetime.
+// authenticator app enrolled before the change produces, that a corrupt stored
+// secret cannot become a key, and that the enclave is destroyed rather than
+// left in locked memory for the process lifetime.
 
 // newProtectedSecretTestManager returns a manager with in-memory storage and
 // the default TOTP parameters.
@@ -63,7 +62,7 @@ func TestProtectedSharedSecretDecodesIntoEnclave(t *testing.T) {
 
 	auth, err := otp.NewAuthenticator(otp.Config{
 		Type:      otp.TypeTOTP,
-		SecretKey: key,
+		Seed:      key,
 		Digits:    6,
 		Period:    30,
 		Algorithm: algorithm,
@@ -90,19 +89,12 @@ func TestProtectedSharedSecretDecodesIntoEnclave(t *testing.T) {
 	assert.Contains(t, fromApp, fromEnclave,
 		"the sealed key must derive the same code the enrolled authenticator app shows")
 
-	// The enclave is released, not merely deferred. Before Destroy the sealed
-	// key opens; after it, it reports no contents and cannot be opened again —
-	// so the assertions below are about the effect of the call and not about a
-	// key that was never usable.
-	require.NoError(t, key.Open(func(k []byte) error {
-		require.Len(t, k, 20)
-		return nil
-	}))
-
-	key.Destroy()
+	// The authenticator owns the seed and releases it on Close: the locked
+	// region is wiped, not merely left for the collector.
+	require.True(t, key.IsAlive())
+	require.NoError(t, auth.Close())
+	assert.False(t, key.IsAlive(), "closing the authenticator must destroy the seed")
 	assert.Equal(t, 0, key.Size())
-	assert.Error(t, key.Open(func([]byte) error { return nil }),
-		"a destroyed secret must not be openable")
 }
 
 // TestTOTPCodesForBracketCoversATimeStepBoundary pins the clock either side of
@@ -430,19 +422,9 @@ func TestVerifyChallengeKeepsBackupRecoveryForDisallowedAlgorithm(t *testing.T) 
 }
 
 // TestDestroyedSharedSecretFailsClosed pins that the enclave is the only
-// source of the key: once it is destroyed, an authenticator built on it
-// refuses a code that was correct a moment earlier rather than falling back to
-// some other copy of the secret.
-//
-// The related invariant — that a configuration setting both the deprecated
-// string and the protected key is rejected, so a call site cannot be
-// half-migrated — is enforced by otp.Config's own validation and is not
-// asserted here: writing the deprecated field to construct such a
-// configuration is itself the deprecation the lint gate forbids, and
-// suppressing that would defeat the check this change exists to satisfy. In
-// this package the invariant shows up as a build-and-test failure: a call site
-// that sets both fields fails otp.NewAuthenticator, which surfaces as
-// "failed to create authenticator" and fails every MFA verification test.
+// source of the key: once the authenticator that owns it is closed, it refuses
+// a code that was correct a moment earlier rather than falling back to some
+// other copy of the secret.
 func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
 	ctx := context.Background()
 
@@ -454,7 +436,7 @@ func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
 
 	auth, err := otp.NewAuthenticator(otp.Config{
 		Type:      otp.TypeTOTP,
-		SecretKey: key,
+		Seed:      key,
 		Digits:    6,
 		Period:    30,
 		Algorithm: algorithm,
@@ -466,12 +448,41 @@ func TestDestroyedSharedSecretFailsClosed(t *testing.T) {
 		Period:    30,
 		Algorithm: MFAAlgorithmSHA1,
 	})
-	require.NoError(t, auth.Authenticate(ctx, code),
-		"the code must verify while the key is sealed")
+	submitted, err := enclave.NewMemoryEnclaveFromString(code)
+	require.NoError(t, err)
+	defer submitted.Destroy()
 
-	key.Destroy()
-	assert.Error(t, auth.Authenticate(ctx, code),
+	require.NoError(t, auth.Authenticate(ctx, submitted),
+		"the code must verify while the key is alive")
+
+	require.NoError(t, auth.Close())
+	assert.False(t, key.IsAlive(), "closing the authenticator must destroy the seed it owns")
+	assert.ErrorIs(t, auth.Authenticate(ctx, submitted), enclave.ErrEnclaveDestroyed,
 		"a destroyed key must fail closed, not fall back to another copy of the secret")
+}
+
+// TestCheckTOTPCode covers the shared verification path: the right code
+// verifies, a wrong code is ErrMFACodeInvalid, and a corrupt stored secret is
+// a typed malformed-secret fault rather than a wrong code.
+func TestCheckTOTPCode(t *testing.T) {
+	ctx := context.Background()
+	m := newProtectedSecretTestManager(t)
+	provisioned := mfaProvisioningParams{Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30}
+	config := MFAConfig{Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30}
+
+	code := generateValidTOTPCode(t, testTOTPSecret, config)
+	require.NoError(t, m.checkTOTPCode(ctx, "test.check", testTOTPSecret, code, provisioned))
+
+	wrong := "000000"
+	if wrong == code {
+		wrong = "111111"
+	}
+	assert.True(t, IsMFACodeInvalid(m.checkTOTPCode(ctx, "test.check", testTOTPSecret, wrong, provisioned)))
+
+	var malformed *MFASecretMalformedError
+	err := m.checkTOTPCode(ctx, "test.check", testTOTPSecret+"A", code, provisioned)
+	require.ErrorAs(t, err, &malformed)
+	assert.False(t, IsMFACodeInvalid(err), "a corrupt stored secret is not a wrong code")
 }
 
 // TestVerifyCodeAcceptsSecretEnrolledBeforeProtectedMemory is the migration's

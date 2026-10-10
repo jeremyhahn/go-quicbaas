@@ -20,12 +20,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-auth/pkg/otp"
-	authsecret "github.com/jeremyhahn/go-auth/pkg/secret"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // MFAManager handles MFA operations.
@@ -127,6 +126,20 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to cancel existing enrollments", err)
 	}
 
+	// Get account name (email) from user storage if available
+	accountName := userID
+	if m.userStorage != nil {
+		user, err := m.userStorage.GetUser(ctx, tenantID, userID)
+		if err == nil && user != nil && user.Email != "" {
+			accountName = user.Email
+		}
+	}
+
+	algorithm, err := convertAlgorithm("iam.mfa.enroll", m.config.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+
 	// Generate the shared secret into protected memory. The key never has a
 	// plaintext form on the heap, and it is the enclave — not the base32
 	// string — that the authenticator below derives codes from.
@@ -137,51 +150,41 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 	// wiped; it is the one unprotected copy this call leaves behind, and it is
 	// inherent to enrolling a shared secret rather than an artifact of how the
 	// code is derived.
-	protectedSecret, err := otp.GenerateProtectedSecret()
+	seed, err := otp.GenerateProtectedSecret()
 	if err != nil {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to generate secret", err)
 	}
-	defer protectedSecret.Destroy()
 
-	secret, err := otp.EncodeSecret(protectedSecret)
+	secret, err := otp.EncodeSecret(seed)
 	if err != nil {
+		seed.Destroy()
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to encode secret", err)
 	}
 
-	// Get account name (email) from user storage if available
-	accountName := userID
-	if m.userStorage != nil {
-		user, err := m.userStorage.GetUser(ctx, tenantID, userID)
-		if err == nil && user != nil && user.Email != "" {
-			accountName = user.Email
-		}
-	}
-
-	// Create OTP authenticator to get provisioning URI
-	algorithm, err := convertAlgorithm("iam.mfa.enroll", m.config.Algorithm)
-	if err != nil {
-		return nil, err
-	}
-
-	otpConfig := otp.Config{
+	// NewAuthenticator takes ownership of the seed on every return path, so
+	// from here on the authenticator's Close is what destroys it.
+	auth, err := otp.NewAuthenticator(otp.Config{
 		Type:        otp.TypeTOTP,
-		SecretKey:   protectedSecret,
+		Seed:        seed,
 		Issuer:      m.config.Issuer,
 		AccountName: accountName,
 		Digits:      uint(m.config.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
 		Period:      uint(m.config.Period), // #nosec G115 -- Period is bounded config value (typically 30)
 		Algorithm:   algorithm,
 		Skew:        uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
-	}
-
-	auth, err := otp.NewAuthenticator(otpConfig)
+	})
 	if err != nil {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to create authenticator", err)
 	}
 
 	qrCodeURI, err := auth.ProvisioningURI()
 	if err != nil {
-		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to build provisioning URI", err)
+		err = NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to build provisioning URI", err)
+	}
+	// The seed is not needed past the URI: destroy it now rather than hold it
+	// in locked memory across the storage round trip below.
+	if err := closeAuthenticator("iam.mfa.enroll", auth, err); err != nil {
+		return nil, err
 	}
 
 	// Create enrollment. The provisioning parameters are recorded alongside
@@ -249,44 +252,17 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 
 	// Verify code against the parameters this enrollment was provisioned with.
 	provisioned := m.provisioningParams(enrollment)
-	algorithm, err := convertAlgorithm("iam.mfa.enroll.complete", provisioned.Algorithm)
-	if err != nil {
-		return err
-	}
-
-	// The enrollment record holds the shared secret as a base32 string, which
-	// no code here can wipe. Decode it into protected memory for the
-	// verification itself so the key is decrypted only for the moment a code
-	// is derived, instead of being handed to a dependency that decodes a fresh
-	// plaintext copy on every call. See protectedSharedSecret for what this
-	// does and does not close.
-	enrollmentKey, err := protectedSharedSecret("iam.mfa.enroll.complete", enrollment.Secret)
-	if err != nil {
-		return err
-	}
-	defer enrollmentKey.Destroy()
-
-	otpConfig := otp.Config{
-		Type:      otp.TypeTOTP,
-		SecretKey: enrollmentKey,
-		Digits:    uint(provisioned.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
-		Period:    uint(provisioned.Period), // #nosec G115 -- Period is bounded config value (typically 30)
-		Algorithm: algorithm,
-		Skew:      uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
-	}
-
-	auth, err := otp.NewAuthenticator(otpConfig)
-	if err != nil {
-		return NewIAMError(ErrMFAInvalid, "iam.mfa.enroll.complete", "failed to create authenticator", err)
-	}
-
-	if err := auth.Authenticate(ctx, code); err != nil {
+	err = m.checkTOTPCode(ctx, "iam.mfa.enroll.complete", enrollment.Secret, code, provisioned)
+	if IsMFACodeInvalid(err) {
 		// Increment attempt counter
 		enrollment.Attempts++
 		if saveErr := m.storage.SaveEnrollment(ctx, enrollment); saveErr != nil {
 			return NewIAMError(ErrMFAInvalid, "iam.mfa.enroll.complete", "failed to save enrollment attempt counter", saveErr)
 		}
-		return ErrMFACodeInvalid
+		return err
+	}
+	if err != nil {
+		return err
 	}
 
 	// Get account name for secret storage
@@ -542,41 +518,16 @@ func (m *DefaultMFAManager) VerifyCode(ctx context.Context, userID, tenantID, co
 		return ErrMFANotEnrolled
 	}
 
-	// Create authenticator. The algorithm is the one the secret was
-	// provisioned with, not the current config: an existing enrollment keeps
-	// verifying after the configured default changes.
-	algorithm, err := convertAlgorithm("iam.mfa.verify", secret.Algorithm)
-	if err != nil {
+	// Verify against the parameters the secret was provisioned with, not the
+	// current config: an existing enrollment keeps verifying after the
+	// configured default changes.
+	provisioned := mfaProvisioningParams{
+		Algorithm: secret.Algorithm,
+		Digits:    secret.Digits,
+		Period:    secret.Period,
+	}
+	if err := m.checkTOTPCode(ctx, "iam.mfa.verify", secret.Secret, code, provisioned); err != nil {
 		return err
-	}
-
-	// The stored secret arrives from the barrier as a base32 string, which no
-	// code here can wipe. Decode it into protected memory for the
-	// verification itself so the key is decrypted only for the moment a code
-	// is derived. See protectedSharedSecret for what this does and does not
-	// close.
-	verifyKey, err := protectedSharedSecret("iam.mfa.verify", secret.Secret)
-	if err != nil {
-		return err
-	}
-	defer verifyKey.Destroy()
-
-	otpConfig := otp.Config{
-		Type:      otp.TypeTOTP,
-		SecretKey: verifyKey,
-		Digits:    uint(secret.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
-		Period:    uint(secret.Period), // #nosec G115 -- Period is bounded config value (typically 30)
-		Algorithm: algorithm,
-		Skew:      uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
-	}
-
-	auth, err := otp.NewAuthenticator(otpConfig)
-	if err != nil {
-		return NewIAMError(ErrMFAInvalid, "iam.mfa.verify", "failed to create authenticator", err)
-	}
-
-	if err := auth.Authenticate(ctx, code); err != nil {
-		return ErrMFACodeInvalid
 	}
 
 	// Update last used time
@@ -838,11 +789,10 @@ func (e *MFASecretMalformedError) Error() string {
 // decoder's error does not hide it from errors.Is.
 func (e *MFASecretMalformedError) Unwrap() error { return e.Cause }
 
-// It closes the last segment of the secret's path: the derivation itself. With
-// the returned key in otp.Config.SecretKey the shared secret is sealed in a
-// memguard enclave and decrypted only for the moment a code is derived,
-// instead of being passed to github.com/pquerna/otp as a string that it
-// decodes into a fresh plaintext key on every Generate and Authenticate.
+// protectedSharedSecret decodes a stored base32 shared secret straight into a
+// go-enclave locked region, which is the only form the OTP library accepts a
+// seed in. Codes are derived from the enclave inside a borrow, so no plaintext
+// key reaches the heap.
 //
 // It does not make the whole path protected, and must not be read as if it
 // did. base32Secret is a Go string that arrived from the MFA store — read as
@@ -853,49 +803,79 @@ func (e *MFASecretMalformedError) Unwrap() error { return e.Cause }
 // protected memory instead of a string, which is a change to the storage
 // interface and to the KV read below it.
 //
-// The caller borrows the key: destroy it when the authenticator built from it
-// is done.
-func protectedSharedSecret(op, base32Secret string) (*authsecret.Secret, error) {
-	// REFUSE AN INCOMPLETE TERMINAL GROUP BEFORE DECODING, because the decode
-	// reports nothing. otp.NewProtectedSecret uses Go's unpadded base32
-	// decoder, which accepts a final group of 1, 3 or 6 characters by
-	// discarding the bits that do not complete a byte: base32 packs 5 bits per
-	// character, so those groups hold 5, 15 or 30 bits and contribute no whole
-	// byte. "<secret>A" therefore decodes to exactly the bytes of "<secret>",
-	// with no error -- measured, byte identical -- so two different persisted
-	// values would derive the same TOTP and both would authenticate.
-	//
-	// That is a corrupt stored value, not a recoverable encoding, so it is
-	// refused rather than normalised: silently accepting the prefix would let
-	// a secret nobody enrolled verify against a code for one that was. The
-	// other remainders (2, 4, 5, 7) do carry complete bytes and are left alone.
-	//
-	// Normalisation matches otp.NewProtectedSecret's own trimBase32 -- trim
-	// surrounding whitespace, then trailing '=' padding -- so this measures
-	// the same string the decoder will. Case does not affect length. The
-	// original value is still what gets passed on, so nothing changes for a
-	// well-formed secret.
-	switch len(strings.TrimRight(strings.TrimSpace(base32Secret), "=")) % 8 {
-	case 1, 3, 6:
-		return nil, NewIAMError(ErrMFAInvalid, op,
-			"shared secret ends in an incomplete base32 group, so it is not a whole number of bytes",
-			&MFASecretMalformedError{Reason: "incomplete terminal base32 group"})
-	}
-
+// The caller owns the key until it hands it to otp.NewAuthenticator, which
+// takes ownership and destroys it in Close.
+func protectedSharedSecret(op, base32Secret string) (*enclave.MemoryEnclave, error) {
 	// EVERY way a stored secret can fail to become a key is the same kind of
-	// fault, so they all carry the same type. The length check above is only
-	// the case the decoder does not report; an empty value, a character
-	// outside the base32 alphabet and anything else NewProtectedSecret refuses
-	// are equally "this enrollment is unusable", and VerifyChallenge has to be
-	// able to tell all of them from a user typing the wrong code. Typing only
-	// the length case would have left the commoner corruptions falling through
-	// to the backup-code fallback -- the exact hole this type exists to close.
-	key, err := otp.NewProtectedSecret(base32Secret)
+	// fault, so they all carry the same type. An empty value, a character
+	// outside the base32 alphabet and a final group of 1, 3 or 6 characters --
+	// which Go's unpadded decoder would silently truncate, letting
+	// "<secret>A" verify as "<secret>" -- are all refused by otp.DecodeSeed,
+	// and all equally mean "this enrollment is unusable". VerifyChallenge has
+	// to be able to tell them from a user typing the wrong code, or they would
+	// fall through to the backup-code fallback.
+	key, err := otp.DecodeSeed(base32Secret)
 	if err != nil {
 		return nil, NewIAMError(ErrMFAInvalid, op, "failed to load shared secret into protected memory",
 			&MFASecretMalformedError{Reason: "not decodable as base32", Cause: err})
 	}
 	return key, nil
+}
+
+// checkTOTPCode verifies code against a stored base32 shared secret under the
+// parameters it was provisioned with. The secret is decoded into locked memory
+// and handed to the authenticator, which destroys it before this returns; the
+// submitted code is copied into its own enclave for the constant-time compare.
+//
+// It returns ErrMFACodeInvalid when the code does not verify, and an IAM error
+// tagged with op for every fault that is not the user's.
+func (m *DefaultMFAManager) checkTOTPCode(ctx context.Context, op, base32Secret, code string, provisioned mfaProvisioningParams) (err error) {
+	algorithm, err := convertAlgorithm(op, provisioned.Algorithm)
+	if err != nil {
+		return err
+	}
+
+	// The code arrives as a string from the transport and cannot be wiped;
+	// the enclave keeps the comparison itself out of ordinary memory.
+	submitted, err := enclave.NewMemoryEnclaveFromString(code)
+	if err != nil {
+		return NewIAMError(ErrMFAInvalid, op, "failed to load code into protected memory", err)
+	}
+	defer submitted.Destroy()
+
+	seed, err := protectedSharedSecret(op, base32Secret)
+	if err != nil {
+		return err
+	}
+
+	// NewAuthenticator takes ownership of the seed on every return path.
+	auth, err := otp.NewAuthenticator(otp.Config{
+		Type:      otp.TypeTOTP,
+		Seed:      seed,
+		Digits:    uint(provisioned.Digits), // #nosec G115 -- Digits is bounded config value (6-8)
+		Period:    uint(provisioned.Period), // #nosec G115 -- Period is bounded config value (typically 30)
+		Algorithm: algorithm,
+		Skew:      uint(m.config.Skew), // #nosec G115 -- Skew is bounded config value (typically 1)
+	})
+	if err != nil {
+		return NewIAMError(ErrMFAInvalid, op, "failed to create authenticator", err)
+	}
+	defer func() { err = closeAuthenticator(op, auth, err) }()
+
+	if err := auth.Authenticate(ctx, submitted); err != nil {
+		return ErrMFACodeInvalid
+	}
+	return nil
+}
+
+// closeAuthenticator destroys the seed auth owns and joins a failed release
+// onto err, so a key that could not be wiped is reported rather than dropped.
+func closeAuthenticator(op string, auth *otp.Authenticator, err error) error {
+	closeErr := auth.Close()
+	if closeErr == nil {
+		return err
+	}
+	return errors.Join(err, NewIAMError(ErrMFAInvalid, op, "failed to destroy shared secret", closeErr))
 }
 
 // generateBackupCode generates a random 8-character alphanumeric backup code.

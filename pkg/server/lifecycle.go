@@ -96,6 +96,9 @@ var (
 		return r.ServiceBackendWithStore(spec, store)
 	}
 	initXKMS = dbxkms.Initialize
+	// closeXKMSFn releases the process-global xkms service this server
+	// initialized. Seam so tests can observe the release and force a failure.
+	closeXKMSFn = dbxkms.Close
 	// registerXKMSBackendFn adds a resolved KMS backend to an already-
 	// initialized global xkms service (the initializeCA-first boot order).
 	// Seam so tests can force a registration failure.
@@ -394,6 +397,7 @@ func (s *Server) initializeCA() error {
 		}
 		s.logger.Info("XKMS already initialized — CA backend not re-registered")
 	} else {
+		s.ownsXKMS = true
 		s.logger.Info("XKMS global service initialized from CA key universe")
 	}
 
@@ -1195,6 +1199,8 @@ func (s *Server) startKMS() error {
 			s.logger.WithField("backend", backendName).Info(
 				"XKMS already initialized — KMS backend added to running service")
 		}
+	} else {
+		s.ownsXKMS = true
 	}
 
 	// Create BackendFactory to manage multiple backends via registry

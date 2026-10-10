@@ -295,7 +295,7 @@ func (b *OrchestratorBinding) ListSessions(req *orchestratorSDK.ListSessionsRequ
 }
 
 // ListTasks returns all tasks for the given tenant.
-func (b *OrchestratorBinding) ListTasks(req *orchestratorSDK.ListTasksRequest) ([]map[string]interface{}, error) {
+func (b *OrchestratorBinding) ListTasks(req *orchestratorSDK.ListTasksRequest) ([]*orchestratorSDK.Task, error) {
 	if req == nil {
 		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListTasks")
 	}
@@ -309,26 +309,7 @@ func (b *OrchestratorBinding) ListTasks(req *orchestratorSDK.ListTasksRequest) (
 		return nil, NewGUITransportError("OrchestratorBinding.ListTasks", err)
 	}
 
-	result := make([]map[string]interface{}, 0, len(resp.Tasks))
-	for _, task := range resp.Tasks {
-		result = append(result, map[string]interface{}{
-			"id":           task.ID,
-			"tenant_id":    task.TenantID,
-			"team_name":    task.TeamName,
-			"subject":      task.Subject,
-			"description":  task.Description,
-			"status":       task.Status,
-			"assigned_to":  task.AssignedTo,
-			"dependencies": task.Dependencies,
-			"created_at":   task.CreatedAt,
-			"claimed_at":   task.ClaimedAt,
-			"completed_at": task.CompletedAt,
-			"version":      task.Version,
-			"metadata":     task.Metadata,
-		})
-	}
-
-	return result, nil
+	return resp.Tasks, nil
 }
 
 // AttentionList returns one page of the tenant's attention items: every
@@ -381,7 +362,7 @@ func (b *OrchestratorBinding) AttentionResolve(req *orchestratorSDK.AttentionRes
 }
 
 // GetTask returns a specific task by ID.
-func (b *OrchestratorBinding) GetTask(req *orchestratorSDK.GetTaskRequest) (map[string]interface{}, error) {
+func (b *OrchestratorBinding) GetTask(req *orchestratorSDK.GetTaskRequest) (*orchestratorSDK.Task, error) {
 	if req == nil {
 		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetTask")
 	}
@@ -395,21 +376,7 @@ func (b *OrchestratorBinding) GetTask(req *orchestratorSDK.GetTaskRequest) (map[
 		return nil, NewGUITransportError("OrchestratorBinding.GetTask", err)
 	}
 
-	return map[string]interface{}{
-		"id":           task.ID,
-		"tenant_id":    task.TenantID,
-		"team_name":    task.TeamName,
-		"subject":      task.Subject,
-		"description":  task.Description,
-		"status":       task.Status,
-		"assigned_to":  task.AssignedTo,
-		"dependencies": task.Dependencies,
-		"created_at":   task.CreatedAt,
-		"claimed_at":   task.ClaimedAt,
-		"completed_at": task.CompletedAt,
-		"version":      task.Version,
-		"metadata":     task.Metadata,
-	}, nil
+	return task, nil
 }
 
 // ListBackends returns all available orchestration backends. This method

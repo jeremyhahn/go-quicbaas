@@ -27,6 +27,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -74,6 +75,50 @@ func TestRunInlineInit_NoneStrategy_DropsMarker(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &marker))
 	assert.Equal(t, "none", marker.BarrierStrategy)
 	assert.Equal(t, "barrier", marker.CredentialStrategy)
+}
+
+// TestRunInlineInit_DoesNotWriteDataDirAfterShutdown pins go-quicbaas#714:
+// once runInlineInit has shut its server down, nothing writes to that data dir
+// again. The server used to leave its process-global xkms service registered,
+// so the next server in the process reused it: its OIDC signing key went
+// through the first server's key storage instead of its own, re-creating that
+// data dir when test cleanup had already removed it.
+func TestRunInlineInit_DoesNotWriteDataDirAfterShutdown(t *testing.T) {
+	requireTestTrustDomain(t)
+	runInit := func(dataDir string) {
+		f := &inlineInitFlags{
+			barrierStrategy:    "none",
+			credentialStrategy: "barrier",
+			dataDir:            dataDir,
+		}
+		require.NoError(t, runInlineInit(&cobra.Command{Use: "init"}, f))
+	}
+
+	first := t.TempDir()
+	runInit(first)
+	before := snapshotDir(t, first)
+
+	second := t.TempDir()
+	runInit(second)
+	assert.Equal(t, before, snapshotDir(t, first),
+		"a later server must not write into a data dir whose server has shut down")
+	assert.FileExists(t, filepath.Join(second, "keys", "keys", "software:signing:oidc-signing:ecdsa.key"),
+		"the later server's OIDC signing key must live in its own data dir")
+}
+
+// snapshotDir maps every path under root to its size and modification time.
+func snapshotDir(t *testing.T, root string) map[string]string {
+	t.Helper()
+	snap := make(map[string]string)
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		snap[path] = fmt.Sprintf("%d %s", info.Size(), info.ModTime())
+		return nil
+	})
+	require.NoError(t, err)
+	return snap
 }
 
 // TestRunInlineInit_SoftwareStrategy_DropsMarker drives the "software"

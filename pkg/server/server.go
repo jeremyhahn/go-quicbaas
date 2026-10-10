@@ -216,6 +216,13 @@ type Server struct {
 	vectorService  service.VectorService
 	vectorStorage  interfaces.VectorStorage
 
+	// ownsXKMS records that THIS server's initXKMS call created the
+	// process-global xkms service (initializeCA or startKMS), so Shutdown
+	// must close it. A service someone else initialized is left alone.
+	// Written during initialize() and read by Shutdown after initWG.Wait,
+	// so the WaitGroup orders the two.
+	ownsXKMS bool
+
 	// Cache components
 	cacheManager *cache.CacheManager
 
@@ -1606,6 +1613,25 @@ func (s *Server) Shutdown(ctx context.Context) error {
 				s.logger.Info("KMS manager closed")
 			}
 			s.kmsManager = nil
+		}
+
+		// Release the process-global xkms service after the KMS manager, its
+		// last consumer. Its backends hold key storage rooted in THIS
+		// server's data dir; left registered, the next server in the same
+		// process (init followed by start, or one test after another) found
+		// it already initialized, kept it, and wrote that server's OIDC
+		// signing key into the previous server's data dir -- re-creating it
+		// after it was removed (#714). Only a service this server created is
+		// closed, and ownership is dropped so a second Shutdown is a no-op.
+		if s.ownsXKMS {
+			s.ownsXKMS = false
+			s.logger.Info("Closing XKMS global service...")
+			if err := closeXKMSFn(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close XKMS global service")
+			} else {
+				s.logger.Info("XKMS global service closed")
+			}
 		}
 
 		duration := time.Since(startTime)

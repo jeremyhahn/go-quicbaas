@@ -462,6 +462,13 @@ func setupFullTestXKMS(t *testing.T) {
 
 	Reset()
 	ResetRNG()
+	initFullTestXKMS(t)
+}
+
+// initFullTestXKMS initializes xkms over fresh in-memory backends without
+// resetting first, so a test can observe what an earlier Close left behind.
+func initFullTestXKMS(t *testing.T) {
+	t.Helper()
 
 	// Create in-memory storage for PKCS8
 	keyStorage, err := xkmssdk.NewMemoryBackend()
@@ -2830,6 +2837,29 @@ func TestClose_MultipleCalls(t *testing.T) {
 	// Second close should still succeed (idempotent for RNG)
 	err = Close()
 	assert.NoError(t, err)
+}
+
+// TestClose_ReinitializeReachesFreshBackends pins that Close releases the
+// go-xkms singleton, not just its backends. Before it did, the next
+// Initialize returned success while every operation still reached the closed
+// backends, so a second server in the same process could not generate a key
+// (go-quicbaas#714).
+func TestClose_ReinitializeReachesFreshBackends(t *testing.T) {
+	setupFullTestXKMS(t)
+	require.NoError(t, Close())
+
+	initFullTestXKMS(t)
+	attrs := &xkmssdk.KeyAttributes{
+		CN:           "after-reinitialize",
+		KeyType:      xkmssdk.KeyTypeSigning,
+		StoreType:    xkmssdk.StoreSoftware,
+		KeyAlgorithm: x509.ECDSA,
+		ECCAttributes: &xkmssdk.ECCAttributes{
+			Curve: elliptic.P256(),
+		},
+	}
+	_, err := GenerateKey(context.Background(), attrs)
+	require.NoError(t, err)
 }
 
 // -----------------------------------------------------------------------------
