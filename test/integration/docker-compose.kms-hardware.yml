@@ -70,12 +70,10 @@ services:
     build:
       context: ../..
       dockerfile: test/integration/docker/swtpm/Dockerfile
-    image: quicbaas/swtpm:latest
-    container_name: quicbaas-hw-swtpm1
     hostname: swtpm1
     ports:
-      - "2321:2321"
-      - "2322:2322"
+      - "2321"
+      - "2322"
     volumes:
       - swtpm1-data:/var/lib/swtpm
     networks:
@@ -92,12 +90,10 @@ services:
     build:
       context: ../..
       dockerfile: test/integration/docker/swtpm/Dockerfile
-    image: quicbaas/swtpm:latest
-    container_name: quicbaas-hw-swtpm2
     hostname: swtpm2
     ports:
-      - "2323:2321"
-      - "2324:2322"
+      - "2321"
+      - "2322"
     volumes:
       - swtpm2-data:/var/lib/swtpm
     networks:
@@ -114,12 +110,10 @@ services:
     build:
       context: ../..
       dockerfile: test/integration/docker/swtpm/Dockerfile
-    image: quicbaas/swtpm:latest
-    container_name: quicbaas-hw-swtpm3
     hostname: swtpm3
     ports:
-      - "2325:2321"
-      - "2326:2322"
+      - "2321"
+      - "2322"
     volumes:
       - swtpm3-data:/var/lib/swtpm
     networks:
@@ -139,9 +133,9 @@ services:
       dockerfile: test/integration/Dockerfile.node
     hostname: hw-node1
     ports:
-      - "8091:8080"   # HTTP API
-      - "9091:9090"   # Metrics
-      - "50061:50051" # gRPC
+      - "8080"   # HTTP API
+      - "9090"   # Metrics
+      - "50051" # gRPC
     environment:
       # Node configuration
       - QUICBAAS_RAFT_NODE_ID=1
@@ -219,9 +213,9 @@ services:
       dockerfile: test/integration/Dockerfile.node
     hostname: hw-node2
     ports:
-      - "8092:8080"   # HTTP API
-      - "9092:9090"   # Metrics
-      - "50062:50051" # gRPC
+      - "8080"   # HTTP API
+      - "9090"   # Metrics
+      - "50051" # gRPC
     environment:
       # Node configuration
       - QUICBAAS_RAFT_NODE_ID=2
@@ -305,9 +299,9 @@ services:
       dockerfile: test/integration/Dockerfile.node
     hostname: hw-node3
     ports:
-      - "8093:8080"   # HTTP API
-      - "9093:9090"   # Metrics
-      - "50063:50051" # gRPC
+      - "8080"   # HTTP API
+      - "9090"   # Metrics
+      - "50051" # gRPC
     environment:
       # Node configuration
       - QUICBAAS_RAFT_NODE_ID=3
@@ -385,7 +379,6 @@ services:
 networks:
   kms-hw-network:
     driver: bridge
-    name: quicbaas-kms-hardware-network
 
 volumes:
   # TPM data volumes

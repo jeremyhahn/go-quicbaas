@@ -9,10 +9,9 @@ services:
   # Floci - AWS Services Emulator (KMS, Secrets Manager, etc.)
   floci:
     image: floci/floci:latest
-    container_name: quicbaas-floci
     hostname: floci
     ports:
-      - "4566:4566"       # Floci gateway (all services on one port)
+      - "4566"       # Floci gateway (all services on one port)
     environment:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
@@ -46,7 +45,6 @@ services:
     build:
       context: ../..
       dockerfile: test/integration/Dockerfile
-    container_name: quicbaas-awskms-test
     hostname: awskms-test
     environment:
       # AWS emulator (Floci) configuration
@@ -79,7 +77,6 @@ services:
 networks:
   kms-cloud-network:
     driver: bridge
-    name: quicbaas-kms-cloud-network
 
 volumes:
   floci-data:

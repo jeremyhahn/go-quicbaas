@@ -17,7 +17,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: quicbaas:latest
     container_name: quicbaas-raft-single
     ports:
       - "8443:8443"   # REST API

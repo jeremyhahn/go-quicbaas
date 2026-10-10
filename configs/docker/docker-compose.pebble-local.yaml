@@ -15,7 +15,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: quicbaas:latest
     container_name: quicbaas-pebble
     ports:
       - "8443:8443"   # REST API

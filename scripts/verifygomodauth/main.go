@@ -575,10 +575,16 @@ func check(root, work string, stdout, stderr io.Writer) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		hangSize := int64(-1)
+		for _, c := range out.watch {
+			if strings.Contains(c.call, ic.hang) {
+				hangSize = c.size
+			}
+		}
 		switch {
 		case !reached:
 			fail("%s never reached %q — this case no longer exercises the interrupt:\n%s", ic.target, ic.hang, out.output)
-		case len(out.watch) == 0 || out.watch[len(out.watch)-1].size <= 0:
+		case hangSize <= 0:
 			fail("%s was interrupted in %q without the credentials staged", ic.target, ic.hang)
 		}
 		if !out.stagedExists || out.staged != "" {

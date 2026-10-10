@@ -329,6 +329,37 @@ DOCKER_IMAGE := $(APP_NAME)
 DOCKER_TAG := $(VERSION)
 DOCKER_REGISTRY := ghcr.io/jeremyhahn
 
+# Per-run Docker identities. CI may supply RUN_ID; otherwise the first make
+# invocation creates a repo-local id that lifecycle commands reuse.
+RUN_ID_FILE ?= .quicbaas-run-id
+RUN_ID := $(or $(RUN_ID),$(shell if [ -s "$(RUN_ID_FILE)" ]; then tr -d '\n' < "$(RUN_ID_FILE)"; else id=$$(if [ -n "$${GITHUB_RUN_ID:-}" ]; then printf '%s-%s-%s' "$${GITHUB_RUN_ID}" "$${GITHUB_RUN_ATTEMPT:-1}" "$${GITHUB_JOB:-job}"; else printf '%s-%s-%s' "$$(basename "$$(pwd)")" "$$(date +%s%N)" "$$$$"; fi); printf '%s\n' "$$id" > "$(RUN_ID_FILE)"; printf '%s' "$$id"; fi))
+RUN_ID_SLUG := $(shell printf '%s' '$(RUN_ID)' | tr '[:upper:]_/' '[:lower:]--' | tr -cs 'a-z0-9_-' '-' | sed -e 's/^-*//' -e 's/-*$$//' -e 's/^$$/run/')
+DOCKER_TAG_RUN := $(DOCKER_TAG)-$(RUN_ID_SLUG)
+DOCKER_LATEST_TAG := latest-$(RUN_ID_SLUG)
+DOCKER_DEV_TAG := dev-$(RUN_ID_SLUG)
+DOCKER_FIPS_TAG := fips-$(RUN_ID_SLUG)
+DOCKER_TEST_TAG := test-$(RUN_ID_SLUG)
+DOCKER_RUN_LABEL := quicbaas.run=$(RUN_ID_SLUG)
+COMPOSE_PROJECT := quicbaas-$(RUN_ID_SLUG)
+COMPOSE_PROJECT_INTEGRATION := $(COMPOSE_PROJECT)-integration
+COMPOSE_PROJECT_TEST := $(COMPOSE_PROJECT)-test
+COMPOSE_PROJECT_CACHE := $(COMPOSE_PROJECT)-cache
+COMPOSE_PROJECT_CLUSTER := $(COMPOSE_PROJECT)-cluster
+COMPOSE_PROJECT_SEAL := $(COMPOSE_PROJECT)-seal
+COMPOSE_PROJECT_TENANTBARRIER := $(COMPOSE_PROJECT)-tenantbarrier
+COMPOSE_PROJECT_SEAL_HW := $(COMPOSE_PROJECT)-seal-hw
+COMPOSE_PROJECT_SIGNALBRIDGE := $(COMPOSE_PROJECT)-signalbridge
+COMPOSE_PROJECT_E2E := $(COMPOSE_PROJECT)-e2e
+COMPOSE_PROJECT_AGENT := $(COMPOSE_PROJECT)-agent
+COMPOSE_PROJECT_FLEET := $(COMPOSE_PROJECT)-fleet
+export RUN_ID RUN_ID_SLUG
+export QUICBAAS_IMAGE ?= $(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)
+export QUICBAAS_DEV_IMAGE ?= $(DOCKER_IMAGE):$(DOCKER_DEV_TAG)
+export QUICBAAS_TEST_IMAGE ?= $(DOCKER_IMAGE):$(DOCKER_TEST_TAG)
+export QUICBAAS_SWTPM_IMAGE ?= $(DOCKER_IMAGE)/swtpm:$(DOCKER_LATEST_TAG)
+export SIGNALBRIDGE_IMAGE ?= signalbridge:$(DOCKER_LATEST_TAG)
+export QUICBAAS_E2E_SANDBOX_IMAGE ?= $(DOCKER_IMAGE)-e2e-sandbox-agent:$(DOCKER_LATEST_TAG)
+
 # Proto tools
 PROTOC := protoc
 PROTOC_GEN_GO := $(shell which protoc-gen-go)
@@ -567,7 +598,7 @@ endif
 
 # Frontend build configuration
 # BUILD_DIR for frontend, handling NFS EPERM issues on Node.js worker threads
-FE_BUILD_DIR ?= /tmp/fe-build-$(shell whoami)
+FE_BUILD_DIR ?= /tmp/fe-build-$(shell whoami)-$(RUN_ID_SLUG)
 
 # Frontend build prerequisites (only when WITH_GUI=1)
 .PHONY: _build-sdk-typescript _build-frontend
@@ -1351,17 +1382,19 @@ test-%: ## Run unit tests for a specific package (e.g., make test-xkms)
 # Redis L2 Cache integration tests
 .PHONY: integration-test-cache-redis
 integration-test-cache-redis: ## Run Redis L2 cache integration tests in Docker
-	@echo "$(BLUE)Starting Redis container...$(NC)"
-	@$(DOCKER_COMPOSE) up -d redis
-	@echo "$(YELLOW)Waiting for Redis to be ready...$(NC)"
-	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		$(DOCKER) exec quicbaas-redis redis-cli ping >/dev/null 2>&1 && break || sleep 1; \
-	done
-	@echo "$(GREEN)Redis is ready$(NC)"
-	@echo "$(BLUE)Running Redis L2 cache integration tests...$(NC)"
-	@QUICBAAS_REDIS_ADDR=localhost:6379 $(GOTEST) -v -tags 'integration,l2_redis' -timeout=5m ./test/integration/cache/... || ($(DOCKER_COMPOSE) stop redis && exit 1)
-	@echo "$(BLUE)Stopping Redis container...$(NC)"
-	@$(DOCKER_COMPOSE) stop redis
+	@set -e; \
+	trap '$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_CACHE) down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
+	echo "$(BLUE)Starting Redis container...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_CACHE) up -d redis; \
+	echo "$(YELLOW)Waiting for Redis to be ready...$(NC)"; \
+	for i in 1 2 3 4 5 6 7 8 9 10; do \
+		$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_CACHE) exec -T redis redis-cli ping >/dev/null 2>&1 && break || sleep 1; \
+	done; \
+	REDIS_ADDR=$$($(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_CACHE) port redis 6379); \
+	REDIS_PORT=$${REDIS_ADDR##*:}; \
+	echo "$(GREEN)Redis is ready on localhost:$$REDIS_PORT$(NC)"; \
+	echo "$(BLUE)Running Redis L2 cache integration tests...$(NC)"; \
+	QUICBAAS_REDIS_ADDR=localhost:$$REDIS_PORT $(GOTEST) -v -tags 'integration,l2_redis' -timeout=5m ./test/integration/cache/...
 
 # GPU Orchestration integration tests
 .PHONY: integration-test-orchestration-gpu
@@ -1623,13 +1656,13 @@ integration-test-merge-result: ## Run the merge-result snapshot suite in a conta
 integration-test-session-attach: build-daemon ## Run session attach integration tests (wire-level SSE smoke against live daemon)
 	@echo "$(BLUE)Running session attach integration tests...$(NC)"
 	@$(MAKE) stop-local >/dev/null 2>&1 || true
-	@rm -rf /tmp/quicbaas-chrometest-data && mkdir -p /tmp/quicbaas-chrometest-data
-	@rm -f /tmp/quicbaas-chrometest.sock
+	@rm -rf /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data && mkdir -p /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data
+	@rm -f /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock
 	@nohup ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
-		--unix-socket /tmp/quicbaas-chrometest.sock \
-		--data-dir /tmp/quicbaas-chrometest-data --log-level warn \
-		>/tmp/quicbaasd-itest.log 2>&1 & \
-	echo $$! > /tmp/quicbaasd-itest.pid
+		--unix-socket /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock \
+		--data-dir /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data --log-level warn \
+		>/tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-itest.log 2>&1 & \
+	echo $$! > /tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-itest.pid
 	@echo "$(YELLOW)Waiting for daemon readiness (up to 75s cold boot)...$(NC)"
 	@for i in $$(seq 1 75); do \
 		if curl -sk -o /dev/null -w "%{http_code}" https://localhost:18080/api/v1/health/ready 2>/dev/null | grep -q 200; then \
@@ -1638,7 +1671,7 @@ integration-test-session-attach: build-daemon ## Run session attach integration 
 	done
 	@QUICBAAS_URL=https://localhost:18080 $(GOTEST) -v -tags integration -timeout=2m ./test/integration/session_attach/...; \
 		TEST_RESULT=$$?; \
-		kill -9 $$(cat /tmp/quicbaasd-itest.pid 2>/dev/null) 2>/dev/null || true; \
+		kill -9 $$(cat /tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-itest.pid 2>/dev/null) 2>/dev/null || true; \
 		$(MAKE) stop-local >/dev/null 2>&1 || true; \
 		exit $$TEST_RESULT
 
@@ -1653,12 +1686,15 @@ integration-test-signalbridge: ## Run Signal Bridge integration tests (docker-co
 			echo "$(RED)Error: docker-compose not found. Install Docker Compose.$(NC)"; \
 			exit 1; \
 		fi; \
+		SIGNALBRIDGE_DIR="$$(pwd)/test/integration/signalbridge"; \
+		trap 'cd "$$SIGNALBRIDGE_DIR" && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_SIGNALBRIDGE) down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 		echo "$(YELLOW)Starting Signal Bridge stack...$(NC)"; \
-		cd test/integration/signalbridge && docker-compose up -d; \
+		cd "$$SIGNALBRIDGE_DIR" && \
+		$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_SIGNALBRIDGE) up -d; \
 		echo "$(YELLOW)Waiting for services to be healthy (max 30s)...$(NC)"; \
 		WAIT_COUNT=0; \
 		while [ $$WAIT_COUNT -lt 30 ]; do \
-			if docker-compose ps 2>/dev/null | grep -q "healthy"; then \
+			if $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_SIGNALBRIDGE) ps 2>/dev/null | grep -q "healthy"; then \
 				break; \
 			fi; \
 			echo "  Waiting..."; \
@@ -1669,7 +1705,7 @@ integration-test-signalbridge: ## Run Signal Bridge integration tests (docker-co
 		go test -v -tags integration -timeout=5m ./...; \
 		TEST_RESULT=$$?; \
 		echo "$(YELLOW)Cleaning up Signal Bridge stack...$(NC)"; \
-		docker-compose down --volumes --remove-orphans; \
+		$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_SIGNALBRIDGE) down --volumes --remove-orphans --rmi local; \
 		exit $$TEST_RESULT; \
 	else \
 		echo "$(YELLOW)test/integration/signalbridge/ not found - skipping$(NC)"; \
@@ -1696,9 +1732,11 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 		exit 1; \
 	fi
 	@COMPOSE_FILE="test/integration/docker-compose.cluster.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_CLUSTER)"; \
 	CLUSTER_DIR="test/integration"; \
 	echo "$(YELLOW)Cleaning up any previous cluster-test containers and bind-mount data dirs...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
+	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	ABS_CLUSTER_DIR="$$PWD/$$CLUSTER_DIR"; \
 	if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
 		docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
@@ -1710,15 +1748,21 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 		chmod 0777 $$CLUSTER_DIR/cluster-data/$$N $$CLUSTER_DIR/cluster-logs/$$N; \
 	done; \
 	echo "$(YELLOW)Building cluster-test image...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE build 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
 	echo "$(YELLOW)Starting 3-node quicbaas cluster (nodes 1-3, bootstrap group)...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d quicbaas-node1 quicbaas-node2 quicbaas-node3; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d quicbaas-node1 quicbaas-node2 quicbaas-node3; \
+	NODE1_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node1 8080); \
+	NODE2_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node2 8080); \
+	NODE3_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node3 8080); \
+	NODE1_HTTP_PORT=$${NODE1_HTTP##*:}; \
+	NODE2_HTTP_PORT=$${NODE2_HTTP##*:}; \
+	NODE3_HTTP_PORT=$${NODE3_HTTP##*:}; \
 	echo "$(YELLOW)Waiting for all 3 cluster nodes to become ready (up to 120s)...$(NC)"; \
 	DEADLINE=$$(( $$(date +%s) + 120 )); \
 	while [ $$(date +%s) -lt $$DEADLINE ]; do \
-		N1=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:8081/api/v1/health/ready 2>/dev/null || echo 0); \
-		N2=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:8082/api/v1/health/ready 2>/dev/null || echo 0); \
-		N3=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:8083/api/v1/health/ready 2>/dev/null || echo 0); \
+		N1=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$NODE1_HTTP_PORT/api/v1/health/ready 2>/dev/null || echo 0); \
+		N2=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$NODE2_HTTP_PORT/api/v1/health/ready 2>/dev/null || echo 0); \
+		N3=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$NODE3_HTTP_PORT/api/v1/health/ready 2>/dev/null || echo 0); \
 		if [ "$$N1" = "200" ] && [ "$$N2" = "200" ] && [ "$$N3" = "200" ]; then \
 			echo "$(GREEN)All 3 nodes ready (node1=$$N1, node2=$$N2, node3=$$N3)$(NC)"; \
 			break; \
@@ -1730,12 +1774,14 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	docker run --rm -v "$$PWD/$$CLUSTER_DIR/cluster-data:/data" alpine sh -c \
 		"chmod -R a+rX /data 2>/dev/null; true" || true; \
 	echo "$(YELLOW)Starting node4 (dynamic-membership joiner — will join via AddNode API)...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d quicbaas-node4; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d quicbaas-node4; \
+	NODE4_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node4 8080); \
+	NODE4_HTTP_PORT=$${NODE4_HTTP##*:}; \
 	echo "$(YELLOW)Adding node4 to the Raft cluster via REST AddNode API (trying all nodes to find the leader)...$(NC)"; \
 	ADD_DEADLINE=$$(( $$(date +%s) + 45 )); \
 	ADD_OK=0; \
 	while [ $$(date +%s) -lt $$ADD_DEADLINE ]; do \
-		for PORT in 8081 8082 8083; do \
+		for PORT in $$NODE1_HTTP_PORT $$NODE2_HTTP_PORT $$NODE3_HTTP_PORT; do \
 			CODE=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
 				-X POST http://localhost:$$PORT/api/v1/cluster/nodes \
 				-H 'Content-Type: application/json' \
@@ -1757,7 +1803,7 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	N4_DEADLINE=$$(( $$(date +%s) + 90 )); \
 	N4_READY=0; \
 	while [ $$(date +%s) -lt $$N4_DEADLINE ]; do \
-		N4=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:8084/api/v1/health/ready 2>/dev/null || echo 0); \
+		N4=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$NODE4_HTTP_PORT/api/v1/health/ready 2>/dev/null || echo 0); \
 		if [ "$$N4" = "200" ]; then \
 			echo "$(GREEN)node4 ready$(NC)"; \
 			N4_READY=1; \
@@ -1768,16 +1814,16 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	done; \
 	if [ $$N4_READY -eq 0 ]; then \
 		echo "$(RED)node4 did not become ready within 60s$(NC)"; \
-		docker compose -f $$COMPOSE_FILE logs quicbaas-node4 --tail=50; \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE logs quicbaas-node4 --tail=50; \
 	fi; \
 	echo "$(YELLOW)Granting host read access to all node data dirs (including node4, for at-rest test)...$(NC)"; \
 	docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/data" alpine sh -c \
 		"chmod -R a+rX /data 2>/dev/null; true" || true; \
 	echo "$(YELLOW)Running cluster integration tests (including AtRest + DynamicMembership)...$(NC)"; \
-	QUICBAAS_NODE1_URL="http://localhost:8081" \
-	QUICBAAS_NODE2_URL="http://localhost:8082" \
-	QUICBAAS_NODE3_URL="http://localhost:8083" \
-	QUICBAAS_NODE4_URL="http://localhost:8084" \
+	QUICBAAS_NODE1_URL="http://localhost:$$NODE1_HTTP_PORT" \
+	QUICBAAS_NODE2_URL="http://localhost:$$NODE2_HTTP_PORT" \
+	QUICBAAS_NODE3_URL="http://localhost:$$NODE3_HTTP_PORT" \
+	QUICBAAS_NODE4_URL="http://localhost:$$NODE4_HTTP_PORT" \
 	QUICBAAS_NODE1_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node1" \
 	QUICBAAS_NODE2_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node2" \
 	QUICBAAS_NODE3_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node3" \
@@ -1785,7 +1831,7 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	$(GOTEST) -v -tags integration -timeout 300s ./test/integration/cluster/...; \
 	RESULT=$$?; \
 	echo "$(BLUE)Stopping cluster stack...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
 		docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
 	fi; \
@@ -1822,19 +1868,21 @@ integration-test-seal: ## Run cloud-backed barrier seal integration tests (awskm
 	fi
 	@$(MAKE) --no-print-directory stage-gomodauth
 	@COMPOSE_FILE="test/integration/docker-compose.seal.yml"; \
-	trap '$(GOMODAUTH_CLEAR)' EXIT; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_SEAL)"; \
+	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	echo "$(YELLOW)Cleaning up any previous seal-test containers...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
+	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	echo "$(YELLOW)Building seal-test image (quicbaasd + quicbaas built with -tags 'awskms vault')...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE build seal-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build seal-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
 	$(GOMODAUTH_CLEAR); \
 	echo "$(YELLOW)Starting emulators (floci KMS + vault dev server)...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d floci vault; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d floci vault; \
 	echo "$(YELLOW)Running seal integration tests...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE run --rm -T seal-test; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE run --rm -T seal-test; \
 	RESULT=$$?; \
 	echo "$(BLUE)Stopping seal-test stack...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	if [ $$RESULT -eq 0 ]; then \
 		echo "$(GREEN)✓ Cloud-seal integration tests PASSED$(NC)"; \
 	else \
@@ -1851,21 +1899,23 @@ integration-test-tenantbarrier: ## Run per-tenant barrier integration tests agai
 	fi
 	@$(MAKE) --no-print-directory stage-gomodauth
 	@COMPOSE_FILE="test/integration/docker-compose.seal.yml"; \
-	trap '$(GOMODAUTH_CLEAR)' EXIT; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_TENANTBARRIER)"; \
+	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	echo "$(YELLOW)Issuing integration mTLS/PIV fixtures through the QuicBaaS CA...$(NC)"; \
 	$(GOCMD) run ./test/integration/certfixture/cmd test/integration/certs; \
 	echo "$(YELLOW)Cleaning up any previous tenantbarrier containers...$(NC)"; \
-	docker compose -p tenantbarrier -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
+	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	echo "$(YELLOW)Building tenantbarrier images (seal-enabled quicbaasd node + test runner)...$(NC)"; \
-	docker compose -p tenantbarrier -f $$COMPOSE_FILE build tenantbarrier-node tenantbarrier-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build tenantbarrier-node tenantbarrier-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
 	$(GOMODAUTH_CLEAR); \
 	echo "$(YELLOW)Starting seal-enabled node (passphrase auto-unseal)...$(NC)"; \
-	docker compose -p tenantbarrier -f $$COMPOSE_FILE up -d tenantbarrier-node; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d tenantbarrier-node; \
 	echo "$(YELLOW)Running per-tenant barrier integration tests...$(NC)"; \
-	docker compose -p tenantbarrier -f $$COMPOSE_FILE run --rm -T tenantbarrier-test; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE run --rm -T tenantbarrier-test; \
 	RESULT=$$?; \
 	echo "$(BLUE)Stopping tenantbarrier stack...$(NC)"; \
-	docker compose -p tenantbarrier -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	if [ $$RESULT -eq 0 ]; then \
 		echo "$(GREEN)✓ Per-tenant barrier integration tests PASSED$(NC)"; \
 	else \
@@ -1881,23 +1931,25 @@ integration-test-seal-hardware: ## Run hardware-backed barrier seal integration 
 		exit 1; \
 	fi
 	@COMPOSE_FILE="test/integration/docker-compose.seal-hardware.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_SEAL_HW)"; \
 	CLOUD_COMPOSE="test/integration/docker-compose.seal.yml"; \
 	echo "$(YELLOW)Checking for concurrent cloud-seal stack...$(NC)"; \
-	while docker compose -f $$CLOUD_COMPOSE ps --services --filter status=running 2>/dev/null | grep -q .; do \
+	while $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_SEAL) -f $$CLOUD_COMPOSE ps --services --filter status=running 2>/dev/null | grep -q .; do \
 		echo "$(YELLOW)  cloud-seal stack is still running; waiting 60s before building hardware stack...$(NC)"; \
 		sleep 60; \
 	done; \
 	echo "$(YELLOW)Cleaning up any previous hardware-seal-test containers...$(NC)"; \
-	docker compose -p seal-hw -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
+	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	echo "$(YELLOW)Building hardware-seal-test image (quicbaasd + quicbaas built with -tags 'tpm2 pkcs11', CGO_ENABLED=1)...$(NC)"; \
-	docker compose -p seal-hw -f $$COMPOSE_FILE build seal-hw-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build seal-hw-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
 	echo "$(YELLOW)Starting hardware emulators (swtpm1)...$(NC)"; \
-	docker compose -p seal-hw -f $$COMPOSE_FILE up -d swtpm1; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d swtpm1; \
 	echo "$(YELLOW)Running hardware-seal integration tests...$(NC)"; \
-	docker compose -p seal-hw -f $$COMPOSE_FILE run --rm -T seal-hw-test; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE run --rm -T seal-hw-test; \
 	RESULT=$$?; \
 	echo "$(BLUE)Stopping hardware-seal-test stack...$(NC)"; \
-	docker compose -p seal-hw -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	if [ $$RESULT -eq 0 ]; then \
 		echo "$(GREEN)✓ Hardware-seal integration tests PASSED$(NC)"; \
 	else \
@@ -2069,13 +2121,13 @@ test-integration-tagged: ## Run integration tests with build tag (in-process)
 # purpose: the images end with COPY . ., so a credentials file inside the build
 # context would be baked into a layer (.dockerignore lists gomodauth* as a
 # second line of defence).
-GOMODAUTH_ENV ?= /tmp/quicbaas-gomodauth.env
+GOMODAUTH_ENV ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomodauth.env
 export GOMODAUTH_ENV
 
 # Where integration-test backs go.mod up while the stack runs, restored after.
 # Overridable so a gate that drives the recipe never touches a real run's copy.
-GOMOD_BACKUP ?= /tmp/quicbaas-gomod-backup
-SDK_GOMOD_BACKUP ?= /tmp/quicbaas-sdk-gomod-backup
+GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomod-backup
+SDK_GOMOD_BACKUP ?= /tmp/quicbaas-$(RUN_ID_SLUG)-sdk-gomod-backup
 
 # Where stage-gomodauth finds a Gitea read token on a host that is not a Gitea
 # runner (#1031). A runner injects the dependency-resolution.md section-6
@@ -2190,6 +2242,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	@$(MAKE) --no-print-directory stage-gomodauth
 	@START_TIME=$$(date +%s); \
 	COMPOSE_FILE="test/integration/docker-compose.integration.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_INTEGRATION)"; \
 	GPU_HOST="$(strip $(GPU_HOST))"; \
 	OLLAMA_CPU="$(strip $(OLLAMA_CPU))"; \
 	OLLAMA_ENABLED=0; \
@@ -2234,7 +2287,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	if [ $$START_LOCAL_OLLAMA -eq 1 ]; then OLLAMA_UP_SERVICES="ollama ollama-setup"; fi; \
 	echo "$(BLUE)  Ollama mode: enabled=$$OLLAMA_ENABLED gpu=$$TEST_GPU local-container=$$START_LOCAL_OLLAMA url=$$OLLAMA_URL$(NC)"; \
 	TORN_DOWN=0; \
-	trap '$(GOMODAUTH_CLEAR); if [ $$TORN_DOWN -eq 0 ]; then echo "$(YELLOW)Tearing down the integration stack...$(NC)"; docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; fi' EXIT; \
+	trap '$(GOMODAUTH_CLEAR); if [ $$TORN_DOWN -eq 0 ]; then echo "$(YELLOW)Tearing down the integration stack...$(NC)"; $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true; fi' EXIT; \
 	cp go.mod "$(GOMOD_BACKUP)"; \
 	cp sdk/go/go.mod "$(SDK_GOMOD_BACKUP)"; \
 	echo "$(YELLOW)CLI binary and mTLS certificates are produced inside the stack$(NC)"; \
@@ -2243,15 +2296,15 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo "$(YELLOW)         quicbaas-certs named volume, which the nodes mount$(NC)"; \
 	echo ""; \
 	echo "$(YELLOW)Cleaning up any previous test containers and volumes...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
 	echo ""; \
 	echo "$(YELLOW)Removing old integration test images to force complete rebuild...$(NC)"; \
-	docker rmi -f integration-integration-test integration-test-node1 integration-test-node2 integration-test-node3 integration-test-node4 integration-test-node5 2>/dev/null || true; \
+	docker rmi -f $(COMPOSE_PROJECT_INTEGRATION)-integration-test $(COMPOSE_PROJECT_INTEGRATION)-test-node1 $(COMPOSE_PROJECT_INTEGRATION)-test-node2 $(COMPOSE_PROJECT_INTEGRATION)-test-node3 $(COMPOSE_PROJECT_INTEGRATION)-test-node4 $(COMPOSE_PROJECT_INTEGRATION)-test-node5 2>/dev/null || true; \
 	echo ""; \
 	echo "$(YELLOW)Building Docker images (forcing clean rebuild to ensure latest code)...$(NC)"; \
 	echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"; \
 	set -o pipefail; \
-	if ! docker compose -f $$COMPOSE_FILE build --no-cache --pull --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" 2>&1 | while IFS= read -r line; do \
+	if ! $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build --no-cache --pull --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" 2>&1 | while IFS= read -r line; do \
 		echo "  $$line"; \
 	done; then \
 		echo "$(RED)Image build FAILED — refusing to run integration tests against stale images.$(NC)"; \
@@ -2260,7 +2313,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	$(GOMODAUTH_CLEAR); \
 	echo ""; \
 	echo "$(YELLOW)Starting integration test cluster...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 floci minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 floci minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
 	echo ""; \
 	echo "$(YELLOW)Waiting for cluster nodes to be healthy (checking every 5s, max 120s)...$(NC)"; \
 	WAIT_COUNT=0; \
@@ -2268,7 +2321,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	while [ $$WAIT_COUNT -lt $$MAX_WAIT ]; do \
 		HEALTHY=0; \
 		for node in test-node1 test-node2 test-node3; do \
-			STATUS=$$(docker compose -f $$COMPOSE_FILE ps --format json $$node 2>/dev/null | grep -o '"Health":"[^"]*"' | cut -d'"' -f4 || echo "unknown"); \
+			STATUS=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE ps --format json $$node 2>/dev/null | grep -o '"Health":"[^"]*"' | cut -d'"' -f4 || echo "unknown"); \
 			if [ "$$STATUS" = "healthy" ]; then \
 				HEALTHY=$$((HEALTHY + 1)); \
 			fi; \
@@ -2286,10 +2339,10 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	if [ $$WAIT_COUNT -ge $$MAX_WAIT ]; then \
 		echo "$(RED)  ✗ Timeout waiting for cluster to become healthy$(NC)"; \
 		echo "$(YELLOW)Node status:$(NC)"; \
-		docker compose -f $$COMPOSE_FILE ps; \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE ps; \
 		echo "$(YELLOW)Recent logs:$(NC)"; \
-		docker compose -f $$COMPOSE_FILE logs --tail=20; \
-		docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE logs --tail=20; \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 		TORN_DOWN=1; \
 		exit 1; \
 	fi; \
@@ -2300,7 +2353,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	while [ $$GRPC_WAIT -lt $$GRPC_MAX_WAIT ]; do \
 		GRPC_READY=0; \
 		for node in test-node1 test-node2 test-node3; do \
-			if docker compose -f $$COMPOSE_FILE exec -T $$node sh -c "nc -z localhost 50051" 2>/dev/null; then \
+			if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T $$node sh -c "nc -z localhost 50051" 2>/dev/null; then \
 				GRPC_READY=$$((GRPC_READY + 1)); \
 			fi; \
 		done; \
@@ -2323,7 +2376,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	while [ $$MCP_WAIT -lt $$MCP_MAX_WAIT ]; do \
 		MCP_READY=0; \
 		for node in test-node1 test-node2 test-node3; do \
-			if docker compose -f $$COMPOSE_FILE exec -T $$node sh -c "nc -z localhost 8888" 2>/dev/null; then \
+			if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T $$node sh -c "nc -z localhost 8888" 2>/dev/null; then \
 				MCP_READY=$$((MCP_READY + 1)); \
 			fi; \
 		done; \
@@ -2345,13 +2398,13 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	STORAGE_MAX_WAIT=30; \
 	while [ $$STORAGE_WAIT -lt $$STORAGE_MAX_WAIT ]; do \
 		STORAGE_READY=0; \
-		if docker compose -f $$COMPOSE_FILE exec -T floci sh -c "curl -sf http://localhost:4566/_floci/health | grep -q '\"s3\":\"running\"'" >/dev/null 2>&1; then \
+		if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T floci sh -c "curl -sf http://localhost:4566/_floci/health | grep -q '\"s3\":\"running\"'" >/dev/null 2>&1; then \
 			STORAGE_READY=$$((STORAGE_READY + 1)); \
 		fi; \
-		if docker compose -f $$COMPOSE_FILE exec -T minio sh -c "curl -sf http://localhost:9000/minio/health/live" >/dev/null 2>&1; then \
+		if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T minio sh -c "curl -sf http://localhost:9000/minio/health/live" >/dev/null 2>&1; then \
 			STORAGE_READY=$$((STORAGE_READY + 1)); \
 		fi; \
-		if docker compose -f $$COMPOSE_FILE exec -T azurite sh -c "node -e \"require('http').get('http://localhost:10000',r=>{process.exit(r.statusCode===400?0:1)})\"" >/dev/null 2>&1; then \
+		if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T azurite sh -c "node -e \"require('http').get('http://localhost:10000',r=>{process.exit(r.statusCode===400?0:1)})\"" >/dev/null 2>&1; then \
 			STORAGE_READY=$$((STORAGE_READY + 1)); \
 		fi; \
 		if [ $$STORAGE_READY -ge 3 ]; then \
@@ -2372,22 +2425,22 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		OLLAMA_WAIT=0; \
 		OLLAMA_MAX_WAIT=120; \
 		while [ $$OLLAMA_WAIT -lt $$OLLAMA_MAX_WAIT ]; do \
-			if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list >/dev/null 2>&1; then \
+			if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama list >/dev/null 2>&1; then \
 				echo "$(GREEN)  ✓ Ollama ready after $${OLLAMA_WAIT}s$(NC)"; \
 				MODEL_READY=0; \
-				if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'all-minilm'; then \
+				if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'all-minilm'; then \
 					echo "$(GREEN)  ✓ all-minilm model loaded$(NC)"; \
 					MODEL_READY=1; \
 				fi; \
 				if [ $$MODEL_READY -eq 0 ]; then \
 					echo "$(YELLOW)  ⚠ Model not yet loaded, pulling all-minilm...$(NC)"; \
-					docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull all-minilm 2>&1 | tail -1; \
+					$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull all-minilm 2>&1 | tail -1; \
 				fi; \
-				if docker compose -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'tinyllama'; then \
+				if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'tinyllama'; then \
 					echo "$(GREEN)  ✓ tinyllama model loaded$(NC)"; \
 				else \
 					echo "$(YELLOW)  ⚠ tinyllama not loaded, pulling...$(NC)"; \
-					docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama 2>&1 | tail -1; \
+					$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama 2>&1 | tail -1; \
 				fi; \
 				break; \
 			fi; \
@@ -2417,7 +2470,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo "$(BLUE)RUNNING INTEGRATION TESTS$(NC)"; \
 	echo "$(BLUE)=========================================================================================================$(NC)"; \
 	echo ""; \
-	docker compose -f $$COMPOSE_FILE run --rm -T \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE run --rm -T \
 		-e QUICBAAS_TEST_FILTER="$(QUICBAAS_TEST_FILTER)" \
 		-e QUICBAAS_TEST_OLLAMA="$$OLLAMA_ENABLED" \
 		-e QUICBAAS_TEST_GPU="$$TEST_GPU" \
@@ -2429,13 +2482,13 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo ""; \
 	if [ $$DOCKER_RESULT -ne 0 ]; then \
 		echo "$(YELLOW)Integration tests failed — capturing service logs before teardown$(NC)"; \
-		docker compose -f $$COMPOSE_FILE logs --no-color --timestamps > integration-compose.log 2>&1 || true; \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE logs --no-color --timestamps > integration-compose.log 2>&1 || true; \
 		echo "$(YELLOW)---- service logs (tail 200; full copy in integration-compose.log) ----$(NC)"; \
 		tail -n 200 integration-compose.log || true; \
 		echo "$(YELLOW)---- end service logs ----$(NC)"; \
 	fi; \
 	echo "$(BLUE)Stopping integration test cluster...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	TORN_DOWN=1; \
 	echo "$(YELLOW)Restoring go.mod files (if modified by container)...$(NC)"; \
 	if [ -f "$(GOMOD_BACKUP)" ]; then cp "$(GOMOD_BACKUP)" go.mod; fi; \
@@ -2558,19 +2611,19 @@ integration-test-minikube: ## Run Minikube integration tests (auto-starts Miniku
 	\
 	echo ""; \
 	echo "$(GREEN)Checking for test container image in Minikube...$(NC)"; \
-	if minikube image ls | grep -q 'quicbaas-test:latest'; then \
+	if minikube image ls | grep -q '$(DOCKER_IMAGE)-test:$(DOCKER_LATEST_TAG)'; then \
 		echo "$(GREEN)✓ Test image already loaded$(NC)"; \
 	else \
 		echo "$(YELLOW)Building and loading test container image...$(NC)"; \
-		docker build -t quicbaas-test:latest -f pkg/discovery/testdata/Dockerfile.test . > /tmp/minikube-build.log 2>&1; \
+		docker build --label $(DOCKER_RUN_LABEL) -t $(DOCKER_IMAGE)-test:$(DOCKER_LATEST_TAG) -f pkg/discovery/testdata/Dockerfile.test . > /tmp/quicbaas-$(RUN_ID_SLUG)-minikube-build.log 2>&1; \
 		BUILD_RESULT=$$?; \
 		if [ $$BUILD_RESULT -ne 0 ]; then \
-			echo "$(RED)Failed to build test image. See /tmp/minikube-build.log$(NC)"; \
+			echo "$(RED)Failed to build test image. See /tmp/quicbaas-$(RUN_ID_SLUG)-minikube-build.log$(NC)"; \
 			echo "$(YELLOW)Attempting to skip go mod download and build with local modules...$(NC)"; \
 		fi; \
 		echo "$(YELLOW)Loading image into Minikube...$(NC)"; \
-		minikube image load quicbaas-test:latest > /tmp/minikube-load.log 2>&1 || \
-			(echo "$(RED)Failed to load image into Minikube. See /tmp/minikube-load.log$(NC)" && exit 1); \
+		minikube image load $(DOCKER_IMAGE)-test:$(DOCKER_LATEST_TAG) > /tmp/quicbaas-$(RUN_ID_SLUG)-minikube-load.log 2>&1 || \
+			(echo "$(RED)Failed to load image into Minikube. See /tmp/quicbaas-$(RUN_ID_SLUG)-minikube-load.log$(NC)" && exit 1); \
 		echo "$(GREEN)✓ Test image loaded into Minikube$(NC)"; \
 	fi; \
 	\
@@ -2699,8 +2752,8 @@ test-integration: integration-test ## Alias for integration-test (deprecated, us
 .PHONY: test-docker
 test-docker: ## Run tests in Docker environment
 	@echo "$(BLUE)Running tests in Docker environment...$(NC)"
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.test.yml build
-	@$(DOCKER) run --rm $(DOCKER_IMAGE):dev go test -v -race -short ./...
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_TEST) -f test/integration/docker-compose.test.yml build
+	@$(DOCKER) run --rm $(DOCKER_IMAGE):$(DOCKER_DEV_TAG) go test -v -race -short ./...
 
 # Removed duplicate/circular integration-test alias to avoid recursion
 
@@ -2709,14 +2762,14 @@ test-docker: ## Run tests in Docker environment
 .PHONY: run-local
 run-local: build-daemon ## Start local daemon (quicbaasd) for development
 	@echo "$(BLUE)Starting QuicBaaS daemon...$(NC)"
-	@rm -rf /tmp/quicbaas-chrometest-data
-	@mkdir -p /tmp/quicbaas-chrometest-data
-	@rm -f /tmp/quicbaas-chrometest.sock
-	@echo "$(YELLOW)Data dir: /tmp/quicbaas-chrometest-data$(NC)"
-	@echo "$(YELLOW)Unix socket: /tmp/quicbaas-chrometest.sock$(NC)"
+	@rm -rf /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data
+	@mkdir -p /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data
+	@rm -f /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock
+	@echo "$(YELLOW)Data dir: /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data$(NC)"
+	@echo "$(YELLOW)Unix socket: /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock$(NC)"
 	@echo "$(YELLOW)HTTP port: 18080$(NC)"
 	@echo "$(YELLOW)Web UI: http://localhost:18080/ui/$(NC)"
-	@./bin/quicbaasd start --http-port 18080 --grpc-port 0 --unix-socket /tmp/quicbaas-chrometest.sock --data-dir /tmp/quicbaas-chrometest-data --log-level info
+	@./bin/quicbaasd start --http-port 18080 --grpc-port 0 --unix-socket /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock --data-dir /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data --log-level info
 
 .PHONY: stop-local
 stop-local: ## Stop local daemon and clean up zombie processes
@@ -2744,14 +2797,14 @@ test-frontend: ## Run frontend unit tests
 test-e2e: build-ui build-daemon ## Run Playwright E2E tests — no ACP backend required (0 skipped, 0 failed)
 	@echo "$(BLUE)Running Playwright E2E tests (chromium-no-backend project)...$(NC)"
 	@$(MAKE) stop-local >/dev/null 2>&1 || true
-	@rm -rf /tmp/quicbaas-chrometest-data && mkdir -p /tmp/quicbaas-chrometest-data
-	@rm -f /tmp/quicbaas-chrometest.sock
+	@rm -rf /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data && mkdir -p /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data
+	@rm -f /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock
 	@nohup ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
-		--unix-socket /tmp/quicbaas-chrometest.sock \
-		--data-dir /tmp/quicbaas-chrometest-data --log-level warn \
+		--unix-socket /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock \
+		--data-dir /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data --log-level warn \
 		--embedded-fleet-node --embedded-fleet-node-backend ollama \
-		>/tmp/quicbaasd-e2e.log 2>&1 & \
-	echo $$! > /tmp/quicbaasd-e2e.pid
+		>/tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-e2e.log 2>&1 & \
+	echo $$! > /tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-e2e.pid
 	@echo "$(YELLOW)Waiting for daemon readiness (up to 75s cold boot)...$(NC)"
 	@for i in $$(seq 1 75); do \
 		if curl -sk -o /dev/null -w "%{http_code}" https://localhost:18080/api/v1/health/ready 2>/dev/null | grep -q 200; then \
@@ -2759,12 +2812,12 @@ test-e2e: build-ui build-daemon ## Run Playwright E2E tests — no ACP backend r
 		fi; sleep 1; \
 	done
 	@cd cmd/quicbaas/frontend && \
-		NODE_EXTRA_CA_CERTS=/tmp/quicbaas-chrometest-data/certs/ca-chain.crt \
+		NODE_EXTRA_CA_CERTS=/tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data/certs/ca-chain.crt \
 		QUICBAAS_UI_URL=https://localhost:18080/ui/ \
-		QUICBAAS_DAEMON_LOG=/tmp/quicbaasd-e2e.log \
+		QUICBAAS_DAEMON_LOG=/tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-e2e.log \
 		npx playwright test --project=chromium-no-backend; \
 		TEST_RESULT=$$?; \
-		kill -9 $$(cat /tmp/quicbaasd-e2e.pid 2>/dev/null) 2>/dev/null || true; \
+		kill -9 $$(cat /tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-e2e.pid 2>/dev/null) 2>/dev/null || true; \
 		$(MAKE) stop-local >/dev/null 2>&1 || true; \
 		exit $$TEST_RESULT
 
@@ -2782,14 +2835,14 @@ test-e2e-acp: build-ui build-daemon ## Run Playwright session lifecycle tests �
 	fi; \
 	echo "$(GREEN)Found ACP backend: $$ACP_BACKEND$(NC)"
 	@$(MAKE) stop-local >/dev/null 2>&1 || true
-	@rm -rf /tmp/quicbaas-chrometest-data && mkdir -p /tmp/quicbaas-chrometest-data
-	@rm -f /tmp/quicbaas-chrometest.sock
+	@rm -rf /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data && mkdir -p /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data
+	@rm -f /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock
 	@nohup ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
-		--unix-socket /tmp/quicbaas-chrometest.sock \
-		--data-dir /tmp/quicbaas-chrometest-data --log-level info \
+		--unix-socket /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest.sock \
+		--data-dir /tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data --log-level info \
 		--embedded-fleet-node --embedded-fleet-node-backend claude \
-		>/tmp/quicbaasd-e2e-acp.log 2>&1 & \
-	echo $$! > /tmp/quicbaasd-e2e-acp.pid
+		>/tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-e2e-acp.log 2>&1 & \
+	echo $$! > /tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-e2e-acp.pid
 	@echo "$(YELLOW)Waiting for daemon readiness (up to 75s cold boot)...$(NC)"
 	@for i in $$(seq 1 75); do \
 		if curl -sk -o /dev/null -w "%{http_code}" https://localhost:18080/api/v1/health/ready 2>/dev/null | grep -q 200; then \
@@ -2797,13 +2850,13 @@ test-e2e-acp: build-ui build-daemon ## Run Playwright session lifecycle tests �
 		fi; sleep 1; \
 	done
 	@cd cmd/quicbaas/frontend && \
-		NODE_EXTRA_CA_CERTS=/tmp/quicbaas-chrometest-data/certs/ca-chain.crt \
+		NODE_EXTRA_CA_CERTS=/tmp/quicbaas-$(RUN_ID_SLUG)-chrometest-data/certs/ca-chain.crt \
 		QUICBAAS_UI_URL=https://localhost:18080/ui/ \
-		QUICBAAS_DAEMON_LOG=/tmp/quicbaasd-e2e-acp.log \
+		QUICBAAS_DAEMON_LOG=/tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-e2e-acp.log \
 		QUICBAAS_E2E_BACKEND=acp \
 		npx playwright test --project=chromium-acp; \
 		TEST_RESULT=$$?; \
-		kill -9 $$(cat /tmp/quicbaasd-e2e-acp.pid 2>/dev/null) 2>/dev/null || true; \
+		kill -9 $$(cat /tmp/quicbaas-$(RUN_ID_SLUG)-quicbaasd-e2e-acp.pid 2>/dev/null) 2>/dev/null || true; \
 		$(MAKE) stop-local >/dev/null 2>&1 || true; \
 		exit $$TEST_RESULT
 
@@ -2847,16 +2900,17 @@ test-e2e-docker: ## Run the Playwright e2e suite fully in Docker (host needs onl
 	@echo "$(BLUE)Running dockerized Playwright e2e (chromium-no-backend)...$(NC)"
 	@$(MAKE) --no-print-directory stage-gomodauth
 	@COMPOSE_FILE="test/e2e/docker-compose.e2e.yml"; \
-	trap '$(GOMODAUTH_CLEAR)' EXIT; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_E2E)"; \
+	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	set -o pipefail; \
-	if ! docker compose -f $$COMPOSE_FILE build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; then \
+	if ! $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; then \
 		echo "$(RED)Image build FAILED — refusing to run e2e against a stale cached image.$(NC)"; \
 		exit 1; \
 	fi; \
 	$(GOMODAUTH_CLEAR); \
-	docker compose -f $$COMPOSE_FILE run --rm e2e; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE run --rm e2e; \
 	RESULT=$$?; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true; \
 	exit $$RESULT
 
 .PHONY: test-e2e-acp-docker
@@ -2870,25 +2924,27 @@ test-e2e-acp-docker: ## Run the Playwright ACP live suite in Docker (opencode + 
 	echo "$(BLUE)Running dockerized Playwright ACP e2e (opencode + ollama @ $$GPU_HOST)...$(NC)"; \
 	export QUICBAAS_E2E_SANDBOX="$(strip $(QUICBAAS_E2E_SANDBOX))"; \
 	export QUICBAAS_E2E_SANDBOX="$${QUICBAAS_E2E_SANDBOX:-0}"; \
-	export QUICBAAS_E2E_SANDBOX_IMAGE="quicbaas-e2e-sandbox-agent:latest"; \
+	export QUICBAAS_E2E_SANDBOX_IMAGE="$(QUICBAAS_E2E_SANDBOX_IMAGE)"; \
 	if [ "$$QUICBAAS_E2E_SANDBOX" = "1" ]; then \
 		echo "$(BLUE)Container-sandbox mode: building sandbox agent image $$QUICBAAS_E2E_SANDBOX_IMAGE (opencode + ollama @ $$GPU_HOST)...$(NC)"; \
 		docker build -f test/e2e/Dockerfile.sandbox-agent \
+			--label $(DOCKER_RUN_LABEL) \
 			--build-arg OLLAMA_URL="http://$$GPU_HOST" \
 			--build-arg OPENCODE_MODEL="qwen3:1.7b" \
-			-t "$$QUICBAAS_E2E_SANDBOX_IMAGE" test/e2e \
+			-t "$(QUICBAAS_E2E_SANDBOX_IMAGE)" test/e2e \
 			2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
 	fi; \
 	COMPOSE_FILE="test/e2e/docker-compose.e2e.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_E2E)"; \
 	$(MAKE) --no-print-directory stage-gomodauth || exit 1; \
-	trap '$(GOMODAUTH_CLEAR)' EXIT; \
+	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	E2E_PROJECT=chromium-acp E2E_BACKEND=opencode E2E_OLLAMA_URL="http://$$GPU_HOST" \
-	docker compose -f $$COMPOSE_FILE -f test/e2e/docker-compose.e2e-acp.yml build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE -f test/e2e/docker-compose.e2e-acp.yml build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
 	$(GOMODAUTH_CLEAR); \
 	E2E_PROJECT=chromium-acp E2E_BACKEND=opencode E2E_OLLAMA_URL="http://$$GPU_HOST" \
-	docker compose -f $$COMPOSE_FILE -f test/e2e/docker-compose.e2e-acp.yml run --rm e2e; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE -f test/e2e/docker-compose.e2e-acp.yml run --rm e2e; \
 	RESULT=$$?; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true; \
 	exit $$RESULT
 
 .PHONY: e2e-test
@@ -3218,7 +3274,7 @@ trivy: ## Run Trivy vulnerability scanner on filesystem
 # The images this Makefile builds that also ship: the daemon and its FIPS
 # variant. The CLI image (Dockerfile.cli) has no Makefile build target; it and
 # these two are gated in .github/workflows/release.yml before push.
-TRIVY_IMAGES := $(DOCKER_IMAGE):$(DOCKER_TAG) $(DOCKER_IMAGE):fips
+TRIVY_IMAGES := $(DOCKER_IMAGE):$(DOCKER_TAG_RUN) $(DOCKER_IMAGE):$(DOCKER_FIPS_TAG)
 
 .PHONY: trivy-image
 # Mirrors the gate in the ci.yml docker job so the same failure reproduces
@@ -3341,8 +3397,8 @@ docker-build: ## Build Docker image
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
-	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" -t $(DOCKER_IMAGE):$(DOCKER_TAG) -t $(DOCKER_IMAGE):latest .
-	@echo "$(GREEN)Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG)$(NC)"
+	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" --label $(DOCKER_RUN_LABEL) -t $(DOCKER_IMAGE):$(DOCKER_TAG_RUN) -t $(DOCKER_IMAGE):$(DOCKER_LATEST_TAG) .
+	@echo "$(GREEN)Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG_RUN)$(NC)"
 
 .PHONY: docker-build-dev
 docker-build-dev: ## Build development Docker image
@@ -3350,7 +3406,7 @@ docker-build-dev: ## Build development Docker image
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
-	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" -f test/integration/Dockerfile.dev -t $(DOCKER_IMAGE):dev .
+	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" --label $(DOCKER_RUN_LABEL) -f test/integration/Dockerfile.dev -t $(DOCKER_IMAGE):$(DOCKER_DEV_TAG) .
 
 .PHONY: docker-build-fips
 docker-build-fips: ## Build FIPS 140-3 Docker image
@@ -3359,14 +3415,14 @@ docker-build-fips: ## Build FIPS 140-3 Docker image
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
-	$(DOCKER) buildx build --build-arg GOFIPS140=latest --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" -f Dockerfile.fips -t $(DOCKER_IMAGE):fips .
-	@echo "$(GREEN)FIPS Docker image built: $(DOCKER_IMAGE):fips$(NC)"
+	$(DOCKER) buildx build --build-arg GOFIPS140=latest --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" --label $(DOCKER_RUN_LABEL) -f Dockerfile.fips -t $(DOCKER_IMAGE):$(DOCKER_FIPS_TAG) .
+	@echo "$(GREEN)FIPS Docker image built: $(DOCKER_IMAGE):$(DOCKER_FIPS_TAG)$(NC)"
 
 .PHONY: docker-build-devcontainer
 docker-build-devcontainer: ## Build devcontainer image
 	@echo "$(BLUE)Building devcontainer image...$(NC)"
-	$(DOCKER) buildx build -f .devcontainer/Dockerfile -t $(DOCKER_IMAGE)-devcontainer:latest .
-	@echo "$(GREEN)Devcontainer image built: $(DOCKER_IMAGE)-devcontainer:latest$(NC)"
+	$(DOCKER) buildx build --label $(DOCKER_RUN_LABEL) -f .devcontainer/Dockerfile -t $(DOCKER_IMAGE)-devcontainer:$(DOCKER_LATEST_TAG) .
+	@echo "$(GREEN)Devcontainer image built: $(DOCKER_IMAGE)-devcontainer:$(DOCKER_LATEST_TAG)$(NC)"
 
 .PHONY: docker-build-integration
 docker-build-integration: ## Build integration test images
@@ -3374,8 +3430,8 @@ docker-build-integration: ## Build integration test images
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
-	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" -f test/integration/Dockerfile -t $(DOCKER_IMAGE)-integration-test:latest .
-	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" -f test/integration/Dockerfile.node -t $(DOCKER_IMAGE)-integration-node:latest .
+	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" --label $(DOCKER_RUN_LABEL) -f test/integration/Dockerfile -t $(DOCKER_IMAGE)-integration-test:$(DOCKER_LATEST_TAG) .
+	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" --label $(DOCKER_RUN_LABEL) -f test/integration/Dockerfile.node -t $(DOCKER_IMAGE)-integration-node:$(DOCKER_LATEST_TAG) .
 	@echo "$(GREEN)Integration test images built$(NC)"
 
 # ==============================================================================
@@ -3438,7 +3494,7 @@ export DEVCACHE_NPM_REGISTRY
 
 .PHONY: build-worker-image
 build-worker-image: ## Build the Software Factory worker image (quicbaas-software-factory-worker:<version>-cc<claude>-cx<codex>)
-	@echo "$(BLUE)Building the Software Factory worker image ($(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG))...$(NC)"
+	@echo "$(BLUE)Building the Software Factory worker image ($(WORKER_IMAGE_LOCAL_REF))...$(NC)"
 	$(DOCKER) build --pull \
 		--build-arg GO_VERSION=$(GO_VERSION) \
 		--build-arg GOLANGCI_VERSION=$(GOLANGCI_VERSION) \
@@ -3491,10 +3547,11 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg DEVCACHE_GOPRIVATE \
 		--build-arg DEVCACHE_NPM_REGISTRY \
 		-f $(WORKER_IMAGE_DIR)/Dockerfile \
+		--label $(DOCKER_RUN_LABEL) \
 		-t $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) \
-		-t $(WORKER_IMAGE_REPO):$(DOCKER_TAG) \
+		-t $(WORKER_IMAGE_REPO):$(DOCKER_TAG_RUN) \
 		$(WORKER_IMAGE_DIR)
-	@echo "$(GREEN)✓ $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG)$(NC)"
+	@echo "$(GREEN)✓ $(WORKER_IMAGE_LOCAL_REF)$(NC)"
 
 # THE PROBES ARE GO, AND THEY ARE THE REFRESH GATE'S PROBES. Each one — the
 # toolchain on the login PATH and a signed commit, serena's MCP handshake and a
@@ -3507,15 +3564,15 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 # itself pass the same bar.
 .PHONY: test-worker-image
 test-worker-image: build-worker-image ## Build the worker image and run its probes (the refresh gate's probes)
-	@echo "$(BLUE)Probing $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) as uid $(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)...$(NC)"
+	@echo "$(BLUE)Probing $(WORKER_IMAGE_LOCAL_REF) as uid $(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)...$(NC)"
 	$(GOCMD) run ./$(WORKER_IMAGE_DIR)/probe \
-		-image $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) \
+		-image $(WORKER_IMAGE_LOCAL_REF) \
 		-base $(VERSION) \
 		-claude-code $(CLAUDE_CODE_VERSION) \
 		-codex $(CODEX_VERSION) \
 		-uid $(WORKER_IMAGE_UID) \
 		-gid $(WORKER_IMAGE_GID)
-	@echo "$(GREEN)✓ $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) passed every probe$(NC)"
+	@echo "$(GREEN)✓ $(WORKER_IMAGE_LOCAL_REF) passed every probe$(NC)"
 
 # The worker image's Go package -- its Dockerfile, pins, labels, probes and
 # fixtures -- unit-tested without an engine. test-% reaches only pkg/ and cmd/.
@@ -3588,47 +3645,47 @@ push-worker-image: ## Scan, then push the worker image to WORKER_IMAGE_REGISTRY 
 .PHONY: docker-run
 docker-run: ## Run Docker container
 	@echo "$(BLUE)Running Docker container...$(NC)"
-	$(DOCKER) run -p 8080:8080 -p 9090:9090 --name $(APP_NAME) $(DOCKER_IMAGE):latest
+	$(DOCKER) run -p 8080 -p 9090 --name $(APP_NAME)-$(RUN_ID_SLUG) $(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)
 
 .PHONY: docker-run-fips
 docker-run-fips: ## Run FIPS Docker container
 	@echo "$(BLUE)Running FIPS Docker container...$(NC)"
-	$(DOCKER) run -p 8080:8080 -p 9090:9090 --name $(APP_NAME)-fips $(DOCKER_IMAGE):fips
+	$(DOCKER) run -p 8080 -p 9090 --name $(APP_NAME)-fips-$(RUN_ID_SLUG) $(DOCKER_IMAGE):$(DOCKER_FIPS_TAG)
 
 .PHONY: docker-stop
 docker-stop: ## Stop Docker container
 	@echo "$(BLUE)Stopping Docker container...$(NC)"
-	$(DOCKER) stop $(APP_NAME) || true
-	$(DOCKER) rm $(APP_NAME) || true
+	$(DOCKER) stop $(APP_NAME)-$(RUN_ID_SLUG) $(APP_NAME)-fips-$(RUN_ID_SLUG) || true
+	$(DOCKER) rm $(APP_NAME)-$(RUN_ID_SLUG) $(APP_NAME)-fips-$(RUN_ID_SLUG) || true
 
 .PHONY: docker-push
 docker-push: ## Push Docker image to registry
 	@echo "$(BLUE)Pushing Docker image to registry...$(NC)"
-	$(DOCKER) tag $(DOCKER_IMAGE):$(DOCKER_TAG) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG)
-	$(DOCKER) tag $(DOCKER_IMAGE):latest $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):latest
-	$(DOCKER) push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG)
-	$(DOCKER) push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):latest
+	$(DOCKER) tag $(DOCKER_IMAGE):$(DOCKER_TAG_RUN) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG_RUN)
+	$(DOCKER) tag $(DOCKER_IMAGE):$(DOCKER_LATEST_TAG) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)
+	$(DOCKER) push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG_RUN)
+	$(DOCKER) push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)
 
 .PHONY: docker-compose-up
 docker-compose-up: ## Start docker-compose environment
 	@echo "$(BLUE)Starting docker-compose environment...$(NC)"
-	$(DOCKER_COMPOSE) up -d
+	$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT) up -d
 
 .PHONY: docker-compose-down
 docker-compose-down: ## Stop docker-compose environment
 	@echo "$(BLUE)Stopping docker-compose environment...$(NC)"
-	$(DOCKER_COMPOSE) down --volumes --remove-orphans
+	$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT) down --volumes --remove-orphans --rmi local
 
 .PHONY: docker-compose-logs
 docker-compose-logs: ## Show docker-compose logs
-	$(DOCKER_COMPOSE) logs -f
+	$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT) logs -f
 
 ##@ Cluster Management
 
 .PHONY: cluster-up
 cluster-up: ## Start test cluster
 	@echo "$(BLUE)Starting QuicBaaS test cluster...$(NC)"
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.test.yml up -d
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_TEST) -f test/integration/docker-compose.test.yml up -d
 	@echo "$(GREEN)Test cluster started$(NC)"
 	@echo "$(YELLOW)Waiting for cluster to be ready...$(NC)"
 	@sleep 5
@@ -3637,13 +3694,13 @@ cluster-up: ## Start test cluster
 .PHONY: cluster-down
 cluster-down: ## Stop test cluster
 	@echo "$(BLUE)Stopping QuicBaaS test cluster...$(NC)"
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.test.yml down --volumes --remove-orphans
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_TEST) -f test/integration/docker-compose.test.yml down --volumes --remove-orphans --rmi local
 	@echo "$(GREEN)Test cluster stopped and cleaned up$(NC)"
 
 .PHONY: cluster-down-integration
 cluster-down-integration: ## Stop integration test cluster
 	@echo "$(BLUE)Stopping integration test cluster...$(NC)"
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.integration.yml down --volumes --remove-orphans
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_INTEGRATION) -f test/integration/docker-compose.integration.yml down --volumes --remove-orphans --rmi local
 	@echo "$(GREEN)Integration test cluster stopped and cleaned up$(NC)"
 
 .PHONY: cluster-restart
@@ -3651,40 +3708,43 @@ cluster-restart: cluster-down cluster-up ## Restart test cluster
 
 .PHONY: cluster-logs
 cluster-logs: ## View cluster logs
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.test.yml logs -f
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_TEST) -f test/integration/docker-compose.test.yml logs -f
 
 .PHONY: cluster-logs-node1
 cluster-logs-node1: ## View node1 logs
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.test.yml logs -f node1
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_TEST) -f test/integration/docker-compose.test.yml logs -f node1
 
 .PHONY: cluster-logs-node2
 cluster-logs-node2: ## View node2 logs
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.test.yml logs -f node2
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_TEST) -f test/integration/docker-compose.test.yml logs -f node2
 
 .PHONY: cluster-logs-node3
 cluster-logs-node3: ## View node3 logs
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.test.yml logs -f node3
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_TEST) -f test/integration/docker-compose.test.yml logs -f node3
 
 .PHONY: cluster-status
 cluster-status: ## Check cluster status
 	@echo "$(BLUE)Checking cluster status...$(NC)"
-	@echo ""
-	@echo "Node 1:"
-	@curl -sf http://localhost:8081/v1/health/live && echo "  Status: Healthy" || echo "  Status: Unhealthy"
-	@echo ""
-	@echo "Node 2:"
-	@curl -sf http://localhost:8082/v1/health/live && echo "  Status: Healthy" || echo "  Status: Unhealthy"
-	@echo ""
-	@echo "Node 3:"
-	@curl -sf http://localhost:8083/v1/health/live && echo "  Status: Healthy" || echo "  Status: Unhealthy"
-	@echo ""
+	@COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_TEST)"; \
+	COMPOSE_FILE="test/integration/docker-compose.test.yml"; \
+	for node in node1 node2 node3; do \
+		addr=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port $$node 8080); \
+		port=$${addr##*:}; \
+		echo ""; \
+		echo "$$node:"; \
+		curl -sf http://localhost:$$port/v1/health/live && echo "  Status: Healthy" || echo "  Status: Unhealthy"; \
+	done
 
 .PHONY: cluster-health
 cluster-health: ## Run cluster health check
 	@echo "$(BLUE)Running cluster health check...$(NC)"
-	@for port in 8081 8082 8083; do \
-		echo "Checking node on port $$port..."; \
-		curl -sf http://localhost:$$port/api/v1/health || echo "  Node on port $$port is unhealthy"; \
+	@COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_TEST)"; \
+	COMPOSE_FILE="test/integration/docker-compose.test.yml"; \
+	for node in node1 node2 node3; do \
+		addr=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port $$node 8080); \
+		port=$${addr##*:}; \
+		echo "Checking $$node on port $$port..."; \
+		curl -sf http://localhost:$$port/api/v1/health || echo "  $$node is unhealthy"; \
 	done
 
 .PHONY: cluster-clean
@@ -3726,7 +3786,7 @@ install-gosec: ## Build and install gosec at GOSEC_VERSION with GO_TOOL_DEPENDEN
 	@echo "$(BLUE)Building gosec $(GOSEC_VERSION) with $(GO_TOOL_DEPENDENCY_FLOORS)...$(NC)"
 	@set -e; \
 	gobin="$$(go env GOBIN)"; gobin="$${gobin:-$$(go env GOPATH)/bin}"; \
-	dir="$$(mktemp -d)"; trap 'rm -rf "$$dir"' EXIT; \
+	dir="$$(mktemp -d -t quicbaas-$(RUN_ID_SLUG)-gosec.XXXXXX)"; trap 'rm -rf "$$dir"' EXIT; \
 	cd "$$dir"; \
 	export GOWORK=off; \
 	go mod init build.local/gosec >/dev/null 2>&1; \
@@ -3871,9 +3931,9 @@ clean: ## Clean build artifacts and test data
 # checkout on the host used them last, not this repository. Each such stack is
 # instead torn down by the target that runs it, where the name is unambiguous
 # because that target just used it: `integration-test` brings its stack down
-# with `--volumes --remove-orphans` and removes those six images by name before
-# it rebuilds them, and an EXIT trap brings the stack down again on every way
-# out of that recipe.
+# with `--volumes --remove-orphans --rmi local` and removes those six images by
+# name before it rebuilds them, and an EXIT trap brings the stack down again on
+# every way out of that recipe.
 #
 # The merge-result snapshot test image is absent for a related reason: it has
 # no name at all. `integration-test-merge-result` builds it with --iidfile and
@@ -3882,23 +3942,22 @@ clean: ## Clean build artifacts and test data
 # write literally. It is removed by that target's own EXIT trap, by the id it
 # just built, on every path out of that recipe.
 DOCKER_LOCAL_IMAGES := \
-	$(DOCKER_IMAGE):$(DOCKER_TAG) \
-	$(DOCKER_IMAGE):latest \
-	$(DOCKER_IMAGE):dev \
-	$(DOCKER_IMAGE):fips \
-	$(DOCKER_IMAGE)-test:latest \
-	$(DOCKER_IMAGE)-devcontainer:latest \
-	$(DOCKER_IMAGE)-integration-test:latest \
-	$(DOCKER_IMAGE)-integration-node:latest \
-	$(DOCKER_IMAGE)-e2e-sandbox-agent:latest \
-	$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-	$(DOCKER_IMAGE)/swtpm:latest \
-	signalbridge:latest \
-	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG) \
-	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):latest \
-	go-quicbaas-quicbaas-node1:latest \
-	go-quicbaas-quicbaas-node2:latest \
-	go-quicbaas-quicbaas-node3:latest
+	$(DOCKER_IMAGE):$(DOCKER_TAG_RUN) \
+	$(DOCKER_IMAGE):$(DOCKER_LATEST_TAG) \
+	$(DOCKER_IMAGE):$(DOCKER_DEV_TAG) \
+	$(DOCKER_IMAGE):$(DOCKER_FIPS_TAG) \
+	$(DOCKER_IMAGE)-test:$(DOCKER_LATEST_TAG) \
+	$(DOCKER_IMAGE)-devcontainer:$(DOCKER_LATEST_TAG) \
+	$(DOCKER_IMAGE)-integration-test:$(DOCKER_LATEST_TAG) \
+	$(DOCKER_IMAGE)-integration-node:$(DOCKER_LATEST_TAG) \
+	$(DOCKER_IMAGE)-e2e-sandbox-agent:$(DOCKER_LATEST_TAG) \
+	$(DOCKER_IMAGE)-software-factory-worker:$(WORKER_IMAGE_TAG) \
+	$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG_RUN) \
+	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG_RUN) \
+	$(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_LATEST_TAG) \
+	$(COMPOSE_PROJECT)-quicbaas-node1:latest \
+	$(COMPOSE_PROJECT)-quicbaas-node2:latest \
+	$(COMPOSE_PROJECT)-quicbaas-node3:latest
 
 .PHONY: clean-docker
 clean-docker: ## Remove the Docker images this project builds (never prunes the host)
@@ -3954,34 +4013,34 @@ dev: dev-rebuild dev-start ## Rebuild and start development environment
 .PHONY: dev-rebuild
 dev-rebuild: ## Rebuild development Docker image
 	@echo "$(BLUE)Rebuilding development image...$(NC)"
-	$(DOCKER) buildx build --load -f test/integration/Dockerfile.dev -t quicbaas:dev .
-	@$(DOCKER) tag quicbaas:dev go-quicbaas-quicbaas-node1:latest
-	@$(DOCKER) tag quicbaas:dev go-quicbaas-quicbaas-node2:latest
-	@$(DOCKER) tag quicbaas:dev go-quicbaas-quicbaas-node3:latest
+	$(DOCKER) buildx build --load --label $(DOCKER_RUN_LABEL) -f test/integration/Dockerfile.dev -t $(DOCKER_IMAGE):$(DOCKER_DEV_TAG) .
+	@$(DOCKER) tag $(DOCKER_IMAGE):$(DOCKER_DEV_TAG) $(COMPOSE_PROJECT)-quicbaas-node1:latest
+	@$(DOCKER) tag $(DOCKER_IMAGE):$(DOCKER_DEV_TAG) $(COMPOSE_PROJECT)-quicbaas-node2:latest
+	@$(DOCKER) tag $(DOCKER_IMAGE):$(DOCKER_DEV_TAG) $(COMPOSE_PROJECT)-quicbaas-node3:latest
 	@echo "$(GREEN)Development image rebuilt$(NC)"
 
 .PHONY: dev-start
 dev-start: ## Start development environment
 	@echo "$(BLUE)Starting development environment...$(NC)"
-	$(DOCKER_COMPOSE) -f docker-compose.yml up -d --remove-orphans
+	$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT) -f docker-compose.yml up -d --remove-orphans
 	@echo "$(GREEN)Development environment started$(NC)"
 	@echo "$(YELLOW)Waiting for services to be healthy...$(NC)"
 	@sleep 10
-	@$(DOCKER_COMPOSE) ps
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT) ps
 
 .PHONY: dev-logs
 dev-logs: ## Show development logs
-	$(DOCKER_COMPOSE) logs -f
+	$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT) logs -f
 
 .PHONY: dev-restart
 dev-restart: ## Restart development environment
 	@echo "$(BLUE)Restarting development environment...$(NC)"
-	$(DOCKER_COMPOSE) restart
+	$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT) restart
 
 .PHONY: dev-down
 dev-down: ## Stop development environment
 	@echo "$(BLUE)Stopping development environment...$(NC)"
-	$(DOCKER_COMPOSE) down --volumes --remove-orphans
+	$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT) down --volumes --remove-orphans --rmi local
 
 .PHONY: dev-gui
 dev-gui: _build-sdk-typescript ## Launch Wails desktop GUI in development mode (hot reload)
@@ -4032,7 +4091,7 @@ trivy-image-release: ## Run Trivy on Docker image for release (fails on CRITICAL
 	@echo "$(BLUE)Running Trivy vulnerability scan on release image...$(NC)"
 	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
 	if [ -n "$$TRIVY_BIN" ]; then \
-		$$TRIVY_BIN image --severity CRITICAL,HIGH --exit-code 1 $(DOCKER_IMAGE):$(DOCKER_TAG) && \
+		$$TRIVY_BIN image --severity CRITICAL,HIGH --exit-code 1 $(DOCKER_IMAGE):$(DOCKER_TAG_RUN) && \
 		echo "$(GREEN)Trivy image scan passed - no critical/high vulnerabilities$(NC)"; \
 	else \
 		echo "$(YELLOW)trivy not found$(NC)"; \
@@ -4048,33 +4107,38 @@ trivy-image-release: ## Run Trivy on Docker image for release (fails on CRITICAL
 
 .PHONY: metrics
 metrics: ## Show metrics endpoint
-	@echo "$(BLUE)Metrics available at http://localhost:9090/metrics$(NC)"
-	curl -s http://localhost:9090/metrics
+	@METRICS_ADDR=$$($(DOCKER) port $(APP_NAME)-$(RUN_ID_SLUG) 9090/tcp); \
+	METRICS_PORT=$${METRICS_ADDR##*:}; \
+	echo "$(BLUE)Metrics available at http://localhost:$$METRICS_PORT/metrics$(NC)"; \
+	curl -s http://localhost:$$METRICS_PORT/metrics
 
 .PHONY: health
 health: ## Check health status
-	@echo "$(BLUE)Checking health status...$(NC)"
-	@curl -s http://localhost:8080/health/live && echo "" || echo "$(RED)Service not healthy$(NC)"
-	@curl -s http://localhost:8080/health/ready && echo "" || echo "$(RED)Service not ready$(NC)"
+	@HTTP_ADDR=$$($(DOCKER) port $(APP_NAME)-$(RUN_ID_SLUG) 8080/tcp); \
+	HTTP_PORT=$${HTTP_ADDR##*:}; \
+	echo "$(BLUE)Checking health status on localhost:$$HTTP_PORT...$(NC)"; \
+	curl -s http://localhost:$$HTTP_PORT/health/live && echo "" || echo "$(RED)Service not healthy$(NC)"; \
+	curl -s http://localhost:$$HTTP_PORT/health/ready && echo "" || echo "$(RED)Service not ready$(NC)"
 
 .PHONY: all
 all: clean deps lint test build ## Run all major targets
 	@echo "$(GREEN)All targets completed successfully$(NC)"
 .PHONY: integration-bench
 integration-bench: ## Run integration benchmarks
-	@echo "$(BLUE)Running integration benchmarks...$(NC)"
-	@echo "$(YELLOW)Starting integration test cluster...$(NC)"
 	@$(MAKE) --no-print-directory stage-gomodauth
-	@trap '$(GOMODAUTH_CLEAR)' EXIT; \
-	$(DOCKER_COMPOSE) -f test/integration/docker-compose.integration.yml up -d; \
-	RC=$$?; $(GOMODAUTH_CLEAR); exit $$RC
-	@echo "$(YELLOW)Waiting for services to be ready...$(NC)"
-	@sleep 10
-	@echo "$(BLUE)Running benchmarks...$(NC)"
-	$(GOTEST) -bench=. -benchmem ./test/integration/benchmarks/... || ($(DOCKER_COMPOSE) -f test/integration/docker-compose.integration.yml down && exit 1)
-	@echo "$(BLUE)Stopping integration test cluster...$(NC)"
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.integration.yml down --volumes
-	@echo "$(GREEN)Integration benchmarks completed$(NC)"
+	@set -e; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_INTEGRATION)"; \
+	COMPOSE_FILE="test/integration/docker-compose.integration.yml"; \
+	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
+	echo "$(BLUE)Running integration benchmarks...$(NC)"; \
+	echo "$(YELLOW)Starting integration test cluster...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d; \
+	$(GOMODAUTH_CLEAR); \
+	echo "$(YELLOW)Waiting for services to be ready...$(NC)"; \
+	sleep 10; \
+	echo "$(BLUE)Running benchmarks...$(NC)"; \
+	$(GOTEST) -bench=. -benchmem ./test/integration/benchmarks/...; \
+	echo "$(GREEN)Integration benchmarks completed$(NC)"
 
 # ==============================================================================
 # NOTE: Legacy hardcoded integration test targets removed.
@@ -4254,34 +4318,48 @@ integration-test-init: build-daemon ## Run canonical init/start/transport matrix
 
 .PHONY: integration-test-agent
 integration-test-agent: ## Run agent orchestration integration tests (requires Docker + Ollama)
-	@echo "$(BLUE)Starting Ollama container for agent tests...$(NC)"
-	@if command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
+	@set -e; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_AGENT)"; \
+	COMPOSE_FILE="test/integration/agent/docker-compose.yml"; \
+	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
+	echo "$(BLUE)Starting Ollama container for agent tests...$(NC)"; \
+	if command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
 		GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1); \
 		GPU_MEM=$$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1); \
 		GPU_IDX=$$(nvidia-smi --query-gpu=index --format=csv,noheader | head -1); \
 		echo "$(GREEN)  ✓ NVIDIA GPU detected: $$GPU_NAME ($$GPU_MEM) [device $$GPU_IDX]$(NC)"; \
 		NVIDIA_DEVICE_ID=$${NVIDIA_DEVICE_ID:-$$GPU_IDX} \
-		docker compose -f test/integration/agent/docker-compose.yml -f test/integration/agent/docker-compose.gpu.yml up -d --wait; \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE -f test/integration/agent/docker-compose.gpu.yml up -d --wait; \
 	else \
 		echo "$(YELLOW)  ⚠ No NVIDIA GPU detected - Ollama will use CPU inference$(NC)"; \
-		docker compose -f test/integration/agent/docker-compose.yml up -d --wait; \
-	fi
-	@echo "$(YELLOW)Pulling tinyllama model (this may take a few minutes on first run)...$(NC)"
-	@docker exec quicbaas-agent-ollama ollama pull tinyllama
-	@echo "$(GREEN)Ollama is ready with tinyllama model$(NC)"
-	@echo "$(BLUE)Running agent orchestration integration tests...$(NC)"
-	@OLLAMA_URL=http://localhost:11434 OLLAMA_MODEL=tinyllama \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d --wait; \
+	fi; \
+	echo "$(YELLOW)Pulling tinyllama model (this may take a few minutes on first run)...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama; \
+	OLLAMA_ADDR=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port ollama 11434); \
+	OLLAMA_PORT=$${OLLAMA_ADDR##*:}; \
+	echo "$(GREEN)Ollama is ready with tinyllama model on localhost:$$OLLAMA_PORT$(NC)"; \
+	echo "$(BLUE)Running agent orchestration integration tests...$(NC)"; \
+	OLLAMA_URL=http://localhost:$$OLLAMA_PORT OLLAMA_MODEL=tinyllama \
 		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' \
-		$(GOTEST) -v -race -tags 'integration rag' -timeout 300s ./test/integration/agent/... || \
-		(echo "$(RED)Agent integration tests failed$(NC)" && docker compose -f test/integration/agent/docker-compose.yml down --remove-orphans && exit 1)
-	@echo "$(BLUE)Stopping Ollama container...$(NC)"
-	@docker compose -f test/integration/agent/docker-compose.yml down --remove-orphans
-	@echo "$(GREEN)Agent integration tests passed$(NC)"
+		$(GOTEST) -v -race -tags 'integration rag' -timeout 300s ./test/integration/agent/...; \
+	echo "$(GREEN)Agent integration tests passed$(NC)"
 
 .PHONY: integration-test-fleet-runtime
 integration-test-fleet-runtime: ## Run fleet node daemon integration tests in Docker (central + Ollama qwen3:1.7b)
 	@echo "$(BLUE)Running fleet runtime integration tests...$(NC)"
 	@COMPOSE_FILE="test/integration/fleet_runtime/docker-compose.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_FLEET)"; \
+	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
+	if [ "$(origin QUICBAAS_IMAGE)" = "command line" ] || [ "$(origin QUICBAAS_IMAGE)" = "environment" ] || [ "$(origin QUICBAAS_IMAGE)" = "environment override" ]; then \
+		echo "$(YELLOW)Using supplied QUICBAAS_IMAGE=$$QUICBAAS_IMAGE$(NC)"; \
+	else \
+		QUICBAAS_IMAGE="$(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)"; \
+		export QUICBAAS_IMAGE; \
+		echo "$(YELLOW)Building fleet runtime image $$QUICBAAS_IMAGE...$(NC)"; \
+		$(MAKE) --no-print-directory docker-build; \
+	fi; \
+	export QUICBAAS_IMAGE; \
 	if command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
 		GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1); \
 		GPU_MEM=$$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1); \
@@ -4290,12 +4368,12 @@ integration-test-fleet-runtime: ## Run fleet node daemon integration tests in Do
 		echo "$(YELLOW)  ⚠ No NVIDIA GPU detected - Ollama will use CPU inference$(NC)"; \
 	fi; \
 	echo "$(YELLOW)Starting fleet runtime test environment...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d --wait central ollama 2>&1 | tail -5; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d --wait central ollama 2>&1 | tail -5; \
 	echo "$(YELLOW)Pulling qwen3:1.7b model (fastest for CI)...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull qwen3:1.7b 2>&1 | tail -3; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull qwen3:1.7b 2>&1 | tail -3; \
 	echo "$(GREEN)Environment ready$(NC)"; \
 	echo "$(BLUE)Running tests...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE run --rm -T \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE run --rm -T \
 		-e QUICBAAS_URL=http://central:8080 \
 		-e OLLAMA_URL=http://ollama:11434 \
 		-e OLLAMA_MODEL=qwen3:1.7b \
@@ -4305,7 +4383,7 @@ integration-test-fleet-runtime: ## Run fleet node daemon integration tests in Do
 			$${QUICBAAS_TEST_FILTER:-./test/integration/fleet_runtime/...} 2>&1 | while IFS= read -r line; do echo "$$line"; done; \
 	RESULT=$${PIPESTATUS[0]}; \
 	echo "$(BLUE)Stopping fleet runtime test environment...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	if [ "$$RESULT" -ne 0 ]; then \
 		echo "$(RED)Fleet runtime integration tests FAILED$(NC)"; \
 		exit 1; \
@@ -4423,6 +4501,8 @@ integration-test-agents: ## Run full E2E agent orchestration tests with real age
 		echo "$(YELLOW)WARNING: ~/.claude not found - Claude Code agents may not authenticate$(NC)"; \
 	fi
 	@COMPOSE_FILE="deployments/agents/docker-compose.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_AGENT)"; \
+	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	if command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
 		echo "$(GREEN)  ✓ GPU detected - enabling GPU acceleration$(NC)"; \
 		COMPOSE_FILE="$$COMPOSE_FILE -f deployments/agents/docker-compose.gpu.yml"; \
@@ -4430,22 +4510,26 @@ integration-test-agents: ## Run full E2E agent orchestration tests with real age
 		echo "$(YELLOW)  ⚠ No GPU detected - CPU inference only$(NC)"; \
 	fi; \
 	echo "$(YELLOW)Building agent containers...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE build 2>&1 | tail -5; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build 2>&1 | tail -5; \
 	echo "$(YELLOW)Starting agent orchestration environment...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE up -d --wait quicbaas ollama 2>&1 | tail -10; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d --wait quicbaas ollama 2>&1 | tail -10; \
 	echo "$(YELLOW)Pulling Ollama models...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull all-minilm 2>&1 | tail -1; \
-	docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama 2>&1 | tail -1; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull all-minilm 2>&1 | tail -1; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama 2>&1 | tail -1; \
+	QUICBAAS_ADDR=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas 8080); \
+	OLLAMA_ADDR=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port ollama 11434); \
+	QUICBAAS_PORT=$${QUICBAAS_ADDR##*:}; \
+	OLLAMA_PORT=$${OLLAMA_ADDR##*:}; \
 	echo "$(GREEN)Environment ready$(NC)"; \
 	echo "$(BLUE)Running E2E agent orchestration tests...$(NC)"; \
-	QUICBAAS_URL=http://localhost:8080 \
-		OLLAMA_URL=http://localhost:11434 \
+	QUICBAAS_URL=http://localhost:$$QUICBAAS_PORT \
+		OLLAMA_URL=http://localhost:$$OLLAMA_PORT \
 		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' \
 		$(GOTEST) -v -tags 'integration agents' -timeout 600s \
 		./test/integration/agents/... 2>&1 | tee integration-test-agents.log; \
 	TEST_EXIT=$$?; \
 	echo "$(BLUE)Stopping agent environment...$(NC)"; \
-	docker compose -f $$COMPOSE_FILE down --remove-orphans; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	if [ $$TEST_EXIT -eq 0 ]; then \
 		echo "$(GREEN)✓ E2E agent orchestration tests PASSED$(NC)"; \
 	else \

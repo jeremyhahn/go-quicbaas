@@ -2,16 +2,14 @@ version: '3.9'
 
 services:
   quicbaasd:
-    image: quicbaas:latest
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: signalbridge-quicbaas
     environment:
       QUICBAAS_LOG_LEVEL: info
     ports:
-      - "8888:8888"  # gRPC
-      - "9090:9090"  # REST/HTTP
+      - "8888"  # gRPC
+      - "9090"  # REST/HTTP
     volumes:
       - quicbaas-data:/data
     healthcheck:
@@ -22,11 +20,9 @@ services:
       start_period: 10s
 
   signalbridge:
-    image: signalbridge:latest
     build:
       context: .
       dockerfile: Dockerfile.signalbridge
-    container_name: signalbridge-bridge
     depends_on:
       quicbaasd:
         condition: service_healthy
@@ -34,7 +30,11 @@ services:
       QUICBAAS_URL: http://quicbaasd:9090
       SIGNAL_LISTEN_ADDR: 0.0.0.0:8000
     ports:
-      - "8000:8000"
+      - "8000"
+    networks:
+      default:
+        aliases:
+          - signalbridge-bridge
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 5s

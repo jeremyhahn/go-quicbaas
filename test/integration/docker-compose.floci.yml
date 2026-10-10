@@ -4,9 +4,8 @@ services:
   # Floci - AWS services emulator (KMS, S3, etc.). MIT-licensed, no auth token.
   floci:
     image: floci/floci:latest
-    container_name: quicbaas-floci
     ports:
-      - "4566:4566"            # Floci gateway (all services on one port)
+      - "4566"            # Floci gateway (all services on one port)
     environment:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
@@ -31,9 +30,8 @@ services:
   # Fake GCS Server - Google Cloud Storage emulator
   fake-gcs-server:
     image: fsouza/fake-gcs-server:latest
-    container_name: quicbaas-fake-gcs
     ports:
-      - "4443:4443"
+      - "4443"
     command: ["-scheme", "http", "-port", "4443", "-external-url", "http://localhost:4443"]
     networks:
       - quicbaas-test
@@ -46,11 +44,10 @@ services:
   # Azurite - Azure Storage emulator (Blob, Queue, Table)
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:latest
-    container_name: quicbaas-azurite
     ports:
-      - "10000:10000"  # Blob service
-      - "10001:10001"  # Queue service
-      - "10002:10002"  # Table service
+      - "10000"  # Blob service
+      - "10001"  # Queue service
+      - "10002"  # Table service
     command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --loose"
     networks:
       - quicbaas-test
@@ -65,7 +62,6 @@ services:
     build:
       context: ../..
       dockerfile: test/integration/docker/softhsm/Dockerfile
-    container_name: quicbaas-softhsm
     volumes:
       - softhsm-tokens:/var/lib/softhsm/tokens
     networks:
@@ -74,7 +70,6 @@ services:
 
 networks:
   quicbaas-test:
-    name: quicbaas-test
     driver: bridge
 
 volumes:

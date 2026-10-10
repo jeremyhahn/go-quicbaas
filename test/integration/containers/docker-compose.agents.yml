@@ -13,14 +13,13 @@ services:
 
   # QuicBaaS server - orchestration and MCP endpoint for agents
   quicbaas:
-    image: quicbaas:test
-    container_name: quicbaas-agents-server
+    image: ${QUICBAAS_TEST_IMAGE:-quicbaas:test}
     hostname: quicbaas
     ports:
-      - "8080:8080"   # HTTP/REST API + MCP endpoint
-      - "50051:50051" # gRPC API
-      - "4433:4433"   # QUIC transport
-      - "9090:9090"   # Prometheus metrics
+      - "8080"   # HTTP/REST API + MCP endpoint
+      - "50051" # gRPC API
+      - "4433"   # QUIC transport
+      - "9090"   # Prometheus metrics
     environment:
       - QUICBAAS_RAFT_NODE_ID=1
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas:63001
@@ -62,10 +61,9 @@ services:
   # Ollama - local LLM inference server (CPU mode by default)
   ollama:
     image: ollama/ollama:latest
-    container_name: quicbaas-agents-ollama
     hostname: ollama
     ports:
-      - "11434:11434"
+      - "11434"
     volumes:
       - ollama-agents-data:/root/.ollama
     environment:
@@ -96,7 +94,6 @@ services:
     build:
       context: ./claude-code
       dockerfile: Dockerfile
-    container_name: quicbaas-claude-code-agent
     hostname: claude-code-agent
     depends_on:
       quicbaas:
@@ -128,7 +125,6 @@ services:
     build:
       context: ./codex
       dockerfile: Dockerfile
-    container_name: quicbaas-codex-agent
     hostname: codex-agent
     depends_on:
       quicbaas:
@@ -158,7 +154,6 @@ services:
     build:
       context: ./opencode
       dockerfile: Dockerfile
-    container_name: quicbaas-opencode-agent
     hostname: opencode-agent
     depends_on:
       quicbaas:

@@ -194,8 +194,8 @@ func TestCheckFailsOnEachWayTheContractCanBreak(t *testing.T) {
 		{
 			name:        "integration-bench clearing only on the normal path",
 			file:        "Makefile",
-			old:         "\t@trap '$(GOMODAUTH_CLEAR)' EXIT; \\\n\t$(DOCKER_COMPOSE) -f test/integration/docker-compose.integration.yml up -d; \\",
-			replacement: "\t@$(DOCKER_COMPOSE) -f test/integration/docker-compose.integration.yml up -d; \\",
+			old:         "\ttrap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \\",
+			replacement: "\ttrap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \\",
 			want:        "integration-bench left the credentials in the staged file when interrupted",
 		},
 		{
@@ -352,7 +352,7 @@ func TestRunLeavesTheHostsGomodBackupsUntouched(t *testing.T) {
 	// recipe's fixed backup paths, which a concurrent run restores into its own
 	// go.mod. Each case now backs up inside its own directory, so whatever the
 	// host has there -- present or not, whatever it holds -- is left alone.
-	hostBackups := []string{"/tmp/quicbaas-gomod-backup", "/tmp/quicbaas-sdk-gomod-backup"}
+	hostBackups := []string{"/tmp/quicbaas-verify-gomodauth-gomod-backup", "/tmp/quicbaas-verify-gomodauth-sdk-gomod-backup"}
 	snapshot := func() map[string]string {
 		state := map[string]string{}
 		for _, path := range hostBackups {

@@ -74,6 +74,9 @@ temp/
 # Docker volumes
 .docker-data/
 
+# Local Docker run identity for Makefile lifecycle targets
+.quicbaas-run-id
+
 # Test artifacts
 test/data/
 test/tmp/

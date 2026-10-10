@@ -112,6 +112,20 @@ func (e *ScanError) Unwrap() error { return e.Err }
 // makeVars are the Makefile variables a producer may name in place of a literal.
 var makeVars = []string{"DOCKER_IMAGE", "DOCKER_TAG", "DOCKER_REGISTRY"}
 
+var optionalMakeVars = []string{
+	"DOCKER_TAG_RUN",
+	"DOCKER_LATEST_TAG",
+	"DOCKER_DEV_TAG",
+	"DOCKER_FIPS_TAG",
+	"DOCKER_TEST_TAG",
+	"WORKER_IMAGE_REPO",
+	"WORKER_IMAGE_TAG",
+	"WORKER_IMAGE_LOCAL_REF",
+	"WORKER_IMAGE_REMOTE_REF",
+	"QUICBAAS_E2E_SANDBOX_IMAGE",
+	"RUN_ID_SLUG",
+}
+
 var (
 	// assignment matches a shell or make variable assignment token, `NAME=value`.
 	assignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
@@ -155,11 +169,18 @@ var prunedDirs = map[string]bool{
 // to cannot be read — all three being holes in the inventory rather than empty
 // answers from it.
 func Derive(root string) ([]string, error) {
-	vars := make(map[string]string, len(makeVars))
+	vars := make(map[string]string, len(makeVars)+len(optionalMakeVars))
 	for _, name := range makeVars {
 		value, err := gate.MakeVar(root, name)
 		if err != nil {
 			return nil, err
+		}
+		vars[name] = value
+	}
+	for _, name := range optionalMakeVars {
+		value, err := gate.MakeVar(root, name)
+		if err != nil {
+			continue
 		}
 		vars[name] = value
 	}
@@ -264,6 +285,9 @@ func scanCommandFile(origin, content string, vars map[string]string) ([]string, 
 			id, ok := resolve(token, vars, literals)
 			if !ok {
 				unresolved = append(unresolved, UnresolvedTag{Origin: origin, Token: token})
+				return
+			}
+			if id == "" || strings.HasPrefix(id, ":") {
 				return
 			}
 			if !strings.Contains(id, ":") {

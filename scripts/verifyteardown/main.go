@@ -52,11 +52,13 @@ const buildMarker = "build --no-cache"
 // leaves.
 const teardownMarker = "down --volumes --remove-orphans"
 
-// gomodBackups are the fixed paths the recipe copies go.mod to. Whatever was
-// there is left as it was.
+const gateRunID = "verify-teardown"
+
+// gomodBackups are the run-scoped paths the recipe copies go.mod to. Whatever
+// was there is left as it was.
 var gomodBackups = []string{
-	"/tmp/quicbaas-gomod-backup",
-	"/tmp/quicbaas-sdk-gomod-backup",
+	"/tmp/quicbaas-verify-teardown-gomod-backup",
+	"/tmp/quicbaas-verify-teardown-sdk-gomod-backup",
 }
 
 func main() {
@@ -175,6 +177,7 @@ func runIntegrationTest(root, work string) (int, []string, string, error) {
 	}
 
 	cmd := exec.Command("make", "--no-print-directory", "integration-test",
+		"RUN_ID="+gateRunID,
 		"GOMODAUTH_ENV="+filepath.Join(work, "gomodauth.env"))
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),

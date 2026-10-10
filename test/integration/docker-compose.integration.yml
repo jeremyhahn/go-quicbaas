@@ -458,10 +458,10 @@ services:
       - "4433/udp"         # QUIC for container-to-container
       - "8888"             # MCP for container-to-container
     ports:
-      - "18080:8080"       # REST API (host:container)
-      - "15051:50051"      # gRPC
-      - "14433:4433/udp"   # QUIC
-      - "18888:8888"       # MCP
+      - "8080"       # REST API (host:container)
+      - "50051"      # gRPC
+      - "4433/udp"   # QUIC
+      - "8888"       # MCP
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
       integration-test-network:
@@ -592,10 +592,10 @@ services:
       - "4433/udp"         # QUIC for container-to-container
       - "8888"             # MCP for container-to-container
     ports:
-      - "18081:8080"       # REST API (host:container)
-      - "15052:50051"      # gRPC
-      - "14434:4433/udp"   # QUIC
-      - "18889:8888"       # MCP
+      - "8080"       # REST API (host:container)
+      - "50051"      # gRPC
+      - "4433/udp"   # QUIC
+      - "8888"       # MCP
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
       integration-test-network:
@@ -728,10 +728,10 @@ services:
       - "4433/udp"         # QUIC for container-to-container
       - "8888"             # MCP for container-to-container
     ports:
-      - "18082:8080"       # REST API (host:container)
-      - "15053:50051"      # gRPC
-      - "14435:4433/udp"   # QUIC
-      - "18890:8888"       # MCP
+      - "8080"       # REST API (host:container)
+      - "50051"      # gRPC
+      - "4433/udp"   # QUIC
+      - "8888"       # MCP
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
       integration-test-network:
@@ -867,8 +867,8 @@ services:
     expose:
       - "8888"             # MCP for container-to-container
     ports:
-      - "4436:4433/udp"
-      - "18891:8888"       # MCP
+      - "4433/udp"
+      - "8888"       # MCP
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     depends_on:
       certs-init:
@@ -991,8 +991,8 @@ services:
     expose:
       - "8888"             # MCP for container-to-container
     ports:
-      - "4437:4433/udp"
-      - "18892:8888"       # MCP
+      - "4433/udp"
+      - "8888"       # MCP
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     depends_on:
       certs-init:
@@ -1013,18 +1013,11 @@ services:
 networks:
   integration-test-network:
     driver: bridge
-    # Enable multicast support via driver options
+    # Enable multicast support via driver options while letting Docker allocate
+    # a non-overlapping subnet for each per-run project.
     driver_opts:
       com.docker.network.bridge.enable_ip_masquerade: "true"
       com.docker.network.bridge.enable_icc: "true"
-    # Use a predictable subnet to ensure multicast routing works.
-    # 172.29.0.0/16 (not .28) — the trusted-platform devcontainer network
-    # occupies 172.28.0.0/16 on shared dev hosts and Docker refuses
-    # overlapping pools.
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.29.0.0/16
 
 volumes:
   # Per-run mTLS/PIV material, produced by certs-init inside the stack.

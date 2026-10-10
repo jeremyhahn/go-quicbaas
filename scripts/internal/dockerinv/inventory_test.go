@@ -210,6 +210,22 @@ func TestScanRecordReadsTheCommandGrammar(t *testing.T) {
 	}
 }
 
+func TestScanCommandFileIgnoresDisabledRegistryRef(t *testing.T) {
+	vars := map[string]string{
+		"WORKER_IMAGE_LOCAL_REF":  "worker:local",
+		"WORKER_IMAGE_REMOTE_REF": ":worker-remote",
+	}
+	content := "docker tag $(WORKER_IMAGE_LOCAL_REF) $(WORKER_IMAGE_REMOTE_REF)\n"
+
+	got, unresolved := scanCommandFile("Makefile", content, vars)
+	if len(unresolved) > 0 {
+		t.Fatalf("scanCommandFile unresolved = %v", unresolved)
+	}
+	if len(got) != 0 {
+		t.Fatalf("scanCommandFile = %q, want no images", got)
+	}
+}
+
 func TestJoinContinuationsMatchesTheShellsOwnView(t *testing.T) {
 	cases := []struct {
 		name    string

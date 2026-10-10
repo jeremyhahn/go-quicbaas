@@ -13,9 +13,10 @@
 #   E2E_EXTRA_ARGS  optional extra args appended to the daemon start command
 set -uo pipefail
 
-DATA_DIR=/tmp/quicbaas-e2e-data
-SOCK=/tmp/quicbaas-e2e.sock
-LOG=/tmp/quicbaasd-e2e.log
+RUN_ID_SLUG=${RUN_ID_SLUG:-${RUN_ID:-local}}
+DATA_DIR=/tmp/quicbaas-${RUN_ID_SLUG}-e2e-data
+SOCK=/tmp/quicbaas-${RUN_ID_SLUG}-e2e.sock
+LOG=/tmp/quicbaas-${RUN_ID_SLUG}-quicbaasd-e2e.log
 PORT=18080
 PROJECT="${E2E_PROJECT:-chromium-no-backend}"
 BACKEND="${E2E_BACKEND:-ollama}"

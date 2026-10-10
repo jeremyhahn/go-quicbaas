@@ -3,9 +3,8 @@ version: '3.8'
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: quicbaas-ollama
     ports:
-      - "11434:11434"
+      - "11434"
     volumes:
       - ollama-data:/root/.ollama
     environment:
@@ -22,7 +21,6 @@ services:
   # Helper container to pull the model on startup
   ollama-setup:
     image: curlimages/curl:latest
-    container_name: quicbaas-ollama-setup
     depends_on:
       ollama:
         condition: service_healthy

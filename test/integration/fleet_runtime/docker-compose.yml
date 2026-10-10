@@ -18,13 +18,12 @@
 services:
   central:
     image: ${QUICBAAS_IMAGE:-quicbaas:latest}
-    container_name: agent-runtime-central
     environment:
       - QUICBAAS_MODE=standalone
       - QUICBAAS_BIND=0.0.0.0:8080
       - QUICBAAS_LOG_LEVEL=info
     ports:
-      - "18080:8080"
+      - "8080"
     networks:
       - agent-runtime-net
     healthcheck:
@@ -36,14 +35,13 @@ services:
 
   ollama:
     image: ollama/ollama:latest
-    container_name: agent-runtime-ollama
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
       - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-1}
       - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
     ports:
-      - "11434:11434"
+      - "11434"
     volumes:
       - agent-runtime-ollama-data:/root/.ollama
     networks:
@@ -57,7 +55,6 @@ services:
 
   integration-test:
     image: ${QUICBAAS_IMAGE:-quicbaas:latest}
-    container_name: agent-runtime-tests
     depends_on:
       central:
         condition: service_healthy

@@ -6,14 +6,13 @@ version: '3.8'
 services:
   # Node 1 - Primary node
   quicbaas-perf-node1:
-    image: quicbaas:dev
-    container_name: quicbaas-perf-node1
+    image: ${QUICBAAS_DEV_IMAGE:-quicbaas:dev}
     hostname: quicbaas-perf-node1
     command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
     ports:
-      - "18081:8080"   # REST API (using 18xxx to avoid conflicts)
-      - "19091:9090"   # Metrics
-      - "50051:50051"  # gRPC
+      - "8080"   # REST API (using 18xxx to avoid conflicts)
+      - "9090"   # Metrics
+      - "50051"  # gRPC
     environment:
       - QUICBAAS_RAFT_NODE_ID=1
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-perf-node1:63001
@@ -41,14 +40,13 @@ services:
 
   # Node 2
   quicbaas-perf-node2:
-    image: quicbaas:dev
-    container_name: quicbaas-perf-node2
+    image: ${QUICBAAS_DEV_IMAGE:-quicbaas:dev}
     hostname: quicbaas-perf-node2
     command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
     ports:
-      - "18082:8080"   # REST API
-      - "19092:9090"   # Metrics
-      - "50052:50051"  # gRPC
+      - "8080"   # REST API
+      - "9090"   # Metrics
+      - "50051"  # gRPC
     environment:
       - QUICBAAS_RAFT_NODE_ID=2
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-perf-node2:63002
@@ -78,14 +76,13 @@ services:
 
   # Node 3
   quicbaas-perf-node3:
-    image: quicbaas:dev
-    container_name: quicbaas-perf-node3
+    image: ${QUICBAAS_DEV_IMAGE:-quicbaas:dev}
     hostname: quicbaas-perf-node3
     command: ["/usr/local/bin/quicbaasd", "node", "--discovery=static", "--grpc-port=50051"]
     ports:
-      - "18083:8080"   # REST API
-      - "19093:9090"   # Metrics
-      - "50053:50051"  # gRPC
+      - "8080"   # REST API
+      - "9090"   # Metrics
+      - "50051"  # gRPC
     environment:
       - QUICBAAS_RAFT_NODE_ID=3
       - QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-perf-node3:63003

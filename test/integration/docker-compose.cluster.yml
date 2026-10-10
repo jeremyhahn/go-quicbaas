@@ -44,7 +44,6 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
     hostname: quicbaas-node1
-    container_name: quicbaas-cluster-node1
     environment:
       - CGO_ENABLED=0
       # Increase WriteTimeout above RequestTimeout (25s) so the server
@@ -85,9 +84,9 @@ services:
       - ./quicbaas-cluster.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - ./cluster-certs:/etc/quicbaas/certs:ro
     ports:
-      - "8081:8080"      # REST API
-      - "50051:50051"    # gRPC
-      - "9091:9090"      # Metrics
+      - "8080"      # REST API
+      - "50051"    # gRPC
+      - "9090"      # Metrics
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
       quicbaas-cluster:
@@ -110,7 +109,6 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
     hostname: quicbaas-node2
-    container_name: quicbaas-cluster-node2
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
@@ -141,9 +139,9 @@ services:
       - ./quicbaas-cluster.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - ./cluster-certs:/etc/quicbaas/certs:ro
     ports:
-      - "8082:8080"      # REST API
-      - "50052:50051"    # gRPC
-      - "9092:9090"      # Metrics
+      - "8080"      # REST API
+      - "50051"    # gRPC
+      - "9090"      # Metrics
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
       quicbaas-cluster:
@@ -169,7 +167,6 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
     hostname: quicbaas-node3
-    container_name: quicbaas-cluster-node3
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
@@ -200,9 +197,9 @@ services:
       - ./quicbaas-cluster.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - ./cluster-certs:/etc/quicbaas/certs:ro
     ports:
-      - "8083:8080"      # REST API
-      - "50053:50051"    # gRPC
-      - "9093:9090"      # Metrics
+      - "8080"      # REST API
+      - "50051"    # gRPC
+      - "9090"      # Metrics
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
       quicbaas-cluster:
@@ -234,7 +231,6 @@ services:
         workspace: ../../..
       dockerfile: test/integration/Dockerfile.node
     hostname: quicbaas-node4
-    container_name: quicbaas-cluster-node4
     environment:
       - CGO_ENABLED=0
       - QUICBAAS_SERVER_WRITE_TIMEOUT=45s
@@ -270,10 +266,10 @@ services:
       - ./quicbaas-cluster.yaml:/etc/quicbaas/quicbaas.yaml:ro
       - ./cluster-certs:/etc/quicbaas/certs:ro
     ports:
-      - "8084:8080"      # REST API
-      - "50054:50051"    # gRPC
-      - "4436:4433/udp"  # QUIC
-      - "9094:9090"      # Metrics
+      - "8080"      # REST API
+      - "50051"    # gRPC
+      - "4433/udp"  # QUIC
+      - "9090"      # Metrics
     command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
     networks:
       quicbaas-cluster:
@@ -298,4 +294,3 @@ services:
 networks:
   quicbaas-cluster:
     driver: bridge
-    name: quicbaas-cluster-network

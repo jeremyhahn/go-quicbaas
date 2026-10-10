@@ -19,7 +19,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: quicbaas:latest
     container_name: quicbaas-node1
     hostname: node1
     ports:
@@ -46,7 +45,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: quicbaas:latest
     container_name: quicbaas-node2
     hostname: node2
     ports:
@@ -70,7 +68,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: quicbaas:latest
     container_name: quicbaas-node3
     hostname: node3
     ports:
