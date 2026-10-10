@@ -15,6 +15,10 @@ package server
 
 import (
 	"context"
+	"strings"
+	"sync"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth/liveness"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -28,16 +32,166 @@ import (
 // when the deployment config leaves security.liveness_cache_ttl unset (zero).
 const defaultLivenessCacheTTL = config.DefaultLivenessCacheTTL
 
-// buildPlatformValidator constructs the single, long-lived platform-token
-// Validator the REST and gRPC (and Unix-over-gRPC) authorization gates call per
-// request. It wires the IN-PROCESS IAM OIDC provider as both the live key source
+var _ qrdbsdk.UnobservableMethodAuthenticator = (*platformBearerAuthenticator)(nil)
+
+type platformBearerAuthenticator struct {
+	server *Server
+
+	mu        sync.Mutex
+	validator *platformtoken.Validator
+}
+
+type PlatformBearerAuthUnavailableError struct {
+	Cause error
+}
+
+func (e *PlatformBearerAuthUnavailableError) Error() string {
+	if e.Cause != nil {
+		return "platform bearer authenticator is unavailable: " + e.Cause.Error()
+	}
+	return "platform bearer authenticator is unavailable"
+}
+
+func (e *PlatformBearerAuthUnavailableError) Unwrap() error {
+	return e.Cause
+}
+
+type PlatformBearerMissingError struct{}
+
+func (e *PlatformBearerMissingError) Error() string {
+	return "platform bearer authorization is missing"
+}
+
+type PlatformBearerInvalidHeaderError struct{}
+
+func (e *PlatformBearerInvalidHeaderError) Error() string {
+	return "platform bearer authorization must be 'Bearer <token>'"
+}
+
+type PlatformBearerTenantRequiredError struct{}
+
+func (e *PlatformBearerTenantRequiredError) Error() string {
+	return "platform bearer token tenant_id is required"
+}
+
+type PlatformBearerCertificateRequiredError struct{}
+
+func (e *PlatformBearerCertificateRequiredError) Error() string {
+	return "platform bearer token requires a client certificate"
+}
+
+func platformBearerHasPeerCertificate(ctx context.Context) bool {
+	state := qrdbsdk.TLSStateFromContext(ctx)
+	return state != nil && len(state.PeerCertificates) > 0 && state.PeerCertificates[0] != nil
+}
+
+func enforcePlatformBearerCertificateBinding(ctx context.Context, confirmation *platformtoken.Confirmation) error {
+	if confirmation == nil || strings.TrimSpace(confirmation.X5TS256) == "" {
+		return nil
+	}
+	if platformBearerHasPeerCertificate(ctx) {
+		return nil
+	}
+	return &PlatformBearerCertificateRequiredError{}
+}
+
+func newPlatformBearerAuthenticator(s *Server) qrdbsdk.UnobservableMethodAuthenticator {
+	return &platformBearerAuthenticator{server: s}
+}
+
+func (a *platformBearerAuthenticator) Name() string {
+	return "platform-bearer"
+}
+
+func (a *platformBearerAuthenticator) MethodUnobservable() bool {
+	return true
+}
+
+func (a *platformBearerAuthenticator) Authenticate(ctx context.Context) (*qrdbsdk.Identity, error) {
+	return a.authenticateAuthorization(ctx, qrdbsdk.HTTPAuthorizationFromContext(ctx))
+}
+
+func (a *platformBearerAuthenticator) authenticateAuthorization(ctx context.Context, authorization string) (*qrdbsdk.Identity, error) {
+	// Known limit (go-qrdb#645): qrdb's node authenticator chain runs
+	// built-in mTLS before embedder authenticators and stops on the first
+	// success. If a peer certificate is present, decline so qrdb mTLS alone
+	// decides the request. Until #645 lands, cnf.x5t#S256 platform tokens
+	// cannot authenticate on qrdb-native routes.
+	if platformBearerHasPeerCertificate(ctx) {
+		return nil, nil
+	}
+	raw := strings.TrimSpace(authorization)
+	if raw == "" {
+		return nil, &PlatformBearerMissingError{}
+	}
+	parts := strings.Fields(raw)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || strings.TrimSpace(parts[1]) == "" {
+		return nil, &PlatformBearerInvalidHeaderError{}
+	}
+	validator, err := a.resolveValidator(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Known limit (go-qrdb#646): qrdb's request context does not yet expose
+	// DPoP proof, HTTP method, or canonical URI values to embedder
+	// authenticators. Empty values make cnf.jkt tokens fail on qrdb-native
+	// routes; module-owned REST routes use Server.AuthenticateHTTP and are
+	// unaffected.
+	ac, err := validator.Validate(ctx, parts[1], "", "", "")
+	if err != nil {
+		return nil, err
+	}
+	if err := enforcePlatformBearerCertificateBinding(ctx, ac.Confirmation); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(ac.TenantID) == "" {
+		return nil, &PlatformBearerTenantRequiredError{}
+	}
+	return &qrdbsdk.Identity{
+		Subject:          ac.Subject,
+		TenantID:         ac.TenantID,
+		ScopePermissions: ac.Scopes,
+	}, nil
+}
+
+func (a *platformBearerAuthenticator) resolveValidator(ctx context.Context) (*platformtoken.Validator, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.validator != nil {
+		return a.validator, nil
+	}
+	if a.server == nil {
+		return nil, &PlatformBearerAuthUnavailableError{}
+	}
+	validator, err := a.server.buildPlatformValidator(ctx)
+	if err != nil {
+		return nil, &PlatformBearerAuthUnavailableError{Cause: err}
+	}
+	a.validator = validator
+	return validator, nil
+}
+
+func (s *Server) platformOIDCProviderGetter(_ context.Context) (grpcOIDCProviderGetter, error) {
+	if s == nil {
+		return nil, &GRPCAuthzError{Op: "build platform validator", Cause: errGRPCOIDCProviderUnavailable}
+	}
+	getter, ok := s.quicBaaSServiceRef().(grpcOIDCProviderGetter)
+	if !ok {
+		return nil, &GRPCAuthzError{Op: "build platform validator", Cause: errGRPCOIDCProviderUnavailable}
+	}
+	return getter, nil
+}
+
+// buildPlatformValidator constructs a platform-token Validator for the qrdb
+// authenticator and the REST module fallback compatibility path. It wires the
+// IN-PROCESS IAM OIDC provider as both the live key source
 // (GetJWKS, covering key rotation and newly added tenant keys without an HTTP
 // fetch) and the liveness backend (TokenLiveness -> revocation + subject
 // disablement).
 //
-// The builder is transport-agnostic (no rest/grpc tag): the same Validator
-// backs every authenticated transport, so each transport's enforcement gate
-// constructs it from this one place rather than re-deriving the wiring.
+// The builder is transport-agnostic (no rest/grpc tag): qrdb's central
+// authenticator calls the resulting validator for every transport that projects
+// Authorization into the request context.
 //
 // Audience convention (AS==RS): quicbaas validates the tokens it itself issues,
 // so the required audience equals the issuer. iss and aud are therefore both the
@@ -52,9 +206,9 @@ const defaultLivenessCacheTTL = config.DefaultLivenessCacheTTL
 // MemoryReplayCache backs DPoP proof-replay rejection for the validator's
 // lifetime.
 func (s *Server) buildPlatformValidator(ctx context.Context) (*platformtoken.Validator, error) {
-	getter, ok := s.quicBaaSService.(grpcOIDCProviderGetter)
-	if !ok {
-		return nil, &GRPCAuthzError{Op: "build platform validator", Cause: errGRPCOIDCProviderUnavailable}
+	getter, err := s.platformOIDCProviderGetter(ctx)
+	if err != nil {
+		return nil, err
 	}
 	provider, err := getter.GetOIDCProvider(ctx)
 	if err != nil {

@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -168,6 +169,33 @@ func TestBuildPlatformValidator_NotAGetter(t *testing.T) {
 	require.True(t, errors.As(err, &gerr))
 	assert.Equal(t, "build platform validator", gerr.Op)
 	assert.True(t, errors.Is(err, errGRPCOIDCProviderUnavailable))
+}
+
+func TestGRPCAuthorizationInterceptors_RequireAuthzStartupDoesNotWaitForInitWG(t *testing.T) {
+	provider := newTestOIDCProvider(t)
+	s := &Server{
+		logger:          newGRPCAuthzTestLogger(t),
+		config:          &config.Config{Security: config.SecurityConfig{RequireAuthz: true}},
+		quicBaaSService: &grpcOIDCGetterService{provider: provider},
+	}
+	s.initWG.Add(1)
+	defer s.initWG.Done()
+
+	done := make(chan error, 1)
+	go func() {
+		unary, stream, err := s.grpcAuthorizationInterceptors()
+		if err == nil && (unary == nil || stream == nil) {
+			err = errGRPCOIDCProviderUnavailable
+		}
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RequireAuthz startup gate construction waited for initWG")
+	}
 }
 
 // TestBuildPlatformValidator_GetterError asserts a failure obtaining the OIDC

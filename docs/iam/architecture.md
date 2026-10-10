@@ -699,6 +699,17 @@ Returns:
 
 The `cnf.x5t#S256` is the SHA-256 thumbprint of the certificate (RFC 8705 §3.1). Every mTLS connection must present this certificate.
 
+#### Known limits
+
+- **go-qrdb#645 — qrdb-native `cnf.x5t#S256` platform tokens.** A request
+  that presents a client certificate is decided by qrdb mTLS alone. A
+  certificate-bound platform token cannot authenticate on qrdb-native routes
+  until qrdb exposes authenticator ordering/composition for bearer plus mTLS.
+- **go-qrdb#646 — qrdb-native `cnf.jkt` DPoP platform tokens.** DPoP-bound
+  tokens are refused on qrdb-native routes until qrdb carries the DPoP proof,
+  HTTP method, and canonical URI through its request context. Module-owned
+  REST routes are unaffected.
+
 #### Obtain Access Token
 
 The client application establishes a TLS connection and requests a token:

@@ -38,26 +38,16 @@ type oidcProviderGetter interface {
 }
 
 // configureRESTAuthz wires the platform-token Validator the module's qrdb
-// ModuleAuthFallback (pkg/apimodule module_http.go AuthenticateHTTP) depends
-// on: a caller that reaches a unified-API-server module route WITHOUT a
-// qrdb-authenticated identity — a quicbaas platform-token (OIDC JWT/DPoP)
-// caller, which qrdb's own mTLS chain does not understand — is authenticated
-// by AuthenticateHTTP and then authorized by qrdb's ONE RBAC authorizer
-// (store-resolved roles for a caller with a qrdb user record, additively
-// unioned with the token's ScopePermissions otherwise — go-qrdb
-// v0.5.6-alpha+) using the SAME central platform-token Validator every
-// other transport shares (buildPlatformValidator, platform_validator.go).
+// ModuleAuthFallback (pkg/apimodule module_http.go AuthenticateHTTP) still
+// depends on for REST compatibility. The node-level WithAuthenticators path is
+// the normal platform-bearer path for REST, gRPC, MCP, and Unix; this fallback
+// remains fail-closed for a module request that reaches REST without a
+// qrdb-projected identity.
 //
-// The fallback is gated by SecurityConfig.RequireAuthz, mirroring the
-// identical selector on the gRPC/QUIC/MCP transports
-// (grpcAuthorizationInterceptors, lifecycle_grpc_authz.go): RequireAuthz=false
-// installs no fallback at all, so a request without a qrdb identity passes
-// through anonymously — the historical "anonymous data-plane access" default
-// — and RequireAuthz=true installs the fallback fail-closed: an unavailable
-// OIDC provider or a Validator construction failure is a typed
-// *AuthzGateConstructionError that ABORTS daemon startup (refuse-to-start
-// posture), so REST is never served with a silently-missing enforcement
-// gate.
+// RequireAuthz=false installs no fallback at all, preserving the historical
+// no-authz behaviour. RequireAuthz=true installs the compatibility fallback
+// fail-closed: an unavailable OIDC provider or a Validator construction
+// failure is a typed *AuthzGateConstructionError that aborts daemon startup.
 func (s *Server) configureRESTAuthz(restServer *restapi.Server) error {
 	if s.config == nil || !s.config.Security.RequireAuthz {
 		return nil

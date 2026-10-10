@@ -22,13 +22,18 @@ import (
 // SetIAMProvider sets the IAM components provider for REST handlers.
 // This is called by the server after IAM components are initialized.
 func (s *quicBaaS) SetIAMProvider(provider IAMComponents) {
-	if provider != nil {
-		s.iamProvider = &iamServiceAdapter{components: provider}
+	if provider == nil {
+		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.iamProvider = &iamServiceAdapter{components: provider}
 }
 
 // getIAMProvider returns the IAM service provider.
 func (s *quicBaaS) getIAMProvider() IAMServiceProvider {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.iamProvider
 }
 

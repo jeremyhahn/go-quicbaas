@@ -266,6 +266,11 @@ func (s *Server) AuthenticateHTTP(r *http.Request) (*qrdbsdk.Identity, error) {
 		s.logBearerRefusal(r, err)
 		return nil, err
 	}
+	if ac.TenantID == "" {
+		err := &EmptyTenantTokenError{}
+		s.logBearerRefusal(r, err)
+		return nil, err
+	}
 	return &qrdbsdk.Identity{
 		Subject:          ac.Subject,
 		TenantID:         ac.TenantID,
@@ -292,6 +297,13 @@ type EmptyTokenError struct{}
 
 func (e *EmptyTokenError) Error() string {
 	return "token cannot be empty"
+}
+
+// EmptyTenantTokenError is returned when a validated platform token has no tenant.
+type EmptyTenantTokenError struct{}
+
+func (e *EmptyTenantTokenError) Error() string {
+	return "platform token tenant_id is required"
 }
 
 // UnauthorizedError represents a 401 error.

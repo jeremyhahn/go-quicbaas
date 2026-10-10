@@ -3288,7 +3288,6 @@ Tokens are issued once the user completes a WebAuthn / PIV / mTLS login
 ceremony, or through an OAuth2 grant — both by `iam.OIDCProvider`. The access
 token is bound to the caller's mTLS certificate via `cnf.x5t#S256`.
 
-
 #### Custom Roles
 
 ```go

@@ -408,6 +408,23 @@ func TestServer_AuthenticateHTTP_GarbageToken(t *testing.T) {
 	}
 }
 
+func TestServer_AuthenticateHTTP_EmptyTenantToken(t *testing.T) {
+	srv := newModuleSupportServer(t)
+	srv.moduleAuthorizer = &fakeModuleTokenAuthorizer{wantToken: "tenantless-token", subject: "alice"}
+
+	req := httptest.NewRequest("GET", "/api/v1/kms/keys", nil)
+	req.Header.Set("Authorization", "Bearer tenantless-token")
+
+	identity, err := srv.AuthenticateHTTP(req)
+	var tenantErr *EmptyTenantTokenError
+	if !errors.As(err, &tenantErr) {
+		t.Fatalf("expected EmptyTenantTokenError, got identity=%v err=%v", identity, err)
+	}
+	if identity != nil {
+		t.Fatalf("expected no identity for tenantless token, got %+v", identity)
+	}
+}
+
 // TestServer_AuthenticateHTTP_MissingBearer proves a request with no
 // Authorization header fails closed with a typed error, never a nil
 // identity with a nil error.

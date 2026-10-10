@@ -891,6 +891,7 @@ func (s *Server) initStandaloneQRDBNode() error {
 		// Record the node's composed authorizer (returned unchanged) for the
 		// REST barrier scope authorizer (go-quicbaas#990).
 		s.nodeAuthorizerCapture(),
+		qrdbnode.WithAuthenticators(newPlatformBearerAuthenticator(s)),
 	}
 
 	// Inject the late-bound OIDC session issuer so a successful unified login
@@ -1096,6 +1097,7 @@ func (s *Server) initClusteredQRDBNode() error {
 		// Record the node's composed authorizer (returned unchanged) for the
 		// REST barrier scope authorizer (go-quicbaas#990).
 		s.nodeAuthorizerCapture(),
+		qrdbnode.WithAuthenticators(newPlatformBearerAuthenticator(s)),
 	}
 
 	// Inject the late-bound OIDC session issuer (see initStandaloneQRDBNode).

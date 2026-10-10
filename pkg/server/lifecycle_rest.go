@@ -327,19 +327,11 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		s.logger.Info("Seal service wired into service facade")
 	}
 
-	// Wire the module's qrdb ModuleAuthFallback seam (pkg/apimodule
-	// module_http.go AuthenticateHTTP, backed by
-	// pkg/api/rest/auth_support.go Server.AuthenticateHTTP): a caller
-	// reaching a unified-API-server module route WITHOUT a qrdb-authenticated
-	// identity is authenticated by the same central platform-token Validator
-	// every transport shares, then authorized by qrdb's ONE RBAC authorizer
-	// (store-resolved roles unioned with the token's ScopePermissions).
-	// Gated by SecurityConfig.RequireAuthz (a no-op when false, mirroring
-	// the gRPC/QUIC/MCP transports); the call is also a no-op when IAM/OIDC
-	// is unavailable under RequireAuthz=false (see the rest && !iam stub),
-	// preserving the prior no-authz behaviour for storage-less / embedded
-	// boots. Under RequireAuthz=true gate construction is fail-closed: a
-	// returned *AuthzGateConstructionError aborts startup.
+	// Keep the module's qrdb ModuleAuthFallback seam wired for compatibility
+	// with qrdb's module extension contract. The node-level authenticator is the
+	// normal platform-bearer path for every transport; this fallback remains a
+	// fail-closed REST composition path for callers that reach the module before
+	// qrdb has projected an identity.
 	if err := s.configureRESTAuthz(restServer); err != nil {
 		return nil, err
 	}
