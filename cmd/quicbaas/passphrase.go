@@ -348,6 +348,7 @@ func readPassphraseLimited(r io.Reader, op string) (*secure.Buffer, error) {
 	}
 	defer scratch.Destroy()
 
+	//secure:unborrowed allocates-protected the terminal reader fills the scratch protected buffer one byte at a time.
 	dst := scratch.Bytes()
 	n := 0
 	for n < len(dst) {

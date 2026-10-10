@@ -673,7 +673,7 @@ func localPIVConfigFromLogin(opts *canonicalAuthLoginOptions) *localPIVConfig {
 	return &localPIVConfig{
 		backend:      opts.pivBackend,
 		dir:          opts.pivDir,
-		pin:          opts.pin,
+		PIN:          opts.pin,
 		pkcs11Module: opts.pkcs11Module,
 		pkcs11Token:  opts.pkcs11Token,
 	}

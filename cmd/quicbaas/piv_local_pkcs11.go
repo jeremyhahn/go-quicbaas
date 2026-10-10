@@ -47,13 +47,13 @@ func newPKCS11PIVSession(cfg *localPIVConfig) (localPIVSession, error) {
 	if cfg.pkcs11Module == "" {
 		return nil, &PIVLocalSessionError{Op: "init pkcs11", Cause: errPKCS11ModuleRequired}
 	}
-	if cfg.pin == "" {
+	if cfg.PIN == "" {
 		return nil, &PIVPINRequiredError{}
 	}
 
 	// NewSecret wipes the byte copy it seals, so only the enclave holds the
 	// PIN from here on.
-	pin, err := secure.NewSecret([]byte(cfg.pin))
+	pin, err := secure.NewSecret([]byte(cfg.PIN))
 	if err != nil {
 		return nil, &PIVLocalSessionError{Op: "seal pkcs11 pin", Cause: err}
 	}
@@ -81,7 +81,7 @@ func newPKCS11PIVSession(cfg *localPIVConfig) (localPIVSession, error) {
 		backendConfig := map[string]interface{}{
 			"library": cfg.pkcs11Module,
 			"label":   cfg.pkcs11Token,
-			"pin":     cfg.pin,
+			"pin":     cfg.PIN,
 		}
 		if err := xkmssdk.AutoInitialize(&xkmssdk.AutoConfig{
 			DefaultBackend: string(xkmssdk.BackendPKCS11),

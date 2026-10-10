@@ -26,7 +26,7 @@ import (
 // touches a token.
 func TestNewPKCS11PIVSession_RejectsIncompleteConfig(t *testing.T) {
 	t.Run("missing module", func(t *testing.T) {
-		_, err := newPKCS11PIVSession(&localPIVConfig{backend: localPIVBackendPKCS11, pin: "123456"})
+		_, err := newPKCS11PIVSession(&localPIVConfig{backend: localPIVBackendPKCS11, PIN: "123456"})
 		var sessionErr *PIVLocalSessionError
 		if !errors.As(err, &sessionErr) || !errors.Is(err, errPKCS11ModuleRequired) {
 			t.Fatalf("error = %T %v, want *PIVLocalSessionError wrapping errPKCS11ModuleRequired", err, err)
@@ -49,7 +49,7 @@ func TestNewPKCS11PIVSession_UnloadableModule(t *testing.T) {
 		backend:      localPIVBackendPKCS11,
 		pkcs11Module: filepath.Join(t.TempDir(), "absent.so"),
 		pkcs11Token:  "quicbaas-test",
-		pin:          "123456",
+		PIN:          "123456",
 	})
 	var sessionErr *PIVLocalSessionError
 	if !errors.As(err, &sessionErr) {

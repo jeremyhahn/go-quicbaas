@@ -182,7 +182,7 @@ type CustodyCredential struct {
 
 	// Password is the password or password-equivalent. Never logged, never
 	// placed in an error, never rendered by String.
-	Password string
+	Password string `json:"password,omitempty" yaml:"password,omitempty"`
 }
 
 // NewGiteaBackend builds the adapter, failing closed on missing configuration.

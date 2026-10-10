@@ -64,8 +64,8 @@ type localPIVConfig struct {
 	// dir is the key/certificate root for the file backend.
 	dir string
 
-	// pin is the PKCS#11 user PIN (pkcs11 backend only).
-	pin string
+	// PIN is the PKCS#11 user PIN (pkcs11 backend only).
+	PIN string `json:"pin,omitempty" yaml:"pin,omitempty"`
 
 	// pkcs11Module is the PKCS#11 library path (pkcs11 backend only).
 	pkcs11Module string

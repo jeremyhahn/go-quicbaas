@@ -45,7 +45,7 @@ type RedisL2Config struct {
 
 	// Password is the Redis password for authentication
 	// If SecretsFetcher is provided, this field will be ignored
-	Password string
+	Password string `json:"password,omitempty" yaml:"password,omitempty"`
 
 	// DB is the Redis database number to use (0-15)
 	DB int

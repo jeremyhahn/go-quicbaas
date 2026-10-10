@@ -203,7 +203,7 @@ type PKCS11SealConfig struct {
 	Slot *int `mapstructure:"slot"`
 
 	// PIN is the user PIN for the token. Required. Treat as a secret — never log it.
-	PIN string `mapstructure:"pin"`
+	PIN string `mapstructure:"pin" json:"pin,omitempty" yaml:"pin,omitempty"`
 
 	// KeyLabel is the label of the wrapping key on the token. Required.
 	KeyLabel string `mapstructure:"key_label"`

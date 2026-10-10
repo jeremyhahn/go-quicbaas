@@ -21,6 +21,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 // KMSDEKProviderError represents an error from the KMS DEK provider.
@@ -197,6 +198,15 @@ func (p *KMSDEKProvider) generateDEK(ctx context.Context, req *GetDEKRequest, de
 		}
 	}
 
+	keyMaterial, err := secure.NewBufferFromBytes(plaintext)
+	if err != nil {
+		return nil, &KMSDEKProviderError{
+			Op:      "GetDEK.GenerateDataKey.Protect",
+			KeyPath: req.Path,
+			Err:     err,
+		}
+	}
+
 	if p.logger != nil {
 		p.logger.WithFields(map[string]interface{}{
 			"key_path": req.Path,
@@ -207,7 +217,7 @@ func (p *KMSDEKProvider) generateDEK(ctx context.Context, req *GetDEKRequest, de
 
 	return &GetDEKResponse{
 		DEK:         dekMeta,
-		KeyMaterial: plaintext,
+		KeyMaterial: keyMaterial,
 		WrappedKey:  wrapped,
 		Timestamp:   time.Now(),
 	}, nil
@@ -230,6 +240,15 @@ func (p *KMSDEKProvider) unwrapDEK(ctx context.Context, req *GetDEKRequest, dekM
 		}
 	}
 
+	keyMaterial, err := secure.NewBufferFromBytes(plaintext)
+	if err != nil {
+		return nil, &KMSDEKProviderError{
+			Op:      "GetDEK.UnwrapDEK.Protect",
+			KeyPath: req.Path,
+			Err:     err,
+		}
+	}
+
 	if p.logger != nil {
 		p.logger.WithFields(map[string]interface{}{
 			"key_path": req.Path,
@@ -240,7 +259,7 @@ func (p *KMSDEKProvider) unwrapDEK(ctx context.Context, req *GetDEKRequest, dekM
 
 	return &GetDEKResponse{
 		DEK:         dekMeta,
-		KeyMaterial: plaintext,
+		KeyMaterial: keyMaterial,
 		WrappedKey:  req.WrappedKey,
 		Timestamp:   time.Now(),
 	}, nil

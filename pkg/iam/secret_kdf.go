@@ -215,7 +215,8 @@ func deriveSecretHash(secret string) (string, error) {
 	return formatSecretHash(&secretDigest{
 		iterations: pbkdf2Iterations,
 		salt:       salt,
-		key:        key.Bytes(),
+		//secure:unborrowed injected-interface formatSecretHash consumes the derived key immediately before key.Destroy runs.
+		key: key.Bytes(),
 	}), nil
 }
 
@@ -261,6 +262,7 @@ func HashClientSecret(secret *secure.Secret) (string, error) {
 	}
 	defer buf.Destroy()
 
+	//secure:unborrowed injected-interface deriveSecretHash currently accepts the PBKDF2 secret as a string.
 	plaintext := buf.Bytes()
 	// Refused at the provisioning boundary rather than at authentication.
 	// deriveSecretHash("") is a perfectly well-formed digest, so without this
@@ -270,6 +272,7 @@ func HashClientSecret(secret *secure.Secret) (string, error) {
 		return "", ErrSecretEmpty
 	}
 
+	//secure:unwiped injected-interface deriveSecretHash currently accepts the PBKDF2 secret as a string.
 	return deriveSecretHash(string(plaintext))
 }
 
@@ -384,5 +387,6 @@ func compareSecretHash(stored, secret string) bool {
 	// its copy is wiped here too rather than left for the collector.
 	defer secure.Wipe(digest.key)
 
+	//secure:unborrowed injected-interface ConstantTimeCompare reads the protected candidate without retaining it.
 	return subtle.ConstantTimeCompare(candidate.Bytes(), digest.key) == 1
 }

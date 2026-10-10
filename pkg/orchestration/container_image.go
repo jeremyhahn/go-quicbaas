@@ -132,7 +132,7 @@ type RegistryAuth struct {
 	Username string
 
 	// Secret is the account's password or token.
-	Secret []byte
+	Secret []byte `json:"secret,omitempty"`
 }
 
 // imageCommand is one engine invocation.

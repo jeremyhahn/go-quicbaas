@@ -332,6 +332,7 @@ func sshPassphraseProviderFromB64(encoded string) (secure.PassphraseProvider, er
 	if err != nil {
 		return nil, err
 	}
+	//secure:unborrowed allocates-protected copy moves caller bytes into a new protected passphrase buffer.
 	copy(buf.Bytes(), raw)
 	return &sshStaticPassphraseProvider{buf: buf}, nil
 }
@@ -349,6 +350,7 @@ func (p *sshStaticPassphraseProvider) Passphrase(_ context.Context, _ string) (*
 	if err != nil {
 		return nil, err
 	}
+	//secure:unborrowed allocates-protected copy moves bytes between protected buffers for caller-owned cloning.
 	copy(clone.Bytes(), p.buf.Bytes())
 	return clone, nil
 }

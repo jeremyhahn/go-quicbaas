@@ -500,6 +500,7 @@ func (s *fleetDeployService) uploadNodeIdentity(
 		return &FleetNodeIdentityUploadError{File: deploy.NodeCertFilename, Cause: err}
 	}
 
+	//secure:unborrowed injected-interface WriteRemoteFile requires a byte slice and does not retain the key past upload.
 	keyBytes := issued.PrivateKey.Bytes()
 	if err := s.files.WriteRemoteFile(ctx, sess, path.Join(dataDir, deploy.NodeKeyFilename), keyBytes, 0o600); err != nil {
 		return &FleetNodeIdentityUploadError{File: deploy.NodeKeyFilename, Cause: err}

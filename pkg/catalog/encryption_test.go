@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 // mockDEKProvider implements DEKProvider for testing.
@@ -47,7 +48,10 @@ func (m *mockDEKProvider) GetDEK(ctx context.Context, req *GetDEKRequest) (*GetD
 
 	// Derive deterministic key material from the path using SHA-256.
 	// This ensures encrypt and decrypt use the same key for a given path.
-	keyMaterial := mockDeriveKey(req.Path)
+	keyMaterial, err := secure.NewBufferFromBytes(mockDeriveKey(req.Path))
+	if err != nil {
+		return nil, err
+	}
 	wrappedKey := mockWrapKey(req.Path)
 
 	// Default behavior: return a DEK with the path and key material
@@ -671,6 +675,33 @@ func TestEncryptionManager_ValidateKey(t *testing.T) {
 		err := mgr.ValidateKey(ctx, "valid/key")
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("valid key destroys returned key material", func(t *testing.T) {
+		buf, err := secure.NewBufferFromBytes([]byte("0123456789abcdef0123456789abcdef"))
+		if err != nil {
+			t.Fatalf("NewBufferFromBytes: %v", err)
+		}
+
+		dek := newMockDEKProvider()
+		dek.getDEKFunc = func(ctx context.Context, req *GetDEKRequest) (*GetDEKResponse, error) {
+			return &GetDEKResponse{
+				DEK: &DEKMetadata{
+					Path:   req.Path,
+					Status: DEKStatusActive,
+				},
+				KeyMaterial: buf,
+			}, nil
+		}
+		resolver := newMockConfigResolver()
+		mgr, _ := NewEncryptionManager(dek, resolver)
+
+		if err := mgr.ValidateKey(ctx, "valid/key"); err != nil {
+			t.Fatalf("ValidateKey: %v", err)
+		}
+		if size := buf.Size(); size != 0 {
+			t.Fatalf("ValidateKey left key material open with size %d", size)
 		}
 	})
 }

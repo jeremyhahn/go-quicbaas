@@ -190,6 +190,7 @@ func (e *cachedAccountCredential) release() {
 // The returned bytes are the plaintext a spawn is handed; they are the one
 // unavoidable copy out of secure memory. The caller must hold a live reference.
 func (e *cachedAccountCredential) snapshot() []byte {
+	//secure:unborrowed injected-interface snapshot returns a caller-owned plaintext copy for container injection.
 	b := e.secret.Bytes()
 	out := make([]byte, len(b))
 	copy(out, b)
@@ -435,6 +436,7 @@ func (m *materializingSecrets) Get(ctx context.Context, path string) (map[string
 		return nil, nil, &AccountAPITenantMismatchError{Requested: tenantID, Bound: m.client.TenantID()}
 	}
 
+	//secure:unwiped returned-to-caller body is returned as the account-secret payload owner in the result map.
 	body, err := m.resolve(ctx, accountID)
 	if err != nil {
 		return nil, nil, err

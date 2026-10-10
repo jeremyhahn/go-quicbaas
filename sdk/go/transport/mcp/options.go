@@ -15,6 +15,9 @@ package mcp
 
 import (
 	"net/http"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	secure "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 // Option is a function that configures the MCP transport.
@@ -91,7 +94,21 @@ func WithAuthToken(token string) Option {
 func WithCredentials(username, password string) Option {
 	return func(t *Transport) {
 		t.username = username
-		t.password = password
+		if t.password != nil {
+			t.password.Destroy()
+			t.password = nil
+		}
+		t.optionErr = nil
+		if password == "" {
+			return
+		}
+		protected, err := secure.NewSecret([]byte(password))
+		if err != nil {
+			t.optionErr = errors.Wrap(err, errors.CodeInternal, "mcp.WithCredentials",
+				"failed to protect password")
+			return
+		}
+		t.password = protected
 	}
 }
 

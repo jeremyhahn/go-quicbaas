@@ -319,7 +319,7 @@ type GetPublicKeyResponse struct {
 // ImportKeyRequest is a request to import a key into the KMS.
 type ImportKeyRequest struct {
 	// KeyMaterial is the raw key material to import.
-	KeyMaterial []byte
+	KeyMaterial []byte `json:"key_material,omitempty"`
 
 	// WrappingKeyID is the key used to decrypt the material (if wrapped).
 	WrappingKeyID string

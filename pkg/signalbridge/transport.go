@@ -76,7 +76,7 @@ type ServerTransport interface {
 type RegistrationRequest struct {
 	SessionID      string
 	Number         string
-	Password       string
+	Password       string `json:"password,omitempty"`
 	RegistrationID uint32
 	PNIRegID       uint32
 	DeviceName     string

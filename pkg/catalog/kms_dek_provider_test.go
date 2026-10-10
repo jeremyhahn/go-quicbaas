@@ -291,6 +291,7 @@ func TestGetDEK_Success_GenerateNewDEK(t *testing.T) {
 	if resp == nil {
 		t.Fatal("Expected response to be non-nil")
 	}
+	defer resp.KeyMaterial.Destroy()
 
 	if resp.DEK == nil {
 		t.Fatal("Expected DEK to be non-nil")
@@ -312,8 +313,8 @@ func TestGetDEK_Success_GenerateNewDEK(t *testing.T) {
 		t.Error("Expected timestamp to be set")
 	}
 
-	if len(resp.KeyMaterial) != defaultDEKSizeBytes {
-		t.Errorf("Expected key material of %d bytes, got: %d", defaultDEKSizeBytes, len(resp.KeyMaterial))
+	if resp.KeyMaterial.Size() != defaultDEKSizeBytes {
+		t.Errorf("Expected key material of %d bytes, got: %d", defaultDEKSizeBytes, resp.KeyMaterial.Size())
 	}
 
 	if len(resp.WrappedKey) == 0 {
@@ -326,6 +327,41 @@ func TestGetDEK_Success_GenerateNewDEK(t *testing.T) {
 
 	if kms.lastKeyID != "test/key/v1" {
 		t.Errorf("Expected last key ID 'test/key/v1', got: %s", kms.lastKeyID)
+	}
+}
+
+func TestGetDEK_GenerateWipesKMSPlaintext(t *testing.T) {
+	plaintext := []byte("0123456789abcdef0123456789abcdef")
+	wrapped := []byte("wrapped-dek-material-for-test")
+
+	kms := &dekProviderMockKMSManager{
+		keyMetadata: map[string]interface{}{
+			"key_id":  "test/key/v1",
+			"version": uint64(2),
+			"status":  "active",
+		},
+		generateDataKeyFunc: func(ctx context.Context, attrs *xkmssdk.KeyAttributes, keyBytes int) ([]byte, []byte, error) {
+			return plaintext, wrapped, nil
+		},
+	}
+
+	provider, err := NewKMSDEKProvider(&KMSDEKProviderConfig{
+		KMSManager: kms,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	resp, err := provider.GetDEK(context.Background(), &GetDEKRequest{Path: "test/key/v1"})
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	defer resp.KeyMaterial.Destroy()
+
+	for i, b := range plaintext {
+		if b != 0 {
+			t.Fatalf("Expected KMS plaintext source to be wiped at byte %d", i)
+		}
 	}
 }
 
@@ -343,7 +379,7 @@ func TestGetDEK_Success_UnwrapExistingDEK(t *testing.T) {
 			if keyID != "test/key/v1" {
 				t.Errorf("Expected keyID 'test/key/v1', got: %s", keyID)
 			}
-			return expectedPlaintext, nil
+			return append([]byte(nil), expectedPlaintext...), nil
 		},
 	}
 
@@ -367,13 +403,57 @@ func TestGetDEK_Success_UnwrapExistingDEK(t *testing.T) {
 	if resp == nil {
 		t.Fatal("Expected response to be non-nil")
 	}
+	defer resp.KeyMaterial.Destroy()
 
-	if string(resp.KeyMaterial) != string(expectedPlaintext) {
-		t.Errorf("Expected key material to match unwrapped plaintext")
+	if err := resp.KeyMaterial.WithBytes(func(key []byte) error {
+		if string(key) != string(expectedPlaintext) {
+			t.Errorf("Expected key material to match unwrapped plaintext")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Failed to inspect key material: %v", err)
 	}
 
 	if string(resp.WrappedKey) != string(wrappedKey) {
 		t.Errorf("Expected wrapped key to be preserved in response")
+	}
+}
+
+func TestGetDEK_UnwrapWipesKMSPlaintext(t *testing.T) {
+	plaintext := []byte("unwrapped-plaintext-32-byte-key!!")
+	wrappedKey := []byte("wrapped-dek-material-for-test")
+
+	kms := &dekProviderMockKMSManager{
+		keyMetadata: map[string]interface{}{
+			"key_id":  "test/key/v1",
+			"version": uint64(2),
+			"status":  "active",
+		},
+		decryptFunc: func(ctx context.Context, keyID string, ciphertext, aad []byte) ([]byte, error) {
+			return plaintext, nil
+		},
+	}
+
+	provider, err := NewKMSDEKProvider(&KMSDEKProviderConfig{
+		KMSManager: kms,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	resp, err := provider.GetDEK(context.Background(), &GetDEKRequest{
+		Path:       "test/key/v1",
+		WrappedKey: wrappedKey,
+	})
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	defer resp.KeyMaterial.Destroy()
+
+	for i, b := range plaintext {
+		if b != 0 {
+			t.Fatalf("Expected unwrapped plaintext source to be wiped at byte %d", i)
+		}
 	}
 }
 
@@ -553,12 +633,13 @@ func TestGetDEK_WithLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	defer resp.KeyMaterial.Destroy()
 
 	if !logger.debugCalled {
 		t.Error("Expected logger.Debug to be called")
 	}
 
-	if len(resp.KeyMaterial) == 0 {
+	if resp.KeyMaterial.Size() == 0 {
 		t.Error("Expected non-empty key material")
 	}
 }

@@ -583,7 +583,7 @@ func buildCanonicalEnrollRequest(ctx context.Context, f *canonicalAuthFactorAddF
 		session, err := newLocalPIVSessionFunc(&localPIVConfig{
 			backend:      f.pivBackend,
 			dir:          f.pivDir,
-			pin:          f.pin,
+			PIN:          f.pin,
 			pkcs11Module: f.pkcs11Module,
 			pkcs11Token:  f.pkcs11Token,
 		})

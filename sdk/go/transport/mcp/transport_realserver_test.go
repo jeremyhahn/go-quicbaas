@@ -27,6 +27,8 @@ package mcp
 import (
 	"context"
 	"net/http"
+	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -233,5 +235,59 @@ func TestTransport_AuthSession(t *testing.T) {
 	}
 	if loginCalls != 1 {
 		t.Errorf("login calls after 2nd request = %d, want 1 (session should be cached)", loginCalls)
+	}
+}
+
+func TestTransport_EnsureAuthenticatedRacesWithClose(t *testing.T) {
+	var loginCalls atomic.Int32
+
+	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
+	srv.AddTool(mcpgo.NewTool("quicbaas_login"), func(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		loginCalls.Add(1)
+		args := req.GetArguments()
+		if args["password"] != "s3cr3t" {
+			t.Errorf("login password = %q", args["password"])
+		}
+		return mcpgo.NewToolResultText(string(mustMarshalJSON(map[string]interface{}{
+			"access_token": "tok-123",
+		}))), nil
+	})
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	defer httpSrv.Close()
+
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second},
+		WithCredentials("alice", "s3cr3t"),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err := tr.ensureInitialized(context.Background()); err != nil {
+		t.Fatalf("ensureInitialized: %v", err)
+	}
+
+	tr.authMu.Lock()
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- tr.Close()
+	}()
+	for !tr.closed.Load() {
+		runtime.Gosched()
+	}
+
+	authDone := make(chan error, 1)
+	go func() {
+		authDone <- tr.ensureAuthenticated(context.Background())
+	}()
+	tr.authMu.Unlock()
+
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := <-authDone; err == nil {
+		t.Fatal("ensureAuthenticated after close succeeded")
+	}
+	if got := loginCalls.Load(); got != 0 {
+		t.Fatalf("login calls after close = %d, want 0", got)
 	}
 }

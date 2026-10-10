@@ -505,6 +505,40 @@ check-insecure-tls: ## Enforce InsecureSkipVerify allowlist - empty allowlist me
 	fi
 	@echo "$(GREEN)InsecureSkipVerify allowlist check passed$(NC)"
 
+.PHONY: secure-analyzer-build
+secure-analyzer-build: ## Build go-qrdb's secure analyzer from the pinned module version
+	@echo "$(BLUE)Building go-qrdb secure analyzer...$(NC)"
+	@mkdir -p $(BIN_DIR)
+	@$(GOCMD) list github.com/jeremyhahn/go-qrdb/pkg/secure/analyzer/cmd/secure-analyzer >/dev/null
+	$(GOCMD) build -o $(BIN_DIR)/secure-analyzer github.com/jeremyhahn/go-qrdb/pkg/secure/analyzer/cmd/secure-analyzer
+
+.PHONY: secure-analyzer
+secure-analyzer: secure-analyzer-build ## Run go-qrdb's secure analyzer across every module and declared tag set
+	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh maximal '$(TEST_TAGS)' $(BIN_DIR)/secure-analyzer
+	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh standard '$(STANDARD_TEST_TAGS)' $(BIN_DIR)/secure-analyzer
+	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh lean '$(LEAN_TEST_TAGS)' $(BIN_DIR)/secure-analyzer
+	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh minimal '$(MINIMAL_TEST_TAGS)' $(BIN_DIR)/secure-analyzer
+	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh desktop '$(DESKTOP_TEST_TAGS)' $(BIN_DIR)/secure-analyzer
+	@GOCMD="$(GOCMD)" SECURE_ANALYZER_MODULES=go.mod SECURE_ANALYZER_PACKAGES=./test/... scripts/secure-analyzer.sh integration-test '$(INTEGRATION_VET_TAGS)' $(BIN_DIR)/secure-analyzer
+	@pkgs=$$($(INTEGRATION_VET_SCAN) | xargs -n1 dirname | sort -u | grep -v '^test/' | grep -v '^sdk/'); \
+	test -n "$$pkgs" || { echo "$(RED)secure-analyzer: the integration build-tag scan matched no package -- it has rotted$(NC)"; exit 1; }; \
+	scope=$$(printf '%s\n' "$$pkgs" | sed 's|^|./|; s|$$|/...|' | tr '\n' ' '); \
+	echo "secure-analyzer[integration-tagged]: $$scope"; \
+	GOCMD="$(GOCMD)" SECURE_ANALYZER_MODULES=go.mod SECURE_ANALYZER_PACKAGES="$$scope" scripts/secure-analyzer.sh integration-tagged '$(INTEGRATION_VET_TAGS)' $(BIN_DIR)/secure-analyzer || exit 1
+	@pkgs=$$($(HARDWARE_VET_SCAN) | xargs -n1 dirname | sort -u); \
+	unit=$$(printf '%s\n' "$$pkgs" | grep -v '^test/' | sed 's|^|./|' | tr '\n' ' '); \
+	integ=$$(printf '%s\n' "$$pkgs" | grep '^test/' | sed 's|^|./|' | tr '\n' ' '); \
+	test -n "$$unit" -a -n "$$integ" || { echo "$(RED)secure-analyzer: the hardware build-tag scan lost a tier (unit: '$$unit', integration: '$$integ') -- it has rotted$(NC)"; exit 1; }; \
+	echo "secure-analyzer[hardware-unit]: $$unit"; \
+	GOCMD="$(GOCMD)" SECURE_ANALYZER_MODULES=go.mod SECURE_ANALYZER_PACKAGES="$$unit" scripts/secure-analyzer.sh hardware-unit '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' $(BIN_DIR)/secure-analyzer || exit 1; \
+	echo "secure-analyzer[hardware-integration]: $$integ"; \
+	GOCMD="$(GOCMD)" SECURE_ANALYZER_MODULES=go.mod SECURE_ANALYZER_PACKAGES="$$integ" scripts/secure-analyzer.sh hardware-integration '$(INTEGRATION_VET_TAGS) $(HARDWARE_VET_TAGS)' $(BIN_DIR)/secure-analyzer || exit 1
+	@GOCMD="$(GOCMD)" SECURE_ANALYZER_MODULES=sdk/go SECURE_ANALYZER_PACKAGES=./test/... scripts/secure-analyzer.sh sdk-integration integration $(BIN_DIR)/secure-analyzer
+
+.PHONY: secure-analyzer-self-test
+secure-analyzer-self-test: secure-analyzer-build ## Prove the secure analyzer gate fails on planted violations
+	@GOCMD="$(GOCMD)" SECURE_ANALYZER_SELFTEST_TAGS='$(TEST_TAGS)' scripts/secure-analyzer_test.sh $(BIN_DIR)/secure-analyzer
+
 
 .PHONY: vet
 vet: ## Run go vet across every tag pass (untagged vet skips tag-gated packages)
@@ -2965,7 +2999,7 @@ vet-integration: ## Typecheck every integration- and hardware-tagged package (th
 # (milliseconds, no build, no network), so a naming regression reports before
 # the 20-minute golangci-lint pass rather than after it. This is why CI's Lint
 # job needs no separate step for the gate.
-lint: vet-integration verify-naming ## Run linters (naming gate + golangci-lint)
+lint: vet-integration verify-naming secure-analyzer secure-analyzer-self-test ## Run linters (naming gate + golangci-lint)
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
 	# 20m, not the template's 5m. This module is ~526k lines across ~1300 files

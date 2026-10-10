@@ -276,8 +276,9 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	resp, err := client.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
-		TenantID:   tenantBarrierTenantID,
-		Strategy:   tenantBarrierStrategy,
+		TenantID: tenantBarrierTenantID,
+		Strategy: tenantBarrierStrategy,
+		//secure:unborrowed injected-interface tenant-barrier transport request must carry bytes; the client owns the request lifetime.
 		Passphrase: secret.Bytes(),
 		Threshold:  tenantBarrierThreshold,
 		Shares:     tenantBarrierShares,
@@ -357,7 +358,8 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	// a replay buffer, this must go back to a wiped copy.
 	if err := client.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
 		TenantID: tenantBarrierTenantID,
-		Key:      secret.Bytes(),
+		//secure:unborrowed injected-interface tenant-barrier transport request must carry bytes; the client owns the request lifetime.
+		Key: secret.Bytes(),
 	}); err != nil {
 		return formatError(err)
 	}

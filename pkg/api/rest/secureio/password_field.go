@@ -91,6 +91,7 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	//secure:unborrowed allocates-protected base64.Decode writes directly into the newly allocated protected buffer.
 	n, err := base64.StdEncoding.Decode(raw.Bytes(), encoded)
 	if err != nil {
 		raw.Destroy()
@@ -105,6 +106,7 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 		raw.Destroy()
 		return err
 	}
+	//secure:unborrowed allocates-protected copy moves bytes between protected buffers before the source is destroyed.
 	copy(trimmed.Bytes(), raw.Bytes()[:n])
 	raw.Destroy()
 	f.buf = trimmed

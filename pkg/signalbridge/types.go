@@ -84,7 +84,7 @@ type RegisterOptions struct {
 	// Password, when non-empty, is used as the HTTP Basic credential for
 	// the new account. Empty means the client generates a random 24-byte
 	// password.
-	Password string
+	Password string `json:"password,omitempty"`
 }
 
 // LoginOptions carries parameters for re-establishing an existing

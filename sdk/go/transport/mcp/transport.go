@@ -31,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
+	secure "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 // MCPVersion is the supported MCP protocol version.
@@ -74,7 +75,8 @@ type Transport struct {
 
 	// Authentication state
 	username      string
-	password      string
+	password      *secure.Secret
+	optionErr     error
 	accessToken   string
 	authenticated atomic.Bool
 	authMu        sync.Mutex
@@ -107,6 +109,9 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 	// Apply options
 	for _, opt := range opts {
 		opt(t)
+	}
+	if t.optionErr != nil {
+		return nil, t.optionErr
 	}
 
 	// Build HTTP client if not provided via options
@@ -643,21 +648,27 @@ func (t *Transport) ensureInitialized(ctx context.Context) error {
 // ensureAuthenticated ensures the transport is authenticated.
 // This is called automatically when credentials are provided.
 func (t *Transport) ensureAuthenticated(ctx context.Context) error {
-	// Skip if already authenticated or no credentials provided
 	if t.authenticated.Load() {
-		return nil
-	}
-
-	// If no credentials, skip authentication (allow public tools)
-	if t.username == "" && t.password == "" {
 		return nil
 	}
 
 	t.authMu.Lock()
 	defer t.authMu.Unlock()
 
-	// Double-check after acquiring lock
+	if t.closed.Load() {
+		return errors.NewConnection("mcp.ensureAuthenticated", "transport is closed")
+	}
+
+	if t.optionErr != nil {
+		return t.optionErr
+	}
+
 	if t.authenticated.Load() {
+		return nil
+	}
+
+	// If no credentials, skip authentication (allow public tools).
+	if t.username == "" && t.password == nil {
 		return nil
 	}
 
@@ -672,10 +683,22 @@ func (t *Transport) ensureAuthenticated(ctx context.Context) error {
 // authenticate performs authentication using the quicbaas_login tool.
 // This tool is public and doesn't require authentication itself.
 func (t *Transport) authenticate(ctx context.Context) error {
+	password := ""
+	if t.password != nil {
+		opened, err := t.password.Open()
+		if err != nil {
+			return errors.Wrap(err, errors.CodeUnauthorized, "mcp.authenticate",
+				"failed to open protected password")
+		}
+		defer opened.Destroy()
+		//secure:unwiped injected-interface MCP login arguments are JSON strings at the wire boundary.
+		password = string(opened.Bytes()) //secure:unborrowed injected-interface the protected password is opened only for the login call.
+	}
 	result, err := t.callTool(ctx, "quicbaas_login", map[string]interface{}{
 		"username": t.username,
-		"password": t.password,
+		"password": password,
 	})
+	password = ""
 	if err != nil {
 		return errors.Wrap(err, errors.CodeUnauthorized, "mcp.authenticate",
 			"failed to authenticate")
@@ -1402,6 +1425,18 @@ func (t *Transport) Close() error {
 			httpTransport.CloseIdleConnections()
 		}
 	}
+
+	t.authMu.Lock()
+	if t.password != nil {
+		t.password.Destroy()
+		t.password = nil
+	}
+	t.optionErr = nil
+	t.accessToken = ""
+	t.mu.Lock()
+	delete(t.headers, "Authorization")
+	t.mu.Unlock()
+	t.authMu.Unlock()
 
 	return firstErr
 }

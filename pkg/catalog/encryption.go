@@ -26,6 +26,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 // Encryption error codes.
@@ -211,7 +212,7 @@ type GetDEKResponse struct {
 
 	// KeyMaterial is the plaintext key material for encryption/decryption.
 	// This is the unwrapped DEK bytes used directly as the AES key.
-	KeyMaterial []byte
+	KeyMaterial *secure.Buffer
 
 	// WrappedKey is the wrapped (encrypted) DEK for persistent storage.
 	// Store this alongside ciphertext so the DEK can be unwrapped later.
@@ -302,6 +303,9 @@ func (m *encryptionManager) Encrypt(ctx context.Context, data []byte, cfg *confi
 	if err != nil {
 		return nil, NewEncryptionError("get key from KMS", err)
 	}
+	if keyData != nil && keyData.KeyMaterial != nil {
+		defer keyData.KeyMaterial.Destroy()
+	}
 
 	// Determine key material from DEK response
 	keyMaterial, err := m.extractKeyMaterial(keyData)
@@ -315,8 +319,13 @@ func (m *encryptionManager) Encrypt(ctx context.Context, data []byte, cfg *confi
 		algorithm = config.DefaultEncryptionAlgo
 	}
 
-	ciphertext, nonce, err := m.encryptWithAlgorithm(data, keyMaterial, algorithm)
-	if err != nil {
+	var ciphertext []byte
+	var nonce []byte
+	if err := keyMaterial.WithBytes(func(key []byte) error {
+		var encryptErr error
+		ciphertext, nonce, encryptErr = m.encryptWithAlgorithm(data, key, algorithm)
+		return encryptErr
+	}); err != nil {
 		return nil, err
 	}
 
@@ -354,6 +363,9 @@ func (m *encryptionManager) Decrypt(ctx context.Context, data []byte, enc *Locat
 	if err != nil {
 		return nil, NewDecryptionError("get key from KMS", err)
 	}
+	if keyData != nil && keyData.KeyMaterial != nil {
+		defer keyData.KeyMaterial.Destroy()
+	}
 
 	// Extract key material
 	keyMaterial, err := m.extractKeyMaterial(keyData)
@@ -362,8 +374,12 @@ func (m *encryptionManager) Decrypt(ctx context.Context, data []byte, enc *Locat
 	}
 
 	// Perform decryption
-	plaintext, err := m.decryptWithAlgorithm(data, keyMaterial, enc.Algorithm, enc.Nonce)
-	if err != nil {
+	var plaintext []byte
+	if err := keyMaterial.WithBytes(func(key []byte) error {
+		var decryptErr error
+		plaintext, decryptErr = m.decryptWithAlgorithm(data, key, enc.Algorithm, enc.Nonce)
+		return decryptErr
+	}); err != nil {
 		return nil, err
 	}
 
@@ -434,21 +450,24 @@ func (m *encryptionManager) ValidateKey(ctx context.Context, keyID string) error
 		return NewKeyNotFoundError("")
 	}
 
-	_, err := m.dekProvider.GetDEK(ctx, &GetDEKRequest{Path: keyID})
+	keyData, err := m.dekProvider.GetDEK(ctx, &GetDEKRequest{Path: keyID})
 	if err != nil {
 		return NewKeyNotFoundError(keyID)
+	}
+	if keyData != nil && keyData.KeyMaterial != nil {
+		keyData.KeyMaterial.Destroy()
 	}
 
 	return nil
 }
 
 // extractKeyMaterial extracts the key material from a DEK response.
-func (m *encryptionManager) extractKeyMaterial(dekResp *GetDEKResponse) ([]byte, error) {
+func (m *encryptionManager) extractKeyMaterial(dekResp *GetDEKResponse) (*secure.Buffer, error) {
 	if dekResp == nil || dekResp.DEK == nil {
 		return nil, NewEncryptionError("DEK response is nil", ErrNilDEKResponse)
 	}
 
-	if len(dekResp.KeyMaterial) == 0 {
+	if dekResp.KeyMaterial == nil || dekResp.KeyMaterial.Size() == 0 {
 		return nil, NewEncryptionError("empty key material", ErrEmptyKeyMaterial)
 	}
 
