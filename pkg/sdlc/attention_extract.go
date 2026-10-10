@@ -71,10 +71,10 @@ var anyMarkdownHeadingPattern = regexp.MustCompile(`(?m)^#{1,6}[ \t]+\S`)
 
 // truncationNotePattern matches either note this codebase appends when a
 // reply was cut short, each on its own line: "… (truncated at 4096 bytes)"
-// from AgentTurn.Capped() (turn.go), and "… (N more bytes withheld; see the
-// daemon log)" from publicOutput (public_reason.go), which recaps an
-// already-capped reply again when it is rendered for publication.
-var truncationNotePattern = regexp.MustCompile(`(?m)^…?[ \t]*\((?:truncated at \d+ bytes|\d+ more bytes withheld; see the daemon log)\)[ \t]*$`)
+// from AgentTurn.Capped() (turn.go), and the publicOutput note that recaps an
+// already-capped reply again when it is rendered for publication. The pattern
+// still recognizes the old daemon-log wording so existing records parse.
+var truncationNotePattern = regexp.MustCompile(`(?m)^…?[ \t]*\((?:truncated at \d+ bytes|\d+ more bytes withheld; (?:see the daemon log|inspect the worker event record|diagnostic truncated for publication))\)[ \t]*$`)
 
 // ExtractAsk parses a worker's quoted reply into the question it is asking
 // and the resolution it recommends. reply is the "worker said" text alone —

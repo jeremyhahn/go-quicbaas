@@ -197,7 +197,7 @@ func publicOutput(raw string) string {
 	}
 	withheld := len(text) - cut
 	return strings.TrimSpace(text[:cut]) +
-		"\n… (" + strconv.Itoa(withheld) + " more bytes withheld; see the daemon log)"
+		"\n… (" + strconv.Itoa(withheld) + " more bytes withheld; diagnostic truncated for publication)"
 }
 
 // =============================================================================

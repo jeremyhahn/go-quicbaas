@@ -598,3 +598,43 @@ func redactLimitSignal(text string) string {
 	}
 	return cleaned
 }
+
+func scrubEnvironmentDiagnostic(raw string, evidence TurnFailureEvidence) (string, bool) {
+	if !evidence.PreFirstTurn() || !IsEnvironmentalTerminalReason(evidence.ReasonClass()) {
+		return "", false
+	}
+	if strings.TrimSpace(raw) == "" {
+		return "", false
+	}
+	return environmentDiagnosticClassified(raw)
+}
+
+func environmentDiagnosticClassified(text string) (string, bool) {
+	lowered := strings.ToLower(text)
+	labels := []struct {
+		label   string
+		markers []string
+	}{
+		{label: "not_logged_in", markers: []string{"not logged in", "please run /login", "run /login"}},
+		{label: "network_unreachable", markers: []string{"network is unreachable"}},
+		{label: "dns_failure", markers: []string{"no such host", "dns"}},
+		{label: "connection_refused", markers: []string{"connection refused", "transport refused"}},
+		{label: "connection_reset", markers: []string{"connection reset"}},
+		{label: "timeout", markers: []string{"connection timed out", "timed out", "timeout"}},
+		{label: "tls_failure", markers: []string{"tls handshake"}},
+		{label: "proxy_failure", markers: []string{"proxy"}},
+		{label: "http_401", markers: []string{"http 401", "status 401"}},
+		{label: "http_403", markers: []string{"http 403", "status 403"}},
+		{label: "http_429", markers: []string{"http 429", "status 429"}},
+		{label: "http_5xx", markers: []string{"http 500", "http 502", "http 503", "http 504", "status 500", "status 502", "status 503", "status 504"}},
+		{label: "credential_file", markers: []string{"could not read credentials", "credentials from", "credential file", "config file", "configuration file", "enoent", "no such file or directory"}},
+	}
+	for _, candidate := range labels {
+		for _, marker := range candidate.markers {
+			if strings.Contains(lowered, marker) {
+				return candidate.label, true
+			}
+		}
+	}
+	return "", false
+}

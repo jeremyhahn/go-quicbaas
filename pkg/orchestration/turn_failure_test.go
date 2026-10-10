@@ -361,8 +361,106 @@ func TestKnownTerminalReasons_MatchesTheMeasuredCLIEnum(t *testing.T) {
 func TestStreamJSONError_RendersClassWithholdsResult(t *testing.T) {
 	err := &StreamJSONError{
 		Command: "claude",
-		// A secret-shaped string in the same payload, per the issue.
-		Result: "auth failed for Bearer sk-ant-api03-0123456789abcdefghij",
+		Result:  "work-derived failure includes token sk-ant-api03-0123456789abcdefghij",
+		TurnFailureEvidence: TurnFailureEvidence{
+			TerminalReason: "prompt_too_long",
+			Usage:          &TokenUsage{},
+		},
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, "terminal_reason=prompt_too_long") {
+		t.Errorf("the reason class must still be rendered, got: %s", msg)
+	}
+	if strings.Contains(msg, "sk-ant-api03") || strings.Contains(msg, "work-derived failure") {
+		t.Errorf("charged result payload must stay withheld, got: %s", msg)
+	}
+	if !strings.Contains(msg, "bytes of result withheld") {
+		t.Errorf("the withheld byte count must still be reported, got: %s", msg)
+	}
+}
+
+func TestStreamJSONError_RendersScrubbedEnvironmentalDiagnostic(t *testing.T) {
+	preTurn := TurnFailureEvidence{
+		TerminalReason: "api_error",
+		NumTurns:       1,
+		Usage:          &TokenUsage{},
+	}
+	for _, tc := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{"login", "Not logged in · Please run /login", "not_logged_in"},
+		{"network", "connect: network is unreachable", "network_unreachable"},
+		{"transport refusal", "transport refused: HTTP 403 from provider", "connection_refused"},
+		{"credential file", "could not read credentials from /home/agent/.claude/.credentials.json", "credential_file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := &StreamJSONError{Command: "claude", Result: tc.text, TurnFailureEvidence: preTurn}
+			msg := err.Error()
+			if !strings.Contains(msg, "terminal_reason=api_error") {
+				t.Fatalf("reason class missing from %s", msg)
+			}
+			if !strings.Contains(msg, "diagnostic="+tc.want) {
+				t.Fatalf("diagnostic label missing from %s", msg)
+			}
+			if !strings.Contains(msg, "bytes of result withheld") {
+				t.Fatalf("raw result byte count was not withheld: %s", msg)
+			}
+			if strings.Contains(msg, tc.text) || strings.Contains(msg, "/home/agent") {
+				t.Fatalf("subprocess text was rendered: %s", msg)
+			}
+		})
+	}
+}
+
+func TestStreamJSONError_ScrubsEnvironmentalDiagnosticSecrets(t *testing.T) {
+	preTurn := TurnFailureEvidence{
+		TerminalReason: "api_error",
+		NumTurns:       1,
+		Usage:          &TokenUsage{},
+	}
+	for _, tc := range []struct {
+		name   string
+		secret string
+	}{
+		{"github classic", "ghp_A1b2C3d4E5f6G7h8I9j0KlMnOpQrStUv"},
+		{"github fine grained", "github_pat_11ABCDEFG0abcdefghijklmnop"},
+		{"gitlab", "glpat-ABCDEFGHIJKLMNOPQRST"},
+		{"anthropic", "sk-ant-api03-0123456789abcdefghij"},
+		{"opaque token", "tok_0123456789abcdef"},
+		{"punctuated password", "p@ssw0rd!"},
+		{"slack", "xoxb-1234567890-abcdefghij"},
+		{"aws temporary", "ASIAIOSFODNN7EXAMPLE"},
+		{"vault", "hvs.CAESIJKLMNOPQRSTUVWX"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := &StreamJSONError{
+				Command:             "claude",
+				Result:              "Not logged in; password is " + tc.secret + " using /tmp/quicbaas-account-123/.claude.json",
+				TurnFailureEvidence: preTurn,
+			}
+
+			msg := err.Error()
+			if !strings.Contains(msg, "diagnostic=not_logged_in") {
+				t.Fatalf("fixed diagnostic label was not rendered: %s", msg)
+			}
+			if !strings.Contains(msg, "bytes of result withheld") {
+				t.Fatalf("raw result byte count was not withheld: %s", msg)
+			}
+			if strings.Contains(msg, tc.secret) || strings.Contains(msg, "Not logged in") || strings.Contains(msg, "/tmp/quicbaas-account-123") || strings.Contains(msg, "[redacted]") {
+				t.Fatalf("subprocess diagnostic text escaped: %s", msg)
+			}
+		})
+	}
+}
+
+func TestOneShotExecutionError_RendersScrubbedEnvironmentalDiagnostic(t *testing.T) {
+	secret := "github_pat_11ABCDEFG0abcdefghijklmnop"
+	err := &OneShotExecutionError{
+		Command: "claude",
+		Stderr:  "Not logged in with " + secret + " at /home/agent/.claude/.credentials.json",
 		TurnFailureEvidence: TurnFailureEvidence{
 			TerminalReason: "api_error",
 			NumTurns:       1,
@@ -371,16 +469,83 @@ func TestStreamJSONError_RendersClassWithholdsResult(t *testing.T) {
 	}
 
 	msg := err.Error()
-	if !strings.Contains(msg, "terminal_reason=api_error") {
-		t.Errorf("the reason class must be rendered — withholding it is what left an "+
-			"operator reading %q for an authentication failure; got: %s",
-			"(N bytes of result withheld)", msg)
+	if !strings.Contains(msg, "terminal_reason=api_error") || !strings.Contains(msg, "diagnostic=not_logged_in") {
+		t.Fatalf("one-shot fixed diagnostic label was not rendered: %s", msg)
 	}
-	if strings.Contains(msg, "sk-ant-api03") || strings.Contains(msg, "auth failed for") {
-		t.Errorf("the result payload must stay withheld, got: %s", msg)
+	if !strings.Contains(msg, "bytes of stderr withheld") {
+		t.Fatalf("raw stderr byte count was not withheld: %s", msg)
+	}
+	if strings.Contains(msg, secret) || strings.Contains(msg, "/home/agent") || strings.Contains(msg, "Not logged in") || strings.Contains(msg, "[redacted]") {
+		t.Fatalf("one-shot subprocess diagnostic text escaped: %s", msg)
+	}
+}
+
+func TestStreamJSONError_WithholdsUnclassifiableResult(t *testing.T) {
+	err := &StreamJSONError{
+		Command: "claude",
+		Result:  "Not logged in · Please run /login",
+		TurnFailureEvidence: TurnFailureEvidence{
+			TerminalReason: "api_error_but_not_really",
+			Usage:          &TokenUsage{},
+		},
+	}
+
+	msg := err.Error()
+	if strings.Contains(msg, "Not logged in") || strings.Contains(msg, "result=") {
+		t.Fatalf("unclassifiable result was rendered: %s", msg)
 	}
 	if !strings.Contains(msg, "bytes of result withheld") {
-		t.Errorf("the withheld byte count must still be reported, got: %s", msg)
+		t.Fatalf("unclassifiable result did not stay withheld: %s", msg)
+	}
+}
+
+func TestEnvironmentalDiagnosticWithholdsOpaqueFreeFormResult(t *testing.T) {
+	const secret = "tok_0123456789abcdef"
+	const path = "file:///home/agent/.claude/credentials.json"
+	evidence := TurnFailureEvidence{
+		TerminalReason: "api_error",
+		NumTurns:       1,
+		Usage:          &TokenUsage{},
+	}
+
+	streamErr := &StreamJSONError{
+		Command:             "claude",
+		Result:              "auth failed for " + secret + " at " + path,
+		TurnFailureEvidence: evidence,
+	}
+	streamMsg := streamErr.Error()
+	if strings.Contains(streamMsg, secret) || strings.Contains(streamMsg, path) || strings.Contains(streamMsg, "diagnostic=") {
+		t.Fatalf("unclassified stream diagnostic escaped: %s", streamMsg)
+	}
+	if !strings.Contains(streamMsg, "bytes of result withheld") {
+		t.Fatalf("unclassified stream diagnostic did not stay withheld: %s", streamMsg)
+	}
+
+	oneShotErr := &OneShotExecutionError{
+		Command:             "claude",
+		Stderr:              "auth failed for " + secret + " at " + path,
+		TurnFailureEvidence: evidence,
+	}
+	oneShotMsg := oneShotErr.Error()
+	if strings.Contains(oneShotMsg, secret) || strings.Contains(oneShotMsg, path) || strings.Contains(oneShotMsg, "diagnostic=") {
+		t.Fatalf("unclassified one-shot diagnostic escaped: %s", oneShotMsg)
+	}
+	if !strings.Contains(oneShotMsg, "bytes of stderr withheld") {
+		t.Fatalf("unclassified one-shot diagnostic did not stay withheld: %s", oneShotMsg)
+	}
+
+	unknownSecret := "abcdef0123456789"
+	classifiedErr := &StreamJSONError{
+		Command:             "claude",
+		Result:              "Not logged in with " + unknownSecret,
+		TurnFailureEvidence: evidence,
+	}
+	classifiedMsg := classifiedErr.Error()
+	if !strings.Contains(classifiedMsg, "diagnostic=not_logged_in") || !strings.Contains(classifiedMsg, "bytes of result withheld") {
+		t.Fatalf("classified diagnostic did not render only the fixed label plus byte count: %s", classifiedMsg)
+	}
+	if strings.Contains(classifiedMsg, unknownSecret) || strings.Contains(classifiedMsg, "Not logged in") {
+		t.Fatalf("classified diagnostic rendered subprocess text: %s", classifiedMsg)
 	}
 }
 

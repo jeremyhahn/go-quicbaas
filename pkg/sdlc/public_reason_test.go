@@ -91,6 +91,12 @@ func TestPublicOutput_BoundsTheDump(t *testing.T) {
 	if !strings.Contains(got, "more bytes withheld") {
 		t.Errorf("truncation was silent; a reader must know the text was cut: %q", got[max(0, len(got)-80):])
 	}
+	if !strings.Contains(got, "diagnostic truncated for publication") {
+		t.Errorf("truncation note should be source-neutral, got: %q", got[max(0, len(got)-120):])
+	}
+	if strings.Contains(got, "daemon log") || strings.Contains(got, "worker event") {
+		t.Errorf("shared truncation note pointed at a caller-specific log surface: %q", got[max(0, len(got)-120):])
+	}
 	// Short output is passed through untouched — bounding must not mangle the
 	// ordinary case.
 	if got := publicOutput("  build failed: undefined: Foo  "); got != "build failed: undefined: Foo" {

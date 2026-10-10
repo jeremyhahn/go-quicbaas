@@ -308,6 +308,9 @@ func (e *OneShotExecutionError) Error() string {
 	if class := e.ReasonClass(); class != "" {
 		msg += " terminal_reason=" + class
 	}
+	if diagnostic, ok := scrubEnvironmentDiagnostic(e.Stderr, e.TurnFailureEvidence); ok {
+		msg += " diagnostic=" + diagnostic
+	}
 	if n := len(e.Stderr); n > 0 {
 		msg += " (" + strconv.Itoa(n) + " bytes of stderr withheld)"
 	}
@@ -370,6 +373,9 @@ func (e *StreamJSONError) Error() string {
 	msg := ErrStreamJSON.Error() + ": " + e.Command
 	if class := e.ReasonClass(); class != "" {
 		msg += " terminal_reason=" + class
+	}
+	if diagnostic, ok := scrubEnvironmentDiagnostic(e.Result, e.TurnFailureEvidence); ok {
+		msg += " diagnostic=" + diagnostic
 	}
 	if n := len(e.Result); n > 0 {
 		msg += " (" + strconv.Itoa(n) + " bytes of result withheld)"

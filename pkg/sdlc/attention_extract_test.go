@@ -128,6 +128,11 @@ func TestExtractAsk_StructuredReplyMarksTruncation(t *testing.T) {
 	if !ask.Truncated {
 		t.Errorf("Truncated = false, want true: the fixture carries a turn.Capped() truncation note; detail=%q", detail)
 	}
+
+	publicNote := ExtractAsk("The build failed before completion.\n… (23 more bytes withheld; diagnostic truncated for publication)")
+	if !publicNote.Truncated {
+		t.Fatalf("Truncated = false, want true for publicOutput's source-neutral truncation note")
+	}
 }
 
 // TestExtractAsk_PrefersExplicitSections is a SYNTHETIC fixture — none of
