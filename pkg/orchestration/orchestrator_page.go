@@ -71,6 +71,50 @@ func (s *agentServiceImpl) ListTasksPage(ctx context.Context, tenantID string, f
 	return ApplyFacetedPage(tasks, page, taskPageSpec, taskFacetSpec, filter.MatchesFacets)
 }
 
+func (s *agentServiceImpl) ListBackendsPage(ctx context.Context, page *Page) (*PageResult[*AgentBackendInfo], error) {
+	return ListBackendsPage(ctx, s, page)
+}
+
+func (s *agentServiceImpl) ListTaskArtifactsPage(ctx context.Context, tenantID, taskID string, page *Page) (*PageResult[Artifact], error) {
+	return ListTaskArtifactsPage(ctx, s, tenantID, taskID, page)
+}
+
+type backendLister interface {
+	ListBackends(context.Context) ([]*AgentBackendInfo, error)
+}
+
+func ListBackendsPage(ctx context.Context, lister backendLister, page *Page) (*PageResult[*AgentBackendInfo], error) {
+	backends, err := lister.ListBackends(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyPage(backends, page, backendPageSpec)
+}
+
+type artifactLister interface {
+	ListTaskArtifacts(context.Context, string, string) ([]Artifact, error)
+}
+
+func ListTaskArtifactsPage(ctx context.Context, lister artifactLister, tenantID, taskID string, page *Page) (*PageResult[Artifact], error) {
+	artifacts, err := lister.ListTaskArtifacts(ctx, tenantID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyPage(artifacts, page, artifactPageSpec)
+}
+
+func ListJobRunnersPage(page *Page) (*PageResult[*JobRunnerInfo], error) {
+	registered := JobRunners()
+	runners := make([]*JobRunnerInfo, 0, len(registered))
+	for _, runner := range registered {
+		runners = append(runners, &JobRunnerInfo{
+			Name:   runner.Name(),
+			States: runner.States(),
+		})
+	}
+	return ApplyPage(runners, page, runnerPageSpec)
+}
+
 // resolveTaskAgents fills in each task's latest-attempt agent, which the task
 // record does not carry (see TaskFilter.AgentID).
 //

@@ -6513,6 +6513,10 @@ func (x *JobEvent) GetTimestamp() int64 {
 type OrchestratorListBackendsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Sort          string                 `protobuf:"bytes,4,opt,name=sort,proto3" json:"sort,omitempty"`
+	Q             string                 `protobuf:"bytes,5,opt,name=q,proto3" json:"q,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6554,10 +6558,42 @@ func (x *OrchestratorListBackendsRequest) GetTenantId() string {
 	return ""
 }
 
+func (x *OrchestratorListBackendsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *OrchestratorListBackendsRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *OrchestratorListBackendsRequest) GetSort() string {
+	if x != nil {
+		return x.Sort
+	}
+	return ""
+}
+
+func (x *OrchestratorListBackendsRequest) GetQ() string {
+	if x != nil {
+		return x.Q
+	}
+	return ""
+}
+
 type OrchestratorListBackendsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Backends      []*AgentBackendInfo    `protobuf:"bytes,1,rep,name=backends,proto3" json:"backends,omitempty"`
 	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Total         int32                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset    int32                  `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6604,6 +6640,34 @@ func (x *OrchestratorListBackendsResponse) GetTimestamp() *timestamppb.Timestamp
 		return x.Timestamp
 	}
 	return nil
+}
+
+func (x *OrchestratorListBackendsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *OrchestratorListBackendsResponse) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *OrchestratorListBackendsResponse) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *OrchestratorListBackendsResponse) GetNextOffset() int32 {
+	if x != nil {
+		return x.NextOffset
+	}
+	return 0
 }
 
 // OrchestratorJobStateSpec is one state a runner drives a job through. It
@@ -6733,6 +6797,10 @@ func (x *OrchestratorJobRunner) GetStates() []*OrchestratorJobStateSpec {
 // ignored, which is worse than absent.
 type OrchestratorListRunnersRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Limit         int32                  `protobuf:"varint,1,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	Sort          string                 `protobuf:"bytes,3,opt,name=sort,proto3" json:"sort,omitempty"`
+	Q             string                 `protobuf:"bytes,4,opt,name=q,proto3" json:"q,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6767,10 +6835,42 @@ func (*OrchestratorListRunnersRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{70}
 }
 
+func (x *OrchestratorListRunnersRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *OrchestratorListRunnersRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *OrchestratorListRunnersRequest) GetSort() string {
+	if x != nil {
+		return x.Sort
+	}
+	return ""
+}
+
+func (x *OrchestratorListRunnersRequest) GetQ() string {
+	if x != nil {
+		return x.Q
+	}
+	return ""
+}
+
 type OrchestratorListRunnersResponse struct {
 	state         protoimpl.MessageState   `protogen:"open.v1"`
 	Runners       []*OrchestratorJobRunner `protobuf:"bytes,1,rep,name=runners,proto3" json:"runners,omitempty"`
 	Count         int32                    `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	Total         int32                    `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	Limit         int32                    `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                    `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset    int32                    `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6815,6 +6915,34 @@ func (x *OrchestratorListRunnersResponse) GetRunners() []*OrchestratorJobRunner 
 func (x *OrchestratorListRunnersResponse) GetCount() int32 {
 	if x != nil {
 		return x.Count
+	}
+	return 0
+}
+
+func (x *OrchestratorListRunnersResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *OrchestratorListRunnersResponse) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *OrchestratorListRunnersResponse) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *OrchestratorListRunnersResponse) GetNextOffset() int32 {
+	if x != nil {
+		return x.NextOffset
 	}
 	return 0
 }
@@ -10459,6 +10587,10 @@ type ListTaskArtifactsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	Sort          string                 `protobuf:"bytes,5,opt,name=sort,proto3" json:"sort,omitempty"`
+	Q             string                 `protobuf:"bytes,6,opt,name=q,proto3" json:"q,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -10507,10 +10639,42 @@ func (x *ListTaskArtifactsRequest) GetTaskId() string {
 	return ""
 }
 
+func (x *ListTaskArtifactsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListTaskArtifactsRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ListTaskArtifactsRequest) GetSort() string {
+	if x != nil {
+		return x.Sort
+	}
+	return ""
+}
+
+func (x *ListTaskArtifactsRequest) GetQ() string {
+	if x != nil {
+		return x.Q
+	}
+	return ""
+}
+
 type ListTaskArtifactsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Artifacts     []*Artifact            `protobuf:"bytes,1,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
 	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Total         int32                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset    int32                  `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -10557,6 +10721,34 @@ func (x *ListTaskArtifactsResponse) GetTimestamp() *timestamppb.Timestamp {
 		return x.Timestamp
 	}
 	return nil
+}
+
+func (x *ListTaskArtifactsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ListTaskArtifactsResponse) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListTaskArtifactsResponse) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ListTaskArtifactsResponse) GetNextOffset() int32 {
+	if x != nil {
+		return x.NextOffset
+	}
+	return 0
 }
 
 // GetTaskArtifact
@@ -11838,23 +12030,41 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\">\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x01\n" +
 	"\x1fOrchestratorListBackendsRequest\x12\x1b\n" +
-	"\ttenant_id\x18\x01 \x01(\tR\btenantId\"\xa4\x01\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x05R\x06offset\x12\x12\n" +
+	"\x04sort\x18\x04 \x01(\tR\x04sort\x12\f\n" +
+	"\x01q\x18\x05 \x01(\tR\x01q\"\x89\x02\n" +
 	" OrchestratorListBackendsResponse\x12F\n" +
 	"\bbackends\x18\x01 \x03(\v2*.quicbaas.orchestrator.v1.AgentBackendInfoR\bbackends\x128\n" +
-	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"m\n" +
+	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x05R\x05total\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
+	"\vnext_offset\x18\x06 \x01(\x05R\n" +
+	"nextOffset\"m\n" +
 	"\x18OrchestratorJobStateSpec\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12%\n" +
 	"\x0esession_backed\x18\x03 \x01(\bR\rsessionBacked\"w\n" +
 	"\x15OrchestratorJobRunner\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12J\n" +
-	"\x06states\x18\x02 \x03(\v22.quicbaas.orchestrator.v1.OrchestratorJobStateSpecR\x06states\" \n" +
-	"\x1eOrchestratorListRunnersRequest\"\x82\x01\n" +
+	"\x06states\x18\x02 \x03(\v22.quicbaas.orchestrator.v1.OrchestratorJobStateSpecR\x06states\"p\n" +
+	"\x1eOrchestratorListRunnersRequest\x12\x14\n" +
+	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x05R\x06offset\x12\x12\n" +
+	"\x04sort\x18\x03 \x01(\tR\x04sort\x12\f\n" +
+	"\x01q\x18\x04 \x01(\tR\x01q\"\xe7\x01\n" +
 	"\x1fOrchestratorListRunnersResponse\x12I\n" +
 	"\arunners\x18\x01 \x03(\v2/.quicbaas.orchestrator.v1.OrchestratorJobRunnerR\arunners\x12\x14\n" +
-	"\x05count\x18\x02 \x01(\x05R\x05count\"8\n" +
+	"\x05count\x18\x02 \x01(\x05R\x05count\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x05R\x05total\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
+	"\vnext_offset\x18\x06 \x01(\x05R\n" +
+	"nextOffset\"8\n" +
 	"\x19OrchestratorHealthRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\"\x9b\x01\n" +
 	"\x1aOrchestratorHealthResponse\x12C\n" +
@@ -12183,13 +12393,22 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x1bSubmitTaskArtifactsResponse\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x16\n" +
 	"\x06stored\x18\x02 \x01(\x05R\x06stored\x128\n" +
-	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"P\n" +
+	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\xa0\x01\n" +
 	"\x18ListTaskArtifactsRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
-	"\atask_id\x18\x02 \x01(\tR\x06taskId\"\x97\x01\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x12\n" +
+	"\x04sort\x18\x05 \x01(\tR\x04sort\x12\f\n" +
+	"\x01q\x18\x06 \x01(\tR\x01q\"\xfc\x01\n" +
 	"\x19ListTaskArtifactsResponse\x12@\n" +
 	"\tartifacts\x18\x01 \x03(\v2\".quicbaas.orchestrator.v1.ArtifactR\tartifacts\x128\n" +
-	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"b\n" +
+	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x05R\x05total\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
+	"\vnext_offset\x18\x06 \x01(\x05R\n" +
+	"nextOffset\"b\n" +
 	"\x16GetTaskArtifactRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x12\n" +

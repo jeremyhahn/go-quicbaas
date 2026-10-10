@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/auth"
 	operationsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	projectSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
 	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
@@ -232,7 +233,7 @@ type BackupClient interface {
 // OrchestratorClient defines the interface for orchestrator operations.
 type OrchestratorClient interface {
 	Health(ctx context.Context) (*orchestratorSDK.HealthCheckReport, error)
-	ListBackends(ctx context.Context) (*orchestratorSDK.ListBackendsResponse, error)
+	ListBackends(ctx context.Context, params ...page.Params) (*orchestratorSDK.ListBackendsResponse, error)
 	ListBackendModels(ctx context.Context, req *orchestratorSDK.ListBackendModelsRequest) (*orchestratorSDK.ListBackendModelsResponse, error)
 	SpawnSession(ctx context.Context, req *orchestratorSDK.SpawnSessionRequest) (*orchestratorSDK.SpawnSessionResponse, error)
 	PromptSession(ctx context.Context, req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error)

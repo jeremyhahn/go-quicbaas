@@ -195,8 +195,8 @@ func (m *mockOrchestratorClient) CreateWorkflow(ctx context.Context, req *orches
 }
 
 // ListWorkflows satisfies orchestratorSDK.Client.
-func (m *mockOrchestratorClient) ListWorkflows(ctx context.Context, req *orchestratorSDK.ListWorkflowsRequest) ([]*orchestratorSDK.WorkflowDefinition, error) {
-	return []*orchestratorSDK.WorkflowDefinition{}, nil
+func (m *mockOrchestratorClient) ListWorkflows(ctx context.Context, req *orchestratorSDK.ListWorkflowsRequest) (*orchestratorSDK.ListWorkflowsResponse, error) {
+	return &orchestratorSDK.ListWorkflowsResponse{Workflows: []*orchestratorSDK.WorkflowDefinition{}}, nil
 }
 
 // GetWorkflow satisfies orchestratorSDK.Client.

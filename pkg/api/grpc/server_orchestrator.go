@@ -1032,19 +1032,28 @@ func (s *OrchestratorServer) ListBackends(ctx context.Context, req *pb.Orchestra
 		return nil, err
 	}
 
-	backends, err := s.agentSvc.ListBackends(tenantCtx)
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
 	if err != nil {
-		return nil, convertOrchestratorError(err)
+		return nil, err
 	}
 
-	pbBackends := make([]*pb.AgentBackendInfo, len(backends))
-	for i, b := range backends {
+	result, err := orchestration.ListBackendsPage(tenantCtx, s.agentSvc, page)
+	if err != nil {
+		return nil, convertListError(err, convertOrchestratorError)
+	}
+
+	pbBackends := make([]*pb.AgentBackendInfo, len(result.Items))
+	for i, b := range result.Items {
 		pbBackends[i] = orchestratorBackendInfoToProto(b)
 	}
 
 	return &pb.OrchestratorListBackendsResponse{
-		Backends:  pbBackends,
-		Timestamp: timestamppb.Now(),
+		Backends:   pbBackends,
+		Timestamp:  timestamppb.Now(),
+		Total:      pageInt32(result.Total),
+		Limit:      pageInt32(result.Limit),
+		Offset:     pageInt32(result.Offset),
+		NextOffset: pageInt32(result.NextOffset),
 	}, nil
 }
 
@@ -1061,31 +1070,42 @@ func (s *OrchestratorServer) ListBackends(ctx context.Context, req *pb.Orchestra
 // orchestrator service being present, because a node that runs no orchestrator
 // drives no jobs, and answering "these are the runners" there would describe a
 // capability the node does not have.
-func (s *OrchestratorServer) ListRunners(_ context.Context, _ *pb.OrchestratorListRunnersRequest) (*pb.OrchestratorListRunnersResponse, error) {
+func (s *OrchestratorServer) ListRunners(_ context.Context, req *pb.OrchestratorListRunnersRequest) (*pb.OrchestratorListRunnersResponse, error) {
 	s.logger.Debug("Processing ListRunners request")
 
 	if s.agentSvc == nil {
 		return nil, status.Error(codes.Unavailable, "orchestrator service not available")
 	}
 
-	registered := orchestration.JobRunners()
-	runners := make([]*pb.OrchestratorJobRunner, 0, len(registered))
-	for _, runner := range registered {
-		specs := runner.States()
-		states := make([]*pb.OrchestratorJobStateSpec, 0, len(specs))
-		for _, spec := range specs {
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := orchestration.ListJobRunnersPage(page)
+	if err != nil {
+		return nil, convertListError(err, convertOrchestratorError)
+	}
+	runners := make([]*pb.OrchestratorJobRunner, 0, len(result.Items))
+	for _, runner := range result.Items {
+		states := make([]*pb.OrchestratorJobStateSpec, 0, len(runner.States))
+		for _, spec := range runner.States {
 			states = append(states, &pb.OrchestratorJobStateSpec{
 				State:         string(spec.State),
 				Label:         spec.Label,
 				SessionBacked: spec.SessionBacked,
 			})
 		}
-		runners = append(runners, &pb.OrchestratorJobRunner{Name: runner.Name(), States: states})
+		runners = append(runners, &pb.OrchestratorJobRunner{Name: runner.Name, States: states})
 	}
 
 	return &pb.OrchestratorListRunnersResponse{
-		Runners: runners,
-		Count:   int32(len(runners)),
+		Runners:    runners,
+		Count:      int32(len(runners)),
+		Total:      pageInt32(result.Total),
+		Limit:      pageInt32(result.Limit),
+		Offset:     pageInt32(result.Offset),
+		NextOffset: pageInt32(result.NextOffset),
 	}, nil
 }
 
@@ -1984,14 +2004,23 @@ func (s *OrchestratorServer) ListTaskArtifacts(ctx context.Context, req *pb.List
 		return nil, err
 	}
 
-	artifacts, err := s.agentSvc.ListTaskArtifacts(tenantCtx, tenantID, req.GetTaskId())
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
 	if err != nil {
-		return nil, convertArtifactError(err)
+		return nil, err
+	}
+
+	result, err := orchestration.ListTaskArtifactsPage(tenantCtx, s.agentSvc, tenantID, req.GetTaskId(), page)
+	if err != nil {
+		return nil, convertListError(err, convertArtifactError)
 	}
 
 	return &pb.ListTaskArtifactsResponse{
-		Artifacts: serviceArtifactsToProto(artifacts),
-		Timestamp: timestamppb.Now(),
+		Artifacts:  serviceArtifactsToProto(result.Items),
+		Timestamp:  timestamppb.Now(),
+		Total:      pageInt32(result.Total),
+		Limit:      pageInt32(result.Limit),
+		Offset:     pageInt32(result.Offset),
+		NextOffset: pageInt32(result.NextOffset),
 	}, nil
 }
 

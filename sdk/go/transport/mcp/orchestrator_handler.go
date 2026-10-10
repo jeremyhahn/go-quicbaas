@@ -67,6 +67,8 @@ var orchestratorMethodTools = map[string]string{
 	"ReadmitTask": "quicbaas_orchestrator_task_readmit",
 	"DeleteTask":  "quicbaas_orchestrator_task_delete",
 
+	"ListTaskArtifacts": "quicbaas_task_list_artifacts",
+
 	// A tenant's runtime cost settings (go-quicbaas#1058).
 	"GetCostSettings": "quicbaas_orchestrator_cost_settings_get",
 	"SetCostSettings": "quicbaas_orchestrator_cost_settings_set",
@@ -93,12 +95,14 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"GetTenantSpendPolicy":   decodeMCPTenantSpendPolicy,
 	"SetTenantSpendPolicy":   decodeMCPTenantSpendPolicy,
 
-	"ListRunners":      decodeMCPListRunners,
-	"BlockTask":        decodeMCPBlockTask,
-	"ReadmitTask":      decodeMCPReadmitTask,
-	"DeleteTask":       decodeMCPDeleteTask,
-	"AttentionList":    decodeMCPAttentionList,
-	"AttentionResolve": decodeMCPAttentionResolve,
+	"ListBackends":      decodeMCPListBackends,
+	"ListRunners":       decodeMCPListRunners,
+	"ListTaskArtifacts": decodeMCPListTaskArtifacts,
+	"BlockTask":         decodeMCPBlockTask,
+	"ReadmitTask":       decodeMCPReadmitTask,
+	"DeleteTask":        decodeMCPDeleteTask,
+	"AttentionList":     decodeMCPAttentionList,
+	"AttentionResolve":  decodeMCPAttentionResolve,
 
 	"GetCostSettings": decodeMCPCostSettings,
 	"SetCostSettings": decodeMCPCostSettings,
@@ -344,6 +348,19 @@ func decodeMCPListJobs(raw []byte) (interface{}, error) {
 // into *orchestrator.ListJobRunnersResponse. The tool serialises the same
 // {runners, count} envelope the REST endpoint does, so the SDK type decodes it
 // directly.
+func decodeMCPListBackends(raw []byte) (interface{}, error) {
+	var resp orchestrator.ListBackendsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.ListBackends", "failed to decode MCP list backends result")
+	}
+	if resp.Backends == nil {
+		resp.Backends = []*orchestrator.BackendInfo{}
+	}
+	resp.Count = len(resp.Backends)
+	return &resp, nil
+}
+
 func decodeMCPListRunners(raw []byte) (interface{}, error) {
 	var resp orchestrator.ListJobRunnersResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
@@ -353,6 +370,19 @@ func decodeMCPListRunners(raw []byte) (interface{}, error) {
 	if resp.Runners == nil {
 		resp.Runners = []*orchestrator.JobRunnerInfo{}
 	}
+	return &resp, nil
+}
+
+func decodeMCPListTaskArtifacts(raw []byte) (interface{}, error) {
+	var resp orchestrator.ListTaskArtifactsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.ListTaskArtifacts", "failed to decode MCP list task artifacts result")
+	}
+	if resp.Artifacts == nil {
+		resp.Artifacts = []*orchestrator.TaskArtifact{}
+	}
+	resp.Count = len(resp.Artifacts)
 	return &resp, nil
 }
 

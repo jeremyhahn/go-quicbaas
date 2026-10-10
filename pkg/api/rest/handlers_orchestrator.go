@@ -1048,25 +1048,29 @@ func (s *Server) HandleOrchestratorSubscribeJobEvents(w http.ResponseWriter, r *
 
 // HandleOrchestratorListBackends handles GET /api/v1/orchestrator/backends - List agent backends.
 func (s *Server) HandleOrchestratorListBackends(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
-	backends, err := agentSvc.ListBackends(ctx)
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
+	backends, err := orchestration.ListBackendsPage(ctx, agentSvc, page)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"backends": backends,
-	})
+	RespondJSON(w, r, http.StatusOK, backends.Envelope("backends"))
 }
 
 // HandleListFleetNodeBackendModels handles
@@ -1162,6 +1166,11 @@ type OrchestratorListRunnersResponse struct {
 
 	// Count is len(Runners).
 	Count int `json:"count"`
+
+	Total      int `json:"total"`
+	Limit      int `json:"limit"`
+	Offset     int `json:"offset"`
+	NextOffset int `json:"next_offset,omitempty"`
 }
 
 // HandleOrchestratorListRunners handles GET /api/v1/orchestrator/runners —
@@ -1180,12 +1189,22 @@ func (s *Server) HandleOrchestratorListRunners(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	registered := orchestration.JobRunners()
-	runners := make([]OrchestratorJobRunnerResponse, 0, len(registered))
-	for _, runner := range registered {
-		specs := runner.States()
-		states := make([]OrchestratorJobStateSpecResponse, 0, len(specs))
-		for _, spec := range specs {
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
+	result, err := orchestration.ListJobRunnersPage(page)
+	if err != nil {
+		handleOrchestratorError(w, r, err)
+		return
+	}
+
+	runners := make([]OrchestratorJobRunnerResponse, 0, len(result.Items))
+	for _, runner := range result.Items {
+		states := make([]OrchestratorJobStateSpecResponse, 0, len(runner.States))
+		for _, spec := range runner.States {
 			states = append(states, OrchestratorJobStateSpecResponse{
 				State:         string(spec.State),
 				Label:         spec.Label,
@@ -1193,14 +1212,18 @@ func (s *Server) HandleOrchestratorListRunners(w http.ResponseWriter, r *http.Re
 			})
 		}
 		runners = append(runners, OrchestratorJobRunnerResponse{
-			Name:   runner.Name(),
+			Name:   runner.Name,
 			States: states,
 		})
 	}
 
 	RespondJSON(w, r, http.StatusOK, OrchestratorListRunnersResponse{
-		Runners: runners,
-		Count:   len(runners),
+		Runners:    runners,
+		Count:      len(runners),
+		Total:      result.Total,
+		Limit:      result.Limit,
+		Offset:     result.Offset,
+		NextOffset: result.NextOffset,
 	})
 }
 
@@ -2307,8 +2330,6 @@ func (s *Server) HandleOrchestratorSubmitArtifacts(w http.ResponseWriter, r *htt
 
 // HandleOrchestratorListArtifacts handles GET /api/v1/orchestrator/tasks/{taskID}/artifacts.
 func (s *Server) HandleOrchestratorListArtifacts(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
 		return
@@ -2320,19 +2341,26 @@ func (s *Server) HandleOrchestratorListArtifacts(w http.ResponseWriter, r *http.
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
-	artifacts, err := agentSvc.ListTaskArtifacts(ctx, tenantID, taskID)
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
+	artifacts, err := orchestration.ListTaskArtifactsPage(ctx, agentSvc, tenantID, taskID, page)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"task_id":   taskID,
-		"artifacts": artifacts,
-	})
+	envelope := artifacts.Envelope("artifacts")
+	envelope["task_id"] = taskID
+	RespondJSON(w, r, http.StatusOK, envelope)
 }
 
 // HandleOrchestratorGetArtifact handles GET /api/v1/orchestrator/tasks/{taskID}/artifacts/{name}.

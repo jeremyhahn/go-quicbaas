@@ -14,8 +14,8 @@ are in [prompt-sets.md](prompt-sets.md).
 
 ## List paging, sorting and search
 
-Every list endpoint below — jobs, tasks, sessions, agents, workflows, projects
-and accounts — takes the SAME four parameters and answers with the SAME
+Every list endpoint below — jobs, tasks, sessions, backends, runners, workflows,
+artifacts, projects and accounts — takes the SAME four parameters and answers with the SAME
 envelope. The burn-in tenant's job list is ~2,000 records; a listing that
 answers with all of them is not an answer a browser can render.
 
@@ -77,8 +77,11 @@ that response — `total` is how many matched.
 | `GET /api/v1/orchestrator/jobs` | `started_at:desc` | `agent_id`, `description`, `job_id`, `runner`, `started_at`, `state`, `task_id`, `updated_at` | job id, description, runner, state, task id | `task_id`, `runner`, `project_id`, `agent_id`, `statuses` (comma-separated), `job_ids` (comma-separated) | `state`, `runner`, `project_id`, `agent_id` |
 | `GET /api/v1/orchestrator/tasks` | `created_at:desc` | `agent_id`, `attempts`, `created_at`, `id`, `project_id`, `status`, `subject`, `updated_at` | id, subject, status, project id | `statuses` (comma-separated), `project_id`, `agent_id`, `job_id`, `auto_spawn` (`true`/`false`), `team_name`, `assigned_to`, `created_by`, `status` | `status`, `project_id`, `agent_id` |
 | `GET /api/v1/orchestrator/sessions` | `created_at` (**oldest first** — this listing has always answered in creation order; ask for `sort=created_at:desc` to invert it) | `agent_id`, `backend`, `created_at`, `last_activity`, `model`, `project_id`, `runner`, `session_id`, `state` | session id, backend, model, state | `backend`, `status`, `project_id`, `job_id`, `runner`, `agent_id` | `backend`, `state`, `runner`, `agent_id` |
+| `GET /api/v1/orchestrator/backends` | `name` | `default_model`, `name`, `type` | name, type, default model | `tenant_id` | — |
+| `GET /api/v1/orchestrator/runners` | `name` | `name` | runner name, state, label | — | — |
 | `GET /api/v1/fleet` | `registered_at:desc` | `backend`, `host`, `id`, `last_seen`, `name`, `registered_at`, `status` | id, name, and every backend it serves (primary + capabilities) | `status`, `backend` (membership — see below), `host`, `agent_type` | `status`, `backend` |
 | `GET /api/v1/orchestrator/workflows` | `name` (workflows carry no timestamp) | `mode`, `name`, `project_id` | name, which is also the identifier | `project_id`, `mode` | `project_id`, `mode` |
+| `GET /api/v1/orchestrator/tasks/{taskID}/artifacts` | `name` | `kind`, `mime_type`, `name`, `size` | name, kind, MIME type | `tenant_id`, task id path segment | — |
 | `GET /api/v1/projects` | `created_at:desc` | `autonomous`, `created_at`, `id`, `name`, `updated_at` | id, name | `tenant_id` (required), `autonomous` (`true`/`false`) | `autonomous` |
 | `GET /api/v1/agent-accounts` | `created_at:desc` | `created_at`, `display_name`, `id`, `provider`, `status`, `updated_at` | id, display name, provider | `provider`, `status`, `project_id` | `provider`, `status` |
 | `GET /api/v1/orchestrator/attention` | `status_changed_at` (**oldest first**) | `id`, `kind`, `project_id`, `status_changed_at`, `subject` | id, subject, project name, issue ref, question, recommendation, message | `project_id`, `kind` | `project_id`, `kind` |
@@ -311,13 +314,14 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.Orchestrator` — SDK package `sdk/go/client/orchestrator`
 
-`ListJobs`, `ListTasks`, `ListSessions`, `ListFleetNodes` and `ListWorkflows` are
+`ListJobs`, `ListTasks`, `ListSessions`, `ListFleetNodes`, `ListBackends`,
+`ListRunners`, `ListWorkflows` and `ListTaskArtifacts` are
 paged, sorted and searched per
 [List paging, sorting and search](#list-paging-sorting-and-search).
 
-Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 38; MCP tools registered server-side: 32.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 38; MCP tools registered server-side: 33.
 
-MCP tools: `quicbaas_fleet_heartbeat`, `quicbaas_fleet_list`, `quicbaas_fleet_register`, `quicbaas_fleet_remove`, `quicbaas_fleet_status`, `quicbaas_orchestrator_broadcast`, `quicbaas_orchestrator_cancel_job`, `quicbaas_orchestrator_close`, `quicbaas_orchestrator_cost`, `quicbaas_orchestrator_decompose`, `quicbaas_orchestrator_discover`, `quicbaas_orchestrator_get_job_status`, `quicbaas_orchestrator_health`, `quicbaas_orchestrator_inference`, `quicbaas_orchestrator_list`, `quicbaas_orchestrator_list_backends`, `quicbaas_orchestrator_list_jobs`, `quicbaas_orchestrator_list_sessions`, `quicbaas_orchestrator_prompt`, `quicbaas_orchestrator_register`, `quicbaas_orchestrator_rotate_account`, `quicbaas_orchestrator_session_conversation`, `quicbaas_orchestrator_session_history`, `quicbaas_orchestrator_spawn`, `quicbaas_orchestrator_start_job`, `quicbaas_orchestrator_status`, `quicbaas_orchestrator_task_block`, `quicbaas_orchestrator_task_create`, `quicbaas_orchestrator_task_delete`, `quicbaas_orchestrator_task_readmit`, `quicbaas_task_get_artifact`, `quicbaas_task_list_artifacts`
+MCP tools: `quicbaas_fleet_heartbeat`, `quicbaas_fleet_list`, `quicbaas_fleet_register`, `quicbaas_fleet_remove`, `quicbaas_fleet_status`, `quicbaas_orchestrator_broadcast`, `quicbaas_orchestrator_cancel_job`, `quicbaas_orchestrator_close`, `quicbaas_orchestrator_cost`, `quicbaas_orchestrator_decompose`, `quicbaas_orchestrator_discover`, `quicbaas_orchestrator_get_job_status`, `quicbaas_orchestrator_health`, `quicbaas_orchestrator_inference`, `quicbaas_orchestrator_list`, `quicbaas_orchestrator_list_backends`, `quicbaas_orchestrator_list_jobs`, `quicbaas_orchestrator_list_runners`, `quicbaas_orchestrator_list_sessions`, `quicbaas_orchestrator_prompt`, `quicbaas_orchestrator_register`, `quicbaas_orchestrator_rotate_account`, `quicbaas_orchestrator_session_conversation`, `quicbaas_orchestrator_session_history`, `quicbaas_orchestrator_spawn`, `quicbaas_orchestrator_start_job`, `quicbaas_orchestrator_status`, `quicbaas_orchestrator_task_block`, `quicbaas_orchestrator_task_create`, `quicbaas_orchestrator_task_delete`, `quicbaas_orchestrator_task_readmit`, `quicbaas_task_get_artifact`, `quicbaas_task_list_artifacts`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
@@ -379,13 +383,15 @@ instead of a hardcoded copy of the engine's states.
 ```json
 {"runners": [{"name": "sdlc",
               "states": [{"state": "initializing", "label": "Initializing", "session_backed": false}]}],
- "count": 1}
+ "count": 1, "total": 1, "limit": 25, "offset": 0}
 ```
 
 Registry data, not tenant data: the runners a daemon can drive are the same
 for every caller, so no tenant is derived. It is still gated on the
 orchestrator service being present — a node that runs no orchestrator drives
-no jobs — identically on REST, embedded and MCP. The permission is
+no jobs — identically on REST, embedded and MCP. The listing accepts `limit`,
+`offset`, `sort` and `q` per
+[List paging, sorting and search](#list-paging-sorting-and-search). The permission is
 `orchestrator:status`, what reading the job already requires, rather than a
 new action in a resource family go-qrdb owns.
 
@@ -394,7 +400,8 @@ Reachable from **every** transport (#606): REST, gRPC
 gRPC wire over a domain socket — QUIC — the REST surface over HTTP/3 — MCP
 (`quicbaas_orchestrator_list_runners`) and the embedded transport, plus the Go
 SDK (`client.Orchestrator().ListRunners`), the TypeScript SDK and the Wails
-desktop binding. The gRPC `OrchestratorListRunnersRequest` carries no tenant,
+desktop binding. The gRPC `OrchestratorListRunnersRequest` carries paging
+fields but no tenant,
 for the same reason the REST route derives none. The SDLC module's sibling
 `GET /api/v1/sdlc/forges` (which forge adapters this build carries) has the
 same shape and was wired across the same transports in the same change; see
@@ -1565,7 +1572,9 @@ The result carries `total`, `limit`, `offset` and — except on the last page �
 
 ### quicbaas_orchestrator_list_backends
 
-List all registered fleet node backends with their capabilities. Takes no parameters.
+List one page of registered fleet node backends with their capabilities. Accepts
+`limit`, `offset`, `sort` and `q` per
+[List paging, sorting and search](#list-paging-sorting-and-search).
 
 **Example request:**
 ```json
@@ -1961,7 +1970,7 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_orchestrator_close` | `orchestrator:close` | Terminate an active session |
 | `quicbaas_orchestrator_rotate_account` | `orchestrator:spawn` | Move a session onto a different pooled account |
 | `quicbaas_orchestrator_list_sessions` | `orchestrator:list` | One page of a tenant's sessions, narrowed by `backend`, `status`, `project_id`, `job_id`, `runner` or `agent_id` |
-| `quicbaas_orchestrator_list_backends` | `orchestrator:backend_list` | List registered backends and capabilities |
+| `quicbaas_orchestrator_list_backends` | `orchestrator:backend_list` | One page of registered backends and capabilities, paged and counted per [List paging, sorting and search](#list-paging-sorting-and-search) |
 | `quicbaas_orchestrator_decompose` | `orchestrator:task_decompose` | Decompose a task into prioritized work items |
 | `quicbaas_orchestrator_health` | `orchestrator:health` | Check health of all active sessions |
 | `quicbaas_orchestrator_broadcast` | `orchestrator:broadcast` | Publish a message to a coordination channel |

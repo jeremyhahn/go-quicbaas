@@ -27,6 +27,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -75,6 +76,7 @@ var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
 	"GetJobStatus":           handleOrchestratorGetJobStatus,
 	"ListJobs":               handleOrchestratorListJobs,
 	"CancelJob":              handleOrchestratorCancelJob,
+	"ListTaskArtifacts":      handleOrchestratorListTaskArtifacts,
 	"GetSessionHistory":      handleOrchestratorGetSessionHistory,
 	"GetSessionConversation": handleOrchestratorGetSessionConversation,
 	"GetSpendReport":         handleOrchestratorGetSpendReport,
@@ -91,6 +93,59 @@ var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
 // the stream closes — spares us from introducing a second RPC while the
 // event surface is still maturing. When history pagination becomes a hot
 // path the server-side can add a dedicated non-streaming RPC.
+func handleOrchestratorListTaskArtifacts(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListTaskArtifactsRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.ListTaskArtifacts", "invalid request type")
+	}
+	paging := pageFieldsFromParams(sdkReq.Params)
+	protoReq := &pb.ListTaskArtifactsRequest{
+		TenantId: sdkReq.TenantID,
+		TaskId:   sdkReq.TaskID,
+		Limit:    paging.limit,
+		Offset:   paging.offset,
+		Sort:     paging.sort,
+		Q:        paging.q,
+	}
+	protoResp := &pb.ListTaskArtifactsResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_ListTaskArtifacts_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.ListTaskArtifacts")
+	}
+	artifacts := make([]*orchestrator.TaskArtifact, 0, len(protoResp.GetArtifacts()))
+	for _, artifact := range protoResp.GetArtifacts() {
+		artifacts = append(artifacts, protoArtifactToSDK(artifact))
+	}
+	return &orchestrator.ListTaskArtifactsResponse{
+		TaskID:    sdkReq.TaskID,
+		Artifacts: artifacts,
+		Count:     len(artifacts),
+		Envelope:  pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
+	}, nil
+}
+
+func protoArtifactToSDK(artifact *pb.Artifact) *orchestrator.TaskArtifact {
+	if artifact == nil {
+		return &orchestrator.TaskArtifact{}
+	}
+	out := &orchestrator.TaskArtifact{
+		Kind:     artifact.GetKind(),
+		Name:     artifact.GetName(),
+		MIMEType: artifact.GetMimeType(),
+		Size:     artifact.GetSize(),
+		Content:  artifact.GetContent(),
+		Metadata: artifact.GetMetadata(),
+	}
+	if ref := artifact.GetRef(); ref != nil {
+		out.Ref = &orchestrator.TaskArtifactRef{
+			AgentID: ref.GetAgentId(),
+			Path:    ref.GetPath(),
+			SHA:     ref.GetSha(),
+			Branch:  ref.GetBranch(),
+		}
+	}
+	return out
+}
+
 func handleOrchestratorGetSessionHistory(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.GetSessionHistoryRequest)
 	if !ok {
@@ -200,10 +255,15 @@ func handleOrchestratorHealth(ctx context.Context, conn *grpc.ClientConn, req in
 //
 // The request carries no tenant because the runner registry is the daemon's,
 // not a tenant's — the same reason the REST route derives none.
-func handleOrchestratorListRunners(ctx context.Context, conn *grpc.ClientConn, _ interface{}) (interface{}, error) {
+func handleOrchestratorListRunners(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	var params page.Params
+	if sdkReq, ok := req.(*orchestrator.ListRunnersRequest); ok && sdkReq != nil {
+		params = sdkReq.Params
+	}
+	paging := pageFieldsFromParams(params)
 	protoResp := &pb.OrchestratorListRunnersResponse{}
 	if err := conn.Invoke(ctx, pb.OrchestratorService_ListRunners_FullMethodName,
-		&pb.OrchestratorListRunnersRequest{}, protoResp); err != nil {
+		&pb.OrchestratorListRunnersRequest{Limit: paging.limit, Offset: paging.offset, Sort: paging.sort, Q: paging.q}, protoResp); err != nil {
 		return nil, convertGRPCError(err, "grpc.orchestrator.ListRunners")
 	}
 
@@ -220,7 +280,11 @@ func handleOrchestratorListRunners(ctx context.Context, conn *grpc.ClientConn, _
 		runners = append(runners, &orchestrator.JobRunnerInfo{Name: r.GetName(), States: states})
 	}
 
-	return &orchestrator.ListJobRunnersResponse{Runners: runners, Count: len(runners)}, nil
+	return &orchestrator.ListJobRunnersResponse{
+		Runners:  runners,
+		Count:    len(runners),
+		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
+	}, nil
 }
 
 // =============================================================================
@@ -229,9 +293,18 @@ func handleOrchestratorListRunners(ctx context.Context, conn *grpc.ClientConn, _
 
 func handleOrchestratorListBackends(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
 	tenantID := transport.TenantFromContext(ctx)
+	var params page.Params
+	if sdkReq, ok := req.(*orchestrator.ListBackendsRequest); ok && sdkReq != nil {
+		params = sdkReq.Params
+	}
 
+	paging := pageFieldsFromParams(params)
 	protoReq := &pb.OrchestratorListBackendsRequest{
 		TenantId: tenantID,
+		Limit:    paging.limit,
+		Offset:   paging.offset,
+		Sort:     paging.sort,
+		Q:        paging.q,
 	}
 	protoResp := &pb.OrchestratorListBackendsResponse{}
 
@@ -243,16 +316,18 @@ func handleOrchestratorListBackends(ctx context.Context, conn *grpc.ClientConn, 
 	backends := make([]*orchestrator.BackendInfo, 0, len(protoResp.GetBackends()))
 	for _, b := range protoResp.GetBackends() {
 		backends = append(backends, &orchestrator.BackendInfo{
-			Name:      b.GetName(),
-			Type:      b.GetType(),
-			Status:    "available",
-			Available: true,
+			Name:         b.GetName(),
+			Type:         b.GetType(),
+			Status:       "available",
+			Available:    true,
+			DefaultModel: b.GetDefaultModel(),
 		})
 	}
 
 	return &orchestrator.ListBackendsResponse{
 		Backends: backends,
 		Count:    len(backends),
+		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
 	}, nil
 }
 

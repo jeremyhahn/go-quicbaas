@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -435,8 +436,9 @@ func TestListWorkflowsSuccess(t *testing.T) {
 
 	wfs, err := c.ListWorkflows(context.Background(), &ListWorkflowsRequest{TenantID: "t1"})
 	require.NoError(t, err)
-	assert.Len(t, wfs, 2)
-	assert.Equal(t, "wf-a", wfs[0].Name)
+	require.NotNil(t, wfs)
+	assert.Len(t, wfs.Workflows, 2)
+	assert.Equal(t, "wf-a", wfs.Workflows[0].Name)
 }
 
 func TestListWorkflowsNilResponse(t *testing.T) {
@@ -449,7 +451,89 @@ func TestListWorkflowsNilResponse(t *testing.T) {
 
 	wfs, err := c.ListWorkflows(context.Background(), &ListWorkflowsRequest{TenantID: "t1"})
 	require.NoError(t, err)
-	assert.Empty(t, wfs)
+	require.NotNil(t, wfs)
+	assert.Empty(t, wfs.Workflows)
+}
+
+func TestListBackendsNoArgsFetchesAllPages(t *testing.T) {
+	var offsets []int
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			require.Equal(t, "ListBackends", method)
+			listReq, ok := req.(*ListBackendsRequest)
+			require.True(t, ok)
+			offsets = append(offsets, listReq.Offset)
+			if listReq.Offset == 0 {
+				return &ListBackendsResponse{
+					Backends: []*BackendInfo{{Name: "a"}},
+					Envelope: page.Envelope{Total: 2, Limit: 1, Offset: 0, NextOffset: 1},
+				}, nil
+			}
+			return &ListBackendsResponse{
+				Backends: []*BackendInfo{{Name: "b"}},
+				Envelope: page.Envelope{Total: 2, Limit: 1, Offset: 1},
+			}, nil
+		},
+	}
+	c := NewClient(mt)
+
+	resp, err := c.ListBackends(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, []int{0, 1}, offsets)
+	assert.Equal(t, []string{"a", "b"}, []string{resp.Backends[0].Name, resp.Backends[1].Name})
+	assert.Equal(t, 2, resp.Count)
+}
+
+func TestListBackendsExplicitPageDoesNotFetchAllPages(t *testing.T) {
+	calls := 0
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			calls++
+			return &ListBackendsResponse{
+				Backends: []*BackendInfo{{Name: "a"}},
+				Envelope: page.Envelope{Total: 2, Limit: 1, Offset: 0, NextOffset: 1},
+			}, nil
+		},
+	}
+	c := NewClient(mt)
+
+	resp, err := c.ListBackends(context.Background(), page.Params{Limit: 1})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, 1, calls)
+	assert.Equal(t, 1, resp.Count)
+	assert.Equal(t, 1, resp.NextOffset)
+}
+
+func TestListRunnersNoArgsFetchesAllPages(t *testing.T) {
+	var offsets []int
+	mt := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			require.Equal(t, "ListRunners", method)
+			listReq, ok := req.(*ListRunnersRequest)
+			require.True(t, ok)
+			offsets = append(offsets, listReq.Offset)
+			if listReq.Offset == 0 {
+				return &ListJobRunnersResponse{
+					Runners:  []*JobRunnerInfo{{Name: "sdlc"}},
+					Envelope: page.Envelope{Total: 2, Limit: 1, Offset: 0, NextOffset: 1},
+				}, nil
+			}
+			return &ListJobRunnersResponse{
+				Runners:  []*JobRunnerInfo{{Name: "review"}},
+				Envelope: page.Envelope{Total: 2, Limit: 1, Offset: 1},
+			}, nil
+		},
+	}
+	c := NewClient(mt)
+
+	resp, err := c.ListRunners(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, []int{0, 1}, offsets)
+	assert.Equal(t, []string{"sdlc", "review"}, []string{resp.Runners[0].Name, resp.Runners[1].Name})
+	assert.Equal(t, 2, resp.Count)
 }
 
 func TestGetWorkflowValidation(t *testing.T) {

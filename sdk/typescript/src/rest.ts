@@ -598,6 +598,25 @@ class RestOrchestratorClient implements OrchestratorClient {
     return this.fetchAPI<T>(`${API_PREFIX}${path}`, init);
   }
 
+  private async fetchAllListPages<T>(path: string, itemsKey: string): Promise<T[]> {
+    const items: T[] = [];
+    let offset = 0;
+    for (;;) {
+      const params = new URLSearchParams();
+      params.set('limit', '100');
+      if (offset > 0) params.set('offset', String(offset));
+      const pagePath = `${path}${path.includes('?') ? '&' : '?'}${params.toString()}`;
+      const raw = await this.fetchJSON<unknown>(pagePath);
+      const page = adoptPage<T>(raw, itemsKey);
+      items.push(...page.items);
+      if (page.next_offset === undefined) return items;
+      if (page.next_offset <= page.offset) {
+        throw new Error(`${itemsKey} list next_offset did not advance`);
+      }
+      offset = page.next_offset;
+    }
+  }
+
   // fetchAPI is fetchJSON for a path outside the orchestrator prefix — the
   // worker image refresh lives under /api/v1/sdlc and the fleet registry
   // under /api/v1/fleet.
@@ -817,24 +836,14 @@ class RestOrchestratorClient implements OrchestratorClient {
   // The REST endpoint returns {"backends": [...]}; unwrap to match the
   // Go SDK contract which exposes a bare slice.
   async listBackends(): Promise<AgentBackendInfo[]> {
-    const resp = await this.fetchJSON<{ backends?: AgentBackendInfo[] } | AgentBackendInfo[]>(
-      '/backends',
-    );
-    if (Array.isArray(resp)) {
-      return resp;
-    }
-    return resp.backends ?? [];
+    return this.fetchAllListPages<AgentBackendInfo>('/backends', 'backends');
   }
 
   // listRunners maps to GET /api/v1/orchestrator/runners
   // The REST endpoint returns {"runners": [...]}; unwrap to match the Go SDK
   // contract, which exposes a bare slice.
   async listRunners(): Promise<JobRunnerInfo[]> {
-    const resp = await this.fetchJSON<{ runners?: JobRunnerInfo[] } | JobRunnerInfo[]>('/runners');
-    if (Array.isArray(resp)) {
-      return resp;
-    }
-    return resp.runners ?? [];
+    return this.fetchAllListPages<JobRunnerInfo>('/runners', 'runners');
   }
 
   // listBackendModels maps to

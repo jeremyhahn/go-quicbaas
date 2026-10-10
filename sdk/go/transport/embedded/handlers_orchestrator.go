@@ -840,18 +840,19 @@ func handleOrchestratorListTaskArtifacts(ctx context.Context, svc service.QuicBa
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListTaskArtifacts")
 	}
-	artifacts, err := agentSvc.ListTaskArtifacts(ctx, r.TenantID, r.TaskID)
+	result, err := orchestration.ListTaskArtifactsPage(ctx, agentSvc, r.TenantID, r.TaskID, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
 	}
-	sdkArtifacts := make([]*orchestratorSDK.TaskArtifact, len(artifacts))
-	for i, a := range artifacts {
+	sdkArtifacts := make([]*orchestratorSDK.TaskArtifact, len(result.Items))
+	for i, a := range result.Items {
 		sdkArtifacts[i] = artifactToSDK(a, false)
 	}
 	return &orchestratorSDK.ListTaskArtifactsResponse{
 		TaskID:    r.TaskID,
 		Artifacts: sdkArtifacts,
 		Count:     len(sdkArtifacts),
+		Envelope:  envelopeFromPage(result),
 	}, nil
 }
 
@@ -1172,23 +1173,35 @@ func handleOrchestratorHealth(ctx context.Context, svc service.QuicBaaS, req int
 }
 
 func handleOrchestratorListBackends(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.ListBackendsRequest)
+	if !ok && req != nil {
+		if _, empty := req.(struct{}); !empty {
+			return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListBackends",
+				"*orchestrator.ListBackendsRequest", reflect.TypeOf(req).String())
+		}
+	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListBackends")
 	}
-	backends, err := agentSvc.ListBackends(ctx)
+	var params page.Params
+	if r != nil {
+		params = r.Params
+	}
+	result, err := orchestration.ListBackendsPage(ctx, agentSvc, pageFromSDK(params))
 	if err != nil {
 		return nil, err
 	}
-	sdkBackends := make([]*orchestratorSDK.BackendInfo, len(backends))
-	for i, b := range backends {
+	sdkBackends := make([]*orchestratorSDK.BackendInfo, len(result.Items))
+	for i, b := range result.Items {
 		sdkBackends[i] = &orchestratorSDK.BackendInfo{
-			Name:      b.Name,
-			Type:      b.Type,
-			Available: true, // backends returned from ListBackends are registered and available
+			Name:         b.Name,
+			Type:         b.Type,
+			Available:    true,
+			DefaultModel: b.DefaultModel,
 		}
 	}
-	return &orchestratorSDK.ListBackendsResponse{Backends: sdkBackends, Count: len(sdkBackends)}, nil
+	return &orchestratorSDK.ListBackendsResponse{Backends: sdkBackends, Count: len(sdkBackends), Envelope: envelopeFromPage(result)}, nil
 }
 
 // handleOrchestratorListRunners answers ListRunners in process.
@@ -1198,25 +1211,38 @@ func handleOrchestratorListBackends(ctx context.Context, svc service.QuicBaaS, r
 // the REST handler: a node that runs no orchestrator drives no jobs, and
 // answering "these are the runners" there would describe a capability the node
 // does not have.
-func handleOrchestratorListRunners(_ context.Context, svc service.QuicBaaS, _ interface{}) (interface{}, error) {
+func handleOrchestratorListRunners(_ context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.ListRunnersRequest)
+	if !ok && req != nil {
+		if _, empty := req.(struct{}); !empty {
+			return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListRunners",
+				"*orchestrator.ListRunnersRequest", reflect.TypeOf(req).String())
+		}
+	}
 	if svc.Agent() == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListRunners")
 	}
-	registered := orchestration.JobRunners()
-	runners := make([]*orchestratorSDK.JobRunnerInfo, 0, len(registered))
-	for _, runner := range registered {
-		specs := runner.States()
-		states := make([]orchestratorSDK.JobStateSpec, 0, len(specs))
-		for _, spec := range specs {
+	var params page.Params
+	if r != nil {
+		params = r.Params
+	}
+	result, err := orchestration.ListJobRunnersPage(pageFromSDK(params))
+	if err != nil {
+		return nil, err
+	}
+	runners := make([]*orchestratorSDK.JobRunnerInfo, 0, len(result.Items))
+	for _, runner := range result.Items {
+		states := make([]orchestratorSDK.JobStateSpec, 0, len(runner.States))
+		for _, spec := range runner.States {
 			states = append(states, orchestratorSDK.JobStateSpec{
 				State:         string(spec.State),
 				Label:         spec.Label,
 				SessionBacked: spec.SessionBacked,
 			})
 		}
-		runners = append(runners, &orchestratorSDK.JobRunnerInfo{Name: runner.Name(), States: states})
+		runners = append(runners, &orchestratorSDK.JobRunnerInfo{Name: runner.Name, States: states})
 	}
-	return &orchestratorSDK.ListJobRunnersResponse{Runners: runners, Count: len(runners)}, nil
+	return &orchestratorSDK.ListJobRunnersResponse{Runners: runners, Count: len(runners), Envelope: envelopeFromPage(result)}, nil
 }
 
 func handleOrchestratorListBackendModels(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

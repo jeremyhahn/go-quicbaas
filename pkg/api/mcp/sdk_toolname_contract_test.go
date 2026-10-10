@@ -206,7 +206,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Orchestrator", "DecomposeTask"}:       gapNameDrift + "quicbaas_orchestrator_decompose",
 	{"quicbaas.Orchestrator", "ListBackendModels"}:   gapNameDrift + "quicbaas_orchestrator_list_backends",
 	{"quicbaas.Orchestrator", "GetTaskArtifact"}:     gapNameDrift + "quicbaas_task_get_artifact",
-	{"quicbaas.Orchestrator", "ListTaskArtifacts"}:   gapNameDrift + "quicbaas_task_list_artifacts",
 	{"quicbaas.Orchestrator", "GetFleetNode"}:        gapAmbiguous + "quicbaas_fleet_status",
 	{"quicbaas.Orchestrator", "ClaimTask"}:           gapNoTool,
 	{"quicbaas.Orchestrator", "CompleteTask"}:        gapNoTool,

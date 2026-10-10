@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -37,6 +38,9 @@ func TestPageSpecs_DefaultSortIsAllowListed(t *testing.T) {
 		{name: "jobs", defaultSort: jobPageSpec.DefaultSort, fields: JobPageSpec().SortFields()},
 		{name: "tasks", defaultSort: taskPageSpec.DefaultSort, fields: TaskPageSpec().SortFields()},
 		{name: "sessions", defaultSort: sessionPageSpec.DefaultSort, fields: SessionPageSpec().SortFields()},
+		{name: "backends", defaultSort: backendPageSpec.DefaultSort, fields: BackendPageSpec().SortFields()},
+		{name: "runners", defaultSort: runnerPageSpec.DefaultSort, fields: RunnerPageSpec().SortFields()},
+		{name: "artifacts", defaultSort: artifactPageSpec.DefaultSort, fields: ArtifactPageSpec().SortFields()},
 		{name: "agents", defaultSort: fleetNodePageSpec.DefaultSort, fields: FleetNodePageSpec().SortFields()},
 		{name: "workflows", defaultSort: workflowPageSpec.DefaultSort, fields: WorkflowPageSpec().SortFields()},
 		{name: "projects", defaultSort: projectPageSpec.DefaultSort, fields: ProjectPageSpec().SortFields()},
@@ -202,6 +206,88 @@ func TestSessionPageSpec_KeepsItsOldestFirstOrder(t *testing.T) {
 // TestAgentPageSpec_SearchesEveryBackendItServes proves the fleet search
 // matches the capability list too, so an agent that serves codex as a
 // secondary backend is found by "codex" — the same rule dispatch applies.
+func TestBackendRunnerAndArtifactPageSpecs(t *testing.T) {
+	t.Parallel()
+
+	backends, err := ApplyPage([]*AgentBackendInfo{
+		{Name: "zeta", Type: "acp", DefaultModel: "opus"},
+		{Name: "alpha", Type: "ollama", DefaultModel: "llama"},
+	}, &Page{Limit: 1, Sort: "name", Query: "LLAMA"}, backendPageSpec)
+	if err != nil {
+		t.Fatalf("backend ApplyPage() error = %v, want nil", err)
+	}
+	if backends.Total != 1 || backends.Items[0].Name != "alpha" || backends.HasNext {
+		t.Fatalf("backend page = total %d first %q hasNext %v, want alpha on last filtered page", backends.Total, backends.Items[0].Name, backends.HasNext)
+	}
+	if _, err := ApplyPage([]*AgentBackendInfo{{Name: "alpha"}}, &Page{Sort: "state"}, backendPageSpec); err == nil || !strings.Contains(err.Error(), "name") {
+		t.Fatalf("backend bad sort error = %v, want typed allow-list refusal", err)
+	}
+
+	runners, err := ApplyPage([]*JobRunnerInfo{
+		{Name: "zeta", States: []JobStateSpec{{State: JobStateExecuting, Label: "Working"}}},
+		{Name: "alpha", States: []JobStateSpec{{State: JobStateReviewing, Label: "Reviewing"}}},
+	}, &Page{Sort: "name:desc", Query: "reviewing"}, runnerPageSpec)
+	if err != nil {
+		t.Fatalf("runner ApplyPage() error = %v, want nil", err)
+	}
+	if runners.Total != 1 || runners.Items[0].Name != "alpha" {
+		t.Fatalf("runner page = total %d first %q, want alpha", runners.Total, runners.Items[0].Name)
+	}
+	if _, err := ApplyPage([]*JobRunnerInfo{{Name: "alpha"}}, &Page{Sort: "state"}, runnerPageSpec); err == nil || !strings.Contains(err.Error(), "name") {
+		t.Fatalf("runner bad sort error = %v, want typed allow-list refusal", err)
+	}
+
+	artifacts, err := ApplyPage([]Artifact{
+		{Name: "report", Kind: ArtifactKindInline, MIMEType: "text/plain", Size: 12},
+		{Name: "patch", Kind: ArtifactKindCommit, MIMEType: "text/x-diff", Size: 4},
+	}, &Page{Limit: 1, Offset: 1, Sort: "size:desc", Query: "text"}, artifactPageSpec)
+	if err != nil {
+		t.Fatalf("artifact ApplyPage() error = %v, want nil", err)
+	}
+	if artifacts.Total != 2 || artifacts.Items[0].Name != "patch" || artifacts.HasNext {
+		t.Fatalf("artifact page = total %d first %q hasNext %v, want second sorted item and last page", artifacts.Total, artifacts.Items[0].Name, artifacts.HasNext)
+	}
+	if _, err := ApplyPage([]Artifact{{Name: "report"}}, &Page{Sort: "created_at"}, artifactPageSpec); err == nil || !strings.Contains(err.Error(), "mime_type") {
+		t.Fatalf("artifact bad sort error = %v, want typed allow-list refusal", err)
+	}
+}
+
+type defaultModelBackend struct {
+	testMinimalBackend
+	model string
+}
+
+func (b *defaultModelBackend) DefaultModel() string { return b.model }
+
+func TestListBackendsPopulatesDefaultModelForPageSpec(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService(t)
+	ctx := context.Background()
+	for name, model := range map[string]string{
+		"alpha": "llama3",
+		"zeta":  "opus",
+	} {
+		if err := svc.RegisterBackend(ctx, &RegisterBackendRequest{
+			Name:    name,
+			Backend: &defaultModelBackend{model: model},
+		}); err != nil {
+			t.Fatalf("RegisterBackend(%q): %v", name, err)
+		}
+	}
+
+	result, err := svc.ListBackendsPage(ctx, &Page{Sort: "default_model", Query: "llama"})
+	if err != nil {
+		t.Fatalf("ListBackendsPage() error = %v, want nil", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("ListBackendsPage() returned total %d len %d, want one model match", result.Total, len(result.Items))
+	}
+	if got := result.Items[0].DefaultModel; got != "llama3" {
+		t.Fatalf("DefaultModel = %q, want llama3", got)
+	}
+}
+
 func TestAgentPageSpec_SearchesEveryBackendItServes(t *testing.T) {
 	t.Parallel()
 

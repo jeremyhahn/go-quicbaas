@@ -395,10 +395,11 @@ func (b *OrchestratorBinding) ListBackends() ([]map[string]interface{}, error) {
 	result := make([]map[string]interface{}, 0, len(resp.Backends))
 	for _, backend := range resp.Backends {
 		result = append(result, map[string]interface{}{
-			"name":      backend.Name,
-			"type":      backend.Type,
-			"status":    backend.Status,
-			"available": backend.Available,
+			"name":          backend.Name,
+			"type":          backend.Type,
+			"status":        backend.Status,
+			"available":     backend.Available,
+			"default_model": backend.DefaultModel,
 		})
 	}
 

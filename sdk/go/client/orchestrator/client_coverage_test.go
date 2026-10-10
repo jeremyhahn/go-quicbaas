@@ -502,7 +502,7 @@ func TestCompleteTask_TypeMismatch(t *testing.T) {
 // =============================================================================
 
 func TestListBackends_HappyPath(t *testing.T) {
-	c := NewClient(okTransport(t, "ListBackends", &ListBackendsResponse{Count: 1}))
+	c := NewClient(okTransport(t, "ListBackends", &ListBackendsResponse{Backends: []*BackendInfo{{Name: "ollama"}}, Count: 1}))
 	resp, err := c.ListBackends(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 1, resp.Count)

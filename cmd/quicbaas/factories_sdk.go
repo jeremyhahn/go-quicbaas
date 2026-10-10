@@ -22,6 +22,7 @@ import (
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	operationsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
@@ -747,8 +748,8 @@ func (c *sdkOrchestratorClient) Health(ctx context.Context) (*orchestratorSDK.He
 }
 
 // ListBackends lists all registered agent backends.
-func (c *sdkOrchestratorClient) ListBackends(ctx context.Context) (*orchestratorSDK.ListBackendsResponse, error) {
-	return c.sdk.Orchestrator().ListBackends(ctx)
+func (c *sdkOrchestratorClient) ListBackends(ctx context.Context, params ...page.Params) (*orchestratorSDK.ListBackendsResponse, error) {
+	return c.sdk.Orchestrator().ListBackends(ctx, params...)
 }
 
 // ListBackendModels lists the model names available on the named backend

@@ -71,7 +71,10 @@ describe('RestOrchestratorClient.listRunners', () => {
   it('requests the runners endpoint', async () => {
     fetchMock.mockResolvedValue(makeResponse(serverBody));
     await new RestClient('http://localhost').orchestrator.listRunners();
-    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost/api/v1/orchestrator/runners');
+    const requested = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(`${requested.origin}${requested.pathname}`).toBe('http://localhost/api/v1/orchestrator/runners');
+    expect(requested.searchParams.get('limit')).toBe('100');
+    expect(requested.searchParams.has('offset')).toBe(false);
   });
 
   it('unwraps the {runners:[...]} envelope into a bare array', async () => {

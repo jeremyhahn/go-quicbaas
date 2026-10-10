@@ -3365,6 +3365,7 @@ func (s *agentServiceImpl) ListBackends(ctx context.Context) ([]*AgentBackendInf
 			Name:         name,
 			Type:         backend.Type(),
 			Capabilities: caps,
+			DefaultModel: backendDefaultModel(backend),
 		})
 
 		return true
@@ -3376,6 +3377,13 @@ func (s *agentServiceImpl) ListBackends(ctx context.Context) ([]*AgentBackendInf
 	})
 
 	return backends, nil
+}
+
+func backendDefaultModel(backend AgentBackend) string {
+	if modeler, ok := backend.(defaultModeler); ok {
+		return modeler.DefaultModel()
+	}
+	return ""
 }
 
 // RegisterBackend adds a new agent backend to the service.

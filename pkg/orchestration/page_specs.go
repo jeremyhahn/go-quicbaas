@@ -99,6 +99,63 @@ var sessionPageSpec = PageSpec[*SessionInfo]{
 // SessionPageSpec returns how the sessions listing is ordered and searched.
 func SessionPageSpec() PageSpec[*SessionInfo] { return sessionPageSpec }
 
+// backendPageSpec orders and searches registered agent backends.
+var backendPageSpec = PageSpec[*AgentBackendInfo]{
+	Sorts: map[string]func(a, b *AgentBackendInfo) int{
+		"name":          func(a, b *AgentBackendInfo) int { return compareStrings(a.Name, b.Name) },
+		"type":          func(a, b *AgentBackendInfo) int { return compareStrings(a.Type, b.Type) },
+		"default_model": func(a, b *AgentBackendInfo) int { return compareStrings(a.DefaultModel, b.DefaultModel) },
+	},
+	DefaultSort: "name",
+	Text: func(backend *AgentBackendInfo) []string {
+		return []string{backend.Name, backend.Type, backend.DefaultModel}
+	},
+}
+
+// BackendPageSpec returns how the backends listing is ordered and searched.
+func BackendPageSpec() PageSpec[*AgentBackendInfo] { return backendPageSpec }
+
+// JobRunnerInfo is the list shape for registered job runners.
+type JobRunnerInfo struct {
+	Name   string
+	States []JobStateSpec
+}
+
+// runnerPageSpec orders and searches registered job runners.
+var runnerPageSpec = PageSpec[*JobRunnerInfo]{
+	Sorts: map[string]func(a, b *JobRunnerInfo) int{
+		"name": func(a, b *JobRunnerInfo) int { return compareStrings(a.Name, b.Name) },
+	},
+	DefaultSort: "name",
+	Text: func(runner *JobRunnerInfo) []string {
+		fields := []string{runner.Name}
+		for _, state := range runner.States {
+			fields = append(fields, string(state.State), state.Label)
+		}
+		return fields
+	},
+}
+
+// RunnerPageSpec returns how the runners listing is ordered and searched.
+func RunnerPageSpec() PageSpec[*JobRunnerInfo] { return runnerPageSpec }
+
+// artifactPageSpec orders and searches task artifacts.
+var artifactPageSpec = PageSpec[Artifact]{
+	Sorts: map[string]func(a, b Artifact) int{
+		"name":      func(a, b Artifact) int { return compareStrings(a.Name, b.Name) },
+		"kind":      func(a, b Artifact) int { return compareStrings(string(a.Kind), string(b.Kind)) },
+		"mime_type": func(a, b Artifact) int { return compareStrings(a.MIMEType, b.MIMEType) },
+		"size":      func(a, b Artifact) int { return compareInt64(a.Size, b.Size) },
+	},
+	DefaultSort: "name",
+	Text: func(artifact Artifact) []string {
+		return []string{artifact.Name, string(artifact.Kind), artifact.MIMEType}
+	},
+}
+
+// ArtifactPageSpec returns how the artifacts listing is ordered and searched.
+func ArtifactPageSpec() PageSpec[Artifact] { return artifactPageSpec }
+
 // fleetNodePageSpec orders and searches the fleet registry. The natural order is
 // the most recently registered daemon first, which is the one an operator who
 // just brought a host up is looking for.

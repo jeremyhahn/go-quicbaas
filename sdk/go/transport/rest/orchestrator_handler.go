@@ -90,6 +90,7 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"CancelJob":              h.handleCancelJob,
 		"SubscribeJobEvents":     h.handleSubscribeJobEvents,
 		"Inference":              h.handleInference,
+		"ListWorkflows":          h.handleListWorkflows,
 		"DisableFleetNode":       h.handleDisableFleetNode,
 		"EnableFleetNode":        h.handleEnableFleetNode,
 		"SubmitTaskArtifacts":    h.handleSubmitTaskArtifacts,
@@ -118,8 +119,20 @@ func (h *orchestratorHandler) handleHealth(ctx context.Context, req interface{})
 
 // handleListBackends handles the ListBackends orchestrator request.
 func (h *orchestratorHandler) handleListBackends(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, _ := req.(*orchestrator.ListBackendsRequest)
+	query := neturl.Values{}
+	if tenantID := transport.TenantFromContext(ctx); tenantID != "" {
+		query.Set("tenant_id", tenantID)
+	}
+	if sdkReq != nil {
+		setPageQuery(query, sdkReq.Params)
+	}
+	url := "/api/v1/orchestrator/backends"
+	if encoded := query.Encode(); encoded != "" {
+		url += "?" + encoded
+	}
 	var resp orchestrator.ListBackendsResponse
-	if err := h.transport.doJSONRequest(ctx, http.MethodGet, "/api/v1/orchestrator/backends", nil, &resp); err != nil {
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -128,8 +141,17 @@ func (h *orchestratorHandler) handleListBackends(ctx context.Context, req interf
 // handleListRunners handles the ListRunners orchestrator request: every
 // registered job runner and the states it declares.
 func (h *orchestratorHandler) handleListRunners(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, _ := req.(*orchestrator.ListRunnersRequest)
+	url := "/api/v1/orchestrator/runners"
+	if sdkReq != nil {
+		query := neturl.Values{}
+		setPageQuery(query, sdkReq.Params)
+		if encoded := query.Encode(); encoded != "" {
+			url += "?" + encoded
+		}
+	}
 	var resp orchestrator.ListJobRunnersResponse
-	if err := h.transport.doJSONRequest(ctx, http.MethodGet, "/api/v1/orchestrator/runners", nil, &resp); err != nil {
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -773,6 +795,26 @@ func (h *orchestratorHandler) handleSubscribeJobEvents(ctx context.Context, req 
 }
 
 // handleDisableFleetNode handles POST /api/v1/agents/{id}/disable.
+func (h *orchestratorHandler) handleListWorkflows(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListWorkflowsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.ListWorkflows", "invalid request type")
+	}
+	url := "/api/v1/orchestrator/workflows?tenant_id=" + neturl.QueryEscape(sdkReq.TenantID)
+	if sdkReq.ProjectID != "" {
+		url += "&project_id=" + neturl.QueryEscape(sdkReq.ProjectID)
+	}
+	if sdkReq.Mode != "" {
+		url += "&mode=" + neturl.QueryEscape(string(sdkReq.Mode))
+	}
+	url += pageQuerySuffix(sdkReq.Params)
+	var resp orchestrator.ListWorkflowsResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (h *orchestratorHandler) handleDisableFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.DisableFleetNodeRequest)
 	if !ok {
@@ -834,7 +876,8 @@ func (h *orchestratorHandler) handleListTaskArtifacts(ctx context.Context, req i
 	if !ok {
 		return nil, errors.NewInvalidInput("orchestrator.ListTaskArtifacts", "invalid request type")
 	}
-	url := "/api/v1/orchestrator/tasks/" + sdkReq.TaskID + "/artifacts?tenant_id=" + sdkReq.TenantID
+	url := "/api/v1/orchestrator/tasks/" + neturl.PathEscape(sdkReq.TaskID) + "/artifacts?tenant_id=" + neturl.QueryEscape(sdkReq.TenantID)
+	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListTaskArtifactsResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err

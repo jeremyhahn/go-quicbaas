@@ -78,14 +78,14 @@ func (m *mockOrchestratorClient) Health(ctx context.Context) (*orchestratorSDK.H
 	return &orchestratorSDK.HealthCheckReport{Healthy: true, Status: "ok"}, nil
 }
 
-func (m *mockOrchestratorClient) ListBackends(ctx context.Context) (*orchestratorSDK.ListBackendsResponse, error) {
+func (m *mockOrchestratorClient) ListBackends(ctx context.Context, params ...page.Params) (*orchestratorSDK.ListBackendsResponse, error) {
 	if m.listBackendsFn != nil {
 		return m.listBackendsFn(ctx)
 	}
 	return &orchestratorSDK.ListBackendsResponse{Backends: []*orchestratorSDK.BackendInfo{}, Count: 0}, nil
 }
 
-func (m *mockOrchestratorClient) ListRunners(ctx context.Context) (*orchestratorSDK.ListJobRunnersResponse, error) {
+func (m *mockOrchestratorClient) ListRunners(ctx context.Context, params ...page.Params) (*orchestratorSDK.ListJobRunnersResponse, error) {
 	if m.listRunnersFn != nil {
 		return m.listRunnersFn(ctx)
 	}

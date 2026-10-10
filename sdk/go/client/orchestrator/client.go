@@ -97,14 +97,14 @@ type Client interface {
 	// lease on the task.
 	DeleteTask(ctx context.Context, req *DeleteTaskRequest) (*DeleteTaskResponse, error)
 
-	// ListBackends returns all available backends.
-	ListBackends(ctx context.Context) (*ListBackendsResponse, error)
+	// ListBackends returns available backends.
+	ListBackends(ctx context.Context, params ...page.Params) (*ListBackendsResponse, error)
 
 	// ListRunners returns every registered job runner and the states it
 	// declares, in registry order. It is what a consumer reads instead of
 	// keeping its own copy of the engine's job states — the job detail
 	// stepper above all.
-	ListRunners(ctx context.Context) (*ListJobRunnersResponse, error)
+	ListRunners(ctx context.Context, params ...page.Params) (*ListJobRunnersResponse, error)
 
 	// ListBackendModels returns the model names available on the named backend
 	// as seen from the specified agent. AgentID is used as a host affinity hint
@@ -202,8 +202,8 @@ type Client interface {
 	// CreateWorkflow registers a new named workflow definition.
 	CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest) (*WorkflowDefinition, error)
 
-	// ListWorkflows returns all registered workflow definitions for a tenant.
-	ListWorkflows(ctx context.Context, req *ListWorkflowsRequest) ([]*WorkflowDefinition, error)
+	// ListWorkflows returns registered workflow definitions for a tenant.
+	ListWorkflows(ctx context.Context, req *ListWorkflowsRequest) (*ListWorkflowsResponse, error)
 
 	// GetWorkflow returns a single workflow definition by name.
 	GetWorkflow(ctx context.Context, req *GetWorkflowRequest) (*WorkflowDefinition, error)
@@ -1375,16 +1375,25 @@ type DeleteTaskResponse struct {
 
 // BackendInfo represents information about an available backend.
 type BackendInfo struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Status    string `json:"status"`
-	Available bool   `json:"available"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Status       string `json:"status"`
+	Available    bool   `json:"available"`
+	DefaultModel string `json:"default_model,omitempty"`
+}
+
+type ListBackendsRequest struct {
+	page.Params
 }
 
 // ListBackendsResponse is the response from listing backends.
 type ListBackendsResponse struct {
 	Backends []*BackendInfo `json:"backends"`
 	Count    int            `json:"count"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // Job runner types
@@ -1413,10 +1422,18 @@ type JobRunnerInfo struct {
 	States []JobStateSpec `json:"states"`
 }
 
+type ListRunnersRequest struct {
+	page.Params
+}
+
 // ListJobRunnersResponse is the response from listing job runners.
 type ListJobRunnersResponse struct {
 	Runners []*JobRunnerInfo `json:"runners"`
 	Count   int              `json:"count"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // ListBackendModelsRequest is a request to list the models available on a
@@ -1700,7 +1717,9 @@ type CreateWorkflowRequest struct {
 
 // ListWorkflowsRequest is a request to list workflow definitions.
 type ListWorkflowsRequest struct {
-	TenantID string `json:"tenant_id"`
+	TenantID  string       `json:"tenant_id"`
+	ProjectID string       `json:"project_id,omitempty"`
+	Mode      WorkflowMode `json:"mode,omitempty"`
 
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.
@@ -1738,8 +1757,6 @@ type DeleteWorkflowRequest struct {
 
 // Internal request types for parameterless methods.
 type healthRequest struct{}
-type listBackendsRequest struct{}
-type listRunnersRequest struct{}
 
 // client implements the Client interface.
 type client struct {
@@ -2184,12 +2201,27 @@ func (c *client) CompleteTask(ctx context.Context, req *CompleteTaskRequest) (*C
 }
 
 // ListBackends returns all available backends.
-func (c *client) ListBackends(ctx context.Context) (*ListBackendsResponse, error) {
+func (c *client) ListBackends(ctx context.Context, params ...page.Params) (*ListBackendsResponse, error) {
 	if ctx == nil {
 		return nil, errors.NewInvalidInput("orchestrator.ListBackends", "context is required")
 	}
+	if len(params) > 1 {
+		return nil, errors.NewInvalidInput("orchestrator.ListBackends", "at most one page parameter set is allowed")
+	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "ListBackends", &listBackendsRequest{})
+	req := &ListBackendsRequest{}
+	if len(params) == 1 {
+		req.Params = params[0]
+	}
+
+	if len(params) == 0 {
+		return c.listAllBackends(ctx, req)
+	}
+	return c.listBackendsPage(ctx, req)
+}
+
+func (c *client) listBackendsPage(ctx context.Context, req *ListBackendsRequest) (*ListBackendsResponse, error) {
+	resp, err := c.transport.Request(ctx, serviceName, "ListBackends", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2202,17 +2234,59 @@ func (c *client) ListBackends(ctx context.Context) (*ListBackendsResponse, error
 	if !ok {
 		return nil, errors.NewInternal("orchestrator.ListBackends", "invalid response type")
 	}
+	if result.Backends != nil {
+		result.Count = len(result.Backends)
+	}
 
 	return result, nil
 }
 
+func (c *client) listAllBackends(ctx context.Context, req *ListBackendsRequest) (*ListBackendsResponse, error) {
+	req.Limit = 100
+	result := &ListBackendsResponse{Backends: []*BackendInfo{}}
+	for {
+		pageResp, err := c.listBackendsPage(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		result.Backends = append(result.Backends, pageResp.Backends...)
+		result.Total = pageResp.Total
+		result.Limit = pageResp.Limit
+		result.Offset = 0
+		result.Facets = pageResp.Facets
+		if !pageResp.HasMore() {
+			result.Count = len(result.Backends)
+			return result, nil
+		}
+		if pageResp.NextOffset <= req.Offset {
+			return nil, errors.NewInternal("orchestrator.ListBackends", "next_offset did not advance")
+		}
+		req.Offset = pageResp.NextOffset
+	}
+}
+
 // ListRunners returns every registered job runner and the states it declares.
-func (c *client) ListRunners(ctx context.Context) (*ListJobRunnersResponse, error) {
+func (c *client) ListRunners(ctx context.Context, params ...page.Params) (*ListJobRunnersResponse, error) {
 	if ctx == nil {
 		return nil, errors.NewInvalidInput("orchestrator.ListRunners", "context is required")
 	}
+	if len(params) > 1 {
+		return nil, errors.NewInvalidInput("orchestrator.ListRunners", "at most one page parameter set is allowed")
+	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "ListRunners", &listRunnersRequest{})
+	req := &ListRunnersRequest{}
+	if len(params) == 1 {
+		req.Params = params[0]
+	}
+
+	if len(params) == 0 {
+		return c.listAllRunners(ctx, req)
+	}
+	return c.listRunnersPage(ctx, req)
+}
+
+func (c *client) listRunnersPage(ctx context.Context, req *ListRunnersRequest) (*ListJobRunnersResponse, error) {
+	resp, err := c.transport.Request(ctx, serviceName, "ListRunners", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2225,8 +2299,35 @@ func (c *client) ListRunners(ctx context.Context) (*ListJobRunnersResponse, erro
 	if !ok {
 		return nil, errors.NewInternal("orchestrator.ListRunners", "invalid response type")
 	}
+	if result.Runners != nil {
+		result.Count = len(result.Runners)
+	}
 
 	return result, nil
+}
+
+func (c *client) listAllRunners(ctx context.Context, req *ListRunnersRequest) (*ListJobRunnersResponse, error) {
+	req.Limit = 100
+	result := &ListJobRunnersResponse{Runners: []*JobRunnerInfo{}}
+	for {
+		pageResp, err := c.listRunnersPage(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		result.Runners = append(result.Runners, pageResp.Runners...)
+		result.Total = pageResp.Total
+		result.Limit = pageResp.Limit
+		result.Offset = 0
+		result.Facets = pageResp.Facets
+		if !pageResp.HasMore() {
+			result.Count = len(result.Runners)
+			return result, nil
+		}
+		if pageResp.NextOffset <= req.Offset {
+			return nil, errors.NewInternal("orchestrator.ListRunners", "next_offset did not advance")
+		}
+		req.Offset = pageResp.NextOffset
+	}
 }
 
 // ListBackendModels returns the model names available on the named backend
@@ -2484,7 +2585,7 @@ func (c *client) CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest)
 }
 
 // ListWorkflows returns all registered workflow definitions for a tenant.
-func (c *client) ListWorkflows(ctx context.Context, req *ListWorkflowsRequest) ([]*WorkflowDefinition, error) {
+func (c *client) ListWorkflows(ctx context.Context, req *ListWorkflowsRequest) (*ListWorkflowsResponse, error) {
 	if ctx == nil {
 		return nil, errors.NewInvalidInput("orchestrator.ListWorkflows", "context is required")
 	}
@@ -2500,13 +2601,16 @@ func (c *client) ListWorkflows(ctx context.Context, req *ListWorkflowsRequest) (
 		return nil, err
 	}
 	if resp == nil {
-		return []*WorkflowDefinition{}, nil
+		return &ListWorkflowsResponse{Workflows: []*WorkflowDefinition{}}, nil
 	}
 	result, ok := resp.(*ListWorkflowsResponse)
 	if !ok {
 		return nil, errors.NewInternal("orchestrator.ListWorkflows", "invalid response type")
 	}
-	return result.Workflows, nil
+	if result.Workflows != nil {
+		result.Count = len(result.Workflows)
+	}
+	return result, nil
 }
 
 // GetWorkflow returns a single workflow definition by name.
@@ -2738,6 +2842,9 @@ func (c *client) ListTaskArtifacts(ctx context.Context, req *ListTaskArtifactsRe
 	result, ok := resp.(*ListTaskArtifactsResponse)
 	if !ok {
 		return nil, errors.NewInternal("orchestrator.ListTaskArtifacts", "invalid response type")
+	}
+	if result.Artifacts != nil {
+		result.Count = len(result.Artifacts)
 	}
 	return result, nil
 }
@@ -3948,6 +4055,10 @@ type GetTaskArtifactRequest struct {
 type ListTaskArtifactsRequest struct {
 	TenantID string `json:"tenant_id"`
 	TaskID   string `json:"task_id"`
+
+	// Params pages, orders and searches the listing. The zero value takes
+	// the server's default page; see package page.
+	page.Params
 }
 
 // ListTaskArtifactsResponse carries artifact metadata (no inline Data resolved).
@@ -3955,4 +4066,8 @@ type ListTaskArtifactsResponse struct {
 	TaskID    string          `json:"task_id"`
 	Artifacts []*TaskArtifact `json:"artifacts"`
 	Count     int             `json:"count"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }

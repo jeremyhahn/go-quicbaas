@@ -502,7 +502,7 @@ func (r *ToolRegistry) registerAgentTools() {
 		Description: "List all registered agent backends with their capabilities",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
-			"properties": map[string]interface{}{},
+			"properties": withPageProperties(map[string]interface{}{}, strings.Join(orchestration.BackendPageSpec().SortFields(), ", ")),
 		},
 	})
 
@@ -511,7 +511,7 @@ func (r *ToolRegistry) registerAgentTools() {
 		Description: "List the registered job runners and the ordered states each drives a job through",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
-			"properties": map[string]interface{}{},
+			"properties": withPageProperties(map[string]interface{}{}, strings.Join(orchestration.RunnerPageSpec().SortFields(), ", ")),
 		},
 	})
 
@@ -1070,7 +1070,7 @@ func (r *ToolRegistry) registerAgentTools() {
 		Description: "List output artifact metadata for a task. Content is omitted for kv_key artifacts; use quicbaas_task_get_artifact to fetch content.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
-			"properties": map[string]interface{}{
+			"properties": withPageProperties(map[string]interface{}{
 				"tenant_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
@@ -1079,7 +1079,7 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "ID of the task. Required.",
 				},
-			},
+			}, strings.Join(orchestration.ArtifactPageSpec().SortFields(), ", ")),
 			"required": []string{"task_id"},
 		},
 	})
@@ -1592,15 +1592,15 @@ func (r *ToolRegistry) executeAgentListBackends(ctx context.Context, args map[st
 		return nil, err
 	}
 
-	backends, err := agentSvc.ListBackends(ctx)
+	result, err := orchestration.ListBackendsPage(ctx, agentSvc, pageFromArgs(args))
 	if err != nil {
 		return nil, err
 	}
 
-	return marshalResult(map[string]interface{}{
-		"backends":  backends,
+	return marshalResult(pageResultFields(result, map[string]interface{}{
+		"backends":  result.Items,
 		"timestamp": time.Now().Format(time.RFC3339Nano),
-	})
+	}))
 }
 
 // executeOrchestratorListRunners answers quicbaas_orchestrator_list_runners.
@@ -1610,16 +1610,18 @@ func (r *ToolRegistry) executeAgentListBackends(ctx context.Context, args map[st
 // the REST and embedded handlers: a node that runs no orchestrator drives no
 // jobs, and answering "these are the runners" there would describe a capability
 // the node does not have.
-func (r *ToolRegistry) executeOrchestratorListRunners(_ context.Context, _ map[string]interface{}) (interface{}, error) {
+func (r *ToolRegistry) executeOrchestratorListRunners(_ context.Context, args map[string]interface{}) (interface{}, error) {
 	if _, err := r.getAgentService(); err != nil {
 		return nil, err
 	}
-	registered := orchestration.JobRunners()
-	runners := make([]map[string]interface{}, 0, len(registered))
-	for _, runner := range registered {
-		specs := runner.States()
-		states := make([]map[string]interface{}, 0, len(specs))
-		for _, spec := range specs {
+	result, err := orchestration.ListJobRunnersPage(pageFromArgs(args))
+	if err != nil {
+		return nil, err
+	}
+	runners := make([]map[string]interface{}, 0, len(result.Items))
+	for _, runner := range result.Items {
+		states := make([]map[string]interface{}, 0, len(runner.States))
+		for _, spec := range runner.States {
 			states = append(states, map[string]interface{}{
 				"state":          string(spec.State),
 				"label":          spec.Label,
@@ -1627,14 +1629,14 @@ func (r *ToolRegistry) executeOrchestratorListRunners(_ context.Context, _ map[s
 			})
 		}
 		runners = append(runners, map[string]interface{}{
-			"name":   runner.Name(),
+			"name":   runner.Name,
 			"states": states,
 		})
 	}
-	return marshalResult(map[string]interface{}{
+	return marshalResult(pageResultFields(result, map[string]interface{}{
 		"runners": runners,
 		"count":   len(runners),
-	})
+	}))
 }
 
 func (r *ToolRegistry) executeAgentDecompose(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -2441,13 +2443,13 @@ func (r *ToolRegistry) executeTaskListArtifacts(ctx context.Context, args map[st
 	if err != nil {
 		return nil, err
 	}
-	artifacts, listErr := agentSvc.ListTaskArtifacts(ctx, tenantID, taskID)
+	result, listErr := orchestration.ListTaskArtifactsPage(ctx, agentSvc, tenantID, taskID, pageFromArgs(args))
 	if listErr != nil {
 		return nil, listErr
 	}
 
-	items := make([]map[string]interface{}, len(artifacts))
-	for i, a := range artifacts {
+	items := make([]map[string]interface{}, len(result.Items))
+	for i, a := range result.Items {
 		items[i] = map[string]interface{}{
 			"name":      a.Name,
 			"kind":      string(a.Kind),
@@ -2458,11 +2460,11 @@ func (r *ToolRegistry) executeTaskListArtifacts(ctx context.Context, args map[st
 		}
 	}
 
-	return marshalResult(map[string]interface{}{
+	return marshalResult(pageResultFields(result, map[string]interface{}{
 		"task_id":   taskID,
 		"artifacts": items,
 		"count":     len(items),
-	})
+	}))
 }
 
 // =============================================================================

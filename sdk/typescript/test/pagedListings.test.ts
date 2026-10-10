@@ -120,13 +120,27 @@ describe('adoptPage', () => {
   it('refuses an answer that is not a listing', () => {
     expect(() => adoptPage(null, 'jobs')).toThrow(MalformedPageError);
     expect(() => adoptPage('nope', 'jobs')).toThrow(MalformedPageError);
-    expect(() => adoptPage({ error: 'boom' }, 'jobs')).toThrow(MalformedPageError);
     expect(() => adoptPage({ jobs: 'not an array' }, 'jobs')).toThrow(MalformedPageError);
+  });
+
+  it('reads a null or absent list member as an empty page', () => {
+    expect(adoptPage({ jobs: null, total: 0, limit: 25, offset: 0 }, 'jobs')).toEqual({
+      items: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+    });
+    expect(adoptPage({ total: 0, limit: 25, offset: 0 }, 'jobs')).toEqual({
+      items: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+    });
   });
 
   it('names the key it looked under, so the refusal is actionable', () => {
     try {
-      adoptPage({ error: 'boom' }, 'tasks');
+      adoptPage({ tasks: 'nope' }, 'tasks');
       expect.unreachable('adoptPage accepted an answer with no records');
     } catch (err: unknown) {
       expect(err).toBeInstanceOf(MalformedPageError);

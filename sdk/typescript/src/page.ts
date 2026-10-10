@@ -298,11 +298,19 @@ export function adoptPage<T>(raw: unknown, itemsKey: string, map?: (item: never)
 
   const record = raw as Record<string, unknown>;
   const items = record[itemsKey];
-  if (!Array.isArray(items)) {
-    throw new MalformedPageError(itemsKey, items === undefined ? 'no such member' : typeof items);
+  if (items === undefined) {
+    const pageShaped =
+      Object.keys(record).length === 0 ||
+      ['total', 'limit', 'offset', 'next_offset', 'facets'].some((key) => key in record);
+    if (!pageShaped) {
+      throw new MalformedPageError(itemsKey, 'no such member');
+    }
+  }
+  if (items !== undefined && items !== null && !Array.isArray(items)) {
+    throw new MalformedPageError(itemsKey, typeof items);
   }
 
-  const converted = convert(items);
+  const converted = convert(Array.isArray(items) ? items : []);
   const facets = adoptFacets(record['facets']);
   if (typeof record['total'] !== 'number') {
     const whole = wholeSetPage(converted);

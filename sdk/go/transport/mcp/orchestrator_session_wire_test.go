@@ -153,14 +153,18 @@ func TestMCPTransformSessionTools(t *testing.T) {
 		}
 	})
 
-	t.Run("methods without a transform pass through unchanged", func(t *testing.T) {
-		in := map[string]interface{}{"backends": []interface{}{}}
+	t.Run("ListBackends decodes into the SDK response", func(t *testing.T) {
+		in := map[string]interface{}{"backends": []interface{}{}, "total": float64(0), "limit": float64(25)}
 		out, err := h.transformResponse("ListBackends", in)
 		if err != nil {
 			t.Fatalf("transformResponse() error = %v", err)
 		}
-		if _, ok := out.(map[string]interface{}); !ok {
-			t.Fatalf("result type = %T, want the untouched map", out)
+		resp, ok := out.(*orchestrator.ListBackendsResponse)
+		if !ok {
+			t.Fatalf("result type = %T, want *orchestrator.ListBackendsResponse", out)
+		}
+		if resp.Total != 0 || resp.Limit != 25 {
+			t.Fatalf("page envelope = total %d limit %d", resp.Total, resp.Limit)
 		}
 	})
 }
