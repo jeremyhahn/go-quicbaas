@@ -59,8 +59,9 @@ func TestEmbeddedListJobs_CarriesTheJobIDsFilter(t *testing.T) {
 func TestEmbeddedListJobs_SummaryCarriesTheForgeIssue(t *testing.T) {
 	agent := &fakeAgentService{listJobs: []*orchestration.JobStatus{
 		{
-			JobID:  "job-1",
-			TaskID: "task-a",
+			JobID:   "job-1",
+			TaskID:  "task-a",
+			Attempt: 2,
 			Source: &orchestration.TaskSourceRef{
 				Kind: "forge_issue",
 				Ref:  "jeremyhahn/go-quicbaas#62",
@@ -82,6 +83,9 @@ func TestEmbeddedListJobs_SummaryCarriesTheForgeIssue(t *testing.T) {
 	}
 	if len(resp.Jobs) != 2 {
 		t.Fatalf("listed %d jobs, want 2", len(resp.Jobs))
+	}
+	if resp.Jobs[0].TaskID != "task-a" || resp.Jobs[0].Attempt != 2 {
+		t.Fatalf("job task fields = %q/%d, want task-a/2", resp.Jobs[0].TaskID, resp.Jobs[0].Attempt)
 	}
 	source := resp.Jobs[0].Source
 	if source == nil {

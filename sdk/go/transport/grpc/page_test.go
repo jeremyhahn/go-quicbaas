@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"math"
+	"slices"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -46,7 +47,8 @@ const refusedSort = "no_such_field"
 
 // pagingFake records the paging fields of whichever list RPC it served.
 type pagingFake struct {
-	got chan pageFields
+	got     chan pageFields
+	jobReqs chan *pb.OrchestratorListJobsRequest
 }
 
 // answer records the fields and computes the envelope a three-record
@@ -85,6 +87,7 @@ func (f *pagingOrchestratorFake) ListTasks(_ context.Context, req *pb.ListTasksR
 }
 
 func (f *pagingOrchestratorFake) ListJobs(_ context.Context, req *pb.OrchestratorListJobsRequest) (*pb.OrchestratorListJobsResponse, error) {
+	f.jobReqs <- req
 	total, limit, offset, next, err := f.answer(pageFields{req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ()})
 	if err != nil {
 		return nil, err
@@ -129,7 +132,7 @@ func (f *pagingAccountFake) ListAccounts(_ context.Context, req *pb.ListAccounts
 // newPagingConn serves every paged list RPC from one recording fake.
 func newPagingConn(t *testing.T) (*grpc.ClientConn, *pagingFake) {
 	t.Helper()
-	fake := &pagingFake{got: make(chan pageFields, 1)}
+	fake := &pagingFake{got: make(chan pageFields, 1), jobReqs: make(chan *pb.OrchestratorListJobsRequest, 1)}
 	srv := newHandlerServer(t, func(s *grpc.Server) {
 		pb.RegisterOrchestratorServiceServer(s, &pagingOrchestratorFake{pagingFake: fake})
 		pb.RegisterProjectServiceServer(s, &pagingProjectFake{pagingFake: fake})
@@ -251,6 +254,47 @@ func TestGRPCListHandlers_CarryPaging(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestGRPCListJobs_CarriesFilters(t *testing.T) {
+	ctx := transport.ContextWithTenant(context.Background(), "t1")
+	conn, fake := newPagingConn(t)
+
+	_, _, err := pagedHandlers()["ListJobs"](ctx, conn, page.Params{Limit: 1})
+	if err != nil {
+		t.Fatalf("baseline list jobs: %v", err)
+	}
+	<-fake.got
+	<-fake.jobReqs
+
+	req := &orchestrator.ListJobsRequest{
+		TenantID:  "t1",
+		TaskID:    "task-a",
+		Runner:    "triage",
+		ProjectID: "project-a",
+		Statuses:  []string{"completed", "failed"},
+		JobIDs:    []string{"job-1", "job-2"},
+		AgentID:   "agent-a",
+		Params:    page.Params{Limit: 2, Sort: "job_id"},
+	}
+	resp, err := handleOrchestratorListJobs(ctx, conn, req)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if _, ok := resp.(*orchestrator.ListJobsResponse); !ok {
+		t.Fatalf("response = %T, want *orchestrator.ListJobsResponse", resp)
+	}
+	<-fake.got
+	got := <-fake.jobReqs
+	if got.GetTaskId() != "task-a" || got.GetRunner() != "triage" || got.GetProjectId() != "project-a" || got.GetAgentId() != "agent-a" {
+		t.Fatalf("filters = task:%q runner:%q project:%q agent:%q", got.GetTaskId(), got.GetRunner(), got.GetProjectId(), got.GetAgentId())
+	}
+	if want := []string{"completed", "failed"}; !slices.Equal(got.GetStatuses(), want) {
+		t.Fatalf("statuses = %v, want %v", got.GetStatuses(), want)
+	}
+	if want := []string{"job-1", "job-2"}; !slices.Equal(got.GetJobIds(), want) {
+		t.Fatalf("job_ids = %v, want %v", got.GetJobIds(), want)
 	}
 }
 

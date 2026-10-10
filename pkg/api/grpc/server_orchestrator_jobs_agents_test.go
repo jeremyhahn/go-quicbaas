@@ -100,6 +100,35 @@ func TestOrchestratorGRPC_ListJobs_NarrowsToTask(t *testing.T) {
 	assert.Equal(t, int64(1), resp.GetJobs()[0].GetAttempt())
 }
 
+func TestOrchestratorGRPC_ListJobs_ForwardsAllFilters(t *testing.T) {
+	svc := &grpcTestAgentService{listJobs: []*orchestration.JobStatus{
+		{JobID: "job-1", TaskID: "task-a", State: orchestration.JobStateCompleted, AgentID: "agent-a"},
+	}}
+	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
+
+	resp, err := srv.ListJobs(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorListJobsRequest{
+		TenantId:  "t1",
+		TaskId:    "task-a",
+		Runner:    "triage",
+		ProjectId: "project-a",
+		Statuses:  []string{"completed", "failed"},
+		JobIds:    []string{"job-1", "job-2"},
+		AgentId:   "agent-a",
+		Limit:     10,
+		Sort:      "job_id",
+		Q:         "job",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, svc.listJobsFilter)
+	assert.Equal(t, "task-a", svc.listJobsFilter.TaskID)
+	assert.Equal(t, "triage", svc.listJobsFilter.Runner)
+	assert.Equal(t, "project-a", svc.listJobsFilter.ProjectID)
+	assert.Equal(t, "agent-a", svc.listJobsFilter.AgentID)
+	assert.Equal(t, []orchestration.JobState{orchestration.JobStateCompleted, orchestration.JobStateFailed}, svc.listJobsFilter.Statuses)
+	assert.Equal(t, []string{"job-1", "job-2"}, svc.listJobsFilter.JobIDs)
+}
+
 // TestOrchestratorGRPC_ListJobs_WithoutTaskNarrowsNothing is the other half:
 // an absent task_id must list the tenant, not nothing.
 func TestOrchestratorGRPC_ListJobs_WithoutTaskNarrowsNothing(t *testing.T) {

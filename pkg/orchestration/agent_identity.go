@@ -166,7 +166,9 @@ type AgentIdentity struct {
 	// AgentID is the orchestrator-assigned agent identifier.
 	AgentID string
 
-	// ServiceAccountID is the IAM service account ID provisioned for this agent.
+	// ServiceAccountID is the fleet enrollment service-account identifier when
+	// this identity came from pkg/fleet. The orchestration control loop leaves it
+	// empty because its in-memory AgentIdentity is only turn attribution.
 	ServiceAccountID string
 
 	// TenantID is the tenant this agent belongs to.
@@ -179,14 +181,16 @@ type AgentIdentity struct {
 	// (e.g. ["kms:read", "secrets:read", "orchestrator:read"]).
 	Scopes []string
 
-	// OIDCSubject is the OIDC subject claim for this agent's service account.
+	// OIDCSubject is the OIDC subject claim when a caller supplies one; current
+	// fleet enrollment and control-loop attribution leave it empty.
 	OIDCSubject string
 
-	// ClientID is the OAuth2 client ID for this agent's service account.
+	// ClientID is the OAuth2 application client ID from fleet enrollment. The
+	// orchestration control loop leaves it empty.
 	ClientID string
 
-	// ClientSecret is the plaintext client secret, short-lived, passed to the
-	// agent process via environment variable.
+	// ClientSecret is the plaintext OAuth2 application secret returned once by
+	// fleet enrollment. The orchestration control loop leaves it empty.
 	ClientSecret string
 }
 

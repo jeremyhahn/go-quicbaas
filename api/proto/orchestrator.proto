@@ -1228,8 +1228,8 @@ message OrchestratorCancelJobResponse {
     google.protobuf.Timestamp timestamp = 3;
 }
 
-// OrchestratorListJobsRequest lists a tenant's jobs, optionally narrowed to
-// the attempts at one task.
+// OrchestratorListJobsRequest lists a tenant's jobs, optionally narrowed by
+// any of the job listing filters.
 message OrchestratorListJobsRequest {
     string tenant_id = 1;
 
@@ -1249,6 +1249,13 @@ message OrchestratorListJobsRequest {
     int32 offset = 4;
     string sort = 5;
     string q = 6;
+
+    // Existing jobs filters. They compose with q and the paging envelope.
+    string runner = 7;
+    string project_id = 8;
+    repeated string statuses = 9;
+    repeated string job_ids = 10;
+    string agent_id = 11;
 }
 
 // OrchestratorListJobsResponse contains the list of jobs for a tenant.

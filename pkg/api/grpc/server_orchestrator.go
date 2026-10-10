@@ -906,8 +906,19 @@ func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorL
 	if err != nil {
 		return nil, err
 	}
+	states, err := orchestration.JobStatesFrom("statuses", req.GetStatuses())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 
-	result, err := s.agentSvc.ListJobsPage(tenantCtx, tenantID, &orchestration.JobFilter{TaskID: req.GetTaskId()}, page)
+	result, err := s.agentSvc.ListJobsPage(tenantCtx, tenantID, &orchestration.JobFilter{
+		TaskID:    req.GetTaskId(),
+		Runner:    req.GetRunner(),
+		ProjectID: req.GetProjectId(),
+		AgentID:   req.GetAgentId(),
+		Statuses:  states,
+		JobIDs:    req.GetJobIds(),
+	}, page)
 	if err != nil {
 		return nil, convertListError(err, convertOrchestratorError)
 	}

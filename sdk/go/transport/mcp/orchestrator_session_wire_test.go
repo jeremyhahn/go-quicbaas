@@ -247,3 +247,50 @@ func TestMCPTransformListRunners(t *testing.T) {
 		}
 	})
 }
+
+func TestMCPTransformListJobs(t *testing.T) {
+	h := &orchestratorMCPHandler{}
+	result := map[string]interface{}{
+		"jobs": []interface{}{
+			map[string]interface{}{
+				"job_id":      "job-1",
+				"state":       "completed",
+				"task_id":     "task-a",
+				"attempt":     float64(2),
+				"event_count": float64(3),
+				"source": map[string]interface{}{
+					"kind": "forge_issue",
+					"ref":  "repo#1",
+					"url":  "https://forge.example/repo/issues/1",
+				},
+			},
+		},
+		"total":       float64(7),
+		"limit":       float64(1),
+		"offset":      float64(2),
+		"next_offset": float64(3),
+		"count":       float64(1),
+	}
+
+	got, err := h.transformResponse("ListJobs", result)
+	if err != nil {
+		t.Fatalf("transform ListJobs: %v", err)
+	}
+	resp, ok := got.(*orchestrator.ListJobsResponse)
+	if !ok {
+		t.Fatalf("response = %T, want *orchestrator.ListJobsResponse", got)
+	}
+	if resp.Total != 7 || resp.Limit != 1 || resp.Offset != 2 || resp.NextOffset != 3 {
+		t.Fatalf("envelope = %+v, want total 7 limit 1 offset 2 next 3", resp.Envelope)
+	}
+	if len(resp.Jobs) != 1 {
+		t.Fatalf("jobs = %d, want 1", len(resp.Jobs))
+	}
+	job := resp.Jobs[0]
+	if job.JobID != "job-1" || job.TaskID != "task-a" || job.Attempt != 2 || job.EventCount != 3 {
+		t.Fatalf("job = %+v, want decoded job metadata", job)
+	}
+	if job.Source == nil || job.Source.Ref != "repo#1" {
+		t.Fatalf("source = %+v, want decoded source", job.Source)
+	}
+}

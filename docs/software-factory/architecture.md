@@ -3359,35 +3359,32 @@ available; every request-scoped caller uses the tenant-scoped `ListSessions`.
 
 ## Agent Identity and IAM Integration
 
-Orchestration agents are first-class IAM security principals. Each agent receives a dedicated service account with scoped permissions, ensuring fine-grained access control and auditability.
+Orchestration agents do not currently have the service-account provisioning lifecycle this section used to describe. The planned lifecycle is not implemented: `provisionAgentIdentity()` and `revokeAgentIdentity()` do not exist, and `OrchestratorAuthService.CreateServiceAccount()` has no production caller. Keep any future wiring tied to the SDK boundary decision for IAM and credential verification; do not treat the planned service-account flow as current behavior.
 
-### How Agents Get IAM Service Accounts
+### What Fills `AgentIdentity` Today
 
-When the orchestrator assigns work to an agent, the identity provisioning flow is:
+`AgentIdentity` is populated by two different mechanisms today:
 
-1. **Provision** -- The orchestrator calls `provisionAgentIdentity()` which creates an IAM ServiceAccount via `OrchestratorAuthService.CreateServiceAccount()`.
-2. **Scope assignment** -- The service account receives scopes defined in the workflow YAML `mcp_scopes` field for the agent's role.
-3. **Token issuance** -- A short-lived OIDC token is issued via the `client_credentials` grant for the agent's service account.
-4. **Session binding** -- The token is injected into the agent's session context, used for all MCP tool calls.
-5. **Cleanup** -- On job completion, cancellation, or failure, `revokeAgentIdentity()` revokes the token and deletes the service account.
+1. **Fleet daemon enrollment** -- `pkg/fleet.ProductionEnroller.buildIdentity` builds an `AgentIdentity` from persisted enrollment credentials and the token exchange that follows. It fills `AgentID`, `ServiceAccountID`, `TenantID`, `Role`, `Scopes`, `ClientID`, and `ClientSecret`; `OIDCSubject` remains empty. Those credentials come from `POST /api/v1/fleet/enroll`, where the REST handler registers or rotates an OIDC application with `pkg/iam.AppManager.RegisterAgentApp`. The live `client_credentials` flow validates the presented secret through `pkg/iam` OIDC application storage (`ValidateClientSecret`) against the OIDC application store, not through `OrchestratorAuthService` service accounts.
+2. **Orchestration control loop attribution** -- `pkg/orchestration.ControlLoop.handleAssign` creates a role-keyed in-memory `AgentIdentity` when a job assigns work. It fills `AgentID` as `agent-<role>-<jobID>`, plus `TenantID`, `Role`, and `Scopes` from the workflow role. It leaves `ServiceAccountID`, `OIDCSubject`, `ClientID`, and `ClientSecret` empty. The control loop uses that record only for `turnAttribution`, so token usage is charged to a stable agent ID.
 
-### OIDC Token Lifecycle
+Spawned session authorization does not come from the control-loop `AgentIdentity`. It comes from the qrdb user record written by `pkg/iam.IdentityStore.EnrollAgentSessionIdentity` for the session certificate, with qrdb's canonical SPKI thumbprint binding and `AgentSessionGrant()` permissions.
 
-| Phase | Action |
-|-------|--------|
-| Initialization | ServiceAccount created with workflow-defined scopes |
-| Token issuance | Short-lived OIDC token issued via client_credentials grant |
-| Active use | Token presented on every MCP tool call for authorization |
-| Refresh | Tokens are short-lived; re-issued as needed during long jobs |
-| Cleanup | Token revoked, ServiceAccount deleted on job termination |
+### Planned Service-Account Lifecycle (Not Implemented)
 
-Tokens contain standard OIDC claims plus custom scope claims that the MCP authorization layer uses for tool filtering.
+The intended service-account lifecycle remains design intent only:
+
+| Phase | Planned action | Current status |
+|-------|----------------|----------------|
+| Provision | `provisionAgentIdentity()` creates an IAM service account through `OrchestratorAuthService.CreateServiceAccount()` | Not implemented; no such orchestration entry point exists |
+| Scope assignment | The service account receives role scopes from workflow YAML `mcp_scopes` | Not implemented for service accounts; the control loop only copies scopes into its in-memory attribution record |
+| Token issuance | A short-lived OIDC token is issued through `client_credentials` for that service account | Not implemented for service accounts; current `client_credentials` validates OIDC applications through `ValidateClientSecret` |
+| Session binding | The token is injected into the agent session context for MCP tool calls | Not implemented |
+| Cleanup | `revokeAgentIdentity()` revokes the token and deletes the service account | Not implemented; no such orchestration entry point exists |
 
 ### Client Credential Storage
 
-`CreateServiceAccount` and `RotateCredentials` return the client secret to the
-caller exactly once. What the store keeps in `ServiceAccount.SecretHash` is a
-PBKDF2-HMAC-SHA256 digest, so a compromised store yields no usable credential.
+The dormant `OrchestratorAuthService` service-account path stores client secrets as PBKDF2-HMAC-SHA256 digests. If that path is wired in the future, `CreateServiceAccount` and `RotateCredentials` return the client secret to the caller exactly once; what the store keeps in `ServiceAccount.SecretHash` yields no usable credential if compromised.
 The stored form is self-describing:
 
 ```
@@ -3423,13 +3420,7 @@ compliance gate: CI runs under `GODEBUG=fips140=only`, and PBKDF2-HMAC-SHA256
 is approved under SP 800-132. The derivation uses the standard library's
 `crypto/pbkdf2`, which is served by the Go Cryptographic Module.
 
-`OrchestratorAuthService.AuthenticateServiceAccount(ctx, clientID, clientSecret)`
-is the only way to check a presented pair. It fails closed and is
-non-enumerating: an unknown client ID, a revoked or expired account, a legacy or
-cleared hash, and a wrong secret all return the same detail-free
-`*ServiceAccountAuthFailedError` and all perform exactly one key derivation, so
-neither the error nor the time taken reveals which client IDs exist. The
-specific reason goes only to the audit log.
+Within the planned service-account path, `OrchestratorAuthService.AuthenticateServiceAccount(ctx, clientID, clientSecret)` is the verifier for a presented pair. It fails closed and is non-enumerating: an unknown client ID, a revoked or expired account, a legacy or cleared hash, and a wrong secret all return the same detail-free `*ServiceAccountAuthFailedError` and all perform exactly one key derivation, so neither the error nor the time taken reveals which client IDs exist. The specific reason goes only to the audit log. This is separate from today's OIDC application `client_credentials` path, which validates through `ValidateClientSecret`.
 
 #### Migrating pre-KDF records
 

@@ -1117,6 +1117,8 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 			UpdatedAt:   s.UpdatedAt,
 			Error:       s.Error,
 			EventCount:  len(s.Events),
+			TaskID:      s.TaskID,
+			Attempt:     s.Attempt,
 			Source:      taskSourceToSDK(s.Source),
 		}
 	}

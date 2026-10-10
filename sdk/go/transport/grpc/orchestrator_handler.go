@@ -1236,12 +1236,17 @@ func handleOrchestratorListJobs(ctx context.Context, conn *grpc.ClientConn, req 
 	// the caller cannot choose its tenant, but it does choose its filter.
 	paging := pageFieldsFromParams(sdkReq.Params)
 	protoReq := &pb.OrchestratorListJobsRequest{
-		TenantId: tenantID,
-		TaskId:   sdkReq.TaskID,
-		Limit:    paging.limit,
-		Offset:   paging.offset,
-		Sort:     paging.sort,
-		Q:        paging.q,
+		TenantId:  tenantID,
+		TaskId:    sdkReq.TaskID,
+		Runner:    sdkReq.Runner,
+		ProjectId: sdkReq.ProjectID,
+		Statuses:  sdkReq.Statuses,
+		JobIds:    sdkReq.JobIDs,
+		AgentId:   sdkReq.AgentID,
+		Limit:     paging.limit,
+		Offset:    paging.offset,
+		Sort:      paging.sort,
+		Q:         paging.q,
 	}
 
 	protoResp := &pb.OrchestratorListJobsResponse{}

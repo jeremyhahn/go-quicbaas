@@ -86,6 +86,7 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"RotateSessionAccount": decodeMCPRotateSessionAccount,
 
 	"ListSessions":           decodeMCPListSessions,
+	"ListJobs":               decodeMCPListJobs,
 	"GetSessionHistory":      decodeMCPSessionHistory,
 	"GetSessionConversation": decodeMCPSessionConversation,
 	"GetSpendReport":         decodeMCPSpendReport,
@@ -327,6 +328,16 @@ func decodeMCPListSessions(raw []byte) (interface{}, error) {
 			"mcp.orchestrator.ListSessions", "failed to decode MCP list sessions result")
 	}
 	return wire.Response(), nil
+}
+
+// decodeMCPListJobs decodes quicbaas_orchestrator_list_jobs output.
+func decodeMCPListJobs(raw []byte) (interface{}, error) {
+	var resp orchestrator.ListJobsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.ListJobs", "failed to decode MCP list jobs result")
+	}
+	return &resp, nil
 }
 
 // decodeMCPListRunners converts the quicbaas_orchestrator_list_runners result
