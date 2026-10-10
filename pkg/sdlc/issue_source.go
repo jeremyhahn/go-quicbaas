@@ -433,6 +433,14 @@ func issueOfTask(task *orchestration.Task) (RepoRef, int, error) {
 	return ParseIssueRef(task.Source.Ref)
 }
 
+func ensureTaskSourceRepoMatchesBinding(task *orchestration.Task, binding *ProjectBinding, source RepoRef) error {
+	bound := binding.Repo()
+	if sameRepo(bound, source) {
+		return nil
+	}
+	return &TaskSourceRepoMismatchError{TaskID: taskID(task), ProjectID: binding.ProjectID, Binding: bound, Source: source}
+}
+
 func taskID(task *orchestration.Task) string {
 	if task == nil {
 		return ""

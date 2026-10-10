@@ -80,7 +80,13 @@ var (
 
 	// ErrWebhookRepoMismatch indicates a delivery describes a repository other
 	// than the one the binding names.
+	// ErrWebhookRepoMismatch indicates a delivery describes a repository other
+	// than the one the binding names.
 	ErrWebhookRepoMismatch = errors.New("sdlc: delivery names a different repository than the binding")
+
+	// ErrTaskSourceRepoMismatch indicates a task source describes a repository
+	// other than the one the binding names.
+	ErrTaskSourceRepoMismatch = errors.New("sdlc: task source names a different repository than the binding")
 
 	// ErrMergeNotReadyExhausted indicates the forge stayed not-ready past the
 	// merge retry bound.
@@ -500,6 +506,24 @@ func (e *WebhookRepoMismatchError) Unwrap() error { return ErrWebhookRepoMismatc
 // TriageWakeError reports a triage pass a verified webhook delivery could not
 // start. It never fails the delivery — the periodic backstop still triages
 // the project — so it travels on WebhookIngestResult for the caller to log.
+// TaskSourceRepoMismatchError reports a task source about a repository the
+// binding does not name.
+type TaskSourceRepoMismatchError struct {
+	TaskID    string
+	ProjectID string
+	Binding   RepoRef
+	Source    RepoRef
+}
+
+// Error implements the error interface.
+func (e *TaskSourceRepoMismatchError) Error() string {
+	return "sdlc: task " + e.TaskID + " in project " + e.ProjectID + " is bound to " + e.Binding.String() +
+		" but the task source describes " + e.Source.String()
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *TaskSourceRepoMismatchError) Unwrap() error { return ErrTaskSourceRepoMismatch }
+
 type TriageWakeError struct {
 	TenantID  string
 	ProjectID string

@@ -57,6 +57,7 @@ type mockAgentService struct {
 	// and session listings the same way listJobs backs the job listing, so
 	// a paging test has records to page through.
 	listAgents    []*orchestration.FleetNode
+	listAgentsErr error
 	listWorkflows []*orchestration.WorkflowDefinition
 	listSessions  []*orchestration.SessionInfo
 
@@ -318,6 +319,9 @@ func (m *mockAgentService) GetFleetNode(ctx context.Context, tenantID, agentID s
 }
 
 func (m *mockAgentService) ListFleetNodes(_ context.Context, _ string, _ *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
+	if m.listAgentsErr != nil {
+		return nil, m.listAgentsErr
+	}
 	return m.listAgents, nil
 }
 

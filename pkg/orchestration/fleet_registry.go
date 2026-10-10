@@ -295,7 +295,6 @@ func (r *fleetRegistry) ListFleetNodes(ctx context.Context, tenantID string, fil
 	if err != nil {
 		return nil, err
 	}
-
 	agents := make([]*FleetNode, 0)
 	err = r.kv.Scan(ctx, prefix, func(_ string, value []byte) error {
 		agent := &FleetNode{}

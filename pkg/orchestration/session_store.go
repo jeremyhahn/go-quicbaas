@@ -634,12 +634,11 @@ type sessionStore struct {
 	auditor StoreAuditor
 
 	// swapper is the store's guarded-swap capability, asserted once at
-	// construction. Nil when the backing store cannot decide one — which in
-	// this tree means an in-process store (pkg/kvstore.Store is a map behind a
-	// mutex), and an in-process store is not shared with another daemon, so
-	// the record lock below IS the whole arbitration there. A store that two
-	// daemons can both reach is the tenant-routed qrdb one, and that one has
-	// the verb.
+	// construction. Nil when the backing store cannot decide one — a test
+	// double without the verb — and then the record lock below is the whole
+	// arbitration. Every store in this tree that a session store is built over
+	// in production has it: the tenant-routed qrdb one, and pkg/kvstore.Store,
+	// whose swap is decided under its own write lock.
 	swapper guardedSwapper
 
 	// recordMu serializes the read-modify-write sequence on one session

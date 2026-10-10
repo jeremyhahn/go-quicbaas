@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func reconcileHarness(t *testing.T) (*agentServiceImpl, AgentStore) {
 	if !ok {
 		t.Fatalf("NewAgentService returned %T, want *agentServiceImpl", svc)
 	}
-	impl.SetKVStore(kvstore.NewMemory())
+	impl.SetKVStore(NewMemoryTaskKV())
 	return impl, store
 }
 
@@ -80,7 +81,7 @@ func seedSession(t *testing.T, store AgentStore, record *SessionRecord) *Session
 // seedJob writes one persisted job status.
 func seedJob(t *testing.T, svc *agentServiceImpl, tenantID, jobID string, state JobState, sessionIDs ...string) {
 	t.Helper()
-	svc.persistJobStatus(tenantID, &JobStatus{
+	seedJobStatus(t, svc, tenantID, &JobStatus{
 		JobID:      jobID,
 		TenantID:   tenantID,
 		State:      state,
@@ -860,7 +861,7 @@ func TestSweepSessions_VisitsEveryTenantOnARoutedStore(t *testing.T) {
 	if !ok {
 		t.Fatalf("service is %T", svc)
 	}
-	impl.SetKVStore(kvstore.NewMemory())
+	impl.SetKVStore(NewMemoryTaskKV())
 	impl.SetTenantLister(&fakeTenantLister{ids: []string{"t1", "t2"}})
 
 	stale := time.Now().Add(-72 * time.Hour).UnixNano()
@@ -900,7 +901,7 @@ func TestSweepSessions_OneSealedTenantDoesNotEndTheWalk(t *testing.T) {
 	if !ok {
 		t.Fatalf("service is %T", svc)
 	}
-	impl.SetKVStore(kvstore.NewMemory())
+	impl.SetKVStore(NewMemoryTaskKV())
 	impl.SetTenantLister(&fakeTenantLister{ids: []string{"t-sealed", "t-open"}})
 
 	stale := time.Now().Add(-72 * time.Hour).UnixNano()
@@ -1309,14 +1310,17 @@ func TestConcludeSession_AFailedJobWriteLeavesAConclusionTheNextPassCompletes(t 
 	// The job half is inside the transition and ahead of the commit point for
 	// the same reason as the log: after it, no retry could reach it.
 	f := newPartialConclusionFixture(t)
-	f.svc.SetKVStore(&refusingKVStore{KVStore: kvstore.NewMemory()})
-	// Seed the job through the refusing store's backing KV so the read works
-	// and only the WRITE fails, which is the fault under test.
-	seedJob(t, f.svc, f.tenant, f.job, JobStateFailed, f.session)
-	f.svc.SetKVStore(&refusingKVStore{KVStore: f.svc.kvStore.(*refusingKVStore).KVStore, refuse: true})
+	// The fixture seeded the job, so the read works and only the WRITE fails,
+	// which is the fault under test.
+	refusing := &refusingKVStore{KVStore: f.svc.kvStore, refuse: true}
+	f.svc.SetKVStore(refusing)
 
-	if _, err := f.conclude(t); err == nil {
+	_, err := f.conclude(t)
+	if err == nil {
 		t.Fatal("a conclusion whose job could not be told reported success")
+	}
+	if refusing.refusedWrites.Load() == 0 || !strings.Contains(err.Error(), errRefusedWrite.Error()) {
+		t.Fatalf("err = %v, want the conclusion stopped by the refused job write", err)
 	}
 	if state, _ := storedStatus(t, f.store, f.tenant, f.session); state == SessionStateClosed {
 		t.Fatal("the record was written closed over a job that was never told; the job would name a " +
@@ -1373,25 +1377,57 @@ func TestConcludeSession_ACompleteConclusionIsANoOpOnTheNextPass(t *testing.T) {
 
 // refusingKVStore fails writes, or reads, on demand — a job store that is
 // briefly unavailable. Each direction is separately switchable so a test can
-// name the one fault it is about.
+// name the one fault it is about, and each refusal is counted so the test can
+// prove that fault — and not some earlier one — is what stopped the caller.
+//
+// The guarded writes are forwarded explicitly (see forwardPutIfAbsent): a
+// wrapper without them is an unguarded store, which a job write refuses before
+// it reaches the read or the write this double exists to fail.
 type refusingKVStore struct {
 	interfaces.KVStore
 	refuse    bool
 	refuseGet bool
+
+	refusedWrites atomic.Int32
+	refusedReads  atomic.Int32
 }
+
+// errRefusedWrite and errRefusedRead are the faults refusingKVStore injects.
+var (
+	errRefusedWrite = errors.New("kv store refused the write")
+	errRefusedRead  = errors.New("kv store could not answer the read")
+)
 
 func (s *refusingKVStore) Put(ctx context.Context, key string, value []byte) error {
 	if s.refuse {
-		return errors.New("kv store refused the write")
+		s.refusedWrites.Add(1)
+		return errRefusedWrite
 	}
 	return s.KVStore.Put(ctx, key, value)
 }
 
 func (s *refusingKVStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if s.refuseGet {
-		return nil, errors.New("kv store could not answer the read")
+		s.refusedReads.Add(1)
+		return nil, errRefusedRead
 	}
 	return s.KVStore.Get(ctx, key)
+}
+
+func (s *refusingKVStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if s.refuse {
+		s.refusedWrites.Add(1)
+		return false, errRefusedWrite
+	}
+	return forwardPutIfAbsent(ctx, s.KVStore, key, value)
+}
+
+func (s *refusingKVStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	if s.refuse {
+		s.refusedWrites.Add(1)
+		return false, errRefusedWrite
+	}
+	return forwardCompareAndSwap(ctx, s.KVStore, key, expected, next)
 }
 
 // =============================================================================
@@ -1407,10 +1443,15 @@ func (s *refusingKVStore) Get(ctx context.Context, key string) ([]byte, error) {
 func TestConcludeSession_AnUnreadableJobStopsTheConclusionBeforeTheCommit(t *testing.T) {
 	f := newPartialConclusionFixture(t)
 	backing := f.svc.kvStore
-	f.svc.SetKVStore(&refusingKVStore{KVStore: backing, refuseGet: true})
+	refusing := &refusingKVStore{KVStore: backing, refuseGet: true}
+	f.svc.SetKVStore(refusing)
 
-	if _, err := f.conclude(t); err == nil {
+	_, err := f.conclude(t)
+	if err == nil {
 		t.Fatal("a conclusion whose job could not be READ reported success")
+	}
+	if refusing.refusedReads.Load() == 0 || !strings.Contains(err.Error(), errRefusedRead.Error()) {
+		t.Fatalf("err = %v, want the conclusion stopped by the refused job read", err)
 	}
 	if state, _ := storedStatus(t, f.store, f.tenant, f.session); state == SessionStateClosed {
 		t.Fatal("the session was closed over a job the store could not answer for; the commit point " +
@@ -1446,7 +1487,12 @@ func TestConcludeSession_ACorruptJobRecordIsRetriedNotSwallowed(t *testing.T) {
 		t.Fatal("the session was closed over a job record that could not be parsed")
 	}
 
-	// Repair the record; the next pass finishes the conclusion.
+	// Repair the record; the next pass finishes the conclusion. The corrupt
+	// body is removed first: a job write will not replace a record it cannot
+	// read, since it cannot tell what that record holds.
+	if err := f.svc.kvStore.Delete(context.Background(), jobPersistenceKey(f.tenant, f.job)); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
 	seedJob(t, f.svc, f.tenant, f.job, JobStateFailed, f.session)
 	if written, err := f.conclude(t); err != nil || !written {
 		t.Fatalf("the resuming pass did not complete the conclusion: written=%v err=%v", written, err)

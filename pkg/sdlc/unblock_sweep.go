@@ -566,6 +566,9 @@ func (l *lazyScope) resolve(ctx context.Context, task *orchestration.Task) (unbl
 		if err != nil {
 			return unblockScope{}, err
 		}
+		if err := ensureTaskSourceRepoMatchesBinding(task, binding, repo); err != nil {
+			return unblockScope{}, err
+		}
 		forge, err := l.sweeper.forges.ForgeFor(ctx, l.tenantID, binding.Forge)
 		if err != nil {
 			return unblockScope{}, err
@@ -574,6 +577,9 @@ func (l *lazyScope) resolve(ctx context.Context, task *orchestration.Task) (unbl
 			return unblockScope{}, NewForgeNotRegisteredError(binding.Forge.Type)
 		}
 		l.forge, l.binding, l.resolved = forge, binding, true
+	}
+	if err := ensureTaskSourceRepoMatchesBinding(task, l.binding, repo); err != nil {
+		return unblockScope{}, err
 	}
 	return unblockScope{forge: l.forge, repo: repo, now: l.sweeper.now}, nil
 }

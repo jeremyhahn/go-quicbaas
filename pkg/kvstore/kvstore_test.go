@@ -349,6 +349,100 @@ func TestStoreConcurrentAccess(t *testing.T) {
 	}
 }
 
+// A swap edits only the value it was shown: a stale expectation loses and
+// leaves the winner's value in place, and an absent key is never created.
+func TestStoreCompareAndSwapDetectsAConflict(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemory()
+	if err := store.Put(ctx, "k", []byte("v1")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	swapped, err := store.CompareAndSwap(ctx, "k", []byte("v1"), []byte("v2"))
+	if err != nil || !swapped {
+		t.Fatalf("swap on the held value = (%v, %v), want (true, nil)", swapped, err)
+	}
+	swapped, err = store.CompareAndSwap(ctx, "k", []byte("v1"), []byte("v3"))
+	if err != nil || swapped {
+		t.Fatalf("swap on a stale value = (%v, %v), want (false, nil)", swapped, err)
+	}
+	if got, _ := store.Get(ctx, "k"); string(got) != "v2" {
+		t.Fatalf("value = %q, want the winner's v2", got)
+	}
+
+	swapped, err = store.CompareAndSwap(ctx, "absent", nil, []byte("v"))
+	if err != nil || swapped {
+		t.Fatalf("swap on an absent key = (%v, %v), want (false, nil)", swapped, err)
+	}
+	if exists, _ := store.Exists(ctx, "absent"); exists {
+		t.Fatal("a swap created a key")
+	}
+}
+
+// Writers racing increments through the swap must each land exactly once.
+func TestStoreCompareAndSwapConcurrentIncrements(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemory()
+	if err := store.Put(ctx, "n", []byte("0")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	const writers = 32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			for {
+				held, err := store.Get(ctx, "n")
+				if err != nil {
+					t.Errorf("get: %v", err)
+					return
+				}
+				n, err := strconv.Atoi(string(held))
+				if err != nil {
+					t.Errorf("atoi: %v", err)
+					return
+				}
+				swapped, err := store.CompareAndSwap(ctx, "n", held, []byte(strconv.Itoa(n+1)))
+				if err != nil {
+					t.Errorf("swap: %v", err)
+					return
+				}
+				if swapped {
+					return
+				}
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got, _ := store.Get(ctx, "n"); string(got) != strconv.Itoa(writers) {
+		t.Fatalf("counter = %s, want %d", got, writers)
+	}
+}
+
+func TestStoreCompareAndSwapErrors(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemory()
+
+	var emptyKey *EmptyKeyError
+	if _, err := store.CompareAndSwap(ctx, "", nil, []byte("v")); !errors.As(err, &emptyKey) {
+		t.Fatalf("swap with an empty key must return EmptyKeyError, got %v", err)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	var opErr *OpError
+	if _, err := store.CompareAndSwap(ctx, "k", nil, []byte("v")); !errors.As(err, &opErr) {
+		t.Fatalf("swap on a closed engine must return OpError, got %v", err)
+	}
+}
+
 // Delete and Close must report engine failures as typed errors too, and the
 // error messages must name the operation and key so an operator can act on
 // them.

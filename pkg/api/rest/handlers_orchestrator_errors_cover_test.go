@@ -25,6 +25,7 @@ import (
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
+	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -53,6 +54,7 @@ func TestHandleOrchestratorError_Dispatch(t *testing.T) {
 		{"agent_spend_undecidable", &orchestration.AgentSpendUndecidableError{AgentID: "a"}, http.StatusServiceUnavailable},
 		{"conflict", orchestration.ErrTaskAlreadyClaimed, http.StatusConflict},
 		{"forbidden", orchestration.ErrNotLeadOfParent, http.StatusForbidden},
+		{"qb_forbidden", qerrors.New(qerrors.ErrForbidden, "fleet.ListFleetNodes", "scope denied"), http.StatusForbidden},
 		// Every spawn-policy refusal is a 403 carrying its actionable message.
 		// These used to fall through to 500, leaving an operator unable to tell
 		// a mount-allowlist misconfiguration from a server fault.

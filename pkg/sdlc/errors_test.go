@@ -47,6 +47,7 @@ func TestTypedErrors_NameTheirSubjectAndUnwrap(t *testing.T) {
 		{&WebhookUnverifiedError{Type: "gitea", Reason: "hmac"}, ErrWebhookUnverified, "hmac"},
 		{&WebhookSecretMissingError{ProjectID: "p", Reason: "r"}, ErrWebhookSecretMissing, "project p"},
 		{&WebhookRepoMismatchError{ProjectID: "p", Configured: RepoRef{Owner: "a", Repo: "b"}, Delivered: RepoRef{Owner: "c", Repo: "d"}}, ErrWebhookRepoMismatch, "a/b"},
+		{&TaskSourceRepoMismatchError{TaskID: "t", ProjectID: "p", Binding: RepoRef{Owner: "a", Repo: "b"}, Source: RepoRef{Owner: "c", Repo: "d"}}, ErrTaskSourceRepoMismatch, "task t in project p is bound to a/b"},
 		{&MergeNotReadyExhaustedError{Subject: "s", Attempts: 2, Last: errors.New("x")}, ErrMergeNotReadyExhausted, "2 attempt(s): x"},
 		{&MergeNotReadyExhaustedError{Subject: "s", Attempts: 2}, ErrMergeNotReadyExhausted, "2 attempt(s)"},
 		{&HeadMovedError{Subject: "s", Reviewed: "a", Current: "b"}, ErrHeadMoved, "from reviewed a to b"},

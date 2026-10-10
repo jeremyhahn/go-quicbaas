@@ -63,7 +63,7 @@ func newSDKKVStore(client *qrdbsdk.Client, shardID uint64) interfaces.KVStore {
 		client:  client,
 		shardID: shardID,
 	}
-	if g, ok := client.KV().(guardedKVClient); ok {
+	if g, ok := client.KV().(transport.GuardedKVClient); ok {
 		return &guardedSDKKVStore{sdkKVStore: base, guarded: g}
 	}
 	return &base
@@ -74,15 +74,6 @@ func (s *sdkKVStore) Put(ctx context.Context, key string, value []byte) error {
 	return s.client.KV().Put(ctx, key, value)
 }
 
-// guardedKVClient is the guarded-verb surface a qrdb transport MAY offer.
-// transport.KVClient does not carry these at v0.10.0-alpha (the verbs live
-// on service.KVServicer); when a transport grows them, the assertion in
-// newSDKKVStore lights the capability up with no further wiring.
-type guardedKVClient interface {
-	PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
-	CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
-}
-
 // guardedSDKKVStore carries the guarded verbs as EXPLICIT FORWARDS
 // (go-quicbaas#120): qrdb evaluates their condition inside the storage
 // engine — across every process sharing the store — which is exactly the
@@ -91,9 +82,20 @@ type guardedKVClient interface {
 // wrapper must never PROMOTE a capability its transport does not truly
 // carry, and must never emulate one over the base verbs — so the methods
 // exist only on the type returned when the transport really has them.
+//
+// The capability is qrdb's own transport.GuardedKVClient, which carries all
+// three verbs. A narrower local interface once matched only the create and
+// delete guards, so CompareAndSwap was never forwarded and every guarded edit
+// against this store had nothing to call (go-quicbaas#837).
 type guardedSDKKVStore struct {
 	sdkKVStore
-	guarded guardedKVClient
+	guarded transport.GuardedKVClient
+}
+
+// CompareAndSwap replaces key's value with next only while it still holds
+// expected, arbitrated in the store. An absent key is left absent.
+func (s *guardedSDKKVStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return s.guarded.CompareAndSwap(ctx, key, expected, next)
 }
 
 // PutIfAbsent stores value only when key is absent, arbitrated in the store.

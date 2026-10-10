@@ -805,14 +805,12 @@ func (s *agentServiceImpl) SpawnChildJob(ctx context.Context, req *SpawnChildJob
 			rj.run.RecordParent(req.ParentJobID, req.CallerAgentID, spawnedAt)
 		}
 	}
-	if s.kvStore != nil {
-		if childStatus, loadErr := s.loadJobStatus(tenantID, childJobID); loadErr == nil {
-			childStatus.ParentJobID = req.ParentJobID
-			childStatus.SpawnedBy = req.CallerAgentID
-			childStatus.SpawnedAt = spawnedAt
-			s.persistJobStatus(tenantID, childStatus)
-		}
-	}
+	s.updateJobLineage(tenantID, childJobID, func(childStatus *JobStatus) bool {
+		childStatus.ParentJobID = req.ParentJobID
+		childStatus.SpawnedBy = req.CallerAgentID
+		childStatus.SpawnedAt = spawnedAt
+		return true
+	})
 
 	// Atomically append the child ID to the parent's ChildJobIDs.
 	s.appendChildJobID(ctx, tenantID, req.ParentJobID, childJobID)
@@ -841,12 +839,20 @@ func (s *agentServiceImpl) appendChildJobID(ctx context.Context, tenantID, paren
 	}
 
 	// Persist to KV store for durability and cross-restart visibility.
-	if s.kvStore == nil {
-		return
-	}
-	if parentStatus, err := s.loadJobStatus(tenantID, parentJobID); err == nil {
+	s.updateJobLineage(tenantID, parentJobID, func(parentStatus *JobStatus) bool {
 		parentStatus.ChildJobIDs = append(parentStatus.ChildJobIDs, childJobID)
-		s.persistJobStatus(tenantID, parentStatus)
+		return true
+	})
+}
+
+// updateJobLineage applies a lineage change to a persisted job record. It is
+// best-effort like persistJobStatus: a job with no record yet has nothing to
+// amend — its run carries the lineage into its first snapshot — and any other
+// failure is logged rather than failing the spawn that has already happened.
+func (s *agentServiceImpl) updateJobLineage(tenantID, jobID string, mutate func(*JobStatus) bool) {
+	err := s.updateJobStatus(tenantID, jobID, mutate)
+	if err != nil && !jobStatusAbsent(err) {
+		s.logger.Warnf("orchestration: failed to record job lineage: job=%s: %s", jobID, err.Error())
 	}
 }
 
@@ -4535,20 +4541,65 @@ func (s *agentServiceImpl) persistJobStatus(tenantID string, status *JobStatus) 
 	}
 }
 
+// guardedJobStore is the job store a whole-snapshot write needs: a guarded
+// create for the record's first write and a guarded swap for every later one.
+type guardedJobStore interface {
+	guardedCreator
+	guardedSwapper
+}
+
 // storeJobStatus is persistJobStatus with the failure RETURNED rather than
-// logged, for the one caller that cannot step over it: a conclusion owes the
-// job its tidy-up before the session record may be written closed, so a job
-// store that will not answer has to leave the session retryable instead of
-// silently finishing without it. See recordSessionConclusionOnJob.
+// logged, for a caller that cannot step over it.
+//
+// It writes a WHOLE snapshot, which is right for the job's own run publishing
+// its state, but the record is not the run's alone: updateJobStatus amends it
+// in between (a child spawn, a session conclusion). A plain Put of the
+// snapshot would erase those amendments, so the write is guarded like theirs.
+// A record the store does not hold yet is created with PutIfAbsent; one it does
+// hold is read, has its amendments folded into the snapshot
+// (mergeJobAmendments) and is replaced by a compare-and-swap against the exact
+// bytes read. A write that lost to another writer re-reads and merges again, up
+// to maxJobStatusSwapAttempts times.
+//
+// A store without both verbs is refused with JobStoreUnguardedError, for the
+// same reason updateJobStatus refuses one.
 func (s *agentServiceImpl) storeJobStatus(tenantID string, status *JobStatus) error {
 	if s.kvStore == nil {
 		return nil
 	}
+	store, guarded := s.kvStore.(guardedJobStore)
+	if !guarded {
+		return &JobStoreUnguardedError{JobID: status.JobID}
+	}
 
 	key := jobPersistenceKey(tenantID, status.JobID)
-	data, err := json.Marshal(status)
+	for attempt := 0; attempt < maxJobStatusSwapAttempts; attempt++ {
+		stored, raw, err := s.loadJobStatusRaw(tenantID, status.JobID)
+		var written bool
+		switch {
+		case jobStatusAbsent(err):
+			written, err = createJobStatus(store, key, status)
+		case err != nil:
+			return err
+		default:
+			written, err = swapJobStatus(store, key, raw, mergeJobAmendments(status, stored))
+		}
+		if err != nil {
+			return err
+		}
+		if written {
+			return nil
+		}
+	}
+	return &JobStatusContendedError{JobID: status.JobID, Attempts: maxJobStatusSwapAttempts}
+}
+
+// createJobStatus writes status at key only while the store holds no record
+// there, and reports whether it did.
+func createJobStatus(creator guardedCreator, key string, status *JobStatus) (bool, error) {
+	data, err := encodeJobStatusOver(nil, status)
 	if err != nil {
-		return &JobPersistenceError{
+		return false, &JobPersistenceError{
 			JobID:   status.JobID,
 			Message: "failed to marshal job status for persistence",
 			Cause:   err,
@@ -4558,20 +4609,29 @@ func (s *agentServiceImpl) storeJobStatus(tenantID string, status *JobStatus) er
 	ctx, cancel := jobRecordOp()
 	defer cancel()
 
-	if putErr := s.kvStore.Put(ctx, key, data); putErr != nil {
-		return &JobPersistenceError{
+	created, err := creator.PutIfAbsent(ctx, key, data)
+	if err != nil {
+		return false, &JobPersistenceError{
 			JobID:   status.JobID,
 			Message: "failed to write job status to the KV store",
-			Cause:   putErr,
+			Cause:   err,
 		}
 	}
-	return nil
+	return created, nil
 }
 
 // loadJobStatus reads a job status from the KV store by tenant and job ID.
 func (s *agentServiceImpl) loadJobStatus(tenantID, jobID string) (*JobStatus, error) {
+	status, _, err := s.loadJobStatusRaw(tenantID, jobID)
+	return status, err
+}
+
+// loadJobStatusRaw is loadJobStatus, keeping the bytes the status was decoded
+// from: a compare-and-swap compares against exactly those, and re-encoding the
+// decoded struct would drop any field a newer build wrote.
+func (s *agentServiceImpl) loadJobStatusRaw(tenantID, jobID string) (*JobStatus, []byte, error) {
 	if s.kvStore == nil {
-		return nil, &JobPersistenceError{
+		return nil, nil, &JobPersistenceError{
 			JobID:   jobID,
 			Message: "KV store not configured",
 		}
@@ -4584,23 +4644,111 @@ func (s *agentServiceImpl) loadJobStatus(tenantID, jobID string) (*JobStatus, er
 
 	data, err := s.kvStore.Get(ctx, key)
 	if err != nil {
-		return nil, &JobPersistenceError{
+		return nil, nil, &JobPersistenceError{
 			JobID:   jobID,
 			Message: "failed to read from KV store",
 			Cause:   err,
 		}
 	}
+	if data == nil {
+		// Some stores answer a missing key with no value rather than an error;
+		// it is the same absence, and jobStatusAbsent must recognise it.
+		return nil, nil, &JobPersistenceError{
+			JobID:   jobID,
+			Message: "failed to read from KV store",
+			Cause:   &qerrors.QBError{Code: qerrors.ErrNotFound, Op: "load job status"},
+		}
+	}
 
 	var status JobStatus
 	if unmarshalErr := json.Unmarshal(data, &status); unmarshalErr != nil {
-		return nil, &JobPersistenceError{
+		return nil, nil, &JobPersistenceError{
 			JobID:   jobID,
 			Message: "failed to unmarshal job status",
 			Cause:   unmarshalErr,
 		}
 	}
 
-	return &status, nil
+	return &status, data, nil
+}
+
+// maxJobStatusSwapAttempts bounds updateJobStatus's compare-and-swap retry.
+// Each lost swap means another writer committed in between, so the loop
+// re-reads and re-applies the mutation to what that writer left. The bound
+// exists so a record that never stops changing cannot spin a caller for ever.
+const maxJobStatusSwapAttempts = 8
+
+// updateJobStatus applies mutate to the stored job record as one atomic step.
+//
+// A READ, A CHANGE AND A PLAIN PUT LOSE WRITES. Two callers that both read the
+// record — a child spawn appending its lineage and a session conclusion
+// dropping its session, say — each write back their own copy, and the later
+// Put erases the earlier caller's change (go-quicbaas#837). Here the write is a
+// compare-and-swap against the exact bytes read, so a writer that lost the
+// race re-reads and applies its mutation on top of the winner's.
+//
+// mutate is called once per attempt on a freshly decoded record and reports
+// whether there is anything to write; returning false ends the update with
+// nothing written. A record the store does not hold is returned as the read
+// error, which jobStatusAbsent recognises.
+//
+// A store without the swap verb is refused with JobStoreUnguardedError rather
+// than written with a plain Put: whether another daemon shares the store is not
+// something this code can see, and a guess is how the lost writes came back.
+func (s *agentServiceImpl) updateJobStatus(tenantID, jobID string, mutate func(*JobStatus) bool) error {
+	if s.kvStore == nil {
+		return nil
+	}
+	swapper, guarded := s.kvStore.(guardedSwapper)
+	if !guarded {
+		return &JobStoreUnguardedError{JobID: jobID}
+	}
+
+	for attempt := 0; attempt < maxJobStatusSwapAttempts; attempt++ {
+		status, raw, err := s.loadJobStatusRaw(tenantID, jobID)
+		if err != nil {
+			return err
+		}
+		if !mutate(status) {
+			return nil
+		}
+		swapped, err := swapJobStatus(swapper, jobPersistenceKey(tenantID, jobID), raw, status)
+		if err != nil {
+			return err
+		}
+		if swapped {
+			return nil
+		}
+	}
+	return &JobStatusContendedError{JobID: jobID, Attempts: maxJobStatusSwapAttempts}
+}
+
+// swapJobStatus writes status at key only while the record still holds held,
+// and reports whether it did. The replacement is encoded over held, so a field
+// this build does not know survives the write.
+func swapJobStatus(
+	swapper guardedSwapper, key string, held []byte, status *JobStatus) (bool, error) {
+	next, err := encodeJobStatusOver(held, status)
+	if err != nil {
+		return false, &JobPersistenceError{
+			JobID:   status.JobID,
+			Message: "failed to marshal job status for persistence",
+			Cause:   err,
+		}
+	}
+
+	ctx, cancel := jobRecordOp()
+	defer cancel()
+
+	swapped, err := swapper.CompareAndSwap(ctx, key, held, next)
+	if err != nil {
+		return false, &JobPersistenceError{
+			JobID:   status.JobID,
+			Message: "failed to swap job status in the KV store",
+			Cause:   err,
+		}
+	}
+	return swapped, nil
 }
 
 // jobStatusAbsent reports whether a loadJobStatus failure means the job record

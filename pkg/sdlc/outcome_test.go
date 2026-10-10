@@ -305,6 +305,47 @@ func TestHooks_TaskConcluded_ExhaustedPostsOnceAndSwapsTheLabel(t *testing.T) {
 	}
 }
 
+func TestHooks_TaskConcludedRequiresSourceRepoToMatchBinding(t *testing.T) {
+	ctx := context.Background()
+
+	matching := concludedRig(t)
+	matchingTask := exhaustedTask()
+	matchingTask.Source.Ref = IssueRefString(RepoRef{Owner: "ACME", Repo: "API"}, 25)
+	matching.tasks.replace(matchingTask)
+	if err := matching.hooks.TaskConcluded(ctx, orchestration.TaskConclusion{
+		TenantID: testTenant, Reason: orchestration.TaskConcludedBudgetExhausted, Task: matchingTask, JobID: "job-3",
+	}); err != nil {
+		t.Fatalf("TaskConcluded with case-normalized bound repo: %v", err)
+	}
+	if got := matching.forges.resolvedTokenRefs(); len(got) != 1 {
+		t.Fatalf("matching repo resolved forge %d time(s), want 1", len(got))
+	}
+
+	foreign := concludedRig(t)
+	foreignTask := exhaustedTask()
+	foreignTask.Source.Ref = IssueRefString(RepoRef{Owner: "other", Repo: "api"}, 25)
+	foreign.tasks.replace(foreignTask)
+	err := foreign.hooks.TaskConcluded(ctx, orchestration.TaskConclusion{
+		TenantID: testTenant, Reason: orchestration.TaskConcludedBudgetExhausted, Task: foreignTask, JobID: "job-3",
+	})
+	var mismatch *TaskSourceRepoMismatchError
+	if !errors.As(err, &mismatch) || !errors.Is(err, ErrTaskSourceRepoMismatch) {
+		t.Fatalf("foreign repo err = %v, want TaskSourceRepoMismatchError", err)
+	}
+	if mismatch.Source != (RepoRef{Owner: "other", Repo: "api"}) || mismatch.Binding != testRepoRef {
+		t.Fatalf("mismatch details = %+v", mismatch)
+	}
+	if got := foreign.forges.resolvedTokenRefs(); len(got) != 0 {
+		t.Fatalf("foreign repo resolved forge credentials: %v", got)
+	}
+	if comments := foreign.forge.commentsOn(25); len(comments) != 0 {
+		t.Fatalf("foreign repo reached the forge: %+v", comments)
+	}
+	if len(foreign.forge.labelAdds) != 0 || len(foreign.forge.labelRemovals) != 0 {
+		t.Fatalf("foreign repo moved labels: adds=%v removals=%v", foreign.forge.labelAdds, foreign.forge.labelRemovals)
+	}
+}
+
 // TestHooks_TaskConcluded_ReadmitClearsTheTerminalLabel proves the undoing of
 // a park is announced too, and moves the issue from its park label to the
 // trigger — the display state of queued work — until the next attempt's

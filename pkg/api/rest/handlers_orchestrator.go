@@ -31,6 +31,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -1868,7 +1869,12 @@ func isOrchForbiddenError(err error) bool {
 	return stderrors.Is(err, orchestration.ErrNotLeadOfParent) ||
 		stderrors.As(err, &notLead) ||
 		orchestration.IsPolicyDenial(err) ||
+		isQBForbiddenError(err) ||
 		isGRPCPermissionDenied(err)
+}
+
+func isQBForbiddenError(err error) bool {
+	return qerrors.Code(err) == qerrors.ErrForbidden
 }
 
 // isGRPCPermissionDenied reports whether err carries a gRPC

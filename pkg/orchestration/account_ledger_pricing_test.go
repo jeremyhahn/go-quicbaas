@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // opusBook prices claude-opus-5, which the entries below were recorded
@@ -166,7 +165,7 @@ func TestPriceUnpriced_RefusalPaths(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	unguarded := NewConsumptionLedger(kvstore.NewMemory()).(ConsumptionPricer)
+	unguarded := NewConsumptionLedger(&unguardedKV{KVStore: newMockKVStore()}).(ConsumptionPricer)
 	_, err := unguarded.PriceUnpriced(ctx, "t1", func(*ConsumptionEntry) bool { return false })
 	assert.ErrorIs(t, err, ErrConsumptionUnguarded)
 

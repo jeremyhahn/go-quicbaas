@@ -246,7 +246,7 @@ func TestConcludeAbsentSession_TwoDaemonsWriteOneEnding(t *testing.T) {
 
 	sharedSessions := kvstore.NewMemory()
 	sharedLog := kvstore.NewMemory()
-	sharedJobs := kvstore.NewMemory()
+	sharedJobs := NewMemoryTaskKV()
 
 	recordKey, err := sessionRecordKey(tenantID, sessionID)
 	if err != nil {
@@ -344,7 +344,7 @@ func TestConcludeAbsentSession_TwoDaemonsStartingTogetherWriteOneEnding(t *testi
 
 	sharedSessions := kvstore.NewMemory()
 	sharedLog := kvstore.NewMemory()
-	sharedJobs := kvstore.NewMemory()
+	sharedJobs := NewMemoryTaskKV()
 
 	daemonA := newFleetDaemon(t, sharedSessions, sharedLog, sharedJobs)
 	daemonB := newFleetDaemon(t, sharedSessions, sharedLog, sharedJobs)
@@ -558,7 +558,7 @@ func TestConcludeAbsentSession_OneAttributionAcrossAllThreeArtifacts(t *testing.
 	// qrdb store does and what makes this the commit path a real fleet takes.
 	sharedSessions := &swappableKV{KVStore: kvstore.NewMemory()}
 	sharedLog := kvstore.NewMemory()
-	sharedJobs := kvstore.NewMemory()
+	sharedJobs := NewMemoryTaskKV()
 
 	recordKey, err := sessionRecordKey(tenantID, sessionID)
 	if err != nil {

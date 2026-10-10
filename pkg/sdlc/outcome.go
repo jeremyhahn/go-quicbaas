@@ -564,6 +564,9 @@ func (h *Hooks) resolveConcluded(ctx context.Context, tenantID string, task *orc
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureTaskSourceRepoMatchesBinding(task, binding, repo); err != nil {
+		return nil, err
+	}
 	forge, err := h.forges.ForgeFor(ctx, tenantID, binding.Forge)
 	if err != nil {
 		return nil, err

@@ -227,6 +227,9 @@ func (h *Hooks) resolve(ctx context.Context, job *orchestration.JobContext) (*at
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureTaskSourceRepoMatchesBinding(task, binding, repo); err != nil {
+		return nil, err
+	}
 	members, err := clusterOfTask(task.Metadata)
 	if err != nil {
 		return nil, err

@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -367,7 +368,27 @@ func (s *agentServiceImpl) recordSessionConclusionOnJob(
 	if jobID == "" || s.kvStore == nil {
 		return nil
 	}
-	status, err := s.loadJobStatus(tenantID, jobID)
+	err = s.updateJobStatus(tenantID, jobID, func(status *JobStatus) bool {
+		remaining := make([]string, 0, len(status.SessionIDs))
+		for _, id := range status.SessionIDs {
+			if id != sessionID {
+				remaining = append(remaining, id)
+			}
+		}
+		if len(remaining) == len(status.SessionIDs) && sessionHasConclusionEvent(status, sessionID) {
+			// Nothing to drop and the ending is already on the trail: a repeat
+			// pass must not append a second line saying the same thing.
+			return false
+		}
+		status.SessionIDs = remaining
+		status.Events = append(status.Events, JobAuditEvent{
+			Timestamp: time.Now().UnixNano(),
+			Type:      JobAuditTypeSessionConcluded,
+			Details:   "session " + sessionID + " concluded: " + reason.String(),
+		})
+		status.UpdatedAt = time.Now().UnixNano()
+		return true
+	})
 	switch {
 	case jobStatusAbsent(err):
 		// Reaped or never persisted: there is no job left to tell.
@@ -376,34 +397,7 @@ func (s *agentServiceImpl) recordSessionConclusionOnJob(
 		return &AgentServiceError{
 			Sentinel: ErrAgentServiceUnavailable,
 			Message: "session " + sessionID + " was concluded (" + reason.String() +
-				") and its job " + jobID + " could not be read to be told: " + err.Error(),
-		}
-	case status == nil:
-		return nil
-	}
-	remaining := make([]string, 0, len(status.SessionIDs))
-	for _, id := range status.SessionIDs {
-		if id != sessionID {
-			remaining = append(remaining, id)
-		}
-	}
-	if len(remaining) == len(status.SessionIDs) && sessionHasConclusionEvent(status, sessionID) {
-		// Nothing to drop and the ending is already on the trail: a repeat
-		// pass must not append a second line saying the same thing.
-		return nil
-	}
-	status.SessionIDs = remaining
-	status.Events = append(status.Events, JobAuditEvent{
-		Timestamp: time.Now().UnixNano(),
-		Type:      JobAuditTypeSessionConcluded,
-		Details:   "session " + sessionID + " concluded: " + reason.String(),
-	})
-	status.UpdatedAt = time.Now().UnixNano()
-	if putErr := s.storeJobStatus(tenantID, status); putErr != nil {
-		return &AgentServiceError{
-			Sentinel: ErrAgentServiceUnavailable,
-			Message: "session " + sessionID + " was concluded (" + reason.String() +
-				") and its job " + jobID + " could not be told: " + putErr.Error(),
+				") and its job " + jobID + " could not be told: " + err.Error(),
 		}
 	}
 	return nil
@@ -447,10 +441,11 @@ func (s *agentServiceImpl) sessionJobID(
 // sessionHasConclusionEvent reports whether the job's trail already names this
 // session's ending.
 func sessionHasConclusionEvent(status *JobStatus, sessionID string) bool {
+	// The trailing " concluded" keeps session "s1" from matching the ending of
+	// session "s10".
+	prefix := "session " + sessionID + " concluded"
 	for _, event := range status.Events {
-		if event.Type == JobAuditTypeSessionConcluded &&
-			len(event.Details) > len("session ")+len(sessionID) &&
-			event.Details[:len("session ")+len(sessionID)] == "session "+sessionID {
+		if event.Type == JobAuditTypeSessionConcluded && strings.HasPrefix(event.Details, prefix) {
 			return true
 		}
 	}

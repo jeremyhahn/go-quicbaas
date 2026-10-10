@@ -257,6 +257,72 @@ func newTestWriteThrough(t *testing.T, factors qrdbtransport.UserAuthFactorClien
 	return wt, users, creds
 }
 
+type tenantRoutedWebAuthnFactorClient struct {
+	qrdbtransport.UserAuthFactorClient
+	svc qrdbsdk.UserAuthFactorServicer
+}
+
+func (c *tenantRoutedWebAuthnFactorClient) AddAuthFactor(ctx context.Context, req *qrdbtransport.AuthFactorAddRequest) (*qrdbtransport.AuthFactorAddResponse, error) {
+	factor := &qrdbsdk.AuthFactor{
+		UserID:         req.UserID,
+		Type:           qrdbsdk.AuthFactorType(req.Type),
+		Label:          req.Label,
+		Credential:     append([]byte(nil), req.Credential...),
+		SPKICredential: append([]byte(nil), req.SPKICredential...),
+		Metadata:       req.Metadata,
+		CreatedBy:      req.CreatedBy,
+	}
+	if err := c.svc.Add(ctx, req.UserID, factor); err != nil {
+		return nil, err
+	}
+	return &qrdbtransport.AuthFactorAddResponse{Factor: authFactorRecordFromSDK(factor)}, nil
+}
+
+func (c *tenantRoutedWebAuthnFactorClient) LoginAuthFactor(ctx context.Context, req *qrdbtransport.AuthFactorLoginRequest) (*qrdbtransport.AuthFactorLoginResponse, error) {
+	factor, err := c.svc.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorType(req.Type), req.LookupKey)
+	if err != nil {
+		return nil, err
+	}
+	return &qrdbtransport.AuthFactorLoginResponse{
+		UserID:   factor.UserID,
+		TenantID: contextTenant(ctx),
+		Active:   true,
+		Factor:   authFactorRecordFromSDK(factor),
+	}, nil
+}
+
+func (c *tenantRoutedWebAuthnFactorClient) AddAttested(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor, attestation qrdbsdk.VerifiedAttestation) error {
+	recorder, ok := c.svc.(qrdbsdk.AttestationRecorder)
+	if !ok {
+		return c.svc.Add(ctx, userID, factor)
+	}
+	return recorder.AddAttested(ctx, userID, factor, attestation)
+}
+
+func (c *tenantRoutedWebAuthnFactorClient) RotateAttested(ctx context.Context, oldID string, factor *qrdbsdk.AuthFactor, attestation qrdbsdk.VerifiedAttestation) error {
+	recorder, ok := c.svc.(qrdbsdk.AttestationRecorder)
+	if !ok {
+		return c.svc.Rotate(ctx, oldID, factor)
+	}
+	return recorder.RotateAttested(ctx, oldID, factor, attestation)
+}
+
+func authFactorRecordFromSDK(factor *qrdbsdk.AuthFactor) qrdbtransport.AuthFactorRecord {
+	return qrdbtransport.AuthFactorRecord{
+		ID:             factor.ID,
+		UserID:         factor.UserID,
+		Type:           string(factor.Type),
+		Label:          factor.Label,
+		Credential:     append([]byte(nil), factor.Credential...),
+		SPKICredential: append([]byte(nil), factor.SPKICredential...),
+		Metadata:       factor.Metadata,
+		RegisteredAt:   factor.RegisteredAt,
+		LastUsedAt:     factor.LastUsedAt,
+		RevokedAt:      factor.RevokedAt,
+		CreatedBy:      factor.CreatedBy,
+	}
+}
+
 // seedUser stores a user under the given qrdb user id so the label lookup
 // resolves. MemoryUserStore.Save keys by the user's WebAuthn handle, so the
 // handle must be the big-endian qrdb id the credential carries.
@@ -324,6 +390,49 @@ func TestWriteThroughSave_EnrollsLoginResolvableFactor(t *testing.T) {
 	// The credential itself must still be persisted in the xkms store.
 	if _, err := creds.GetByCredentialID(context.Background(), credID); err != nil {
 		t.Errorf("credential must remain persisted after a successful enrollment: %v", err)
+	}
+}
+
+func TestWriteThroughSave_TenantRoutedFactorResolvesForSameTenantOnly(t *testing.T) {
+	kv := newRoutingTestKV()
+	kv.barrierTenant("tenant-a")
+	kv.barrierTenant("tenant-b")
+
+	svc, err := qrdbsdk.NewUserAuthFactorService(qrdbsdk.UserAuthFactorServiceConfig{KV: kv})
+	if err != nil {
+		t.Fatalf("NewUserAuthFactorService: %v", err)
+	}
+	factors := &tenantRoutedWebAuthnFactorClient{svc: svc}
+	wt, users, _ := newTestWriteThrough(t, factors)
+	seedUser(t, users, 42, "alice@example.com", "alice's tenant-a key")
+
+	ctxA := qrdbsdk.ContextWithTenant(context.Background(), "tenant-a")
+	ctxB := qrdbsdk.ContextWithTenant(context.Background(), "tenant-b")
+	credID := []byte("tenant-a-webauthn-credential")
+	if err := wt.Save(ctxA, testCredential(42, credID)); err != nil {
+		t.Fatalf("Save tenant A credential: %v", err)
+	}
+
+	lookupKey := []byte(webAuthnCredentialLookupKey(credID))
+	login, err := factors.LoginAuthFactor(ctxA, &qrdbtransport.AuthFactorLoginRequest{
+		Type:      string(qrdbtransport.FactorTypeFIDO2),
+		LookupKey: lookupKey,
+	})
+	if err != nil {
+		t.Fatalf("tenant A login lookup: %v", err)
+	}
+	if login.UserID != 42 {
+		t.Fatalf("tenant A login user id = %d, want 42", login.UserID)
+	}
+	if string(login.Factor.Credential) != string(lookupKey) {
+		t.Fatalf("tenant A factor credential = %q, want %q", login.Factor.Credential, lookupKey)
+	}
+
+	if _, err := factors.LoginAuthFactor(ctxB, &qrdbtransport.AuthFactorLoginRequest{
+		Type:      string(qrdbtransport.FactorTypeFIDO2),
+		LookupKey: lookupKey,
+	}); err == nil {
+		t.Fatal("tenant B login lookup resolved tenant A WebAuthn factor")
 	}
 }
 

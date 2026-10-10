@@ -228,7 +228,7 @@ func (s *AttentionService) markRulings(ctx context.Context, tenantID string, ite
 			}
 			forges[task.ProjectID] = pf
 		}
-		if !pf.ok {
+		if !pf.ok || ensureTaskSourceRepoMatchesBinding(task, pf.binding, repo) != nil {
 			continue
 		}
 		comments, err := pf.forge.ListIssueComments(ctx, repo, number)
@@ -670,6 +670,9 @@ func (s *AttentionService) handBack(ctx context.Context, tenantID string, task *
 	if err != nil {
 		return err
 	}
+	if err := ensureTaskSourceRepoMatchesBinding(task, binding, repo); err != nil {
+		return err
+	}
 	forge, err := s.forges.ForgeFor(ctx, tenantID, binding.Forge)
 	if err != nil {
 		return err
@@ -790,6 +793,9 @@ func (s *AttentionService) postRuling(ctx context.Context, tenantID string, task
 	}
 	binding, err := s.bindings.GetBinding(ctx, tenantID, task.ProjectID)
 	if err != nil {
+		return err
+	}
+	if err := ensureTaskSourceRepoMatchesBinding(task, binding, repo); err != nil {
 		return err
 	}
 	forge, err := s.forges.ForgeFor(ctx, tenantID, binding.Forge)

@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -29,12 +31,16 @@ import (
 // Mock KV Store for persistence tests
 // =============================================================================
 
-// mockKVStore implements interfaces.KVStore using an in-memory sync.Map.
+// mockKVStore implements interfaces.KVStore, plus the guarded create and swap
+// a job record's writes need, using an in-memory sync.Map.
 type mockKVStore struct {
 	data    sync.Map
 	putErr  error
 	getErr  error
 	scanErr error
+
+	// writeMu makes each guarded write's check and store one step.
+	writeMu sync.Mutex
 }
 
 func newMockKVStore() *mockKVStore {
@@ -45,6 +51,8 @@ func (m *mockKVStore) Put(_ context.Context, key string, value []byte) error {
 	if m.putErr != nil {
 		return m.putErr
 	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	copied := make([]byte, len(value))
 	copy(copied, value)
 	m.data.Store(key, copied)
@@ -57,12 +65,43 @@ func (m *mockKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	}
 	val, ok := m.data.Load(key)
 	if !ok {
-		return nil, errors.New("key not found: " + key)
+		return nil, &qerrors.QBError{Code: qerrors.ErrNotFound, Op: "get " + key}
 	}
 	return val.([]byte), nil
 }
 
+// PutIfAbsent honours the injected put failure: a guarded create is a write.
+func (m *mockKVStore) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	if m.putErr != nil {
+		return false, m.putErr
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	if _, held := m.data.Load(key); held {
+		return false, nil
+	}
+	m.data.Store(key, append([]byte(nil), value...))
+	return true, nil
+}
+
+// CompareAndSwap honours the injected put failure: a guarded swap is a write.
+func (m *mockKVStore) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	if m.putErr != nil {
+		return false, m.putErr
+	}
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	held, ok := m.data.Load(key)
+	if !ok || !bytes.Equal(held.([]byte), expected) {
+		return false, nil
+	}
+	m.data.Store(key, append([]byte(nil), next...))
+	return true, nil
+}
+
 func (m *mockKVStore) Delete(_ context.Context, key string) error {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	m.data.Delete(key)
 	return nil
 }
@@ -104,6 +143,13 @@ func (m *mockKVStore) Exists(_ context.Context, key string) (bool, error) {
 
 // Compile-time interface check.
 var _ interfaces.KVStore = (*mockKVStore)(nil)
+
+// unguardedKV is a store with the plain verbs only: embedding the interface
+// does not promote the inner store's guarded writes, which is what a store
+// that cannot arbitrate a race looks like to a caller that asserts for them.
+type unguardedKV struct {
+	interfaces.KVStore
+}
 
 // =============================================================================
 // Persistence Tests

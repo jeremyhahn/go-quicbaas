@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+
+	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // doOrchReq dispatches a request through the full router so chi URL params
@@ -239,6 +241,17 @@ func TestHandleOrchestratorListAgents_OK(t *testing.T) {
 	w := doOrchReq(t, s, http.MethodGet, "/api/v1/fleet?status=idle&host=node-1&backend=ollama", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestHandleOrchestratorListAgents_ScopeDenied(t *testing.T) {
+	s, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	agentSvc.listAgentsErr = qerrors.New(qerrors.ErrForbidden, "fleet.ListFleetNodes", "scope denied")
+
+	w := doOrchReq(t, s, http.MethodGet, "/api/v1/fleet?tenant_id=acme", "")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
 	}
 }
 

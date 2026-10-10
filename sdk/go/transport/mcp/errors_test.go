@@ -103,6 +103,37 @@ func TestJSONRPCError(t *testing.T) {
 	})
 }
 
+func TestMCPApplicationErrorCodesPinned(t *testing.T) {
+	tests := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{name: "authentication required", got: MCPAuthenticationRequired, want: -32001},
+		{name: "invalid token", got: MCPInvalidToken, want: -32002},
+		{name: "permission denied", got: MCPPermissionDenied, want: -32003},
+		{name: "resource not found", got: MCPResourceNotFound, want: -32004},
+		{name: "resource conflict", got: MCPResourceConflict, want: -32005},
+		{name: "service unavailable", got: MCPServiceUnavailable, want: -32006},
+		{name: "request timeout", got: MCPRequestTimeout, want: -32007},
+		{name: "resource exhausted", got: MCPResourceExhausted, want: -32008},
+		{name: "precondition failed", got: MCPPreconditionFailed, want: -32009},
+		{name: "operation not allowed", got: MCPOperationNotAllowed, want: -32010},
+		{name: "operation canceled", got: MCPOperationCanceled, want: -32011},
+		{name: "invalid input", got: MCPInvalidInput, want: -32012},
+		{name: "already exists", got: MCPAlreadyExists, want: -32013},
+		{name: "unimplemented", got: MCPUnimplemented, want: -32014},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Fatalf("MCP error code = %d, want %d", tc.got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseError(t *testing.T) {
 	t.Run("Error with underlying error", func(t *testing.T) {
 		underlying := stderrors.New("underlying error")

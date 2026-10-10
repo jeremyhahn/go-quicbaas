@@ -28,6 +28,7 @@ type hooksRig struct {
 	hooks  *Hooks
 	store  *Store
 	forge  *fakeForge
+	forges *fakeForges
 	tasks  *fakeTasks
 	waiter *immediateWaiter
 }
@@ -40,17 +41,18 @@ func newHooksRig(t *testing.T) *hooksRig {
 	}
 	forge := newFakeForge()
 	forge.putIssue(25, "Fix the thing", "task:ready", "bug")
+	forges := &fakeForges{forge: forge}
 	tasks := newFakeTasks(testTaskRecord(25))
 	waiter := &immediateWaiter{}
 	hooks, err := NewHooks(HooksConfig{
 		Projects: &fakeProjects{projects: map[string]*orchestration.Project{testProject: testOrchProject()}},
-		Bindings: store, Deliveries: store, Tasks: tasks, Forges: &fakeForges{forge: forge},
+		Bindings: store, Deliveries: store, Tasks: tasks, Forges: forges,
 		MergeAttempts: 3, Waiter: waiter, Surfacing: SurfacePolicy{RetryAttempts: 2, RetryInterval: 1, PostTimeout: 1e9},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &hooksRig{hooks: hooks, store: store, forge: forge, tasks: tasks, waiter: waiter}
+	return &hooksRig{hooks: hooks, store: store, forge: forge, forges: forges, tasks: tasks, waiter: waiter}
 }
 
 // rebind replaces the rig's binding with a mutated copy, so a test can run
@@ -712,6 +714,33 @@ func TestHooks_ResolutionRefusals(t *testing.T) {
 	}
 	if err := rig.hooks.Complete(ctx, unbound); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("complete unbound: %v", err)
+	}
+}
+
+func TestHooks_ResolveRequiresSourceRepoToMatchBinding(t *testing.T) {
+	ctx := context.Background()
+
+	matching := newHooksRig(t)
+	matching.tasks.tasks[testTask].Source.Ref = IssueRefString(RepoRef{Owner: "ACME", Repo: "API"}, 25)
+	if _, err := matching.hooks.Prepare(ctx, testJob(1)); err != nil {
+		t.Fatalf("Prepare with case-normalized bound repo: %v", err)
+	}
+	if got := matching.forges.resolvedTokenRefs(); len(got) != 1 {
+		t.Fatalf("matching repo resolved forge %d time(s), want 1", len(got))
+	}
+
+	foreign := newHooksRig(t)
+	foreign.tasks.tasks[testTask].Source.Ref = IssueRefString(RepoRef{Owner: "other", Repo: "api"}, 25)
+	_, err := foreign.hooks.Prepare(ctx, testJob(1))
+	var mismatch *TaskSourceRepoMismatchError
+	if !errors.As(err, &mismatch) || !errors.Is(err, ErrTaskSourceRepoMismatch) {
+		t.Fatalf("foreign repo err = %v, want TaskSourceRepoMismatchError", err)
+	}
+	if mismatch.Source != (RepoRef{Owner: "other", Repo: "api"}) || mismatch.Binding != testRepoRef {
+		t.Fatalf("mismatch details = %+v", mismatch)
+	}
+	if got := foreign.forges.resolvedTokenRefs(); len(got) != 0 {
+		t.Fatalf("foreign repo resolved forge credentials: %v", got)
 	}
 }
 

@@ -766,6 +766,14 @@ var (
 	// ErrJobPersistenceFailed indicates a job status persistence operation failed.
 	ErrJobPersistenceFailed = errors.New("orchestration: job persistence failed")
 
+	// ErrJobStatusContended indicates a job status update lost its
+	// compare-and-swap on every attempt the retry bound allows.
+	ErrJobStatusContended = errors.New("orchestration: job status too contended to update")
+
+	// ErrJobStoreUnguarded indicates a job status write was refused because
+	// the job store cannot guard it: it lacks the guarded create or swap.
+	ErrJobStoreUnguarded = errors.New("orchestration: job store cannot guard a job record write")
+
 	// ErrJobRecoveryFailed indicates job recovery from persistent storage failed.
 	ErrJobRecoveryFailed = errors.New("orchestration: job recovery failed")
 
@@ -801,6 +809,42 @@ func (e *JobPersistenceError) Unwrap() []error {
 		return []error{ErrJobPersistenceFailed, e.Cause}
 	}
 	return []error{ErrJobPersistenceFailed}
+}
+
+// JobStatusContendedError reports a job status update whose compare-and-swap
+// lost to another writer on every attempt. The mutation was NOT applied.
+type JobStatusContendedError struct {
+	JobID    string
+	Attempts int
+}
+
+// Error implements the error interface.
+func (e *JobStatusContendedError) Error() string {
+	return ErrJobStatusContended.Error() + ": job=" + e.JobID +
+		": lost the swap on all " + strconv.Itoa(e.Attempts) + " attempts"
+}
+
+// Unwrap returns the contention sentinel and the persistence sentinel, so a
+// caller matching either finds it.
+func (e *JobStatusContendedError) Unwrap() []error {
+	return []error{ErrJobStatusContended, ErrJobPersistenceFailed}
+}
+
+// JobStoreUnguardedError reports a job status write refused because the job
+// store lacks a guarded verb the write needs: CompareAndSwap for every write,
+// PutIfAbsent as well for a whole snapshot. Nothing was written.
+type JobStoreUnguardedError struct {
+	JobID string
+}
+
+// Error implements the error interface.
+func (e *JobStoreUnguardedError) Error() string {
+	return ErrJobStoreUnguarded.Error() + ": job=" + e.JobID
+}
+
+// Unwrap returns the unguarded-store sentinel and the persistence sentinel.
+func (e *JobStoreUnguardedError) Unwrap() []error {
+	return []error{ErrJobStoreUnguarded, ErrJobPersistenceFailed}
 }
 
 // JobRecoveryError indicates a failure during job recovery from persistent storage.

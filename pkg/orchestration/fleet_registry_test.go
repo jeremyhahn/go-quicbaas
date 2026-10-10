@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -57,15 +58,19 @@ func (a *agentAuditRecorder) snapshot() []StoreAuditEvent {
 type agentKVFault string
 
 const (
-	agentFaultGet    agentKVFault = "get"
-	agentFaultPut    agentKVFault = "put"
-	agentFaultDelete agentKVFault = "delete"
-	agentFaultExists agentKVFault = "exists"
-	agentFaultScan   agentKVFault = "scan"
+	agentFaultGet      agentKVFault = "get"
+	agentFaultPut      agentKVFault = "put"
+	agentFaultDelete   agentKVFault = "delete"
+	agentFaultExists   agentKVFault = "exists"
+	agentFaultScan     agentKVFault = "scan"
+	agentFaultDenyScan agentKVFault = "denyScan"
 )
 
 // errAgentKVDown is the injected backend failure.
-var errAgentKVDown = errors.New("kv backend unavailable")
+var (
+	errAgentKVDown       = errors.New("kv backend unavailable")
+	errAgentKVDeniedScan = qerrors.New(qerrors.ErrForbidden, "fleet.ListFleetNodes", "scope denied")
+)
 
 // failingAgentKV wraps a real store and fails exactly one verb, so a test can
 // prove that the registry propagates backend failures rather than masking them.
@@ -120,6 +125,9 @@ func (f *failingAgentKV) Exists(ctx context.Context, key string) (bool, error) {
 func (f *failingAgentKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
 	if f.fault == agentFaultScan {
 		return errAgentKVDown
+	}
+	if f.fault == agentFaultDenyScan {
+		return errAgentKVDeniedScan
 	}
 	return f.KVStore.Scan(ctx, prefix, fn)
 }
@@ -702,6 +710,19 @@ func TestListAgents_StoreFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, agents)
 	assert.ErrorIs(t, err, errAgentKVDown)
+}
+
+// A store that authorizes the scan itself and denies it must surface that
+// denial, not an empty listing the caller would read as "no fleet nodes".
+func TestListAgents_ScanDenied(t *testing.T) {
+	t.Parallel()
+
+	registry := NewFleetRegistry(newFailingAgentKV(agentFaultDenyScan))
+
+	agents, err := registry.ListFleetNodes(context.Background(), "tenant-a", nil)
+	require.Error(t, err)
+	assert.Nil(t, agents)
+	assert.Equal(t, qerrors.ErrForbidden, qerrors.Code(err))
 }
 
 // =============================================================================

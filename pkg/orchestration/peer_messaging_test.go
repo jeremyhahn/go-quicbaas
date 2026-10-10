@@ -154,6 +154,17 @@ func (m *peerTestKVStore) CompareAndDelete(_ context.Context, key string, expect
 	return true, nil
 }
 
+func (m *peerTestKVStore) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	held, exists := m.data[key]
+	if !exists || !bytes.Equal(held, expected) {
+		return false, nil
+	}
+	m.data[key] = append([]byte(nil), next...)
+	return true, nil
+}
+
 // =============================================================================
 // Test Logger
 // =============================================================================

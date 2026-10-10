@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -80,9 +82,35 @@ func (r *routingKVStore) Get(ctx context.Context, key string) ([]byte, error) {
 	defer r.mu.Unlock()
 	value, ok := r.backend(ctx)[key]
 	if !ok {
-		return nil, &JobPersistenceError{JobID: key, Message: "key not found"}
+		return nil, &qerrors.QBError{Code: qerrors.ErrNotFound, Op: "get"}
 	}
 	return value, nil
+}
+
+// PutIfAbsent and CompareAndSwap are routed like every other verb: the
+// daemon's tenant-routing store forwards the guarded writes to the same
+// tenant backend, and a job record's every write is guarded.
+func (r *routingKVStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	store := r.backend(ctx)
+	if _, held := store[key]; held {
+		return false, nil
+	}
+	store[key] = append([]byte(nil), value...)
+	return true, nil
+}
+
+func (r *routingKVStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	store := r.backend(ctx)
+	held, ok := store[key]
+	if !ok || !bytes.Equal(held, expected) {
+		return false, nil
+	}
+	store[key] = append([]byte(nil), next...)
+	return true, nil
 }
 
 func (r *routingKVStore) Delete(ctx context.Context, key string) error {

@@ -32,6 +32,7 @@ package kvstore
 import (
 	"bytes"
 	"context"
+	"sync"
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -52,6 +53,12 @@ type Store struct {
 	// listing, so the adapter tracks closure itself rather than relying on
 	// engine behaviour.
 	closed atomic.Bool
+
+	// writeMu serializes every write through this Store, so CompareAndSwap's
+	// read and its write are one step against Put and Delete as well as
+	// against other swaps. It arbitrates only within this process — which is
+	// all an engine owned by one process is ever shared across.
+	writeMu sync.Mutex
 }
 
 // Compile-time interface satisfaction check.
@@ -76,10 +83,34 @@ func (s *Store) Put(_ context.Context, key string, value []byte) error {
 	if key == "" {
 		return &EmptyKeyError{Op: "put"}
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if err := s.engine.Set([]byte(key), value); err != nil {
 		return &OpError{Op: "put", Key: key, Cause: err}
 	}
 	return nil
+}
+
+// CompareAndSwap replaces key's value with next only while it still holds
+// expected, and reports whether it did. An absent key is left absent: a swap
+// edits a record, it never creates one.
+func (s *Store) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	if key == "" {
+		return false, &EmptyKeyError{Op: "compare-and-swap"}
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	held, err := s.engine.Get([]byte(key))
+	if err != nil {
+		return false, &OpError{Op: "compare-and-swap", Key: key, Cause: err}
+	}
+	if held == nil || !bytes.Equal(held, expected) {
+		return false, nil
+	}
+	if err := s.engine.Set([]byte(key), next); err != nil {
+		return false, &OpError{Op: "compare-and-swap", Key: key, Cause: err}
+	}
+	return true, nil
 }
 
 // Get retrieves a value by key. A missing key yields the canonical quicbaas
@@ -104,6 +135,8 @@ func (s *Store) Delete(_ context.Context, key string) error {
 	if key == "" {
 		return nil
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if err := s.engine.Delete([]byte(key)); err != nil {
 		return &OpError{Op: "delete", Key: key, Cause: err}
 	}
