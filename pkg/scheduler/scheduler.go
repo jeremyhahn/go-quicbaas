@@ -1448,21 +1448,10 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 		}{result, err}
 	}()
 
-	// Wait for result or timeout
-	select {
-	case <-execCtx.Done():
-		if ctx.Err() != nil {
-			s.handleInterruptedRun(ctx, job, exec)
-			return
-		}
-		if execCtx.Err() == context.DeadlineExceeded {
-			s.handleJobTimeout(ctx, job, exec, timeout)
-			return
-		}
-		s.handleJobFailure(ctx, job, execCtx.Err())
-		return
-
-	case res := <-resultCh:
+	recordResult := func(res struct {
+		result *JobResult
+		err    error
+	}) {
 		if res.err != nil {
 			// A handler that honours cancellation returns its context's
 			// error the moment the engine stops, and that return races the
@@ -1476,6 +1465,42 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 			return
 		}
 		s.handleJobSuccess(ctx, job, exec, res.result)
+	}
+	recordResultUnlessTimedOut := func(res struct {
+		result *JobResult
+		err    error
+	}) {
+		if execCtx.Err() == context.DeadlineExceeded {
+			s.handleJobTimeout(ctx, job, exec, timeout)
+			return
+		}
+		recordResult(res)
+	}
+
+	// Wait for result or timeout
+	select {
+	case <-execCtx.Done():
+		switch execCtx.Err() {
+		case context.DeadlineExceeded:
+			s.handleJobTimeout(ctx, job, exec, timeout)
+			return
+		case context.Canceled:
+			if ctx.Err() != nil {
+				select {
+				case res := <-resultCh:
+					recordResult(res)
+					return
+				default:
+				}
+				s.handleInterruptedRun(ctx, job, exec)
+				return
+			}
+		}
+		s.handleJobFailure(ctx, job, execCtx.Err())
+		return
+
+	case res := <-resultCh:
+		recordResultUnlessTimedOut(res)
 	}
 }
 

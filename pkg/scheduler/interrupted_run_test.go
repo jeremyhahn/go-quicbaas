@@ -228,6 +228,13 @@ func TestInterruptedRun_AnotherNodeRunsTheInterruptedFiring(t *testing.T) {
 
 	firing := time.Now().Add(-time.Minute)
 	job := interruptedJob(t, storage, JobTypeOneShot, firing)
+	completed := make(chan struct{})
+	var completedOnce sync.Once
+	storage.afterUpdateJob = func(updated *Job) {
+		if updated.ID == job.ID && updated.Status == JobStatusCompleted {
+			completedOnce.Do(func() { close(completed) })
+		}
+	}
 
 	nodeA, err := NewWithClustering(cfg, storage, "node-a", nil)
 	require.NoError(t, err)
@@ -241,8 +248,8 @@ func TestInterruptedRun_AnotherNodeRunsTheInterruptedFiring(t *testing.T) {
 		t.Fatal("node A never ran the job")
 	}
 	stopCtx, cancel := context.WithTimeout(context.Background(), interruptWait)
-	defer cancel()
 	require.NoError(t, nodeA.Stop(stopCtx))
+	cancel()
 	require.Equal(t, JobStatusPending, storedJob(t, storage, job.ID).Status)
 
 	nodeB, err := NewWithClustering(cfg, storage, "node-b", nil)
@@ -260,7 +267,14 @@ func TestInterruptedRun_AnotherNodeRunsTheInterruptedFiring(t *testing.T) {
 	case <-time.After(interruptWait):
 		t.Fatal("the interrupted firing never ran on node B")
 	}
+	select {
+	case <-completed:
+	case <-time.After(interruptWait):
+		t.Fatal("node B ran the interrupted firing but did not persist completion")
+	}
+	stopCtx, cancel = context.WithTimeout(context.Background(), interruptWait)
 	require.NoError(t, nodeB.Stop(stopCtx))
+	cancel()
 	assert.Equal(t, JobStatusCompleted, storedJob(t, storage, job.ID).Status)
 }
 

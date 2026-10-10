@@ -181,10 +181,11 @@ type BaseWorker struct {
 	metrics *WorkerMetrics
 	logger  interfaces.Logger
 
-	running atomic.Bool
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	running       atomic.Bool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	taskCompleted chan struct{}
 }
 
 // NewBaseWorker creates a new base worker with the given configuration.
@@ -288,6 +289,12 @@ func (w *BaseWorker) RecordTaskComplete(processingTime time.Duration) {
 	w.metrics.TasksProcessed.Add(1)
 	w.metrics.LastTaskTime.Store(time.Now().UnixNano())
 	w.metrics.TotalProcessingTime.Add(int64(processingTime))
+	if w.taskCompleted != nil {
+		select {
+		case w.taskCompleted <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // RecordTaskFailed records a failed task processing.

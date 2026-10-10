@@ -74,6 +74,10 @@ type mockJobStorage struct {
 	// only thing that separates them.
 	dueBarrier *claimBarrier
 
+	// afterUpdateJob observes committed updates in tests that need to
+	// synchronize with the stored outcome rather than handler entry.
+	afterUpdateJob func(*Job)
+
 	// Error injection for testing error paths
 	createJobErr              error
 	claimErr                  error
@@ -178,11 +182,14 @@ func (m *mockJobStorage) UpdateJob(ctx context.Context, job *Job) error {
 		return updateJobErr
 	}
 
+	stored := copyJob(job)
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.jobs[job.ID] = stored
+	m.mu.Unlock()
 
-	// Store a copy to prevent race conditions
-	m.jobs[job.ID] = copyJob(job)
+	if m.afterUpdateJob != nil {
+		m.afterUpdateJob(copyJob(stored))
+	}
 	return nil
 }
 
@@ -4166,75 +4173,62 @@ func TestLogging(t *testing.T) {
 
 // TestJobTimeout tests job timeout handling.
 func TestJobTimeout(t *testing.T) {
-	t.Run("job timeout triggers failure", func(t *testing.T) {
+	timeoutCase := func(t *testing.T, handler JobHandler) *Job {
+		t.Helper()
+
 		storage := newMockJobStorage()
 		config := &SchedulerConfig{
 			TickInterval:      50 * time.Millisecond,
 			MaxConcurrentJobs: 10,
-			DefaultTimeout:    50 * time.Millisecond,
+			DefaultTimeout:    time.Second,
 			DefaultRetries:    0,
 			RetryBackoff:      time.Millisecond,
 		}
 		scheduler := New(config, storage)
-		ctx := context.Background()
+		require.NoError(t, scheduler.RegisterHandler("timeout-handler", handler))
 
-		handlerStarted := make(chan struct{})
-		err := scheduler.RegisterHandler("slow-handler", func(ctx context.Context, job *Job) (*JobResult, error) {
-			close(handlerStarted)
-			// Wait for context cancellation (timeout)
+		job := &Job{
+			ID:        1,
+			Name:      "timeout-job",
+			Type:      JobTypeDelayed,
+			Handler:   "timeout-handler",
+			Status:    JobStatusPending,
+			NextRun:   time.Now().Add(-time.Second),
+			Timeout:   10 * time.Millisecond,
+			OwnerType: OwnerTypeSystem,
+		}
+		storage.mu.Lock()
+		storage.jobs[job.ID] = copyJob(job)
+		storage.mu.Unlock()
+
+		scheduler.executeJob(context.Background(), job, time.Time{})
+
+		stored := storedJob(t, storage, job.ID)
+		assert.Equal(t, JobStatusFailed, stored.Status)
+		assert.Contains(t, stored.LastError, "timed out")
+		return stored
+	}
+
+	t.Run("job timeout triggers failure", func(t *testing.T) {
+		timeoutCase(t, func(ctx context.Context, job *Job) (*JobResult, error) {
 			<-ctx.Done()
 			return nil, ctx.Err()
 		})
-		require.NoError(t, err)
+	})
 
-		err = scheduler.Start(ctx)
-		require.NoError(t, err)
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			_ = scheduler.Stop(stopCtx)
-		}()
+	t.Run("handler ctx error at timeout preserves timeout semantics", func(t *testing.T) {
+		stored := timeoutCase(t, func(ctx context.Context, job *Job) (*JobResult, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+		assert.NotContains(t, stored.LastError, context.DeadlineExceeded.Error())
+	})
 
-		storage.mu.Lock()
-		storage.jobs[1] = &Job{
-			ID:        1,
-			Name:      "slow-job",
-			Type:      JobTypeDelayed,
-			Handler:   "slow-handler",
-			Status:    JobStatusPending,
-			NextRun:   time.Now().Add(-time.Second),
-			Timeout:   50 * time.Millisecond,
-			OwnerType: OwnerTypeSystem,
-		}
-		storage.mu.Unlock()
-
-		// Wait for handler to start
-		select {
-		case <-handlerStarted:
-		case <-time.After(2 * time.Second):
-			t.Fatal("handler did not start")
-		}
-
-		// Wait for job to fail due to timeout
-		waitDone := make(chan struct{})
-		go func() {
-			for {
-				job := storage.getJobDirect(1)
-				if job != nil && job.Status == JobStatusFailed {
-					close(waitDone)
-					return
-				}
-			}
-		}()
-
-		select {
-		case <-waitDone:
-			job := storage.getJobDirect(1)
-			assert.Equal(t, JobStatusFailed, job.Status)
-			assert.Contains(t, job.LastError, "timed out")
-		case <-time.After(3 * time.Second):
-			t.Fatal("job did not fail within timeout")
-		}
+	t.Run("handler nil at deadline still times out", func(t *testing.T) {
+		timeoutCase(t, func(ctx context.Context, job *Job) (*JobResult, error) {
+			<-ctx.Done()
+			return &JobResult{Success: true}, nil
+		})
 	})
 }
 

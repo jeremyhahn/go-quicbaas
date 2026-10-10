@@ -32,7 +32,19 @@ import (
 // mockLogger implements interfaces.Logger for testing.
 type mockLogger struct{}
 
-func (l *mockLogger) Debug(msg string, args ...any)             {}
+func (l *mockLogger) Debug(msg string, args ...any) {}
+
+const archiveWorkerCompletionTimeout = 2 * time.Second
+
+func waitForArchiveWorkerCompletion(t *testing.T, completed <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-completed:
+	case <-time.After(archiveWorkerCompletionTimeout):
+		t.Fatal("timed out waiting for archive worker completion")
+	}
+}
 func (l *mockLogger) Debugf(format string, args ...interface{}) {}
 func (l *mockLogger) Info(msg string, args ...any)              {}
 func (l *mockLogger) Infof(format string, args ...interface{})  {}
@@ -1922,16 +1934,21 @@ func TestArchiveWorker_ProcessTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create worker: %v", err)
 	}
+	completed := make(chan struct{}, 1)
+	w.taskCompleted = completed
 
 	ctx := context.Background()
-	w.Start(ctx)
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("failed to start worker: %v", err)
+	}
 	defer w.Stop()
 
 	// Enqueue an archive task
-	catalog.EnqueueArchive(ctx, "test-key", "archive")
+	if err := catalog.EnqueueArchive(ctx, "test-key", "archive"); err != nil {
+		t.Fatalf("failed to enqueue archive task: %v", err)
+	}
 
-	// Wait for processing
-	time.Sleep(200 * time.Millisecond)
+	waitForArchiveWorkerCompletion(t, completed)
 
 	// Verify metrics
 	metrics := w.Metrics()
@@ -2569,14 +2586,20 @@ func TestArchiveWorker_NoArchivePolicy(t *testing.T) {
 	}
 
 	w, _ := NewArchiveWorker(catalog, backends, cfg, logger)
+	completed := make(chan struct{}, 1)
+	w.taskCompleted = completed
 
 	ctx := context.Background()
-	w.Start(ctx)
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("failed to start worker: %v", err)
+	}
 	defer w.Stop()
 
-	catalog.EnqueueArchive(ctx, "test-key", "archive")
+	if err := catalog.EnqueueArchive(ctx, "test-key", "archive"); err != nil {
+		t.Fatalf("failed to enqueue archive task: %v", err)
+	}
 
-	time.Sleep(200 * time.Millisecond)
+	waitForArchiveWorkerCompletion(t, completed)
 
 	// Should complete successfully (skipped)
 	metrics := w.Metrics()
@@ -2625,14 +2648,20 @@ func TestArchiveWorker_DisabledPolicy(t *testing.T) {
 	}
 
 	w, _ := NewArchiveWorker(catalog, backends, cfg, logger)
+	completed := make(chan struct{}, 1)
+	w.taskCompleted = completed
 
 	ctx := context.Background()
-	w.Start(ctx)
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("failed to start worker: %v", err)
+	}
 	defer w.Stop()
 
-	catalog.EnqueueArchive(ctx, "test-key", "archive")
+	if err := catalog.EnqueueArchive(ctx, "test-key", "archive"); err != nil {
+		t.Fatalf("failed to enqueue archive task: %v", err)
+	}
 
-	time.Sleep(200 * time.Millisecond)
+	waitForArchiveWorkerCompletion(t, completed)
 
 	// Should complete successfully (skipped)
 	metrics := w.Metrics()
@@ -2964,14 +2993,20 @@ func TestArchiveWorker_AlreadyArchived(t *testing.T) {
 	}
 
 	w, _ := NewArchiveWorker(catalog, backends, cfg, logger)
+	completed := make(chan struct{}, 1)
+	w.taskCompleted = completed
 
 	ctx := context.Background()
-	w.Start(ctx)
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("failed to start worker: %v", err)
+	}
 	defer w.Stop()
 
-	catalog.EnqueueArchive(ctx, "test-key", "archive")
+	if err := catalog.EnqueueArchive(ctx, "test-key", "archive"); err != nil {
+		t.Fatalf("failed to enqueue archive task: %v", err)
+	}
 
-	time.Sleep(200 * time.Millisecond)
+	waitForArchiveWorkerCompletion(t, completed)
 
 	// Should complete successfully (already archived)
 	metrics := w.Metrics()
@@ -3226,14 +3261,20 @@ func TestArchiveWorker_WithCompression(t *testing.T) {
 	}
 
 	w, _ := NewArchiveWorker(catalog, backends, cfg, logger)
+	completed := make(chan struct{}, 1)
+	w.taskCompleted = completed
 
 	ctx := context.Background()
-	w.Start(ctx)
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("failed to start worker: %v", err)
+	}
 	defer w.Stop()
 
-	catalog.EnqueueArchive(ctx, "test-key", "archive")
+	if err := catalog.EnqueueArchive(ctx, "test-key", "archive"); err != nil {
+		t.Fatalf("failed to enqueue archive task: %v", err)
+	}
 
-	time.Sleep(200 * time.Millisecond)
+	waitForArchiveWorkerCompletion(t, completed)
 
 	metrics := w.Metrics()
 	if metrics.TasksProcessed.Load() < 1 {
