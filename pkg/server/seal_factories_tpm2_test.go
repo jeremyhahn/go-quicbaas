@@ -16,6 +16,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
@@ -93,7 +94,7 @@ func TestBuildTPM2Strategy_FactoryDispatch_Simulator(t *testing.T) {
 // This proves the tpm2 strategy path end-to-end: a 32-byte root key sealed
 // under the TPM storage hierarchy and recovered byte-for-byte.
 func TestBuildTPM2Strategy_RoundTrip_Simulator(t *testing.T) {
-	backend, cleanup := provisionedSimulatorBackend(t)
+	backend, _, cleanup := provisionedSimulatorBackend(t)
 	defer cleanup()
 
 	// Wrap the provisioned backend exactly as buildTPM2Strategy does.
@@ -162,7 +163,7 @@ func isUpstreamPlatformSRKRegression(err error) bool {
 // path), this test is independent of that upstream condition and therefore
 // guards the composer's real-crypto wiring on every run.
 func TestProvisionedTPM2Backend_SealUnseal_Simulator(t *testing.T) {
-	backend, cleanup := provisionedSimulatorBackend(t)
+	backend, _, cleanup := provisionedSimulatorBackend(t)
 	defer cleanup()
 
 	ssrk := backend.SRKAttributes()
@@ -204,11 +205,79 @@ func TestProvisionedTPM2Backend_SealUnseal_Simulator(t *testing.T) {
 	}
 }
 
+// TestProvisionedTPM2Backend_ActivateCredentialIAK_Simulator proves the
+// quicbaas TPM provisioning recipe carries ek.hierarchy-auth into go-xkms.
+// go-xkms v0.49.0-alpha requires that authorization when ActivateCredential
+// administers the IAK under the TCG IDevID/IAK policy.
+func TestProvisionedTPM2Backend_ActivateCredentialIAK_Simulator(t *testing.T) {
+	tpm, _, cleanup := provisionedSimulatorTPM(t)
+	defer cleanup()
+
+	ekAttrs, err := tpm.EKAttributes()
+	if err != nil {
+		t.Fatalf("EKAttributes: %v", err)
+	}
+	if ekAttrs == nil || ekAttrs.TPMAttributes == nil || len(ekAttrs.TPMAttributes.PublicKeyBytes) == 0 {
+		t.Fatal("provisioned EK attributes are missing public key bytes")
+	}
+	ekPub, err := x509.ParsePKIXPublicKey(ekAttrs.TPMAttributes.PublicKeyBytes)
+	if err != nil {
+		t.Fatalf("parse EK public key: %v", err)
+	}
+
+	iakAttrs, err := tpm.IAKAttributes()
+	if err != nil {
+		t.Fatalf("IAKAttributes: %v", err)
+	}
+	if iakAttrs == nil || iakAttrs.TPMAttributes == nil || len(iakAttrs.TPMAttributes.Name.Buffer) == 0 {
+		t.Fatal("provisioned IAK attributes are missing the TPM name")
+	}
+
+	challenge, wantSecret, err := pkgtpm2.NewCredentialChallenge(ekPub, iakAttrs.TPMAttributes.Name.Buffer)
+	if err != nil {
+		t.Fatalf("NewCredentialChallenge: %v", err)
+	}
+	gotSecret, err := tpm.ActivateCredential(challenge.CredentialBlob, challenge.EncryptedSecret)
+	if err != nil {
+		t.Fatalf("ActivateCredential: %v", err)
+	}
+	if !bytes.Equal(gotSecret, wantSecret) {
+		t.Fatalf("activated secret mismatch: got %x want %x", gotSecret, wantSecret)
+	}
+}
+
 // provisionedSimulatorBackend builds a provisioned TPM2 backend backed by the
 // in-memory simulator and returns it as a *tpm2backend.Backend (which
 // implements types.Sealer) plus a cleanup func. It composes exported go-xkms
 // API; no TPM crypto is reimplemented here.
-func provisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, func()) {
+func provisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, pkgtpm2.TrustedPlatformModule, func()) {
+	t.Helper()
+
+	tpm, storageFactory, tpmCleanup := provisionedSimulatorTPM(t)
+
+	backend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
+		TPM:        tpm,
+		KeyBackend: storageFactory.KeyBackend(),
+		Logger:     slog.Default(),
+	})
+	if err != nil {
+		tpmCleanup()
+		t.Fatalf("NewBackendWithTPM: %v", err)
+	}
+	if !backend.CanSeal() {
+		_ = backend.Close()
+		tpmCleanup()
+		t.Fatal("provisioned backend reports CanSeal() == false")
+	}
+
+	cleanup := func() {
+		_ = backend.Close()
+		tpmCleanup()
+	}
+	return backend, tpm, cleanup
+}
+
+func provisionedSimulatorTPM(t *testing.T) (pkgtpm2.TrustedPlatformModule, *tpmstore.StorageFactory, func()) {
 	t.Helper()
 
 	logger := slog.Default()
@@ -218,20 +287,22 @@ func provisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, func()) {
 	if err != nil {
 		t.Fatalf("NewStorageFactory: %v", err)
 	}
+	hierarchyAuth, err := xkmssdk.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD))
+	if err != nil {
+		t.Fatalf("NewLiteralSecretValue: %v", err)
+	}
 
 	// This mirrors the simulator provisioning recipe go-xkms uses in its own
 	// pkg/tpm2 seal round-trip tests (createSim), composed here via exported
-	// API. GoldenPCRs + PlatformSRK.PlatformPolicy are required for the
-	// platform-policy seal/unseal path to succeed.
+	// API.
 	tpmConfig := &pkgtpm2.Config{
-		Device:         "/dev/tpmrm0",
-		UseSimulator:   true,
-		Hash:           "SHA-256",
-		EncryptSession: false,
+		Device:       "/dev/tpmrm0",
+		UseSimulator: true,
+		Hash:         "SHA-256",
 		EK: &pkgtpm2.EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: tpmstore.DEFAULT_PASSWORD,
+			HierarchyAuth: hierarchyAuth,
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
 		},
@@ -249,14 +320,9 @@ func provisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, func()) {
 		GoldenPCRs:      []uint{0, 7},
 		SSRK: &pkgtpm2.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: tpmstore.DEFAULT_PASSWORD,
+			HierarchyAuth: hierarchyAuth,
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
-		},
-		PlatformSRK: &pkgtpm2.PlatformSRKConfig{
-			SRKAuth:        "testme",
-			SRKHandle:      0x81000002,
-			PlatformPolicy: true,
 		},
 	}
 
@@ -279,24 +345,8 @@ func provisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, func()) {
 		}
 	}
 
-	backend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
-		TPM:        tpm,
-		KeyBackend: storageFactory.KeyBackend(),
-		Logger:     logger,
-	})
-	if err != nil {
-		_ = tpm.Close()
-		t.Fatalf("NewBackendWithTPM: %v", err)
-	}
-	if !backend.CanSeal() {
-		_ = backend.Close()
-		_ = tpm.Close()
-		t.Fatal("provisioned backend reports CanSeal() == false")
-	}
-
 	cleanup := func() {
-		_ = backend.Close()
 		_ = tpm.Close()
 	}
-	return backend, cleanup
+	return tpm, storageFactory, cleanup
 }
