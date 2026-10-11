@@ -15,6 +15,7 @@ package websocket
 
 import (
 	"context"
+	"crypto/fips140"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -292,7 +293,14 @@ func TestSessionManager_ForEachEmpty(t *testing.T) {
 	}
 }
 
+// TestSessionManager_CloseAll exercises SessionManager, not the Server. The
+// RFC 6455 handshake it needs uses SHA-1, which fips140=only refuses, so the
+// handshake is allowed for this test only.
 func TestSessionManager_CloseAll(t *testing.T) {
+	fips140.WithoutEnforcement(func() { sessionManagerCloseAll(t) })
+}
+
+func sessionManagerCloseAll(t *testing.T) {
 	// Create a simple WebSocket server to get real connections
 	sm := NewSessionManager()
 

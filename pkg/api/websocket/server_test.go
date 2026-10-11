@@ -15,6 +15,8 @@ package websocket
 
 import (
 	"context"
+	"crypto/fips140"
+	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
@@ -85,6 +88,54 @@ func (a *mockAuthenticator) Authenticate(ctx context.Context, token string) (str
 	return "test-user", nil
 }
 
+// assertFIPSOnlyRefusal checks the typed refusal NewServer returns while the
+// process enforces GODEBUG=fips140=only.
+func assertFIPSOnlyRefusal(t *testing.T, server *Server, err error) {
+	t.Helper()
+	if server != nil {
+		t.Error("NewServer must not return a server in FIPS 140-only mode")
+	}
+	if !IsWebSocketUnavailableInFIPSOnlyMode(err) {
+		t.Errorf("want WebSocketUnavailableInFIPSOnlyModeError, got %v", err)
+	}
+	var qbErr *errors.QBError
+	if !stderrors.As(err, &qbErr) || qbErr.Code != ErrCodeUnavailableInFIPSOnlyMode {
+		t.Errorf("want QBError code %d, got %v", ErrCodeUnavailableInFIPSOnlyMode, err)
+	}
+}
+
+// handshakeServer builds a server for tests that perform the RFC 6455
+// handshake. Under fips140=only the handshake cannot run (SHA-1), so it asserts
+// the refusal and returns nil; the caller returns.
+func handshakeServer(t *testing.T, config ServerConfig, auth Authenticator, log *logger.Logger) *Server {
+	t.Helper()
+	server, err := NewServer(config, auth, log)
+	if fips140.Enforced() {
+		assertFIPSOnlyRefusal(t, server, err)
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("NewServer returned error: %v", err)
+	}
+	return server
+}
+
+// TestNewServer_FIPSOnlyGate proves the gate follows crypto/fips140: the
+// refusal under only-mode, a usable server otherwise.
+func TestNewServer_FIPSOnlyGate(t *testing.T) {
+	server, err := NewServer(DefaultServerConfig(), nil, testLogger(t))
+	if fips140.Enforced() {
+		assertFIPSOnlyRefusal(t, server, err)
+		return
+	}
+	if err != nil || server == nil {
+		t.Fatalf("NewServer = (%v, %v), want a server and no error", server, err)
+	}
+	if IsWebSocketUnavailableInFIPSOnlyMode(err) {
+		t.Error("nil error must not match the FIPS-only refusal")
+	}
+}
+
 func TestNewServer(t *testing.T) {
 	log := testLogger(t)
 
@@ -117,7 +168,14 @@ func TestNewServer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := NewServer(tt.config, tt.auth, log)
+			server, err := NewServer(tt.config, tt.auth, log)
+			if fips140.Enforced() {
+				assertFIPSOnlyRefusal(t, server, err)
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewServer returned error: %v", err)
+			}
 
 			if server == nil {
 				t.Fatal("NewServer returned nil")
@@ -144,7 +202,7 @@ func TestNewServer(t *testing.T) {
 
 func TestNewServer_NilAuth(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	// Should use NoopAuthenticator
 	if server.authenticator == nil {
@@ -159,7 +217,7 @@ func TestNewServer_NilAuth(t *testing.T) {
 
 func TestServer_RegisterSubprotocol(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	handler := &mockSubprotocolHandler{name: "echo"}
 	server.RegisterSubprotocol(handler)
@@ -176,7 +234,7 @@ func TestServer_RegisterSubprotocol(t *testing.T) {
 
 func TestServer_RegisterMultipleSubprotocols(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	server.RegisterSubprotocol(&mockSubprotocolHandler{name: "echo"})
 	server.RegisterSubprotocol(&mockSubprotocolHandler{name: "mqtt"})
@@ -200,7 +258,7 @@ func TestServer_RegisterMultipleSubprotocols(t *testing.T) {
 
 func TestServer_RegisterDuplicateSubprotocol(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	handler1 := &mockSubprotocolHandler{name: "echo"}
 	handler2 := &mockSubprotocolHandler{name: "echo"}
@@ -216,7 +274,7 @@ func TestServer_RegisterDuplicateSubprotocol(t *testing.T) {
 
 func TestServer_GetSubprotocols(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	// Empty initially
 	protocols := server.GetSubprotocols()
@@ -234,7 +292,7 @@ func TestServer_GetSubprotocols(t *testing.T) {
 
 func TestServer_Close(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	if server.IsClosed() {
 		t.Error("New server should not be closed")
@@ -252,7 +310,7 @@ func TestServer_Close(t *testing.T) {
 
 func TestServer_CloseIdempotent(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	err := server.Close()
 	if err != nil {
@@ -271,7 +329,10 @@ func TestServer_CloseIdempotent(t *testing.T) {
 
 func TestServer_CloseClosesSessions(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := handshakeServer(t, DefaultServerConfig(), nil, log)
+	if server == nil {
+		return
+	}
 
 	// Create test server to get real WebSocket connections
 	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
@@ -317,7 +378,7 @@ func TestServer_CloseClosesSessions(t *testing.T) {
 
 func TestServer_IsClosed(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	if server.IsClosed() {
 		t.Error("New server should not be closed")
@@ -332,7 +393,7 @@ func TestServer_IsClosed(t *testing.T) {
 
 func TestServer_GetSession(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	// Get nonexistent session
 	_, exists := server.GetSession("nonexistent")
@@ -356,7 +417,7 @@ func TestServer_GetSession(t *testing.T) {
 
 func TestServer_GetSessionCount(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	if server.GetSessionCount() != 0 {
 		t.Errorf("Initial session count = %d, want 0", server.GetSessionCount())
@@ -373,7 +434,7 @@ func TestServer_GetSessionCount(t *testing.T) {
 
 func TestServer_GetSessionStats(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	// Add sessions with different protocols
 	for i := 0; i < 3; i++ {
@@ -479,7 +540,7 @@ func makeHeaderWithSet(key, value string) http.Header {
 
 func TestServer_SelectSubprotocol(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	server.RegisterSubprotocol(&mockSubprotocolHandler{name: "echo"})
 	server.RegisterSubprotocol(&mockSubprotocolHandler{name: "mqtt"})
@@ -528,7 +589,7 @@ func TestServer_SelectSubprotocol(t *testing.T) {
 
 func TestServer_SelectSubprotocol_Empty(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	// No registered subprotocols
 	result := server.selectSubprotocol([]string{"echo", "mqtt"})
@@ -539,7 +600,7 @@ func TestServer_SelectSubprotocol_Empty(t *testing.T) {
 
 func TestServer_HandleHTTP_ClosedServer(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 	server.Close()
 
 	req := httptest.NewRequest("GET", "/ws", nil)
@@ -557,7 +618,7 @@ func TestServer_HandleHTTP_ClosedServer(t *testing.T) {
 
 func TestServer_HandleHTTP_UnsupportedSubprotocol(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	// Register only echo
 	server.RegisterSubprotocol(&mockSubprotocolHandler{name: "echo"})
@@ -583,7 +644,10 @@ func TestServer_HandleHTTP_UnsupportedSubprotocol(t *testing.T) {
 func TestServer_HandleHTTP_WithSupportedSubprotocol(t *testing.T) {
 	log := testLogger(t)
 	config := DefaultServerConfig()
-	server := NewServer(config, nil, log)
+	server := handshakeServer(t, config, nil, log)
+	if server == nil {
+		return
+	}
 
 	handler := &mockSubprotocolHandler{name: "echo"}
 	server.RegisterSubprotocol(handler)
@@ -626,7 +690,10 @@ func TestServer_HandleHTTP_WithSupportedSubprotocol(t *testing.T) {
 
 func TestServer_HandleHTTP_NoSubprotocol(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := handshakeServer(t, DefaultServerConfig(), nil, log)
+	if server == nil {
+		return
+	}
 
 	// Create test server
 	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
@@ -673,7 +740,10 @@ func TestServer_HandleHTTP_NoSubprotocol(t *testing.T) {
 
 func TestServer_HandleHTTP_EchoMessages(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := handshakeServer(t, DefaultServerConfig(), nil, log)
+	if server == nil {
+		return
+	}
 
 	// Create test server
 	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
@@ -718,7 +788,10 @@ func TestServer_HandleHTTP_EchoMessages(t *testing.T) {
 
 func TestServer_HandleHTTP_MultipleMessages(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := handshakeServer(t, DefaultServerConfig(), nil, log)
+	if server == nil {
+		return
+	}
 
 	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
 	defer ts.Close()
@@ -758,7 +831,10 @@ func TestServer_HandleHTTP_MultipleMessages(t *testing.T) {
 
 func TestServer_HandleHTTP_BinaryMessages(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := handshakeServer(t, DefaultServerConfig(), nil, log)
+	if server == nil {
+		return
+	}
 
 	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
 	defer ts.Close()
@@ -806,7 +882,10 @@ func TestServer_HandleHTTP_BinaryMessages(t *testing.T) {
 
 func TestServer_ConcurrentConnections(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := handshakeServer(t, DefaultServerConfig(), nil, log)
+	if server == nil {
+		return
+	}
 
 	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
 	defer ts.Close()
@@ -859,7 +938,10 @@ func TestServer_ConcurrentConnections(t *testing.T) {
 
 func TestServer_SessionCleanupOnDisconnect(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := handshakeServer(t, DefaultServerConfig(), nil, log)
+	if server == nil {
+		return
+	}
 
 	ts := httptest.NewServer(http.HandlerFunc(server.HandleHTTP))
 	defer ts.Close()
@@ -899,7 +981,7 @@ func TestServer_SessionCleanupOnDisconnect(t *testing.T) {
 
 func TestServer_RegisterSubprotocolConcurrent(t *testing.T) {
 	log := testLogger(t)
-	server := NewServer(DefaultServerConfig(), nil, log)
+	server := newServer(DefaultServerConfig(), nil, log)
 
 	var wg sync.WaitGroup
 

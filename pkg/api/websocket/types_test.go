@@ -15,6 +15,7 @@ package websocket
 
 import (
 	"context"
+	"crypto/fips140"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -142,7 +143,14 @@ func TestSession_Context(t *testing.T) {
 	}
 }
 
+// TestSession_ContextWithRealConnection exercises Session, not the Server. The
+// RFC 6455 handshake it needs uses SHA-1, which fips140=only refuses, so the
+// handshake is allowed for this test only.
 func TestSession_ContextWithRealConnection(t *testing.T) {
+	fips140.WithoutEnforcement(func() { sessionContextWithRealConnection(t) })
+}
+
+func sessionContextWithRealConnection(t *testing.T) {
 	// Create a simple WebSocket server to test context with real connection
 	var session *Session
 	sessionReady := make(chan struct{})

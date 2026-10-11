@@ -9,6 +9,10 @@ import (
 
 // TestEmbeddedSecretRegistryAutoWire starts an embedded QuicBaaS server the way
 // platformd does and asserts the SDK client auto-adopts the secret registry.
+// testTrustDomain is the SPIFFE trust domain the embedded servers in this file
+// issue their first-boot admin certificate under.
+const testTrustDomain = "quicbaas.example.test"
+
 func TestEmbeddedSecretRegistryAutoWire(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.DefaultConfig()
@@ -18,6 +22,8 @@ func TestEmbeddedSecretRegistryAutoWire(t *testing.T) {
 	// Disable network listeners — we only exercise the embedded wiring.
 	// Embedded mode: in-process, no network listeners — exactly how platformd runs.
 	cfg.Server.Embedded = true
+	// First-boot issues the admin certificate and fails closed without a trust domain.
+	cfg.IAM.SPIFFETrustDomain = testTrustDomain
 
 	srv, err := quicbaas.NewServer(cfg)
 	if err != nil {
@@ -59,6 +65,8 @@ func TestEmbeddedSecretRegistryAutoWireTLSDisabled(t *testing.T) {
 	cfg.Storage.Backend = config.StorageBackendFile
 	cfg.Storage.DataDir = dir
 	cfg.Server.Embedded = true
+	// First-boot issues the admin certificate and fails closed without a trust domain.
+	cfg.IAM.SPIFFETrustDomain = testTrustDomain
 	cfg.Security.TLSEnabled = false
 
 	srv, err := quicbaas.NewServer(cfg)

@@ -144,7 +144,12 @@ services:
       - integration-test-network
 
   minio:
-    image: minio/minio:latest
+    # Docker Hub's minio/minio is gone and quay.io/minio/minio needs auth.
+    # Chainguard's rolling free-tier image is the source that resolves; the
+    # -dev variant carries busybox for the healthcheck. Pinned by digest
+    # (multi-arch index of latest-dev as of 2026-10-11); bump deliberately.
+    image: cgr.dev/chainguard/minio:latest-dev@sha256:88df627ed94cddb2a0417f6248e6024cb614128fd213e1097c283b31f4170b73
+    user: "0"
     hostname: minio
     command: server /data --console-address ":9001"
     environment:
@@ -155,7 +160,7 @@ services:
     networks:
       - integration-test-network
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9000/minio/health/ready"]
       interval: 5s
       timeout: 3s
       retries: 10

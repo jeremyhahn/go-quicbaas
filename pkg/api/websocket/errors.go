@@ -50,6 +50,10 @@ const (
 
 	// ErrCodeInvalidMessage indicates an invalid message was received.
 	ErrCodeInvalidMessage
+
+	// ErrCodeUnavailableInFIPSOnlyMode indicates the transport cannot run
+	// because the process enforces GODEBUG=fips140=only.
+	ErrCodeUnavailableInFIPSOnlyMode
 )
 
 // SubprotocolNotSupportedError indicates the requested subprotocol is not supported.
@@ -131,6 +135,15 @@ type ServerClosedError struct{}
 
 func (e *ServerClosedError) Error() string {
 	return "websocket server closed"
+}
+
+// WebSocketUnavailableInFIPSOnlyModeError indicates the WebSocket transport
+// cannot be served under GODEBUG=fips140=only: RFC 6455 requires SHA-1 for
+// Sec-WebSocket-Accept, and the Go Cryptographic Module refuses SHA-1 there.
+type WebSocketUnavailableInFIPSOnlyModeError struct{}
+
+func (e *WebSocketUnavailableInFIPSOnlyModeError) Error() string {
+	return "websocket is unavailable in FIPS 140-only mode: RFC 6455 requires SHA-1"
 }
 
 // InvalidMessageError indicates an invalid message was received.
@@ -265,6 +278,23 @@ func NewServerClosedError(op string) *errors.QBError {
 		Op:   op,
 		Err:  &ServerClosedError{},
 	}
+}
+
+// NewWebSocketUnavailableInFIPSOnlyModeError creates a new QBError for a
+// server constructed while the process enforces FIPS 140-only mode.
+func NewWebSocketUnavailableInFIPSOnlyModeError(op string) *errors.QBError {
+	return &errors.QBError{
+		Code: ErrCodeUnavailableInFIPSOnlyMode,
+		Op:   op,
+		Err:  &WebSocketUnavailableInFIPSOnlyModeError{},
+	}
+}
+
+// IsWebSocketUnavailableInFIPSOnlyMode returns true if the error is a
+// WebSocketUnavailableInFIPSOnlyModeError.
+func IsWebSocketUnavailableInFIPSOnlyMode(err error) bool {
+	var target *WebSocketUnavailableInFIPSOnlyModeError
+	return stderrors.As(err, &target)
 }
 
 // NewInvalidMessageError creates a new QBError for invalid message.

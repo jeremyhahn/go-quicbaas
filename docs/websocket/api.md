@@ -64,7 +64,7 @@ over: the subprotocol is a no-op, and the server carrying it is not mounted.
 
 ## Authentication
 
-`websocket.NewServer` (`pkg/api/websocket/server.go:46`) takes an
+`websocket.NewServer` (`pkg/api/websocket/server.go`) takes an
 `Authenticator`. Because no caller constructs the server, nothing in this
 repository decides what that authenticator is. Any deployment that mounts this
 server must supply one — an unauthenticated WebSocket upgrade on a

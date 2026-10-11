@@ -15,6 +15,7 @@ package websocket
 
 import (
 	"context"
+	"crypto/fips140"
 	"net/http"
 	"net/textproto"
 	"strings"
@@ -43,7 +44,17 @@ type Server struct {
 }
 
 // NewServer creates a new WebSocket server.
-func NewServer(config ServerConfig, auth Authenticator, log *logger.Logger) *Server {
+func NewServer(config ServerConfig, auth Authenticator, log *logger.Logger) (*Server, error) {
+	if fips140.Enforced() {
+		return nil, NewWebSocketUnavailableInFIPSOnlyModeError("websocket.NewServer")
+	}
+
+	return newServer(config, auth, log), nil
+}
+
+// newServer builds the server without the FIPS-only gate. NewServer is the
+// public entry point; tests that never perform a handshake use this directly.
+func newServer(config ServerConfig, auth Authenticator, log *logger.Logger) *Server {
 	if auth == nil {
 		auth = &NoopAuthenticator{}
 	}

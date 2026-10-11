@@ -35,14 +35,26 @@ implements `RequestStream` for exactly one method,
 (`sdk/go/transport/rest/transport.go:1419-1424`). That is the only streaming
 read path the SDK offers today.
 
+## FIPS 140-only mode
+
+WebSocket is unavailable in FIPS 140-only deployments (`GODEBUG=fips140=only`).
+RFC 6455 derives `Sec-WebSocket-Accept` with SHA-1, which the Go Cryptographic
+Module refuses in that mode, so no handshake can complete. `websocket.NewServer`
+checks `crypto/fips140.Enforced()` and returns
+`WebSocketUnavailableInFIPSOnlyModeError` (`ErrCodeUnavailableInFIPSOnlyMode`)
+instead of failing once per connection. Treat enabling WebSocket under
+FIPS-only as a configuration error and log the refusal once at startup. REST,
+gRPC, QUIC, MCP and Unix carry the same surface and are unaffected.
+
 ## If you are the one wiring the listener
 
 The pieces are all present and unit-tested:
 
-1. Construct the server with `websocket.NewServer(config, auth, log)`
-   (`pkg/api/websocket/server.go:46`). **The `Authenticator` is not optional in
+1. Construct the server with `websocket.NewServer(config, auth, log)`, which
+   returns `(*Server, error)`. **The `Authenticator` is not optional in
    practice** — an unauthenticated upgrade on a network-facing listener is an
-   open door into the messaging bus.
+   open door into the messaging bus. Under FIPS 140-only mode it returns
+   `WebSocketUnavailableInFIPSOnlyModeError`; see [FIPS](#fips-140-only-mode).
 2. Register the subprotocols you want with `RegisterSubprotocol` (`:62`). In a
    default build, `mqtt`, `amqp` and `stomp` resolve to no-op stubs; only `echo`
    is a real handler without a build tag. See `engineering.md`.
