@@ -11,8 +11,8 @@
 # automatic.
 #
 # sdk-go-integration joined on the same terms: it is the sdk/go docker-compose
-# harness that `make test-sdk-go` excludes from the gate, known-red and tracked
-# as #50 (see the comment above test-sdk-go in the Makefile).
+# harness that `make test-sdk-go` excludes from the gate (see the comment
+# above test-sdk-go in the Makefile).
 #
 # fips and trivy are the jobs that were in this repo's ci.yml, moved unchanged
 # apart from the fips job's `needs: [build]`, which had no meaning here.
@@ -131,16 +131,14 @@ jobs:
       - name: Check every worker-image pin against upstream
         run: make check-worker-toolchain-currency
 
-  # The sdk/go docker-compose harness (sdk/go/test/integration). Known-red and
-  # tracked as #50: its compose file builds the server from
-  # test/integration/Dockerfile.dev, which still copies sibling repos out of a
-  # `workspace` named build context (the model dependency-resolution.md §2
-  # abolished). A runner's parent directory holds no siblings, so the image
-  # build fails. The harness is excluded from ci.yml's `make test-sdk-go`
-  # (Makefile, grep -v '/test/') and runs here so it is never out of sight.
-  # When #50 lands, moving it back into ci.yml is deliberate, not automatic.
+  # The sdk/go docker-compose harness (sdk/go/test/integration). Its compose
+  # file builds the server from test/integration/Dockerfile.dev, which resolves
+  # first-party modules from published tags (no sibling checkouts), so the
+  # image builds on a runner. The harness is excluded from ci.yml's
+  # `make test-sdk-go` (Makefile, grep -v '/test/') and runs here so it is
+  # never out of sight. Moving it into ci.yml is deliberate, not automatic.
   sdk-go-integration:
-    name: SDK Go integration (known-red, #50)
+    name: SDK Go integration
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

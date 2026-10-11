@@ -3,12 +3,11 @@
 # suite (sdk/go/test/integration/docker-compose.yml). The container runs
 # `quicbaasd node` for SDK clients to exercise over REST/gRPC.
 #
-# Build model: a Go workspace (go.work) is reconstructed inside the image
-# from sibling repos supplied via Docker BuildKit's `workspace` named
-# context (see the SDK docker-compose.yml). go.work is then the single
-# source of truth for cross-module resolution — same model as local dev
-# and the cluster Dockerfile/Dockerfile.node.
-# No `.deps/` staging or replace-directive rewriting required.
+# Build model: first-party dependencies resolve from Gitea as tagged modules,
+# exactly as they do for `go build` on a developer machine and in every other
+# job (dependency-resolution.md §1). go.mod and go.sum are the single source of
+# truth; no sibling checkout, go.work or `workspace` build context is needed,
+# so the image builds on a CI runner whose parent directory holds no siblings.
 
 ARG BUILD_TAGS="iam raft rest rag"
 
@@ -26,83 +25,30 @@ RUN apk add --no-cache \
     bash \
     ca-certificates
 
-WORKDIR /workspace
-
-# Pull each sibling go-quicbaas needs from the workspace named context.
-# The host go.work also references unrelated Layer 0 modules that we
-# deliberately do not bring into Docker; the pruned go.work below covers
-# exactly what is used.
-COPY --from=workspace go-libsignal  ./go-libsignal
-COPY --from=workspace go-objstore   ./go-objstore
-COPY --from=workspace go-qrdb       ./go-qrdb
-COPY --from=workspace go-quicraft   ./go-quicraft
-COPY --from=workspace go-signal     ./go-signal
-COPY --from=workspace go-truststrap ./go-truststrap
-COPY --from=workspace go-xkms       ./go-xkms
-COPY --from=workspace go-codec      ./go-codec
-COPY --from=workspace go-frost      ./go-frost
-
-# go-quicbaas itself comes from the default context (project root).
-COPY . ./go-quicbaas
-
-# Pruned go.work — same shape as the host go.work, trimmed to the modules
-# we actually copy. Replace directives mirror the workspace-only v0.0.0
-# entries from the host file. Keeping go.work as the single source of truth
-# means individual go.mod files do not need any Docker-specific shimming.
-RUN { \
-        echo 'go 1.27.2'; \
-        echo ''; \
-        echo 'use ('; \
-        echo '	./go-libsignal'; \
-        echo '	./go-objstore'; \
-        echo '	./go-objstore/api/sdks/go'; \
-        echo '	./go-qrdb'; \
-        echo '	./go-qrdb/sdk/go'; \
-        echo '	./go-quicbaas'; \
-        echo '	./go-quicbaas/sdk/go'; \
-        echo '	./go-quicraft'; \
-        echo '	./go-signal'; \
-        echo '	./go-xkms'; \
-        echo '	./go-codec'; \
-        echo '	./go-frost'; \
-        echo '	./go-xkms/sdk/go'; \
-        echo '	./go-xkms/xkey'; \
-        echo ')'; \
-        echo ''; \
-        echo 'replace ('; \
-        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
-        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
-        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
-        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
-        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
-        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
-        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
-        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
-        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
-        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
-        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
-        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
-        echo ')'; \
-    } > go.work
-
 WORKDIR /workspace/go-quicbaas
+
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
+# Gitea credentials arrive as a BuildKit secret, mounted on tmpfs for this RUN
+# alone and sourced rather than exported, so the token reaches neither a layer,
+# image metadata, nor a command line (dependency-resolution.md §6). The mount
+# is optional: on GitHub no secret is supplied and these modules resolve from
+# the public proxy once tags are mirrored.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
+
+COPY . .
 
 # Remove deprecated debug route variants to avoid stale files in image cache.
 RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
 
-# Drop go.sum: workspace `use` directives resolve sibling modules locally,
-# but go.sum still gets consulted and may be out of sync with workspace
-# versions (e.g. an in-flight sibling change). Letting Go regenerate sums
-# under workspace mode is the correct behavior here.
-RUN rm -f go.sum sdk/go/go.sum
-
-# Build node + CLI. go.work at /workspace/go.work resolves every sibling.
-RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+# Build node + CLI.
+RUN CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd && \
-    CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
+    CGO_ENABLED=0 GOOS=linux \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaas ./cmd/quicbaas
 
 # ============================================================================

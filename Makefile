@@ -1491,7 +1491,9 @@ integration-test-sdk-js-%: ## Run JavaScript SDK integration tests for a specifi
 .PHONY: integration-test-sdk-go
 integration-test-sdk-go: ## Run ALL Go SDK integration tests
 	@echo "$(BLUE)Running all Go SDK integration tests...$(NC)"
-	@cd sdk/go && go test -v -tags integration -timeout 10m ./test/integration/...
+	@$(MAKE) --no-print-directory stage-gomodauth
+	@trap '$(GOMODAUTH_CLEAR)' EXIT; \
+	cd sdk/go && go test -v -tags integration -timeout 10m ./test/integration/...
 	@echo "$(GREEN)✓ Go SDK integration tests passed$(NC)"
 
 # All JavaScript SDK integration tests
@@ -4672,16 +4674,13 @@ bench-kvstore: ## Run kvstore package benchmarks
 
 # The `grep -v '/test/'` in test-sdk-go and test-sdk-go-coverage is a tracked
 # exclusion, not an oversight: it keeps sdk/go/test/integration -- the
-# docker-compose harness -- out of the per-push gate because the harness is
-# known-red. Tracker: #50. Cause: its compose file builds the server from
-# test/integration/Dockerfile.dev, which still copies sibling repos out of a
-# `workspace` named build context and generates a go.work. That is the model
-# dependency-resolution.md §2 abolished and that test/integration/Dockerfile
-# already left behind. On a runner, the parent directory has no siblings, so the
-# image build fails before a single test runs. The harness still runs, off the
-# gate, in the `sdk-go-integration` job of .github/workflows/nightly.yml
-# (schedule + workflow_dispatch) via `make integration-test-sdk-go`. When #50
-# lands, moving it back into ci.yml is a deliberate change, not an automatic one.
+# docker-compose harness -- out of the per-push gate: it needs Docker and is slow.
+# Its compose file builds the server from test/integration/Dockerfile.dev, which
+# resolves first-party modules from published tags (no sibling checkouts, no
+# go.work), so the image builds on a runner. It runs, off the gate, in the
+# `sdk-go-integration` job of .github/workflows/nightly.yml (schedule +
+# workflow_dispatch) via `make integration-test-sdk-go`. Moving it into ci.yml
+# is a deliberate change, not an automatic one.
 .PHONY: test-sdk-go
 test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"

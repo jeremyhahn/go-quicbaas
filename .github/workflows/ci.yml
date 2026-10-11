@@ -311,9 +311,8 @@ jobs:
           # `make test` covers ./pkg/... ./cmd/... in the ROOT module only, so
           # the separate sdk/go module -- the one downstream consumers actually
           # import -- had no CI coverage at all. It runs with -race and
-          # excludes sdk/go/test/, whose docker-compose harness is known-red and
-          # tracked as #50; it runs off the gate in nightly.yml's
-          # sdk-go-integration job.
+          # excludes sdk/go/test/, whose docker-compose harness needs Docker; it
+          # runs off the gate in nightly.yml's sdk-go-integration job.
           - leg: sdk-go
             target: test-sdk-go
           # Coverage report; this leg alone checks the threshold, uploads the

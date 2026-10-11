@@ -5,14 +5,11 @@ services:
   quicbaas:
     build:
       context: ../../../..
-      additional_contexts:
-        # ~/sources — parent dir containing all sibling repos. The
-        # Dockerfile.dev workspace build stage pulls go-qrdb, go-xkms, etc.
-        # from this named context (5 levels up from this compose file).
-        workspace: ../../../../..
       dockerfile: test/integration/Dockerfile.dev
       args:
         BUILD_TAGS: "iam raft rest rag"
+      secrets:
+        - gomodauth
     container_name: quicbaas-sdk-test
     hostname: quicbaas
     command:
@@ -72,6 +69,13 @@ services:
       timeout: 5s
       retries: 15
       start_period: 20s
+
+# Gitea module-fetch credentials for the image build, as a BuildKit secret
+# (dependency-resolution.md §6), staged by `make stage-gomodauth`. When empty the
+# build falls back to the public proxy.
+secrets:
+  gomodauth:
+    file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}
 
 networks:
   sdk-test-network:
