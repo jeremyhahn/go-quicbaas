@@ -68,6 +68,7 @@ var orchestratorMethodTools = map[string]string{
 	"DeleteTask":  "quicbaas_orchestrator_task_delete",
 
 	"ListTaskArtifacts": "quicbaas_task_list_artifacts",
+	"ListWorkflows":     "quicbaas_orchestrator_list_workflows",
 
 	// A tenant's runtime cost settings (go-quicbaas#1058).
 	"GetCostSettings": "quicbaas_orchestrator_cost_settings_get",
@@ -98,6 +99,7 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"ListBackends":      decodeMCPListBackends,
 	"ListRunners":       decodeMCPListRunners,
 	"ListTaskArtifacts": decodeMCPListTaskArtifacts,
+	"ListWorkflows":     decodeMCPListWorkflows,
 	"BlockTask":         decodeMCPBlockTask,
 	"ReadmitTask":       decodeMCPReadmitTask,
 	"DeleteTask":        decodeMCPDeleteTask,
@@ -370,6 +372,19 @@ func decodeMCPListRunners(raw []byte) (interface{}, error) {
 	if resp.Runners == nil {
 		resp.Runners = []*orchestrator.JobRunnerInfo{}
 	}
+	return &resp, nil
+}
+
+func decodeMCPListWorkflows(raw []byte) (interface{}, error) {
+	var resp orchestrator.ListWorkflowsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.ListWorkflows", "failed to decode MCP list workflows result")
+	}
+	if resp.Workflows == nil {
+		resp.Workflows = []*orchestrator.WorkflowDefinition{}
+	}
+	resp.Count = len(resp.Workflows)
 	return &resp, nil
 }
 

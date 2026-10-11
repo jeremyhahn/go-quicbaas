@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	orchestratorclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	sdlcclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
 )
 
@@ -67,6 +68,49 @@ func TestRequest_ListRunnersOverHTTP3(t *testing.T) {
 
 	assert.Equal(t, http.MethodGet, <-gotMethod)
 	assert.Equal(t, "/api/v1/orchestrator/runners", <-gotPath)
+}
+
+func TestRequest_ListWorkflowsOverHTTP3(t *testing.T) {
+	gotMethod := make(chan string, 1)
+	gotPath := make(chan string, 1)
+	gotLimit := make(chan string, 1)
+	gotSort := make(chan string, 1)
+	gotQuery := make(chan string, 1)
+
+	addr, shutdown := startTestHTTP3Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod <- r.Method
+		gotPath <- r.URL.Path
+		gotLimit <- r.URL.Query().Get("limit")
+		gotSort <- r.URL.Query().Get("sort")
+		gotQuery <- r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workflows":[{"name":"delivery","mode":"canned","agents":[]}],"total":3,"limit":1,"offset":0,"next_offset":1}`))
+	}))
+	defer shutdown()
+
+	tr, err := New(testTransportConfig(addr))
+	require.NoError(t, err)
+	defer tr.Close()
+
+	resp, err := tr.Request(context.Background(), "quicbaas.Orchestrator", "ListWorkflows", &orchestratorclient.ListWorkflowsRequest{
+		TenantID: "tenant-a",
+		Params:   page.Params{Limit: 1, Sort: "name:desc", Query: "del"},
+	})
+	require.NoError(t, err)
+
+	out, ok := resp.(*orchestratorclient.ListWorkflowsResponse)
+	require.True(t, ok, "transport returned %T", resp)
+	require.Len(t, out.Workflows, 1)
+	assert.Equal(t, "delivery", out.Workflows[0].Name)
+	assert.Equal(t, 3, out.Total)
+	assert.Equal(t, 1, out.Limit)
+	assert.Equal(t, 1, out.NextOffset)
+
+	assert.Equal(t, http.MethodGet, <-gotMethod)
+	assert.Equal(t, "/api/v1/orchestrator/workflows", <-gotPath)
+	assert.Equal(t, "1", <-gotLimit)
+	assert.Equal(t, "name:desc", <-gotSort)
+	assert.Equal(t, "del", <-gotQuery)
 }
 
 // TestRequest_ListForgesOverHTTP3 proves the forge-adapter verb reaches the same

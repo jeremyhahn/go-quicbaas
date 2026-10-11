@@ -37,8 +37,9 @@ func TestOrchestratorMethodToolNames(t *testing.T) {
 		"GetSessionHistory": "quicbaas_orchestrator_session_history",
 		// Already agreed with the generic derivation; asserted so a future
 		// refactor of that derivation cannot silently break them.
-		"ListSessions": "quicbaas_orchestrator_list_sessions",
-		"Inference":    "quicbaas_orchestrator_inference",
+		"ListSessions":  "quicbaas_orchestrator_list_sessions",
+		"ListWorkflows": "quicbaas_orchestrator_list_workflows",
+		"Inference":     "quicbaas_orchestrator_inference",
 	}
 	for method, want := range cases {
 		if got := tr.mapToToolName("quicbaas.Orchestrator", method); got != want {

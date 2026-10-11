@@ -6947,6 +6947,994 @@ func (x *OrchestratorListRunnersResponse) GetNextOffset() int32 {
 	return 0
 }
 
+type OrchestratorWorkflowAgentRoleSpec struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Role            string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`
+	Backend         string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
+	Model           string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	Capabilities    []string               `protobuf:"bytes,4,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	Env             map[string]string      `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	SystemPrompt    string                 `protobuf:"bytes,6,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	PromptAppend    string                 `protobuf:"bytes,7,opt,name=prompt_append,json=promptAppend,proto3" json:"prompt_append,omitempty"`
+	McpScopes       []string               `protobuf:"bytes,8,rep,name=mcp_scopes,json=mcpScopes,proto3" json:"mcp_scopes,omitempty"`
+	Count           int32                  `protobuf:"varint,9,opt,name=count,proto3" json:"count,omitempty"`
+	WorkspacePath   string                 `protobuf:"bytes,10,opt,name=workspace_path,json=workspacePath,proto3" json:"workspace_path,omitempty"`
+	PermissionMode  string                 `protobuf:"bytes,11,opt,name=permission_mode,json=permissionMode,proto3" json:"permission_mode,omitempty"`
+	SkipPermissions bool                   `protobuf:"varint,12,opt,name=skip_permissions,json=skipPermissions,proto3" json:"skip_permissions,omitempty"`
+	Sandboxed       bool                   `protobuf:"varint,13,opt,name=sandboxed,proto3" json:"sandboxed,omitempty"`
+	ContainerImage  string                 `protobuf:"bytes,14,opt,name=container_image,json=containerImage,proto3" json:"container_image,omitempty"`
+	HostAffinity    string                 `protobuf:"bytes,15,opt,name=host_affinity,json=hostAffinity,proto3" json:"host_affinity,omitempty"`
+	NumCtx          int32                  `protobuf:"varint,16,opt,name=num_ctx,json=numCtx,proto3" json:"num_ctx,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) Reset() {
+	*x = OrchestratorWorkflowAgentRoleSpec{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[72]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowAgentRoleSpec) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[72]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowAgentRoleSpec.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowAgentRoleSpec) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{72}
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetBackend() string {
+	if x != nil {
+		return x.Backend
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetCapabilities() []string {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetSystemPrompt() string {
+	if x != nil {
+		return x.SystemPrompt
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetPromptAppend() string {
+	if x != nil {
+		return x.PromptAppend
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetMcpScopes() []string {
+	if x != nil {
+		return x.McpScopes
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetWorkspacePath() string {
+	if x != nil {
+		return x.WorkspacePath
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetPermissionMode() string {
+	if x != nil {
+		return x.PermissionMode
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetSkipPermissions() bool {
+	if x != nil {
+		return x.SkipPermissions
+	}
+	return false
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetSandboxed() bool {
+	if x != nil {
+		return x.Sandboxed
+	}
+	return false
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetContainerImage() string {
+	if x != nil {
+		return x.ContainerImage
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetHostAffinity() string {
+	if x != nil {
+		return x.HostAffinity
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowAgentRoleSpec) GetNumCtx() int32 {
+	if x != nil {
+		return x.NumCtx
+	}
+	return 0
+}
+
+type OrchestratorWorkflowReviewCriterion struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Validator     string                 `protobuf:"bytes,2,opt,name=validator,proto3" json:"validator,omitempty"`
+	Config        string                 `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
+	Required      bool                   `protobuf:"varint,4,opt,name=required,proto3" json:"required,omitempty"`
+	Phase         string                 `protobuf:"bytes,5,opt,name=phase,proto3" json:"phase,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowReviewCriterion) Reset() {
+	*x = OrchestratorWorkflowReviewCriterion{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[73]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowReviewCriterion) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowReviewCriterion) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowReviewCriterion) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[73]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowReviewCriterion.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowReviewCriterion) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{73}
+}
+
+func (x *OrchestratorWorkflowReviewCriterion) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowReviewCriterion) GetValidator() string {
+	if x != nil {
+		return x.Validator
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowReviewCriterion) GetConfig() string {
+	if x != nil {
+		return x.Config
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowReviewCriterion) GetRequired() bool {
+	if x != nil {
+		return x.Required
+	}
+	return false
+}
+
+func (x *OrchestratorWorkflowReviewCriterion) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+type OrchestratorWorkflowPeerMessagingSettings struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	MaxMessageSize int32                  `protobuf:"varint,1,opt,name=max_message_size,json=maxMessageSize,proto3" json:"max_message_size,omitempty"`
+	MaxInboxSize   int32                  `protobuf:"varint,2,opt,name=max_inbox_size,json=maxInboxSize,proto3" json:"max_inbox_size,omitempty"`
+	OverflowAction string                 `protobuf:"bytes,3,opt,name=overflow_action,json=overflowAction,proto3" json:"overflow_action,omitempty"`
+	InboxTtl       string                 `protobuf:"bytes,4,opt,name=inbox_ttl,json=inboxTtl,proto3" json:"inbox_ttl,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowPeerMessagingSettings) Reset() {
+	*x = OrchestratorWorkflowPeerMessagingSettings{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[74]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowPeerMessagingSettings) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowPeerMessagingSettings) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowPeerMessagingSettings) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[74]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowPeerMessagingSettings.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowPeerMessagingSettings) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{74}
+}
+
+func (x *OrchestratorWorkflowPeerMessagingSettings) GetMaxMessageSize() int32 {
+	if x != nil {
+		return x.MaxMessageSize
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowPeerMessagingSettings) GetMaxInboxSize() int32 {
+	if x != nil {
+		return x.MaxInboxSize
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowPeerMessagingSettings) GetOverflowAction() string {
+	if x != nil {
+		return x.OverflowAction
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowPeerMessagingSettings) GetInboxTtl() string {
+	if x != nil {
+		return x.InboxTtl
+	}
+	return ""
+}
+
+type OrchestratorWorkflowFileLockSettings struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	LeaseTtl          string                 `protobuf:"bytes,1,opt,name=lease_ttl,json=leaseTtl,proto3" json:"lease_ttl,omitempty"`
+	HeartbeatInterval string                 `protobuf:"bytes,2,opt,name=heartbeat_interval,json=heartbeatInterval,proto3" json:"heartbeat_interval,omitempty"`
+	MaxRenewals       int32                  `protobuf:"varint,3,opt,name=max_renewals,json=maxRenewals,proto3" json:"max_renewals,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowFileLockSettings) Reset() {
+	*x = OrchestratorWorkflowFileLockSettings{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[75]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowFileLockSettings) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowFileLockSettings) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowFileLockSettings) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[75]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowFileLockSettings.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowFileLockSettings) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{75}
+}
+
+func (x *OrchestratorWorkflowFileLockSettings) GetLeaseTtl() string {
+	if x != nil {
+		return x.LeaseTtl
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowFileLockSettings) GetHeartbeatInterval() string {
+	if x != nil {
+		return x.HeartbeatInterval
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowFileLockSettings) GetMaxRenewals() int32 {
+	if x != nil {
+		return x.MaxRenewals
+	}
+	return 0
+}
+
+type OrchestratorWorkflowVectorDBSettings struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Enabled        bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	IndexType      string                 `protobuf:"bytes,2,opt,name=index_type,json=indexType,proto3" json:"index_type,omitempty"`
+	AutoIndex      bool                   `protobuf:"varint,3,opt,name=auto_index,json=autoIndex,proto3" json:"auto_index,omitempty"`
+	Triggers       []string               `protobuf:"bytes,4,rep,name=triggers,proto3" json:"triggers,omitempty"`
+	GpuAccelerated bool                   `protobuf:"varint,5,opt,name=gpu_accelerated,json=gpuAccelerated,proto3" json:"gpu_accelerated,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowVectorDBSettings) Reset() {
+	*x = OrchestratorWorkflowVectorDBSettings{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[76]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowVectorDBSettings) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowVectorDBSettings) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowVectorDBSettings) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[76]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowVectorDBSettings.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowVectorDBSettings) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{76}
+}
+
+func (x *OrchestratorWorkflowVectorDBSettings) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *OrchestratorWorkflowVectorDBSettings) GetIndexType() string {
+	if x != nil {
+		return x.IndexType
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowVectorDBSettings) GetAutoIndex() bool {
+	if x != nil {
+		return x.AutoIndex
+	}
+	return false
+}
+
+func (x *OrchestratorWorkflowVectorDBSettings) GetTriggers() []string {
+	if x != nil {
+		return x.Triggers
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowVectorDBSettings) GetGpuAccelerated() bool {
+	if x != nil {
+		return x.GpuAccelerated
+	}
+	return false
+}
+
+type OrchestratorWorkflowCostControlSettings struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	MaxTokensPerJob   int64                  `protobuf:"varint,1,opt,name=max_tokens_per_job,json=maxTokensPerJob,proto3" json:"max_tokens_per_job,omitempty"`
+	MaxTokensPerAgent int64                  `protobuf:"varint,2,opt,name=max_tokens_per_agent,json=maxTokensPerAgent,proto3" json:"max_tokens_per_agent,omitempty"`
+	BudgetAction      string                 `protobuf:"bytes,3,opt,name=budget_action,json=budgetAction,proto3" json:"budget_action,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowCostControlSettings) Reset() {
+	*x = OrchestratorWorkflowCostControlSettings{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[77]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowCostControlSettings) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowCostControlSettings) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowCostControlSettings) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[77]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowCostControlSettings.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowCostControlSettings) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{77}
+}
+
+func (x *OrchestratorWorkflowCostControlSettings) GetMaxTokensPerJob() int64 {
+	if x != nil {
+		return x.MaxTokensPerJob
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowCostControlSettings) GetMaxTokensPerAgent() int64 {
+	if x != nil {
+		return x.MaxTokensPerAgent
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowCostControlSettings) GetBudgetAction() string {
+	if x != nil {
+		return x.BudgetAction
+	}
+	return ""
+}
+
+type OrchestratorWorkflowRecoverySettings struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AutoRestart    bool                   `protobuf:"varint,1,opt,name=auto_restart,json=autoRestart,proto3" json:"auto_restart,omitempty"`
+	MaxRestarts    int32                  `protobuf:"varint,2,opt,name=max_restarts,json=maxRestarts,proto3" json:"max_restarts,omitempty"`
+	RestartBackoff string                 `protobuf:"bytes,3,opt,name=restart_backoff,json=restartBackoff,proto3" json:"restart_backoff,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowRecoverySettings) Reset() {
+	*x = OrchestratorWorkflowRecoverySettings{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[78]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowRecoverySettings) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowRecoverySettings) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowRecoverySettings) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[78]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowRecoverySettings.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowRecoverySettings) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *OrchestratorWorkflowRecoverySettings) GetAutoRestart() bool {
+	if x != nil {
+		return x.AutoRestart
+	}
+	return false
+}
+
+func (x *OrchestratorWorkflowRecoverySettings) GetMaxRestarts() int32 {
+	if x != nil {
+		return x.MaxRestarts
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowRecoverySettings) GetRestartBackoff() string {
+	if x != nil {
+		return x.RestartBackoff
+	}
+	return ""
+}
+
+type OrchestratorWorkflowSettings struct {
+	state          protoimpl.MessageState                     `protogen:"open.v1"`
+	MaxIterations  int32                                      `protobuf:"varint,1,opt,name=max_iterations,json=maxIterations,proto3" json:"max_iterations,omitempty"`
+	Topology       string                                     `protobuf:"bytes,2,opt,name=topology,proto3" json:"topology,omitempty"`
+	Isolation      string                                     `protobuf:"bytes,3,opt,name=isolation,proto3" json:"isolation,omitempty"`
+	PeerMessaging  *OrchestratorWorkflowPeerMessagingSettings `protobuf:"bytes,4,opt,name=peer_messaging,json=peerMessaging,proto3" json:"peer_messaging,omitempty"`
+	FileLocking    *OrchestratorWorkflowFileLockSettings      `protobuf:"bytes,5,opt,name=file_locking,json=fileLocking,proto3" json:"file_locking,omitempty"`
+	VectorDb       *OrchestratorWorkflowVectorDBSettings      `protobuf:"bytes,6,opt,name=vector_db,json=vectorDb,proto3" json:"vector_db,omitempty"`
+	Verbosity      string                                     `protobuf:"bytes,7,opt,name=verbosity,proto3" json:"verbosity,omitempty"`
+	NumCtx         int32                                      `protobuf:"varint,8,opt,name=num_ctx,json=numCtx,proto3" json:"num_ctx,omitempty"`
+	Hooks          string                                     `protobuf:"bytes,9,opt,name=hooks,proto3" json:"hooks,omitempty"`
+	MaxParallelism int32                                      `protobuf:"varint,10,opt,name=max_parallelism,json=maxParallelism,proto3" json:"max_parallelism,omitempty"`
+	PollInterval   string                                     `protobuf:"bytes,11,opt,name=poll_interval,json=pollInterval,proto3" json:"poll_interval,omitempty"`
+	TimeoutPerItem string                                     `protobuf:"bytes,12,opt,name=timeout_per_item,json=timeoutPerItem,proto3" json:"timeout_per_item,omitempty"`
+	TotalTimeout   string                                     `protobuf:"bytes,13,opt,name=total_timeout,json=totalTimeout,proto3" json:"total_timeout,omitempty"`
+	ReviewCriteria []*OrchestratorWorkflowReviewCriterion     `protobuf:"bytes,14,rep,name=review_criteria,json=reviewCriteria,proto3" json:"review_criteria,omitempty"`
+	CostControls   *OrchestratorWorkflowCostControlSettings   `protobuf:"bytes,15,opt,name=cost_controls,json=costControls,proto3" json:"cost_controls,omitempty"`
+	Recovery       *OrchestratorWorkflowRecoverySettings      `protobuf:"bytes,16,opt,name=recovery,proto3" json:"recovery,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowSettings) Reset() {
+	*x = OrchestratorWorkflowSettings{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[79]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowSettings) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowSettings) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowSettings) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[79]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowSettings.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowSettings) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{79}
+}
+
+func (x *OrchestratorWorkflowSettings) GetMaxIterations() int32 {
+	if x != nil {
+		return x.MaxIterations
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowSettings) GetTopology() string {
+	if x != nil {
+		return x.Topology
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowSettings) GetIsolation() string {
+	if x != nil {
+		return x.Isolation
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowSettings) GetPeerMessaging() *OrchestratorWorkflowPeerMessagingSettings {
+	if x != nil {
+		return x.PeerMessaging
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowSettings) GetFileLocking() *OrchestratorWorkflowFileLockSettings {
+	if x != nil {
+		return x.FileLocking
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowSettings) GetVectorDb() *OrchestratorWorkflowVectorDBSettings {
+	if x != nil {
+		return x.VectorDb
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowSettings) GetVerbosity() string {
+	if x != nil {
+		return x.Verbosity
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowSettings) GetNumCtx() int32 {
+	if x != nil {
+		return x.NumCtx
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowSettings) GetHooks() string {
+	if x != nil {
+		return x.Hooks
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowSettings) GetMaxParallelism() int32 {
+	if x != nil {
+		return x.MaxParallelism
+	}
+	return 0
+}
+
+func (x *OrchestratorWorkflowSettings) GetPollInterval() string {
+	if x != nil {
+		return x.PollInterval
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowSettings) GetTimeoutPerItem() string {
+	if x != nil {
+		return x.TimeoutPerItem
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowSettings) GetTotalTimeout() string {
+	if x != nil {
+		return x.TotalTimeout
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowSettings) GetReviewCriteria() []*OrchestratorWorkflowReviewCriterion {
+	if x != nil {
+		return x.ReviewCriteria
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowSettings) GetCostControls() *OrchestratorWorkflowCostControlSettings {
+	if x != nil {
+		return x.CostControls
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowSettings) GetRecovery() *OrchestratorWorkflowRecoverySettings {
+	if x != nil {
+		return x.Recovery
+	}
+	return nil
+}
+
+type OrchestratorWorkflowDefinition struct {
+	state         protoimpl.MessageState               `protogen:"open.v1"`
+	Name          string                               `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                               `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	Mode          string                               `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	Agents        []*OrchestratorWorkflowAgentRoleSpec `protobuf:"bytes,4,rep,name=agents,proto3" json:"agents,omitempty"`
+	Settings      *OrchestratorWorkflowSettings        `protobuf:"bytes,5,opt,name=settings,proto3" json:"settings,omitempty"`
+	TenantId      string                               `protobuf:"bytes,6,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	ProjectId     string                               `protobuf:"bytes,7,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OrchestratorWorkflowDefinition) Reset() {
+	*x = OrchestratorWorkflowDefinition{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[80]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorWorkflowDefinition) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorWorkflowDefinition) ProtoMessage() {}
+
+func (x *OrchestratorWorkflowDefinition) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[80]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorWorkflowDefinition.ProtoReflect.Descriptor instead.
+func (*OrchestratorWorkflowDefinition) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{80}
+}
+
+func (x *OrchestratorWorkflowDefinition) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowDefinition) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowDefinition) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowDefinition) GetAgents() []*OrchestratorWorkflowAgentRoleSpec {
+	if x != nil {
+		return x.Agents
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowDefinition) GetSettings() *OrchestratorWorkflowSettings {
+	if x != nil {
+		return x.Settings
+	}
+	return nil
+}
+
+func (x *OrchestratorWorkflowDefinition) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *OrchestratorWorkflowDefinition) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+type OrchestratorListWorkflowsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	Mode          string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	Sort          string                 `protobuf:"bytes,6,opt,name=sort,proto3" json:"sort,omitempty"`
+	Q             string                 `protobuf:"bytes,7,opt,name=q,proto3" json:"q,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OrchestratorListWorkflowsRequest) Reset() {
+	*x = OrchestratorListWorkflowsRequest{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[81]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorListWorkflowsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorListWorkflowsRequest) ProtoMessage() {}
+
+func (x *OrchestratorListWorkflowsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[81]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorListWorkflowsRequest.ProtoReflect.Descriptor instead.
+func (*OrchestratorListWorkflowsRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{81}
+}
+
+func (x *OrchestratorListWorkflowsRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *OrchestratorListWorkflowsRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *OrchestratorListWorkflowsRequest) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *OrchestratorListWorkflowsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *OrchestratorListWorkflowsRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *OrchestratorListWorkflowsRequest) GetSort() string {
+	if x != nil {
+		return x.Sort
+	}
+	return ""
+}
+
+func (x *OrchestratorListWorkflowsRequest) GetQ() string {
+	if x != nil {
+		return x.Q
+	}
+	return ""
+}
+
+type OrchestratorListWorkflowsResponse struct {
+	state         protoimpl.MessageState            `protogen:"open.v1"`
+	Workflows     []*OrchestratorWorkflowDefinition `protobuf:"bytes,1,rep,name=workflows,proto3" json:"workflows,omitempty"`
+	Total         int32                             `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Limit         int32                             `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                             `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset    int32                             `protobuf:"varint,5,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OrchestratorListWorkflowsResponse) Reset() {
+	*x = OrchestratorListWorkflowsResponse{}
+	mi := &file_api_proto_orchestrator_proto_msgTypes[82]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrchestratorListWorkflowsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrchestratorListWorkflowsResponse) ProtoMessage() {}
+
+func (x *OrchestratorListWorkflowsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_orchestrator_proto_msgTypes[82]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrchestratorListWorkflowsResponse.ProtoReflect.Descriptor instead.
+func (*OrchestratorListWorkflowsResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{82}
+}
+
+func (x *OrchestratorListWorkflowsResponse) GetWorkflows() []*OrchestratorWorkflowDefinition {
+	if x != nil {
+		return x.Workflows
+	}
+	return nil
+}
+
+func (x *OrchestratorListWorkflowsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *OrchestratorListWorkflowsResponse) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *OrchestratorListWorkflowsResponse) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *OrchestratorListWorkflowsResponse) GetNextOffset() int32 {
+	if x != nil {
+		return x.NextOffset
+	}
+	return 0
+}
+
 // Health
 type OrchestratorHealthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -6957,7 +7945,7 @@ type OrchestratorHealthRequest struct {
 
 func (x *OrchestratorHealthRequest) Reset() {
 	*x = OrchestratorHealthRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[72]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6969,7 +7957,7 @@ func (x *OrchestratorHealthRequest) String() string {
 func (*OrchestratorHealthRequest) ProtoMessage() {}
 
 func (x *OrchestratorHealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[72]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6982,7 +7970,7 @@ func (x *OrchestratorHealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrchestratorHealthRequest.ProtoReflect.Descriptor instead.
 func (*OrchestratorHealthRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{72}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *OrchestratorHealthRequest) GetTenantId() string {
@@ -7002,7 +7990,7 @@ type OrchestratorHealthResponse struct {
 
 func (x *OrchestratorHealthResponse) Reset() {
 	*x = OrchestratorHealthResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[73]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7014,7 +8002,7 @@ func (x *OrchestratorHealthResponse) String() string {
 func (*OrchestratorHealthResponse) ProtoMessage() {}
 
 func (x *OrchestratorHealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[73]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7027,7 +8015,7 @@ func (x *OrchestratorHealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrchestratorHealthResponse.ProtoReflect.Descriptor instead.
 func (*OrchestratorHealthResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{73}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *OrchestratorHealthResponse) GetReport() *HealthCheckReport {
@@ -7062,7 +8050,7 @@ type RegisterFleetNodeRequest struct {
 
 func (x *RegisterFleetNodeRequest) Reset() {
 	*x = RegisterFleetNodeRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[74]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7074,7 +8062,7 @@ func (x *RegisterFleetNodeRequest) String() string {
 func (*RegisterFleetNodeRequest) ProtoMessage() {}
 
 func (x *RegisterFleetNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[74]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7087,7 +8075,7 @@ func (x *RegisterFleetNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterFleetNodeRequest.ProtoReflect.Descriptor instead.
 func (*RegisterFleetNodeRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{74}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *RegisterFleetNodeRequest) GetTenantId() string {
@@ -7163,7 +8151,7 @@ type RegisterFleetNodeResponse struct {
 
 func (x *RegisterFleetNodeResponse) Reset() {
 	*x = RegisterFleetNodeResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[75]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7175,7 +8163,7 @@ func (x *RegisterFleetNodeResponse) String() string {
 func (*RegisterFleetNodeResponse) ProtoMessage() {}
 
 func (x *RegisterFleetNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[75]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7188,7 +8176,7 @@ func (x *RegisterFleetNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterFleetNodeResponse.ProtoReflect.Descriptor instead.
 func (*RegisterFleetNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{75}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *RegisterFleetNodeResponse) GetNode() *FleetNode {
@@ -7216,7 +8204,7 @@ type GetFleetNodeRequest struct {
 
 func (x *GetFleetNodeRequest) Reset() {
 	*x = GetFleetNodeRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[76]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7228,7 +8216,7 @@ func (x *GetFleetNodeRequest) String() string {
 func (*GetFleetNodeRequest) ProtoMessage() {}
 
 func (x *GetFleetNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[76]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7241,7 +8229,7 @@ func (x *GetFleetNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFleetNodeRequest.ProtoReflect.Descriptor instead.
 func (*GetFleetNodeRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{76}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *GetFleetNodeRequest) GetTenantId() string {
@@ -7268,7 +8256,7 @@ type GetFleetNodeResponse struct {
 
 func (x *GetFleetNodeResponse) Reset() {
 	*x = GetFleetNodeResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[77]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7280,7 +8268,7 @@ func (x *GetFleetNodeResponse) String() string {
 func (*GetFleetNodeResponse) ProtoMessage() {}
 
 func (x *GetFleetNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[77]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7293,7 +8281,7 @@ func (x *GetFleetNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFleetNodeResponse.ProtoReflect.Descriptor instead.
 func (*GetFleetNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{77}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *GetFleetNodeResponse) GetNode() *FleetNode {
@@ -7331,7 +8319,7 @@ type ListFleetNodesRequest struct {
 
 func (x *ListFleetNodesRequest) Reset() {
 	*x = ListFleetNodesRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[78]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7343,7 +8331,7 @@ func (x *ListFleetNodesRequest) String() string {
 func (*ListFleetNodesRequest) ProtoMessage() {}
 
 func (x *ListFleetNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[78]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7356,7 +8344,7 @@ func (x *ListFleetNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFleetNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListFleetNodesRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{78}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *ListFleetNodesRequest) GetTenantId() string {
@@ -7420,7 +8408,7 @@ type ListFleetNodesResponse struct {
 
 func (x *ListFleetNodesResponse) Reset() {
 	*x = ListFleetNodesResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[79]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7432,7 +8420,7 @@ func (x *ListFleetNodesResponse) String() string {
 func (*ListFleetNodesResponse) ProtoMessage() {}
 
 func (x *ListFleetNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[79]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7445,7 +8433,7 @@ func (x *ListFleetNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFleetNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListFleetNodesResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{79}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *ListFleetNodesResponse) GetNodes() []*FleetNode {
@@ -7508,7 +8496,7 @@ type RemoveFleetNodeRequest struct {
 
 func (x *RemoveFleetNodeRequest) Reset() {
 	*x = RemoveFleetNodeRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[80]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7520,7 +8508,7 @@ func (x *RemoveFleetNodeRequest) String() string {
 func (*RemoveFleetNodeRequest) ProtoMessage() {}
 
 func (x *RemoveFleetNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[80]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7533,7 +8521,7 @@ func (x *RemoveFleetNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveFleetNodeRequest.ProtoReflect.Descriptor instead.
 func (*RemoveFleetNodeRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{80}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *RemoveFleetNodeRequest) GetTenantId() string {
@@ -7561,7 +8549,7 @@ type RemoveFleetNodeResponse struct {
 
 func (x *RemoveFleetNodeResponse) Reset() {
 	*x = RemoveFleetNodeResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[81]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7573,7 +8561,7 @@ func (x *RemoveFleetNodeResponse) String() string {
 func (*RemoveFleetNodeResponse) ProtoMessage() {}
 
 func (x *RemoveFleetNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[81]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7586,7 +8574,7 @@ func (x *RemoveFleetNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveFleetNodeResponse.ProtoReflect.Descriptor instead.
 func (*RemoveFleetNodeResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{81}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *RemoveFleetNodeResponse) GetNodeId() string {
@@ -7621,7 +8609,7 @@ type FleetNodeHeartbeatRequest struct {
 
 func (x *FleetNodeHeartbeatRequest) Reset() {
 	*x = FleetNodeHeartbeatRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[82]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7633,7 +8621,7 @@ func (x *FleetNodeHeartbeatRequest) String() string {
 func (*FleetNodeHeartbeatRequest) ProtoMessage() {}
 
 func (x *FleetNodeHeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[82]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7646,7 +8634,7 @@ func (x *FleetNodeHeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetNodeHeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*FleetNodeHeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{82}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *FleetNodeHeartbeatRequest) GetTenantId() string {
@@ -7674,7 +8662,7 @@ type FleetNodeHeartbeatResponse struct {
 
 func (x *FleetNodeHeartbeatResponse) Reset() {
 	*x = FleetNodeHeartbeatResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[83]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7686,7 +8674,7 @@ func (x *FleetNodeHeartbeatResponse) String() string {
 func (*FleetNodeHeartbeatResponse) ProtoMessage() {}
 
 func (x *FleetNodeHeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[83]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7699,7 +8687,7 @@ func (x *FleetNodeHeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetNodeHeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*FleetNodeHeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{83}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *FleetNodeHeartbeatResponse) GetNodeId() string {
@@ -7741,7 +8729,7 @@ type PushEventRequest struct {
 
 func (x *PushEventRequest) Reset() {
 	*x = PushEventRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[84]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7753,7 +8741,7 @@ func (x *PushEventRequest) String() string {
 func (*PushEventRequest) ProtoMessage() {}
 
 func (x *PushEventRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[84]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7766,7 +8754,7 @@ func (x *PushEventRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushEventRequest.ProtoReflect.Descriptor instead.
 func (*PushEventRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{84}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *PushEventRequest) GetSessionId() string {
@@ -7821,7 +8809,7 @@ type PushEventAck struct {
 
 func (x *PushEventAck) Reset() {
 	*x = PushEventAck{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[85]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7833,7 +8821,7 @@ func (x *PushEventAck) String() string {
 func (*PushEventAck) ProtoMessage() {}
 
 func (x *PushEventAck) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[85]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7846,7 +8834,7 @@ func (x *PushEventAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushEventAck.ProtoReflect.Descriptor instead.
 func (*PushEventAck) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{85}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *PushEventAck) GetSessionId() string {
@@ -7900,7 +8888,7 @@ type SubscribeSessionRequest struct {
 
 func (x *SubscribeSessionRequest) Reset() {
 	*x = SubscribeSessionRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[86]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7912,7 +8900,7 @@ func (x *SubscribeSessionRequest) String() string {
 func (*SubscribeSessionRequest) ProtoMessage() {}
 
 func (x *SubscribeSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[86]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7925,7 +8913,7 @@ func (x *SubscribeSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeSessionRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeSessionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{86}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *SubscribeSessionRequest) GetTenantId() string {
@@ -7972,7 +8960,7 @@ type SessionEventEnvelope struct {
 
 func (x *SessionEventEnvelope) Reset() {
 	*x = SessionEventEnvelope{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[87]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7984,7 +8972,7 @@ func (x *SessionEventEnvelope) String() string {
 func (*SessionEventEnvelope) ProtoMessage() {}
 
 func (x *SessionEventEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[87]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7997,7 +8985,7 @@ func (x *SessionEventEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionEventEnvelope.ProtoReflect.Descriptor instead.
 func (*SessionEventEnvelope) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{87}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *SessionEventEnvelope) GetSessionId() string {
@@ -8059,7 +9047,7 @@ type GetSessionConversationRequest struct {
 
 func (x *GetSessionConversationRequest) Reset() {
 	*x = GetSessionConversationRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[88]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8071,7 +9059,7 @@ func (x *GetSessionConversationRequest) String() string {
 func (*GetSessionConversationRequest) ProtoMessage() {}
 
 func (x *GetSessionConversationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[88]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8084,7 +9072,7 @@ func (x *GetSessionConversationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionConversationRequest.ProtoReflect.Descriptor instead.
 func (*GetSessionConversationRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{88}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *GetSessionConversationRequest) GetTenantId() string {
@@ -8130,7 +9118,7 @@ type SessionToolUse struct {
 
 func (x *SessionToolUse) Reset() {
 	*x = SessionToolUse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[89]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8142,7 +9130,7 @@ func (x *SessionToolUse) String() string {
 func (*SessionToolUse) ProtoMessage() {}
 
 func (x *SessionToolUse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[89]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8155,7 +9143,7 @@ func (x *SessionToolUse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionToolUse.ProtoReflect.Descriptor instead.
 func (*SessionToolUse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{89}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *SessionToolUse) GetInvocationId() string {
@@ -8214,7 +9202,7 @@ type SessionTurn struct {
 
 func (x *SessionTurn) Reset() {
 	*x = SessionTurn{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[90]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8226,7 +9214,7 @@ func (x *SessionTurn) String() string {
 func (*SessionTurn) ProtoMessage() {}
 
 func (x *SessionTurn) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[90]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8239,7 +9227,7 @@ func (x *SessionTurn) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionTurn.ProtoReflect.Descriptor instead.
 func (*SessionTurn) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{90}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *SessionTurn) GetSequence() uint64 {
@@ -8336,7 +9324,7 @@ type GetSessionConversationResponse struct {
 
 func (x *GetSessionConversationResponse) Reset() {
 	*x = GetSessionConversationResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[91]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8348,7 +9336,7 @@ func (x *GetSessionConversationResponse) String() string {
 func (*GetSessionConversationResponse) ProtoMessage() {}
 
 func (x *GetSessionConversationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[91]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8361,7 +9349,7 @@ func (x *GetSessionConversationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionConversationResponse.ProtoReflect.Descriptor instead.
 func (*GetSessionConversationResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{91}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *GetSessionConversationResponse) GetSessionId() string {
@@ -8433,7 +9421,7 @@ type GetSpendReportRequest struct {
 
 func (x *GetSpendReportRequest) Reset() {
 	*x = GetSpendReportRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[92]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8445,7 +9433,7 @@ func (x *GetSpendReportRequest) String() string {
 func (*GetSpendReportRequest) ProtoMessage() {}
 
 func (x *GetSpendReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[92]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8458,7 +9446,7 @@ func (x *GetSpendReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSpendReportRequest.ProtoReflect.Descriptor instead.
 func (*GetSpendReportRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{92}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *GetSpendReportRequest) GetTenantId() string {
@@ -8566,7 +9554,7 @@ type SpendWindowStatus struct {
 
 func (x *SpendWindowStatus) Reset() {
 	*x = SpendWindowStatus{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[93]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8578,7 +9566,7 @@ func (x *SpendWindowStatus) String() string {
 func (*SpendWindowStatus) ProtoMessage() {}
 
 func (x *SpendWindowStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[93]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8591,7 +9579,7 @@ func (x *SpendWindowStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpendWindowStatus.ProtoReflect.Descriptor instead.
 func (*SpendWindowStatus) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{93}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *SpendWindowStatus) GetName() string {
@@ -8683,7 +9671,7 @@ type SpendBreakerVerdict struct {
 
 func (x *SpendBreakerVerdict) Reset() {
 	*x = SpendBreakerVerdict{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[94]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8695,7 +9683,7 @@ func (x *SpendBreakerVerdict) String() string {
 func (*SpendBreakerVerdict) ProtoMessage() {}
 
 func (x *SpendBreakerVerdict) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[94]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8708,7 +9696,7 @@ func (x *SpendBreakerVerdict) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpendBreakerVerdict.ProtoReflect.Descriptor instead.
 func (*SpendBreakerVerdict) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{94}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *SpendBreakerVerdict) GetState() string {
@@ -8799,7 +9787,7 @@ type SpendTotals struct {
 
 func (x *SpendTotals) Reset() {
 	*x = SpendTotals{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[95]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8811,7 +9799,7 @@ func (x *SpendTotals) String() string {
 func (*SpendTotals) ProtoMessage() {}
 
 func (x *SpendTotals) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[95]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8824,7 +9812,7 @@ func (x *SpendTotals) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpendTotals.ProtoReflect.Descriptor instead.
 func (*SpendTotals) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{95}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *SpendTotals) GetEntries() int32 {
@@ -8985,7 +9973,7 @@ type SpendAccount struct {
 
 func (x *SpendAccount) Reset() {
 	*x = SpendAccount{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[96]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8997,7 +9985,7 @@ func (x *SpendAccount) String() string {
 func (*SpendAccount) ProtoMessage() {}
 
 func (x *SpendAccount) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[96]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9010,7 +9998,7 @@ func (x *SpendAccount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpendAccount.ProtoReflect.Descriptor instead.
 func (*SpendAccount) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{96}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *SpendAccount) GetAccountId() string {
@@ -9095,7 +10083,7 @@ type SpendModel struct {
 
 func (x *SpendModel) Reset() {
 	*x = SpendModel{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[97]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9107,7 +10095,7 @@ func (x *SpendModel) String() string {
 func (*SpendModel) ProtoMessage() {}
 
 func (x *SpendModel) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[97]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9120,7 +10108,7 @@ func (x *SpendModel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpendModel.ProtoReflect.Descriptor instead.
 func (*SpendModel) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{97}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *SpendModel) GetEngine() string {
@@ -9158,7 +10146,7 @@ type SpendHost struct {
 
 func (x *SpendHost) Reset() {
 	*x = SpendHost{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[98]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9170,7 +10158,7 @@ func (x *SpendHost) String() string {
 func (*SpendHost) ProtoMessage() {}
 
 func (x *SpendHost) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[98]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9183,7 +10171,7 @@ func (x *SpendHost) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpendHost.ProtoReflect.Descriptor instead.
 func (*SpendHost) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{98}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{109}
 }
 
 func (x *SpendHost) GetHost() string {
@@ -9223,7 +10211,7 @@ type SpendAgent struct {
 
 func (x *SpendAgent) Reset() {
 	*x = SpendAgent{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[99]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9235,7 +10223,7 @@ func (x *SpendAgent) String() string {
 func (*SpendAgent) ProtoMessage() {}
 
 func (x *SpendAgent) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[99]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9248,7 +10236,7 @@ func (x *SpendAgent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpendAgent.ProtoReflect.Descriptor instead.
 func (*SpendAgent) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{99}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{110}
 }
 
 func (x *SpendAgent) GetAgentId() string {
@@ -9301,7 +10289,7 @@ type SpendChild struct {
 
 func (x *SpendChild) Reset() {
 	*x = SpendChild{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[100]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9313,7 +10301,7 @@ func (x *SpendChild) String() string {
 func (*SpendChild) ProtoMessage() {}
 
 func (x *SpendChild) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[100]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9326,7 +10314,7 @@ func (x *SpendChild) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpendChild.ProtoReflect.Descriptor instead.
 func (*SpendChild) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{100}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{111}
 }
 
 func (x *SpendChild) GetId() string {
@@ -9425,7 +10413,7 @@ type GetSpendReportResponse struct {
 
 func (x *GetSpendReportResponse) Reset() {
 	*x = GetSpendReportResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[101]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9437,7 +10425,7 @@ func (x *GetSpendReportResponse) String() string {
 func (*GetSpendReportResponse) ProtoMessage() {}
 
 func (x *GetSpendReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[101]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9450,7 +10438,7 @@ func (x *GetSpendReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSpendReportResponse.ProtoReflect.Descriptor instead.
 func (*GetSpendReportResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{101}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{112}
 }
 
 func (x *GetSpendReportResponse) GetLevel() string {
@@ -9652,7 +10640,7 @@ type GetTenantSpendPolicyRequest struct {
 
 func (x *GetTenantSpendPolicyRequest) Reset() {
 	*x = GetTenantSpendPolicyRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[102]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9664,7 +10652,7 @@ func (x *GetTenantSpendPolicyRequest) String() string {
 func (*GetTenantSpendPolicyRequest) ProtoMessage() {}
 
 func (x *GetTenantSpendPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[102]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9677,7 +10665,7 @@ func (x *GetTenantSpendPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantSpendPolicyRequest.ProtoReflect.Descriptor instead.
 func (*GetTenantSpendPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{102}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{113}
 }
 
 func (x *GetTenantSpendPolicyRequest) GetTenantId() string {
@@ -9698,7 +10686,7 @@ type SetTenantSpendPolicyRequest struct {
 
 func (x *SetTenantSpendPolicyRequest) Reset() {
 	*x = SetTenantSpendPolicyRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[103]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9710,7 +10698,7 @@ func (x *SetTenantSpendPolicyRequest) String() string {
 func (*SetTenantSpendPolicyRequest) ProtoMessage() {}
 
 func (x *SetTenantSpendPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[103]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9723,7 +10711,7 @@ func (x *SetTenantSpendPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetTenantSpendPolicyRequest.ProtoReflect.Descriptor instead.
 func (*SetTenantSpendPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{103}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{114}
 }
 
 func (x *SetTenantSpendPolicyRequest) GetTenantId() string {
@@ -9755,7 +10743,7 @@ type TenantSpendPolicyResponse struct {
 
 func (x *TenantSpendPolicyResponse) Reset() {
 	*x = TenantSpendPolicyResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[104]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9767,7 +10755,7 @@ func (x *TenantSpendPolicyResponse) String() string {
 func (*TenantSpendPolicyResponse) ProtoMessage() {}
 
 func (x *TenantSpendPolicyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[104]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9780,7 +10768,7 @@ func (x *TenantSpendPolicyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantSpendPolicyResponse.ProtoReflect.Descriptor instead.
 func (*TenantSpendPolicyResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{104}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{115}
 }
 
 func (x *TenantSpendPolicyResponse) GetTenantId() string {
@@ -9844,7 +10832,7 @@ type InferenceRequest struct {
 
 func (x *InferenceRequest) Reset() {
 	*x = InferenceRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[105]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9856,7 +10844,7 @@ func (x *InferenceRequest) String() string {
 func (*InferenceRequest) ProtoMessage() {}
 
 func (x *InferenceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[105]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9869,7 +10857,7 @@ func (x *InferenceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InferenceRequest.ProtoReflect.Descriptor instead.
 func (*InferenceRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{105}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{116}
 }
 
 func (x *InferenceRequest) GetBackend() string {
@@ -9951,7 +10939,7 @@ type InferenceResponse struct {
 
 func (x *InferenceResponse) Reset() {
 	*x = InferenceResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[106]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9963,7 +10951,7 @@ func (x *InferenceResponse) String() string {
 func (*InferenceResponse) ProtoMessage() {}
 
 func (x *InferenceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[106]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9976,7 +10964,7 @@ func (x *InferenceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InferenceResponse.ProtoReflect.Descriptor instead.
 func (*InferenceResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{106}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{117}
 }
 
 func (x *InferenceResponse) GetContent() []*ContentBlock {
@@ -10019,7 +11007,7 @@ type InferenceChunk struct {
 
 func (x *InferenceChunk) Reset() {
 	*x = InferenceChunk{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[107]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10031,7 +11019,7 @@ func (x *InferenceChunk) String() string {
 func (*InferenceChunk) ProtoMessage() {}
 
 func (x *InferenceChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[107]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10044,7 +11032,7 @@ func (x *InferenceChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InferenceChunk.ProtoReflect.Descriptor instead.
 func (*InferenceChunk) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{107}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{118}
 }
 
 func (x *InferenceChunk) GetDelta() []*ContentBlock {
@@ -10089,7 +11077,7 @@ type TaskSpec struct {
 
 func (x *TaskSpec) Reset() {
 	*x = TaskSpec{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[108]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10101,7 +11089,7 @@ func (x *TaskSpec) String() string {
 func (*TaskSpec) ProtoMessage() {}
 
 func (x *TaskSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[108]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10114,7 +11102,7 @@ func (x *TaskSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskSpec.ProtoReflect.Descriptor instead.
 func (*TaskSpec) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{108}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *TaskSpec) GetTitle() string {
@@ -10170,7 +11158,7 @@ type SpawnChildJobRequest struct {
 
 func (x *SpawnChildJobRequest) Reset() {
 	*x = SpawnChildJobRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[109]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10182,7 +11170,7 @@ func (x *SpawnChildJobRequest) String() string {
 func (*SpawnChildJobRequest) ProtoMessage() {}
 
 func (x *SpawnChildJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[109]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10195,7 +11183,7 @@ func (x *SpawnChildJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpawnChildJobRequest.ProtoReflect.Descriptor instead.
 func (*SpawnChildJobRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{109}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{120}
 }
 
 func (x *SpawnChildJobRequest) GetParentJobId() string {
@@ -10264,7 +11252,7 @@ type SpawnChildJobResponse struct {
 
 func (x *SpawnChildJobResponse) Reset() {
 	*x = SpawnChildJobResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[110]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10276,7 +11264,7 @@ func (x *SpawnChildJobResponse) String() string {
 func (*SpawnChildJobResponse) ProtoMessage() {}
 
 func (x *SpawnChildJobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[110]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10289,7 +11277,7 @@ func (x *SpawnChildJobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpawnChildJobResponse.ProtoReflect.Descriptor instead.
 func (*SpawnChildJobResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{110}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *SpawnChildJobResponse) GetChildJobId() string {
@@ -10312,7 +11300,7 @@ type ArtifactRef struct {
 
 func (x *ArtifactRef) Reset() {
 	*x = ArtifactRef{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[111]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10324,7 +11312,7 @@ func (x *ArtifactRef) String() string {
 func (*ArtifactRef) ProtoMessage() {}
 
 func (x *ArtifactRef) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[111]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10337,7 +11325,7 @@ func (x *ArtifactRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArtifactRef.ProtoReflect.Descriptor instead.
 func (*ArtifactRef) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{111}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{122}
 }
 
 func (x *ArtifactRef) GetAgentId() string {
@@ -10384,7 +11372,7 @@ type Artifact struct {
 
 func (x *Artifact) Reset() {
 	*x = Artifact{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[112]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10396,7 +11384,7 @@ func (x *Artifact) String() string {
 func (*Artifact) ProtoMessage() {}
 
 func (x *Artifact) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[112]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10409,7 +11397,7 @@ func (x *Artifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Artifact.ProtoReflect.Descriptor instead.
 func (*Artifact) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{112}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{123}
 }
 
 func (x *Artifact) GetKind() string {
@@ -10473,7 +11461,7 @@ type SubmitTaskArtifactsRequest struct {
 
 func (x *SubmitTaskArtifactsRequest) Reset() {
 	*x = SubmitTaskArtifactsRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[113]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10485,7 +11473,7 @@ func (x *SubmitTaskArtifactsRequest) String() string {
 func (*SubmitTaskArtifactsRequest) ProtoMessage() {}
 
 func (x *SubmitTaskArtifactsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[113]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10498,7 +11486,7 @@ func (x *SubmitTaskArtifactsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitTaskArtifactsRequest.ProtoReflect.Descriptor instead.
 func (*SubmitTaskArtifactsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{113}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *SubmitTaskArtifactsRequest) GetTenantId() string {
@@ -10533,7 +11521,7 @@ type SubmitTaskArtifactsResponse struct {
 
 func (x *SubmitTaskArtifactsResponse) Reset() {
 	*x = SubmitTaskArtifactsResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[114]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10545,7 +11533,7 @@ func (x *SubmitTaskArtifactsResponse) String() string {
 func (*SubmitTaskArtifactsResponse) ProtoMessage() {}
 
 func (x *SubmitTaskArtifactsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[114]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10558,7 +11546,7 @@ func (x *SubmitTaskArtifactsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitTaskArtifactsResponse.ProtoReflect.Descriptor instead.
 func (*SubmitTaskArtifactsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{114}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *SubmitTaskArtifactsResponse) GetTaskId() string {
@@ -10597,7 +11585,7 @@ type ListTaskArtifactsRequest struct {
 
 func (x *ListTaskArtifactsRequest) Reset() {
 	*x = ListTaskArtifactsRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[115]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10609,7 +11597,7 @@ func (x *ListTaskArtifactsRequest) String() string {
 func (*ListTaskArtifactsRequest) ProtoMessage() {}
 
 func (x *ListTaskArtifactsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[115]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10622,7 +11610,7 @@ func (x *ListTaskArtifactsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTaskArtifactsRequest.ProtoReflect.Descriptor instead.
 func (*ListTaskArtifactsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{115}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *ListTaskArtifactsRequest) GetTenantId() string {
@@ -10681,7 +11669,7 @@ type ListTaskArtifactsResponse struct {
 
 func (x *ListTaskArtifactsResponse) Reset() {
 	*x = ListTaskArtifactsResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[116]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10693,7 +11681,7 @@ func (x *ListTaskArtifactsResponse) String() string {
 func (*ListTaskArtifactsResponse) ProtoMessage() {}
 
 func (x *ListTaskArtifactsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[116]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10706,7 +11694,7 @@ func (x *ListTaskArtifactsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTaskArtifactsResponse.ProtoReflect.Descriptor instead.
 func (*ListTaskArtifactsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{116}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *ListTaskArtifactsResponse) GetArtifacts() []*Artifact {
@@ -10763,7 +11751,7 @@ type GetTaskArtifactRequest struct {
 
 func (x *GetTaskArtifactRequest) Reset() {
 	*x = GetTaskArtifactRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[117]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10775,7 +11763,7 @@ func (x *GetTaskArtifactRequest) String() string {
 func (*GetTaskArtifactRequest) ProtoMessage() {}
 
 func (x *GetTaskArtifactRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[117]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10788,7 +11776,7 @@ func (x *GetTaskArtifactRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskArtifactRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskArtifactRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{117}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *GetTaskArtifactRequest) GetTenantId() string {
@@ -10822,7 +11810,7 @@ type GetTaskArtifactResponse struct {
 
 func (x *GetTaskArtifactResponse) Reset() {
 	*x = GetTaskArtifactResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[118]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10834,7 +11822,7 @@ func (x *GetTaskArtifactResponse) String() string {
 func (*GetTaskArtifactResponse) ProtoMessage() {}
 
 func (x *GetTaskArtifactResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[118]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10847,7 +11835,7 @@ func (x *GetTaskArtifactResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskArtifactResponse.ProtoReflect.Descriptor instead.
 func (*GetTaskArtifactResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{118}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *GetTaskArtifactResponse) GetArtifact() *Artifact {
@@ -10921,7 +11909,7 @@ type TurnFailureEvidence struct {
 
 func (x *TurnFailureEvidence) Reset() {
 	*x = TurnFailureEvidence{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[119]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10933,7 +11921,7 @@ func (x *TurnFailureEvidence) String() string {
 func (*TurnFailureEvidence) ProtoMessage() {}
 
 func (x *TurnFailureEvidence) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[119]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10946,7 +11934,7 @@ func (x *TurnFailureEvidence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TurnFailureEvidence.ProtoReflect.Descriptor instead.
 func (*TurnFailureEvidence) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{119}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *TurnFailureEvidence) GetTerminalReason() string {
@@ -11073,7 +12061,7 @@ type SpawnFaultEvidence struct {
 
 func (x *SpawnFaultEvidence) Reset() {
 	*x = SpawnFaultEvidence{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[120]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11085,7 +12073,7 @@ func (x *SpawnFaultEvidence) String() string {
 func (*SpawnFaultEvidence) ProtoMessage() {}
 
 func (x *SpawnFaultEvidence) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[120]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11098,7 +12086,7 @@ func (x *SpawnFaultEvidence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpawnFaultEvidence.ProtoReflect.Descriptor instead.
 func (*SpawnFaultEvidence) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{120}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *SpawnFaultEvidence) GetFaultClass() string {
@@ -11145,7 +12133,7 @@ type SessionWorkspace struct {
 
 func (x *SessionWorkspace) Reset() {
 	*x = SessionWorkspace{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[121]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11157,7 +12145,7 @@ func (x *SessionWorkspace) String() string {
 func (*SessionWorkspace) ProtoMessage() {}
 
 func (x *SessionWorkspace) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[121]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11170,7 +12158,7 @@ func (x *SessionWorkspace) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionWorkspace.ProtoReflect.Descriptor instead.
 func (*SessionWorkspace) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{121}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *SessionWorkspace) GetTenantId() string {
@@ -11218,7 +12206,7 @@ type GetCostSettingsRequest struct {
 
 func (x *GetCostSettingsRequest) Reset() {
 	*x = GetCostSettingsRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[122]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11230,7 +12218,7 @@ func (x *GetCostSettingsRequest) String() string {
 func (*GetCostSettingsRequest) ProtoMessage() {}
 
 func (x *GetCostSettingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[122]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11243,7 +12231,7 @@ func (x *GetCostSettingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCostSettingsRequest.ProtoReflect.Descriptor instead.
 func (*GetCostSettingsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{122}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *GetCostSettingsRequest) GetTenantId() string {
@@ -11267,7 +12255,7 @@ type SetCostSettingsRequest struct {
 
 func (x *SetCostSettingsRequest) Reset() {
 	*x = SetCostSettingsRequest{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[123]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11279,7 +12267,7 @@ func (x *SetCostSettingsRequest) String() string {
 func (*SetCostSettingsRequest) ProtoMessage() {}
 
 func (x *SetCostSettingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[123]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11292,7 +12280,7 @@ func (x *SetCostSettingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetCostSettingsRequest.ProtoReflect.Descriptor instead.
 func (*SetCostSettingsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{123}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *SetCostSettingsRequest) GetTenantId() string {
@@ -11339,7 +12327,7 @@ type CostSettingsResponse struct {
 
 func (x *CostSettingsResponse) Reset() {
 	*x = CostSettingsResponse{}
-	mi := &file_api_proto_orchestrator_proto_msgTypes[124]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11351,7 +12339,7 @@ func (x *CostSettingsResponse) String() string {
 func (*CostSettingsResponse) ProtoMessage() {}
 
 func (x *CostSettingsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_orchestrator_proto_msgTypes[124]
+	mi := &file_api_proto_orchestrator_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11364,7 +12352,7 @@ func (x *CostSettingsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CostSettingsResponse.ProtoReflect.Descriptor instead.
 func (*CostSettingsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{124}
+	return file_api_proto_orchestrator_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *CostSettingsResponse) GetTenantId() string {
@@ -12064,6 +13052,102 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
 	"\vnext_offset\x18\x06 \x01(\x05R\n" +
+	"nextOffset\"\x9a\x05\n" +
+	"!OrchestratorWorkflowAgentRoleSpec\x12\x12\n" +
+	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
+	"\abackend\x18\x02 \x01(\tR\abackend\x12\x14\n" +
+	"\x05model\x18\x03 \x01(\tR\x05model\x12\"\n" +
+	"\fcapabilities\x18\x04 \x03(\tR\fcapabilities\x12V\n" +
+	"\x03env\x18\x05 \x03(\v2D.quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.EnvEntryR\x03env\x12#\n" +
+	"\rsystem_prompt\x18\x06 \x01(\tR\fsystemPrompt\x12#\n" +
+	"\rprompt_append\x18\a \x01(\tR\fpromptAppend\x12\x1d\n" +
+	"\n" +
+	"mcp_scopes\x18\b \x03(\tR\tmcpScopes\x12\x14\n" +
+	"\x05count\x18\t \x01(\x05R\x05count\x12%\n" +
+	"\x0eworkspace_path\x18\n" +
+	" \x01(\tR\rworkspacePath\x12'\n" +
+	"\x0fpermission_mode\x18\v \x01(\tR\x0epermissionMode\x12)\n" +
+	"\x10skip_permissions\x18\f \x01(\bR\x0fskipPermissions\x12\x1c\n" +
+	"\tsandboxed\x18\r \x01(\bR\tsandboxed\x12'\n" +
+	"\x0fcontainer_image\x18\x0e \x01(\tR\x0econtainerImage\x12#\n" +
+	"\rhost_affinity\x18\x0f \x01(\tR\fhostAffinity\x12\x17\n" +
+	"\anum_ctx\x18\x10 \x01(\x05R\x06numCtx\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa1\x01\n" +
+	"#OrchestratorWorkflowReviewCriterion\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
+	"\tvalidator\x18\x02 \x01(\tR\tvalidator\x12\x16\n" +
+	"\x06config\x18\x03 \x01(\tR\x06config\x12\x1a\n" +
+	"\brequired\x18\x04 \x01(\bR\brequired\x12\x14\n" +
+	"\x05phase\x18\x05 \x01(\tR\x05phase\"\xc1\x01\n" +
+	")OrchestratorWorkflowPeerMessagingSettings\x12(\n" +
+	"\x10max_message_size\x18\x01 \x01(\x05R\x0emaxMessageSize\x12$\n" +
+	"\x0emax_inbox_size\x18\x02 \x01(\x05R\fmaxInboxSize\x12'\n" +
+	"\x0foverflow_action\x18\x03 \x01(\tR\x0eoverflowAction\x12\x1b\n" +
+	"\tinbox_ttl\x18\x04 \x01(\tR\binboxTtl\"\x95\x01\n" +
+	"$OrchestratorWorkflowFileLockSettings\x12\x1b\n" +
+	"\tlease_ttl\x18\x01 \x01(\tR\bleaseTtl\x12-\n" +
+	"\x12heartbeat_interval\x18\x02 \x01(\tR\x11heartbeatInterval\x12!\n" +
+	"\fmax_renewals\x18\x03 \x01(\x05R\vmaxRenewals\"\xc3\x01\n" +
+	"$OrchestratorWorkflowVectorDBSettings\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x1d\n" +
+	"\n" +
+	"index_type\x18\x02 \x01(\tR\tindexType\x12\x1d\n" +
+	"\n" +
+	"auto_index\x18\x03 \x01(\bR\tautoIndex\x12\x1a\n" +
+	"\btriggers\x18\x04 \x03(\tR\btriggers\x12'\n" +
+	"\x0fgpu_accelerated\x18\x05 \x01(\bR\x0egpuAccelerated\"\xac\x01\n" +
+	"'OrchestratorWorkflowCostControlSettings\x12+\n" +
+	"\x12max_tokens_per_job\x18\x01 \x01(\x03R\x0fmaxTokensPerJob\x12/\n" +
+	"\x14max_tokens_per_agent\x18\x02 \x01(\x03R\x11maxTokensPerAgent\x12#\n" +
+	"\rbudget_action\x18\x03 \x01(\tR\fbudgetAction\"\x95\x01\n" +
+	"$OrchestratorWorkflowRecoverySettings\x12!\n" +
+	"\fauto_restart\x18\x01 \x01(\bR\vautoRestart\x12!\n" +
+	"\fmax_restarts\x18\x02 \x01(\x05R\vmaxRestarts\x12'\n" +
+	"\x0frestart_backoff\x18\x03 \x01(\tR\x0erestartBackoff\"\xc1\a\n" +
+	"\x1cOrchestratorWorkflowSettings\x12%\n" +
+	"\x0emax_iterations\x18\x01 \x01(\x05R\rmaxIterations\x12\x1a\n" +
+	"\btopology\x18\x02 \x01(\tR\btopology\x12\x1c\n" +
+	"\tisolation\x18\x03 \x01(\tR\tisolation\x12j\n" +
+	"\x0epeer_messaging\x18\x04 \x01(\v2C.quicbaas.orchestrator.v1.OrchestratorWorkflowPeerMessagingSettingsR\rpeerMessaging\x12a\n" +
+	"\ffile_locking\x18\x05 \x01(\v2>.quicbaas.orchestrator.v1.OrchestratorWorkflowFileLockSettingsR\vfileLocking\x12[\n" +
+	"\tvector_db\x18\x06 \x01(\v2>.quicbaas.orchestrator.v1.OrchestratorWorkflowVectorDBSettingsR\bvectorDb\x12\x1c\n" +
+	"\tverbosity\x18\a \x01(\tR\tverbosity\x12\x17\n" +
+	"\anum_ctx\x18\b \x01(\x05R\x06numCtx\x12\x14\n" +
+	"\x05hooks\x18\t \x01(\tR\x05hooks\x12'\n" +
+	"\x0fmax_parallelism\x18\n" +
+	" \x01(\x05R\x0emaxParallelism\x12#\n" +
+	"\rpoll_interval\x18\v \x01(\tR\fpollInterval\x12(\n" +
+	"\x10timeout_per_item\x18\f \x01(\tR\x0etimeoutPerItem\x12#\n" +
+	"\rtotal_timeout\x18\r \x01(\tR\ftotalTimeout\x12f\n" +
+	"\x0freview_criteria\x18\x0e \x03(\v2=.quicbaas.orchestrator.v1.OrchestratorWorkflowReviewCriterionR\x0ereviewCriteria\x12f\n" +
+	"\rcost_controls\x18\x0f \x01(\v2A.quicbaas.orchestrator.v1.OrchestratorWorkflowCostControlSettingsR\fcostControls\x12Z\n" +
+	"\brecovery\x18\x10 \x01(\v2>.quicbaas.orchestrator.v1.OrchestratorWorkflowRecoverySettingsR\brecovery\"\xcf\x02\n" +
+	"\x1eOrchestratorWorkflowDefinition\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\x12S\n" +
+	"\x06agents\x18\x04 \x03(\v2;.quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpecR\x06agents\x12R\n" +
+	"\bsettings\x18\x05 \x01(\v26.quicbaas.orchestrator.v1.OrchestratorWorkflowSettingsR\bsettings\x12\x1b\n" +
+	"\ttenant_id\x18\x06 \x01(\tR\btenantId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\a \x01(\tR\tprojectId\"\xc2\x01\n" +
+	" OrchestratorListWorkflowsRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x12\n" +
+	"\x04sort\x18\x06 \x01(\tR\x04sort\x12\f\n" +
+	"\x01q\x18\a \x01(\tR\x01q\"\xe0\x01\n" +
+	"!OrchestratorListWorkflowsResponse\x12V\n" +
+	"\tworkflows\x18\x01 \x03(\v28.quicbaas.orchestrator.v1.OrchestratorWorkflowDefinitionR\tworkflows\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x1f\n" +
+	"\vnext_offset\x18\x05 \x01(\x05R\n" +
 	"nextOffset\"8\n" +
 	"\x19OrchestratorHealthRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\"\x9b\x01\n" +
@@ -12509,7 +13593,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x10TRUST_LEVEL_NONE\x10\x01\x12\x16\n" +
 	"\x12TRUST_LEVEL_PINNED\x10\x02\x12\x18\n" +
 	"\x14TRUST_LEVEL_ATTESTED\x10\x03\x12\x18\n" +
-	"\x14TRUST_LEVEL_MEASURED\x10\x042\x940\n" +
+	"\x14TRUST_LEVEL_MEASURED\x10\x042\xbf1\n" +
 	"\x13OrchestratorService\x12\x85\x01\n" +
 	"\fSpawnSession\x12-.quicbaas.orchestrator.v1.SpawnSessionRequest\x1a..quicbaas.orchestrator.v1.SpawnSessionResponse\"\x16\xc2\xf3\x18\x12orchestrator:spawn\x12\x89\x01\n" +
 	"\rPromptSession\x12..quicbaas.orchestrator.v1.PromptSessionRequest\x1a/.quicbaas.orchestrator.v1.PromptSessionResponse\"\x17\xc2\xf3\x18\x13orchestrator:prompt\x12\x89\x01\n" +
@@ -12534,7 +13618,8 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\bListJobs\x125.quicbaas.orchestrator.v1.OrchestratorListJobsRequest\x1a6.quicbaas.orchestrator.v1.OrchestratorListJobsResponse\"\x19\xc2\xf3\x18\x15orchestrator:job_list\x12\x8a\x01\n" +
 	"\x12SubscribeJobEvents\x123.quicbaas.orchestrator.v1.SubscribeJobEventsRequest\x1a\".quicbaas.orchestrator.v1.JobEvent\"\x19\xc2\xf3\x18\x15orchestrator:job_read0\x01\x12\xa4\x01\n" +
 	"\fListBackends\x129.quicbaas.orchestrator.v1.OrchestratorListBackendsRequest\x1a:.quicbaas.orchestrator.v1.OrchestratorListBackendsResponse\"\x1d\xc2\xf3\x18\x19orchestrator:backend_list\x12\x9b\x01\n" +
-	"\vListRunners\x128.quicbaas.orchestrator.v1.OrchestratorListRunnersRequest\x1a9.quicbaas.orchestrator.v1.OrchestratorListRunnersResponse\"\x17\xc2\xf3\x18\x13orchestrator:status\x12\x8c\x01\n" +
+	"\vListRunners\x128.quicbaas.orchestrator.v1.OrchestratorListRunnersRequest\x1a9.quicbaas.orchestrator.v1.OrchestratorListRunnersResponse\"\x17\xc2\xf3\x18\x13orchestrator:status\x12\xa8\x01\n" +
+	"\rListWorkflows\x12:.quicbaas.orchestrator.v1.OrchestratorListWorkflowsRequest\x1a;.quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse\"\x1e\xc2\xf3\x18\x1aorchestrator:workflow_read\x12\x8c\x01\n" +
 	"\x06Health\x123.quicbaas.orchestrator.v1.OrchestratorHealthRequest\x1a4.quicbaas.orchestrator.v1.OrchestratorHealthResponse\"\x17\xc2\xf3\x18\x13orchestrator:health\x12\x9d\x01\n" +
 	"\x11RegisterFleetNode\x122.quicbaas.orchestrator.v1.RegisterFleetNodeRequest\x1a3.quicbaas.orchestrator.v1.RegisterFleetNodeResponse\"\x1f\xc2\xf3\x18\x1borchestrator:agent_register\x12\x8a\x01\n" +
 	"\fGetFleetNode\x12-.quicbaas.orchestrator.v1.GetFleetNodeRequest\x1a..quicbaas.orchestrator.v1.GetFleetNodeResponse\"\x1b\xc2\xf3\x18\x17orchestrator:agent_read\x12\x90\x01\n" +
@@ -12570,228 +13655,240 @@ func file_api_proto_orchestrator_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_api_proto_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 141)
+var file_api_proto_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 153)
 var file_api_proto_orchestrator_proto_goTypes = []any{
-	(TaskStatus)(0),                          // 0: quicbaas.orchestrator.v1.TaskStatus
-	(FleetNodeStatus)(0),                     // 1: quicbaas.orchestrator.v1.FleetNodeStatus
-	(SessionState)(0),                        // 2: quicbaas.orchestrator.v1.SessionState
-	(SandboxMode)(0),                         // 3: quicbaas.orchestrator.v1.SandboxMode
-	(TrustLevel)(0),                          // 4: quicbaas.orchestrator.v1.TrustLevel
-	(*MCPServerConfig)(nil),                  // 5: quicbaas.orchestrator.v1.MCPServerConfig
-	(*ContainerMount)(nil),                   // 6: quicbaas.orchestrator.v1.ContainerMount
-	(*ContainerSpec)(nil),                    // 7: quicbaas.orchestrator.v1.ContainerSpec
-	(*ContentBlock)(nil),                     // 8: quicbaas.orchestrator.v1.ContentBlock
-	(*SessionInfo)(nil),                      // 9: quicbaas.orchestrator.v1.SessionInfo
-	(*Task)(nil),                             // 10: quicbaas.orchestrator.v1.Task
-	(*TaskRouting)(nil),                      // 11: quicbaas.orchestrator.v1.TaskRouting
-	(*TaskSource)(nil),                       // 12: quicbaas.orchestrator.v1.TaskSource
-	(*TaskResult)(nil),                       // 13: quicbaas.orchestrator.v1.TaskResult
-	(*TaskFilter)(nil),                       // 14: quicbaas.orchestrator.v1.TaskFilter
-	(*OrchestratorWorkItem)(nil),             // 15: quicbaas.orchestrator.v1.OrchestratorWorkItem
-	(*FleetNode)(nil),                        // 16: quicbaas.orchestrator.v1.FleetNode
-	(*FleetNodeFilter)(nil),                  // 17: quicbaas.orchestrator.v1.FleetNodeFilter
-	(*BackendCapabilities)(nil),              // 18: quicbaas.orchestrator.v1.BackendCapabilities
-	(*AgentBackendInfo)(nil),                 // 19: quicbaas.orchestrator.v1.AgentBackendInfo
-	(*SessionHealthResult)(nil),              // 20: quicbaas.orchestrator.v1.SessionHealthResult
-	(*HealthCheckReport)(nil),                // 21: quicbaas.orchestrator.v1.HealthCheckReport
-	(*SpawnSessionRequest)(nil),              // 22: quicbaas.orchestrator.v1.SpawnSessionRequest
-	(*SigningRelaySpec)(nil),                 // 23: quicbaas.orchestrator.v1.SigningRelaySpec
-	(*WorkspaceStoragePlan)(nil),             // 24: quicbaas.orchestrator.v1.WorkspaceStoragePlan
-	(*SpawnSessionResponse)(nil),             // 25: quicbaas.orchestrator.v1.SpawnSessionResponse
-	(*PromptSessionRequest)(nil),             // 26: quicbaas.orchestrator.v1.PromptSessionRequest
-	(*PromptSessionResponse)(nil),            // 27: quicbaas.orchestrator.v1.PromptSessionResponse
-	(*SessionStatusRequest)(nil),             // 28: quicbaas.orchestrator.v1.SessionStatusRequest
-	(*SessionStatusResponse)(nil),            // 29: quicbaas.orchestrator.v1.SessionStatusResponse
-	(*CloseSessionRequest)(nil),              // 30: quicbaas.orchestrator.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil),             // 31: quicbaas.orchestrator.v1.CloseSessionResponse
-	(*RotateSessionAccountRequest)(nil),      // 32: quicbaas.orchestrator.v1.RotateSessionAccountRequest
-	(*RotateSessionAccountResponse)(nil),     // 33: quicbaas.orchestrator.v1.RotateSessionAccountResponse
-	(*ListSessionsRequest)(nil),              // 34: quicbaas.orchestrator.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),             // 35: quicbaas.orchestrator.v1.ListSessionsResponse
-	(*CreateTaskRequest)(nil),                // 36: quicbaas.orchestrator.v1.CreateTaskRequest
-	(*CreateTaskResponse)(nil),               // 37: quicbaas.orchestrator.v1.CreateTaskResponse
-	(*GetTaskRequest)(nil),                   // 38: quicbaas.orchestrator.v1.GetTaskRequest
-	(*GetTaskResponse)(nil),                  // 39: quicbaas.orchestrator.v1.GetTaskResponse
-	(*ListTasksRequest)(nil),                 // 40: quicbaas.orchestrator.v1.ListTasksRequest
-	(*ListTasksResponse)(nil),                // 41: quicbaas.orchestrator.v1.ListTasksResponse
-	(*ClaimTaskRequest)(nil),                 // 42: quicbaas.orchestrator.v1.ClaimTaskRequest
-	(*ClaimTaskResponse)(nil),                // 43: quicbaas.orchestrator.v1.ClaimTaskResponse
-	(*BlockTaskRequest)(nil),                 // 44: quicbaas.orchestrator.v1.BlockTaskRequest
-	(*BlockTaskResponse)(nil),                // 45: quicbaas.orchestrator.v1.BlockTaskResponse
-	(*ReadmitTaskRequest)(nil),               // 46: quicbaas.orchestrator.v1.ReadmitTaskRequest
-	(*ReadmitTaskResponse)(nil),              // 47: quicbaas.orchestrator.v1.ReadmitTaskResponse
-	(*DeleteTaskRequest)(nil),                // 48: quicbaas.orchestrator.v1.DeleteTaskRequest
-	(*DeleteTaskResponse)(nil),               // 49: quicbaas.orchestrator.v1.DeleteTaskResponse
-	(*CompleteTaskRequest)(nil),              // 50: quicbaas.orchestrator.v1.CompleteTaskRequest
-	(*CompleteTaskResponse)(nil),             // 51: quicbaas.orchestrator.v1.CompleteTaskResponse
-	(*DecomposeTaskRequest)(nil),             // 52: quicbaas.orchestrator.v1.DecomposeTaskRequest
-	(*DecomposeTaskResponse)(nil),            // 53: quicbaas.orchestrator.v1.DecomposeTaskResponse
-	(*OrchestratorStartJobRequest)(nil),      // 54: quicbaas.orchestrator.v1.OrchestratorStartJobRequest
-	(*OrchestratorStartJobResponse)(nil),     // 55: quicbaas.orchestrator.v1.OrchestratorStartJobResponse
-	(*OrchestratorGetJobStatusRequest)(nil),  // 56: quicbaas.orchestrator.v1.OrchestratorGetJobStatusRequest
-	(*OrchestratorGetJobStatusResponse)(nil), // 57: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse
-	(*OrchestratorJobVerification)(nil),      // 58: quicbaas.orchestrator.v1.OrchestratorJobVerification
-	(*OrchestratorJobStage)(nil),             // 59: quicbaas.orchestrator.v1.OrchestratorJobStage
-	(*OrchestratorJobAttempt)(nil),           // 60: quicbaas.orchestrator.v1.OrchestratorJobAttempt
-	(*OrchestratorJobReviewRound)(nil),       // 61: quicbaas.orchestrator.v1.OrchestratorJobReviewRound
-	(*OrchestratorJobDelivery)(nil),          // 62: quicbaas.orchestrator.v1.OrchestratorJobDelivery
-	(*OrchestratorAuditEvent)(nil),           // 63: quicbaas.orchestrator.v1.OrchestratorAuditEvent
-	(*OrchestratorCancelJobRequest)(nil),     // 64: quicbaas.orchestrator.v1.OrchestratorCancelJobRequest
-	(*OrchestratorCancelJobResponse)(nil),    // 65: quicbaas.orchestrator.v1.OrchestratorCancelJobResponse
-	(*OrchestratorListJobsRequest)(nil),      // 66: quicbaas.orchestrator.v1.OrchestratorListJobsRequest
-	(*OrchestratorListJobsResponse)(nil),     // 67: quicbaas.orchestrator.v1.OrchestratorListJobsResponse
-	(*OrchestratorJobSummary)(nil),           // 68: quicbaas.orchestrator.v1.OrchestratorJobSummary
-	(*SubscribeJobEventsRequest)(nil),        // 69: quicbaas.orchestrator.v1.SubscribeJobEventsRequest
-	(*JobEvent)(nil),                         // 70: quicbaas.orchestrator.v1.JobEvent
-	(*OrchestratorListBackendsRequest)(nil),  // 71: quicbaas.orchestrator.v1.OrchestratorListBackendsRequest
-	(*OrchestratorListBackendsResponse)(nil), // 72: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse
-	(*OrchestratorJobStateSpec)(nil),         // 73: quicbaas.orchestrator.v1.OrchestratorJobStateSpec
-	(*OrchestratorJobRunner)(nil),            // 74: quicbaas.orchestrator.v1.OrchestratorJobRunner
-	(*OrchestratorListRunnersRequest)(nil),   // 75: quicbaas.orchestrator.v1.OrchestratorListRunnersRequest
-	(*OrchestratorListRunnersResponse)(nil),  // 76: quicbaas.orchestrator.v1.OrchestratorListRunnersResponse
-	(*OrchestratorHealthRequest)(nil),        // 77: quicbaas.orchestrator.v1.OrchestratorHealthRequest
-	(*OrchestratorHealthResponse)(nil),       // 78: quicbaas.orchestrator.v1.OrchestratorHealthResponse
-	(*RegisterFleetNodeRequest)(nil),         // 79: quicbaas.orchestrator.v1.RegisterFleetNodeRequest
-	(*RegisterFleetNodeResponse)(nil),        // 80: quicbaas.orchestrator.v1.RegisterFleetNodeResponse
-	(*GetFleetNodeRequest)(nil),              // 81: quicbaas.orchestrator.v1.GetFleetNodeRequest
-	(*GetFleetNodeResponse)(nil),             // 82: quicbaas.orchestrator.v1.GetFleetNodeResponse
-	(*ListFleetNodesRequest)(nil),            // 83: quicbaas.orchestrator.v1.ListFleetNodesRequest
-	(*ListFleetNodesResponse)(nil),           // 84: quicbaas.orchestrator.v1.ListFleetNodesResponse
-	(*RemoveFleetNodeRequest)(nil),           // 85: quicbaas.orchestrator.v1.RemoveFleetNodeRequest
-	(*RemoveFleetNodeResponse)(nil),          // 86: quicbaas.orchestrator.v1.RemoveFleetNodeResponse
-	(*FleetNodeHeartbeatRequest)(nil),        // 87: quicbaas.orchestrator.v1.FleetNodeHeartbeatRequest
-	(*FleetNodeHeartbeatResponse)(nil),       // 88: quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse
-	(*PushEventRequest)(nil),                 // 89: quicbaas.orchestrator.v1.PushEventRequest
-	(*PushEventAck)(nil),                     // 90: quicbaas.orchestrator.v1.PushEventAck
-	(*SubscribeSessionRequest)(nil),          // 91: quicbaas.orchestrator.v1.SubscribeSessionRequest
-	(*SessionEventEnvelope)(nil),             // 92: quicbaas.orchestrator.v1.SessionEventEnvelope
-	(*GetSessionConversationRequest)(nil),    // 93: quicbaas.orchestrator.v1.GetSessionConversationRequest
-	(*SessionToolUse)(nil),                   // 94: quicbaas.orchestrator.v1.SessionToolUse
-	(*SessionTurn)(nil),                      // 95: quicbaas.orchestrator.v1.SessionTurn
-	(*GetSessionConversationResponse)(nil),   // 96: quicbaas.orchestrator.v1.GetSessionConversationResponse
-	(*GetSpendReportRequest)(nil),            // 97: quicbaas.orchestrator.v1.GetSpendReportRequest
-	(*SpendWindowStatus)(nil),                // 98: quicbaas.orchestrator.v1.SpendWindowStatus
-	(*SpendBreakerVerdict)(nil),              // 99: quicbaas.orchestrator.v1.SpendBreakerVerdict
-	(*SpendTotals)(nil),                      // 100: quicbaas.orchestrator.v1.SpendTotals
-	(*SpendAccount)(nil),                     // 101: quicbaas.orchestrator.v1.SpendAccount
-	(*SpendModel)(nil),                       // 102: quicbaas.orchestrator.v1.SpendModel
-	(*SpendHost)(nil),                        // 103: quicbaas.orchestrator.v1.SpendHost
-	(*SpendAgent)(nil),                       // 104: quicbaas.orchestrator.v1.SpendAgent
-	(*SpendChild)(nil),                       // 105: quicbaas.orchestrator.v1.SpendChild
-	(*GetSpendReportResponse)(nil),           // 106: quicbaas.orchestrator.v1.GetSpendReportResponse
-	(*GetTenantSpendPolicyRequest)(nil),      // 107: quicbaas.orchestrator.v1.GetTenantSpendPolicyRequest
-	(*SetTenantSpendPolicyRequest)(nil),      // 108: quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest
-	(*TenantSpendPolicyResponse)(nil),        // 109: quicbaas.orchestrator.v1.TenantSpendPolicyResponse
-	(*InferenceRequest)(nil),                 // 110: quicbaas.orchestrator.v1.InferenceRequest
-	(*InferenceResponse)(nil),                // 111: quicbaas.orchestrator.v1.InferenceResponse
-	(*InferenceChunk)(nil),                   // 112: quicbaas.orchestrator.v1.InferenceChunk
-	(*TaskSpec)(nil),                         // 113: quicbaas.orchestrator.v1.TaskSpec
-	(*SpawnChildJobRequest)(nil),             // 114: quicbaas.orchestrator.v1.SpawnChildJobRequest
-	(*SpawnChildJobResponse)(nil),            // 115: quicbaas.orchestrator.v1.SpawnChildJobResponse
-	(*ArtifactRef)(nil),                      // 116: quicbaas.orchestrator.v1.ArtifactRef
-	(*Artifact)(nil),                         // 117: quicbaas.orchestrator.v1.Artifact
-	(*SubmitTaskArtifactsRequest)(nil),       // 118: quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest
-	(*SubmitTaskArtifactsResponse)(nil),      // 119: quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse
-	(*ListTaskArtifactsRequest)(nil),         // 120: quicbaas.orchestrator.v1.ListTaskArtifactsRequest
-	(*ListTaskArtifactsResponse)(nil),        // 121: quicbaas.orchestrator.v1.ListTaskArtifactsResponse
-	(*GetTaskArtifactRequest)(nil),           // 122: quicbaas.orchestrator.v1.GetTaskArtifactRequest
-	(*GetTaskArtifactResponse)(nil),          // 123: quicbaas.orchestrator.v1.GetTaskArtifactResponse
-	(*TurnFailureEvidence)(nil),              // 124: quicbaas.orchestrator.v1.TurnFailureEvidence
-	(*SpawnFaultEvidence)(nil),               // 125: quicbaas.orchestrator.v1.SpawnFaultEvidence
-	(*SessionWorkspace)(nil),                 // 126: quicbaas.orchestrator.v1.SessionWorkspace
-	(*GetCostSettingsRequest)(nil),           // 127: quicbaas.orchestrator.v1.GetCostSettingsRequest
-	(*SetCostSettingsRequest)(nil),           // 128: quicbaas.orchestrator.v1.SetCostSettingsRequest
-	(*CostSettingsResponse)(nil),             // 129: quicbaas.orchestrator.v1.CostSettingsResponse
-	nil,                                      // 130: quicbaas.orchestrator.v1.MCPServerConfig.EnvEntry
-	nil,                                      // 131: quicbaas.orchestrator.v1.ContainerSpec.EnvEntry
-	nil,                                      // 132: quicbaas.orchestrator.v1.Task.MetadataEntry
-	nil,                                      // 133: quicbaas.orchestrator.v1.TaskResult.MetadataEntry
-	nil,                                      // 134: quicbaas.orchestrator.v1.FleetNode.MetadataEntry
-	nil,                                      // 135: quicbaas.orchestrator.v1.SpawnSessionRequest.EnvEntry
-	nil,                                      // 136: quicbaas.orchestrator.v1.SpawnSessionRequest.ExpectedPcrsEntry
-	nil,                                      // 137: quicbaas.orchestrator.v1.CreateTaskRequest.MetadataEntry
-	nil,                                      // 138: quicbaas.orchestrator.v1.JobEvent.MetadataEntry
-	nil,                                      // 139: quicbaas.orchestrator.v1.RegisterFleetNodeRequest.MetadataEntry
-	nil,                                      // 140: quicbaas.orchestrator.v1.InferenceRequest.MetadataEntry
-	nil,                                      // 141: quicbaas.orchestrator.v1.Artifact.MetadataEntry
-	nil,                                      // 142: quicbaas.orchestrator.v1.SessionWorkspace.SpecFilesEntry
-	nil,                                      // 143: quicbaas.orchestrator.v1.SetCostSettingsRequest.EnginePowerWattsEntry
-	nil,                                      // 144: quicbaas.orchestrator.v1.CostSettingsResponse.EnginePowerWattsEntry
-	nil,                                      // 145: quicbaas.orchestrator.v1.CostSettingsResponse.EffectiveEnginePowerWattsEntry
-	(*timestamppb.Timestamp)(nil),            // 146: google.protobuf.Timestamp
-	(*AgentAttempt)(nil),                     // 147: quicbaas.agents.v1.AgentAttempt
-	(*AgentRef)(nil),                         // 148: quicbaas.agents.v1.AgentRef
-	(*SpendLimits)(nil),                      // 149: quicbaas.spend.v1.SpendLimits
+	(TaskStatus)(0),                                   // 0: quicbaas.orchestrator.v1.TaskStatus
+	(FleetNodeStatus)(0),                              // 1: quicbaas.orchestrator.v1.FleetNodeStatus
+	(SessionState)(0),                                 // 2: quicbaas.orchestrator.v1.SessionState
+	(SandboxMode)(0),                                  // 3: quicbaas.orchestrator.v1.SandboxMode
+	(TrustLevel)(0),                                   // 4: quicbaas.orchestrator.v1.TrustLevel
+	(*MCPServerConfig)(nil),                           // 5: quicbaas.orchestrator.v1.MCPServerConfig
+	(*ContainerMount)(nil),                            // 6: quicbaas.orchestrator.v1.ContainerMount
+	(*ContainerSpec)(nil),                             // 7: quicbaas.orchestrator.v1.ContainerSpec
+	(*ContentBlock)(nil),                              // 8: quicbaas.orchestrator.v1.ContentBlock
+	(*SessionInfo)(nil),                               // 9: quicbaas.orchestrator.v1.SessionInfo
+	(*Task)(nil),                                      // 10: quicbaas.orchestrator.v1.Task
+	(*TaskRouting)(nil),                               // 11: quicbaas.orchestrator.v1.TaskRouting
+	(*TaskSource)(nil),                                // 12: quicbaas.orchestrator.v1.TaskSource
+	(*TaskResult)(nil),                                // 13: quicbaas.orchestrator.v1.TaskResult
+	(*TaskFilter)(nil),                                // 14: quicbaas.orchestrator.v1.TaskFilter
+	(*OrchestratorWorkItem)(nil),                      // 15: quicbaas.orchestrator.v1.OrchestratorWorkItem
+	(*FleetNode)(nil),                                 // 16: quicbaas.orchestrator.v1.FleetNode
+	(*FleetNodeFilter)(nil),                           // 17: quicbaas.orchestrator.v1.FleetNodeFilter
+	(*BackendCapabilities)(nil),                       // 18: quicbaas.orchestrator.v1.BackendCapabilities
+	(*AgentBackendInfo)(nil),                          // 19: quicbaas.orchestrator.v1.AgentBackendInfo
+	(*SessionHealthResult)(nil),                       // 20: quicbaas.orchestrator.v1.SessionHealthResult
+	(*HealthCheckReport)(nil),                         // 21: quicbaas.orchestrator.v1.HealthCheckReport
+	(*SpawnSessionRequest)(nil),                       // 22: quicbaas.orchestrator.v1.SpawnSessionRequest
+	(*SigningRelaySpec)(nil),                          // 23: quicbaas.orchestrator.v1.SigningRelaySpec
+	(*WorkspaceStoragePlan)(nil),                      // 24: quicbaas.orchestrator.v1.WorkspaceStoragePlan
+	(*SpawnSessionResponse)(nil),                      // 25: quicbaas.orchestrator.v1.SpawnSessionResponse
+	(*PromptSessionRequest)(nil),                      // 26: quicbaas.orchestrator.v1.PromptSessionRequest
+	(*PromptSessionResponse)(nil),                     // 27: quicbaas.orchestrator.v1.PromptSessionResponse
+	(*SessionStatusRequest)(nil),                      // 28: quicbaas.orchestrator.v1.SessionStatusRequest
+	(*SessionStatusResponse)(nil),                     // 29: quicbaas.orchestrator.v1.SessionStatusResponse
+	(*CloseSessionRequest)(nil),                       // 30: quicbaas.orchestrator.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),                      // 31: quicbaas.orchestrator.v1.CloseSessionResponse
+	(*RotateSessionAccountRequest)(nil),               // 32: quicbaas.orchestrator.v1.RotateSessionAccountRequest
+	(*RotateSessionAccountResponse)(nil),              // 33: quicbaas.orchestrator.v1.RotateSessionAccountResponse
+	(*ListSessionsRequest)(nil),                       // 34: quicbaas.orchestrator.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),                      // 35: quicbaas.orchestrator.v1.ListSessionsResponse
+	(*CreateTaskRequest)(nil),                         // 36: quicbaas.orchestrator.v1.CreateTaskRequest
+	(*CreateTaskResponse)(nil),                        // 37: quicbaas.orchestrator.v1.CreateTaskResponse
+	(*GetTaskRequest)(nil),                            // 38: quicbaas.orchestrator.v1.GetTaskRequest
+	(*GetTaskResponse)(nil),                           // 39: quicbaas.orchestrator.v1.GetTaskResponse
+	(*ListTasksRequest)(nil),                          // 40: quicbaas.orchestrator.v1.ListTasksRequest
+	(*ListTasksResponse)(nil),                         // 41: quicbaas.orchestrator.v1.ListTasksResponse
+	(*ClaimTaskRequest)(nil),                          // 42: quicbaas.orchestrator.v1.ClaimTaskRequest
+	(*ClaimTaskResponse)(nil),                         // 43: quicbaas.orchestrator.v1.ClaimTaskResponse
+	(*BlockTaskRequest)(nil),                          // 44: quicbaas.orchestrator.v1.BlockTaskRequest
+	(*BlockTaskResponse)(nil),                         // 45: quicbaas.orchestrator.v1.BlockTaskResponse
+	(*ReadmitTaskRequest)(nil),                        // 46: quicbaas.orchestrator.v1.ReadmitTaskRequest
+	(*ReadmitTaskResponse)(nil),                       // 47: quicbaas.orchestrator.v1.ReadmitTaskResponse
+	(*DeleteTaskRequest)(nil),                         // 48: quicbaas.orchestrator.v1.DeleteTaskRequest
+	(*DeleteTaskResponse)(nil),                        // 49: quicbaas.orchestrator.v1.DeleteTaskResponse
+	(*CompleteTaskRequest)(nil),                       // 50: quicbaas.orchestrator.v1.CompleteTaskRequest
+	(*CompleteTaskResponse)(nil),                      // 51: quicbaas.orchestrator.v1.CompleteTaskResponse
+	(*DecomposeTaskRequest)(nil),                      // 52: quicbaas.orchestrator.v1.DecomposeTaskRequest
+	(*DecomposeTaskResponse)(nil),                     // 53: quicbaas.orchestrator.v1.DecomposeTaskResponse
+	(*OrchestratorStartJobRequest)(nil),               // 54: quicbaas.orchestrator.v1.OrchestratorStartJobRequest
+	(*OrchestratorStartJobResponse)(nil),              // 55: quicbaas.orchestrator.v1.OrchestratorStartJobResponse
+	(*OrchestratorGetJobStatusRequest)(nil),           // 56: quicbaas.orchestrator.v1.OrchestratorGetJobStatusRequest
+	(*OrchestratorGetJobStatusResponse)(nil),          // 57: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse
+	(*OrchestratorJobVerification)(nil),               // 58: quicbaas.orchestrator.v1.OrchestratorJobVerification
+	(*OrchestratorJobStage)(nil),                      // 59: quicbaas.orchestrator.v1.OrchestratorJobStage
+	(*OrchestratorJobAttempt)(nil),                    // 60: quicbaas.orchestrator.v1.OrchestratorJobAttempt
+	(*OrchestratorJobReviewRound)(nil),                // 61: quicbaas.orchestrator.v1.OrchestratorJobReviewRound
+	(*OrchestratorJobDelivery)(nil),                   // 62: quicbaas.orchestrator.v1.OrchestratorJobDelivery
+	(*OrchestratorAuditEvent)(nil),                    // 63: quicbaas.orchestrator.v1.OrchestratorAuditEvent
+	(*OrchestratorCancelJobRequest)(nil),              // 64: quicbaas.orchestrator.v1.OrchestratorCancelJobRequest
+	(*OrchestratorCancelJobResponse)(nil),             // 65: quicbaas.orchestrator.v1.OrchestratorCancelJobResponse
+	(*OrchestratorListJobsRequest)(nil),               // 66: quicbaas.orchestrator.v1.OrchestratorListJobsRequest
+	(*OrchestratorListJobsResponse)(nil),              // 67: quicbaas.orchestrator.v1.OrchestratorListJobsResponse
+	(*OrchestratorJobSummary)(nil),                    // 68: quicbaas.orchestrator.v1.OrchestratorJobSummary
+	(*SubscribeJobEventsRequest)(nil),                 // 69: quicbaas.orchestrator.v1.SubscribeJobEventsRequest
+	(*JobEvent)(nil),                                  // 70: quicbaas.orchestrator.v1.JobEvent
+	(*OrchestratorListBackendsRequest)(nil),           // 71: quicbaas.orchestrator.v1.OrchestratorListBackendsRequest
+	(*OrchestratorListBackendsResponse)(nil),          // 72: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse
+	(*OrchestratorJobStateSpec)(nil),                  // 73: quicbaas.orchestrator.v1.OrchestratorJobStateSpec
+	(*OrchestratorJobRunner)(nil),                     // 74: quicbaas.orchestrator.v1.OrchestratorJobRunner
+	(*OrchestratorListRunnersRequest)(nil),            // 75: quicbaas.orchestrator.v1.OrchestratorListRunnersRequest
+	(*OrchestratorListRunnersResponse)(nil),           // 76: quicbaas.orchestrator.v1.OrchestratorListRunnersResponse
+	(*OrchestratorWorkflowAgentRoleSpec)(nil),         // 77: quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec
+	(*OrchestratorWorkflowReviewCriterion)(nil),       // 78: quicbaas.orchestrator.v1.OrchestratorWorkflowReviewCriterion
+	(*OrchestratorWorkflowPeerMessagingSettings)(nil), // 79: quicbaas.orchestrator.v1.OrchestratorWorkflowPeerMessagingSettings
+	(*OrchestratorWorkflowFileLockSettings)(nil),      // 80: quicbaas.orchestrator.v1.OrchestratorWorkflowFileLockSettings
+	(*OrchestratorWorkflowVectorDBSettings)(nil),      // 81: quicbaas.orchestrator.v1.OrchestratorWorkflowVectorDBSettings
+	(*OrchestratorWorkflowCostControlSettings)(nil),   // 82: quicbaas.orchestrator.v1.OrchestratorWorkflowCostControlSettings
+	(*OrchestratorWorkflowRecoverySettings)(nil),      // 83: quicbaas.orchestrator.v1.OrchestratorWorkflowRecoverySettings
+	(*OrchestratorWorkflowSettings)(nil),              // 84: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings
+	(*OrchestratorWorkflowDefinition)(nil),            // 85: quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition
+	(*OrchestratorListWorkflowsRequest)(nil),          // 86: quicbaas.orchestrator.v1.OrchestratorListWorkflowsRequest
+	(*OrchestratorListWorkflowsResponse)(nil),         // 87: quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse
+	(*OrchestratorHealthRequest)(nil),                 // 88: quicbaas.orchestrator.v1.OrchestratorHealthRequest
+	(*OrchestratorHealthResponse)(nil),                // 89: quicbaas.orchestrator.v1.OrchestratorHealthResponse
+	(*RegisterFleetNodeRequest)(nil),                  // 90: quicbaas.orchestrator.v1.RegisterFleetNodeRequest
+	(*RegisterFleetNodeResponse)(nil),                 // 91: quicbaas.orchestrator.v1.RegisterFleetNodeResponse
+	(*GetFleetNodeRequest)(nil),                       // 92: quicbaas.orchestrator.v1.GetFleetNodeRequest
+	(*GetFleetNodeResponse)(nil),                      // 93: quicbaas.orchestrator.v1.GetFleetNodeResponse
+	(*ListFleetNodesRequest)(nil),                     // 94: quicbaas.orchestrator.v1.ListFleetNodesRequest
+	(*ListFleetNodesResponse)(nil),                    // 95: quicbaas.orchestrator.v1.ListFleetNodesResponse
+	(*RemoveFleetNodeRequest)(nil),                    // 96: quicbaas.orchestrator.v1.RemoveFleetNodeRequest
+	(*RemoveFleetNodeResponse)(nil),                   // 97: quicbaas.orchestrator.v1.RemoveFleetNodeResponse
+	(*FleetNodeHeartbeatRequest)(nil),                 // 98: quicbaas.orchestrator.v1.FleetNodeHeartbeatRequest
+	(*FleetNodeHeartbeatResponse)(nil),                // 99: quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse
+	(*PushEventRequest)(nil),                          // 100: quicbaas.orchestrator.v1.PushEventRequest
+	(*PushEventAck)(nil),                              // 101: quicbaas.orchestrator.v1.PushEventAck
+	(*SubscribeSessionRequest)(nil),                   // 102: quicbaas.orchestrator.v1.SubscribeSessionRequest
+	(*SessionEventEnvelope)(nil),                      // 103: quicbaas.orchestrator.v1.SessionEventEnvelope
+	(*GetSessionConversationRequest)(nil),             // 104: quicbaas.orchestrator.v1.GetSessionConversationRequest
+	(*SessionToolUse)(nil),                            // 105: quicbaas.orchestrator.v1.SessionToolUse
+	(*SessionTurn)(nil),                               // 106: quicbaas.orchestrator.v1.SessionTurn
+	(*GetSessionConversationResponse)(nil),            // 107: quicbaas.orchestrator.v1.GetSessionConversationResponse
+	(*GetSpendReportRequest)(nil),                     // 108: quicbaas.orchestrator.v1.GetSpendReportRequest
+	(*SpendWindowStatus)(nil),                         // 109: quicbaas.orchestrator.v1.SpendWindowStatus
+	(*SpendBreakerVerdict)(nil),                       // 110: quicbaas.orchestrator.v1.SpendBreakerVerdict
+	(*SpendTotals)(nil),                               // 111: quicbaas.orchestrator.v1.SpendTotals
+	(*SpendAccount)(nil),                              // 112: quicbaas.orchestrator.v1.SpendAccount
+	(*SpendModel)(nil),                                // 113: quicbaas.orchestrator.v1.SpendModel
+	(*SpendHost)(nil),                                 // 114: quicbaas.orchestrator.v1.SpendHost
+	(*SpendAgent)(nil),                                // 115: quicbaas.orchestrator.v1.SpendAgent
+	(*SpendChild)(nil),                                // 116: quicbaas.orchestrator.v1.SpendChild
+	(*GetSpendReportResponse)(nil),                    // 117: quicbaas.orchestrator.v1.GetSpendReportResponse
+	(*GetTenantSpendPolicyRequest)(nil),               // 118: quicbaas.orchestrator.v1.GetTenantSpendPolicyRequest
+	(*SetTenantSpendPolicyRequest)(nil),               // 119: quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest
+	(*TenantSpendPolicyResponse)(nil),                 // 120: quicbaas.orchestrator.v1.TenantSpendPolicyResponse
+	(*InferenceRequest)(nil),                          // 121: quicbaas.orchestrator.v1.InferenceRequest
+	(*InferenceResponse)(nil),                         // 122: quicbaas.orchestrator.v1.InferenceResponse
+	(*InferenceChunk)(nil),                            // 123: quicbaas.orchestrator.v1.InferenceChunk
+	(*TaskSpec)(nil),                                  // 124: quicbaas.orchestrator.v1.TaskSpec
+	(*SpawnChildJobRequest)(nil),                      // 125: quicbaas.orchestrator.v1.SpawnChildJobRequest
+	(*SpawnChildJobResponse)(nil),                     // 126: quicbaas.orchestrator.v1.SpawnChildJobResponse
+	(*ArtifactRef)(nil),                               // 127: quicbaas.orchestrator.v1.ArtifactRef
+	(*Artifact)(nil),                                  // 128: quicbaas.orchestrator.v1.Artifact
+	(*SubmitTaskArtifactsRequest)(nil),                // 129: quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest
+	(*SubmitTaskArtifactsResponse)(nil),               // 130: quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse
+	(*ListTaskArtifactsRequest)(nil),                  // 131: quicbaas.orchestrator.v1.ListTaskArtifactsRequest
+	(*ListTaskArtifactsResponse)(nil),                 // 132: quicbaas.orchestrator.v1.ListTaskArtifactsResponse
+	(*GetTaskArtifactRequest)(nil),                    // 133: quicbaas.orchestrator.v1.GetTaskArtifactRequest
+	(*GetTaskArtifactResponse)(nil),                   // 134: quicbaas.orchestrator.v1.GetTaskArtifactResponse
+	(*TurnFailureEvidence)(nil),                       // 135: quicbaas.orchestrator.v1.TurnFailureEvidence
+	(*SpawnFaultEvidence)(nil),                        // 136: quicbaas.orchestrator.v1.SpawnFaultEvidence
+	(*SessionWorkspace)(nil),                          // 137: quicbaas.orchestrator.v1.SessionWorkspace
+	(*GetCostSettingsRequest)(nil),                    // 138: quicbaas.orchestrator.v1.GetCostSettingsRequest
+	(*SetCostSettingsRequest)(nil),                    // 139: quicbaas.orchestrator.v1.SetCostSettingsRequest
+	(*CostSettingsResponse)(nil),                      // 140: quicbaas.orchestrator.v1.CostSettingsResponse
+	nil,                                               // 141: quicbaas.orchestrator.v1.MCPServerConfig.EnvEntry
+	nil,                                               // 142: quicbaas.orchestrator.v1.ContainerSpec.EnvEntry
+	nil,                                               // 143: quicbaas.orchestrator.v1.Task.MetadataEntry
+	nil,                                               // 144: quicbaas.orchestrator.v1.TaskResult.MetadataEntry
+	nil,                                               // 145: quicbaas.orchestrator.v1.FleetNode.MetadataEntry
+	nil,                                               // 146: quicbaas.orchestrator.v1.SpawnSessionRequest.EnvEntry
+	nil,                                               // 147: quicbaas.orchestrator.v1.SpawnSessionRequest.ExpectedPcrsEntry
+	nil,                                               // 148: quicbaas.orchestrator.v1.CreateTaskRequest.MetadataEntry
+	nil,                                               // 149: quicbaas.orchestrator.v1.JobEvent.MetadataEntry
+	nil,                                               // 150: quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.EnvEntry
+	nil,                                               // 151: quicbaas.orchestrator.v1.RegisterFleetNodeRequest.MetadataEntry
+	nil,                                               // 152: quicbaas.orchestrator.v1.InferenceRequest.MetadataEntry
+	nil,                                               // 153: quicbaas.orchestrator.v1.Artifact.MetadataEntry
+	nil,                                               // 154: quicbaas.orchestrator.v1.SessionWorkspace.SpecFilesEntry
+	nil,                                               // 155: quicbaas.orchestrator.v1.SetCostSettingsRequest.EnginePowerWattsEntry
+	nil,                                               // 156: quicbaas.orchestrator.v1.CostSettingsResponse.EnginePowerWattsEntry
+	nil,                                               // 157: quicbaas.orchestrator.v1.CostSettingsResponse.EffectiveEnginePowerWattsEntry
+	(*timestamppb.Timestamp)(nil),                     // 158: google.protobuf.Timestamp
+	(*AgentAttempt)(nil),                              // 159: quicbaas.agents.v1.AgentAttempt
+	(*AgentRef)(nil),                                  // 160: quicbaas.agents.v1.AgentRef
+	(*SpendLimits)(nil),                               // 161: quicbaas.spend.v1.SpendLimits
 }
 var file_api_proto_orchestrator_proto_depIdxs = []int32{
-	130, // 0: quicbaas.orchestrator.v1.MCPServerConfig.env:type_name -> quicbaas.orchestrator.v1.MCPServerConfig.EnvEntry
-	131, // 1: quicbaas.orchestrator.v1.ContainerSpec.env:type_name -> quicbaas.orchestrator.v1.ContainerSpec.EnvEntry
+	141, // 0: quicbaas.orchestrator.v1.MCPServerConfig.env:type_name -> quicbaas.orchestrator.v1.MCPServerConfig.EnvEntry
+	142, // 1: quicbaas.orchestrator.v1.ContainerSpec.env:type_name -> quicbaas.orchestrator.v1.ContainerSpec.EnvEntry
 	2,   // 2: quicbaas.orchestrator.v1.SessionInfo.state:type_name -> quicbaas.orchestrator.v1.SessionState
-	146, // 3: quicbaas.orchestrator.v1.SessionInfo.created_at:type_name -> google.protobuf.Timestamp
-	146, // 4: quicbaas.orchestrator.v1.SessionInfo.last_activity:type_name -> google.protobuf.Timestamp
+	158, // 3: quicbaas.orchestrator.v1.SessionInfo.created_at:type_name -> google.protobuf.Timestamp
+	158, // 4: quicbaas.orchestrator.v1.SessionInfo.last_activity:type_name -> google.protobuf.Timestamp
 	0,   // 5: quicbaas.orchestrator.v1.Task.status:type_name -> quicbaas.orchestrator.v1.TaskStatus
 	13,  // 6: quicbaas.orchestrator.v1.Task.result:type_name -> quicbaas.orchestrator.v1.TaskResult
-	132, // 7: quicbaas.orchestrator.v1.Task.metadata:type_name -> quicbaas.orchestrator.v1.Task.MetadataEntry
-	146, // 8: quicbaas.orchestrator.v1.Task.created_at:type_name -> google.protobuf.Timestamp
-	146, // 9: quicbaas.orchestrator.v1.Task.updated_at:type_name -> google.protobuf.Timestamp
-	146, // 10: quicbaas.orchestrator.v1.Task.claimed_at:type_name -> google.protobuf.Timestamp
-	146, // 11: quicbaas.orchestrator.v1.Task.completed_at:type_name -> google.protobuf.Timestamp
-	146, // 12: quicbaas.orchestrator.v1.Task.spawned_at:type_name -> google.protobuf.Timestamp
+	143, // 7: quicbaas.orchestrator.v1.Task.metadata:type_name -> quicbaas.orchestrator.v1.Task.MetadataEntry
+	158, // 8: quicbaas.orchestrator.v1.Task.created_at:type_name -> google.protobuf.Timestamp
+	158, // 9: quicbaas.orchestrator.v1.Task.updated_at:type_name -> google.protobuf.Timestamp
+	158, // 10: quicbaas.orchestrator.v1.Task.claimed_at:type_name -> google.protobuf.Timestamp
+	158, // 11: quicbaas.orchestrator.v1.Task.completed_at:type_name -> google.protobuf.Timestamp
+	158, // 12: quicbaas.orchestrator.v1.Task.spawned_at:type_name -> google.protobuf.Timestamp
 	12,  // 13: quicbaas.orchestrator.v1.Task.source:type_name -> quicbaas.orchestrator.v1.TaskSource
 	11,  // 14: quicbaas.orchestrator.v1.Task.routing:type_name -> quicbaas.orchestrator.v1.TaskRouting
-	133, // 15: quicbaas.orchestrator.v1.TaskResult.metadata:type_name -> quicbaas.orchestrator.v1.TaskResult.MetadataEntry
+	144, // 15: quicbaas.orchestrator.v1.TaskResult.metadata:type_name -> quicbaas.orchestrator.v1.TaskResult.MetadataEntry
 	0,   // 16: quicbaas.orchestrator.v1.TaskFilter.status:type_name -> quicbaas.orchestrator.v1.TaskStatus
 	0,   // 17: quicbaas.orchestrator.v1.TaskFilter.statuses:type_name -> quicbaas.orchestrator.v1.TaskStatus
 	1,   // 18: quicbaas.orchestrator.v1.FleetNode.status:type_name -> quicbaas.orchestrator.v1.FleetNodeStatus
-	146, // 19: quicbaas.orchestrator.v1.FleetNode.last_seen:type_name -> google.protobuf.Timestamp
-	146, // 20: quicbaas.orchestrator.v1.FleetNode.registered_at:type_name -> google.protobuf.Timestamp
-	134, // 21: quicbaas.orchestrator.v1.FleetNode.metadata:type_name -> quicbaas.orchestrator.v1.FleetNode.MetadataEntry
+	158, // 19: quicbaas.orchestrator.v1.FleetNode.last_seen:type_name -> google.protobuf.Timestamp
+	158, // 20: quicbaas.orchestrator.v1.FleetNode.registered_at:type_name -> google.protobuf.Timestamp
+	145, // 21: quicbaas.orchestrator.v1.FleetNode.metadata:type_name -> quicbaas.orchestrator.v1.FleetNode.MetadataEntry
 	1,   // 22: quicbaas.orchestrator.v1.FleetNodeFilter.status:type_name -> quicbaas.orchestrator.v1.FleetNodeStatus
 	18,  // 23: quicbaas.orchestrator.v1.AgentBackendInfo.capabilities:type_name -> quicbaas.orchestrator.v1.BackendCapabilities
 	2,   // 24: quicbaas.orchestrator.v1.SessionHealthResult.state:type_name -> quicbaas.orchestrator.v1.SessionState
-	146, // 25: quicbaas.orchestrator.v1.HealthCheckReport.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 25: quicbaas.orchestrator.v1.HealthCheckReport.timestamp:type_name -> google.protobuf.Timestamp
 	20,  // 26: quicbaas.orchestrator.v1.HealthCheckReport.results:type_name -> quicbaas.orchestrator.v1.SessionHealthResult
 	5,   // 27: quicbaas.orchestrator.v1.SpawnSessionRequest.mcp_servers:type_name -> quicbaas.orchestrator.v1.MCPServerConfig
-	135, // 28: quicbaas.orchestrator.v1.SpawnSessionRequest.env:type_name -> quicbaas.orchestrator.v1.SpawnSessionRequest.EnvEntry
+	146, // 28: quicbaas.orchestrator.v1.SpawnSessionRequest.env:type_name -> quicbaas.orchestrator.v1.SpawnSessionRequest.EnvEntry
 	7,   // 29: quicbaas.orchestrator.v1.SpawnSessionRequest.container_config:type_name -> quicbaas.orchestrator.v1.ContainerSpec
 	3,   // 30: quicbaas.orchestrator.v1.SpawnSessionRequest.sandbox_mode:type_name -> quicbaas.orchestrator.v1.SandboxMode
 	6,   // 31: quicbaas.orchestrator.v1.SpawnSessionRequest.extra_mounts:type_name -> quicbaas.orchestrator.v1.ContainerMount
 	4,   // 32: quicbaas.orchestrator.v1.SpawnSessionRequest.trust_level:type_name -> quicbaas.orchestrator.v1.TrustLevel
-	136, // 33: quicbaas.orchestrator.v1.SpawnSessionRequest.expected_pcrs:type_name -> quicbaas.orchestrator.v1.SpawnSessionRequest.ExpectedPcrsEntry
+	147, // 33: quicbaas.orchestrator.v1.SpawnSessionRequest.expected_pcrs:type_name -> quicbaas.orchestrator.v1.SpawnSessionRequest.ExpectedPcrsEntry
 	24,  // 34: quicbaas.orchestrator.v1.SpawnSessionRequest.storage:type_name -> quicbaas.orchestrator.v1.WorkspaceStoragePlan
-	126, // 35: quicbaas.orchestrator.v1.SpawnSessionRequest.workspace:type_name -> quicbaas.orchestrator.v1.SessionWorkspace
+	137, // 35: quicbaas.orchestrator.v1.SpawnSessionRequest.workspace:type_name -> quicbaas.orchestrator.v1.SessionWorkspace
 	23,  // 36: quicbaas.orchestrator.v1.SpawnSessionRequest.signing_relay:type_name -> quicbaas.orchestrator.v1.SigningRelaySpec
-	146, // 37: quicbaas.orchestrator.v1.SpawnSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
-	147, // 38: quicbaas.orchestrator.v1.SpawnSessionResponse.failovers:type_name -> quicbaas.agents.v1.AgentAttempt
+	158, // 37: quicbaas.orchestrator.v1.SpawnSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
+	159, // 38: quicbaas.orchestrator.v1.SpawnSessionResponse.failovers:type_name -> quicbaas.agents.v1.AgentAttempt
 	8,   // 39: quicbaas.orchestrator.v1.PromptSessionResponse.content:type_name -> quicbaas.orchestrator.v1.ContentBlock
-	146, // 40: quicbaas.orchestrator.v1.PromptSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 40: quicbaas.orchestrator.v1.PromptSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
 	2,   // 41: quicbaas.orchestrator.v1.SessionStatusResponse.state:type_name -> quicbaas.orchestrator.v1.SessionState
-	146, // 42: quicbaas.orchestrator.v1.SessionStatusResponse.last_activity:type_name -> google.protobuf.Timestamp
-	146, // 43: quicbaas.orchestrator.v1.SessionStatusResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 44: quicbaas.orchestrator.v1.CloseSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 45: quicbaas.orchestrator.v1.RotateSessionAccountResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 42: quicbaas.orchestrator.v1.SessionStatusResponse.last_activity:type_name -> google.protobuf.Timestamp
+	158, // 43: quicbaas.orchestrator.v1.SessionStatusResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 44: quicbaas.orchestrator.v1.CloseSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 45: quicbaas.orchestrator.v1.RotateSessionAccountResponse.timestamp:type_name -> google.protobuf.Timestamp
 	9,   // 46: quicbaas.orchestrator.v1.ListSessionsResponse.sessions:type_name -> quicbaas.orchestrator.v1.SessionInfo
-	146, // 47: quicbaas.orchestrator.v1.ListSessionsResponse.timestamp:type_name -> google.protobuf.Timestamp
-	137, // 48: quicbaas.orchestrator.v1.CreateTaskRequest.metadata:type_name -> quicbaas.orchestrator.v1.CreateTaskRequest.MetadataEntry
+	158, // 47: quicbaas.orchestrator.v1.ListSessionsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	148, // 48: quicbaas.orchestrator.v1.CreateTaskRequest.metadata:type_name -> quicbaas.orchestrator.v1.CreateTaskRequest.MetadataEntry
 	12,  // 49: quicbaas.orchestrator.v1.CreateTaskRequest.source:type_name -> quicbaas.orchestrator.v1.TaskSource
 	10,  // 50: quicbaas.orchestrator.v1.CreateTaskResponse.task:type_name -> quicbaas.orchestrator.v1.Task
-	146, // 51: quicbaas.orchestrator.v1.CreateTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 51: quicbaas.orchestrator.v1.CreateTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
 	10,  // 52: quicbaas.orchestrator.v1.GetTaskResponse.task:type_name -> quicbaas.orchestrator.v1.Task
-	146, // 53: quicbaas.orchestrator.v1.GetTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 53: quicbaas.orchestrator.v1.GetTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
 	14,  // 54: quicbaas.orchestrator.v1.ListTasksRequest.filter:type_name -> quicbaas.orchestrator.v1.TaskFilter
 	10,  // 55: quicbaas.orchestrator.v1.ListTasksResponse.tasks:type_name -> quicbaas.orchestrator.v1.Task
-	146, // 56: quicbaas.orchestrator.v1.ListTasksResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 57: quicbaas.orchestrator.v1.ClaimTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 58: quicbaas.orchestrator.v1.BlockTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 59: quicbaas.orchestrator.v1.ReadmitTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 60: quicbaas.orchestrator.v1.DeleteTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 56: quicbaas.orchestrator.v1.ListTasksResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 57: quicbaas.orchestrator.v1.ClaimTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 58: quicbaas.orchestrator.v1.BlockTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 59: quicbaas.orchestrator.v1.ReadmitTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 60: quicbaas.orchestrator.v1.DeleteTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
 	13,  // 61: quicbaas.orchestrator.v1.CompleteTaskRequest.result:type_name -> quicbaas.orchestrator.v1.TaskResult
-	146, // 62: quicbaas.orchestrator.v1.CompleteTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 62: quicbaas.orchestrator.v1.CompleteTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
 	15,  // 63: quicbaas.orchestrator.v1.DecomposeTaskResponse.work_items:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkItem
-	146, // 64: quicbaas.orchestrator.v1.DecomposeTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	148, // 65: quicbaas.orchestrator.v1.OrchestratorStartJobRequest.lead:type_name -> quicbaas.agents.v1.AgentRef
-	146, // 66: quicbaas.orchestrator.v1.OrchestratorStartJobResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 67: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 64: quicbaas.orchestrator.v1.DecomposeTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	160, // 65: quicbaas.orchestrator.v1.OrchestratorStartJobRequest.lead:type_name -> quicbaas.agents.v1.AgentRef
+	158, // 66: quicbaas.orchestrator.v1.OrchestratorStartJobResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 67: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.timestamp:type_name -> google.protobuf.Timestamp
 	63,  // 68: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.events:type_name -> quicbaas.orchestrator.v1.OrchestratorAuditEvent
 	59,  // 69: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.stages:type_name -> quicbaas.orchestrator.v1.OrchestratorJobStage
 	60,  // 70: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.attempts:type_name -> quicbaas.orchestrator.v1.OrchestratorJobAttempt
@@ -12799,166 +13896,178 @@ var file_api_proto_orchestrator_proto_depIdxs = []int32{
 	58,  // 72: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.verification:type_name -> quicbaas.orchestrator.v1.OrchestratorJobVerification
 	12,  // 73: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.source:type_name -> quicbaas.orchestrator.v1.TaskSource
 	61,  // 74: quicbaas.orchestrator.v1.OrchestratorJobDelivery.reviews:type_name -> quicbaas.orchestrator.v1.OrchestratorJobReviewRound
-	146, // 75: quicbaas.orchestrator.v1.OrchestratorCancelJobResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 75: quicbaas.orchestrator.v1.OrchestratorCancelJobResponse.timestamp:type_name -> google.protobuf.Timestamp
 	68,  // 76: quicbaas.orchestrator.v1.OrchestratorListJobsResponse.jobs:type_name -> quicbaas.orchestrator.v1.OrchestratorJobSummary
 	12,  // 77: quicbaas.orchestrator.v1.OrchestratorJobSummary.source:type_name -> quicbaas.orchestrator.v1.TaskSource
-	138, // 78: quicbaas.orchestrator.v1.JobEvent.metadata:type_name -> quicbaas.orchestrator.v1.JobEvent.MetadataEntry
+	149, // 78: quicbaas.orchestrator.v1.JobEvent.metadata:type_name -> quicbaas.orchestrator.v1.JobEvent.MetadataEntry
 	19,  // 79: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse.backends:type_name -> quicbaas.orchestrator.v1.AgentBackendInfo
-	146, // 80: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 80: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse.timestamp:type_name -> google.protobuf.Timestamp
 	73,  // 81: quicbaas.orchestrator.v1.OrchestratorJobRunner.states:type_name -> quicbaas.orchestrator.v1.OrchestratorJobStateSpec
 	74,  // 82: quicbaas.orchestrator.v1.OrchestratorListRunnersResponse.runners:type_name -> quicbaas.orchestrator.v1.OrchestratorJobRunner
-	21,  // 83: quicbaas.orchestrator.v1.OrchestratorHealthResponse.report:type_name -> quicbaas.orchestrator.v1.HealthCheckReport
-	146, // 84: quicbaas.orchestrator.v1.OrchestratorHealthResponse.timestamp:type_name -> google.protobuf.Timestamp
-	139, // 85: quicbaas.orchestrator.v1.RegisterFleetNodeRequest.metadata:type_name -> quicbaas.orchestrator.v1.RegisterFleetNodeRequest.MetadataEntry
-	16,  // 86: quicbaas.orchestrator.v1.RegisterFleetNodeResponse.node:type_name -> quicbaas.orchestrator.v1.FleetNode
-	146, // 87: quicbaas.orchestrator.v1.RegisterFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
-	16,  // 88: quicbaas.orchestrator.v1.GetFleetNodeResponse.node:type_name -> quicbaas.orchestrator.v1.FleetNode
-	146, // 89: quicbaas.orchestrator.v1.GetFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
-	17,  // 90: quicbaas.orchestrator.v1.ListFleetNodesRequest.filter:type_name -> quicbaas.orchestrator.v1.FleetNodeFilter
-	16,  // 91: quicbaas.orchestrator.v1.ListFleetNodesResponse.nodes:type_name -> quicbaas.orchestrator.v1.FleetNode
-	146, // 92: quicbaas.orchestrator.v1.ListFleetNodesResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 93: quicbaas.orchestrator.v1.RemoveFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 94: quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 95: quicbaas.orchestrator.v1.PushEventRequest.emitted_at:type_name -> google.protobuf.Timestamp
-	146, // 96: quicbaas.orchestrator.v1.SessionEventEnvelope.timestamp:type_name -> google.protobuf.Timestamp
-	146, // 97: quicbaas.orchestrator.v1.SessionTurn.timestamp:type_name -> google.protobuf.Timestamp
-	94,  // 98: quicbaas.orchestrator.v1.SessionTurn.tools:type_name -> quicbaas.orchestrator.v1.SessionToolUse
-	95,  // 99: quicbaas.orchestrator.v1.GetSessionConversationResponse.turns:type_name -> quicbaas.orchestrator.v1.SessionTurn
-	146, // 100: quicbaas.orchestrator.v1.GetSpendReportRequest.from:type_name -> google.protobuf.Timestamp
-	146, // 101: quicbaas.orchestrator.v1.GetSpendReportRequest.to:type_name -> google.protobuf.Timestamp
-	146, // 102: quicbaas.orchestrator.v1.SpendWindowStatus.frees_at:type_name -> google.protobuf.Timestamp
-	146, // 103: quicbaas.orchestrator.v1.SpendBreakerVerdict.last_failure_at:type_name -> google.protobuf.Timestamp
-	146, // 104: quicbaas.orchestrator.v1.SpendBreakerVerdict.last_success_at:type_name -> google.protobuf.Timestamp
-	146, // 105: quicbaas.orchestrator.v1.SpendBreakerVerdict.open_until:type_name -> google.protobuf.Timestamp
-	100, // 106: quicbaas.orchestrator.v1.SpendAccount.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	98,  // 107: quicbaas.orchestrator.v1.SpendAccount.windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
-	99,  // 108: quicbaas.orchestrator.v1.SpendAccount.breaker:type_name -> quicbaas.orchestrator.v1.SpendBreakerVerdict
-	100, // 109: quicbaas.orchestrator.v1.SpendModel.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	100, // 110: quicbaas.orchestrator.v1.SpendHost.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	100, // 111: quicbaas.orchestrator.v1.SpendAgent.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	100, // 112: quicbaas.orchestrator.v1.SpendChild.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	146, // 113: quicbaas.orchestrator.v1.GetSpendReportResponse.first_at:type_name -> google.protobuf.Timestamp
-	146, // 114: quicbaas.orchestrator.v1.GetSpendReportResponse.last_at:type_name -> google.protobuf.Timestamp
-	101, // 115: quicbaas.orchestrator.v1.GetSpendReportResponse.accounts:type_name -> quicbaas.orchestrator.v1.SpendAccount
-	102, // 116: quicbaas.orchestrator.v1.GetSpendReportResponse.models:type_name -> quicbaas.orchestrator.v1.SpendModel
-	105, // 117: quicbaas.orchestrator.v1.GetSpendReportResponse.children:type_name -> quicbaas.orchestrator.v1.SpendChild
-	100, // 118: quicbaas.orchestrator.v1.GetSpendReportResponse.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	146, // 119: quicbaas.orchestrator.v1.GetSpendReportResponse.from:type_name -> google.protobuf.Timestamp
-	146, // 120: quicbaas.orchestrator.v1.GetSpendReportResponse.to:type_name -> google.protobuf.Timestamp
-	98,  // 121: quicbaas.orchestrator.v1.GetSpendReportResponse.scope_windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
-	103, // 122: quicbaas.orchestrator.v1.GetSpendReportResponse.hosts:type_name -> quicbaas.orchestrator.v1.SpendHost
-	104, // 123: quicbaas.orchestrator.v1.GetSpendReportResponse.agents:type_name -> quicbaas.orchestrator.v1.SpendAgent
-	98,  // 124: quicbaas.orchestrator.v1.GetSpendReportResponse.agent_windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
-	149, // 125: quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest.limits:type_name -> quicbaas.spend.v1.SpendLimits
-	149, // 126: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.limits:type_name -> quicbaas.spend.v1.SpendLimits
-	146, // 127: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.updated_at:type_name -> google.protobuf.Timestamp
-	98,  // 128: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
-	140, // 129: quicbaas.orchestrator.v1.InferenceRequest.metadata:type_name -> quicbaas.orchestrator.v1.InferenceRequest.MetadataEntry
-	8,   // 130: quicbaas.orchestrator.v1.InferenceResponse.content:type_name -> quicbaas.orchestrator.v1.ContentBlock
-	8,   // 131: quicbaas.orchestrator.v1.InferenceChunk.delta:type_name -> quicbaas.orchestrator.v1.ContentBlock
-	113, // 132: quicbaas.orchestrator.v1.SpawnChildJobRequest.tasks:type_name -> quicbaas.orchestrator.v1.TaskSpec
-	116, // 133: quicbaas.orchestrator.v1.Artifact.ref:type_name -> quicbaas.orchestrator.v1.ArtifactRef
-	141, // 134: quicbaas.orchestrator.v1.Artifact.metadata:type_name -> quicbaas.orchestrator.v1.Artifact.MetadataEntry
-	117, // 135: quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest.artifacts:type_name -> quicbaas.orchestrator.v1.Artifact
-	146, // 136: quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse.timestamp:type_name -> google.protobuf.Timestamp
-	117, // 137: quicbaas.orchestrator.v1.ListTaskArtifactsResponse.artifacts:type_name -> quicbaas.orchestrator.v1.Artifact
-	146, // 138: quicbaas.orchestrator.v1.ListTaskArtifactsResponse.timestamp:type_name -> google.protobuf.Timestamp
-	117, // 139: quicbaas.orchestrator.v1.GetTaskArtifactResponse.artifact:type_name -> quicbaas.orchestrator.v1.Artifact
-	146, // 140: quicbaas.orchestrator.v1.GetTaskArtifactResponse.timestamp:type_name -> google.protobuf.Timestamp
-	142, // 141: quicbaas.orchestrator.v1.SessionWorkspace.spec_files:type_name -> quicbaas.orchestrator.v1.SessionWorkspace.SpecFilesEntry
-	143, // 142: quicbaas.orchestrator.v1.SetCostSettingsRequest.engine_power_watts:type_name -> quicbaas.orchestrator.v1.SetCostSettingsRequest.EnginePowerWattsEntry
-	144, // 143: quicbaas.orchestrator.v1.CostSettingsResponse.engine_power_watts:type_name -> quicbaas.orchestrator.v1.CostSettingsResponse.EnginePowerWattsEntry
-	146, // 144: quicbaas.orchestrator.v1.CostSettingsResponse.updated_at:type_name -> google.protobuf.Timestamp
-	145, // 145: quicbaas.orchestrator.v1.CostSettingsResponse.effective_engine_power_watts:type_name -> quicbaas.orchestrator.v1.CostSettingsResponse.EffectiveEnginePowerWattsEntry
-	22,  // 146: quicbaas.orchestrator.v1.OrchestratorService.SpawnSession:input_type -> quicbaas.orchestrator.v1.SpawnSessionRequest
-	26,  // 147: quicbaas.orchestrator.v1.OrchestratorService.PromptSession:input_type -> quicbaas.orchestrator.v1.PromptSessionRequest
-	28,  // 148: quicbaas.orchestrator.v1.OrchestratorService.SessionStatus:input_type -> quicbaas.orchestrator.v1.SessionStatusRequest
-	30,  // 149: quicbaas.orchestrator.v1.OrchestratorService.CloseSession:input_type -> quicbaas.orchestrator.v1.CloseSessionRequest
-	34,  // 150: quicbaas.orchestrator.v1.OrchestratorService.ListSessions:input_type -> quicbaas.orchestrator.v1.ListSessionsRequest
-	32,  // 151: quicbaas.orchestrator.v1.OrchestratorService.RotateSessionAccount:input_type -> quicbaas.orchestrator.v1.RotateSessionAccountRequest
-	36,  // 152: quicbaas.orchestrator.v1.OrchestratorService.CreateTask:input_type -> quicbaas.orchestrator.v1.CreateTaskRequest
-	38,  // 153: quicbaas.orchestrator.v1.OrchestratorService.GetTask:input_type -> quicbaas.orchestrator.v1.GetTaskRequest
-	40,  // 154: quicbaas.orchestrator.v1.OrchestratorService.ListTasks:input_type -> quicbaas.orchestrator.v1.ListTasksRequest
-	42,  // 155: quicbaas.orchestrator.v1.OrchestratorService.ClaimTask:input_type -> quicbaas.orchestrator.v1.ClaimTaskRequest
-	50,  // 156: quicbaas.orchestrator.v1.OrchestratorService.CompleteTask:input_type -> quicbaas.orchestrator.v1.CompleteTaskRequest
-	44,  // 157: quicbaas.orchestrator.v1.OrchestratorService.BlockTask:input_type -> quicbaas.orchestrator.v1.BlockTaskRequest
-	46,  // 158: quicbaas.orchestrator.v1.OrchestratorService.ReadmitTask:input_type -> quicbaas.orchestrator.v1.ReadmitTaskRequest
-	48,  // 159: quicbaas.orchestrator.v1.OrchestratorService.DeleteTask:input_type -> quicbaas.orchestrator.v1.DeleteTaskRequest
-	52,  // 160: quicbaas.orchestrator.v1.OrchestratorService.DecomposeTask:input_type -> quicbaas.orchestrator.v1.DecomposeTaskRequest
-	54,  // 161: quicbaas.orchestrator.v1.OrchestratorService.StartJob:input_type -> quicbaas.orchestrator.v1.OrchestratorStartJobRequest
-	56,  // 162: quicbaas.orchestrator.v1.OrchestratorService.GetJobStatus:input_type -> quicbaas.orchestrator.v1.OrchestratorGetJobStatusRequest
-	64,  // 163: quicbaas.orchestrator.v1.OrchestratorService.CancelJob:input_type -> quicbaas.orchestrator.v1.OrchestratorCancelJobRequest
-	66,  // 164: quicbaas.orchestrator.v1.OrchestratorService.ListJobs:input_type -> quicbaas.orchestrator.v1.OrchestratorListJobsRequest
-	69,  // 165: quicbaas.orchestrator.v1.OrchestratorService.SubscribeJobEvents:input_type -> quicbaas.orchestrator.v1.SubscribeJobEventsRequest
-	71,  // 166: quicbaas.orchestrator.v1.OrchestratorService.ListBackends:input_type -> quicbaas.orchestrator.v1.OrchestratorListBackendsRequest
-	75,  // 167: quicbaas.orchestrator.v1.OrchestratorService.ListRunners:input_type -> quicbaas.orchestrator.v1.OrchestratorListRunnersRequest
-	77,  // 168: quicbaas.orchestrator.v1.OrchestratorService.Health:input_type -> quicbaas.orchestrator.v1.OrchestratorHealthRequest
-	79,  // 169: quicbaas.orchestrator.v1.OrchestratorService.RegisterFleetNode:input_type -> quicbaas.orchestrator.v1.RegisterFleetNodeRequest
-	81,  // 170: quicbaas.orchestrator.v1.OrchestratorService.GetFleetNode:input_type -> quicbaas.orchestrator.v1.GetFleetNodeRequest
-	83,  // 171: quicbaas.orchestrator.v1.OrchestratorService.ListFleetNodes:input_type -> quicbaas.orchestrator.v1.ListFleetNodesRequest
-	85,  // 172: quicbaas.orchestrator.v1.OrchestratorService.RemoveFleetNode:input_type -> quicbaas.orchestrator.v1.RemoveFleetNodeRequest
-	87,  // 173: quicbaas.orchestrator.v1.OrchestratorService.FleetNodeHeartbeat:input_type -> quicbaas.orchestrator.v1.FleetNodeHeartbeatRequest
-	89,  // 174: quicbaas.orchestrator.v1.OrchestratorService.PushEvents:input_type -> quicbaas.orchestrator.v1.PushEventRequest
-	91,  // 175: quicbaas.orchestrator.v1.OrchestratorService.SubscribeSessionEvents:input_type -> quicbaas.orchestrator.v1.SubscribeSessionRequest
-	93,  // 176: quicbaas.orchestrator.v1.OrchestratorService.GetSessionConversation:input_type -> quicbaas.orchestrator.v1.GetSessionConversationRequest
-	97,  // 177: quicbaas.orchestrator.v1.OrchestratorService.GetSpendReport:input_type -> quicbaas.orchestrator.v1.GetSpendReportRequest
-	107, // 178: quicbaas.orchestrator.v1.OrchestratorService.GetTenantSpendPolicy:input_type -> quicbaas.orchestrator.v1.GetTenantSpendPolicyRequest
-	108, // 179: quicbaas.orchestrator.v1.OrchestratorService.SetTenantSpendPolicy:input_type -> quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest
-	110, // 180: quicbaas.orchestrator.v1.OrchestratorService.Inference:input_type -> quicbaas.orchestrator.v1.InferenceRequest
-	110, // 181: quicbaas.orchestrator.v1.OrchestratorService.InferenceStream:input_type -> quicbaas.orchestrator.v1.InferenceRequest
-	114, // 182: quicbaas.orchestrator.v1.OrchestratorService.SpawnChildJob:input_type -> quicbaas.orchestrator.v1.SpawnChildJobRequest
-	118, // 183: quicbaas.orchestrator.v1.OrchestratorService.SubmitTaskArtifacts:input_type -> quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest
-	120, // 184: quicbaas.orchestrator.v1.OrchestratorService.ListTaskArtifacts:input_type -> quicbaas.orchestrator.v1.ListTaskArtifactsRequest
-	122, // 185: quicbaas.orchestrator.v1.OrchestratorService.GetTaskArtifact:input_type -> quicbaas.orchestrator.v1.GetTaskArtifactRequest
-	127, // 186: quicbaas.orchestrator.v1.OrchestratorService.GetCostSettings:input_type -> quicbaas.orchestrator.v1.GetCostSettingsRequest
-	128, // 187: quicbaas.orchestrator.v1.OrchestratorService.SetCostSettings:input_type -> quicbaas.orchestrator.v1.SetCostSettingsRequest
-	25,  // 188: quicbaas.orchestrator.v1.OrchestratorService.SpawnSession:output_type -> quicbaas.orchestrator.v1.SpawnSessionResponse
-	27,  // 189: quicbaas.orchestrator.v1.OrchestratorService.PromptSession:output_type -> quicbaas.orchestrator.v1.PromptSessionResponse
-	29,  // 190: quicbaas.orchestrator.v1.OrchestratorService.SessionStatus:output_type -> quicbaas.orchestrator.v1.SessionStatusResponse
-	31,  // 191: quicbaas.orchestrator.v1.OrchestratorService.CloseSession:output_type -> quicbaas.orchestrator.v1.CloseSessionResponse
-	35,  // 192: quicbaas.orchestrator.v1.OrchestratorService.ListSessions:output_type -> quicbaas.orchestrator.v1.ListSessionsResponse
-	33,  // 193: quicbaas.orchestrator.v1.OrchestratorService.RotateSessionAccount:output_type -> quicbaas.orchestrator.v1.RotateSessionAccountResponse
-	37,  // 194: quicbaas.orchestrator.v1.OrchestratorService.CreateTask:output_type -> quicbaas.orchestrator.v1.CreateTaskResponse
-	39,  // 195: quicbaas.orchestrator.v1.OrchestratorService.GetTask:output_type -> quicbaas.orchestrator.v1.GetTaskResponse
-	41,  // 196: quicbaas.orchestrator.v1.OrchestratorService.ListTasks:output_type -> quicbaas.orchestrator.v1.ListTasksResponse
-	43,  // 197: quicbaas.orchestrator.v1.OrchestratorService.ClaimTask:output_type -> quicbaas.orchestrator.v1.ClaimTaskResponse
-	51,  // 198: quicbaas.orchestrator.v1.OrchestratorService.CompleteTask:output_type -> quicbaas.orchestrator.v1.CompleteTaskResponse
-	45,  // 199: quicbaas.orchestrator.v1.OrchestratorService.BlockTask:output_type -> quicbaas.orchestrator.v1.BlockTaskResponse
-	47,  // 200: quicbaas.orchestrator.v1.OrchestratorService.ReadmitTask:output_type -> quicbaas.orchestrator.v1.ReadmitTaskResponse
-	49,  // 201: quicbaas.orchestrator.v1.OrchestratorService.DeleteTask:output_type -> quicbaas.orchestrator.v1.DeleteTaskResponse
-	53,  // 202: quicbaas.orchestrator.v1.OrchestratorService.DecomposeTask:output_type -> quicbaas.orchestrator.v1.DecomposeTaskResponse
-	55,  // 203: quicbaas.orchestrator.v1.OrchestratorService.StartJob:output_type -> quicbaas.orchestrator.v1.OrchestratorStartJobResponse
-	57,  // 204: quicbaas.orchestrator.v1.OrchestratorService.GetJobStatus:output_type -> quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse
-	65,  // 205: quicbaas.orchestrator.v1.OrchestratorService.CancelJob:output_type -> quicbaas.orchestrator.v1.OrchestratorCancelJobResponse
-	67,  // 206: quicbaas.orchestrator.v1.OrchestratorService.ListJobs:output_type -> quicbaas.orchestrator.v1.OrchestratorListJobsResponse
-	70,  // 207: quicbaas.orchestrator.v1.OrchestratorService.SubscribeJobEvents:output_type -> quicbaas.orchestrator.v1.JobEvent
-	72,  // 208: quicbaas.orchestrator.v1.OrchestratorService.ListBackends:output_type -> quicbaas.orchestrator.v1.OrchestratorListBackendsResponse
-	76,  // 209: quicbaas.orchestrator.v1.OrchestratorService.ListRunners:output_type -> quicbaas.orchestrator.v1.OrchestratorListRunnersResponse
-	78,  // 210: quicbaas.orchestrator.v1.OrchestratorService.Health:output_type -> quicbaas.orchestrator.v1.OrchestratorHealthResponse
-	80,  // 211: quicbaas.orchestrator.v1.OrchestratorService.RegisterFleetNode:output_type -> quicbaas.orchestrator.v1.RegisterFleetNodeResponse
-	82,  // 212: quicbaas.orchestrator.v1.OrchestratorService.GetFleetNode:output_type -> quicbaas.orchestrator.v1.GetFleetNodeResponse
-	84,  // 213: quicbaas.orchestrator.v1.OrchestratorService.ListFleetNodes:output_type -> quicbaas.orchestrator.v1.ListFleetNodesResponse
-	86,  // 214: quicbaas.orchestrator.v1.OrchestratorService.RemoveFleetNode:output_type -> quicbaas.orchestrator.v1.RemoveFleetNodeResponse
-	88,  // 215: quicbaas.orchestrator.v1.OrchestratorService.FleetNodeHeartbeat:output_type -> quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse
-	90,  // 216: quicbaas.orchestrator.v1.OrchestratorService.PushEvents:output_type -> quicbaas.orchestrator.v1.PushEventAck
-	92,  // 217: quicbaas.orchestrator.v1.OrchestratorService.SubscribeSessionEvents:output_type -> quicbaas.orchestrator.v1.SessionEventEnvelope
-	96,  // 218: quicbaas.orchestrator.v1.OrchestratorService.GetSessionConversation:output_type -> quicbaas.orchestrator.v1.GetSessionConversationResponse
-	106, // 219: quicbaas.orchestrator.v1.OrchestratorService.GetSpendReport:output_type -> quicbaas.orchestrator.v1.GetSpendReportResponse
-	109, // 220: quicbaas.orchestrator.v1.OrchestratorService.GetTenantSpendPolicy:output_type -> quicbaas.orchestrator.v1.TenantSpendPolicyResponse
-	109, // 221: quicbaas.orchestrator.v1.OrchestratorService.SetTenantSpendPolicy:output_type -> quicbaas.orchestrator.v1.TenantSpendPolicyResponse
-	111, // 222: quicbaas.orchestrator.v1.OrchestratorService.Inference:output_type -> quicbaas.orchestrator.v1.InferenceResponse
-	112, // 223: quicbaas.orchestrator.v1.OrchestratorService.InferenceStream:output_type -> quicbaas.orchestrator.v1.InferenceChunk
-	115, // 224: quicbaas.orchestrator.v1.OrchestratorService.SpawnChildJob:output_type -> quicbaas.orchestrator.v1.SpawnChildJobResponse
-	119, // 225: quicbaas.orchestrator.v1.OrchestratorService.SubmitTaskArtifacts:output_type -> quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse
-	121, // 226: quicbaas.orchestrator.v1.OrchestratorService.ListTaskArtifacts:output_type -> quicbaas.orchestrator.v1.ListTaskArtifactsResponse
-	123, // 227: quicbaas.orchestrator.v1.OrchestratorService.GetTaskArtifact:output_type -> quicbaas.orchestrator.v1.GetTaskArtifactResponse
-	129, // 228: quicbaas.orchestrator.v1.OrchestratorService.GetCostSettings:output_type -> quicbaas.orchestrator.v1.CostSettingsResponse
-	129, // 229: quicbaas.orchestrator.v1.OrchestratorService.SetCostSettings:output_type -> quicbaas.orchestrator.v1.CostSettingsResponse
-	188, // [188:230] is the sub-list for method output_type
-	146, // [146:188] is the sub-list for method input_type
-	146, // [146:146] is the sub-list for extension type_name
-	146, // [146:146] is the sub-list for extension extendee
-	0,   // [0:146] is the sub-list for field type_name
+	150, // 83: quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.env:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.EnvEntry
+	79,  // 84: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.peer_messaging:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowPeerMessagingSettings
+	80,  // 85: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.file_locking:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowFileLockSettings
+	81,  // 86: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.vector_db:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowVectorDBSettings
+	78,  // 87: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.review_criteria:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowReviewCriterion
+	82,  // 88: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.cost_controls:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowCostControlSettings
+	83,  // 89: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.recovery:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowRecoverySettings
+	77,  // 90: quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition.agents:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec
+	84,  // 91: quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition.settings:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowSettings
+	85,  // 92: quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse.workflows:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition
+	21,  // 93: quicbaas.orchestrator.v1.OrchestratorHealthResponse.report:type_name -> quicbaas.orchestrator.v1.HealthCheckReport
+	158, // 94: quicbaas.orchestrator.v1.OrchestratorHealthResponse.timestamp:type_name -> google.protobuf.Timestamp
+	151, // 95: quicbaas.orchestrator.v1.RegisterFleetNodeRequest.metadata:type_name -> quicbaas.orchestrator.v1.RegisterFleetNodeRequest.MetadataEntry
+	16,  // 96: quicbaas.orchestrator.v1.RegisterFleetNodeResponse.node:type_name -> quicbaas.orchestrator.v1.FleetNode
+	158, // 97: quicbaas.orchestrator.v1.RegisterFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
+	16,  // 98: quicbaas.orchestrator.v1.GetFleetNodeResponse.node:type_name -> quicbaas.orchestrator.v1.FleetNode
+	158, // 99: quicbaas.orchestrator.v1.GetFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
+	17,  // 100: quicbaas.orchestrator.v1.ListFleetNodesRequest.filter:type_name -> quicbaas.orchestrator.v1.FleetNodeFilter
+	16,  // 101: quicbaas.orchestrator.v1.ListFleetNodesResponse.nodes:type_name -> quicbaas.orchestrator.v1.FleetNode
+	158, // 102: quicbaas.orchestrator.v1.ListFleetNodesResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 103: quicbaas.orchestrator.v1.RemoveFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 104: quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 105: quicbaas.orchestrator.v1.PushEventRequest.emitted_at:type_name -> google.protobuf.Timestamp
+	158, // 106: quicbaas.orchestrator.v1.SessionEventEnvelope.timestamp:type_name -> google.protobuf.Timestamp
+	158, // 107: quicbaas.orchestrator.v1.SessionTurn.timestamp:type_name -> google.protobuf.Timestamp
+	105, // 108: quicbaas.orchestrator.v1.SessionTurn.tools:type_name -> quicbaas.orchestrator.v1.SessionToolUse
+	106, // 109: quicbaas.orchestrator.v1.GetSessionConversationResponse.turns:type_name -> quicbaas.orchestrator.v1.SessionTurn
+	158, // 110: quicbaas.orchestrator.v1.GetSpendReportRequest.from:type_name -> google.protobuf.Timestamp
+	158, // 111: quicbaas.orchestrator.v1.GetSpendReportRequest.to:type_name -> google.protobuf.Timestamp
+	158, // 112: quicbaas.orchestrator.v1.SpendWindowStatus.frees_at:type_name -> google.protobuf.Timestamp
+	158, // 113: quicbaas.orchestrator.v1.SpendBreakerVerdict.last_failure_at:type_name -> google.protobuf.Timestamp
+	158, // 114: quicbaas.orchestrator.v1.SpendBreakerVerdict.last_success_at:type_name -> google.protobuf.Timestamp
+	158, // 115: quicbaas.orchestrator.v1.SpendBreakerVerdict.open_until:type_name -> google.protobuf.Timestamp
+	111, // 116: quicbaas.orchestrator.v1.SpendAccount.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	109, // 117: quicbaas.orchestrator.v1.SpendAccount.windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
+	110, // 118: quicbaas.orchestrator.v1.SpendAccount.breaker:type_name -> quicbaas.orchestrator.v1.SpendBreakerVerdict
+	111, // 119: quicbaas.orchestrator.v1.SpendModel.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	111, // 120: quicbaas.orchestrator.v1.SpendHost.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	111, // 121: quicbaas.orchestrator.v1.SpendAgent.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	111, // 122: quicbaas.orchestrator.v1.SpendChild.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	158, // 123: quicbaas.orchestrator.v1.GetSpendReportResponse.first_at:type_name -> google.protobuf.Timestamp
+	158, // 124: quicbaas.orchestrator.v1.GetSpendReportResponse.last_at:type_name -> google.protobuf.Timestamp
+	112, // 125: quicbaas.orchestrator.v1.GetSpendReportResponse.accounts:type_name -> quicbaas.orchestrator.v1.SpendAccount
+	113, // 126: quicbaas.orchestrator.v1.GetSpendReportResponse.models:type_name -> quicbaas.orchestrator.v1.SpendModel
+	116, // 127: quicbaas.orchestrator.v1.GetSpendReportResponse.children:type_name -> quicbaas.orchestrator.v1.SpendChild
+	111, // 128: quicbaas.orchestrator.v1.GetSpendReportResponse.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	158, // 129: quicbaas.orchestrator.v1.GetSpendReportResponse.from:type_name -> google.protobuf.Timestamp
+	158, // 130: quicbaas.orchestrator.v1.GetSpendReportResponse.to:type_name -> google.protobuf.Timestamp
+	109, // 131: quicbaas.orchestrator.v1.GetSpendReportResponse.scope_windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
+	114, // 132: quicbaas.orchestrator.v1.GetSpendReportResponse.hosts:type_name -> quicbaas.orchestrator.v1.SpendHost
+	115, // 133: quicbaas.orchestrator.v1.GetSpendReportResponse.agents:type_name -> quicbaas.orchestrator.v1.SpendAgent
+	109, // 134: quicbaas.orchestrator.v1.GetSpendReportResponse.agent_windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
+	161, // 135: quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest.limits:type_name -> quicbaas.spend.v1.SpendLimits
+	161, // 136: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.limits:type_name -> quicbaas.spend.v1.SpendLimits
+	158, // 137: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.updated_at:type_name -> google.protobuf.Timestamp
+	109, // 138: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
+	152, // 139: quicbaas.orchestrator.v1.InferenceRequest.metadata:type_name -> quicbaas.orchestrator.v1.InferenceRequest.MetadataEntry
+	8,   // 140: quicbaas.orchestrator.v1.InferenceResponse.content:type_name -> quicbaas.orchestrator.v1.ContentBlock
+	8,   // 141: quicbaas.orchestrator.v1.InferenceChunk.delta:type_name -> quicbaas.orchestrator.v1.ContentBlock
+	124, // 142: quicbaas.orchestrator.v1.SpawnChildJobRequest.tasks:type_name -> quicbaas.orchestrator.v1.TaskSpec
+	127, // 143: quicbaas.orchestrator.v1.Artifact.ref:type_name -> quicbaas.orchestrator.v1.ArtifactRef
+	153, // 144: quicbaas.orchestrator.v1.Artifact.metadata:type_name -> quicbaas.orchestrator.v1.Artifact.MetadataEntry
+	128, // 145: quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest.artifacts:type_name -> quicbaas.orchestrator.v1.Artifact
+	158, // 146: quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	128, // 147: quicbaas.orchestrator.v1.ListTaskArtifactsResponse.artifacts:type_name -> quicbaas.orchestrator.v1.Artifact
+	158, // 148: quicbaas.orchestrator.v1.ListTaskArtifactsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	128, // 149: quicbaas.orchestrator.v1.GetTaskArtifactResponse.artifact:type_name -> quicbaas.orchestrator.v1.Artifact
+	158, // 150: quicbaas.orchestrator.v1.GetTaskArtifactResponse.timestamp:type_name -> google.protobuf.Timestamp
+	154, // 151: quicbaas.orchestrator.v1.SessionWorkspace.spec_files:type_name -> quicbaas.orchestrator.v1.SessionWorkspace.SpecFilesEntry
+	155, // 152: quicbaas.orchestrator.v1.SetCostSettingsRequest.engine_power_watts:type_name -> quicbaas.orchestrator.v1.SetCostSettingsRequest.EnginePowerWattsEntry
+	156, // 153: quicbaas.orchestrator.v1.CostSettingsResponse.engine_power_watts:type_name -> quicbaas.orchestrator.v1.CostSettingsResponse.EnginePowerWattsEntry
+	158, // 154: quicbaas.orchestrator.v1.CostSettingsResponse.updated_at:type_name -> google.protobuf.Timestamp
+	157, // 155: quicbaas.orchestrator.v1.CostSettingsResponse.effective_engine_power_watts:type_name -> quicbaas.orchestrator.v1.CostSettingsResponse.EffectiveEnginePowerWattsEntry
+	22,  // 156: quicbaas.orchestrator.v1.OrchestratorService.SpawnSession:input_type -> quicbaas.orchestrator.v1.SpawnSessionRequest
+	26,  // 157: quicbaas.orchestrator.v1.OrchestratorService.PromptSession:input_type -> quicbaas.orchestrator.v1.PromptSessionRequest
+	28,  // 158: quicbaas.orchestrator.v1.OrchestratorService.SessionStatus:input_type -> quicbaas.orchestrator.v1.SessionStatusRequest
+	30,  // 159: quicbaas.orchestrator.v1.OrchestratorService.CloseSession:input_type -> quicbaas.orchestrator.v1.CloseSessionRequest
+	34,  // 160: quicbaas.orchestrator.v1.OrchestratorService.ListSessions:input_type -> quicbaas.orchestrator.v1.ListSessionsRequest
+	32,  // 161: quicbaas.orchestrator.v1.OrchestratorService.RotateSessionAccount:input_type -> quicbaas.orchestrator.v1.RotateSessionAccountRequest
+	36,  // 162: quicbaas.orchestrator.v1.OrchestratorService.CreateTask:input_type -> quicbaas.orchestrator.v1.CreateTaskRequest
+	38,  // 163: quicbaas.orchestrator.v1.OrchestratorService.GetTask:input_type -> quicbaas.orchestrator.v1.GetTaskRequest
+	40,  // 164: quicbaas.orchestrator.v1.OrchestratorService.ListTasks:input_type -> quicbaas.orchestrator.v1.ListTasksRequest
+	42,  // 165: quicbaas.orchestrator.v1.OrchestratorService.ClaimTask:input_type -> quicbaas.orchestrator.v1.ClaimTaskRequest
+	50,  // 166: quicbaas.orchestrator.v1.OrchestratorService.CompleteTask:input_type -> quicbaas.orchestrator.v1.CompleteTaskRequest
+	44,  // 167: quicbaas.orchestrator.v1.OrchestratorService.BlockTask:input_type -> quicbaas.orchestrator.v1.BlockTaskRequest
+	46,  // 168: quicbaas.orchestrator.v1.OrchestratorService.ReadmitTask:input_type -> quicbaas.orchestrator.v1.ReadmitTaskRequest
+	48,  // 169: quicbaas.orchestrator.v1.OrchestratorService.DeleteTask:input_type -> quicbaas.orchestrator.v1.DeleteTaskRequest
+	52,  // 170: quicbaas.orchestrator.v1.OrchestratorService.DecomposeTask:input_type -> quicbaas.orchestrator.v1.DecomposeTaskRequest
+	54,  // 171: quicbaas.orchestrator.v1.OrchestratorService.StartJob:input_type -> quicbaas.orchestrator.v1.OrchestratorStartJobRequest
+	56,  // 172: quicbaas.orchestrator.v1.OrchestratorService.GetJobStatus:input_type -> quicbaas.orchestrator.v1.OrchestratorGetJobStatusRequest
+	64,  // 173: quicbaas.orchestrator.v1.OrchestratorService.CancelJob:input_type -> quicbaas.orchestrator.v1.OrchestratorCancelJobRequest
+	66,  // 174: quicbaas.orchestrator.v1.OrchestratorService.ListJobs:input_type -> quicbaas.orchestrator.v1.OrchestratorListJobsRequest
+	69,  // 175: quicbaas.orchestrator.v1.OrchestratorService.SubscribeJobEvents:input_type -> quicbaas.orchestrator.v1.SubscribeJobEventsRequest
+	71,  // 176: quicbaas.orchestrator.v1.OrchestratorService.ListBackends:input_type -> quicbaas.orchestrator.v1.OrchestratorListBackendsRequest
+	75,  // 177: quicbaas.orchestrator.v1.OrchestratorService.ListRunners:input_type -> quicbaas.orchestrator.v1.OrchestratorListRunnersRequest
+	86,  // 178: quicbaas.orchestrator.v1.OrchestratorService.ListWorkflows:input_type -> quicbaas.orchestrator.v1.OrchestratorListWorkflowsRequest
+	88,  // 179: quicbaas.orchestrator.v1.OrchestratorService.Health:input_type -> quicbaas.orchestrator.v1.OrchestratorHealthRequest
+	90,  // 180: quicbaas.orchestrator.v1.OrchestratorService.RegisterFleetNode:input_type -> quicbaas.orchestrator.v1.RegisterFleetNodeRequest
+	92,  // 181: quicbaas.orchestrator.v1.OrchestratorService.GetFleetNode:input_type -> quicbaas.orchestrator.v1.GetFleetNodeRequest
+	94,  // 182: quicbaas.orchestrator.v1.OrchestratorService.ListFleetNodes:input_type -> quicbaas.orchestrator.v1.ListFleetNodesRequest
+	96,  // 183: quicbaas.orchestrator.v1.OrchestratorService.RemoveFleetNode:input_type -> quicbaas.orchestrator.v1.RemoveFleetNodeRequest
+	98,  // 184: quicbaas.orchestrator.v1.OrchestratorService.FleetNodeHeartbeat:input_type -> quicbaas.orchestrator.v1.FleetNodeHeartbeatRequest
+	100, // 185: quicbaas.orchestrator.v1.OrchestratorService.PushEvents:input_type -> quicbaas.orchestrator.v1.PushEventRequest
+	102, // 186: quicbaas.orchestrator.v1.OrchestratorService.SubscribeSessionEvents:input_type -> quicbaas.orchestrator.v1.SubscribeSessionRequest
+	104, // 187: quicbaas.orchestrator.v1.OrchestratorService.GetSessionConversation:input_type -> quicbaas.orchestrator.v1.GetSessionConversationRequest
+	108, // 188: quicbaas.orchestrator.v1.OrchestratorService.GetSpendReport:input_type -> quicbaas.orchestrator.v1.GetSpendReportRequest
+	118, // 189: quicbaas.orchestrator.v1.OrchestratorService.GetTenantSpendPolicy:input_type -> quicbaas.orchestrator.v1.GetTenantSpendPolicyRequest
+	119, // 190: quicbaas.orchestrator.v1.OrchestratorService.SetTenantSpendPolicy:input_type -> quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest
+	121, // 191: quicbaas.orchestrator.v1.OrchestratorService.Inference:input_type -> quicbaas.orchestrator.v1.InferenceRequest
+	121, // 192: quicbaas.orchestrator.v1.OrchestratorService.InferenceStream:input_type -> quicbaas.orchestrator.v1.InferenceRequest
+	125, // 193: quicbaas.orchestrator.v1.OrchestratorService.SpawnChildJob:input_type -> quicbaas.orchestrator.v1.SpawnChildJobRequest
+	129, // 194: quicbaas.orchestrator.v1.OrchestratorService.SubmitTaskArtifacts:input_type -> quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest
+	131, // 195: quicbaas.orchestrator.v1.OrchestratorService.ListTaskArtifacts:input_type -> quicbaas.orchestrator.v1.ListTaskArtifactsRequest
+	133, // 196: quicbaas.orchestrator.v1.OrchestratorService.GetTaskArtifact:input_type -> quicbaas.orchestrator.v1.GetTaskArtifactRequest
+	138, // 197: quicbaas.orchestrator.v1.OrchestratorService.GetCostSettings:input_type -> quicbaas.orchestrator.v1.GetCostSettingsRequest
+	139, // 198: quicbaas.orchestrator.v1.OrchestratorService.SetCostSettings:input_type -> quicbaas.orchestrator.v1.SetCostSettingsRequest
+	25,  // 199: quicbaas.orchestrator.v1.OrchestratorService.SpawnSession:output_type -> quicbaas.orchestrator.v1.SpawnSessionResponse
+	27,  // 200: quicbaas.orchestrator.v1.OrchestratorService.PromptSession:output_type -> quicbaas.orchestrator.v1.PromptSessionResponse
+	29,  // 201: quicbaas.orchestrator.v1.OrchestratorService.SessionStatus:output_type -> quicbaas.orchestrator.v1.SessionStatusResponse
+	31,  // 202: quicbaas.orchestrator.v1.OrchestratorService.CloseSession:output_type -> quicbaas.orchestrator.v1.CloseSessionResponse
+	35,  // 203: quicbaas.orchestrator.v1.OrchestratorService.ListSessions:output_type -> quicbaas.orchestrator.v1.ListSessionsResponse
+	33,  // 204: quicbaas.orchestrator.v1.OrchestratorService.RotateSessionAccount:output_type -> quicbaas.orchestrator.v1.RotateSessionAccountResponse
+	37,  // 205: quicbaas.orchestrator.v1.OrchestratorService.CreateTask:output_type -> quicbaas.orchestrator.v1.CreateTaskResponse
+	39,  // 206: quicbaas.orchestrator.v1.OrchestratorService.GetTask:output_type -> quicbaas.orchestrator.v1.GetTaskResponse
+	41,  // 207: quicbaas.orchestrator.v1.OrchestratorService.ListTasks:output_type -> quicbaas.orchestrator.v1.ListTasksResponse
+	43,  // 208: quicbaas.orchestrator.v1.OrchestratorService.ClaimTask:output_type -> quicbaas.orchestrator.v1.ClaimTaskResponse
+	51,  // 209: quicbaas.orchestrator.v1.OrchestratorService.CompleteTask:output_type -> quicbaas.orchestrator.v1.CompleteTaskResponse
+	45,  // 210: quicbaas.orchestrator.v1.OrchestratorService.BlockTask:output_type -> quicbaas.orchestrator.v1.BlockTaskResponse
+	47,  // 211: quicbaas.orchestrator.v1.OrchestratorService.ReadmitTask:output_type -> quicbaas.orchestrator.v1.ReadmitTaskResponse
+	49,  // 212: quicbaas.orchestrator.v1.OrchestratorService.DeleteTask:output_type -> quicbaas.orchestrator.v1.DeleteTaskResponse
+	53,  // 213: quicbaas.orchestrator.v1.OrchestratorService.DecomposeTask:output_type -> quicbaas.orchestrator.v1.DecomposeTaskResponse
+	55,  // 214: quicbaas.orchestrator.v1.OrchestratorService.StartJob:output_type -> quicbaas.orchestrator.v1.OrchestratorStartJobResponse
+	57,  // 215: quicbaas.orchestrator.v1.OrchestratorService.GetJobStatus:output_type -> quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse
+	65,  // 216: quicbaas.orchestrator.v1.OrchestratorService.CancelJob:output_type -> quicbaas.orchestrator.v1.OrchestratorCancelJobResponse
+	67,  // 217: quicbaas.orchestrator.v1.OrchestratorService.ListJobs:output_type -> quicbaas.orchestrator.v1.OrchestratorListJobsResponse
+	70,  // 218: quicbaas.orchestrator.v1.OrchestratorService.SubscribeJobEvents:output_type -> quicbaas.orchestrator.v1.JobEvent
+	72,  // 219: quicbaas.orchestrator.v1.OrchestratorService.ListBackends:output_type -> quicbaas.orchestrator.v1.OrchestratorListBackendsResponse
+	76,  // 220: quicbaas.orchestrator.v1.OrchestratorService.ListRunners:output_type -> quicbaas.orchestrator.v1.OrchestratorListRunnersResponse
+	87,  // 221: quicbaas.orchestrator.v1.OrchestratorService.ListWorkflows:output_type -> quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse
+	89,  // 222: quicbaas.orchestrator.v1.OrchestratorService.Health:output_type -> quicbaas.orchestrator.v1.OrchestratorHealthResponse
+	91,  // 223: quicbaas.orchestrator.v1.OrchestratorService.RegisterFleetNode:output_type -> quicbaas.orchestrator.v1.RegisterFleetNodeResponse
+	93,  // 224: quicbaas.orchestrator.v1.OrchestratorService.GetFleetNode:output_type -> quicbaas.orchestrator.v1.GetFleetNodeResponse
+	95,  // 225: quicbaas.orchestrator.v1.OrchestratorService.ListFleetNodes:output_type -> quicbaas.orchestrator.v1.ListFleetNodesResponse
+	97,  // 226: quicbaas.orchestrator.v1.OrchestratorService.RemoveFleetNode:output_type -> quicbaas.orchestrator.v1.RemoveFleetNodeResponse
+	99,  // 227: quicbaas.orchestrator.v1.OrchestratorService.FleetNodeHeartbeat:output_type -> quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse
+	101, // 228: quicbaas.orchestrator.v1.OrchestratorService.PushEvents:output_type -> quicbaas.orchestrator.v1.PushEventAck
+	103, // 229: quicbaas.orchestrator.v1.OrchestratorService.SubscribeSessionEvents:output_type -> quicbaas.orchestrator.v1.SessionEventEnvelope
+	107, // 230: quicbaas.orchestrator.v1.OrchestratorService.GetSessionConversation:output_type -> quicbaas.orchestrator.v1.GetSessionConversationResponse
+	117, // 231: quicbaas.orchestrator.v1.OrchestratorService.GetSpendReport:output_type -> quicbaas.orchestrator.v1.GetSpendReportResponse
+	120, // 232: quicbaas.orchestrator.v1.OrchestratorService.GetTenantSpendPolicy:output_type -> quicbaas.orchestrator.v1.TenantSpendPolicyResponse
+	120, // 233: quicbaas.orchestrator.v1.OrchestratorService.SetTenantSpendPolicy:output_type -> quicbaas.orchestrator.v1.TenantSpendPolicyResponse
+	122, // 234: quicbaas.orchestrator.v1.OrchestratorService.Inference:output_type -> quicbaas.orchestrator.v1.InferenceResponse
+	123, // 235: quicbaas.orchestrator.v1.OrchestratorService.InferenceStream:output_type -> quicbaas.orchestrator.v1.InferenceChunk
+	126, // 236: quicbaas.orchestrator.v1.OrchestratorService.SpawnChildJob:output_type -> quicbaas.orchestrator.v1.SpawnChildJobResponse
+	130, // 237: quicbaas.orchestrator.v1.OrchestratorService.SubmitTaskArtifacts:output_type -> quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse
+	132, // 238: quicbaas.orchestrator.v1.OrchestratorService.ListTaskArtifacts:output_type -> quicbaas.orchestrator.v1.ListTaskArtifactsResponse
+	134, // 239: quicbaas.orchestrator.v1.OrchestratorService.GetTaskArtifact:output_type -> quicbaas.orchestrator.v1.GetTaskArtifactResponse
+	140, // 240: quicbaas.orchestrator.v1.OrchestratorService.GetCostSettings:output_type -> quicbaas.orchestrator.v1.CostSettingsResponse
+	140, // 241: quicbaas.orchestrator.v1.OrchestratorService.SetCostSettings:output_type -> quicbaas.orchestrator.v1.CostSettingsResponse
+	199, // [199:242] is the sub-list for method output_type
+	156, // [156:199] is the sub-list for method input_type
+	156, // [156:156] is the sub-list for extension type_name
+	156, // [156:156] is the sub-list for extension extendee
+	0,   // [0:156] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_orchestrator_proto_init() }
@@ -12969,17 +14078,17 @@ func file_api_proto_orchestrator_proto_init() {
 	file_api_proto_spend_proto_init()
 	file_api_proto_agents_proto_init()
 	file_api_proto_orchestrator_proto_msgTypes[9].OneofWrappers = []any{}
-	file_api_proto_orchestrator_proto_msgTypes[96].OneofWrappers = []any{}
-	file_api_proto_orchestrator_proto_msgTypes[101].OneofWrappers = []any{}
-	file_api_proto_orchestrator_proto_msgTypes[123].OneofWrappers = []any{}
-	file_api_proto_orchestrator_proto_msgTypes[124].OneofWrappers = []any{}
+	file_api_proto_orchestrator_proto_msgTypes[107].OneofWrappers = []any{}
+	file_api_proto_orchestrator_proto_msgTypes[112].OneofWrappers = []any{}
+	file_api_proto_orchestrator_proto_msgTypes[134].OneofWrappers = []any{}
+	file_api_proto_orchestrator_proto_msgTypes[135].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_orchestrator_proto_rawDesc), len(file_api_proto_orchestrator_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   141,
+			NumMessages:   153,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

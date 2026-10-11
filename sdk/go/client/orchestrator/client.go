@@ -1670,12 +1670,21 @@ const (
 
 // AgentRoleSpec describes a single agent role within a workflow definition.
 type AgentRoleSpec struct {
-	Role         string            `json:"role"`
-	Backend      string            `json:"backend"`
-	Model        string            `json:"model,omitempty"`
-	Capabilities []string          `json:"capabilities,omitempty"`
-	Env          map[string]string `json:"env,omitempty"`
-	Instructions string            `json:"instructions,omitempty"`
+	Role            string            `json:"role"`
+	Backend         string            `json:"backend"`
+	Model           string            `json:"model,omitempty"`
+	Capabilities    []string          `json:"capabilities,omitempty"`
+	MCPScopes       []string          `json:"mcp_scopes,omitempty"`
+	Count           int               `json:"count,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
+	WorkspacePath   string            `json:"workspace_path,omitempty"`
+	PermissionMode  string            `json:"permission_mode,omitempty"`
+	SkipPermissions bool              `json:"skip_permissions,omitempty"`
+	Sandboxed       bool              `json:"sandboxed,omitempty"`
+	ContainerImage  string            `json:"container_image,omitempty"`
+	HostAffinity    string            `json:"host_affinity,omitempty"`
+	NumCtx          int               `json:"num_ctx,omitempty"`
+	SystemPrompt    string            `json:"system_prompt,omitempty"`
 
 	// PromptAppend is run-time prompt material appended to every session of
 	// this role, after the role's system prompt or its Agent's. At most
@@ -1683,16 +1692,64 @@ type AgentRoleSpec struct {
 	PromptAppend string `json:"prompt_append,omitempty"`
 }
 
+type ReviewCriterion struct {
+	Name      string `json:"name"`
+	Validator string `json:"validator"`
+	Config    string `json:"config"`
+	Required  bool   `json:"required"`
+	Phase     string `json:"phase,omitempty"`
+}
+
+type PeerMessagingSettings struct {
+	MaxMessageSize int    `json:"max_message_size,omitempty"`
+	MaxInboxSize   int    `json:"max_inbox_size,omitempty"`
+	OverflowAction string `json:"overflow_action,omitempty"`
+	InboxTTL       string `json:"inbox_ttl,omitempty"`
+}
+
+type FileLockSettings struct {
+	LeaseTTL          string `json:"lease_ttl,omitempty"`
+	HeartbeatInterval string `json:"heartbeat_interval,omitempty"`
+	MaxRenewals       int    `json:"max_renewals,omitempty"`
+}
+
+type VectorDBSettings struct {
+	Enabled        bool     `json:"enabled,omitempty"`
+	IndexType      string   `json:"index_type,omitempty"`
+	AutoIndex      bool     `json:"auto_index,omitempty"`
+	Triggers       []string `json:"triggers,omitempty"`
+	GPUAccelerated bool     `json:"gpu_accelerated,omitempty"`
+}
+
+type CostControlSettings struct {
+	MaxTokensPerJob   int64  `json:"max_tokens_per_job,omitempty"`
+	MaxTokensPerAgent int64  `json:"max_tokens_per_agent,omitempty"`
+	BudgetAction      string `json:"budget_action,omitempty"`
+}
+
+type RecoverySettings struct {
+	AutoRestart    bool   `json:"auto_restart,omitempty"`
+	MaxRestarts    int    `json:"max_restarts,omitempty"`
+	RestartBackoff string `json:"restart_backoff,omitempty"`
+}
+
 // WorkflowSettings holds operational tuning parameters for a workflow.
 type WorkflowSettings struct {
-	MaxIterations int    `json:"max_iterations,omitempty"`
-	Topology      string `json:"topology,omitempty"`
-	Isolation     string `json:"isolation,omitempty"`
-	PeerMessaging bool   `json:"peer_messaging,omitempty"`
-	FileLocking   bool   `json:"file_locking,omitempty"`
-	VectorDB      bool   `json:"vector_db,omitempty"`
-	Verbosity     string `json:"verbosity,omitempty"`
-	GlobalNumCtx  int    `json:"global_num_ctx,omitempty"`
+	MaxIterations  int                   `json:"max_iterations,omitempty"`
+	MaxParallelism int                   `json:"max_parallelism,omitempty"`
+	PollInterval   string                `json:"poll_interval,omitempty"`
+	TimeoutPerItem string                `json:"timeout_per_item,omitempty"`
+	TotalTimeout   string                `json:"total_timeout,omitempty"`
+	ReviewCriteria []ReviewCriterion     `json:"review_criteria,omitempty"`
+	Topology       string                `json:"topology,omitempty"`
+	Isolation      string                `json:"isolation,omitempty"`
+	PeerMessaging  PeerMessagingSettings `json:"peer_messaging,omitempty"`
+	FileLocking    FileLockSettings      `json:"file_locking,omitempty"`
+	VectorDB       VectorDBSettings      `json:"vector_db,omitempty"`
+	CostControls   CostControlSettings   `json:"cost_controls,omitempty"`
+	Recovery       RecoverySettings      `json:"recovery,omitempty"`
+	Verbosity      string                `json:"verbosity,omitempty"`
+	NumCtx         int                   `json:"num_ctx,omitempty"`
 
 	// Hooks names the registered lifecycle hook set every job of the
 	// workflow runs; empty runs none.

@@ -95,6 +95,14 @@ func (f *pagingOrchestratorFake) ListJobs(_ context.Context, req *pb.Orchestrato
 	return &pb.OrchestratorListJobsResponse{Jobs: []*pb.OrchestratorJobSummary{{JobId: "j1"}}, Total: total, Limit: limit, Offset: offset, NextOffset: next}, nil
 }
 
+func (f *pagingOrchestratorFake) ListWorkflows(_ context.Context, req *pb.OrchestratorListWorkflowsRequest) (*pb.OrchestratorListWorkflowsResponse, error) {
+	total, limit, offset, next, err := f.answer(pageFields{req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ()})
+	if err != nil {
+		return nil, err
+	}
+	return &pb.OrchestratorListWorkflowsResponse{Workflows: []*pb.OrchestratorWorkflowDefinition{{Name: "wf1", Mode: "canned"}}, Total: total, Limit: limit, Offset: offset, NextOffset: next}, nil
+}
+
 func (f *pagingOrchestratorFake) ListFleetNodes(_ context.Context, req *pb.ListFleetNodesRequest) (*pb.ListFleetNodesResponse, error) {
 	total, limit, offset, next, err := f.answer(pageFields{req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ()})
 	if err != nil {
@@ -170,6 +178,14 @@ func pagedHandlers() map[string]pagedHandler {
 			}
 			resp := out.(*orchestrator.ListJobsResponse)
 			return resp.Envelope, len(resp.Jobs), nil
+		},
+		"ListWorkflows": func(ctx context.Context, conn *grpc.ClientConn, params page.Params) (page.Envelope, int, error) {
+			out, err := handleOrchestratorListWorkflows(ctx, conn, &orchestrator.ListWorkflowsRequest{Params: params})
+			if err != nil {
+				return page.Envelope{}, 0, err
+			}
+			resp := out.(*orchestrator.ListWorkflowsResponse)
+			return resp.Envelope, len(resp.Workflows), nil
 		},
 		"ListFleetNodes": func(ctx context.Context, conn *grpc.ClientConn, params page.Params) (page.Envelope, int, error) {
 			out, err := handleFleetList(ctx, conn, &orchestrator.ListFleetNodesRequest{TenantID: "t1", Params: params})

@@ -114,6 +114,11 @@ service OrchestratorService {
         option (qrdb.v1.permission) = "orchestrator:status";
     }
 
+    // Workflow Operations
+    rpc ListWorkflows(OrchestratorListWorkflowsRequest) returns (OrchestratorListWorkflowsResponse) {
+        option (qrdb.v1.permission) = "orchestrator:workflow_read";
+    }
+
     // Health Operations
     rpc Health(OrchestratorHealthRequest) returns (OrchestratorHealthResponse) {
         option (qrdb.v1.permission) = "orchestrator:health";
@@ -1398,6 +1403,117 @@ message OrchestratorListRunnersResponse {
     int32 limit = 4;
     int32 offset = 5;
     int32 next_offset = 6;
+}
+
+// =============================================================================
+// Workflow Requests and Responses
+// =============================================================================
+
+message OrchestratorWorkflowAgentRoleSpec {
+    string role = 1;
+    string backend = 2;
+    string model = 3;
+    repeated string capabilities = 4;
+    map<string, string> env = 5;
+    string system_prompt = 6;
+    string prompt_append = 7;
+    repeated string mcp_scopes = 8;
+    int32 count = 9;
+    string workspace_path = 10;
+    string permission_mode = 11;
+    bool skip_permissions = 12;
+    bool sandboxed = 13;
+    string container_image = 14;
+    string host_affinity = 15;
+    int32 num_ctx = 16;
+}
+
+message OrchestratorWorkflowReviewCriterion {
+    string name = 1;
+    string validator = 2;
+    string config = 3;
+    bool required = 4;
+    string phase = 5;
+}
+
+message OrchestratorWorkflowPeerMessagingSettings {
+    int32 max_message_size = 1;
+    int32 max_inbox_size = 2;
+    string overflow_action = 3;
+    string inbox_ttl = 4;
+}
+
+message OrchestratorWorkflowFileLockSettings {
+    string lease_ttl = 1;
+    string heartbeat_interval = 2;
+    int32 max_renewals = 3;
+}
+
+message OrchestratorWorkflowVectorDBSettings {
+    bool enabled = 1;
+    string index_type = 2;
+    bool auto_index = 3;
+    repeated string triggers = 4;
+    bool gpu_accelerated = 5;
+}
+
+message OrchestratorWorkflowCostControlSettings {
+    int64 max_tokens_per_job = 1;
+    int64 max_tokens_per_agent = 2;
+    string budget_action = 3;
+}
+
+message OrchestratorWorkflowRecoverySettings {
+    bool auto_restart = 1;
+    int32 max_restarts = 2;
+    string restart_backoff = 3;
+}
+
+message OrchestratorWorkflowSettings {
+    int32 max_iterations = 1;
+    string topology = 2;
+    string isolation = 3;
+    OrchestratorWorkflowPeerMessagingSettings peer_messaging = 4;
+    OrchestratorWorkflowFileLockSettings file_locking = 5;
+    OrchestratorWorkflowVectorDBSettings vector_db = 6;
+    string verbosity = 7;
+    int32 num_ctx = 8;
+    string hooks = 9;
+    int32 max_parallelism = 10;
+    string poll_interval = 11;
+    string timeout_per_item = 12;
+    string total_timeout = 13;
+    repeated OrchestratorWorkflowReviewCriterion review_criteria = 14;
+    OrchestratorWorkflowCostControlSettings cost_controls = 15;
+    OrchestratorWorkflowRecoverySettings recovery = 16;
+}
+
+message OrchestratorWorkflowDefinition {
+    string name = 1;
+    string description = 2;
+    string mode = 3;
+    repeated OrchestratorWorkflowAgentRoleSpec agents = 4;
+    OrchestratorWorkflowSettings settings = 5;
+    string tenant_id = 6;
+    string project_id = 7;
+}
+
+message OrchestratorListWorkflowsRequest {
+    string tenant_id = 1;
+    string project_id = 2;
+    string mode = 3;
+    int32 limit = 4;
+    int32 offset = 5;
+    string sort = 6;
+    string q = 7;
+}
+
+message OrchestratorListWorkflowsResponse {
+    repeated OrchestratorWorkflowDefinition workflows = 1;
+    int32 total = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+    int32 next_offset = 5;
 }
 
 // =============================================================================

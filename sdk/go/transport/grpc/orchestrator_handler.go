@@ -49,6 +49,7 @@ var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
 	"Health":                 handleOrchestratorHealth,
 	"ListBackends":           handleOrchestratorListBackends,
 	"ListRunners":            handleOrchestratorListRunners,
+	"ListWorkflows":          handleOrchestratorListWorkflows,
 	"SpawnSession":           handleOrchestratorSpawnSession,
 	"PromptSession":          handleOrchestratorPromptSession,
 	"SessionStatus":          handleOrchestratorSessionStatus,
@@ -1363,6 +1364,134 @@ func handleOrchestratorListJobs(ctx context.Context, conn *grpc.ClientConn, req 
 		Jobs:     jobs,
 		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
 	}, nil
+}
+
+func handleOrchestratorListWorkflows(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListWorkflowsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.ListWorkflows", "invalid request type")
+	}
+
+	paging := pageFieldsFromParams(sdkReq.Params)
+	protoReq := &pb.OrchestratorListWorkflowsRequest{
+		TenantId:  transport.TenantFromContext(ctx),
+		ProjectId: sdkReq.ProjectID,
+		Mode:      string(sdkReq.Mode),
+		Limit:     paging.limit,
+		Offset:    paging.offset,
+		Sort:      paging.sort,
+		Q:         paging.q,
+	}
+	protoResp := &pb.OrchestratorListWorkflowsResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_ListWorkflows_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.ListWorkflows")
+	}
+
+	workflows := make([]*orchestrator.WorkflowDefinition, 0, len(protoResp.GetWorkflows()))
+	for _, workflow := range protoResp.GetWorkflows() {
+		workflows = append(workflows, workflowDefinitionFromProto(workflow))
+	}
+	return &orchestrator.ListWorkflowsResponse{
+		Workflows: workflows,
+		Count:     len(workflows),
+		Envelope:  pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
+	}, nil
+}
+
+func workflowDefinitionFromProto(definition *pb.OrchestratorWorkflowDefinition) *orchestrator.WorkflowDefinition {
+	if definition == nil {
+		return nil
+	}
+	agents := make([]orchestrator.AgentRoleSpec, 0, len(definition.GetAgents()))
+	for _, agent := range definition.GetAgents() {
+		agents = append(agents, orchestrator.AgentRoleSpec{
+			Role:            agent.GetRole(),
+			Backend:         agent.GetBackend(),
+			Model:           agent.GetModel(),
+			Capabilities:    append([]string(nil), agent.GetCapabilities()...),
+			MCPScopes:       append([]string(nil), agent.GetMcpScopes()...),
+			Count:           int(agent.GetCount()),
+			Env:             cloneStringMap(agent.GetEnv()),
+			WorkspacePath:   agent.GetWorkspacePath(),
+			PermissionMode:  agent.GetPermissionMode(),
+			SkipPermissions: agent.GetSkipPermissions(),
+			Sandboxed:       agent.GetSandboxed(),
+			ContainerImage:  agent.GetContainerImage(),
+			HostAffinity:    agent.GetHostAffinity(),
+			NumCtx:          int(agent.GetNumCtx()),
+			SystemPrompt:    agent.GetSystemPrompt(),
+			PromptAppend:    agent.GetPromptAppend(),
+		})
+	}
+	settings := definition.GetSettings()
+	reviewCriteria := make([]orchestrator.ReviewCriterion, 0, len(settings.GetReviewCriteria()))
+	for _, criterion := range settings.GetReviewCriteria() {
+		reviewCriteria = append(reviewCriteria, orchestrator.ReviewCriterion{
+			Name:      criterion.GetName(),
+			Validator: criterion.GetValidator(),
+			Config:    criterion.GetConfig(),
+			Required:  criterion.GetRequired(),
+			Phase:     criterion.GetPhase(),
+		})
+	}
+	return &orchestrator.WorkflowDefinition{
+		Name:        definition.GetName(),
+		Description: definition.GetDescription(),
+		Mode:        orchestrator.WorkflowMode(definition.GetMode()),
+		Agents:      agents,
+		Settings: orchestrator.WorkflowSettings{
+			MaxIterations:  int(settings.GetMaxIterations()),
+			MaxParallelism: int(settings.GetMaxParallelism()),
+			PollInterval:   settings.GetPollInterval(),
+			TimeoutPerItem: settings.GetTimeoutPerItem(),
+			TotalTimeout:   settings.GetTotalTimeout(),
+			ReviewCriteria: reviewCriteria,
+			Topology:       settings.GetTopology(),
+			Isolation:      settings.GetIsolation(),
+			PeerMessaging: orchestrator.PeerMessagingSettings{
+				MaxMessageSize: int(settings.GetPeerMessaging().GetMaxMessageSize()),
+				MaxInboxSize:   int(settings.GetPeerMessaging().GetMaxInboxSize()),
+				OverflowAction: settings.GetPeerMessaging().GetOverflowAction(),
+				InboxTTL:       settings.GetPeerMessaging().GetInboxTtl(),
+			},
+			FileLocking: orchestrator.FileLockSettings{
+				LeaseTTL:          settings.GetFileLocking().GetLeaseTtl(),
+				HeartbeatInterval: settings.GetFileLocking().GetHeartbeatInterval(),
+				MaxRenewals:       int(settings.GetFileLocking().GetMaxRenewals()),
+			},
+			VectorDB: orchestrator.VectorDBSettings{
+				Enabled:        settings.GetVectorDb().GetEnabled(),
+				IndexType:      settings.GetVectorDb().GetIndexType(),
+				AutoIndex:      settings.GetVectorDb().GetAutoIndex(),
+				Triggers:       append([]string(nil), settings.GetVectorDb().GetTriggers()...),
+				GPUAccelerated: settings.GetVectorDb().GetGpuAccelerated(),
+			},
+			CostControls: orchestrator.CostControlSettings{
+				MaxTokensPerJob:   settings.GetCostControls().GetMaxTokensPerJob(),
+				MaxTokensPerAgent: settings.GetCostControls().GetMaxTokensPerAgent(),
+				BudgetAction:      settings.GetCostControls().GetBudgetAction(),
+			},
+			Recovery: orchestrator.RecoverySettings{
+				AutoRestart:    settings.GetRecovery().GetAutoRestart(),
+				MaxRestarts:    int(settings.GetRecovery().GetMaxRestarts()),
+				RestartBackoff: settings.GetRecovery().GetRestartBackoff(),
+			},
+			Verbosity: settings.GetVerbosity(),
+			NumCtx:    int(settings.GetNumCtx()),
+			Hooks:     settings.GetHooks(),
+		},
+	}
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
 }
 
 // handleOrchestratorCancelJob converts an SDK CancelJobRequest to proto,

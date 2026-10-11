@@ -259,6 +259,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_orchestrator_start_job":         {"orchestrator", "job_start"},
 	"quicbaas_orchestrator_get_job_status":    {"orchestrator", "job_read"},
 	"quicbaas_orchestrator_list_jobs":         {"orchestrator", "job_list"},
+	"quicbaas_orchestrator_list_workflows":    {"orchestrator", "workflow_read"},
 	"quicbaas_orchestrator_cancel_job":        {"orchestrator", "job_cancel"},
 	"quicbaas_orchestrator_list_backends":     {"orchestrator", "backend_list"},
 	"quicbaas_orchestrator_list_runners":      {"orchestrator", "status"},

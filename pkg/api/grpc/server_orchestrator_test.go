@@ -45,6 +45,7 @@ type grpcTestAgentService struct {
 	// that verb fills each row's Source, so a transport that reverts to the
 	// unpaged twin would answer rows with no forge issue on them.
 	listJobsPaged bool
+	listWorkflows []*orchestration.WorkflowDefinition
 
 	// listAgents is what ListFleetNodes answers with.
 	listAgents []*orchestration.FleetNode
@@ -280,7 +281,7 @@ func (m *grpcTestAgentService) ListBackendModels(_ context.Context, _ string) ([
 }
 
 func (m *grpcTestAgentService) ListWorkflows(_ context.Context) ([]*orchestration.WorkflowDefinition, error) {
-	return []*orchestration.WorkflowDefinition{}, nil
+	return m.listWorkflows, nil
 }
 
 func (m *grpcTestAgentService) GetWorkflow(_ context.Context, name string) (*orchestration.WorkflowDefinition, error) {
@@ -359,6 +360,133 @@ func TestOrchestratorGRPC_Spawn_Success(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, "session-abc", resp.SessionId)
 	assert.Equal(t, "claude", resp.Backend)
+}
+
+func TestOrchestratorGRPC_ListWorkflows_PagesAndFilters(t *testing.T) {
+	agentSvc := &grpcTestAgentService{listWorkflows: []*orchestration.WorkflowDefinition{
+		{Name: "alpha", Mode: orchestration.WorkflowModeCanned, ProjectID: "p1"},
+		{Name: "beta", Mode: orchestration.WorkflowModeAutonomous, ProjectID: "p2"},
+		{Name: "gamma", Mode: orchestration.WorkflowModeCanned, ProjectID: "p1"},
+	}}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	resp, err := server.ListWorkflows(tenantctx.WithSystem(context.Background()), &pb.OrchestratorListWorkflowsRequest{
+		ProjectId: "p1",
+		Mode:      string(orchestration.WorkflowModeCanned),
+		Limit:     1,
+		Offset:    1,
+		Sort:      "name:desc",
+		Q:         "a",
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.GetWorkflows(), 1)
+	assert.Equal(t, "alpha", resp.GetWorkflows()[0].GetName())
+	assert.Equal(t, int32(2), resp.GetTotal())
+	assert.Equal(t, int32(1), resp.GetLimit())
+	assert.Equal(t, int32(1), resp.GetOffset())
+	assert.Zero(t, resp.GetNextOffset())
+}
+
+func TestOrchestratorGRPC_ListWorkflows_RefusesUnknownSort(t *testing.T) {
+	server := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
+
+	_, err := server.ListWorkflows(tenantctx.WithSystem(context.Background()), &pb.OrchestratorListWorkflowsRequest{Sort: "created_at"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "created_at")
+}
+
+func TestWorkflowDefinitionToProto_PreservesFullRESTShape(t *testing.T) {
+	proto := workflowDefinitionToProto(&orchestration.WorkflowDefinition{
+		TenantID:    "tenant-a",
+		ProjectID:   "project-a",
+		Name:        "full-workflow",
+		Description: "full workflow",
+		Mode:        orchestration.WorkflowModeCanned,
+		Agents: []orchestration.AgentRoleSpec{{
+			Role:            "lead",
+			Backend:         "ollama",
+			Model:           "llama3.3",
+			Capabilities:    []string{"plan", "code"},
+			MCPScopes:       []string{"orchestrator:task_read"},
+			Count:           2,
+			WorkspacePath:   "/workspace",
+			PermissionMode:  "default",
+			SkipPermissions: true,
+			Env:             map[string]string{"A": "B"},
+			Sandboxed:       true,
+			ContainerImage:  "agent:latest",
+			HostAffinity:    "node-a",
+			NumCtx:          32768,
+			SystemPrompt:    "lead",
+			PromptAppend:    "append",
+		}},
+		Settings: orchestration.WorkflowSettings{
+			MaxIterations:  11,
+			MaxParallelism: 3,
+			PollInterval:   "2s",
+			TimeoutPerItem: "5m",
+			TotalTimeout:   "30m",
+			ReviewCriteria: []orchestration.ReviewCriterion{{
+				Name:      "tests",
+				Validator: "go-test",
+				Config:    "pkg/...",
+				Required:  true,
+				Phase:     orchestration.CriterionPhaseReviewing,
+			}},
+			Topology:  orchestration.TopologyPeerToPeer,
+			Isolation: orchestration.IsolationWorktree,
+			PeerMessaging: orchestration.PeerMessagingSettings{
+				MaxMessageSize: 4096,
+				MaxInboxSize:   99,
+				OverflowAction: "drop_oldest",
+				InboxTTL:       "1h",
+			},
+			FileLocking: orchestration.FileLockSettings{
+				LeaseTTL:          "10s",
+				HeartbeatInterval: "1s",
+				MaxRenewals:       7,
+			},
+			VectorDB: orchestration.VectorDBSettings{
+				Enabled:        true,
+				IndexType:      "hnsw",
+				AutoIndex:      true,
+				Triggers:       []string{"artifact", "message"},
+				GPUAccelerated: true,
+			},
+			CostControls: orchestration.CostControlSettings{
+				MaxTokensPerJob:   1000,
+				MaxTokensPerAgent: 250,
+				BudgetAction:      "pause",
+			},
+			Recovery: orchestration.RecoverySettings{
+				AutoRestart:    true,
+				MaxRestarts:    4,
+				RestartBackoff: "3s",
+			},
+			Verbosity: "debug",
+			NumCtx:    65536,
+			Hooks:     "standard",
+		},
+	})
+
+	require.NotNil(t, proto)
+	require.Len(t, proto.GetAgents(), 1)
+	agent := proto.GetAgents()[0]
+	assert.Equal(t, "lead", agent.GetSystemPrompt())
+	assert.Equal(t, []string{"orchestrator:task_read"}, agent.GetMcpScopes())
+	assert.Equal(t, int32(32768), agent.GetNumCtx())
+
+	settings := proto.GetSettings()
+	require.NotNil(t, settings)
+	assert.Equal(t, int32(3), settings.GetMaxParallelism())
+	assert.Equal(t, "2s", settings.GetPollInterval())
+	assert.Equal(t, "reviewing", settings.GetReviewCriteria()[0].GetPhase())
+	assert.Equal(t, int32(99), settings.GetPeerMessaging().GetMaxInboxSize())
+	assert.Equal(t, int32(7), settings.GetFileLocking().GetMaxRenewals())
+	assert.Equal(t, []string{"artifact", "message"}, settings.GetVectorDb().GetTriggers())
+	assert.Equal(t, "pause", settings.GetCostControls().GetBudgetAction())
+	assert.Equal(t, int32(4), settings.GetRecovery().GetMaxRestarts())
+	assert.Equal(t, int32(65536), settings.GetNumCtx())
 }
 
 // TestOrchestratorGRPC_Spawn_CarriesPersistentFlag pins the flag that decides
@@ -891,5 +1019,9 @@ func (m *grpcTestAgentService) ListWorkflowsPage(ctx context.Context, filter *or
 	if err != nil {
 		return nil, err
 	}
-	return orchestration.ApplyPage(workflows, page, orchestration.WorkflowPageSpec())
+	return orchestration.ApplyFacetedPage(workflows, page, orchestration.WorkflowPageSpec(),
+		orchestration.WorkflowFacetSpec(),
+		func(workflow *orchestration.WorkflowDefinition) bool {
+			return filter == nil || filter.Matches(workflow)
+		})
 }

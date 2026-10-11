@@ -641,6 +641,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeJobEvents":     {"orchestrator", "job_read"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackends":           {"orchestrator", "backend_list"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListRunners":            {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListWorkflows":          {"orchestrator", "workflow_read"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/Health":                 {"orchestrator", "health"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/Inference":              {"orchestrator", "inference"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream":        {"orchestrator", "inference"},

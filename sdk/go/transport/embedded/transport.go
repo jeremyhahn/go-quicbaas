@@ -361,6 +361,7 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Orchestrator/Health":            handleOrchestratorHealth,
 	"quicbaas.Orchestrator/ListBackends":      handleOrchestratorListBackends,
 	"quicbaas.Orchestrator/ListRunners":       handleOrchestratorListRunners,
+	"quicbaas.Orchestrator/ListWorkflows":     handleOrchestratorListWorkflows,
 	"quicbaas.Orchestrator/ListBackendModels": handleOrchestratorListBackendModels,
 	"quicbaas.Orchestrator/DecomposeTask":     handleOrchestratorDecomposeTask,
 	"quicbaas.Orchestrator/GetCostSettings":   handleOrchestratorGetCostSettings,

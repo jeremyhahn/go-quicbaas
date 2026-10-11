@@ -815,6 +815,22 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_list_workflows",
+		Description: "List one page of the current tenant's workflow definitions, optionally narrowed by project or mode",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": withPageProperties(map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"project_id": filterSchemaProperty("Narrow the listing to one project's workflows."),
+				"mode":       filterSchemaProperty("Narrow the listing to one workflow mode."),
+			}, strings.Join(orchestration.WorkflowPageSpec().SortFields(), ", ")),
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name:        "quicbaas_orchestrator_task_create",
 		Description: "Create an orchestration task, optionally dispatching it immediately as a one-shot job on the best-matching agent",
 		InputSchema: map[string]interface{}{
@@ -2293,6 +2309,30 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 	}))
 }
 
+func (r *ToolRegistry) executeOrchestratorListWorkflows(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, _, err = orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	workflows, err := agentSvc.ListWorkflowsPage(ctx, &orchestration.WorkflowFilter{
+		ProjectID: getString(args, "project_id"),
+		Mode:      orchestration.WorkflowMode(getString(args, "mode")),
+	}, pageFromArgs(args))
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(pageResultFields(workflows, map[string]interface{}{
+		"workflows": workflows.Items,
+		"count":     len(workflows.Items),
+	}))
+}
+
 // executeOrchestratorTaskCreate creates an orchestration task, optionally
 // dispatching it as a one-shot job via auto-spawn.
 // taskCreateObjects decodes task_create's object arguments — the source and
@@ -2763,6 +2803,7 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_get_job_status",
 		"quicbaas_orchestrator_cancel_job",
 		"quicbaas_orchestrator_list_jobs",
+		"quicbaas_orchestrator_list_workflows",
 		"quicbaas_orchestrator_task_create",
 		"quicbaas_orchestrator_task_block",
 		"quicbaas_orchestrator_task_readmit",
@@ -2837,6 +2878,8 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeOrchestratorCancelJob(ctx, args)
 	case "quicbaas_orchestrator_list_jobs":
 		return r.executeOrchestratorListJobs(ctx, args)
+	case "quicbaas_orchestrator_list_workflows":
+		return r.executeOrchestratorListWorkflows(ctx, args)
 	case "quicbaas_orchestrator_task_create":
 		return r.executeOrchestratorTaskCreate(ctx, args)
 	case "quicbaas_orchestrator_task_block":

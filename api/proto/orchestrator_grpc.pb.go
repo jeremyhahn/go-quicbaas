@@ -47,6 +47,7 @@ const (
 	OrchestratorService_SubscribeJobEvents_FullMethodName     = "/quicbaas.orchestrator.v1.OrchestratorService/SubscribeJobEvents"
 	OrchestratorService_ListBackends_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/ListBackends"
 	OrchestratorService_ListRunners_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/ListRunners"
+	OrchestratorService_ListWorkflows_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/ListWorkflows"
 	OrchestratorService_Health_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/Health"
 	OrchestratorService_RegisterFleetNode_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/RegisterFleetNode"
 	OrchestratorService_GetFleetNode_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetNode"
@@ -114,6 +115,8 @@ type OrchestratorServiceClient interface {
 	// orchestrator:status the REST route GET /api/v1/orchestrator/runners
 	// is gated on.
 	ListRunners(ctx context.Context, in *OrchestratorListRunnersRequest, opts ...grpc.CallOption) (*OrchestratorListRunnersResponse, error)
+	// Workflow Operations
+	ListWorkflows(ctx context.Context, in *OrchestratorListWorkflowsRequest, opts ...grpc.CallOption) (*OrchestratorListWorkflowsResponse, error)
 	// Health Operations
 	Health(ctx context.Context, in *OrchestratorHealthRequest, opts ...grpc.CallOption) (*OrchestratorHealthResponse, error)
 	// Fleet Management
@@ -436,6 +439,16 @@ func (c *orchestratorServiceClient) ListRunners(ctx context.Context, in *Orchest
 	return out, nil
 }
 
+func (c *orchestratorServiceClient) ListWorkflows(ctx context.Context, in *OrchestratorListWorkflowsRequest, opts ...grpc.CallOption) (*OrchestratorListWorkflowsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OrchestratorListWorkflowsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_ListWorkflows_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orchestratorServiceClient) Health(ctx context.Context, in *OrchestratorHealthRequest, opts ...grpc.CallOption) (*OrchestratorHealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(OrchestratorHealthResponse)
@@ -702,6 +715,8 @@ type OrchestratorServiceServer interface {
 	// orchestrator:status the REST route GET /api/v1/orchestrator/runners
 	// is gated on.
 	ListRunners(context.Context, *OrchestratorListRunnersRequest) (*OrchestratorListRunnersResponse, error)
+	// Workflow Operations
+	ListWorkflows(context.Context, *OrchestratorListWorkflowsRequest) (*OrchestratorListWorkflowsResponse, error)
 	// Health Operations
 	Health(context.Context, *OrchestratorHealthRequest) (*OrchestratorHealthResponse, error)
 	// Fleet Management
@@ -859,6 +874,9 @@ func (UnimplementedOrchestratorServiceServer) ListBackends(context.Context, *Orc
 }
 func (UnimplementedOrchestratorServiceServer) ListRunners(context.Context, *OrchestratorListRunnersRequest) (*OrchestratorListRunnersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRunners not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) ListWorkflows(context.Context, *OrchestratorListWorkflowsRequest) (*OrchestratorListWorkflowsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListWorkflows not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) Health(context.Context, *OrchestratorHealthRequest) (*OrchestratorHealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
@@ -1329,6 +1347,24 @@ func _OrchestratorService_ListRunners_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorService_ListWorkflows_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OrchestratorListWorkflowsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).ListWorkflows(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_ListWorkflows_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).ListWorkflows(ctx, req.(*OrchestratorListWorkflowsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OrchestratorService_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(OrchestratorHealthRequest)
 	if err := dec(in); err != nil {
@@ -1754,6 +1790,10 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListRunners",
 			Handler:    _OrchestratorService_ListRunners_Handler,
+		},
+		{
+			MethodName: "ListWorkflows",
+			Handler:    _OrchestratorService_ListWorkflows_Handler,
 		},
 		{
 			MethodName: "Health",

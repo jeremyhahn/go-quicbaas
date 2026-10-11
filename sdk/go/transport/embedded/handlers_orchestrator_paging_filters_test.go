@@ -51,6 +51,20 @@ func TestEmbeddedListJobs_CarriesTheJobIDsFilter(t *testing.T) {
 	}
 }
 
+func TestEmbeddedListWorkflows_BindsRequestTenant(t *testing.T) {
+	agent := &fakeAgentService{}
+	svc := &orchMock{agent: agent}
+
+	_, err := handleOrchestratorListWorkflows(context.Background(), svc,
+		&orchestratorSDK.ListWorkflowsRequest{TenantID: "tenant-non-system"})
+	if err != nil {
+		t.Fatalf("ListWorkflows: %v", err)
+	}
+	if agent.listWorkflowsTenant != "tenant-non-system" {
+		t.Fatalf("ListWorkflows tenant = %q, want tenant-non-system", agent.listWorkflowsTenant)
+	}
+}
+
 // TestEmbeddedListJobs_SummaryCarriesTheForgeIssue is the embedded half of
 // go-quicbaas#976. The in-process transport converts the domain status into a
 // JobSummary field by field, so a field it does not name is a field the

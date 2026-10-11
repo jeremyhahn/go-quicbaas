@@ -39,8 +39,9 @@ type fakeAgentService struct {
 	// listJobsFilter records the narrowing the last ListJobs carried, so a
 	// transport that drops the caller's filter is caught rather than
 	// silently listing the whole tenant.
-	listJobsFilter  *orchestration.JobFilter
-	listTasksFilter *orchestration.TaskFilter
+	listJobsFilter      *orchestration.JobFilter
+	listTasksFilter     *orchestration.TaskFilter
+	listWorkflowsTenant string
 
 	// listJobs is what ListJobs answers with when a test needs particular
 	// records; nil keeps the single bare job the conversion tests rely on.
@@ -500,6 +501,7 @@ func (m *fakeAgentService) ListFleetNodesPage(ctx context.Context, tenantID stri
 }
 
 func (m *fakeAgentService) ListWorkflowsPage(ctx context.Context, filter *orchestration.WorkflowFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
+	m.listWorkflowsTenant = orchestration.StorageTenant(ctx)
 	workflows, err := m.ListWorkflows(ctx)
 	if err != nil {
 		return nil, err

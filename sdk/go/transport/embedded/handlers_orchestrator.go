@@ -1126,6 +1126,130 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 	return &orchestratorSDK.ListJobsResponse{Jobs: sdkSummaries, Envelope: envelopeFromPage(jobs)}, nil
 }
 
+func handleOrchestratorListWorkflows(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.ListWorkflowsRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListWorkflows",
+			"*orchestrator.ListWorkflowsRequest", reflect.TypeOf(req).String())
+	}
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListWorkflows")
+	}
+	tenantID := r.TenantID
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	workflowCtx := orchestration.ContextWithTenant(ctx, tenantID)
+	workflows, err := agentSvc.ListWorkflowsPage(workflowCtx, &orchestration.WorkflowFilter{
+		ProjectID: r.ProjectID,
+		Mode:      orchestration.WorkflowMode(r.Mode),
+	}, pageFromSDK(r.Params))
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*orchestratorSDK.WorkflowDefinition, 0, len(workflows.Items))
+	for _, workflow := range workflows.Items {
+		items = append(items, workflowToSDK(workflow))
+	}
+	return &orchestratorSDK.ListWorkflowsResponse{Workflows: items, Count: len(items), Envelope: envelopeFromPage(workflows)}, nil
+}
+
+func workflowToSDK(workflow *orchestration.WorkflowDefinition) *orchestratorSDK.WorkflowDefinition {
+	if workflow == nil {
+		return nil
+	}
+	agents := make([]orchestratorSDK.AgentRoleSpec, 0, len(workflow.Agents))
+	for _, agent := range workflow.Agents {
+		agents = append(agents, orchestratorSDK.AgentRoleSpec{
+			Role:            agent.Role,
+			Backend:         agent.Backend,
+			Model:           agent.Model,
+			Capabilities:    append([]string(nil), agent.Capabilities...),
+			MCPScopes:       append([]string(nil), agent.MCPScopes...),
+			Count:           agent.Count,
+			Env:             cloneStringMap(agent.Env),
+			WorkspacePath:   agent.WorkspacePath,
+			PermissionMode:  agent.PermissionMode,
+			SkipPermissions: agent.SkipPermissions,
+			Sandboxed:       agent.Sandboxed,
+			ContainerImage:  agent.ContainerImage,
+			HostAffinity:    agent.HostAffinity,
+			NumCtx:          agent.NumCtx,
+			SystemPrompt:    agent.SystemPrompt,
+			PromptAppend:    agent.PromptAppend,
+		})
+	}
+	reviewCriteria := make([]orchestratorSDK.ReviewCriterion, 0, len(workflow.Settings.ReviewCriteria))
+	for _, criterion := range workflow.Settings.ReviewCriteria {
+		reviewCriteria = append(reviewCriteria, orchestratorSDK.ReviewCriterion{
+			Name:      criterion.Name,
+			Validator: criterion.Validator,
+			Config:    criterion.Config,
+			Required:  criterion.Required,
+			Phase:     string(criterion.Phase),
+		})
+	}
+	return &orchestratorSDK.WorkflowDefinition{
+		Name:        workflow.Name,
+		Description: workflow.Description,
+		Mode:        orchestratorSDK.WorkflowMode(workflow.Mode),
+		Agents:      agents,
+		Settings: orchestratorSDK.WorkflowSettings{
+			MaxIterations:  workflow.Settings.MaxIterations,
+			MaxParallelism: workflow.Settings.MaxParallelism,
+			PollInterval:   workflow.Settings.PollInterval,
+			TimeoutPerItem: workflow.Settings.TimeoutPerItem,
+			TotalTimeout:   workflow.Settings.TotalTimeout,
+			ReviewCriteria: reviewCriteria,
+			Topology:       string(workflow.Settings.Topology),
+			Isolation:      string(workflow.Settings.Isolation),
+			PeerMessaging: orchestratorSDK.PeerMessagingSettings{
+				MaxMessageSize: workflow.Settings.PeerMessaging.MaxMessageSize,
+				MaxInboxSize:   workflow.Settings.PeerMessaging.MaxInboxSize,
+				OverflowAction: workflow.Settings.PeerMessaging.OverflowAction,
+				InboxTTL:       workflow.Settings.PeerMessaging.InboxTTL,
+			},
+			FileLocking: orchestratorSDK.FileLockSettings{
+				LeaseTTL:          workflow.Settings.FileLocking.LeaseTTL,
+				HeartbeatInterval: workflow.Settings.FileLocking.HeartbeatInterval,
+				MaxRenewals:       workflow.Settings.FileLocking.MaxRenewals,
+			},
+			VectorDB: orchestratorSDK.VectorDBSettings{
+				Enabled:        workflow.Settings.VectorDB.Enabled,
+				IndexType:      workflow.Settings.VectorDB.IndexType,
+				AutoIndex:      workflow.Settings.VectorDB.AutoIndex,
+				Triggers:       append([]string(nil), workflow.Settings.VectorDB.Triggers...),
+				GPUAccelerated: workflow.Settings.VectorDB.GPUAccelerated,
+			},
+			CostControls: orchestratorSDK.CostControlSettings{
+				MaxTokensPerJob:   workflow.Settings.CostControls.MaxTokensPerJob,
+				MaxTokensPerAgent: workflow.Settings.CostControls.MaxTokensPerAgent,
+				BudgetAction:      workflow.Settings.CostControls.BudgetAction,
+			},
+			Recovery: orchestratorSDK.RecoverySettings{
+				AutoRestart:    workflow.Settings.Recovery.AutoRestart,
+				MaxRestarts:    workflow.Settings.Recovery.MaxRestarts,
+				RestartBackoff: workflow.Settings.Recovery.RestartBackoff,
+			},
+			Verbosity: workflow.Settings.Verbosity,
+			NumCtx:    workflow.Settings.NumCtx,
+			Hooks:     workflow.Settings.Hooks,
+		},
+	}
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
 func handleOrchestratorCancelJob(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*orchestratorSDK.CancelJobRequest)
 	if !ok {

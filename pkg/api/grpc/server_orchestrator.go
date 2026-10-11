@@ -1109,6 +1109,139 @@ func (s *OrchestratorServer) ListRunners(_ context.Context, req *pb.Orchestrator
 	}, nil
 }
 
+// ListWorkflows returns one page of workflow definitions for the tenant.
+func (s *OrchestratorServer) ListWorkflows(ctx context.Context, req *pb.OrchestratorListWorkflowsRequest) (*pb.OrchestratorListWorkflowsResponse, error) {
+	s.logger.Debug("Processing ListWorkflows request")
+
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
+
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.agentSvc.ListWorkflowsPage(tenantCtx, &orchestration.WorkflowFilter{
+		ProjectID: req.GetProjectId(),
+		Mode:      orchestration.WorkflowMode(req.GetMode()),
+	}, page)
+	if err != nil {
+		return nil, convertListError(err, convertOrchestratorError)
+	}
+
+	workflows := make([]*pb.OrchestratorWorkflowDefinition, 0, len(result.Items))
+	for _, workflow := range result.Items {
+		workflows = append(workflows, workflowDefinitionToProto(workflow))
+	}
+
+	return &pb.OrchestratorListWorkflowsResponse{
+		Workflows:  workflows,
+		Total:      pageInt32(result.Total),
+		Limit:      pageInt32(result.Limit),
+		Offset:     pageInt32(result.Offset),
+		NextOffset: pageInt32(result.NextOffset),
+	}, nil
+}
+
+func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) *pb.OrchestratorWorkflowDefinition {
+	if definition == nil {
+		return nil
+	}
+	agents := make([]*pb.OrchestratorWorkflowAgentRoleSpec, 0, len(definition.Agents))
+	for _, agent := range definition.Agents {
+		agents = append(agents, &pb.OrchestratorWorkflowAgentRoleSpec{
+			Role:            agent.Role,
+			Backend:         agent.Backend,
+			Model:           agent.Model,
+			Capabilities:    append([]string(nil), agent.Capabilities...),
+			McpScopes:       append([]string(nil), agent.MCPScopes...),
+			Count:           int32(agent.Count), //nolint:gosec // G115: workflow role fan-out bound
+			Env:             cloneStringMap(agent.Env),
+			WorkspacePath:   agent.WorkspacePath,
+			PermissionMode:  agent.PermissionMode,
+			SkipPermissions: agent.SkipPermissions,
+			Sandboxed:       agent.Sandboxed,
+			ContainerImage:  agent.ContainerImage,
+			HostAffinity:    agent.HostAffinity,
+			NumCtx:          int32(agent.NumCtx), //nolint:gosec // G115: workflow tuning bound
+			SystemPrompt:    agent.SystemPrompt,
+			PromptAppend:    agent.PromptAppend,
+		})
+	}
+	reviewCriteria := make([]*pb.OrchestratorWorkflowReviewCriterion, 0, len(definition.Settings.ReviewCriteria))
+	for _, criterion := range definition.Settings.ReviewCriteria {
+		reviewCriteria = append(reviewCriteria, &pb.OrchestratorWorkflowReviewCriterion{
+			Name:      criterion.Name,
+			Validator: criterion.Validator,
+			Config:    criterion.Config,
+			Required:  criterion.Required,
+			Phase:     string(criterion.Phase),
+		})
+	}
+	return &pb.OrchestratorWorkflowDefinition{
+		Name:        definition.Name,
+		Description: definition.Description,
+		Mode:        string(definition.Mode),
+		Agents:      agents,
+		Settings: &pb.OrchestratorWorkflowSettings{
+			MaxIterations:  int32(definition.Settings.MaxIterations),  //nolint:gosec // G115: workflow tuning bound
+			MaxParallelism: int32(definition.Settings.MaxParallelism), //nolint:gosec // G115: workflow tuning bound
+			PollInterval:   definition.Settings.PollInterval,
+			TimeoutPerItem: definition.Settings.TimeoutPerItem,
+			TotalTimeout:   definition.Settings.TotalTimeout,
+			ReviewCriteria: reviewCriteria,
+			Topology:       string(definition.Settings.Topology),
+			Isolation:      string(definition.Settings.Isolation),
+			PeerMessaging: &pb.OrchestratorWorkflowPeerMessagingSettings{
+				MaxMessageSize: int32(definition.Settings.PeerMessaging.MaxMessageSize), //nolint:gosec // G115: workflow tuning bound
+				MaxInboxSize:   int32(definition.Settings.PeerMessaging.MaxInboxSize),   //nolint:gosec // G115: workflow tuning bound
+				OverflowAction: definition.Settings.PeerMessaging.OverflowAction,
+				InboxTtl:       definition.Settings.PeerMessaging.InboxTTL,
+			},
+			FileLocking: &pb.OrchestratorWorkflowFileLockSettings{
+				LeaseTtl:          definition.Settings.FileLocking.LeaseTTL,
+				HeartbeatInterval: definition.Settings.FileLocking.HeartbeatInterval,
+				MaxRenewals:       int32(definition.Settings.FileLocking.MaxRenewals), //nolint:gosec // G115: workflow tuning bound
+			},
+			VectorDb: &pb.OrchestratorWorkflowVectorDBSettings{
+				Enabled:        definition.Settings.VectorDB.Enabled,
+				IndexType:      definition.Settings.VectorDB.IndexType,
+				AutoIndex:      definition.Settings.VectorDB.AutoIndex,
+				Triggers:       append([]string(nil), definition.Settings.VectorDB.Triggers...),
+				GpuAccelerated: definition.Settings.VectorDB.GPUAccelerated,
+			},
+			CostControls: &pb.OrchestratorWorkflowCostControlSettings{
+				MaxTokensPerJob:   definition.Settings.CostControls.MaxTokensPerJob,
+				MaxTokensPerAgent: definition.Settings.CostControls.MaxTokensPerAgent,
+				BudgetAction:      definition.Settings.CostControls.BudgetAction,
+			},
+			Recovery: &pb.OrchestratorWorkflowRecoverySettings{
+				AutoRestart:    definition.Settings.Recovery.AutoRestart,
+				MaxRestarts:    int32(definition.Settings.Recovery.MaxRestarts), //nolint:gosec // G115: workflow tuning bound
+				RestartBackoff: definition.Settings.Recovery.RestartBackoff,
+			},
+			Verbosity: definition.Settings.Verbosity,
+			NumCtx:    int32(definition.Settings.NumCtx), //nolint:gosec // G115: workflow tuning bound
+			Hooks:     definition.Settings.Hooks,
+		},
+		TenantId:  definition.TenantID,
+		ProjectId: definition.ProjectID,
+	}
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
 // =============================================================================
 // Health Operations
 // =============================================================================

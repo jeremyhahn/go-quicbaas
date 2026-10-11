@@ -62,6 +62,7 @@ func orchCases() []orchCase {
 		{o, "StartJob", &orchestratorSDK.StartJobRequest{}},
 		{o, "GetJobStatus", &orchestratorSDK.GetJobStatusRequest{}},
 		{o, "ListJobs", &orchestratorSDK.ListJobsRequest{}},
+		{o, "ListWorkflows", &orchestratorSDK.ListWorkflowsRequest{}},
 		{o, "CancelJob", &orchestratorSDK.CancelJobRequest{}},
 		{o, "ListBackendModels", &orchestratorSDK.ListBackendModelsRequest{BackendName: "b"}},
 		{o, "DecomposeTask", &orchestratorSDK.DecomposeTaskRequest{}},

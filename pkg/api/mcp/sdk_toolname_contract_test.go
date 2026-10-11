@@ -217,7 +217,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Orchestrator", "UpdateWorkflow"}:      gapNoTool,
 	{"quicbaas.Orchestrator", "DeleteWorkflow"}:      gapNoTool,
 	{"quicbaas.Orchestrator", "GetWorkflow"}:         gapNoTool,
-	{"quicbaas.Orchestrator", "ListWorkflows"}:       gapNoTool,
 
 	// --- Parameter store ---------------------------------------------------
 	// Registered under quicbaas_parameter_*; the SDK derives
