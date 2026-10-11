@@ -14,13 +14,8 @@
 package server
 
 import (
-	"context"
-	"crypto/x509"
-
-	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
-	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // buildHomeRealmDirectory constructs the home-realm directory over the shared
@@ -47,41 +42,4 @@ func (s *Server) buildHomeRealmDirectory() *iam.HomeRealmDirectory {
 		return nil
 	}
 	return dir
-}
-
-// tenantContextFunc builds the best-effort, permissive tenant-derivation hook
-// shared by the gRPC and QUIC transports. It derives the caller's tenant from
-// the VERIFIED peer certificate (pinned SPIFFE trust domain, then home-realm
-// discovery) and, on success, stamps it onto the request context so
-// tenant-scoped operations (e.g. SPIFFE-stamped certificate issuance) observe
-// it. It NEVER rejects a call: when no tenant can be derived (certless callers,
-// KV/health/cluster traffic, foreign certs) it returns the input context
-// unchanged.
-//
-// The returned func is consumed by grpcapi.UnaryTenantInterceptor /
-// StreamTenantInterceptor and the QUIC handler's SetTenantResolver hook,
-// keeping those transport packages free of any iam dependency.
-func (s *Server) tenantContextFunc() grpcapi.TenantContextFunc {
-	trustDomain := s.config.IAM.SPIFFETrustDomain
-	// The directory is built lazily on the first call so the shared store does
-	// not have to exist at server-construction time; it commonly comes online
-	// only after the platform barrier is initialized.
-	return func(ctx context.Context, cert *x509.Certificate) context.Context {
-		if cert == nil {
-			return ctx
-		}
-		var hrd iam.HomeRealmResolver
-		if dir := s.buildHomeRealmDirectory(); dir != nil {
-			hrd = dir
-		}
-		// HRD without per-request SNI/email hints rarely resolves on its own,
-		// but supplying it keeps parity with REST and lets a future hint source
-		// (e.g. metadata) participate. SPIFFE SAN is the dominant gRPC/QUIC path.
-		tenantID, err := iam.TenantFromPeerCert(ctx, cert, trustDomain, hrd, iam.RealmHints{})
-		if err != nil || tenantID == "" {
-			// Best-effort: proceed without a tenant. Never reject.
-			return ctx
-		}
-		return tenantctx.WithTenant(ctx, tenantID)
-	}
 }

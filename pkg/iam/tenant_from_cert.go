@@ -23,10 +23,8 @@ import (
 
 // TenantUnresolvedError is the transport-neutral signal that a caller's tenant
 // could not be derived from either a tenant-scoped SPIFFE SAN or a home-realm
-// routing hint. It carries the underlying cause so a caller that wants to fail
-// closed (e.g. the REST login path) can map it to its own error, while a
-// best-effort caller (gRPC/QUIC interceptors) can simply ignore it and proceed
-// without a tenant.
+// routing hint. It carries the underlying cause so the REST login path can map
+// it to its own fail-closed error.
 type TenantUnresolvedError struct {
 	// Cause is the underlying derivation failure, when one is available.
 	Cause error
@@ -45,8 +43,7 @@ func (e *TenantUnresolvedError) Unwrap() error {
 	return e.Cause
 }
 
-// TenantFromPeerCert is the transport-neutral tenant-derivation core shared by
-// every API surface (REST login, gRPC interceptor, QUIC hook). It resolves a
+// TenantFromPeerCert is the login tenant-derivation core. It resolves a
 // caller's tenant in the locked priority order:
 //
 //  1. The tenant-scoped SPIFFE URI SAN on the verified peer certificate, with

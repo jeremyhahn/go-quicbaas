@@ -2282,23 +2282,21 @@ func (s *Server) startGRPCServer() error {
 
 	// Add interceptors. The tenant interceptor runs after recovery so a panic
 	// is still trapped, and before the handlers so tenant-scoped operations
-	// observe the caller's tenant. It is best-effort: tenantResolve is nil
-	// until wired (the interceptor is then a no-op pass-through), and even
-	// when wired it never rejects a call for lack of a tenant.
-	tenantResolve := s.tenantContextFunc()
+	// observe the caller's qrdb tenant.
+	trustDomain := s.config.IAM.SPIFFETrustDomain
 	unaryInterceptors := []ggrpc.UnaryServerInterceptor{
 		grpcapi.UnaryTimeoutInterceptor(30 * time.Second),
 		grpcapi.UnaryLoggingInterceptor(s.logger),
 		grpcapi.UnaryMetricsInterceptor(),
 		grpcapi.UnaryRecoveryInterceptor(s.logger),
-		grpcapi.UnaryTenantInterceptor(tenantResolve),
+		grpcapi.UnaryTenantInterceptor(trustDomain),
 	}
 	streamInterceptors := []ggrpc.StreamServerInterceptor{
 		grpcapi.StreamTimeoutInterceptor(5 * time.Minute),
 		grpcapi.StreamLoggingInterceptor(s.logger),
 		grpcapi.StreamMetricsInterceptor(),
 		grpcapi.StreamRecoveryInterceptor(s.logger),
-		grpcapi.StreamTenantInterceptor(tenantResolve),
+		grpcapi.StreamTenantInterceptor(trustDomain),
 	}
 
 	// Install the sealed-window interceptors (qrdb's own, consumed via the

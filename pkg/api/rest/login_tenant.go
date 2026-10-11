@@ -53,12 +53,10 @@ var ErrLoginCertReissueRequired = errors.New("client certificate has no tenant S
 // cert may be nil for non-mTLS logins (browser/WebAuthn/federated), in which
 // case derivation goes straight to HRD.
 //
-// The resolution itself is delegated to the transport-neutral
-// iam.TenantFromPeerCert core shared with the gRPC/QUIC transports. This
-// wrapper layers REST's fail-closed login semantics on top of the core's pure
-// resolution: an unresolved tenant is fatal for a login (unlike the
-// best-effort interceptors), and the failure is mapped to the precise
-// reissue-required / unresolved error.
+// The resolution itself is delegated to the login-only iam.TenantFromPeerCert
+// core. This wrapper layers REST's fail-closed login semantics on top of the
+// core's pure resolution: an unresolved tenant is fatal for a login, and the
+// failure is mapped to the precise reissue-required / unresolved error.
 func (s *Server) deriveLoginTenant(ctx context.Context, r *http.Request, cert *x509.Certificate, email string) (string, error) {
 	var hrd iam.HomeRealmResolver
 	if s.config.HomeRealmResolver != nil {

@@ -15,27 +15,23 @@ package grpc
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
+	"math/big"
+	"net/url"
 	"testing"
+	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"google.golang.org/grpc"
 )
 
-type tenantTestKey struct{}
+const tenantInterceptorTrustDomain = "example.com"
 
-// tenantStamp is a TenantContextFunc that records the cert it saw and stamps a
-// sentinel tenant onto the context, mirroring what the iam-backed resolver does
-// without pulling pkg/iam into this transport package's tests.
-func tenantStamp(tenant string, sawCert *bool) TenantContextFunc {
-	return func(ctx context.Context, cert *x509.Certificate) context.Context {
-		if sawCert != nil {
-			*sawCert = cert != nil
-		}
-		return context.WithValue(ctx, tenantTestKey{}, tenant)
-	}
-}
-
-// fakeServerStream is a minimal grpc.ServerStream exposing a fixed context.
 type fakeServerStream struct {
 	grpc.ServerStream
 	ctx context.Context
@@ -43,16 +39,41 @@ type fakeServerStream struct {
 
 func (f *fakeServerStream) Context() context.Context { return f.ctx }
 
-// The unary interceptor stamps the tenant when a verified peer cert is present.
-func TestUnaryTenantInterceptor_StampsTenant(t *testing.T) {
-	var sawCert bool
-	interceptor := UnaryTenantInterceptor(tenantStamp("tenant-acme", &sawCert))
+func tenantClientCert(t *testing.T, trustDomain, tenantID string) *x509.Certificate {
+	t.Helper()
+	spiffeURI, err := url.Parse("spiffe://" + trustDomain + "/tenant/" + tenantID + "/user/alice")
+	if err != nil {
+		t.Fatalf("parse spiffe uri: %v", err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "alice"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		URIs:         []*url.URL{spiffeURI},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse cert: %v", err)
+	}
+	return cert
+}
 
-	ctx := mtlsPeerContext(grpcTestCert(t))
+func TestUnaryTenantInterceptor_StampsQRDBTenant(t *testing.T) {
+	interceptor := UnaryTenantInterceptor(tenantInterceptorTrustDomain)
+	ctx := mtlsPeerContext(tenantClientCert(t, tenantInterceptorTrustDomain, "tenant-a"))
 	var observed string
 	handler := func(ctx context.Context, _ interface{}) (interface{}, error) {
-		if v, ok := ctx.Value(tenantTestKey{}).(string); ok {
-			observed = v
+		if tenantID, ok := qrdbsdk.TenantFromContext(ctx); ok {
+			observed = tenantID
 		}
 		return "ok", nil
 	}
@@ -64,75 +85,67 @@ func TestUnaryTenantInterceptor_StampsTenant(t *testing.T) {
 	if resp != "ok" {
 		t.Fatalf("resp = %v, want ok", resp)
 	}
-	if !sawCert {
-		t.Fatal("resolver should have received the verified peer cert")
-	}
-	if observed != "tenant-acme" {
-		t.Fatalf("handler observed tenant %q, want tenant-acme", observed)
+	if observed != "tenant-a" {
+		t.Fatalf("handler observed tenant %q, want tenant-a", observed)
 	}
 }
 
-// The unary interceptor is a no-op pass-through when there is no peer cert: it
-// proceeds, returns no error, and never invokes the resolver.
 func TestUnaryTenantInterceptor_NoCertProceeds(t *testing.T) {
-	var sawCert bool
-	resolverInvoked := false
-	resolve := func(ctx context.Context, cert *x509.Certificate) context.Context {
-		resolverInvoked = true
-		sawCert = cert != nil
-		return ctx
-	}
-	interceptor := UnaryTenantInterceptor(resolve)
-
+	interceptor := UnaryTenantInterceptor(tenantInterceptorTrustDomain)
 	called := false
 	handler := func(ctx context.Context, _ interface{}) (interface{}, error) {
 		called = true
-		if _, ok := ctx.Value(tenantTestKey{}).(string); ok {
+		if _, ok := qrdbsdk.TenantFromContext(ctx); ok {
 			t.Fatal("no tenant should be stamped without a peer cert")
 		}
 		return "ok", nil
 	}
 
-	// Plain context: no peer info at all.
 	if _, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/svc/M"}, handler); err != nil {
 		t.Fatalf("interceptor returned error: %v", err)
 	}
 	if !called {
 		t.Fatal("handler must still be called when no cert is present")
 	}
-	if resolverInvoked {
-		t.Fatal("resolver must not be invoked without a verified peer cert")
-	}
-	_ = sawCert
 }
 
-// A nil resolve func makes the unary interceptor a transparent pass-through
-// even when a peer cert is present.
-func TestUnaryTenantInterceptor_NilResolver(t *testing.T) {
-	interceptor := UnaryTenantInterceptor(nil)
+func TestUnaryTenantInterceptor_NoTenantCertFails(t *testing.T) {
+	interceptor := UnaryTenantInterceptor(tenantInterceptorTrustDomain)
 	ctx := mtlsPeerContext(grpcTestCert(t))
-	called := false
-	handler := func(_ context.Context, _ interface{}) (interface{}, error) {
-		called = true
-		return "ok", nil
+	handler := func(context.Context, interface{}) (interface{}, error) {
+		t.Fatal("handler must not be called when qrdb cannot derive a tenant")
+		return nil, nil
 	}
-	if _, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/svc/M"}, handler); err != nil {
-		t.Fatalf("interceptor returned error: %v", err)
-	}
-	if !called {
-		t.Fatal("handler must be called with a nil resolver")
+
+	if _, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/svc/M"}, handler); !errors.Is(err, qrdbsdk.ErrInvalidClientCertificate) {
+		t.Fatalf("err = %v, want ErrInvalidClientCertificate", err)
 	}
 }
 
-// The stream interceptor stamps the tenant onto the wrapped stream's context.
-func TestStreamTenantInterceptor_StampsTenant(t *testing.T) {
-	interceptor := StreamTenantInterceptor(tenantStamp("tenant-acme", nil))
+func TestUnaryTenantInterceptor_TrustDomainMismatchFails(t *testing.T) {
+	interceptor := UnaryTenantInterceptor(tenantInterceptorTrustDomain)
+	ctx := mtlsPeerContext(tenantClientCert(t, "other.example", "tenant-a"))
+	handler := func(context.Context, interface{}) (interface{}, error) {
+		t.Fatal("handler must not be called when qrdb rejects the trust domain")
+		return nil, nil
+	}
 
-	ss := &fakeServerStream{ctx: mtlsPeerContext(grpcTestCert(t))}
+	_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: "/svc/M"}, handler)
+	if !errors.Is(err, qrdbsdk.ErrInvalidClientCertificate) {
+		t.Fatalf("err = %v, want ErrInvalidClientCertificate", err)
+	}
+	if !errors.Is(err, qrdbsdk.ErrSpiffeTrustDomainMismatch) {
+		t.Fatalf("err = %v, want ErrSpiffeTrustDomainMismatch", err)
+	}
+}
+
+func TestStreamTenantInterceptor_StampsQRDBTenant(t *testing.T) {
+	interceptor := StreamTenantInterceptor(tenantInterceptorTrustDomain)
+	ss := &fakeServerStream{ctx: mtlsPeerContext(tenantClientCert(t, tenantInterceptorTrustDomain, "tenant-a"))}
 	var observed string
 	handler := func(_ interface{}, stream grpc.ServerStream) error {
-		if v, ok := stream.Context().Value(tenantTestKey{}).(string); ok {
-			observed = v
+		if tenantID, ok := qrdbsdk.TenantFromContext(stream.Context()); ok {
+			observed = tenantID
 		}
 		return nil
 	}
@@ -140,28 +153,27 @@ func TestStreamTenantInterceptor_StampsTenant(t *testing.T) {
 	if err := interceptor(nil, ss, &grpc.StreamServerInfo{FullMethod: "/svc/Stream"}, handler); err != nil {
 		t.Fatalf("interceptor returned error: %v", err)
 	}
-	if observed != "tenant-acme" {
-		t.Fatalf("stream handler observed tenant %q, want tenant-acme", observed)
+	if observed != "tenant-a" {
+		t.Fatalf("stream handler observed tenant %q, want tenant-a", observed)
 	}
 }
 
-// The stream interceptor proceeds unchanged when no peer cert is present.
 func TestStreamTenantInterceptor_NoCertProceeds(t *testing.T) {
-	interceptor := StreamTenantInterceptor(tenantStamp("tenant-acme", nil))
-
+	interceptor := StreamTenantInterceptor(tenantInterceptorTrustDomain)
 	ss := &fakeServerStream{ctx: context.Background()}
 	called := false
 	handler := func(_ interface{}, stream grpc.ServerStream) error {
 		called = true
-		if _, ok := stream.Context().Value(tenantTestKey{}).(string); ok {
+		if _, ok := qrdbsdk.TenantFromContext(stream.Context()); ok {
 			t.Fatal("no tenant should be stamped without a peer cert")
 		}
 		return nil
 	}
-	if err := interceptor(nil, ss, &grpc.StreamServerInfo{FullMethod: "/svc/S"}, handler); err != nil {
+
+	if err := interceptor(nil, ss, &grpc.StreamServerInfo{FullMethod: "/svc/Stream"}, handler); err != nil {
 		t.Fatalf("interceptor returned error: %v", err)
 	}
 	if !called {
-		t.Fatal("handler must still be called when no cert is present")
+		t.Fatal("stream handler must still be called when no cert is present")
 	}
 }
