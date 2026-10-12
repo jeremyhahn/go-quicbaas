@@ -1,6 +1,6 @@
 # Public releasability
 
-> **Status: REFERENCE** · Last verified: 2026-09-29
+> **Status: REFERENCE** · Last verified: 2026-10-12
 > What the public release of this repository ships.
 
 This repository ships publicly: a module zip, a release tarball, two container
@@ -118,6 +118,13 @@ needles first — the regexps alone run at a few MB/s, the needles at memory
 bandwidth), and the guidance a tripping engineer reads. Add a sample to
 `TestPatterns_EveryNeedleIsImpliedByItsExpr`, which is what stops a needle from
 silently blinding its own pattern.
+
+## Before tagging: assemble the changelog
+
+Pull requests add `changelog.d/<issue>-<slug>.md` fragments and never edit
+`CHANGELOG.md`. Before tagging, run `make changelog VERSION=vX.Y.Z`, which folds
+every fragment into a new `## [X.Y.Z] - <date>` section and empties
+`changelog.d`, and commit the result; the tag goes on that commit.
 
 ## What go-quicbaas#944 removed
 

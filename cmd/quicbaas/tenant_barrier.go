@@ -104,7 +104,7 @@ func createSDKTenantBarrierClient() (TenantBarrierClient, error) {
 // Command tree
 // =============================================================================
 
-// newTenantBarrierCommand builds the 'quicbaas tenant barrier' group.
+// newTenantBarrierCommand builds the 'quicbaas iam tenant barrier' group.
 func newTenantBarrierCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "barrier",
@@ -160,7 +160,7 @@ func requireTenantID(op string) error {
 // status
 // =============================================================================
 
-// newTenantBarrierStatusCommand builds 'quicbaas tenant barrier status'.
+// newTenantBarrierStatusCommand builds 'quicbaas iam tenant barrier status'.
 func newTenantBarrierStatusCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -172,12 +172,12 @@ protects it, whether that strategy is hardware-backed, and the Shamir
 M-of-N parameters when applicable.
 
 Example:
-  quicbaas tenant barrier status --tenant acme`,
+  quicbaas iam tenant barrier status --tenant acme`,
 		RunE: runTenantBarrierStatusCommand,
 	}
 }
 
-// runTenantBarrierStatusCommand executes 'tenant barrier status'.
+// runTenantBarrierStatusCommand executes 'quicbaas iam tenant barrier status'.
 func runTenantBarrierStatusCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.status"); err != nil {
 		return err
@@ -203,7 +203,7 @@ func runTenantBarrierStatusCommand(cmd *cobra.Command, _ []string) error {
 // init
 // =============================================================================
 
-// newTenantBarrierInitCommand builds 'quicbaas tenant barrier init'.
+// newTenantBarrierInitCommand builds 'quicbaas iam tenant barrier init'.
 func newTenantBarrierInitCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -218,9 +218,9 @@ barrier is sealed.
 ` + passphraseInputHelp + `
 
 Examples:
-  printf '%s' "$PP" | quicbaas tenant barrier init --tenant acme \
+  printf '%s' "$PP" | quicbaas iam tenant barrier init --tenant acme \
       --strategy passphrase --passphrase-stdin
-  quicbaas tenant barrier init --tenant acme --strategy shamir --threshold 2 --shares 3`,
+  quicbaas iam tenant barrier init --tenant acme --strategy shamir --threshold 2 --shares 3`,
 		RunE: runTenantBarrierInitCommand,
 	}
 	cmd.Flags().StringVar(&tenantBarrierStrategy, "strategy", "",
@@ -234,7 +234,7 @@ Examples:
 	return cmd
 }
 
-// runTenantBarrierInitCommand executes 'tenant barrier init'.
+// runTenantBarrierInitCommand executes 'quicbaas iam tenant barrier init'.
 func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.init"); err != nil {
 		return err
@@ -293,7 +293,7 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 // unseal / unseal-share
 // =============================================================================
 
-// newTenantBarrierUnsealCommand builds 'quicbaas tenant barrier unseal'.
+// newTenantBarrierUnsealCommand builds 'quicbaas iam tenant barrier unseal'.
 func newTenantBarrierUnsealCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unseal",
@@ -306,7 +306,7 @@ must each submit their own share.
 ` + passphraseInputHelp + `
 
 Example:
-  printf '%s' "$PP" | quicbaas tenant barrier unseal --tenant acme --passphrase-stdin`,
+  printf '%s' "$PP" | quicbaas iam tenant barrier unseal --tenant acme --passphrase-stdin`,
 		RunE: runTenantBarrierUnsealCommand,
 	}
 	addPassphraseFlags(cmd, &tenantBarrierSecret,
@@ -314,7 +314,7 @@ Example:
 	return cmd
 }
 
-// runTenantBarrierUnsealCommand executes 'tenant barrier unseal'.
+// runTenantBarrierUnsealCommand executes 'quicbaas iam tenant barrier unseal'.
 func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.unseal"); err != nil {
 		return err
@@ -367,7 +367,7 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// newTenantBarrierUnsealShareCommand builds 'tenant barrier unseal-share'.
+// newTenantBarrierUnsealShareCommand builds 'quicbaas iam tenant barrier unseal-share'.
 func newTenantBarrierUnsealShareCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unseal-share",
@@ -380,7 +380,7 @@ accumulated in memory and discarded once the quorum completes, so a later
 unseal requires fresh submissions.
 
 Example:
-  quicbaas tenant barrier unseal-share --tenant acme --share "$SHARE"`,
+  quicbaas iam tenant barrier unseal-share --tenant acme --share "$SHARE"`,
 		RunE: runTenantBarrierUnsealShareCommand,
 	}
 	cmd.Flags().StringVar(&tenantBarrierShare, "share", "",
@@ -388,7 +388,7 @@ Example:
 	return cmd
 }
 
-// runTenantBarrierUnsealShareCommand executes 'tenant barrier unseal-share'.
+// runTenantBarrierUnsealShareCommand executes 'quicbaas iam tenant barrier unseal-share'.
 func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.unseal-share"); err != nil {
 		return err
@@ -420,7 +420,7 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 // seal
 // =============================================================================
 
-// newTenantBarrierSealCommand builds 'quicbaas tenant barrier seal'.
+// newTenantBarrierSealCommand builds 'quicbaas iam tenant barrier seal'.
 func newTenantBarrierSealCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "seal",
@@ -432,7 +432,7 @@ unsealed again with the tenant's own credentials. Nobody else — including
 the infrastructure operator — can reverse it.
 
 Example:
-  quicbaas tenant barrier seal --tenant acme --yes`,
+  quicbaas iam tenant barrier seal --tenant acme --yes`,
 		RunE: runTenantBarrierSealCommand,
 	}
 	cmd.Flags().BoolVarP(&barrierAssumeYes, "yes", "y", false,
@@ -440,7 +440,7 @@ Example:
 	return cmd
 }
 
-// runTenantBarrierSealCommand executes 'tenant barrier seal'.
+// runTenantBarrierSealCommand executes 'quicbaas iam tenant barrier seal'.
 func runTenantBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.seal"); err != nil {
 		return err
@@ -474,7 +474,7 @@ func runTenantBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 // officer
 // =============================================================================
 
-// newTenantBarrierOfficerCommand builds 'quicbaas tenant barrier officer'.
+// newTenantBarrierOfficerCommand builds 'quicbaas iam tenant barrier officer'.
 func newTenantBarrierOfficerCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "officer",
@@ -497,7 +497,7 @@ certificate thumbprint. Share bytes are never returned by any verb here.`,
 	return cmd
 }
 
-// runTenantBarrierOfficerListCommand executes 'tenant barrier officer list'.
+// runTenantBarrierOfficerListCommand executes 'quicbaas iam tenant barrier officer list'.
 func runTenantBarrierOfficerListCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.officer.list"); err != nil {
 		return err
@@ -517,7 +517,7 @@ func runTenantBarrierOfficerListCommand(cmd *cobra.Command, _ []string) error {
 	return formatOfficerStatusList(officers, tenantBarrierOutputFmt, cmd.OutOrStdout())
 }
 
-// runTenantBarrierOfficerStatusCommand executes 'tenant barrier officer status'.
+// runTenantBarrierOfficerStatusCommand executes 'quicbaas iam tenant barrier officer status'.
 func runTenantBarrierOfficerStatusCommand(cmd *cobra.Command, _ []string) error {
 	if err := requireTenantID("tenant.barrier.officer.status"); err != nil {
 		return err

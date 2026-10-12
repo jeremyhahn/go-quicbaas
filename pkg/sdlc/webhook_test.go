@@ -40,13 +40,19 @@ func (r *staticRoutes) Tenant(_ context.Context, projectID string) (string, erro
 type staticSecrets struct {
 	secrets map[string][]byte
 	err     error
+
+	// issued holds every buffer handed out, so a test can see what the
+	// ingestor left in it once it was done.
+	issued [][]byte
 }
 
 func (s *staticSecrets) WebhookSecret(_ context.Context, _, ref string) ([]byte, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
-	return append([]byte(nil), s.secrets[ref]...), nil
+	secret := append([]byte(nil), s.secrets[ref]...)
+	s.issued = append(s.issued, secret)
+	return secret, nil
 }
 
 type webhookRig struct {
@@ -103,6 +109,39 @@ func TestWebhookIngest_VerifiedDeliveryNudgesTheProject(t *testing.T) {
 	}
 }
 
+// TestWebhookIngest_WipesTheSecretItWasHanded proves the webhook secret does
+// not outlive the delivery it verified: whether the delivery is accepted or
+// refused after the secret was read, the buffer the resolver handed out is
+// all zeros once Ingest returns.
+func TestWebhookIngest_WipesTheSecretItWasHanded(t *testing.T) {
+	cases := map[string]func(*webhookRig){
+		"accepted": func(*webhookRig) {},
+		"refused": func(r *webhookRig) {
+			r.forge.verifyErr = &WebhookUnverifiedError{Type: ForgeGitea, Reason: "hmac"}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			rig := newWebhookRig(t)
+			mutate(rig)
+			_, err := rig.ingestor.Ingest(context.Background(), delivery())
+			if name == "accepted" && err != nil {
+				t.Fatalf("Ingest: %v", err)
+			}
+			if len(rig.secrets.issued) != 1 {
+				t.Fatalf("secrets issued = %d, want 1", len(rig.secrets.issued))
+			}
+			secret := rig.secrets.issued[0]
+			if len(secret) == 0 {
+				t.Fatal("the rig handed out an empty secret, so a wipe proves nothing")
+			}
+			if !bytes.Equal(secret, make([]byte, len(secret))) {
+				t.Fatalf("secret left in memory after Ingest: %q", secret)
+			}
+		})
+	}
+}
+
 func TestWebhookIngest_Refusals(t *testing.T) {
 	rig := newWebhookRig(t)
 	cases := map[string]struct {
@@ -149,12 +188,6 @@ func TestWebhookIngest_Refusals(t *testing.T) {
 	}
 	if _, err := rig.ingestor.Ingest(context.Background(), delivery()); !errors.Is(err, ErrWebhookSecretMissing) {
 		t.Fatalf("no secret ref: %v", err)
-	}
-	// The secret handed to the adapter is wiped afterwards.
-	secret := []byte("s3cret")
-	zeroize(secret)
-	if !bytes.Equal(secret, make([]byte, len(secret))) {
-		t.Fatal("zeroize")
 	}
 	nilForge, _ := NewWebhookIngestor(&staticRoutes{tenants: map[string]string{testProject: testTenant}}, rig.store, rig.secrets, &fakeForges{}, rig.nudger, nil)
 	binding.Forge.WebhookSecretRef = "wh"

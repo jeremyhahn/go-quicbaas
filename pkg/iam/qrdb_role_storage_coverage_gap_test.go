@@ -160,32 +160,14 @@ func TestQRDBRoleStorage_CreateRole(t *testing.T) {
 
 	// Name collision maps to the broker's ErrRoleAlreadyExists sentinel.
 	//
-	// ASSERTED ON THE ERROR'S FIELDS, BECAUSE errors.Is CANNOT TELL THESE APART.
-	// Every sentinel in this package carrying dberrors.ErrAlreadyExists matches
-	// every other one — QBError.Is compares the CODE alone — so
-	// errors.Is(err, ErrRoleAlreadyExists) is equally true for a group
-	// conflict, a user conflict, or a duplicate role ID. That is what this
-	// assertion used to be, and it could not fail for the reason it named:
-	// mapping a name collision to ErrGroupAlreadyExists left it green (#449).
-	//
-	// Op separates role from group and user; the condition message separates a
-	// duplicate NAME from a duplicate ID, which share both Code and Op. Neither
-	// is a substitute for making the sentinels matchable — that is #449's own
-	// scope and an owner call, since it changes how every consumer tests for
-	// "already exists" — but a test standing in for the guarantee must not be
-	// blind to it in the meantime.
+	// Matched with the condition predicate, not errors.Is: QBError.Is compares
+	// the CODE alone, so errors.Is(err, ErrRoleAlreadyExists) is equally true
+	// for a group conflict, a user conflict, or a duplicate role ID (#449).
 	fc = &fakeRoleClient{createErr: &qrdbrole.RoleNameExistsError{Name: "admin", TenantID: "t1"}}
 	s = NewQRDBRoleStorage(&fakeRoleResolver{client: fc})
 	err := s.CreateRole(ctx, &Role{ID: "r1", Name: "admin", TenantID: "t1"})
-
-	var createErr *dberrors.QBError
-	require.ErrorAs(t, err, &createErr)
-	assert.Equal(t, dberrors.ErrAlreadyExists, createErr.Code)
-	assert.Equal(t, "iam.role", createErr.Op,
-		"a group or user conflict carries a different Op and would otherwise pass here")
-	require.NotNil(t, createErr.Err)
-	assert.EqualError(t, createErr.Err, "role already exists",
-		"a duplicate ID shares this Code and Op; only the condition distinguishes them")
+	assert.True(t, IsRoleAlreadyExists(err), "name collision: %v", err)
+	assert.False(t, IsRoleIDAlreadyExists(err), "a duplicate name is not a duplicate ID")
 }
 
 func TestQRDBRoleStorage_GetRole(t *testing.T) {

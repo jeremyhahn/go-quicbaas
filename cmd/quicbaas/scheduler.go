@@ -209,9 +209,9 @@ func newSchedulerCreateCommand() *cobra.Command {
 		Long: `Create a new scheduled job with the specified parameters.
 
 Examples:
-  quicbaas scheduler create backup --type recurring --schedule "0 0 * * *" --handler backup.full
-  quicbaas scheduler create grace-disable --type one-shot --execute-at "2025-01-20T00:00:00Z" --handler kms.grace_period
-  quicbaas scheduler create cleanup --type delayed --delay 24h --handler audit.cleanup`,
+  quicbaas scheduler job create backup --type recurring --schedule "0 0 * * *" --handler backup.full
+  quicbaas scheduler job create grace-disable --type one-shot --execute-at "2025-01-20T00:00:00Z" --handler kms.grace_period
+  quicbaas scheduler job create cleanup --type delayed --delay 24h --handler audit.cleanup`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerCreateCommand,
 	}
@@ -320,9 +320,9 @@ func newSchedulerListCommand() *cobra.Command {
 		Long: `List all scheduled jobs with optional filtering.
 
 Examples:
-  quicbaas scheduler list
-  quicbaas scheduler list --status pending
-  quicbaas scheduler list --handler backup.full --limit 50`,
+  quicbaas scheduler job list
+  quicbaas scheduler job list --status pending
+  quicbaas scheduler job list --handler backup.full --limit 50`,
 		Args: cobra.NoArgs,
 		RunE: runSchedulerListCommand,
 	}
@@ -382,8 +382,8 @@ func newSchedulerGetCommand() *cobra.Command {
 		Long: `Retrieve details for a specific scheduled job.
 
 Examples:
-  quicbaas scheduler get 123
-  quicbaas scheduler get 123 --tenant acme`,
+  quicbaas scheduler job get 123
+  quicbaas scheduler job get 123 --tenant acme`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerGetCommand,
 	}
@@ -432,8 +432,8 @@ func newSchedulerDeleteCommand() *cobra.Command {
 		Long: `Delete a scheduled job.
 
 Examples:
-  quicbaas scheduler delete 123
-  quicbaas scheduler delete 123 --force`,
+  quicbaas scheduler job delete 123
+  quicbaas scheduler job delete 123 --force`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerDeleteCommand,
 	}
@@ -485,7 +485,7 @@ func newSchedulerTriggerCommand() *cobra.Command {
 		Long: `Trigger immediate execution of a scheduled job.
 
 Examples:
-  quicbaas scheduler trigger 123`,
+  quicbaas scheduler job trigger 123`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerTriggerCommand,
 	}
@@ -534,7 +534,7 @@ func newSchedulerPauseCommand() *cobra.Command {
 		Long: `Pause a scheduled job to prevent future executions.
 
 Examples:
-  quicbaas scheduler pause 123`,
+  quicbaas scheduler job pause 123`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerPauseCommand,
 	}
@@ -583,7 +583,7 @@ func newSchedulerResumeCommand() *cobra.Command {
 		Long: `Resume a previously paused scheduled job.
 
 Examples:
-  quicbaas scheduler resume 123`,
+  quicbaas scheduler job resume 123`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerResumeCommand,
 	}
@@ -632,8 +632,8 @@ func newSchedulerCancelCommand() *cobra.Command {
 		Long: `Cancel a scheduled job. The job will not be deleted but will stop future executions.
 
 Examples:
-  quicbaas scheduler cancel 123
-  quicbaas scheduler cancel 123 --reason "No longer needed"`,
+  quicbaas scheduler job cancel 123
+  quicbaas scheduler job cancel 123 --reason "No longer needed"`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerCancelCommand,
 	}
@@ -685,8 +685,8 @@ func newSchedulerHistoryCommand() *cobra.Command {
 		Long: `View the execution history for a scheduled job.
 
 Examples:
-  quicbaas scheduler history 123
-  quicbaas scheduler history 123 --limit 20`,
+  quicbaas scheduler job history 123
+  quicbaas scheduler job history 123 --limit 20`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerHistoryCommand,
 	}

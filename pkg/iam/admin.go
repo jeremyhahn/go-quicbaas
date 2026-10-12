@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // AdminStorage defines the interface for admin assignment persistence operations.
@@ -178,6 +179,13 @@ func (m *AdminManager) CreateAssignment(ctx context.Context, opts CreateAdminAss
 		return nil, err
 	}
 
+	// Mint the audit ID before the write, so an assignment never exists
+	// without the record of who granted it.
+	auditID, err := generateAuditLogID()
+	if err != nil {
+		return nil, err
+	}
+
 	// Store assignment
 	if err := m.adminStorage.CreateAssignment(ctx, assignment); err != nil {
 		return nil, api.NewOperationFailedError("create assignment", err)
@@ -185,7 +193,7 @@ func (m *AdminManager) CreateAssignment(ctx context.Context, opts CreateAdminAss
 
 	// Audit log
 	m.logAuditEvent(ctx, &AuditEvent{
-		ID:        generateAuditLogID(),
+		ID:        auditID,
 		Timestamp: now,
 		Action:    "admin.assignment.create",
 		EventType: AuditEventUserManagement,
@@ -285,6 +293,11 @@ func (m *AdminManager) UpdateAssignment(ctx context.Context, id string, opts Upd
 		return nil, err
 	}
 
+	auditID, err := generateAuditLogID()
+	if err != nil {
+		return nil, err
+	}
+
 	// Store updated assignment
 	if err := m.adminStorage.UpdateAssignment(ctx, assignment); err != nil {
 		return nil, api.NewOperationFailedError("update assignment", err)
@@ -292,7 +305,7 @@ func (m *AdminManager) UpdateAssignment(ctx context.Context, id string, opts Upd
 
 	// Audit log
 	m.logAuditEvent(ctx, &AuditEvent{
-		ID:        generateAuditLogID(),
+		ID:        auditID,
 		Timestamp: time.Now().UTC(),
 		Action:    "admin.assignment.update",
 		EventType: AuditEventUserManagement,
@@ -328,6 +341,11 @@ func (m *AdminManager) DeleteAssignment(ctx context.Context, id string) error {
 		return api.NewOperationFailedError("get assignment", err)
 	}
 
+	auditID, err := generateAuditLogID()
+	if err != nil {
+		return err
+	}
+
 	// Delete assignment
 	if err := m.adminStorage.DeleteAssignment(ctx, id); err != nil {
 		if dberrors.IsNotFound(err) {
@@ -338,7 +356,7 @@ func (m *AdminManager) DeleteAssignment(ctx context.Context, id string) error {
 
 	// Audit log
 	m.logAuditEvent(ctx, &AuditEvent{
-		ID:        generateAuditLogID(),
+		ID:        auditID,
 		Timestamp: time.Now().UTC(),
 		Action:    "admin.assignment.delete",
 		EventType: AuditEventUserManagement,
@@ -603,6 +621,11 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 		return nil, api.NewOperationFailedError("generate session ID", err)
 	}
 
+	auditID, err := generateAuditLogID()
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 
 	// Default duration is 1 hour
@@ -624,7 +647,7 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 		StartedAt:      now,
 		ExpiresAt:      now.Add(duration),
 		OperationCount: 0,
-		AuditLogID:     generateAuditLogID(),
+		AuditLogID:     auditID,
 	}
 
 	// Store session
@@ -686,6 +709,11 @@ func (m *AdminManager) EndImpersonation(ctx context.Context, sessionID string) e
 		return api.NewInvalidInputError("impersonation session already ended")
 	}
 
+	auditID, err := generateAuditLogID()
+	if err != nil {
+		return err
+	}
+
 	// End session
 	if err := m.impersonationStorage.EndImpersonationSession(ctx, sessionID); err != nil {
 		if dberrors.IsNotFound(err) {
@@ -700,7 +728,7 @@ func (m *AdminManager) EndImpersonation(ctx context.Context, sessionID string) e
 
 	// Audit log - impersonation session end with full summary
 	m.logAuditEvent(ctx, &AuditEvent{
-		ID:                     generateAuditLogID(),
+		ID:                     auditID,
 		TenantID:               session.TenantID,
 		Timestamp:              endTime,
 		Action:                 "admin.impersonation.end",
@@ -761,6 +789,11 @@ func (m *AdminManager) RecordImpersonatedOperation(ctx context.Context, sessionI
 		return ErrImpersonationSessionExpired
 	}
 
+	auditID, err := generateAuditLogID()
+	if err != nil {
+		return err
+	}
+
 	// Increment operation count
 	newCount, err := m.impersonationStorage.IncrementOperationCount(ctx, sessionID)
 	if err != nil {
@@ -779,7 +812,7 @@ func (m *AdminManager) RecordImpersonatedOperation(ctx context.Context, sessionI
 
 	// Audit log the operation
 	m.logAuditEvent(ctx, &AuditEvent{
-		ID:                     generateAuditLogID(),
+		ID:                     auditID,
 		TenantID:               session.TenantID,
 		Timestamp:              time.Now().UTC(),
 		Action:                 operation,
@@ -861,14 +894,31 @@ func generateImpersonationSessionID() (string, error) {
 	return "imp_" + hex.EncodeToString(bytes), nil
 }
 
+// auditLogIDEntropyBytes is the size of an audit event ID. 128 bits keeps the
+// chance of two events sharing an ID negligible.
+const auditLogIDEntropyBytes = 16
+
+// auditLogIDEntropy is the randomness generateAuditLogID draws on. It is a
+// variable so a test can make the CSPRNG fail without touching the
+// process-global RNG state every other test in this package shares.
+var auditLogIDEntropy = xkms.Rand
+
 // generateAuditLogID generates a cryptographically secure random audit log ID.
-func generateAuditLogID() string {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		// Fallback to timestamp-based ID if random generation fails
-		return fmt.Sprintf("audit_%d", time.Now().UnixNano())
+//
+// The ID is the key the audit store files an event under (AuditStorage
+// saves and fetches events by it), not a secret: it is returned to admins on the
+// impersonation session. So the property it must keep is uniqueness. A
+// timestamp fallback would give two events failing in the same nanosecond, or
+// on hosts with coarse clocks, the same key, and the second would silently
+// overwrite the first. A CSPRNG failure is therefore refused with
+// AuditLogIDGenerationError, and the caller does not perform the audited
+// operation.
+func generateAuditLogID() (string, error) {
+	b, err := auditLogIDEntropy(auditLogIDEntropyBytes)
+	if err != nil {
+		return "", &AuditLogIDGenerationError{Cause: err}
 	}
-	return "audit_" + hex.EncodeToString(bytes)
+	return "audit_" + hex.EncodeToString(b), nil
 }
 
 // matchResourcePattern checks if a resource ID matches a resource pattern.

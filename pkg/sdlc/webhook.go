@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 // =============================================================================
@@ -181,7 +182,7 @@ func (i *WebhookIngestor) Ingest(ctx context.Context, delivery WebhookDelivery) 
 	if err != nil {
 		return nil, backendError("WebhookSecret", err)
 	}
-	defer zeroize(secret)
+	defer secure.Wipe(secret)
 	if len(secret) == 0 {
 		return nil, &WebhookSecretMissingError{
 			ProjectID: binding.ProjectID,
@@ -298,11 +299,4 @@ func matchRepo(binding *ProjectBinding, delivered RepoRef) error {
 		return nil
 	}
 	return &WebhookRepoMismatchError{ProjectID: binding.ProjectID, Configured: configured, Delivered: delivered}
-}
-
-// zeroize overwrites a secret the ingestor is done with.
-func zeroize(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }

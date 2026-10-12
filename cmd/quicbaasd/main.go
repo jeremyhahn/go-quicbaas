@@ -399,6 +399,9 @@ func bindEnvVars() {
 	_ = viper.BindEnv("server.write_timeout")
 	_ = viper.BindEnv("server.idle_timeout")
 
+	// Locked-memory budget, installed by runDaemon before anything allocates.
+	_ = viper.BindEnv("server.secure_memory_budget_mib")
+
 	// Raft configuration.
 	_ = viper.BindEnv("raft.node_id")
 	_ = viper.BindEnv("raft.deployment_id")
@@ -832,6 +835,15 @@ func prepareDaemon(modeName string) error {
 
 // runDaemon runs the daemon with the configured storage backend.
 func runDaemon(modeName string) error {
+	// Install the process-wide locked-memory budget first, before anything
+	// below can allocate protected memory and lazily install a default.
+	budget, err := installSecureMemoryBudget(cfg.Server.SecureMemoryBudgetMiB)
+	if err != nil {
+		log.WithError(err).Error("Failed to install the secure memory budget")
+		return err
+	}
+	log.Infof("Secure memory budget: %d bytes (%s)", budget.bytes, budget.source)
+
 	// Perform pre-server startup tasks.
 	if err := prepareDaemon(modeName); err != nil {
 		return err

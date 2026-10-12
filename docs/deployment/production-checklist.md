@@ -679,6 +679,35 @@ handler that exits from inside the signal handler (the memguard-era
 data loss. The invariant is pinned by `test/integration/durability` and
 `TestSecureSubsystem_DoesNotInstallProcessKillingSignalHandler`.
 
+#### Locked-memory budget
+
+At startup, before anything allocates protected memory, `quicbaasd` (and
+`quicbaasd init`, for its embedded server) installs one process-wide
+locked-memory budget. Every protected buffer and every opened secret admits
+against it, so no request path can exhaust the host's `RLIMIT_MEMLOCK` for the
+rest of the process.
+
+```yaml
+server:
+  secure_memory_budget_mib: 0   # QUICBAAS_SERVER_SECURE_MEMORY_BUDGET_MIB
+```
+
+| Value | Budget |
+|-------|--------|
+| `0` (default) | Derived from the host: 64 MiB, or `RLIMIT_MEMLOCK` less 2 MiB of headroom when that is smaller, rounded down to whole pages. An unlimited ceiling (or `CAP_IPC_LOCK`) gets 64 MiB. |
+| `> 0` | Used as given, in MiB. |
+| `< 0` | Invalid: the daemon refuses to start. |
+
+The daemon refuses to start, with a `SecureMemoryBudgetError` naming the
+configured value, when a configured budget exceeds `RLIMIT_MEMLOCK`, when a
+derived budget would be under 1 MiB, or when the ceiling cannot be read. The
+log line `Secure memory budget: N bytes (configured|default|derived from
+RLIMIT_MEMLOCK)` records what was installed.
+
+- [ ] `RLIMIT_MEMLOCK` fits the budget: `ulimit -l`, systemd `LimitMEMLOCK=`,
+      or `--ulimit memlock=…` / `--cap-add IPC_LOCK` for a container.
+- [ ] A configured budget, if any, is below that ceiling.
+
 ### 6.4 Raft Timeouts
 
 **Same Datacenter (low latency <5ms):**

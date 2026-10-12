@@ -201,7 +201,7 @@ var (
 	ErrRoleAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.role",
-		Err:  &IAMMessageError{Message: "role already exists"},
+		Err:  &RoleAlreadyExistsError{},
 	}
 
 	// ErrRoleIDAlreadyExists is returned when a create supplies a role ID that
@@ -217,11 +217,13 @@ var (
 	//
 	// This mirrors how the user store already distinguishes
 	// ErrEmailAlreadyExists from ErrUserAlreadyExists — same code, distinct
-	// message — rather than inventing a status for it.
+	// message — rather than inventing a status for it. Because QBError.Is
+	// compares the code alone, callers tell the two apart with
+	// IsRoleIDAlreadyExists / IsRoleAlreadyExists, not errors.Is.
 	ErrRoleIDAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
 		Op:   "iam.role",
-		Err:  &IAMMessageError{Message: "role id already exists"},
+		Err:  &RoleIDAlreadyExistsError{},
 	}
 
 	// ErrSystemRoleImmutable is returned when an operation would rename,
@@ -234,7 +236,7 @@ var (
 	ErrSystemRoleImmutable = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.role",
-		Err:  &IAMMessageError{Message: "system roles cannot be modified or deleted"},
+		Err:  &SystemRoleImmutableError{},
 	}
 
 	// ErrReservedRoleName is returned when a create would take a name reserved
@@ -248,7 +250,7 @@ var (
 	ErrReservedRoleName = &dberrors.QBError{
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.role",
-		Err:  &IAMMessageError{Message: "role name is reserved for a system role"},
+		Err:  &ReservedRoleNameError{},
 	}
 
 	// ErrRoleReconcileUnsupported is returned when built-in role
@@ -1803,6 +1805,24 @@ func (e *TokenRevocationCheckError) Unwrap() error {
 // Error implements the error interface.
 func (e *TokenRevokedError) Error() string {
 	return "token is revoked"
+}
+
+// AuditLogIDGenerationError is returned when the CSPRNG fails while minting
+// an audit event ID. The ID is the key the audit store files the event under,
+// so a guessable fallback could collide and overwrite an existing record; the
+// operation that needed the record is refused instead.
+type AuditLogIDGenerationError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *AuditLogIDGenerationError) Error() string {
+	return "failed to generate audit log ID: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *AuditLogIDGenerationError) Unwrap() error {
+	return e.Cause
 }
 
 // ConsentIDGenerationError is returned when consent ID generation fails.

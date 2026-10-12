@@ -106,6 +106,10 @@ func TestIAMConditionPredicatesMatchTheirOwnSentinel(t *testing.T) {
 		{"invite spent", ErrInviteUsed, IsInviteUnusable},
 		{"user not pending", ErrUserNotPending, IsUserNotPending},
 		{"PIV certificate rejected", ErrPIVCertRejected, IsPIVCertRejected},
+		{"role name taken", ErrRoleAlreadyExists, IsRoleAlreadyExists},
+		{"role id taken", ErrRoleIDAlreadyExists, IsRoleIDAlreadyExists},
+		{"system role immutable", ErrSystemRoleImmutable, IsSystemRoleImmutable},
+		{"reserved role name", ErrReservedRoleName, IsReservedRoleName},
 	}
 
 	for _, tc := range tests {
@@ -114,6 +118,64 @@ func TestIAMConditionPredicatesMatchTheirOwnSentinel(t *testing.T) {
 			assert.True(t, tc.narrow(&IAMContextError{Message: "wrapped", Cause: tc.err}),
 				"the predicate refused its own sentinel through a wrapper")
 			assert.False(t, tc.narrow(nil), "the predicate matched a nil error")
+		})
+	}
+}
+
+// TestRoleSentinelPredicatesRefuseSiblings pins #449: each role sentinel's
+// predicate matches that sentinel and refuses every other sentinel carrying
+// the same code, while the code itself -- what a client sees on the wire --
+// is unchanged.
+func TestRoleSentinelPredicatesRefuseSiblings(t *testing.T) {
+	tests := []struct {
+		name     string
+		sentinel error
+		narrow   func(error) bool
+		wantCode dberrors.ErrorCode
+		siblings []error
+	}{
+		{
+			name:     "role name taken",
+			sentinel: ErrRoleAlreadyExists,
+			narrow:   IsRoleAlreadyExists,
+			wantCode: dberrors.ErrAlreadyExists,
+			siblings: []error{ErrRoleIDAlreadyExists, ErrUserAlreadyExists, ErrEmailAlreadyExists},
+		},
+		{
+			name:     "role id taken",
+			sentinel: ErrRoleIDAlreadyExists,
+			narrow:   IsRoleIDAlreadyExists,
+			wantCode: dberrors.ErrAlreadyExists,
+			siblings: []error{ErrRoleAlreadyExists, ErrUserAlreadyExists, ErrEmailAlreadyExists},
+		},
+		{
+			name:     "system role immutable",
+			sentinel: ErrSystemRoleImmutable,
+			narrow:   IsSystemRoleImmutable,
+			wantCode: dberrors.ErrForbidden,
+			siblings: []error{ErrPEPClosed, ErrInviteExpired, ErrPIVCertRejected},
+		},
+		{
+			name:     "reserved role name",
+			sentinel: ErrReservedRoleName,
+			narrow:   IsReservedRoleName,
+			wantCode: dberrors.ErrInvalidInput,
+			siblings: []error{ErrInvalidCheckRequest},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var coded *dberrors.QBError
+			require.ErrorAs(t, tc.sentinel, &coded)
+			assert.Equal(t, tc.wantCode, coded.Code, "the wire code changed")
+
+			assert.True(t, tc.narrow(tc.sentinel), "the predicate refused its own sentinel")
+			for _, sibling := range tc.siblings {
+				assert.True(t, errors.Is(sibling, tc.sentinel),
+					"%v no longer shares the code; pick a sibling that does", sibling)
+				assert.False(t, tc.narrow(sibling), "the predicate matched sibling %v", sibling)
+			}
 		})
 	}
 }
@@ -147,6 +209,10 @@ func TestIAMSentinelMessagesAreUnchanged(t *testing.T) {
 		{ErrInviteUsed, "iam.invite: forbidden: invite has already been used"},
 		{ErrUserNotPending, "iam.invite.activate: conflict: user is not in pending state"},
 		{ErrPIVCertRejected, "iam.invite.activate.piv: forbidden: PIV certificate rejected"},
+		{ErrRoleAlreadyExists, "iam.role: already_exists: role already exists"},
+		{ErrRoleIDAlreadyExists, "iam.role: already_exists: role id already exists"},
+		{ErrSystemRoleImmutable, "iam.role: forbidden: system roles cannot be modified or deleted"},
+		{ErrReservedRoleName, "iam.role: invalid_input: role name is reserved for a system role"},
 	}
 
 	for _, tc := range tests {

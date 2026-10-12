@@ -318,6 +318,12 @@ func runInitEmbeddedServer(
 ) error {
 	initCfg := buildInitConfig(dataDir, f, barrierEnabled)
 
+	// The embedded server holds protected memory, so the process budget is
+	// installed before it is constructed, exactly as runDaemon does.
+	if _, err := installSecureMemoryBudget(initCfg.Server.SecureMemoryBudgetMiB); err != nil {
+		return err
+	}
+
 	// When the passphrase barrier is enabled, inject the passphrase via
 	// WithSealPassphrase so that NewStandaloneNode auto-unseals the qrdb
 	// node during Start. Without this the node boots sealed: in embedded
@@ -391,6 +397,12 @@ func buildInitConfig(dataDir string, f *inlineInitFlags, barrierEnabled bool) *c
 	cfg.Storage.Backend = config.StorageBackendPebble
 	if operatorCfg != nil && operatorCfg.Storage.Backend != "" {
 		cfg.Storage.Backend = operatorCfg.Storage.Backend
+	}
+
+	// The locked-memory budget is the operator's too: init installs it for
+	// its embedded server just as the daemon does.
+	if operatorCfg != nil {
+		cfg.Server.SecureMemoryBudgetMiB = operatorCfg.Server.SecureMemoryBudgetMiB
 	}
 
 	// Disable every listener at the config level too, so any code that

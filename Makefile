@@ -5232,7 +5232,14 @@ export GOWORK=off
 # deps-latest picks the highest tag INCLUDING -alpha prereleases — bare
 # 'go get @latest' ignores prereleases and would downgrade to legacy v0.0.0.
 
-.PHONY: release-alpha deps-latest
+.PHONY: release-alpha deps-latest changelog
+
+# changelog folds changelog.d/*.md into a new CHANGELOG.md section and empties
+# changelog.d (handbook release-versioning §5). Commit the result before
+# tagging; release.yml does not run it. VERSION must come from the command
+# line: the file-derived default is the version already released.
+changelog: ## Fold changelog.d fragments into CHANGELOG.md (make changelog VERSION=vX.Y.Z)
+	@$(GOCMD) run ./scripts/changelog -version '$(if $(filter command line,$(origin VERSION)),$(VERSION))'
 
 release-alpha:
 	@V=$$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo v0.0.0-alpha); \

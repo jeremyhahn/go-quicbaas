@@ -16,6 +16,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -336,6 +337,65 @@ func TestCanonicalSurface_TenantBarrier(t *testing.T) {
 	for _, verb := range []string{"list", "status"} {
 		assert.True(t, officerVerbs[verb], "`tenant barrier officer %s` is missing", verb)
 	}
+}
+
+// TestTenantBarrierExamples_ResolveThroughTheRealRoot pins #228: the tenant
+// barrier group hangs under `iam tenant`, and every example once said
+// `quicbaas tenant barrier ...`, a path that does not exist. Each example's
+// command words must resolve, through the real cobra root, to a command whose
+// path is exactly those words; cobra's Find stops at the deepest match and
+// hands the rest back as args, so a wrong path resolves short rather than
+// failing, and only the path comparison catches it.
+func TestTenantBarrierExamples_ResolveThroughTheRealRoot(t *testing.T) {
+	group, _, err := rootCmd.Find([]string{"iam", "tenant", "barrier"})
+	require.NoError(t, err)
+	require.Equal(t, "quicbaas iam tenant barrier", group.CommandPath())
+
+	var examples int
+	var walk func(cmd *cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		for _, words := range exampleCommandWords(cmd.Long + "\n" + cmd.Example) {
+			examples++
+			want := "quicbaas " + strings.Join(words, " ")
+			found, _, err := rootCmd.Find(words)
+			require.NoError(t, err, "%s example %q does not resolve", cmd.CommandPath(), want)
+			assert.Equal(t, want, found.CommandPath(),
+				"%s example %q names a command that does not exist", cmd.CommandPath(), want)
+		}
+		for _, sub := range cmd.Commands() {
+			walk(sub)
+		}
+	}
+	walk(group)
+
+	assert.Positive(t, examples, "no examples were found; the scan no longer reads them")
+}
+
+// exampleCommandWords returns, for each example invocation in a command's help
+// text, the command words after `quicbaas` up to the first flag. An invocation
+// is a line that starts with `quicbaas` or pipes into it; prose that mentions
+// a command in passing is not one.
+func exampleCommandWords(help string) [][]string {
+	var out [][]string
+	for _, line := range strings.Split(help, "\n") {
+		trimmed := strings.TrimSpace(line)
+		invocation, ok := strings.CutPrefix(trimmed, "quicbaas ")
+		if !ok {
+			_, invocation, ok = strings.Cut(trimmed, "| quicbaas ")
+		}
+		if !ok {
+			continue
+		}
+		var words []string
+		for _, field := range strings.Fields(invocation) {
+			if strings.HasPrefix(field, "-") {
+				break
+			}
+			words = append(words, field)
+		}
+		out = append(out, words)
+	}
+	return out
 }
 
 // cloneTenantBarrierInitReq copies the borrowed passphrase out of the request.

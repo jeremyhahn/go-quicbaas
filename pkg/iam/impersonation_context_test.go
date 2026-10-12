@@ -167,7 +167,7 @@ func TestBuildAuditEventForImpersonatedOperation(t *testing.T) {
 			"action_detail": "read",
 		}
 
-		event := BuildAuditEventForImpersonatedOperation(
+		event, err := BuildAuditEventForImpersonatedOperation(
 			impCtx,
 			"document.read",
 			AuditEventAuthorization,
@@ -177,6 +177,7 @@ func TestBuildAuditEventForImpersonatedOperation(t *testing.T) {
 			details,
 		)
 
+		require.NoError(t, err)
 		require.NotNil(t, event)
 		assert.NotEmpty(t, event.ID)
 		assert.Equal(t, "tenant1", event.TenantID)
@@ -208,7 +209,7 @@ func TestBuildAuditEventForImpersonatedOperation(t *testing.T) {
 	})
 
 	t.Run("ReturnsNilForNilContext", func(t *testing.T) {
-		event := BuildAuditEventForImpersonatedOperation(
+		event, err := BuildAuditEventForImpersonatedOperation(
 			nil,
 			"test.action",
 			AuditEventAuthorization,
@@ -217,6 +218,26 @@ func TestBuildAuditEventForImpersonatedOperation(t *testing.T) {
 			nil,
 			nil,
 		)
+		require.NoError(t, err)
 		assert.Nil(t, event)
+	})
+
+	t.Run("RefusesWhenTheCSPRNGFails", func(t *testing.T) {
+		broken := breakAuditLogIDEntropy(t)
+
+		event, err := BuildAuditEventForImpersonatedOperation(
+			&ImpersonationContext{SessionID: "imp_test123", TenantID: "tenant1"},
+			"document.read",
+			AuditEventAuthorization,
+			AuditCategorySecurity,
+			AuditOutcomeSuccess,
+			nil,
+			nil,
+		)
+
+		var idErr *AuditLogIDGenerationError
+		require.ErrorAs(t, err, &idErr)
+		assert.ErrorIs(t, err, broken)
+		assert.Nil(t, event, "an event without a unique ID must not be built")
 	})
 }

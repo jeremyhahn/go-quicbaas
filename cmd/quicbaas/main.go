@@ -102,12 +102,12 @@ Examples:
 
   # AI embeddings
   quicbaas embedding generate "Hello, world!"
-  quicbaas rag ingest --collection docs --file paper.pdf
+  quicbaas rag query "How do I configure logging?" --namespace docs
 
   # Security operations
   quicbaas iam user list
-  quicbaas kms create-key --algorithm aes-256-gcm
-  quicbaas secrets store db/password --data password=secret
+  quicbaas kms key generate mykey --algorithm AES-256-GCM
+  quicbaas secrets put db/password --data password=secret
 
   # Messaging
   quicbaas msg create-channel orders --buffer-size 512

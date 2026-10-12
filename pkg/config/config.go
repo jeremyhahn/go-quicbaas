@@ -2110,6 +2110,14 @@ type ServerConfig struct {
 	// validation.
 	ACME ServerACMEConfig `mapstructure:"acme"`
 
+	// SecureMemoryBudgetMiB caps, in MiB, the locked memory the daemon's
+	// protected buffers and opened secrets may hold at once. It is installed
+	// as the process-wide allocator at startup and must fit within the
+	// host's RLIMIT_MEMLOCK, or the daemon refuses to start. Zero (the
+	// default) derives it from the host: 64 MiB, or RLIMIT_MEMLOCK less
+	// 2 MiB of headroom when that is smaller. Negative is invalid.
+	SecureMemoryBudgetMiB int64 `mapstructure:"secure_memory_budget_mib"`
+
 	// Timeouts and limits
 	ReadTimeout     time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout    time.Duration `mapstructure:"write_timeout"`

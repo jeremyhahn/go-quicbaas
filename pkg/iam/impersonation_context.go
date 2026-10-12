@@ -97,6 +97,8 @@ func BuildImpersonatedActor(impCtx *ImpersonationContext) *AuditActor {
 
 // BuildAuditEventForImpersonatedOperation creates an AuditEvent with proper impersonation context.
 // This is a convenience function to ensure consistent audit event creation during impersonation.
+// It returns nil, nil for a nil context, and *AuditLogIDGenerationError when
+// no event ID can be minted, in which case no event exists to record.
 func BuildAuditEventForImpersonatedOperation(
 	impCtx *ImpersonationContext,
 	action string,
@@ -105,9 +107,14 @@ func BuildAuditEventForImpersonatedOperation(
 	outcome AuditOutcome,
 	resource *AuditResource,
 	details map[string]interface{},
-) *AuditEvent {
+) (*AuditEvent, error) {
 	if impCtx == nil {
-		return nil
+		return nil, nil
+	}
+
+	auditID, err := generateAuditLogID()
+	if err != nil {
+		return nil, err
 	}
 
 	// Add impersonation details to the event
@@ -121,7 +128,7 @@ func BuildAuditEventForImpersonatedOperation(
 	}
 
 	return &AuditEvent{
-		ID:                     generateAuditLogID(),
+		ID:                     auditID,
 		TenantID:               impCtx.TenantID,
 		Action:                 action,
 		EventType:              eventType,
@@ -132,5 +139,5 @@ func BuildAuditEventForImpersonatedOperation(
 		Actor:                  BuildImpersonatedActor(impCtx),
 		Resource:               resource,
 		Details:                eventDetails,
-	}
+	}, nil
 }

@@ -177,3 +177,65 @@ func IsPIVCertRejected(err error) bool {
 	var target *PIVCertRejectedError
 	return errors.As(err, &target)
 }
+
+// RoleAlreadyExistsError reports that a create would take a role name already
+// in use in the tenant. It is the inner error of ErrRoleAlreadyExists.
+type RoleAlreadyExistsError struct{}
+
+// Error implements the error interface.
+func (e *RoleAlreadyExistsError) Error() string { return "role already exists" }
+
+// IsRoleAlreadyExists reports whether err is (or wraps) ErrRoleAlreadyExists --
+// the role NAME is taken -- as opposed to a duplicate role ID, which shares
+// both the AlreadyExists code and the "iam.role" Op but has a different remedy.
+func IsRoleAlreadyExists(err error) bool {
+	var target *RoleAlreadyExistsError
+	return errors.As(err, &target)
+}
+
+// RoleIDAlreadyExistsError reports that a create supplied a role ID that is
+// already taken. It is the inner error of ErrRoleIDAlreadyExists.
+type RoleIDAlreadyExistsError struct{}
+
+// Error implements the error interface.
+func (e *RoleIDAlreadyExistsError) Error() string { return "role id already exists" }
+
+// IsRoleIDAlreadyExists reports whether err is (or wraps)
+// ErrRoleIDAlreadyExists -- the role ID is taken -- as opposed to a duplicate
+// role name, which would tell an operator to pick a name that is in fact free.
+func IsRoleIDAlreadyExists(err error) bool {
+	var target *RoleIDAlreadyExistsError
+	return errors.As(err, &target)
+}
+
+// SystemRoleImmutableError reports that an operation would rename,
+// re-permission or delete a built-in role. It is the inner error of
+// ErrSystemRoleImmutable.
+type SystemRoleImmutableError struct{}
+
+// Error implements the error interface.
+func (e *SystemRoleImmutableError) Error() string {
+	return "system roles cannot be modified or deleted"
+}
+
+// IsSystemRoleImmutable reports whether err is (or wraps)
+// ErrSystemRoleImmutable, as opposed to any other forbidden error -- a sealed
+// tenant, a closed PEP, a denied permission check.
+func IsSystemRoleImmutable(err error) bool {
+	var target *SystemRoleImmutableError
+	return errors.As(err, &target)
+}
+
+// ReservedRoleNameError reports that a create would take a name reserved for
+// a system role. It is the inner error of ErrReservedRoleName.
+type ReservedRoleNameError struct{}
+
+// Error implements the error interface.
+func (e *ReservedRoleNameError) Error() string { return "role name is reserved for a system role" }
+
+// IsReservedRoleName reports whether err is (or wraps) ErrReservedRoleName,
+// as opposed to any other invalid-input error the role path can raise.
+func IsReservedRoleName(err error) bool {
+	var target *ReservedRoleNameError
+	return errors.As(err, &target)
+}

@@ -212,7 +212,7 @@ The precedence is absolute, not a fallback chain: when `--passphrase-stdin`
 is given, an empty stdin is a missing passphrase, not a cue to read the
 environment. Verbs carrying the full three-way surface are `barrier init`,
 `barrier init-shamir`, `barrier unseal`, `barrier enable-encryption`,
-`tenant barrier init` and `tenant barrier unseal` — every verb in the CLI
+`iam tenant barrier init` and `iam tenant barrier unseal` — every verb in the CLI
 that takes a passphrase. Implementation and the resolution order live in
 [`cmd/quicbaas/passphrase.go`](../../cmd/quicbaas/passphrase.go).
 
@@ -285,7 +285,7 @@ as the way off argv; `recovery recover` was the odd one out until
 [#227](https://github.com/jeremyhahn/go-quicbaas/issues/227). The PIN
 flags have no stdin path yet
 ([#226](https://github.com/jeremyhahn/go-quicbaas/issues/226)), and
-`tenant barrier unseal-share` submits a single share and is still argv-only.
+`iam tenant barrier unseal-share` submits a single share and is still argv-only.
 
 ---
 
