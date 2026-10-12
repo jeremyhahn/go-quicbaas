@@ -8,7 +8,7 @@ version: '3.8'
 services:
   # Floci - AWS Services Emulator (KMS, Secrets Manager, etc.)
   floci:
-    image: floci/floci:latest
+    image: floci/floci:2.2.0@sha256:e97cd0c1dc2aa14e7697fb5ef5018404c4d6345169dbd276315f0bed2c7b0520
     hostname: floci
     ports:
       - "4566"       # Floci gateway (all services on one port)
@@ -30,10 +30,19 @@ services:
       # Assert the services this stack uses report "running" rather than just
       # probing the port, so warm-up cannot be mistaken for readiness.
       test:
-        [
-          "CMD-SHELL",
-          "curl -sf http://localhost:4566/_floci/health -o /tmp/floci-health.json && grep -q '\"kms\":\"running\"' /tmp/floci-health.json && grep -q '\"secretsmanager\":\"running\"' /tmp/floci-health.json",
-        ]
+        - CMD
+        - bash
+        - -c
+        - |
+          exec 3<>/dev/tcp/127.0.0.1/4566 || exit 1
+          printf 'GET /_floci/health HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3
+          resp=
+          while IFS= read -r -u 3 line || [ -n "$$line" ]; do resp+="$$line"; done
+          [[ "$$resp" == HTTP/1.?" 200"* ]] || exit 1
+          for svc in "$$@"; do [[ "$$resp" == *"\"$$svc\":\"running\""* ]] || exit 1; done
+        - floci-health
+        - kms
+        - secretsmanager
       interval: 10s
       timeout: 5s
       retries: 5
