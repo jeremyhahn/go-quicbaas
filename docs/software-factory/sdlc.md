@@ -24,7 +24,7 @@ What it does own is the **shape** of an issue-driven job: the `sdlc`
 through one branch with one worker session. A delivery pipeline is not a
 Workflow — a Workflow is a lead agent decomposing work into a DAG — and the
 seam that makes that distinction real is
-[job-runners.md](job-runners.md).
+[job-runners.md](../orchestration/job-runners.md).
 
 Where the rest of the module is documented:
 
@@ -86,7 +86,7 @@ complete runner registry and what lets `recoverOrchestrationJobs` resume a
 job whose runner would otherwise be unknown. `registerSDLCModule` needs no
 runtime, so it runs first; `startSDLC` attaches what the runner drives with.
 (`SetIdleThresholds` does not yet validate against the registry — see
-[job-runners.md](job-runners.md) and issue #621.)
+[job-runners.md](../orchestration/job-runners.md) and issue #621.)
 
 1. **`TaskSource` — `forge_issue`** (`issue_source.go`). The engine's
    task-source poller (`orchestration.sweep_interval`) asks the source, per
@@ -171,7 +171,7 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
 
    | state | what happens |
    |---|---|
-   | `initializing` | `Prepare` plans the branch, writes the `Delivery` and labels the issue; the ONE worker session is spawned in the worker Agent's `image` with the workspace spec and the forge token mounted read-only. The runner then clones the project and its `context_repos` INSIDE that container, through the runtime's exec seam (`checkout.go`), and puts the planned branch on the checkout; the host that runs the session — this daemon or a fleet node — makes only the directory the checkout is mounted through, under its own projects root ([sandbox](sandbox.md#agent-local-workspaces)). A **pre-flight** then proves that checkout (`preflight.go`) before anything is prompted: an unfit workspace parks the task for an operator at zero token cost — see [Autonomous projects](autonomy-and-dispatch.md#the-pre-flight--the-workspace-is-proved-before-anything-is-prompted). |
+   | `initializing` | `Prepare` plans the branch, writes the `Delivery` and labels the issue; the ONE worker session is spawned in the worker Agent's `image` with the workspace spec and the forge token mounted read-only. The runner then clones the project and its `context_repos` INSIDE that container, through the runtime's exec seam (`checkout.go`), and puts the planned branch on the checkout; the host that runs the session — this daemon or a fleet node — makes only the directory the checkout is mounted through, under its own projects root ([sandbox](../orchestration/sandbox.md#agent-local-workspaces)). A **pre-flight** then proves that checkout (`preflight.go`) before anything is prompted: an unfit workspace parks the task for an operator at zero token cost — see [Autonomous projects](../orchestration/autonomy-and-dispatch.md#the-pre-flight--the-workspace-is-proved-before-anything-is-prompted). |
    | `executing` | the worker is prompted with the issue contract verbatim, plus the previous round's findings from job memory and, when the last attempt changed nothing, that attempt's turn. The answer is recorded on the job as an `sdlc:agent_turn` event whatever it was, and what the run does next is decided by whether the checkout moved — see [the worker's turn](#the-workers-turn). |
    | `validating` | reached ONLY when the turn changed something. The binding's `verification` commands, in order, through the module's `container_command` validator: the operator's `ExecutionGuard` admits each command on the DAEMON, and the command then runs INSIDE the worker's container, in the checkout its entrypoint made (`ContainerRuntime.Exec`, the same seam the delivery's git uses). Nothing verifies on the daemon; a job with no container is refused. A failure goes back to `executing` with the command's output — both streams — and counts a round. A branch BEHIND its base is verified on the merge result instead, and the round says so first (below). |
    | `reviewing` | the container pushes, then the worker's session and container are CLOSED for the wait (`releaseWorker`, go-quicbaas#938; audited `sdlc:worker_released`). On a project whose `session_rotation` is `resume` (the default) the session's conversation is read first, and the audit records `replayed_turns=` (or `resume_unavailable=`). `Reviewable` publishes; then the `forge_review` gate. `request_changes` → `re-delegating`; a plan needing no pull request (the trunk-based carve-out) goes straight to `completing`. |
@@ -250,7 +250,7 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
 
    | moment | what the module does |
    |---|---|
-   | `Prepare` (initializing) | the attempt's branch is planned (`issue/<n>-<slug>` from the binding's strategy, based on `Project.Git.DefaultBranch`), the `Delivery` records it, the issue is labelled `in_progress`. A later attempt continues a branch an earlier one pushed. **Nothing is materialised on the daemon's filesystem** and the returned work directory is empty: the worker's container clones the project and the project's `context_repos` itself — see [Autonomous projects](autonomy-and-dispatch.md). |
+   | `Prepare` (initializing) | the attempt's branch is planned (`issue/<n>-<slug>` from the binding's strategy, based on `Project.Git.DefaultBranch`), the `Delivery` records it, the issue is labelled `in_progress`. A later attempt continues a branch an earlier one pushed. **Nothing is materialised on the daemon's filesystem** and the returned work directory is empty: the worker's container clones the project and the project's `context_repos` itself — see [Autonomous projects](../orchestration/autonomy-and-dispatch.md). |
    | `Reviewable` (reviewing) | the pull request opened (or refreshed on a later round) against the head the CONTAINER already published, recorded on the `Delivery` and published as Task artifacts (`url` `pull_request`, `commit` `head`), issue labelled `in_review`. A readmitted task's attempt that refreshes an open pull request takes off the park labels an earlier `Blocked` put on it; labels a person added stay. No head recorded → `NoPublishedHeadError`; the container publishes before the forge is written. |
    | `Complete` (completing) | merge as the binding's strategy plans, **bound to the head the review approved**: the forge refuses a merge whose head moved (`HeadMovedError`), retried only while the forge says not-ready (`merge_attempts`), issue labelled `merged`. When the retries are spent, one more read of the pull request decides between `MergeNotReadyExhaustedError` and `MergeConflictError`; see [a merge conflict is a merge round](#a-merge-conflict-is-a-merge-round). A merge the forge never answered is settled by reading the pull request back — see [Forge transport](#forge-transport-deadlines-retries-and-unanswered-writes). |
    | `Discard` (cleanup, detached context) | no filesystem work — the container that made the checkout is gone with it; the `Delivery` stays as the record of the attempt. The runner publishes the branch before the container ends on every non-completed exit. |
@@ -442,7 +442,7 @@ Three properties the argument vectors carry deliberately:
   a fleet node on another host is served the same agent over the agent's
   FleetRuntime link rather than a mount — the key and the socket stay here,
   `StopSigning` still closes the window, and every relayed signature is
-  audited ([sandbox.md](sandbox.md#agent-local-workspaces), go-quicbaas#1013).
+  audited ([sandbox.md](../orchestration/sandbox.md#agent-local-workspaces), go-quicbaas#1013).
 - **The forge token never travels either.** For an `https://` remote the push
   carries a credential helper that READS the mounted token file when git asks;
   for `ssh://` there is no helper at all, because the agent socket already
@@ -465,7 +465,7 @@ signs commits; the seam resolves the token, starts the ssh agent when one is
 needed, **checks the credentials against the spec**, and puts the named
 workspace, its decided spec and every container path on the spawn request. The
 host that runs the session provisions the workspace and writes the spec — see
-[sandbox.md § Agent-local workspaces](sandbox.md#agent-local-workspaces).
+[sandbox.md § Agent-local workspaces](../orchestration/sandbox.md#agent-local-workspaces).
 
 | runner | scope | what the agent serves |
 | --- | --- | --- |
@@ -507,7 +507,7 @@ publish.
    `Bind` neither reads nor sets `Project.DefaultWorkflow`, and no `sdlc`
    `JobLifecycleHooks` set is registered — the runner calls the moments
    itself. The engine's side of the seam is
-   [job-runners.md](job-runners.md).
+   [job-runners.md](../orchestration/job-runners.md).
 
 ## The worker's turn
 
@@ -1737,7 +1737,7 @@ from the environment. Pre-v1: there is no migration path; rename by hand.
 | `sdlc.max_webhook_body` | `sdlc.webhook.max_body` |
 | `sdlc.stage_event_flush_timeout` | nothing; job events are the engine's own stream |
 | `sdlc.agent_config_dir` | `orchestration.agent_config_dir` — the ONE knob; the engine puts it on every session it spawns (`JobLifecyclePolicy.AgentConfigDir`) |
-| `sdlc.worktree_root`, `sdlc.companions` | nothing; the daemon does no clone, copy or worktree. The worker's container clones the project and the project's `context_repos` itself — see [Autonomous projects](autonomy-and-dispatch.md) |
+| `sdlc.worktree_root`, `sdlc.companions` | nothing; the daemon does no clone, copy or worktree. The worker's container clones the project and the project's `context_repos` itself — see [Autonomous projects](../orchestration/autonomy-and-dispatch.md) |
 
 ### The worker image
 
@@ -1844,7 +1844,7 @@ to the lead-driven `workflow` runner, and an `sdlc` job has no workflow.
 the list in the workspace spec it hands the container, and the runner clones
 each entry beside the project checkout, inside that container. The spec's
 shape and the checkout's obligations are in
-[Autonomous projects](autonomy-and-dispatch.md).
+[Autonomous projects](../orchestration/autonomy-and-dispatch.md).
 
 ## Outcomes: every way a task stops, and what reaches the issue
 

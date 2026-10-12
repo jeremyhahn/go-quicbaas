@@ -368,7 +368,7 @@ The properties proved, with the tests that prove them:
 
 ## See also
 
-- [autonomy-and-dispatch.md](autonomy-and-dispatch.md) — the autonomy switch and the two sweeps
-- [job-admission.md](job-admission.md) — job leases, stall detection, supersession
+- [autonomy-and-dispatch.md](../orchestration/autonomy-and-dispatch.md) — the autonomy switch and the two sweeps
+- [job-admission.md](../orchestration/job-admission.md) — job leases, stall detection, supersession
 - [cost-enforcement.md](cost-enforcement.md) — the consumption ledger and account quotas
 - [sdlc.md](sdlc.md) — the delivery runner and the park the pre-flight uses

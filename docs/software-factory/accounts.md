@@ -3,7 +3,7 @@
 > **Status: NORMATIVE** · Last verified: 2026-09-22
 > Supplement to the Software Factory feature folder: the account model, how a
 > credential reaches a worker host, selection, rotation and cost attribution.
-> Verbs are in [cli.md](cli.md#quicbaas-agent-account) and
+> Verbs are in [cli.md](cli.md#quicbaas-account) and
 > [api.md](api.md#quicbaasaccount--sdk-package-sdkgoclientaccount).
 > Conflicts with this document are defects.
 

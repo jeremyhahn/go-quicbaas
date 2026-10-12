@@ -23,7 +23,7 @@ backend and model:
 | the node's triage default | `sdlc.triage_agent.{agent_id,pool_id}` | `triage` |
 
 These are not the fleet's agent daemons, which serve backends; those are
-[fleet.md](fleet.md).
+[fleet.md](../orchestration/fleet.md).
 
 Source: `pkg/orchestration/agent_catalog*.go`, `agent_directory.go`,
 `agent_spawn.go`, `agent_migration.go`, `role_charter.go`,

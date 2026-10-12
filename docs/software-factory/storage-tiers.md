@@ -211,7 +211,7 @@ quicbaas job events <job-id> | grep -E 'agent_turn|turn:push_failed'
 
 ## See also
 
-- [Sandboxed Agent Execution](sandbox.md) — how a spawn becomes a container
-- [Container Trust](architecture.md#container-trust) — the measurement the
+- [Sandboxed Agent Execution](../orchestration/sandbox.md) — how a spawn becomes a container
+- [Container Trust](../orchestration/architecture.md#container-trust) — the measurement the
   resource limits are folded into
 - [Projects](projects.md) — the project record

@@ -791,7 +791,7 @@ runner's.
 ## Related
 
 - [accounts.md](accounts.md) — the pool itself and the release verb.
-- [autonomy-and-dispatch.md](autonomy-and-dispatch.md) — where a refusal lands
+- [autonomy-and-dispatch.md](../orchestration/autonomy-and-dispatch.md) — where a refusal lands
   in the dispatch loop.
 - [sdlc.md](sdlc.md) — how the Software Factory's turns reach the ledger.
 - go-quicbaas#758 — the salvage this layer came from.

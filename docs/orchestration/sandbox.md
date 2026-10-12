@@ -14,7 +14,7 @@ it cannot be one.
 - Bind-mount allowlist — [Bind-Mount Allowlist Reference](engineering.md#bind-mount-allowlist-reference)
 - Image integrity (a separate axis) — [Container Trust](architecture.md#container-trust)
 - Where the checkout physically lives, and what bounds it —
-  [Workspace Storage Tiers](storage-tiers.md)
+  [Workspace Storage Tiers](../software-factory/storage-tiers.md)
 
 ## The rule
 
@@ -612,7 +612,7 @@ this daemon did not launch has no such label and is never enumerated, let alone
 removed — an operator's own containers, and another daemon's live workers, are
 untouched. The owner is the daemon's work directory for the same reason the
 signing sockets root carries a per-daemon segment derived from
-`storage.data_dir` (see [sdlc.md](sdlc.md#configuration)): it is the one setting two
+`storage.data_dir` (see [sdlc.md](../software-factory/sdlc.md#configuration)): it is the one setting two
 daemons on one host cannot share, and it survives a restart, so a restarted
 daemon recognises its predecessor's containers and nobody else's.
 

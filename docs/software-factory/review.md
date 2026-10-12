@@ -814,7 +814,7 @@ itself.
 The rule is only as good as the routing beneath it: it names the family of the
 CONFIGURED reviewer, so the backend the reviewer's session actually runs has to
 be the one it was routed on. See
-[autonomy-and-dispatch.md](autonomy-and-dispatch.md#the-backend-a-remote-daemon-serves)
+[autonomy-and-dispatch.md](../orchestration/autonomy-and-dispatch.md#the-backend-a-remote-daemon-serves)
 — a remote daemon serves one backend per `RemoteACPBackend`, and a spawn for a
 backend its daemon does not serve is refused rather than served by the
 daemon's primary.

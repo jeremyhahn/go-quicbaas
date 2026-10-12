@@ -31,7 +31,7 @@ It gates two loops:
 
 A **parked** project (`Project.Parked`) keeps both loops running for the work it
 has already started and refuses everything new; see
-[Parking a project](projects.md#parking-a-project).
+[Parking a project](../software-factory/projects.md#parking-a-project).
 
 `Project.DefaultWorkflow` no longer gates anything. It keeps its original
 meaning — the workflow a Task under this project is auto-spawned into — for
@@ -88,7 +88,7 @@ headroom, and the project's and tenant's own spend limits — and divides the fl
 aggregate bound cannot let one busy project starve every other. The fleet row
 above is that bound's last-ditch check at the lease, reading the same capacity
 the controller reads. See
-[admission-and-readiness.md](admission-and-readiness.md).
+[admission-and-readiness.md](../software-factory/admission-and-readiness.md).
 
 The `checkProjectConcurrency` row closes a bypass (go-quicbaas#898). A manually triggered
 `CreateTask(..., AutoSpawn: true)` goes straight to `autoSpawnTask` and reached
@@ -132,7 +132,7 @@ auto-spawned, unbound pending task gets the `dispatch_reason` "project autonomy
 is off: nothing dispatches until it is switched on". Like every refusal, the
 reason is written once and warned once. It is cleared when a later sweep
 dispatches the task. A parked project drains only while autonomy is on (see
-[Parking a project](projects.md#parking-a-project)).
+[Parking a project](../software-factory/projects.md#parking-a-project)).
 
 Per autonomous project, one sweep:
 
@@ -145,7 +145,7 @@ Per autonomous project, one sweep:
    fleet's free capacity divided fairly, and the provider pool's headroom — or
    from `MaxConcurrency − inflight` alone when no controller is wired, unbounded
    when the quota is zero
-   ([admission-and-readiness.md](admission-and-readiness.md));
+   ([admission-and-readiness.md](../software-factory/admission-and-readiness.md));
 4. builds the **candidates** — `AutoSpawn && SpawnedJobID == "" &&
    Status == pending && !Deferred(now) && !BudgetExhausted()` — ordered by
    `Priority` descending, then `CreatedAt` ascending, then ID;
@@ -286,7 +286,7 @@ was not watching, so a spend refusal reads
 
 Everything the classifier does not recognize keeps the error's own text:
 inventing a category for an unrecognized fault is how a real failure stops
-being investigated. See [cost-enforcement.md](cost-enforcement.md).
+being investigated. See [cost-enforcement.md](../software-factory/cost-enforcement.md).
 
 The reason is written through the task store's compare-and-swap and **only
 when it changed**, with one bounded retry when another writer wins the race. A
@@ -346,7 +346,7 @@ against the kernel's limit, and admitted by the mount policy **by
 construction** rather than by an operator allowlist entry. That grant is the
 narrowest one that works: the socket file itself, one directory below the
 root, read-only, and actually a socket. See
-[SDLC configuration](sdlc.md#configuration).
+[SDLC configuration](../software-factory/sdlc.md#configuration).
 
 ### The container workspace contract
 
@@ -363,7 +363,7 @@ stays the one description of the checkout both sides act on.
 | `/run/quicbaas/workspace` | the spec directory, mounted **read-only** |
 | `/run/quicbaas/workspace/workspace.json` | the spec; `$QUICBAAS_WORKSPACE_SPEC` names this path |
 | `/run/quicbaas/workspace/forge-token` | the forge token, mode `0400`; present only when the spec's `forge_token_file` names it |
-| `/run/quicbaas/ssh-agent.sock` | the ephemeral, KMS-backed SSH signing agent, mounted **read-only**; `$SSH_AUTH_SOCK` names this path. The agent is started per attempt with its socket directory at `<orchestration.sockets_root>/<12 hex characters>` (`AgentOptions.SocketDir`, go-xkms `sdk/go/client/ssh`); the directory and the socket are removed when the attempt ends. The derived sockets root is per-daemon, not per-user — see [the signing socket’s root](sdlc.md#the-signing-sockets-root) |
+| `/run/quicbaas/ssh-agent.sock` | the ephemeral, KMS-backed SSH signing agent, mounted **read-only**; `$SSH_AUTH_SOCK` names this path. The agent is started per attempt with its socket directory at `<orchestration.sockets_root>/<12 hex characters>` (`AgentOptions.SocketDir`, go-xkms `sdk/go/client/ssh`); the directory and the socket are removed when the attempt ends. The derived sockets root is per-daemon, not per-user — see [the signing socket’s root](../software-factory/sdlc.md#the-signing-sockets-root) |
 | `/workspace/<project name>` | the project checkout the container makes |
 | `/workspace/<context repo name>` | each context repository, beside it |
 
@@ -429,7 +429,7 @@ toolchain and the `golangci-lint` / `gosec` / `govulncheck` that `make lint`,
 `make check` and `make security` are made of.
 `deployments/agents/software-factory-worker/` is the one this repository builds;
 see [the worker image](sandbox.md#the-worker-image) and
-[the worker image](sdlc.md#the-worker-image).
+[the worker image](../software-factory/sdlc.md#the-worker-image).
 
 **No credential value ever reaches argv or the environment.** The two
 environment variables the spawn sets — `QUICBAAS_WORKSPACE_SPEC` and

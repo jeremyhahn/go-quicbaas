@@ -32,7 +32,7 @@ Triage is a **judgement**, so it needs a session, a prompt, a budget, a
 recorded verdict and an audit trail. That is exactly the list the engine's job
 envelope provides, so triage is a third `JobRunner` registered beside
 `workflow` and `sdlc` — not a sweep, not a cron, not a shell script. See
-[job-runners.md](job-runners.md) for the seam.
+[job-runners.md](../orchestration/job-runners.md) for the seam.
 
 | | |
 |---|---|

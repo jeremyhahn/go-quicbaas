@@ -87,7 +87,7 @@ unchanged, because a write can commit and still lose its answer. Before the
 next worker state, the run re-reads its lease record. The store is the
 arbiter. A record still on the budget proceeds on the slot it never gave up.
 Anything else goes through admission. See
-[admission-and-readiness.md](admission-and-readiness.md).
+[admission-and-readiness.md](../software-factory/admission-and-readiness.md).
 
 **Dormant.** The same move marks the lease `Dormant`: a job in an off-budget
 state of such a runner runs no worker at all, and the sdlc runner closes its
@@ -103,7 +103,7 @@ it: the task's source reference for task-bound work, and otherwise whatever
 `JobLeasePolicy.LeaseSubject` answers. Without a policy a job bound to no
 task is leased by its own id and contends with nothing, which is right for a
 one-off and wrong for a runner whose jobs are per-subject singletons. See
-`docs/software-factory/job-runners.md`.
+`docs/orchestration/job-runners.md`.
 
 **Heartbeat.** The **envelope** heartbeats on every state transition
 (`JobRun.SetState`) and on a ticker at TTL/3, started when the lease is
@@ -148,7 +148,7 @@ prose:
 | `accounts_cooling_down` | `AccountsCoolingDownError` | refunded, requeued at `AvailableAt` (clamped to 24h) |
 | `accounts_spent` | `AccountsSpentError` — every selectable account refused by its own spend policy | refunded, requeued at `AvailableAt` (clamped to 24h); **never counts** toward the park bound, as saturation does not |
 | `project_capacity_exceeded` | `ProjectCapacityExceededError` | refunded, requeued at `RetryAt` |
-| `forge_unreachable` | any error unwrapping to `ErrForgeUnreachable` — a forge call unanswered after the adapter's retries and reconciliation ([sdlc.md](sdlc.md#forge-transport-deadlines-retries-and-unanswered-writes)) | refunded, requeued (bounded) |
+| `forge_unreachable` | any error unwrapping to `ErrForgeUnreachable` — a forge call unanswered after the adapter's retries and reconciliation ([sdlc.md](../software-factory/sdlc.md#forge-transport-deadlines-retries-and-unanswered-writes)) | refunded, requeued (bounded) |
 | `agent_interrupted` | any error unwrapping to `ErrAgentInterrupted` — a worker turn whose Prompt the fleet node stopped serving: `Unavailable` (the agent drained or its transport was lost) or `Canceled` on a stream this side did not cancel — or a `ContainerStreamClosedError` whose container reported no exit of the worker's own (killed, pipe cut, or the runtime's own status 125). The agent answers a lost container stream `Unavailable` whether or not it is draining. The job's error names the agent's host. A worker process that exits non-zero under a healthy agent arrives `Internal` and is **not** this class | refunded, requeued (bounded); **never charged** — the third in a row blocks the task for a person but is refunded too |
 | `no_provider_account`, `no_account_resolver`, `account_credential_missing`, `account_refresher_missing` | resolver errors | refunded, **blocked** for a human |
 | `superseded` | `JobSupersededError`, `JobLeaseTakenError` | nothing written; the lease holder owns the Task |
@@ -168,7 +168,7 @@ judgement a runner makes **while it holds the job**, carried on
 | `workspace_unfit` | the project names no workspace path; the daemon could not make the mount point; the checkout is absent, empty, holding another repository, or missing a declared context repository; any git command of the checkout failed | refunded, **blocked** for an operator |
 | `worker_environment` | the worker declared `SDLC-STOP: environment`, declared a stop code this binary does not know, or answered with no text on every turn of the attempt | refunded, **blocked** for an operator |
 | `config_error` | the project's binding names a verification command the operator allowlist (`orchestration.verification_commands`) does not carry: the runner refuses before it spawns a worker, and the execution guard's refusal at validation is classed the same way | refunded, **blocked** for an operator: add the command to the allowlist or rebind the project, then readmit |
-| `untrusted_signer` | the publisher refused a push because the branch carries a commit no key the project trusts signed (unsigned, an unknown key, or a retired key after its retirement), or the merge train ejected such a change; the factory never rewrites a pushed branch, so another attempt would refuse identically | refunded, **escalated** for an operator: record the key in the project's trusted signing history ([projects.md](projects.md#rotating-the-signing-key)) or replace the commit, then readmit |
+| `untrusted_signer` | the publisher refused a push because the branch carries a commit no key the project trusts signed (unsigned, an unknown key, or a retired key after its retirement), or the merge train ejected such a change; the factory never rewrites a pushed branch, so another attempt would refuse identically | refunded, **escalated** for an operator: record the key in the project's trusted signing history ([projects.md](../software-factory/projects.md#rotating-the-signing-key)) or replace the commit, then readmit |
 
 The park still stops the Task — nothing retries it until a person acts — and
 the class adds three things:
@@ -466,7 +466,7 @@ All typed, all with sentinels: `JobLeaseError` (`ErrJobLeaseInvalidInput`,
 ## Source files
 
 - `pkg/orchestration/job_lease.go` — record, key, stores, the project and fleet capacity checks, errors
-- `pkg/orchestration/fleet_capacity.go` — how many worker slots the deployment has; see [admission-and-readiness.md](admission-and-readiness.md)
+- `pkg/orchestration/fleet_capacity.go` — how many worker slots the deployment has; see [admission-and-readiness.md](../software-factory/admission-and-readiness.md)
 - `pkg/orchestration/job_run_lease.go` — the loop's acquire, heartbeat, abort, release
 - `pkg/orchestration/task_attempt.go` — classification, outcomes, `concludeAttempt`
 - `pkg/orchestration/job_reaper.go`, `job_stall.go` — the sweep

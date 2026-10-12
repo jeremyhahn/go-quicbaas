@@ -161,7 +161,7 @@ Both are set on create (`autonomous`, `context_repos`) and on update
 `context_repos` replaces the whole list, `clear_context_repos` empties it),
 with `--autonomous`, `--context-repo name=…,url=…,ref=…` and
 `--clear-context-repos` on the CLI. Both are documented in full in
-[autonomy-and-dispatch.md](autonomy-and-dispatch.md).
+[autonomy-and-dispatch.md](../orchestration/autonomy-and-dispatch.md).
 
 ### Session rotation
 
@@ -640,11 +640,11 @@ the sections that absorbed them.*
 
 ## Cross-References
 
-- Workspace isolation: [architecture.md](architecture.md#workspace-isolation)
-- Job spawning from projects: [engineering.md](engineering.md#sub-job-spawning--typed-artifacts)
-- Permission matrix details: [architecture.md](architecture.md#agent-orchestration-security)
-- Quota enforcement: [engineering.md](engineering.md#cost-controls)
-- Autonomy and dispatch: [autonomy-and-dispatch.md](autonomy-and-dispatch.md)
+- Workspace isolation: [architecture.md](../orchestration/architecture.md#workspace-isolation)
+- Job spawning from projects: [engineering.md](../orchestration/engineering.md#sub-job-spawning--typed-artifacts)
+- Permission matrix details: [architecture.md](../orchestration/architecture.md#agent-orchestration-security)
+- Quota enforcement: [engineering.md](../orchestration/engineering.md#cost-controls)
+- Autonomy and dispatch: [autonomy-and-dispatch.md](../orchestration/autonomy-and-dispatch.md)
 - Binding a project to a forge: [sdlc.md](sdlc.md)
 - Audit trail: [../audit-logging/architecture.md](../audit-logging/architecture.md)
 

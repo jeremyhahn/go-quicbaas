@@ -132,7 +132,7 @@ Preflight, then: mint the agent's mTLS identity, upload the binary, the
 identity and the rendered `agent.yaml`, install and start the systemd
 `--user` unit (enabling lingering) or the nohup launcher, close the SSH
 session, and wait until the fleet registry shows the agent online *and* its
-runtime port answers. The details are in [cli.md](cli.md#remote-agent-deploy).
+runtime port answers. The details are in [cli.md](cli.md#remote-fleet-node-deploy).
 
 ## Lifecycle
 
@@ -181,7 +181,7 @@ Each heartbeat also carries the node's accelerator telemetry — NVIDIA GPU
 power, utilisation and memory (nvidia-smi), Intel NPU busy fraction (intel_vpu
 sysfs) and CPU package power (RAPL) — which the control plane files as
 per-node time series and integrates to cost local turns from measured energy.
-See [cost-enforcement.md](cost-enforcement.md#measured-energy-fleet-device-telemetry).
+See [cost-enforcement.md](../software-factory/cost-enforcement.md#measured-energy-fleet-device-telemetry).
 
 ## Names
 
