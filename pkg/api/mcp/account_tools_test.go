@@ -18,6 +18,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -197,11 +198,83 @@ func TestExecuteAccountTool_UnknownTool(t *testing.T) {
 // credential produces nil (which the service layer rejects) rather than an
 // empty envelope that would silently overwrite a real credential.
 func TestAccountCredentialFromArgs_MissingCredential(t *testing.T) {
-	if cred := accountCredentialFromArgs(map[string]interface{}{"tenant_id": "t1"}); cred != nil {
-		t.Fatalf("expected nil credential, got %+v", cred)
+	if cred, err := accountCredentialFromArgs(map[string]interface{}{"tenant_id": "t1"}); cred != nil || err != nil {
+		t.Fatalf("expected nil credential and error, got %+v, %v", cred, err)
 	}
-	if cred := accountCredentialFromArgs(map[string]interface{}{"credential": "not-an-object"}); cred != nil {
-		t.Fatalf("expected nil credential for a non-object, got %+v", cred)
+	if cred, err := accountCredentialFromArgs(map[string]interface{}{"credential": "not-an-object"}); cred != nil || err != nil {
+		t.Fatalf("expected nil credential and error for a non-object, got %+v, %v", cred, err)
+	}
+}
+
+// credential.expires_at reaches the service on create and rotation, so account
+// balancing sees the real expiry instead of a zero "never expires".
+func TestAccountMCP_ForwardsCredentialExpiry(t *testing.T) {
+	want := time.Date(2026, 11, 1, 12, 30, 0, 0, time.UTC)
+	var created, rotated time.Time
+	svc := &mocks.MockAccountService{
+		CreateAccountFunc: func(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error) {
+			created = req.Credential.ExpiresAt
+			return &service.CreateAccountResponse{Account: mcpSampleAccount()}, nil
+		},
+		RotateAccountCredentialFunc: func(ctx context.Context, req *service.RotateAccountCredentialRequest) (*service.RotateAccountCredentialResponse, error) {
+			rotated = req.Credential.ExpiresAt
+			return &service.RotateAccountCredentialResponse{AccountID: req.AccountID}, nil
+		},
+	}
+	reg := newAccountRegistry(t, svc)
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+	credential := map[string]interface{}{"access_token": "tok", "expires_at": "2026-11-01T12:30:00Z"}
+
+	if _, err := reg.ExecuteTool(ctx, "quicbaas_agent_account_create", map[string]interface{}{
+		"tenant_id": "tenant-1", "provider": "claude", "credential": credential,
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := reg.ExecuteTool(ctx, "quicbaas_agent_account_rotate", map[string]interface{}{
+		"tenant_id": "tenant-1", "account_id": "acct-1", "credential": credential,
+	}); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if !created.Equal(want) {
+		t.Errorf("create expires_at = %v, want %v", created, want)
+	}
+	if !rotated.Equal(want) {
+		t.Errorf("rotate expires_at = %v, want %v", rotated, want)
+	}
+}
+
+// A malformed credential.expires_at is refused with a typed error before the
+// service is reached, on create and rotation alike.
+func TestAccountMCP_RefusesMalformedCredentialExpiry(t *testing.T) {
+	svc := &mocks.MockAccountService{
+		CreateAccountFunc: func(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error) {
+			t.Error("create reached the service with a malformed expiry")
+			return &service.CreateAccountResponse{Account: mcpSampleAccount()}, nil
+		},
+		RotateAccountCredentialFunc: func(ctx context.Context, req *service.RotateAccountCredentialRequest) (*service.RotateAccountCredentialResponse, error) {
+			t.Error("rotate reached the service with a malformed expiry")
+			return &service.RotateAccountCredentialResponse{AccountID: req.AccountID}, nil
+		},
+	}
+	reg := newAccountRegistry(t, svc)
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+
+	for _, expiry := range []interface{}{"next tuesday", float64(1767225600)} {
+		credential := map[string]interface{}{"access_token": "tok", "expires_at": expiry}
+		calls := map[string]map[string]interface{}{
+			"quicbaas_agent_account_create": {"tenant_id": "tenant-1", "provider": "claude", "credential": credential},
+			"quicbaas_agent_account_rotate": {"tenant_id": "tenant-1", "account_id": "acct-1", "credential": credential},
+		}
+		for tool, args := range calls {
+			_, err := reg.ExecuteTool(ctx, tool, args)
+			var expiryErr *AccountCredentialExpiryError
+			if !errors.As(err, &expiryErr) {
+				t.Fatalf("%s with expires_at %v: got %v, want AccountCredentialExpiryError", tool, expiry, err)
+			}
+			if !strings.Contains(err.Error(), "credential.expires_at") {
+				t.Errorf("%s: error does not name the argument: %v", tool, err)
+			}
+		}
 	}
 }
 

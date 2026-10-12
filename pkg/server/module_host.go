@@ -253,13 +253,16 @@ func (e *HostModuleRouterInspectionError) Unwrap() error { return e.Cause }
 // requirement needs a registration-time introspection hook from go-qrdb, filed
 // as go-qrdb#194.
 //
-// Two transports are NOT covered by the module seam, and a host must plan for
-// both (go-qrdb pkg/apimodule/module.go:73-79):
+// Two transports need a host's attention beyond RegisterGRPC/HTTP/MCP:
 //
-//   - QUIC: go-qrdb's QUIC transport is a bespoke frame protocol with
-//     method-keyed dispatch, not HTTP-over-chi, so RegisterHTTP does not
-//     reach it. A module needs its own QUIC surface until go-qrdb grows a
-//     RegisterQUIC hook.
+//   - QUIC: reached only through the module's RegisterQUIC hook, which
+//     go-qrdb's BaseModule leaves a no-op. The QUIC server projects each unary
+//     method of the descriptors RegisterQUIC registers onto its frame protocol,
+//     authorized by the method's (qrdb.v1.permission) option; a method without
+//     one panics QUIC server construction unless the module also lists it as
+//     public, in which case QUIC skips it. quicbaas's own module does not yet
+//     implement the hook: its EmbeddingService declares no permissions
+//     (go-quicbaas#819).
 //   - embedded: the in-process transport is each capability owner's own SDK
 //     surface, independent of this seam. A host calls its module's Go API
 //     directly in-process.

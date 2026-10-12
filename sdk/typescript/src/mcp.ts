@@ -13,10 +13,11 @@
 
 // McpClient is the transport implementation for the Model Context Protocol.
 //
-// OPERATOR NOTE: This transport requires an MCP client library and a
-// go-quicbaas MCP server endpoint. The MCP server is exposed via the
-// pkg/api/mcp package. Implement the methods below using your preferred
-// MCP client SDK before switching to this transport.
+// The projects, sdlc and accounts families are wired: they call the server's
+// project_*, sdlc_* and quicbaas_agent_account_* tools through one shared
+// McpSession (mcp_rpc.ts). A request argument a tool does not read is refused
+// with TransportNotSupportedError rather than silently dropped. The remaining
+// families still throw McpNotImplementedError.
 //
 // MCP endpoint convention: config.mcp.endpoint (e.g. "http://localhost:8081/mcp")
 
@@ -121,8 +122,60 @@ import type {
   Task,
   WorkflowDefinition,
 } from './types.js';
+import type {
+  Account,
+  AccountsClient,
+  CreateAccountRequest,
+  CreateAccountResponse,
+  DeleteAccountResponse,
+  GetAccountResponse,
+  GetAccountUsageResponse,
+  ListAccountsRequest,
+  ListAccountsResponse,
+  RevokeAccountRequest,
+  RevokeAccountResponse,
+  RotateAccountCredentialRequest,
+  RotateAccountCredentialResponse,
+  SetDefaultAccountResponse,
+  UpdateAccountRequest,
+  UpdateAccountResponse,
+} from './accounts.js';
+import type {
+  CreateProjectRequest,
+  CreateProjectResponse,
+  DeleteProjectResponse,
+  GetProjectResponse,
+  GrantFleetNodeRoleRequest,
+  GrantFleetNodeRoleResponse,
+  ListProjectsResponse,
+  Project,
+  ProjectRole,
+  ProjectsClient,
+  RevokeFleetNodeRoleRequest,
+  RevokeFleetNodeRoleResponse,
+  UpdateProjectRequest,
+  UpdateProjectResponse,
+} from './projects.js';
+import type {
+  SdlcClient,
+  ProjectBinding,
+  Delivery,
+  OnboardingReport,
+  ConformanceReport,
+  OpenWork,
+  ReviewerSelection,
+  FileIssueRequest,
+  ForgeIssue,
+  CollaboratorsResponse,
+  AdoptIssueRequest,
+  Adoption,
+} from './sdlc.js';
+import { McpSession } from './mcp_rpc.js';
 import {
+  adoptPage,
+  type ProjectPageParams,
   wholeSetPage,
+  type AccountPageParams,
   type FleetNodePageParams,
   type JobPageParams,
   type PageParams,
@@ -130,7 +183,8 @@ import {
   type SessionPageParams,
   type TaskPageParams,
 } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
+import { QuicBaaSError, DeployNotSupportedError, TransportNotSupportedError } from './errors.js';
+
 
 // McpNotImplementedError is thrown by all methods until the MCP protocol
 // client is wired into this file.
@@ -326,6 +380,253 @@ export class McpBootstrapClient implements BootstrapClient {
 }
 
 // McpClient is the stub entry point for the MCP transport.
+// McpAccountsClient carries the accounts family over the quicbaas_agent_account_*
+// tools (pkg/api/mcp/account_tools.go). Each tool takes the REST request's
+// fields flat and answers with the same JSON the REST handler writes, so the
+// requests pass through and the responses are the shared accounts types.
+// mcpRefusal is the error for a request argument a tool does not read:
+// dropping it would answer as if the server had applied it.
+function mcpRefusal(family: string, method: string, reason: string): TransportNotSupportedError {
+  return new TransportNotSupportedError('mcp', family, `${reason}; use the rest transport`, method);
+}
+
+function hasEntries(value: Record<string, string> | undefined): boolean {
+  return value !== undefined && Object.keys(value).length > 0;
+}
+
+// The project tools answer the service's Go response structs, which carry no
+// json tags, so their keys are the Go field names. The project inside them is
+// snake_case like every other wire project; only the envelope is translated.
+interface WireProjectResponse {
+  Project: Project;
+}
+
+interface WireDeleteProjectResponse {
+  Deleted: boolean;
+}
+
+interface WireGrantResponse {
+  ProjectID: string;
+  FleetNodeID: string;
+  Role: ProjectRole;
+  Timestamp: string;
+}
+
+interface WireRevokeResponse {
+  ProjectID: string;
+  FleetNodeID: string;
+  Timestamp: string;
+}
+
+export class McpProjectsClient implements ProjectsClient {
+  private readonly session: McpSession;
+
+  constructor(session: McpSession) {
+    this.session = session;
+  }
+
+  // createProject refuses metadata: project_create does not read it.
+  async createProject(req: CreateProjectRequest): Promise<CreateProjectResponse> {
+    if (hasEntries(req.metadata)) {
+      throw mcpRefusal('projects', 'createProject', 'the project_create tool does not read metadata');
+    }
+    const resp = await this.session.callTool<WireProjectResponse>('project_create', req);
+    return { project: resp.Project };
+  }
+
+  async getProject(tenantId: string, projectId: string): Promise<GetProjectResponse> {
+    const resp = await this.session.callTool<WireProjectResponse>('project_get', { tenant_id: tenantId, project_id: projectId });
+    return { project: resp.Project };
+  }
+
+  // updateProject refuses metadata and clear_description: project_update
+  // reads neither. Any defined metadata is refused, {} included: on an update
+  // {} means "clear the metadata", and dropping it would report a success that
+  // changed nothing.
+  async updateProject(req: UpdateProjectRequest): Promise<UpdateProjectResponse> {
+    if (req.metadata !== undefined) {
+      throw mcpRefusal('projects', 'updateProject', 'the project_update tool does not read metadata');
+    }
+    if (req.clear_description) {
+      throw mcpRefusal('projects', 'updateProject', 'the project_update tool does not read clear_description');
+    }
+    const resp = await this.session.callTool<WireProjectResponse>('project_update', req);
+    return { project: resp.Project };
+  }
+
+  async deleteProject(tenantId: string, projectId: string): Promise<DeleteProjectResponse> {
+    const resp = await this.session.callTool<WireDeleteProjectResponse>('project_delete', { tenant_id: tenantId, project_id: projectId });
+    return { deleted: resp.Deleted };
+  }
+
+  async listProjects(tenantId: string): Promise<ListProjectsResponse> {
+    const page = await this.listProjectsPage(tenantId);
+    return { projects: page.items, total: page.total };
+  }
+
+  // listProjectsPage refuses the autonomous filter: project_list takes the
+  // paging arguments but no autonomous switch.
+  async listProjectsPage(tenantId: string, page?: ProjectPageParams): Promise<PageResult<Project>> {
+    if (page?.autonomous !== undefined) {
+      throw mcpRefusal('projects', 'listProjectsPage', 'the project_list tool has no autonomous filter');
+    }
+    const raw = await this.session.callTool<unknown>('project_list', {
+      tenant_id: tenantId,
+      limit: page?.limit,
+      offset: page?.offset,
+      sort: page?.sort,
+      q: page?.q,
+    });
+    return adoptPage<Project>(raw, 'projects');
+  }
+
+  async grantFleetNodeRole(req: GrantFleetNodeRoleRequest): Promise<GrantFleetNodeRoleResponse> {
+    const resp = await this.session.callTool<WireGrantResponse>('project_grant_fleet_node', req);
+    return { project_id: resp.ProjectID, node_id: resp.FleetNodeID, role: resp.Role, timestamp: resp.Timestamp };
+  }
+
+  async revokeFleetNodeRole(req: RevokeFleetNodeRoleRequest): Promise<RevokeFleetNodeRoleResponse> {
+    const resp = await this.session.callTool<WireRevokeResponse>('project_revoke_fleet_node', req);
+    return { project_id: resp.ProjectID, node_id: resp.FleetNodeID, timestamp: resp.Timestamp };
+  }
+}
+
+// McpSdlcClient calls the sdlc_* tools. They answer the same service values
+// the REST handlers do, so every result but forges passes through unchanged.
+export class McpSdlcClient implements SdlcClient {
+  private readonly session: McpSession;
+
+  constructor(session: McpSession) {
+    this.session = session;
+  }
+
+  async forges(): Promise<string[]> {
+    const resp = await this.session.callTool<{ forges?: string[] }>('sdlc_forges', {});
+    return resp.forges ?? [];
+  }
+
+  async bind(tenantId: string, projectId: string, binding: ProjectBinding): Promise<ProjectBinding> {
+    return this.session.callTool('sdlc_bind', {
+      tenant_id: tenantId,
+      project_id: projectId,
+      binding: { ...binding, project_id: binding.project_id || projectId },
+    });
+  }
+
+  async unbind(tenantId: string, projectId: string): Promise<void> {
+    await this.session.callTool('sdlc_unbind', { tenant_id: tenantId, project_id: projectId });
+  }
+
+  async binding(tenantId: string, projectId: string): Promise<ProjectBinding> {
+    return this.session.callTool('sdlc_binding', { tenant_id: tenantId, project_id: projectId });
+  }
+
+  async delivery(tenantId: string, taskId: string): Promise<Delivery> {
+    return this.session.callTool('sdlc_delivery', { tenant_id: tenantId, task_id: taskId });
+  }
+
+  async onboard(tenantId: string, projectId: string): Promise<OnboardingReport> {
+    return this.session.callTool('sdlc_onboard', { tenant_id: tenantId, project_id: projectId });
+  }
+
+  async conformance(tenantId: string, projectId: string): Promise<ConformanceReport> {
+    return this.session.callTool('sdlc_conformance', { tenant_id: tenantId, project_id: projectId });
+  }
+
+  async openWork(tenantId: string, projectId: string): Promise<OpenWork> {
+    return this.session.callTool('sdlc_open_work', { tenant_id: tenantId, project_id: projectId });
+  }
+
+  async reviewer(tenantId: string, projectId: string, pullRequest: number): Promise<ReviewerSelection> {
+    return this.session.callTool('sdlc_reviewer', { tenant_id: tenantId, project_id: projectId, pull_request: pullRequest });
+  }
+
+  async setReviewer(tenantId: string, projectId: string, pullRequest: number, profile: string): Promise<ReviewerSelection> {
+    return this.session.callTool('sdlc_reviewer_set', {
+      tenant_id: tenantId,
+      project_id: projectId,
+      pull_request: pullRequest,
+      profile,
+    });
+  }
+
+  async clearReviewer(tenantId: string, projectId: string, pullRequest: number): Promise<ReviewerSelection> {
+    return this.session.callTool('sdlc_reviewer_clear', { tenant_id: tenantId, project_id: projectId, pull_request: pullRequest });
+  }
+
+  async fileIssue(tenantId: string, projectId: string, req: FileIssueRequest): Promise<ForgeIssue> {
+    return this.session.callTool('sdlc_issue_create', { ...req, tenant_id: tenantId, project_id: projectId });
+  }
+
+  async collaborators(tenantId: string, projectId: string): Promise<CollaboratorsResponse> {
+    return this.session.callTool('sdlc_collaborators', { tenant_id: tenantId, project_id: projectId });
+  }
+
+  async adoptIssue(tenantId: string, projectId: string, request: AdoptIssueRequest): Promise<Adoption> {
+    return this.session.callTool('sdlc_adopt_issue', { ...request, tenant_id: tenantId, project_id: projectId });
+  }
+}
+
+export class McpAccountsClient implements AccountsClient {
+  private readonly session: McpSession;
+
+  constructor(session: McpSession) {
+    this.session = session;
+  }
+
+  async createAccount(req: CreateAccountRequest): Promise<CreateAccountResponse> {
+    return this.session.callTool('quicbaas_agent_account_create', req);
+  }
+
+  async getAccount(tenantId: string, accountId: string): Promise<GetAccountResponse> {
+    return this.session.callTool('quicbaas_agent_account_get', { tenant_id: tenantId, account_id: accountId });
+  }
+
+  async listAccounts(req: ListAccountsRequest): Promise<ListAccountsResponse> {
+    return this.session.callTool('quicbaas_agent_account_list', req);
+  }
+
+  // listAccountsPage refuses a status filter: the list tool takes provider,
+  // project_id and the paging arguments but no status, and answering the
+  // unfiltered page as if it were filtered would be a lie.
+  async listAccountsPage(req: AccountPageParams & { tenant_id: string }): Promise<PageResult<Account>> {
+    if (req.status !== undefined && req.status !== '') {
+      throw new TransportNotSupportedError(
+        'mcp',
+        'accounts',
+        'the quicbaas_agent_account_list tool has no status filter; use the rest transport',
+        'listAccountsPage',
+      );
+    }
+    const raw = await this.session.callTool<unknown>('quicbaas_agent_account_list', req);
+    return adoptPage<Account>(raw, 'accounts');
+  }
+
+  async updateAccount(req: UpdateAccountRequest): Promise<UpdateAccountResponse> {
+    return this.session.callTool('quicbaas_agent_account_update', req);
+  }
+
+  async deleteAccount(tenantId: string, accountId: string): Promise<DeleteAccountResponse> {
+    return this.session.callTool('quicbaas_agent_account_delete', { tenant_id: tenantId, account_id: accountId });
+  }
+
+  async rotateAccountCredential(req: RotateAccountCredentialRequest): Promise<RotateAccountCredentialResponse> {
+    return this.session.callTool('quicbaas_agent_account_rotate', req);
+  }
+
+  async revokeAccount(req: RevokeAccountRequest): Promise<RevokeAccountResponse> {
+    return this.session.callTool('quicbaas_agent_account_revoke', req);
+  }
+
+  async setDefaultAccount(tenantId: string, accountId: string): Promise<SetDefaultAccountResponse> {
+    return this.session.callTool('quicbaas_agent_account_set_default', { tenant_id: tenantId, account_id: accountId });
+  }
+
+  async getAccountUsage(tenantId: string, accountId: string): Promise<GetAccountUsageResponse> {
+    return this.session.callTool('quicbaas_agent_account_usage', { tenant_id: tenantId, account_id: accountId });
+  }
+}
+
 export class McpClient implements Client {
   readonly connection: ConnectionClient;
   readonly orchestrator: OrchestratorClient;
@@ -346,11 +647,9 @@ export class McpClient implements Client {
   readonly messaging: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly scheduler: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly projects: any = null;
-  readonly sdlc: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly accounts: any = null;
+  readonly projects: ProjectsClient;
+  readonly sdlc: SdlcClient;
+  readonly accounts: AccountsClient;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -385,8 +684,12 @@ export class McpClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly ssh: any = null;
 
-  constructor(endpoint: string, _config: ClientConfig = {}) {
+  constructor(endpoint: string, config: ClientConfig = {}) {
     this.connection = new McpConnectionClient(endpoint);
+    const session = new McpSession(endpoint, config);
+    this.projects = new McpProjectsClient(session);
+    this.sdlc = new McpSdlcClient(session);
+    this.accounts = new McpAccountsClient(session);
     this.orchestrator = new McpOrchestratorClient();
     this.auth = new McpAuthClient();
     this.barrier = new McpBarrierClient();

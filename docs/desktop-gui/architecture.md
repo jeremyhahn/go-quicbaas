@@ -29,11 +29,26 @@ This installs `npm` dependencies under `cmd/quicbaas/frontend/`, builds the Svel
 
 ```bash
 # Build the frontend bundle and embed it in the daemon.
-make _build-frontend
+make build-frontend
 make build
 ```
 
 The daemon exposes the UI at `GET /ui/` once REST is enabled.
+
+### Frontend build and tests
+
+`make build-frontend` installs dependencies with `npm ci` from the tracked
+`cmd/quicbaas/frontend/package-lock.json`, which it never rewrites. It builds
+outside the checkout, because Node.js worker threads hit EPERM on NFS, in
+`/tmp/fe-build-<user>-<hash of the checkout path>` (override with
+`FE_BUILD_ROOT`). That root mirrors the repository layout, with `sdk/` linked
+to the checkout's `sdk/`, so the lock's `file:../../../sdk/typescript`
+dependencies resolve. Each checkout gets its own build root. The bundle is
+copied back to `pkg/api/rest/ui/dist` and `cmd/quicbaas/frontend/dist`. The
+build is reproducible: rebuilding unchanged sources leaves `git status` clean.
+
+`make test-frontend` runs `make install-frontend` (`npm ci` in
+`cmd/quicbaas/frontend`) first, so it works in a fresh checkout.
 
 ## Transport Selection
 

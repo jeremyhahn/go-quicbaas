@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -87,6 +88,16 @@ import (
 // treated as success. Credential ids are authenticator-generated and
 // unforgeable without the private key, so a duplicate is always the same
 // authenticator re-running the ceremony.
+//
+// ACCOUNT DELETION (go-quicbaas#290)
+//
+// An account marked deleting (LifecycleDeleting) gains no credential. Save
+// refuses it before writing anything, and re-reads the account after the write:
+// deletion marks the account before it sweeps its credentials, so a write that
+// races past the first read and lands after the sweep is caught by the re-read
+// and rolled back. Either refusal is a WebAuthnRegistrantDeletingError, and an
+// account that cannot be read fails the ceremony closed with
+// WebAuthnRegistrantLookupError.
 //
 // REMOVAL IS THE SAME INVARIANT, RUN BACKWARDS
 //
@@ -266,6 +277,84 @@ func (e *WebAuthnFactorRevokeError) Unwrap() error {
 	return e.Cause
 }
 
+// WebAuthnRegistrantDeletingError reports that a WebAuthn registration was
+// refused because the registrant's account is being deleted
+// (LifecycleDeleting). Deletion sweeps the account's credentials after marking
+// it, so a credential written now would outlive the account it belongs to. The
+// ceremony fails closed with this error rather than persisting that orphan.
+type WebAuthnRegistrantDeletingError struct {
+	// CredentialID is the base64url WebAuthn credential id the registration
+	// was for.
+	CredentialID string
+
+	// UserID is the qrdb user id decoded from the credential's user handle.
+	UserID uint64
+
+	// Compensated reports whether a credential this registration had already
+	// written was removed again. It is false when the refusal came before
+	// anything was written, and when the removal itself failed.
+	Compensated bool
+}
+
+// Error implements error.
+func (e *WebAuthnRegistrantDeletingError) Error() string {
+	if e == nil {
+		return "iam.webauthn.registration: the account is being deleted"
+	}
+	msg := "iam.webauthn.registration: refused, the account is being deleted (user " +
+		strconv.FormatUint(e.UserID, 10) + ")"
+	if e.CredentialID != "" {
+		msg += " (credential " + e.CredentialID + ")"
+	}
+	if e.Compensated {
+		msg += "; the credential was rolled back"
+	}
+	return msg
+}
+
+// WebAuthnRegistrantLookupError reports that a WebAuthn registration could not
+// read the registrant's account, so whether the account is being deleted is
+// unknown. The ceremony fails closed rather than risk enrolling a credential
+// for an account that is being torn down.
+type WebAuthnRegistrantLookupError struct {
+	// CredentialID is the base64url WebAuthn credential id the registration
+	// was for.
+	CredentialID string
+
+	// Compensated reports whether a credential this registration had already
+	// written was removed again.
+	Compensated bool
+
+	// Cause is the underlying lookup failure.
+	Cause error
+}
+
+// Error implements error.
+func (e *WebAuthnRegistrantLookupError) Error() string {
+	if e == nil {
+		return "iam.webauthn.registration: could not read the registrant's account"
+	}
+	msg := "iam.webauthn.registration: could not read the registrant's account, so the registration was refused"
+	if e.CredentialID != "" {
+		msg += " (credential " + e.CredentialID + ")"
+	}
+	if e.Compensated {
+		msg += "; the credential was rolled back"
+	}
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying cause for errors.Is / errors.As.
+func (e *WebAuthnRegistrantLookupError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
 // webAuthnFactorWriteThrough decorates an xkms CredentialStore so a completed
 // registration ceremony also enrolls the authenticator in qrdb's UserAuthFactor
 // store — the store the unified login ceremony resolves against.
@@ -378,6 +467,19 @@ func (s *webAuthnFactorWriteThrough) Save(ctx context.Context, cred *xkmswebauth
 		return &WebAuthnFactorEnrollError{CredentialID: lookupKey, Cause: err}
 	}
 
+	// An account being deleted must not gain a credential: the deletion sweeps
+	// the account's credentials after marking it, so one written now could land
+	// after the sweep and outlive the account. Refusing here leaves no residue;
+	// confirmRegistrantStanding below covers a deletion that starts after this
+	// read.
+	registrantExisted, deleting, err := s.registrantStanding(ctx, cred.UserID)
+	if err != nil {
+		return &WebAuthnRegistrantLookupError{CredentialID: lookupKey, Cause: err}
+	}
+	if deleting {
+		return &WebAuthnRegistrantDeletingError{CredentialID: lookupKey, UserID: userID}
+	}
+
 	// The assurance gate runs BEFORE the credential is written, so a refused
 	// authenticator leaves no residue at all: no credential in the xkms store,
 	// no factor in qrdb, nothing for an operator to clean up. Refusing after
@@ -423,13 +525,11 @@ func (s *webAuthnFactorWriteThrough) Save(ctx context.Context, cred *xkmswebauth
 	}
 
 	enrollErr := s.enrollFactor(ctx, userID, lookupKey, cred, attestation)
-	if enrollErr == nil {
-		return nil
-	}
-	if isFactorAlreadyEnrolled(enrollErr) {
-		// Same authenticator re-running the ceremony: the login-resolvable
-		// factor already exists, so the registration is complete.
-		return nil
+	// A factor that is already enrolled is the same authenticator re-running
+	// the ceremony: the login-resolvable factor exists, so the registration is
+	// complete.
+	if enrollErr == nil || isFactorAlreadyEnrolled(enrollErr) {
+		return s.confirmRegistrantStanding(ctx, cred, lookupKey, userID, registrantExisted, credentialExisted)
 	}
 
 	compensated := false
@@ -451,6 +551,75 @@ func (s *webAuthnFactorWriteThrough) Save(ctx context.Context, cred *xkmswebauth
 		Compensated:  compensated,
 		Cause:        enrollErr,
 	}
+}
+
+// registrantStanding reads the registrant's account and reports whether it
+// exists and whether it is being deleted. A store with no record for the handle
+// is a positive answer (exists is false), not a failure; any other read error
+// is returned, because an account whose state cannot be read cannot be shown
+// not to be deleting.
+func (s *webAuthnFactorWriteThrough) registrantStanding(ctx context.Context, handle []byte) (exists, deleting bool, err error) {
+	user, err := s.users.GetByID(ctx, handle)
+	if errors.Is(err, xkmswebauthn.ErrUserNotFound) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	if user == nil {
+		return false, false, nil
+	}
+	return true, user.Lifecycle() == LifecycleDeleting, nil
+}
+
+// confirmRegistrantStanding re-reads the registrant once the credential and its
+// factor are written, closing the window between Save's first read and the
+// write. Account deletion marks the account deleting BEFORE it sweeps the
+// account's credentials (IdentityStore.DeleteUser), so a write that lands after
+// the sweep is always followed by a read here that sees the mark, or no account
+// at all, and the write is rolled back instead of surviving as an orphan.
+func (s *webAuthnFactorWriteThrough) confirmRegistrantStanding(
+	ctx context.Context,
+	cred *xkmswebauthn.Credential,
+	lookupKey string,
+	userID uint64,
+	registrantExisted bool,
+	credentialExisted bool,
+) error {
+	exists, deleting, err := s.registrantStanding(ctx, cred.UserID)
+	if err != nil {
+		// Unknown standing fails the ceremony closed. Only a credential this
+		// call created is rolled back, for the same reason the enrollment
+		// compensation spares a pre-existing one: a read failure is no
+		// evidence against a working passkey.
+		compensated := !credentialExisted && s.rollBackRegistration(ctx, cred.ID, lookupKey)
+		return &WebAuthnRegistrantLookupError{CredentialID: lookupKey, Compensated: compensated, Cause: err}
+	}
+	if deleting || (registrantExisted && !exists) {
+		// The account is being torn down, so whatever this call wrote goes
+		// with it, pre-existing or not: the sweep may already have passed.
+		return &WebAuthnRegistrantDeletingError{
+			CredentialID: lookupKey,
+			UserID:       userID,
+			Compensated:  s.rollBackRegistration(ctx, cred.ID, lookupKey),
+		}
+	}
+	return nil
+}
+
+// rollBackRegistration removes a credential written by a registration that is
+// being refused after the fact, revoking its factor with it. It reports whether
+// the removal succeeded; a failure is logged, because the caller's typed error
+// is the only place left to say the credential is still there.
+func (s *webAuthnFactorWriteThrough) rollBackRegistration(ctx context.Context, credID []byte, lookupKey string) bool {
+	if err := s.Delete(ctx, credID); err != nil {
+		s.logger.Error("webauthn registration: failed to roll back the credential of a refused registration",
+			"tenant_id", s.tenantID,
+			"credential_id", lookupKey,
+			"error", err)
+		return false
+	}
+	return true
 }
 
 // Delete removes the credential and revokes the fido2 login factor enrolled

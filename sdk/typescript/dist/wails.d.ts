@@ -1,4 +1,7 @@
 import type { AuthClient, Client, ConnectionClient, OrchestratorClient, SSHKeysClient, SSHClient } from './interfaces.js';
+import type { AccountsClient } from './accounts.js';
+import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
 export declare class WailsClient implements Client {
     readonly connection: ConnectionClient;
     readonly orchestrator: OrchestratorClient;
@@ -11,9 +14,9 @@ export declare class WailsClient implements Client {
     readonly embeddings: any;
     readonly messaging: any;
     readonly scheduler: any;
-    readonly projects: any;
-    readonly sdlc: any;
-    readonly accounts: any;
+    readonly projects: ProjectsClient;
+    readonly sdlc: SdlcClient;
+    readonly accounts: AccountsClient;
     readonly agents: any;
     readonly iam: any;
     readonly kms: any;

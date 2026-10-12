@@ -121,6 +121,19 @@ import type {
   WorkflowDefinition,
 } from './types.js';
 import { ConnectionError } from './errors.js';
+import type { AccountsClient } from './accounts.js';
+import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
+import { unsupportedClient } from './unsupported.js';
+
+// wailsUnsupported is why projects, sdlc and accounts refuse here: the
+// desktop app binds no Go struct for them (cmd/quicbaas/bindings_*.go binds
+// orchestrator, sessions, fleet, SSH, agents and cost settings only), so there
+// is no window.go method to call. The desktop SPA reaches them over REST
+// against the embedded server.
+const wailsUnsupported =
+  'the desktop app exposes no Wails binding for this family; ' +
+  'use the rest transport against the embedded server';
 
 // WailsBinding is the shape of a Wails-generated Go struct binding.
 // Wails exposes each exported Go method as a property whose value is a
@@ -901,11 +914,9 @@ export class WailsClient implements Client {
   readonly messaging: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly scheduler: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly projects: any = null;
-  readonly sdlc: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly accounts: any = null;
+  readonly projects = unsupportedClient<ProjectsClient>('wails', 'projects', wailsUnsupported);
+  readonly sdlc = unsupportedClient<SdlcClient>('wails', 'sdlc', wailsUnsupported);
+  readonly accounts = unsupportedClient<AccountsClient>('wails', 'accounts', wailsUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

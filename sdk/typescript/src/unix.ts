@@ -20,6 +20,10 @@
 // will always throw UnixNotImplementedError.
 
 import type { AuthClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
+import type { AccountsClient } from './accounts.js';
+import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
+import { unsupportedClient } from './unsupported.js';
 import type {
   AgentBackendInfo,
   JobRunnerInfo,
@@ -105,6 +109,15 @@ export class UnixNotImplementedError extends QuicBaaSError {
 function notImpl(method: string): never {
   throw new UnixNotImplementedError(method);
 }
+
+// unixUnsupported is why projects, sdlc and accounts refuse here. The Unix
+// wire is gRPC over AF_UNIX, and the server does serve ProjectService,
+// SDLCService and AccountService on it; but speaking gRPC needs an HTTP/2
+// gRPC client and generated stubs, which this SDK (no runtime dependencies)
+// does not carry, and a browser cannot open a socket at all.
+const unixUnsupported =
+  'the Unix wire is gRPC over AF_UNIX and the SDK has no Node gRPC client or ' +
+  'generated stubs; use the rest transport';
 
 class UnixConnectionClient implements ConnectionClient {
   private readonly _socketPath: string;
@@ -261,11 +274,9 @@ export class UnixClient implements Client {
   readonly messaging: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly scheduler: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly projects: any = null;
-  readonly sdlc: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly accounts: any = null;
+  readonly projects = unsupportedClient<ProjectsClient>('unix', 'projects', unixUnsupported);
+  readonly sdlc = unsupportedClient<SdlcClient>('unix', 'sdlc', unixUnsupported);
+  readonly accounts = unsupportedClient<AccountsClient>('unix', 'accounts', unixUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -433,7 +433,7 @@ const SSE_RECONNECT_DELAY_MS = 3000;
 
 // resolveToken resolves a bearer token from either a static string or an
 // async factory function. Returns an empty string when no token is configured.
-async function resolveToken(
+export async function resolveToken(
   token: string | (() => Promise<string>) | undefined,
 ): Promise<string> {
   if (!token) return '';
@@ -2610,7 +2610,7 @@ class RestSchedulerClient implements SchedulerClient {
 
 // RestProjectsClient implements ProjectsClient over the QuicBaaS REST project endpoints.
 // All project routes live under /api/v1/projects.
-class RestProjectsClient implements ProjectsClient {
+export class RestProjectsClient implements ProjectsClient {
   private readonly baseUrl: string;
   private readonly config: ClientConfig;
 
@@ -2712,7 +2712,7 @@ class RestProjectsClient implements ProjectsClient {
 
 // RestSdlcClient implements SdlcClient over the SDLC module's REST endpoints:
 // a project's forge binding and a task's delivery.
-class RestSdlcClient implements SdlcClient {
+export class RestSdlcClient implements SdlcClient {
   private readonly baseUrl: string;
   private readonly config: ClientConfig;
 
@@ -2869,7 +2869,7 @@ class RestSdlcClient implements SdlcClient {
 // /api/v1/agent-accounts. See handlers_account.go for the server-side shapes
 // this mirrors — AccountRESTResponse never carries credential material, so
 // no method here can either.
-class RestAccountsClient implements AccountsClient {
+export class RestAccountsClient implements AccountsClient {
   private readonly baseUrl: string;
   private readonly config: ClientConfig;
 

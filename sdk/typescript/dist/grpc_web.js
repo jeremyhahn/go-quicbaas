@@ -10,6 +10,7 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+import { unsupportedClient } from './unsupported.js';
 import { wholeSetPage, } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
 // GrpcWebNotImplementedError is thrown when any gRPC-Web method is called
@@ -25,6 +26,12 @@ export class GrpcWebNotImplementedError extends QuicBaaSError {
 function notImpl(method) {
     throw new GrpcWebNotImplementedError(method);
 }
+// grpcWebUnsupported is why projects, sdlc and accounts refuse here. The
+// server serves ProjectService, SDLCService and AccountService as native gRPC
+// (pkg/server/lifecycle.go), but nothing serves the gRPC-Web framing a browser
+// needs, and this SDK carries no gRPC-Web client or generated stubs.
+const grpcWebUnsupported = 'the server serves these services as native gRPC only (no gRPC-Web endpoint) ' +
+    'and the SDK has no gRPC-Web client; use the rest transport';
 class GrpcWebConnectionClient {
     _transport = 'grpc-web';
     _address;
@@ -212,11 +219,9 @@ export class GrpcWebClient {
     messaging = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     scheduler = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    projects = null;
-    sdlc = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accounts = null;
+    projects = unsupportedClient('grpc-web', 'projects', grpcWebUnsupported);
+    sdlc = unsupportedClient('grpc-web', 'sdlc', grpcWebUnsupported);
+    accounts = unsupportedClient('grpc-web', 'accounts', grpcWebUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -10,6 +10,7 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+import { unsupportedClient } from './unsupported.js';
 import { wholeSetPage, } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
 // UnixNotImplementedError is thrown by all methods until the Unix socket
@@ -24,6 +25,13 @@ export class UnixNotImplementedError extends QuicBaaSError {
 function notImpl(method) {
     throw new UnixNotImplementedError(method);
 }
+// unixUnsupported is why projects, sdlc and accounts refuse here. The Unix
+// wire is gRPC over AF_UNIX, and the server does serve ProjectService,
+// SDLCService and AccountService on it; but speaking gRPC needs an HTTP/2
+// gRPC client and generated stubs, which this SDK (no runtime dependencies)
+// does not carry, and a browser cannot open a socket at all.
+const unixUnsupported = 'the Unix wire is gRPC over AF_UNIX and the SDK has no Node gRPC client or ' +
+    'generated stubs; use the rest transport';
 class UnixConnectionClient {
     _socketPath;
     _transport = 'unix';
@@ -165,11 +173,9 @@ export class UnixClient {
     messaging = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     scheduler = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    projects = null;
-    sdlc = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accounts = null;
+    projects = unsupportedClient('unix', 'projects', unixUnsupported);
+    sdlc = unsupportedClient('unix', 'sdlc', unixUnsupported);
+    accounts = unsupportedClient('unix', 'accounts', unixUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

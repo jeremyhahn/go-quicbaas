@@ -1,4 +1,7 @@
 import type { AuthClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
+import type { AccountsClient } from './accounts.js';
+import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
 import type { ClientConfig } from './types.js';
 import { QuicBaaSError } from './errors.js';
 export declare class UnixNotImplementedError extends QuicBaaSError {
@@ -16,9 +19,9 @@ export declare class UnixClient implements Client {
     readonly embeddings: any;
     readonly messaging: any;
     readonly scheduler: any;
-    readonly projects: any;
-    readonly sdlc: any;
-    readonly accounts: any;
+    readonly projects: ProjectsClient;
+    readonly sdlc: SdlcClient;
+    readonly accounts: AccountsClient;
     readonly agents: any;
     readonly iam: any;
     readonly kms: any;

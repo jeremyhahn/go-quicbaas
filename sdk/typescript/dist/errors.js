@@ -56,6 +56,39 @@ export class DeployNotSupportedError extends QuicBaaSError {
         this.name = 'DeployNotSupportedError';
     }
 }
+// TransportNotSupportedError is thrown by every method of a client family a
+// transport cannot carry: the server serves that family on no wire this
+// transport speaks, or the SDK has no client for that wire. `reason` names
+// which, so a caller knows whether to switch transports or wait for one.
+export class TransportNotSupportedError extends QuicBaaSError {
+    transport;
+    family;
+    reason;
+    /** method is the verb that was called, when the refusal is for one. */
+    method;
+    constructor(transport, family, reason, method) {
+        const verb = method ? `${family}.${method}` : family;
+        super(`${transport} transport does not carry ${verb}: ${reason}`);
+        this.name = 'TransportNotSupportedError';
+        this.transport = transport;
+        this.family = family;
+        this.reason = reason;
+        this.method = method;
+    }
+}
+// McpError is an MCP server's refusal: a JSON-RPC error (`code` set) or a
+// tool result flagged isError (`code` undefined). `tool` names the tool the
+// call was for, or the JSON-RPC method when the failure is the handshake.
+export class McpError extends QuicBaaSError {
+    tool;
+    code;
+    constructor(tool, message, code) {
+        super(`mcp ${tool}: ${message}`);
+        this.name = 'McpError';
+        this.tool = tool;
+        this.code = code;
+    }
+}
 // =============================================================================
 // SSH typed errors
 // =============================================================================

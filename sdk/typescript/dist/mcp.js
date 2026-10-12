@@ -10,8 +10,9 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
-import { wholeSetPage, } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
+import { McpSession } from './mcp_rpc.js';
+import { adoptPage, wholeSetPage, } from './page.js';
+import { QuicBaaSError, DeployNotSupportedError, TransportNotSupportedError } from './errors.js';
 // McpNotImplementedError is thrown by all methods until the MCP protocol
 // client is wired into this file.
 export class McpNotImplementedError extends QuicBaaSError {
@@ -185,6 +186,184 @@ export class McpBootstrapClient {
     async spki(_req) { return notImpl('bootstrap.spki'); }
 }
 // McpClient is the stub entry point for the MCP transport.
+// McpAccountsClient carries the accounts family over the quicbaas_agent_account_*
+// tools (pkg/api/mcp/account_tools.go). Each tool takes the REST request's
+// fields flat and answers with the same JSON the REST handler writes, so the
+// requests pass through and the responses are the shared accounts types.
+// mcpRefusal is the error for a request argument a tool does not read:
+// dropping it would answer as if the server had applied it.
+function mcpRefusal(family, method, reason) {
+    return new TransportNotSupportedError('mcp', family, `${reason}; use the rest transport`, method);
+}
+function hasEntries(value) {
+    return value !== undefined && Object.keys(value).length > 0;
+}
+export class McpProjectsClient {
+    session;
+    constructor(session) {
+        this.session = session;
+    }
+    // createProject refuses metadata: project_create does not read it.
+    async createProject(req) {
+        if (hasEntries(req.metadata)) {
+            throw mcpRefusal('projects', 'createProject', 'the project_create tool does not read metadata');
+        }
+        const resp = await this.session.callTool('project_create', req);
+        return { project: resp.Project };
+    }
+    async getProject(tenantId, projectId) {
+        const resp = await this.session.callTool('project_get', { tenant_id: tenantId, project_id: projectId });
+        return { project: resp.Project };
+    }
+    // updateProject refuses metadata and clear_description: project_update
+    // reads neither. Any defined metadata is refused, {} included: on an update
+    // {} means "clear the metadata", and dropping it would report a success that
+    // changed nothing.
+    async updateProject(req) {
+        if (req.metadata !== undefined) {
+            throw mcpRefusal('projects', 'updateProject', 'the project_update tool does not read metadata');
+        }
+        if (req.clear_description) {
+            throw mcpRefusal('projects', 'updateProject', 'the project_update tool does not read clear_description');
+        }
+        const resp = await this.session.callTool('project_update', req);
+        return { project: resp.Project };
+    }
+    async deleteProject(tenantId, projectId) {
+        const resp = await this.session.callTool('project_delete', { tenant_id: tenantId, project_id: projectId });
+        return { deleted: resp.Deleted };
+    }
+    async listProjects(tenantId) {
+        const page = await this.listProjectsPage(tenantId);
+        return { projects: page.items, total: page.total };
+    }
+    // listProjectsPage refuses the autonomous filter: project_list takes the
+    // paging arguments but no autonomous switch.
+    async listProjectsPage(tenantId, page) {
+        if (page?.autonomous !== undefined) {
+            throw mcpRefusal('projects', 'listProjectsPage', 'the project_list tool has no autonomous filter');
+        }
+        const raw = await this.session.callTool('project_list', {
+            tenant_id: tenantId,
+            limit: page?.limit,
+            offset: page?.offset,
+            sort: page?.sort,
+            q: page?.q,
+        });
+        return adoptPage(raw, 'projects');
+    }
+    async grantFleetNodeRole(req) {
+        const resp = await this.session.callTool('project_grant_fleet_node', req);
+        return { project_id: resp.ProjectID, node_id: resp.FleetNodeID, role: resp.Role, timestamp: resp.Timestamp };
+    }
+    async revokeFleetNodeRole(req) {
+        const resp = await this.session.callTool('project_revoke_fleet_node', req);
+        return { project_id: resp.ProjectID, node_id: resp.FleetNodeID, timestamp: resp.Timestamp };
+    }
+}
+// McpSdlcClient calls the sdlc_* tools. They answer the same service values
+// the REST handlers do, so every result but forges passes through unchanged.
+export class McpSdlcClient {
+    session;
+    constructor(session) {
+        this.session = session;
+    }
+    async forges() {
+        const resp = await this.session.callTool('sdlc_forges', {});
+        return resp.forges ?? [];
+    }
+    async bind(tenantId, projectId, binding) {
+        return this.session.callTool('sdlc_bind', {
+            tenant_id: tenantId,
+            project_id: projectId,
+            binding: { ...binding, project_id: binding.project_id || projectId },
+        });
+    }
+    async unbind(tenantId, projectId) {
+        await this.session.callTool('sdlc_unbind', { tenant_id: tenantId, project_id: projectId });
+    }
+    async binding(tenantId, projectId) {
+        return this.session.callTool('sdlc_binding', { tenant_id: tenantId, project_id: projectId });
+    }
+    async delivery(tenantId, taskId) {
+        return this.session.callTool('sdlc_delivery', { tenant_id: tenantId, task_id: taskId });
+    }
+    async onboard(tenantId, projectId) {
+        return this.session.callTool('sdlc_onboard', { tenant_id: tenantId, project_id: projectId });
+    }
+    async conformance(tenantId, projectId) {
+        return this.session.callTool('sdlc_conformance', { tenant_id: tenantId, project_id: projectId });
+    }
+    async openWork(tenantId, projectId) {
+        return this.session.callTool('sdlc_open_work', { tenant_id: tenantId, project_id: projectId });
+    }
+    async reviewer(tenantId, projectId, pullRequest) {
+        return this.session.callTool('sdlc_reviewer', { tenant_id: tenantId, project_id: projectId, pull_request: pullRequest });
+    }
+    async setReviewer(tenantId, projectId, pullRequest, profile) {
+        return this.session.callTool('sdlc_reviewer_set', {
+            tenant_id: tenantId,
+            project_id: projectId,
+            pull_request: pullRequest,
+            profile,
+        });
+    }
+    async clearReviewer(tenantId, projectId, pullRequest) {
+        return this.session.callTool('sdlc_reviewer_clear', { tenant_id: tenantId, project_id: projectId, pull_request: pullRequest });
+    }
+    async fileIssue(tenantId, projectId, req) {
+        return this.session.callTool('sdlc_issue_create', { ...req, tenant_id: tenantId, project_id: projectId });
+    }
+    async collaborators(tenantId, projectId) {
+        return this.session.callTool('sdlc_collaborators', { tenant_id: tenantId, project_id: projectId });
+    }
+    async adoptIssue(tenantId, projectId, request) {
+        return this.session.callTool('sdlc_adopt_issue', { ...request, tenant_id: tenantId, project_id: projectId });
+    }
+}
+export class McpAccountsClient {
+    session;
+    constructor(session) {
+        this.session = session;
+    }
+    async createAccount(req) {
+        return this.session.callTool('quicbaas_agent_account_create', req);
+    }
+    async getAccount(tenantId, accountId) {
+        return this.session.callTool('quicbaas_agent_account_get', { tenant_id: tenantId, account_id: accountId });
+    }
+    async listAccounts(req) {
+        return this.session.callTool('quicbaas_agent_account_list', req);
+    }
+    // listAccountsPage refuses a status filter: the list tool takes provider,
+    // project_id and the paging arguments but no status, and answering the
+    // unfiltered page as if it were filtered would be a lie.
+    async listAccountsPage(req) {
+        if (req.status !== undefined && req.status !== '') {
+            throw new TransportNotSupportedError('mcp', 'accounts', 'the quicbaas_agent_account_list tool has no status filter; use the rest transport', 'listAccountsPage');
+        }
+        const raw = await this.session.callTool('quicbaas_agent_account_list', req);
+        return adoptPage(raw, 'accounts');
+    }
+    async updateAccount(req) {
+        return this.session.callTool('quicbaas_agent_account_update', req);
+    }
+    async deleteAccount(tenantId, accountId) {
+        return this.session.callTool('quicbaas_agent_account_delete', { tenant_id: tenantId, account_id: accountId });
+    }
+    async rotateAccountCredential(req) {
+        return this.session.callTool('quicbaas_agent_account_rotate', req);
+    }
+    async revokeAccount(req) {
+        return this.session.callTool('quicbaas_agent_account_revoke', req);
+    }
+    async setDefaultAccount(tenantId, accountId) {
+        return this.session.callTool('quicbaas_agent_account_set_default', { tenant_id: tenantId, account_id: accountId });
+    }
+    async getAccountUsage(tenantId, accountId) {
+        return this.session.callTool('quicbaas_agent_account_usage', { tenant_id: tenantId, account_id: accountId });
+    }
+}
 export class McpClient {
     connection;
     orchestrator;
@@ -205,11 +384,9 @@ export class McpClient {
     messaging = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     scheduler = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    projects = null;
-    sdlc = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accounts = null;
+    projects;
+    sdlc;
+    accounts;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -243,8 +420,12 @@ export class McpClient {
     sshKeys = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ssh = null;
-    constructor(endpoint, _config = {}) {
+    constructor(endpoint, config = {}) {
         this.connection = new McpConnectionClient(endpoint);
+        const session = new McpSession(endpoint, config);
+        this.projects = new McpProjectsClient(session);
+        this.sdlc = new McpSdlcClient(session);
+        this.accounts = new McpAccountsClient(session);
         this.orchestrator = new McpOrchestratorClient();
         this.auth = new McpAuthClient();
         this.barrier = new McpBarrierClient();

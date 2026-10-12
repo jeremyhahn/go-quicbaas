@@ -3,17 +3,73 @@ import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
 import type { SchedulerClient } from './scheduler_sdk.js';
-import type { ProjectsClient } from './projects.js';
-import type { SdlcClient } from './sdlc.js';
+import type { ProjectsClient, Project, CreateProjectRequest, CreateProjectResponse, GetProjectResponse, UpdateProjectRequest, UpdateProjectResponse, DeleteProjectResponse, ListProjectsResponse, GrantFleetNodeRoleRequest, GrantFleetNodeRoleResponse, RevokeFleetNodeRoleRequest, RevokeFleetNodeRoleResponse } from './projects.js';
+import type { SdlcClient, ProjectBinding, Delivery, OnboardingReport, ConformanceReport, OpenWork, ReviewerSelection, FileIssueRequest, ForgeIssue, CollaboratorsResponse, AdoptIssueRequest, Adoption } from './sdlc.js';
 import type { CAClient, IssueCertificateRequest, IssueCertificateResponse, SignCSRRequest, SignCSRResponse, RevokeCertificateResponse, VerifyCertificateResponse, GetCACertificateResponse, CAInfoResponse, CABundleResponse, ListCertificatesRequest, ListCertificatesResponse, GenerateCRLResponse, IsRevokedResponse } from './ca.js';
 import type { TrustClient, CrossSignedRootPoolResponse, AutoImportAIARequest, AutoImportAIAResponse, PublishDANERequest, PublishDANEResponse } from './trust.js';
 import type { CryptoClient, CryptoEncryptRequest, CryptoEncryptResponse, CryptoDecryptRequest, CryptoDecryptResponse, CryptoRewrapRequest, CryptoRewrapResponse, CryptoSignRequest, CryptoSignResponse, CryptoVerifyRequest, CryptoVerifyResponse, CryptoHashRequest, CryptoHashResponse, CryptoRandomResponse, CryptoDataKeyRequest, CryptoDataKeyResponse } from './crypto.js';
 import type { DEKClient, CreateDEKRequest, CreateDEKResponse, GetDEKResponse, ListDEKsRequest, ListDEKsResponse, RotateDEKRequest, RotateDEKResponse, DeleteDEKRequest, DeleteDEKResponse, GetDEKStatusResponse, SetDefaultDEKResponse, SetDEKSafetyRequest, SetDEKSafetyResponse, ClearDEKSafetyResponse, StartReencryptionRequest, StartReencryptionResponse, GetReencryptionProgressResponse } from './dek.js';
 import type { DynamicSecretsClient, DynamicSecretRole, CreateRoleRequest as DynamicSecretCreateRoleRequest, ListRolesResponse as ListDynamicSecretRolesResponse, DeleteRoleResponse as DeleteDynamicSecretRoleResponse, GenerateCredentialRequest, GenerateCredentialResponse, RenewLeaseRequest, RenewLeaseResponse, RevokeLeaseResponse as RevokeDynamicSecretLeaseResponse, ListLeasesResponse } from './dynamicsecrets.js';
-import type { AccountsClient } from './accounts.js';
+import type { AccountsClient, Account, CreateAccountRequest, CreateAccountResponse, GetAccountResponse, ListAccountsRequest, ListAccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, RevokeAccountRequest, RevokeAccountResponse, SetDefaultAccountResponse, GetAccountUsageResponse } from './accounts.js';
 import type { AgentsClient } from './agents.js';
 import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
+import { type AccountPageParams, type PageResult, type ProjectPageParams } from './page.js';
 import { APIError, ConnectionError, NotConnectedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError } from './errors.js';
+export declare function resolveToken(token: string | (() => Promise<string>) | undefined): Promise<string>;
+export declare class RestProjectsClient implements ProjectsClient {
+    private readonly baseUrl;
+    private readonly config;
+    constructor(baseUrl: string, config?: ClientConfig);
+    private fetchJSON;
+    createProject(req: CreateProjectRequest): Promise<CreateProjectResponse>;
+    getProject(tenantId: string, projectId: string): Promise<GetProjectResponse>;
+    updateProject(req: UpdateProjectRequest): Promise<UpdateProjectResponse>;
+    deleteProject(tenantId: string, projectId: string): Promise<DeleteProjectResponse>;
+    listProjects(tenantId: string): Promise<ListProjectsResponse>;
+    listProjectsPage(tenantId: string, page?: ProjectPageParams): Promise<PageResult<Project>>;
+    grantFleetNodeRole(req: GrantFleetNodeRoleRequest): Promise<GrantFleetNodeRoleResponse>;
+    revokeFleetNodeRole(req: RevokeFleetNodeRoleRequest): Promise<RevokeFleetNodeRoleResponse>;
+}
+export declare class RestSdlcClient implements SdlcClient {
+    private readonly baseUrl;
+    private readonly config;
+    constructor(baseUrl: string, config?: ClientConfig);
+    private fetchJSON;
+    private bindingPath;
+    forges(): Promise<string[]>;
+    bind(tenantId: string, projectId: string, binding: ProjectBinding): Promise<ProjectBinding>;
+    unbind(tenantId: string, projectId: string): Promise<void>;
+    binding(tenantId: string, projectId: string): Promise<ProjectBinding>;
+    delivery(tenantId: string, taskId: string): Promise<Delivery>;
+    onboard(tenantId: string, projectId: string): Promise<OnboardingReport>;
+    conformance(tenantId: string, projectId: string): Promise<ConformanceReport>;
+    openWork(tenantId: string, projectId: string): Promise<OpenWork>;
+    private reviewerPath;
+    reviewer(tenantId: string, projectId: string, pullRequest: number): Promise<ReviewerSelection>;
+    setReviewer(tenantId: string, projectId: string, pullRequest: number, profile: string): Promise<ReviewerSelection>;
+    clearReviewer(tenantId: string, projectId: string, pullRequest: number): Promise<ReviewerSelection>;
+    fileIssue(tenantId: string, projectId: string, req: FileIssueRequest): Promise<ForgeIssue>;
+    collaborators(tenantId: string, projectId: string): Promise<CollaboratorsResponse>;
+    adoptIssue(tenantId: string, projectId: string, request: AdoptIssueRequest): Promise<Adoption>;
+}
+export declare class RestAccountsClient implements AccountsClient {
+    private readonly baseUrl;
+    private readonly config;
+    constructor(baseUrl: string, config?: ClientConfig);
+    private fetchJSON;
+    createAccount(req: CreateAccountRequest): Promise<CreateAccountResponse>;
+    getAccount(tenantId: string, accountId: string): Promise<GetAccountResponse>;
+    listAccounts(req: ListAccountsRequest): Promise<ListAccountsResponse>;
+    listAccountsPage(req: AccountPageParams & {
+        tenant_id: string;
+    }): Promise<PageResult<Account>>;
+    updateAccount(req: UpdateAccountRequest): Promise<UpdateAccountResponse>;
+    deleteAccount(tenantId: string, accountId: string): Promise<DeleteAccountResponse>;
+    rotateAccountCredential(req: RotateAccountCredentialRequest): Promise<RotateAccountCredentialResponse>;
+    revokeAccount(req: RevokeAccountRequest): Promise<RevokeAccountResponse>;
+    setDefaultAccount(tenantId: string, accountId: string): Promise<SetDefaultAccountResponse>;
+    getAccountUsage(tenantId: string, accountId: string): Promise<GetAccountUsageResponse>;
+}
 export declare class RestCAClient implements CAClient {
     private readonly http;
     constructor(baseUrl: string, config?: ClientConfig);

@@ -10,6 +10,7 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+import { unsupportedClient } from './unsupported.js';
 import { wholeSetPage, } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
 // QuicNotImplementedError is thrown by all methods until a QUIC/WebTransport
@@ -24,6 +25,15 @@ export class QuicNotImplementedError extends QuicBaaSError {
 function notImpl(method) {
     throw new QuicNotImplementedError(method);
 }
+// quicUnsupported is why projects, sdlc and accounts refuse here. The server's
+// QUIC listener (pkg/server/transport_factory.go) speaks qrdb's frame protocol,
+// not REST over HTTP/3, and Node's fetch does not negotiate HTTP/3 anyway: a
+// REST client aimed at the QUIC endpoint would either fail against the real
+// listener or quietly fall back to TCP HTTP while claiming QUIC. Implementing
+// the frame protocol in TypeScript waits on an open owner decision on whether
+// and how a QUIC client listener is offered to SDK callers.
+const quicUnsupported = "the server's QUIC listener speaks qrdb's frame protocol, which this SDK " +
+    'does not implement; use the rest transport';
 class QuicConnectionClient {
     _endpoint;
     _transport = 'quic';
@@ -205,11 +215,9 @@ export class QuicClient {
     messaging = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     scheduler = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    projects = null;
-    sdlc = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accounts = null;
+    projects = unsupportedClient('quic', 'projects', quicUnsupported);
+    sdlc = unsupportedClient('quic', 'sdlc', quicUnsupported);
+    accounts = unsupportedClient('quic', 'accounts', quicUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

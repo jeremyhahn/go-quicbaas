@@ -18,7 +18,9 @@ package mcp
 import (
 	"context"
 	"math"
+	"strconv"
 	"strings"
+	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -55,6 +57,7 @@ func (r *ToolRegistry) registerAccountTools() {
 			"access_token_env_key": map[string]interface{}{"type": "string", "description": "Environment variable the access token is projected into (e.g. CLAUDE_CODE_OAUTH_TOKEN)"},
 			"env":                  map[string]interface{}{"type": "object", "description": "Static environment variables injected into the spawned subprocess"},
 			"scopes":               map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "OAuth2 scopes"},
+			"expires_at":           map[string]interface{}{"type": "string", "format": "date-time", "description": "RFC 3339 time the access token stops working; omit when unknown"},
 		},
 	}
 
@@ -274,6 +277,10 @@ func (r *ToolRegistry) executeAccountCreate(ctx context.Context, args map[string
 	if err != nil {
 		return nil, err
 	}
+	credential, err := accountCredentialFromArgs(args)
+	if err != nil {
+		return nil, err
+	}
 	return accountSvc.CreateAccount(ctx, &service.CreateAccountRequest{
 		TenantID:      getString(args, "tenant_id"),
 		ProjectID:     getString(args, "project_id"),
@@ -283,7 +290,7 @@ func (r *ToolRegistry) executeAccountCreate(ctx context.Context, args map[string
 		RefreshPolicy: orchestration.AccountRefreshPolicy(getString(args, "refresh_policy")),
 		Billing:       billing,
 		Spend:         spend,
-		Credential:    accountCredentialFromArgs(args),
+		Credential:    credential,
 
 		CredentialSecretRef:   getString(args, "credential_secret_ref"),
 		CredentialSecretFile:  getString(args, "credential_secret_file"),
@@ -449,10 +456,14 @@ func (r *ToolRegistry) executeAccountRotate(ctx context.Context, args map[string
 	if err != nil {
 		return nil, err
 	}
+	credential, err := accountCredentialFromArgs(args)
+	if err != nil {
+		return nil, err
+	}
 	return accountSvc.RotateAccountCredential(ctx, &service.RotateAccountCredentialRequest{
 		TenantID:   getString(args, "tenant_id"),
 		AccountID:  getString(args, "account_id"),
-		Credential: accountCredentialFromArgs(args),
+		Credential: credential,
 	})
 }
 
@@ -582,10 +593,10 @@ func (r *ToolRegistry) executeAccountUsage(ctx context.Context, args map[string]
 // accountCredentialFromArgs extracts the inbound credential envelope from the
 // tool arguments. Returns nil when absent, which the service layer rejects
 // with an AccountInvalidError for the verbs that require one.
-func accountCredentialFromArgs(args map[string]interface{}) *orchestration.AccountCredential {
+func accountCredentialFromArgs(args map[string]interface{}) (*orchestration.AccountCredential, error) {
 	raw, ok := args["credential"].(map[string]interface{})
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	cred := &orchestration.AccountCredential{
 		AccessToken:       getString(raw, "access_token"),
@@ -598,7 +609,53 @@ func accountCredentialFromArgs(args map[string]interface{}) *orchestration.Accou
 	if env := getStringMap(raw, "env"); len(env) > 0 {
 		cred.Env = env
 	}
-	return cred
+	expiresAt, err := accountCredentialExpiryFromArgs(raw["expires_at"])
+	if err != nil {
+		return nil, err
+	}
+	cred.ExpiresAt = expiresAt
+	return cred, nil
+}
+
+// accountCredentialExpiryFromArgs reads credential.expires_at, an RFC 3339
+// timestamp. Absent (or null) is the zero time: an unknown expiry. A value that
+// is not an RFC 3339 string is refused rather than read as "never expires",
+// which account balancing would otherwise trust.
+func accountCredentialExpiryFromArgs(raw interface{}) (time.Time, error) {
+	if raw == nil {
+		return time.Time{}, nil
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return time.Time{}, &AccountCredentialExpiryError{}
+	}
+	expiresAt, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		return time.Time{}, &AccountCredentialExpiryError{Value: text, Err: err}
+	}
+	return expiresAt, nil
+}
+
+// AccountCredentialExpiryError reports a credential.expires_at argument that is
+// not an RFC 3339 timestamp string.
+type AccountCredentialExpiryError struct {
+	// Value is the offending text; empty when the argument was not a string.
+	Value string
+	// Err is the parse failure, nil when the argument was not a string.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *AccountCredentialExpiryError) Error() string {
+	if e.Err == nil {
+		return "mcp: credential.expires_at must be an RFC 3339 timestamp string"
+	}
+	return "mcp: credential.expires_at " + strconv.Quote(e.Value) + " is not an RFC 3339 timestamp: " + e.Err.Error()
+}
+
+// Unwrap returns the parse failure.
+func (e *AccountCredentialExpiryError) Unwrap() error {
+	return e.Err
 }
 
 // getAccountService retrieves the AccountService from the QuicBaaS service.

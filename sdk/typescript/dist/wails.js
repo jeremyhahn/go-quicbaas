@@ -12,6 +12,14 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 import { adoptPage, } from './page.js';
 import { ConnectionError } from './errors.js';
+import { unsupportedClient } from './unsupported.js';
+// wailsUnsupported is why projects, sdlc and accounts refuse here: the
+// desktop app binds no Go struct for them (cmd/quicbaas/bindings_*.go binds
+// orchestrator, sessions, fleet, SSH, agents and cost settings only), so there
+// is no window.go method to call. The desktop SPA reaches them over REST
+// against the embedded server.
+const wailsUnsupported = 'the desktop app exposes no Wails binding for this family; ' +
+    'use the rest transport against the embedded server';
 // wailsGo returns the window.go namespace cast to a two-level map.
 // Wails generates bindings at compile time; we keep the index signature
 // here and cast return values at each call site.
@@ -713,11 +721,9 @@ export class WailsClient {
     messaging = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     scheduler = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    projects = null;
-    sdlc = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    accounts = null;
+    projects = unsupportedClient('wails', 'projects', wailsUnsupported);
+    sdlc = unsupportedClient('wails', 'sdlc', wailsUnsupported);
+    accounts = unsupportedClient('wails', 'accounts', wailsUnsupported);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -30,7 +30,7 @@ function sleep(ms) {
 const SSE_RECONNECT_DELAY_MS = 3000;
 // resolveToken resolves a bearer token from either a static string or an
 // async factory function. Returns an empty string when no token is configured.
-async function resolveToken(token) {
+export async function resolveToken(token) {
     if (!token)
         return '';
     if (typeof token === 'function')
@@ -145,6 +145,26 @@ class RestOrchestratorClient {
     // Non-2xx responses are converted to APIError.
     async fetchJSON(path, init) {
         return this.fetchAPI(`${API_PREFIX}${path}`, init);
+    }
+    async fetchAllListPages(path, itemsKey) {
+        const items = [];
+        let offset = 0;
+        for (;;) {
+            const params = new URLSearchParams();
+            params.set('limit', '100');
+            if (offset > 0)
+                params.set('offset', String(offset));
+            const pagePath = `${path}${path.includes('?') ? '&' : '?'}${params.toString()}`;
+            const raw = await this.fetchJSON(pagePath);
+            const page = adoptPage(raw, itemsKey);
+            items.push(...page.items);
+            if (page.next_offset === undefined)
+                return items;
+            if (page.next_offset <= page.offset) {
+                throw new Error(`${itemsKey} list next_offset did not advance`);
+            }
+            offset = page.next_offset;
+        }
     }
     // fetchAPI is fetchJSON for a path outside the orchestrator prefix — the
     // worker image refresh lives under /api/v1/sdlc and the fleet registry
@@ -336,21 +356,13 @@ class RestOrchestratorClient {
     // The REST endpoint returns {"backends": [...]}; unwrap to match the
     // Go SDK contract which exposes a bare slice.
     async listBackends() {
-        const resp = await this.fetchJSON('/backends');
-        if (Array.isArray(resp)) {
-            return resp;
-        }
-        return resp.backends ?? [];
+        return this.fetchAllListPages('/backends', 'backends');
     }
     // listRunners maps to GET /api/v1/orchestrator/runners
     // The REST endpoint returns {"runners": [...]}; unwrap to match the Go SDK
     // contract, which exposes a bare slice.
     async listRunners() {
-        const resp = await this.fetchJSON('/runners');
-        if (Array.isArray(resp)) {
-            return resp;
-        }
-        return resp.runners ?? [];
+        return this.fetchAllListPages('/runners', 'runners');
     }
     // listBackendModels maps to
     // GET /api/v1/fleet/{nodeID}/backends/{backendName}/models
@@ -1819,10 +1831,79 @@ class RestSchedulerClient {
     async getStatus() {
         return this.fetchJSON('/api/v1/scheduler/status');
     }
+    // registerNode maps to POST /api/v1/scheduler/nodes
+    async registerNode(req) {
+        return this.fetchJSON('/api/v1/scheduler/nodes', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // renewNode maps to POST /api/v1/scheduler/nodes/:id/renew
+    async renewNode(nodeId) {
+        await this.fetchJSON(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}/renew`, { method: 'POST' });
+    }
+    // deregisterNode maps to DELETE /api/v1/scheduler/nodes/:id
+    async deregisterNode(nodeId) {
+        await this.fetchJSON(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+    }
+    // getNode maps to GET /api/v1/scheduler/nodes/:id
+    async getNode(nodeId) {
+        return this.fetchJSON(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}`);
+    }
+    // listNodes maps to GET /api/v1/scheduler/nodes
+    async listNodes() {
+        const body = await this.fetchJSON('/api/v1/scheduler/nodes');
+        return body.nodes ?? [];
+    }
+    // cordonNode maps to POST /api/v1/scheduler/nodes/:id/cordon
+    async cordonNode(nodeId) {
+        return this.fetchJSON(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}/cordon`, {
+            method: 'POST',
+        });
+    }
+    // uncordonNode maps to POST /api/v1/scheduler/nodes/:id/uncordon
+    async uncordonNode(nodeId) {
+        return this.fetchJSON(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}/uncordon`, {
+            method: 'POST',
+        });
+    }
+    // drainNode maps to POST /api/v1/scheduler/nodes/:id/drain
+    async drainNode(nodeId) {
+        const body = await this.fetchJSON(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}/drain`, { method: 'POST' });
+        return body.placements ?? [];
+    }
+    // place maps to POST /api/v1/scheduler/placements
+    async place(req) {
+        return this.fetchJSON('/api/v1/scheduler/placements', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // release maps to DELETE /api/v1/scheduler/placements/:id
+    async release(workloadId) {
+        await this.fetchJSON(`/api/v1/scheduler/placements/${encodeURIComponent(workloadId)}`, {
+            method: 'DELETE',
+        });
+    }
+    // getPlacement maps to GET /api/v1/scheduler/placements/:id
+    async getPlacement(workloadId) {
+        return this.fetchJSON(`/api/v1/scheduler/placements/${encodeURIComponent(workloadId)}`);
+    }
+    // listPlacements maps to GET /api/v1/scheduler/placements
+    async listPlacements(filter = {}) {
+        const params = new URLSearchParams();
+        if (filter.node_id)
+            params.set('node_id', filter.node_id);
+        if (filter.group)
+            params.set('group', filter.group);
+        const query = params.toString() ? `?${params.toString()}` : '';
+        const body = await this.fetchJSON(`/api/v1/scheduler/placements${query}`);
+        return body.placements ?? [];
+    }
 }
 // RestProjectsClient implements ProjectsClient over the QuicBaaS REST project endpoints.
 // All project routes live under /api/v1/projects.
-class RestProjectsClient {
+export class RestProjectsClient {
     baseUrl;
     config;
     constructor(baseUrl, config = {}) {
@@ -1902,7 +1983,7 @@ class RestProjectsClient {
 }
 // RestSdlcClient implements SdlcClient over the SDLC module's REST endpoints:
 // a project's forge binding and a task's delivery.
-class RestSdlcClient {
+export class RestSdlcClient {
     baseUrl;
     config;
     constructor(baseUrl, config = {}) {
@@ -2032,7 +2113,7 @@ class RestSdlcClient {
 // /api/v1/agent-accounts. See handlers_account.go for the server-side shapes
 // this mirrors — AccountRESTResponse never carries credential material, so
 // no method here can either.
-class RestAccountsClient {
+export class RestAccountsClient {
     baseUrl;
     config;
     constructor(baseUrl, config = {}) {

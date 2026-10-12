@@ -14,6 +14,19 @@ export declare class APIError extends QuicBaaSError {
 export declare class DeployNotSupportedError extends QuicBaaSError {
     constructor(transport: string);
 }
+export declare class TransportNotSupportedError extends QuicBaaSError {
+    readonly transport: string;
+    readonly family: string;
+    readonly reason: string;
+    /** method is the verb that was called, when the refusal is for one. */
+    readonly method?: string;
+    constructor(transport: string, family: string, reason: string, method?: string);
+}
+export declare class McpError extends QuicBaaSError {
+    readonly tool: string;
+    readonly code?: number;
+    constructor(tool: string, message: string, code?: number);
+}
 export declare class SSHError extends QuicBaaSError {
     /** HTTP status code from the server response. */
     readonly status: number;

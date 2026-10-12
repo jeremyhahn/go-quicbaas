@@ -600,41 +600,22 @@ endif
 	@echo "$(GREEN)Build successful: $(BIN_DIR)/$(APP_NAME)d$(NC)"
 
 # Frontend build configuration
-# BUILD_DIR for frontend, handling NFS EPERM issues on Node.js worker threads
-FE_BUILD_DIR ?= /tmp/fe-build-$(shell whoami)-$(RUN_ID_SLUG)
+# The frontend is built outside the checkout (Node.js worker threads hit EPERM
+# on NFS). FE_BUILD_ROOT mirrors the repository layout -- the frontend at
+# cmd/quicbaas/frontend, sdk/ as a symlink to the checkout's sdk/ -- so the
+# tracked lock's file:../../../sdk/typescript entries resolve and npm ci can
+# install it unchanged. The suffix hashes $(CURDIR), so every checkout gets
+# its own build root and concurrent worktrees never share one.
+FE_BUILD_ROOT ?= /tmp/fe-build-$(shell whoami)-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
+FE_BUILD_DIR := $(FE_BUILD_ROOT)/cmd/quicbaas/frontend
 
-# Frontend build prerequisites (only when WITH_GUI=1)
-.PHONY: _build-sdk-typescript _build-frontend
+.PHONY: _build-sdk-typescript
 
 # npm ci, not npm install — see build-sdk-typescript below.
 _build-sdk-typescript:
 	@echo "$(BLUE)Building TypeScript SDK...$(NC)"
 	@cd sdk/typescript && npm ci --silent && node ./node_modules/typescript/bin/tsc
 	@echo "$(GREEN)TypeScript SDK built$(NC)"
-
-_build-frontend: _build-sdk-typescript
-	@echo "$(BLUE)Building frontend (using temporary build directory: $(FE_BUILD_DIR))...$(NC)"
-	@mkdir -p $(FE_BUILD_DIR)
-	@echo "$(YELLOW)Copying sources to $(FE_BUILD_DIR)...$(NC)"
-	@rsync -a --delete cmd/quicbaas/frontend/ $(FE_BUILD_DIR)/ --exclude node_modules --exclude package-lock.json --exclude dist || exit 1
-	@echo "$(YELLOW)Running npm install...$(NC)"
-	@cd $(FE_BUILD_DIR) && npm install 2>&1 | tail -5
-	@echo "$(YELLOW)Overriding @quicbaas/sdk with absolute symlink (post npm-install to survive)...$(NC)"
-	@mkdir -p $(FE_BUILD_DIR)/node_modules/@quicbaas
-	@rm -rf $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk
-	@ln -sfn $(abspath sdk/typescript) $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk
-	@test -e $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk/dist/index.js \
-		|| (echo "$(RED)SDK symlink broken — dist/index.js not reachable via symlink$(NC)" && exit 1)
-	@echo "$(YELLOW)Building...$(NC)"
-	@rm -rf $(FE_BUILD_DIR)/dist
-	@cd $(FE_BUILD_DIR) && set -o pipefail; npm run build 2>&1 | tail -10
-	@test -f $(FE_BUILD_DIR)/dist/index.html \
-		|| (echo "$(RED)Frontend build produced no dist/index.html — build failed silently$(NC)" && exit 1)
-	@echo "$(BLUE)Copying dist back to embed location + frontend tree...$(NC)"
-	@rm -rf pkg/api/rest/ui/dist cmd/quicbaas/frontend/dist
-	@cp -r $(FE_BUILD_DIR)/dist pkg/api/rest/ui/dist
-	@cp -r $(FE_BUILD_DIR)/dist cmd/quicbaas/frontend/dist
-	@echo "$(GREEN)Frontend built$(NC)"
 
 # npm ci, NOT npm install: install FROM sdk/typescript/package-lock.json
 # without rewriting it. npm install re-resolves the tree and drops the optional
@@ -652,22 +633,16 @@ build-sdk-typescript: ## Build TypeScript SDK (direct compilation)
 build-frontend: build-sdk-typescript ## Build frontend (handles NFS EPERM via temp dir)
 	@echo "$(BLUE)Building frontend...$(NC)"
 	@mkdir -p $(FE_BUILD_DIR)
+	@ln -sfn $(abspath sdk) $(FE_BUILD_ROOT)/sdk
 	@echo "$(YELLOW)Syncing sources to $(FE_BUILD_DIR)...$(NC)"
-	@rsync -a --delete cmd/quicbaas/frontend/ $(FE_BUILD_DIR)/ --exclude node_modules --exclude package-lock.json --exclude dist || exit 1
-	@echo "$(YELLOW)Running npm install...$(NC)"
-	@cd $(FE_BUILD_DIR) && npm install 2>&1 | tail -5
-	@echo "$(YELLOW)Overriding @quicbaas/sdk + @quicbaas/svelte-security with absolute symlinks (npm install would make them relative)...$(NC)"
-	@mkdir -p $(FE_BUILD_DIR)/node_modules/@quicbaas
-	@rm -rf $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk
-	@ln -sfn $(abspath sdk/typescript) $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk
+	@rsync -a --delete cmd/quicbaas/frontend/ $(FE_BUILD_DIR)/ --exclude node_modules --exclude dist || exit 1
+	@echo "$(YELLOW)Running npm ci...$(NC)"
+	@cd $(FE_BUILD_DIR) && npm ci --silent
 	@test -e $(FE_BUILD_DIR)/node_modules/@quicbaas/sdk/dist/index.js \
-		|| (echo "$(RED)SDK symlink broken — dist/index.js not reachable via symlink$(NC)" && exit 1)
-	@rm -rf $(FE_BUILD_DIR)/node_modules/@quicbaas/svelte-security
-	@ln -sfn $(abspath sdk/typescript/svelte-security) $(FE_BUILD_DIR)/node_modules/@quicbaas/svelte-security
+		|| (echo "$(RED)@quicbaas/sdk link broken — dist/index.js not reachable$(NC)" && exit 1)
 	@test -e $(FE_BUILD_DIR)/node_modules/@quicbaas/svelte-security/src/index.ts \
-		|| (echo "$(RED)svelte-security symlink broken — src/index.ts not reachable via symlink$(NC)" && exit 1)
-	@echo "$(YELLOW)Purging vite cache + stale dist...$(NC)"
-	@rm -rf $(FE_BUILD_DIR)/node_modules/.vite $(FE_BUILD_DIR)/dist
+		|| (echo "$(RED)@quicbaas/svelte-security link broken — src/index.ts not reachable$(NC)" && exit 1)
+	@rm -rf $(FE_BUILD_DIR)/dist
 	@echo "$(YELLOW)Running vite build...$(NC)"
 	@cd $(FE_BUILD_DIR) && bash -c "set -o pipefail; npm run build 2>&1 | tail -10" \
 		|| (echo "$(RED)Frontend build failed — see errors above$(NC)" && exit 1)
@@ -2812,8 +2787,15 @@ test-sdk-ts: ## Run TypeScript SDK unit tests
 	@cd sdk/typescript && npx vitest run
 	@echo "$(GREEN)TypeScript SDK tests passed$(NC)"
 
+# npm ci installs exactly cmd/quicbaas/frontend/package-lock.json and never
+# rewrites it, so a fresh checkout (a clean CI runner) can run the suite.
+.PHONY: install-frontend
+install-frontend: ## Install frontend dependencies from the tracked lockfile
+	@echo "$(BLUE)Installing frontend dependencies...$(NC)"
+	@cd cmd/quicbaas/frontend && npm ci --silent
+
 .PHONY: test-frontend
-test-frontend: ## Run frontend unit tests
+test-frontend: install-frontend ## Run frontend unit tests
 	@echo "$(BLUE)Running frontend tests...$(NC)"
 	@cd cmd/quicbaas/frontend && npm test
 	@echo "$(GREEN)Frontend tests passed$(NC)"
@@ -4602,7 +4584,7 @@ bench-orchestration: ## Run orchestration package benchmarks
 # a single directory.
 # =============================================================================
 
-ACCOUNT_PKGS := ./pkg/service/... ./pkg/api/rest/... ./pkg/api/grpc/... ./pkg/api/quic/... ./pkg/api/mcp/... ./cmd/quicbaas/...
+ACCOUNT_PKGS := ./pkg/service/... ./pkg/api/rest/... ./pkg/api/grpc/... ./pkg/api/mcp/... ./cmd/quicbaas/...
 
 .PHONY: test-account
 test-account: ## Run pooled provider account unit tests (service + all transports + CLI)

@@ -274,11 +274,32 @@ the page after, asks the `*Page` verb.
 bindings take the SDK request structs verbatim, so the paging parameters DO
 reach the daemon over desktop IPC; what comes back is a projected array with no
 envelope, which the SDK reports as a single page (`total` = its length, no
-`next_offset`) rather than as a first page of an unknown number. gRPC-Web,
-QUIC, Unix and MCP have no TypeScript transport wired yet: their `*Page` verbs
-delegate to their own unpaged sibling, so a caller gets that transport's typed
-refusal rather than an invented page. None of them throws "paging not
-supported".
+`next_offset`) rather than as a first page of an unknown number. MCP pages
+`listProjectsPage` and `listAccountsPage` for real (see the table below);
+gRPC-Web, QUIC, Unix and Wails refuse those families outright. For every other
+family gRPC-Web, QUIC, Unix and MCP have no TypeScript transport wired yet:
+their `*Page` verbs delegate to their own unpaged sibling, so a caller gets that
+transport's typed refusal rather than an invented page. None of them throws
+"paging not supported".
+
+### TypeScript transports: projects, sdlc, accounts
+
+What each `sdk/typescript` transport does with `client.projects`, `client.sdlc`
+and `client.accounts`. A family a transport cannot carry is still an object of
+its declared type: every verb rejects with `TransportNotSupportedError`
+(`transport`, `family`, `method`, `reason`), never a `null` field.
+
+| Transport | projects | sdlc | accounts | How / why not |
+|---|---|---|---|---|
+| REST | yes | yes | yes | `/api/v1/projects`, `/api/v1/sdlc`, `/api/v1/agent-accounts`. |
+| QUIC | no | no | no | The server's QUIC listener speaks qrdb's frame protocol, not REST over HTTP/3, and Node's `fetch` does not negotiate HTTP/3. Whether and how a QUIC client listener is offered to SDK callers is an open owner decision. |
+| MCP | yes, with refusals | yes | yes, with one refusal | `project_*`, `sdlc_*` and `quicbaas_agent_account_*` tools on one Streamable HTTP session (`mcp_rpc.ts`). `credential.expires_at` (RFC 3339) reaches create and rotation. Refused because the tool does not read the argument: `createProject` with non-empty `metadata`, `updateProject` with any `metadata` (`{}` would mean "clear"), `updateProject` with `clear_description`, `listProjectsPage` with `autonomous`, `listAccountsPage` with `status`. |
+| gRPC-Web | no | no | no | The server serves native gRPC only (no gRPC-Web endpoint), and the SDK has no gRPC-Web client library. Needs an architecture decision. |
+| Unix | no | no | no | The Unix transport is gRPC over `AF_UNIX`; the TypeScript SDK has no Node gRPC client or generated stubs. Needs an architecture decision. |
+| Wails | no | no | no | The desktop app exposes no Wails binding for these families. Use the REST transport against the embedded server. |
+
+Prompts have no surface on any wire (server, Go SDK or TypeScript interface),
+so no transport carries them.
 
 A 200 whose body is not a listing — no records under the endpoint's key — is a
 typed `MalformedPageError` rather than an empty page, because a table rendering
@@ -901,8 +922,10 @@ projectId)`, `.delivery(tenantId, taskId)`, `.unbind(tenantId, projectId)`,
 `.openWork(tenantId, projectId)`,
 `.reviewer(tenantId, projectId, pr)`, `.setReviewer(tenantId, projectId, pr,
 profile)`, `.clearReviewer(tenantId, projectId, pr)`, `.fileIssue(tenantId,
-projectId, {title, body, labels, parent})`, `.collaborators(tenantId, projectId)`
-(`sdk/typescript/src/sdlc.ts`; REST transport).
+projectId, {title, body, labels, parent})`, `.collaborators(tenantId, projectId)`,
+`.adoptIssue(tenantId, projectId, {issue, pull_request, ruling})`, `.forges()`
+(`sdk/typescript/src/sdlc.ts`; REST and MCP transports — see
+[TypeScript transports](#typescript-transports-projects-sdlc-accounts)).
 
 The worker image verbs are on the orchestrator client, where the desktop app's
 Wails binding reaches them: `client.orchestrator.getWorkerImageStatus()` and

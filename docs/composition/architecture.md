@@ -593,15 +593,21 @@ plane go-qrdb adds under a *new* top-level segment is not covered. go-qrdb#194
 asks for the built-in table (and covers the parameter-name and registrar-bypass
 gaps in qrdb's own registry).
 
-### Transport coverage — the two gaps a host must plan around
+### Transport coverage — the two transports a host must plan around
 
-The module seam reaches **gRPC, unix, REST and MCP**. It does **not** reach:
+`RegisterGRPC`, `RegisterHTTP` and `RegisterMCP` reach **gRPC, unix, REST and
+MCP**. Two transports need more:
 
-- **QUIC.** go-qrdb's QUIC transport is a bespoke frame protocol with
-  method-keyed dispatch, not HTTP-over-chi, so `RegisterHTTP` never reaches it
-  ([go-qrdb `pkg/apimodule/module.go:73-79`](https://github.com/jeremyhahn/go-qrdb)).
-  A module needing QUIC parity must serve it itself until go-qrdb grows a
-  `RegisterQUIC` hook.
+- **QUIC.** go-qrdb's QUIC transport is a frame protocol, so `RegisterHTTP`
+  never reaches it. A module reaches it through its `RegisterQUIC` hook
+  (`BaseModule` leaves it a no-op): the QUIC server projects each unary method
+  of the gRPC descriptors registered there onto its frames, so a module usually
+  delegates to `RegisterGRPC`. Every projected method must declare a
+  `(qrdb.v1.permission)` option, or QUIC server construction panics; a method
+  the module also lists as public is skipped, because QUIC has no
+  unauthenticated path. Streaming methods are not projected. quicbaas's own
+  module does not implement the hook yet: its `EmbeddingService` declares no
+  permissions (go-quicbaas#819).
 - **The embedded (in-process) transport.** That surface is each capability
   owner's own SDK, independent of this seam. A host calls its module's Go API
   directly in-process rather than routing through the node.

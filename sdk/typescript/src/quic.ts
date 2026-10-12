@@ -19,7 +19,8 @@
 // usage can additionally use the quic module from @node/quic or the
 // webtransport-ponyfill package.
 //
-// Until this transport is wired in, all method calls throw QuicNotImplementedError.
+// projects, sdlc and accounts reject every verb with TransportNotSupportedError
+// (see quicUnsupported). The other families still throw QuicNotImplementedError.
 // The go-quicbaas QUIC server endpoint is configured in config.quic.endpoint.
 
 import type {
@@ -31,6 +32,10 @@ import type {
   ConnectionClient,
   OrchestratorClient,
 } from './interfaces.js';
+import type { AccountsClient } from './accounts.js';
+import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
+import { unsupportedClient } from './unsupported.js';
 import type {
   AgentBackendInfo,
   JobRunnerInfo,
@@ -149,6 +154,17 @@ export class QuicNotImplementedError extends QuicBaaSError {
 function notImpl(method: string): never {
   throw new QuicNotImplementedError(method);
 }
+
+// quicUnsupported is why projects, sdlc and accounts refuse here. The server's
+// QUIC listener (pkg/server/transport_factory.go) speaks qrdb's frame protocol,
+// not REST over HTTP/3, and Node's fetch does not negotiate HTTP/3 anyway: a
+// REST client aimed at the QUIC endpoint would either fail against the real
+// listener or quietly fall back to TCP HTTP while claiming QUIC. Implementing
+// the frame protocol in TypeScript waits on an open owner decision on whether
+// and how a QUIC client listener is offered to SDK callers.
+const quicUnsupported =
+  "the server's QUIC listener speaks qrdb's frame protocol, which this SDK " +
+  'does not implement; use the rest transport';
 
 class QuicConnectionClient implements ConnectionClient {
   private readonly _endpoint: string;
@@ -348,11 +364,9 @@ export class QuicClient implements Client {
   readonly messaging: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly scheduler: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly projects: any = null;
-  readonly sdlc: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly accounts: any = null;
+  readonly projects = unsupportedClient<ProjectsClient>('quic', 'projects', quicUnsupported);
+  readonly sdlc = unsupportedClient<SdlcClient>('quic', 'sdlc', quicUnsupported);
+  readonly accounts = unsupportedClient<AccountsClient>('quic', 'accounts', quicUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

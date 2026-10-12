@@ -35,6 +35,10 @@ import type {
   ConnectionClient,
   OrchestratorClient,
 } from './interfaces.js';
+import type { AccountsClient } from './accounts.js';
+import type { ProjectsClient } from './projects.js';
+import type { SdlcClient } from './sdlc.js';
+import { unsupportedClient } from './unsupported.js';
 import type {
   AgentBackendInfo,
   JobRunnerInfo,
@@ -154,6 +158,14 @@ export class GrpcWebNotImplementedError extends QuicBaaSError {
 function notImpl(method: string): never {
   throw new GrpcWebNotImplementedError(method);
 }
+
+// grpcWebUnsupported is why projects, sdlc and accounts refuse here. The
+// server serves ProjectService, SDLCService and AccountService as native gRPC
+// (pkg/server/lifecycle.go), but nothing serves the gRPC-Web framing a browser
+// needs, and this SDK carries no gRPC-Web client or generated stubs.
+const grpcWebUnsupported =
+  'the server serves these services as native gRPC only (no gRPC-Web endpoint) ' +
+  'and the SDK has no gRPC-Web client; use the rest transport';
 
 class GrpcWebConnectionClient implements ConnectionClient {
   private readonly _transport = 'grpc-web';
@@ -359,11 +371,9 @@ export class GrpcWebClient implements Client {
   readonly messaging: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly scheduler: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly projects: any = null;
-  readonly sdlc: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly accounts: any = null;
+  readonly projects = unsupportedClient<ProjectsClient>('grpc-web', 'projects', grpcWebUnsupported);
+  readonly sdlc = unsupportedClient<SdlcClient>('grpc-web', 'sdlc', grpcWebUnsupported);
+  readonly accounts = unsupportedClient<AccountsClient>('grpc-web', 'accounts', grpcWebUnsupported);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

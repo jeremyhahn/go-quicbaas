@@ -81,14 +81,17 @@ var WithServiceModuleNodeInfo = apimodule.WithNodeInfo
 // Mounting through quicbaas.NewServer keeps one node, one authorizer, one
 // audit plane and one module registration point.
 //
-// Transport coverage a host must plan around — the module seam reaches gRPC,
-// unix, REST and MCP, but NOT:
+// Transport coverage a host must plan around:
 //
-//   - QUIC. go-qrdb's QUIC transport is a bespoke frame protocol with
-//     method-keyed dispatch rather than HTTP-over-chi, so RegisterHTTP does
-//     not reach it (go-qrdb pkg/apimodule/module.go:73-79). A module needing
-//     QUIC parity must serve it itself until go-qrdb grows a RegisterQUIC
-//     hook.
+//   - QUIC is reached only through RegisterQUIC, which BaseHostModule leaves a
+//     no-op. go-qrdb's QUIC transport is a frame protocol, so RegisterHTTP does
+//     not reach it; instead the QUIC server hands RegisterQUIC a registrar that
+//     projects each unary method of a gRPC service descriptor onto its frames,
+//     so a module usually implements it by delegating to RegisterGRPC. Every
+//     projected method must declare a (qrdb.v1.permission) option: one without
+//     panics the QUIC server at construction (its default-deny assertion),
+//     except a method the module also lists as public, which QUIC skips because
+//     it has no unauthenticated path. Streaming methods are not projected.
 //   - The embedded (in-process) transport. That surface is each capability
 //     owner's own SDK; a host calls its module's Go API directly in-process
 //     instead of routing through the node.

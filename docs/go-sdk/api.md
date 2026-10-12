@@ -2628,12 +2628,15 @@ drift. **Put every route under a prefix of your own.**
 
 ### Transport gaps
 
-The module seam covers **gRPC, unix, REST and MCP**. It does **not** cover:
+`RegisterGRPC`, `RegisterHTTP` and `RegisterMCP` cover **gRPC, unix, REST and
+MCP**. Two transports need more:
 
-- **QUIC** — go-qrdb's QUIC transport is a bespoke frame protocol with
-  method-keyed dispatch rather than HTTP-over-chi, so `RegisterHTTP` does not
-  reach it. A module needing QUIC parity serves it itself until go-qrdb adds a
-  `RegisterQUIC` hook.
+- **QUIC** — reached only through the module's `RegisterQUIC` hook, which
+  `BaseHostModule` leaves a no-op. The QUIC server projects each unary method
+  of the gRPC descriptors registered there onto its frames, so a module usually
+  delegates to `RegisterGRPC`. Every projected method needs a
+  `(qrdb.v1.permission)` option or QUIC server construction panics; methods the
+  module lists as public are skipped, and streaming methods are not projected.
 - **The embedded (in-process) transport** — that surface is each capability
   owner's own SDK. A host calls its module's Go API directly in-process
   instead of routing through the node.
