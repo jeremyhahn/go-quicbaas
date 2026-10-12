@@ -124,17 +124,41 @@ func TestWebAuthnFactory_CacheEviction(t *testing.T) {
 	if count() != 1 {
 		t.Fatalf("after ResetTenant count = %d, want 1", count())
 	}
+	if got := f.generation("t1").Load(); got != 1 {
+		t.Fatalf("after ResetTenant t1 generation = %d, want 1", got)
+	}
 
 	f.OnTenantSettingsChanged("t2")
 	if count() != 0 {
 		t.Fatalf("after OnTenantSettingsChanged count = %d, want 0", count())
 	}
+	if got := f.generation("t2").Load(); got != 1 {
+		t.Fatalf("after OnTenantSettingsChanged t2 generation = %d, want 1", got)
+	}
 
-	// Re-seed and Reset clears everything.
+	// Resetting an uncached tenant evicts nothing, but still bumps its
+	// generation so a build in flight for it cannot cache a stale service.
+	f.services.Store("t4", (*struct{})(nil))
+	f.ResetTenant("uncached")
+	if count() != 1 {
+		t.Fatalf("after ResetTenant of an uncached tenant count = %d, want 1", count())
+	}
+	if got := f.generation("uncached").Load(); got != 1 {
+		t.Fatalf("uncached generation = %d, want 1", got)
+	}
+
+	// Re-seed and Reset clears everything and bumps every known generation,
+	// including tenants that are not cached.
 	f.services.Store("t3", (*struct{})(nil))
 	f.Reset()
 	if count() != 0 {
 		t.Fatalf("after Reset count = %d, want 0", count())
+	}
+	want := map[string]uint64{"t1": 2, "t2": 2, "uncached": 2}
+	for tenantID, w := range want {
+		if got := f.generation(tenantID).Load(); got != w {
+			t.Fatalf("after Reset %s generation = %d, want %d", tenantID, got, w)
+		}
 	}
 }
 

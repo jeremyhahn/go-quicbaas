@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -235,14 +236,22 @@ type WebAuthnServiceFactory struct {
 	params WebAuthnFactoryParams
 	logger *slog.Logger
 
-	// services caches one *xkmswebauthn.Service per tenant.
+	// services caches one *xkmswebauthn.Service per tenant. An entry never
+	// outlives a ResetTenant or Reset issued after its build began: see
+	// ResetTenant for the ordering that guarantees it.
 	services sync.Map // map[tenantID]*xkmssdk.WebAuthnService
 
-	// constructLock serialises ServiceFor calls for the same tenant id
+	// constructLocks serialises ServiceFor builds for the same tenant id
 	// so concurrent lookups don't construct duplicate services. The
 	// stored value is a *sync.Mutex per tenant id; the per-tenant locks
-	// avoid global contention.
+	// avoid global contention. Resets never take these locks: they are
+	// ordered against an in-flight build by generations instead.
 	constructLocks sync.Map // map[tenantID]*sync.Mutex
+
+	// generations counts the resets issued for each tenant id. ServiceFor
+	// compares the count before and after a build to detect a reset that
+	// raced it. Like constructLocks, it grows with the number of tenants.
+	generations sync.Map // map[tenantID]*atomic.Uint64
 }
 
 // NewWebAuthnServiceFactory constructs the factory. The QRDB client and
@@ -305,12 +314,29 @@ func (f *WebAuthnServiceFactory) ServiceFor(ctx context.Context, tenantID string
 		}
 	}
 
+	// Capture the reset generation before the build reads any settings, so
+	// a reset that lands during the build is detected below.
+	gen := f.generation(tenantID)
+	start := gen.Load()
+
 	svc, err := f.buildService(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	f.services.Store(tenantID, svc)
+	if gen.Load() != start {
+		// A reset raced the build, which may have read the old settings.
+		// Evict the entry, but still hand the caller the service it built.
+		f.services.CompareAndDelete(tenantID, svc)
+	}
 	return svc, nil
+}
+
+// generation returns the tenant's reset counter, creating it on first use.
+func (f *WebAuthnServiceFactory) generation(tenantID string) *atomic.Uint64 {
+	v, _ := f.generations.LoadOrStore(tenantID, &atomic.Uint64{})
+	gen, _ := v.(*atomic.Uint64)
+	return gen
 }
 
 // resolveConfig builds the effective per-tenant WebAuthn relying-party
@@ -603,7 +629,17 @@ func (f *WebAuthnServiceFactory) attestationConveyance(configured string) string
 // Reset clears all cached services. Tests use this to force fresh
 // construction; production callers should not need it. The factory
 // remains usable after Reset.
+//
+// Reset bumps every tenant's generation, not only the cached tenants', because
+// a tenant whose build is in flight is not cached yet. The ordering argument
+// is the one ResetTenant documents.
 func (f *WebAuthnServiceFactory) Reset() {
+	f.generations.Range(func(_, v any) bool {
+		if gen, ok := v.(*atomic.Uint64); ok {
+			gen.Add(1)
+		}
+		return true
+	})
 	f.services.Range(func(k, _ any) bool {
 		f.services.Delete(k)
 		return true
@@ -615,7 +651,21 @@ func (f *WebAuthnServiceFactory) Reset() {
 // it after a tenant updates its WebAuthn override (RPID/origins/display name)
 // so the change takes effect without restarting the process. Evicting an
 // uncached tenant is a no-op.
+//
+// ResetTenant takes no lock, so it never waits on a build in progress. It
+// bumps the tenant's generation first and deletes the cached entry second;
+// ServiceFor captures the generation before its build and re-reads it after
+// storing the result. Every interleaving with an in-flight build therefore
+// leaves no stale entry behind:
+//   - If the reset bumps the generation before ServiceFor re-reads it,
+//     ServiceFor sees the change and evicts its own entry.
+//   - If the reset bumps it after the re-read, the store has already
+//     happened, so the reset's delete evicts the entry.
+//   - If the reset happened before ServiceFor captured the generation, the
+//     build reads the settings that were already committed, and its entry
+//     is fresh.
 func (f *WebAuthnServiceFactory) ResetTenant(tenantID string) {
+	f.generation(tenantID).Add(1)
 	f.services.Delete(tenantID)
 }
 

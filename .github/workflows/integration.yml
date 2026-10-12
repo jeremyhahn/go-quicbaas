@@ -5,14 +5,13 @@
 # CLI and the test-runner images from tagged modules, and takes on the order of
 # an hour, so the per-PR gate stays fast and honest while the suite still runs.
 #
-# FULL TIER (handbook sdlc §5a; go-quicbaas#1266). It runs on push to main
-# (paths-filtered), on workflow_dispatch -- the coordinator dispatches the
+# FULL TIER (handbook sdlc §5a; go-quicbaas#1266, #1272). It runs on push to
+# main (paths-filtered), on workflow_dispatch -- the coordinator dispatches the
 # nightly full tier this way; no workflow carries a `schedule:` trigger, owner
 # ruling 2026-10-11 -- and on a pull_request labelled `ci:full`. Every other
 # pull request starts a run whose only job skips at once. The pull_request
-# trigger has no `labeled` type, so adding `ci:full` takes effect on the pull
-# request's next push or branch update. This workflow is in no required check,
-# so its skip gates nothing.
+# trigger carries `labeled`, so adding `ci:full` starts the suite at once.
+# This workflow is in no required check, so its skip gates nothing.
 #
 # Why not a job inside ci.yml: Gitea does not honour job-level
 # continue-on-error for the overall run conclusion, so an advisory job there
@@ -35,9 +34,12 @@ name: Integration
 on:
   # Gitea has no API to re-run a finished run (ci-template v1.3).
   workflow_dispatch:
-  # Default types only, no `labeled`; the job's `if:` requires `ci:full`.
+  # `labeled` so that adding `ci:full` starts a full-tier run (#1272); the
+  # job's `if:` requires `ci:full`, so any other label starts a run whose only
+  # job skips at once.
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   push:
     # main is the only trunk (ci.yml v1.15); this used to name master and
     # develop, neither of which exists, so a push never ran it.

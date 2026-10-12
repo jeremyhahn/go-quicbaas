@@ -16,6 +16,8 @@ package iam
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -665,6 +667,10 @@ func (m *MemoryStorage) ListUsers(ctx context.Context, tenantID string, opts Lis
 			result = append(result, &u)
 		}
 	}
+
+	// Map iteration order is random; sort by ID so offset pages are stable
+	// across calls, as they are in the qrdb-backed store.
+	slices.SortFunc(result, func(a, b *User) int { return strings.Compare(a.ID, b.ID) })
 
 	// Apply pagination
 	start := opts.Offset

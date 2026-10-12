@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -155,14 +157,25 @@ func (m *mockUserStorage) ListUsers(ctx context.Context, tenantID string, opts L
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// Return copies in a stable, ID-sorted order and honour Limit/Offset,
+	// as the qrdb-backed store does; callers that page rely on both.
 	var users []*User
-	for key, user := range m.users {
+	for _, user := range m.users {
 		if user.TenantID == tenantID {
-			users = append(users, user)
+			u := *user
+			users = append(users, &u)
 		}
-		_ = key
 	}
-	return users, nil
+	slices.SortFunc(users, func(a, b *User) int { return strings.Compare(a.ID, b.ID) })
+
+	if opts.Offset >= len(users) {
+		return []*User{}, nil
+	}
+	end := len(users)
+	if opts.Limit > 0 && opts.Offset+opts.Limit < end {
+		end = opts.Offset + opts.Limit
+	}
+	return users[opts.Offset:end], nil
 }
 
 type mockRoleStorage struct {

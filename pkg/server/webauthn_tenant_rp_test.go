@@ -22,6 +22,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 
@@ -165,3 +166,139 @@ func TestWebAuthnFactory_SettingsChangeRebuildsCachedService(t *testing.T) {
 	assert.Equal(t, "new.example.com", rebuilt.Config().RPID,
 		"rebuilt service must reflect the updated RPID")
 }
+
+// gatedWebAuthnSettings wraps fakeWebAuthnSettings so a test can park the
+// FIRST settings read inside the factory's service build. That first call
+// reads the inner settings, closes entered, blocks until release is closed,
+// then returns gatedErr when it is set or the settings it read otherwise. Every later call passes straight
+// through to the inner settings.
+type gatedWebAuthnSettings struct {
+	inner    *fakeWebAuthnSettings
+	once     sync.Once
+	entered  chan struct{}
+	release  chan struct{}
+	gatedErr error
+}
+
+func newGatedWebAuthnSettings(inner *fakeWebAuthnSettings) *gatedWebAuthnSettings {
+	return &gatedWebAuthnSettings{
+		inner:   inner,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (g *gatedWebAuthnSettings) WebAuthnSettingsFor(ctx context.Context, tenantID string) (*iam.TenantWebAuthnConfig, error) {
+	gated := false
+	g.once.Do(func() { gated = true })
+	// Read before parking, so a gated call returns the settings that were
+	// committed when the build read them, not those committed while it waited.
+	override, err := g.inner.WebAuthnSettingsFor(ctx, tenantID)
+	if gated {
+		close(g.entered)
+		<-g.release
+		if g.gatedErr != nil {
+			return nil, g.gatedErr
+		}
+	}
+	return override, err
+}
+
+// serviceResult carries a ServiceFor outcome out of a goroutine.
+type serviceResult struct {
+	svc *xkmssdk.WebAuthnService
+	err error
+}
+
+// TestWebAuthnFactory_ResetDuringBuildEvictsStaleService pins go-quicbaas#384:
+// a settings change that lands while a ServiceFor build is reading the OLD
+// settings must not leave the stale relying party cached.
+func TestWebAuthnFactory_ResetDuringBuildEvictsStaleService(t *testing.T) {
+	inner := newFakeWebAuthnSettings()
+	inner.set("racing-tenant", &iam.TenantWebAuthnConfig{RPID: "old.example.com"})
+	gated := newGatedWebAuthnSettings(inner)
+	factory := buildLiveWebAuthnFactoryWithSettings(t, gated)
+	ctx := context.Background()
+
+	done := make(chan serviceResult, 1)
+	go func() {
+		svc, err := factory.ServiceFor(ctx, "racing-tenant")
+		done <- serviceResult{svc: svc, err: err}
+	}()
+	<-gated.entered
+
+	// The build has read nothing yet; commit the new settings and notify the
+	// factory while the build is parked. The reset must not block.
+	inner.set("racing-tenant", &iam.TenantWebAuthnConfig{RPID: "new.example.com"})
+	factory.OnTenantSettingsChanged("racing-tenant")
+	close(gated.release)
+
+	inFlight := <-done
+	require.NoError(t, inFlight.err)
+	assert.Equal(t, "old.example.com", inFlight.svc.Config().RPID,
+		"the in-flight caller keeps the relying party it was built with")
+
+	next, err := factory.ServiceFor(ctx, "racing-tenant")
+	require.NoError(t, err)
+	assert.NotSame(t, inFlight.svc, next, "the stale service must not outlive the reset")
+	assert.Equal(t, "new.example.com", next.Config().RPID)
+}
+
+// TestWebAuthnFactory_ResetBeforeBuildKeepsFreshService covers a reset that
+// completes before the build starts: the build reads the committed settings,
+// and its service stays cached rather than being evicted needlessly.
+func TestWebAuthnFactory_ResetBeforeBuildKeepsFreshService(t *testing.T) {
+	settings := newFakeWebAuthnSettings()
+	settings.set("settled-tenant", &iam.TenantWebAuthnConfig{RPID: "new.example.com"})
+	factory := buildLiveWebAuthnFactoryWithSettings(t, settings)
+	ctx := context.Background()
+
+	factory.OnTenantSettingsChanged("settled-tenant")
+
+	built, err := factory.ServiceFor(ctx, "settled-tenant")
+	require.NoError(t, err)
+	assert.Equal(t, "new.example.com", built.Config().RPID)
+
+	cached, err := factory.ServiceFor(ctx, "settled-tenant")
+	require.NoError(t, err)
+	assert.Same(t, built, cached, "a build that follows the reset must stay cached")
+}
+
+// TestWebAuthnFactory_ResetDuringFailedBuildCachesNothing covers the error
+// path: a build that races a reset and fails to read settings caches nothing,
+// surfaces the typed error unchanged, and a later call builds afresh.
+func TestWebAuthnFactory_ResetDuringFailedBuildCachesNothing(t *testing.T) {
+	inner := newFakeWebAuthnSettings()
+	inner.set("failing-tenant", &iam.TenantWebAuthnConfig{RPID: "new.example.com"})
+	gated := newGatedWebAuthnSettings(inner)
+	gated.gatedErr = &iam.WebAuthnSettingsReadError{TenantID: "failing-tenant", Cause: errSettingsUnavailable}
+	factory := buildLiveWebAuthnFactoryWithSettings(t, gated)
+	ctx := context.Background()
+
+	done := make(chan serviceResult, 1)
+	go func() {
+		svc, err := factory.ServiceFor(ctx, "failing-tenant")
+		done <- serviceResult{svc: svc, err: err}
+	}()
+	<-gated.entered
+	factory.OnTenantSettingsChanged("failing-tenant")
+	close(gated.release)
+
+	failed := <-done
+	require.Error(t, failed.err)
+	assert.Nil(t, failed.svc)
+	var readErr *iam.WebAuthnSettingsReadError
+	require.ErrorAs(t, failed.err, &readErr)
+	assert.Equal(t, "failing-tenant", readErr.TenantID)
+
+	rebuilt, err := factory.ServiceFor(ctx, "failing-tenant")
+	require.NoError(t, err, "a failed build must leave nothing cached")
+	assert.Equal(t, "new.example.com", rebuilt.Config().RPID)
+}
+
+// settingsUnavailableError is the cause the failing settings read wraps.
+type settingsUnavailableError struct{}
+
+func (settingsUnavailableError) Error() string { return "tenant settings unavailable" }
+
+var errSettingsUnavailable = settingsUnavailableError{}

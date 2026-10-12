@@ -15,10 +15,13 @@ package iam
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 )
@@ -182,55 +185,47 @@ func assertionWithChallenge(challenge string) *protocol.ParsedCredentialAssertio
 // WebAuthnLoginSessionError. Sessions are keyed exactly as BeginLogin stores
 // them and resolved exactly as FinishLogin reads them.
 func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
-	m := &XKMSWebAuthnManager{}
+	m := newClockedManager(handoffTestNow)
 	const tenant = "tenant-1"
 
-	// Two concurrent same-tenant ceremonies, each with its own challenge and
-	// session id — exactly what BeginLogin records.
-	type ceremony struct {
-		challenge string
-		sessionID string
-	}
-	ceremonies := []ceremony{
-		{challenge: "challenge-alice", sessionID: "xkms-session-alice"},
-		{challenge: "challenge-bob", sessionID: "xkms-session-bob"},
-	}
-	for _, c := range ceremonies {
-		m.loginSessions.Store(m.loginKey(tenant, c.challenge), loginHandoff{
-			sessionID:  c.sessionID,
-			userHandle: []byte(c.challenge), // distinct handle per ceremony
+	// Many concurrent same-tenant ceremonies, each with its own challenge and
+	// session id, exactly what BeginLogin records. Each worker resolves its
+	// own challenge; none may ever see another ceremony's handoff.
+	const workers = 64
+	challengeOf := func(i int) string { return fmt.Sprintf("challenge-%d", i) }
+	sessionOf := func(i int) string { return fmt.Sprintf("xkms-session-%d", i) }
+	for i := 0; i < workers; i++ {
+		seedLoginHandoff(m, tenant, challengeOf(i), loginHandoff{
+			sessionID:  sessionOf(i),
+			userHandle: []byte(challengeOf(i)), // distinct handle per ceremony
+			expiresAt:  handoffTestNow.Add(time.Minute),
 		})
 	}
 
-	// Each ceremony's assertion must resolve to its own session, never the
-	// other's. Drive many concurrent resolutions to surface any cross-wiring.
-	const workers = 64
+	start := make(chan struct{})
 	var wg sync.WaitGroup
-	errCh := make(chan error, workers*len(ceremonies))
+	errCh := make(chan error, workers)
 	for i := 0; i < workers; i++ {
-		for _, c := range ceremonies {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				handoff, key, err := m.resolveLoginSession(tenant, assertionWithChallenge(c.challenge))
-				if err != nil {
-					errCh <- fmt.Errorf("challenge %q: unexpected error: %w", c.challenge, err)
-					return
-				}
-				if handoff.sessionID != c.sessionID {
-					errCh <- fmt.Errorf("challenge %q resolved to session %q, want %q (cross-wired)", c.challenge, handoff.sessionID, c.sessionID)
-					return
-				}
-				if string(handoff.userHandle) != c.challenge {
-					errCh <- fmt.Errorf("challenge %q resolved to user handle %q, want %q (cross-wired)", c.challenge, handoff.userHandle, c.challenge)
-					return
-				}
-				if key != m.loginKey(tenant, c.challenge) {
-					errCh <- fmt.Errorf("challenge %q resolved to key %q, want %q", c.challenge, key, m.loginKey(tenant, c.challenge))
-				}
-			}()
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			challenge := challengeOf(i)
+			handoff, err := m.resolveLoginSession(tenant, assertionWithChallenge(challenge))
+			if err != nil {
+				errCh <- fmt.Errorf("challenge %q: unexpected error: %w", challenge, err)
+				return
+			}
+			if handoff.sessionID != sessionOf(i) {
+				errCh <- fmt.Errorf("challenge %q resolved to session %q, want %q (cross-wired)", challenge, handoff.sessionID, sessionOf(i))
+				return
+			}
+			if string(handoff.userHandle) != challenge {
+				errCh <- fmt.Errorf("challenge %q resolved to user handle %q, want %q (cross-wired)", challenge, handoff.userHandle, challenge)
+			}
+		}()
 	}
+	close(start)
 	wg.Wait()
 	close(errCh)
 	for err := range errCh {
@@ -238,27 +233,287 @@ func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
 	}
 
 	// Unknown challenge must fail closed with the typed error.
-	if _, _, err := m.resolveLoginSession(tenant, assertionWithChallenge("challenge-unknown")); err == nil {
-		t.Fatal("expected WebAuthnLoginSessionError for unknown challenge, got nil")
-	} else {
-		var sessErr *WebAuthnLoginSessionError
-		if !errors.As(err, &sessErr) {
-			t.Fatalf("expected *WebAuthnLoginSessionError, got %T: %v", err, err)
-		}
-	}
+	assertLoginSessionError(t, m, tenant, assertionWithChallenge("challenge-unknown"))
 
-	// Same challenge under a different tenant must not match — the tenant is
+	// Same challenge under a different tenant must not match: the tenant is
 	// part of the composite key.
-	if _, _, err := m.resolveLoginSession("tenant-2", assertionWithChallenge("challenge-alice")); err == nil {
-		t.Fatal("expected fail-closed for cross-tenant challenge reuse, got nil")
-	}
+	seedLoginHandoff(m, tenant, "challenge-alice", loginHandoff{
+		sessionID: "xkms-session-alice",
+		expiresAt: handoffTestNow.Add(time.Minute),
+	})
+	assertLoginSessionError(t, m, "tenant-2", assertionWithChallenge("challenge-alice"))
 
 	// Empty / temp challenge must fail closed, never falling through to a scan.
-	if _, _, err := m.resolveLoginSession(tenant, assertionWithChallenge("")); err == nil {
-		t.Fatal("expected WebAuthnLoginSessionError for empty challenge, got nil")
+	assertLoginSessionError(t, m, tenant, assertionWithChallenge(""))
+	assertLoginSessionError(t, m, tenant, nil)
+}
+
+// handoffTestNow is the fixed instant the handoff tests run their clock at.
+var handoffTestNow = time.Date(2026, time.October, 12, 9, 0, 0, 0, time.UTC)
+
+// newClockedManager returns a manager whose clock is pinned to now.
+func newClockedManager(now time.Time) *XKMSWebAuthnManager {
+	return &XKMSWebAuthnManager{now: func() time.Time { return now }}
+}
+
+// seedLoginHandoff stores a handoff exactly where BeginLogin would.
+func seedLoginHandoff(m *XKMSWebAuthnManager, tenantID, challenge string, handoff loginHandoff) {
+	m.loginSessions.Store(m.loginKey(tenantID, challenge), &handoff)
+}
+
+// hasLoginHandoff reports whether a handoff is stored for the challenge.
+func hasLoginHandoff(m *XKMSWebAuthnManager, tenantID, challenge string) bool {
+	_, ok := m.loginSessions.Load(m.loginKey(tenantID, challenge))
+	return ok
+}
+
+// assertLoginSessionError asserts that resolving parsed fails closed with
+// the typed *WebAuthnLoginSessionError.
+func assertLoginSessionError(t *testing.T, m *XKMSWebAuthnManager, tenantID string, parsed *protocol.ParsedCredentialAssertionData) {
+	t.Helper()
+	_, err := m.resolveLoginSession(tenantID, parsed)
+	var sessErr *WebAuthnLoginSessionError
+	if !errors.As(err, &sessErr) {
+		t.Fatalf("expected *WebAuthnLoginSessionError, got %T: %v", err, err)
 	}
-	if _, _, err := m.resolveLoginSession(tenant, nil); err == nil {
-		t.Fatal("expected WebAuthnLoginSessionError for nil assertion, got nil")
+}
+
+// TestXKMSWebAuthnManager_LoginSession_ConsumedOnce pins go-quicbaas#384:
+// concurrent finishes for one challenge must not all resolve the handoff.
+// Exactly one wins; every other finish fails closed.
+func TestXKMSWebAuthnManager_LoginSession_ConsumedOnce(t *testing.T) {
+	m := newClockedManager(handoffTestNow)
+	const tenant = "tenant-1"
+	const challenge = "challenge-shared"
+	seedLoginHandoff(m, tenant, challenge, loginHandoff{
+		sessionID:  "xkms-session-shared",
+		userHandle: []byte{0x01},
+		expiresAt:  handoffTestNow.Add(time.Minute),
+	})
+
+	const workers = 32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := m.resolveLoginSession(tenant, assertionWithChallenge(challenge))
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	successes, refusals := 0, 0
+	for err := range errs {
+		var sessErr *WebAuthnLoginSessionError
+		switch {
+		case err == nil:
+			successes++
+		case errors.As(err, &sessErr):
+			refusals++
+		default:
+			t.Errorf("unexpected error type %T: %v", err, err)
+		}
+	}
+	if successes != 1 || refusals != workers-1 {
+		t.Fatalf("successes = %d, refusals = %d; want 1 and %d", successes, refusals, workers-1)
+	}
+	if hasLoginHandoff(m, tenant, challenge) {
+		t.Fatal("a consumed handoff must not remain stored")
+	}
+}
+
+// TestXKMSWebAuthnManager_FinishLogin_FailureReclaimsHandoff verifies that a
+// finish which fails after resolving its handoff leaves nothing behind: the
+// user restarts the ceremony instead of the handoff leaking for the life of
+// the process.
+func TestXKMSWebAuthnManager_FinishLogin_FailureReclaimsHandoff(t *testing.T) {
+	settingsErr := &WebAuthnSettingsReadError{TenantID: "tenant-1"}
+	// A failing settings provider makes ServiceFor fail inside resolveConfig,
+	// before it touches the zero-value qrdb client.
+	f := newTestWebAuthnFactory(t, stubWebAuthnSettings{err: settingsErr})
+	m, err := NewXKMSWebAuthnManager(f)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	m.now = func() time.Time { return handoffTestNow }
+
+	const tenant = "tenant-1"
+	const challenge = "Y2hhbGxlbmdlLWZhaWxpbmc"
+	seedLoginHandoff(m, tenant, challenge, loginHandoff{
+		sessionID:  "xkms-session-failing",
+		userHandle: []byte{0x01},
+		expiresAt:  handoffTestNow.Add(time.Minute),
+	})
+
+	credential := assertionMapWithChallenge(t, challenge)
+	_, err = m.FinishLogin(context.Background(), tenant, credential)
+	var readErr *WebAuthnSettingsReadError
+	if !errors.As(err, &readErr) {
+		t.Fatalf("expected *WebAuthnSettingsReadError from ServiceFor, got %T: %v", err, err)
+	}
+	if hasLoginHandoff(m, tenant, challenge) {
+		t.Fatal("a failed finish must reclaim its handoff")
+	}
+}
+
+// assertionMapWithChallenge builds a wire-shaped assertion that parses
+// cleanly and echoes challenge in its collected client data.
+func assertionMapWithChallenge(t *testing.T, challenge string) map[string]interface{} {
+	t.Helper()
+	clientData, err := json.Marshal(map[string]string{
+		"type":      string(protocol.AssertCeremony),
+		"challenge": challenge,
+		"origin":    "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("marshal client data: %v", err)
+	}
+	// rpIdHash (32 bytes) || flags (user present) || signCount (4 bytes).
+	authData := make([]byte, 37)
+	authData[32] = 0x01
+	credential := map[string]interface{}{
+		"id":    "Y3JlZA",
+		"rawId": "Y3JlZA",
+		"type":  "public-key",
+		"response": map[string]interface{}{
+			"clientDataJSON":    base64.RawURLEncoding.EncodeToString(clientData),
+			"authenticatorData": base64.RawURLEncoding.EncodeToString(authData),
+			"signature":         "c2ln",
+		},
+	}
+	parsed, err := parseCredentialAssertionMap(credential)
+	if err != nil {
+		t.Fatalf("test assertion must parse: %v", err)
+	}
+	if parsed.Response.CollectedClientData.Challenge != challenge {
+		t.Fatalf("parsed challenge %q, want %q", parsed.Response.CollectedClientData.Challenge, challenge)
+	}
+	return credential
+}
+
+// TestXKMSWebAuthnManager_LoginSession_ExpiredRefused verifies an expired
+// handoff is refused with the typed error and consumed by the attempt.
+func TestXKMSWebAuthnManager_LoginSession_ExpiredRefused(t *testing.T) {
+	m := newClockedManager(handoffTestNow)
+	const tenant = "tenant-1"
+	const challenge = "challenge-expired"
+	seedLoginHandoff(m, tenant, challenge, loginHandoff{
+		sessionID: "xkms-session-expired",
+		expiresAt: handoffTestNow.Add(-time.Second),
+	})
+
+	assertLoginSessionError(t, m, tenant, assertionWithChallenge(challenge))
+	if hasLoginHandoff(m, tenant, challenge) {
+		t.Fatal("an expired handoff must be consumed by the refused attempt")
+	}
+
+	// A handoff expiring exactly now is still within its ceremony window.
+	seedLoginHandoff(m, tenant, "challenge-boundary", loginHandoff{
+		sessionID: "xkms-session-boundary",
+		expiresAt: handoffTestNow,
+	})
+	if _, err := m.resolveLoginSession(tenant, assertionWithChallenge("challenge-boundary")); err != nil {
+		t.Fatalf("handoff expiring at now must resolve, got %v", err)
+	}
+}
+
+// TestXKMSWebAuthnManager_ReclaimExpiredLoginHandoffs verifies the sweep
+// removes only expired handoffs.
+func TestXKMSWebAuthnManager_ReclaimExpiredLoginHandoffs(t *testing.T) {
+	m := newClockedManager(handoffTestNow)
+	const tenant = "tenant-1"
+	seedLoginHandoff(m, tenant, "challenge-stale", loginHandoff{expiresAt: handoffTestNow.Add(-time.Minute)})
+	seedLoginHandoff(m, tenant, "challenge-live", loginHandoff{expiresAt: handoffTestNow.Add(time.Minute)})
+
+	m.reclaimExpiredLoginHandoffs(handoffTestNow)
+
+	if hasLoginHandoff(m, tenant, "challenge-stale") {
+		t.Fatal("the sweep must reclaim an expired handoff")
+	}
+	if !hasLoginHandoff(m, tenant, "challenge-live") {
+		t.Fatal("the sweep must keep a live handoff")
+	}
+}
+
+// TestXKMSWebAuthnManager_SweepLoginHandoffsIfDue verifies the sweep runs at
+// most once per TTL, observed through the recorded sweep time.
+func TestXKMSWebAuthnManager_SweepLoginHandoffsIfDue(t *testing.T) {
+	m := newClockedManager(handoffTestNow)
+	const tenant = "tenant-1"
+	const ttl = time.Minute
+
+	if !m.sweepLoginHandoffsIfDue(handoffTestNow, ttl) {
+		t.Fatal("the first sweep must run")
+	}
+	if got := m.lastHandoffSweep.Load(); got != handoffTestNow.UnixNano() {
+		t.Fatalf("last sweep = %d, want %d", got, handoffTestNow.UnixNano())
+	}
+
+	// Within the TTL the sweep must not run, so this expired handoff stays.
+	seedLoginHandoff(m, tenant, "challenge-stale", loginHandoff{expiresAt: handoffTestNow.Add(-time.Second)})
+	within := handoffTestNow.Add(ttl - time.Nanosecond)
+	if m.sweepLoginHandoffsIfDue(within, ttl) {
+		t.Fatal("a sweep within the TTL must not run")
+	}
+	if got := m.lastHandoffSweep.Load(); got != handoffTestNow.UnixNano() {
+		t.Fatalf("a skipped sweep moved the last sweep time to %d", got)
+	}
+	if !hasLoginHandoff(m, tenant, "challenge-stale") {
+		t.Fatal("a skipped sweep must not reclaim anything")
+	}
+
+	// One TTL later the sweep runs again and reclaims the expired handoff.
+	due := handoffTestNow.Add(ttl)
+	if !m.sweepLoginHandoffsIfDue(due, ttl) {
+		t.Fatal("a sweep one TTL later must run")
+	}
+	if got := m.lastHandoffSweep.Load(); got != due.UnixNano() {
+		t.Fatalf("last sweep = %d, want %d", got, due.UnixNano())
+	}
+	if hasLoginHandoff(m, tenant, "challenge-stale") {
+		t.Fatal("the due sweep must reclaim the expired handoff")
+	}
+}
+
+// TestLoginHandoffTTL verifies the handoff lifetime follows the configured
+// ceremony timeout and falls back to the library default when it is unset.
+func TestLoginHandoffTTL(t *testing.T) {
+	if got := loginHandoffTTL(90 * time.Second); got != 90*time.Second {
+		t.Fatalf("configured timeout: ttl = %v, want 90s", got)
+	}
+	if got := loginHandoffTTL(0); got != defaultLoginCeremonyTimeout {
+		t.Fatalf("unset timeout: ttl = %v, want %v", got, defaultLoginCeremonyTimeout)
+	}
+	if defaultLoginCeremonyTimeout != 5*time.Minute {
+		t.Fatalf("default = %v, want go-webauthn's 5m login default", defaultLoginCeremonyTimeout)
+	}
+	if got := loginHandoffTTL(-time.Second); got != defaultLoginCeremonyTimeout {
+		t.Fatalf("negative timeout: ttl = %v, want %v", got, defaultLoginCeremonyTimeout)
+	}
+}
+
+// TestXKMSWebAuthnManager_NewLoginHandoff verifies the handoff BeginLogin
+// stores expires one TTL after the manager's clock.
+func TestXKMSWebAuthnManager_NewLoginHandoff(t *testing.T) {
+	m := newClockedManager(handoffTestNow)
+
+	h := m.newLoginHandoff("xkms-session-1", []byte{0x01}, 2*time.Minute)
+	if want := handoffTestNow.Add(2 * time.Minute); !h.expiresAt.Equal(want) {
+		t.Fatalf("expiresAt = %v, want %v", h.expiresAt, want)
+	}
+	if h.sessionID != "xkms-session-1" || string(h.userHandle) != "\x01" {
+		t.Fatalf("handoff = %+v, want the session id and handle it was given", h)
+	}
+
+	h = m.newLoginHandoff("xkms-session-2", nil, 0)
+	if want := handoffTestNow.Add(defaultLoginCeremonyTimeout); !h.expiresAt.Equal(want) {
+		t.Fatalf("unset timeout: expiresAt = %v, want %v", h.expiresAt, want)
 	}
 }
 
@@ -270,23 +525,17 @@ func TestXKMSWebAuthnManager_LoginSession_ConcurrentResolution(t *testing.T) {
 // triggered the browser's native passkey picker). This asserts the handoff
 // round-trips the exact handle bytes that resolveLoginSession returns.
 func TestXKMSWebAuthnManager_LoginHandoff_CarriesUserHandle(t *testing.T) {
-	m := &XKMSWebAuthnManager{}
+	m := newClockedManager(handoffTestNow)
 	const tenant = "tenant-1"
 	const challenge = "challenge-xyz"
 	wantHandle := []byte{0x01, 0x02, 0x03, 0x04}
 
 	// Mirror exactly what BeginLogin stores for a user-identified ceremony.
-	m.loginSessions.Store(m.loginKey(tenant, challenge), loginHandoff{
-		sessionID:  "xkms-session-1",
-		userHandle: wantHandle,
-	})
+	seedLoginHandoff(m, tenant, challenge, m.newLoginHandoff("xkms-session-1", wantHandle, time.Minute))
 
-	handoff, key, err := m.resolveLoginSession(tenant, assertionWithChallenge(challenge))
+	handoff, err := m.resolveLoginSession(tenant, assertionWithChallenge(challenge))
 	if err != nil {
 		t.Fatalf("unexpected error resolving handoff: %v", err)
-	}
-	if key != m.loginKey(tenant, challenge) {
-		t.Fatalf("resolved key %q, want %q", key, m.loginKey(tenant, challenge))
 	}
 	if handoff.sessionID != "xkms-session-1" {
 		t.Fatalf("resolved session %q, want %q", handoff.sessionID, "xkms-session-1")

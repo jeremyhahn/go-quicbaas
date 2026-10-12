@@ -1025,7 +1025,20 @@ func (s *IdentityStore) UpdateRole(ctx context.Context, tenantID, roleID string,
 	return role, nil
 }
 
+// deleteRoleCascadePage is how many users DeleteRole lists per page while
+// stripping a role from its holders. It matches userPage in DeleteTenant so
+// both cascades read the user store in the same page size.
+const deleteRoleCascadePage = 256
+
 // DeleteRole deletes a role from the tenant.
+//
+// Before the role is deleted, it is stripped from every holder the user
+// store lists, page by page. A failure partway, listing or updating, returns
+// at once and leaves the role in place, so a retry re-runs the cascade.
+//
+// Known gap (go-quicbaas#435): a role deleted through the embedded qrdb
+// node's own role surface never reaches this method, so holders keep the
+// deleted role id. That cascade belongs upstream in qrdb.
 func (s *IdentityStore) DeleteRole(ctx context.Context, tenantID, roleID string) error {
 	if err := validateTenantID(tenantID); err != nil {
 		return err
@@ -1034,38 +1047,53 @@ func (s *IdentityStore) DeleteRole(ctx context.Context, tenantID, roleID string)
 		return err
 	}
 
-	// List all users and remove this role from them
-	opts := ListOptions{Limit: 1000}
-	users, err := s.userStorage.ListUsers(ctx, tenantID, opts)
-	if err != nil {
-		return api.NewOperationFailedError("list users", err)
-	}
-
-	for _, user := range users {
-		// Check if user has this role
-		hasRole := false
-		newRoleIDs := make([]string, 0, len(user.Roles))
-		for _, rid := range user.Roles {
-			if rid == roleID {
-				hasRole = true
-			} else {
-				newRoleIDs = append(newRoleIDs, rid)
-			}
+	// Strip the role from every holder before deleting it. Stripping a role
+	// leaves the user in the listing, so the offset must advance past each
+	// page; DeleteTenant keeps Offset at 0 only because it deletes the users
+	// it lists. Do not fold this loop into that idiom.
+	for offset := 0; ; {
+		users, err := s.userStorage.ListUsers(ctx, tenantID, ListOptions{
+			Limit:  deleteRoleCascadePage,
+			Offset: offset,
+		})
+		if err != nil {
+			return api.NewOperationFailedError("list users at offset "+strconv.Itoa(offset), err)
 		}
-
-		if hasRole {
-			user.Roles = newRoleIDs
-			user.Updated = time.Now().UTC()
-			if err := s.userStorage.UpdateUser(ctx, user); err != nil {
-				return api.NewOperationFailedError("update user "+user.ID, err)
-			}
+		if err := s.stripRoleFromUsers(ctx, users, roleID); err != nil {
+			return err
 		}
+		if len(users) < deleteRoleCascadePage {
+			break
+		}
+		offset += len(users)
 	}
 
 	if err := s.roleStorage.DeleteRole(ctx, tenantID, roleID); err != nil {
 		return api.NewOperationFailedError("delete role", err)
 	}
 
+	return nil
+}
+
+// stripRoleFromUsers removes roleID from each user that holds it and saves
+// the change. Users that do not hold the role are left untouched.
+func (s *IdentityStore) stripRoleFromUsers(ctx context.Context, users []*User, roleID string) error {
+	for _, user := range users {
+		if !slices.Contains(user.Roles, roleID) {
+			continue
+		}
+		newRoleIDs := make([]string, 0, len(user.Roles)-1)
+		for _, rid := range user.Roles {
+			if rid != roleID {
+				newRoleIDs = append(newRoleIDs, rid)
+			}
+		}
+		user.Roles = newRoleIDs
+		user.Updated = time.Now().UTC()
+		if err := s.userStorage.UpdateUser(ctx, user); err != nil {
+			return api.NewOperationFailedError("update user "+user.ID, err)
+		}
+	}
 	return nil
 }
 

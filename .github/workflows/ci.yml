@@ -2,9 +2,12 @@
 #
 # TIERED CI adopted 2026-10-11 (handbook sdlc §5a; go-quicbaas#1266). Two tiers:
 #
-#   PR tier   -- lint, test (unit), build, security, plus the merge and
-#                snapshot gate infrastructure. Runs on every event.
-#   Full tier -- race, web, docker, and the FIPS build step inside `build`.
+#   PR tier   -- lint, build, security, unit-test legs default and sdk-go
+#                (`test`), plus the merge and snapshot gate infrastructure.
+#                Runs on every event.
+#   Full tier -- race, web, docker, unit-test legs standard, lean, minimal
+#                and coverage (`test-full`, #1272), and the FIPS build step
+#                inside `build`.
 #                Runs on push to main, on workflow_dispatch, and on a
 #                pull_request labelled `ci:full`. The rest of the full tier
 #                lives in integration.yml (same selection) and nightly.yml
@@ -19,11 +22,13 @@
 #   github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
 #   contains(github.event.pull_request.labels.*.name, 'ci:full')
 #
-# The pull_request trigger deliberately has no `labeled` type -- every task:*
-# label change would then cost a CI run -- so adding `ci:full` to a pull request
-# takes effect on its next push or branch update, not at once. CI Gate passes a
-# full-tier job the tier skipped and fails one that was selected and skipped or
-# failed.
+# The pull_request trigger carries `labeled` (#1272, superseding #1266's
+# default types) so that adding `ci:full` starts a full-tier run. Any other
+# label also starts a run, which re-runs the PR tier on the same commit; the
+# ref-keyed `concurrency:` group below cancels the run it supersedes, so that
+# costs one PR tier, not two. CI Gate tags every job `pr` or `full`: it passes
+# a full-tier job the tier skipped and fails every other skip or failure.
+# test/buildgates asserts the tags and the `if:` agree.
 #
 # v1.15 adopted 2026-10-05 (#1156; automatethethings#209): every job starts at
 # once -- test, race, security, snapshot and docker no longer wait on lint +
@@ -84,10 +89,12 @@ on:
     # only the latest trunk state is validated. automerge v7's merge trains are
     # PRs into main and get their CI from pull_request.
     branches: [main]
-  # Default types only, no `labeled` (#1266): adding `ci:full` selects the full
-  # tier from the pull request's next push or branch update.
+  # `labeled` so that adding `ci:full` starts a full-tier run (#1272). Any
+  # other label also starts a run, which re-runs the PR tier on the same
+  # commit.
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   # Gitea has no API to re-run a finished run (ci-template v1.3).
   workflow_dispatch:
 
@@ -296,6 +303,15 @@ jobs:
   #
   # Each leg runs one `make` target; what each pass covers and why it exists is
   # recorded on its matrix entry below.
+  #
+  # TIERED (#1272): the legs are split across two jobs, `test` (PR tier:
+  # default, sdk-go) and `test-full` (full tier: standard, lean, minimal,
+  # coverage). Two jobs rather than one matrix with a per-leg condition,
+  # because a job-level `if:` is evaluated before the matrix expands and
+  # cannot see `matrix.*`, and a step-level condition would still start a
+  # runner for every leg -- the slot this tier exists to save. Two jobs also
+  # give CI Gate one result per tier, so each `check` line carries one tag.
+  # The status names (`Unit Tests (<leg>)`) are unchanged.
   test:
     name: Unit Tests (${{ matrix.leg }})
     runs-on: ubuntu-latest
@@ -310,6 +326,49 @@ jobs:
           # `make test` compiles the MAXIMAL feature set.
           - leg: default
             target: test
+          # `make test` covers ./pkg/... ./cmd/... in the ROOT module only, so
+          # the separate sdk/go module -- the one downstream consumers actually
+          # import -- had no CI coverage at all. It runs with -race and
+          # excludes sdk/go/test/, whose docker-compose harness needs Docker; it
+          # runs off the gate in nightly.yml's sdk-go-integration job.
+          - leg: sdk-go
+            target: test-sdk-go
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          # fetch-depth: 0 -- required by the merge-result step below (#436).
+          fetch-depth: 0
+
+      # #436: build merge(base, head), not head. The base commit is the one the
+      # `merge` job pinned, so every job validates the same tree.
+      - name: Validate the merge result, not the head
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests (make ${{ matrix.target }})
+        run: make ${{ matrix.target }}
+
+  # The full-tier unit-test legs (#1272). Same steps as `test`, plus the
+  # coverage leg's threshold, upload and PR comment.
+  test-full:
+    name: Unit Tests (${{ matrix.leg }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: [merge]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
           # `make test` compiles the maximal set, so a file gated on a
           # conjunction of an enabled and a disabled tag -- rag_stub.go is
           # `rest && !rag` -- is compiled by neither it nor `make test-minimal`
@@ -339,15 +398,9 @@ jobs:
           # red.
           - leg: minimal
             target: test-minimal
-          # `make test` covers ./pkg/... ./cmd/... in the ROOT module only, so
-          # the separate sdk/go module -- the one downstream consumers actually
-          # import -- had no CI coverage at all. It runs with -race and
-          # excludes sdk/go/test/, whose docker-compose harness needs Docker; it
-          # runs off the gate in nightly.yml's sdk-go-integration job.
-          - leg: sdk-go
-            target: test-sdk-go
           # Coverage report; this leg alone checks the threshold, uploads the
-          # reports and comments on the PR.
+          # reports and comments on the PR. Full tier (#1272): the threshold
+          # holds on main and on a `ci:full` pull request, not on every push.
           - leg: coverage
             target: coverage
     steps:
@@ -994,71 +1047,64 @@ jobs:
   # v1.9: fips and trivy moved to nightly.yml (known-red/long-horizon jobs off
   # the push path -- owner ruling 2026-08-20); they gate nothing here.
   #
-  # Tiered CI (sdlc §5a, #1266): the gate fails a full-tier job that ran and
-  # failed, and passes one the tier skipped. The job name must stay `CI Gate`:
+  # Tiered CI (sdlc §5a, #1266, #1272): every `check` line is tagged `pr` or
+  # `full`. Anything other than `success`, including `cancelled`, fails, with
+  # one exception: `skipped` passes for a job tagged `full` when this run did
+  # not select the full tier (FULL_TIER is the same expression as the
+  # full-tier jobs' `if:`). A PR-tier job never skips legitimately, and in a
+  # full-tier run neither does a full-tier job, so `skipped` there still
+  # fails. A new job goes into `needs` AND a tagged `check` line;
+  # test/buildgates asserts the pairing. The job name must stay `CI Gate`:
   # branch protection requires `CI / CI Gate (pull_request)`.
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [merge, lint, test, race, security, build, web, snapshot, docker]
+    needs: [merge, lint, test, test-full, race, security, build, web, snapshot, docker]
     steps:
       - name: Fail closed on any non-success
         env:
-          # The full-tier condition from the header, evaluated here so the gate
-          # can tell a skip the tier chose from a skip it did not.
-          FULL_TIER: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && 'true' || 'false' }}
+          FULL_TIER: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: |
-          echo "full tier selected: $FULL_TIER (event=${{ github.event_name }})"
-          # PR-tier jobs carry no `if:`, so they run on every event. skipped !=
-          # failed, but BOTH fail the gate: a skipped job means the merge-result
-          # job it needs failed, and NAMING it as a skip prevents the go-qrdb#42
-          # class -- a red that reads as a test failure while the tests never
-          # ran at all.
-          check() { case "$2" in
-            success) echo "OK   $1";;
-            skipped) echo "SKIP $1 (did not run -- see Merge Result and its job)"; BAD=1;;
-            *)       echo "FAIL $1 ($2)"; BAD=1;;
-          esac; }
-          # Full-tier jobs (race, web, docker) carry the full-tier `if:`. A skip
-          # passes only when this event did not select the full tier. When it
-          # did, a skip means the job never ran when it should have (race and
-          # web also skip when merge fails) -- fail closed rather than pass
-          # vacuously.
-          check_full() { case "$2" in
-            success) echo "OK   $1";;
-            skipped)
-              if [ "$FULL_TIER" = true ]; then
-                echo "SKIP $1 (full tier selected but the job did not run -- see Merge Result and its job)"; BAD=1
-              else
-                echo "OK   $1 (full tier not selected for this event)"
-              fi;;
-            *)       echo "FAIL $1 ($2)"; BAD=1;;
-          esac; }
           BAD=0
-          # merge is the #436 merge-result check, and it gets its own case
-          # rather than the generic one. It carries no `if:`, so it never
-          # legitimately skips: a non-success means either that this branch does
-          # not merge into its base, or that the check could not be performed at
-          # all. Both fail closed -- but a MERGE CONFLICT reported as
-          # "SKIP lint (upstream stage failed)" is the reads-like-infrastructure
-          # misfiling this whole change exists to prevent, so the gate names it.
-          case "${{ needs.merge.result }}" in
-            success) echo "OK   merge" ;;
-            *) echo "FAIL merge (${{ needs.merge.result }}) -- this branch does not merge into its base, or the merge-result check could not run. Open the 'Merge Result' job: a conflict lists the conflicting paths, an infrastructure failure says CI INFRASTRUCTURE on its first line."; BAD=1 ;;
-          esac
-          check lint     "${{ needs.lint.result }}"
-          check test     "${{ needs.test.result }}"
-          check security "${{ needs.security.result }}"
-          check build    "${{ needs.build.result }}"
+          echo "full tier selected: ${FULL_TIER} (event=${{ github.event_name }})"
+          # skipped != failed, but a skip the tier did not choose fails the
+          # gate too: it means the merge-result job it needs failed, and
+          # NAMING it as a skip prevents the go-qrdb#42 class -- a red that
+          # reads as a test failure while the tests never ran at all.
+          check() { # <job> <result> <pr|full>
+            case "$2" in success) echo "OK   $1";;
+              skipped)
+                if [ "$3" = full ] && [ "${FULL_TIER}" != true ]; then
+                  echo "SKIP $1 (full tier not selected)"
+                else
+                  echo "FAIL $1 (skipped -- did not run; see Merge Result and its job)"; BAD=1
+                fi;;
+              *) echo "FAIL $1 ($2)"; BAD=1;;
+            esac
+          }
+          # merge is the #436 merge-result check. It carries no `if:`, so it
+          # never legitimately skips. A non-success means this branch does not
+          # merge into its base, or the check could not run at all -- the gate
+          # names which job to open, so a MERGE CONFLICT does not read as
+          # "SKIP lint".
+          check merge     "${{ needs.merge.result }}" pr
+          if [ "${{ needs.merge.result }}" != success ]; then
+            echo "     Open the 'Merge Result' job: a conflict lists the conflicting paths, an infrastructure failure says CI INFRASTRUCTURE on its first line."
+          fi
+          check lint      "${{ needs.lint.result }}" pr
+          check test      "${{ needs.test.result }}" pr
+          check security  "${{ needs.security.result }}" pr
+          check build     "${{ needs.build.result }}" pr
           # snapshot runs on every event, so a skip here means merge failed and
           # nothing measured what a verification's tree holds (#982).
-          check snapshot "${{ needs.snapshot.result }}"
-          check_full race   "${{ needs.race.result }}"
+          check snapshot  "${{ needs.snapshot.result }}" pr
+          check test-full "${{ needs.test-full.result }}" full
+          check race      "${{ needs.race.result }}" full
           # web gates nothing downstream, so it never causes another job to
           # skip (#551).
-          check_full web    "${{ needs.web.result }}"
+          check web       "${{ needs.web.result }}" full
           # docker has no `needs` (v1.14), so on a full-tier event it runs even
           # when merge fails; a skip there is never legitimate.
-          check_full docker "${{ needs.docker.result }}"
+          check docker    "${{ needs.docker.result }}" full
           exit $BAD

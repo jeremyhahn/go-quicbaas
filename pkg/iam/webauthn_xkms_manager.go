@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 
@@ -62,10 +64,13 @@ import (
 //     begin time) and verifies the assertion against that user, so the
 //     begin→finish session type is consistent end to end.
 //
-// The manager keeps a small in-memory map of (tenantID, challenge) to
-// xkms session id. The map is concurrency-safe via sync.Map and lives
-// for the lifetime of the daemon; ceremony sessions self-expire on
-// xkms's side after the configured timeout.
+// The manager keeps a small in-memory map of (tenantID, challenge) to a
+// login handoff. A handoff is consumed exactly once, by the first finish
+// that presents its challenge, whether that finish succeeds or fails. It
+// also expires with the ceremony timeout, and BeginLogin periodically
+// sweeps the expired handoffs of ceremonies that were never finished, so
+// the map stays bounded by the logins in flight. Ceremony sessions
+// self-expire on xkms's side after the same timeout.
 type XKMSWebAuthnManager struct {
 	factory *WebAuthnServiceFactory
 
@@ -92,16 +97,48 @@ type XKMSWebAuthnManager struct {
 	// session id and the resolved user's WebAuthn handle so FinishLogin
 	// can verify the assertion against the SAME user the ceremony began
 	// for (the user-identified flow), not a discoverable nil user.
-	loginSessions sync.Map // map[string]loginHandoff
+	// resolveLoginSession consumes a handoff with LoadAndDelete, so two
+	// finishes for one challenge can never both proceed, and refuses one
+	// whose expiresAt has passed.
+	// Entries are pointers so the sweep can CompareAndDelete them; a
+	// loginHandoff holds a slice and is not comparable.
+	loginSessions sync.Map // map[string]*loginHandoff
+
+	// lastHandoffSweep is the time, in Unix nanoseconds, of the last sweep
+	// of expired login handoffs. BeginLogin sweeps at most once per TTL, and
+	// claims each sweep with a CompareAndSwap so concurrent logins never
+	// sweep twice.
+	lastHandoffSweep atomic.Int64
+
+	// now is the clock that stamps and checks handoff expiry. It is
+	// injectable for deterministic tests.
+	now func() time.Time
 }
 
 // loginHandoff is the per-ceremony record stashed at BeginLogin time and
 // recovered at FinishLogin time. It binds the xkms ceremony session id to
 // the WebAuthn handle of the user the email-first ceremony resolved, so
-// the finish step verifies the assertion against that exact user.
+// the finish step verifies the assertion against that exact user. The
+// handoff is refused once expiresAt has passed.
 type loginHandoff struct {
 	sessionID  string
 	userHandle []byte
+	expiresAt  time.Time
+}
+
+// defaultLoginCeremonyTimeout is the login handoff lifetime used when the
+// relying party's ceremony timeout is unset. It matches go-webauthn's default
+// login timeout, which the relying party applies in that case.
+const defaultLoginCeremonyTimeout = 5 * time.Minute
+
+// loginHandoffTTL returns the lifetime of a login handoff for a relying
+// party whose ceremony timeout is timeout: the timeout itself, or
+// defaultLoginCeremonyTimeout when it is unset.
+func loginHandoffTTL(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return defaultLoginCeremonyTimeout
+	}
+	return timeout
 }
 
 // WebAuthnUserResolver is the narrow seam FinishLogin uses to resolve the
@@ -129,7 +166,7 @@ func NewXKMSWebAuthnManager(factory *WebAuthnServiceFactory) (*XKMSWebAuthnManag
 	if factory == nil {
 		return nil, &WebAuthnFactoryConfigError{Field: "factory"}
 	}
-	return &XKMSWebAuthnManager{factory: factory}, nil
+	return &XKMSWebAuthnManager{factory: factory, now: time.Now}, nil
 }
 
 // Factory returns the underlying factory so callers can mount the xkms
@@ -273,7 +310,9 @@ func (m *XKMSWebAuthnManager) verifyAttestationChain(
 // the resolved user's WebAuthn handle are stashed keyed by
 // (tenantID, challenge); FinishLogin recovers the exact session by matching
 // the challenge the authenticator signs over, so the begin→finish handoff
-// is correct under concurrent same-tenant logins.
+// is correct under concurrent same-tenant logins. The handoff expires with
+// the relying party's ceremony timeout, and BeginLogin reclaims expired
+// handoffs at most once per timeout.
 //
 // The ceremony is USER-IDENTIFIED: the manager resolves the user by email
 // and forwards the user's WebAuthn handle to xkms, which emits an assertion
@@ -304,11 +343,51 @@ func (m *XKMSWebAuthnManager) BeginLogin(ctx context.Context, tenantID, email st
 	if challenge == "" {
 		return nil, &WebAuthnLoginSessionError{Reason: "xkms returned a login ceremony with an empty challenge"}
 	}
-	m.loginSessions.Store(m.loginKey(tenantID, challenge), loginHandoff{
+	timeout := svc.Config().Timeout
+	m.sweepLoginHandoffsIfDue(m.now(), loginHandoffTTL(timeout))
+	handoff := m.newLoginHandoff(sessionID, userHandle, timeout)
+	m.loginSessions.Store(m.loginKey(tenantID, challenge), &handoff)
+	return marshalToMap(options)
+}
+
+// newLoginHandoff returns the handoff BeginLogin stores for a ceremony whose
+// relying party has the ceremony timeout timeout. It expires one handoff TTL
+// after the manager's clock.
+func (m *XKMSWebAuthnManager) newLoginHandoff(sessionID string, userHandle []byte, timeout time.Duration) loginHandoff {
+	return loginHandoff{
 		sessionID:  sessionID,
 		userHandle: userHandle,
+		expiresAt:  m.now().Add(loginHandoffTTL(timeout)),
+	}
+}
+
+// sweepLoginHandoffsIfDue reclaims expired login handoffs when at least ttl
+// has passed since the last sweep, and reports whether it swept. It is
+// lock-free: concurrent callers race a CompareAndSwap on the last sweep time,
+// and only the winner sweeps, so the common path stays O(1).
+func (m *XKMSWebAuthnManager) sweepLoginHandoffsIfDue(now time.Time, ttl time.Duration) bool {
+	last := m.lastHandoffSweep.Load()
+	if now.UnixNano()-last < int64(ttl) {
+		return false
+	}
+	if !m.lastHandoffSweep.CompareAndSwap(last, now.UnixNano()) {
+		return false
+	}
+	m.reclaimExpiredLoginHandoffs(now)
+	return true
+}
+
+// reclaimExpiredLoginHandoffs deletes every login handoff that expired before
+// now, which reclaims the handoffs of ceremonies that were never finished. It
+// uses CompareAndDelete so a handoff stored again under the same key in the
+// meantime is left alone.
+func (m *XKMSWebAuthnManager) reclaimExpiredLoginHandoffs(now time.Time) {
+	m.loginSessions.Range(func(key, value any) bool {
+		if handoff, ok := value.(*loginHandoff); ok && now.After(handoff.expiresAt) {
+			m.loginSessions.CompareAndDelete(key, value)
+		}
+		return true
 	})
-	return marshalToMap(options)
 }
 
 // FinishLogin completes the assertion ceremony and surfaces the
@@ -319,33 +398,36 @@ func (m *XKMSWebAuthnManager) BeginLogin(ctx context.Context, tenantID, email st
 // authenticator signed over. This is collision-free across concurrent
 // same-tenant ceremonies. A missing or unknown challenge fails closed
 // before any xkms dispatch, so a forged or expired/temp session handle
-// cannot be coerced onto another user's in-flight ceremony.
+// cannot be coerced onto another user's in-flight ceremony. The handoff is
+// consumed before the tenant's service is resolved, so a finish that fails
+// for any reason cannot be retried against the same challenge and leaves
+// nothing behind: the user begins a new ceremony.
 //
 // The ceremony is user-identified: the WebAuthn handle stashed at begin
 // time is forwarded to xkms so the assertion is verified against the SAME
 // user the ceremony began for, consistent with the allowCredentials list
 // emitted by BeginLogin.
 func (m *XKMSWebAuthnManager) FinishLogin(ctx context.Context, tenantID string, credential map[string]interface{}) (*User, error) {
-	svc, err := m.factory.ServiceFor(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
 	parsed, err := parseCredentialAssertionMap(credential)
 	if err != nil {
 		return nil, err
 	}
 
-	handoff, key, err := m.resolveLoginSession(tenantID, parsed)
+	// Resolving consumes the handoff, so every failure from here on leaves
+	// nothing behind; the user restarts the ceremony.
+	handoff, err := m.resolveLoginSession(tenantID, parsed)
 	if err != nil {
 		return nil, err
 	}
 
+	svc, err := m.factory.ServiceFor(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	_, xkmsUser, err := svc.FinishLogin(ctx, handoff.sessionID, handoff.userHandle, parsed)
 	if err != nil {
 		return nil, err
 	}
-	// Cleanup of the exact session consumed by this ceremony.
-	m.loginSessions.Delete(key)
 
 	// The asserted email (xkms's webauthn name == the qrdb username) is the
 	// lookup key into the canonical broker store.
@@ -383,29 +465,32 @@ func (m *XKMSWebAuthnManager) resolveAuthenticatedUser(ctx context.Context, tena
 }
 
 // resolveLoginSession maps a parsed assertion back to the exact login
-// handoff stored at BeginLogin time, keyed by (tenantID, challenge). It
-// returns the handoff (xkms session id + user WebAuthn handle) and the
-// composite cache key (so the caller can delete the precise entry after a
-// successful finish), or a typed WebAuthnLoginSessionError when the
-// challenge is absent or unknown.
-func (m *XKMSWebAuthnManager) resolveLoginSession(tenantID string, parsed *protocol.ParsedCredentialAssertionData) (loginHandoff, string, error) {
+// handoff stored at BeginLogin time, keyed by (tenantID, challenge), and
+// consumes it: of any number of concurrent calls for one challenge, exactly
+// one receives the handoff (xkms session id + user WebAuthn handle). It
+// returns a typed WebAuthnLoginSessionError when the challenge is absent,
+// unknown or already consumed, or when the handoff has expired; an expired
+// handoff is consumed by the refused attempt.
+func (m *XKMSWebAuthnManager) resolveLoginSession(tenantID string, parsed *protocol.ParsedCredentialAssertionData) (loginHandoff, error) {
 	if parsed == nil {
-		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "nil assertion"}
+		return loginHandoff{}, &WebAuthnLoginSessionError{Reason: "nil assertion"}
 	}
 	challenge := parsed.Response.CollectedClientData.Challenge
 	if challenge == "" {
-		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "assertion has no challenge"}
+		return loginHandoff{}, &WebAuthnLoginSessionError{Reason: "assertion has no challenge"}
 	}
-	key := m.loginKey(tenantID, challenge)
-	v, ok := m.loginSessions.Load(key)
+	v, ok := m.loginSessions.LoadAndDelete(m.loginKey(tenantID, challenge))
 	if !ok {
-		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
+		return loginHandoff{}, &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
 	}
-	handoff, ok := v.(loginHandoff)
-	if !ok {
-		return loginHandoff{}, "", &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
+	handoff, ok := v.(*loginHandoff)
+	if !ok || handoff == nil {
+		return loginHandoff{}, &WebAuthnLoginSessionError{Reason: "no login session matches the assertion challenge"}
 	}
-	return handoff, key, nil
+	if m.now().After(handoff.expiresAt) {
+		return loginHandoff{}, &WebAuthnLoginSessionError{Reason: "login session has expired"}
+	}
+	return *handoff, nil
 }
 
 // marshalToMap converts a typed protocol structure to a JSON-decoded
