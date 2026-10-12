@@ -54,7 +54,7 @@ GOPLS_VERSION := v0.23.0
 # `make install-gosec` and CI's gosec build the same way, so the gosec that
 # gates CI is the gosec in the image. Space-separated module@version pairs.
 # Drop an entry once the tools' own releases require that version or newer.
-GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/text@v0.42.0 golang.org/x/tools@v0.51.0 google.golang.org/grpc@v1.84.0
+GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 golang.org/x/tools@v0.51.0 google.golang.org/grpc@v1.84.0
 # Workflow linting. The fleet's `make lint` includes actionlint (devops.md
 # lint row), and actionlint delegates every SC* rule to shellcheck -- with
 # shellcheck absent it SILENTLY skips them and still exits 0, so a project's
