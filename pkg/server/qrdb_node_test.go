@@ -357,6 +357,30 @@ func TestBuildQRDBConfig_ClusterMode_PeersWithIDPrefix(t *testing.T) {
 	assert.Contains(t, qcfg.Raft.Peers, "2=10.0.0.2:63101")
 }
 
+func TestBuildQRDBConfig_ClusterMode_MemberIdentities(t *testing.T) {
+	id2 := "spki:abababababababababababababababababababababababababababababababab"
+	id3 := "spki:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+	cfg := &config.Config{}
+	cfg.Storage.Backend = config.StorageBackendMemory
+	cfg.Raft.NodeID = 1
+	cfg.Raft.JoinAddresses = []string{"1=10.0.0.1:63101", "2=10.0.0.2:63101", "3=10.0.0.3:63101"}
+	cfg.Raft.MemberIdentities = []string{"2=" + id2, "3=" + id3}
+
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
+
+	assert.Equal(t, "2="+id2+",3="+id3, qcfg.Raft.MemberIdentities)
+}
+
+func TestBuildQRDBConfig_ClusterMode_NoMemberIdentities(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Storage.Backend = config.StorageBackendMemory
+	cfg.Raft.NodeID = 1
+
+	qcfg := mustBuildQRDBConfig(t, cfg, true)
+
+	assert.Empty(t, qcfg.Raft.MemberIdentities)
+}
+
 func TestBuildQRDBConfig_ClusterMode_NoPeersWithoutIDPrefix(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.Backend = config.StorageBackendMemory

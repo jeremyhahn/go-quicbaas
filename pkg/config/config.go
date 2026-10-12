@@ -2208,24 +2208,30 @@ type RaftConfig struct {
 	// in production, set an explicit non-zero value that is the same across
 	// all nodes. Supported format: any uint64 > 0 (e.g. 1, 42, or a
 	// hash of the cluster name).
-	DeploymentID        uint64        `mapstructure:"deployment_id"`
-	ElectionRTT         uint64        `mapstructure:"election_rtt"`
-	HeartbeatRTT        uint64        `mapstructure:"heartbeat_rtt"`
-	SnapshotEntries     uint64        `mapstructure:"snapshot_entries"`
-	CompactionOverhead  uint64        `mapstructure:"compaction_overhead"`
-	RequestTimeout      time.Duration `mapstructure:"request_timeout"`
-	RTTMillisecond      uint64        `mapstructure:"rtt_millisecond"`
-	RaftAddress         string        `mapstructure:"raft_address"`
-	JoinAddresses       []string      `mapstructure:"join_addresses"`
-	ListenAddress       string        `mapstructure:"listen_address"`
-	MutualTLS           bool          `mapstructure:"mutual_tls"`
-	MaxInMemLogSize     uint64        `mapstructure:"max_in_mem_log_size"`
-	MaxSendQueueSize    uint64        `mapstructure:"max_send_queue_size"`
-	MaxReceiveQueueSize uint64        `mapstructure:"max_receive_queue_size"`
-	MaxSnapshotSendBPS  uint64        `mapstructure:"max_snapshot_send_bps"`
-	MaxSnapshotRecvBPS  uint64        `mapstructure:"max_snapshot_recv_bps"`
-	NotifyCommit        bool          `mapstructure:"notify_commit"`
-	EnableMetrics       bool          `mapstructure:"enable_metrics"`
+	DeploymentID       uint64        `mapstructure:"deployment_id"`
+	ElectionRTT        uint64        `mapstructure:"election_rtt"`
+	HeartbeatRTT       uint64        `mapstructure:"heartbeat_rtt"`
+	SnapshotEntries    uint64        `mapstructure:"snapshot_entries"`
+	CompactionOverhead uint64        `mapstructure:"compaction_overhead"`
+	RequestTimeout     time.Duration `mapstructure:"request_timeout"`
+	RTTMillisecond     uint64        `mapstructure:"rtt_millisecond"`
+	RaftAddress        string        `mapstructure:"raft_address"`
+	JoinAddresses      []string      `mapstructure:"join_addresses"`
+	// MemberIdentities lists the Raft member identities of the other replicas
+	// as "replicaID=spki:<sha256-hex>" entries (`qrdbd node-identity --cert`
+	// prints the value for a certificate). go-qrdb requires it on every
+	// multi-node replica: a member is admitted by its identity or not at all.
+	// The local replica's identity is derived from its own certificate.
+	MemberIdentities    []string `mapstructure:"member_identities"`
+	ListenAddress       string   `mapstructure:"listen_address"`
+	MutualTLS           bool     `mapstructure:"mutual_tls"`
+	MaxInMemLogSize     uint64   `mapstructure:"max_in_mem_log_size"`
+	MaxSendQueueSize    uint64   `mapstructure:"max_send_queue_size"`
+	MaxReceiveQueueSize uint64   `mapstructure:"max_receive_queue_size"`
+	MaxSnapshotSendBPS  uint64   `mapstructure:"max_snapshot_send_bps"`
+	MaxSnapshotRecvBPS  uint64   `mapstructure:"max_snapshot_recv_bps"`
+	NotifyCommit        bool     `mapstructure:"notify_commit"`
+	EnableMetrics       bool     `mapstructure:"enable_metrics"`
 
 	// Write mode configuration
 	WriteMode          string        `mapstructure:"write_mode"`           // sync, wal, or batched

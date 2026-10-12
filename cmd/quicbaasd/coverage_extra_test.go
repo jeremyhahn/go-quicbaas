@@ -109,6 +109,38 @@ func TestParseSpecialEnvVars_RaftJoinAddressesAllBlank(t *testing.T) {
 	}
 }
 
+// TestParseSpecialEnvVars_RaftMemberIdentities covers the comma-split of
+// QUICBAAS_RAFT_MEMBER_IDENTITIES, including empty-entry trimming.
+func TestParseSpecialEnvVars_RaftMemberIdentities(t *testing.T) {
+	origCfg := cfg
+	defer func() { cfg = origCfg }()
+	cfg = config.Default()
+
+	t.Setenv("QUICBAAS_RAFT_MEMBER_IDENTITIES", " 2=spki:aa , , 3=spki:bb ")
+	parseSpecialEnvVars()
+
+	got := cfg.Raft.MemberIdentities
+	if len(got) != 2 || got[0] != "2=spki:aa" || got[1] != "3=spki:bb" {
+		t.Errorf("MemberIdentities = %v, want trimmed pair", got)
+	}
+}
+
+// TestParseSpecialEnvVars_RaftMemberIdentitiesAllBlank verifies an env value
+// of only separators leaves the configured identities untouched.
+func TestParseSpecialEnvVars_RaftMemberIdentitiesAllBlank(t *testing.T) {
+	origCfg := cfg
+	defer func() { cfg = origCfg }()
+	cfg = config.Default()
+	cfg.Raft.MemberIdentities = []string{"2=spki:aa"}
+
+	t.Setenv("QUICBAAS_RAFT_MEMBER_IDENTITIES", " , , ")
+	parseSpecialEnvVars()
+
+	if len(cfg.Raft.MemberIdentities) != 1 {
+		t.Errorf("MemberIdentities unexpectedly changed to %v", cfg.Raft.MemberIdentities)
+	}
+}
+
 // =============================================================================
 // applySealOverride: both viper.IsSet branches
 // =============================================================================

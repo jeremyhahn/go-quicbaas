@@ -81,7 +81,8 @@ RUN apk add --no-cache \
     curl \
     ca-certificates \
     tzdata \
-    netcat-openbsd
+    netcat-openbsd \
+    openssl
 
 RUN addgroup -g 1000 quicbaas && \
     adduser -D -u 1000 -G quicbaas -s /bin/bash quicbaas
@@ -94,7 +95,9 @@ RUN mkdir -p /data /var/log/quicbaas /var/run/quicbaas /etc/quicbaas /covdata &&
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaas  /usr/local/bin/quicbaas
 
-RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas
+COPY test/integration/node-entrypoint.sh /usr/local/bin/node-entrypoint.sh
+
+RUN chmod +x /usr/local/bin/quicbaasd /usr/local/bin/quicbaas /usr/local/bin/node-entrypoint.sh
 
 # The node config is tracked, so it is baked in rather than bind-mounted. A
 # bind source is a path in the *host* daemon's filesystem, and this compose is
@@ -124,4 +127,7 @@ VOLUME ["/data", "/var/log/quicbaas"]
 HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=10 \
     CMD curl -sf http://localhost:8080/api/v1/health/live >/dev/null || exit 1
 
+# The entrypoint derives the Raft member identities go-quicraft requires from the
+# peers' certificates, then execs the command.
+ENTRYPOINT ["/usr/local/bin/node-entrypoint.sh"]
 CMD ["/usr/local/bin/quicbaasd", "node"]

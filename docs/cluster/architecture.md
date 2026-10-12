@@ -67,6 +67,24 @@ discovery:
   type: "static"   # or "multicast", "dns", "token"
 ```
 
+Every multi-node replica must also name the **identity** of the other
+replicas in `raft.member_identities` (`QUICBAAS_RAFT_MEMBER_IDENTITIES`,
+comma-separated): go-quicraft admits a member by its identity or not at all.
+An identity is `spki:` plus the hex SHA-256 of the replica certificate's
+SubjectPublicKeyInfo, as `qrdbd node-identity --cert <node.crt>` prints it. The
+local replica's own identity is derived from its certificate and may be omitted.
+
+```yaml
+raft:
+  member_identities:
+    - "2=spki:<sha256-hex>"
+    - "3=spki:<sha256-hex>"
+```
+
+The integration stack issues its certificates at run time, so
+`test/integration/node-entrypoint.sh` derives the variable from the peers'
+`node<id>.crt` files on the shared certs volume before starting the daemon.
+
 When no `id=`-prefixed addresses are present, QuicBaaS falls back to a
 single-node clustered mode (`WithoutTransport`) which is suitable for
 development and testing.

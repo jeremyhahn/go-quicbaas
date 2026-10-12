@@ -293,6 +293,10 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 		qcfg.Raft.Peers = strings.Join(peerEntries, ",")
 	}
 
+	// go-quicraft admits a member by its identity only; qrdb parses and
+	// validates this "replicaID=identity" list, so it is passed through as is.
+	qcfg.Raft.MemberIdentities = strings.Join(cfg.Raft.MemberIdentities, ",")
+
 	// ------------------------------------------------------------------ //
 	// Discovery: map quicbaas DiscoveryConfig → qrdb DiscoveryConfig.
 	// The qrdb Discovery.Method controls how the node finds its peers;

@@ -501,6 +501,18 @@ func bindEnvVars() {
 	_ = viper.BindEnv("server.embedded_fleet_node.auto_pull")
 }
 
+// splitEnvList returns the trimmed, non-empty entries of the comma-separated
+// environment variable name; it is nil when the variable is unset or blank.
+func splitEnvList(name string) []string {
+	var entries []string
+	for _, e := range strings.Split(os.Getenv(name), ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			entries = append(entries, e)
+		}
+	}
+	return entries
+}
+
 // parseSpecialEnvVars parses environment variables that viper doesn't handle automatically.
 // Viper doesn't convert comma-separated strings to []uint64 or key:value format to maps.
 func parseSpecialEnvVars() {
@@ -527,17 +539,14 @@ func parseSpecialEnvVars() {
 	// Viper does not automatically split a comma-separated string into a []string
 	// slice during Unmarshal, so we do it here. Entries may be plain "host:port"
 	// or "id=host:port" format; buildClusterMembers filters for the "id=" prefix.
-	if joinEnv := os.Getenv("QUICBAAS_RAFT_JOIN_ADDRESSES"); joinEnv != "" {
-		var addrs []string
-		for _, a := range strings.Split(joinEnv, ",") {
-			a = strings.TrimSpace(a)
-			if a != "" {
-				addrs = append(addrs, a)
-			}
-		}
-		if len(addrs) > 0 {
-			cfg.Raft.JoinAddresses = addrs
-		}
+	if addrs := splitEnvList("QUICBAAS_RAFT_JOIN_ADDRESSES"); len(addrs) > 0 {
+		cfg.Raft.JoinAddresses = addrs
+	}
+
+	// Parse QUICBAAS_RAFT_MEMBER_IDENTITIES ("id=spki:<hex>" entries, comma
+	// separated) for the same reason: go-qrdb admits a Raft member by identity.
+	if ids := splitEnvList("QUICBAAS_RAFT_MEMBER_IDENTITIES"); len(ids) > 0 {
+		cfg.Raft.MemberIdentities = ids
 	}
 
 	// Parse QUICBAAS_SERVER_SHARDS (comma-separated list of shard IDs).
