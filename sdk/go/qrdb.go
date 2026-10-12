@@ -79,6 +79,14 @@ type QRDBVectorClient = qrdbtransport.VectorClient
 // QRDBUserClient is a re-export of the qrdb UserClient interface.
 type QRDBUserClient = qrdbtransport.UserClient
 
+// QRDBUser is a re-export of the qrdb User identity model.
+type QRDBUser = qrdbtransport.User
+
+// ComputeSPKIThumbprint is a re-export of qrdb's canonical mTLS identity
+// algorithm (SHA-256 over SubjectPublicKeyInfo, base64url without padding).
+// Consumers must call it rather than reimplement it.
+var ComputeSPKIThumbprint = qrdbsdk.ComputeSPKIThumbprint
+
 // QRDBRoleClient is a re-export of the qrdb RoleClient interface.
 type QRDBRoleClient = qrdbtransport.RoleClient
 

@@ -667,6 +667,22 @@ type AuthService interface {
 	// identity. The proof is verified server-side by the registered factor
 	// authenticator before any token is issued.
 	FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*FinishLoginResponse, error)
+
+	// UserByCertificate resolves a verified mTLS client certificate to the
+	// qrdb user its SPKI thumbprint is bound to. The thumbprint is computed
+	// with ComputeSPKIThumbprint, the stack's single algorithm. It returns an
+	// InvalidInput error for a nil or key-less certificate and a NotFound
+	// error when no user is bound to the certificate, so a caller can treat
+	// the lookup as an authorization primitive: an unbound certificate never
+	// resolves.
+	UserByCertificate(ctx context.Context, cert *x509.Certificate) (*QRDBUser, error)
+
+	// UserByCertThumbprint resolves a user from an SPKI thumbprint already
+	// computed with ComputeSPKIThumbprint. It returns InvalidInput for an
+	// empty thumbprint and NotFound when no user is bound to it. The lookup
+	// rides the qrdb client of the active transport (embedded, gRPC, REST,
+	// QUIC, MCP or Unix).
+	UserByCertThumbprint(ctx context.Context, thumbprint string) (*QRDBUser, error)
 }
 
 // =============================================================================
@@ -1897,6 +1913,46 @@ func (s *authServiceImpl) FinishLogin(ctx context.Context, req qrdbtransport.Fin
 		return nil, sdkerrors.NewInternal("auth.FinishLogin", "invalid response type from transport")
 	}
 	return out, nil
+}
+
+// UserByCertificate computes the certificate's canonical SPKI thumbprint and
+// resolves the user bound to it.
+func (s *authServiceImpl) UserByCertificate(ctx context.Context, cert *x509.Certificate) (*QRDBUser, error) {
+	if cert == nil || len(cert.RawSubjectPublicKeyInfo) == 0 {
+		return nil, sdkerrors.NewInvalidInput("auth.UserByCertificate", "a certificate with a public key is required")
+	}
+	return s.UserByCertThumbprint(ctx, ComputeSPKIThumbprint(cert))
+}
+
+// UserByCertThumbprint resolves the user bound to an SPKI thumbprint through
+// the qrdb user client. qrdb's not-found is returned as the SDK's typed
+// NotFound error so callers match one error family.
+func (s *authServiceImpl) UserByCertThumbprint(ctx context.Context, thumbprint string) (*QRDBUser, error) {
+	if ctx == nil {
+		return nil, sdkerrors.NewInvalidInput("auth.UserByCertThumbprint", "context is required")
+	}
+	if thumbprint == "" {
+		return nil, sdkerrors.NewInvalidInput("auth.UserByCertThumbprint", "thumbprint is required")
+	}
+	qrdb, err := s.c.qrdbClient()
+	if err != nil {
+		return nil, err
+	}
+	users := qrdb.Users()
+	if users == nil {
+		return nil, sdkerrors.NewUnavailable("auth.UserByCertThumbprint", "qrdb user surface is unavailable")
+	}
+	u, err := users.GetUserByCertThumbprint(ctx, thumbprint)
+	if err != nil {
+		if IsDatabaseErrorCode(err, ErrNotFound) {
+			return nil, sdkerrors.NewNotFound("auth.UserByCertThumbprint", "no user is bound to this certificate")
+		}
+		return nil, err
+	}
+	if u == nil {
+		return nil, sdkerrors.NewNotFound("auth.UserByCertThumbprint", "no user is bound to this certificate")
+	}
+	return u, nil
 }
 
 // =============================================================================
