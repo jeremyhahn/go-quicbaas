@@ -448,6 +448,14 @@ type ProjectBinding struct {
 	// login that cannot see the repository is nobody the owner delegated to.
 	Rulers []string `json:"rulers,omitempty"`
 
+	// Epoch identifies this binding of the project: the store draws it at
+	// random when the project is bound, keeps it across updates, and draws a
+	// new one when the project is bound again after an unbind. A reviewer
+	// override records the epoch it was set under, and applies only while
+	// the binding still carries it. Set by the store; a value sent in is
+	// ignored.
+	Epoch string `json:"epoch,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

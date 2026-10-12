@@ -77,6 +77,47 @@ func TestStore_BindingRoundTrip(t *testing.T) {
 	}
 }
 
+// The store draws a binding's epoch, keeps it across updates, and draws a new
+// one when the project is bound again after an unbind.
+func TestStore_BindingEpoch(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	binding := testBinding()
+	binding.Epoch = "chosen-by-the-caller"
+	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.GetBinding(ctx, testTenant, testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Epoch == "" || first.Epoch == "chosen-by-the-caller" {
+		t.Fatalf("epoch %q was not drawn by the store", first.Epoch)
+	}
+
+	update := testBinding()
+	update.Review.RequiredApprovals = 2
+	if err := store.PutBinding(ctx, testTenant, update); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.GetBinding(ctx, testTenant, testProject)
+	if err != nil || updated.Epoch != first.Epoch {
+		t.Fatalf("an update changed the epoch: %q -> %+v, %v", first.Epoch, updated, err)
+	}
+
+	if err := store.DeleteBinding(ctx, testTenant, testProject); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+		t.Fatal(err)
+	}
+	rebound, err := store.GetBinding(ctx, testTenant, testProject)
+	if err != nil || rebound.Epoch == "" || rebound.Epoch == first.Epoch {
+		t.Fatalf("binding again after an unbind kept epoch %q: %+v, %v", first.Epoch, rebound, err)
+	}
+}
+
 func TestStore_RefusesBadInput(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

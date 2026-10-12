@@ -15,7 +15,6 @@ package sdlc
 
 import (
 	"context"
-	"errors"
 	"path"
 	"sort"
 	"strconv"
@@ -318,6 +317,12 @@ func issueClusterKey(projectID string, issue int) string {
 	return "cluster\x00" + projectID + "\x00" + strconv.Itoa(issue)
 }
 
+// issueClusterRecordKey is the store key of the cluster copy filed under
+// issue, the key its DAO writes.
+func issueClusterRecordKey(projectID string, issue int) string {
+	return recordKey(issueClusterEntityType, entityIDFor(issueClusterKey(projectID, issue)))
+}
+
 // IssueClusterReader answers which cluster an issue belongs to.
 type IssueClusterReader interface {
 	// GetIssueCluster returns the cluster issue belongs to, or a
@@ -392,30 +397,32 @@ func (s *Store) PutIssueCluster(ctx context.Context, tenantID string, cluster *I
 }
 
 // DeleteIssueCluster implements IssueClusterStore. A copy already gone is not
-// an error: a dissolve that crashed half way must be able to finish.
+// an error: a dissolve that crashed half way must be able to finish. Each copy
+// is removed only as read: a copy re-filed into a newer cluster after the
+// read is left to it, and a copy this cluster re-filed after the read is kept
+// and the dissolve refused with a VersionConflictError.
 func (s *Store) DeleteIssueCluster(ctx context.Context, tenantID string, cluster *IssueCluster) error {
 	if err := cluster.Validate(); err != nil {
 		return err
 	}
-	dao, err := s.issueClusterDAO(ctx, "DeleteIssueCluster", tenantID)
+	store, err := s.guardedKV(ctx, "DeleteIssueCluster", tenantID)
 	if err != nil {
 		return err
 	}
 	for _, issue := range cluster.Issues() {
-		held, getErr := s.GetIssueCluster(ctx, tenantID, cluster.ProjectID, issue)
-		if getErr != nil {
-			if errors.Is(getErr, ErrNotFound) {
-				continue
+		held, changed, err := removeRecord(ctx, "DeleteIssueCluster", store, issueClusterRecordKey(cluster.ProjectID, issue), func(c *IssueCluster) bool {
+			// A slot re-filed into a newer cluster is not this cluster's
+			// to remove.
+			return c.ProjectID == cluster.ProjectID && c.Issue == issue && c.Anchor == cluster.Anchor
+		})
+		if err != nil {
+			return err
+		}
+		if changed {
+			return &VersionConflictError{
+				Entity: issueClusterEntityName, TenantID: tenantID,
+				ID: cluster.ProjectID + "#" + strconv.Itoa(issue), Expected: held.UpdatedAt.UnixNano(),
 			}
-			return getErr
-		}
-		if held.Anchor != cluster.Anchor {
-			// The slot was re-filed into a newer cluster; it is not this
-			// cluster's to remove.
-			continue
-		}
-		if err := dao.Delete(ctx, held); err != nil {
-			return backendError("DeleteIssueCluster", err)
 		}
 	}
 	return nil

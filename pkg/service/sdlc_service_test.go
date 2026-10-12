@@ -196,6 +196,9 @@ type sdlcServiceRig struct {
 	secrets      *sdlcFakeSecrets
 	store        *sdlc.Store
 
+	// resolver holds the tenant stores behind store, so a test can wrap one.
+	resolver *sdlcMemoryResolver
+
 	// forge is a STATEFUL in-memory Gitea, not a double: binding a project
 	// now provisions that repository's webhook and labels, so a rig whose
 	// forge answered canned values would prove nothing about whether the
@@ -284,7 +287,8 @@ func sdlcTestBinding() *sdlc.ProjectBinding {
 func newSDLCServiceRig(t *testing.T) *sdlcServiceRig {
 	t.Helper()
 	ensureSDLCSeams(t)
-	store, err := sdlc.NewStore(&sdlcMemoryResolver{})
+	resolver := &sdlcMemoryResolver{}
+	store, err := sdlc.NewStore(resolver)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,6 +302,7 @@ func newSDLCServiceRig(t *testing.T) *sdlcServiceRig {
 		t.Fatal(err)
 	}
 	rig := &sdlcServiceRig{
+		resolver:     resolver,
 		projects:     &sdlcFakeProjects{projects: map[string]*orchestration.Project{sdlcTestProject: sdlcTestProjectRecord()}},
 		agents:       &sdlcFakeAgents{},
 		secrets:      &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte("secret")}},

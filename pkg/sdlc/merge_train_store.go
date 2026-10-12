@@ -15,9 +15,6 @@ package sdlc
 
 import (
 	"context"
-	"errors"
-
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // =============================================================================
@@ -69,12 +66,14 @@ type TrainStore interface {
 
 var _ TrainStore = (*Store)(nil)
 
-func (s *Store) trainEntryDAO(ctx context.Context, op, tenantID string) (qrdbsdk.GenericDAO[*TrainEntry], error) {
-	return entityDAO(ctx, s, op, tenantID, trainEntryEntityType, func() *TrainEntry { return &TrainEntry{} })
+// trainEntryRecordKey is where a task's queue entry lives.
+func trainEntryRecordKey(projectID, taskID string) string {
+	return recordKey(trainEntryEntityType, entityIDFor(trainEntryKey(projectID, taskID)))
 }
 
-func (s *Store) trainLedgerDAO(ctx context.Context, op, tenantID string) (qrdbsdk.GenericDAO[*TrainLedger], error) {
-	return entityDAO(ctx, s, op, tenantID, trainLedgerEntityType, func() *TrainLedger { return &TrainLedger{} })
+// trainLedgerRecordKey is where a project's train ledger lives.
+func trainLedgerRecordKey(projectID string) string {
+	return recordKey(trainLedgerEntityType, entityIDFor(trainLedgerKey(projectID)))
 }
 
 // GetTrainEntry implements TrainStore.
@@ -85,23 +84,19 @@ func (s *Store) GetTrainEntry(ctx context.Context, tenantID, projectID, taskID s
 	if err := validateKeySegment("task_id", taskID); err != nil {
 		return nil, err
 	}
-	dao, err := s.trainEntryDAO(ctx, "GetTrainEntry", tenantID)
+	store, err := s.tenantKV(ctx, "GetTrainEntry", tenantID)
 	if err != nil {
 		return nil, err
 	}
-	id := entityIDFor(trainEntryKey(projectID, taskID))
-	entry, err := dao.Get(ctx, id)
+	entry, _, err := loadRecord[TrainEntry](ctx, "GetTrainEntry", store, trainEntryRecordKey(projectID, taskID))
 	if err != nil {
-		if qrdbsdk.IsDAONotFound(err) {
-			return nil, &NotFoundError{Entity: trainEntryEntityName, TenantID: tenantID, ID: projectID + "/" + taskID}
-		}
-		return nil, backendError("GetTrainEntry", err)
+		return nil, err
 	}
-	if entry.ProjectID != projectID || entry.TaskID != taskID {
-		// A digest collision: the slot holds another task's entry.
+	if entry == nil || entry.ProjectID != projectID || entry.TaskID != taskID {
+		// Absent, or a digest collision: the slot holds another task's entry.
 		return nil, &NotFoundError{Entity: trainEntryEntityName, TenantID: tenantID, ID: projectID + "/" + taskID}
 	}
-	entry.ID = id
+	entry.ID = entityIDFor(trainEntryKey(projectID, taskID))
 	return entry, nil
 }
 
@@ -111,9 +106,25 @@ func (s *Store) SaveTrainEntry(ctx context.Context, tenantID string, entry *Trai
 	if err := entry.Validate(); err != nil {
 		return err
 	}
-	dao, err := s.trainEntryDAO(ctx, "SaveTrainEntry", tenantID)
+	store, err := s.guardedKV(ctx, "SaveTrainEntry", tenantID)
 	if err != nil {
 		return err
+	}
+	key := trainEntryRecordKey(entry.ProjectID, entry.TaskID)
+	held, raw, err := loadRecord[TrainEntry](ctx, "SaveTrainEntry", store, key)
+	if err != nil {
+		return err
+	}
+	conflict := &VersionConflictError{
+		Entity: trainEntryEntityName, TenantID: tenantID,
+		ID: entry.ProjectID + "/" + entry.TaskID, Expected: entry.Version,
+	}
+	switch {
+	case held == nil && entry.Version != 0:
+		// Only a writer that read no entry, at version 0, may create one.
+		return conflict
+	case held != nil && (held.ProjectID != entry.ProjectID || held.TaskID != entry.TaskID || held.Version != entry.Version):
+		return conflict
 	}
 	now := s.now()
 	next := *entry
@@ -123,36 +134,42 @@ func (s *Store) SaveTrainEntry(ctx context.Context, tenantID string, entry *Trai
 	if entry.Version == 0 {
 		next.CreatedAt = now
 	}
-	cond := qrdbsdk.Condition{Target: qrdbsdk.ConditionVersion, Operator: qrdbsdk.OpEqual, Value: entry.Version}
-	if err := dao.SaveWithCondition(ctx, &next, cond); err != nil {
-		var failed qrdbsdk.DAOConditionFailedError
-		if errors.As(err, &failed) {
-			return &VersionConflictError{
-				Entity: trainEntryEntityName, TenantID: tenantID,
-				ID: entry.ProjectID + "/" + entry.TaskID, Expected: entry.Version,
-			}
-		}
-		return backendError("SaveTrainEntry", err)
+	applied, err := storeRecord(ctx, "SaveTrainEntry", store, key, raw, &next)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return conflict
 	}
 	*entry = next
 	return nil
 }
 
-// DeleteTrainEntry implements TrainStore.
+// DeleteTrainEntry implements TrainStore. The store removes only the exact
+// entry read, so an entry saved after that read is kept and the delete is
+// refused with a VersionConflictError.
 func (s *Store) DeleteTrainEntry(ctx context.Context, tenantID, projectID, taskID string) error {
-	held, err := s.GetTrainEntry(ctx, tenantID, projectID, taskID)
+	if err := validateKeySegment("project_id", projectID); err != nil {
+		return err
+	}
+	if err := validateKeySegment("task_id", taskID); err != nil {
+		return err
+	}
+	store, err := s.guardedKV(ctx, "DeleteTrainEntry", tenantID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil
+		return err
+	}
+	held, changed, err := removeRecord(ctx, "DeleteTrainEntry", store, trainEntryRecordKey(projectID, taskID), func(e *TrainEntry) bool {
+		return e.ProjectID == projectID && e.TaskID == taskID
+	})
+	if err != nil {
+		return err
+	}
+	if changed {
+		return &VersionConflictError{
+			Entity: trainEntryEntityName, TenantID: tenantID,
+			ID: projectID + "/" + taskID, Expected: held.Version,
 		}
-		return err
-	}
-	dao, err := s.trainEntryDAO(ctx, "DeleteTrainEntry", tenantID)
-	if err != nil {
-		return err
-	}
-	if err := dao.Delete(ctx, held); err != nil {
-		return backendError("DeleteTrainEntry", err)
 	}
 	return nil
 }
@@ -162,22 +179,20 @@ func (s *Store) ListTrainEntries(ctx context.Context, tenantID, projectID string
 	if err := validateKeySegment("project_id", projectID); err != nil {
 		return nil, err
 	}
-	dao, err := s.trainEntryDAO(ctx, "ListTrainEntries", tenantID)
+	store, err := s.tenantKV(ctx, "ListTrainEntries", tenantID)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := scanRecords[TrainEntry](ctx, "ListTrainEntries", store, trainEntryEntityType)
 	if err != nil {
 		return nil, err
 	}
 	var out []*TrainEntry
-	pageErr := dao.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: listPageSize}, func(page qrdbsdk.PageResult[*TrainEntry]) error {
-		for _, entry := range page.Entities {
-			if entry.ProjectID == projectID {
-				entry.ID = entityIDFor(trainEntryKey(entry.ProjectID, entry.TaskID))
-				out = append(out, entry)
-			}
+	for _, entry := range entries {
+		if entry.ProjectID == projectID {
+			entry.ID = entityIDFor(trainEntryKey(entry.ProjectID, entry.TaskID))
+			out = append(out, entry)
 		}
-		return nil
-	})
-	if pageErr != nil {
-		return nil, backendError("ListTrainEntries", pageErr)
 	}
 	return out, nil
 }
@@ -187,17 +202,17 @@ func (s *Store) GetTrainLedger(ctx context.Context, tenantID, projectID string) 
 	if err := validateKeySegment("project_id", projectID); err != nil {
 		return nil, err
 	}
-	dao, err := s.trainLedgerDAO(ctx, "GetTrainLedger", tenantID)
+	store, err := s.tenantKV(ctx, "GetTrainLedger", tenantID)
 	if err != nil {
 		return nil, err
 	}
 	id := entityIDFor(trainLedgerKey(projectID))
-	ledger, err := dao.Get(ctx, id)
+	ledger, _, err := loadRecord[TrainLedger](ctx, "GetTrainLedger", store, trainLedgerRecordKey(projectID))
 	if err != nil {
-		if qrdbsdk.IsDAONotFound(err) {
-			return &TrainLedger{ID: id, ProjectID: projectID, Next: 1}, nil
-		}
-		return nil, backendError("GetTrainLedger", err)
+		return nil, err
+	}
+	if ledger == nil {
+		return &TrainLedger{ID: id, ProjectID: projectID, Next: 1}, nil
 	}
 	if ledger.ProjectID != projectID {
 		// A digest collision is refused rather than answered with another
@@ -217,9 +232,24 @@ func (s *Store) SaveTrainLedger(ctx context.Context, tenantID string, ledger *Tr
 	if err := ledger.Validate(); err != nil {
 		return err
 	}
-	dao, err := s.trainLedgerDAO(ctx, "SaveTrainLedger", tenantID)
+	store, err := s.guardedKV(ctx, "SaveTrainLedger", tenantID)
 	if err != nil {
 		return err
+	}
+	key := trainLedgerRecordKey(ledger.ProjectID)
+	held, raw, err := loadRecord[TrainLedger](ctx, "SaveTrainLedger", store, key)
+	if err != nil {
+		return err
+	}
+	conflict := &VersionConflictError{
+		Entity: trainLedgerEntityName, TenantID: tenantID, ID: ledger.ProjectID, Expected: ledger.Version,
+	}
+	switch {
+	case held == nil && ledger.Version != 0:
+		// Only a writer that read no ledger, at version 0, may create one.
+		return conflict
+	case held != nil && (held.ProjectID != ledger.ProjectID || held.Version != ledger.Version):
+		return conflict
 	}
 	now := s.now()
 	next := *ledger
@@ -229,15 +259,12 @@ func (s *Store) SaveTrainLedger(ctx context.Context, tenantID string, ledger *Tr
 	if ledger.Version == 0 {
 		next.CreatedAt = now
 	}
-	cond := qrdbsdk.Condition{Target: qrdbsdk.ConditionVersion, Operator: qrdbsdk.OpEqual, Value: ledger.Version}
-	if err := dao.SaveWithCondition(ctx, &next, cond); err != nil {
-		var failed qrdbsdk.DAOConditionFailedError
-		if errors.As(err, &failed) {
-			return &VersionConflictError{
-				Entity: trainLedgerEntityName, TenantID: tenantID, ID: ledger.ProjectID, Expected: ledger.Version,
-			}
-		}
-		return backendError("SaveTrainLedger", err)
+	applied, err := storeRecord(ctx, "SaveTrainLedger", store, key, raw, &next)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return conflict
 	}
 	*ledger = next
 	return nil

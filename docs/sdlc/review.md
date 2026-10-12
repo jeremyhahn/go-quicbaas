@@ -432,7 +432,13 @@ it was chosen is refused, never replaced by the default**: an operator asked
 for that reviewer, and a verdict from another would answer a question nobody
 asked. The sweep reports it as a `SelectReviewer` failure until the override
 is cleared. Unbinding a project deletes its overrides, so a later binding with
-different profiles does not inherit them.
+different profiles does not inherit them. **An override applies only under
+the binding it was set for.** Each binding carries an `epoch` the store draws
+when the project is bound and keeps across updates, and each override records
+it. An override set as the project was unbound can pass its binding check
+before the unbind and be written after the unbind cleared the overrides. Its
+epoch then names a binding that is gone, so selection ignores it and the next
+binding of the project uses its default reviewer.
 
 **"Already judged" depends on the chosen reviewer.** For a counting profile,
 any counting verdict on the head answers the question, exactly as before; an

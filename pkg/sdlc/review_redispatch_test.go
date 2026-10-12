@@ -35,7 +35,7 @@ func (r *dispatchRig) selectBackupSeat(t *testing.T) {
 	if err := r.store.PutBinding(ctx, testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
-	override := &ReviewerOverride{ProjectID: testProject, PullRequest: 41, Profile: "backup"}
+	override := &ReviewerOverride{ProjectID: testProject, PullRequest: 41, Profile: "backup", BindingEpoch: binding.Epoch}
 	if err := r.store.PutReviewerOverride(ctx, testTenant, override); err != nil {
 		t.Fatal(err)
 	}

@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -336,6 +337,54 @@ func TestSelectReviewer_TheOverrideElseTheDefault(t *testing.T) {
 	}
 }
 
+// An override set under an earlier binding of the project is not this
+// binding's choice: the selection is the default, and setting the override
+// again under this binding starts its history afresh.
+func TestSelectReviewer_IgnoresAnOverrideSetUnderAnotherBinding(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	binding := profiledBinding()
+	binding.Epoch = "current"
+
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return created }
+	if err := store.PutReviewerOverride(ctx, testTenant, &ReviewerOverride{
+		ProjectID: testProject, PullRequest: 41, Profile: qwenProfile, BindingEpoch: "earlier",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	profile, selection, err := SelectReviewer(ctx, store, testTenant, binding, 41)
+	if err != nil || !profile.Default || selection.Overridden || !selection.UpdatedAt.IsZero() {
+		t.Fatalf("an earlier binding's override was honoured: %+v %+v %v", profile, selection, err)
+	}
+
+	store.now = func() time.Time { return created.Add(time.Hour) }
+	if err := store.PutReviewerOverride(ctx, testTenant, &ReviewerOverride{
+		ProjectID: testProject, PullRequest: 41, Profile: qwenProfile, BindingEpoch: "current",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	profile, selection, err = SelectReviewer(ctx, store, testTenant, binding, 41)
+	if err != nil || profile.Login != qwenLogin || !selection.Overridden {
+		t.Fatalf("this binding's override was not honoured: %+v %+v %v", profile, selection, err)
+	}
+	override, err := store.GetReviewerOverride(ctx, testTenant, testProject, 41)
+	if err != nil || !override.CreatedAt.Equal(created.Add(time.Hour)) {
+		t.Fatalf("the override carried an earlier binding's creation time: %+v, %v", override, err)
+	}
+}
+
+// overrideUnderBinding is an override of pull request 41 set under the
+// project's stored binding, as SetReviewerOverride records one.
+func overrideUnderBinding(t *testing.T, store *Store, profile string) *ReviewerOverride {
+	t.Helper()
+	binding, err := store.GetBinding(context.Background(), testTenant, testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &ReviewerOverride{ProjectID: testProject, PullRequest: 41, Profile: profile, BindingEpoch: binding.Epoch}
+}
+
 func TestSelectReviewer_AStoreFailureIsNotTheDefault(t *testing.T) {
 	down := errors.New("store down")
 	_, _, err := SelectReviewer(context.Background(), failingOverrides{err: down}, testTenant, profiledBinding(), 41)
@@ -414,9 +463,7 @@ func TestReviewDispatcher_TheOverrideChoosesTheProfileTheJobRunsAs(t *testing.T)
 	if _, err := rig.dispatcher.TriggerReview(ctx, prRequest(41)); err != nil {
 		t.Fatal(err)
 	}
-	if err := rig.store.PutReviewerOverride(ctx, testTenant, &ReviewerOverride{
-		ProjectID: testProject, PullRequest: 41, Profile: qwenProfile,
-	}); err != nil {
+	if err := rig.store.PutReviewerOverride(ctx, testTenant, overrideUnderBinding(t, rig.store, qwenProfile)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rig.dispatcher.TriggerReview(ctx, prRequest(41)); err != nil {
@@ -441,9 +488,7 @@ func TestReviewDispatcher_AnOverrideNamingARemovedProfileStartsNothing(t *testin
 	rig := newDispatchRig(t)
 	rig.setChecks(dispatchHead, greenRun("ci", dispatchHead))
 	ctx := context.Background()
-	if err := rig.store.PutReviewerOverride(ctx, testTenant, &ReviewerOverride{
-		ProjectID: testProject, PullRequest: 41, Profile: "gone",
-	}); err != nil {
+	if err := rig.store.PutReviewerOverride(ctx, testTenant, overrideUnderBinding(t, rig.store, "gone")); err != nil {
 		t.Fatal(err)
 	}
 	started, err := rig.dispatcher.TriggerReview(ctx, prRequest(41))
@@ -502,9 +547,7 @@ func TestReviewSweeper_JudgedMeansJudgedByAVerdictThatAnswersTheChosenReviewer(t
 			rig := newSweepRig(t)
 			rig.rebind(t, func(b *ProjectBinding) { b.Reviewers = []ReviewerConfig{qwenAlternate()} })
 			if tc.override != "" {
-				if err := rig.store.PutReviewerOverride(context.Background(), testTenant, &ReviewerOverride{
-					ProjectID: testProject, PullRequest: 41, Profile: tc.override,
-				}); err != nil {
+				if err := rig.store.PutReviewerOverride(context.Background(), testTenant, overrideUnderBinding(t, rig.store, tc.override)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -523,9 +566,7 @@ func TestReviewSweeper_JudgedMeansJudgedByAVerdictThatAnswersTheChosenReviewer(t
 func TestReviewSweeper_AReviewInFlightIsTheChosenReviewers(t *testing.T) {
 	rig := newSweepRig(t)
 	rig.rebind(t, func(b *ProjectBinding) { b.Reviewers = []ReviewerConfig{qwenAlternate()} })
-	if err := rig.store.PutReviewerOverride(context.Background(), testTenant, &ReviewerOverride{
-		ProjectID: testProject, PullRequest: 41, Profile: qwenProfile,
-	}); err != nil {
+	if err := rig.store.PutReviewerOverride(context.Background(), testTenant, overrideUnderBinding(t, rig.store, qwenProfile)); err != nil {
 		t.Fatal(err)
 	}
 	running := reviewRunning()
@@ -546,9 +587,7 @@ func TestReviewSweeper_AReviewInFlightIsTheChosenReviewers(t *testing.T) {
 
 func TestReviewSweeper_ARemovedProfileIsAVisibleFailure(t *testing.T) {
 	rig := newSweepRig(t)
-	if err := rig.store.PutReviewerOverride(context.Background(), testTenant, &ReviewerOverride{
-		ProjectID: testProject, PullRequest: 41, Profile: "gone",
-	}); err != nil {
+	if err := rig.store.PutReviewerOverride(context.Background(), testTenant, overrideUnderBinding(t, rig.store, "gone")); err != nil {
 		t.Fatal(err)
 	}
 	_, err := rig.sweeper.SweepProject(context.Background(), testTenant, testProject)

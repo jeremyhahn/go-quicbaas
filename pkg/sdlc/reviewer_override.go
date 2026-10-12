@@ -59,6 +59,12 @@ type ReviewerOverride struct {
 	// Profile names one of the binding's reviewer profiles.
 	Profile string `json:"profile"`
 
+	// BindingEpoch is the Epoch of the binding the override was set under.
+	// The override applies only while the project's binding carries it, so
+	// an override written as the project was unbound never reaches the
+	// project's next binding.
+	BindingEpoch string `json:"binding_epoch"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -89,6 +95,12 @@ func (o *ReviewerOverride) Validate() error {
 // reviewerOverrideRef is what an override's entity id is derived from.
 func reviewerOverrideRef(projectID string, pullRequest int) string {
 	return projectID + "#" + strconv.Itoa(pullRequest)
+}
+
+// reviewerOverrideRecordKey is the store key of one pull request's override,
+// the key its DAO writes.
+func reviewerOverrideRecordKey(projectID string, pullRequest int) string {
+	return recordKey(reviewerOverrideEntityType, entityIDFor(reviewerOverrideRef(projectID, pullRequest)))
 }
 
 // ReviewerOverrideReader reads the operator's per-pull-request reviewer
@@ -147,6 +159,10 @@ func SelectReviewer(
 		override = nil
 	case err != nil:
 		return ReviewerProfile{}, selection, err
+	case override.BindingEpoch != binding.Epoch:
+		// Set under an earlier binding of the project: its put passed the
+		// binding check before an unbind and wrote after it.
+		override = nil
 	}
 	name := ""
 	if override != nil {
@@ -210,7 +226,8 @@ func (s *Store) PutReviewerOverride(ctx context.Context, tenantID string, overri
 	override.ID = entityIDFor(reviewerOverrideRef(override.ProjectID, override.PullRequest))
 	override.UpdatedAt = now
 	held, getErr := dao.Get(ctx, override.ID)
-	if getErr == nil && held.ProjectID == override.ProjectID && held.PullRequest == override.PullRequest {
+	if getErr == nil && held.ProjectID == override.ProjectID && held.PullRequest == override.PullRequest &&
+		held.BindingEpoch == override.BindingEpoch {
 		override.CreatedAt = held.CreatedAt
 	} else {
 		override.CreatedAt = now
@@ -222,52 +239,58 @@ func (s *Store) PutReviewerOverride(ctx context.Context, tenantID string, overri
 }
 
 // DeleteReviewerOverride removes the override for one pull request. Deleting
-// an absent override is not an error.
+// an absent override is not an error; an override put after the delete read
+// it is kept, and the delete is refused with a VersionConflictError.
 func (s *Store) DeleteReviewerOverride(ctx context.Context, tenantID, projectID string, pullRequest int) error {
-	held, err := s.GetReviewerOverride(ctx, tenantID, projectID, pullRequest)
-	if errors.Is(err, ErrNotFound) {
-		return nil
+	if err := validateKeySegment("project_id", projectID); err != nil {
+		return err
 	}
+	store, err := s.guardedKV(ctx, "DeleteReviewerOverride", tenantID)
 	if err != nil {
 		return err
 	}
-	dao, err := s.reviewerOverrideDAO(ctx, "DeleteReviewerOverride", tenantID)
+	return removeReviewerOverride(ctx, "DeleteReviewerOverride", store, tenantID, projectID, pullRequest)
+}
+
+// removeReviewerOverride deletes one pull request's override only while it
+// still holds the exact record read, so an override put after that read is
+// kept and the delete is refused with a VersionConflictError.
+func removeReviewerOverride(ctx context.Context, op string, store qrdbsdk.AtomicKVStore, tenantID, projectID string, pullRequest int) error {
+	ref := reviewerOverrideRef(projectID, pullRequest)
+	held, changed, err := removeRecord(ctx, op, store, reviewerOverrideRecordKey(projectID, pullRequest), func(o *ReviewerOverride) bool {
+		return o.ProjectID == projectID && o.PullRequest == pullRequest
+	})
 	if err != nil {
 		return err
 	}
-	if err := dao.Delete(ctx, held); err != nil {
-		return backendError("DeleteReviewerOverride", err)
+	if changed {
+		return &VersionConflictError{Entity: reviewerOverrideEntityName, TenantID: tenantID, ID: ref, Expected: held.UpdatedAt.UnixNano()}
 	}
 	return nil
 }
 
 // DeleteReviewerOverrides removes every override recorded for one project, so
 // an unbound project leaves no choice behind that a later binding with
-// different profiles would inherit.
+// different profiles would inherit. Each override is removed only as read,
+// as DeleteReviewerOverride does.
 func (s *Store) DeleteReviewerOverrides(ctx context.Context, tenantID, projectID string) error {
 	if err := validateKeySegment("project_id", projectID); err != nil {
 		return err
 	}
-	dao, err := s.reviewerOverrideDAO(ctx, "DeleteReviewerOverrides", tenantID)
+	store, err := s.guardedKV(ctx, "DeleteReviewerOverrides", tenantID)
 	if err != nil {
 		return err
 	}
-	var doomed []*ReviewerOverride
-	pageErr := dao.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: listPageSize}, func(page qrdbsdk.PageResult[*ReviewerOverride]) error {
-		for _, override := range page.Entities {
-			if override != nil && override.ProjectID == projectID {
-				doomed = append(doomed, override)
-			}
-		}
-		return nil
-	})
-	if pageErr != nil {
-		return backendError("DeleteReviewerOverrides", pageErr)
+	overrides, err := scanRecords[ReviewerOverride](ctx, "DeleteReviewerOverrides", store, reviewerOverrideEntityType)
+	if err != nil {
+		return err
 	}
-	for _, override := range doomed {
-		override.ID = entityIDFor(reviewerOverrideRef(override.ProjectID, override.PullRequest))
-		if err := dao.Delete(ctx, override); err != nil {
-			return backendError("DeleteReviewerOverrides", err)
+	for _, override := range overrides {
+		if override.ProjectID != projectID {
+			continue
+		}
+		if err := removeReviewerOverride(ctx, "DeleteReviewerOverrides", store, tenantID, projectID, override.PullRequest); err != nil {
+			return err
 		}
 	}
 	return nil

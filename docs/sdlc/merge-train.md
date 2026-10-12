@@ -304,7 +304,9 @@ own record — the entry, then the delivery — is what says the change landed.
 ## Restart
 
 Every decision is on the **ledger** (`TrainLedger`, one per project, written
-under a version guard) before it is acted on:
+under a version guard the store decides with `PutIfAbsent` /
+`CompareAndSwap`, so two train passes holding the same version cannot both
+write) before it is acted on:
 
 - interrupted in `validating`: the same probe, the same pull request; nothing
   is rebuilt and no second pull request is opened.

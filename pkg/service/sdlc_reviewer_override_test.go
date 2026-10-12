@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 )
@@ -182,6 +184,75 @@ func TestSDLCService_UnbindForgetsTheOverrides(t *testing.T) {
 	if _, err := rig.store.GetReviewerOverride(ctx, sdlcTestTenant, sdlcTestProject, 41); !errors.Is(err, sdlc.ErrNotFound) {
 		t.Fatalf("an override outlived its binding: %v", err)
 	}
+}
+
+// An override whose binding check passed before an unbind, and whose write
+// lands after the unbind cleared the overrides, must not reach the project's
+// next binding: an override chooses among one binding's reviewers only.
+func TestSDLCService_OverrideRacingAnUnbindDoesNotReachTheNextBinding(t *testing.T) {
+	rig := profiledRig(t)
+	ctx := context.Background()
+	// SetReviewerOverride's first read is its binding check; the unbind and
+	// the rebind land between that check and the override's write.
+	pauseAfterNextRead(t, rig, func() {
+		if err := rig.svc.Unbind(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
+			t.Errorf("Unbind: %v", err)
+		}
+		if _, err := rig.svc.Bind(ctx, sdlcTestTenant, profiledServiceBinding(rig)); err != nil {
+			t.Errorf("Bind: %v", err)
+		}
+	})
+	selection, err := rig.svc.SetReviewerOverride(ctx, sdlcTestTenant, sdlcTestProject, 41, "qwen")
+	if err != nil {
+		t.Fatalf("SetReviewerOverride: %v", err)
+	}
+	if selection.Overridden {
+		t.Fatalf("the answer to the set reports an override the new binding never chose: %+v", selection)
+	}
+	selection, err = rig.svc.ReviewerSelection(ctx, sdlcTestTenant, sdlcTestProject, 41)
+	if err != nil || selection.Overridden || selection.Profile != sdlc.DefaultReviewerProfileName {
+		t.Fatalf("the new binding inherited an override made under the old one: %+v, %v", selection, err)
+	}
+
+	// An override set under the new binding applies to it.
+	selection, err = rig.svc.SetReviewerOverride(ctx, sdlcTestTenant, sdlcTestProject, 41, "qwen")
+	if err != nil || !selection.Overridden || selection.Profile != "qwen" {
+		t.Fatalf("an override under the current binding: %+v, %v", selection, err)
+	}
+}
+
+// pausingKV runs a hook once, right after the next read returns from the
+// store, so a test lands a write between a caller's check and its write.
+type pausingKV struct {
+	qrdbsdk.AtomicKVStore
+
+	mu        sync.Mutex
+	afterRead func()
+}
+
+func (s *pausingKV) Get(ctx context.Context, key string) ([]byte, error) {
+	value, err := s.AtomicKVStore.Get(ctx, key)
+	s.mu.Lock()
+	hook := s.afterRead
+	s.afterRead = nil
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return value, err
+}
+
+// pauseAfterNextRead wraps the rig tenant's store so hook runs after the
+// next read from it.
+func pauseAfterNextRead(t *testing.T, rig *sdlcServiceRig, hook func()) {
+	t.Helper()
+	rig.resolver.mu.Lock()
+	defer rig.resolver.mu.Unlock()
+	held, ok := rig.resolver.stores[sdlcTestTenant].(qrdbsdk.AtomicKVStore)
+	if !ok {
+		t.Fatal("the rig's tenant store takes no guarded writes")
+	}
+	rig.resolver.stores[sdlcTestTenant] = &pausingKV{AtomicKVStore: held, afterRead: hook}
 }
 
 // reviewJobs is the engine a reviewer override dispatches on. While a review

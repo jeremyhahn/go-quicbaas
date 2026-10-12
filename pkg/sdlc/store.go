@@ -15,7 +15,6 @@ package sdlc
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -80,12 +79,14 @@ func entityDAO[E qrdbsdk.Entity](
 	return dao, nil
 }
 
-func (s *Store) bindingDAO(ctx context.Context, op, tenantID string) (qrdbsdk.GenericDAO[*ProjectBinding], error) {
-	return entityDAO(ctx, s, op, tenantID, bindingEntityType, func() *ProjectBinding { return &ProjectBinding{} })
+// bindingKey is where the project's binding lives.
+func bindingKey(projectID string) string {
+	return recordKey(bindingEntityType, entityIDFor(projectID))
 }
 
-func (s *Store) deliveryDAO(ctx context.Context, op, tenantID string) (qrdbsdk.GenericDAO[*Delivery], error) {
-	return entityDAO(ctx, s, op, tenantID, deliveryEntityType, func() *Delivery { return &Delivery{} })
+// deliveryKey is where the task's delivery lives.
+func deliveryKey(taskID string) string {
+	return recordKey(deliveryEntityType, entityIDFor(taskID))
 }
 
 // =============================================================================
@@ -97,19 +98,16 @@ func (s *Store) GetBinding(ctx context.Context, tenantID, projectID string) (*Pr
 	if err := validateKeySegment("project_id", projectID); err != nil {
 		return nil, err
 	}
-	dao, err := s.bindingDAO(ctx, "GetBinding", tenantID)
+	store, err := s.tenantKV(ctx, "GetBinding", tenantID)
 	if err != nil {
 		return nil, err
 	}
-	binding, err := dao.Get(ctx, entityIDFor(projectID))
+	binding, _, err := loadRecord[ProjectBinding](ctx, "GetBinding", store, bindingKey(projectID))
 	if err != nil {
-		if qrdbsdk.IsDAONotFound(err) {
-			return nil, &NotFoundError{Entity: bindingEntityName, TenantID: tenantID, ID: projectID}
-		}
-		return nil, backendError("GetBinding", err)
+		return nil, err
 	}
-	if binding.ProjectID != projectID {
-		// A digest collision: the slot holds another project's binding.
+	if binding == nil || binding.ProjectID != projectID {
+		// Absent, or a digest collision: the slot holds another project's binding.
 		return nil, &NotFoundError{Entity: bindingEntityName, TenantID: tenantID, ID: projectID}
 	}
 	// The entity id is derived, never stored; a record read back carries it
@@ -123,22 +121,26 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 	if err := binding.Validate(); err != nil {
 		return err
 	}
-	dao, err := s.bindingDAO(ctx, "PutBinding", tenantID)
+	store, err := s.guardedKV(ctx, "PutBinding", tenantID)
 	if err != nil {
 		return err
 	}
-	now := s.now()
+	epoch, err := newNonce()
+	if err != nil {
+		return backendError("PutBinding.epoch", err)
+	}
 	binding.ID = entityIDFor(binding.ProjectID)
-	binding.UpdatedAt = now
-	if held, getErr := dao.Get(ctx, binding.ID); getErr == nil && held.ProjectID == binding.ProjectID {
-		binding.CreatedAt = held.CreatedAt
-	} else {
+	return replaceRecord(ctx, "PutBinding", store, bindingKey(binding.ProjectID), func(held *ProjectBinding) any {
+		now := s.now()
+		binding.UpdatedAt = now
 		binding.CreatedAt = now
-	}
-	if err := dao.Save(ctx, binding); err != nil {
-		return backendError("PutBinding", err)
-	}
-	return nil
+		binding.Epoch = epoch
+		if held != nil && held.ProjectID == binding.ProjectID {
+			binding.CreatedAt = held.CreatedAt
+			binding.Epoch = held.Epoch
+		}
+		return binding
+	})
 }
 
 // UpdateBinding writes binding only if the stored record is still the one
@@ -160,11 +162,20 @@ func (s *Store) UpdateBinding(ctx context.Context, tenantID string, binding *Pro
 		// the resurrection this write exists to refuse.
 		return &InvalidInputError{Field: "updated_at", Message: "a guarded update needs the stamp of the record it read"}
 	}
-	dao, err := s.bindingDAO(ctx, "UpdateBinding", tenantID)
+	store, err := s.guardedKV(ctx, "UpdateBinding", tenantID)
+	if err != nil {
+		return err
+	}
+	key := bindingKey(binding.ProjectID)
+	held, raw, err := loadRecord[ProjectBinding](ctx, "UpdateBinding", store, key)
 	if err != nil {
 		return err
 	}
 	expected := binding.UpdatedAt.UnixNano()
+	conflict := &VersionConflictError{Entity: bindingEntityName, TenantID: tenantID, ID: binding.ProjectID, Expected: expected}
+	if held == nil || held.ProjectID != binding.ProjectID || held.UpdatedAt.UnixNano() != expected {
+		return conflict
+	}
 	next := *binding
 	next.ID = entityIDFor(binding.ProjectID)
 	next.UpdatedAt = s.now()
@@ -173,62 +184,55 @@ func (s *Store) UpdateBinding(ctx context.Context, tenantID string, binding *Pro
 		// tell this one from the record it replaced.
 		next.UpdatedAt = binding.UpdatedAt.Add(time.Nanosecond)
 	}
-	cond := qrdbsdk.Condition{Target: qrdbsdk.ConditionMod, Operator: qrdbsdk.OpEqual, Value: expected}
-	if err := dao.SaveWithCondition(ctx, &next, cond); err != nil {
-		var failed qrdbsdk.DAOConditionFailedError
-		if errors.As(err, &failed) {
-			return &VersionConflictError{
-				Entity: bindingEntityName, TenantID: tenantID, ID: binding.ProjectID, Expected: expected,
-			}
-		}
-		return backendError("UpdateBinding", err)
+	applied, err := storeRecord(ctx, "UpdateBinding", store, key, raw, &next)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return conflict
 	}
 	*binding = next
 	return nil
 }
 
 // DeleteBinding removes the binding for projectID. Deleting an absent
-// binding is not an error.
+// binding is not an error. The store removes only the exact record read, so
+// a binding updated after that read is kept and the delete is refused with a
+// VersionConflictError.
 func (s *Store) DeleteBinding(ctx context.Context, tenantID, projectID string) error {
 	if err := validateKeySegment("project_id", projectID); err != nil {
 		return err
 	}
-	dao, err := s.bindingDAO(ctx, "DeleteBinding", tenantID)
+	store, err := s.guardedKV(ctx, "DeleteBinding", tenantID)
 	if err != nil {
 		return err
 	}
-	held, getErr := dao.Get(ctx, entityIDFor(projectID))
-	if getErr != nil {
-		if qrdbsdk.IsDAONotFound(getErr) {
-			return nil
-		}
-		return backendError("DeleteBinding", getErr)
+	held, changed, err := removeRecord(ctx, "DeleteBinding", store, bindingKey(projectID), func(b *ProjectBinding) bool {
+		return b.ProjectID == projectID
+	})
+	if err != nil {
+		return err
 	}
-	if held.ProjectID != projectID {
-		return nil
-	}
-	held.ID = entityIDFor(projectID)
-	if err := dao.Delete(ctx, held); err != nil {
-		return backendError("DeleteBinding", err)
+	if changed {
+		return &VersionConflictError{Entity: bindingEntityName, TenantID: tenantID, ID: projectID, Expected: held.UpdatedAt.UnixNano()}
 	}
 	return nil
 }
 
 // ListBindings returns every binding in the tenant.
 func (s *Store) ListBindings(ctx context.Context, tenantID string) ([]*ProjectBinding, error) {
-	dao, err := s.bindingDAO(ctx, "ListBindings", tenantID)
+	store, err := s.tenantKV(ctx, "ListBindings", tenantID)
 	if err != nil {
 		return nil, err
 	}
-	var out []*ProjectBinding
-	pageErr := dao.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: listPageSize}, func(page qrdbsdk.PageResult[*ProjectBinding]) error {
-		out = append(out, page.Entities...)
-		return nil
-	})
-	if pageErr != nil {
-		return nil, backendError("ListBindings", pageErr)
+	bindings, err := scanRecords[ProjectBinding](ctx, "ListBindings", store, bindingEntityType)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	for _, binding := range bindings {
+		binding.ID = entityIDFor(binding.ProjectID)
+	}
+	return bindings, nil
 }
 
 // listPageSize bounds one page of a listing.
@@ -243,18 +247,15 @@ func (s *Store) GetDelivery(ctx context.Context, tenantID, taskID string) (*Deli
 	if err := validateKeySegment("task_id", taskID); err != nil {
 		return nil, err
 	}
-	dao, err := s.deliveryDAO(ctx, "GetDelivery", tenantID)
+	store, err := s.tenantKV(ctx, "GetDelivery", tenantID)
 	if err != nil {
 		return nil, err
 	}
-	delivery, err := dao.Get(ctx, entityIDFor(taskID))
+	delivery, _, err := loadRecord[Delivery](ctx, "GetDelivery", store, deliveryKey(taskID))
 	if err != nil {
-		if qrdbsdk.IsDAONotFound(err) {
-			return nil, &NotFoundError{Entity: deliveryEntityName, TenantID: tenantID, ID: taskID}
-		}
-		return nil, backendError("GetDelivery", err)
+		return nil, err
 	}
-	if delivery.TaskID != taskID {
+	if delivery == nil || delivery.TaskID != taskID {
 		return nil, &NotFoundError{Entity: deliveryEntityName, TenantID: tenantID, ID: taskID}
 	}
 	delivery.ID = entityIDFor(taskID)
@@ -268,24 +269,22 @@ func (s *Store) PutDelivery(ctx context.Context, tenantID string, delivery *Deli
 	if err := delivery.Validate(); err != nil {
 		return err
 	}
-	dao, err := s.deliveryDAO(ctx, "PutDelivery", tenantID)
+	store, err := s.guardedKV(ctx, "PutDelivery", tenantID)
 	if err != nil {
 		return err
 	}
-	now := s.now()
 	delivery.ID = entityIDFor(delivery.TaskID)
-	delivery.UpdatedAt = now
-	if held, getErr := dao.Get(ctx, delivery.ID); getErr == nil && held.TaskID == delivery.TaskID {
-		delivery.CreatedAt = held.CreatedAt
-		delivery.Version = held.Version + 1
-	} else {
+	return replaceRecord(ctx, "PutDelivery", store, deliveryKey(delivery.TaskID), func(held *Delivery) any {
+		now := s.now()
+		delivery.UpdatedAt = now
 		delivery.CreatedAt = now
 		delivery.Version = 1
-	}
-	if err := dao.Save(ctx, delivery); err != nil {
-		return backendError("PutDelivery", err)
-	}
-	return nil
+		if held != nil && held.TaskID == delivery.TaskID {
+			delivery.CreatedAt = held.CreatedAt
+			delivery.Version = held.Version + 1
+		}
+		return delivery
+	})
 }
 
 // UpdateDelivery writes delivery only if the stored record still carries the
@@ -295,24 +294,34 @@ func (s *Store) UpdateDelivery(ctx context.Context, tenantID string, delivery *D
 	if err := delivery.Validate(); err != nil {
 		return err
 	}
-	dao, err := s.deliveryDAO(ctx, "UpdateDelivery", tenantID)
+	store, err := s.guardedKV(ctx, "UpdateDelivery", tenantID)
+	if err != nil {
+		return err
+	}
+	key := deliveryKey(delivery.TaskID)
+	held, raw, err := loadRecord[Delivery](ctx, "UpdateDelivery", store, key)
 	if err != nil {
 		return err
 	}
 	expected := delivery.Version
+	conflict := &VersionConflictError{Entity: deliveryEntityName, TenantID: tenantID, ID: delivery.TaskID, Expected: expected}
+	switch {
+	case held == nil && expected != 0:
+		// Only a writer that read no record, at version 0, may create one.
+		return conflict
+	case held != nil && (held.TaskID != delivery.TaskID || held.Version != expected):
+		return conflict
+	}
 	next := *delivery
 	next.ID = entityIDFor(delivery.TaskID)
 	next.Version = expected + 1
 	next.UpdatedAt = s.now()
-	cond := qrdbsdk.Condition{Target: qrdbsdk.ConditionVersion, Operator: qrdbsdk.OpEqual, Value: expected}
-	if err := dao.SaveWithCondition(ctx, &next, cond); err != nil {
-		var failed qrdbsdk.DAOConditionFailedError
-		if errors.As(err, &failed) {
-			return &VersionConflictError{
-				Entity: deliveryEntityName, TenantID: tenantID, ID: delivery.TaskID, Expected: expected,
-			}
-		}
-		return backendError("UpdateDelivery", err)
+	applied, err := storeRecord(ctx, "UpdateDelivery", store, key, raw, &next)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return conflict
 	}
 	*delivery = next
 	return nil

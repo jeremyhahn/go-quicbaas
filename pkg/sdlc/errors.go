@@ -45,6 +45,12 @@ var (
 	// ErrBackend indicates a storage or forge backend failed.
 	ErrBackend = errors.New("sdlc: backend failure")
 
+	// ErrGuardedWriteUnsupported indicates a tenant store that cannot decide
+	// a contested write. A version-guarded write is refused over such a store
+	// rather than emulated with a read and an unguarded put; it is carried
+	// inside a BackendError.
+	ErrGuardedWriteUnsupported = errors.New("sdlc: store cannot perform guarded writes")
+
 	// ErrForgeNotRegistered indicates no adapter is registered for a forge type.
 	ErrForgeNotRegistered = errors.New("sdlc: forge backend not registered")
 

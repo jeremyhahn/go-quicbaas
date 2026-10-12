@@ -144,7 +144,7 @@ func (r *kvOutcomeReserver) Reserve(ctx context.Context, tenantID, projectID str
 	key := outcomeReservationPrefix + url.PathEscape(tenantID) + "/" + url.PathEscape(projectID) + "/" +
 		strconv.Itoa(issue) + "/" + base64.RawURLEncoding.EncodeToString([]byte(reconcileKey))
 
-	nonce, err := newReservationNonce()
+	nonce, err := newNonce()
 	if err != nil {
 		return nil, &OutcomeReservationError{Key: key, Operation: "nonce", Cause: err}
 	}
@@ -223,8 +223,9 @@ func (r *kvOutcomeReserver) effectiveExpiry(ctx context.Context, key string, cur
 	return current.ExpiresAt, nil
 }
 
-// newReservationNonce returns a random identifier for one reservation.
-func newReservationNonce() (string, error) {
+// newNonce returns a random identifier: one reservation, or one binding's
+// epoch.
+func newNonce() (string, error) {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err

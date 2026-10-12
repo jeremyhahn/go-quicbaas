@@ -688,7 +688,9 @@ func (s *SDLCService) SetReviewerOverride(ctx context.Context, tenantID, project
 	if err != nil {
 		return nil, err
 	}
-	override := &sdlc.ReviewerOverride{ProjectID: projectID, PullRequest: pullRequest, Profile: resolved.Name}
+	override := &sdlc.ReviewerOverride{
+		ProjectID: projectID, PullRequest: pullRequest, Profile: resolved.Name, BindingEpoch: binding.Epoch,
+	}
 	if err := s.store.PutReviewerOverride(ctx, tenantID, override); err != nil {
 		return nil, err
 	}

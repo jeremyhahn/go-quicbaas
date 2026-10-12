@@ -815,7 +815,29 @@ appears in no key.
   attempt's `Prepare` (carrying over the pull request when the branch
   continues) and updated under `Version` afterwards. `Version` is the only
   concurrency token: a write that finds it moved is refused
-  (`VersionConflictError`) and the writer re-reads.
+  (`VersionConflictError`) and the writer re-reads. The store decides the
+  guard, not the caller: a create lands only through `PutIfAbsent` and an
+  edit only through `CompareAndSwap` over the exact bytes the writer read, so
+  of N writers holding the same `Version` exactly one wins. `PutDelivery`
+  re-reads and retries when it loses, so every replacement gets its own
+  version. A tenant store that cannot perform atomic writes is refused
+  (`ErrGuardedWriteUnsupported` inside a `BackendError`) rather than guarded
+  with a read and a plain put. Bindings, train entries and train ledgers are
+  written the same way. Deletes are guarded too: deleting a binding, train
+  entry, reviewer override or issue cluster goes through `CompareAndDelete`
+  over the exact bytes the delete read and checked. A record written after
+  that read is kept and the delete is refused (`VersionConflictError`), so a
+  delete never erases a write it did not see. A record another delete
+  already removed counts as deleted. Reviewer overrides and issue clusters
+  are blind upserts: each put replaces the whole record (an override only
+  carries its `CreatedAt` forward), so a racing put has no stale read to
+  merge. An override and the binding it depends on are two keys, and the
+  store guards one key at a time, so the read decides instead: a binding's
+  `Epoch` is drawn at random when the project is bound and kept across
+  updates, an override records the epoch it was set under, and
+  `SelectReviewer` ignores an override whose epoch is not the binding's. An
+  override put that passed its binding check before an unbind and wrote after
+  it therefore never reaches the project's next binding.
 
 ### Superseded CI runs
 
