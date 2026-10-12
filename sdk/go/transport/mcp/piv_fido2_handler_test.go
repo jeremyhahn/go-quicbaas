@@ -14,6 +14,7 @@
 package mcp
 
 import (
+	"context"
 	"testing"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -62,6 +63,7 @@ func TestMapToToolName_FIDO2(t *testing.T) {
 	cases := map[string]string{
 		"BeginRegistration":    "xkms.fido2.beginRegistration",
 		"FinishRegistration":   "xkms.fido2.finishRegistration",
+		"BeginAddCredential":   "xkms.fido2.beginAddCredential",
 		"BeginAuthentication":  "xkms.fido2.beginAuthentication",
 		"FinishAuthentication": "xkms.fido2.finishAuthentication",
 	}
@@ -228,6 +230,42 @@ func TestFIDO2MCPHandler_TransformResponse(t *testing.T) {
 	_, err = h.transformResponse("BeginRegistration", map[string]interface{}{
 		"session_id": 12345,
 	})
+	require.Error(t, err)
+}
+
+// TestFIDO2BeginAddCredential_OverMCP drives the add-credential verb through
+// a real MCP server. The SDK sends no account fields: the server takes the
+// account from the authenticated caller.
+func TestFIDO2BeginAddCredential_OverMCP(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "xkms.fido2.beginAddCredential",
+		assertArgs: func(t *testing.T, args map[string]interface{}) {
+			assert.NotContains(t, args, "email")
+			assert.NotContains(t, args, "user_id")
+		},
+		result: map[string]interface{}{"session_id": "sess-add", "options_json": `{"publicKey":{}}`},
+	})
+	defer cleanup()
+
+	resp, err := tr.Request(context.Background(), "quicbaas.FIDO2", "BeginAddCredential", nil)
+	require.NoError(t, err)
+	typed, ok := resp.(*xkmstransport.BeginRegistrationResponse)
+	require.True(t, ok)
+	assert.Equal(t, "sess-add", typed.SessionID)
+}
+
+// TestFIDO2BeginAddCredential_RefusalOverMCP proves a server refusal (an
+// unauthenticated or cross-tenant caller) surfaces as an error rather than
+// an empty session.
+func TestFIDO2BeginAddCredential_RefusalOverMCP(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool:  "xkms.fido2.beginAddCredential",
+		toolError: true,
+		rawText:   "forbidden: cross-tenant",
+	})
+	defer cleanup()
+
+	_, err := tr.Request(context.Background(), "quicbaas.FIDO2", "BeginAddCredential", nil)
 	require.Error(t, err)
 }
 

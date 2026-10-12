@@ -164,6 +164,10 @@ func contextWithAuthorizedSubject(ctx context.Context, authzCtx *platformtoken.A
 		Roles:         authzCtx.Roles,
 		Authenticated: true,
 		Attributes:    make(map[string]interface{}),
+		// The validated token's sub is the login name and its uid the
+		// account; Username is only the token's name claim.
+		IDKind: auth.SubjectIDKindOf(authzCtx.Subject),
+		UserID: authzCtx.UserID,
 	})
 
 	// Only set the tenant key when the token carries a tenant; an empty

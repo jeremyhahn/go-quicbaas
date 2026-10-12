@@ -13,7 +13,9 @@ import (
 	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -190,6 +192,62 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 	}
 	if resolved.Metadata == nil || resolved.Metadata[authMethodMetadataKey] != "piv" {
 		t.Fatalf("auth method not round-tripped: %+v", resolved.Metadata)
+	}
+	// The session sub is the username the ceremony authenticated; the account
+	// travels as the verified uid claim.
+	seeded, err := users.GetUserByUsername(ctx, "acme", "user-42")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	subject := auth.SubjectFromIdentity(resolved)
+	if subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != seeded.ID {
+		t.Fatalf("resolved subject %+v, want username kind with UserID %q", subject, seeded.ID)
+	}
+}
+
+// A session never reads its sub as an account ID: a user whose username is
+// another user's ID resolves to its own account, and an email session is
+// classified as an email. Reading sub as an ID would hand the numeric-name
+// user the other account (an add-credential takeover).
+func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	ctx := context.Background()
+	seedSessionUser(t, users, "acme", "admin", []string{"admin"})
+	admin, err := users.GetUserByUsername(ctx, "acme", "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername(admin): %v", err)
+	}
+	seedSessionUser(t, users, "acme", admin.ID, []string{"reader"})
+	numeric, err := users.GetUserByUsername(ctx, "acme", admin.ID)
+	if err != nil {
+		t.Fatalf("GetUserByUsername(%s): %v", admin.ID, err)
+	}
+	issuer := newOIDCSessionIssuer()
+	issuer.SetProvider(provider)
+
+	cases := map[string]struct {
+		sub      string
+		wantKind interfaces.SubjectIDKind
+		wantUser string
+	}{
+		"numeric username": {sub: admin.ID, wantKind: interfaces.SubjectIDUsername, wantUser: numeric.ID},
+		"email":            {sub: "admin@example.test", wantKind: interfaces.SubjectIDEmail, wantUser: admin.ID},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			token, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: tc.sub, TenantID: "acme"})
+			if err != nil {
+				t.Fatalf("Issue: %v", err)
+			}
+			resolved, err := issuer.Resolve(ctx, token)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			subject := auth.SubjectFromIdentity(resolved)
+			if subject.ID != tc.sub || subject.IDKind != tc.wantKind || subject.UserID != tc.wantUser {
+				t.Fatalf("subject = %+v, want ID %q, IDKind %v, UserID %q", subject, tc.sub, tc.wantKind, tc.wantUser)
+			}
+		})
 	}
 }
 

@@ -554,6 +554,7 @@ POST /api/v1/xkms/ca/sign permission certs:generate
 POST /api/v1/xkms/certs permission certs:generate
 POST /api/v1/xkms/fido2/authenticate/begin permission user_authfactors:get
 POST /api/v1/xkms/fido2/authenticate/finish permission user_authfactors:get
+POST /api/v1/xkms/fido2/credentials/begin permission user_authfactors:add
 POST /api/v1/xkms/fido2/register/begin permission user_authfactors:add
 POST /api/v1/xkms/fido2/register/finish permission user_authfactors:add
 POST /api/v1/xkms/keys permission keys:create

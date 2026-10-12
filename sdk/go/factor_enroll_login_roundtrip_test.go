@@ -154,11 +154,13 @@ func (k *memKV) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// testUser is one directory entry keyed by (tenant, username) -> id.
+// testUser is one directory entry keyed by (tenant, username) -> id. The
+// email is optional; only a user that has one is resolvable by email.
 type testUser struct {
 	id       uint64
 	tenantID string
 	username string
+	email    string
 }
 
 // directoryUserServicer is a focused UserServicer test double that resolves a
@@ -186,6 +188,7 @@ func (d *directoryUserServicer) toSDK(u testUser) *qrdbsdk.User {
 	return &qrdbsdk.User{
 		ID:        u.id,
 		Username:  u.username,
+		Email:     u.email,
 		TenantID:  u.tenantID,
 		Lifecycle: qrdbsdk.LifecycleActive,
 	}
@@ -211,11 +214,16 @@ func (d *directoryUserServicer) GetUserByUsername(_ context.Context, tenantID, u
 	return d.toSDK(u), nil
 }
 
-// GetUserByEmail fails loudly, like the other methods this double does not
-// implement: the paths under test here resolve by tenant-scoped USERNAME, and
-// the fixture's users carry no email. A double that answered anyway would be
-// inventing an index the test never set up.
-func (d *directoryUserServicer) GetUserByEmail(context.Context, string, string) (*qrdbsdk.User, error) {
+// GetUserByEmail resolves only users the fixture gave an email, within the
+// tenant; every other lookup fails loudly. The WebAuthn relying party keys
+// accounts by email, so a passkey test sets one; a double that answered for a
+// user without one would be inventing an index the test never set up.
+func (d *directoryUserServicer) GetUserByEmail(_ context.Context, tenantID, email string) (*qrdbsdk.User, error) {
+	for _, u := range d.byID {
+		if email != "" && u.email == email && u.tenantID == tenantID {
+			return d.toSDK(u), nil
+		}
+	}
 	return nil, stubErr
 }
 

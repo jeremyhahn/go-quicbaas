@@ -271,11 +271,12 @@ func (s *Server) AuthenticateHTTP(r *http.Request) (*qrdbsdk.Identity, error) {
 		s.logBearerRefusal(r, err)
 		return nil, err
 	}
-	return &qrdbsdk.Identity{
+	// sub is the login name; the account is the verified uid claim.
+	return auth.MarkTokenSubject(&qrdbsdk.Identity{
 		Subject:          ac.Subject,
 		TenantID:         ac.TenantID,
 		ScopePermissions: ac.Scopes,
-	}, nil
+	}, ac.UserID), nil
 }
 
 // MissingAuthHeaderError is returned when Authorization header is missing.

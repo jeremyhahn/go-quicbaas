@@ -62,7 +62,7 @@ func (f *fakeCertService) SignCSR(ctx context.Context, req *service.SignCSRReque
 	if err := f.maybeErr(); err != nil {
 		return nil, err
 	}
-	return &service.SignCSRResponse{}, nil
+	return &service.SignCSRResponse{CertificatePEM: "leaf", ChainPEM: "chain", SerialNumber: "7"}, nil
 }
 
 func (f *fakeCertService) RevokeCertificate(ctx context.Context, req *service.RevokeCertificateRequest) (*service.RevokeCertificateResponse, error) {
@@ -220,6 +220,30 @@ func TestTransport_CertificateOperations_SDKClientType(t *testing.T) {
 			assert.NotNil(t, resp)
 		})
 	}
+}
+
+// The SDK certificate client asserts its own response type, so an SDK-typed
+// SignCSR must come back as one, with every field carried over.
+func TestTransport_SignCSR_SDKCallerGetsSDKResponse(t *testing.T) {
+	tr := newCertTransport(t, &fakeCertService{})
+
+	resp, err := tr.Request(context.Background(), "quicbaas.Certificate", "SignCSR",
+		&certclient.SignCSRRequest{CSRPEM: "p"})
+	require.NoError(t, err)
+	sdkResp, ok := resp.(*certclient.SignCSRResponse)
+	require.True(t, ok, "SDK caller got %T, want *certificate.SignCSRResponse", resp)
+	assert.Equal(t, "leaf", sdkResp.CertificatePEM)
+	assert.Equal(t, "chain", sdkResp.ChainPEM)
+	assert.Equal(t, "7", sdkResp.SerialNumber)
+}
+
+func TestTransport_SignCSR_SDKCallerGetsServiceError(t *testing.T) {
+	tr := newCertTransport(t, &fakeCertService{failNext: true})
+
+	resp, err := tr.Request(context.Background(), "quicbaas.Certificate", "SignCSR",
+		&certclient.SignCSRRequest{CSRPEM: "p"})
+	require.ErrorIs(t, err, errCert)
+	assert.Nil(t, resp)
 }
 
 func TestTransport_CertificateOperations_ServiceError(t *testing.T) {

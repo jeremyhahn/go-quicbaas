@@ -55,6 +55,10 @@ func (w *fakeFIDO2Client) FinishRegistration(_ context.Context, req *quicbaas.FI
 	return w.finishResp, w.finishErr
 }
 
+func (w *fakeFIDO2Client) BeginAddCredential(context.Context) (*quicbaas.FIDO2BeginRegistrationResponse, error) {
+	return nil, stderrors.New("BeginAddCredential not expected")
+}
+
 func (w *fakeFIDO2Client) BeginAuthentication(context.Context, *quicbaas.FIDO2BeginAuthenticationRequest) (*quicbaas.FIDO2BeginAuthenticationResponse, error) {
 	return nil, stderrors.New("BeginAuthentication not expected")
 }

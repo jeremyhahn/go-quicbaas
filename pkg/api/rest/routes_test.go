@@ -139,9 +139,12 @@ import (
 // /reference-values and /appraise-quote, handlers_attestation_verifier.go):
 // managing what it trusts under attestation:provision, reading and
 // appraising under attestation:verify.
+// PLUS 1 for the FIDO2 add-credential compat leg
+// (/api/v1/xkms/fido2/credentials/begin, handlers_xkms_fido2.go) under
+// user_authfactors:add.
 // PLUS 1 for the project by-name lookup (GET /api/v1/projects/by-name/{name},
 // go-quicbaas#1261) under project:read, the REST face of GetProjectByName.
-const baseRouteTableSize = 669
+const baseRouteTableSize = 670
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

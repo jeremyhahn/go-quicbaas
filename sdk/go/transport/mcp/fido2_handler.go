@@ -44,11 +44,16 @@ func isMCPFIDO2Service(service string) bool {
 	return strings.HasPrefix(service, fido2ServiceName) || service == "FIDO2"
 }
 
+// fido2MethodBeginAddCredential is the one FIDO2 method that sends no
+// request payload.
+const fido2MethodBeginAddCredential = "BeginAddCredential"
+
 // fido2MethodTools maps FIDO2 methods (the xkms FIDO2Service vocabulary) to
 // the server's xkms.fido2.* tool names.
 var fido2MethodTools = map[string]string{
 	"BeginRegistration":    "xkms.fido2.beginRegistration",
 	"FinishRegistration":   "xkms.fido2.finishRegistration",
+	"BeginAddCredential":   "xkms.fido2.beginAddCredential",
 	"BeginAuthentication":  "xkms.fido2.beginAuthentication",
 	"FinishAuthentication": "xkms.fido2.finishAuthentication",
 }
@@ -72,6 +77,11 @@ func newFIDO2MCPHandler() *fido2MCPHandler { return &fido2MCPHandler{} }
 // tool argument names. The caller's tenant scope is injected by the
 // transport loop (see doRequest), not here.
 func (h *fido2MCPHandler) transformRequest(method string, req interface{}) (map[string]interface{}, error) {
+	if method == fido2MethodBeginAddCredential {
+		// The add-credential tool takes no arguments: the server derives
+		// the account from the caller's identity.
+		return map[string]interface{}{}, nil
+	}
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.fido2."+method, "request is required")
 	}
@@ -93,6 +103,7 @@ func (h *fido2MCPHandler) transformRequest(method string, req interface{}) (map[
 var fido2ResultTransformers = map[string]func(result interface{}) (interface{}, error){
 	"BeginRegistration":    decodeFIDO2BeginRegistrationResult,
 	"FinishRegistration":   decodeFIDO2FinishRegistrationResult,
+	"BeginAddCredential":   decodeFIDO2BeginRegistrationResult,
 	"BeginAuthentication":  decodeFIDO2BeginAuthenticationResult,
 	"FinishAuthentication": decodeFIDO2FinishAuthenticationResult,
 }

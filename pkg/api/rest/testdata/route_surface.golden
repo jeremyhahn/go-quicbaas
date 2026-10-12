@@ -562,6 +562,7 @@ POST /api/v1/xkms/ca/sign
 POST /api/v1/xkms/certs
 POST /api/v1/xkms/fido2/authenticate/begin
 POST /api/v1/xkms/fido2/authenticate/finish
+POST /api/v1/xkms/fido2/credentials/begin
 POST /api/v1/xkms/fido2/register/begin
 POST /api/v1/xkms/fido2/register/finish
 POST /api/v1/xkms/keys

@@ -26,6 +26,8 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // stubFIDO2Service is a minimal service.FIDO2Service for the gRPC server
@@ -42,6 +44,14 @@ func (s *stubFIDO2Service) BeginRegistration(_ context.Context, tenantID string,
 		return nil, s.err
 	}
 	return &xkmstransport.BeginRegistrationResponse{SessionID: "sess-1", OptionsJSON: `{"publicKey":{}}`}, nil
+}
+
+func (s *stubFIDO2Service) BeginAddCredential(_ context.Context, tenantID string) (*xkmstransport.BeginRegistrationResponse, error) {
+	s.lastTenant = tenantID
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &xkmstransport.BeginRegistrationResponse{SessionID: "add-sess", OptionsJSON: `{"publicKey":{}}`}, nil
 }
 
 func (s *stubFIDO2Service) FinishRegistration(_ context.Context, tenantID string, req *xkmstransport.FinishRegistrationRequest) (*xkmstransport.FinishRegistrationResponse, error) {
@@ -206,4 +216,45 @@ func TestServer_FIDO2ServiceUnavailable(t *testing.T) {
 	_, err := srv.BeginRegistration(context.Background(), &pb.FIDO2BeginRegistrationRequest{TenantId: "t", Username: "u"})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
+}
+
+// TestServer_FIDO2BeginAddCredential pins that the add-credential rpc takes
+// its tenant from the request context, never from the (empty) message, and
+// that a typed service refusal keeps its gRPC status.
+func TestServer_FIDO2BeginAddCredential(t *testing.T) {
+	t.Run("success_scopes_to_context_tenant", func(t *testing.T) {
+		srv, mockSvc := createTestServerWithMockService(t)
+		stub := &stubFIDO2Service{}
+		mockSvc.FIDO2Svc = stub
+
+		ctx := tenantctx.WithTenant(context.Background(), "acme")
+		resp, err := srv.BeginAddCredential(ctx, &pb.FIDO2BeginAddCredentialRequest{})
+		require.NoError(t, err)
+		assert.Equal(t, "add-sess", resp.SessionId)
+		assert.Equal(t, `{"publicKey":{}}`, resp.OptionsJson)
+		assert.Equal(t, "acme", stub.lastTenant)
+	})
+
+	t.Run("nil_request", func(t *testing.T) {
+		srv, _ := createTestServerWithMockService(t)
+		_, err := srv.BeginAddCredential(context.Background(), nil)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	})
+
+	t.Run("refusals_keep_their_status", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			err  error
+			want codes.Code
+		}{
+			"unauthenticated": {&dberrors.QBError{Code: dberrors.ErrUnauthorized, Op: "test"}, codes.Unauthenticated},
+			"cross_tenant":    {&dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"}, codes.PermissionDenied},
+		} {
+			t.Run(name, func(t *testing.T) {
+				srv, mockSvc := createTestServerWithMockService(t)
+				mockSvc.FIDO2Svc = &stubFIDO2Service{err: tc.err}
+				_, err := srv.BeginAddCredential(context.Background(), &pb.FIDO2BeginAddCredentialRequest{})
+				assert.Equal(t, tc.want, status.Code(err))
+			})
+		}
+	})
 }

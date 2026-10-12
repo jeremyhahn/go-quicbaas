@@ -71,6 +71,18 @@ func handleFIDO2FinishRegistration(ctx context.Context, svc service.QuicBaaS, re
 	return fido2Svc.FinishRegistration(ctx, transport.TenantFromContext(ctx), sdkReq)
 }
 
+// handleFIDO2BeginAddCredential starts a ceremony that adds a passkey to the
+// caller's own account. It takes no request: the service derives the account
+// from the authenticated identity on ctx.
+func handleFIDO2BeginAddCredential(ctx context.Context, svc service.QuicBaaS, _ interface{}) (interface{}, error) {
+	fido2Svc := svc.FIDO2()
+	if fido2Svc == nil {
+		return nil, NewServiceNotConfiguredError("FIDO2")
+	}
+
+	return fido2Svc.BeginAddCredential(ctx, transport.TenantFromContext(ctx))
+}
+
 func handleFIDO2BeginAuthentication(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	fido2Svc := svc.FIDO2()
 	if fido2Svc == nil {

@@ -466,6 +466,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// pair is pre-auth and lives in publicGRPCMethods.
 	"/quicbaas.fido2.v1.FIDO2Service/BeginRegistration":  {"user_authfactors", "add"},
 	"/quicbaas.fido2.v1.FIDO2Service/FinishRegistration": {"user_authfactors", "add"},
+	"/quicbaas.fido2.v1.FIDO2Service/BeginAddCredential": {"user_authfactors", "add"},
 
 	// ---- quicbaas.piv.v1.PIVService ----
 	//

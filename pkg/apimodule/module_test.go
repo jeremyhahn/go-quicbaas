@@ -516,6 +516,7 @@ func TestModule_PublicGRPCMethods_ExactSet(t *testing.T) {
 	notPublic := []string{
 		"/quicbaas.fido2.v1.FIDO2Service/BeginRegistration",
 		"/quicbaas.fido2.v1.FIDO2Service/FinishRegistration",
+		"/quicbaas.fido2.v1.FIDO2Service/BeginAddCredential",
 	}
 	for _, method := range notPublic {
 		assert.False(t, seen[method], "%q binds a new authenticator and must stay authz-gated", method)

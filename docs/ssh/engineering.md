@@ -138,6 +138,7 @@ transport's configured default tenant.
 type FIDO2Client interface {
     BeginRegistration(ctx context.Context, req *FIDO2BeginRegistrationRequest) (*FIDO2BeginRegistrationResponse, error)
     FinishRegistration(ctx context.Context, req *FIDO2FinishRegistrationRequest) (*FIDO2FinishRegistrationResponse, error)
+    BeginAddCredential(ctx context.Context) (*FIDO2BeginRegistrationResponse, error)
     BeginAuthentication(ctx context.Context, req *FIDO2BeginAuthenticationRequest) (*FIDO2BeginAuthenticationResponse, error)
     FinishAuthentication(ctx context.Context, req *FIDO2FinishAuthenticationRequest) (*FIDO2FinishAuthenticationResponse, error)
 }
@@ -148,6 +149,44 @@ Begin verbs return the JSON-marshaled WebAuthn options
 carry the authenticator's attestation/assertion JSON back under that
 session id. There is no separate `WebAuthn()` accessor — one
 canonical entry point per capability.
+
+`BeginRegistration` creates a new account and refuses one that already
+exists. `BeginAddCredential` adds a passkey to the **caller's own**
+account: it takes no request, the owner is the authenticated caller,
+and the tenant is the request context's (never a body field). The
+service looks the caller up in the tenant's qrdb user store: an mTLS
+caller by the username its certificate is bound to, a bearer-token
+caller by the verified user ID in the token's `uid` claim
+(`interfaces.Subject.UserID`). A token's `sub` is the login's email or
+username and never names an account by ID: without a `uid` it is looked
+up as an email when it contains `@`, otherwise as a username, so an
+all-digit username is still a username and cannot reach the account
+whose ID it spells. An mTLS identity is always a username. A caller
+that names no user in its own tenant is refused (`403`). It is
+finished with `FinishRegistration`, which verifies the attestation and
+stores the credential with its attestation level. It is authorized as
+`user_authfactors:add` and is served on every transport: REST
+`POST /api/v1/xkms/fido2/credentials/begin`, gRPC
+`FIDO2Service/BeginAddCredential`, MCP `xkms.fido2.beginAddCredential`,
+QUIC, Unix and embedded.
+
+`Security().Auth().AdminFactors().Enroll` uses this ceremony for a
+fido2 factor: begin add-credential, let the attached `FIDO2Handler`
+create the credential on the one matching local authenticator, then
+finish. It reports the factor only after the server has stored it,
+and never writes a fido2 row through `Factors().Add` — a row with no
+WebAuthn credential behind it could not log in. The reported
+`credential_id` is the ID of the credential the authenticator attested
+on every transport: REST and QUIC finish on
+`POST /api/v1/xkms/fido2/register/finish`, the same FIDO2 service gRPC,
+MCP, Unix and embedded call.
+
+`Enroll` binds the request's `TenantID` to the context once, in
+preflight, so a piv certificate is issued and its factor stored in that
+tenant exactly as the passkey ceremony is, even from an unbound
+context. A context already bound to a different tenant is refused with
+a conflict (`CodeConflict`) before anything is issued or stored; it is
+never overridden.
 
 ### Devices
 

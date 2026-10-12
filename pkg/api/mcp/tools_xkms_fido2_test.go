@@ -52,6 +52,14 @@ func (f *fido2FakeService) BeginRegistration(_ context.Context, tenantID string,
 	return &transport.BeginRegistrationResponse{SessionID: "sess-1", OptionsJSON: `{"publicKey":{}}`}, nil
 }
 
+func (f *fido2FakeService) BeginAddCredential(_ context.Context, tenantID string) (*transport.BeginRegistrationResponse, error) {
+	f.lastTenant = tenantID
+	if f.failNext {
+		return nil, errMCPFIDO2
+	}
+	return &transport.BeginRegistrationResponse{SessionID: "add-sess", OptionsJSON: `{"publicKey":{}}`}, nil
+}
+
 func (f *fido2FakeService) FinishRegistration(_ context.Context, tenantID string, req *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
 	f.lastTenant = tenantID
 	f.lastFinishReg = req
@@ -220,6 +228,35 @@ func TestXKMSFIDO2Handlers_ServiceErrorPropagates(t *testing.T) {
 	assert.Equal(t, "fido2.beginRegistration", opErr.Operation)
 }
 
+// TestXKMSFIDO2BeginAddCredential_ScopesToContextTenant pins that the
+// add-credential tool takes its tenant from the request context: a tenant_id
+// argument is not part of its schema and must not redirect the ceremony.
+func TestXKMSFIDO2BeginAddCredential_ScopesToContextTenant(t *testing.T) {
+	fake := &fido2FakeService{}
+	registry := newFIDO2Registry(t, fake)
+
+	ctx := tenantctx.WithTenant(context.Background(), "ctx-tenant")
+	result, err := registry.handleXKMSFIDO2BeginAddCredential(ctx, map[string]interface{}{"tenant_id": "other"})
+	require.NoError(t, err)
+
+	m, ok := result.(map[string]interface{})
+	require.True(t, ok, "expected JSON object result, got %T", result)
+	assert.Equal(t, "add-sess", m["session_id"])
+	assert.Equal(t, "ctx-tenant", fake.lastTenant)
+}
+
+// TestXKMSFIDO2BeginAddCredential_RefusalPropagates pins that a service
+// refusal (unauthenticated, cross-tenant) reaches the caller typed.
+func TestXKMSFIDO2BeginAddCredential_RefusalPropagates(t *testing.T) {
+	registry := newFIDO2Registry(t, &fido2FakeService{failNext: true})
+
+	_, err := registry.handleXKMSFIDO2BeginAddCredential(context.Background(), nil)
+	var opErr *XKMSOperationError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, "fido2.beginAddCredential", opErr.Operation)
+	assert.ErrorIs(t, err, errMCPFIDO2)
+}
+
 func TestXKMSFIDO2Handlers_NilServiceUnavailable(t *testing.T) {
 	log := newTestLogger(t)
 	registry := NewToolRegistry(&mockService{}, log)
@@ -264,6 +301,7 @@ func TestXKMSFIDO2ToolsRegisteredAndMapped(t *testing.T) {
 		"xkms.piv.exportCert",
 		"xkms.fido2.beginRegistration",
 		"xkms.fido2.finishRegistration",
+		"xkms.fido2.beginAddCredential",
 		"xkms.fido2.beginAuthentication",
 		"xkms.fido2.finishAuthentication",
 	}
@@ -283,6 +321,7 @@ func TestXKMSFIDO2ToolsRegisteredAndMapped(t *testing.T) {
 		"xkms.piv.exportCert":             {"piv", "read"},
 		"xkms.fido2.beginRegistration":    {"user_authfactors", "add"},
 		"xkms.fido2.finishRegistration":   {"user_authfactors", "add"},
+		"xkms.fido2.beginAddCredential":   {"user_authfactors", "add"},
 		"xkms.fido2.beginAuthentication":  {"user_authfactors", "get"},
 		"xkms.fido2.finishAuthentication": {"user_authfactors", "get"},
 	}

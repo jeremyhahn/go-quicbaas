@@ -23,6 +23,7 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // Compile-time assertion that *Server satisfies the generated FIDO2Service
@@ -96,6 +97,31 @@ func (s *Server) FinishRegistration(ctx context.Context, req *pb.FIDO2FinishRegi
 		CredentialId: resp.CredentialID,
 		Token:        resp.Token,
 		Message:      resp.Message,
+	}, nil
+}
+
+// BeginAddCredential starts a ceremony that adds a passkey to the
+// authenticated caller's own account. The request names neither account nor
+// tenant: both are the caller's, and the tenant is the one the authorization
+// interceptor bound to the context. Finish with FinishRegistration.
+func (s *Server) BeginAddCredential(ctx context.Context, req *pb.FIDO2BeginAddCredentialRequest) (*pb.FIDO2BeginRegistrationResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is nil")
+	}
+	fido2Service := s.service.FIDO2()
+	if fido2Service == nil {
+		return nil, status.Error(codes.Unimplemented, "fido2 service not available")
+	}
+
+	tenantID, _ := tenantctx.Lookup(ctx)
+	resp, err := fido2Service.BeginAddCredential(ctx, tenantID)
+	if err != nil {
+		return nil, toProtoError(err)
+	}
+
+	return &pb.FIDO2BeginRegistrationResponse{
+		SessionId:   resp.SessionID,
+		OptionsJson: resp.OptionsJSON,
 	}, nil
 }
 

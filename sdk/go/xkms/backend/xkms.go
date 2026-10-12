@@ -11,9 +11,11 @@ type Backend = xkmssdk.ServiceBackend
 // PIV manager wiring: PIVKeyGenerator and PIVManagerConfig describe how a
 // backend provisions PIV slots, and SetPIVBackendResolver installs the
 // resolver used to locate the backend serving a given device.
+// PIVCertificateStorage holds the certificate installed in each slot.
 type (
-	PIVKeyGenerator  = xkmssdk.PIVKeyGenerator
-	PIVManagerConfig = xkmssdk.PIVManagerConfig
+	PIVCertificateStorage = xkmssdk.PIVCertificateStorage
+	PIVKeyGenerator       = xkmssdk.PIVKeyGenerator
+	PIVManagerConfig      = xkmssdk.PIVManagerConfig
 )
 
 var (

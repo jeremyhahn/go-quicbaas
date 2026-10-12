@@ -23,7 +23,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -259,13 +258,7 @@ func upstreamToolContext(ctx context.Context) context.Context {
 	if identity == nil {
 		return ctx
 	}
-	ctx = auth.SubjectIntoContext(ctx, interfaces.Subject{
-		ID:            identity.Subject,
-		Username:      identity.Subject,
-		TenantID:      identity.TenantID,
-		Roles:         identity.Roles,
-		Authenticated: true,
-	})
+	ctx = auth.SubjectIntoContext(ctx, auth.SubjectFromIdentity(identity))
 	if identity.TenantID != "" {
 		ctx = tenantctx.WithTenant(ctx, identity.TenantID)
 	}

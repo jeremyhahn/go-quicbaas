@@ -29,6 +29,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
@@ -95,6 +96,7 @@ type fakeModuleTokenAuthorizer struct {
 	wantToken string
 	granted   []string
 	subject   string
+	userID    string
 	tenant    string
 }
 
@@ -105,6 +107,7 @@ func (f *fakeModuleTokenAuthorizer) authenticate(token string) (*platformtoken.A
 	return &platformtoken.AuthorizedContext{
 		Subject:  f.subject,
 		Username: f.subject,
+		UserID:   f.userID,
 		TenantID: f.tenant,
 		Scopes:   f.granted,
 	}, nil
@@ -205,6 +208,7 @@ func TestBindRoute_ProjectsUpstreamQRDBIdentity(t *testing.T) {
 	var gotSubjectOK bool
 	var gotTenant string
 	var gotAuthenticated bool
+	var gotIDKind interfaces.SubjectIDKind
 	spec := RouteSpec{Method: "GET", Pattern: "/api/v1/kms/keys", Auth: RouteAuthPermission, Resource: "keys", Action: "get",
 		Handler: func(*Server) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +218,7 @@ func TestBindRoute_ProjectsUpstreamQRDBIdentity(t *testing.T) {
 				gotSubjectOK = ok
 				gotTenant = subject.TenantID
 				gotAuthenticated = subject.Authenticated
+				gotIDKind = subject.IDKind
 				w.WriteHeader(http.StatusOK)
 			}
 		},
@@ -252,6 +257,10 @@ func TestBindRoute_ProjectsUpstreamQRDBIdentity(t *testing.T) {
 	// without it.
 	if !gotAuthenticated {
 		t.Error("projected subject must be Authenticated for a verified qrdb identity")
+	}
+	// An unmarked identity is qrdb's own (mTLS): its subject is a username.
+	if gotIDKind != interfaces.SubjectIDUsername {
+		t.Errorf("subject IDKind = %v, want SubjectIDUsername", gotIDKind)
 	}
 }
 
@@ -307,6 +316,27 @@ func TestServer_AuthenticateHTTP_UserToken(t *testing.T) {
 	}
 	if len(identity.ScopePermissions) != 0 {
 		t.Errorf("ScopePermissions = %v, want empty for a scopeless user token", identity.ScopePermissions)
+	}
+}
+
+// A bearer's sub is a login name, never an account ID: a numeric sub projects
+// as a username, and the account is the token's verified uid claim.
+func TestServer_AuthenticateHTTP_AccountIsVerifiedUserID(t *testing.T) {
+	srv := newModuleSupportServer(t)
+	srv.moduleAuthorizer = &fakeModuleTokenAuthorizer{
+		wantToken: "user-token", subject: "12345", userID: "67890", tenant: "tenant-a",
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/kms/keys", nil)
+	req.Header.Set("Authorization", "Bearer user-token")
+
+	identity, err := srv.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("AuthenticateHTTP() error = %v", err)
+	}
+	subject := auth.SubjectFromIdentity(identity)
+	if subject.ID != "12345" || subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != "67890" {
+		t.Fatalf("subject = %+v, want ID 12345 as a username with UserID 67890", subject)
 	}
 }
 

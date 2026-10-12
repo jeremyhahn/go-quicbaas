@@ -23,6 +23,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -190,6 +191,31 @@ func (s *Server) HandleXKMSFIDO2FinishRegistration(w http.ResponseWriter, r *htt
 	resp, err := fido2.FinishRegistration(ctx, tenantID, &req)
 	if err != nil {
 		respondXKMSFIDO2Error(w, "FinishRegistration", err, false)
+		return
+	}
+	respondXKMSJSON(w, http.StatusOK, resp)
+}
+
+// HandleXKMSFIDO2BeginAddCredential handles POST
+// /api/v1/xkms/fido2/credentials/begin: it starts a ceremony that adds a
+// passkey to the authenticated caller's own account. There is no request
+// body and no tenant_id parameter — the account and tenant are the caller's,
+// taken from the authenticated principal. The ceremony finishes on
+// /api/v1/xkms/fido2/register/finish.
+func (s *Server) HandleXKMSFIDO2BeginAddCredential(w http.ResponseWriter, r *http.Request) {
+	fido2, err := s.xkmsFIDO2Service()
+	if err != nil {
+		respondXKMSFIDO2Error(w, "BeginAddCredential", err, false)
+		return
+	}
+	tenantID, _ := tenantctx.Lookup(r.Context())
+
+	ctx, cancel := xkmsContextWithTimeout(r.Context())
+	defer cancel()
+
+	resp, err := fido2.BeginAddCredential(ctx, tenantID)
+	if err != nil {
+		respondXKMSFIDO2Error(w, "BeginAddCredential", err, false)
 		return
 	}
 	respondXKMSJSON(w, http.StatusOK, resp)

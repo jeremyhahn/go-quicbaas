@@ -163,6 +163,7 @@ func TestExecuteXKMSToolDispatchesCorrectly(t *testing.T) {
 		// FIDO2 / WebAuthn ceremony operations
 		"xkms.fido2.beginRegistration",
 		"xkms.fido2.finishRegistration",
+		"xkms.fido2.beginAddCredential",
 		"xkms.fido2.beginAuthentication",
 		"xkms.fido2.finishAuthentication",
 		// CA operations

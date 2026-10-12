@@ -30,7 +30,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
@@ -110,6 +112,48 @@ func TestPlatformBearerAuthenticator_AcceptsPlatformTokenOnUnifiedCarrierTranspo
 			require.Equal(t, "agent-session", identity.Subject)
 			require.Equal(t, "tenant-a", identity.TenantID)
 			require.Equal(t, []string{"kms:keys:get"}, identity.ScopePermissions)
+		})
+	}
+}
+
+// A platform bearer's sub is a login name, never an account ID: a numeric sub
+// projects as a username, and the account is the verified uid claim.
+func TestPlatformBearerAuthenticator_AccountIsVerifiedUserID(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	issuer := newPlatformBearerTestIssuer(t, "platform-kid")
+	validator, err := platformtoken.NewValidator(platformtoken.Options{
+		Issuer:       "https://issuer.example",
+		Audience:     "https://quicbaas.example",
+		JWKS:         issuer.jwks(),
+		Clock:        func() time.Time { return now },
+		ModeResolver: func(string) platformtoken.AuthzMode { return platformtoken.AuthzModeOffline },
+	})
+	require.NoError(t, err)
+	authenticator := &platformBearerAuthenticator{validator: validator}
+
+	for name, tc := range map[string]struct {
+		userID   string
+		wantUser string
+	}{
+		"with uid":    {userID: "67890", wantUser: "67890"},
+		"without uid": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			token := issuer.sign(t, platformBearerTestClaims{
+				issuer:   "https://issuer.example",
+				audience: []string{"https://quicbaas.example"},
+				subject:  "12345",
+				userID:   tc.userID,
+				tenant:   "tenant-a",
+				expires:  now.Add(10 * time.Minute),
+				issued:   now,
+			})
+			identity, err := authenticator.authenticateAuthorization(context.Background(), "Bearer "+token)
+			require.NoError(t, err)
+			subject := auth.SubjectFromIdentity(identity)
+			require.Equal(t, "12345", subject.ID)
+			require.Equal(t, interfaces.SubjectIDUsername, subject.IDKind)
+			require.Equal(t, tc.wantUser, subject.UserID)
 		})
 	}
 }
@@ -224,6 +268,7 @@ type platformBearerTestClaims struct {
 	issuer   string
 	audience []string
 	subject  string
+	userID   string
 	tenant   string
 	scopes   []string
 	x5tS256  string
@@ -259,6 +304,9 @@ func (i *platformBearerTestIssuer) sign(t *testing.T, claims platformBearerTestC
 	}
 	if claims.tenant != "" {
 		values["tenant_id"] = claims.tenant
+	}
+	if claims.userID != "" {
+		values["uid"] = claims.userID
 	}
 	if len(claims.scopes) > 0 {
 		values["scp"] = claims.scopes

@@ -302,13 +302,12 @@ func TestVerifyDispatchedAttestation_AdmitsAManufacturerChainedCredential(t *tes
 // TestVerifyDispatchedAttestation_RequiresRawCredentialJSON pins the wire
 // contract this route depends on.
 //
-// The SDK's REST client sends the credential JSON as the body and the ceremony
-// session in the X-Session-Id header (sdk/go/transport/rest/security_handler.go
-// unwraps its FinishRegistrationRequest before the call, and xkms's handler
-// reads the header). The transport envelope
-// {"session_id":…,"attestation_json":…} is the shape used by the gRPC / MCP /
-// QUIC surfaces, which reach the attestation check through
-// pkg/service/fido2_service.go instead.
+// A browser sends the credential JSON as the body and the ceremony session in
+// the X-Session-Id header, which xkms's handler reads. The transport envelope
+// {"session_id":…,"attestation_json":…} is the shape the SDK sends on every
+// transport — REST and QUIC to /api/v1/xkms/fido2/register/finish, gRPC, MCP
+// and Unix to their FIDO2 verbs — all of which reach the attestation check
+// through pkg/service/fido2_service.go instead.
 //
 // If a client ever posted the envelope HERE, the credential would not parse and
 // no chain would be attached — a hardware key would silently enroll as

@@ -39,6 +39,7 @@ func TestTransport_FIDO2_Delegates(t *testing.T) {
 	}{
 		{"begin-registration", "BeginRegistration", &xkmstransport.BeginRegistrationRequest{Email: "alice@example.com"}},
 		{"finish-registration", "FinishRegistration", &xkmstransport.FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"}},
+		{"begin-add-credential", "BeginAddCredential", nil},
 		{"begin-authentication", "BeginAuthentication", &xkmstransport.BeginAuthenticationRequest{Email: "alice@example.com"}},
 		{"finish-authentication", "FinishAuthentication", &xkmstransport.FinishAuthenticationRequest{SessionID: "s", Email: "alice@example.com", AssertionJSON: "{}"}},
 	}

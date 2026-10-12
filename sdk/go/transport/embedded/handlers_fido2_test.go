@@ -50,6 +50,14 @@ func (f *fakeFIDO2Service) BeginRegistration(ctx context.Context, tenantID strin
 	}, nil
 }
 
+func (f *fakeFIDO2Service) BeginAddCredential(ctx context.Context, tenantID string) (*xkmstransport.BeginRegistrationResponse, error) {
+	f.lastTenant = tenantID
+	if f.failNext {
+		return nil, errFIDO2
+	}
+	return &xkmstransport.BeginRegistrationResponse{SessionID: "add-sess", OptionsJSON: `{"publicKey":{}}`}, nil
+}
+
 func (f *fakeFIDO2Service) FinishRegistration(ctx context.Context, tenantID string, req *xkmstransport.FinishRegistrationRequest) (*xkmstransport.FinishRegistrationResponse, error) {
 	f.lastTenant = tenantID
 	if f.failNext {
@@ -127,6 +135,20 @@ func TestTransport_FIDO2FinishRegistration(t *testing.T) {
 	assert.Equal(t, "tenant-a", fake.lastTenant)
 }
 
+// TestTransport_FIDO2BeginAddCredential pins that the payload-less
+// add-credential verb reaches the service with the context tenant.
+func TestTransport_FIDO2BeginAddCredential(t *testing.T) {
+	fake := &fakeFIDO2Service{}
+	tr := newFIDO2Transport(t, fake)
+	ctx := transport.ContextWithTenant(context.Background(), "tenant-a")
+	resp, err := tr.Request(ctx, "quicbaas.FIDO2", "BeginAddCredential", nil)
+	require.NoError(t, err)
+	typed, ok := resp.(*xkmstransport.BeginRegistrationResponse)
+	require.True(t, ok)
+	assert.Equal(t, "add-sess", typed.SessionID)
+	assert.Equal(t, "tenant-a", fake.lastTenant)
+}
+
 func TestTransport_FIDO2BeginAuthentication(t *testing.T) {
 	fake := &fakeFIDO2Service{}
 	tr := newFIDO2Transport(t, fake)
@@ -177,6 +199,7 @@ func TestTransport_FIDO2Operations_ServiceError(t *testing.T) {
 	requests := map[string]interface{}{
 		"BeginRegistration":    &xkmstransport.BeginRegistrationRequest{},
 		"FinishRegistration":   &xkmstransport.FinishRegistrationRequest{},
+		"BeginAddCredential":   nil,
 		"BeginAuthentication":  &xkmstransport.BeginAuthenticationRequest{},
 		"FinishAuthentication": &xkmstransport.FinishAuthenticationRequest{},
 	}

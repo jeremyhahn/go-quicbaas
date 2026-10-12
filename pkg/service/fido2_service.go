@@ -47,6 +47,13 @@ type FIDO2Service interface {
 	// FinishRegistration completes a WebAuthn registration ceremony.
 	FinishRegistration(ctx context.Context, tenantID string, req *xkmstransport.FinishRegistrationRequest) (*xkmstransport.FinishRegistrationResponse, error)
 
+	// BeginAddCredential starts a registration ceremony that adds a passkey
+	// to the authenticated caller's own account. The account and tenant come
+	// from the caller's identity; tenantID is the transport-resolved request
+	// tenant and, when set, must be the caller's. Finish the ceremony with
+	// FinishRegistration.
+	BeginAddCredential(ctx context.Context, tenantID string) (*xkmstransport.BeginRegistrationResponse, error)
+
 	// BeginAuthentication starts a WebAuthn authentication ceremony.
 	BeginAuthentication(ctx context.Context, tenantID string, req *xkmstransport.BeginAuthenticationRequest) (*xkmstransport.BeginAuthenticationResponse, error)
 

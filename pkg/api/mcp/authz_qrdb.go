@@ -807,6 +807,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// step-up verification of an enrolled factor, a factor read.
 	"xkms.fido2.beginRegistration":    {"user_authfactors", "add"},
 	"xkms.fido2.finishRegistration":   {"user_authfactors", "add"},
+	"xkms.fido2.beginAddCredential":   {"user_authfactors", "add"},
 	"xkms.fido2.beginAuthentication":  {"user_authfactors", "get"},
 	"xkms.fido2.finishAuthentication": {"user_authfactors", "get"},
 

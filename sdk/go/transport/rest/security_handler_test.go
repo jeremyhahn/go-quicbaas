@@ -93,6 +93,61 @@ func TestSecurity_FIDO2_BeginRegistration_HitsIAMMount(t *testing.T) {
 	}
 }
 
+func TestSecurity_FIDO2_BeginAddCredential_PostsWithoutAccount(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"session_id":"sess-add","options_json":"{\"publicKey\":{}}"}`))
+	}))
+	defer server.Close()
+
+	tr := newSecurityTestTransport(t, server, "acme-tenant")
+	defer tr.Close()
+
+	result, err := tr.Request(context.Background(), securityServiceFIDO2, "BeginAddCredential", nil)
+	if err != nil {
+		t.Fatalf("BeginAddCredential failed: %v", err)
+	}
+	if gotPath != "/api/v1/xkms/fido2/credentials/begin" {
+		t.Errorf("path = %q, want the caller-scoped add-credential route", gotPath)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if len(gotBody) != 0 {
+		t.Errorf("body = %q, want empty: the server derives the account from the caller", gotBody)
+	}
+	resp, ok := result.(*xkmstransport.BeginRegistrationResponse)
+	if !ok {
+		t.Fatalf("result type = %T, want *xkmstransport.BeginRegistrationResponse", result)
+	}
+	if resp.SessionID != "sess-add" || resp.OptionsJSON != `{"publicKey":{}}` {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+}
+
+func TestSecurity_FIDO2_BeginAddCredential_Unauthenticated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer server.Close()
+
+	tr := newSecurityTestTransport(t, server, "acme-tenant")
+	defer tr.Close()
+
+	_, err := tr.Request(context.Background(), securityServiceFIDO2, "BeginAddCredential", nil)
+	if !errors.IsUnauthorized(err) {
+		t.Fatalf("err = %v, want an unauthorized error", err)
+	}
+}
+
 func TestSecurity_FIDO2_BeginRegistration_InvalidRequestType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("server must not be called for an invalid request type")
@@ -113,21 +168,24 @@ func TestSecurity_FIDO2_BeginRegistration_InvalidRequestType(t *testing.T) {
 	}
 }
 
-func TestSecurity_FIDO2_FinishRegistration_SendsSessionHeader(t *testing.T) {
+func TestSecurity_FIDO2_FinishRegistration_UsesFIDO2ServiceRoute(t *testing.T) {
 	const (
 		tenant          = "acme-tenant"
 		sessionID       = "sess-xyz-789"
 		attestationJSON = `{"id":"cred","response":{}}`
+		credentialID    = "Y3JlZC1pZA"
 	)
-	var gotPath, gotSession string
-	var gotBody []byte
+	var gotPath, gotTenant string
+	var gotReq xkmstransport.FinishRegistrationRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		gotSession = r.Header.Get(webauthnhttp.HeaderSessionID)
-		gotBody, _ = io.ReadAll(r.Body)
+		gotTenant = r.URL.Query().Get("tenant_id")
+		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"token":"jwt-token","user_id":"dXNlcg"}`))
+		_, _ = w.Write([]byte(`{"success":true,"credential_id":"` + credentialID + `"}`))
 	}))
 	defer server.Close()
 
@@ -143,23 +201,40 @@ func TestSecurity_FIDO2_FinishRegistration_SendsSessionHeader(t *testing.T) {
 		t.Fatalf("FinishRegistration failed: %v", err)
 	}
 
-	wantPath := "/api/v1/iam/" + tenant + "/webauthn/registration/finish"
-	if gotPath != wantPath {
-		t.Errorf("path = %q, want %q", gotPath, wantPath)
+	if gotPath != "/api/v1/xkms/fido2/register/finish" {
+		t.Errorf("path = %q, want the FIDO2 service finish route", gotPath)
 	}
-	if gotSession != sessionID {
-		t.Errorf("X-Session-Id = %q, want %q", gotSession, sessionID)
+	if gotTenant != tenant {
+		t.Errorf("tenant_id = %q, want %q", gotTenant, tenant)
 	}
-	if string(gotBody) != attestationJSON {
-		t.Errorf("body = %q, want raw attestation %q", gotBody, attestationJSON)
+	if gotReq.SessionID != sessionID || gotReq.AttestationJSON != attestationJSON {
+		t.Errorf("request = %+v, want session %q and the raw attestation", gotReq, sessionID)
 	}
 
 	resp, ok := result.(*xkmstransport.FinishRegistrationResponse)
 	if !ok {
 		t.Fatalf("result type = %T, want *xkmstransport.FinishRegistrationResponse", result)
 	}
-	if !resp.Success || resp.Token != "jwt-token" || resp.CredentialID != "dXNlcg" {
-		t.Errorf("unexpected response: %+v", resp)
+	if !resp.Success || resp.CredentialID != credentialID {
+		t.Errorf("response = %+v, want success with credential %q", resp, credentialID)
+	}
+}
+
+func TestSecurity_FIDO2_FinishRegistration_UndecodableResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`not json`))
+	}))
+	defer server.Close()
+
+	tr := newSecurityTestTransport(t, server, "acme-tenant")
+	defer tr.Close()
+
+	_, err := tr.Request(context.Background(), securityServiceFIDO2, "FinishRegistration",
+		&xkmstransport.FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"})
+	if err == nil {
+		t.Fatal("want an error for an undecodable response")
 	}
 }
 

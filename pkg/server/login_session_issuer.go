@@ -22,6 +22,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -183,7 +184,9 @@ func (i *oidcSessionIssuer) Resolve(ctx context.Context, bearer string) (*qrdbsd
 	if claims.AuthMethod != "" {
 		identity.Metadata = map[string]string{authMethodMetadataKey: claims.AuthMethod}
 	}
-	return identity, nil
+	// sub is the email or username the ceremony authenticated; the account is
+	// the verified uid claim, never sub read as an ID.
+	return auth.MarkTokenSubject(identity, claims.UserID), nil
 }
 
 // Revoke invalidates a previously issued bearer (logout).

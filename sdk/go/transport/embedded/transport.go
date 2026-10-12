@@ -280,6 +280,7 @@ var unaryHandlers = map[string]handlerFunc{
 	// rides the context (transport.ContextWithTenant).
 	"quicbaas.FIDO2/BeginRegistration":    handleFIDO2BeginRegistration,
 	"quicbaas.FIDO2/FinishRegistration":   handleFIDO2FinishRegistration,
+	"quicbaas.FIDO2/BeginAddCredential":   handleFIDO2BeginAddCredential,
 	"quicbaas.FIDO2/BeginAuthentication":  handleFIDO2BeginAuthentication,
 	"quicbaas.FIDO2/FinishAuthentication": handleFIDO2FinishAuthentication,
 

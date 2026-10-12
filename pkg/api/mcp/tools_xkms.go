@@ -117,6 +117,7 @@ func (r *ToolRegistry) initXKMSHandlers() map[string]XKMSToolHandler {
 		// FIDO2 / WebAuthn ceremony operations (tenant-scoped)
 		"xkms.fido2.beginRegistration":    r.handleXKMSFIDO2BeginRegistration,
 		"xkms.fido2.finishRegistration":   r.handleXKMSFIDO2FinishRegistration,
+		"xkms.fido2.beginAddCredential":   r.handleXKMSFIDO2BeginAddCredential,
 		"xkms.fido2.beginAuthentication":  r.handleXKMSFIDO2BeginAuthentication,
 		"xkms.fido2.finishAuthentication": r.handleXKMSFIDO2FinishAuthentication,
 
@@ -586,6 +587,15 @@ func (r *ToolRegistry) registerXKMSPIVTools() {
 				"attestation_json": map[string]interface{}{"type": "string", "description": "WebAuthn PublicKeyCredential attestation JSON from the authenticator"},
 			},
 			"required": []string{"session_id", "attestation_json"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "xkms.fido2.beginAddCredential",
+		Description: "Begin a WebAuthn ceremony that adds a passkey to the authenticated caller's own account; finish it with finishRegistration",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
 		},
 	})
 
@@ -1905,6 +1915,25 @@ func (r *ToolRegistry) handleXKMSFIDO2FinishRegistration(ctx context.Context, ar
 	})
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "fido2.finishRegistration", Cause: err}
+	}
+
+	return marshalResult(resp)
+}
+
+// handleXKMSFIDO2BeginAddCredential starts a ceremony that adds a passkey to
+// the authenticated caller's own account. The tool takes no arguments: the
+// account comes from the caller's identity and the tenant from the request
+// context, so neither can be named by the call.
+func (r *ToolRegistry) handleXKMSFIDO2BeginAddCredential(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+	fido2Svc, err := r.fido2Service()
+	if err != nil {
+		return nil, err
+	}
+
+	tenantID, _ := tenantctx.Lookup(ctx) // comma-ok: an unbound context leaves the caller's own tenant in force
+	resp, err := fido2Svc.BeginAddCredential(ctx, tenantID)
+	if err != nil {
+		return nil, &XKMSOperationError{Operation: "fido2.beginAddCredential", Cause: err}
 	}
 
 	return marshalResult(resp)

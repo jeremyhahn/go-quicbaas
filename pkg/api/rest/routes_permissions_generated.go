@@ -631,6 +631,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/xkms/certs":                                                         {auth: RouteAuthPermission, resource: "certs", action: "generate"},
 	"POST /api/v1/xkms/fido2/authenticate/begin":                                      {auth: RouteAuthPermission, resource: "user_authfactors", action: "get"},
 	"POST /api/v1/xkms/fido2/authenticate/finish":                                     {auth: RouteAuthPermission, resource: "user_authfactors", action: "get"},
+	"POST /api/v1/xkms/fido2/credentials/begin":                                       {auth: RouteAuthPermission, resource: "user_authfactors", action: "add"},
 	"POST /api/v1/xkms/fido2/register/begin":                                          {auth: RouteAuthPermission, resource: "user_authfactors", action: "add"},
 	"POST /api/v1/xkms/fido2/register/finish":                                         {auth: RouteAuthPermission, resource: "user_authfactors", action: "add"},
 	"POST /api/v1/xkms/keys":                                                          {auth: RouteAuthPermission, resource: "keys", action: "create"},

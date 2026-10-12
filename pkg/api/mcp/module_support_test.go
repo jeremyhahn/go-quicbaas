@@ -25,6 +25,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
@@ -223,6 +224,10 @@ func TestUpstreamToolContext_ProjectsQRDBIdentity(t *testing.T) {
 	}
 	if len(subject.Roles) != 1 || subject.Roles[0] != "admin" {
 		t.Fatalf("roles projection wrong: %v", subject.Roles)
+	}
+	// An unmarked identity is qrdb's own (mTLS): its subject is a username.
+	if subject.IDKind != interfaces.SubjectIDUsername {
+		t.Fatalf("IDKind = %v, want SubjectIDUsername", subject.IDKind)
 	}
 
 	plain := upstreamToolContext(context.Background())

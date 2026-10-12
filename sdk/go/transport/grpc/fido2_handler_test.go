@@ -18,10 +18,13 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -31,6 +34,15 @@ import (
 type fakeFIDO2Server struct {
 	fail       bool
 	lastTenant string
+}
+
+// BeginAddCredential refuses with PermissionDenied when fail is set, the
+// status the server returns for a cross-tenant caller.
+func (f *fakeFIDO2Server) BeginAddCredential(_ context.Context, _ *pb.FIDO2BeginAddCredentialRequest) (*pb.FIDO2BeginRegistrationResponse, error) {
+	if f.fail {
+		return nil, status.Error(codes.PermissionDenied, "cross-tenant")
+	}
+	return &pb.FIDO2BeginRegistrationResponse{SessionId: "sess-add", OptionsJson: `{"publicKey":{}}`}, nil
 }
 
 func (f *fakeFIDO2Server) BeginRegistration(_ context.Context, req *pb.FIDO2BeginRegistrationRequest) (*pb.FIDO2BeginRegistrationResponse, error) {
@@ -174,6 +186,33 @@ func TestFIDO2Handler_FinishAuthentication_RoundTrip(t *testing.T) {
 	}
 	if !out.Success || out.Token != "tok-auth" || out.Username != "alice@example.com" {
 		t.Errorf("unexpected response: %+v", out)
+	}
+}
+
+func TestFIDO2Handler_BeginAddCredential_RoundTrip(t *testing.T) {
+	conn, _ := newFIDO2TestConn(t, false)
+	handler := newFIDO2Handler(conn)
+
+	resp, err := handler.handleRequest(context.Background(), "quicbaas.FIDO2", "BeginAddCredential", nil)
+	if err != nil {
+		t.Fatalf("BeginAddCredential: %v", err)
+	}
+	out, ok := resp.(*xkmstransport.BeginRegistrationResponse)
+	if !ok {
+		t.Fatalf("unexpected response type %T", resp)
+	}
+	if out.SessionID != "sess-add" || out.OptionsJSON == "" {
+		t.Errorf("unexpected response: %+v", out)
+	}
+}
+
+func TestFIDO2Handler_BeginAddCredential_Refused(t *testing.T) {
+	conn, _ := newFIDO2TestConn(t, true)
+	handler := newFIDO2Handler(conn)
+
+	_, err := handler.handleRequest(context.Background(), "quicbaas.FIDO2", "BeginAddCredential", nil)
+	if !errors.IsForbidden(err) {
+		t.Fatalf("err = %v, want a forbidden error", err)
 	}
 }
 

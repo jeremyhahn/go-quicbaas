@@ -20,7 +20,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 )
 
 // BindRoute binds a RouteSpec's handler on s with the middleware profile its
@@ -90,13 +90,10 @@ func (s *Server) projectQRDBIdentity(next http.Handler) http.Handler {
 		// and is required by every handler that gates on
 		// subject.Authenticated (requireSubject, and the impersonation
 		// actor resolution in AdminManager.StartImpersonation — #383).
-		subject := interfaces.Subject{
-			ID:            identity.Subject,
-			Username:      identity.Subject,
-			TenantID:      identity.TenantID,
-			Roles:         identity.Roles,
-			Authenticated: true,
-		}
+		// auth.SubjectFromIdentity also records whether the subject names a
+		// user ID or a username, which an mTLS caller and a bearer caller
+		// cannot otherwise be told apart by.
+		subject := auth.SubjectFromIdentity(identity)
 		next.ServeHTTP(w, r.WithContext(injectPrincipal(r.Context(), subject, nil)))
 	})
 }

@@ -34,6 +34,9 @@ type AuthorizedContext struct {
 	// Username is the human-facing name (from the token name claim), surfaced so
 	// a resource server can match principals by username in addition to Subject.
 	Username string
+	// UserID is the issuer's immutable user id (uid), the handle a user
+	// principal's account is resolved by. Empty on service tokens.
+	UserID string
 	// TenantID is the tenant the request operates within. Downstream services
 	// set this as the row-level-security tenant (e.g. app.current_tenant).
 	TenantID string
@@ -51,6 +54,7 @@ func Authorize(claims *Claims) *AuthorizedContext {
 	return &AuthorizedContext{
 		Subject:      claims.Subject,
 		Username:     claims.Name,
+		UserID:       claims.UserID,
 		TenantID:     claims.TenantID,
 		Scopes:       claims.scopes(),
 		Roles:        claims.Roles,

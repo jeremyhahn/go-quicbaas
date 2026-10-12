@@ -28,7 +28,9 @@ import (
 
 	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // fakeFIDO2Service records the tenant scope and returns canned ceremony
@@ -44,6 +46,14 @@ func (f *fakeFIDO2Service) BeginRegistration(_ context.Context, tenantID string,
 		return nil, f.err
 	}
 	return &transportTypes.BeginRegistrationResponse{SessionID: "s1", OptionsJSON: `{"publicKey":{}}`}, nil
+}
+
+func (f *fakeFIDO2Service) BeginAddCredential(_ context.Context, tenantID string) (*transportTypes.BeginRegistrationResponse, error) {
+	f.tenantID = tenantID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &transportTypes.BeginRegistrationResponse{SessionID: "add-sess", OptionsJSON: `{"publicKey":{}}`}, nil
 }
 
 func (f *fakeFIDO2Service) FinishRegistration(_ context.Context, tenantID string, _ *transportTypes.FinishRegistrationRequest) (*transportTypes.FinishRegistrationResponse, error) {
@@ -151,6 +161,55 @@ func TestHandleXKMSFIDO2FinishRegistration_CeremonyError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// TestHandleXKMSFIDO2BeginAddCredential_ScopesToTheRequestTenant pins that
+// the add-credential leg takes its tenant from the request context the
+// authentication middleware set, and never from a tenant_id parameter.
+func TestHandleXKMSFIDO2BeginAddCredential_ScopesToTheRequestTenant(t *testing.T) {
+	fake := &fakeFIDO2Service{}
+	s := newXKMSFIDO2Server(t, fake)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/fido2/credentials/begin?tenant_id=other", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "acme"))
+	w := httptest.NewRecorder()
+	s.HandleXKMSFIDO2BeginAddCredential(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "acme", fake.tenantID, "the context tenant must scope the ceremony, not the query")
+	var resp transportTypes.BeginRegistrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "add-sess", resp.SessionID)
+	assert.NotEmpty(t, resp.OptionsJSON)
+}
+
+// TestHandleXKMSFIDO2BeginAddCredential_RefusalStatus pins that the service's
+// classified refusals keep their status on this bridge: no caller is 401, a
+// caller of another tenant is 403, an unwired service is 503.
+func TestHandleXKMSFIDO2BeginAddCredential_RefusalStatus(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want int
+	}{
+		"unauthenticated": {
+			err:  &dberrors.QBError{Code: dberrors.ErrUnauthorized, Err: &service.FIDO2CallerRefusedError{Reason: "no caller"}},
+			want: http.StatusUnauthorized,
+		},
+		"cross-tenant": {
+			err:  &dberrors.QBError{Code: dberrors.ErrForbidden, Err: &tenantctx.CrossTenantError{CallerTenant: "acme", TargetTenant: "other"}},
+			want: http.StatusForbidden,
+		},
+		"not configured": {err: service.ErrFIDO2NotConfigured, want: http.StatusServiceUnavailable},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := newXKMSFIDO2Server(t, &fakeFIDO2Service{err: tc.err})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/fido2/credentials/begin", nil)
+			w := httptest.NewRecorder()
+			s.HandleXKMSFIDO2BeginAddCredential(w, req)
+			assert.Equal(t, tc.want, w.Code, w.Body.String())
+		})
+	}
+}
+
 func TestHandleXKMSFIDO2BeginAuthentication_Happy(t *testing.T) {
 	fake := &fakeFIDO2Service{}
 	s := newXKMSFIDO2Server(t, fake)
@@ -237,6 +296,7 @@ func TestXKMSFIDO2Routes_PEPVocabulary(t *testing.T) {
 	}{
 		{"/api/v1/xkms/fido2/register/begin", "user_authfactors", "add"},
 		{"/api/v1/xkms/fido2/register/finish", "user_authfactors", "add"},
+		{"/api/v1/xkms/fido2/credentials/begin", "user_authfactors", "add"},
 		{"/api/v1/xkms/fido2/authenticate/begin", "user_authfactors", "get"},
 		{"/api/v1/xkms/fido2/authenticate/finish", "user_authfactors", "get"},
 	}
@@ -256,6 +316,7 @@ func TestXKMSFIDO2Routes_NotPublic(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/xkms/fido2/register/begin",
 		"/api/v1/xkms/fido2/register/finish",
+		"/api/v1/xkms/fido2/credentials/begin",
 		"/api/v1/xkms/fido2/authenticate/begin",
 		"/api/v1/xkms/fido2/authenticate/finish",
 	} {

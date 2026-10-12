@@ -1987,6 +1987,7 @@ func (m *MockFleetAdminService) ListFleetNodeRegistrations(ctx context.Context, 
 type MockFIDO2Service struct {
 	BeginRegistrationFunc    func(ctx context.Context, tenantID string, req *xkmstransport.BeginRegistrationRequest) (*xkmstransport.BeginRegistrationResponse, error)
 	FinishRegistrationFunc   func(ctx context.Context, tenantID string, req *xkmstransport.FinishRegistrationRequest) (*xkmstransport.FinishRegistrationResponse, error)
+	BeginAddCredentialFunc   func(ctx context.Context, tenantID string) (*xkmstransport.BeginRegistrationResponse, error)
 	BeginAuthenticationFunc  func(ctx context.Context, tenantID string, req *xkmstransport.BeginAuthenticationRequest) (*xkmstransport.BeginAuthenticationResponse, error)
 	FinishAuthenticationFunc func(ctx context.Context, tenantID string, req *xkmstransport.FinishAuthenticationRequest) (*xkmstransport.FinishAuthenticationResponse, error)
 }
@@ -2005,6 +2006,13 @@ func (m *MockFIDO2Service) FinishRegistration(ctx context.Context, tenantID stri
 		return m.FinishRegistrationFunc(ctx, tenantID, req)
 	}
 	return &xkmstransport.FinishRegistrationResponse{Success: true}, nil
+}
+
+func (m *MockFIDO2Service) BeginAddCredential(ctx context.Context, tenantID string) (*xkmstransport.BeginRegistrationResponse, error) {
+	if m.BeginAddCredentialFunc != nil {
+		return m.BeginAddCredentialFunc(ctx, tenantID)
+	}
+	return &xkmstransport.BeginRegistrationResponse{SessionID: "mock-session"}, nil
 }
 
 func (m *MockFIDO2Service) BeginAuthentication(ctx context.Context, tenantID string, req *xkmstransport.BeginAuthenticationRequest) (*xkmstransport.BeginAuthenticationResponse, error) {

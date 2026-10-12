@@ -17,6 +17,9 @@ type (
 	HIDDevice            = xkmsfido2.HIDDevice
 	HIDDeviceEnumerator  = xkmsfido2.HIDDeviceEnumerator
 	RelyingParty         = xkmsfido2.RelyingParty
+
+	WebAuthnAttestation         = xkmsfido2.WebAuthnAttestation
+	WebAuthnRegistrationOptions = xkmsfido2.WebAuthnRegistrationOptions
 )
 
 var (
@@ -27,6 +30,8 @@ var (
 	NewCTAPHIDDevice            = xkmsfido2.NewCTAPHIDDevice
 	NewDefaultEnumerator        = xkmsfido2.NewDefaultEnumerator
 	NewHandler                  = xkmsfido2.NewHandler
+
+	ParseWebAuthnRegistrationOptions = xkmsfido2.ParseWebAuthnRegistrationOptions
 )
 
 // User identifies a FIDO2 relying-party user.

@@ -20,6 +20,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth/liveness"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -147,11 +148,12 @@ func (a *platformBearerAuthenticator) authenticateAuthorization(ctx context.Cont
 	if strings.TrimSpace(ac.TenantID) == "" {
 		return nil, &PlatformBearerTenantRequiredError{}
 	}
-	return &qrdbsdk.Identity{
+	// sub is the login name; the account is the verified uid claim.
+	return auth.MarkTokenSubject(&qrdbsdk.Identity{
 		Subject:          ac.Subject,
 		TenantID:         ac.TenantID,
 		ScopePermissions: ac.Scopes,
-	}, nil
+	}, ac.UserID), nil
 }
 
 func (a *platformBearerAuthenticator) resolveValidator(ctx context.Context) (*platformtoken.Validator, error) {

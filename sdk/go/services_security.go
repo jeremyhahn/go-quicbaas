@@ -578,6 +578,14 @@ type FIDO2Client interface {
 	// the authenticator attestation produced by the client.
 	FinishRegistration(ctx context.Context, req *FIDO2FinishRegistrationRequest) (*FIDO2FinishRegistrationResponse, error)
 
+	// BeginAddCredential starts a ceremony that adds a passkey to the
+	// authenticated caller's own account, which BeginRegistration refuses
+	// because the account already exists. The account and tenant are the
+	// caller's: the server takes them from the authenticated identity, so
+	// the call names neither. Complete it with FinishRegistration, which
+	// verifies the attestation and stores the credential.
+	BeginAddCredential(ctx context.Context) (*FIDO2BeginRegistrationResponse, error)
+
 	// BeginAuthentication starts a WebAuthn authentication ceremony and
 	// returns the JSON-marshaled CredentialRequestOptions plus the opaque
 	// ceremony session ID.
@@ -653,6 +661,13 @@ type AuthService interface {
 
 	// Factors returns the multi-factor enrollment + login client.
 	Factors() AuthFactorsClient
+
+	// AdminFactors returns the administrator hardware-factor enroller. The
+	// FIDO2 / PIV ceremony runs in the calling process, against handlers the
+	// caller attaches, because only the console-owning process can open the
+	// device; only the persist step crosses the transport. See
+	// AdminFactorEnroller.
+	AdminFactors() AdminFactorEnroller
 
 	// BeginLogin starts the unified login ceremony for any factor type
 	// (mtls / fido2 / piv) and returns the server-issued challenge. It
@@ -1175,6 +1190,27 @@ func (c *fido2TransportClient) FinishRegistration(ctx context.Context, req *FIDO
 	out, ok := resp.(*FIDO2FinishRegistrationResponse)
 	if !ok {
 		return nil, sdkerrors.NewInternal("fido2.FinishRegistration", "invalid response type")
+	}
+	return out, nil
+}
+
+// BeginAddCredential starts a ceremony that adds a passkey to the caller's
+// own account. The request carries no payload: the server derives the
+// account from the caller's identity.
+func (c *fido2TransportClient) BeginAddCredential(ctx context.Context) (*FIDO2BeginRegistrationResponse, error) {
+	if ctx == nil {
+		return nil, sdkerrors.NewInvalidInput("fido2.BeginAddCredential", "context is required")
+	}
+	resp, err := c.t.Request(ctx, fido2ServiceName, "BeginAddCredential", nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, sdkerrors.NewInternal("fido2.BeginAddCredential", "nil response from server")
+	}
+	out, ok := resp.(*FIDO2BeginRegistrationResponse)
+	if !ok {
+		return nil, sdkerrors.NewInternal("fido2.BeginAddCredential", "invalid response type")
 	}
 	return out, nil
 }
@@ -1857,18 +1893,22 @@ type authServiceImpl struct {
 	piv     XKMSPIVService
 	devices LocalDevices
 	factors AuthFactorsClient
+	admin   AdminFactorEnroller
 }
 
 func newAuthService(c *client) AuthService {
 	t := c.transport
+	factors := &authFactorsImpl{c: c, t: t}
+	passkeys := &fido2TransportClient{t: t}
 	return &authServiceImpl{
 		AuthClient: c.auth(),
 		c:          c,
 		t:          t,
-		fido2:      &fido2TransportClient{t: t},
+		fido2:      passkeys,
 		piv:        &pivTransportClient{t: t},
 		devices:    newLocalDevices(),
-		factors:    &authFactorsImpl{c: c, t: t},
+		factors:    factors,
+		admin:      newAdminFactorEnroller(c, factors, passkeys),
 	}
 }
 
@@ -1876,6 +1916,9 @@ func (s *authServiceImpl) FIDO2() FIDO2Client         { return s.fido2 }
 func (s *authServiceImpl) PIV() XKMSPIVService        { return s.piv }
 func (s *authServiceImpl) Devices() LocalDevices      { return s.devices }
 func (s *authServiceImpl) Factors() AuthFactorsClient { return s.factors }
+func (s *authServiceImpl) AdminFactors() AdminFactorEnroller {
+	return s.admin
+}
 
 // BeginLogin routes the unified login ceremony to qrdb's LoginClient — the
 // single canonical login backbone. The registered factor authenticator issues

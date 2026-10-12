@@ -45,7 +45,41 @@ type Subject struct {
 	// Authenticated indicates whether the subject has been authenticated.
 	// False for anonymous/unauthenticated requests.
 	Authenticated bool
+
+	// IDKind says which qrdb user-store key ID is. The transport that
+	// authenticated the caller sets it from the credential it verified; a
+	// service that resolves the caller's account reads it and never infers
+	// it from what ID looks like, because a username may be all digits.
+	IDKind SubjectIDKind
+
+	// UserID is the caller's qrdb user id in decimal, copied from the
+	// verified user-id claim (uid) of the token that authenticated it. Empty
+	// when the credential carried none. When set it names the caller's
+	// account; ID is then only the name the caller logged in with.
+	UserID string
 }
+
+// SubjectIDKind names the qrdb user-store key a Subject's ID is.
+type SubjectIDKind uint8
+
+const (
+	// SubjectIDUnresolved means the credential did not say what ID is.
+	// Nothing may resolve such an ID to a user account.
+	SubjectIDUnresolved SubjectIDKind = iota
+
+	// SubjectIDUserID means ID is the caller's qrdb user id in decimal:
+	// an in-process caller that already holds the account's id.
+	SubjectIDUserID
+
+	// SubjectIDUsername means ID is the caller's tenant-scoped qrdb
+	// username: the subject qrdb derives from an mTLS certificate binding,
+	// or a token sub minted for a username login.
+	SubjectIDUsername
+
+	// SubjectIDEmail means ID is the caller's tenant-scoped login email: a
+	// token sub minted for an email login.
+	SubjectIDEmail
+)
 
 // AuthorizationRequest represents a request for authorization.
 // It contains the subject (who), resource (what), action (how), and context.

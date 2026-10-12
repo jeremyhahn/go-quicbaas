@@ -867,6 +867,57 @@ func TestFIDO2_BeginRegistration_HappyPath(t *testing.T) {
 	}
 }
 
+func TestFIDO2_BeginAddCredential_HappyPath(t *testing.T) {
+	want := &FIDO2BeginRegistrationResponse{SessionID: "s", OptionsJSON: "{}"}
+	var gotMethod string
+	var gotReq interface{} = "unset"
+	c := &fido2TransportClient{t: &mockTransport{requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
+		gotMethod, gotReq = method, req
+		return want, nil
+	}}}
+	got, err := c.BeginAddCredential(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if gotMethod != "BeginAddCredential" || gotReq != nil {
+		t.Errorf("routed %s with %v, want BeginAddCredential with no payload", gotMethod, gotReq)
+	}
+}
+
+func TestFIDO2_BeginAddCredential_Errors(t *testing.T) {
+	t.Run("nil context", func(t *testing.T) {
+		c := &fido2TransportClient{t: &mockTransport{}}
+		if _, err := c.BeginAddCredential(nil); err == nil || !sdkerrors.IsInvalidInput(err) {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("transport error", func(t *testing.T) {
+		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+			return nil, errBoom
+		}}}
+		if _, err := c.BeginAddCredential(context.Background()); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("nil response", func(t *testing.T) {
+		c := &fido2TransportClient{t: &mockTransport{}}
+		if _, err := c.BeginAddCredential(context.Background()); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("invalid type", func(t *testing.T) {
+		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+			return "wrong", nil
+		}}}
+		if _, err := c.BeginAddCredential(context.Background()); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
 func TestFIDO2_FinishRegistration_Validation(t *testing.T) {
 	c := &fido2TransportClient{t: &mockTransport{}}
 	tests := []struct {

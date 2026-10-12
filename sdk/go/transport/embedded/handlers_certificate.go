@@ -95,7 +95,14 @@ func handleCertSignCSR(ctx context.Context, svc service.QuicBaaS, req interface{
 		ValidityDays: sdkReq.ValidityDays,
 		Usage:        sdkReq.Usage,
 	}
-	return certSvc.SignCSR(ctx, svcReq)
+	resp, err := certSvc.SignCSR(ctx, svcReq)
+	if err != nil {
+		return nil, err
+	}
+	// An SDK caller gets the SDK response type back; the certificate client
+	// rejects any other type.
+	sdkResp := certclient.SignCSRResponse(*resp)
+	return &sdkResp, nil
 }
 
 func handleCertRevokeCertificate(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

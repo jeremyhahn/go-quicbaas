@@ -62,6 +62,7 @@ type fido2MethodHandler func(*fido2Handler, context.Context, pb.FIDO2ServiceClie
 var fido2Methods = map[string]fido2MethodHandler{
 	"BeginRegistration":    (*fido2Handler).handleBeginRegistration,
 	"FinishRegistration":   (*fido2Handler).handleFinishRegistration,
+	"BeginAddCredential":   (*fido2Handler).handleBeginAddCredential,
 	"BeginAuthentication":  (*fido2Handler).handleBeginAuthentication,
 	"FinishAuthentication": (*fido2Handler).handleFinishAuthentication,
 }
@@ -94,6 +95,21 @@ func (h *fido2Handler) handleBeginRegistration(ctx context.Context, client pb.FI
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, "fido2Handler.handleBeginRegistration")
+	}
+
+	return &xkmstransport.BeginRegistrationResponse{
+		SessionID:   pbResp.SessionId,
+		OptionsJSON: pbResp.OptionsJson,
+	}, nil
+}
+
+// handleBeginAddCredential starts a ceremony that adds a passkey to the
+// caller's own account. The rpc carries no tenant or account: the server
+// takes both from the authenticated caller.
+func (h *fido2Handler) handleBeginAddCredential(ctx context.Context, client pb.FIDO2ServiceClient, _ string, _ interface{}) (interface{}, error) {
+	pbResp, err := client.BeginAddCredential(ctx, &pb.FIDO2BeginAddCredentialRequest{})
+	if err != nil {
+		return nil, convertGRPCError(err, "fido2Handler.handleBeginAddCredential")
 	}
 
 	return &xkmstransport.BeginRegistrationResponse{

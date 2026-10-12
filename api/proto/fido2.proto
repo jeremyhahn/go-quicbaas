@@ -48,6 +48,14 @@ service FIDO2Service {
       option (qrdb.v1.permission) = "user_authfactors:add";
   }
 
+  // BeginAddCredential starts a registration ceremony that adds a passkey to
+  // the authenticated caller's own account. The account and tenant are the
+  // caller's, taken from the authenticated principal; the request carries
+  // neither. Finish the ceremony with FinishRegistration.
+  rpc BeginAddCredential(FIDO2BeginAddCredentialRequest) returns (FIDO2BeginRegistrationResponse) {
+      option (qrdb.v1.permission) = "user_authfactors:add";
+  }
+
   // BeginAuthentication starts a WebAuthn authentication ceremony and
   // returns the CredentialRequestOptions JSON plus the ceremony session id.
   rpc BeginAuthentication(FIDO2BeginAuthenticationRequest) returns (FIDO2BeginAuthenticationResponse);
@@ -76,6 +84,11 @@ message FIDO2BeginRegistrationResponse {
   string session_id = 1;
   string options_json = 2;
 }
+
+// FIDO2BeginAddCredentialRequest starts an add-credential ceremony for the
+// authenticated caller. It is deliberately empty: the account is never named
+// by the request.
+message FIDO2BeginAddCredentialRequest {}
 
 // FIDO2FinishRegistrationRequest carries the authenticator attestation back
 // to the server.

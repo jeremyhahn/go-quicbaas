@@ -682,7 +682,9 @@ factor types are:
 
 - **FIDO2 / WebAuthn (passkey)**: local CTAP2 authenticator over
   USB-HID (YubiKey, SoloKey, Nitrokey, ...), driven with the
-  server-issued WebAuthn options.
+  server-issued WebAuthn options. Admin passkey enrolment runs the
+  server's add-credential ceremony, so the server verifies the
+  attestation and stores the credential before the factor is reported.
 - **PIV**: client-local go-xkms PIV backend (`file` / `pkcs11` /
   `tpm2`); physical smart cards are reachable through the `pkcs11`
   backend. There is no PC/SC reader model.

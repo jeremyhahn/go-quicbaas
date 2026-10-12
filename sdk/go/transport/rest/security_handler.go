@@ -18,11 +18,15 @@
 // the REST transport without this handler.
 //
 // The FIDO2 ceremony rides the IAM-mounted, tenant-scoped routes under
-// /api/v1/iam/{tenant_id}/webauthn/{registration,login}/{begin,finish}.
+// /api/v1/iam/{tenant_id}/webauthn/{registration/begin,login/begin,login/finish}.
 // Those routes delegate to go-xkms's native WebAuthn HTTP handler, which
 // exchanges opaque ceremony JSON plus an X-Session-Id correlation header.
 // This handler adapts the xkms FIDO2 wire requests/responses to that HTTP
-// contract so Security().Auth().FIDO2().* reaches the server. The tenant is
+// contract so Security().Auth().FIDO2().* reaches the server. Registration
+// finishes on /api/v1/xkms/fido2/register/finish, which returns the created
+// credential's ID; the add-credential ceremony begins on
+// /api/v1/xkms/fido2/credentials/begin. Both share the IAM routes' ceremony
+// sessions. The tenant is
 // resolved from the request context (transport.ContextWithTenant) first,
 // then the transport's configured default tenant (WithDefaultTenant).
 //
@@ -110,6 +114,7 @@ func (h *securityRESTHandler) handleRequest(ctx context.Context, service, method
 var fido2Methods = map[string]func(*securityRESTHandler, context.Context, interface{}) (interface{}, error){
 	"BeginRegistration":    (*securityRESTHandler).fido2BeginRegistration,
 	"FinishRegistration":   (*securityRESTHandler).fido2FinishRegistration,
+	"BeginAddCredential":   (*securityRESTHandler).fido2BeginAddCredential,
 	"BeginAuthentication":  (*securityRESTHandler).fido2BeginAuthentication,
 	"FinishAuthentication": (*securityRESTHandler).fido2FinishAuthentication,
 }
@@ -194,26 +199,50 @@ func (h *securityRESTHandler) fido2FinishRegistration(ctx context.Context, req i
 			"session_id and attestation_json are required")
 	}
 
+	body, err := json.Marshal(r)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInvalidInput,
+			"rest.security.FIDO2.FinishRegistration", "failed to encode request")
+	}
 	resp, err := h.transport.doRawRequest(ctx, http.MethodPost,
-		webAuthnPath(tenant, "/registration/finish"), []byte(r.AttestationJSON),
-		map[string]string{webauthnhttp.HeaderSessionID: r.SessionID})
+		fido2FinishRegistrationPath+"?tenant_id="+url.QueryEscape(tenant), body, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var auth webauthnhttp.AuthResponse
-	if len(resp.Body) > 0 {
-		if err := json.Unmarshal(resp.Body, &auth); err != nil {
-			return nil, errors.Wrap(err, errors.CodeInternal,
-				"rest.security.FIDO2.FinishRegistration", "failed to decode response")
-		}
+	var out xkmstransport.FinishRegistrationResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"rest.security.FIDO2.FinishRegistration", "failed to decode response")
+	}
+	return &out, nil
+}
+
+// fido2FinishRegistrationPath finishes a registration through the server's
+// FIDO2 service, the same one gRPC, MCP and the embedded transport call, so
+// the response carries the ID of the credential the authenticator created.
+// The IAM-mounted registration/finish route answers with a login session
+// instead, which names the user but not the credential.
+const fido2FinishRegistrationPath = "/api/v1/xkms/fido2/register/finish"
+
+// fido2AddCredentialPath is the route that starts an add-credential ceremony
+// for the authenticated caller. It names no tenant: the server scopes it to
+// the caller's own, and the ceremony finishes with FinishRegistration like
+// any registration.
+const fido2AddCredentialPath = "/api/v1/xkms/fido2/credentials/begin"
+
+func (h *securityRESTHandler) fido2BeginAddCredential(ctx context.Context, _ interface{}) (interface{}, error) {
+	resp, err := h.transport.doRawRequest(ctx, http.MethodPost, fido2AddCredentialPath, nil, nil)
+	if err != nil {
+		return nil, err
 	}
 
-	return &xkmstransport.FinishRegistrationResponse{
-		Success:      true,
-		CredentialID: auth.UserID,
-		Token:        auth.Token,
-	}, nil
+	var out xkmstransport.BeginRegistrationResponse
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"rest.security.FIDO2.BeginAddCredential", "failed to decode response")
+	}
+	return &out, nil
 }
 
 func (h *securityRESTHandler) fido2BeginAuthentication(ctx context.Context, req interface{}) (interface{}, error) {

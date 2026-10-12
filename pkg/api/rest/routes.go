@@ -698,6 +698,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/xkms/fido2/authenticate/finish", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSFIDO2FinishAuthentication }},
 		{Method: "POST", Pattern: "/api/v1/xkms/fido2/register/begin", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSFIDO2BeginRegistration }},
 		{Method: "POST", Pattern: "/api/v1/xkms/fido2/register/finish", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSFIDO2FinishRegistration }},
+		{Method: "POST", Pattern: "/api/v1/xkms/fido2/credentials/begin", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSFIDO2BeginAddCredential }},
 		{Method: "GET", Pattern: "/api/v1/xkms/health", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSHealth }},
 		{Method: "GET", Pattern: "/api/v1/xkms/keys", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSListKeys }},
 		{Method: "POST", Pattern: "/api/v1/xkms/keys", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSGenerateKey }},

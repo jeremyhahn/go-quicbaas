@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
@@ -186,6 +187,33 @@ func TestUnaryAuthorizationInterceptor_Allow(t *testing.T) {
 	assert.Equal(t, "kv:put", authorizer.lastPerm)
 	// gRPC carries no DPoP: the validator is always called with empty proof args.
 	assert.Equal(t, [3]string{"", "", ""}, authorizer.lastDPoPArgs)
+}
+
+// A token's sub is a login name, never an account ID: the bound subject
+// classifies it by what it is and carries the verified uid as UserID.
+func TestContextWithAuthorizedSubject_AccountIsVerifiedUserID(t *testing.T) {
+	cases := map[string]struct {
+		ac       platformtoken.AuthorizedContext
+		wantKind interfaces.SubjectIDKind
+	}{
+		"numeric username": {
+			ac:       platformtoken.AuthorizedContext{Subject: "12345", UserID: "67890", TenantID: "tenant-a"},
+			wantKind: interfaces.SubjectIDUsername,
+		},
+		"email": {
+			ac:       platformtoken.AuthorizedContext{Subject: "alice@example.com", UserID: "67890", TenantID: "tenant-a"},
+			wantKind: interfaces.SubjectIDEmail,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			subject, ok := auth.SubjectFromContext(contextWithAuthorizedSubject(context.Background(), &tc.ac))
+			require.True(t, ok)
+			assert.Equal(t, tc.ac.Subject, subject.ID)
+			assert.Equal(t, tc.wantKind, subject.IDKind)
+			assert.Equal(t, "67890", subject.UserID)
+		})
+	}
 }
 
 // TestUnaryAuthorizationInterceptor_DenyUnpermitted asserts an offline scp deny

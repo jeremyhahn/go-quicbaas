@@ -116,6 +116,19 @@ type FIDO2Service interface {
 2. Client calls `navigator.credentials.create()` with returned options
 3. `FinishRegistration` -- server validates attestation and stores credential
 
+**Add credential (existing account):** `BeginRegistration` refuses an account
+that already exists, so a signed-in user adds a passkey with
+`BeginAddCredential` instead. It takes no body: the owner is the
+authenticated caller and the tenant comes from the request context. The
+caller is resolved in the tenant's user store by username for mTLS and by
+the token's verified `uid` claim for a bearer token. A token's `sub` is the
+login's email or username, never an account ID: without a `uid` it is
+looked up as an email or a username, so an all-digit username cannot reach
+the account whose ID it spells. A caller with no account in its tenant gets
+`403`. The ceremony finishes with the same `FinishRegistration`, which verifies the
+attestation and records the credential and its attestation level. The
+permission is `user_authfactors:add`.
+
 **Authentication (assertion):**
 1. `BeginAuthentication` -- server generates challenge with allowed credential IDs
 2. Client calls `navigator.credentials.get()` with returned options
@@ -127,6 +140,7 @@ type FIDO2Service interface {
 |--------|-------------|
 | `BeginRegistration` | Generates challenge, user ID, RP info, and allowed algorithms for credential creation |
 | `FinishRegistration` | Validates authenticator attestation and stores the new credential |
+| `BeginAddCredential` | Generates creation options for a new passkey on the caller's own account |
 | `BeginAuthentication` | Generates challenge and allowed credential IDs for assertion |
 | `FinishAuthentication` | Verifies authenticator signature, returns JWT session token |
 
@@ -312,6 +326,7 @@ the authentication context into key attributes for both paths.
 | Credentials (submit/list/rotate/retrieve/versions/delete/gc) | Yes — `Security().Credentials()` on all six transports | n/a |
 | CA admin (info / bundle / list / issue / revoke / export-bundle) | Yes — `Security().Certificate()` (Phase 8e added `CAInfo` + `ListCertificates`) | Legacy `/api/v1/xkms/ca/*` routes retained for backward compatibility |
 | Auth factors (factor list/add/remove/rotate/relabel) | Yes — `Security().Auth().Factors()` (login is `Security().Auth().BeginLogin/FinishLogin`) | n/a |
+| Admin FIDO2 / PIV factor enrollment | Yes — `Security().Auth().AdminFactors()` (`Preflight` / `Enroll`). The CTAP2 / PIV ceremony runs in the caller's console-owning process against the `FIDO2Handler` / `PIVGenerator` the caller attaches. A piv plan needs both a caller-owned `PIVGenerator`, which holds the slot key (`Enroll` never creates one), and the slot's `PIVCertStore`; without either it is refused before any state changes. `Enroll` signs a CSR for the slot key (`CreateCSRWithKey`), has the server CA issue a client certificate for it, installs the issued certificate in the slot, and only then persists the piv factor via `Factors().Add`, so the card presents the certificate the factor is bound to. A fido2 factor is never written by the client: `Enroll` runs the server's add-credential ceremony (`FIDO2().BeginAddCredential`, the authenticator creates the credential, `FIDO2().FinishRegistration`) and reports success only once the server has verified the attestation and stored the credential in the tenant WebAuthn service, so the passkey can log in; the reported credential ID is the attested credential's on every transport. A fido2 plan with no handler is refused before any state changes. A request `TenantID` is bound to the context for every factor — certificate issuance, the piv factor write and the passkey ceremony all act in that tenant even from an unbound context; a context already bound to a different tenant is refused with a conflict before anything is issued or stored. | n/a |
 | FIDO2 + PIV | Yes — `Security().Auth().{FIDO2,PIV}()` on all six transports (`quicbaas.FIDO2` / `quicbaas.PIV` verbs) | `/api/v1/xkms/fido2/*` + `/api/v1/xkms/piv/*` routes bridge to the same composed services |
 | ACME (server + client) | Yes — `Security().ACME().{Server,Client}()` | n/a |
 | Trust bootstrap | Yes — `Security().Trust().Bootstrap()` (single canonical lib in xkms/pkg/trust/bootstrap) | n/a |
@@ -360,7 +375,7 @@ instead of the caller computing one.
 | **Credentials (canonical)** | Submit, List, Rotate, RetrieveVersion, ListVersions, Delete, GCExpired | `POST /api/v1/credentials/*` | `quicbaas.credentials.*` | `quicbaas.v1.CredentialService` | `Security().Credentials()` |
 | **CA admin (Phase 8e canonical)** | CAInfo, GetCABundle, ListCertificates, IssueCertificate, RevokeCertificate, SignCSR | `GET /api/v1/ca/info`, `GET /api/v1/ca/bundle`, `GET /api/v1/ca/certificates`, `POST /api/v1/ca/issue`, `POST /api/v1/ca/revoke`, `POST /api/v1/ca/sign` | `quicbaas.ca.*` | `quicbaas.v1.CertificateService` | `Security().Certificate()` |
 | **PIV** | ListSlots, GetCert, StoreCert, DeleteCert, GenerateKey, ImportCert, ExportCert, GenerateCSR | `GET /piv/slots`, `GET /piv/slots/{slot}/cert`, `PUT /piv/slots/{slot}/cert`, `DELETE /piv/slots/{slot}/cert`, `POST /piv/slots/{slot}/key`, `POST /piv/slots/{slot}/csr` (Import maps onto `PUT .../cert`, Export onto `GET .../cert` — quicbaasd does not mount xkms's dedicated `/import` and `/export` routes) | `xkms.piv.listSlots`, `xkms.piv.getCert`, `xkms.piv.storeCert`, `xkms.piv.deleteCert`, `xkms.piv.generateKey`, `xkms.piv.importCert`, `xkms.piv.exportCert`, `xkms.piv.generateCSR` | `quicbaas.piv.v1.PIVService` | `Security().Auth().PIV()` |
-| **FIDO2** | BeginRegistration, FinishRegistration, BeginAuthentication, FinishAuthentication | `POST /fido2/register/begin`, `POST /fido2/register/finish`, `POST /fido2/authenticate/begin`, `POST /fido2/authenticate/finish` | `xkms.fido2.beginRegistration`, `xkms.fido2.finishRegistration`, `xkms.fido2.beginAuthentication`, `xkms.fido2.finishAuthentication` | `quicbaas.fido2.v1.FIDO2Service` | `Security().Auth().FIDO2()` |
+| **FIDO2** | BeginRegistration, FinishRegistration, BeginAddCredential, BeginAuthentication, FinishAuthentication | `POST /fido2/register/begin`, `POST /fido2/register/finish`, `POST /fido2/credentials/begin`, `POST /fido2/authenticate/begin`, `POST /fido2/authenticate/finish` | `xkms.fido2.beginRegistration`, `xkms.fido2.finishRegistration`, `xkms.fido2.beginAddCredential`, `xkms.fido2.beginAuthentication`, `xkms.fido2.finishAuthentication` | `quicbaas.fido2.v1.FIDO2Service` | `Security().Auth().FIDO2()` |
 | **CA (legacy compat)** | GetBundle, GetCert, SignCSR, IssueCert, RevokeCert, GenerateCRL, IsRevoked | `GET /ca/bundle`, `GET /ca/cert`, `POST /ca/sign`, `POST /ca/issue`, `POST /ca/revoke`, `POST /ca/crl`, `GET /ca/revoked/{serial}` | `xkms.ca.getBundle`, `xkms.ca.getCert`, `xkms.ca.signCSR`, `xkms.ca.issueCert`, `xkms.ca.revokeCert`, `xkms.ca.generateCRL`, `xkms.ca.isRevoked` | -- | `Security().Certificate()` (use the native surface for new code) |
 | **PIN admin** | SetSO, SetUser, ChangeSO, ChangeUser, VerifySO, VerifyUser, LockoutStatus, ResetLockout | `POST /pin/so/set`, `POST /pin/user/set`, `POST /pin/so/change`, `POST /pin/user/change`, `POST /pin/so/verify`, `POST /pin/user/verify`, `GET /pin/lockout`, `POST /pin/lockout/reset` | `xkms.pin.setSO`, `xkms.pin.setUser`, `xkms.pin.changeSO`, `xkms.pin.changeUser`, `xkms.pin.verifySO`, `xkms.pin.verifyUser`, `xkms.pin.lockoutStatus`, `xkms.pin.resetLockout` | `BarrierService.PINStatus` (selected verbs) | qrdb PINBackend (composed; no direct SDK accessor — barrier and ceremony flows manage PINs) |
 
