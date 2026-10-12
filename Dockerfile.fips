@@ -80,17 +80,22 @@ RUN echo "Verifying FIPS binaries:" && \
     file quicbaas
 
 # Stage 2: Runtime stage
-FROM debian:bookworm-slim
+# The binaries are static (CGO_ENABLED=0, FIPS comes from Go's crypto/fips140,
+# not the OS), so the runtime needs only ca-certificates and tzdata. The
+# debian:bookworm-slim base failed the release Trivy gate on 58 HIGH/CRITICAL
+# base-layer CVEs (#591); this is the same base the daemon and CLI images use,
+# which pass the identical gate. Pinned by tag and digest (the manifest-list
+# digest of alpine:3.24.1, resolved 2026-10-11) so a scan is reproducible.
+# Bump both together; `apk upgrade` covers the interval between base releases.
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    tzdata \
-    && rm -rf /var/lib/apt/lists/*
+# Install runtime dependencies, patched
+RUN apk upgrade --no-cache && \
+    apk --no-cache add ca-certificates tzdata
 
 # Create non-root user
-RUN groupadd -g 1000 quicbaas && \
-    useradd -u 1000 -g quicbaas -s /bin/bash -m quicbaas
+RUN addgroup -g 1000 quicbaas && \
+    adduser -D -u 1000 -G quicbaas quicbaas
 
 # Create directories
 RUN mkdir -p /data /var/log/quicbaas /var/run/quicbaas && \
