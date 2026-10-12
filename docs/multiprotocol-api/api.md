@@ -838,6 +838,27 @@ const user = await client.get('user', 1);
 console.log(user);
 ```
 
+#### 64-bit integers in REST responses (`@quicbaas/sdk`)
+
+The daemon writes Go `uint64`/`int64` values as bare JSON numbers, and a
+JavaScript `number` holds integers exactly only up to 2^53. The TypeScript
+SDK's REST client parses every response body with
+`parseJSONPreservingLargeIntegers` (`sdk/typescript/src/json.ts`), which
+applies one rule by member name, with no per-endpoint table:
+
+| Key | Integer past 2^53 arrives as | Why |
+|-----|------------------------------|-----|
+| `id`, `ids`, `*_id`, `*_ids`, `*Id`, `*Ids`, `*ID`, `*IDs` (and elements of an array under such a key) | its exact decimal **string** | An identity: a rounded id names a record the server never issued. |
+| Any other key (`created_at`, `timestamp`, `size`, `sequence`, …) | a `number`, as `JSON.parse` gives | A quantity: a `time.UnixNano` timestamp loses under a microsecond and still names the right millisecond. |
+| No key (a bare top-level value or top-level array) | its exact decimal string | Nothing to judge it by, so it is kept exact. |
+
+An integer at or below 2^53 is a `number` under every key. Fields that can
+carry either form are typed `number | string` — `RAGDocument.id`
+(`RAGDocumentID`, a content hash) and `PlacementNodeInfo.lease_id` (a
+registry lease). Pass such a value back to the SDK unchanged; never
+`Number()` it. Raft `shard_id`, `node_id` and `leader_id` stay `number`:
+they are operator-configured replica ids, far below 2^53.
+
 ### Python
 
 ```python

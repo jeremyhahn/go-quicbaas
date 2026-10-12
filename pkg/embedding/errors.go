@@ -21,8 +21,10 @@ package embedding
 import "errors"
 
 // ErrVectorNotEnabled is returned when embedding operations are attempted
-// without the vector build tag.
-var ErrVectorNotEnabled = errors.New("vector embedding support not enabled: build with -tags vector")
+// without the vector and qrdb_vector build tags. The two travel together: vector
+// compiles quicbaas's embedding layer and qrdb_vector the go-qrdb index it
+// drives, and either one alone leaves the subsystem unusable.
+var ErrVectorNotEnabled = errors.New("vector embedding support not enabled: build with -tags 'vector qrdb_vector'")
 
 // Sentinel errors used throughout the embedding subsystem. These mirror the
 // go-quicbaas provider error contract so that callers using errors.Is continue

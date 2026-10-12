@@ -89,7 +89,7 @@ export interface PlacementNodeStatus {
 export interface PlacementNodeInfo {
     facts: PlacementNodeFacts;
     status: PlacementNodeStatus;
-    lease_id: number;
+    lease_id: number | string;
     ttl_seconds: number;
     allocated?: Record<string, number>;
     placements: number;

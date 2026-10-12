@@ -5,6 +5,10 @@
         integration-test integration-test-up integration-test-down integration-test-logs \
         coverage coverage-html unit-test help
 
+# The repository's toolchain pins (GOLANGCI_VERSION, ...): the same file the
+# top-level Makefile and CI read, so the SDK lints with the same golangci-lint.
+include $(dir $(lastword $(MAKEFILE_LIST)))../../pkg/version/toolchain.mk
+
 # Default target
 all: lint test
 
@@ -49,11 +53,11 @@ integration-test-only:
 lint:
 	@echo "Running linter..."
 	@go vet ./...
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
-	else \
-		echo "golangci-lint not installed, skipping"; \
-	fi
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint is not installed; run 'make tools' (installs $(GOLANGCI_VERSION))" >&2; \
+		exit 1; \
+	}
+	@golangci-lint run ./...
 
 # Format code
 fmt:
@@ -105,7 +109,7 @@ verify:
 # Install development tools
 tools:
 	@echo "Installing development tools..."
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 	@go install golang.org/x/tools/cmd/goimports@latest
 
 # Help target

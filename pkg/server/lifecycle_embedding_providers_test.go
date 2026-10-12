@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build vector
+//go:build vector && qrdb_vector
 
 package server
 

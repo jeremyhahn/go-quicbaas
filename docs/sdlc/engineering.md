@@ -590,6 +590,23 @@ a version CI does not use produces a review verdict the merge then contradicts.
 `golangci-lint` reports the pinned version, and that it lints a vendored module
 clean and reports a finding on a bad one — with the container on `--network none`.
 
+Every other place that installs these tools reads the same file. The
+devcontainer and the integration-test image (`test/integration/Dockerfile`)
+are built with the repository root as context, so each `COPY`s
+`pkg/version/toolchain.mk` and installs golangci-lint (and, in the
+devcontainer, the protoc plugins) at its pin; `sdk/go/Makefile` `include`s it,
+installs the v2 module at the pin with `make tools`, and fails `make lint` when
+the linter is absent rather than skipping it (go-quicbaas#391).
+`make install-proto-tools` installs protoc from its checksum-verified release
+zip into `PROTOC_PREFIX` (default `~/.local`) and the two Go plugins at their
+pins, and `make proto-gen` runs `make check-proto-tools` first, which refuses
+— naming each tool, the version found and the pin — unless `protoc --version`,
+`protoc-gen-go --version` and `protoc-gen-go-grpc --version` all match
+(go-quicbaas#481). The seal integration images build in a `go.work` written by
+`test/integration/mkworkspace.sh`, whose `go` line is the image toolchain's
+`go env GOVERSION`; `make check-workspace-script` (part of `make test`) fails if
+a Dockerfile writes one inline again (go-quicbaas#399).
+
 **Trivy is deliberately absent.** It is the fourth member of `make security`,
 but it downloads a vulnerability database on every run: in a worker sandbox
 whose network policy is the operator's to decide, it would fail for the

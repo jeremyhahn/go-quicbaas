@@ -24,7 +24,7 @@ var (
 
 	// ErrEmbeddingNotCompiled is returned when embedding operations are attempted
 	// but the binary was not compiled with the vector build tag.
-	ErrEmbeddingNotCompiled = errors.New("embedding support not compiled - build with -tags vector")
+	ErrEmbeddingNotCompiled = errors.New("embedding support not compiled - build with -tags 'vector qrdb_vector'")
 
 	// ErrRAGNotCompiled is returned when RAG operations are attempted
 	// but the binary was not compiled with the rag build tag.

@@ -123,7 +123,9 @@ export interface PlacementNodeStatus {
 export interface PlacementNodeInfo {
   facts: PlacementNodeFacts;
   status: PlacementNodeStatus;
-  lease_id: number;
+  // lease_id is the node's int64 registry lease. One past 2^53 arrives as its
+  // exact decimal string; a smaller one as a number.
+  lease_id: number | string;
   ttl_seconds: number;
   allocated?: Record<string, number>;
   placements: number;

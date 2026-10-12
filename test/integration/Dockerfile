@@ -85,8 +85,16 @@ RUN apk add --no-cache \
     docker-cli \
     docker-cli-compose
 
-RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest && \
-    go install gotest.tools/gotestsum@latest
+# golangci-lint at the repository's pin, read from the one copy of it
+# (pkg/version/toolchain.mk) so this image lints with the version CI does
+# (go-quicbaas#391).
+COPY pkg/version/toolchain.mk /tmp/toolchain.mk
+RUN set -eu; \
+    golangci_version=$(sed -n 's/^GOLANGCI_VERSION := //p' /tmp/toolchain.mk); \
+    test -n "$golangci_version" || { echo "GOLANGCI_VERSION missing from toolchain.mk" >&2; exit 1; }; \
+    go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${golangci_version}"; \
+    go install gotest.tools/gotestsum@latest; \
+    rm -f /tmp/toolchain.mk
 
 WORKDIR /workspace/go-quicbaas
 

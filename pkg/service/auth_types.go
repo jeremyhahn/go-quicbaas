@@ -426,6 +426,14 @@ type TokenIntrospection struct {
 
 	// JTI is the JWT ID.
 	JTI string
+
+	// AttestLevel is the key provenance the token's attest_level claim
+	// records ("hardware", "software" or "none"); empty when unattested.
+	AttestLevel string
+
+	// AttestAAGUID is the hex FIDO2 authenticator model from the token's
+	// attest_aaguid claim; empty for PIV and unattested tokens.
+	AttestAAGUID string
 }
 
 // =============================================================================

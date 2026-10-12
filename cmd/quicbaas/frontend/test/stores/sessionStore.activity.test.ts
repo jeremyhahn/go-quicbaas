@@ -74,6 +74,7 @@ import {
   openSession,
   closeActiveSession,
   appendLocalPrompt,
+  loadMoreHistory,
 } from '../../src/stores/sessionStore.svelte.ts';
 
 function makeSession(overrides: Partial<SessionStatusResponse> = {}): SessionStatusResponse {
@@ -126,6 +127,53 @@ describe('sessionStore — historyLoading', () => {
     await openPromise;
 
     expect(sessionStore.historyLoading).toBe(false);
+  });
+
+  it('stays true for a second session opened in the same tenant until its own load completes', async () => {
+    type HistoryPage = { events: SessionEventEnvelope[]; next_seq: number };
+    let releaseFirst!: (v: HistoryPage) => void;
+    let releaseSecond!: (v: HistoryPage) => void;
+    getSessionHistoryMock
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseSecond = resolve; }));
+
+    const firstOpen = openSession(makeSession({ session_id: 'sess-first' }));
+    await flush();
+    const secondOpen = openSession(makeSession({ session_id: 'sess-second' }));
+    await flush();
+    expect(sessionStore.historyLoading).toBe(true);
+
+    releaseFirst({ events: [], next_seq: 0 });
+    await firstOpen;
+    expect(sessionStore.activeSession?.session_id).toBe('sess-second');
+    expect(sessionStore.historyLoading).toBe(true);
+
+    releaseSecond({ events: [], next_seq: 0 });
+    await secondOpen;
+    expect(sessionStore.historyLoading).toBe(false);
+  });
+
+  it('pages an earlier session from its own cursor when another session opens mid-request', async () => {
+    getSessionHistoryMock
+      .mockImplementationOnce(() => Promise.resolve({ events: [envelope(5, {})], next_seq: 9 }))
+      .mockImplementationOnce(() => Promise.resolve({ events: [], next_seq: 0 }))
+      .mockImplementationOnce(() => Promise.resolve({ events: [], next_seq: 0 }));
+
+    await openSession(makeSession({ session_id: 'sess-first' }));
+    // The load-more is still awaiting its client when the second session
+    // resets the cursor; the request it sends must use the first session's.
+    const loadMore = loadMoreHistory();
+    const secondOpen = openSession(makeSession({ session_id: 'sess-second' }));
+    await Promise.all([loadMore, secondOpen]);
+
+    const asked = getSessionHistoryMock.mock.calls.map(
+      (call) => call[0] as { session_id: string; from_sequence: number },
+    );
+    expect(asked).toEqual([
+      expect.objectContaining({ session_id: 'sess-first', from_sequence: 1 }),
+      expect.objectContaining({ session_id: 'sess-first', from_sequence: 9 }),
+      expect.objectContaining({ session_id: 'sess-second', from_sequence: 1 }),
+    ]);
   });
 
   it('is false once history resolves even when the session has zero events', async () => {

@@ -168,20 +168,27 @@ RUN apk add --no-cache libc6-compat && \
         && echo "ollama installed" ) \
     || echo "WARN: ollama download failed; embedding/RAG tests unavailable in this image"
 
-# Install Go development tools
-# Note: Some tools may need specific versions for Go 1.26 compatibility
-RUN go install github.com/air-verse/air@latest && \
-    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
+# Install Go development tools. golangci-lint and the protoc plugins are
+# installed at the repository's pins, read from the one copy of them
+# (pkg/version/toolchain.mk; the build context is the repository root), so the
+# devcontainer lints with the version CI does (go-quicbaas#391) and `make
+# proto-gen` accepts its plugins (go-quicbaas#481).
+COPY pkg/version/toolchain.mk /tmp/toolchain.mk
+RUN golangci_version=$(sed -n 's/^GOLANGCI_VERSION := //p' /tmp/toolchain.mk) && \
+    test -n "$golangci_version" && \
+    go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${golangci_version}" && \
+    go install github.com/air-verse/air@latest && \
     go install github.com/securego/gosec/v2/cmd/gosec@latest && \
-    go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest && \
+    go install "google.golang.org/protobuf/cmd/protoc-gen-go@$(sed -n 's/^PROTOC_GEN_GO_VERSION := //p' /tmp/toolchain.mk)" && \
+    go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(sed -n 's/^PROTOC_GEN_GO_GRPC_VERSION := //p' /tmp/toolchain.mk)" && \
     go install github.com/go-delve/delve/cmd/dlv@latest && \
     go install golang.org/x/tools/gopls@latest && \
     go install github.com/fatih/gomodifytags@latest && \
     go install github.com/josharian/impl@latest && \
     go install github.com/cweill/gotests/gotests@latest && \
     go install honnef.co/go/tools/cmd/staticcheck@latest && \
-    go install gotest.tools/gotestsum@latest
+    go install gotest.tools/gotestsum@latest && \
+    rm -f /tmp/toolchain.mk
 
 # Create non-root user with sudo access
 RUN addgroup -g ${USER_GID} ${USERNAME} && \

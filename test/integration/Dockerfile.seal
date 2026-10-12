@@ -8,7 +8,7 @@
 #
 # Build model mirrors test/integration/Dockerfile: a go.work workspace is
 # reconstructed from the sibling repos supplied via the BuildKit `workspace`
-# named context.
+# named context, by test/integration/mkworkspace.sh.
 #
 # pkcs11 and tpm2 are NOT enabled here:
 #   * pkcs11 needs CGO + a PKCS#11 provider (SoftHSM2) system library.
@@ -46,44 +46,9 @@ COPY --from=workspace go-frost      ./go-frost
 
 COPY . ./go-quicbaas
 
-RUN { \
-        echo 'go 1.27.2'; \
-        echo ''; \
-        echo 'use ('; \
-        echo '	./go-libsignal'; \
-        echo '	./go-objstore'; \
-        echo '	./go-objstore/api/sdks/go'; \
-        echo '	./go-qrdb'; \
-        echo '	./go-qrdb/sdk/go'; \
-        echo '	./go-quicbaas'; \
-        echo '	./go-quicbaas/sdk/go'; \
-        echo '	./go-quicraft'; \
-        echo '	./go-signal'; \
-        echo '	./go-xkms'; \
-        echo '	./go-codec'; \
-        echo '	./go-frost'; \
-        echo '	./go-xkms/sdk/go'; \
-        echo '	./go-xkms/xkey'; \
-        echo ')'; \
-        echo ''; \
-        echo 'replace ('; \
-        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
-        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
-        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
-        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
-        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
-        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
-        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
-        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
-        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
-        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
-        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
-        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
-        echo ')'; \
-    } > go.work
+# go.work comes from the one shared script; its go line is this image's
+# toolchain (go-quicbaas#399).
+RUN sh ./go-quicbaas/test/integration/mkworkspace.sh go.work
 
 WORKDIR /workspace/go-quicbaas
 
@@ -135,44 +100,9 @@ COPY --from=workspace go-codec      ./go-codec
 COPY --from=workspace go-frost      ./go-frost
 COPY . ./go-quicbaas
 
-RUN { \
-        echo 'go 1.27.2'; \
-        echo ''; \
-        echo 'use ('; \
-        echo '	./go-libsignal'; \
-        echo '	./go-objstore'; \
-        echo '	./go-objstore/api/sdks/go'; \
-        echo '	./go-qrdb'; \
-        echo '	./go-qrdb/sdk/go'; \
-        echo '	./go-quicbaas'; \
-        echo '	./go-quicbaas/sdk/go'; \
-        echo '	./go-quicraft'; \
-        echo '	./go-signal'; \
-        echo '	./go-xkms'; \
-        echo '	./go-codec'; \
-        echo '	./go-frost'; \
-        echo '	./go-xkms/sdk/go'; \
-        echo '	./go-xkms/xkey'; \
-        echo ')'; \
-        echo ''; \
-        echo 'replace ('; \
-        echo '	github.com/jeremyhahn/go-libsignal v0.0.0       => ./go-libsignal'; \
-        echo '	github.com/jeremyhahn/go-objstore v0.0.0        => ./go-objstore'; \
-        echo '	github.com/jeremyhahn/go-qrdb v0.0.0            => ./go-qrdb'; \
-        echo '	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0     => ./go-qrdb/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-quicbaas v0.0.0        => ./go-quicbaas'; \
-        echo '	github.com/jeremyhahn/go-quicbaas/sdk/go v0.0.0 => ./go-quicbaas/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-quicraft v0.0.0        => ./go-quicraft'; \
-        echo '	github.com/jeremyhahn/go-signal v0.0.0          => ./go-signal'; \
-        echo '	github.com/jeremyhahn/go-xkms v0.0.0            => ./go-xkms'; \
-        echo '	github.com/jeremyhahn/go-codec v1.3.0          => ./go-codec'; \
-        echo '	github.com/jeremyhahn/go-frost v0.1.4-alpha    => ./go-frost'; \
-        echo '	github.com/jeremyhahn/go-frost v0.1.6-alpha    => ./go-frost'; \
-        echo '	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0     => ./go-xkms/sdk/go'; \
-        echo '	github.com/jeremyhahn/go-objstore v0.1.4-alpha => ./go-objstore'; \
-        echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
-        echo ')'; \
-    } > go.work
+# go.work comes from the one shared script; its go line is this image's
+# toolchain (go-quicbaas#399).
+RUN sh ./go-quicbaas/test/integration/mkworkspace.sh go.work
 
 # The module cache the builder fetched behind the secret; see above.
 COPY --from=builder /go/pkg/mod /go/pkg/mod

@@ -10,6 +10,7 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+import { parseJSONPreservingLargeIntegers } from './json.js';
 import { adoptPage, appendCSVParam, appendListParam, appendPageParams, } from './page.js';
 import { APIError, ConnectionError, NotConnectedError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 // API base path for all orchestrator endpoints.
@@ -54,11 +55,14 @@ function bytesToBase64(bytes) {
 // parsed JSON, tolerating 204 No Content and empty bodies (returns undefined
 // as T). All fetchJSON and fetchSSH success tails delegate here to prevent
 // "Unexpected end of JSON input" when servers return 204 or a body-less 2xx.
+// The parse keeps 64-bit identities exact: an id past 2^53 arrives as its
+// decimal string, while timestamps and other quantities stay numbers (see
+// json.ts for the key rule).
 async function parseResponseBody(resp) {
     if (resp.status === 204)
         return undefined;
     const text = await resp.text();
-    return (text ? JSON.parse(text) : undefined);
+    return (text ? parseJSONPreservingLargeIntegers(text) : undefined);
 }
 // RestConnectionClient manages the server address and validates connectivity
 // by performing a health check against the orchestrator endpoint.

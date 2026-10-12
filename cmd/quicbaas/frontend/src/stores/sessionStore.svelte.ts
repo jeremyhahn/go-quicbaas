@@ -196,7 +196,15 @@ let historyExhausted = $state(false);
 // True only for the initial history fetch a session open triggers — distinct
 // from EventStream's own pagination spinner — so the UI can tell "we haven't
 // looked yet" apart from "we looked, and there's genuinely nothing here".
-let historyLoading = $state(false);
+// Held as the in-flight load's own token, not a shared boolean: when a second
+// session is opened while the first one's history is still loading, the first
+// load finishing must not clear the second's spinner (go-quicbaas#351). Each
+// load clears the slot only if it still holds it.
+interface HistoryLoad {
+  readonly sessionId: string;
+}
+// $state.raw, not $state: a deep proxy would break the identity compare.
+let _historyLoad: HistoryLoad | null = $state.raw(null);
 // The reason the last history fetch failed, or '' when it did not.
 //
 // IT USED TO BE SWALLOWED, AND THAT IS WHY #793 LOOKED LIKE AN EMPTY SESSION.
@@ -262,8 +270,15 @@ function inScope(): boolean {
   return scope === tenantScope();
 }
 
-// Private: cursor for history pagination (oldest sequence fetched so far).
-let _historyFromSeq = $state(0);
+// Private: cursor for history pagination (oldest sequence fetched so far),
+// keyed to the session it pages so it is never applied to another session's
+// transcript.
+interface HistoryCursor {
+  readonly sessionId: string;
+  readonly fromSeq: number;
+}
+const NO_HISTORY_CURSOR: HistoryCursor = { sessionId: '', fromSeq: 0 };
+let _historyCursor: HistoryCursor = $state.raw(NO_HISTORY_CURSOR);
 // Private: the next_cursor the last conversation page reported; 0 at the end
 // of the transcript.
 let _conversationCursor = 0;
@@ -295,7 +310,9 @@ export const sessionStore = {
   get activeSession() { return inScope() ? activeSession : null; },
   get events() { return inScope() ? events : NO_EVENTS; },
   get historyExhausted() { return historyExhausted; },
-  get historyLoading() { return historyLoading; },
+  get historyLoading() {
+    return _historyLoad !== null && _historyLoad.sessionId === activeSession?.session_id;
+  },
   get historyError() { return inScope() ? historyError : ''; },
   get conversation() { return inScope() ? conversation : NO_TURNS; },
   get conversationLoading() { return conversationLoading; },
@@ -331,10 +348,10 @@ function releaseDepartedScope(): void {
   activeSession = null;
   events = [];
   historyExhausted = false;
-  historyLoading = false;
+  _historyLoad = null;
   historyError = '';
   connectionStatus = 'connected';
-  _historyFromSeq = 0;
+  _historyCursor = NO_HISTORY_CURSOR;
   resetConversation();
 }
 
@@ -427,7 +444,7 @@ export async function openSession(session: SessionStatusResponse): Promise<void>
   historyExhausted = false;
   historyError = '';
   connectionStatus = 'connected';
-  _historyFromSeq = 1;
+  _historyCursor = { sessionId: session.session_id, fromSeq: 1 };
   resetConversation();
 
   // Load the first history page before starting the live tail. historyLoading
@@ -448,11 +465,14 @@ export async function openSession(session: SessionStatusResponse): Promise<void>
       }
     });
 
-  historyLoading = true;
+  const load: HistoryLoad = { sessionId: session.session_id };
+  _historyLoad = load;
   try {
     await loadMoreHistory();
   } finally {
-    if (asked === tenantScope()) historyLoading = false;
+    // Compare-and-clear: a later open owns the slot now, and this load
+    // finishing says nothing about that one.
+    if (_historyLoad === load) _historyLoad = null;
   }
   await conversationLoad;
 
@@ -474,10 +494,10 @@ export function closeActiveSession(): void {
   activeSession = null;
   events = [];
   historyExhausted = false;
-  historyLoading = false;
+  _historyLoad = null;
   historyError = '';
   connectionStatus = 'connected';
-  _historyFromSeq = 0;
+  _historyCursor = NO_HISTORY_CURSOR;
   resetConversation();
 }
 
@@ -529,12 +549,14 @@ export async function loadMoreHistory(): Promise<void> {
   // prepended onto another's transcript, or onto one that has been released.
   const asked = scope;
   const forSession = activeSession.session_id;
+  const cursor = _historyCursor;
+  if (cursor.sessionId !== forSession) return;
 
   try {
     const client = await getSDKClient();
     const resp = await client.orchestrator.getSessionHistory({
       session_id: forSession,
-      from_sequence: _historyFromSeq,
+      from_sequence: cursor.fromSeq,
       limit: HISTORY_PAGE_SIZE,
     });
 
@@ -557,7 +579,7 @@ export async function loadMoreHistory(): Promise<void> {
       historyExhausted = true;
     } else {
       // Advance cursor to the sequence after the last one we fetched.
-      _historyFromSeq = resp.next_seq;
+      _historyCursor = { sessionId: forSession, fromSeq: resp.next_seq };
     }
   } catch (err: unknown) {
     // REPORTED, NOT SWALLOWED. A transcript that cannot be fetched must not

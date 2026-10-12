@@ -49,6 +49,7 @@ import type {
   RAGBuildContextRequest,
   RAGBuildContextResponse,
   RAGDocument,
+  RAGDocumentID,
   RAGListDocumentsResponse,
   RAGReindexRequest,
 } from './rag.js';
@@ -211,6 +212,7 @@ import type {
   GetAccountUsageResponse,
 } from './accounts.js';
 import type { AgentsClient, Agent, AgentPool, AgentUsage } from './agents.js';
+import { parseJSONPreservingLargeIntegers } from './json.js';
 import type {
   AgentBackendInfo,
   JobRunnerInfo,
@@ -460,10 +462,13 @@ function bytesToBase64(bytes: Uint8Array): string {
 // parsed JSON, tolerating 204 No Content and empty bodies (returns undefined
 // as T). All fetchJSON and fetchSSH success tails delegate here to prevent
 // "Unexpected end of JSON input" when servers return 204 or a body-less 2xx.
+// The parse keeps 64-bit identities exact: an id past 2^53 arrives as its
+// decimal string, while timestamps and other quantities stay numbers (see
+// json.ts for the key rule).
 async function parseResponseBody<T>(resp: Response): Promise<T> {
   if (resp.status === 204) return undefined as T;
   const text = await resp.text();
-  return (text ? (JSON.parse(text) as T) : (undefined as T));
+  return (text ? parseJSONPreservingLargeIntegers<T>(text) : (undefined as T));
 }
 
 // RestConnectionClient manages the server address and validates connectivity
@@ -2214,17 +2219,17 @@ class RestRAGClient implements RAGClient {
   }
 
   // getDocument maps to GET /api/v1/rag/documents/{id}
-  async getDocument(id: number): Promise<RAGDocument> {
+  async getDocument(id: RAGDocumentID): Promise<RAGDocument> {
     return this.fetchJSON<RAGDocument>(`/api/v1/rag/documents/${id}`);
   }
 
   // deleteDocument maps to DELETE /api/v1/rag/documents/{id}
-  async deleteDocument(id: number): Promise<void> {
+  async deleteDocument(id: RAGDocumentID): Promise<void> {
     await this.fetchJSON<void>(`/api/v1/rag/documents/${id}`, { method: 'DELETE' });
   }
 
   // reindexDocument maps to POST /api/v1/rag/documents/{id}/reindex
-  async reindexDocument(id: number, req?: RAGReindexRequest): Promise<RAGDocument> {
+  async reindexDocument(id: RAGDocumentID, req?: RAGReindexRequest): Promise<RAGDocument> {
     return this.fetchJSON<RAGDocument>(`/api/v1/rag/documents/${id}/reindex`, {
       method: 'POST',
       body: JSON.stringify(req ?? {}),

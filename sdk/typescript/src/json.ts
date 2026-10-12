@@ -31,6 +31,24 @@
  * parsing, so an unrepresentable integer arrives as its exact decimal STRING
  * and a representable one arrives unchanged as a number.
  *
+ * IDENTITIES BECOME STRINGS, QUANTITIES STAY NUMBERS. Go `time.UnixNano`
+ * timestamps exceed 2^53 too, and those are quantities: rounding one costs
+ * less than a microsecond, and callers compare and convert them as numbers.
+ * So the rewrite is keyed on the member name, with no per-endpoint table:
+ *
+ *   - an integer under a key named `id`, `ids`, `*_id`, `*_ids`, `*Id`,
+ *     `*Ids`, `*ID` or `*IDs` — directly or inside an array under that key —
+ *     is an identity, and arrives as its exact decimal string when it is
+ *     past 2^53;
+ *   - an integer under any other key (`created_at`, `timestamp`, `size`,
+ *     `sequence`, …) is a quantity, and parses exactly as `JSON.parse` would;
+ *   - an integer with no key at all (a bare top-level value, or an array at
+ *     the top level) has no name to judge it by, and is kept exact.
+ *
+ * Every 64-bit integer the daemon serialises was checked against this rule
+ * when it was adopted (#555): the id-named ones are identities and every other
+ * one is a timestamp, a counter or a size.
+ *
  * WHY A SCANNER AND NOT A REGULAR EXPRESSION. The obvious shortcut — rewriting
  * `/"id":\s*(\d+)/` — cannot tell a number from text that looks like one, and
  * these payloads carry free-form user text: a forge issue body routinely
@@ -42,12 +60,13 @@
  */
 
 /**
- * parseJSONPreservingLargeIntegers parses JSON text, returning any integer
- * literal that cannot be represented exactly as a `number` as its decimal
+ * parseJSONPreservingLargeIntegers parses JSON text, returning any identity
+ * integer that cannot be represented exactly as a `number` as its decimal
  * string instead.
  *
- * Every other value — including floats, whose imprecision is inherent rather
- * than an identity hazard — parses exactly as `JSON.parse` would.
+ * Every other value — quantities such as UnixNano timestamps, and floats,
+ * whose imprecision is inherent rather than an identity hazard — parses
+ * exactly as `JSON.parse` would.
  *
  * Throws the same `SyntaxError` as `JSON.parse` for malformed input: this is a
  * parse, and input that is not JSON must fail as loudly here as it would there.
@@ -57,8 +76,9 @@ export function parseJSONPreservingLargeIntegers<T>(text: string): T {
 }
 
 /**
- * quoteUnrepresentableIntegers rewrites JSON text so that every integer literal
- * that does not survive a `number` round-trip is wrapped in double quotes.
+ * quoteUnrepresentableIntegers rewrites JSON text so that every identity
+ * integer literal (see the key rule above) that does not survive a `number`
+ * round-trip is wrapped in double quotes.
  *
  * Exported for the tests, which assert on the rewritten TEXT: the rewrite is
  * the part that has to be exactly right, and asserting only on the parsed
@@ -66,18 +86,27 @@ export function parseJSONPreservingLargeIntegers<T>(text: string): T {
  * should not have".
  */
 export function quoteUnrepresentableIntegers(text: string): string {
+  // One frame per open container. An object frame's `key` is the member name
+  // last read in it; an array frame's `key` is the name the array itself sits
+  // under, so every element inherits it.
+  const frames: ContainerFrame[] = [];
   let out = '';
   let i = 0;
 
   while (i < text.length) {
     const ch = text[i] as string;
+    const top = frames[frames.length - 1];
 
     // A string literal is copied verbatim, escapes included. This is the
     // clause that makes the rewrite safe against payloads whose text content
     // looks like JSON.
     if (ch === '"') {
       const end = endOfStringLiteral(text, i);
-      out += text.slice(i, end);
+      const literal = text.slice(i, end);
+      if (top?.kind === 'object' && top.expectingKey) {
+        top.key = decodeKey(literal);
+      }
+      out += literal;
       i = end;
       continue;
     }
@@ -88,9 +117,29 @@ export function quoteUnrepresentableIntegers(text: string): string {
     if (ch === '-' || (ch >= '0' && ch <= '9')) {
       const end = endOfNumberLiteral(text, i);
       const literal = text.slice(i, end);
-      out += needsQuoting(literal) ? `"${literal}"` : literal;
+      const quote = isIdentityKey(top?.key) && needsQuoting(literal);
+      out += quote ? `"${literal}"` : literal;
       i = end;
       continue;
+    }
+
+    switch (ch) {
+      case '{':
+        frames.push({ kind: 'object', key: undefined, expectingKey: true });
+        break;
+      case '[':
+        frames.push({ kind: 'array', key: top?.key, expectingKey: false });
+        break;
+      case '}':
+      case ']':
+        frames.pop();
+        break;
+      case ':':
+        if (top) top.expectingKey = false;
+        break;
+      case ',':
+        if (top?.kind === 'object') top.expectingKey = true;
+        break;
     }
 
     out += ch;
@@ -98,6 +147,40 @@ export function quoteUnrepresentableIntegers(text: string): string {
   }
 
   return out;
+}
+
+/** ContainerFrame is the scanner's view of one open object or array. */
+interface ContainerFrame {
+  kind: 'object' | 'array';
+  key: string | undefined;
+  expectingKey: boolean;
+}
+
+// IDENTITY_KEY matches the member names whose integers are identities:
+// `id`, `ids`, `*_id`, `*_ids`, `*Id`, `*Ids`, `*ID`, `*IDs`.
+const IDENTITY_KEY = /(^|_)ids?$|(Id|ID)s?$/;
+
+/**
+ * isIdentityKey reports whether an integer under `key` names an entity. A
+ * value with no key — the top level, or an array there — has nothing to judge
+ * it by, so it is kept exact: a rounded quantity is cheap, a rounded id is not.
+ */
+function isIdentityKey(key: string | undefined): boolean {
+  return key === undefined || IDENTITY_KEY.test(key);
+}
+
+/**
+ * decodeKey returns the member name a key literal spells. Only a literal with
+ * an escape needs `JSON.parse`; an unterminated one is left to the caller's
+ * parse to reject, as `endOfStringLiteral` explains.
+ */
+function decodeKey(literal: string): string {
+  if (!literal.includes('\\')) return literal.slice(1, -1);
+  try {
+    return JSON.parse(literal) as string;
+  } catch {
+    return literal;
+  }
 }
 
 /**

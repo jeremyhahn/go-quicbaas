@@ -25,7 +25,7 @@
   import type { Column } from '../../lib/dataTable.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
-  import type { RAGQueryResponse, RAGCitation, RAGDocument } from '@quicbaas/sdk';
+  import type { RAGQueryResponse, RAGCitation, RAGDocument, RAGDocumentID } from '@quicbaas/sdk';
   import { Brain, Plus, Search, X, FileText, BookOpen, Trash2, RotateCw, RefreshCw } from 'lucide-svelte';
   import { formatDateTime } from '../../lib/time.ts';
 
@@ -123,8 +123,8 @@
   let docsTotal = $state(0);
   let docsLoading = $state(false);
   let docsError = $state('');
-  let deletingDoc: number | null = $state(null);
-  let reindexingDoc: number | null = $state(null);
+  let deletingDoc: RAGDocumentID | null = $state(null);
+  let reindexingDoc: RAGDocumentID | null = $state(null);
 
   async function loadDocuments(): Promise<void> {
     if (!docsNamespace.trim()) {

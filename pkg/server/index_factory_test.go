@@ -1,4 +1,4 @@
-//go:build vector
+//go:build vector && qrdb_vector
 
 package server
 

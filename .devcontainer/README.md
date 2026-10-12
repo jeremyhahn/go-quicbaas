@@ -5,7 +5,10 @@ This devcontainer provides a complete development environment for QuicBaaS with 
 ## Features
 
 - Go 1.25 development environment
-- All Go development tools (golangci-lint, delve, gopls, etc.)
+- All Go development tools (golangci-lint, delve, gopls, etc.); golangci-lint,
+  protoc-gen-go and protoc-gen-go-grpc at the pins in `pkg/version/toolchain.mk`.
+  The image's protoc is Alpine's; run `make install-proto-tools` for the pinned
+  one before `make proto-gen`
 - Docker-in-Docker support for integration tests
 - QuicBaaS server auto-starts with all services enabled
 - Port forwarding for all services

@@ -1,4 +1,4 @@
-//go:build raft && rest && quic && mcp && vector && !integration
+//go:build raft && rest && quic && mcp && vector && qrdb_vector && !integration
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

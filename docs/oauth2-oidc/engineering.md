@@ -170,6 +170,18 @@ For an active token the standard claim set is returned: `active`, `sub`,
 `x5t#S256` when sender-constrained), `roles`, and `username` when known. The
 endpoint fails closed: it never leaks claims for an invalid token.
 
+An active token that carries attestation also reports it, so an introspecting
+resource server can enforce the same hardware-only policy as one that parses
+the JWT:
+
+- `attest_level` — the key provenance proven at login: `hardware`, `software`
+  or `none`.
+- `attest_aaguid` — the hex FIDO2 authenticator model; absent for PIV.
+
+Both are omitted when the token carries no attestation. Absence means "no
+evidence", never hardware. `acr` and `amr` are not reported yet (#392), and
+the userinfo endpoint never reports attestation: userinfo is profile data.
+
 #### Tenant derivation — no global table
 
 The broker has **no global token table**. The tenant is derived from the

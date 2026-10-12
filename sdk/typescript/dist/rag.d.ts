@@ -41,8 +41,9 @@ export interface RAGBuildContextResponse {
     truncated: boolean;
     citations: RAGCitation[];
 }
+export type RAGDocumentID = number | string;
 export interface RAGDocument {
-    id: number;
+    id: RAGDocumentID;
     namespace: string;
     content?: string;
     metadata?: Record<string, unknown>;
@@ -60,8 +61,8 @@ export interface RAGClient {
     query(req: RAGQueryRequest): Promise<RAGQueryResponse>;
     buildContext(req: RAGBuildContextRequest): Promise<RAGBuildContextResponse>;
     listDocuments(namespace: string, limit?: number, cursor?: string): Promise<RAGListDocumentsResponse>;
-    getDocument(id: number): Promise<RAGDocument>;
-    deleteDocument(id: number): Promise<void>;
-    reindexDocument(id: number, req?: RAGReindexRequest): Promise<RAGDocument>;
+    getDocument(id: RAGDocumentID): Promise<RAGDocument>;
+    deleteDocument(id: RAGDocumentID): Promise<void>;
+    reindexDocument(id: RAGDocumentID, req?: RAGReindexRequest): Promise<RAGDocument>;
 }
 //# sourceMappingURL=rag.d.ts.map

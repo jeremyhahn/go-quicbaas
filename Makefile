@@ -360,10 +360,14 @@ export QUICBAAS_SWTPM_IMAGE ?= $(DOCKER_IMAGE)/swtpm:$(DOCKER_LATEST_TAG)
 export SIGNALBRIDGE_IMAGE ?= signalbridge:$(DOCKER_LATEST_TAG)
 export QUICBAAS_E2E_SANDBOX_IMAGE ?= $(DOCKER_IMAGE)-e2e-sandbox-agent:$(DOCKER_LATEST_TAG)
 
-# Proto tools
+# Proto tools. protoc and its two Go plugins are pinned in
+# pkg/version/toolchain.mk (PROTOC_VERSION, PROTOC_GEN_GO_VERSION,
+# PROTOC_GEN_GO_GRPC_VERSION); `make install-proto-tools` installs exactly those
+# and `make proto-gen` refuses any other (go-quicbaas#481). protoc goes under
+# PROTOC_PREFIX (bin/protoc plus the well-known types in include/, which protoc
+# finds relative to its own binary); put $(PROTOC_PREFIX)/bin on PATH.
 PROTOC := protoc
-PROTOC_GEN_GO := $(shell which protoc-gen-go)
-PROTOC_GEN_GO_GRPC := $(shell which protoc-gen-go-grpc)
+PROTOC_PREFIX ?= $(HOME)/.local
 BUF := buf
 
 # PROTO_QRDB_DIR points at a go-qrdb source tree so the quicbaas protos can
@@ -416,17 +420,31 @@ generate: ## Run go generate
 
 ##@ Protocol Buffers
 
+.PHONY: check-proto-tools
+# Generated code names the protoc and plugin versions that wrote it, so a
+# regeneration with any other version rewrites every header (and possibly the
+# code) in a diff nobody asked for. This compares each tool's own --version
+# output with its pin and names every mismatch before failing.
+check-proto-tools: ## Fail unless protoc, protoc-gen-go and protoc-gen-go-grpc are the pinned versions
+	@fail=0; \
+	check() { \
+		if [ -z "$$3" ]; then \
+			echo "$(RED)$$1 not found on PATH; the pin is $$2$(NC)" >&2; fail=1; \
+		elif [ "$$3" != "$$1 $$2" ]; then \
+			echo "$(RED)$$1 is '$$3'; the pin is '$$1 $$2'$(NC)" >&2; fail=1; \
+		fi; \
+	}; \
+	check libprotoc "$(PROTOC_VERSION)" "$$($(PROTOC) --version 2>/dev/null)"; \
+	check protoc-gen-go "$(PROTOC_GEN_GO_VERSION)" "$$(protoc-gen-go --version 2>/dev/null)"; \
+	check protoc-gen-go-grpc "$(PROTOC_GEN_GO_GRPC_VERSION:v%=%)" "$$(protoc-gen-go-grpc --version 2>/dev/null)"; \
+	if [ "$$fail" -ne 0 ]; then \
+		echo "$(RED)Run 'make install-proto-tools' and put $(PROTOC_PREFIX)/bin and $$($(GOCMD) env GOPATH)/bin first on PATH.$(NC)" >&2; \
+		exit 1; \
+	fi
+
 .PHONY: proto-gen
-proto-gen: ## Generate protobuf code from .proto files
+proto-gen: check-proto-tools ## Generate protobuf code from .proto files
 	@echo "$(BLUE)Generating protobuf code...$(NC)"
-	@if [ -z "$(PROTOC_GEN_GO)" ]; then \
-		echo "$(RED)protoc-gen-go not found. Run: make install-proto-tools$(NC)"; \
-		exit 1; \
-	fi
-	@if [ -z "$(PROTOC_GEN_GO_GRPC)" ]; then \
-		echo "$(RED)protoc-gen-go-grpc not found. Run: make install-proto-tools$(NC)"; \
-		exit 1; \
-	fi
 	@if [ ! -f "$(PROTO_QRDB_DIR)/pkg/api/grpc/proto/qrdbv1/authz.proto" ]; then \
 		echo "$(RED)qrdb authz.proto not found under PROTO_QRDB_DIR=$(PROTO_QRDB_DIR)$(NC)"; \
 		echo "$(RED)Fetch the pinned release: go mod download github.com/jeremyhahn/go-qrdb$(NC)"; \
@@ -476,15 +494,30 @@ proto-clean: ## Remove generated protobuf files
 	@echo "$(GREEN)Generated proto files removed$(NC)"
 
 .PHONY: install-proto-tools
-install-proto-tools: ## Install protobuf code generation tools
-	@echo "$(BLUE)Installing protobuf tools...$(NC)"
-	@$(GOCMD) install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	@$(GOCMD) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	@echo "$(GREEN)Protobuf tools installed successfully$(NC)"
-	@echo "$(YELLOW)Note: You also need protoc compiler installed on your system$(NC)"
-	@echo "$(YELLOW)  - Ubuntu/Debian: apt-get install protobuf-compiler$(NC)"
-	@echo "$(YELLOW)  - macOS: brew install protobuf$(NC)"
-	@echo "$(YELLOW)  - Or download from: https://github.com/protocolbuffers/protobuf/releases$(NC)"
+# protoc comes from its release zip, checked against the SHA-256 pinned beside
+# the version -- the same install the worker image does. A distribution package
+# (apt's protobuf-compiler, brew's protobuf) is whatever version that
+# distribution ships, which is the drift this target exists to prevent.
+install-proto-tools: ## Install protoc and its Go plugins at the pinned versions
+	@echo "$(BLUE)Installing protoc $(PROTOC_VERSION) into $(PROTOC_PREFIX)...$(NC)"
+	@set -eu; \
+	case "$$(uname -s)-$$(uname -m)" in \
+		Linux-x86_64) zipname=protoc-$(PROTOC_VERSION)-linux-x86_64.zip; sum=$(PROTOC_SHA256_X86_64) ;; \
+		Linux-aarch64) zipname=protoc-$(PROTOC_VERSION)-linux-aarch_64.zip; sum=$(PROTOC_SHA256_AARCH64) ;; \
+		*) echo "$(RED)No pinned protoc release for $$(uname -s)-$$(uname -m); install protoc $(PROTOC_VERSION) by hand.$(NC)" >&2; exit 1 ;; \
+	esac; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	curl -fsSL -o "$$tmp/$$zipname" "https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/$$zipname"; \
+	echo "$$sum  $$tmp/$$zipname" | sha256sum -c -; \
+	unzip -q "$$tmp/$$zipname" -d "$$tmp/protoc"; \
+	mkdir -p "$(PROTOC_PREFIX)/bin" "$(PROTOC_PREFIX)/include"; \
+	install -m 0755 "$$tmp/protoc/bin/protoc" "$(PROTOC_PREFIX)/bin/protoc"; \
+	cp -r "$$tmp/protoc/include/." "$(PROTOC_PREFIX)/include/"
+	@echo "$(BLUE)Installing protoc-gen-go $(PROTOC_GEN_GO_VERSION) and protoc-gen-go-grpc $(PROTOC_GEN_GO_GRPC_VERSION)...$(NC)"
+	@$(GOCMD) install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	@$(GOCMD) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+	@echo "$(GREEN)Protobuf tools installed; make sure $(PROTOC_PREFIX)/bin is on PATH$(NC)"
 
 .PHONY: install-buf
 install-buf: ## Install Buf CLI tool
@@ -1161,7 +1194,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # command, where a `@#` line is handed to bash as a COMMAND and fails with
 # exit 127. That is exactly how this comment broke `make test` in CI run 4119.
 .PHONY: test
-test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins ## Run unit tests (excludes integration tests)
+test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
@@ -1188,6 +1221,24 @@ endif
 check-case-collisions: ## Fail if two tracked paths differ only by letter case
 	@dups=$$(git ls-files | LC_ALL=C sort -f | uniq -di); \
 	if [ -n "$$dups" ]; then echo "check-case-collisions: paths that differ only by case:"; echo "$$dups"; exit 1; fi
+
+.PHONY: check-workspace-script
+# The seal integration images build in a go.work that test/integration/
+# mkworkspace.sh writes, with a go line taken from the image's own toolchain.
+# Before go-quicbaas#399 each Dockerfile carried its own echo-built copy with a
+# literal go line, and the copies drifted from each other and from the base
+# image. This fails if a Dockerfile writes a go.work inline again, and runs the
+# script's own test against a temporary directory.
+WORKSPACE_INLINE_PATTERN := echo '(go [0-9]|use \(|replace \()|> *go\.work|<<.*go\.work
+check-workspace-script: ## Fail if a Dockerfile writes go.work inline instead of running mkworkspace.sh
+	@echo "$(BLUE)Checking Dockerfiles build go.work through mkworkspace.sh...$(NC)"
+	@bad=$$(git grep -nE "$(WORKSPACE_INLINE_PATTERN)" -- 'Dockerfile*' '**/Dockerfile*'); \
+	if [ -n "$$bad" ]; then \
+		echo "$(RED)Inline go.work in a Dockerfile; run test/integration/mkworkspace.sh instead:$(NC)"; \
+		echo "$$bad"; \
+		exit 1; \
+	fi
+	@sh test/integration/mkworkspace_test.sh
 
 .PHONY: check-local-keygen
 # go-xkms owns keys and certificates for the whole stack; go-quicbaas composes

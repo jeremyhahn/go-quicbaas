@@ -68,9 +68,14 @@ export interface RAGBuildContextResponse {
 // RAG document types
 // ---------------------------------------------------------------------------
 
+// RAGDocumentID is a document's uint64 vector id. Ids are content hashes, so
+// most exceed 2^53: the REST parse delivers such an id as its exact decimal
+// string, and a smaller one as a number. Pass it back unchanged.
+export type RAGDocumentID = number | string;
+
 // RAGDocument represents a RAG document stored as a vector with content metadata.
 export interface RAGDocument {
-  id: number;
+  id: RAGDocumentID;
   namespace: string;
   content?: string;
   metadata?: Record<string, unknown>;
@@ -111,13 +116,13 @@ export interface RAGClient {
 
   // getDocument retrieves a single document by ID.
   // GET /api/v1/rag/documents/{id}
-  getDocument(id: number): Promise<RAGDocument>;
+  getDocument(id: RAGDocumentID): Promise<RAGDocument>;
 
   // deleteDocument removes a document by ID.
   // DELETE /api/v1/rag/documents/{id}
-  deleteDocument(id: number): Promise<void>;
+  deleteDocument(id: RAGDocumentID): Promise<void>;
 
   // reindexDocument re-embeds and re-upserts a document.
   // POST /api/v1/rag/documents/{id}/reindex
-  reindexDocument(id: number, req?: RAGReindexRequest): Promise<RAGDocument>;
+  reindexDocument(id: RAGDocumentID, req?: RAGReindexRequest): Promise<RAGDocument>;
 }

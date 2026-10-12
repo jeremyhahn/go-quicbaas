@@ -36,6 +36,8 @@
  *     Bootstrap          → #/bootstrap
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { navigate, navStore } from '../src/stores/navigation.svelte.ts';
 import { routerStore } from '../src/stores/router.svelte.ts';
@@ -280,21 +282,14 @@ describe('sidebar exposes three distinct disambiguated dashboard entries', () =>
   // labels avoids mounting the full component tree (which depends on
   // SDK clients, runtime polling loops, etc.) while still catching a
   // regression that re-introduces a duplicate "Dashboard" label.
-  it('OVERVIEW > Overview, SOFTWARE FACTORY > Software Factory, CLUSTER > Cluster are present and distinct', async () => {
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const url = await import('node:url');
+  //
+  // Read once, at collection, through static imports: dynamic
+  // import('node:fs/promises') calls inside each case went through the
+  // module pipeline on the test's clock and pushed it past vitest's 5 s
+  // default under full-suite load (go-quicbaas#349).
+  const source = readFileSync(resolve(__dirname, '../src/views/MainApp.svelte'), 'utf8');
 
-    const here = url.fileURLToPath(import.meta.url);
-    const mainAppPath = path.resolve(
-      path.dirname(here),
-      '..',
-      'src',
-      'views',
-      'MainApp.svelte',
-    );
-    const source = await fs.readFile(mainAppPath, 'utf8');
-
+  it('OVERVIEW > Overview, SOFTWARE FACTORY > Software Factory, CLUSTER > Cluster are present and distinct', () => {
     // Each of the three dashboard entries must use a label that matches
     // its section so the labels are unique within the sidebar. The
     // prior bug had all three labelled "Dashboard".
@@ -312,21 +307,7 @@ describe('sidebar exposes three distinct disambiguated dashboard entries', () =>
     expect(clusterCount).toBe(1);
   });
 
-  it('breadcrumb carries the section name on the OVERVIEW dashboard route', async () => {
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const url = await import('node:url');
-
-    const here = url.fileURLToPath(import.meta.url);
-    const mainAppPath = path.resolve(
-      path.dirname(here),
-      '..',
-      'src',
-      'views',
-      'MainApp.svelte',
-    );
-    const source = await fs.readFile(mainAppPath, 'utf8');
-
+  it('breadcrumb carries the section name on the OVERVIEW dashboard route', () => {
     // The breadcrumb for the dashboard route must include "Overview" as
     // a parent crumb so the surface mirrors the "Software Factory > Dashboard"
     // and "Cluster > Dashboard" patterns used by the other two dashboards.

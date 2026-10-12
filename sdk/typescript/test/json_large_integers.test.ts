@@ -63,9 +63,9 @@ describe('parseJSONPreservingLargeIntegers', () => {
     expect(quoteUnrepresentableIntegers('{"n": 1.5e300}')).toBe('{"n": 1.5e300}');
   });
 
-  it('preserves a large NEGATIVE integer with its sign', () => {
-    expect(quoteUnrepresentableIntegers('{"n": -1788567351228350294}')).toBe(
-      '{"n": "-1788567351228350294"}',
+  it('preserves a large NEGATIVE id with its sign', () => {
+    expect(quoteUnrepresentableIntegers('{"id": -1788567351228350294}')).toBe(
+      '{"id": "-1788567351228350294"}',
     );
   });
 
@@ -92,6 +92,68 @@ describe('parseJSONPreservingLargeIntegers', () => {
     }>(wire);
     expect(parsed.items.map((i) => i.id)).toEqual([REAL_ITEM_ID, '1788573392453174691']);
     expect(parsed.items.map((i) => i.attempts)).toEqual([2, 1]);
+  });
+
+  it('quotes every id-named key form and leaves other keys alone', () => {
+    const big = REAL_ITEM_ID;
+    const keys = ['id', 'ids', 'issue_id', 'member_ids', 'itemId', 'itemIds', 'ID', 'LeaseID', 'NodeIDs'];
+    for (const key of keys) {
+      expect(quoteUnrepresentableIntegers(`{"${key}":${big}}`), key).toBe(`{"${key}":"${big}"}`);
+    }
+    // Names that merely contain "id" are quantities, not identities.
+    const quantities = ['client_id_issued_at', 'width', 'valid', 'paid', 'idle_ns', 'size'];
+    for (const key of quantities) {
+      expect(quoteUnrepresentableIntegers(`{"${key}":${big}}`), key).toBe(`{"${key}":${big}}`);
+    }
+  });
+
+  it('keeps a UnixNano timestamp a number that converts to the right millisecond', () => {
+    // A real Go time.UnixNano value: past 2^53, but a quantity. Rounding costs
+    // under a microsecond; the millisecond it names is unchanged.
+    const parsed = parseJSONPreservingLargeIntegers<{ id: string; created_at: number }>(
+      `{"id": ${REAL_ITEM_ID}, "created_at": 1778017609149476600}`,
+    );
+    expect(parsed.id).toBe(REAL_ITEM_ID);
+    expect(typeof parsed.created_at).toBe('number');
+    expect(Math.floor(parsed.created_at / 1_000_000)).toBe(1778017609149);
+  });
+
+  it('leaves an id at or below 2^53 a number', () => {
+    const parsed = parseJSONPreservingLargeIntegers<{ id: number; job_id: number }>(
+      '{"id": 9007199254740991, "job_id": 4503599627370496}',
+    );
+    expect(parsed.id).toBe(9007199254740991);
+    expect(parsed.job_id).toBe(4503599627370496);
+  });
+
+  it('carries an id key into its array and drops it after the array closes', () => {
+    const wire = `{"member_ids":[${REAL_ITEM_ID},[1788573392453174691]],"size":${REAL_ITEM_ID}}`;
+    expect(quoteUnrepresentableIntegers(wire)).toBe(
+      `{"member_ids":["${REAL_ITEM_ID}",["1788573392453174691"]],"size":${REAL_ITEM_ID}}`,
+    );
+  });
+
+  it('judges a member of an object nested under an id key by its own name', () => {
+    const wire = `{"ids":[{"bytes":${REAL_ITEM_ID},"id":${REAL_ITEM_ID}}]}`;
+    expect(quoteUnrepresentableIntegers(wire)).toBe(
+      `{"ids":[{"bytes":${REAL_ITEM_ID},"id":"${REAL_ITEM_ID}"}]}`,
+    );
+  });
+
+  it('does not take a string VALUE for a key', () => {
+    // "id" here is the value of "name"; the integer after it is a quantity.
+    const wire = `{"name":"id","size":${REAL_ITEM_ID}}`;
+    expect(quoteUnrepresentableIntegers(wire)).toBe(wire);
+  });
+
+  it('decodes an escaped key before judging it', () => {
+    const wire = String.raw`{"id": 1788567351228350294}`;
+    const parsed = parseJSONPreservingLargeIntegers<{ id: string }>(wire);
+    expect(parsed.id).toBe(REAL_ITEM_ID);
+  });
+
+  it('keeps an unkeyed top-level integer exact', () => {
+    expect(parseJSONPreservingLargeIntegers<string>(REAL_ITEM_ID)).toBe(REAL_ITEM_ID);
   });
 
   it('rejects malformed JSON exactly as JSON.parse does', () => {

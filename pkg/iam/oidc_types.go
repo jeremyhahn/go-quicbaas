@@ -307,6 +307,18 @@ type IntrospectionResponse struct {
 
 	// Roles is the list of user roles carried by the token.
 	Roles []string `json:"roles,omitempty"`
+
+	// AttestLevel is the access token's attest_level claim: the key
+	// provenance proven at login ("hardware", "software" or "none"). It lets
+	// an introspecting resource server enforce the same hardware-only policy
+	// a JWT-parsing one can. Omitted when the token carries no attestation;
+	// absence means "no evidence", never hardware.
+	AttestLevel string `json:"attest_level,omitempty"`
+
+	// AttestAAGUID is the access token's attest_aaguid claim: the hex FIDO2
+	// authenticator model that authenticated the session. Empty for PIV and
+	// for unattested tokens.
+	AttestAAGUID string `json:"attest_aaguid,omitempty"`
 }
 
 // UserInfoResponse represents the OIDC UserInfo endpoint response.

@@ -574,6 +574,8 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 		Username:     claims.Name,
 		Confirmation: claims.Confirmation,
 		Roles:        claims.Roles,
+		AttestLevel:  claims.AttestLevel,
+		AttestAAGUID: claims.AttestAAGUID,
 	}
 	if !claims.ExpiresAt.IsZero() {
 		resp.ExpiresAt = claims.ExpiresAt.Unix()

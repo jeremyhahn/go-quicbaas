@@ -81,6 +81,7 @@ export type {
   RAGCitation,
   RAGResultInput,
   RAGDocument,
+  RAGDocumentID,
   RAGListDocumentsResponse,
   RAGReindexRequest,
 } from './rag.js';
