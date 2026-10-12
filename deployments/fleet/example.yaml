@@ -3,7 +3,7 @@
 # One file per node. `quicbaas fleet deploy --spec <file>` reads it, runs the
 # preflight checks, and installs the agent; `fleet stop|start|undeploy --spec
 # <file>` address the same node. A flag set on the command line overrides the
-# value here. See docs/orchestration/fleet.md for the runbook.
+# value here. See docs/agent-fleet/user.md for the runbook.
 #
 # This repository is published, so the specs for a real fleet — its host
 # names, addresses and users — live in that fleet's private infrastructure

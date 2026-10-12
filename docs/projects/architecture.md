@@ -43,7 +43,7 @@ admission (`Quotas.MaxConcurrency`), the SDLC module (binding, workspace,
 publish), and the worker runtime (storage tier, context repositories, session
 rotation). Their mechanics are documented with them:
 [orchestration](../orchestration/), [SDLC](../sdlc/architecture.md),
-[agent fleet](../orchestration/fleet.md), and in the software factory's
+[agent fleet](../agent-fleet/architecture.md), and in the software factory's
 [autonomy and dispatch](../orchestration/autonomy-and-dispatch.md) and
 [storage tiers](../software-factory/storage-tiers.md), and in the accounts
 folder's [job admission](../accounts/architecture.md#the-lease) and

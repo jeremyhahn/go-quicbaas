@@ -9,9 +9,10 @@
 > [../orchestration/cli.md](../orchestration/cli.md). Feature folder: `docs/software-factory/`.
 > Conflicts with this document are defects.
 
-Output formats, global flags, paging and the `quicbaas orchestrator` and
-`quicbaas fleet` groups are in
-[../orchestration/cli.md](../orchestration/cli.md); the same flags apply here.
+Output formats, global flags, paging and the `quicbaas orchestrator` group are
+in [../orchestration/cli.md](../orchestration/cli.md); the same flags apply
+here. The `quicbaas fleet` group is in
+[../agent-fleet/cli.md](../agent-fleet/cli.md).
 
 ## Agents
 

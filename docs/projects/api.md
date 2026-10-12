@@ -201,6 +201,6 @@ gRPC: `convertProjectError` (`pkg/api/grpc/server_project.go`).
   [SDLC API](../sdlc/api.md).
 - Task, job and dispatch APIs that take a `project_id`:
   [orchestration](../orchestration/).
-- Fleet node enable/disable (`quicbaas_fleet_*`): [agent fleet](../orchestration/fleet.md).
+- Fleet node enable/disable (`quicbaas_fleet_*`): [agent fleet](../agent-fleet/api.md#mcp).
 - Pooled provider accounts with a project default:
   [accounts](../accounts/architecture.md).

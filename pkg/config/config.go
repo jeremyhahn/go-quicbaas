@@ -982,7 +982,7 @@ type SDLCConfig struct {
 
 // SDLCWorkerImage configures the worker image refresh: how often it looks for
 // newer agent CLIs, where it publishes the image it builds, and which model
-// its gate must prove works. See docs/software-factory/worker-image.md.
+// its gate must prove works. See docs/agent-fleet/worker-image.md.
 //
 // IT RUNS ONLY WHERE IT CAN. The refresh needs the SDLC module (sdlc.enabled)
 // and a container engine on this node; without either it is not started, and

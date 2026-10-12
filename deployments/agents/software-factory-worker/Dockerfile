@@ -988,7 +988,7 @@ RUN set -eux; \
 #
 # THE COPY AT /etc/serena IS THE DOCUMENTED DEFAULT for a HOME that already
 # holds a serena_config.yml, which serena never regenerates: splice the block
-# into it (docs/software-factory/worker-image.md).
+# into it (docs/agent-fleet/worker-image.md).
 #
 # THE BUILD ASSERTS THE RESULT rather than trusting the substitution: a serena
 # release that reshapes its template fails the build here, and a config loaded

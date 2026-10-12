@@ -2,13 +2,14 @@
 
 > **Status: NORMATIVE** · Last verified: 2026-10-11
 > Every capability of the orchestration engine on every transport, with
-> permissions: sessions, jobs, tasks, workflows, fleet, inference, cost, the
+> permissions: sessions, jobs, tasks, workflows, inference, cost, the
 > list-paging contract and the agent MCP tools. Feature folder:
 > `docs/orchestration/`. Conflicts with this document are defects.
 
 Projects, pooled accounts, the agent catalog and the SDLC module are in
-[../software-factory/api.md](../software-factory/api.md). The list-paging
-contract below is the one contract all of them share.
+[../software-factory/api.md](../software-factory/api.md); the fleet registry
+and node enrollment are in [../agent-fleet/api.md](../agent-fleet/api.md). The
+list-paging contract below is the one contract all of them share.
 
 
 ## List paging, sorting and search
@@ -386,16 +387,11 @@ Every route is tenant-scoped by the caller's credential.
 | `GET /api/v1/orchestrator/cost` | `orchestrator:status` | Consumption ledger rollup (below) |
 | `GET`, `PUT /api/v1/orchestrator/spend-policy` | `orchestrator:status` / `spend_policy:write` | The tenant's spend limits |
 | `GET`, `PUT /api/v1/orchestrator/cost-settings` | `orchestrator:status` / `cost_settings:write` | Local-inference costing |
-| `POST /api/v1/fleet` | `orchestrator:agent_register` | Register a fleet node |
-| `GET /api/v1/fleet`, `GET /api/v1/fleet/{nodeID}` | `orchestrator:status` | List / read fleet nodes |
-| `DELETE /api/v1/fleet/{nodeID}` | `orchestrator:close` | Remove a fleet node |
-| `POST /api/v1/fleet/{nodeID}/heartbeat` | `orchestrator:agent_heartbeat` | Node heartbeat |
-| `POST /api/v1/fleet/{nodeID}/enable`, `.../disable` | `orchestrator:agent_register` / `agent_remove` | Enable / disable a node |
-| `GET /api/v1/fleet/{nodeID}/backends/{backendName}/models` | `orchestrator:backend_list` | Models a node's backend serves |
 
 Not every route is in this table: `GET /api/v1/orchestrator/attention` and
 `POST .../attention/{taskID}/resolve` are the attention inbox, documented with
-the SDLC module in [../software-factory/api.md](../software-factory/api.md).
+the SDLC module in [../software-factory/api.md](../software-factory/api.md);
+the `/api/v1/fleet` routes are in [../agent-fleet/api.md](../agent-fleet/api.md#rest).
 
 **Streaming.** `SubscribeSessionEvents` is server-streaming on gRPC and a
 server-sent-event stream on REST (`sdk/go/transport/rest/orchestrator_stream.go`);
@@ -405,8 +401,9 @@ server-sent-event stream on REST (`sdk/go/transport/rest/orchestrator_stream.go`
 **MCP tools** (`pkg/api/mcp/orchestrator_tools.go`, `fleet_admin_tools.go`,
 `cost_settings_tools.go`, `orchestrator_cache_tools.go`):
 `quicbaas_orchestrator_{discover,register,list,spawn,prompt,session_history,session_conversation,status,close,rotate_account,list_sessions,list_backends,list_runners,decompose,health,broadcast,inference,start_job,get_job_status,cancel_job,list_jobs,list_workflows,task_create,task_block,task_readmit,task_delete,cost,spend_policy_get,spend_policy_set,cost_settings_get,cost_settings_set,cache_put,cache_get}`,
-`quicbaas_task_{get,list}_artifact(s)`, `quicbaas_fleet_{register,list,status,remove,heartbeat,disable,enable}`.
-The attention tools are `quicbaas_orchestrator_attention_{list,resolve}`.
+`quicbaas_task_{get,list}_artifact(s)`.
+The attention tools are `quicbaas_orchestrator_attention_{list,resolve}`; the
+`quicbaas_fleet_*` tools are in [../agent-fleet/api.md](../agent-fleet/api.md#mcp).
 
 #### `GET /api/v1/orchestrator/runners`
 
@@ -1308,17 +1305,8 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_orchestrator_cache_put` | `orchestrator:cache_write` | Store analysis result in KV (project-scoped) |
 | `quicbaas_orchestrator_cache_get` | `orchestrator:cache_read` | Retrieve cached result by project and key |
 
-### quicbaas_fleet_* Tools
-
-| Tool | Permission | Description |
-|------|------------|-------------|
-| `quicbaas_fleet_register` | `orchestrator:agent_register` | Register an agent with the fleet |
-| `quicbaas_fleet_list` | `orchestrator:agent_list` | One page of a tenant's fleet nodes, narrowed by `status`, `backend` (membership), `host` or `node_type`, paged per [List paging, sorting and search](#list-paging-sorting-and-search) |
-| `quicbaas_fleet_status` | `orchestrator:agent_read` | Get one fleet node's status |
-| `quicbaas_fleet_remove` | `orchestrator:agent_remove` | Remove an agent from the fleet registry |
-| `quicbaas_fleet_heartbeat` | `orchestrator:agent_heartbeat` | Update an agent's last-seen timestamp |
-
-The pooled-account family is documented in
+The `quicbaas_fleet_*` tools are in
+[../agent-fleet/api.md](../agent-fleet/api.md#mcp). The pooled-account family is documented in
 [../accounts/api.md](../accounts/api.md).
 
 ### Observability metrics

@@ -9,9 +9,9 @@ How a spawn becomes a container, what the container gets, and what happens when
 it cannot be one.
 
 - Policy semantics (`required` / `preferred` / `opt-in`, tenant overrides) —
-  [Sandbox Policy Reference](engineering.md#sandbox-policy-reference)
-- Network isolation — [Sandbox Network Reference](engineering.md#sandbox-network-reference)
-- Bind-mount allowlist — [Bind-Mount Allowlist Reference](engineering.md#bind-mount-allowlist-reference)
+  [Sandbox Policy Reference](../agent-fleet/engineering.md#policy)
+- Network isolation — [Sandbox Network Reference](../agent-fleet/engineering.md#network)
+- Bind-mount allowlist — [Bind-Mount Allowlist Reference](../agent-fleet/engineering.md#bind-mount-allowlist)
 - Image integrity (a separate axis) — [Container Trust](architecture.md#container-trust)
 - Where the checkout physically lives, and what bounds it —
   [Workspace Storage Tiers](../software-factory/storage-tiers.md)

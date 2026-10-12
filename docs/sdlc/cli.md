@@ -112,7 +112,7 @@ context it publishes under. See
 
 The `worker-image` verbs act on the host's worker image refresh and need the
 cross-tenant `worker_images:*` permissions; see
-[the worker image refresh](../software-factory/worker-image.md).
+[the worker image refresh](../agent-fleet/worker-image.md).
 
 The `table` rendering of a binding is one line per decision an operator
 checks: project, forge, trigger label, strategy, worker, worker prompt append

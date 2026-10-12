@@ -9,10 +9,11 @@
 > [../accounts/user.md](../accounts/user.md). Feature folder:
 > `docs/software-factory/`. Conflicts with this document are defects.
 
-Starting the server, spawning and prompting sessions, tasks, fleet setup,
-inference and the container and Claude Code setup guides are in
-[../orchestration/user.md](../orchestration/user.md). The tasks below assume a
-running server and a spawned session.
+Starting the server, spawning and prompting sessions, tasks, inference and the
+container and Claude Code setup guides are in
+[../orchestration/user.md](../orchestration/user.md); adding and running fleet
+nodes is in [../agent-fleet/user.md](../agent-fleet/user.md). The tasks below
+assume a running server and a spawned session.
 
 ## Discover and register agentic projects
 
@@ -143,7 +144,8 @@ how cost is attributed are in [../accounts/user.md](../accounts/user.md).
 ## Next steps
 
 - [../orchestration/user.md](../orchestration/user.md): multi-machine setup,
-  environment variables, finding things, fleet quick start, inference and
-  container setup.
+  environment variables, finding things, inference and container setup.
+- [../agent-fleet/user.md](../agent-fleet/user.md): adding, checking and
+  removing fleet nodes.
 - [../sdlc/user.md](../sdlc/user.md) and [../projects/user.md](../projects/user.md)
   for the modules above.

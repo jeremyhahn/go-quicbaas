@@ -3278,7 +3278,7 @@ export interface CostSettings {
 }
 
 // =============================================================================
-// The Software Factory worker image refresh (docs/software-factory/worker-image.md)
+// The Software Factory worker image refresh (docs/agent-fleet/worker-image.md)
 // =============================================================================
 
 // WorkerImageAgents are the two agent CLI versions an image carries.

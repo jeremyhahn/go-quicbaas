@@ -22,9 +22,9 @@ socket. Seven binding objects are constructed at
 | `ConnectionBinding` | server address, transport, TLS material | [`../multiprotocol-api/`](../multiprotocol-api/api.md) |
 | `OrchestratorBinding` | orchestration operations | [`../software-factory/`](../software-factory/api.md) |
 | `SessionBinding` | session event history and subscriptions | [`../software-factory/`](../software-factory/api.md) |
-| `FleetBinding` | fleet registry queries | [`../software-factory/`](../software-factory/api.md) |
+| `FleetBinding` | fleet registry queries | [`../agent-fleet/`](../agent-fleet/api.md) |
 | `EmbeddedServerBinding` | in-process server control | [`../composition/`](../composition/api.md) |
-| `FleetDeployBinding` | remote fleet node deployment | [`../software-factory/`](../software-factory/api.md) |
+| `FleetDeployBinding` | remote fleet node deployment | [`../agent-fleet/`](../agent-fleet/cli.md#fleet-deploy) |
 | `SSHKeysBinding` | server-held SSH keys | [`../ssh/`](../ssh/api.md) |
 
 These are **not a public API**. They are not versioned, not stable, and not

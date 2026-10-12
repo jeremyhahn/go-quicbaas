@@ -21,8 +21,8 @@ indistinguishable from an unwritten one.
 
 ## Migration state
 
-**Complete.** 43 feature folders, 261 files, migrated 2026-08-19; last
-recounted 2026-10-11. Counting is derived, not maintained:
+**Complete.** 44 feature folders, 266 files, migrated 2026-08-19; last
+recounted 2026-10-12. Counting is derived, not maintained:
 `ls docs/*/architecture.md | wc -l` and `find docs -name '*.md' | wc -l`.
 
 | Date | Change |
@@ -31,6 +31,7 @@ recounted 2026-10-11. Counting is derived, not maintained:
 | 2026-09-10 | The three folders `agent-orchestration`, `sdlc` and `agentic-projects` became one, [software-factory/](software-factory/): the engine's ten pages became the base, sdlc's seven (architecture, binding, configuration, outcomes, README, api, runbook) and agentic-projects' five (architecture, engineering, cli, api, user) were absorbed into them, and the result is the five canonical files plus supplements `sdlc.md`, `projects.md`, `accounts.md`, `prompt-sets.md`, `job-runners.md`, `autonomy-and-dispatch.md`, `job-admission.md`, `sandbox.md` and `cost-enforcement.md`. The two folders that had no `cli.md`/`engineering.md`/`user.md` now do. The folder count had already drifted to 39 before this change; both figures above are recounted, not adjusted. |
 | 2026-10-11 | The orchestration engine moved out of [software-factory/](software-factory/) into its own folder, [orchestration/](orchestration/) (#1231): the five canonical files' engine content, and the supplements `job-runners.md`, `autonomy-and-dispatch.md`, `job-admission.md`, `sandbox.md` and `fleet.md`. software-factory/ keeps projects, accounts, the SDLC module and prompt sets, and points at the engine. The content was brought up to date with agent sessions, inference backends, attach, job amendments and the list contract, and the CLI verbs and API routes were re-checked against the code. The counts above are recounted. |
 | 2026-10-11 | The SDLC module moved out of `software-factory/` into its own folder, [sdlc/](sdlc/): `software-factory/sdlc.md` became `sdlc/architecture.md`, the supplements `review.md`, `triage.md`, `merge-train.md` and `ci-failure-classification.md` moved with it, and the SDLC sections of `software-factory/{engineering,cli,api,user}.md` became the new folder's four other canonical files. `software-factory/projects.md` became [projects/](projects/), and `accounts.md`, `cost-enforcement.md` and `job-admission.md` became [accounts/](accounts/); `orchestration/job-admission.md` is a pointer into accounts/. Each old path keeps a one-paragraph pointer page so existing links resolve. |
+| 2026-10-12 | The fleet content left [orchestration/](orchestration/) and [software-factory/](software-factory/) for its own folder, [agent-fleet/](agent-fleet/): enrollment, heartbeat and recovery, `fleet serve` and `fleet deploy`, the embedded node, and the worker image. `orchestration/fleet.md` became `agent-fleet/user.md` and keeps a pointer page; `software-factory/worker-image.md` became `agent-fleet/worker-image.md`; the fleet sections of the five canonical files moved to their agent-fleet counterparts. The counts above are recounted. |
 
 **This file is the migration record.** New features get a folder from day one;
 do not add a flat `.md` at the `docs/` root, and do not recreate the old
@@ -68,8 +69,9 @@ predates the unified-API-server model and is a record of decisions, not a plan.
 
 | Feature | What it is |
 |---|---|
-| [orchestration/](orchestration/) | The orchestration engine: agent sessions and their durable event log and attach, backends and inference, the job envelope and its runners, workflows, tasks and autonomy, fleet, container trust and sandboxing, and the list contract |
-| [software-factory/](software-factory/) | The Software Factory built on the engine: how the engine, projects, accounts and the SDLC module fit together, the agent catalog, prompt sets, admission and readiness, workspace storage tiers and the worker image |
+| [orchestration/](orchestration/) | The orchestration engine: agent sessions and their durable event log and attach, backends and inference, the job envelope and its runners, workflows, tasks and autonomy, container trust and sandboxing, and the list contract |
+| [agent-fleet/](agent-fleet/) | The agent fleet: remote and embedded fleet nodes, mTLS enrollment, heartbeat and recovery, `fleet serve` and `fleet deploy`, the node sandbox, and the worker image |
+| [software-factory/](software-factory/) | The Software Factory built on the engine: how the engine, projects, accounts and the SDLC module fit together, the agent catalog, prompt sets, admission and readiness and workspace storage tiers |
 | [accounts/](accounts/) | Pooled provider accounts, the spend cap, cost enforcement and job admission |
 | [sdlc/](sdlc/) | The Software Factory's SDLC module: a labelled forge issue becomes a branch, a pull request, a review and a merge — project bindings, onboarding and conformance, review, triage, the merge train, CI-failure classification and the attention inbox |
 | [projects/](projects/) | Projects: the tenant-scoped record that ties a repository, a git identity and signing history, a workspace, fleet-node roles and limits together; onboarding, forge bindings and source-repository identity |

@@ -1,7 +1,7 @@
-# Software Factory — the worker image refresh
+# Agent Fleet — the worker image refresh
 
-> **Status: REFERENCE** · Last verified: 2026-10-07
-> The Software Factory worker image and its refresh.
+> **Status: REFERENCE** · Last verified: 2026-10-11
+> The worker image sandboxed sessions run on a fleet node, and its refresh.
 
 The worker image (`deployments/agents/software-factory-worker/Dockerfile`) is
 where every sdlc worker, reviewer and triage session runs. It installs the
@@ -130,7 +130,7 @@ Otherwise its next regeneration produces a diff nobody asked for.
 | **Build** | The *embedded* Dockerfile, with the repository's toolchain pins (`pkg/version/toolchain.mk`) and the newer CLIs, `--pull` so the base image's updates come too. A candidate already built under the same tag with the right labels is reused. The built image's labels are then checked against what was asked for. |
 | **Gate** | (1) The image's **probes** — the same list `make test-worker-image` runs (`deployments/agents/software-factory-worker/probes.go`) — against exactly the built **image ID**, as the uid the spawn runs as, each in a named one-shot container (`quicbaas-oneshot-<id>`) that is force-removed if its run is cut short, so a hung probe does not outlive a failed pass: the toolchain and a signed commit, serena, a real Go lint, workflow linting (actionlint reaching shellcheck), full control of the container **under the production sandbox policy** (the capability set and pids bound a spawn uses, rendered by the same code), a fork past a lowered pids bound refused cleanly, and bind-mounted writes owned by the spawning uid. (2) A **smoke**: one real session per distinct agent (backend + model) the promotion would put in the image, **plus** the default Claude model (`sdlc.worker_image.smoke_model`) — spawned through the orchestrator's own path, sandboxed in the candidate, with the worker's own argv and the tenant's **pooled credential**, pinned to the fleet node registered from this node (this node's own embedded fleet node, `embedded-<hostname>` — never another node's, though the shared fleet registry lists them all — or the daemon whose registered host is this node's hostname; or `smoke_host` when set), and asked to answer `READY`. (3) The candidate tag must still name the gated build. |
 | **Publish** | With `sdlc.worker_image.registry` set: tag, push (private login with the token from a tenant secret, see below) and record the manifest **digest**. The reference Agents get is `<registry>:<tag>@sha256:<digest>`. Without a registry (**local mode**) it is the local tag, and a local-mode pass refuses to promote at all in a tenant whose fleet has another node (see [Local mode and the fleet](#local-mode-and-the-fleet)). |
-| **Promote** | Every [Agent](agents.md) that a binding slot (worker, reviewer or triage) references, and whose image is a stale managed image, is repointed at the reference through the agent catalog (`AgentCatalogService.ReplaceAgentImage`). Bindings name Agents and are not rewritten. Each Agent gets one audit entry. |
+| **Promote** | Every [Agent](../software-factory/agents.md) that a binding slot (worker, reviewer or triage) references, and whose image is a stale managed image, is repointed at the reference through the agent catalog (`AgentCatalogService.ReplaceAgentImage`). Bindings name Agents and are not rewritten. Each Agent gets one audit entry. |
 
 With a registry, a pass also **publishes what is already bound**: an Agent that
 names a *current* image by a local tag of `repository` is pushed as it is —

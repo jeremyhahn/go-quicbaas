@@ -255,7 +255,7 @@ pre-side-effect chokepoint and both deny-by-default:
   durable job leases, environment-fault refunds, the reaper and stall detector.
 - [Autonomous Projects](autonomy-and-dispatch.md): `Project.Autonomous`, the
   task dispatcher, context repositories and the container workspace contract.
-- [Fleet](fleet.md) and [Job runners](job-runners.md).
+- [Fleet](../agent-fleet/architecture.md) and [Job runners](job-runners.md).
 - The Software Factory modules: [SDLC](../sdlc/architecture.md),
   [projects](../projects/architecture.md),
   [pooled accounts](../accounts/architecture.md) and
@@ -428,56 +428,15 @@ A long-lived daemon (`quicbaas fleet serve`) runs on remote GPU hosts and expose
 ```
 
 **Key features:**
-- Daemon enrolls with central using OAuth2 Client Credentials (one-shot enrollment token)
-- Enrollment **grants** the permission set onto the daemon's OAuth2 application
-  record (`iam.FleetRuntimeGrant`). A `client_credentials` token carries that
-  grant; the daemon sends no `scope` parameter, so it cannot name authority it
-  was not given, and a grant change reaches it on its next token refresh
-  without re-enrollment.
-- Enrollment **also grants the same set to the identity the daemon's CLIENT
-  CERTIFICATE authenticates as** (`iam.IdentityStore.EnrollFleetNodeCertIdentity`).
-  A daemon holds two credentials for one identity, and go-qrdb's authenticator
-  chain is first-success-wins with mTLS FIRST: any request carrying a client
-  certificate is authenticated as the certificate's subject, and the bearer
-  fallback is not consulted at all. Because the daemon presents its certificate
-  on every call (it needs one for `/oauth2/token-mtls`), the application grant
-  alone left every control-plane call refused 403 — go-quicbaas#663. The
-  enrollment is the same ceremony go-qrdb performs for the platform admin
-  certificate at first boot: a user record whose username is the certificate
-  CN, a dedicated tenant-scoped `agent-runtime` role carrying the grant, and a
-  binding to the certificate's canonical SPKI thumbprint. The record is a
-  machine identity — active, `AuthMethods: ["mtls"]`, no email login key — so
-  it is unreachable by any human login ceremony, and a certificate whose
-  tenant-scoped SPIFFE SAN names a different tenant than the registration is
-  refused rather than enrolled where the authenticator would never look.
-- A registration that cannot confer that grant FAILS (500): the response
-  advertises the grant, and credentials the control plane will refuse are not a
-  registration. An identity an administrator disabled is never resurrected by a
-  re-registration.
-- A spawned **session** gets its OWN principal, not the daemon's. A daemon is
-  long-lived and holds control-plane authority; an agent session is one process
-  for one job reaching the platform only over MCP, so it is enrolled separately
-  through `iam.IdentityStore.EnrollAgentSessionIdentity` against the per-session
-  certificate `pkg/server.AgentMCPPresetResolver` mints, holds the narrower
-  tenant-scoped `agent-session` role (`iam.AgentSessionGrant`), and is REVOKED
-  when the session closes. The two grants are disjoint, so neither enrollment is
-  a route to the other's authority. See `docs/software-factory/engineering.md`
-  §MCP Preconfiguration for Spawned Agents.
-- The fleet-registry record is written under the **record's own tenant**
-  (`orchestration.fleetTenantContext`). `POST /api/v1/fleet/enroll` is a
-  public route — the mTLS handshake is the authentication — so it carries no
-  identity and its context names no tenant, while every read of the registry is
-  made under the tenant the request names. Without the scoping the row landed in
-  the system namespace and no tenant-scoped read could see it: registration
-  reported `agent already exists` while the heartbeat got
-  `fleet registry: not found` for the same agent (go-quicbaas#663).
-- Heartbeats into fleet registry; central can spawn sessions remotely
+- The daemon enrolls with its certificate, holds an OAuth2 grant and a
+  certificate identity, and heartbeats into the fleet registry; see
+  [agent-fleet architecture § Identity](../agent-fleet/architecture.md#identity).
 - Sandbox policy: **required** (default; container-only) — raw exec forbidden unless explicitly allowed
 - Reuses existing `ACPBackend`, `OllamaBackend`, `ContainerRuntime` (no parallel spawn logic)
 - Session state encrypted with tenant DEK; audit logging per RPC
 - Graceful shutdown drains in-flight sessions with configurable timeout
 
-**Operators guide**: See `docs/agents/daemon.md` for deployment, enrollment, troubleshooting, and systemd integration.
+**Operator's guide**: [agent-fleet user guide](../agent-fleet/user.md).
 
 **Use case**: Production GPU hosts, compliance-sensitive tenants (FedRAMP/HIPAA), central orchestrator needs direct control of session lifecycle.
 
@@ -1445,7 +1404,7 @@ isolated from the host?"), and neither answer implies the other. A container can
 be perfectly isolated while running an image someone swapped under a mutable
 tag, and a digest-pinned image can run with no sandbox at all. QuicBaaS
 therefore resolves the two on separate axes. This document covers the trust
-axis; see [Sandbox Policy](engineering.md#sandbox-policy-reference) for the
+axis; see [Sandbox Policy](../agent-fleet/engineering.md#policy) for the
 other one, and the [orthogonal sandbox axis](#the-orthogonal-sandbox-axis)
 section below for how they interact.
 
@@ -1798,10 +1757,10 @@ Bind mounts are deny-by-default: only sources under the requesting tenant's
 subtree of the managed projects root, or under an operator-configured allowlist
 root, are permitted.
 
-Full operator reference: [Remote Fleet Node Daemon](engineering.md) —
-[Sandbox Policy](engineering.md#sandbox-policy-reference),
-[Sandbox Network](engineering.md#sandbox-network-reference),
-[Bind-Mount Allowlist](engineering.md#bind-mount-allowlist-reference).
+Full operator reference: [Fleet node daemon](../agent-fleet/engineering.md#sandbox) —
+[Sandbox Policy](../agent-fleet/engineering.md#policy),
+[Sandbox Network](../agent-fleet/engineering.md#network),
+[Bind-Mount Allowlist](../agent-fleet/engineering.md#bind-mount-allowlist).
 
 ### See Also
 
@@ -1809,7 +1768,7 @@ Full operator reference: [Remote Fleet Node Daemon](engineering.md) —
   document expands on.
 - Agent Orchestration Overview — the orchestration layer as a
   whole.
-- [Remote Fleet Node Daemon](engineering.md) — operator reference for the
+- [Fleet node daemon](../agent-fleet/engineering.md#sandbox) — operator reference for the
   sandbox axis.
 
 
@@ -1973,7 +1932,7 @@ Operator notes:
 - A spawn dispatched to a remote fleet node daemon is authorized **twice**: against
   the control plane's roots here, and again on the daemon against its own
   `allowed_mount_roots` (see
-  [fleet node daemon](engineering.md#bind-mount-allowlist-reference)). Both must
+  [fleet node daemon](../agent-fleet/engineering.md#bind-mount-allowlist)). Both must
   permit the path. The daemon's check is not a duplicate — a spawn whose
   control-plane-resolved mode is not `required` skips the `work_dir`
   authorization above, while the daemon's own `sandbox_policy` may still

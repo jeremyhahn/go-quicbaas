@@ -13,9 +13,10 @@ Prompt sets have no transport surface yet: the prompts are embedded markdown
 with no store behind them, and the planned verbs are in
 [prompt-sets.md](prompt-sets.md).
 
-The orchestration engine's own surface (jobs, sessions, backends, fleet, the
+The orchestration engine's own surface (jobs, sessions, backends, the
 list-paging contract, the MCP tool reference) is in
-[../orchestration/api.md](../orchestration/api.md).
+[../orchestration/api.md](../orchestration/api.md); the fleet's is in
+[../agent-fleet/api.md](../agent-fleet/api.md).
 
 ## Transport matrix
 

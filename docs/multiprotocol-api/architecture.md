@@ -549,7 +549,7 @@ filesystem permissions guard access.
 - gRPC API
 - QUIC
 - [MCP](../software-factory/api.md)
-- [Fleet quick start](../software-factory/user.md) — same `inference` command on every transport.
+- [Fleet quick start](../agent-fleet/user.md#quick-start) — same `inference` command on every transport.
 
 
 ---

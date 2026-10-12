@@ -4059,10 +4059,10 @@ This agent will be unregistered from the fleet. Running jobs will be affected.
 
 ### See also
 
-- [CLI: quicbaas fleet deploy](../software-factory/cli.md) — full agent deployment walkthrough
-- [CLI: quicbaas orchestrator agents](../orchestration/cli.md#quicbaas-orchestrator-agents-list) — list agents via CLI
+- [CLI: quicbaas fleet deploy](../agent-fleet/cli.md#fleet-deploy) — deploy flags, preflight and lifecycle
+- [CLI: quicbaas fleet list](../agent-fleet/cli.md#registry-verbs) — list fleet nodes via CLI
 - Software Factory → Inference — submit prompts to registered fleet nodes
-- [agents/deploy.md](../software-factory/cli.md) — comprehensive agent bootstrapping guide
+- [Agent fleet user guide](../agent-fleet/user.md) — node bootstrapping runbook
 
 
 ---

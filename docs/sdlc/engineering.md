@@ -534,7 +534,7 @@ The worker's [Agent](../software-factory/agents.md) names the container image th
 session runs in. Naming one requires the sandbox for that project's workers.
 
 This repository builds one, and the daemon keeps it current by itself — see
-[the worker image refresh](../software-factory/worker-image.md):
+[the worker image refresh](../agent-fleet/worker-image.md):
 
 ```
 make build-worker-image      # quicbaas-software-factory-worker:<VERSION>-cc<claude-code>-cx<codex>

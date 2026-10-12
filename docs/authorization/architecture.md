@@ -1377,7 +1377,7 @@ All events include the calling principal (user, service account, or agent) and a
 
 - Authorization & RBAC: `docs/security/authorization.md`
 - Audit logging: `docs/security/audit.md`
-- Fleet node registration: `docs/agents/daemon.md#identity--registration`
+- Fleet node registration: [`docs/agent-fleet/architecture.md#identity`](../agent-fleet/architecture.md#identity)
 - Project permissions: [`docs/projects/architecture.md#permission-matrix`](../projects/architecture.md#permission-matrix)
 - mTLS setup: `docs/security/tls-setup.md`
 

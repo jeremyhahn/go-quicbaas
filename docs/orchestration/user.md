@@ -2,8 +2,9 @@
 
 > **Status: NORMATIVE** · Last verified: 2026-10-11
 > Task-oriented usage, in the order tasks are done: start the server, spawn a
-> session, prompt it, read or attach to its conversation, register fleet
-> agents, create and decompose tasks, run a workflow, deploy a fleet node.
+> session, prompt it, read or attach to its conversation, create and
+> decompose tasks, run a workflow, run inference on a fleet node. Adding and
+> running fleet nodes is in [../agent-fleet/user.md](../agent-fleet/user.md).
 > Feature folder: `docs/orchestration/`. Conflicts with this document are
 > defects.
 
@@ -146,35 +147,11 @@ presence change, with a live SSE tail — use
 `quicbaas orchestrator attach <session-id>` or
 `GET /api/v1/orchestrator/sessions/{id}/events`.
 
-## 7. Register Agents in Fleet
+## 7. Fleet Nodes
 
-Register agent workers on remote machines:
-
-```bash
-# Register agent with default model
-quicbaas fleet register --name worker-1 --host 203.0.113.10:9090 --type claude
-
-# Register with custom model
-quicbaas fleet register --name worker-2 --host 203.0.113.11:9090 --type claude \
-  --model claude-3-opus-20250219
-
-# Register Ollama agent for local inference
-quicbaas fleet register --name worker-local --host localhost:9090 --type ollama \
-  --backend ollama --model llama3
-```
-
-## 8. List Fleet Agents
-
-View registered fleet nodes:
-
-```bash
-quicbaas fleet list
-
-# Output:
-# ID                                      NAME            HOST                TYPE        STATUS
-# a1b2c3d4-e5f6-7890-abcd-ef1234567890  worker-1        203.0.113.10:9090   claude      running
-# e5f6-7890-abcd-ef1234567890-a1b2c3d4  worker-2        203.0.113.11:9090   claude      registered
-```
+Sessions run on fleet nodes. Adding, listing, checking and removing them is
+covered in the [Agent Fleet user guide](../agent-fleet/user.md); `quicbaas
+fleet list` shows what is online.
 
 ## 9. Create and Assign Tasks
 
@@ -428,123 +405,18 @@ navigation, so Back leaves the page rather than walking through forty pages.
 
 ---
 
-## Fleet Quick Start: Deploy an Agent and Run Inference
+## Fleet Quick Start: Run Inference
 
-This guide walks through the full end-to-end flow: starting the
-QuicBaaS server, staging an SSH key, deploying a fleet node that
-serves a local Ollama instance, and running stateless inference
-across **all five transports** (REST, gRPC, QUIC, MCP, Unix socket).
-Every step is exercised through the SDK's transport abstraction, so
-the same `quicbaas orchestrator inference` command works identically
-regardless of which transport you select.
+This guide runs stateless inference across **all five transports** (REST,
+gRPC, QUIC, MCP, Unix socket) on a fleet node. Every step goes through the
+SDK's transport abstraction, so the same `quicbaas orchestrator inference`
+command works identically on each. Starting the server, staging an SSH key
+and deploying the node are in the
+[Agent Fleet quick start](../agent-fleet/user.md#quick-start); the server
+publishes REST on `:18080`, gRPC on `:19090`, QUIC on `:10443`, MCP on
+`:11443` and a Unix socket, each carrying the same SDK contract.
 
-### 1. Start the server
-
-> **Prerequisite: `iam.spiffe_trust_domain` must be set.** TLS is on by default,
-> so a fresh data dir brings up the CA and runs first-boot, which issues the
-> platform admin's mTLS certificate. The CA stamps the tenant SPIFFE SAN onto
-> that certificate — and login resolves the tenant from it — only when a trust
-> domain is configured, so the daemon **fails closed** without one rather than
-> handing you a credential that cannot authenticate.
->
-> ```yaml
-> # config.yaml
-> iam:
->   spiffe_trust_domain: quicbaas.example.test
-> ```
->
-> See [docs/cli/init.md](../bootstrap/cli.md#prerequisite-iamspiffe_trust_domain-required)
-> for the full rationale.
-
-```bash
-quicbaasd start \
-  --http-port 18080 --http-address 0.0.0.0 \
-  --grpc-port 19090 \
-  --unix-socket /tmp/quicbaas.sock \
-  --data-dir ./data \
-  --log-level info
-```
-
-The server publishes:
-
-| Transport | Address                                  | Notes                              |
-|-----------|------------------------------------------|------------------------------------|
-| REST      | `https://<host>:18080`                   | TLS, `http/1.1` ALPN               |
-| gRPC      | `<host>:19090`                           | TLS, `h2` ALPN                     |
-| MCP       | `wss://<host>:11443`                     | TLS, JSON-RPC over WebSocket       |
-| QUIC      | `<host>:10443`                           | TLS 1.3, multiplexed streams       |
-| Unix      | `/tmp/quicbaas.sock`                     | gRPC over UDS, no TLS              |
-
-Each transport carries the **same SDK contract**. Fleet inference
-works identically on every one of them — the test harness in
-`test/integration/cli/orchestrator_inference_test.go` exercises all
-five.
-
-### 2. Stage an SSH key (one-time, per operator)
-
-The server's xkms-backed key store keeps deploy SSH keys mlocked
-in-process. Private material never touches the operator's filesystem.
-
-```bash
-# Generate a fresh ed25519 key inside xkms.
-quicbaas --address https://localhost:18080 ssh keys generate \
-  --name fleet-deploy --type ed25519 --scope user
-
-# Print the public key.
-quicbaas --address https://localhost:18080 ssh keys export-public \
-  --name fleet-deploy --scope user --owner "$USER"
-```
-
-Add the printed public key to `~/.ssh/authorized_keys` on every host
-you intend to deploy to. The server holds the private key; only the
-public half is ever copied.
-
-### 3. Deploy an agent
-
-```bash
-quicbaas --address https://localhost:18080 agent deploy \
-  --ssh user@target-host \
-  --ssh-key-name fleet-deploy \
-  --ssh-key-scope user \
-  --server https://<server-lan-ip>:18080 \
-  --backend ollama \
-  --binary bin/quicbaas-static \
-  --wait-online 2m
-```
-
-What happens:
-
-1. The server's CA mints an mTLS client certificate for the agent
-   (`OU=agents, O=<tenant>, EKU=ClientAuth`, 365-day default validity).
-2. The static CLI binary, the agent identity (`agent.crt` /
-   `agent.key`), and the server CA bundle are uploaded over SFTP to
-   `~/.quicbaas/agent` on the target.
-3. A systemd `--user` unit (or a `nohup` fallback) starts the daemon,
-   which immediately registers via `POST /api/v1/fleet/enroll`. A
-   `--user` unit also needs **lingering** enabled for the login user, or
-   the agent is stopped when the deploy's SSH session closes; the deploy
-   enables it over `sudo -n` and fails with the command to run when it
-   cannot ([cli.md](cli.md#lingering-systemd---user)).
-4. The register response advertises the **gRPC event-ingest URL**
-   (e.g., `https://<server-lan-ip>:19090`) — the agent persists this
-   into `credentials.json` and uses it for the long-lived `PushEvents`
-   bidi stream. **Events never traverse the REST port.**
-5. The deploy closes the SSH session, then polls the fleet registry
-   every 2 s until the agent reports `running`, `idle`, or `ready` **and**
-   its runtime port answers a dial, and prints `Online At: <timestamp>`.
-   The dial is what distinguishes a live agent from a registration left
-   behind by one that died on disconnect.
-
-Verify:
-
-```bash
-quicbaas --address https://localhost:18080 agent list
-```
-
-The agent should appear with `STATUS=running` and a timestamp under
-`LAST SEEN`.
-
-### 4. Run inference
+### Run inference
 
 The agent's local Ollama is **not** exposed to the network — every
 prompt is routed through the QuicBaaS server over the agent's mTLS
@@ -602,7 +474,7 @@ quicbaas --transport unix --address /tmp/quicbaas.sock \
   --prompt "ping"
 ```
 
-### 5. Use the GUI
+### Use the GUI
 
 Open the QuicBaaS web UI (or the Wails desktop build) and navigate to
 **Software Factory → Inference**. The view loads the registered backends
@@ -616,32 +488,13 @@ The GUI keeps a per-session history of the last 10 inference calls in
 a collapsible card so you can re-read recent results without leaving
 the view.
 
-### 6. What's actually happening on the wire
-
-```
-operator CLI / GUI
-  └─ SDK transport (REST | gRPC | QUIC | MCP | Unix)
-       └─ QuicBaaS server (orchestrator service)
-            └─ RemoteACPBackend → mTLS gRPC :19090
-                 └─ agent runtime (target host)
-                      └─ OllamaBackend → http://127.0.0.1:11434
-```
-
-- The agent's local Ollama port (`11434`) is bound to `127.0.0.1`
-  only — it has **no** external listener.
-- The agent's only outbound connection is the mTLS gRPC stream to
-  the control plane's gRPC ingest URL.
-- The control plane's REST listener never receives gRPC traffic, so the
-  REST listener can keep advertising only `http/1.1` ALPN without
-  breaking anything.
-
 ### Troubleshooting
+
+Deploy and enrollment problems are in the
+[Agent Fleet user guide](../agent-fleet/user.md#troubleshooting).
 
 | Symptom | Resolution |
 |---------|------------|
-| Deploy times out at "Wait online" | Verify `--server` is reachable from the target host (LAN IP, not `localhost`). Check `~/.quicbaas/agent/quicbaas-agent.log` on the target. |
-| Agent log shows `tls: no application protocol` | The agent is dialing the REST port for events. Pull the latest CLI; the deploy now embeds the gRPC ingest URL in the register response. |
-| `fleet list` is empty after deploy | The agent registered but failed its first heartbeat. Check the agent's clock skew vs. the server (>5 min skew breaks JWT validation). |
 | `inference` returns 422 | The chosen backend is session-only. Use `quicbaas orchestrator session spawn` then `prompt` instead. |
 | `inference` returns "no online agents" | No agent serves the chosen backend in the chosen tenant. Run `fleet list` and confirm at least one agent has `backend=ollama`. |
 | Streaming hangs in the browser | Network proxy buffering NDJSON. Set `Cache-Control: no-cache` on the proxy or run the GUI directly against the daemon. |
@@ -649,8 +502,8 @@ operator CLI / GUI
 ### Related docs
 
 - Inference reference — full RPC, REST, SDK, GUI reference.
-- Agent deploy reference — every flag, every step.
-- Daemon design — agent runtime, registration, event forwarding.
+- [Agent fleet CLI](../agent-fleet/cli.md) — every deploy flag, every step.
+- [Agent fleet architecture](../agent-fleet/architecture.md) — node runtime, enrollment, event forwarding.
 - GUI: Desktop & Web — Wails desktop and browser UI.
 - [API](../multiprotocol-api) — REST / gRPC / QUIC / MCP protocol details.
 
@@ -996,7 +849,10 @@ All agent containers follow the same pattern: Alpine 3.21 base, non-root `agent`
 
 ### Fleet Registration and Heartbeat
 
-Every entrypoint script performs the same registration lifecycle:
+This describes the ad-hoc container entrypoint scripts only. A node run by
+`quicbaas fleet serve` enrolls with its certificate instead, as described in
+[Agent Fleet](../agent-fleet/architecture.md#identity). Every entrypoint script
+performs the same registration lifecycle:
 
 1. **Register**: `POST /api/v1/fleet` with hostname, agent type, backend, work directory
 2. **Heartbeat**: Background loop every 30s via `POST /api/v1/fleet/{id}/heartbeat`

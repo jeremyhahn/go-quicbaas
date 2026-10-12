@@ -169,7 +169,7 @@ quicbaas ssh authorized remove --name fleet-deploy --scope user
 
 ## See also
 
-- [Fleet quick start](../software-factory/user.md)
+- [Fleet quick start](../agent-fleet/user.md#quick-start)
 - [Agent deploy reference](../software-factory/cli.md)
 - [SDK security surface — SSH](engineering.md#ssh--sshservice)
 

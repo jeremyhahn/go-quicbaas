@@ -25,7 +25,7 @@ from going anywhere else.
 Sessions, the job envelope and the dispatch loop are described in
 [../orchestration/architecture.md](../orchestration/architecture.md). Worker
 hosts and their daemons are in
-[../orchestration/fleet.md](../orchestration/fleet.md). The SDLC
+[../agent-fleet/architecture.md](../agent-fleet/architecture.md). The SDLC
 runner that consumes the pool is in [../sdlc/architecture.md](../sdlc/architecture.md),
 and projects are in [../projects/architecture.md](../projects/architecture.md).
 
@@ -1747,7 +1747,7 @@ than a panic.
 - [user.md](user.md): the tasks, in order.
 - [../orchestration/architecture.md](../orchestration/architecture.md): sessions,
   the job envelope and the dispatcher.
-- [../orchestration/fleet.md](../orchestration/fleet.md): worker
+- [../agent-fleet/architecture.md](../agent-fleet/architecture.md): worker
   hosts and their daemons.
 - [../sdlc/architecture.md](../sdlc/architecture.md): the SDLC runner.
 - [../projects/architecture.md](../projects/architecture.md): the project an

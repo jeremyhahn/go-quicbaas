@@ -7,9 +7,10 @@
 > Conflicts with this document are defects.
 
 The orchestration engine's contract (backends, sessions, the attach event log,
-jobs and amendments, fleet, workflows, inference) is in
-[../orchestration/engineering.md](../orchestration/engineering.md). This
-document covers the modules built on it.
+jobs and amendments, workflows, inference) is in
+[../orchestration/engineering.md](../orchestration/engineering.md), and the
+fleet's is in [../agent-fleet/engineering.md](../agent-fleet/engineering.md).
+This document covers the modules built on it.
 
 ## The SDLC module
 

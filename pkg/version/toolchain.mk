@@ -136,7 +136,7 @@ UV_SHA256_AARCH64 := 6524bd338177ed50d035d39354e12545e993bbeba2ecbddf0480c5b3a81
 # The language servers Serena drives, baked into the image so a session with an
 # empty HOME and no network still reads code by symbol. Left to itself Serena
 # downloads each one into ~/.serena on first use; the image's global Serena
-# settings point it at these instead (docs/software-factory/worker-image.md).
+# settings point it at these instead (docs/agent-fleet/worker-image.md).
 # gopls is pinned above.
 #
 # The npm-published servers. TYPESCRIPT_VERSION stays on the 6.x line on

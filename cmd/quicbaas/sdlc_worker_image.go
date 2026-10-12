@@ -46,7 +46,7 @@ day (sdlc.worker_image.refresh_interval) it reads the latest
 @anthropic-ai/claude-code and @openai/codex from npm and, when the bound image
 is behind, rebuilds it, gates it (the image's probes plus a real session per
 agent the bindings run), publishes it and rebinds every binding naming a stale
-image. "refresh" runs that pass now. See docs/software-factory/worker-image.md.
+image. "refresh" runs that pass now. See docs/agent-fleet/worker-image.md.
 
 These are HOST verbs: they need the cross-tenant worker_images permissions a
 system-tenant operator holds, and take no --tenant.

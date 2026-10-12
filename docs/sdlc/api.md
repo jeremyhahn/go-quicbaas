@@ -31,7 +31,7 @@ below is the authoritative list.
 
 The two `worker_images:*` permissions are cross-tenant (qrdb `ScopeCross`):
 the refresh rebinds images in EVERY tenant's bindings, so only a system-tenant
-identity exercises them. See [the worker image refresh](../software-factory/worker-image.md).
+identity exercises them. See [the worker image refresh](../agent-fleet/worker-image.md).
 
 Onboarding sits under `sdlc:bind` and conformance under `sdlc:read`, and the
 split is the point rather than a convention: an operator auditing a fleet must

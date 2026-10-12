@@ -19,7 +19,7 @@ apart is what keeps the engine generic:
 
 | Piece | Package | Documented in |
 |---|---|---|
-| **The engine** — sessions, the job envelope and its runners, workflows, tasks and autonomy, fleet, inference backends, container trust and sandboxing | `pkg/orchestration` | [../orchestration/architecture.md](../orchestration/architecture.md), plus [job-runners.md](../orchestration/job-runners.md), [../accounts/architecture.md](../accounts/architecture.md#job-admission), [autonomy-and-dispatch.md](../orchestration/autonomy-and-dispatch.md), [sandbox.md](../orchestration/sandbox.md), [fleet.md](../orchestration/fleet.md) |
+| **The engine** — sessions, the job envelope and its runners, workflows, tasks and autonomy, fleet, inference backends, container trust and sandboxing | `pkg/orchestration` | [../orchestration/architecture.md](../orchestration/architecture.md), plus [job-runners.md](../orchestration/job-runners.md), [../accounts/architecture.md](../accounts/architecture.md#job-admission), [autonomy-and-dispatch.md](../orchestration/autonomy-and-dispatch.md), [sandbox.md](../orchestration/sandbox.md), [agent-fleet](../agent-fleet/user.md) |
 | **Projects** — the tenant-scoped record that binds a workspace, a repository, per-agent roles and quotas | `pkg/orchestration/project.go`, `pkg/service/project_service.go` | [projects/](../projects/architecture.md) |
 | **Pooled provider accounts** — a tenant's pool of provider logins a spawn can be bound to instead of the host identity | `pkg/orchestration/account_*.go` | [../accounts/](../accounts/) |
 | **The SDLC module** — git delivery against a forge: a labelled issue becomes a branch, a pull request, a review and a merge | `pkg/sdlc` | [../sdlc/architecture.md](../sdlc/architecture.md) |
@@ -59,5 +59,7 @@ The Software Factory deliberately does **not**:
 ## The engine
 
 The engine's design (backends, sessions and the attach event log, the job
-envelope, fleet, containment, the list contract) and the alternatives rejected
-are in [../orchestration/architecture.md](../orchestration/architecture.md).
+envelope, containment, the list contract) and the alternatives rejected are in
+[../orchestration/architecture.md](../orchestration/architecture.md). The fleet
+nodes the engine dispatches to are in
+[../agent-fleet/architecture.md](../agent-fleet/architecture.md).
