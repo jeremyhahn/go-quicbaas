@@ -15,6 +15,7 @@ package secrets
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -109,9 +110,26 @@ type Client interface {
 
 // StoreSecretRequest is a request to store a secret.
 type StoreSecretRequest struct {
-	Path     string
-	Data     map[string]interface{}
+	Path string
+
+	// Data is a structured payload, stored as its JSON encoding. Exactly one
+	// of Data and Raw is set.
+	Data map[string]interface{}
+
+	// Raw is an opaque payload, stored byte-for-byte as given. Exactly one of
+	// Data and Raw is set.
+	Raw []byte
+
 	Metadata map[string]string
+}
+
+// Payload returns the bytes the store persists: Raw verbatim, or the JSON
+// encoding of Data.
+func (r *StoreSecretRequest) Payload() ([]byte, error) {
+	if len(r.Raw) > 0 {
+		return r.Raw, nil
+	}
+	return json.Marshal(r.Data)
 }
 
 // StoreSecretResponse is the response from storing a secret.
@@ -763,8 +781,11 @@ func validateStoreSecretRequest(req *StoreSecretRequest) error {
 	if req.Path == "" {
 		return errors.NewInvalidInput("secrets.Store", "path is required")
 	}
-	if len(req.Data) == 0 {
+	if len(req.Data) == 0 && len(req.Raw) == 0 {
 		return errors.NewInvalidInput("secrets.Store", "data is required")
+	}
+	if len(req.Data) > 0 && len(req.Raw) > 0 {
+		return errors.NewInvalidInput("secrets.Store", "data and raw are mutually exclusive")
 	}
 	return nil
 }

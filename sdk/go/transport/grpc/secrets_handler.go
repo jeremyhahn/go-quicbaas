@@ -102,7 +102,7 @@ func (h *secretsHandler) handleStore(ctx context.Context, req interface{}) (inte
 			"invalid request type, expected *secrets.StoreSecretRequest")
 	}
 
-	dataBytes, err := json.Marshal(sdkReq.Data)
+	dataBytes, err := sdkReq.Payload()
 	if err != nil {
 		return nil, errors.Wrap(err, errors.CodeInvalidInput, "secretsHandler.handleStore",
 			"failed to encode secret data")

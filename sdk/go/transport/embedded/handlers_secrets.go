@@ -78,8 +78,8 @@ func handleSecretsStore(ctx context.Context, svc service.QuicBaaS, req interface
 		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Store", "*secrets.StoreSecretRequest", reflect.TypeOf(req).String())
 	}
 
-	// Convert SDK request Data (map[string]interface{}) to bytes
-	dataBytes, marshalErr := json.Marshal(sdkReq.Data)
+	// Raw is stored verbatim; structured Data is JSON-encoded.
+	dataBytes, marshalErr := sdkReq.Payload()
 	if marshalErr != nil {
 		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Store", "serializable data", "unserializable data")
 	}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	secretsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
 
@@ -62,112 +63,137 @@ func createRESTSecretsClient() (SecretsClient, error) {
 	return &restSecretsClient{sdk: sdk}, nil
 }
 
+// StoreSecret stores req.Data byte-for-byte: it is sent as Raw, never re-encoded.
 func (c *restSecretsClient) StoreSecret(ctx context.Context, req *service.StoreSecretRequest) (*service.StoreSecretResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "POST", map[string]interface{}{
-		"path": "/api/v1/secrets/" + req.Name,
-		"body": req,
+	resp, err := c.sdk.Security().Secrets().Store(ctx, &secretsSDK.StoreSecretRequest{
+		Path:     secretPath(req.SecretID, req.Name),
+		Raw:      req.Data,
+		Metadata: req.Metadata,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return parseSecretsStoreResponse(result)
+	return &service.StoreSecretResponse{
+		SecretID: secretPath(req.SecretID, req.Name),
+		Version:  uint64(resp.Version),
+	}, nil
 }
 
+// GetSecret returns the stored payload verbatim.
 func (c *restSecretsClient) GetSecret(ctx context.Context, req *service.GetSecretRequest) (*service.GetSecretResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "GET", map[string]interface{}{
-		"path":    "/api/v1/secrets/" + req.SecretID,
-		"version": req.Version,
-	})
+	resp := &service.GetSecretResponse{SecretID: req.SecretID, Version: req.Version}
+	err := c.sdk.Security().Secrets().GetWithBytes(ctx, req.SecretID, "", func(data []byte) error {
+		resp.Data = append([]byte(nil), data...)
+		return nil
+	}, secretsSDK.WithVersion(int(req.Version)))
 	if err != nil {
 		return nil, err
 	}
-	return parseSecretsGetResponse(result)
+	return resp, nil
 }
 
+// DeleteSecret deletes the secret. The REST route has no permanent-delete or
+// all-versions mode, so those flags are refused rather than silently dropped.
 func (c *restSecretsClient) DeleteSecret(ctx context.Context, req *service.DeleteSecretRequest) (*service.DeleteSecretResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "DELETE", map[string]interface{}{
-		"path":  "/api/v1/secrets/" + req.SecretID,
-		"force": req.PermanentlyDelete,
-	})
-	if err != nil {
+	if req.PermanentlyDelete || req.AllVersions {
+		return nil, &UnsupportedTransportError{Transport: "rest-permanent-delete"}
+	}
+	if err := c.sdk.Security().Secrets().Delete(ctx, req.SecretID); err != nil {
 		return nil, err
 	}
-	return parseSecretsDeleteResponse(result)
+	return &service.DeleteSecretResponse{SecretID: req.SecretID, Deleted: true}, nil
 }
 
+// ListSecrets lists secret paths under req.Prefix. The REST route does not
+// paginate through the SDK, so Limit and Cursor are not forwarded.
 func (c *restSecretsClient) ListSecrets(ctx context.Context, req *service.ListSecretsRequest) (*service.ListSecretsResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "GET", map[string]interface{}{
-		"path":   "/api/v1/secrets",
-		"limit":  req.Limit,
-		"cursor": req.Cursor,
-	})
+	resp, err := c.sdk.Security().Secrets().List(ctx, req.Prefix)
 	if err != nil {
 		return nil, err
 	}
-	return parseSecretsListResponse(result)
+	secrets := make([]*service.Secret, 0, len(resp.Paths))
+	for _, path := range resp.Paths {
+		secrets = append(secrets, &service.Secret{SecretID: path, Name: path})
+	}
+	return &service.ListSecretsResponse{Secrets: secrets}, nil
 }
 
+// GetSecretsByPrefix has no REST route.
 func (c *restSecretsClient) GetSecretsByPrefix(ctx context.Context, req *service.GetSecretsByPrefixRequest) (*service.GetSecretsByPrefixResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "GET", map[string]interface{}{
-		"path":         "/api/v1/secrets/prefix/" + req.Prefix,
-		"include_data": req.IncludeData,
-		"limit":        req.Limit,
-		"cursor":       req.Cursor,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return parseSecretsGetByPrefixResponse(result)
+	return nil, &UnsupportedTransportError{Transport: "rest-prefix-get"}
 }
 
 func (c *restSecretsClient) RotateSecret(ctx context.Context, req *service.RotateSecretRequest) (*service.RotateSecretResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "POST", map[string]interface{}{
-		"path": "/api/v1/secrets/" + req.SecretID + "/rotate",
-		"body": req,
+	resp, err := c.sdk.Security().Secrets().Rotate(ctx, &secretsSDK.RotateSecretRequest{
+		SecretID: req.SecretID,
+		NewData:  req.NewData,
+		Metadata: req.Metadata,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return parseSecretsRotateResponse(result)
+	return &service.RotateSecretResponse{
+		SecretID:   resp.SecretID,
+		OldVersion: uint64(resp.OldVersion),
+		NewVersion: uint64(resp.NewVersion),
+	}, nil
 }
 
 func (c *restSecretsClient) ListSecretVersions(ctx context.Context, req *service.ListSecretVersionsRequest) (*service.ListSecretVersionsResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "GET", map[string]interface{}{
-		"path": "/api/v1/secrets/" + req.SecretID + "/versions",
-	})
+	resp, err := c.sdk.Security().Secrets().ListVersions(ctx, req.SecretID)
 	if err != nil {
 		return nil, err
 	}
-	return parseSecretsListVersionsResponse(result)
+	versions := make([]*service.SecretVersion, 0, len(resp.Versions))
+	for _, v := range resp.Versions {
+		versions = append(versions, &service.SecretVersion{
+			SecretID:  v.SecretID,
+			Version:   uint64(v.Version),
+			Data:      v.Data,
+			Metadata:  v.Metadata,
+			CreatedAt: v.CreatedAt,
+			CreatedBy: v.CreatedBy,
+		})
+	}
+	return &service.ListSecretVersionsResponse{Versions: versions}, nil
 }
 
 func (c *restSecretsClient) RollbackSecret(ctx context.Context, req *service.RollbackSecretRequest) (*service.RollbackSecretResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "POST", map[string]interface{}{
-		"path": "/api/v1/secrets/" + req.SecretID + "/rollback",
-		"body": map[string]interface{}{
-			"version": req.TargetVersion,
-		},
+	resp, err := c.sdk.Security().Secrets().Rollback(ctx, &secretsSDK.RollbackSecretRequest{
+		SecretID:      req.SecretID,
+		TargetVersion: int(req.TargetVersion),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return parseSecretsRollbackResponse(result)
+	return &service.RollbackSecretResponse{
+		SecretID:   resp.SecretID,
+		NewVersion: uint64(resp.NewVersion),
+	}, nil
 }
 
 func (c *restSecretsClient) UpdateSecretStatus(ctx context.Context, req *service.UpdateSecretStatusRequest) (*service.UpdateSecretStatusResponse, error) {
-	result, err := c.sdk.Transport().Request(ctx, "REST", "PUT", map[string]interface{}{
-		"path": "/api/v1/secrets/" + req.SecretID + "/status",
-		"body": req,
+	err := c.sdk.Security().Secrets().UpdateStatus(ctx, &secretsSDK.UpdateSecretStatusRequest{
+		SecretID: req.SecretID,
+		Status:   secretsSDK.SecretStatus(req.Status),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return parseSecretsUpdateStatusResponse(result)
+	return &service.UpdateSecretStatusResponse{SecretID: req.SecretID, NewStatus: req.Status}, nil
 }
 
+// WatchSecretsByPrefix has no REST route: the SDK transport does not stream.
 func (c *restSecretsClient) WatchSecretsByPrefix(ctx context.Context, req *service.WatchSecretsRequest) (<-chan *service.SecretChange, error) {
-	// REST transport doesn't support streaming natively via the SDK transport.
 	return nil, &UnsupportedTransportError{Transport: "rest-watch"}
+}
+
+// secretPath returns the secret's identifier, falling back to its name.
+func secretPath(id, name string) string {
+	if id != "" {
+		return id
+	}
+	return name
 }
 
 func (c *restSecretsClient) Close() error {

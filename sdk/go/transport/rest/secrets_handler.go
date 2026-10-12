@@ -104,7 +104,15 @@ func (h *secretsRESTHandler) handleStore(ctx context.Context, req interface{}) (
 	if r.Path == "" {
 		return nil, errors.NewInvalidInput("rest.secrets.Store", "path is required")
 	}
-	data, err := json.Marshal(r.Data)
+	// Raw bytes travel as a JSON string (base64), which the server decodes back
+	// to the exact bytes; structured Data travels as a JSON object.
+	var data []byte
+	var err error
+	if len(r.Raw) > 0 {
+		data, err = json.Marshal(r.Raw)
+	} else {
+		data, err = json.Marshal(r.Data)
+	}
 	if err != nil {
 		return nil, errors.Wrap(err, errors.CodeInvalidInput, "rest.secrets.Store",
 			"failed to encode secret data")
