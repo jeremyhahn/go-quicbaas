@@ -113,26 +113,33 @@ func (m *JobMemory) AddFeedback(feedback string) {
 	m.ReviewFeedback = append(m.ReviewFeedback, feedback)
 }
 
-// Serialize produces a human-readable markdown summary for injection into prompts.
+// Serialize produces a human-readable markdown summary for injection into prompts,
+// worded by the build's default memory prompts.
 // Returns an empty string if no context has been accumulated.
 func (m *JobMemory) Serialize() string {
+	return m.SerializeFrom(workflowPrompts)
+}
+
+// SerializeFrom is Serialize worded by set — a job's resolved workflow set,
+// so a tenant's edit to the memory headings reaches the agents.
+func (m *JobMemory) SerializeFrom(set prompts.Renderer) string {
 	if m.IsEmpty() {
 		return ""
 	}
 
 	var b strings.Builder
 
-	b.WriteString(workflowPrompts.MustRender("memory_header", nil))
+	b.WriteString(set.MustRender("memory_header", nil))
 	b.WriteString("\n")
 
-	writeMemorySection(&b, "memory_worked", m.SuccessfulApproaches)
+	writeMemorySection(&b, set, "memory_worked", m.SuccessfulApproaches)
 
 	if len(m.FailedApproaches) > 0 {
 		b.WriteString("\n")
-		b.WriteString(workflowPrompts.MustRender("memory_failed", nil))
+		b.WriteString(set.MustRender("memory_failed", nil))
 		b.WriteString("\n")
 		for _, f := range m.FailedApproaches {
-			b.WriteString(workflowPrompts.MustRender("memory_failed_item", prompts.Vars{
+			b.WriteString(set.MustRender("memory_failed_item", prompts.Vars{
 				"title":     strconv.Quote(f.WorkItemTitle),
 				"approach":  f.Approach,
 				"reason":    f.Reason,
@@ -142,8 +149,8 @@ func (m *JobMemory) Serialize() string {
 		}
 	}
 
-	writeMemorySection(&b, "memory_constraints", m.Constraints)
-	writeMemorySection(&b, "memory_feedback", m.ReviewFeedback)
+	writeMemorySection(&b, set, "memory_constraints", m.Constraints)
+	writeMemorySection(&b, set, "memory_feedback", m.ReviewFeedback)
 
 	return b.String()
 }
@@ -151,12 +158,12 @@ func (m *JobMemory) Serialize() string {
 // writeMemorySection writes one bulleted section, or nothing when the
 // section has nothing in it. The bullet is punctuation rather than
 // instruction, so it stays here; the heading is a prompt.
-func writeMemorySection(b *strings.Builder, heading string, items []string) {
+func writeMemorySection(b *strings.Builder, set prompts.Renderer, heading string, items []string) {
 	if len(items) == 0 {
 		return
 	}
 	b.WriteString("\n")
-	b.WriteString(workflowPrompts.MustRender(heading, nil))
+	b.WriteString(set.MustRender(heading, nil))
 	b.WriteString("\n")
 	for _, item := range items {
 		b.WriteString("- ")

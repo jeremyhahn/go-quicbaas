@@ -139,9 +139,9 @@ func TestMapToEndpointAllServices(t *testing.T) {
 
 		// Auth service
 		{"Auth/Login", "Auth", "Login", "/api/v1/auth/login", http.MethodPost},
-		{"Auth/Logout", "Auth", "Logout", "/api/v1/auth/logout", http.MethodPost},
-		{"Auth/RefreshToken", "Auth", "RefreshToken", "/api/v1/auth/refresh", http.MethodPost},
-		{"Auth/ValidateToken", "Auth", "ValidateToken", "/api/v1/auth/validate", http.MethodPost},
+		{"Auth/Logout", "Auth", "Logout", "/api/v1/iam/logout", http.MethodPost},
+		{"Auth/RefreshToken", "Auth", "RefreshToken", "/api/v1/iam/refresh", http.MethodPost},
+		{"Auth/ValidateToken", "Auth", "ValidateToken", "/api/v1/iam/validate", http.MethodPost},
 		{"Auth/ChangePassword", "Auth", "ChangePassword", "/api/v1/auth/password", http.MethodPut},
 		{"Auth/ResetPassword", "Auth", "ResetPassword", "/api/v1/auth/password/reset", http.MethodPost},
 		{"Auth/GetSession", "Auth", "GetSession", "/api/v1/auth/session", http.MethodGet},

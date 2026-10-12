@@ -54,6 +54,24 @@ var sdlcPrompts = prompts.MustRegisterSet(sdlcSetSpec())
 // SDLCPrompts returns the module's registered prompt set.
 func SDLCPrompts() *prompts.Set { return sdlcPrompts }
 
+// jobPrompts is what job renders this module's prompts from: the sdlc set it
+// was launched with, or the build's defaults for a run built without one.
+func jobPrompts(job *orchestration.JobRun) prompts.Renderer {
+	if job == nil {
+		return sdlcPrompts
+	}
+	return prompts.RendererOr(job.Prompts, sdlcPrompts)
+}
+
+// contextPrompts is jobPrompts for a validator, which sees the job through
+// its context rather than its run.
+func contextPrompts(job *orchestration.JobContext) prompts.Renderer {
+	if job == nil {
+		return sdlcPrompts
+	}
+	return prompts.RendererOr(job.Prompts, sdlcPrompts)
+}
+
 // workerCharterMarkers is what the charter may not stop saying: the stop
 // marker ParseTurnStop looks for, and EVERY code ClassifyTurn accepts.
 //
@@ -518,9 +536,11 @@ func sdlcSetSpec() prompts.SetSpec {
 
 // init registers the charters of the roles the SDLC runs, so an Agent with no
 // prompt of its own that is spawned for one of these roles starts with its
-// role's charter (orchestration.RoleCharter).
+// role's charter (orchestration.RoleCharter). A role charter is process-wide —
+// no tenant is in scope — so it is the build's default; a job's own sessions
+// are spawned with the charter its resolved set holds.
 func init() {
-	orchestration.RegisterRoleCharter(orchestration.AgentRoleCoding, WorkerCharter)
-	orchestration.RegisterRoleCharter(orchestration.AgentRoleReview, ReviewerCharter)
+	orchestration.RegisterRoleCharter(orchestration.AgentRoleCoding, func() string { return WorkerCharter(sdlcPrompts) })
+	orchestration.RegisterRoleCharter(orchestration.AgentRoleReview, func() string { return ReviewerCharter(sdlcPrompts) })
 	orchestration.RegisterRoleCharter(orchestration.AgentRoleTriage, TriageCharter)
 }

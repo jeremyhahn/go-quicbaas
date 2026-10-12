@@ -432,6 +432,7 @@ func (s *runnerRun) trainEjected(ctx context.Context, entry *TrainEntry) (orches
 	if settled != "" || err != nil {
 		return settled, err
 	}
+	set := jobPrompts(s.job)
 	switch ejection.Reason {
 	case TrainEjectClosed:
 		// Only a pull request reopened since the train read it reaches this.
@@ -439,7 +440,7 @@ func (s *runnerRun) trainEjected(ctx context.Context, entry *TrainEntry) (orches
 			"ejected from merge train #"+strconv.Itoa(ejection.Train)+" (closed), but the pull request is open again; the gate judges it again")
 		return orchestration.JobStateReviewing, nil
 	case TrainEjectChecksFailed:
-		s.feedback = sdlcPrompts.MustRender("train_ejected", prompts.Vars{
+		s.feedback = set.MustRender("train_ejected", prompts.Vars{
 			"train":    strconv.Itoa(ejection.Train),
 			"target":   entry.Target,
 			"findings": strings.TrimSpace(ejection.Findings),
@@ -447,7 +448,7 @@ func (s *runnerRun) trainEjected(ctx context.Context, entry *TrainEntry) (orches
 		s.job.Memory().AddFeedback(s.feedback)
 		return s.nextRound(ctx, "ejected from merge train #"+strconv.Itoa(ejection.Train))
 	case TrainEjectReviewRefused:
-		s.feedback = sdlcPrompts.MustRender("train_review_refused", prompts.Vars{
+		s.feedback = set.MustRender("train_review_refused", prompts.Vars{
 			"train":    strconv.Itoa(ejection.Train),
 			"target":   entry.Target,
 			"findings": strings.TrimSpace(ejection.Findings),

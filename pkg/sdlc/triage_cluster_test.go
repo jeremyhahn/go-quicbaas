@@ -222,7 +222,7 @@ func TestClusterOfTask_ReadsTheMembersAndRefusesGarbage(t *testing.T) {
 }
 
 func TestClusterContract_CarriesEveryIssueVerbatim(t *testing.T) {
-	contract, err := ClusterContract("Issue: #5\n\n## Fix kdf", []int{12, 14}, []string{"pkg:pkg/luks2"},
+	contract, err := ClusterContract(sdlcPrompts, "Issue: #5\n\n## Fix kdf", []int{12, 14}, []string{"pkg:pkg/luks2"},
 		[]string{"Issue: #12\n\n## Fix header", "Issue: #14\n\n## Fix trailer"})
 	if err != nil {
 		t.Fatal(err)
@@ -235,10 +235,10 @@ func TestClusterContract_CarriesEveryIssueVerbatim(t *testing.T) {
 	if strings.Index(contract, "## Fix kdf") > strings.Index(contract, "## Fix header") {
 		t.Fatal("the anchor's contract is not first")
 	}
-	if _, err := ClusterContract("", []int{1}, nil, []string{"x"}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := ClusterContract(sdlcPrompts, "", []int{1}, nil, []string{"x"}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("no anchor: %v", err)
 	}
-	if _, err := ClusterContract("a", []int{1, 2}, nil, []string{"x"}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := ClusterContract(sdlcPrompts, "a", []int{1, 2}, nil, []string{"x"}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("a member without a contract: %v", err)
 	}
 }

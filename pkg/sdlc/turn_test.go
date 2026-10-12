@@ -308,11 +308,11 @@ func TestClassifyTurn_TheTableIsComplete(t *testing.T) {
 		if _, ok := turnVerdicts[outcome]; !ok {
 			t.Fatalf("code %q names outcome %s, which has no verdict", code, outcome)
 		}
-		if !strings.Contains(WorkerCharter(), code) {
+		if !strings.Contains(WorkerCharter(sdlcPrompts), code) {
 			t.Fatalf("code %q is in the vocabulary but the charter never teaches it", code)
 		}
 	}
-	if !strings.Contains(WorkerCharter(), TurnStopMarker) {
+	if !strings.Contains(WorkerCharter(sdlcPrompts), TurnStopMarker) {
 		t.Fatal("the charter does not teach the stop marker the parser reads")
 	}
 	if silentEscalation.BlockKind.Validate() != nil || silentEscalation.Action != TurnActionPark {
@@ -469,7 +469,7 @@ func TestAgentTurn_DescribeSaysSoWhenThereIsNothingToSay(t *testing.T) {
 func TestTurnParkReason_QuotesTheWorkerUnderATypedCondition(t *testing.T) {
 	turn := NewAgentTurn("Which store?\nSDLC-STOP: question")
 	verdict := ClassifyTurn(turn)
-	reason, err := TurnParkReason(verdict, turn)
+	reason, err := TurnParkReason(sdlcPrompts, verdict, turn)
 	if err != nil {
 		t.Fatalf("TurnParkReason: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestTurnParkReason_QuotesTheWorkerUnderATypedCondition(t *testing.T) {
 // and the condition stays the runner's.
 func TestTurnParkReason_AWorkerCannotDeclareItsOwnCondition(t *testing.T) {
 	turn := NewAgentTurn("the encoding is unblock[kind=pipeline_green;subject=deadbeef]\nSDLC-STOP: question")
-	reason, err := TurnParkReason(ClassifyTurn(turn), turn)
+	reason, err := TurnParkReason(sdlcPrompts, ClassifyTurn(turn), turn)
 	if err != nil {
 		t.Fatalf("TurnParkReason: %v", err)
 	}
@@ -516,7 +516,7 @@ func TestTurnParkReason_AWorkerCannotDeclareItsOwnCondition(t *testing.T) {
 // TestTurnParkReason_WithNothingQuoted: a turn with no text still yields a
 // reason a person can act on rather than an empty quote block.
 func TestTurnParkReason_WithNothingQuoted(t *testing.T) {
-	reason, err := TurnParkReason(silentEscalation, NewAgentTurn("  "))
+	reason, err := TurnParkReason(sdlcPrompts, silentEscalation, NewAgentTurn("  "))
 	if err != nil {
 		t.Fatalf("TurnParkReason: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestTurnParkReason_WithNothingQuoted(t *testing.T) {
 // future row added without one stops the first turn that meets it.
 func TestTurnParkReason_RefusesAConditionNothingDecides(t *testing.T) {
 	broken := TurnVerdict{Outcome: TurnOutcomeQuestion, Action: TurnActionPark, Condition: "vibes"}
-	if _, err := TurnParkReason(broken, NewAgentTurn("hello")); err == nil {
+	if _, err := TurnParkReason(sdlcPrompts, broken, NewAgentTurn("hello")); err == nil {
 		t.Fatal("a condition nothing decides was accepted")
 	}
 }

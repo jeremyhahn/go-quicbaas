@@ -530,7 +530,7 @@ func TestValidateWithAgent_NilJobOrService(t *testing.T) {
 
 func TestBuildValidationPrompt(t *testing.T) {
 	t.Parallel()
-	prompt := buildValidationPrompt(ReviewCriterion{Name: "c", Config: "cfg"}, []*TaskResult{{Output: "out-1"}, nil, {Output: "out-2"}})
+	prompt := buildValidationPrompt(workflowPrompts, ReviewCriterion{Name: "c", Config: "cfg"}, []*TaskResult{{Output: "out-1"}, nil, {Output: "out-2"}})
 	for _, want := range []string{"criterion: c", "Config: cfg", "--- Artifact 1 ---", "out-1", "--- Artifact 3 ---", "out-2", `{"passed": bool`} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q:\n%s", want, prompt)

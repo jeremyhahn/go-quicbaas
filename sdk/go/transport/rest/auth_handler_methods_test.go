@@ -89,7 +89,7 @@ func TestAuthHandlerTypedStructRequests(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/v1/auth/validate":
+		case authValidatePath:
 			_, _ = w.Write([]byte(`{"valid":true,"user_id":"u1"}`))
 		default:
 			_, _ = w.Write([]byte(`{"access_token":"at","token_type":"Bearer","expires_at":"2030-01-01T00:00:00Z"}`))

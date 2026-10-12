@@ -329,7 +329,7 @@ const sessionRefreshTimeout = 15 * time.Second
 
 // refreshStoredSession redeems a refresh credential against the server.
 //
-// It dials with a DELIBERATELY token-less client: /api/v1/auth/refresh is a
+// It dials with a DELIBERATELY token-less client: /api/v1/iam/refresh is a
 // public endpoint (the refresh credential is itself the authentication), and
 // building an authenticated client here would recurse straight back into
 // loadStoredAuthToken.

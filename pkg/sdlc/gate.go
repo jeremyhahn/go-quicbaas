@@ -432,7 +432,7 @@ func verdictSeverity(v ReviewVerdict) int {
 
 // findingsFor returns the findings of the reviewers who requested changes on
 // the head, for the worker's next round.
-func findingsFor(reviews []ReviewRecord, headSHA string) string {
+func findingsFor(set prompts.Renderer, reviews []ReviewRecord, headSHA string) string {
 	var b strings.Builder
 	for _, review := range latestVerdictsForHead(reviews, headSHA) {
 		if review.Verdict != VerdictRequestChanges {
@@ -443,9 +443,9 @@ func findingsFor(reviews []ReviewRecord, headSHA string) string {
 		}
 		body := strings.TrimSpace(review.Findings)
 		if body == "" {
-			body = sdlcPrompts.MustRender("changes_requested_no_findings", nil)
+			body = set.MustRender("changes_requested_no_findings", nil)
 		}
-		b.WriteString(sdlcPrompts.MustRender("changes_requested", prompts.Vars{
+		b.WriteString(set.MustRender("changes_requested", prompts.Vars{
 			"reviewer": review.Reviewer,
 			"head_sha": headSHA,
 			"findings": body,
@@ -668,7 +668,7 @@ func evaluateChecksFailure(checks []CheckRecord, headSHA string, now time.Time, 
 // ONLY THE CHANGE'S OWN REDS ARE NAMED AND QUOTED. A void or host-defect check
 // is being handled without the worker, so quoting its log would hand it a
 // failure to fix that no change of its could.
-func (f ChecksFailure) Findings(triage ChecksTriage, logs map[string]string, quoteBytes int) string {
+func (f ChecksFailure) Findings(set prompts.Renderer, triage ChecksTriage, logs map[string]string, quoteBytes int) string {
 	var checks strings.Builder
 	quoted := 0
 	for _, check := range f.Failed {
@@ -680,7 +680,7 @@ func (f ChecksFailure) Findings(triage ChecksTriage, logs map[string]string, quo
 			finished = " (finished " + check.FinishedAt.UTC().Format(time.RFC3339) + ")"
 		}
 		checks.WriteString("\n")
-		checks.WriteString(sdlcPrompts.MustRender("ci_red_check", prompts.Vars{
+		checks.WriteString(set.MustRender("ci_red_check", prompts.Vars{
 			"check_name": check.Name,
 			"finished":   finished,
 		}))
@@ -699,16 +699,16 @@ func (f ChecksFailure) Findings(triage ChecksTriage, logs map[string]string, quo
 			continue
 		}
 		quoted++
-		checks.WriteString(sdlcPrompts.MustRender("ci_red_check_log", prompts.Vars{"excerpt": excerpt}))
+		checks.WriteString(set.MustRender("ci_red_check_log", prompts.Vars{"excerpt": excerpt}))
 		checks.WriteString("\n")
 	}
 	infrastructure := ""
 	if faults := triage.NotTheChanges(); len(faults) > 0 {
-		infrastructure = "\n" + sdlcPrompts.MustRender("ci_red_infrastructure", prompts.Vars{
+		infrastructure = "\n" + set.MustRender("ci_red_infrastructure", prompts.Vars{
 			"checks": strings.Join(faults, ", "),
 		}) + "\n"
 	}
-	return sdlcPrompts.MustRender("ci_red", prompts.Vars{
+	return set.MustRender("ci_red", prompts.Vars{
 		"head_sha":       f.HeadSHA,
 		"failed_count":   strconv.Itoa(len(f.Failed)),
 		"check_noun":     checkNouns[len(f.Failed) == 1],

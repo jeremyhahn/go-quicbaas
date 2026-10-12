@@ -478,3 +478,146 @@ describe('an inherited session (page reload) is not mistaken for a new one', () 
     expect(auth.authStore.status).toBe('authenticated');
   });
 });
+
+// go-quicbaas#369: the SDK token factory (getValidAccessToken) attached
+// whatever credential storage held without first asking whether it still
+// belonged to this tab's session. A store snapshots its scope, then awaits its
+// SDK call; if a sibling tab wrote a fresh login in between, the request went
+// out as the sibling's session and the response committed under this tab's.
+describe('the token factory reconciles the session before attaching a bearer', () => {
+  const PROTECTED_ROW = { job_id: 'secret-A', tenant_id: 'burnin', state: 'executing' };
+
+  // A token for one login: the sid is what tells a renewal of that login apart
+  // from a fresh one by the same principal into the same tenant.
+  function loginToken(sid: string, issue: number): string {
+    const header = btoa(JSON.stringify({ alg: 'none', typ: 'at+jwt' }));
+    const payload = btoa(
+      JSON.stringify({
+        uid: 'usr_A',
+        tenant_id: 'burnin',
+        sid,
+        // Distinct bytes per issue, so a renewal is a different credential.
+        iat: issue,
+        exp: Math.floor(Date.now() / 1000) + 900,
+      }),
+    );
+    return `${header}.${payload}.sig`;
+  }
+
+  // Records the bearer each data request carried. Only the FIRST data request
+  // is answered with the protected row: a scope change makes the stores fetch
+  // their data again under the new session, and those answers are empty so
+  // they cannot be mistaken for the response under test. /validate answers
+  // valid.
+  function stubFetch(bearers: string[]): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('/validate')) return jsonResponse(200, { valid: true });
+        bearers.push(new Headers(init?.headers ?? {}).get('Authorization') ?? '');
+        return jsonResponse(200, { jobs: bearers.length === 1 ? [PROTECTED_ROW] : [] });
+      }),
+    );
+  }
+
+  // Tab A, holding login s1 and validated, as a tab that inherited its session
+  // is. Inheriting rather than signing in keeps the sign-in's own scope
+  // announcement (and the fetches it starts) out of the window under test.
+  // The sibling tab is modelled by writing straight to the shared
+  // localStorage, with no storage event: the event is what used to close the
+  // window, so withholding it is what exposes it.
+  async function signedInTab(bearers: string[] = []) {
+    window.localStorage.setItem('quicbaas_token', loginToken('s1', 1));
+    window.localStorage.setItem('quicbaas_refresh_token', 'refresh-1');
+    const auth = await import('../src/stores/auth.svelte.ts');
+    const orchestrator = await import('../src/stores/orchestrator.svelte.ts');
+    stubFetch(bearers);
+    await auth.validateSession();
+    expect(auth.authStore.status).toBe('authenticated');
+    return { auth, orchestrator };
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("a sibling's fresh login moves the scope, so a response fetched under it does not commit", async () => {
+    const bearers: string[] = [];
+    const { auth, orchestrator } = await signedInTab(bearers);
+    const before = auth.sessionGeneration();
+    const keyBefore = auth.authStore.sessionKey;
+
+    // The store pins its scope synchronously, then awaits the SDK; the sibling's
+    // write lands in that await, before the token factory reads storage.
+    const sibling = loginToken('s2', 2);
+    const pending = orchestrator.refresh('jobs');
+    window.localStorage.setItem('quicbaas_token', sibling);
+    await pending;
+
+    // The request went out as the sibling's session, so it must not have
+    // committed as this tab's old one.
+    expect(bearers[0]).toBe(`Bearer ${sibling}`);
+    expect(auth.sessionGeneration()).toBeGreaterThan(before);
+    expect(auth.authStore.sessionKey).not.toBe(keyBefore);
+    expect(orchestrator.orchestratorStore.jobs).toHaveLength(0);
+  });
+
+  it("a sibling's renewal of the same login is used without ending the session", async () => {
+    const bearers: string[] = [];
+    const { auth, orchestrator } = await signedInTab(bearers);
+    const before = auth.sessionGeneration();
+
+    const renewed = loginToken('s1', 2);
+    const pending = orchestrator.refresh('jobs');
+    window.localStorage.setItem('quicbaas_token', renewed);
+    await pending;
+
+    expect(bearers).toEqual([`Bearer ${renewed}`]);
+    expect(await auth.getValidAccessToken()).toBe(renewed);
+    expect(auth.sessionGeneration()).toBe(before);
+    expect(auth.authStore.status).toBe('authenticated');
+    expect(orchestrator.orchestratorStore.jobs).toHaveLength(1);
+  });
+
+  it("a sibling's sign-out is adopted: no bearer is attached and the generation moves", async () => {
+    const { auth } = await signedInTab();
+    const before = auth.sessionGeneration();
+
+    window.localStorage.removeItem('quicbaas_token');
+    window.localStorage.removeItem('quicbaas_refresh_token');
+
+    expect(await auth.getValidAccessToken()).toBe('');
+    expect(auth.sessionGeneration()).toBeGreaterThan(before);
+  });
+
+  it("an inherited session's first token read does not start a new generation", async () => {
+    window.localStorage.setItem('quicbaas_token', loginToken('s1', 1));
+    window.localStorage.setItem('quicbaas_refresh_token', 'refresh-1');
+    const auth = await import('../src/stores/auth.svelte.ts');
+    const scopeChanges = vi.fn();
+    auth.onSessionScopeChange(scopeChanges);
+    const before = auth.sessionGeneration();
+
+    expect(await auth.getValidAccessToken()).toBe(loginToken('s1', 1));
+    expect(auth.sessionGeneration()).toBe(before);
+    expect(scopeChanges).not.toHaveBeenCalled();
+  });
+
+  it("validateSession after a sibling's renewal still commits authenticated", async () => {
+    const { auth } = await signedInTab();
+    const before = auth.sessionGeneration();
+
+    window.localStorage.setItem('quicbaas_token', loginToken('s1', 2));
+    await auth.validateSession();
+
+    expect(auth.authStore.status).toBe('authenticated');
+    expect(auth.sessionGeneration()).toBe(before);
+  });
+});

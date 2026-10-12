@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -52,6 +53,7 @@ import (
 // the reason Poll leaves it: its work is its anchor's task.
 func (s *IssueSource) parkedSpecs(
 	ctx context.Context,
+	set prompts.Renderer,
 	project *orchestration.Project,
 	binding *ProjectBinding,
 	forge ForgeBackend,
@@ -72,7 +74,7 @@ func (s *IssueSource) parkedSpecs(
 				continue
 			}
 			seen[issue.Number] = true
-			spec, ok, err := s.parkedSpec(ctx, project, binding, forge, inputs, issue)
+			spec, ok, err := s.parkedSpec(ctx, set, project, binding, forge, inputs, issue)
 			if err != nil {
 				return nil, err
 			}
@@ -88,6 +90,7 @@ func (s *IssueSource) parkedSpecs(
 // false for a cluster member.
 func (s *IssueSource) parkedSpec(
 	ctx context.Context,
+	set prompts.Renderer,
 	project *orchestration.Project,
 	binding *ProjectBinding,
 	forge ForgeBackend,
@@ -112,6 +115,7 @@ func (s *IssueSource) parkedSpec(
 	}
 	contract, err := IssueContract(IssueContractSpec{
 		Repo: repo, IssueNumber: issue.Number, Title: issue.Title, Body: issue.Body, Comments: comments,
+		Prompts: set,
 	})
 	if err != nil {
 		return orchestration.TaskSourceSpec{}, false, err

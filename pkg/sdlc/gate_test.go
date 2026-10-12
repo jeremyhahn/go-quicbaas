@@ -156,7 +156,7 @@ func TestLatestVerdictsForHead_SupersedesByRoundThenTimeThenSeverity(t *testing.
 	if verdictSeverity("mystery") != 1 {
 		t.Fatal("unknown verdict severity")
 	}
-	findings := findingsFor(reviews, "h")
+	findings := findingsFor(sdlcPrompts, reviews, "h")
 	if !strings.Contains(findings, "Review by alice requested changes") || !strings.Contains(findings, "Review by bob") || strings.Contains(findings, "codex") {
 		t.Fatalf("findings = %q", findings)
 	}
@@ -246,7 +246,7 @@ func TestEvaluateChecksFailure_SettlesOnlyOnAStandingFailure(t *testing.T) {
 	// rather than a runner that died mid-job (go-quicbaas#898).
 	logs := map[string]string{"test": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ failed at line 3\nJob failed"}
 	triage := TriageChecksFailure(failure, logs, nil)
-	text := failure.Findings(triage, logs, DefaultChecksLogBytes)
+	text := failure.Findings(sdlcPrompts, triage, logs, DefaultChecksLogBytes)
 	for _, want := range []string{"red on this pull request's current head (h)", "1 required check failed", "FAILED: test", "failed at line 3", "```"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("findings lack %q:\n%s", want, text)
@@ -256,7 +256,7 @@ func TestEvaluateChecksFailure_SettlesOnlyOnAStandingFailure(t *testing.T) {
 		t.Fatal("a credential reached the findings")
 	}
 	two := ChecksFailure{HeadSHA: "h", Failed: []CheckRecord{failed, {Name: "lint"}}}
-	if !strings.Contains(two.Findings(nil, nil, DefaultChecksLogBytes), "2 required checks failed") {
+	if !strings.Contains(two.Findings(sdlcPrompts, nil, nil, DefaultChecksLogBytes), "2 required checks failed") {
 		t.Fatal("plural")
 	}
 }

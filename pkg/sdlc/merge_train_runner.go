@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cifault"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -208,6 +209,10 @@ func NewTrainRunner(cfg TrainRunnerConfig) (*TrainRunner, error) {
 
 // Name implements orchestration.JobRunner.
 func (*TrainRunner) Name() string { return TrainRunnerName }
+
+// PromptSet implements orchestration.PromptSetProvider: the findings an
+// ejected change is handed back with come from the sdlc set.
+func (*TrainRunner) PromptSet() prompts.SetKind { return SetSDLC }
 
 // States implements orchestration.JobRunner.
 func (*TrainRunner) States() []orchestration.JobStateSpec { return TrainRunnerStates() }
@@ -984,7 +989,7 @@ func (s *trainRun) readProbe(ctx context.Context, t *MergeTrain, probe *TrainPro
 				return verdict, err
 			}
 		}
-		return probeVerdict{findings: failure.Findings(triage, logs, DefaultChecksLogBytes)}, nil
+		return probeVerdict{findings: failure.Findings(jobPrompts(s.job), triage, logs, DefaultChecksLogBytes)}, nil
 	case cifault.VerdictHostDefect:
 		return probeVerdict{}, s.hostDefect(ctx, t, probe, triage.Account(probe.HeadSHA))
 	default:

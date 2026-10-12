@@ -45,9 +45,10 @@ import (
 //
 // A FUNCTION RATHER THAN THE CONSTANT IT REPLACED, and deliberately not an
 // exported variable: what a worker is told must not be reassignable by
-// whoever imports this package. The editable copy lives in the store
-// go-quicbaas#804 builds, behind a validator and an audit trail.
-func WorkerCharter() string { return sdlcPrompts.MustRender("worker_charter", nil) }
+// whoever imports this package. The editable copy lives in the prompt store,
+// behind a validator and an audit trail, and reaches a worker as the job's
+// resolved set — set here; see jobPrompts.
+func WorkerCharter(set prompts.Renderer) string { return set.MustRender("worker_charter", nil) }
 
 // IssueContractSpec is what the contract names for one issue.
 type IssueContractSpec struct {
@@ -56,6 +57,18 @@ type IssueContractSpec struct {
 	Title       string
 	Body        string
 	Comments    []ForgeComment
+
+	// Prompts words the contract: the project's resolved sdlc set. Nil is
+	// the build's defaults.
+	Prompts prompts.Renderer
+}
+
+// renderer is what the contract is worded by.
+func (s IssueContractSpec) renderer() prompts.Renderer {
+	if s.Prompts == nil {
+		return sdlcPrompts
+	}
+	return s.Prompts
 }
 
 // Validate checks the spec names an issue.
@@ -78,6 +91,7 @@ func IssueContract(spec IssueContractSpec) (string, error) {
 	if err := spec.Validate(); err != nil {
 		return "", err
 	}
+	set := spec.renderer()
 	body := ""
 	if trimmed := strings.TrimSpace(spec.Body); trimmed != "" {
 		body = "\n" + trimmed + "\n"
@@ -92,7 +106,7 @@ func IssueContract(spec IssueContractSpec) (string, error) {
 		// that follow it must still read 1, 2, 3 rather than carrying a gap
 		// a worker would take for a comment it was not shown.
 		rendered++
-		discussion.WriteString(sdlcPrompts.MustRender("issue_contract_comment", prompts.Vars{
+		discussion.WriteString(set.MustRender("issue_contract_comment", prompts.Vars{
 			"index":       strconv.Itoa(rendered),
 			"attribution": commentAttribution(comment),
 			"body":        strings.TrimSpace(comment.Body),
@@ -102,7 +116,7 @@ func IssueContract(spec IssueContractSpec) (string, error) {
 	if rendered == 0 {
 		discussion.WriteString(noDiscussion + "\n")
 	}
-	return sdlcPrompts.MustRender("issue_contract", prompts.Vars{
+	return set.MustRender("issue_contract", prompts.Vars{
 		"repo":         spec.Repo.String(),
 		"issue_number": strconv.Itoa(spec.IssueNumber),
 		"title":        strings.TrimSpace(spec.Title),
@@ -123,7 +137,7 @@ const noDiscussion = "(none)"
 // contract follows — the worker reads what a person wrote, never a paraphrase —
 // is the rule for every issue the task closes, because every one of them is
 // closed by the pull request this worker opens.
-func ClusterContract(anchor string, members []int, shared []string, memberContracts []string) (string, error) {
+func ClusterContract(set prompts.Renderer, anchor string, members []int, shared []string, memberContracts []string) (string, error) {
 	if strings.TrimSpace(anchor) == "" {
 		return "", &InvalidInputError{Field: "anchor_contract", Message: "a clustered task is its anchor issue first"}
 	}
@@ -137,7 +151,7 @@ func ClusterContract(anchor string, members []int, shared []string, memberContra
 	if len(names) == 0 {
 		names = append(names, "the same code")
 	}
-	return sdlcPrompts.MustRender("issue_contract_cluster", prompts.Vars{
+	return set.MustRender("issue_contract_cluster", prompts.Vars{
 		"anchor_contract":  strings.TrimSpace(anchor),
 		"members":          issueList(members),
 		"shared":           strings.Join(names, ", "),

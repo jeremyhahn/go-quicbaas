@@ -158,7 +158,7 @@ func TestReviewValidator_RecordGivesUpOnAPermanentConflict(t *testing.T) {
 }
 
 func TestBlockReasonRendering_DefaultKindLabel(t *testing.T) {
-	body := renderBlocked(testBinding(), testTaskRecord(1), 1, orchestration.BlockReason{Kind: orchestration.TaskBlockKindBlocked, Message: "waiting on infra"}, nil)
+	body := renderBlocked(sdlcPrompts, testBinding(), testTaskRecord(1), 1, orchestration.BlockReason{Kind: orchestration.TaskBlockKindBlocked, Message: "waiting on infra"}, nil)
 	if !strings.Contains(body, "`task:ready` → `factory:blocked`") || !strings.Contains(body, "waits on an external condition") {
 		t.Fatalf("blocked render:\n%s", body)
 	}

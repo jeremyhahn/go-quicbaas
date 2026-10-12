@@ -637,7 +637,7 @@ func TestForgeAccess_AMissingCredentialIsAWorkspaceFault(t *testing.T) {
 		t.Fatalf("the fault does not name the project: %v", err)
 	}
 	// And the park reason a runner composes from it reads as one.
-	reason, composeErr := WorkspaceUnfitParkReason(err)
+	reason, composeErr := WorkspaceUnfitParkReason(sdlcPrompts, err)
 	if composeErr != nil {
 		t.Fatalf("WorkspaceUnfitParkReason: %v", composeErr)
 	}

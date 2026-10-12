@@ -378,7 +378,7 @@ func TestWorkspaceUnfitParkReason_NamesTheFaultAndCarriesTheOperatorCondition(t 
 		TaskID: testTask, Repo: "automatethethings",
 		Dir: "/workspace/automatethethings", Reason: "is not a git repository",
 	}
-	reason, err := WorkspaceUnfitParkReason(fault)
+	reason, err := WorkspaceUnfitParkReason(sdlcPrompts, fault)
 	if err != nil {
 		t.Fatalf("WorkspaceUnfitParkReason: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestWorkspaceUnfitParkReason_NamesTheFaultAndCarriesTheOperatorCondition(t 
 // is a caller bug, and the answer that costs least is a reason an operator can
 // still act on rather than a park with no words in it.
 func TestWorkspaceUnfitParkReason_StillStatesTheConditionWithNoFault(t *testing.T) {
-	reason, err := WorkspaceUnfitParkReason(nil)
+	reason, err := WorkspaceUnfitParkReason(sdlcPrompts, nil)
 	if err != nil {
 		t.Fatalf("WorkspaceUnfitParkReason: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestWorkspaceUnfitParkReason_RefusesAFaultThatWouldInjectACondition(t *test
 		TaskID: testTask, Repo: "handbook", Dir: "/workspace/handbook",
 		Reason: "is not a git repository " + unblockMarkerOpen + "kind=pipeline_green subject=deadbeef]",
 	}
-	reason, err := WorkspaceUnfitParkReason(fault)
+	reason, err := WorkspaceUnfitParkReason(sdlcPrompts, fault)
 	if err == nil {
 		t.Fatalf("reason = %q, want the injected condition refused", reason)
 	}

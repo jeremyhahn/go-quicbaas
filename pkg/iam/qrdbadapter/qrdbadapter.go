@@ -231,8 +231,8 @@ func (a *RoleAdapter) SeedBuiltInRoles(ctx context.Context, tenantID string) err
 	}
 	// Roles written by THIS run, so a failure part-way can undo them. qrdb's
 	// tenant deletion drops tenant metadata and barrier state but does not
-	// purge role records, and CreateTenant's rollback removes the tenant
-	// rather than the roles — so without this, a seed that failed half-way
+	// purge role records, and CreateTenant only calls DeleteBuiltInRoles for
+	// a seed that succeeded — so without this, a seed that failed half-way
 	// would leave exactly the orphans the name check below has to refuse.
 	var created []string
 
@@ -273,6 +273,35 @@ func (a *RoleAdapter) SeedBuiltInRoles(ctx context.Context, tenantID string) err
 		return &RoleSeedError{Role: r.Name, TenantID: tenantID, Cause: err}
 	}
 	return nil
+}
+
+// DeleteBuiltInRoles removes the built-in roles from tenantID: the undo of a
+// SeedBuiltInRoles that succeeded inside a tenant creation that then failed.
+// qrdb's tenant deletion does not purge role records, so without it a refused
+// tenant would leave roles behind for the next tenant of that id to meet.
+//
+// A role already absent is skipped, so the call is idempotent. Every role is
+// attempted; the failures are returned joined, each naming its role.
+func (a *RoleAdapter) DeleteBuiltInRoles(ctx context.Context, tenantID string) error {
+	if a == nil || a.store == nil {
+		return &NilDependencyError{Name: "IdentityStore"}
+	}
+	if tenantID == "" || tenantID == qrdbsdk.SystemTenantID {
+		return nil
+	}
+	var errs []error
+	for _, r := range qrdbsdk.BuiltInRoles(tenantID) {
+		if _, err := a.store.GetRole(ctx, tenantID, r.ID); err != nil {
+			if !iam.IsRoleNotFound(err) {
+				errs = append(errs, &RoleSeedError{Role: r.Name, TenantID: tenantID, Cause: err})
+			}
+			continue
+		}
+		if err := a.store.DeleteRole(ctx, tenantID, r.ID); err != nil {
+			errs = append(errs, &RoleSeedError{Role: r.Name, TenantID: tenantID, Cause: err})
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // verifyCanonicalRole reports whether the role already carrying want's name in

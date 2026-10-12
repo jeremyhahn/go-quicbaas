@@ -277,7 +277,7 @@ func TestReviewRunner_TheReviewerIsSpawnedFromTheBindingAndSignsNothing(t *testi
 	if spawn.AgentID != testReviewerAgent || spawn.Role != orchestration.AgentRoleReview || spawn.Backend != "" {
 		t.Fatalf("the reviewer was not spawned as the seat's agent: %+v", spawn)
 	}
-	if spawn.SystemPrompt != ReviewerCharter() {
+	if spawn.SystemPrompt != ReviewerCharter(sdlcPrompts) {
 		t.Fatal("the reviewer did not get the reviewer charter")
 	}
 	// NOTHING RATIONS THE REVIEWER INSIDE ITS CONTAINER (go-quicbaas#927). Its

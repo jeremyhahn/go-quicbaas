@@ -369,19 +369,19 @@ type agentReviewResponse struct {
 
 // buildValidationPrompt assembles what an agent validator is asked to judge:
 // the criterion, and every artifact the work produced.
-func buildValidationPrompt(criterion ReviewCriterion, artifacts []*TaskResult) string {
+func buildValidationPrompt(set prompts.Renderer, criterion ReviewCriterion, artifacts []*TaskResult) string {
 	var rendered strings.Builder
 	for i, a := range artifacts {
 		if a == nil {
 			continue
 		}
-		rendered.WriteString(workflowPrompts.MustRender("validation_artifact", prompts.Vars{
+		rendered.WriteString(set.MustRender("validation_artifact", prompts.Vars{
 			"index":  itoa(i + 1),
 			"output": a.Output,
 		}))
 		rendered.WriteString("\n")
 	}
-	return workflowPrompts.MustRender("validation_prompt", prompts.Vars{
+	return set.MustRender("validation_prompt", prompts.Vars{
 		"criterion": criterion.Name,
 		"config":    criterion.Config,
 		"artifacts": rendered.String(),
@@ -397,7 +397,7 @@ func validateWithAgent(ctx context.Context, job *JobContext, criterion ReviewCri
 			Cause:     ErrValidatorNilInput,
 		}
 	}
-	prompt := buildValidationPrompt(criterion, job.Artifacts)
+	prompt := buildValidationPrompt(prompts.RendererOr(job.Prompts, workflowPrompts), criterion, job.Artifacts)
 
 	resp, err := job.Agents.PromptSession(ctx, &PromptSessionRequest{
 		Backend: job.Config.LeadBackend,

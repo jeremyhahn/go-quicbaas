@@ -138,28 +138,28 @@ func TestWorkflowPrompts_Golden(t *testing.T) {
 
 	runGoldenCases(t, "prompts", []goldenCase{
 		{"worker_prompt_full", func() string {
-			return buildWorkerPrompt(item, "/workspace/proj-7", "Prefer the Bash tool for builds.")
+			return buildWorkerPrompt(workflowPrompts, item, "/workspace/proj-7", "Prefer the Bash tool for builds.")
 		}},
-		{"worker_prompt_minimal", func() string { return buildWorkerPrompt(bare, "", "") }},
-		{"reviewer_prompt", func() string { return buildReviewPrompt("ship the health endpoint", tasks) }},
-		{"reviewer_prompt_no_tasks", func() string { return buildReviewPrompt("ship the health endpoint", nil) }},
-		{"reviewer_system", func() string { return reviewerSystemPrompt() }},
-		{"planner_system", func() string { return plannerSystemPrompt() }},
+		{"worker_prompt_minimal", func() string { return buildWorkerPrompt(workflowPrompts, bare, "", "") }},
+		{"reviewer_prompt", func() string { return buildReviewPrompt(workflowPrompts, "ship the health endpoint", tasks) }},
+		{"reviewer_prompt_no_tasks", func() string { return buildReviewPrompt(workflowPrompts, "ship the health endpoint", nil) }},
+		{"reviewer_system", func() string { return reviewerSystemPrompt(workflowPrompts) }},
+		{"planner_system", func() string { return plannerSystemPrompt(workflowPrompts) }},
 		{"decomposition_prompt_full", func() string {
-			return buildDecompositionPrompt("ship the health endpoint", []string{"proj-7", "proj-8"}, backends...)
+			return buildDecompositionPrompt(workflowPrompts, "ship the health endpoint", []string{"proj-7", "proj-8"}, backends...)
 		}},
 		{"decomposition_prompt_bare", func() string {
-			return buildDecompositionPrompt("ship the health endpoint", nil)
+			return buildDecompositionPrompt(workflowPrompts, "ship the health endpoint", nil)
 		}},
 		{"validation_prompt", func() string {
-			return buildValidationPrompt(ReviewCriterion{Name: "tests pass", Config: "go test ./..."}, artifacts)
+			return buildValidationPrompt(workflowPrompts, ReviewCriterion{Name: "tests pass", Config: "go test ./..."}, artifacts)
 		}},
 		{"validation_prompt_no_artifacts", func() string {
-			return buildValidationPrompt(ReviewCriterion{Name: "tests pass", Config: "go test ./..."}, nil)
+			return buildValidationPrompt(workflowPrompts, ReviewCriterion{Name: "tests pass", Config: "go test ./..."}, nil)
 		}},
-		{"validation_summary", func() string { return buildValidationSummary(results) }},
-		{"capabilities_context", func() string { return buildCapabilitiesContext(workflow) }},
-		{"capabilities_context_empty", func() string { return buildCapabilitiesContext(&WorkflowDefinition{}) }},
+		{"validation_summary", func() string { return buildValidationSummary(workflowPrompts, results) }},
+		{"capabilities_context", func() string { return buildCapabilitiesContext(workflowPrompts, workflow) }},
+		{"capabilities_context_empty", func() string { return buildCapabilitiesContext(workflowPrompts, &WorkflowDefinition{}) }},
 		{"memory_full", func() string { return memory.Serialize() }},
 		{"memory_feedback_only", func() string { return feedbackOnly.Serialize() }},
 		{"resume_priming", func() string { return transcript.PrimingMessage() }},

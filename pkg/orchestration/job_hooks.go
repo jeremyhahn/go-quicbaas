@@ -18,6 +18,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -146,6 +148,10 @@ type JobContext struct {
 
 	Config   *JobConfig
 	Workflow *WorkflowDefinition
+
+	// Prompts is the prompt set the job was launched with; nil for a runner
+	// that renders none. A validator that prompts an agent renders from it.
+	Prompts *prompts.ResolvedSet
 
 	// WorkDir is the directory Prepare returned; empty before Prepare ran
 	// or when the workflow runs no hooks. It is a DAEMON directory.

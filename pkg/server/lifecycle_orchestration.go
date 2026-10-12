@@ -223,6 +223,7 @@ func (s *Server) startOrchestration() error {
 		SetLeadSessionID(id string)
 		SetKVStore(kv interfaces.KVStore)
 		SetWorkflowLoader(wl *orchestration.WorkflowLoader)
+		SetPromptResolver(resolver orchestration.PromptResolver)
 		SetSessionEventLog(log orchestration.SessionEventLog)
 		SetProjectAuthz(authz *orchestration.ProjectAuthz)
 		SetProjectStore(store orchestration.ProjectStore)
@@ -403,6 +404,14 @@ func (s *Server) startOrchestration() error {
 		}
 		wirer.SetWorkflowLoader(wl)
 		s.logger.Info("Workflow loader attached to orchestration service")
+
+		// Every job resolves its prompt set through the tenant prompt store;
+		// without one (no embedded node) jobs render the embedded defaults.
+		resolver, err := s.promptResolver()
+		if err != nil {
+			return err
+		}
+		wirer.SetPromptResolver(resolver)
 
 		// The project service verifies a Project.DefaultWorkflow against the
 		// same tenant-scoped registry, so a project can never name a workflow

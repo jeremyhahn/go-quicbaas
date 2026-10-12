@@ -16,8 +16,10 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,23 +33,26 @@ func TestAuthRESTHandler_Logout(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/v1/auth/logout" {
-			t.Errorf("expected /api/v1/auth/logout, got %s", r.URL.Path)
+		if r.URL.Path != authLogoutPath {
+			t.Errorf("expected %s, got %s", authLogoutPath, r.URL.Path)
 		}
 
-		// Decode request body
-		var req authLogoutRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("failed to decode request: %v", err)
+		// The session route authenticates the header before the handler
+		// runs, so the token must be the bearer, not a body field.
+		if got := r.Header.Get("Authorization"); got != "Bearer access-token-123" {
+			t.Errorf("expected Authorization 'Bearer access-token-123', got %q", got)
 		}
-		if req.AccessToken != "access-token-123" {
-			t.Errorf("expected access token 'access-token-123', got %s", req.AccessToken)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+		}
+		if strings.Contains(string(body), "access-token-123") {
+			t.Errorf("token must not travel in the body, got %s", body)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte(`{"message": "logged out successfully"}`))
-		if err != nil {
+		if _, err := w.Write([]byte(`{"message": "logged out successfully"}`)); err != nil {
 			t.Errorf("failed to write response: %v", err)
 		}
 	}))
@@ -80,8 +85,12 @@ func TestAuthRESTHandler_RefreshToken(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/v1/auth/refresh" {
-			t.Errorf("expected /api/v1/auth/refresh, got %s", r.URL.Path)
+		if r.URL.Path != authRefreshPath {
+			t.Errorf("expected %s, got %s", authRefreshPath, r.URL.Path)
+		}
+		// Refresh is a public route: the body refresh token is the credential.
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("expected no Authorization header, got %q", got)
 		}
 
 		var req authRefreshTokenRequest
@@ -94,10 +103,11 @@ func TestAuthRESTHandler_RefreshToken(t *testing.T) {
 
 		expiresAt := time.Now().Add(time.Hour)
 		resp := authLoginResponse{
-			AccessToken: "new-access-token-789",
-			TokenType:   "Bearer",
-			ExpiresIn:   3600,
-			ExpiresAt:   expiresAt.Format(time.RFC3339),
+			AccessToken:  "new-access-token-789",
+			RefreshToken: "rotated-refresh-token",
+			TokenType:    "Bearer",
+			ExpiresIn:    3600,
+			ExpiresAt:    expiresAt.Format(time.RFC3339),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -131,6 +141,9 @@ func TestAuthRESTHandler_RefreshToken(t *testing.T) {
 	if refreshResp.AccessToken != "new-access-token-789" {
 		t.Errorf("expected access token 'new-access-token-789', got %s", refreshResp.AccessToken)
 	}
+	if refreshResp.RefreshToken != "rotated-refresh-token" {
+		t.Errorf("expected rotated refresh token, got %q", refreshResp.RefreshToken)
+	}
 	if refreshResp.TokenType != "Bearer" {
 		t.Errorf("expected token type 'Bearer', got %s", refreshResp.TokenType)
 	}
@@ -141,8 +154,8 @@ func TestAuthRESTHandler_ValidateToken(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/v1/auth/validate" {
-			t.Errorf("expected /api/v1/auth/validate, got %s", r.URL.Path)
+		if r.URL.Path != authValidatePath {
+			t.Errorf("expected %s, got %s", authValidatePath, r.URL.Path)
 		}
 
 		// Check authorization header

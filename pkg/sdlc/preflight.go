@@ -220,13 +220,13 @@ func (p *preflight) verifyBranch(root string) error {
 // burn-in was missing: an operator who reads "the workspace is unfit" looks at
 // the project checkout, and an owner who reads an escalation assumes an agent
 // burned a session reaching it.
-func WorkspaceUnfitParkReason(fault error) (string, error) {
+func WorkspaceUnfitParkReason(set prompts.Renderer, fault error) (string, error) {
 	detail := "the workspace was refused before anything was prompted"
 	if fault != nil {
 		detail = fault.Error()
 	}
 	return ComposeBlockedReason(UnblockCondition{Kind: UnblockOperatorRepair},
-		sdlcPrompts.MustRender("workspace_unfit", prompts.Vars{"fault": detail}))
+		set.MustRender("workspace_unfit", prompts.Vars{"fault": detail}))
 }
 
 // displayOrigin renders a repository's origin for a person, including the case

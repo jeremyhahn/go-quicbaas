@@ -225,7 +225,7 @@ func TestChecksFailure_FindingsQuoteOnlyTheChangesOwnFailures(t *testing.T) {
 	logs := map[string]string{"build": logGenuine, "test": logRunnerDied}
 	triage := TriageChecksFailure(failure, logs, nil)
 
-	text := failure.Findings(triage, logs, DefaultChecksLogBytes)
+	text := failure.Findings(sdlcPrompts, triage, logs, DefaultChecksLogBytes)
 	for _, want := range []string{"FAILED: build", "Makefile:516", "test (runner_died)", "Do not try to fix them"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("findings lack %q:\n%s", want, text)
@@ -244,12 +244,12 @@ func TestChecksFailure_FindingsQuoteOnlyTheChangesOwnFailures(t *testing.T) {
 func TestChecksFailure_FindingsBadInput(t *testing.T) {
 	failure := failedChecks("h1", "build")
 	// A nil triage answers genuine for every name, so the check is still named.
-	if text := failure.Findings(nil, nil, DefaultChecksLogBytes); !strings.Contains(text, "FAILED: build") {
+	if text := failure.Findings(sdlcPrompts, nil, nil, DefaultChecksLogBytes); !strings.Contains(text, "FAILED: build") {
 		t.Fatalf("a nil triage must still name the failed check:\n%s", text)
 	}
 	// A zero budget is boundedTail's "unbounded", so the excerpt is whole
 	// rather than absent.
-	text := failure.Findings(nil, map[string]string{"build": logGenuine}, 0)
+	text := failure.Findings(sdlcPrompts, nil, map[string]string{"build": logGenuine}, 0)
 	if !strings.Contains(text, "Makefile:516") {
 		t.Fatalf("a zero quote budget dropped the excerpt:\n%s", text)
 	}

@@ -124,14 +124,15 @@ export class HttpTransport {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       ...this.config.headers,
-      ...additionalHeaders,
     };
 
     if (this.authToken) {
       headers['Authorization'] = `Bearer ${this.authToken}`;
     }
 
-    return headers;
+    // Per-request headers win, including an explicit Authorization: a call
+    // such as validateToken(otherToken) must send that bearer, not ours.
+    return { ...headers, ...additionalHeaders };
   }
 
   /**

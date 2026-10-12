@@ -74,8 +74,8 @@ func TestRunner_TheWorkerCarriesTheBindingsAppend(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	spawn := rig.agents.spawns[0]
-	if spawn.SystemPrompt != WorkerCharter() || spawn.PromptAppend != "this project uses tabs" {
-		t.Fatalf("worker spawned with {SystemPrompt charter:%v PromptAppend:%q}", spawn.SystemPrompt == WorkerCharter(), spawn.PromptAppend)
+	if spawn.SystemPrompt != WorkerCharter(sdlcPrompts) || spawn.PromptAppend != "this project uses tabs" {
+		t.Fatalf("worker spawned with {SystemPrompt charter:%v PromptAppend:%q}", spawn.SystemPrompt == WorkerCharter(sdlcPrompts), spawn.PromptAppend)
 	}
 }
 
@@ -85,8 +85,8 @@ func TestReviewRunner_TheSeatCarriesItsOwnAppend(t *testing.T) {
 	rig.reviewerSays(reviewSaying("fine", ReviewCodeApprove))
 	rig.mustRun(41)
 	spawn := rig.agents.spawns[0]
-	if spawn.SystemPrompt != ReviewerCharter() || spawn.PromptAppend != "check the migration is idempotent" {
-		t.Fatalf("reviewer spawned with {charter:%v PromptAppend:%q}", spawn.SystemPrompt == ReviewerCharter(), spawn.PromptAppend)
+	if spawn.SystemPrompt != ReviewerCharter(sdlcPrompts) || spawn.PromptAppend != "check the migration is idempotent" {
+		t.Fatalf("reviewer spawned with {charter:%v PromptAppend:%q}", spawn.SystemPrompt == ReviewerCharter(sdlcPrompts), spawn.PromptAppend)
 	}
 }
 

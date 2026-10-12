@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -57,6 +58,10 @@ type JobRunConfig struct {
 	Workflow   *WorkflowDefinition
 	StartState JobState
 	Resumed    *JobStatus
+
+	// Prompts is the set the runner renders from, resolved once at launch;
+	// nil for a runner that is not a PromptSetProvider.
+	Prompts *prompts.ResolvedSet
 
 	Agents      AgentService
 	Logger      interfaces.Logger
@@ -120,11 +125,20 @@ type JobRun struct {
 	// job. A runner restores its own recoverable state from it.
 	Resumed *JobStatus
 
+	// Prompts is the prompt set the job renders from, resolved once at
+	// launch — a resumed job resolves afresh — and immutable for the run's
+	// life. Nil for a runner that is not a PromptSetProvider. Its refs are
+	// recorded on every status, so the job says which versions it ran with.
+	Prompts *prompts.ResolvedSet
+
 	// Agents is the service every session call goes through; Logger is the
 	// daemon's; CostTracker is the ledger a budget is checked against.
 	Agents      AgentService
 	Logger      interfaces.Logger
 	CostTracker CostTracker
+
+	// promptRefs is Prompts.Refs, taken once: every snapshot records it.
+	promptRefs []prompts.VersionRef
 
 	status   atomic.Value // *JobStatus
 	events   chan JobEvent
@@ -304,6 +318,8 @@ func newJobRun(cfg JobRunConfig) *JobRun {
 		Workflow:          cfg.Workflow,
 		StartState:        cfg.StartState,
 		Resumed:           cfg.Resumed,
+		Prompts:           cfg.Prompts,
+		promptRefs:        cfg.Prompts.Refs(),
 		Agents:            cfg.Agents,
 		Logger:            cfg.Logger,
 		CostTracker:       cfg.CostTracker,
@@ -525,6 +541,7 @@ func (r *JobRun) Context() *JobContext {
 	ctx.TenantID = r.TenantID
 	ctx.Config = r.Config
 	ctx.Workflow = r.Workflow
+	ctx.Prompts = r.Prompts
 	ctx.Iteration = r.iteration
 	ctx.Memory = r.memory
 	ctx.WorkDir = r.workDir
@@ -605,6 +622,7 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 		Park:         r.park.clone(),
 		Satisfied:    r.satisfied,
 		Superseded:   r.superseded,
+		Prompts:      r.promptRefs,
 	}
 	r.fanoutMu.Lock()
 	status.ParentJobID = r.parentJobID

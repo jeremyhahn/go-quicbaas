@@ -37,9 +37,9 @@ import (
 //   - POST /api/v1/iam/login/piv             (PIV mTLS login; rejects non-mTLS;
 //     moved from /api/v1/auth/login/piv by P3.3 -- xkms's module owns that path
 //     on a composed node as part of its own session-login plane)
-//   - POST /api/v1/auth/refresh              (rejects invalid refresh tokens)
-//   - POST /api/v1/auth/validate             (rejects requests without a bearer)
-//   - POST /api/v1/auth/logout               (rejects requests without a token)
+//   - POST /api/v1/iam/refresh               (rejects invalid refresh tokens)
+//   - POST /api/v1/iam/validate              (401 without a minted bearer)
+//   - POST /api/v1/iam/logout                (401 without a minted bearer)
 //
 // The removed username/password login flow (/api/v1/auth/login) is intentionally
 // not tested — that route no longer exists.
@@ -153,61 +153,46 @@ func TestTokenValidation(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
 
-	t.Run("missing bearer token returns bad request", func(t *testing.T) {
-		ctx, cancel := DefaultContext(t)
-		defer cancel()
+	// /api/v1/iam/validate is session-authenticated: the auth middleware
+	// rejects a missing or unminted bearer with 401 before the handler runs
+	// (see pkg/apimodule/module_session_verbs_e2e_test.go).
+	cases := []struct {
+		name   string
+		bearer string
+	}{
+		{"missing bearer token is unauthorized", ""},
+		{"forged bearer token is unauthorized", "invalid_token_here"},
+	}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/validate", nil)
-		if err != nil {
-			t.Fatalf("failed to create request: %v", err)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := DefaultContext(t)
+			defer cancel()
 
-		client := newHTTPClient(10 * time.Second)
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
-		defer resp.Body.Close()
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/iam/validate", nil)
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+			if tc.bearer != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.bearer)
+			}
 
-		require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
-			"token validation endpoint must be registered on the server")
-		if resp.StatusCode != http.StatusBadRequest {
-			body, _ := io.ReadAll(resp.Body)
-			t.Errorf("expected status 400 for validate without a bearer token, got %d (body: %s)",
-				resp.StatusCode, string(body))
-		}
-	})
+			client := newHTTPClient(10 * time.Second)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
 
-	t.Run("invalid token reports not valid", func(t *testing.T) {
-		ctx, cancel := DefaultContext(t)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/validate", nil)
-		if err != nil {
-			t.Fatalf("failed to create request: %v", err)
-		}
-		req.Header.Set("Authorization", "Bearer invalid_token_here")
-
-		client := newHTTPClient(10 * time.Second)
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("request failed: %v", err)
-		}
-		defer resp.Body.Close()
-
-		// ValidateToken returns 200 with {"valid": false} for an unparseable
-		// token rather than an HTTP error (see pkg/api/rest/iam_login.go).
-		require.Equal(t, http.StatusOK, resp.StatusCode,
-			"validate with a malformed bearer token should return 200 with valid=false")
-
-		var result struct {
-			Valid bool `json:"valid"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			t.Fatalf("failed to decode validate response: %v", err)
-		}
-		require.False(t, result.Valid, "an invalid token must not validate")
-	})
+			require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
+				"token validation endpoint must be registered on the server")
+			if resp.StatusCode != http.StatusUnauthorized {
+				body, _ := io.ReadAll(resp.Body)
+				t.Errorf("expected status 401 for validate, got %d (body: %s)",
+					resp.StatusCode, string(body))
+			}
+		})
+	}
 }
 
 // TestTokenRefresh verifies that the token refresh endpoint exists and rejects
@@ -226,7 +211,7 @@ func TestTokenRefresh(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/refresh", bytes.NewBuffer(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/iam/refresh", bytes.NewBuffer(body))
 		if err != nil {
 			t.Fatalf("failed to create request: %v", err)
 		}
@@ -256,7 +241,7 @@ func TestTokenRefresh(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/refresh", bytes.NewBufferString("{}"))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/iam/refresh", bytes.NewBufferString("{}"))
 		if err != nil {
 			t.Fatalf("failed to create request: %v", err)
 		}
@@ -372,11 +357,11 @@ func TestLogout(t *testing.T) {
 	SkipIfNoDocker(t)
 	SkipIfNoServer(t)
 
-	t.Run("logout without a token returns bad request", func(t *testing.T) {
+	t.Run("logout without a token is unauthorized", func(t *testing.T) {
 		ctx, cancel := DefaultContext(t)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/auth/logout", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, GetRESTAddress()+"/api/v1/iam/logout", nil)
 		if err != nil {
 			t.Fatalf("failed to create request: %v", err)
 		}
@@ -390,9 +375,9 @@ func TestLogout(t *testing.T) {
 
 		require.NotEqual(t, http.StatusNotFound, resp.StatusCode,
 			"logout endpoint must be registered on the server")
-		// Logout with no Authorization header and no body token returns 400
-		// (see pkg/api/rest/iam_login.go Logout).
-		require.Equal(t, http.StatusBadRequest, resp.StatusCode,
-			"logout without a token must return 400")
+		// /api/v1/iam/logout is session-authenticated: the auth middleware
+		// rejects a request with no bearer before the handler runs.
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+			"logout without a token must return 401")
 	})
 }

@@ -340,6 +340,16 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// fresh tenant has zero roles and cannot hold a user at all (#269).
 	tenantManager.SetRoleSeeder(qrdbadapter.WrapRole(identityStore))
 
+	// Copy the system prompt set into every new tenant after its roles, so a
+	// tenant's prompts are its own versioned records from the start
+	// (go-quicbaas#804). No node, no store: jobs resolve to the build.
+	if err := s.ensurePromptStore(); err != nil {
+		return nil, &PromptReconcileError{TenantID: "", Cause: err}
+	}
+	if s.promptSeeder != nil {
+		tenantManager.SetPromptSeeder(s.promptSeeder)
+	}
+
 	// Create policy cache and engine
 	policyCache := iam.NewPolicyCache(&iam.CacheConfig{
 		TTL:               5 * time.Minute,
@@ -833,6 +843,14 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// with the reconcile verb, not a reason to refuse the boot.
 	if err := s.reconcileTenantBuiltInRoles(context.Background(), identityStore, tenantManager); err != nil {
 		s.logger.WithError(err).Warn("Built-in tenant roles not reconciled; tenants seeded before a permission change keep their stale grants until POST /api/v1/tenants/{tenant_id}/roles/reconcile is run")
+	}
+
+	// Converge the prompt sets: the system set onto this build's defaults, and
+	// every tenant seeded with the prompts it lacks. Non-fatal: a tenant left
+	// unseeded still resolves through to the system set, and the next boot
+	// retries it.
+	if err := s.reconcileTenantPrompts(context.Background(), s.promptReconciler(), tenantManager); err != nil {
+		s.logger.WithError(err).Warn("Prompt sets not fully reconciled; affected tenants resolve through to the system set until the next boot")
 	}
 
 	s.logger.Info("IAM components initialized successfully")

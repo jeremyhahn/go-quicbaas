@@ -294,12 +294,12 @@ func (cl *ControlLoop) handleDecompose(ctx context.Context) (JobState, error) {
 	// Build enhanced task description with accumulated context.
 	taskDescription := cl.job.Config.Description
 	if cl.job.memory != nil && !cl.job.memory.IsEmpty() {
-		taskDescription = taskDescription + "\n\n" + cl.job.memory.Serialize()
+		taskDescription = taskDescription + "\n\n" + cl.job.memory.SerializeFrom(cl.job.workflowRenderer())
 	}
 
 	// Append backend capabilities context from workflow if available.
 	if cl.workflow != nil {
-		taskDescription = taskDescription + "\n\n" + buildCapabilitiesContext(cl.workflow)
+		taskDescription = taskDescription + "\n\n" + buildCapabilitiesContext(cl.job.workflowRenderer(), cl.workflow)
 	}
 
 	cl.audit("lead:decompose_start", "backend="+cl.job.Config.LeadBackend+" model="+cl.job.Config.LeadModel)
@@ -309,6 +309,7 @@ func (cl *ControlLoop) handleDecompose(ctx context.Context) (JobState, error) {
 		Model:      cl.job.Config.LeadModel,
 		Task:       taskDescription,
 		ProjectIDs: projectIDs,
+		Prompts:    cl.job.Prompts,
 	})
 	if err != nil {
 		cl.audit("lead:decompose_failed", "error="+err.Error())
@@ -651,7 +652,7 @@ func (cl *ControlLoop) handleExecute(ctx context.Context) (JobState, error) {
 						}
 					}
 					toolGuidance := cl.job.Agents.BackendToolGuidance(iw.item.Backend)
-					workerPrompt := buildWorkerPrompt(iw.item, workspacePath, toolGuidance)
+					workerPrompt := buildWorkerPrompt(cl.job.workflowRenderer(), iw.item, workspacePath, toolGuidance)
 					turnCtx := WithTurnAttribution(ctx, cl.turnAttribution(promptRole))
 					resp, promptErr := cl.job.Agents.PromptSession(turnCtx, &PromptSessionRequest{
 						SessionID: sessionID,
@@ -851,11 +852,11 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 		return JobStateFailed, err
 	}
 
-	reviewPrompt := buildReviewPrompt(cl.job.Config.Description, jobTasks)
+	reviewPrompt := buildReviewPrompt(cl.job.workflowRenderer(), cl.job.Config.Description, jobTasks)
 
 	// Append validation results to the review prompt if available.
 	if len(cl.validationResults) > 0 {
-		reviewPrompt = reviewPrompt + "\n\n" + buildValidationSummary(cl.validationResults)
+		reviewPrompt = reviewPrompt + "\n\n" + buildValidationSummary(cl.job.workflowRenderer(), cl.validationResults)
 	}
 
 	// Route the review prompt to the dedicated reviewer session when one was
@@ -866,7 +867,7 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 	reviewerSessionID := cl.reviewerSessionID
 	reviewerBackend := cl.reviewerBackend
 	reviewerModel := cl.reviewerModel
-	systemPrompt := reviewerSystemPrompt()
+	systemPrompt := reviewerSystemPrompt(cl.job.workflowRenderer())
 
 	// CLAUDE REVIEWS NOTHING. Owner ruling 2026-09-13: a review runs on codex
 	// or on the local qwen model, and on nothing else.
@@ -924,6 +925,7 @@ func (cl *ControlLoop) handleReview(ctx context.Context) (JobState, error) {
 			Backend: backend,
 			Model:   model,
 			Task:    reviewPrompt,
+			Prompts: cl.job.Prompts,
 		})
 		if promptErr != nil {
 			return JobStateFailed, promptErr
@@ -1925,54 +1927,54 @@ func resolveResumeState(interrupted JobState) JobState {
 
 // buildReviewPrompt assembles the review prompt from the workflow set: the
 // job's goal, then one block per task.
-func buildReviewPrompt(description string, tasks []*Task) string {
+func buildReviewPrompt(set prompts.Renderer, description string, tasks []*Task) string {
 	var tasksText strings.Builder
 	for i, task := range tasks {
-		tasksText.WriteString(workflowPrompts.MustRender("reviewer_prompt_task", prompts.Vars{
+		tasksText.WriteString(set.MustRender("reviewer_prompt_task", prompts.Vars{
 			"index":   itoa(i + 1),
 			"subject": task.Subject,
 			"status":  string(task.Status),
 		}))
 		tasksText.WriteString("\n")
 		if task.Result != nil && task.Result.Output != "" {
-			tasksText.WriteString(workflowPrompts.MustRender("reviewer_prompt_result", prompts.Vars{
+			tasksText.WriteString(set.MustRender("reviewer_prompt_result", prompts.Vars{
 				"output": task.Result.Output,
 			}))
 			tasksText.WriteString("\n")
 		}
 		tasksText.WriteString("\n")
 	}
-	return workflowPrompts.MustRender("reviewer_prompt", prompts.Vars{
+	return set.MustRender("reviewer_prompt", prompts.Vars{
 		"description": description,
 		"tasks":       tasksText.String(),
 	})
 }
 
 // reviewerSystemPrompt is the reviewer session's standing instructions.
-func reviewerSystemPrompt() string {
-	return workflowPrompts.MustRender("reviewer_system", nil)
+func reviewerSystemPrompt(set prompts.Renderer) string {
+	return set.MustRender("reviewer_system", nil)
 }
 
 // buildWorkerPrompt assembles the instruction one work item is handed to a
 // worker session. The clauses that appear only sometimes — the workspace, the
 // description, the project, the backend's tool guidance — are prompts of
 // their own, spliced in where they belong and empty where they do not.
-func buildWorkerPrompt(item *WorkItem, workspacePath, toolGuidance string) string {
+func buildWorkerPrompt(set prompts.Renderer, item *WorkItem, workspacePath, toolGuidance string) string {
 	workspace := ""
 	if workspacePath != "" {
-		workspace = workflowPrompts.MustRender("worker_workspace", prompts.Vars{
+		workspace = set.MustRender("worker_workspace", prompts.Vars{
 			"workspace_path": workspacePath,
 		}) + "\n\n"
 	}
 	description := ""
 	if item.Description != "" {
-		description = workflowPrompts.MustRender("worker_description", prompts.Vars{
+		description = set.MustRender("worker_description", prompts.Vars{
 			"description": item.Description,
 		}) + "\n"
 	}
 	project := ""
 	if item.ProjectID != "" {
-		project = workflowPrompts.MustRender("worker_project", prompts.Vars{
+		project = set.MustRender("worker_project", prompts.Vars{
 			"project_id": item.ProjectID,
 		}) + "\n"
 	}
@@ -1980,7 +1982,7 @@ func buildWorkerPrompt(item *WorkItem, workspacePath, toolGuidance string) strin
 	if toolGuidance != "" {
 		guidance = "\n\n" + toolGuidance
 	}
-	return workflowPrompts.MustRender("worker_prompt", prompts.Vars{
+	return set.MustRender("worker_prompt", prompts.Vars{
 		"workspace":     workspace,
 		"title":         item.Title,
 		"description":   description,
@@ -1991,20 +1993,20 @@ func buildWorkerPrompt(item *WorkItem, workspacePath, toolGuidance string) strin
 
 // buildCapabilitiesContext constructs a context string describing available
 // backend capabilities from the workflow definition.
-func buildCapabilitiesContext(wf *WorkflowDefinition) string {
+func buildCapabilitiesContext(set prompts.Renderer, wf *WorkflowDefinition) string {
 	if wf == nil || len(wf.Agents) == 0 {
 		return ""
 	}
 
 	var sb strings.Builder
-	sb.WriteString(workflowPrompts.MustRender("capabilities_context", nil))
+	sb.WriteString(set.MustRender("capabilities_context", nil))
 	sb.WriteString("\n")
 	for _, agent := range wf.Agents {
 		capabilities := ""
 		if len(agent.Capabilities) > 0 {
 			capabilities = ", Capabilities: " + strings.Join(agent.Capabilities, ", ")
 		}
-		sb.WriteString(workflowPrompts.MustRender("capabilities_agent", prompts.Vars{
+		sb.WriteString(set.MustRender("capabilities_agent", prompts.Vars{
 			"role":         agent.Role,
 			"backend":      agent.Backend,
 			"capabilities": capabilities,
@@ -2015,16 +2017,16 @@ func buildCapabilitiesContext(wf *WorkflowDefinition) string {
 }
 
 // buildValidationSummary constructs a summary of validation results for the review prompt.
-func buildValidationSummary(results []ValidationResult) string {
+func buildValidationSummary(set prompts.Renderer, results []ValidationResult) string {
 	var sb strings.Builder
-	sb.WriteString(workflowPrompts.MustRender("validation_summary", nil))
+	sb.WriteString(set.MustRender("validation_summary", nil))
 	sb.WriteString("\n")
 	for _, r := range results {
 		message := ""
 		if r.Message != "" {
 			message = " - " + r.Message
 		}
-		sb.WriteString(workflowPrompts.MustRender("validation_summary_row", prompts.Vars{
+		sb.WriteString(set.MustRender("validation_summary_row", prompts.Vars{
 			"name":    r.Name,
 			"verdict": validationVerdicts[r.Passed],
 			"message": message,

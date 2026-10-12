@@ -65,7 +65,7 @@ func (s *Server) reconcileTenantBuiltInRoles(ctx context.Context, roles builtInR
 
 	tenantIDs, err := reconcileTargets(ctx, tenants)
 	if err != nil {
-		return err
+		return &RoleReconcileError{TenantID: "", Cause: err}
 	}
 
 	for _, tenantID := range tenantIDs {
@@ -90,7 +90,9 @@ func (s *Server) reconcileTenantBuiltInRoles(ctx context.Context, roles builtInR
 }
 
 // reconcileTargets enumerates the tenants to reconcile: the system tenant plus
-// every tenant the broker knows about.
+// every tenant the broker knows about. The built-in roles and the prompt sets
+// are both reconciled over this list; each caller wraps a listing failure in
+// its own error.
 //
 // The system tenant is named explicitly because the broker's tenant listing
 // does not carry it — the same composition pkg/server already performs for the
@@ -107,7 +109,7 @@ func reconcileTargets(ctx context.Context, tenants tenantLister) ([]string, erro
 
 	listed, err := tenants.ListTenants(ctx, iam.ListOptions{})
 	if err != nil {
-		return nil, &RoleReconcileError{TenantID: "", Cause: err}
+		return nil, err
 	}
 	for _, t := range listed {
 		if t == nil || t.ID == "" || t.ID == qrdbsdk.SystemTenantID {

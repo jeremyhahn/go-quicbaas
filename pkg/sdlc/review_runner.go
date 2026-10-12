@@ -235,6 +235,10 @@ func NewReviewRunner(cfg ReviewRunnerConfig) (*ReviewRunner, error) {
 // Name implements orchestration.JobRunner.
 func (*ReviewRunner) Name() string { return ReviewJobRunnerName }
 
+// PromptSet implements orchestration.PromptSetProvider: the reviewer's
+// charter and its train brief come from the sdlc set.
+func (*ReviewRunner) PromptSet() prompts.SetKind { return SetSDLC }
+
 // States implements orchestration.JobRunner.
 func (*ReviewRunner) States() []orchestration.JobStateSpec { return ReviewRunnerStates() }
 
@@ -977,7 +981,7 @@ func (s *reviewRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessi
 		AgentID:      s.reviewer.Agent,
 		Role:         orchestration.AgentRoleReview,
 		ProjectID:    s.job.Project.ID,
-		SystemPrompt: ReviewerCharter(),
+		SystemPrompt: ReviewerCharter(jobPrompts(s.job)),
 		PromptAppend: s.reviewer.PromptAppend,
 		Persistent:   true,
 	}
@@ -1336,7 +1340,7 @@ func (s *reviewRun) trainSection() string {
 		}
 		issues = strings.Join(refs, ", ")
 	}
-	return "\n" + sdlcPrompts.MustRender("train_review", prompts.Vars{
+	return "\n" + jobPrompts(s.job).MustRender("train_review", prompts.Vars{
 		"train":   strconv.Itoa(s.train.Number),
 		"target":  s.train.Target,
 		"base":    s.train.BaseSHA,

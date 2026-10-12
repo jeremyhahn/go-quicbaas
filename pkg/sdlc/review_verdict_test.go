@@ -125,7 +125,7 @@ func TestParseReviewVerdict_ACodeFenceWithNothingAboveItIsNotAnApproval(t *testi
 }
 
 func TestReviewCodes_TheCharterTeachesOnlyCodesTheParserKnows(t *testing.T) {
-	charter := ReviewerCharter()
+	charter := ReviewerCharter(sdlcPrompts)
 	// A charter naming a code the parser does not know would be a reviewer
 	// stopping for a reason nothing could act on.
 	for code := range reviewCodeVerdicts {
@@ -151,7 +151,7 @@ func TestReviewCodes_TheCharterTeachesOnlyCodesTheParserKnows(t *testing.T) {
 // out. Both halves are required — "CI passed" alone still leaves running the
 // tests the careful thing to do.
 func TestReviewerCharter_SaysCIAlreadyPassedAndForbidsARerun(t *testing.T) {
-	charter := ReviewerCharter()
+	charter := ReviewerCharter(sdlcPrompts)
 	for _, marker := range []string{ReviewerCIGreenMarker, ReviewerNoRerunMarker} {
 		if !strings.Contains(charter, marker) {
 			t.Fatalf("the reviewer charter does not carry %q", marker)

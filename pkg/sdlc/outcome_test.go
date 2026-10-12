@@ -182,23 +182,23 @@ func TestOutcomeRemedy_EveryEndingInPrecedenceOrder(t *testing.T) {
 	green := UnblockCondition{Kind: UnblockPipelineGreen, Subject: "deadbeef"}
 	ruling := UnblockCondition{Kind: UnblockOwnerRuling}
 
-	if got := outcomeRemedy(outcomeSpecs[OutcomeReadmitted], fresh, none, false); !strings.Contains(got, "back in the queue") {
+	if got := outcomeRemedy(sdlcPrompts, outcomeSpecs[OutcomeReadmitted], fresh, none, false); !strings.Contains(got, "back in the queue") {
 		t.Fatalf("readmitted remedy: %q", got)
 	}
-	if got := outcomeRemedy(outcomeSpecs[OutcomeExhausted], spent, none, false); !strings.Contains(got, "cannot be readmitted") {
+	if got := outcomeRemedy(sdlcPrompts, outcomeSpecs[OutcomeExhausted], spent, none, false); !strings.Contains(got, "cannot be readmitted") {
 		t.Fatalf("exhausted remedy: %q", got)
 	}
-	if got := outcomeRemedy(outcomeSpecs[OutcomeEscalated], spent, green, true); !strings.Contains(got, "cannot be resumed as it stands") {
+	if got := outcomeRemedy(sdlcPrompts, outcomeSpecs[OutcomeEscalated], spent, green, true); !strings.Contains(got, "cannot be resumed as it stands") {
 		t.Fatalf("a spent budget must outrank a machine-checkable condition: %q", got)
 	}
-	if got := outcomeRemedy(outcomeSpecs[OutcomeBlocked], fresh, green, true); !strings.Contains(got, "nothing here") {
+	if got := outcomeRemedy(sdlcPrompts, outcomeSpecs[OutcomeBlocked], fresh, green, true); !strings.Contains(got, "nothing here") {
 		t.Fatalf("a machine-checkable condition needs no person: %q", got)
 	}
-	if got := outcomeRemedy(outcomeSpecs[OutcomeNeedsInfo], fresh, ruling, true); !strings.Contains(got, "**To resume:**") ||
+	if got := outcomeRemedy(sdlcPrompts, outcomeSpecs[OutcomeNeedsInfo], fresh, ruling, true); !strings.Contains(got, "**To resume:**") ||
 		!strings.Contains(got, fresh.ID) {
 		t.Fatalf("an owner ruling needs the owner: %q", got)
 	}
-	if got := outcomeRemedy(outcomeSpecs[OutcomeNeedsInfo], nil, none, false); strings.Contains(got, " task readmit ") {
+	if got := outcomeRemedy(sdlcPrompts, outcomeSpecs[OutcomeNeedsInfo], nil, none, false); strings.Contains(got, " task readmit ") {
 		t.Fatalf("a remedy for no task must not name one: %q", got)
 	}
 }

@@ -16,6 +16,8 @@ package sdlc
 import (
 	"strconv"
 	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -97,7 +99,7 @@ const ReviewerNoRerunMarker = "Do not run the build, the tests, the linters or t
 // specification (prompt_set.go, reviewerCharterMarkers), so a charter cannot
 // be saved that stops naming a code the parser knows — the same coupling the
 // old concatenated constant achieved, now checked rather than assumed.
-func ReviewerCharter() string { return sdlcPrompts.MustRender("reviewer_charter", nil) }
+func ReviewerCharter(set prompts.Renderer) string { return set.MustRender("reviewer_charter", nil) }
 
 // ReviewOutcome is one reviewer turn, read.
 type ReviewOutcome struct {

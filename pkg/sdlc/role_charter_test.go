@@ -21,8 +21,8 @@ import (
 
 func TestRoleCharters_TheSDLCRolesStartWithTheirCharters(t *testing.T) {
 	cases := map[orchestration.AgentRole]string{
-		orchestration.AgentRoleCoding: WorkerCharter(),
-		orchestration.AgentRoleReview: ReviewerCharter(),
+		orchestration.AgentRoleCoding: WorkerCharter(sdlcPrompts),
+		orchestration.AgentRoleReview: ReviewerCharter(sdlcPrompts),
 		orchestration.AgentRoleTriage: TriageCharter(),
 	}
 	for role, want := range cases {

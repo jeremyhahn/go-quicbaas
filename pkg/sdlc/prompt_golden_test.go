@@ -143,8 +143,8 @@ func TestSDLCPrompts_Golden(t *testing.T) {
 	silentTurn := AgentTurn{Attempt: 3, Elapsed: 5 * time.Second, Outcome: TurnOutcomeSilent}
 
 	runSDLCGoldenCases(t, []sdlcGoldenCase{
-		{"worker_charter", func(*testing.T) string { return WorkerCharter() }},
-		{"reviewer_charter", func(*testing.T) string { return ReviewerCharter() }},
+		{"worker_charter", func(*testing.T) string { return WorkerCharter(sdlcPrompts) }},
+		{"reviewer_charter", func(*testing.T) string { return ReviewerCharter(sdlcPrompts) }},
 		{"issue_contract_full", func(t *testing.T) string {
 			return goldenContract(t, "Serve /healthz and return 200 when the store answers.", comments)
 		}},
@@ -165,37 +165,37 @@ func TestSDLCPrompts_Golden(t *testing.T) {
 			return "## Review findings\n\n" + renderFailures(failures)
 		}},
 		{"merge_conflict", func(*testing.T) string {
-			return mergeConflictFindings(&MergeConflictError{
+			return mergeConflictFindings(sdlcPrompts, &MergeConflictError{
 				Subject: "acme/api#64", Base: "main", Head: "cf56c2ef9780", Attempts: 6,
 			})
 		}},
-		{"changes_requested", func(*testing.T) string { return findingsFor(reviews, "abc123") }},
-		{"changes_requested_none", func(*testing.T) string { return findingsFor(nil, "abc123") }},
+		{"changes_requested", func(*testing.T) string { return findingsFor(sdlcPrompts, reviews, "abc123") }},
+		{"changes_requested_none", func(*testing.T) string { return findingsFor(sdlcPrompts, nil, "abc123") }},
 		{"ci_red_one_check", func(*testing.T) string {
-			return oneCheck.Findings(nil, nil, DefaultChecksLogBytes)
+			return oneCheck.Findings(sdlcPrompts, nil, nil, DefaultChecksLogBytes)
 		}},
 		{"ci_red_many_checks", func(*testing.T) string {
-			return manyChecks.Findings(nil,
+			return manyChecks.Findings(sdlcPrompts, nil,
 				map[string]string{"build": "undefined: Handler\n", "test": "  "}, DefaultChecksLogBytes)
 		}},
 		// A day when the fleet is unwell: one real failure, one runner that
 		// died and one host that could not start the container. The worker is
 		// told which is its own and told not to chase the other two.
 		{"ci_red_with_infrastructure", func(*testing.T) string {
-			return manyChecks.Findings(ChecksTriage{
+			return manyChecks.Findings(sdlcPrompts, ChecksTriage{
 				{Check: CheckRecord{Name: "build"}, Finding: cifault.Finding{Verdict: cifault.VerdictGenuine, Signature: cifault.SignatureUnrecognised}},
 				{Check: CheckRecord{Name: "test"}, Finding: cifault.Finding{Verdict: cifault.VerdictVoid, Signature: cifault.SignatureRunnerDied}},
 				{Check: CheckRecord{Name: "vet"}, Finding: cifault.Finding{Verdict: cifault.VerdictHostDefect, Signature: cifault.SignatureContainerCreateFailed}},
 			}, map[string]string{"build": "undefined: Handler\n", "test": "ok\tpkg/api\t1.0s\n"}, DefaultChecksLogBytes)
 		}},
-		{"prior_turn_spoken", func(*testing.T) string { return renderPriorTurn(spokenTurn) }},
-		{"prior_turn_silent", func(*testing.T) string { return renderPriorTurn(silentTurn) }},
-		{"silent_turn_note", func(*testing.T) string { return silentTurnNote(5 * time.Second) }},
-		{"non_answer_turn_note", func(*testing.T) string { return nonAnswerTurnNote(451 * time.Millisecond) }},
-		{"session_rolled_note", func(*testing.T) string { return sessionRolledNote(24*time.Minute+4*time.Second, 1) }},
-		{"account_rolled_note", func(*testing.T) string { return accountRolledNote(2) }},
+		{"prior_turn_spoken", func(*testing.T) string { return renderPriorTurn(sdlcPrompts, spokenTurn) }},
+		{"prior_turn_silent", func(*testing.T) string { return renderPriorTurn(sdlcPrompts, silentTurn) }},
+		{"silent_turn_note", func(*testing.T) string { return silentTurnNote(sdlcPrompts, 5*time.Second) }},
+		{"non_answer_turn_note", func(*testing.T) string { return nonAnswerTurnNote(sdlcPrompts, 451*time.Millisecond) }},
+		{"session_rolled_note", func(*testing.T) string { return sessionRolledNote(sdlcPrompts, 24*time.Minute+4*time.Second, 1) }},
+		{"account_rolled_note", func(*testing.T) string { return accountRolledNote(sdlcPrompts, 2) }},
 		{"account_resumed_note", func(*testing.T) string {
-			return accountResumedNote(2, &orchestration.ReplayTranscript{
+			return accountResumedNote(sdlcPrompts, 2, &orchestration.ReplayTranscript{
 				SessionID: "session-1",
 				Turns: []orchestration.ReplayTurn{
 					{Role: orchestration.ReplayRoleUser, Text: "implement the router"},
@@ -204,12 +204,12 @@ func TestSDLCPrompts_Golden(t *testing.T) {
 			})
 		}},
 		{"account_resumed_note_unprompted", func(*testing.T) string {
-			return accountResumedNote(2, &orchestration.ReplayTranscript{SessionID: "session-1"})
+			return accountResumedNote(sdlcPrompts, 2, &orchestration.ReplayTranscript{SessionID: "session-1"})
 		}},
-		{"session_rolled_account_note", func(*testing.T) string { return sessionRolledAccountNote(2) }},
-		{"worker_released_note", func(*testing.T) string { return workerReleasedNote(1) }},
+		{"session_rolled_account_note", func(*testing.T) string { return sessionRolledAccountNote(sdlcPrompts, 2) }},
+		{"worker_released_note", func(*testing.T) string { return workerReleasedNote(sdlcPrompts, 1) }},
 		{"worker_resumed_note", func(*testing.T) string {
-			return workerResumedNote(1, &orchestration.ReplayTranscript{
+			return workerResumedNote(sdlcPrompts, 1, &orchestration.ReplayTranscript{
 				SessionID: "session-1",
 				Turns: []orchestration.ReplayTurn{
 					{Role: orchestration.ReplayRoleUser, Text: "implement the router"},
@@ -218,10 +218,10 @@ func TestSDLCPrompts_Golden(t *testing.T) {
 			})
 		}},
 		{"worker_resumed_note_unprompted", func(*testing.T) string {
-			return workerResumedNote(1, &orchestration.ReplayTranscript{SessionID: "session-1"})
+			return workerResumedNote(sdlcPrompts, 1, &orchestration.ReplayTranscript{SessionID: "session-1"})
 		}},
 		{"session_resumed_account_note", func(*testing.T) string {
-			return sessionResumedAccountNote(2, &orchestration.ReplayTranscript{
+			return sessionResumedAccountNote(sdlcPrompts, 2, &orchestration.ReplayTranscript{
 				SessionID: "session-1",
 				Turns: []orchestration.ReplayTurn{
 					{Role: orchestration.ReplayRoleUser, Text: "implement the router"},
@@ -231,24 +231,24 @@ func TestSDLCPrompts_Golden(t *testing.T) {
 			})
 		}},
 		{"session_resumed_account_note_unprompted", func(*testing.T) string {
-			return sessionResumedAccountNote(2, &orchestration.ReplayTranscript{SessionID: "session-1"})
+			return sessionResumedAccountNote(sdlcPrompts, 2, &orchestration.ReplayTranscript{SessionID: "session-1"})
 		}},
 		{"repeated_prompt", func(t *testing.T) string {
-			reason, err := repeatedPromptReason()
+			reason, err := repeatedPromptReason(sdlcPrompts)
 			if err != nil {
 				t.Fatalf("compose the repeated-prompt reason: %v", err)
 			}
 			return reason
 		}},
 		{"park_reason_spoken", func(t *testing.T) string {
-			reason, err := TurnParkReason(turnVerdicts[TurnOutcomeQuestion], spokenTurn)
+			reason, err := TurnParkReason(sdlcPrompts, turnVerdicts[TurnOutcomeQuestion], spokenTurn)
 			if err != nil {
 				t.Fatalf("compose the park reason: %v", err)
 			}
 			return reason
 		}},
 		{"park_reason_silent", func(t *testing.T) string {
-			reason, err := TurnParkReason(turnVerdicts[TurnOutcomeEnvironment], silentTurn)
+			reason, err := TurnParkReason(sdlcPrompts, turnVerdicts[TurnOutcomeEnvironment], silentTurn)
 			if err != nil {
 				t.Fatalf("compose the park reason: %v", err)
 			}

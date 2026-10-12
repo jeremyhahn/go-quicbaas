@@ -569,6 +569,13 @@ func (s *Server) startSDLC() error {
 	if err != nil {
 		return &SDLCInitError{Component: "issue source", Cause: err}
 	}
+	// Contracts are rendered from each project's resolved sdlc set, the same
+	// chain a job resolves at launch.
+	promptResolver, err := s.promptResolver()
+	if err != nil {
+		return &SDLCInitError{Component: "issue source prompts", Cause: err}
+	}
+	source.SetPromptResolver(promptResolver)
 	// THE OWNERSHIP PREDICATE'S EVIDENCE, from the engine's job leases. A lease
 	// already names the task's source reference — the issue reference this
 	// source emits — so "is a live session already working this issue" is a read

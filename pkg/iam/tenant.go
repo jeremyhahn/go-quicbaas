@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
@@ -81,6 +82,23 @@ type QRDBTenantProvisioner interface {
 type TenantRoleSeeder interface {
 	// SeedBuiltInRoles creates the built-in roles in tenantID.
 	SeedBuiltInRoles(ctx context.Context, tenantID string) error
+
+	// DeleteBuiltInRoles removes the built-in roles from tenantID. CreateTenant
+	// calls it to undo a successful seed when a later step fails, because the
+	// engine's tenant deletion does not purge role records.
+	DeleteBuiltInRoles(ctx context.Context, tenantID string) error
+}
+
+// TenantPromptSeeder copies the system prompt set into a newly created tenant,
+// so a tenant's prompts are its own records from the start: editable,
+// versioned, and following the system set until somebody edits them.
+//
+// Implementations must be idempotent, must leave the system tenant alone (the
+// boot reconcile owns its set), and on failure must delete every record they
+// wrote before returning, because CreateTenant rolls back only its own steps.
+type TenantPromptSeeder interface {
+	// SeedTenant copies the system prompt set into tenantID.
+	SeedTenant(ctx context.Context, tenantID string) error
 }
 
 // Tenant ID validation constraints.
@@ -117,6 +135,12 @@ type DefaultTenantManager struct {
 	// leaves CreateTenant's role-seed step a no-op, which yields a tenant
 	// that cannot hold a user until an operator recreates the roles by hand.
 	roleSeeder TenantRoleSeeder
+
+	// promptSeeder, when wired, copies the system prompt set into each newly
+	// created tenant after its roles are seeded. Wired at server init via
+	// SetPromptSeeder. Nil leaves the step a no-op: the tenant's jobs resolve
+	// through to the system set until the next boot reconcile seeds it.
+	promptSeeder TenantPromptSeeder
 
 	// userStorage, when wired, is the routed (qrdb-backed) user store used by
 	// DeleteTenant to deprovision the tenant's users — purging the broker
@@ -295,22 +319,46 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 	// leaving behind a tenant nothing can be provisioned into.
 	if m.roleSeeder != nil {
 		if err := m.roleSeeder.SeedBuiltInRoles(ctx, tenantID); err != nil {
-			// Roll back every step taken above, innermost first.
-			if m.dekProvisioner != nil {
-				_ = m.dekProvisioner.DeprovisionDEK(ctx, tenantID)
+			return nil, dberrors.Wrapf(errors.Join(err, m.rollbackCreate(ctx, tenantID)), dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant built-in roles")
+		}
+	}
+
+	// Seed the tenant's prompt set. The seeder deletes its own writes when it
+	// fails, so rolling back the steps above leaves nothing behind. A tenant
+	// whose prompts could not be copied is refused rather than created half
+	// configured, the same reasoning as the roles above.
+	if m.promptSeeder != nil {
+		if err := m.promptSeeder.SeedTenant(ctx, tenantID); err != nil {
+			// The roles seeded above are this creation's own step to undo,
+			// innermost first: the tenant's deletion would not remove them.
+			var unseed error
+			if m.roleSeeder != nil {
+				unseed = m.roleSeeder.DeleteBuiltInRoles(ctx, tenantID)
 			}
-			if m.provisioner != nil {
-				_ = m.provisioner.DeprovisionTenant(ctx, tenantID)
-			}
-			_ = m.storage.DeleteTenant(ctx, tenantID)
-			if m.qrdbProvisioner != nil {
-				_ = m.qrdbProvisioner.DeleteTenant(ctx, tenantID)
-			}
-			return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant built-in roles")
+			return nil, dberrors.Wrapf(errors.Join(err, unseed, m.rollbackCreate(ctx, tenantID)), dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant prompt set")
 		}
 	}
 
 	return tenant, nil
+}
+
+// rollbackCreate undoes every provisioning step CreateTenant took before a
+// seeding step failed, innermost first. Every step is attempted; the failures
+// are returned joined so the caller reports a tenant left partly provisioned
+// instead of hiding it.
+func (m *DefaultTenantManager) rollbackCreate(ctx context.Context, tenantID string) error {
+	var errs []error
+	if m.dekProvisioner != nil {
+		errs = append(errs, m.dekProvisioner.DeprovisionDEK(ctx, tenantID))
+	}
+	if m.provisioner != nil {
+		errs = append(errs, m.provisioner.DeprovisionTenant(ctx, tenantID))
+	}
+	errs = append(errs, m.storage.DeleteTenant(ctx, tenantID))
+	if m.qrdbProvisioner != nil {
+		errs = append(errs, m.qrdbProvisioner.DeleteTenant(ctx, tenantID))
+	}
+	return errors.Join(errs...)
 }
 
 // GetTenant retrieves a tenant by ID.

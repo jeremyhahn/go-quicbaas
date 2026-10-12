@@ -1,6 +1,6 @@
 # Prompt sets inside one Software Factory: consolidated docs, consolidated packages, tenant-owned editable prompts
 
-> **Status: REFERENCE** · Last verified: 2026-09-12 · Design for planned work; deleted when the feature folder ships
+> **Status: REFERENCE** · Last verified: 2026-10-12 · Design for planned work; deleted when the feature folder ships
 >
 > **PR1 (go-quicbaas#803) has landed**: the extraction, the embedded markdown,
 > the spec registry, the validator, the renderer and the golden equivalence
@@ -11,9 +11,15 @@
 > generic package's own directory, so ownership and the system-tenant origin
 > are visible in the tree; and the package move (`pkg/sdlc` →
 > `pkg/orchestration/sdlc`) had not happened, so the `sdlc` set is owned from
-> `pkg/sdlc` and moves with it. Everything else in this document — the store,
-> inheritance, seeding, resolution, permissions, the transports, the CLI, the
-> GUI, the role charters — is still unbuilt and is go-quicbaas#804 to #807.
+> `pkg/sdlc` and moves with it.
+>
+> **PR2 (go-quicbaas#804) has landed** too: the store, inheritance, seeding,
+> boot reconcile, resolution at launch, job version refs and the permission
+> family are described as built in the same document. The transports, CLI,
+> GUI and role charters are still unbuilt and are go-quicbaas#805 to #807.
+> Deviations from the signatures below: the seeder is `SeedTenant` plus a
+> per-tenant `Reconcile` that the server calls system tenant first, and
+> `Change` carries a `Stamp{Author, Note, ExpectedVersion}`.
 
 The approved design for making the Software Factory's prompts editable data
 instead of Go constants, and for putting the whole feature — engine, SDLC
@@ -78,7 +84,7 @@ Two sets, each owned by the package that consumes it (both import the generic `p
 1. **Generic package `pkg/orchestration/prompts`**: spec registry, validator, renderer, record/store, resolver, seeder. Owners register a `SetSpec` from `init()`; markers such as `SDLC-STOP:` are declared by sdlc from its own `turn.go` constants, so the validator learns them by registration.
 2. **Templating = `${name}` substitution against a per-prompt declared variable list.** `text/template` is unused in the repo and would let user-edited markdown carry `{{if}}/{{range}}` that cannot be validated; loops, plurals, fenced logs, redaction, renumbered comments and every JSON parser stay in Go as thin assemblers over the set.
 3. **One validator, two call sites**: at registration (embedded default; failure panics in `init` like `RegisterJobRunner`) and at `Store.Save`. Rules: non-blank; every `${x}` declared; every required variable present; every marker literal present. The typed error names the marker/placeholder.
-4. **One record per (tenant, project|"", set, name)** with `Content`, `ContentHash`, `Version`, `FollowParent`, bounded inline `Revisions` (`MaxRevisions = 20`). Concurrency = the `UpdateDelivery` idiom (`SaveWithCondition` + `ConditionVersion` → typed `VersionConflictError`, `pkg/sdlc/store.go:248-273`). Rollback and reset are new revisions; history is append-only. System scope = the tenant-wide record under `qrdbsdk.SystemTenantID`; only the boot reconciler writes it (transports refuse system-scope writes).
+4. **One record per (tenant, project|"", set, name)** with `Content`, `ContentHash`, `Version`, `FollowParent`, bounded inline `Revisions` (`MaxRevisions = 20`). Concurrency is decided by the store, not by a read before the write: a create is `PutIfAbsent` and an edit is `CompareAndSwap` against the exact bytes read, both from `qrdbsdk.AtomicKVStore`; a lost race is a typed `VersionConflictError`, and a store without those verbs is refused (`ErrGuardedWriteUnsupported`). The DAO's `SaveWithCondition` is a read followed by a write and is not used. Rollback and reset are new revisions; history is append-only. System scope = the tenant-wide record under `qrdbsdk.SystemTenantID`; only the boot reconciler writes it (transports refuse system-scope writes).
 5. **Resolution once per job in `launchJob`** (`pkg/orchestration/job_envelope.go:69-140`, beside runner/project/workflow/hooks) via an optional runner interface `PromptSetProvider{PromptSet() SetKind}`; the `ResolvedSet` rides `JobRunConfig.Prompts` → `JobRun.Prompts` → `JobContext.Prompts`; `JobStatus.Prompts []VersionRef` is persisted and audited (`prompts:resolved`). Resolve failure refuses the launch. Nil store (no qrdb) resolves to embedded.
 6. **`AgentRoleSpec.SystemPrompt` retired in PR4**: read at one site (control_loop.go:479); an unversioned, unvalidated, unpermissioned back door around the store. Role charters come from the workflow set; the loader refuses `system_prompt` with a typed error naming the store.
 7. **Seeding = tenant-create step 10** (`pkg/iam/tenant.go:298-315` after `SeedBuiltInRoles`, same rollback chain, idempotent). **Boot reconcile** (`pkg/server/prompt_reconcile.go`, mirrors `role_reconcile.go`): rewrite the system set when the embedded hash changed (revision authored `build <version.GitCommit>`), seed-if-absent for existing tenants, never touch a record with `follow_parent=false`.

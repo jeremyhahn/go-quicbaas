@@ -232,8 +232,8 @@ describe('AuthClient', () => {
       mockTransport.post.mockResolvedValueOnce({});
       await client.logout();
 
-      expect(mockTransport.post).toHaveBeenLastCalledWith('/api/v1/auth/logout', {
-        access_token: 'jwt-token',
+      expect(mockTransport.post).toHaveBeenLastCalledWith('/api/v1/iam/logout', null, {
+        headers: { Authorization: 'Bearer jwt-token' },
       });
       expect(mockTransport.clearAuthToken).toHaveBeenCalled();
     });
@@ -274,7 +274,7 @@ describe('AuthClient', () => {
 
       const result = await client.refreshToken('old-refresh-token');
 
-      expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/auth/refresh', {
+      expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/iam/refresh', {
         refresh_token: 'old-refresh-token',
       });
       expect(mockTransport.setAuthToken).toHaveBeenCalledWith('new-access-token', 'new-refresh-token');
@@ -366,8 +366,8 @@ describe('AuthClient', () => {
 
       const result = await client.validateToken('valid-jwt-token');
 
-      expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/auth/validate', {
-        access_token: 'valid-jwt-token',
+      expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/iam/validate', null, {
+        headers: { Authorization: 'Bearer valid-jwt-token' },
       });
       expect(result.valid).toBe(true);
       expect(result.userId).toBe('user-123');
@@ -376,6 +376,14 @@ describe('AuthClient', () => {
       expect(result.roles).toEqual(['admin', 'user']);
       expect(result.permissions).toEqual(['read', 'write', 'delete']);
       expect(result.sessionId).toBe('session-456');
+    });
+
+    it('should report valid:false from a 200 {"valid":false} body', async () => {
+      mockTransport.post.mockResolvedValueOnce({ valid: false });
+
+      const result = await client.validateToken('dead-token');
+
+      expect(result.valid).toBe(false);
     });
 
     it('should throw ValidationError for empty token', async () => {

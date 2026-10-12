@@ -644,15 +644,15 @@ func classifyTurnOutcome(turn AgentTurn) TurnOutcome {
 // with LastIndex, so text placed after it would let a worker's own reply
 // declare the condition its task is parked under — the one thing a worker
 // must not be able to say about itself.
-func TurnParkReason(verdict TurnVerdict, turn AgentTurn) (string, error) {
+func TurnParkReason(set prompts.Renderer, verdict TurnVerdict, turn AgentTurn) (string, error) {
 	workerReply := ""
 	if reply := strings.TrimSpace(turn.Capped().Reply); reply != "" {
-		workerReply = "\n\n" + sdlcPrompts.MustRender("blocked_comment_worker_said", prompts.Vars{
+		workerReply = "\n\n" + set.MustRender("blocked_comment_worker_said", prompts.Vars{
 			"reply": defuseUnblockMarker(reply),
 		})
 	}
 	return ComposeBlockedReason(UnblockCondition{Kind: verdict.Condition},
-		sdlcPrompts.MustRender("blocked_comment", prompts.Vars{
+		set.MustRender("blocked_comment", prompts.Vars{
 			"headline":     verdict.Headline,
 			"worker_reply": workerReply,
 		}))

@@ -9274,7 +9274,7 @@ func TestBuildDecompositionPrompt_WithCapabilities(t *testing.T) {
 		},
 	}
 
-	prompt := buildDecompositionPrompt("analyze the codebase", []string{"proj-1"}, backend)
+	prompt := buildDecompositionPrompt(workflowPrompts, "analyze the codebase", []string{"proj-1"}, backend)
 	if prompt == "" {
 		t.Fatal("expected non-empty prompt")
 	}

@@ -1108,8 +1108,27 @@ async function performRenewal(
  * the SDK token factory's source of truth (see sdkClient.ts): a long-lived tab
  * whose 15-minute access token expires mid-session transparently obtains a new
  * one from the refresh token instead of silently 401-ing.
+ *
+ * Storage is adopted BEFORE the token is read, for the same reason
+ * refreshAccessToken does it: storage is shared with every sibling tab, and the
+ * credential in it may be one this tab has not reconciled yet. A store snapshots
+ * its scope before awaiting its SDK call, and this function runs inside that
+ * call. Without the reconcile, a sibling's fresh login was attached as the
+ * bearer while the scope still named this tab's old session, so the response
+ * committed under a session that never issued it (go-quicbaas#369). With it,
+ * the scope has already moved by the time the response lands, and the store's
+ * own `scope !== currentScope()` check discards it. A sibling's renewal of the
+ * same login (same sid) does not move the generation, so it costs nothing.
+ *
+ * This makes the reconcile at refreshAccessToken's entry redundant on this path
+ * but not wrong: the second call finds a matching fingerprint and returns. It
+ * stays, because refreshAccessToken must hold on its own for the callers that
+ * reach it directly. validateSession's reconcile after
+ * `await getValidAccessToken()` stays too: it catches a credential a sibling
+ * wrote during that await.
  */
 export async function getValidAccessToken(): Promise<string> {
+  reconcileSessionIdentity();
   const token = readAuthToken();
   if (!token) return '';
   const remaining = secondsUntilExpiry(token);

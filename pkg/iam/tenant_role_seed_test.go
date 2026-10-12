@@ -27,6 +27,8 @@ type recordingRoleSeeder struct {
 	err    error
 }
 
+func (s *recordingRoleSeeder) DeleteBuiltInRoles(context.Context, string) error { return nil }
+
 func (s *recordingRoleSeeder) SeedBuiltInRoles(_ context.Context, tenantID string) error {
 	s.seeded = append(s.seeded, tenantID)
 	return s.err

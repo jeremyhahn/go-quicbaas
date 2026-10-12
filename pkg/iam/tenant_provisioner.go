@@ -80,3 +80,16 @@ func (m *DefaultTenantManager) SetRoleSeeder(s TenantRoleSeeder) {
 func (m *DefaultTenantManager) RoleSeeder() TenantRoleSeeder {
 	return m.roleSeeder
 }
+
+// SetPromptSeeder wires the seeder that copies the system prompt set into
+// each newly created tenant. When set, CreateTenant seeds the prompts after
+// the built-in roles and rolls the whole creation back if seeding fails. Call
+// during server init, before the manager is shared.
+func (m *DefaultTenantManager) SetPromptSeeder(s TenantPromptSeeder) {
+	m.promptSeeder = s
+}
+
+// PromptSeeder returns the configured prompt seeder, or nil.
+func (m *DefaultTenantManager) PromptSeeder() TenantPromptSeeder {
+	return m.promptSeeder
+}

@@ -151,6 +151,17 @@ const (
 	AgentsRead  qrdbsdk.Permission = "agents:read"
 	AgentsWrite qrdbsdk.Permission = "agents:write"
 
+	// The prompt store (pkg/orchestration/prompts): a tenant's own and its
+	// projects' edits to the prompt sets every factory job resolves at launch
+	// (go-quicbaas#804). Reading and writing are Admin and Operator — tuning
+	// what an agent is told is day-to-day operation, and the store refuses a
+	// body that would break the engine's parsing. History is also the
+	// Auditor's: who changed which words, and when, is oversight evidence.
+	// The system set is written only by the boot reconciler, never by a verb.
+	PromptsRead    qrdbsdk.Permission = "prompts:read"
+	PromptsWrite   qrdbsdk.Permission = "prompts:write"
+	PromptsHistory qrdbsdk.Permission = "prompts:history"
+
 	// CostSettingsWrite ("cost_settings:write") authorizes REPLACING a
 	// tenant's runtime cost settings: the electricity rate and per-engine
 	// device draws its local inference is costed from (go-quicbaas#1058).
@@ -545,6 +556,13 @@ var contributions = []contribution{
 	// module governance.
 	{permission: AgentsRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	{permission: AgentsWrite, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	// The prompt store. Tenant-scoped: a tenant edits its own prompts and
+	// never another's. Revision history is oversight evidence, so the Auditor
+	// reads it beside Admin and Operator. No key material, no module
+	// governance.
+	{permission: PromptsRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: PromptsWrite, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: PromptsHistory, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator, qrdbsdk.PermissionRoleAuditor}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	// The worker image refresh. Cross-tenant, so only a system-tenant identity
 	// holding the role exercises either. Neither touches key material or
 	// module governance: outside the Security Officer's duties.

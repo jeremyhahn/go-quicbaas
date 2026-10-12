@@ -1543,7 +1543,7 @@ bound (early boot). The same two fields are carried by the gRPC
 `FinishLoginResponse` (fields 5 and 6), and by the QUIC and MCP responses
 (flattened as `refreshToken` / `refreshExpiresAt`).
 
-#### `POST /api/v1/auth/refresh` — renewal (public)
+#### `POST /api/v1/iam/refresh` — renewal (public)
 
 The credential is itself the authentication, so the route is public. An
 optional `DPoP` header carries the RFC 9449 proof.
@@ -1573,7 +1573,7 @@ optional `DPoP` header carries the RFC 9449 proof.
 
 The OAuth2 grant is for registered clients (it authenticates `client_id` /
 `client_secret`). It rotates too. SPA and CLI sessions are **not** OAuth
-clients and use `/api/v1/auth/refresh`.
+clients and use `/api/v1/iam/refresh`.
 
 ### Client behaviour
 

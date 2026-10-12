@@ -336,6 +336,19 @@ type outcomeReport struct {
 	// delivery is the attempt's branch and pull request, nil when there is
 	// none.
 	delivery *Delivery
+
+	// prompts is the job's resolved prompt set, nil when the comment is
+	// posted with no job in scope (the conclusion seam), which renders the
+	// build's defaults.
+	prompts prompts.Renderer
+}
+
+// renderer is the prompt set the comment renders from.
+func (r outcomeReport) renderer() prompts.Renderer {
+	if r.prompts == nil {
+		return sdlcPrompts
+	}
+	return r.prompts
 }
 
 // renderOutcome renders one outcome comment.
@@ -349,9 +362,10 @@ func renderOutcome(r outcomeReport) string {
 		spec = outcomeSpecs[OutcomeBlocked]
 	}
 	condition, detail, conditioned := blockedCondition(r.message)
+	set := r.renderer()
 
 	evidence := ""
-	if quoted := outcomeEvidence(detail, spec); quoted != "" {
+	if quoted := outcomeEvidence(set, detail, spec); quoted != "" {
 		evidence = quoted + "\n"
 	}
 	var b strings.Builder
@@ -379,7 +393,7 @@ func renderOutcome(r outcomeReport) string {
 	}
 	if conditioned {
 		b.WriteString("**Unblocks when:** " + condition.Describe() + "\n")
-		b.WriteString("**Cleared by:** " + blockedClearedBy(condition.Kind) + "\n")
+		b.WriteString("**Cleared by:** " + blockedClearedBy(set, condition.Kind) + "\n")
 	}
 	if r.task != nil {
 		b.WriteString("**Attempt:** " + attemptLine(r.task) + "\n")
@@ -409,13 +423,13 @@ func renderOutcome(r outcomeReport) string {
 	if r.task != nil {
 		taskID = r.task.ID
 	}
-	return sdlcPrompts.MustRender("outcome_comment", prompts.Vars{
+	return set.MustRender("outcome_comment", prompts.Vars{
 		"headline": spec.headline,
 		"kind":     string(r.kind),
 		"meaning":  spec.meaning,
 		"evidence": evidence,
 		"facts":    b.String(),
-		"remedy":   outcomeRemedy(spec, r.task, condition, conditioned),
+		"remedy":   outcomeRemedy(set, spec, r.task, condition, conditioned),
 		"marker":   blockedMarker(taskID, r.attempt, r.kind),
 	}) + "\n"
 }
@@ -426,14 +440,14 @@ func renderOutcome(r outcomeReport) string {
 // A TERMINAL OUTCOME ALWAYS QUOTES SOMETHING, even if only that nothing was
 // recorded: a stop with no stated reason is itself the thing the reader has to
 // know. A readmission is not a stop and has nothing to explain.
-func outcomeEvidence(detail string, spec outcomeSpec) string {
+func outcomeEvidence(set prompts.Renderer, detail string, spec outcomeSpec) string {
 	if detail != "" {
 		return quoteReason(detail)
 	}
 	if !spec.terminal {
 		return ""
 	}
-	return quoteReason(sdlcPrompts.MustRender("outcome_no_reason_recorded", nil))
+	return quoteReason(set.MustRender("outcome_no_reason_recorded", nil))
 }
 
 // outcomeRemedy renders what the reader can do about the outcome.
@@ -452,23 +466,23 @@ func outcomeEvidence(detail string, spec outcomeSpec) string {
 //     condition is);
 //   - a machine-checkable condition needs no person at all: the sweep
 //     re-examines it and returns the task itself.
-func outcomeRemedy(spec outcomeSpec, task *orchestration.Task, condition UnblockCondition, conditioned bool) string {
+func outcomeRemedy(set prompts.Renderer, spec outcomeSpec, task *orchestration.Task, condition UnblockCondition, conditioned bool) string {
 	argument := ""
 	if task != nil {
 		argument = " " + task.ID
 	}
-	readmit := sdlcPrompts.MustRender("outcome_readmit_action", prompts.Vars{"task_argument": argument})
+	readmit := set.MustRender("outcome_readmit_action", prompts.Vars{"task_argument": argument})
 	switch {
 	case !spec.terminal:
-		return sdlcPrompts.MustRender("outcome_remedy_readmitted", nil)
+		return set.MustRender("outcome_remedy_readmitted", nil)
 	case !spec.resumable:
-		return sdlcPrompts.MustRender("outcome_remedy_failed", nil)
+		return set.MustRender("outcome_remedy_failed", nil)
 	case task != nil && task.BudgetExhausted():
-		return sdlcPrompts.MustRender("outcome_remedy_budget_spent", prompts.Vars{"readmit": readmit})
+		return set.MustRender("outcome_remedy_budget_spent", prompts.Vars{"readmit": readmit})
 	case conditioned && condition.Kind.MachineCheckable():
-		return sdlcPrompts.MustRender("outcome_remedy_self_clearing", nil)
+		return set.MustRender("outcome_remedy_self_clearing", nil)
 	default:
-		return sdlcPrompts.MustRender("outcome_remedy_resume", prompts.Vars{"readmit": readmit})
+		return set.MustRender("outcome_remedy_resume", prompts.Vars{"readmit": readmit})
 	}
 }
 

@@ -1481,7 +1481,7 @@ func TestBuildDecompositionPrompt(t *testing.T) {
 	t.Parallel()
 
 	t.Run("with projects", func(t *testing.T) {
-		prompt := buildDecompositionPrompt("build API", []string{"proj-1", "proj-2"})
+		prompt := buildDecompositionPrompt(workflowPrompts, "build API", []string{"proj-1", "proj-2"})
 		if prompt == "" {
 			t.Fatal("expected non-empty prompt")
 		}
@@ -1494,7 +1494,7 @@ func TestBuildDecompositionPrompt(t *testing.T) {
 	})
 
 	t.Run("without projects", func(t *testing.T) {
-		prompt := buildDecompositionPrompt("build API", nil)
+		prompt := buildDecompositionPrompt(workflowPrompts, "build API", nil)
 		if prompt == "" {
 			t.Fatal("expected non-empty prompt")
 		}

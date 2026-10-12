@@ -493,70 +493,36 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 
 // doJSONRequest executes a JSON HTTP request and decodes the response into the provided result.
 func (t *Transport) doJSONRequest(ctx context.Context, httpMethod, endpoint string, reqBody interface{}, result interface{}) error {
-	if t.closed.Load() {
-		return errors.NewConnection("rest.doJSONRequest", "transport is closed")
-	}
+	return t.doJSONRequestWithHeaders(ctx, httpMethod, endpoint, reqBody, result, nil)
+}
 
-	// Construct URL with base path prefix if present
-	url := t.baseURL + t.basePath + endpoint
-
-	// Encode request body
-	var body io.Reader
+// doJSONRequestWithHeaders is doJSONRequest with per-request headers that
+// overlay the transport's configured headers for this request only. Use it
+// instead of SetHeader when a single call needs a different value (e.g. a
+// bearer other than the caller's): SetHeader mutates state every concurrent
+// request shares.
+func (t *Transport) doJSONRequestWithHeaders(ctx context.Context, httpMethod, endpoint string, reqBody interface{}, result interface{}, reqHeaders map[string]string) error {
+	var body []byte
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
 		if err != nil {
 			return errors.Wrap(err, errors.CodeInvalidInput, "rest.doJSONRequest",
 				"failed to encode request body")
 		}
-		body = bytes.NewReader(data)
+		body = data
 	}
 
-	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, httpMethod, url, body)
+	resp, err := t.doRawRequest(ctx, httpMethod, endpoint, body, reqHeaders)
 	if err != nil {
-		return errors.Wrap(err, errors.CodeInternal, "rest.doJSONRequest",
-			"failed to create HTTP request")
+		return err
 	}
 
-	// Set headers
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	t.mu.RLock()
-	for k, v := range t.headers {
-		httpReq.Header.Set(k, v)
-	}
-	t.mu.RUnlock()
-
-	// Execute request
-	resp, err := t.client.Do(httpReq)
-	if err != nil {
-		return t.convertHTTPError(err, "rest.doJSONRequest")
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return errors.Wrap(err, errors.CodeInternal, "rest.doJSONRequest",
-			"failed to read response body")
-	}
-
-	// Check for error status codes
-	if resp.StatusCode >= 400 {
-		return t.parseErrorResponse(resp.StatusCode, respBody)
-	}
-
-	// Decode success response
-	if result != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, result); err != nil {
+	if result != nil && len(resp.Body) > 0 {
+		if err := json.Unmarshal(resp.Body, result); err != nil {
 			return errors.Wrap(err, errors.CodeInternal, "rest.doJSONRequest",
 				"failed to decode response")
 		}
 	}
-
-	// Update health timestamp on success
-	t.lastHealth.Store(time.Now().UnixNano())
 
 	return nil
 }
@@ -1121,11 +1087,11 @@ func (t *Transport) mapAuthMethod(method string) (string, string) {
 	case "Login":
 		return "/api/v1/auth/login", http.MethodPost
 	case "Logout":
-		return "/api/v1/auth/logout", http.MethodPost
+		return authLogoutPath, http.MethodPost
 	case "RefreshToken":
-		return "/api/v1/auth/refresh", http.MethodPost
+		return authRefreshPath, http.MethodPost
 	case "ValidateToken":
-		return "/api/v1/auth/validate", http.MethodPost
+		return authValidatePath, http.MethodPost
 	case "ChangePassword":
 		return "/api/v1/auth/password", http.MethodPut
 	case "ResetPassword":

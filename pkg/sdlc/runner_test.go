@@ -1187,7 +1187,7 @@ func TestRunner_DeliversTheIssueThroughExactlyOneSession(t *testing.T) {
 	}
 
 	spawn := rig.agents.spawns[0]
-	if spawn.SystemPrompt != WorkerCharter() {
+	if spawn.SystemPrompt != WorkerCharter(sdlcPrompts) {
 		t.Error("the worker was spawned without the module charter as its system prompt")
 	}
 	if !spawn.Persistent {

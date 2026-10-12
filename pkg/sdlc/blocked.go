@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -131,8 +132,9 @@ func blockedLabelKey(kind orchestration.TaskBlockKind) string {
 // meaning, the label and the remedy all come from the one table in outcome.go
 // that every ending is rendered from, so the escalation comment and the
 // exhaustion comment are the same renderer with different rows.
-func renderBlocked(binding *ProjectBinding, task *orchestration.Task, attempt int, reason orchestration.BlockReason, delivery *Delivery) string {
+func renderBlocked(set prompts.Renderer, binding *ProjectBinding, task *orchestration.Task, attempt int, reason orchestration.BlockReason, delivery *Delivery) string {
 	return renderOutcome(outcomeReport{
+		prompts: set,
 		binding: binding, task: task, attempt: attempt,
 		kind:    blockedOutcome(reason.Kind),
 		message: reason.Message, iterations: reason.Iterations, delivery: delivery,
@@ -211,11 +213,11 @@ func blockedCondition(message string) (UnblockCondition, string, bool) {
 }
 
 // blockedClearedBy names what returns the task to the queue.
-func blockedClearedBy(kind UnblockKind) string {
+func blockedClearedBy(set prompts.Renderer, kind UnblockKind) string {
 	if awaiting := kind.Awaiting(); awaiting != "" {
 		return awaiting
 	}
-	return sdlcPrompts.MustRender("outcome_cleared_by_sweep", nil)
+	return set.MustRender("outcome_cleared_by_sweep", nil)
 }
 
 func quoteReason(reason string) string {

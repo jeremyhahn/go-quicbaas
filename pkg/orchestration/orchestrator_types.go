@@ -18,6 +18,8 @@ import (
 	"errors"
 	"slices"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -1162,6 +1164,11 @@ type DecomposeTaskRequest struct {
 	Task       string   `json:"task"`
 	ProjectIDs []string `json:"project_ids,omitempty"`
 	UseRAG     bool     `json:"use_rag,omitempty"`
+
+	// Prompts is the launching job's resolved prompt set, which the
+	// decomposition is worded by. It never crosses a transport: a request
+	// that arrives without one is worded by the build's defaults.
+	Prompts *prompts.ResolvedSet `json:"-"`
 }
 
 // DecomposeTaskResponse contains the result of task decomposition.
@@ -1646,6 +1653,12 @@ type JobStatus struct {
 	// recorded by JobRun.Verify and persists with the status, so a failed
 	// job still says which command refused it.
 	Verification []ValidationResult `json:"verification,omitempty"`
+
+	// Prompts names the exact version of every prompt the job renders from:
+	// which scope answered, at which version, with which content hash. It is
+	// resolved once at launch, so it holds for the whole run however the
+	// store is edited meanwhile. Empty for a runner that renders none.
+	Prompts []prompts.VersionRef `json:"prompts,omitempty"`
 }
 
 // JobFilter narrows a job listing.

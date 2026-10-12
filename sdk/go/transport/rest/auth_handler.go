@@ -31,6 +31,15 @@ const (
 	authServicePrefix = "quicbaas.Auth"
 )
 
+// Session-verb routes. quicbaas serves these under its own /api/v1/iam/
+// namespace; /api/v1/auth/ belongs to the composed xkms node and redeems
+// against xkms's token store, not quicbaas's (go-quicbaas#259).
+const (
+	authLogoutPath   = "/api/v1/iam/logout"
+	authRefreshPath  = "/api/v1/iam/refresh"
+	authValidatePath = "/api/v1/iam/validate"
+)
+
 // isAuthService checks if the service name is an Auth service.
 func isAuthService(svc string) bool {
 	return strings.HasPrefix(svc, authServicePrefix)
@@ -71,11 +80,6 @@ type authValidateTokenResponse struct {
 	IsRevoked bool     `json:"is_revoked"`
 }
 
-// logoutRequest is the internal request type for logout.
-type authLogoutRequest struct {
-	AccessToken string `json:"access_token"`
-}
-
 // handleRequest routes Auth requests to the appropriate handler based on method name.
 func (h *authRESTHandler) handleRequest(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
 	switch method {
@@ -110,33 +114,42 @@ func (h *authRESTHandler) handleLogin(_ context.Context, _ interface{}) (interfa
 
 // handleLogout handles Logout requests.
 func (h *authRESTHandler) handleLogout(ctx context.Context, req interface{}) (interface{}, error) {
-	var accessToken string
-
-	switch r := req.(type) {
-	case map[string]interface{}:
-		accessToken = getString(r, "access_token")
-	default:
-		reqMap, err := toMap(req)
-		if err != nil {
-			return nil, errors.NewInvalidInput("authRESTHandler.handleLogout",
-				"invalid request type")
-		}
-		accessToken = getString(reqMap, "access_token")
+	accessToken, err := accessTokenFromRequest("authRESTHandler.handleLogout", req)
+	if err != nil {
+		return nil, err
 	}
 
-	logoutReq := authLogoutRequest{
-		AccessToken: accessToken,
-	}
-
-	// Make the HTTP request
+	// The route is session-authenticated: the server's middleware reads the
+	// bearer from the Authorization header before the handler runs, so the
+	// token travels there, not in the body.
 	var resp map[string]interface{}
-	err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/auth/logout", logoutReq, &resp)
+	err = h.transport.doJSONRequestWithHeaders(ctx, http.MethodPost, authLogoutPath, nil, &resp,
+		bearerHeader(accessToken))
 	if err != nil {
 		return nil, err
 	}
 
 	// Return nil to indicate success (matches gRPC handler behavior)
 	return nil, nil
+}
+
+// accessTokenFromRequest extracts the "access_token" field from a logout or
+// validate request, which callers pass either as a map or as a struct.
+func accessTokenFromRequest(op string, req interface{}) (string, error) {
+	reqMap, ok := req.(map[string]interface{})
+	if !ok {
+		var err error
+		reqMap, err = toMap(req)
+		if err != nil {
+			return "", errors.NewInvalidInput(op, "invalid request type")
+		}
+	}
+	return getString(reqMap, "access_token"), nil
+}
+
+// bearerHeader returns the per-request Authorization header for token.
+func bearerHeader(token string) map[string]string {
+	return map[string]string{"Authorization": "Bearer " + token}
 }
 
 // handleRefreshToken handles RefreshToken requests.
@@ -165,7 +178,7 @@ func (h *authRESTHandler) handleRefreshToken(ctx context.Context, req interface{
 
 	// Make the HTTP request
 	var resp authLoginResponse
-	err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/auth/refresh", refreshReq, &resp)
+	err := h.transport.doJSONRequest(ctx, http.MethodPost, authRefreshPath, refreshReq, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -200,27 +213,18 @@ func refreshTokenFromMap(m map[string]interface{}) string {
 
 // handleValidateToken handles ValidateToken requests.
 func (h *authRESTHandler) handleValidateToken(ctx context.Context, req interface{}) (interface{}, error) {
-	var accessToken string
-
-	switch r := req.(type) {
-	case map[string]interface{}:
-		accessToken = getString(r, "access_token")
-	default:
-		reqMap, err := toMap(req)
-		if err != nil {
-			return nil, errors.NewInvalidInput("authRESTHandler.handleValidateToken",
-				"invalid request type")
-		}
-		accessToken = getString(reqMap, "access_token")
+	accessToken, err := accessTokenFromRequest("authRESTHandler.handleValidateToken", req)
+	if err != nil {
+		return nil, err
 	}
 
-	// Set the Authorization header for validate requests
-	h.transport.SetHeader("Authorization", "Bearer "+accessToken)
-	defer h.transport.SetHeader("Authorization", "")
-
-	// Make the HTTP request
+	// The bearer is a per-request header: the transport's shared headers
+	// carry the caller's own credential and must not be touched. The server
+	// answers 200 {"valid":false} for a rejected token, so Valid comes from
+	// the body, not the status code.
 	var resp authValidateTokenResponse
-	err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/auth/validate", nil, &resp)
+	err = h.transport.doJSONRequestWithHeaders(ctx, http.MethodPost, authValidatePath, nil, &resp,
+		bearerHeader(accessToken))
 	if err != nil {
 		return nil, err
 	}

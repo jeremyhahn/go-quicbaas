@@ -215,7 +215,7 @@ func (v *ReviewValidator) round(ctx context.Context, job *orchestration.JobConte
 	case decision.Reason == GateBlockedChangesRequested:
 		// Only a binding verdict sends the work back, so only binding
 		// findings are the worker's to answer.
-		result.Message = findingsFor(advisory.Binding(delivery.Reviews), delivery.HeadSHA)
+		result.Message = findingsFor(contextPrompts(job), advisory.Binding(delivery.Reviews), delivery.HeadSHA)
 		return result, true, nil
 	case decision.Reason == GateBlockedChecksFailed:
 		return v.checksFailed(ctx, job, binding, forge, repo, delivery, checks, result)
@@ -287,7 +287,7 @@ func (v *ReviewValidator) checksFailed(
 
 	switch verdict := triage.Aggregate(); verdict {
 	case cifault.VerdictGenuine:
-		result.Message = failure.Findings(triage, logs, v.logBytes)
+		result.Message = failure.Findings(contextPrompts(job), triage, logs, v.logBytes)
 		return result, true, nil
 	case cifault.VerdictHostDefect:
 		return result, false, &CIHostDefectError{

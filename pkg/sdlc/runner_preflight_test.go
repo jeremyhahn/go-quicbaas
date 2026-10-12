@@ -329,7 +329,7 @@ func TestRunner_AQuestionParkIsStillChargedToTheWork(t *testing.T) {
 // have the crash — not the fault — spend the task's attempt.
 func TestRunner_AResumedWorkspaceParkKeepsItsAttribution(t *testing.T) {
 	rig := newRunnerRig(t)
-	reason, err := WorkspaceUnfitParkReason(&WorkspaceUnfitError{
+	reason, err := WorkspaceUnfitParkReason(sdlcPrompts, &WorkspaceUnfitError{
 		TaskID: testTask, Repo: theCompanyRepo.Name,
 		Dir: "/workspace/automatethethings", Reason: "is not a git repository",
 	})

@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -115,6 +117,24 @@ type JobRunner interface {
 // restarts. A runner that does not implement it restarts at States()[0].
 type JobResumer interface {
 	ResumeState(interrupted JobState) JobState
+}
+
+// PromptSetProvider is the optional half of a runner that renders its
+// sessions' instructions from a prompt set. The envelope resolves that set
+// once, at launch, for the job's tenant and project, and the run renders from
+// it for its whole life. A runner that does not implement it is handed no set.
+type PromptSetProvider interface {
+	PromptSet() prompts.SetKind
+}
+
+// runnerPromptSet is the set a runner renders from, or empty when it names
+// none.
+func runnerPromptSet(runner JobRunner) prompts.SetKind {
+	provider, ok := runner.(PromptSetProvider)
+	if !ok || provider == nil {
+		return ""
+	}
+	return provider.PromptSet()
 }
 
 // JobLeasePolicy is the optional half of a runner that says how the ENVELOPE
@@ -443,6 +463,10 @@ type workflowRunner struct{}
 
 // Name implements JobRunner.
 func (workflowRunner) Name() string { return JobRunnerWorkflow }
+
+// PromptSet implements PromptSetProvider: the lead, its workers and its
+// reviewer are instructed from the workflow set.
+func (workflowRunner) PromptSet() prompts.SetKind { return SetWorkflow }
 
 // States implements JobRunner: the lead-driven state sequence.
 func (workflowRunner) States() []JobStateSpec {

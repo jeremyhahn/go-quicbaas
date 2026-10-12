@@ -555,3 +555,32 @@ func TestPlacement_PermissionsAreRegisteredWithTheRightRolePlacement(t *testing.
 	assert.NotContainsf(t, contributed[PlacementManage].roles, qrdbsdk.PermissionRoleOperator,
 		"placement:manage reshapes the node pool and must not be Operator's")
 }
+
+// TestPrompts_PermissionsAreRegisteredWithTheRightRolePlacement pins the
+// prompt store's verbs (go-quicbaas#804): all three tenant-scoped, Admin and
+// Operator hold each, the Auditor reads history and nothing else, and none is
+// a Security Officer duty or reachable through a family wildcard.
+func TestPrompts_PermissionsAreRegisteredWithTheRightRolePlacement(t *testing.T) {
+	contributed := make(map[qrdbsdk.Permission]contribution)
+	for _, c := range contributions {
+		contributed[c.permission] = c
+	}
+	verbs := []qrdbsdk.Permission{PromptsRead, PromptsWrite, PromptsHistory}
+	for _, perm := range verbs {
+		c, ok := contributed[perm]
+		require.Truef(t, ok, "%s is not contributed", perm)
+		assert.Equalf(t, dutyOutsideSecurityOfficer, c.duty, "%s carries a governance or crypto duty", perm)
+		assert.Equalf(t, scopeSelf, c.scope, "%s must reach the caller's own tenant only", perm)
+		assert.NotContainsf(t, c.roles, qrdbsdk.PermissionRoleSO, "%s granted to the Security Officer", perm)
+		assert.Contains(t, c.roles, qrdbsdk.PermissionRoleAdmin, perm)
+		assert.Contains(t, c.roles, qrdbsdk.PermissionRoleOperator, perm)
+		assert.Contains(t, All(), perm)
+	}
+	assert.Contains(t, contributed[PromptsHistory].roles, qrdbsdk.PermissionRoleAuditor)
+	assert.NotContainsf(t, contributed[PromptsRead].roles, qrdbsdk.PermissionRoleAuditor,
+		"the Auditor reads revision history, not the live bodies")
+	assert.NotContainsf(t, contributed[PromptsWrite].roles, qrdbsdk.PermissionRoleAuditor,
+		"an oversight role must never edit what it oversees")
+	_, wildcard := contributed["prompts:*"]
+	assert.False(t, wildcard, "prompts:* must not be contributed")
+}

@@ -219,6 +219,23 @@ describe('HttpTransport', () => {
       );
     });
 
+    it('should let an explicit per-request Authorization override the auth token', async () => {
+      transport.setAuthToken('my-token');
+      global.fetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Map([['Content-Type', 'application/json']]),
+        text: () => Promise.resolve('{}'),
+      });
+
+      await transport.post('/test', null, { headers: { Authorization: 'Bearer other-token' } });
+      expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer other-token');
+
+      // The override is per-request: the next call carries our own token again.
+      await transport.get('/test');
+      expect(global.fetch.mock.calls[1][1].headers.Authorization).toBe('Bearer my-token');
+    });
+
     it('should build URL with query parameters', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,

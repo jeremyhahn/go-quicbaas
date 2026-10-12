@@ -19,6 +19,24 @@ import { requiredString, required } from '../utils/validation.js';
 const AUTH_API_PATH = '/api/v1/auth';
 
 /**
+ * Session verbs (logout, refresh, validate) are quicbaas's own and live under
+ * /api/v1/iam; /api/v1/auth belongs to the composed xkms node (go-quicbaas#259).
+ * @private
+ */
+const SESSION_API_PATH = '/api/v1/iam';
+
+/**
+ * Builds the per-request Authorization header for a session-authenticated
+ * route, whose middleware reads the bearer before the handler runs.
+ * @param {string} token - Access token
+ * @returns {Object} Headers object
+ * @private
+ */
+function bearerHeader(token) {
+  return { Authorization: `Bearer ${token}` };
+}
+
+/**
  * MFA type enumeration.
  * @readonly
  * @enum {string}
@@ -246,8 +264,8 @@ export class AuthClient {
     const token = this.#accessToken;
 
     if (token) {
-      await this._transport.post(`${AUTH_API_PATH}/logout`, {
-        access_token: token,
+      await this._transport.post(`${SESSION_API_PATH}/logout`, null, {
+        headers: bearerHeader(token),
       });
     }
 
@@ -277,7 +295,7 @@ export class AuthClient {
     requiredString(refreshToken, 'refreshToken');
 
     const response = await this._transport.post(
-      `${AUTH_API_PATH}/refresh`,
+      `${SESSION_API_PATH}/refresh`,
       { refresh_token: refreshToken }
     );
 
@@ -319,10 +337,11 @@ export class AuthClient {
   async validateToken(token) {
     requiredString(token, 'token');
 
-    const response = await this._transport.post(
-      `${AUTH_API_PATH}/validate`,
-      { access_token: token }
-    );
+    // The server answers 200 {"valid":false} for a rejected token, so the
+    // claims' `valid` comes from the body, not the status code.
+    const response = await this._transport.post(`${SESSION_API_PATH}/validate`, null, {
+      headers: bearerHeader(token),
+    });
 
     return this._transformTokenClaims(response);
   }

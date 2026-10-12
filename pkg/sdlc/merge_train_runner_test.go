@@ -25,6 +25,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -51,6 +52,10 @@ type trainRig struct {
 	builder *fakeTrainBuilder
 	root    string
 	queued  int
+
+	// prompts is the set a job is launched with, as the envelope hands it
+	// in; nil renders from the build.
+	prompts *prompts.ResolvedSet
 
 	auditMu sync.Mutex
 	audits  []orchestration.JobAuditEvent
@@ -325,6 +330,7 @@ func (r *trainRig) job(ctx context.Context, start orchestration.JobState) *orche
 		Config:     &orchestration.JobConfig{TenantID: testTenant, ProjectID: testProject},
 		Project:    project,
 		StartState: start,
+		Prompts:    r.prompts,
 		Agents:     r.agents,
 		Logger:     logger.NewAdapter(base),
 		AuditFn: func(eventType, details string) {

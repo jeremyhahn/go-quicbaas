@@ -787,7 +787,7 @@ func (h *Hooks) Blocked(ctx context.Context, job *orchestration.JobContext, reas
 	if err != nil {
 		return err
 	}
-	body := renderBlocked(a.binding, a.task, job.Attempt, reason, delivery)
+	body := renderBlocked(contextPrompts(job), a.binding, a.task, job.Attempt, reason, delivery)
 	if _, err := postWithRetry(ctx, a.forge, a.repo, a.issue, body, h.surfacing); err != nil {
 		return err
 	}

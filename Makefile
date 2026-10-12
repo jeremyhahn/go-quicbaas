@@ -5234,6 +5234,19 @@ coverage-sdlc: ## Generate coverage report for the SDLC module
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-sdlc.out -o $(COVERAGE_DIR)/coverage-sdlc.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-sdlc.out | grep total
 
+.PHONY: test-prompts
+test-prompts: ## Run prompt-set unit tests (registry, store, resolver, seeder)
+	@echo "$(BLUE)Running prompt-set tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/orchestration/prompts/...
+	@echo "$(GREEN)Prompt-set unit tests passed$(NC)"
+
+.PHONY: coverage-prompts
+coverage-prompts: ## Generate coverage report for the prompt-set package
+	@mkdir -p $(COVERAGE_DIR)
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+		-coverprofile=$(COVERAGE_DIR)/coverage-prompts.out -covermode=atomic ./pkg/orchestration/prompts/...
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-prompts.out | grep total
+
 .PHONY: coverage-triage
 coverage-triage: ## Report coverage of the issue-triage sources specifically
 	@mkdir -p $(COVERAGE_DIR)

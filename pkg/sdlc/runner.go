@@ -168,6 +168,11 @@ func (r *Runner) SocketSweep() orchestration.SigningSocketSweep { return r.acces
 // Name implements orchestration.JobRunner.
 func (*Runner) Name() string { return JobRunnerName }
 
+// PromptSet implements orchestration.PromptSetProvider: the worker's charter,
+// its round feedback and every forge comment the job writes come from the
+// sdlc set.
+func (*Runner) PromptSet() prompts.SetKind { return SetSDLC }
+
 // States implements orchestration.JobRunner.
 func (*Runner) States() []orchestration.JobStateSpec { return RunnerStates() }
 
@@ -812,7 +817,7 @@ func (s *runnerRun) prepareWorkspace(ctx context.Context) (orchestration.JobStat
 	if !errors.Is(err, ErrWorkspaceUnfit) {
 		return "", err
 	}
-	reason, composeErr := WorkspaceUnfitParkReason(err)
+	reason, composeErr := WorkspaceUnfitParkReason(jobPrompts(s.job), err)
 	if composeErr != nil {
 		return "", composeErr
 	}
@@ -953,7 +958,7 @@ func (s *runnerRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessi
 		PoolID:       worker.PoolID,
 		Role:         orchestration.AgentRoleCoding,
 		ProjectID:    s.job.Project.ID,
-		SystemPrompt: WorkerCharter(),
+		SystemPrompt: WorkerCharter(jobPrompts(s.job)),
 		PromptAppend: s.attempt.binding.WorkerPromptAppend,
 		Persistent:   true,
 	}
@@ -1228,11 +1233,11 @@ func (s *runnerRun) rollOffAccount(ctx context.Context, refusal accountRefusal) 
 		" in round " + strconv.Itoa(round)
 	if carried.resumed() {
 		s.job.Audit(auditSessionResumed, detail)
-		return s.replaceSession(ctx, accountResumedNote(round, carried.transcript),
+		return s.replaceSession(ctx, accountResumedNote(jobPrompts(s.job), round, carried.transcript),
 			refused+"; the session's conversation is resumed in a new session on another account on the same branch")
 	}
 	s.job.Audit(auditSessionRolled, detail)
-	return s.replaceSession(ctx, accountRolledNote(round),
+	return s.replaceSession(ctx, accountRolledNote(jobPrompts(s.job), round),
 		refused+"; a fresh session is spawned on another account on the same branch")
 }
 
@@ -1273,7 +1278,7 @@ func (s *runnerRun) rollSession(ctx context.Context, class string) (orchestratio
 	s.rolled, s.rolledRound = true, round
 	s.job.Audit(auditSessionRolled, "class="+class+" round="+strconv.Itoa(round)+
 		" session="+s.sessionID+" elapsed="+elapsed.String())
-	return s.replaceSession(ctx, sessionRolledNote(elapsed, round),
+	return s.replaceSession(ctx, sessionRolledNote(jobPrompts(s.job), elapsed, round),
 		"the worker's session ran out of context ("+class+") in round "+strconv.Itoa(round)+
 			"; a fresh session is spawned on the same branch")
 }
@@ -1340,13 +1345,13 @@ func (s *runnerRun) replaceStaleCredential(
 	detail += carried.auditFields()
 	if carried.resumed() {
 		s.job.Audit(auditSessionResumed, detail)
-		return s.replaceSession(ctx, sessionResumedAccountNote(round, carried.transcript),
+		return s.replaceSession(ctx, sessionResumedAccountNote(jobPrompts(s.job), round, carried.transcript),
 			"the worker's pooled provider account was rotated after this session took its credential; "+
 				"the session's conversation is resumed in a new session on the same branch")
 	}
 
 	s.job.Audit(auditSessionRolled, detail)
-	return s.replaceSession(ctx, sessionRolledAccountNote(round),
+	return s.replaceSession(ctx, sessionRolledAccountNote(jobPrompts(s.job), round),
 		"the worker's pooled provider account was rotated after this session took its credential; "+
 			"a fresh session is spawned on the same branch")
 }
@@ -1574,6 +1579,7 @@ func (s *runnerRun) freshContract(ctx context.Context) string {
 	if err == nil {
 		contract, err = IssueContract(IssueContractSpec{
 			Repo: s.attempt.repo, IssueNumber: issue.Number, Title: issue.Title, Body: issue.Body, Comments: comments,
+			Prompts: jobPrompts(s.job),
 		})
 	}
 	if err != nil {
@@ -1597,7 +1603,7 @@ func (s *runnerRun) freshContract(ctx context.Context) string {
 func (s *runnerRun) priorTurnNote() string {
 	var b strings.Builder
 	if last := s.deliveryTurn(); last != nil {
-		b.WriteString(renderPriorTurn(*last))
+		b.WriteString(renderPriorTurn(jobPrompts(s.job), *last))
 	}
 	if s.turnNote != "" {
 		if b.Len() > 0 {
@@ -1619,18 +1625,18 @@ func (s *runnerRun) deliveryTurn() *AgentTurn {
 
 // renderPriorTurn tells this worker what the last attempt at the task said
 // and that it changed no file.
-func renderPriorTurn(turn AgentTurn) string {
+func renderPriorTurn(set prompts.Renderer, turn AgentTurn) string {
 	classification := ""
 	if turn.Outcome != "" {
-		classification = ", " + sdlcPrompts.MustRender("prior_turn_classification", prompts.Vars{
+		classification = ", " + set.MustRender("prior_turn_classification", prompts.Vars{
 			"outcome": string(turn.Outcome),
 		})
 	}
-	account := sdlcPrompts.MustRender("prior_turn_silent", nil)
+	account := set.MustRender("prior_turn_silent", nil)
 	if strings.TrimSpace(turn.Reply) != "" {
-		account = sdlcPrompts.MustRender("prior_turn_said", prompts.Vars{"reply": turn.Reply})
+		account = set.MustRender("prior_turn_said", prompts.Vars{"reply": turn.Reply})
 	}
-	return sdlcPrompts.MustRender("prior_turn", prompts.Vars{
+	return set.MustRender("prior_turn", prompts.Vars{
 		"attempt":        strconv.Itoa(turn.Attempt),
 		"elapsed":        turn.Elapsed.Round(time.Second).String(),
 		"classification": classification,
@@ -1651,13 +1657,13 @@ func (s *runnerRun) repeatedPrompt(prompt string) (string, error) {
 	if last == nil || last.PromptDigest == "" || last.PromptDigest != promptDigest(prompt) {
 		return "", nil
 	}
-	return repeatedPromptReason()
+	return repeatedPromptReason(jobPrompts(s.job))
 }
 
 // silentTurnNote is what the next prompt of this run adds when the last turn
 // answered with nothing.
-func silentTurnNote(elapsed time.Duration) string {
-	return sdlcPrompts.MustRender("silent_turn_note", prompts.Vars{
+func silentTurnNote(set prompts.Renderer, elapsed time.Duration) string {
+	return set.MustRender("silent_turn_note", prompts.Vars{
 		"elapsed": elapsed.Round(time.Second).String(),
 	})
 }
@@ -1665,8 +1671,8 @@ func silentTurnNote(elapsed time.Duration) string {
 // nonAnswerTurnNote is what the re-sent prompt of this run adds when the last
 // reply answered something other than the prompt: how fast it came back, and
 // that the prompt above is still the one to answer.
-func nonAnswerTurnNote(elapsed time.Duration) string {
-	return sdlcPrompts.MustRender("non_answer_turn_note", prompts.Vars{
+func nonAnswerTurnNote(set prompts.Renderer, elapsed time.Duration) string {
+	return set.MustRender("non_answer_turn_note", prompts.Vars{
 		"elapsed": elapsed.Round(time.Millisecond).String(),
 	})
 }
@@ -1674,8 +1680,8 @@ func nonAnswerTurnNote(elapsed time.Duration) string {
 // sessionRolledNote is what the first prompt of a fresh session says about
 // the session it replaced: how long the turn that filled its context took,
 // and in which round.
-func sessionRolledNote(elapsed time.Duration, round int) string {
-	return sdlcPrompts.MustRender("session_rolled_note", prompts.Vars{
+func sessionRolledNote(set prompts.Renderer, elapsed time.Duration, round int) string {
+	return set.MustRender("session_rolled_note", prompts.Vars{
 		"elapsed": elapsed.Round(time.Second).String(),
 		"round":   strconv.Itoa(round),
 	})
@@ -1703,8 +1709,8 @@ func accountRotationEvidence(rotated *orchestration.SessionAccountFreshness) str
 //
 // It carries no elapsed time because there is no failed turn to measure: the
 // replacement happens BEFORE a turn is spent, which is the whole point of it.
-func sessionRolledAccountNote(round int) string {
-	return sdlcPrompts.MustRender("session_rolled_account_note", prompts.Vars{
+func sessionRolledAccountNote(set prompts.Renderer, round int) string {
+	return set.MustRender("session_rolled_account_note", prompts.Vars{
 		"round": strconv.Itoa(round),
 	})
 }
@@ -1713,34 +1719,34 @@ func sessionRolledAccountNote(round int) string {
 // why it is in a new container, and the conversation it continues. A session
 // replaced before it was ever prompted has no conversation, and is told only
 // the first half.
-func sessionResumedAccountNote(round int, transcript *orchestration.ReplayTranscript) string {
-	return resumedNote("session_resumed_account_note", round, transcript)
+func sessionResumedAccountNote(set prompts.Renderer, round int, transcript *orchestration.ReplayTranscript) string {
+	return resumedNote(set, "session_resumed_account_note", round, transcript)
 }
 
 // accountResumedNote is what the first prompt of a session that CONTINUES the
 // conversation of one whose pooled account the provider refused is told.
-func accountResumedNote(round int, transcript *orchestration.ReplayTranscript) string {
-	return resumedNote("account_resumed_note", round, transcript)
+func accountResumedNote(set prompts.Renderer, round int, transcript *orchestration.ReplayTranscript) string {
+	return resumedNote(set, "account_resumed_note", round, transcript)
 }
 
 // workerResumedNote is what the first prompt of a session spawned for a review
 // round is told when it CONTINUES the conversation of the one closed while the
 // review ran.
-func workerResumedNote(round int, transcript *orchestration.ReplayTranscript) string {
-	return resumedNote("worker_resumed_note", round, transcript)
+func workerResumedNote(set prompts.Renderer, round int, transcript *orchestration.ReplayTranscript) string {
+	return resumedNote(set, "worker_resumed_note", round, transcript)
 }
 
 // resumedNote renders a resumed session's note: why it is in a new container,
 // then the conversation it continues. A session that was never prompted has
 // no conversation and is told only the first half.
-func resumedNote(name string, round int, transcript *orchestration.ReplayTranscript) string {
+func resumedNote(set prompts.Renderer, name string, round int, transcript *orchestration.ReplayTranscript) string {
 	conversation := ""
 	if !transcript.Empty() {
-		conversation = sdlcPrompts.MustRender("session_resumed_account_transcript", prompts.Vars{
+		conversation = set.MustRender("session_resumed_account_transcript", prompts.Vars{
 			"transcript": transcript.Render(),
 		})
 	}
-	return sdlcPrompts.MustRender(name, prompts.Vars{
+	return set.MustRender(name, prompts.Vars{
 		"round":        strconv.Itoa(round),
 		"conversation": conversation,
 	})
@@ -1748,25 +1754,25 @@ func resumedNote(name string, round int, transcript *orchestration.ReplayTranscr
 
 // workerReleasedNote is what the first prompt of a session spawned for a review
 // round is told about the one that was closed while the review ran.
-func workerReleasedNote(round int) string {
-	return sdlcPrompts.MustRender("worker_released_note", prompts.Vars{
+func workerReleasedNote(set prompts.Renderer, round int) string {
+	return set.MustRender("worker_released_note", prompts.Vars{
 		"round": strconv.Itoa(round),
 	})
 }
 
 // accountRolledNote is what the first prompt of a session that replaced one
 // on a refused account is told.
-func accountRolledNote(round int) string {
-	return sdlcPrompts.MustRender("account_rolled_note", prompts.Vars{
+func accountRolledNote(set prompts.Renderer, round int) string {
+	return set.MustRender("account_rolled_note", prompts.Vars{
 		"round": strconv.Itoa(round),
 	})
 }
 
 // repeatedPromptReason is why a task parks rather than being handed a prompt
 // a previous attempt already answered without changing a file.
-func repeatedPromptReason() (string, error) {
+func repeatedPromptReason(set prompts.Renderer) (string, error) {
 	return ComposeBlockedReason(UnblockCondition{Kind: UnblockOwnerRuling},
-		sdlcPrompts.MustRender("repeated_prompt", nil))
+		set.MustRender("repeated_prompt", nil))
 }
 
 // promptDigest identifies a prompt by content, so "the same prompt" is a
@@ -2089,7 +2095,7 @@ func (s *runnerRun) retryTurn(ctx context.Context, verdict TurnVerdict, turn Age
 		return s.parkTurn(ctx, silentEscalation, turn)
 	}
 	s.silentTurns++
-	s.turnNote = silentTurnNote(turn.Elapsed)
+	s.turnNote = silentTurnNote(jobPrompts(s.job), turn.Elapsed)
 	s.job.Emit(orchestration.JobStateExecuting, "the worker answered with nothing and changed no file; "+
 		"the turn is taken once more with that stated")
 	return orchestration.JobStateExecuting, nil
@@ -2121,7 +2127,7 @@ func (s *runnerRun) repromptTurn(ctx context.Context, _ TurnVerdict, turn AgentT
 		return s.chargeTurn(ctx, turnVerdicts[TurnOutcomeClaimedWork], turn)
 	}
 	s.nonAnswerTurns++
-	s.turnNote = nonAnswerTurnNote(turn.Elapsed)
+	s.turnNote = nonAnswerTurnNote(jobPrompts(s.job), turn.Elapsed)
 	s.job.Audit(auditNonAnswerReprompted, "attempt="+strconv.Itoa(turn.Attempt)+
 		" round="+strconv.Itoa(turn.Round)+
 		" elapsed="+turn.Elapsed.Round(time.Millisecond).String()+
@@ -2140,7 +2146,7 @@ func (s *runnerRun) parkTurn(ctx context.Context, verdict TurnVerdict, turn Agen
 	if err := s.rememberNoChangeTurn(ctx, turn); err != nil {
 		return "", err
 	}
-	reason, err := TurnParkReason(verdict, turn)
+	reason, err := TurnParkReason(jobPrompts(s.job), verdict, turn)
 	if err != nil {
 		return "", err
 	}
@@ -2260,7 +2266,7 @@ func (s *runnerRun) roundFindings() string {
 	if round <= 0 || body == "" {
 		return ""
 	}
-	return sdlcPrompts.MustRender("round_findings", prompts.Vars{
+	return jobPrompts(s.job).MustRender("round_findings", prompts.Vars{
 		"round":    strconv.Itoa(round),
 		"findings": body,
 	})
@@ -2340,7 +2346,7 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 		s.job.Emit(orchestration.JobStateReviewing, "verification passed: "+strconv.Itoa(len(results))+" command(s)")
 		return orchestration.JobStateReviewing, nil
 	}
-	s.feedback = sdlcPrompts.MustRender("verification_failed", prompts.Vars{
+	s.feedback = jobPrompts(s.job).MustRender("verification_failed", prompts.Vars{
 		"failures": leadWith(merged.Note(), renderFailures(results)),
 	})
 	s.job.Memory().AddFeedback(s.feedback)
@@ -2581,7 +2587,7 @@ func (s *runnerRun) review(ctx context.Context) (orchestration.JobState, error) 
 		s.job.Emit(orchestration.JobStateCompleting, "review approved; it merges on its own, not by a merge train: "+reason)
 		return orchestration.JobStateCompleting, nil
 	}
-	s.feedback = sdlcPrompts.MustRender("review_findings", prompts.Vars{
+	s.feedback = jobPrompts(s.job).MustRender("review_findings", prompts.Vars{
 		"failures": renderFailures(results),
 	})
 	s.job.Memory().AddFeedback(s.feedback)
@@ -2835,15 +2841,15 @@ func (s *runnerRun) complete(ctx context.Context) (orchestration.JobState, error
 func (s *runnerRun) mergeRound(ctx context.Context, conflict *MergeConflictError) (orchestration.JobState, error) {
 	s.job.Audit(auditMergeConflict, "base="+conflict.Base+" head="+conflict.Head+
 		" attempts="+strconv.Itoa(conflict.Attempts))
-	s.feedback = mergeConflictFindings(conflict)
+	s.feedback = mergeConflictFindings(jobPrompts(s.job), conflict)
 	s.job.Memory().AddFeedback(s.feedback)
 	return s.nextRound(ctx, "merge conflict with "+conflict.Base)
 }
 
 // mergeConflictFindings is what the worker is told about a pull request that
 // conflicts with its base.
-func mergeConflictFindings(conflict *MergeConflictError) string {
-	return sdlcPrompts.MustRender("merge_conflict", prompts.Vars{
+func mergeConflictFindings(set prompts.Renderer, conflict *MergeConflictError) string {
+	return set.MustRender("merge_conflict", prompts.Vars{
 		"base": conflict.Base,
 		"head": conflict.Head,
 	})
@@ -3295,10 +3301,10 @@ func (s *runnerRun) releaseWorker(ctx context.Context) error {
 	s.job.Audit(auditWorkerReleased, "session="+s.sessionID+" round="+strconv.Itoa(round)+carried.auditFields())
 	s.closeWorker(ctx)
 	if carried.resumed() {
-		s.turnNote = workerResumedNote(round, carried.transcript)
+		s.turnNote = workerResumedNote(jobPrompts(s.job), round, carried.transcript)
 		return nil
 	}
-	s.turnNote = workerReleasedNote(round)
+	s.turnNote = workerReleasedNote(jobPrompts(s.job), round)
 	return nil
 }
 

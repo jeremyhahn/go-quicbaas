@@ -387,6 +387,31 @@ func (e *RoleReconcileError) Unwrap() error {
 	return ErrRoleReconcile
 }
 
+// ErrPromptReconcile is returned when the boot-time prompt-set reconcile
+// fails. It is the sentinel PromptReconcileError unwraps to.
+var ErrPromptReconcile = errors.New("prompt set reconciliation failed")
+
+// PromptReconcileError names the tenant whose prompt set could not be
+// reconciled. An empty TenantID means the failure happened while enumerating
+// the tenants, before any one of them was reached.
+type PromptReconcileError struct {
+	TenantID string
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *PromptReconcileError) Error() string {
+	if e.TenantID == "" {
+		return "prompt set reconciliation: enumerate tenants: " + e.Cause.Error()
+	}
+	return "prompt set reconciliation: tenant " + e.TenantID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel and the cause for errors.Is/As support.
+func (e *PromptReconcileError) Unwrap() []error {
+	return []error{ErrPromptReconcile, e.Cause}
+}
+
 // FirstBootBootstrapError captures the operation that failed during the
 // first-boot admin bootstrap flow.
 type FirstBootBootstrapError struct {

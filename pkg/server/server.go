@@ -54,6 +54,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 	quicbaaspermission "github.com/jeremyhahn/go-quicbaas/pkg/permission"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
@@ -309,6 +310,13 @@ type Server struct {
 	// built: every slot's Agent or pool resolves against it. Nil when
 	// orchestration is off.
 	orchAgentDirectory *orchestration.AgentDirectory
+
+	// promptStore holds every tenant's prompt records, and promptSeeder copies
+	// the system set into tenants and converges it onto this build's defaults.
+	// Built once by ensurePromptStore; nil without an embedded qrdb node, in
+	// which case every job resolves its prompts to the embedded defaults.
+	promptStore  *prompts.Store
+	promptSeeder *prompts.Seeder
 
 	// tenantUnsealHooks is told by every per-tenant barrier facade after a
 	// tenant's barrier is unsealed; the boot migrations register here to

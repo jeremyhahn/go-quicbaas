@@ -338,7 +338,7 @@ func TestIssueContract_Refusals(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	if !strings.Contains(WorkerCharter(), "Software Factory") {
+	if !strings.Contains(WorkerCharter(sdlcPrompts), "Software Factory") {
 		t.Fatal("the charter must name the Software Factory")
 	}
 }

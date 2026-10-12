@@ -139,6 +139,17 @@ func (s *agentServiceImpl) launchJob(ctx context.Context, config *JobConfig, job
 		}
 	}
 
+	// The prompt set is resolved here, once, beside the runner, project and
+	// workflow: the job renders from it for its whole life, and a resumed
+	// job resolves afresh. A set that cannot be resolved refuses the launch.
+	if kind := runnerPromptSet(runner); kind != "" {
+		set, err := s.resolveJobPrompts(ctx, kind, config)
+		if err != nil {
+			return "", err
+		}
+		runCfg.Prompts = set
+	}
+
 	if s.kvStore != nil {
 		// The status already carries the tenant: the run is built with it
 		// and every snapshot sets it before publishing. The hook only
@@ -172,6 +183,9 @@ func (s *agentServiceImpl) launchJob(ctx context.Context, config *JobConfig, job
 	}
 
 	run := newJobRun(runCfg)
+	if run.Prompts != nil {
+		run.Audit(AuditPromptsResolved, promptsResolvedDetail(run.Prompts))
+	}
 	run.StartState = entryStateFor(runner)
 	if resumed != nil {
 		// newJobRun already restored the recoverable state from cfg.Resumed.

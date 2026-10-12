@@ -1,12 +1,12 @@
 # Prompt sets
 
-> **Status: NORMATIVE for the extraction; REFERENCE for the store** ·
-> Last verified: 2026-09-13
-> Every instruction the Software Factory sends an agent is now markdown
-> embedded in the binary, declared, validated and rendered by
-> `pkg/orchestration/prompts` — that part is built and is described here as
-> built. The tenant-scoped store, the transports, the GUI and the per-role
-> charters are not: they are go-quicbaas#804 to #807, specified in
+> **Status: NORMATIVE** · Last verified: 2026-10-12
+> Every instruction the Software Factory sends an agent is markdown embedded in
+> the binary, declared, validated and rendered by `pkg/orchestration/prompts`,
+> and kept as tenant-scoped, versioned records that each job resolves once at
+> launch (go-quicbaas#804). Both are built and described here as built. The
+> transports, the CLI, the GUI and the per-role charters are not: they are
+> go-quicbaas#805 to #807, specified in
 > [../design/prompt-sets.md](../design/prompt-sets.md).
 
 ## What exists
@@ -21,9 +21,11 @@ it, over one generic prompt package.
 
 **The embedded files are the system tenant's set.** That is what the
 `promptdefaults/` directory name says and what each directory's `README.md`
-repeats: they are compiled in, they are what #804 will write into the system
+repeats: they are compiled in, the boot reconcile writes them into the system
 tenant's records, and they are what every new tenant is seeded from and
-inherits until it overrides something. Nothing reads a file at runtime.
+inherits until it overrides something. Nothing reads a file at runtime. How
+the records are scoped, seeded, reconciled and resolved is
+[Scopes and resolution](#scopes-and-resolution).
 
 ```
 pkg/orchestration/prompts/                      the generic package: spec, registry, validator, renderer, hash
@@ -59,7 +61,8 @@ hole of its own.
 ### Validation happens twice, on four rules
 
 `prompts.Validate(kind, spec, content)` is the only validator, and it runs at
-registration and (from #804) at save. The rules:
+registration, at `Store.Save`, and again when a stored body is resolved for a
+job. The rules:
 
 1. the body is not blank;
 2. every `${x}` in it is declared;
@@ -135,19 +138,31 @@ specification declares.
 | `Hash(content)` | `sha256:…`, what a job will record |
 | `Defaults`, `MustDefaults`, `UnusedDefaults` | read embedded markdown; name dead files |
 | `FileExtension`, `HashPrefix` | `.md`, `sha256:` |
+| `Ref{TenantID, ProjectID, Set, Name}`, `Record`, `Revision`, `MaxRevisions` | one stored prompt, its bounded inline history |
+| `Store`, `NewStore`, `WithAuditor`, `WithRegistry` | `Get`, `List`, `History`, `Save`, `Rollback`, `Reset`, `Delete` over a tenant store resolver |
+| `Change{Stamp, Content, FollowParent}`, `Stamp{Author, Note, ExpectedVersion}` | one write and who made it |
+| `Auditor`, `AuditEvent`, `AuditResource`, `AuditAction*` | the write audit: identifiers only, never a body |
+| `Scope` (`project`, `tenant`, `system`, `embedded`) | which layer answered a resolution |
+| `Resolver`, `NewResolver`, `ResolvedSet`, `VersionRef` | resolve a set once; render from it; name what was rendered |
+| `Renderer`, `RendererOr` | what an assembler renders from; a resolved set or a fallback |
+| `Seeder`, `NewSeeder`, `SeedReport`, `SeedAuthor` | seed a tenant; reconcile at boot |
 
 Typed errors, all with sentinels for `errors.Is`: `InvalidSpecError`,
 `SetAlreadyRegisteredError`, `UnknownSetError`, `UnknownPromptError`,
 `BlankPromptError`, `UnknownPlaceholderError`, `MissingVariableError`,
-`UnknownVariableError`, `MissingMarkerError`, `DefaultsUnreadableError`.
+`UnknownVariableError`, `MissingMarkerError`, `DefaultsUnreadableError`, and
+for the store `InvalidInputError`, `NotFoundError`, `VersionConflictError`,
+`UnknownRevisionError`, `CollisionError`, `BackendError`, `ResolveError`,
+`SeedError`.
 
 `Set.MustRender` panics. It is for assemblers on a path with no error to
 return, and the failure it panics on — an assembler naming a variable the
 prompt does not declare, or withholding a required one — is a defect in this
 binary that the golden tests catch before it ships, not a state a running node
-can reach. **#804 must revisit this**: once content comes from a tenant's
-store rather than from the binary, the resolver validates on save and at
-resolution, and a render failure becomes a launch refusal rather than a panic.
+can reach. A tenant-supplied body does not change that: the store refuses an
+invalid body at save and the resolver refuses it again at launch, so a job
+only ever renders bodies that passed the same four rules, and a bad body is a
+launch refusal rather than a panic.
 
 **One prompt sits outside this machinery, and must be folded into it.** The
 triage charter is human-editable markdown embedded with its own `go:embed` —
@@ -158,6 +173,122 @@ registered spec, because it was written while this work was in flight.
 and the private `embed.FS` is deleted. It was deliberately built as one charter
 behind one accessor so the migration is a rename rather than a rewrite. See
 [triage.md](triage.md).
+
+## Scopes and resolution
+
+### Four layers
+
+```
+embedded markdown ──boot reconcile──► system tenant record (authored "build <commit>")
+                                          │ copied at tenant creation, follow_parent=true
+                                          ▼
+                                    tenant record ──edit──► project record (per project)
+```
+
+| scope | record | written by |
+|---|---|---|
+| `project` | `Ref{tenant, project, set, name}` | an edit for one project |
+| `tenant` | `Ref{tenant, "", set, name}` | the seeder, then the tenant's edits |
+| `system` | `Ref{qrdbsdk.SystemTenantID, "", set, name}` | the boot reconcile only |
+| `embedded` | none — the build's file | the build |
+
+A job resolves each prompt **project → tenant → system → embedded**, taking the
+first record that does not follow its parent. The tenant step is skipped when
+the job's tenant is the system tenant, whose tenant-wide record *is* the
+system record.
+
+### follow_parent
+
+`follow_parent=true` marks an unedited copy: resolution reads through it to
+the layer above. Every seeded copy carries it, so a tenant tracks the system
+set — and through it each new build — without per-build copying. An edit or a
+rollback clears it; `Store.Reset` sets it again as a new revision that keeps
+the body. Every write is a revision; history is append-only apart from the
+`MaxRevisions` (20) bound.
+
+### Seeding
+
+Creating a tenant copies the system set into it, one record per prompt with
+`follow_parent=true`, authored `seed`. It is the step after the built-in roles
+in `pkg/iam`'s tenant creation (`DefaultTenantManager.SetPromptSeeder`), it is
+idempotent — a prompt the tenant already holds is left alone — and a failure
+deletes every record it wrote, so a rolled-back tenant leaves nothing behind.
+A copy starts from the system record's body, or the embedded default before
+the system set was ever written.
+
+### Boot reconcile
+
+`pkg/server/prompt_reconcile.go` runs once at boot, beside the role reconcile:
+
+1. **The system tenant first**, onto this build's defaults. A missing record
+   is created; a record that follows the build and whose hash differs from
+   the embedded file gets a new revision authored `build <commit>`. A record
+   that does not follow is never touched.
+2. **Every other tenant**, by seeding the prompts it lacks — a tenant that
+   predates the store, or a prompt a newer build added. An edited record is
+   never touched.
+
+One log line is written per record written. A tenant that fails — a sealed
+barrier, typically — does not stop the others; failures are returned joined
+and the next boot retries them. With no embedded qrdb node there is no store:
+nothing is reconciled and every job resolves to the embedded defaults.
+
+### Resolution at launch
+
+`launchJob` resolves a runner's set **once**, beside its project and
+workflow, when the runner implements `PromptSetProvider` (`PromptSet()
+SetKind`): the workflow runner answers `workflow`, the SDLC and review runners
+`sdlc`. The `ResolvedSet` rides `JobRunConfig.Prompts` → `JobRun.Prompts` →
+`JobContext.Prompts` and the job renders from it for its whole life, however
+the store is edited meanwhile. A resumed job resolves afresh.
+
+- **A set that cannot be resolved refuses the launch** with the
+  `*prompts.ResolveError` naming the prompt. That includes a stored body that
+  no longer validates: a job never runs on instructions nobody can name.
+- **`JobStatus.Prompts`** (`prompts` in JSON) persists one `VersionRef{Set,
+  Name, Scope, ScopeID, Version, Hash}` per prompt.
+- **The `prompts:resolved` job audit event** names the set and every prompt a
+  layer other than the build answered, as `name=scope:id@vN` — identifiers
+  only, never a body.
+
+The SDLC issue source renders contracts before any job exists, so it resolves
+the project's `sdlc` set once per poll (`IssueSource.SetPromptResolver`) and
+refuses the poll when it cannot.
+
+### What still renders the build's defaults
+
+Some prompts are rendered where no job or tenant is in scope, so they read the
+embedded set directly: the ACP handshake; session-resume priming; the
+process-wide role charters registered with `RegisterRoleCharter`;
+`JobMemory.Serialize`; workflow prompts rendered inside an SDLC job (which
+resolved `sdlc`, not `workflow`); outcome comments posted from the
+conclusion seam and the orphaned-label comment, which have no job; and the
+adoption contract `IssueAdopter` posts. The per-role charters move into the
+store with go-quicbaas#807.
+
+### Persistence and audit
+
+One record per `(tenant, project | "", set, name)`, stored in the owning
+tenant's store through `qrdbsdk.TenantStoreResolver` — so a sealed tenant
+barrier seals its prompts with everything else. The entity id is derived from
+the ref; a collision is refused by comparing fields (`CollisionError`). Every
+write is a compare-and-swap on `Version` (`ExpectedVersion` 0 creates);
+a stale version is `VersionConflictError`. Each write is audited as resource
+`prompt`, action `create`, `update`, `rollback`, `reset` or `delete`, on the
+same trail as the orchestration stores, identifiers only.
+
+### Permissions
+
+| permission | built-in roles | covers |
+|---|---|---|
+| `prompts:read` | `admin`, `operator` | list, get, the effective body and its chain, diff |
+| `prompts:write` | `admin`, `operator` | put, rollback, reset |
+| `prompts:history` | `admin`, `operator`, `auditor` | the revision log, identifiers only |
+
+All three are tenant-scoped (`ScopeSelf`) and outside the Security Officer's
+duties; any custom role may hold them. No verb writes the system set — only
+the boot reconcile does. The verbs themselves arrive with go-quicbaas#805;
+the permissions are registered now so roles can be granted ahead of them.
 
 ## What stays in Go
 
@@ -237,12 +368,12 @@ rows 8 and 15 of the table above — deterministic work the factory should do.
 
 ## Not built yet
 
-The store, inheritance, history, rollback, the `prompts:read|write|history`
-permission family, resolution at job launch, the job's recorded version refs,
-the six transports, the CLI, the GUI and the per-role charters are
-go-quicbaas#804 to #807. Until they land:
+The six transports and the Go SDK (go-quicbaas#805), the TypeScript client and
+the GUI (#806), and the per-role charters (#807). The store is only reachable
+in-process until then:
 
 - [cli.md](cli.md#quicbaas-prompts) — `quicbaas prompts` does not exist.
 - [api.md](api.md) — there are no prompt routes, RPCs or MCP tools.
-- [user.md](user.md#tune-the-prompts) — nothing to tune from a running node;
-  editing a prompt is editing a file and rebuilding.
+- [user.md](user.md#tune-the-prompts) — no verb edits a record yet; changing
+  a default is editing a file and rebuilding, and the boot reconcile carries
+  it into the system set and every tenant still following it.

@@ -2013,7 +2013,7 @@ func TestBuildReviewPrompt_Format(t *testing.T) {
 		{Subject: "Write tests", Status: TaskStatusFailed},
 	}
 
-	prompt := buildReviewPrompt("build a web app", tasks)
+	prompt := buildReviewPrompt(workflowPrompts, "build a web app", tasks)
 
 	if !strings.Contains(prompt, "build a web app") {
 		t.Fatal("expected prompt to contain description")
@@ -2035,7 +2035,7 @@ func TestBuildReviewPrompt_Format(t *testing.T) {
 func TestBuildReviewPrompt_EmptyTasks(t *testing.T) {
 	t.Parallel()
 
-	prompt := buildReviewPrompt("test", nil)
+	prompt := buildReviewPrompt(workflowPrompts, "test", nil)
 	if !strings.Contains(prompt, "test") {
 		t.Fatal("expected prompt to contain description")
 	}
@@ -2050,7 +2050,7 @@ func TestBuildWorkerPrompt_Format(t *testing.T) {
 		ProjectID:   "proj-1",
 	}
 
-	prompt := buildWorkerPrompt(item, "", "")
+	prompt := buildWorkerPrompt(workflowPrompts, item, "", "")
 
 	if !strings.Contains(prompt, "Build API endpoint") {
 		t.Fatal("expected prompt to contain title")
@@ -2067,7 +2067,7 @@ func TestBuildWorkerPrompt_MinimalItem(t *testing.T) {
 	t.Parallel()
 
 	item := &WorkItem{Title: "Minimal task"}
-	prompt := buildWorkerPrompt(item, "", "")
+	prompt := buildWorkerPrompt(workflowPrompts, item, "", "")
 
 	if !strings.Contains(prompt, "Minimal task") {
 		t.Fatal("expected prompt to contain title")
@@ -2085,7 +2085,7 @@ func TestBuildCapabilitiesContext_WithWorkflow(t *testing.T) {
 		},
 	}
 
-	ctx := buildCapabilitiesContext(wf)
+	ctx := buildCapabilitiesContext(workflowPrompts, wf)
 	if !strings.Contains(ctx, "lead") {
 		t.Fatal("expected context to contain lead role")
 	}
@@ -2100,7 +2100,7 @@ func TestBuildCapabilitiesContext_WithWorkflow(t *testing.T) {
 func TestBuildCapabilitiesContext_NilWorkflow(t *testing.T) {
 	t.Parallel()
 
-	result := buildCapabilitiesContext(nil)
+	result := buildCapabilitiesContext(workflowPrompts, nil)
 	if result != "" {
 		t.Fatalf("expected empty string for nil workflow, got %q", result)
 	}
@@ -2114,7 +2114,7 @@ func TestBuildValidationSummary(t *testing.T) {
 		{Name: "quality", Passed: false, Message: "low coverage"},
 	}
 
-	summary := buildValidationSummary(results)
+	summary := buildValidationSummary(workflowPrompts, results)
 	if !strings.Contains(summary, "security") {
 		t.Fatal("expected summary to contain security result")
 	}
@@ -3799,7 +3799,7 @@ func TestBuildWorkerPrompt_WithToolGuidance(t *testing.T) {
 	}
 	guidance := "TOOL USAGE RULES:\n- The Bash tool requires 'description' field.\n"
 
-	prompt := buildWorkerPrompt(item, "/workspace", guidance)
+	prompt := buildWorkerPrompt(workflowPrompts, item, "/workspace", guidance)
 
 	if !strings.Contains(prompt, guidance) {
 		t.Fatal("expected prompt to contain tool guidance text")
@@ -3820,7 +3820,7 @@ func TestBuildWorkerPrompt_WithoutToolGuidance(t *testing.T) {
 		Description: "Write unit tests for auth module",
 	}
 
-	prompt := buildWorkerPrompt(item, "/workspace", "")
+	prompt := buildWorkerPrompt(workflowPrompts, item, "/workspace", "")
 
 	if strings.Contains(prompt, "TOOL USAGE RULES") {
 		t.Fatal("expected prompt to NOT contain tool guidance when guidance is empty")
@@ -3838,7 +3838,7 @@ func TestBuildWorkerPrompt_ToolGuidanceNotDuplicated(t *testing.T) {
 	}
 	guidance := "TOOL USAGE RULES (required by this agent):\n- Bash needs 'description'.\n"
 
-	prompt := buildWorkerPrompt(item, "", guidance)
+	prompt := buildWorkerPrompt(workflowPrompts, item, "", guidance)
 
 	// Count occurrences of the guidance text.
 	count := strings.Count(prompt, "TOOL USAGE RULES")

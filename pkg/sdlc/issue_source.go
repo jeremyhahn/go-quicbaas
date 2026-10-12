@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -66,6 +67,7 @@ type IssueSource struct {
 	live      LiveWorkReader
 	auditor   AdoptionAuditor
 	claims    claimMemory
+	resolver  orchestration.PromptResolver
 	pageLimit int
 	now       func() time.Time
 }
@@ -103,9 +105,21 @@ func NewIssueSource(bindings BindingReader, forges ForgeResolver, clusters Issue
 		clusters:  clusters,
 		ranker:    ranker,
 		readiness: NewReadinessEvaluator(time.Now),
+		resolver:  prompts.NewResolver(nil),
 		pageLimit: pageLimit,
 		now:       time.Now,
 	}, nil
+}
+
+// SetPromptResolver supplies where a sweep resolves the contracts' wording:
+// the project's sdlc set, read once per project per sweep. Until it is
+// called, and when resolver is nil, contracts are worded by the build's
+// defaults.
+func (s *IssueSource) SetPromptResolver(resolver orchestration.PromptResolver) {
+	if resolver == nil {
+		return
+	}
+	s.resolver = resolver
 }
 
 // SetLiveWorkReader supplies the reader the ownership predicate consults.
@@ -203,6 +217,13 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 	}
 	scope.Closing = closing
 	skipped := map[int]ClosingClaim{}
+	// The contracts' wording is the project's, resolved once per sweep for
+	// the same reason again. A set that cannot be resolved adopts nothing:
+	// a contract worded by nobody can name is not handed to a worker.
+	set, err := s.resolver.Resolve(ctx, project.TenantID, project.ID, SetSDLC)
+	if err != nil {
+		return nil, err
+	}
 
 	specs := make([]orchestration.TaskSourceSpec, 0, len(issues))
 	for i := range issues {
@@ -227,7 +248,7 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 			// it would deliver the same change twice.
 			continue
 		}
-		contract, members, contractErr := s.contract(ctx, forge, repo, issue, cluster)
+		contract, members, contractErr := s.contract(ctx, set, forge, repo, issue, cluster)
 		if contractErr != nil {
 			return nil, contractErr
 		}
@@ -255,7 +276,7 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 	for i := range issues {
 		triggered[issues[i].Number] = true
 	}
-	parked, err := s.parkedSpecs(ctx, project, binding, forge, inputs, triggered)
+	parked, err := s.parkedSpecs(ctx, set, project, binding, forge, inputs, triggered)
 	if err != nil {
 		return nil, err
 	}
@@ -298,12 +319,13 @@ func (s *IssueSource) clusterOf(ctx context.Context, project *orchestration.Proj
 // already answered, and its pull request closing it again would say nothing.
 func (s *IssueSource) contract(
 	ctx context.Context,
+	set prompts.Renderer,
 	forge ForgeBackend,
 	repo RepoRef,
 	issue *ForgeIssue,
 	cluster *IssueCluster,
 ) (string, []int, error) {
-	anchor, err := s.issueContract(ctx, forge, repo, issue)
+	anchor, err := s.issueContract(ctx, set, forge, repo, issue)
 	if err != nil {
 		return "", nil, err
 	}
@@ -323,7 +345,7 @@ func (s *IssueSource) contract(
 		if member == nil || issueClosed(member) {
 			continue
 		}
-		contract, contractErr := s.issueContract(ctx, forge, repo, member)
+		contract, contractErr := s.issueContract(ctx, set, forge, repo, member)
 		if contractErr != nil {
 			return "", nil, contractErr
 		}
@@ -333,7 +355,7 @@ func (s *IssueSource) contract(
 	if len(members) == 0 {
 		return anchor, nil, nil
 	}
-	combined, err := ClusterContract(anchor, members, cluster.Shared, contracts)
+	combined, err := ClusterContract(set, anchor, members, cluster.Shared, contracts)
 	if err != nil {
 		return "", nil, err
 	}
@@ -341,13 +363,14 @@ func (s *IssueSource) contract(
 }
 
 // issueContract renders one issue's contract from its text and discussion.
-func (s *IssueSource) issueContract(ctx context.Context, forge ForgeBackend, repo RepoRef, issue *ForgeIssue) (string, error) {
+func (s *IssueSource) issueContract(ctx context.Context, set prompts.Renderer, forge ForgeBackend, repo RepoRef, issue *ForgeIssue) (string, error) {
 	comments, err := forge.ListIssueComments(ctx, repo, issue.Number)
 	if err != nil {
 		return "", unavailable(err)
 	}
 	return IssueContract(IssueContractSpec{
 		Repo: repo, IssueNumber: issue.Number, Title: issue.Title, Body: issue.Body, Comments: comments,
+		Prompts: set,
 	})
 }
 

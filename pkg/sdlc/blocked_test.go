@@ -58,21 +58,21 @@ func TestRenderBlocked_EveryKindReadsRight(t *testing.T) {
 		orchestration.TaskBlockKindEscalated: "This task needs the owner",
 		orchestration.TaskBlockKindBlocked:   "This task is blocked",
 	} {
-		body := renderBlocked(binding, task, 2, orchestration.BlockReason{Kind: kind, Message: "line one\nline two"}, delivery)
+		body := renderBlocked(sdlcPrompts, binding, task, 2, orchestration.BlockReason{Kind: kind, Message: "line one\nline two"}, delivery)
 		for _, want := range []string{"### " + headline, "> line one\n> line two", "**Attempt:** 1 of 3 (2 dispatches, 1 environment fault, not charged)", "http://forge.test/pr/7", blockedMarker(task.ID, 2, blockedOutcome(kind))} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("%s lacks %q:\n%s", kind, want, body)
 			}
 		}
 	}
-	empty := renderBlocked(nil, nil, 0, orchestration.BlockReason{}, nil)
+	empty := renderBlocked(sdlcPrompts, nil, nil, 0, orchestration.BlockReason{}, nil)
 	if !strings.Contains(empty, "recorded no reason") || strings.Contains(empty, "**Labels:**") {
 		t.Fatalf("empty render:\n%s", empty)
 	}
 	spent := testTaskRecord(1)
 	spent.Attempts = 3
 	spent.AttemptBudget = 3
-	if !strings.Contains(renderBlocked(binding, spent, 3, orchestration.BlockReason{}, nil), "cannot be resumed as it stands") {
+	if !strings.Contains(renderBlocked(sdlcPrompts, binding, spent, 3, orchestration.BlockReason{}, nil), "cannot be resumed as it stands") {
 		t.Fatal("a spent budget must say so")
 	}
 }
@@ -88,7 +88,7 @@ func TestRenderBlocked_DerivesTheProseFromTheTypedCondition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComposeBlockedReason: %v", err)
 	}
-	body := renderBlocked(binding, task, 1, orchestration.BlockReason{
+	body := renderBlocked(sdlcPrompts, binding, task, 1, orchestration.BlockReason{
 		Kind: orchestration.TaskBlockKindEscalated, Message: reason,
 	}, nil)
 	for _, want := range []string{
@@ -121,7 +121,7 @@ func TestRenderBlocked_AMachineCheckedConditionAsksForNoReadmission(t *testing.T
 		t.Fatalf("ComposeBlockedReason: %v", err)
 	}
 
-	body := renderBlocked(binding, testTaskRecord(25), 1, orchestration.BlockReason{
+	body := renderBlocked(sdlcPrompts, binding, testTaskRecord(25), 1, orchestration.BlockReason{
 		Kind: orchestration.TaskBlockKindBlocked, Message: reason,
 	}, nil)
 	if !strings.Contains(body, "returns the task to the queue itself") {
@@ -133,7 +133,7 @@ func TestRenderBlocked_AMachineCheckedConditionAsksForNoReadmission(t *testing.T
 
 	spent := testTaskRecord(25)
 	spent.Attempts, spent.AttemptBudget = 3, 3
-	spentBody := renderBlocked(binding, spent, 1, orchestration.BlockReason{
+	spentBody := renderBlocked(sdlcPrompts, binding, spent, 1, orchestration.BlockReason{
 		Kind: orchestration.TaskBlockKindBlocked, Message: reason,
 	}, nil)
 	if !strings.Contains(spentBody, "cannot be resumed as it stands") {
@@ -150,7 +150,7 @@ func TestRenderBlocked_AConditionWithNoDetailStatesItself(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComposeBlockedReason: %v", err)
 	}
-	body := renderBlocked(testBinding(), testTaskRecord(25), 1, orchestration.BlockReason{
+	body := renderBlocked(sdlcPrompts, testBinding(), testTaskRecord(25), 1, orchestration.BlockReason{
 		Kind: orchestration.TaskBlockKindBlocked, Message: reason,
 	}, nil)
 	if strings.Contains(body, "recorded no reason") {
@@ -226,7 +226,7 @@ func TestRenderBlocked_NamesTheFaultThatCausedThePark(t *testing.T) {
 	task := testTaskRecord(25)
 	task.BlockFaultClass = orchestration.FaultAccountQuotaExhausted
 
-	body := renderBlocked(binding, task, 1, orchestration.BlockReason{
+	body := renderBlocked(sdlcPrompts, binding, task, 1, orchestration.BlockReason{
 		Kind:    orchestration.TaskBlockKindBlocked,
 		Message: "the account has spent its allowance",
 	}, nil)
@@ -249,7 +249,7 @@ func TestRenderBlocked_OmitsACauseItCannotName(t *testing.T) {
 	binding := testBinding()
 
 	unclassified := testTaskRecord(26)
-	body := renderBlocked(binding, unclassified, 1, orchestration.BlockReason{Kind: orchestration.TaskBlockKindEscalated}, nil)
+	body := renderBlocked(sdlcPrompts, binding, unclassified, 1, orchestration.BlockReason{Kind: orchestration.TaskBlockKindEscalated}, nil)
 	if strings.Contains(body, "**Cause:**") {
 		t.Fatalf("a park with no classified fault invented a cause:\n%s", body)
 	}
@@ -259,7 +259,7 @@ func TestRenderBlocked_OmitsACauseItCannotName(t *testing.T) {
 	// explained wrongly.
 	foreign := testTaskRecord(27)
 	foreign.BlockFaultClass = "agent_said_something_new"
-	body = renderBlocked(binding, foreign, 1, orchestration.BlockReason{Kind: orchestration.TaskBlockKindBlocked}, nil)
+	body = renderBlocked(sdlcPrompts, binding, foreign, 1, orchestration.BlockReason{Kind: orchestration.TaskBlockKindBlocked}, nil)
 	if !strings.Contains(body, "**Cause:** `agent_said_something_new`") {
 		t.Fatalf("an unrecognized class was dropped rather than shown:\n%s", body)
 	}
@@ -385,7 +385,7 @@ func TestRenderBlocked_CauseAndConditionAreIndependent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			task := testTaskRecord(40 + i)
 			task.BlockFaultClass = tc.faultClass
-			body := renderBlocked(binding, task, 1, orchestration.BlockReason{
+			body := renderBlocked(sdlcPrompts, binding, task, 1, orchestration.BlockReason{
 				Kind: orchestration.TaskBlockKindBlocked, Message: tc.message,
 			}, nil)
 

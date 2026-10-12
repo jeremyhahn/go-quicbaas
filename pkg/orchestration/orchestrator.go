@@ -55,6 +55,7 @@ type agentServiceImpl struct {
 	resumedSettled   atomic.Pointer[chan struct{}]
 	kvStore          interfaces.KVStore // KV store for job persistence
 	workflowLoader   *WorkflowLoader    // workflow loader for job resumption
+	promptResolver   PromptResolver     // where a job's prompt set is resolved; nil = embedded
 	logger           interfaces.Logger
 	eventSubscribers sync.Map // map[string]*subscriberList keyed by tenantID/jobID
 	sandboxPolicy    SandboxPolicy
@@ -3236,7 +3237,8 @@ func (s *agentServiceImpl) DecomposeTask(ctx context.Context, req *DecomposeTask
 	// Build the decomposition prompt used by both paths.
 	// Fetch available backends to include in the decomposition prompt.
 	availableBackends, _ := s.ListBackends(ctx)
-	prompt := buildDecompositionPrompt(req.Task, req.ProjectIDs, availableBackends...)
+	set := prompts.RendererOr(req.Prompts, workflowPrompts)
+	prompt := buildDecompositionPrompt(set, req.Task, req.ProjectIDs, availableBackends...)
 
 	// Lead agent session path: when no backend is specified and a persistent
 	// lead session exists, route the decomposition through PromptSession.
@@ -3245,7 +3247,7 @@ func (s *agentServiceImpl) DecomposeTask(ctx context.Context, req *DecomposeTask
 			SessionID:    s.leadSessionID,
 			Prompt:       prompt,
 			Model:        req.Model,
-			SystemPrompt: plannerSystemPrompt(),
+			SystemPrompt: plannerSystemPrompt(set),
 		})
 		if err != nil {
 			return nil, err
@@ -3280,7 +3282,7 @@ func (s *agentServiceImpl) DecomposeTask(ctx context.Context, req *DecomposeTask
 	promptReq := &PromptRequest{
 		Prompt:       prompt,
 		Model:        req.Model,
-		SystemPrompt: plannerSystemPrompt(),
+		SystemPrompt: plannerSystemPrompt(set),
 	}
 
 	resp, err := backend.Prompt(ctx, promptReq)
@@ -5302,10 +5304,10 @@ func generateID() (string, error) {
 // buildDecompositionPrompt creates a structured prompt for task decomposition.
 // When backends are provided, the prompt includes available backends and their
 // capabilities so the AI can assign work items to appropriate backends.
-func buildDecompositionPrompt(task string, projectIDs []string, backends ...*AgentBackendInfo) string {
+func buildDecompositionPrompt(set prompts.Renderer, task string, projectIDs []string, backends ...*AgentBackendInfo) string {
 	projects := ""
 	if len(projectIDs) > 0 {
-		projects = workflowPrompts.MustRender("decomposition_projects", prompts.Vars{
+		projects = set.MustRender("decomposition_projects", prompts.Vars{
 			"project_ids": strings.Join(projectIDs, ", "),
 		}) + "\n\n"
 	}
@@ -5313,18 +5315,18 @@ func buildDecompositionPrompt(task string, projectIDs []string, backends ...*Age
 	if len(backends) > 0 {
 		var lines strings.Builder
 		for _, b := range backends {
-			lines.WriteString(workflowPrompts.MustRender("decomposition_backend", prompts.Vars{
+			lines.WriteString(set.MustRender("decomposition_backend", prompts.Vars{
 				"name":         b.Name,
 				"type":         b.Type,
 				"capabilities": describeBackendCapabilities(b.Capabilities),
 			}))
 			lines.WriteString("\n")
 		}
-		available = workflowPrompts.MustRender("decomposition_backends", prompts.Vars{
+		available = set.MustRender("decomposition_backends", prompts.Vars{
 			"backend_lines": lines.String(),
 		}) + "\n\n"
 	}
-	return workflowPrompts.MustRender("decomposition_prompt", prompts.Vars{
+	return set.MustRender("decomposition_prompt", prompts.Vars{
 		"task":     task,
 		"projects": projects,
 		"backends": available,
@@ -5360,8 +5362,8 @@ func describeBackendCapabilities(capabilities BackendCapabilities) string {
 }
 
 // plannerSystemPrompt is the planning session's standing instructions.
-func plannerSystemPrompt() string {
-	return workflowPrompts.MustRender("planner_system", nil)
+func plannerSystemPrompt(set prompts.Renderer) string {
+	return set.MustRender("planner_system", nil)
 }
 
 // parseWorkItems extracts work items from a prompt response.

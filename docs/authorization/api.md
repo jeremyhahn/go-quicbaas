@@ -360,6 +360,9 @@ Currently contributed:
 |---|---|---|---|
 | `attestation:verify` | read | `admin`, `operator` | Verify an attestation statement or certificate chain. A pure computation over caller-supplied material: mutates nothing, touches no hardware. |
 | `attestation:attest` | write | `admin` | Drive the registered attestor — extend a PCR and ask the host TPM for a signed quote. A host-level mutation. |
+| `prompts:read` | read | `admin`, `operator` | Read a tenant's or project's prompt records and the effective body a job would resolve. Tenant-scoped, outside the Security Officer's duties ([prompt-sets](../software-factory/prompt-sets.md#permissions)). |
+| `prompts:write` | write | `admin`, `operator` | Edit, roll back or reset a tenant's or project's prompt. The store refuses a body that drops a marker the engine parses; no verb writes the system set. |
+| `prompts:history` | read | `admin`, `operator`, `auditor` | Read a prompt's revision log — who changed it, when, at which version. Oversight evidence, hence the `auditor`. |
 
 Both take qrdb's default `ScopeSelf` (the permission acts on the identity's own
 tenant; the system-tenant rule lifts it across tenants for a system-tenant
