@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -254,18 +255,35 @@ func runIAMUserCreateCommand(cmd *cobra.Command, args []string) error {
 		return encoder.Encode(user)
 
 	default:
-		fmt.Println("User created successfully:")
-		fmt.Printf("  ID: %s\n", user.ID)
-		fmt.Printf("  Email: %s\n", user.Email)
-		fmt.Printf("  Name: %s\n", user.DisplayName)
-		fmt.Printf("  Tenant: %s\n", user.TenantID)
-		if len(user.Roles) > 0 {
-			fmt.Printf("  Roles: %s\n", strings.Join(user.Roles, ", "))
-		}
-		fmt.Printf("  Created: %s\n", user.CreatedAt.Format("2006-01-02 15:04:05"))
+		writeCreatedUser(os.Stdout, user)
 	}
 
 	return nil
+}
+
+// writeCreatedUser prints a created user, and the activation invite of a
+// pending one: the server returns the token on this call only.
+func writeCreatedUser(w io.Writer, user *iam.User) {
+	fmt.Fprintln(w, "User created successfully:")
+	fmt.Fprintf(w, "  ID: %s\n", user.ID)
+	fmt.Fprintf(w, "  Email: %s\n", user.Email)
+	fmt.Fprintf(w, "  Name: %s\n", user.DisplayName)
+	fmt.Fprintf(w, "  Tenant: %s\n", user.TenantID)
+	if len(user.Roles) > 0 {
+		fmt.Fprintf(w, "  Roles: %s\n", strings.Join(user.Roles, ", "))
+	}
+	fmt.Fprintf(w, "  Created: %s\n", user.CreatedAt.Format("2006-01-02 15:04:05"))
+	if user.InviteToken == "" {
+		return
+	}
+	fmt.Fprintln(w, "Activation invite (shown once; share it with the user out-of-band):")
+	if user.InviteURL != "" {
+		fmt.Fprintf(w, "  URL: %s\n", user.InviteURL)
+	}
+	fmt.Fprintf(w, "  Token: %s\n", user.InviteToken)
+	if user.InviteExpiresAt != nil {
+		fmt.Fprintf(w, "  Expires: %s\n", user.InviteExpiresAt.Format("2006-01-02 15:04:05 MST"))
+	}
 }
 
 // newIAMUserGetCommand creates the user get command.

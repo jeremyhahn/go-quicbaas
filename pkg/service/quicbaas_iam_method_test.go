@@ -11,6 +11,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
@@ -18,6 +19,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 )
 
 func (m *mockIAMComponents) GetTenantManager() iam.TenantManager { return m.tenantManager }
@@ -702,7 +704,7 @@ func TestIAMServiceWrapper_CreateUser_ForwardsRoles(t *testing.T) {
 	role, err := store.CreateRole(ctx, "t-1", iam.CreateRoleOptions{Name: "auditor"})
 	require.NoError(t, err)
 
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: iamtest.NewMemoryInviteStore()}}
 
 	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
 		TenantID: "t-1",
@@ -729,7 +731,7 @@ func TestIAMServiceWrapper_CreateUser_UnknownRole_NoUserCreated(t *testing.T) {
 	store, _ := newRoleTestIdentityStore()
 	ctx := context.Background()
 
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: iamtest.NewMemoryInviteStore()}}
 
 	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
 		TenantID: "t-1",
@@ -752,6 +754,57 @@ func TestIAMServiceWrapper_CreateUser_UnknownRole_NoUserCreated(t *testing.T) {
 // this wrapper)
 // =============================================================================
 
+// TestIAMServiceWrapper_CreateUser_ReturnsTheInvite proves the wrapper the
+// QUIC and MCP transports share issues a pending user's activation invite, as
+// REST and gRPC do, and hands back a token that redeems for that user.
+func TestIAMServiceWrapper_CreateUser_ReturnsTheInvite(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	invites := iamtest.NewMemoryInviteStore()
+	ctx := context.Background()
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: invites}}
+
+	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
+		TenantID: "t-1", Email: "pat@example.com", Name: "Pat", InviteExpiryHours: 48,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.InviteToken, "a pending user came back without its invite")
+	require.NotNil(t, resp.InviteExpiresAt)
+	assert.WithinDuration(t, time.Now().Add(48*time.Hour), *resp.InviteExpiresAt, time.Minute)
+
+	record, err := invites.Redeem(ctx, "t-1", resp.InviteToken)
+	require.NoError(t, err)
+	assert.Equal(t, resp.User.ID, record.UserID)
+}
+
+// TestIAMServiceWrapper_CreateUser_NoInviteStoreRefusesPending proves a node
+// without an invite store refuses a pending create before writing.
+func TestIAMServiceWrapper_CreateUser_NoInviteStoreRefusesPending(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	_, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{TenantID: "t-1", Email: "sam@example.com", Name: "Sam"})
+	require.ErrorIs(t, err, iam.ErrInviteStoreUnavailable)
+
+	_, err = store.GetUserByEmail(ctx, "t-1", "sam@example.com")
+	assert.Error(t, err, "a pending user was written with no way to activate it")
+}
+
+// TestIAMServiceWrapper_CreateUser_InviteStoreErrorWritesNothing proves a
+// failure to reach the invite store aborts the create before writing.
+func TestIAMServiceWrapper_CreateUser_InviteStoreErrorWritesNothing(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	ctx := context.Background()
+	cause := dberrors.New(dberrors.ErrUnavailable, "test", "invite store unreachable")
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStoreErr: cause}}
+
+	_, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{TenantID: "t-1", Email: "rae@example.com", Name: "Rae"})
+	require.ErrorIs(t, err, cause)
+
+	_, err = store.GetUserByEmail(ctx, "t-1", "rae@example.com")
+	assert.Error(t, err, "the user was written although its invite could not be issued")
+}
+
 // TestIAMServiceWrapper_CreateUser_ForwardsAttributes proves the wrapper no
 // longer drops IAMCreateUserRequest.Attributes: custom attributes reach the
 // identity store and are persisted on the created user (gRPC/REST parity).
@@ -759,7 +812,7 @@ func TestIAMServiceWrapper_CreateUser_ForwardsAttributes(t *testing.T) {
 	store, _ := newRoleTestIdentityStore()
 	ctx := context.Background()
 
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: iamtest.NewMemoryInviteStore()}}
 
 	attrs := map[string]string{"department": "engineering", "cost_center": "cc-42"}
 	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
@@ -798,7 +851,7 @@ func TestIAMServiceWrapper_UpdateUser_ForwardsAttributes(t *testing.T) {
 	store, _ := newRoleTestIdentityStore()
 	ctx := context.Background()
 
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: iamtest.NewMemoryInviteStore()}}
 
 	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
 		TenantID:   "t-1",
@@ -839,7 +892,7 @@ func TestIAMServiceWrapper_UpdateUser_ForwardsRoles(t *testing.T) {
 
 	role, err := store.CreateRole(ctx, "t-1", iam.CreateRoleOptions{Name: "auditor"})
 	require.NoError(t, err)
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: iamtest.NewMemoryInviteStore()}}
 
 	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
 		TenantID: "t-1",
@@ -875,7 +928,7 @@ func TestIAMServiceWrapper_UpdateUser_OmittedFieldsAreLeftAlone(t *testing.T) {
 	role, err := store.CreateRole(ctx, "t-1", iam.CreateRoleOptions{Name: "auditor"})
 	require.NoError(t, err)
 
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: iamtest.NewMemoryInviteStore()}}
 
 	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
 		TenantID:   "t-1",
@@ -911,7 +964,7 @@ func TestIAMServiceWrapper_UpdateUser_RefusesTheTerminalDeletingState(t *testing
 	store, _ := newRoleTestIdentityStore()
 	ctx := context.Background()
 
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: iamtest.NewMemoryInviteStore()}}
 
 	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
 		TenantID:  "t-1",
@@ -946,7 +999,7 @@ func TestIAMServiceWrapper_UpdateUser_StillSuspends(t *testing.T) {
 	store, _ := newRoleTestIdentityStore()
 	ctx := context.Background()
 
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store, inviteStore: iamtest.NewMemoryInviteStore()}}
 
 	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
 		TenantID:  "t-1",

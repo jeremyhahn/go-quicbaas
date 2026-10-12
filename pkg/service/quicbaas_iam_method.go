@@ -236,15 +236,29 @@ func (w *iamServiceWrapper) CreateUser(ctx context.Context, req *IAMCreateUserRe
 		Roles:       req.Roles,
 	}
 
-	user, err := is.CreateUser(ctx, req.TenantID, opts)
+	// A pending user is useless without its activation invite, so it is issued
+	// in the same call; CreateInvitedUser refuses a nil store before writing.
+	var invites iam.InviteStore
+	if opts.EffectiveLifecycle() == iam.LifecyclePending {
+		if invites, err = w.provider.GetInviteStore(ctx); err != nil {
+			return nil, err
+		}
+	}
+	inviteTTL := time.Duration(req.InviteExpiryHours) * time.Hour
+	user, token, invite, err := is.CreateInvitedUser(ctx, req.TenantID, opts, invites, inviteTTL)
 	if err != nil {
 		return nil, err
 	}
 
-	return &IAMCreateUserResponse{
+	resp := &IAMCreateUserResponse{
 		User:      user,
 		Timestamp: time.Now(),
-	}, nil
+	}
+	if token != "" {
+		resp.InviteToken = token
+		resp.InviteExpiresAt = &invite.ExpiresAt
+	}
+	return resp, nil
 }
 
 func (w *iamServiceWrapper) GetUser(ctx context.Context, req *IAMGetUserRequest) (*IAMGetUserResponse, error) {

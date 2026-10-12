@@ -113,10 +113,17 @@ func (s *QRDBUserStorage) servicer(ctx context.Context) (qrdbsdk.UserServicer, e
 // The Email is sent, and that is load-bearing rather than incidental: it is the
 // canonical tenant-unique login key, and qrdb refuses a create that omits it
 // unless the caller declares WithoutEmailLoginKey. A user without an email is a
-// legitimate identity (a bootstrap admin, an mTLS-only service account) but never
-// an accident, so the declaration is derived from the record itself rather than
-// from a flag a caller might forget.
+// legitimate identity only when it authenticates by certificate — a fleet node
+// enrolled by ensureFleetNodeCertUser, which carries its binding at creation —
+// and never an accident, so the declaration is derived from the record itself
+// rather than from a flag a caller might forget. The first-boot admin is not
+// such a record: it is created with a synthetic email and bound afterwards. A
+// record that declares no email must carry a certificate binding instead
+// (iam.RequireLoginKey), or it would be an account nothing could ever log in as.
 func (s *QRDBUserStorage) CreateUser(ctx context.Context, u *iam.User) error {
+	if err := iam.RequireLoginKey(u); err != nil {
+		return err
+	}
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return err

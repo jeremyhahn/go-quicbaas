@@ -15,6 +15,7 @@ package iam
 
 import (
 	"strconv"
+	"strings"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
@@ -96,6 +97,31 @@ func (u *User) LoginName() string {
 		return ""
 	}
 	return u.Username
+}
+
+// RequireLoginKey refuses a user record that nothing could authenticate.
+//
+// qrdb's email is the canonical login key, and a record may omit it only under
+// WithoutEmailLoginKey, for an identity that authenticates by certificate. The
+// one such record this build creates is a fleet node (ensureFleetNodeCertUser),
+// which carries its certificate binding at creation; the first-boot admin is
+// not one, since it is created with a synthetic email and bound afterwards. A
+// record with neither an email nor a certificate binding names a principal no
+// ceremony can resolve, so it is refused when it is written rather than at its
+// first login.
+//
+// Both UserStorage implementations call this from CreateUser, so the in-memory
+// store refuses exactly what the qrdb-backed one does.
+func RequireLoginKey(u *User) error {
+	if strings.TrimSpace(u.Email) != "" {
+		return nil
+	}
+	for i := range u.CertBindings {
+		if u.CertBindings[i].Thumbprint != "" {
+			return nil
+		}
+	}
+	return NewPrincipalWithoutLoginKeyError(u.TenantID, u.Username)
 }
 
 // QRDBID returns the user's qrdb numeric id. It is the same value ID carries,

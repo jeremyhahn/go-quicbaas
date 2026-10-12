@@ -41,16 +41,18 @@ func (h *iamHandler) handleCreateUser(ctx context.Context, client iampb.IAMServi
 	metadata, _ := getStringMap(requestData, "metadata")
 	authMethods, _ := getStringSlice(requestData, "auth_methods")
 	lifecycle, _ := getString(requestData, "lifecycle")
+	inviteExpiryHours, _ := getInt(requestData, "invite_expiry_hours")
 
 	pbReq := &iampb.CreateUserRequest{
-		TenantId:    tenantID,
-		Email:       email,
-		Username:    username,
-		Name:        displayName,
-		Roles:       roles,
-		Attributes:  metadata,
-		AuthMethods: authMethods,
-		Lifecycle:   lifecycle,
+		TenantId:          tenantID,
+		Email:             email,
+		Username:          username,
+		Name:              displayName,
+		Roles:             roles,
+		Attributes:        metadata,
+		AuthMethods:       authMethods,
+		Lifecycle:         lifecycle,
+		InviteExpiryHours: int32(inviteExpiryHours),
 	}
 
 	// Use the handle as the display name when none was given. The handle
@@ -588,6 +590,13 @@ func convertProtoUserToSDK(u *iampb.User) *iam.User {
 		Roles:       u.Roles,
 		AuthMethods: u.AuthMethods,
 		Lifecycle:   u.Lifecycle,
+		InviteToken: u.InviteToken,
+		InviteURL:   u.InviteUrl,
+	}
+
+	if u.InviteExpiresAt != nil {
+		t := u.InviteExpiresAt.AsTime()
+		resp.InviteExpiresAt = &t
 	}
 
 	if len(u.Attributes) > 0 {

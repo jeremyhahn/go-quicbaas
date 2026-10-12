@@ -1688,6 +1688,24 @@ type iamComponentsGetter interface {
 	GetWebAuthnManager(ctx context.Context) (service.WebAuthnManager, error)
 	GetAuditLogger(ctx context.Context) (iam.AuditLogger, error)
 	GetSessionStorage(ctx context.Context) (iam.SessionStorage, error)
+	GetInviteStore(ctx context.Context) (iam.InviteStore, error)
+}
+
+// inviteOrigin is the origin activation links are built under: the first
+// configured WebAuthn origin, else the one derived from the issuer URL. It is
+// the origin the relying party accepts a ceremony from, so a link built under
+// any other loads and then fails at the authenticator. Empty when neither
+// yields one; links are then left unset rather than wrong.
+func (s *Server) inviteOrigin() string {
+	if origins := s.config.IAM.WebAuthn.RPOrigins; len(origins) > 0 {
+		return origins[0]
+	}
+	_, origin, err := webauthnDefaultsFromIssuer(s.getIssuerURL())
+	if err != nil {
+		s.logger.WithError(err).Warn("No WebAuthn origin for invite links; gRPC CreateUser returns no invite_url")
+		return ""
+	}
+	return origin
 }
 
 // registerIAMService registers IAM-related gRPC services with the gRPC server.
@@ -1745,7 +1763,16 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	webauthnMgr, _ := getter.GetWebAuthnManager(ctx)
 	iamAdapter.SetWebAuthnCredentials(
 		service.NewWebAuthnCredentialServiceFor(identityStore, webauthnMgr))
+	// CreateUser issues activation invites from the same store REST and the
+	// activation endpoints use. Without one, a pending create is refused as
+	// unavailable rather than leaving an account nothing can activate.
+	inviteStore, err := getter.GetInviteStore(ctx)
+	if err != nil {
+		s.logger.WithError(err).Warn("Invite store unavailable; gRPC CreateUser refuses pending users")
+	}
+	iamAdapter.SetInviteStore(inviteStore)
 	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
+	iamServer.SetInviteOrigin(s.inviteOrigin())
 	iampb.RegisterIAMServiceServer(grpcServer, iamServer)
 	s.logger.Info("Registered IAM gRPC service")
 

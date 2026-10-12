@@ -18,13 +18,13 @@ package rest
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -536,11 +536,13 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ErrInviteStoreUnavailable indicates the canonical persistent InviteStore is
-// not wired into the service. There is intentionally NO in-memory fallback: the
-// activation invite first-boot prints lives in the persistent store, so a
-// missing store is a wiring fault that must surface, never be papered over.
-var ErrInviteStoreUnavailable = errors.New("iam: invite store not available")
+// errInviteStoreNotWired reports iam.ErrInviteStoreUnavailable when the
+// canonical persistent InviteStore is not wired into the service. There is
+// intentionally NO in-memory fallback: the activation invite first-boot prints
+// lives in the persistent store, so a missing store is a wiring fault that must
+// surface, never be papered over. It is coded internal, so REST answers 500 as
+// it always has for a wiring fault, and errors.Is still finds the iam sentinel.
+var errInviteStoreNotWired = dberrors.Wrap(iam.ErrInviteStoreUnavailable, dberrors.ErrInternal, "rest.getInviteStore")
 
 // getInviteStore resolves the canonical persistent InviteStore from the service.
 // It mirrors getIdentityStore: the store is owned by the IAM components and wired
@@ -551,14 +553,14 @@ func (h *IAMHandler) getInviteStore(ctx context.Context) (iam.InviteStore, error
 		GetInviteStore(ctx context.Context) (iam.InviteStore, error)
 	})
 	if !ok {
-		return nil, ErrInviteStoreUnavailable
+		return nil, errInviteStoreNotWired
 	}
 	store, err := svc.GetInviteStore(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if store == nil {
-		return nil, ErrInviteStoreUnavailable
+		return nil, errInviteStoreNotWired
 	}
 	return store, nil
 }

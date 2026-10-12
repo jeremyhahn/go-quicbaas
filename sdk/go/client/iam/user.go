@@ -257,12 +257,17 @@ func convertToUser(resp interface{}) (*User, bool) {
 		return nil, false
 	}
 
+	user := &User{}
+
+	// A create's invite sits beside the nested user over MCP and on the user
+	// itself over REST.
+	applyInvite(user, respMap)
+
 	// Check for nested user field (server response format: {user: {...}, timestamp: "..."})
 	if userData, ok := respMap["user"].(map[string]interface{}); ok {
 		respMap = userData
+		applyInvite(user, respMap)
 	}
-
-	user := &User{}
 
 	if v, ok := respMap["id"].(string); ok {
 		user.ID = v
@@ -379,6 +384,22 @@ func convertToUser(resp interface{}) (*User, bool) {
 	}
 
 	return user, true
+}
+
+// applyInvite copies a create response's activation invite, where m carries
+// one, onto user.
+func applyInvite(user *User, m map[string]interface{}) {
+	if v, ok := m["invite_token"].(string); ok && v != "" {
+		user.InviteToken = v
+	}
+	if v, ok := m["invite_url"].(string); ok && v != "" {
+		user.InviteURL = v
+	}
+	if v, ok := m["invite_expires_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			user.InviteExpiresAt = &t
+		}
+	}
 }
 
 // isUserSuccessResponse checks if a response indicates success for user operations.

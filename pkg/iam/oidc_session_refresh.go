@@ -203,7 +203,11 @@ func (p *OIDCProvider) RefreshSession(ctx context.Context, req SessionRefreshReq
 	// IsTokenRevoked is the canonical revocation query: a backend may track
 	// revocations separately from the stored record, and a rotated credential
 	// MUST be refused on replay.
-	if revoked, err := p.tokenService.storage.IsTokenRevoked(withTokenTenant(ctx, stored.TenantID), stored.JTI); err == nil && revoked {
+	revoked, err := p.tokenService.storage.IsTokenRevoked(withTokenTenant(ctx, stored.TenantID), stored.JTI)
+	if err != nil {
+		return nil, &TokenRevocationCheckError{Cause: err}
+	}
+	if revoked {
 		return nil, &SessionRefreshRejectedError{Reason: "refresh token revoked"}
 	}
 	if !stored.Expires.IsZero() && !time.Now().Before(stored.Expires) {

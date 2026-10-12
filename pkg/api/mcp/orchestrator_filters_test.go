@@ -160,7 +160,7 @@ func TestMCPListSessions_CarriesTheNewNarrowings(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, svc)
 
-	result, err := reg.executeAgentTool(tenantctx.WithSystem(context.Background()), "quicbaas_orchestrator_list_sessions", map[string]interface{}{
+	result, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_list_sessions", map[string]interface{}{
 		"tenant_id":  "t1",
 		"project_id": "proj-a",
 		"job_id":     "job-1",

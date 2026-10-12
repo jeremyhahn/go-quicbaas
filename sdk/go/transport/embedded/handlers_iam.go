@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	"reflect"
+	"time"
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	pepsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
@@ -42,6 +43,10 @@ type tenantManagerProvider interface {
 
 type identityStoreProvider interface {
 	GetIdentityStore(ctx context.Context) (*iam.IdentityStore, error)
+}
+
+type inviteStoreProvider interface {
+	GetInviteStore(ctx context.Context) (iam.InviteStore, error)
 }
 
 func tenantManagerFor(ctx context.Context, svc service.QuicBaaS) (iam.TenantManager, error) {
@@ -292,7 +297,7 @@ func handleIAMUserCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.User", "Create",
 			"*iam.CreateUserRequest", reflect.TypeOf(req).String())
 	}
-	user, err := store.CreateUser(ctx, tenantID, iam.CreateUserOptions{
+	opts := iam.CreateUserOptions{
 		Email:       sdkReq.Email,
 		Username:    sdkReq.Username,
 		Name:        sdkReq.DisplayName,
@@ -304,11 +309,28 @@ func handleIAMUserCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		Roles: sdkReq.Roles,
 		// Enabled is left unset: nil means enabled, so saying so adds nothing.
 		Lifecycle: iam.Lifecycle(sdkReq.Lifecycle),
-	})
+	}
+	// A service without an invite store leaves invites nil, which
+	// CreateInvitedUser refuses for a pending user before writing.
+	var invites iam.InviteStore
+	if p, ok := svc.(inviteStoreProvider); ok && opts.EffectiveLifecycle() == iam.LifecyclePending {
+		if invites, err = p.GetInviteStore(ctx); err != nil {
+			return nil, err
+		}
+	}
+	inviteTTL := time.Duration(sdkReq.InviteExpiryHours) * time.Hour
+	user, token, invite, err := store.CreateInvitedUser(ctx, tenantID, opts, invites, inviteTTL)
 	if err != nil {
 		return nil, err
 	}
-	return userToSDK(user), nil
+	resp := userToSDK(user)
+	if token != "" {
+		// In process there is no origin to build an activation link under;
+		// the caller has the token and builds its own.
+		resp.InviteToken = token
+		resp.InviteExpiresAt = &invite.ExpiresAt
+	}
+	return resp, nil
 }
 
 // metadataToAttributes copies the SDK's metadata map into the identity store's

@@ -129,28 +129,39 @@
     accountSearch.trim() !== '' || Object.keys(accountNarrowing.values).length > 0,
   );
 
-  async function fetchAll(): Promise<void> {
+  /**
+   * fetchAll reads the accounts and projects of ONE tenant, named by the
+   * caller. The tenant is never read after an await: that would pin neither
+   * the request nor the effect to the tenant the load began for. An answer
+   * for a tenant the operator has since left is dropped.
+   */
+  async function fetchAll(tenantID: string): Promise<void> {
     loading = true;
     loadError = '';
     try {
       const client = await getSDKClient();
       const [acctResp, projResp] = await Promise.all([
-        client.accounts.listAccounts({ tenant_id: orchestratorStore.activeTenantID }),
+        client.accounts.listAccounts({ tenant_id: tenantID }),
         client.projects
-          .listProjects(orchestratorStore.activeTenantID)
+          .listProjects(tenantID)
           .catch(() => ({ projects: [], total: 0 })),
       ]);
+      if (tenantID !== orchestratorStore.activeTenantID) return;
       accounts = acctResp.accounts ?? [];
       projects = projResp.projects ?? [];
     } catch (err: unknown) {
+      if (tenantID !== orchestratorStore.activeTenantID) return;
       const msg = err instanceof Error ? err.message : String(err);
       loadError = `Failed to load accounts: ${msg}`;
     } finally {
-      loading = false;
+      if (tenantID === orchestratorStore.activeTenantID) loading = false;
     }
   }
 
-  $effect(() => { void fetchAll(); });
+  $effect(() => {
+    const tenantID = orchestratorStore.activeTenantID;
+    void fetchAll(tenantID);
+  });
 
   // ---------------------------------------------------------------------------
   // Create account dialog
@@ -267,7 +278,7 @@
       await client.accounts.createAccount(req);
       showToast('success', `Account "${createDisplayName.trim()}" created`);
       showCreateDialog = false;
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       createError = `Create failed: ${msg}`;
@@ -345,7 +356,7 @@
       await client.accounts.rotateAccountCredential(req);
       showToast('success', `Credential rotated for "${rotateTarget.display_name || rotateTarget.id}"`);
       rotateTarget = null;
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       rotateError = `Rotate failed: ${msg}`;
@@ -372,7 +383,7 @@
       const client = await getSDKClient();
       await client.accounts.setDefaultAccount(orchestratorStore.activeTenantID, account.id);
       showToast('success', `"${account.display_name || account.id}" is now the default`);
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Set default failed: ${msg}`);
@@ -390,7 +401,7 @@
         account_id: account.id,
       });
       showToast('success', `"${account.display_name || account.id}" revoked`);
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Revoke failed: ${msg}`);
@@ -413,7 +424,7 @@
       await client.accounts.deleteAccount(orchestratorStore.activeTenantID, deleteTarget.id);
       showToast('success', `Account "${deleteTarget.display_name || deleteTarget.id}" deleted`);
       deleteTarget = null;
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Delete failed: ${msg}`);
@@ -934,7 +945,7 @@
     account={editTarget}
     tenantID={orchestratorStore.activeTenantID}
     onclose={() => { editTarget = null; }}
-    onsaved={() => { editTarget = null; void fetchAll(); }}
+    onsaved={() => { editTarget = null; void fetchAll(orchestratorStore.activeTenantID); }}
   />
 {/if}
 
@@ -949,7 +960,7 @@
     {#snippet children()}
       <button
         class="btn btn-sm btn-ghost gap-1"
-        onclick={() => { void fetchAll(); }}
+        onclick={() => { void fetchAll(orchestratorStore.activeTenantID); }}
         disabled={loading}
         aria-label="Refresh accounts"
       >

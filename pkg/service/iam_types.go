@@ -182,6 +182,10 @@ type IAMCreateUserRequest struct {
 	// Lifecycle is the state to create in: pending, active or disabled. Empty
 	// defaults to pending.
 	Lifecycle iam.Lifecycle `json:"lifecycle,omitempty"`
+
+	// InviteExpiryHours is the lifetime of a pending user's activation invite.
+	// Zero takes the default; values past the maximum are clamped.
+	InviteExpiryHours int `json:"invite_expiry_hours,omitempty"`
 }
 
 // Validate validates the IAMCreateUserRequest.
@@ -211,6 +215,13 @@ func (req *IAMCreateUserRequest) Validate() error {
 type IAMCreateUserResponse struct {
 	// User is the created user
 	User *iam.User `json:"user"`
+
+	// InviteToken is the one-time activation token for a pending user. It is
+	// returned only here and cannot be retrieved later.
+	InviteToken string `json:"invite_token,omitempty"`
+
+	// InviteExpiresAt is when InviteToken stops being redeemable.
+	InviteExpiresAt *time.Time `json:"invite_expires_at,omitempty"`
 
 	// Timestamp is when the user was created
 	Timestamp time.Time `json:"timestamp"`

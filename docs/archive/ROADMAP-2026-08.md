@@ -1,4 +1,7 @@
-# QuicBaaS Architecture Roadmap
+# QuicBaaS Architecture Roadmap (archive, 2026-08)
+
+The current roadmap is [../../ROADMAP.md](../../ROADMAP.md); this file is the
+superseded August 2026 architecture plan.
 
 > **Status: ARCHIVE — historical record. Do NOT build from this document.**
 > Last verified: 2026-08-19
@@ -9,7 +12,7 @@
 > history records what was decided and when; it is not a plan to execute
 > against.
 >
-> **For current documentation, start at [README.md](README.md)** and read the
+> **For current documentation, start at [README.md](../README.md)** and read the
 > feature folder for the capability you are working on. Those are verified
 > against code and stamped; this document is not.
 >
@@ -141,7 +144,7 @@ Multi-tenancy has been addressed across Phases 1-2. The go-xkms SDK includes Ten
 **[CORRECTED 2026-08-19]** This phase was still marked IN PROGRESS while the
 architecture it describes had already been replaced by the unified-API-server
 model. Documentation is no longer tracked as a roadmap phase: it is tracked as
-the feature-folder migration recorded in [README.md](README.md), which is
+the feature-folder migration recorded in [README.md](../README.md), which is
 per-feature and verified against code.
 
 The original text:
@@ -164,5 +167,5 @@ The original text:
 | `pkg/kms/xkms_backend.go` | Adapts go-xkms backends to QuicBaaS's KMS Backend interface |
 | `pkg/kms/storage_adapter.go` | KVStoreStorageAdapter: bridges QuicBaaS KVStore to go-xkms storage (tenant-prefixed) |
 | `pkg/service/kms.go` | KMS service wrapper with tenant extraction from auth context |
-| ~~`pkg/security/tenant_dek_manager.go`~~ | **[CORRECTED 2026-08-19] Does not exist.** No file under `pkg/security/` matches `*dek*`. The DEK surface is documented at [data-encryption-keys/](data-encryption-keys/architecture.md). |
+| ~~`pkg/security/tenant_dek_manager.go`~~ | **[CORRECTED 2026-08-19] Does not exist.** No file under `pkg/security/` matches `*dek*`. The DEK surface is documented at [data-encryption-keys/](../data-encryption-keys/architecture.md). |
 | ~~`pkg/seal/manager.go`~~ | **[CORRECTED 2026-08-19] Does not exist.** `pkg/seal/` contains only `types.go`. The barrier manager the refactor anticipated now lives at `pkg/barrier/manager.go` with `pkg/barrier/strategies.go`, so this row's "to be refactored" note describes work that has since happened. |

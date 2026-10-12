@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -87,7 +88,7 @@ func newCostRegistry(t *testing.T, tenantID string) *ToolRegistry {
 func TestMCPCostReportsTokensAndTheAccount(t *testing.T) {
 	reg := newCostRegistry(t, "tenant-1")
 
-	raw, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+	raw, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 		map[string]interface{}{"tenant_id": "tenant-1"})
 	require.NoError(t, err)
 
@@ -115,7 +116,7 @@ func TestMCPCostReportsTokensAndTheAccount(t *testing.T) {
 func TestMCPCostDrillsDownToARound(t *testing.T) {
 	reg := newCostRegistry(t, "tenant-1")
 
-	raw, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+	raw, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 		map[string]interface{}{
 			"tenant_id": "tenant-1", "project_id": "p1", "task_id": "w1",
 			"job_id": "j1", "session_id": "s1", "round": 0,
@@ -136,7 +137,7 @@ func TestMCPCostNarrowsToARange(t *testing.T) {
 	reg := newCostRegistry(t, "tenant-1")
 	from := time.Now().UTC().Add(-90 * time.Second)
 
-	raw, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+	raw, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 		map[string]interface{}{"tenant_id": "tenant-1", "from": from.Format(time.RFC3339Nano)})
 	require.NoError(t, err)
 
@@ -154,35 +155,35 @@ func TestMCPCostNarrowsToARange(t *testing.T) {
 func TestMCPCostRejectsBadInput(t *testing.T) {
 	t.Run("no tenant id", func(t *testing.T) {
 		reg := newCostRegistry(t, "tenant-1")
-		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 			map[string]interface{}{"project_id": "p1"})
 		require.Error(t, err)
 	})
 
 	t.Run("malformed from", func(t *testing.T) {
 		reg := newCostRegistry(t, "tenant-1")
-		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 			map[string]interface{}{"tenant_id": "tenant-1", "from": "last week"})
 		require.Error(t, err)
 	})
 
 	t.Run("to without from", func(t *testing.T) {
 		reg := newCostRegistry(t, "tenant-1")
-		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 			map[string]interface{}{"tenant_id": "tenant-1", "to": time.Now().UTC().Format(time.RFC3339)})
 		require.Error(t, err, "an open start is the whole history, not a range")
 	})
 
 	t.Run("skipped chain level", func(t *testing.T) {
 		reg := newCostRegistry(t, "tenant-1")
-		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 			map[string]interface{}{"tenant_id": "tenant-1", "task_id": "w1"})
 		require.Error(t, err, "the chain is a path: a task without a project is not a prefix")
 	})
 
 	t.Run("no ledger configured", func(t *testing.T) {
 		reg := newFleetRegistry(t, &mockAgentService{})
-		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 			map[string]interface{}{"tenant_id": "tenant-1"})
 		require.Error(t, err, "a deployment that records no spend must say so, not report zero")
 	})
@@ -210,7 +211,7 @@ func TestMCPCostNarrowsToAHost(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			raw, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+			raw, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 				map[string]interface{}{"tenant_id": "tenant-1", "host": tc.host})
 			require.NoError(t, err)
 			report, ok := raw.(map[string]interface{})
@@ -219,7 +220,7 @@ func TestMCPCostNarrowsToAHost(t *testing.T) {
 			assert.Equal(t, tc.host, report["host"])
 		})
 	}
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 		map[string]interface{}{"tenant_id": "tenant-1", "host": "  "})
 	assert.Error(t, err, "a blank host is refused, not read as every host")
 }
@@ -229,7 +230,7 @@ func TestMCPCostNarrowsToAHost(t *testing.T) {
 func TestMCPCostNarrowsToAnAgent(t *testing.T) {
 	reg := newCostRegistry(t, "tenant-1")
 	for agent, entries := range map[string]float64{"-": 2, "claude-coder": 0} {
-		raw, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		raw, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 			map[string]interface{}{"tenant_id": "tenant-1", "agent": agent})
 		require.NoError(t, err)
 		report, ok := raw.(map[string]interface{})
@@ -237,7 +238,7 @@ func TestMCPCostNarrowsToAnAgent(t *testing.T) {
 		assert.Equal(t, entries, report["entries"], agent)
 		assert.Equal(t, agent, report["agent"])
 	}
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_cost",
 		map[string]interface{}{"tenant_id": "tenant-1", "agent": "Bad ID"})
 	assert.Error(t, err, "a malformed Agent is refused, not read as every Agent")
 }

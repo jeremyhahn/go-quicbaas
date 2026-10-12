@@ -369,6 +369,10 @@ func (m *MemoryStorage) DecrementQuotaUsage(ctx context.Context, tenantID string
 // UserStorage implementation
 
 func (m *MemoryStorage) CreateUser(ctx context.Context, user *User) error {
+	if err := RequireLoginKey(user); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

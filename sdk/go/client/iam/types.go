@@ -272,6 +272,17 @@ type User struct {
 
 	// UpdatedAt is when the user was last updated.
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// InviteToken is the one-time activation token for a pending account. It
+	// is set only on the CreateUser result and cannot be retrieved later.
+	InviteToken string `json:"invite_token,omitempty"`
+
+	// InviteURL is the activation link carrying InviteToken, when the server
+	// knows the origin its activation page is served on.
+	InviteURL string `json:"invite_url,omitempty"`
+
+	// InviteExpiresAt is when InviteToken stops being redeemable.
+	InviteExpiresAt *time.Time `json:"invite_expires_at,omitempty"`
 }
 
 // UserAttributes contains custom attributes for ABAC.

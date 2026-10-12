@@ -865,7 +865,10 @@ func (p *OIDCProvider) ValidateAccessToken(ctx context.Context, tokenString stri
 
 	// Check if token is revoked
 	revoked, err := p.tokenService.storage.IsTokenRevoked(ctx, claims.JTI)
-	if err == nil && revoked {
+	if err != nil {
+		return nil, &TokenRevocationCheckError{Cause: err}
+	}
+	if revoked {
 		return nil, &TokenRevokedError{}
 	}
 

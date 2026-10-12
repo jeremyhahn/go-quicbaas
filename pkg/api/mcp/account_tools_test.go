@@ -165,7 +165,7 @@ func TestExecuteAccountTools_HappyPath(t *testing.T) {
 		{"quicbaas_agent_account_usage", map[string]interface{}{"tenant_id": "tenant-1", "account_id": "acct-1"}, "usage"},
 	}
 	for _, c := range calls {
-		if _, err := reg.ExecuteTool(context.Background(), c.tool, c.args); err != nil {
+		if _, err := reg.ExecuteTool(tenantctx.WithTenant(context.Background(), "t1"), c.tool, c.args); err != nil {
 			t.Errorf("%s: %v", c.tool, err)
 		}
 		if !called[c.key] {
@@ -179,7 +179,7 @@ func TestExecuteAccountTools_HappyPath(t *testing.T) {
 func TestExecuteAccountTool_ServiceUnavailable(t *testing.T) {
 	reg := newAccountRegistry(t, nil)
 	for name := range accountToolHandlers {
-		if _, err := reg.ExecuteTool(context.Background(), name, map[string]interface{}{"tenant_id": "t1"}); err == nil {
+		if _, err := reg.ExecuteTool(tenantctx.WithTenant(context.Background(), "t1"), name, map[string]interface{}{"tenant_id": "t1"}); err == nil {
 			t.Errorf("%s succeeded with no account service wired", name)
 		}
 	}
@@ -286,7 +286,7 @@ func TestAccountMCPResultsCarryNoCredential(t *testing.T) {
 	}
 	markers := []string{"SECRET-ACCESS-TOKEN", "SECRET-REFRESH-TOKEN", "SECRET-ENV-VALUE", "access_token", "refresh_token"}
 	for _, c := range results {
-		out, err := reg.ExecuteTool(context.Background(), c.tool, c.args)
+		out, err := reg.ExecuteTool(tenantctx.WithTenant(context.Background(), "t1"), c.tool, c.args)
 		if err != nil {
 			t.Fatalf("%s: %v", c.tool, err)
 		}
@@ -318,7 +318,7 @@ func TestMCPSpawn_PinsAccountID(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, agentSvc)
 
-	if _, err := reg.ExecuteTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+	if _, err := reg.ExecuteTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":  "tenant-1",
 		"project_id": "proj-1",
 		"backend":    "claude",
@@ -347,7 +347,7 @@ func TestMCPSpawn_CarriesAccountAuto(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, agentSvc)
 
-	if _, err := reg.ExecuteTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+	if _, err := reg.ExecuteTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":        "tenant-1",
 		"project_id":       "proj-1",
 		"backend":          "claude",

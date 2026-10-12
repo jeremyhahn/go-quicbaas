@@ -216,6 +216,14 @@ message User {
   // the record, and two accounts sharing a display name collided on an index
   // neither had named.
   string username = 15;
+
+  // The activation invite, set ONLY on the CreateUser response for an account
+  // created pending. The token is minted by the invite store and returned
+  // exactly once; the user record never carries it, so every other read leaves
+  // these empty.
+  string invite_token = 16;
+  string invite_url = 17;
+  google.protobuf.Timestamp invite_expires_at = 18;
 }
 
 message Role {
@@ -445,6 +453,10 @@ message CreateUserRequest {
   // the email, which is what this transport did unconditionally while there
   // was nowhere to carry a requested handle.
   string username = 9;
+
+  // invite_expiry_hours is how long the activation invite of a pending account
+  // stays redeemable. Non-positive defaults to 24; values above 168 are capped.
+  int32 invite_expiry_hours = 10;
 }
 
 message GetUserRequest {

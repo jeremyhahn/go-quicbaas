@@ -1783,6 +1783,23 @@ func (e *JWKSGenerationError) Unwrap() error {
 // TokenRevokedError is returned when a token has been revoked.
 type TokenRevokedError struct{}
 
+// TokenRevocationCheckError is returned when the revocation store cannot
+// answer whether a token is revoked. The token is refused: a store that cannot
+// answer is not evidence that the token is fine.
+type TokenRevocationCheckError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *TokenRevocationCheckError) Error() string {
+	return "token revocation check failed: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *TokenRevocationCheckError) Unwrap() error {
+	return e.Cause
+}
+
 // Error implements the error interface.
 func (e *TokenRevokedError) Error() string {
 	return "token is revoked"
@@ -2052,5 +2069,29 @@ func NewErrAAGUIDGateUnconfigured() error {
 		Code: dberrors.ErrForbidden,
 		Op:   "iam.webauthn.aaguid",
 		Err:  &ErrAAGUIDGateUnconfiguredError{},
+	}
+}
+
+// PrincipalWithoutLoginKeyError is returned when a user record carries neither
+// an email login key nor a certificate binding, so no login ceremony could ever
+// resolve it.
+type PrincipalWithoutLoginKeyError struct {
+	TenantID string
+	Username string
+}
+
+// Error implements the error interface.
+func (e *PrincipalWithoutLoginKeyError) Error() string {
+	return "user " + strconv.Quote(e.Username) + " in tenant " + strconv.Quote(e.TenantID) +
+		" has neither an email login key nor a certificate binding, so it could never authenticate"
+}
+
+// NewPrincipalWithoutLoginKeyError creates a QBError wrapping
+// PrincipalWithoutLoginKeyError.
+func NewPrincipalWithoutLoginKeyError(tenantID, username string) error {
+	return &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.user.create",
+		Err:  &PrincipalWithoutLoginKeyError{TenantID: tenantID, Username: username},
 	}
 }

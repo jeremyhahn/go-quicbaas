@@ -73,12 +73,12 @@ func (m *mockIAMService) ListTenants(ctx context.Context, limit, offset int) ([]
 	return args.Get(0).([]*iam.Tenant), args.Int(1), args.Error(2)
 }
 
-func (m *mockIAMService) CreateUser(ctx context.Context, user *iam.User) (*iam.User, error) {
+func (m *mockIAMService) CreateUser(ctx context.Context, user *iam.User, inviteTTL time.Duration) (*iam.User, string, *iam.InviteRecord, error) {
 	args := m.Called(ctx, user)
 	if args.Get(0) == nil {
-		return nil, args.Error(1)
+		return nil, "", nil, args.Error(1)
 	}
-	return args.Get(0).(*iam.User), args.Error(1)
+	return args.Get(0).(*iam.User), "", nil, args.Error(1)
 }
 
 func (m *mockIAMService) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {

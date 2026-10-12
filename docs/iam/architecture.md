@@ -612,15 +612,24 @@ quicbaas iam users create alice@example.com \
 
 User is created in `pending` status. No authenticator is enrolled yet.
 
+The same call issues the user's one-time activation invite and returns it as
+`invite_token`, `invite_url` and `invite_expires_at`, on every transport. The
+token is opaque, stored only as a hash, and returned on this call only. Set
+its lifetime with `invite_expiry_hours`: the default is 24 and the maximum is
+168. If the invite cannot be issued, the create fails and no user is left
+behind. A node with no invite store refuses pending creates as unavailable.
+`invite_url` is omitted when the server has no origin to build it under, as
+in-process, or when the issuer is an IP literal.
+
 #### 2. Invite URL Sent to User
 
 Admin or system sends user an invite URL:
 
 ```
-https://quicbaas.example.com/auth/invite?token=<signed-jwt>&user_id=<uuid>
+https://quicbaas.example.com/ui/#/invite/<tenant_id>/<invite_token>
 ```
 
-The token contains the user ID, tenant ID, and a short expiration (e.g., 24 hours). The user accesses the link in a modern browser.
+The user accesses the link in a modern browser.
 
 #### 3. User Enrolls Authenticator
 

@@ -2521,12 +2521,15 @@ func (r *ToolRegistry) executeTaskListArtifacts(ctx context.Context, args map[st
 // project tools do, and re-stamps it with orchestration.ContextWithTenant so
 // the guard (and the embedded-fleet-node gRPC backend behind it) observes a
 // non-empty tenant on every code path.
+//
+// The argument is still required, but it is honoured only as
+// orchestratorTenantContext allows: it may name only the caller's own tenant
+// (tenantctx.Target), so a session tool cannot be pointed at another tenant.
 func sessionTenantContext(ctx context.Context, args map[string]interface{}) (context.Context, string, error) {
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
+	if getString(args, "tenant_id") == "" {
 		return ctx, "", api.NewRequiredFieldError("tenant_id")
 	}
-	return orchestration.ContextWithTenant(ctx, tenantID), tenantID, nil
+	return orchestratorTenantContext(ctx, args)
 }
 
 // orchestratorTenantContext resolves the tenant of a task, job, artifact or

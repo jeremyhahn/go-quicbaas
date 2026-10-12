@@ -20,6 +20,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"gopkg.in/yaml.v3"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -35,6 +36,10 @@ type IAMServer struct {
 	iampb.UnimplementedIAMServiceServer
 	iamService IAMService
 	logger     *logger.Logger
+
+	// inviteOrigin is the origin activation links are built under: the one
+	// the WebAuthn relying party accepts. Empty leaves invite_url unset.
+	inviteOrigin string
 }
 
 // IAMService defines the interface for IAM operations.
@@ -54,7 +59,10 @@ type IAMService interface {
 	ListTenants(ctx context.Context, limit, offset int) ([]*iam.Tenant, int, error)
 
 	// User operations
-	CreateUser(ctx context.Context, user *iam.User) (*iam.User, error)
+	//
+	// CreateUser returns, for a user created pending, the one-time invite
+	// token and its record; both are empty for any other lifecycle.
+	CreateUser(ctx context.Context, user *iam.User, inviteTTL time.Duration) (*iam.User, string, *iam.InviteRecord, error)
 	GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error)
 	UpdateUser(ctx context.Context, user *iam.User) (*iam.User, error)
 	DeleteUser(ctx context.Context, tenantID, userID string) error
@@ -122,6 +130,13 @@ func NewIAMServer(iamService IAMService, log *logger.Logger) *IAMServer {
 		iamService: iamService,
 		logger:     log.WithField("component", "iam-grpc-server"),
 	}
+}
+
+// SetInviteOrigin sets the origin CreateUser builds activation links under.
+// It must be the origin the WebAuthn relying party accepts, or the link loads
+// and the ceremony is then refused.
+func (s *IAMServer) SetInviteOrigin(origin string) {
+	s.inviteOrigin = origin
 }
 
 // =============================================================================
@@ -294,12 +309,23 @@ func (s *IAMServer) CreateUser(ctx context.Context, req *iampb.CreateUserRequest
 		}
 	}
 
-	created, err := s.iamService.CreateUser(ctx, user)
+	inviteTTL := time.Duration(req.InviteExpiryHours) * time.Hour
+	created, inviteToken, invite, err := s.iamService.CreateUser(ctx, user, inviteTTL)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
 
-	return convertUserToProto(created), nil
+	resp := convertUserToProto(created)
+	if inviteToken != "" {
+		resp.InviteToken = inviteToken
+		if s.inviteOrigin != "" {
+			resp.InviteUrl = iam.InviteURL(s.inviteOrigin, created.TenantID, inviteToken)
+		}
+		if invite != nil {
+			resp.InviteExpiresAt = timestamppb.New(invite.ExpiresAt)
+		}
+	}
+	return resp, nil
 }
 
 // GetUser retrieves a user by ID.

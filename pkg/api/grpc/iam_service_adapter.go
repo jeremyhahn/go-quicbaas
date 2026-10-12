@@ -104,6 +104,17 @@ type IAMServiceAdapter struct {
 	// in the server lifecycle than the IAM components this adapter wraps;
 	// nil means the node reports the verbs as unavailable.
 	webauthnCredentials service.WebAuthnCredentialService
+
+	// inviteStore issues the activation invite of a user created pending. Set
+	// after construction (SetInviteStore); nil means a pending create is
+	// refused with iam.ErrInviteStoreUnavailable before anything is written.
+	inviteStore iam.InviteStore
+}
+
+// SetInviteStore wires the invite store CreateUser issues activation invites
+// from — the same store REST and the activation endpoints use.
+func (a *IAMServiceAdapter) SetInviteStore(store iam.InviteStore) {
+	a.inviteStore = store
 }
 
 // SetWebAuthnCredentials wires the WebAuthn credential administration service
@@ -199,20 +210,13 @@ func (a *IAMServiceAdapter) ListTenants(ctx context.Context, limit, offset int) 
 // =============================================================================
 
 // CreateUser creates a new user.
-func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*iam.User, error) {
+func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User, inviteTTL time.Duration) (*iam.User, string, *iam.InviteRecord, error) {
 	if user == nil {
-		return nil, api.NewNilInputError("iam.grpc.CreateUser", "user")
+		return nil, "", nil, api.NewNilInputError("iam.grpc.CreateUser", "user")
 	}
 
-	// The record's own handle wins. It used to be derived from the email
-	// unconditionally, on the (then true) grounds that iam.User had no Username
-	// field; it has one now, and deriving over a handle the caller supplied
-	// would be this layer choosing a different name for the account than the
-	// one it was given.
-	//
-	// The derivation stays as the DEFAULT, because this transport's protobuf
-	// User carries no username field, so a gRPC caller has no way to send one
-	// and CreateUser requires it.
+	// The record's own handle wins; the email's local part is only the
+	// default for a caller that sent none, because CreateUser requires one.
 	username := strings.TrimSpace(user.Username)
 	if username == "" && user.Email != "" {
 		// Use the part before @ as username
@@ -223,6 +227,8 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 		}
 	}
 
+	// Roles go in with the create, which validates every reference before
+	// any write, so a bad role leaves no partial user behind.
 	opts := iam.CreateUserOptions{
 		Email:       user.Email,
 		Username:    username,
@@ -230,41 +236,12 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 		Attributes:  user.Attributes,
 		AuthMethods: user.AuthMethods,
 		Lifecycle:   user.Lifecycle,
+		Roles:       user.Roles,
 	}
 
-	// Pre-validate requested role references BEFORE creating the user.
-	// Resolving them up front keeps the create atomic from the caller's
-	// perspective: a bad role ID fails fast with a typed not-found error
-	// and no partially-created user is left behind (which would make a retry
-	// fail with already_exists on the username).
-	for _, role := range user.Roles {
-		if _, err := a.identityStore.GetRole(ctx, user.TenantID, role); err != nil {
-			return nil, err
-		}
-	}
-	created, err := a.identityStore.CreateUser(ctx, user.TenantID, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Track successfully assigned roles
-	assignedRoles := make([]string, 0, len(user.Roles))
-	for _, role := range user.Roles {
-		if err := a.identityStore.AssignRole(ctx, user.TenantID, created.ID, role); err != nil {
-			// If role assignment fails, return the created user with partial roles
-			// This avoids losing the user creation on role assignment failure
-			created.Roles = assignedRoles
-			return created, err
-		}
-		assignedRoles = append(assignedRoles, role)
-	}
-
-	// Populate the created user with the successfully assigned roles.
-	// This avoids an unnecessary re-fetch which could fail due to read-your-own-writes
-	// consistency issues with Raft replication.
-	created.Roles = assignedRoles
-
-	return created, nil
+	// The same service-layer path REST uses: a pending user comes back with
+	// the one-time invite that activates it, or is not created at all.
+	return a.identityStore.CreateInvitedUser(ctx, user.TenantID, opts, a.inviteStore, inviteTTL)
 }
 
 // GetUser retrieves a user by ID or email.

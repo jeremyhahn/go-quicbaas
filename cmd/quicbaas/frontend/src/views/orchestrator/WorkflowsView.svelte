@@ -121,13 +121,14 @@
    * which the table asks for itself. One page of a hundred: the check is a
    * courtesy and the server is what actually refuses a duplicate.
    */
-  async function fetchWorkflows(): Promise<void> {
+  async function fetchWorkflows(tenantID: string): Promise<void> {
     loadError = '';
     try {
       const client = await getSDKClient();
-      const page = await client.orchestrator.listWorkflowsPage(orchestratorStore.activeTenantID, {
+      const page = await client.orchestrator.listWorkflowsPage(tenantID, {
         limit: NAME_PAGE_LIMIT,
       });
+      if (tenantID !== orchestratorStore.activeTenantID) return;
       const seen = new Set<string>();
       workflows = page.items.filter((wf) => {
         if (seen.has(wf.name)) return false;
@@ -135,6 +136,7 @@
         return true;
       });
     } catch (err: unknown) {
+      if (tenantID !== orchestratorStore.activeTenantID) return;
       const msg = err instanceof Error ? err.message : String(err);
       loadError = `Failed to read the workflow names: ${msg}`;
     }
@@ -143,7 +145,7 @@
   /** reloadWorkflows re-reads both the table's page and the name list. */
   async function reloadWorkflows(): Promise<void> {
     refreshTick += 1;
-    await fetchWorkflows();
+    await fetchWorkflows(orchestratorStore.activeTenantID);
   }
 
   function highlightRow(name: string): void {
@@ -155,13 +157,14 @@
   let backends = $state<AgentBackendInfo[]>([]);
   let fleetAgents = $state<FleetNode[]>([]);
 
-  async function fetchSupportData(): Promise<void> {
+  async function fetchSupportData(tenantID: string): Promise<void> {
     try {
       const client = await getSDKClient();
       const [backendList, agentResp] = await Promise.all([
         client.orchestrator.listBackends(),
-        client.orchestrator.listFleetNodes({ tenant_id: orchestratorStore.activeTenantID }),
+        client.orchestrator.listFleetNodes({ tenant_id: tenantID }),
       ]);
+      if (tenantID !== orchestratorStore.activeTenantID) return;
       backends = backendList ?? [];
       fleetAgents = agentResp.nodes ?? [];
     } catch {
@@ -169,7 +172,13 @@
     }
   }
 
-  $effect(() => { void fetchWorkflows(); void fetchSupportData(); });
+  // The tenant is read here, before any await, so the effect depends on it and
+  // both loads are pinned to the tenant this run was for.
+  $effect(() => {
+    const tenantID = orchestratorStore.activeTenantID;
+    void fetchWorkflows(tenantID);
+    void fetchSupportData(tenantID);
+  });
 
   // ---------------------------------------------------------------------------
   // Wizard modal state

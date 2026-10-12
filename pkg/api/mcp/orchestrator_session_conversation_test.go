@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -36,7 +37,7 @@ import (
 func TestMCPSessionConversationReadsTheTurns(t *testing.T) {
 	agentSvc := newAsyncTurnOrchestrator(t, true)
 	reg := newFleetRegistry(t, agentSvc)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_prompt", map[string]interface{}{
 		"tenant_id":  "tenant-1",
@@ -83,21 +84,21 @@ func TestMCPSessionConversationReadsTheTurns(t *testing.T) {
 func TestMCPSessionConversationRejectsBadInput(t *testing.T) {
 	t.Run("no session id", func(t *testing.T) {
 		reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, true))
-		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_conversation",
+		_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_session_conversation",
 			map[string]interface{}{"tenant_id": "tenant-1"})
 		require.Error(t, err)
 	})
 
 	t.Run("no tenant id", func(t *testing.T) {
 		reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, true))
-		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_conversation",
+		_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_session_conversation",
 			map[string]interface{}{"session_id": "sess-1"})
 		require.Error(t, err)
 	})
 
 	t.Run("no transcript configured", func(t *testing.T) {
 		reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, false))
-		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_conversation",
+		_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_session_conversation",
 			map[string]interface{}{"tenant_id": "tenant-1", "session_id": "sess-1"})
 		require.Error(t, err)
 	})

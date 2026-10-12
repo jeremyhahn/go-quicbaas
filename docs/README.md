@@ -1,6 +1,6 @@
 # QuicBaaS Documentation
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-11
 > The index of feature documentation and the record of this repository's
 > migration state. Conflicts with this document are defects.
 
@@ -42,7 +42,7 @@ folders) into the folders below. Content was **moved and absorbed, not
 rewritten**; where a document contradicted the code, the document was corrected
 and the correction noted in place.
 
-Five directories are deliberately **not** feature folders and keep their
+Six directories are deliberately **not** feature folders and keep their
 existing shape:
 
 | Directory | Why it is not a feature folder |
@@ -51,10 +51,14 @@ existing shape:
 | `design/` | Working design documents and roadmaps for work that is planned, not built. A feature folder describes what exists. |
 | `identity-refactor/` | A cross-repo migration plan, still awaiting sign-off. |
 | `testing/` | Contributor guides for running the suites. |
+| `archive/` | Superseded documents kept as a record, e.g. the 2026-08 roadmap. Not a plan. |
 | `release/` | What must be true of the tree before it is published, and the gates that enforce it. |
 
-`ROADMAP.md` is stamped **ARCHIVE**: it predates the unified-API-server model
-and is kept as a record of decisions, not as a plan.
+There is one roadmap: [`ROADMAP.md`](../ROADMAP.md) at the repository root, which
+states what is complete and what remains to the release candidate. The August
+2026 architecture plan that used to sit here is kept as
+[archive/ROADMAP-2026-08.md](archive/ROADMAP-2026-08.md), stamped **ARCHIVE**: it
+predates the unified-API-server model and is a record of decisions, not a plan.
 
 ## Features
 

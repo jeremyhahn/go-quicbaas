@@ -26,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 )
 
 // =============================================================================
@@ -358,7 +359,7 @@ func TestIAMServiceAdapter_CreateUser_NilInput(t *testing.T) {
 	ctx := context.Background()
 
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.CreateUser(ctx, nil)
+	result, _, _, err := adapter.CreateUser(ctx, nil, 0)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -861,7 +862,9 @@ func createTestIAMAdapter91(t *testing.T) *IAMServiceAdapter {
 	})
 	require.NoError(t, err)
 
-	return NewIAMServiceAdapter(tenantMgr, identityStore, policyEngine, appManager, adminMgr, gdprMgr)
+	adapter := NewIAMServiceAdapter(tenantMgr, identityStore, policyEngine, appManager, adminMgr, gdprMgr)
+	adapter.SetInviteStore(iamtest.NewMemoryInviteStore())
+	return adapter
 }
 
 // =============================================================================
@@ -1004,7 +1007,7 @@ func TestAdapter91_CreateUser_Success(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "alice@example.com", Name: "Alice"}
-	result, err := adapter.CreateUser(ctx, user)
+	result, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "alice@example.com", result.Email)
@@ -1016,7 +1019,7 @@ func TestAdapter91_CreateUser_EmailWithoutAt(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "localuser", Name: "Local"}
-	_, err := adapter.CreateUser(ctx, user)
+	_, _, _, err := adapter.CreateUser(ctx, user, 0)
 	// IdentityStore validates email format - should error
 	assert.Error(t, err)
 }
@@ -1039,7 +1042,7 @@ func TestAdapter91_CreateUser_WithRoles(t *testing.T) {
 		Name:     "Bob",
 		Roles:    []string{"admin"},
 	}
-	result, err := adapter.CreateUser(ctx, user)
+	result, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"admin"}, result.Roles)
@@ -1056,7 +1059,7 @@ func TestAdapter91_CreateUser_UnknownRoleFailsWithoutPartialUser(t *testing.T) {
 		Name:     "Bob Two",
 		Roles:    []string{"does-not-exist"},
 	}
-	result, err := adapter.CreateUser(ctx, user)
+	result, _, _, err := adapter.CreateUser(ctx, user, 0)
 	// Role references are validated BEFORE the user record is created, so a
 	// bad role fails fast and atomically: no result and no partial user that
 	// would make a retry collide with already_exists.
@@ -1073,7 +1076,7 @@ func TestAdapter91_GetUser_ByID(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "charlie@example.com", Name: "Charlie"}
-	created, err := adapter.CreateUser(ctx, user)
+	created, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
 	result, err := adapter.GetUser(ctx, "tenant-1", created.ID)
@@ -1087,7 +1090,7 @@ func TestAdapter91_GetUser_ByEmail(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "diana@example.com", Name: "Diana"}
-	_, err := adapter.CreateUser(ctx, user)
+	_, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
 	result, err := adapter.GetUser(ctx, "tenant-1", "diana@example.com")
@@ -1101,7 +1104,7 @@ func TestAdapter91_GetUser_ByEmail_WrongTenant(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "eve@example.com", Name: "Eve"}
-	_, err := adapter.CreateUser(ctx, user)
+	_, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
 	result, err := adapter.GetUser(ctx, "wrong-tenant", "eve@example.com")
@@ -1125,7 +1128,7 @@ func TestAdapter91_UpdateUser_Success(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "frank@example.com", Name: "Frank"}
-	created, err := adapter.CreateUser(ctx, user)
+	created, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
 	created.Name = "Frank Updated"
@@ -1140,7 +1143,7 @@ func TestAdapter91_UpdateUser_WithRoles(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "grace@example.com", Name: "Grace"}
-	created, err := adapter.CreateUser(ctx, user)
+	created, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
 	created.Roles = []string{"viewer"}
@@ -1155,7 +1158,7 @@ func TestAdapter91_DeleteUser_ByID(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "ivan@example.com", Name: "Ivan"}
-	created, err := adapter.CreateUser(ctx, user)
+	created, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
 	assert.NoError(t, adapter.DeleteUser(ctx, "tenant-1", created.ID))
@@ -1167,7 +1170,7 @@ func TestAdapter91_DeleteUser_ByEmail(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	user := &iam.User{TenantID: "tenant-1", Email: "jane@example.com", Name: "Jane"}
-	_, err := adapter.CreateUser(ctx, user)
+	_, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
 	assert.NoError(t, adapter.DeleteUser(ctx, "tenant-1", "jane@example.com"))
@@ -1185,7 +1188,7 @@ func TestAdapter91_ListUsers_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	_, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "kate@example.com", Name: "Kate"})
+	_, _, _, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "kate@example.com", Name: "Kate"}, 0)
 	require.NoError(t, err)
 
 	users, total, err := adapter.ListUsers(ctx, "tenant-1", 10, 0, nil)
@@ -1312,7 +1315,7 @@ func TestAdapter91_AssignRole_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	createdUser, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "assign@example.com", Name: "Assign"})
+	createdUser, _, _, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "assign@example.com", Name: "Assign"}, 0)
 	require.NoError(t, err)
 	createdRole, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "assignable"})
 	require.NoError(t, err)
@@ -1331,7 +1334,7 @@ func TestAdapter91_RevokeRole_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	createdUser, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "revoke@example.com", Name: "Revoke"})
+	createdUser, _, _, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "revoke@example.com", Name: "Revoke"}, 0)
 	require.NoError(t, err)
 	createdRole, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "revocable"})
 	require.NoError(t, err)

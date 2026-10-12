@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -108,7 +109,7 @@ func TestExecuteRotateAccount_MovesTheSession(t *testing.T) {
 	reg := newFleetRegistry(t, agentSvc)
 
 	availableAt := time.Now().UTC().Add(15 * time.Minute).Truncate(time.Second)
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_rotate_account",
+	result, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_rotate_account",
 		map[string]interface{}{
 			"tenant_id":     "acme",
 			"session_id":    "sess-42",
@@ -147,7 +148,7 @@ func TestExecuteRotateAccount_MissingRequiredArgs(t *testing.T) {
 			agentSvc := &rotatingMockAgentService{mockAgentService: &mockAgentService{}}
 			reg := newFleetRegistry(t, agentSvc)
 
-			_, err := reg.executeAgentTool(context.Background(),
+			_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"),
 				"quicbaas_orchestrator_rotate_account", tc.args)
 			require.Error(t, err)
 			assert.Nil(t, agentSvc.lastRequest, "a half-built request must not reach the orchestrator")
@@ -164,7 +165,7 @@ func TestExecuteRotateAccount_MalformedAvailableAtIsRejected(t *testing.T) {
 	agentSvc := &rotatingMockAgentService{mockAgentService: &mockAgentService{}}
 	reg := newFleetRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_rotate_account",
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_rotate_account",
 		map[string]interface{}{
 			"tenant_id":     "acme",
 			"session_id":    "sess-42",
@@ -187,7 +188,7 @@ func TestExecuteRotateAccount_ServiceErrorPropagates(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_rotate_account",
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_rotate_account",
 		map[string]interface{}{"tenant_id": "acme", "session_id": "sess-42"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, orchestration.ErrSessionNotRotatable)
@@ -201,7 +202,7 @@ func TestExecuteRotateAccount_UnsupportedDeployment(t *testing.T) {
 
 	reg := newFleetRegistry(t, &mockAgentService{})
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_rotate_account",
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_rotate_account",
 		map[string]interface{}{"tenant_id": "acme", "session_id": "sess-42"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, orchestration.ErrSessionRotationUnsupported)
@@ -238,7 +239,7 @@ func TestSpawnToolCarriesAccountAllow(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn",
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_spawn",
 		map[string]interface{}{
 			"tenant_id":     "acme",
 			"backend":       "claude",

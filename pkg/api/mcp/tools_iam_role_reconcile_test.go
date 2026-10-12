@@ -26,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // reconcileToolName is the wire name of the built-in role reconciliation tool.
@@ -89,7 +90,7 @@ func TestExecuteIAMRoleReconcile_ReturnsReport(t *testing.T) {
 		},
 	})
 
-	result, err := reg.executeIAMTool(context.Background(), reconcileToolName, map[string]interface{}{
+	result, err := reg.executeIAMTool(tenantctx.WithTenant(context.Background(), "acme"), reconcileToolName, map[string]interface{}{
 		"tenant_id": "acme",
 	})
 	require.NoError(t, err)
@@ -130,7 +131,7 @@ func TestExecuteIAMRoleReconcile_Idempotent(t *testing.T) {
 		},
 	})
 
-	result, err := reg.executeIAMRoleReconcile(context.Background(), map[string]interface{}{
+	result, err := reg.executeIAMRoleReconcile(tenantctx.WithTenant(context.Background(), "acme"), map[string]interface{}{
 		"tenant_id": "acme",
 	})
 	require.NoError(t, err)
@@ -151,7 +152,7 @@ func TestExecuteIAMRoleReconcile_ServiceError(t *testing.T) {
 		},
 	})
 
-	result, err := reg.executeIAMTool(context.Background(), reconcileToolName, map[string]interface{}{
+	result, err := reg.executeIAMTool(tenantctx.WithTenant(context.Background(), "acme"), reconcileToolName, map[string]interface{}{
 		"tenant_id": "acme",
 	})
 	require.Error(t, err)
@@ -165,7 +166,7 @@ func TestExecuteIAMRoleReconcile_ServiceUnavailable(t *testing.T) {
 	// mockService does not implement iamServiceAccessor.
 	reg := NewToolRegistry(&mockService{}, newTestLogger(t))
 
-	_, err := reg.executeIAMRoleReconcile(context.Background(), map[string]interface{}{
+	_, err := reg.executeIAMRoleReconcile(tenantctx.WithTenant(context.Background(), "acme"), map[string]interface{}{
 		"tenant_id": "acme",
 	})
 	require.Error(t, err)

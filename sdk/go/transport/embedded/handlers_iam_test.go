@@ -15,9 +15,12 @@ package embedded
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 )
@@ -27,11 +30,16 @@ import (
 // transport uses (identityStoreProvider).
 type mockQuicBaaSForIAM struct {
 	service.QuicBaaS
-	store *iam.IdentityStore
+	store   *iam.IdentityStore
+	invites iam.InviteStore
 }
 
 func (m *mockQuicBaaSForIAM) GetIdentityStore(_ context.Context) (*iam.IdentityStore, error) {
 	return m.store, nil
+}
+
+func (m *mockQuicBaaSForIAM) GetInviteStore(_ context.Context) (iam.InviteStore, error) {
+	return m.invites, nil
 }
 
 // embeddedCreateUserEnvelope mirrors the SDK client's internal transport
@@ -47,7 +55,60 @@ func newIAMTestService() (*mockQuicBaaSForIAM, *iam.IdentityStore) {
 		UserStorage: mem,
 		RoleStorage: mem,
 	})
-	return &mockQuicBaaSForIAM{store: store}, store
+	return &mockQuicBaaSForIAM{store: store, invites: iamtest.NewMemoryInviteStore()}, store
+}
+
+// TestHandleIAMUserCreate_ReturnsTheInvite proves the embedded transport hands
+// a pending user's activation token back, as the wire transports do.
+func TestHandleIAMUserCreate_ReturnsTheInvite(t *testing.T) {
+	svc, _ := newIAMTestService()
+	ctx := context.Background()
+
+	out, err := handleIAMUserCreate(ctx, svc, &embeddedCreateUserEnvelope{
+		TenantID: "t-1",
+		Request:  &iamsdk.CreateUserRequest{Username: "pat", Email: "pat@example.com", InviteExpiryHours: 48},
+	})
+	if err != nil {
+		t.Fatalf("handleIAMUserCreate failed: %v", err)
+	}
+	user, ok := out.(*iamsdk.User)
+	if !ok {
+		t.Fatalf("unexpected result type %T", out)
+	}
+	if user.InviteToken == "" || user.InviteExpiresAt == nil {
+		t.Fatalf("a pending user came back without its invite: %+v", user)
+	}
+	if got := time.Until(*user.InviteExpiresAt); got < 47*time.Hour || got > 48*time.Hour {
+		t.Errorf("invite expires in %v, want 48h", got)
+	}
+
+	record, err := svc.invites.Redeem(ctx, "t-1", user.InviteToken)
+	if err != nil {
+		t.Fatalf("the returned token does not redeem: %v", err)
+	}
+	if record.UserID != user.ID {
+		t.Errorf("invite is for %q, want %q", record.UserID, user.ID)
+	}
+}
+
+// TestHandleIAMUserCreate_NoInviteStoreRefusesPending proves a service with no
+// invite store refuses a pending create rather than writing a user nobody can
+// activate.
+func TestHandleIAMUserCreate_NoInviteStoreRefusesPending(t *testing.T) {
+	svc, store := newIAMTestService()
+	svc.invites = nil
+	ctx := context.Background()
+
+	_, err := handleIAMUserCreate(ctx, svc, &embeddedCreateUserEnvelope{
+		TenantID: "t-1",
+		Request:  &iamsdk.CreateUserRequest{Username: "sam", Email: "sam@example.com"},
+	})
+	if !errors.Is(err, iam.ErrInviteStoreUnavailable) {
+		t.Fatalf("err = %v, want ErrInviteStoreUnavailable", err)
+	}
+	if _, err := store.GetUserByEmail(ctx, "t-1", "sam@example.com"); err == nil {
+		t.Error("a pending user was written with no way to activate it")
+	}
 }
 
 // TestHandleIAMUserCreate_ForwardsRolesAndMetadata proves the embedded

@@ -143,26 +143,37 @@
     projectSearch.trim() !== '' || Object.keys(projectNarrowing.values).length > 0,
   );
 
-  async function fetchAll(): Promise<void> {
+  /**
+   * fetchAll reads the projects and fleet nodes of ONE tenant, named by the
+   * caller. The tenant is never read after an await: that would pin neither
+   * the request nor the effect to the tenant the load began for. An answer
+   * for a tenant the operator has since left is dropped.
+   */
+  async function fetchAll(tenantID: string): Promise<void> {
     loading = true;
     loadError = '';
     try {
       const client = await getSDKClient();
       const [projResp, agentResp] = await Promise.all([
-        client.projects.listProjects(orchestratorStore.activeTenantID),
-        client.orchestrator.listFleetNodes({ tenant_id: orchestratorStore.activeTenantID }),
+        client.projects.listProjects(tenantID),
+        client.orchestrator.listFleetNodes({ tenant_id: tenantID }),
       ]);
+      if (tenantID !== orchestratorStore.activeTenantID) return;
       projects = projResp.projects ?? [];
       agents = agentResp.nodes ?? [];
     } catch (err: unknown) {
+      if (tenantID !== orchestratorStore.activeTenantID) return;
       const msg = err instanceof Error ? err.message : String(err);
       loadError = `Failed to load projects: ${msg}`;
     } finally {
-      loading = false;
+      if (tenantID === orchestratorStore.activeTenantID) loading = false;
     }
   }
 
-  $effect(() => { void fetchAll(); });
+  $effect(() => {
+    const tenantID = orchestratorStore.activeTenantID;
+    void fetchAll(tenantID);
+  });
 
   function toggleExpand(projectId: string): void {
     const next = new Set(expanded);
@@ -209,7 +220,7 @@
       );
       showToast('success', `Project "${name}" created`);
       showCreateDialog = false;
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       createError = `Create failed: ${errorMessage(err)}`;
     } finally {
@@ -232,7 +243,7 @@
       await client.projects.deleteProject(orchestratorStore.activeTenantID, deleteTarget.id);
       showToast('success', `Project "${deleteTarget.name}" deleted`);
       deleteTarget = null;
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       showToast('error', `Delete failed: ${errorMessage(err)}`);
     } finally {
@@ -262,7 +273,7 @@
           ? `Project "${project.name}" parked — work in flight will finish`
           : `Project "${project.name}" resumed`,
       );
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       showToast('error', `${parked ? 'Park' : 'Resume'} failed: ${errorMessage(err)}`);
     } finally {
@@ -494,7 +505,7 @@
       }
       showToast('success', `Project "${project.name}" updated`);
       editTarget = null;
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       editError = `Update failed: ${errorMessage(err)}`;
     } finally {
@@ -528,7 +539,7 @@
       };
       await client.projects.grantFleetNodeRole(req);
       showToast('success', `Role updated to "${role}"`);
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       showToast('error', `Role change failed: ${errorMessage(err)}`);
     } finally {
@@ -552,7 +563,7 @@
       };
       await client.projects.revokeFleetNodeRole(req);
       showToast('success', 'Fleet node access revoked (denied)');
-      await fetchAll();
+      await fetchAll(orchestratorStore.activeTenantID);
     } catch (err: unknown) {
       showToast('error', `Revoke failed: ${errorMessage(err)}`);
     } finally {
@@ -790,7 +801,7 @@
     {#snippet children()}
       <button
         class="btn btn-sm btn-ghost gap-1"
-        onclick={() => { void fetchAll(); }}
+        onclick={() => { void fetchAll(orchestratorStore.activeTenantID); }}
         disabled={loading}
         aria-label="Refresh projects"
       >

@@ -438,13 +438,7 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 	//
 	// Enabled therefore applies only when the caller named no state. Nil still
 	// means the caller said nothing, so it cannot disable anyone.
-	lifecycle := opts.Lifecycle
-	if lifecycle == "" {
-		lifecycle = LifecyclePending
-		if opts.Enabled != nil && !*opts.Enabled {
-			lifecycle = LifecycleDisabled
-		}
-	}
+	lifecycle := opts.EffectiveLifecycle()
 
 	user := &User{
 		TenantID: tenantID,

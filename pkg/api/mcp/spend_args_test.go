@@ -142,7 +142,7 @@ func TestARejectedSpendUpdateLeavesTheSavedPolicyIntact(t *testing.T) {
 		ledger:           orchestration.NewInMemoryConsumptionLedger(),
 		tenant:           orchestration.NewInMemoryTenantSpendPolicyStore(),
 	})
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 	set := func(micros interface{}) error {
 		_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_spend_policy_set", map[string]interface{}{
 			"tenant_id": "t1",
@@ -241,7 +241,7 @@ func TestTenantSpendPolicyTools(t *testing.T) {
 		ledger:           orchestration.NewInMemoryConsumptionLedger(),
 		tenant:           orchestration.NewInMemoryTenantSpendPolicyStore(),
 	})
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_spend_policy_set", map[string]interface{}{
 		"tenant_id": "t1",
 		"limits": map[string]interface{}{"windows": []interface{}{

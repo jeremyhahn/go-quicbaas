@@ -17,6 +17,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestIAMToolsRegistration(t *testing.T) {
@@ -931,7 +932,7 @@ func TestGetIAMService_Success(t *testing.T) {
 
 func TestExecuteIAMTool_RoutesToTenantOps(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	tests := []struct {
 		name     string
@@ -956,7 +957,7 @@ func TestExecuteIAMTool_RoutesToTenantOps(t *testing.T) {
 
 func TestExecuteIAMTool_RoutesToUserOps(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	tests := []struct {
 		name     string
@@ -983,7 +984,7 @@ func TestExecuteIAMTool_RoutesToUserOps(t *testing.T) {
 
 func TestExecuteIAMTool_RoutesToRoleOps(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	tests := []struct {
 		name     string
@@ -1008,7 +1009,7 @@ func TestExecuteIAMTool_RoutesToRoleOps(t *testing.T) {
 
 func TestExecuteIAMTool_RoutesToPolicyOps(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	policyMap := map[string]interface{}{"name": "test-policy", "effect": "allow"}
 
@@ -1039,7 +1040,7 @@ func TestExecuteIAMTool_RoutesToPolicyOps(t *testing.T) {
 
 func TestExecuteIAMTool_RoutesToAppOps(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	tests := []struct {
 		name     string
@@ -1101,7 +1102,7 @@ func TestExecuteIAMTool_ServiceErrors(t *testing.T) {
 		},
 	}
 	reg := newIAMTestRegistry(iamSvc)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	tests := []struct {
 		name     string
@@ -1125,7 +1126,7 @@ func TestExecuteIAMTool_ServiceErrors(t *testing.T) {
 
 func TestExecuteIAMTenantCreate_WithOptionalFields(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"id":       "custom-id",
@@ -1141,7 +1142,7 @@ func TestExecuteIAMTenantCreate_WithOptionalFields(t *testing.T) {
 
 func TestExecuteIAMTenantUpdate_WithOptionalFields(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"id":       "t1",
@@ -1157,7 +1158,7 @@ func TestExecuteIAMTenantUpdate_WithOptionalFields(t *testing.T) {
 
 func TestExecuteIAMTenantList_WithPaginationAndFilter(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"limit":  float64(50),
@@ -1172,7 +1173,7 @@ func TestExecuteIAMTenantList_WithPaginationAndFilter(t *testing.T) {
 
 func TestExecuteIAMUserCreate_WithAllFields(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"tenant_id":  "t1",
@@ -1189,7 +1190,7 @@ func TestExecuteIAMUserCreate_WithAllFields(t *testing.T) {
 
 func TestExecuteIAMUserUpdate_WithAllOptionalFields(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"tenant_id":  "t1",
@@ -1209,7 +1210,7 @@ func TestExecuteIAMUserUpdate_WithAllOptionalFields(t *testing.T) {
 
 func TestExecuteIAMUserList_WithPaginationAndFilter(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"tenant_id": "t1",
@@ -1225,7 +1226,7 @@ func TestExecuteIAMUserList_WithPaginationAndFilter(t *testing.T) {
 
 func TestExecuteIAMPolicyCreate_MissingPolicyObject(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"tenant_id": "t1",
@@ -1238,7 +1239,7 @@ func TestExecuteIAMPolicyCreate_MissingPolicyObject(t *testing.T) {
 
 func TestExecuteIAMPolicyUpdate_MissingPolicyObject(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"tenant_id": "t1",
@@ -1252,7 +1253,7 @@ func TestExecuteIAMPolicyUpdate_MissingPolicyObject(t *testing.T) {
 
 func TestExecuteIAMPolicyTest_MissingCheckObject(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"policy": map[string]interface{}{"name": "p1"},
@@ -1265,7 +1266,7 @@ func TestExecuteIAMPolicyTest_MissingCheckObject(t *testing.T) {
 
 func TestExecuteIAMPolicyTest_SimulateMode(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	// When "policy" key is absent, the handler uses simulate mode
 	// with flat subject/action/resource fields.
@@ -1503,7 +1504,7 @@ func TestGetMFAManager_Success(t *testing.T) {
 
 func TestExecuteMFABeginEnroll_Success(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"user_id":   "u1",
@@ -1518,7 +1519,7 @@ func TestExecuteMFABeginEnroll_Success(t *testing.T) {
 
 func TestExecuteMFABeginEnroll_DefaultMethod(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
 		"user_id":   "u1",
@@ -2045,7 +2046,7 @@ func newErrorIAMService() *mockIAMService {
 func TestIAMCoverage91_ServiceErrorPaths(t *testing.T) {
 	errSvc := newErrorIAMService()
 	reg := newIAMTestRegistry(errSvc)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t")
 
 	tests := []struct {
 		name     string
@@ -2111,7 +2112,7 @@ func TestIAMCoverage91_NoIAMService(t *testing.T) {
 	// Use a registry backed by a service that does NOT implement iamServiceAccessor.
 	log := newTestLogger(t)
 	reg := NewToolRegistry(&mockService{}, log)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	// Every IAM function should return an error when the service doesn't support IAM.
 	functions := []struct {
@@ -2173,7 +2174,7 @@ func TestIAMCoverage91_ExecToolRouting_MFA(t *testing.T) {
 	// getMFAManager() requires a mfaManagerAccessor which the mock doesn't implement.
 	// This covers the switch branches and the getMFAManager error paths.
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	mfaTools := []struct {
 		name     string
@@ -2204,7 +2205,7 @@ func TestIAMCoverage91_ExecToolRouting_MFA(t *testing.T) {
 // TestIAMCoverage91_ExecToolRouting_PEP covers PEP routing branches in executeIAMTool.
 func TestIAMCoverage91_ExecToolRouting_PEP(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	pepTools := []struct {
 		name     string
@@ -2233,7 +2234,7 @@ func TestIAMCoverage91_ExecToolRouting_PEP(t *testing.T) {
 // TestIAMCoverage91_ExecToolRouting_DelegatedAdmin covers delegated admin routing branches.
 func TestIAMCoverage91_ExecToolRouting_DelegatedAdmin(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	adminTools := []struct {
 		name     string
@@ -2260,7 +2261,7 @@ func TestIAMCoverage91_ExecToolRouting_DelegatedAdmin(t *testing.T) {
 // TestIAMCoverage91_ExecToolRouting_Impersonation covers impersonation routing branches.
 func TestIAMCoverage91_ExecToolRouting_Impersonation(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	impersonationTools := []struct {
 		name     string
@@ -2284,7 +2285,7 @@ func TestIAMCoverage91_ExecToolRouting_Impersonation(t *testing.T) {
 // TestIAMCoverage91_ExecToolRouting_GDPR covers GDPR routing branches in executeIAMTool.
 func TestIAMCoverage91_ExecToolRouting_GDPR(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	gdprTools := []struct {
 		name     string
@@ -2403,6 +2404,40 @@ func TestExecuteIAMUserCreate_AttributesForwarded(t *testing.T) {
 	require.NotNil(t, captured)
 	require.NotNil(t, captured.Attributes)
 	assert.Equal(t, "engineering", captured.Attributes["department"])
+}
+
+// TestExecuteIAMUserCreate_CarriesTheInvite proves the invite lifetime reaches
+// the service and the activation invite it issues reaches the MCP caller.
+func TestExecuteIAMUserCreate_CarriesTheInvite(t *testing.T) {
+	var captured *service.IAMCreateUserRequest
+	expires := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	mock := &mockIAMService{
+		createUserFunc: func(_ context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
+			captured = req
+			return &service.IAMCreateUserResponse{
+				User:            &iam.User{ID: "u1", TenantID: req.TenantID, Email: req.Email},
+				InviteToken:     "tok",
+				InviteExpiresAt: &expires,
+				Timestamp:       time.Now(),
+			}, nil
+		},
+	}
+	reg := newIAMTestRegistry(mock)
+
+	result, err := reg.executeIAMUserCreate(context.Background(), map[string]interface{}{
+		"tenant_id":           "t1",
+		"email":               "pat@example.com",
+		"name":                "Pat",
+		"invite_expiry_hours": float64(48),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	assert.Equal(t, 48, captured.InviteExpiryHours)
+
+	out, ok := result.(map[string]interface{})
+	require.True(t, ok, "unexpected result type %T", result)
+	assert.Equal(t, "tok", out["invite_token"])
+	assert.Equal(t, expires.Format(time.RFC3339), out["invite_expires_at"])
 }
 
 // TestExecuteIAMUserUpdate_AttributesReachTheServiceInTheStoreShape pins the

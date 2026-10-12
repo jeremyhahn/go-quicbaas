@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // This file guards the ACP agent-session surface on MCP: spawn, prompt, list
@@ -168,7 +169,7 @@ func TestSessionToolsMissingRequiredArgs(t *testing.T) {
 	t.Parallel()
 
 	reg := newFleetRegistry(t, &mockAgentService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	cases := []struct {
 		name  string
@@ -222,7 +223,7 @@ func TestSpawnToolRejectsInvalidSandboxMode(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":    "t1",
 		"backend":      "claude",
 		"project_id":   "p1",
@@ -265,7 +266,7 @@ func TestSpawnToolDispatch(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+	result, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":            "acme",
 		"backend":              "claude",
 		"project_id":           "proj-1",
@@ -322,7 +323,7 @@ func TestSpawnToolHonorsExplicitNonPersistent(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, agentSvc)
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":  "acme",
 		"backend":    "claude",
 		"project_id": "proj-1",
@@ -360,7 +361,7 @@ func TestPromptToolDispatch(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, agentSvc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_prompt", map[string]interface{}{
+	result, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_prompt", map[string]interface{}{
 		"tenant_id":  "acme",
 		"session_id": "sess-42",
 		"prompt":     "summarize the repo",
@@ -411,7 +412,7 @@ func TestSessionInspectionToolsDispatch(t *testing.T) {
 		},
 	}
 	reg := newFleetRegistry(t, agentSvc)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	statusResult, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_status", map[string]interface{}{
 		"tenant_id": "acme", "session_id": "sess-42",

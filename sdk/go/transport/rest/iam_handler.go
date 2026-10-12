@@ -1365,6 +1365,11 @@ func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 		body["auth_methods"] = authMethods
 	}
 
+	// Map invite_expiry_hours (lifetime of a pending user's activation invite).
+	if hours, ok := req["invite_expiry_hours"].(float64); ok && hours > 0 {
+		body["invite_expiry_hours"] = int(hours)
+	}
+
 	return body
 }
 

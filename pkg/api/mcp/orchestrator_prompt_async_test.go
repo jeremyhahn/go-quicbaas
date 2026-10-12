@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // newAsyncTurnOrchestrator builds a real orchestrator wired to asyncTestBackend
@@ -93,7 +94,7 @@ type turnDrainer interface{ WaitForTurns() }
 func TestMCPPromptAcknowledgesThenTranscriptIsPollable(t *testing.T) {
 	agentSvc := newAsyncTurnOrchestrator(t, true)
 	reg := newFleetRegistry(t, agentSvc)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	// The prompt tool returns only the acknowledgement — never the agent's
 	// output, which MCP has no way to stream.
@@ -157,11 +158,11 @@ func TestMCPPromptAcknowledgesThenTranscriptIsPollable(t *testing.T) {
 func TestMCPSessionHistoryRejectsBadInput(t *testing.T) {
 	reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, true))
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_history",
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_session_history",
 		map[string]interface{}{"tenant_id": "tenant-1"})
 	require.Error(t, err, "a transcript read without a session must be refused")
 
-	_, err = reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_history",
+	_, err = reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_session_history",
 		map[string]interface{}{"session_id": "sess-1"})
 	require.Error(t, err, "a transcript read without a tenant must be refused")
 }
@@ -172,7 +173,7 @@ func TestMCPSessionHistoryRejectsBadInput(t *testing.T) {
 func TestMCPSessionHistoryWithoutEventLog(t *testing.T) {
 	reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, false))
 
-	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_history",
+	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "tenant-1"), "quicbaas_orchestrator_session_history",
 		map[string]interface{}{"tenant_id": "tenant-1", "session_id": "sess-1"})
 	require.Error(t, err, "a transcript read with no event log installed must be refused")
 }

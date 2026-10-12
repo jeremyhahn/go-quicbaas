@@ -210,6 +210,26 @@ func TestInvite_RESTCreatedInviteLandsInSameStore(t *testing.T) {
 	assert.Equal(t, http.StatusOK, gw.Code, "REST-created invite must resolve via GetInvite; body: %s", gw.Body.String())
 }
 
+// TestInvite_NoInviteStoreIsAWiringFault: an unwired store reports the shared
+// iam sentinel every transport uses, while REST keeps answering 500 for it.
+func TestInvite_NoInviteStoreIsAWiringFault(t *testing.T) {
+	handler, tenantID, _ := newUnificationInviteHandler(t, nil)
+
+	_, err := handler.getInviteStore(context.Background())
+	require.ErrorIs(t, err, iam.ErrInviteStoreUnavailable)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tenant_id", tenantID)
+	rctx.URLParams.Add("token", "tok")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/invites/tok", nil)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+
+	handler.GetInvite(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+}
+
 // TestActivateFIDO2Finish_MarkUsedFailureSurfaces verifies the security-relevant
 // MarkUsed error path: when the one-time token cannot be recorded as consumed,
 // the handler must NOT report success (the invite would otherwise remain live).

@@ -87,9 +87,13 @@ func TestCreateUser_SendsEmailOrDeclaresItsAbsence(t *testing.T) {
 	store, _ := newTestUserStorage(t, svc, testTenant)
 	ctx := context.Background()
 
-	// A user with no email is legitimate — a bootstrap or mTLS-only identity —
-	// and the adapter declares it rather than letting the store refuse.
-	u := &iam.User{TenantID: testTenant, Username: "bootstrap-admin", Name: "Bootstrap Admin", Lifecycle: iam.LifecycleActive}
+	// A user with no email is legitimate — an mTLS- or PIV-only identity that
+	// authenticates by certificate — and the adapter declares it rather than
+	// letting the store refuse.
+	u := &iam.User{
+		TenantID: testTenant, Username: "node-daemon", Name: "Node Daemon", Lifecycle: iam.LifecycleActive,
+		CertBindings: []qrdbsdk.CertBinding{{Thumbprint: "spki-node-daemon", Kind: qrdbsdk.CertBindingSPKIThumbprint}},
+	}
 	if err := store.CreateUser(ctx, u); err != nil {
 		t.Fatalf("a user with no email must be created with the omission declared: %v", err)
 	}
@@ -101,8 +105,19 @@ func TestCreateUser_SendsEmailOrDeclaresItsAbsence(t *testing.T) {
 	if stored.Email != "" {
 		t.Fatalf("Email = %q, want empty", stored.Email)
 	}
-	if stored.Username != "bootstrap-admin" {
+	if stored.Username != "node-daemon" {
 		t.Fatalf("Username = %q, want the handle", stored.Username)
+	}
+
+	// Neither an email nor a certificate binding: nothing could log in as it,
+	// so it is refused before qrdb is asked to write it.
+	ghost := &iam.User{TenantID: testTenant, Username: "ghost", Name: "Ghost", Lifecycle: iam.LifecycleActive}
+	var noKey *iam.PrincipalWithoutLoginKeyError
+	if err := store.CreateUser(ctx, ghost); !errors.As(err, &noKey) {
+		t.Fatalf("CreateUser err = %v, want PrincipalWithoutLoginKeyError", err)
+	}
+	if _, err := svc.GetUserByUsername(ctx, testTenant, "ghost"); err == nil {
+		t.Fatal("a refused create reached the qrdb store")
 	}
 }
 

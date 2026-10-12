@@ -249,6 +249,10 @@ func (r *ToolRegistry) registerUserTools() {
 					"description": "State to create in. Suspended and locked describe something that HAPPENS to an account and cannot be asserted at creation.",
 					"enum":        []string{"pending", "active", "disabled"},
 				},
+				"invite_expiry_hours": map[string]interface{}{
+					"type":        "integer",
+					"description": "Lifetime of a pending user's activation invite in hours. Defaults to 24; capped at 168.",
+				},
 			},
 			"required": []string{"tenant_id", "email", "name"},
 		},
@@ -1320,11 +1324,12 @@ func (r *ToolRegistry) executeIAMUserCreate(ctx context.Context, args map[string
 	}
 
 	req := &service.IAMCreateUserRequest{
-		TenantID:  getString(args, "tenant_id"),
-		Email:     getString(args, "email"),
-		Username:  getString(args, "username"),
-		Name:      getString(args, "name"),
-		Lifecycle: iam.Lifecycle(getString(args, "lifecycle")),
+		TenantID:          getString(args, "tenant_id"),
+		Email:             getString(args, "email"),
+		Username:          getString(args, "username"),
+		Name:              getString(args, "name"),
+		Lifecycle:         iam.Lifecycle(getString(args, "lifecycle")),
+		InviteExpiryHours: getInt(args, "invite_expiry_hours"),
 	}
 
 	if raw, ok := args["auth_methods"].([]interface{}); ok {

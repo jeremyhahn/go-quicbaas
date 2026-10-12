@@ -54,6 +54,23 @@ func TestMapUserCreateRequest_OmitsAnUnsetLifecycle(t *testing.T) {
 	}
 }
 
+// TestMapUserCreateRequest_ForwardsInviteExpiry: a caller's invite lifetime
+// must reach the server, or REST alone would issue the default.
+func TestMapUserCreateRequest_ForwardsInviteExpiry(t *testing.T) {
+	body := mapUserCreateRequest(map[string]interface{}{
+		"email":               "alice@acme.test",
+		"invite_expiry_hours": float64(48),
+	})
+	if body["invite_expiry_hours"] != 48 {
+		t.Errorf("invite_expiry_hours = %v, want 48", body["invite_expiry_hours"])
+	}
+
+	unset := mapUserCreateRequest(map[string]interface{}{"email": "alice@acme.test"})
+	if _, present := unset["invite_expiry_hours"]; present {
+		t.Errorf("invite_expiry_hours must be absent when unset, got %v", unset["invite_expiry_hours"])
+	}
+}
+
 // TestMapUserUpdateRequest_ForwardsLifecycleAndAuthMethods: an update that
 // silently drops an account-state change answers 200 with nothing changed.
 func TestMapUserUpdateRequest_ForwardsLifecycleAndAuthMethods(t *testing.T) {
