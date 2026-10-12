@@ -157,9 +157,9 @@ func TestNewWorkspaceSpec_Refusals(t *testing.T) {
 
 // writtenSpec decides spec's directory and writes it under a fresh temporary
 // parent, the way the host that executes a session does.
-func writtenSpec(t *testing.T, spec WorkspaceSpec, token []byte) (*WorkspaceSpecFiles, string) {
+func writtenSpec(t *testing.T, spec WorkspaceSpec) (*WorkspaceSpecFiles, string) {
 	t.Helper()
-	files, err := NewWorkspaceSpecFiles(spec, token)
+	files, err := NewWorkspaceSpecFiles(spec, false)
 	if err != nil {
 		t.Fatalf("NewWorkspaceSpecFiles: %v", err)
 	}
@@ -171,16 +171,17 @@ func writtenSpec(t *testing.T, spec WorkspaceSpec, token []byte) (*WorkspaceSpec
 	return files, dir
 }
 
-// TestWorkspaceSpecFiles_WritesTheSpecReadOnly proves the spec and the forge
-// token land in a private directory as read-only files, and that the spec
-// names the token file rather than carrying the token.
+// TestWorkspaceSpecFiles_WritesTheSpecReadOnly proves the spec lands in a
+// private directory as a read-only file, and that it names the token file on
+// the credential tier while no file the host writes carries a token
+// (go-quicbaas#899).
 func TestWorkspaceSpecFiles_WritesTheSpecReadOnly(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := NewWorkspaceSpecFiles(spec, []byte("forge-secret"))
+	files, err := NewWorkspaceSpecFiles(spec, true)
 	if err != nil {
 		t.Fatalf("NewWorkspaceSpecFiles: %v", err)
 	}
@@ -196,14 +197,15 @@ func TestWorkspaceSpecFiles_WritesTheSpecReadOnly(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != workspaceSpecDirMode {
 		t.Fatalf("spec directory mode = %v, want %v", perm, workspaceSpecDirMode)
 	}
-	for _, name := range []string{WorkspaceSpecFile, WorkspaceForgeTokenFile} {
-		fi, statErr := os.Stat(filepath.Join(dir, name))
-		if statErr != nil {
-			t.Fatalf("stat %s: %v", name, statErr)
-		}
-		if perm := fi.Mode().Perm(); perm != workspaceSpecFileMode {
-			t.Fatalf("%s mode = %v, want %v", name, perm, workspaceSpecFileMode)
-		}
+	fi, err := os.Stat(filepath.Join(dir, WorkspaceSpecFile))
+	if err != nil {
+		t.Fatalf("stat %s: %v", WorkspaceSpecFile, err)
+	}
+	if perm := fi.Mode().Perm(); perm != workspaceSpecFileMode {
+		t.Fatalf("%s mode = %v, want %v", WorkspaceSpecFile, perm, workspaceSpecFileMode)
+	}
+	if len(files.Files) != 1 {
+		t.Fatalf("files = %v, want the spec alone: the token is not the host's to write", files.Files)
 	}
 
 	raw, err := os.ReadFile(filepath.Join(dir, WorkspaceSpecFile))
@@ -214,19 +216,15 @@ func TestWorkspaceSpecFiles_WritesTheSpecReadOnly(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("decode spec: %v", err)
 	}
-	if decoded.ForgeTokenFile != WorkspaceForgeTokenFile || files.Spec.ForgeTokenFile != WorkspaceForgeTokenFile {
-		t.Fatalf("the spec must name the token file: %q", decoded.ForgeTokenFile)
+	if decoded.ForgeTokenFile != WorkspaceForgeCredentialFile || files.Spec.ForgeTokenFile != WorkspaceForgeCredentialFile {
+		t.Fatalf("the spec must name the token file on the credential tier: %q", decoded.ForgeTokenFile)
+	}
+	if !strings.HasPrefix(decoded.ForgeTokenFile, WorkspaceCredentialDir+"/") {
+		t.Fatalf("token file %q is not under the credential tier %s", decoded.ForgeTokenFile, WorkspaceCredentialDir)
 	}
 	if decoded.Project.RepoURL != spec.Project.RepoURL || len(decoded.ContextRepos) != 2 ||
 		decoded.Branch.Name != "issue/7" || decoded.CheckoutRoot != WorkspaceCheckoutRoot {
 		t.Fatalf("round trip = %+v", decoded)
-	}
-	if strings.Contains(string(raw), "forge-secret") {
-		t.Fatal("the spec must not carry the token value")
-	}
-	token, err := os.ReadFile(filepath.Join(dir, WorkspaceForgeTokenFile))
-	if err != nil || string(token) != "forge-secret" {
-		t.Fatalf("token file = %q, %v", token, err)
 	}
 
 	cleanup()
@@ -235,25 +233,44 @@ func TestWorkspaceSpecFiles_WritesTheSpecReadOnly(t *testing.T) {
 	}
 }
 
-// TestWorkspaceSpecFiles_TokenIsCopied: the files hold their own copy of the
-// token, so a caller that zeroes its buffer after deciding the spec does not
-// hand the executing host an empty credential.
-func TestWorkspaceSpecFiles_TokenIsCopied(t *testing.T) {
+// TestApplyWorkspaceSpec_MountsTheCredentialTierAsTmpfs: a spec that names a
+// forge token gets the credential tier as a sized tmpfs with no host source,
+// and one that names none gets no tier at all.
+func TestApplyWorkspaceSpec_MountsTheCredentialTierAsTmpfs(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := []byte("forge-secret")
-	files, err := NewWorkspaceSpecFiles(spec, token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := range token {
-		token[i] = 0
-	}
-	if got := string(files.Files[WorkspaceForgeTokenFile]); got != "forge-secret" {
-		t.Fatalf("token file content = %q", got)
+	for _, forge := range []bool{true, false} {
+		files, err := NewWorkspaceSpecFiles(spec, forge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := namedWorkspaceRequest()
+		ApplyWorkspaceSpec(req, files, "")
+		var tiers []ContainerMount
+		for _, m := range req.ExtraMounts {
+			if m.Target == WorkspaceCredentialDir {
+				tiers = append(tiers, m)
+			}
+		}
+		if !forge {
+			if len(tiers) != 0 {
+				t.Fatalf("a spec with no token got a credential tier: %+v", tiers)
+			}
+			continue
+		}
+		if len(tiers) != 1 {
+			t.Fatalf("credential tiers = %+v, want exactly one", tiers)
+		}
+		tier := tiers[0]
+		if tier.Type != MountTypeTmpfs || tier.Source != "" || tier.TmpfsSizeBytes != WorkspaceCredentialTmpfsBytes {
+			t.Fatalf("credential tier = %+v, want a %d-byte tmpfs with no host source", tier, WorkspaceCredentialTmpfsBytes)
+		}
+		if err := tier.Validate(); err != nil {
+			t.Fatalf("the credential tier does not validate: %v", err)
+		}
 	}
 }
 
@@ -266,9 +283,9 @@ func TestWorkspaceSpecFiles_NoTokenWritesNoTokenFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec.ForgeTokenFile = "stale"
-	_, dir := writtenSpec(t, spec, nil)
-	if _, err := os.Stat(filepath.Join(dir, WorkspaceForgeTokenFile)); !os.IsNotExist(err) {
-		t.Fatalf("no token means no token file: %v", err)
+	files, dir := writtenSpec(t, spec)
+	if len(files.Files) != 1 {
+		t.Fatalf("files = %v, want the spec alone", files.Files)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, WorkspaceSpecFile))
 	if err != nil {
@@ -304,7 +321,7 @@ func TestWorkspaceSpecFiles_SSHWritesTheKnownHosts(t *testing.T) {
 	hostKey := testHostKeyLine(t)
 	spec.SSHHostKey = hostKey
 
-	files, dir := writtenSpec(t, spec, nil)
+	files, dir := writtenSpec(t, spec)
 	if files.Spec.KnownHostsFile != WorkspaceKnownHostsFile {
 		t.Fatalf("the decided spec must name the known_hosts it holds: %q", files.Spec.KnownHostsFile)
 	}
@@ -352,7 +369,7 @@ func TestWorkspaceSpecFiles_SSHWithoutAPinnedKeyIsRefused(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			spec.SSHHostKey = hostKey
-			files, decideErr := NewWorkspaceSpecFiles(spec, nil)
+			files, decideErr := NewWorkspaceSpecFiles(spec, false)
 			if decideErr == nil || files != nil {
 				t.Fatalf("an unpinned ssh checkout was decided: %+v", files)
 			}
@@ -377,7 +394,7 @@ func TestWorkspaceSpecFiles_HTTPSWritesNoKnownHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec.KnownHostsFile = "stale"
-	files, dir := writtenSpec(t, spec, nil)
+	files, dir := writtenSpec(t, spec)
 	if _, err := os.Stat(filepath.Join(dir, WorkspaceKnownHostsFile)); !os.IsNotExist(err) {
 		t.Fatalf("an https checkout writes no known_hosts: %v", err)
 	}
@@ -411,7 +428,7 @@ func TestWorkspaceSpecFiles_ASigningKeyWritesTheAllowedSigners(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec.SigningKey = "ssh-ed25519 AAAAkey agent"
-	files, dir := writtenSpec(t, spec, nil)
+	files, dir := writtenSpec(t, spec)
 	file := filepath.Join(dir, WorkspaceAllowedSignersFile)
 	content, err := os.ReadFile(file)
 	if err != nil {
@@ -448,7 +465,7 @@ func TestWorkspaceSpecFiles_NoSigningKeyWritesNoAllowedSigners(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec.AllowedSignersFile = "stale"
-	files, dir := writtenSpec(t, spec, nil)
+	files, dir := writtenSpec(t, spec)
 	if _, err := os.Stat(filepath.Join(dir, WorkspaceAllowedSignersFile)); !os.IsNotExist(err) {
 		t.Fatalf("an attempt that signs nothing writes no allowed_signers: %v", err)
 	}
@@ -479,7 +496,7 @@ func namedWorkspaceRequest() *SpawnSessionRequest {
 func TestApplyWorkspaceSpec_CarriesTheFilesAndNamesPathsOnly(t *testing.T) {
 	t.Parallel()
 	req := namedWorkspaceRequest()
-	files := &WorkspaceSpecFiles{Files: map[string][]byte{WorkspaceForgeTokenFile: []byte("forge-secret")}}
+	files := &WorkspaceSpecFiles{Files: map[string][]byte{WorkspaceSpecFile: []byte(`{}`)}}
 	ApplyWorkspaceSpec(req, files, "/tmp/agent.sock")
 
 	if req.Workspace.Spec != files {
@@ -497,11 +514,6 @@ func TestApplyWorkspaceSpec_CarriesTheFilesAndNamesPathsOnly(t *testing.T) {
 	}
 	if req.Env[WorkspaceSigningAgentEnv] != WorkspaceSigningAgentSocket {
 		t.Fatalf("%s = %q", WorkspaceSigningAgentEnv, req.Env[WorkspaceSigningAgentEnv])
-	}
-	for name, value := range req.Env {
-		if strings.Contains(value, "forge-secret") {
-			t.Fatalf("the token must never reach the environment: %s", name)
-		}
 	}
 	if len(req.ExtraArgs) != 1 || req.ExtraArgs[0] != "--kept" {
 		t.Fatalf("the caller's argv must survive: %v", req.ExtraArgs)

@@ -358,7 +358,7 @@ projects root and reports where:
 
 ```
 <projects_root>/<tenant_id>/<project_id>/workspace/<key>          # the checkout, mounted at /workspace
-<projects_root>/<tenant_id>/<project_id>/workspace/quicbaas-workspace-*   # the spec + forge token, read-only at /run/quicbaas/workspace
+<projects_root>/<tenant_id>/<project_id>/workspace/quicbaas-workspace-*   # the spec, read-only at /run/quicbaas/workspace
 ```
 
 Until go-quicbaas#981 the sdlc runners provisioned that directory under the
@@ -371,7 +371,8 @@ the push run inside the session's container — and now the directory does too.
 | Piece | Where it lives |
 |---|---|
 | `SpawnSessionRequest.Workspace` (`tenant`, `project`, `key`) | the spawn; mutually exclusive with `WorkDir` |
-| workspace spec + forge token (`WorkspaceSpecFiles`) | decided on the daemon, carried on the authenticated spawn RPC, **written by the executing host** beside the workspace; never serialized into a durable record |
+| workspace spec (`WorkspaceSpecFiles`) | decided on the daemon, carried on the authenticated spawn RPC, **written by the executing host** beside the workspace; never serialized into a durable record. It carries no forge token: a spec that names one among its files is refused |
+| forge token | held by the daemon and delivered per session to a tmpfs inside the container — [the forge credential](autonomy-and-dispatch.md#the-forge-credential) |
 | `WorkspaceManager.ProvisionSession` | the one provisioner, run by the daemon for in-process spawns and by every agent for its own |
 | `SpawnSessionResponse.Workspace` (`agent_host`, `key`, `dir`) | reported back; `dir` is recorded as the session's `WorkDir` |
 | `JobStatus.WorkspacePin` | the job's first placement, stored **strictly** the moment the spawn returns — before the checkout. A store that refuses it closes the session and returns `WorkspacePinPersistError` (parked), so no checkout is ever made that a recovery could not locate |
@@ -413,8 +414,16 @@ workspace must be a directory — a link there is `WorkspaceLinkError` — and a
 mode is set through a handle opened inside the root and proved to be the
 directory at that name, never by name (`Root.Chmod` is documented as racy).
 
-**The forge token never outlives its session.** The spec directory holds it in
-plaintext, so:
+**The forge token never reaches a host's disk** (go-quicbaas#899). The spec
+directory holds the spec alone. The token goes from the daemon, over an exec's
+standard input, to a `0400` file on the container's credential tier — a tmpfs
+at `/run/quicbaas/credentials` — after the container starts. It is removed
+before the session closes, and in any case it goes with the container, which
+the reaper removes after a crash. The daemon zeroes its own copy when the
+workspace is released. See
+[the forge credential](autonomy-and-dispatch.md#the-forge-credential).
+
+The spec directory is still swept like the session it belongs to:
 
 - the executing host removes it when the session closes, and when a spawn fails
   after writing it;
@@ -422,9 +431,7 @@ plaintext, so:
   directory under its projects root (`WorkspaceManager.SweepSessionSpecs`,
   run by `fleet serve`, the embedded fleet node and the daemon). No session
   survives a restart — the agent's container sweep ends them — so each one is
-  an orphan no `Close` will ever release;
-- the in-memory copy is wiped (bytes zeroed) the moment it is written on the
-  executing host, and on the daemon once the spawn is over, sent or not.
+  an orphan no `Close` will ever release.
 
 What an agent persists about a session (`<work-dir>/sessions/*.json`) is the
 workspace path and nothing more; the token is re-delivered by the control plane

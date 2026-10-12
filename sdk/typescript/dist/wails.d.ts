@@ -2,6 +2,7 @@ import type { AuthClient, Client, ConnectionClient, OrchestratorClient, SSHKeysC
 import type { AccountsClient } from './accounts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
+export declare function wailsError(reason: unknown): unknown;
 export declare class WailsClient implements Client {
     readonly connection: ConnectionClient;
     readonly orchestrator: OrchestratorClient;

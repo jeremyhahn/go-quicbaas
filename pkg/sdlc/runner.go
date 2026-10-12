@@ -854,11 +854,12 @@ func (s *runnerRun) verifyWorkspace(ctx context.Context) error {
 // share.
 func (s *runnerRun) checkout() containerCheckout {
 	return containerCheckout{
-		job:       s.job,
-		sessionID: s.sessionID,
-		spec:      s.spec,
-		project:   s.job.Project,
-		taskID:    s.taskID(),
+		job:        s.job,
+		credential: s.workspace.forgeCredential(),
+		sessionID:  s.sessionID,
+		spec:       s.spec,
+		project:    s.job.Project,
+		taskID:     s.taskID(),
 	}
 }
 
@@ -3303,7 +3304,7 @@ func (s *runnerRun) closeWorker(ctx context.Context) {
 	if s.sessionID != "" {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx),
 			s.job.Policy().StageTimeouts.For(orchestration.JobStageDiscard))
-		s.job.Close(closeCtx, s.sessionID)
+		closeSession(closeCtx, s.job, s.sessionID, s.workspace)
 		cancel()
 		s.sessionID = ""
 	}

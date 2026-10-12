@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -5644,82 +5643,6 @@ func TestItoa_NegativeAndZero(t *testing.T) {
 // =============================================================================
 // remote_acp_backend — authCtx with tokenSource
 // =============================================================================
-
-// fakeTokenSource implements oauth2.TokenSource for testing.
-type fakeTokenSource struct {
-	token *oauth2.Token
-	err   error
-}
-
-func (f *fakeTokenSource) Token() (*oauth2.Token, error) {
-	return f.token, f.err
-}
-
-func TestRemoteACPBackend_AuthCtx_WithToken(t *testing.T) {
-	t.Parallel()
-
-	reg := &FleetNode{
-		ID:       "auth-agent-1",
-		TenantID: "auth-tenant",
-		Name:     "auth-agent",
-		Host:     "localhost:9999",
-		Backend:  "acp",
-		Kind:     FleetNodeKindDaemon,
-	}
-
-	logger := &peerTestLogger{}
-	b, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: reg,
-		Backend:      "acp",
-		Logger:       logger,
-		TokenSource:  &fakeTokenSource{token: &oauth2.Token{AccessToken: "test-bearer-token"}},
-		ConnDialer: func(ctx context.Context, target string) (*grpc.ClientConn, error) {
-			return nil, errors.New("no connection in test")
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-
-	// authCtx should set Authorization header with the bearer token.
-	ctx := b.authCtx(context.Background())
-	if ctx == nil {
-		t.Fatal("expected non-nil context")
-	}
-}
-
-func TestRemoteACPBackend_AuthCtx_NilToken(t *testing.T) {
-	t.Parallel()
-
-	reg := &FleetNode{
-		ID:       "auth-agent-2",
-		TenantID: "auth-tenant-2",
-		Name:     "auth-agent-2",
-		Host:     "localhost:9998",
-		Backend:  "acp",
-		Kind:     FleetNodeKindDaemon,
-	}
-
-	logger := &peerTestLogger{}
-	b, err := NewRemoteACPBackend(RemoteACPBackendDeps{
-		Registration: reg,
-		Backend:      "acp",
-		Logger:       logger,
-		// TokenSource returns nil token — should not panic.
-		TokenSource: &fakeTokenSource{token: nil, err: errors.New("no token")},
-		ConnDialer: func(ctx context.Context, target string) (*grpc.ClientConn, error) {
-			return nil, errors.New("no connection in test")
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewRemoteACPBackend: %v", err)
-	}
-
-	ctx := b.authCtx(context.Background())
-	if ctx == nil {
-		t.Fatal("expected non-nil context even with nil token")
-	}
-}
 
 // =============================================================================
 // orchestrator — StartJob with workflow name not found

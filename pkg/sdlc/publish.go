@@ -110,7 +110,8 @@ func signingConfig(publicKey string) []gitConfigField {
 var allowedSignersPath = path.Join(orchestration.WorkspaceSpecDir, orchestration.WorkspaceAllowedSignersFile)
 
 // credentialHelperArgs teach git to read the forge token out of the file the
-// spawn mounted, for the one repository URL scheme that needs it.
+// runner wrote on the container's credential tier (a tmpfs), for the one
+// repository URL scheme that needs it.
 //
 // The helper is a SHELL SNIPPET NAMING A PATH. It is the shape the repository
 // already uses for a container credential (account_materialize.go): the value
@@ -124,8 +125,8 @@ func credentialHelperArgs(repoURL string) []string {
 	if !strings.HasPrefix(repoURL, "https://") {
 		return nil
 	}
-	tokenFile := path.Join(orchestration.WorkspaceSpecDir, orchestration.WorkspaceForgeTokenFile)
-	helper := "!f(){ echo username=" + forgeTokenUsername + "; echo \"password=$(cat " + tokenFile + ")\"; }; f"
+	helper := "!f(){ echo username=" + forgeTokenUsername + "; echo \"password=$(cat " +
+		orchestration.WorkspaceForgeCredentialFile + ")\"; }; f"
 	return []string{"-c", "credential.helper=", "-c", "credential.helper=" + helper}
 }
 

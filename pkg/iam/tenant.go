@@ -191,6 +191,10 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 		return nil, dberrors.InvalidInput("iam.CreateTenant", "tenant name is required")
 	}
 
+	if err := validateTenantSettings("iam.CreateTenant", opts.Settings); err != nil {
+		return nil, err
+	}
+
 	// Generate or validate tenant ID
 	tenantID := opts.ID
 	if tenantID == "" {
@@ -381,6 +385,9 @@ func (m *DefaultTenantManager) GetTenant(ctx context.Context, id string) (*Tenan
 // UpdateTenant updates an existing tenant with the specified options.
 func (m *DefaultTenantManager) UpdateTenant(ctx context.Context, id string, opts UpdateTenantOptions) (*Tenant, error) {
 	if err := validateTenantIDPattern(id); err != nil {
+		return nil, err
+	}
+	if err := validateTenantSettings("iam.UpdateTenant", opts.Settings); err != nil {
 		return nil, err
 	}
 

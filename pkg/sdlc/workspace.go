@@ -185,6 +185,19 @@ type containerWorkspace struct {
 	// stopSigning tears the agent down. A READER stops its agent as soon as
 	// the checkout is made, long before its session ends.
 	stopSigning func(context.Context)
+
+	// credential is the forge token bound for the container's credential
+	// tier, nil when the checkout needs none. Release wipes the daemon's copy.
+	credential *forgeCredential
+}
+
+// forgeCredential answers the workspace's forge credential, nil for a nil
+// workspace or one that needs none.
+func (w *containerWorkspace) forgeCredential() *forgeCredential {
+	if w == nil {
+		return nil
+	}
+	return w.credential
 }
 
 // StopSigning tears down the agent this workspace's checkout authenticated
@@ -227,6 +240,7 @@ func (w *containerWorkspace) Release(ctx context.Context) {
 		return
 	}
 	w.StopSigning(ctx)
+	w.credential.wipe()
 }
 
 // Open decides one spawn's workspace and puts it on the spawn request: the
@@ -305,11 +319,16 @@ func (a forgeAccess) Open(
 	// session, beside the workspace it provisions there: this daemon holds the
 	// token and the binding, that host holds the directory its container
 	// mounts.
-	files, err := orchestration.NewWorkspaceSpecFiles(spec, token)
+	files, err := orchestration.NewWorkspaceSpecFiles(spec, len(token) > 0)
 	if err != nil {
 		workspace.Release(context.WithoutCancel(ctx))
 		return nil, err
 	}
+	// The token itself stays HERE, on the daemon, until the container exists:
+	// the checkout delivers it to the container's tmpfs credential tier, so
+	// no host writes it to disk and no spawn surface carries it
+	// (go-quicbaas#899).
+	workspace.credential = newForgeCredential(token)
 	req.Workspace = &orchestration.SessionWorkspace{
 		TenantID:  plan.TenantID,
 		ProjectID: plan.Project.ID,

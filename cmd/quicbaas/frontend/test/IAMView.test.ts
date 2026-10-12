@@ -109,14 +109,35 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
 import IAMView from '../src/views/security/IAMView.svelte';
 import { getSDKClient } from '../src/stores/sdkClient.ts';
 import { routerStore, routeIAMTab } from '../src/stores/router.svelte.ts';
+import { setAuthenticated, setUnauthenticated } from '../src/stores/auth.svelte.ts';
+
+/** An unsigned session token whose tenant claim is `tenantID`. */
+function sessionToken(tenantID: string): string {
+  const b64url = (o: unknown): string =>
+    btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const claims = {
+    sub: 'usr_1',
+    tenant_id: tenantID,
+    roles: ['operator'],
+    sid: 'sid_1',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  };
+  return `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
+}
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe('IAMView', () => {
+  afterEach(() => {
+    setUnauthenticated();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
+    // The operator is signed in to tenant 'acme'; IAMView must administer it.
+    setAuthenticated({ access_token: sessionToken('acme') });
     mockCreateUser.mockResolvedValue({ user: mockUsers[0] });
     mockReconcileRoles.mockResolvedValue({ tenant_id: 'system', changed: true, roles: [{ role_id: 'role-1', name: 'admin', added: ['kv:write'], removed: ['kv:put'] }] });
     mockGetSDKClient.mockResolvedValue({
@@ -137,6 +158,58 @@ describe('IAMView', () => {
     render(IAMView);
     await waitFor(() => {
       expect(screen.getByText('IAM')).toBeInTheDocument();
+    });
+  });
+
+  describe('tenant selector (#312)', () => {
+    function stubIAM(listTenants: ReturnType<typeof vi.fn>): ReturnType<typeof vi.fn> {
+      const listUsers = vi.fn().mockResolvedValue({ users: [], count: 0 });
+      mockGetSDKClient.mockResolvedValue({
+        iam: {
+          listUsers,
+          listTenants,
+          listRoles: vi.fn().mockResolvedValue({ roles: [], count: 0 }),
+          listPolicies: vi.fn().mockResolvedValue({ policies: [], count: 0 }),
+        },
+      });
+      return listUsers;
+    }
+
+    function optionValues(select: HTMLSelectElement): string[] {
+      return Array.from(select.options).map((o) => o.value);
+    }
+
+    it('selects the session tenant and injects no system option when listing is refused', async () => {
+      const listTenants = vi.fn().mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+      const listUsers = stubIAM(listTenants);
+
+      render(IAMView);
+
+      await waitFor(() => expect(listTenants).toHaveBeenCalled());
+      const select = screen.getByLabelText('Tenant') as HTMLSelectElement;
+      expect(select.value).toBe('acme');
+      expect(optionValues(select)).toEqual(['acme']);
+      expect(listUsers).toHaveBeenCalledWith('acme');
+      // A refused listing is not an error on the Users tab.
+      expect(screen.queryByText('forbidden')).not.toBeInTheDocument();
+    });
+
+    it('adds the tenants a permitted principal may enumerate, keeping the session tenant selected', async () => {
+      const listTenants = vi.fn().mockResolvedValue({
+        tenants: [
+          { id: 'globex', name: 'Globex', description: '', created_at: '', updated_at: '' },
+          { id: 'acme', name: 'Acme', description: '', created_at: '', updated_at: '' },
+        ],
+        count: 2,
+      });
+      stubIAM(listTenants);
+
+      render(IAMView);
+
+      const select = screen.getByLabelText('Tenant') as HTMLSelectElement;
+      await waitFor(() => expect(optionValues(select)).toEqual(['globex', 'acme']));
+      expect(select.value).toBe('acme');
+      expect(optionValues(select)).not.toContain('system');
     });
   });
 
@@ -213,9 +286,8 @@ describe('IAMView', () => {
 
     await waitFor(() => {
       expect(mockCreateUser).toHaveBeenCalledWith(
-        // IAMView defaults selectedTenantID to qrdb's canonical 'system' tenant
-        // (the legacy 'default' tenant was retired).
-        'system',
+        // IAMView starts on the session's own tenant (#312).
+        'acme',
         expect.objectContaining({
           username: 'charlie',
           email: 'charlie@example.com',
@@ -238,7 +310,7 @@ describe('IAMView', () => {
   });
 
   it('shows an error message when listUsers fails', async () => {
-    mockGetSDKClient.mockResolvedValueOnce({
+    mockGetSDKClient.mockResolvedValue({
       iam: {
         listUsers: vi.fn().mockRejectedValue(new Error('Server error')),
         listTenants: vi.fn().mockResolvedValue({ tenants: [], count: 0 }),
@@ -335,8 +407,8 @@ describe('IAMView', () => {
       await fireEvent.click(screen.getByRole('button', { name: /Reconcile roles/i }));
 
       await waitFor(() => {
-        // IAMView defaults selectedTenantID to qrdb's canonical 'system' tenant.
-        expect(mockReconcileRoles).toHaveBeenCalledWith('system');
+        // IAMView starts on the session's own tenant (#312).
+        expect(mockReconcileRoles).toHaveBeenCalledWith('acme');
         expect(mockShowToast).toHaveBeenCalledWith(
           expect.objectContaining({ type: 'success', message: expect.stringContaining('Reconciled 1 role') }),
         );

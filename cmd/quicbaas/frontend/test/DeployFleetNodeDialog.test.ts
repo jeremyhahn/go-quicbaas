@@ -8,7 +8,7 @@
  *   - password     → ssh_password
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, screen } from '@testing-library/svelte';
 
 // ---------------------------------------------------------------------------
@@ -36,10 +36,25 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
 }));
 
 import DeployFleetNodeDialog from '../src/components/orchestrator/DeployFleetNodeDialog.svelte';
+import { setAuthenticated, setUnauthenticated } from '../src/stores/auth.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** sessionToken builds an unsigned access token whose tenant claim is tenantID. */
+function sessionToken(tenantID: string): string {
+  const b64url = (o: unknown): string =>
+    btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const claims = {
+    sub: 'usr_1',
+    tenant_id: tenantID,
+    roles: ['operator'],
+    sid: 'sid_1',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  };
+  return `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
+}
 
 function fillRequiredFields(container: HTMLElement): void {
   (container.querySelector('[aria-label="SSH user"]') as HTMLInputElement).value = 'deploy';
@@ -65,6 +80,11 @@ describe('DeployFleetNodeDialog', () => {
     deployAgentMock.mockReset();
     listSSHKeysMock.mockReset();
     listSSHKeysMock.mockResolvedValue({ keys: [] });
+    setAuthenticated({ access_token: sessionToken('acme') });
+  });
+
+  afterEach(() => {
+    setUnauthenticated();
   });
 
   it('mounts closed and does not call the SDK', () => {
@@ -283,5 +303,31 @@ describe('DeployFleetNodeDialog', () => {
     await fireEvent.click(button);
     await waitFor(() => expect(deployAgentMock).toHaveBeenCalled());
     expect(deployAgentMock.mock.calls[0][0].systemd).toBe(false);
+  });
+
+  it('defaults the tenant to the session tenant and submits it (#312)', async () => {
+    deployAgentMock.mockResolvedValue({ host: 'h', installed_path: '/x', service_status: 'systemd' });
+    const { container } = render(DeployFleetNodeDialog, { props: { open: true } });
+    fillRequiredFields(container);
+
+    const tenant = container.querySelector('[aria-label="Tenant"]') as HTMLInputElement;
+    expect(tenant.value).toBe('acme');
+
+    const button = screen.getByLabelText('Deploy node') as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    await fireEvent.click(button);
+    await waitFor(() => expect(deployAgentMock).toHaveBeenCalled());
+    expect(deployAgentMock.mock.calls[0][0].tenant).toBe('acme');
+  });
+
+  it('leaves the tenant empty and blocks submission without a session (#312)', async () => {
+    setUnauthenticated();
+    const { container } = render(DeployFleetNodeDialog, { props: { open: true } });
+    fillRequiredFields(container);
+
+    const tenant = container.querySelector('[aria-label="Tenant"]') as HTMLInputElement;
+    expect(tenant.value).toBe('');
+    const button = screen.getByLabelText('Deploy node') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
   });
 });

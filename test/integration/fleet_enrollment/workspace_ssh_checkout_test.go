@@ -221,7 +221,7 @@ func materializeSSHWorkspace(t *testing.T, hostKey string) sshWorkspace {
 	require.NoError(t, err)
 	spec.SSHHostKey = hostKey
 
-	files, err := orchestration.NewWorkspaceSpecFiles(spec, nil)
+	files, err := orchestration.NewWorkspaceSpecFiles(spec, false)
 	require.NoError(t, err, "deciding an ssh workspace with a pinned key failed")
 	require.Equal(t, orchestration.WorkspaceKnownHostsFile, files.Spec.KnownHostsFile)
 
@@ -319,7 +319,7 @@ func TestE2E_SSHCheckout_AnUnpinnedForgeIsRefusedBeforeAnythingRuns(t *testing.T
 	}, orchestration.WorkspaceBranchPlan{Name: "main"})
 	require.NoError(t, err)
 
-	files, err := orchestration.NewWorkspaceSpecFiles(spec, nil)
+	files, err := orchestration.NewWorkspaceSpecFiles(spec, false)
 	require.Error(t, err, "an ssh checkout with no pinned host key was decided")
 	require.Nil(t, files, "a refused spec has nothing to write")
 	require.ErrorIs(t, err, orchestration.ErrSSHHostKeyInvalid)

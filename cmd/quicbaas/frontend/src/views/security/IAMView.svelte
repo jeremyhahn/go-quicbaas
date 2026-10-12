@@ -24,6 +24,8 @@
 -->
 <script lang="ts">
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { authStore } from '../../stores/auth.svelte.ts';
+  import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../../lib/tenantOptions.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
@@ -83,10 +85,36 @@
   // Active tenant selector (used by users/roles/policies tabs)
   // ---------------------------------------------------------------------------
 
-  // 'system' is qrdb's canonical control-plane tenant; the legacy 'default'
-  // tenant was retired by qrdb's tenant-isolation refactor, so defaulting to it
-  // made the Users/Roles/Policies tabs query a non-existent tenant (404).
-  let selectedTenantID = $state('system');
+  // Starts on the session's own tenant: an operator administers the tenant
+  // they signed in to, and a hardcoded tenant sent a tenant-scoped operator
+  // to one they cannot read (#312).
+  let selectedTenantID = $state(authStore.tenantID);
+
+  // The listing only ever ADDS options, for principals permitted to enumerate
+  // tenants (see lib/tenantOptions.ts). It is fetched silently: a refusal
+  // must not raise an error on the Users/Roles/Policies tabs.
+  let discoveredTenants = $state<TenantOption[]>([]);
+
+  const tenantOptions = $derived(
+    withRequiredTenants(discoveredTenants, [selectedTenantID, authStore.tenantID]),
+  );
+
+  $effect(() => {
+    // Read synchronously so the listing follows the signed-in principal.
+    const forSession = authStore.sessionKey;
+    discoveredTenants = [];
+    void (async () => {
+      try {
+        const client = await getSDKClient();
+        const resp = await client.iam.listTenants();
+        if (forSession !== authStore.sessionKey) return;
+        discoveredTenants = tenantOptionsOf(resp.tenants);
+      } catch {
+        // Not authorized to enumerate tenants (or the call failed); the
+        // session's own tenant stays in the list either way.
+      }
+    })();
+  });
 
   // ---------------------------------------------------------------------------
   // Data
@@ -301,18 +329,25 @@
     }
   }
 
+  /** uniqueTenants drops repeated ids from a tenant listing, keeping the first. */
+  function uniqueTenants<T extends { id: string }>(list: T[]): T[] {
+    const seen = new Set<string>();
+    return list.filter((t) => {
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+  }
+
   async function loadTenants(): Promise<void> {
     loading = true;
     error = null;
     try {
       const client = await getSDKClient();
       const resp = await client.iam.listTenants();
-      const seenT = new Set<string>();
-      tenants = resp.tenants.filter((t) => {
-        if (seenT.has(t.id)) return false;
-        seenT.add(t.id);
-        return true;
-      });
+      tenants = uniqueTenants(resp.tenants);
+      // Keep the selector in step with tenants created or deleted here.
+      discoveredTenants = tenantOptionsOf(tenants);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load tenants';
     } finally {
@@ -856,12 +891,7 @@
         class="select select-bordered select-sm font-mono"
         bind:value={selectedTenantID}
       >
-        <!-- 'system' is the qrdb canonical control-plane tenant; the retired
-             'default' tenant was removed by qrdb's tenant-isolation refactor. -->
-        {#if !tenants.some((t) => t.id === 'system')}
-          <option value="system">system</option>
-        {/if}
-        {#each tenants as t (t.id)}
+        {#each tenantOptions as t (t.id)}
           <option value={t.id}>{t.name}</option>
         {/each}
       </select>

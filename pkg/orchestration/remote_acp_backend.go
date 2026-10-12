@@ -73,6 +73,15 @@ var (
 	// behavior incompatible with the remote session contract (e.g., status
 	// lookups on a backend that doesn't support sessions).
 	ErrRemoteBackendSessionsUnsupported = errors.New("remote_acp_backend: remote backend does not support this operation")
+
+	// ErrRemoteBackendToken is the sentinel every RemoteBackendTokenError
+	// unwraps to: the bearer token a daemon RPC needs could not be had, so the
+	// RPC was not sent.
+	ErrRemoteBackendToken = errors.New("remote_acp_backend: bearer token unavailable")
+
+	// ErrRemoteBackendEmptyToken is the cause of a RemoteBackendTokenError
+	// whose token source answered without an access token.
+	ErrRemoteBackendEmptyToken = errors.New("remote_acp_backend: token source returned no access token")
 )
 
 // RemoteBackendDialError indicates a gRPC connection failure to the remote
@@ -105,6 +114,37 @@ func (e *RemoteBackendRPCError) Error() string {
 
 // Unwrap returns the wrapped error for errors.Is / errors.As support.
 func (e *RemoteBackendRPCError) Unwrap() error { return e.Err }
+
+// RemoteBackendTokenError reports that the bearer token for a daemon RPC could
+// not be had. The RPC is not sent: a daemon call without its token is refused
+// there anyway, and sending it would hide the cause behind an Unauthenticated
+// status. Err is the cause, which is the caller's own context error when its
+// deadline or cancellation came before the token did.
+type RemoteBackendTokenError struct {
+	Host string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *RemoteBackendTokenError) Error() string {
+	return "remote_acp_backend: bearer token for " + e.Host + ": " + e.Err.Error()
+}
+
+// Unwrap returns ErrRemoteBackendToken and the cause, so errors.Is matches both
+// the sentinel and, say, context.DeadlineExceeded.
+func (e *RemoteBackendTokenError) Unwrap() []error {
+	return []error{ErrRemoteBackendToken, e.Err}
+}
+
+// RemoteTokenSource supplies the bearer token a daemon RPC carries.
+//
+// THE CONTEXT IS THE RPC'S, and an implementation must return when it is done.
+// oauth2.TokenSource takes no context, so a slow token endpoint held every
+// remote RPC — and the REST or gRPC handler waiting on it — past its caller's
+// deadline (go-quicbaas#193).
+type RemoteTokenSource interface {
+	Token(ctx context.Context) (*oauth2.Token, error)
+}
 
 // RemoteBackendMismatchError indicates a request named a backend other than
 // the one this instance is bound to. It is the routing invariant stated as an
@@ -170,7 +210,7 @@ type RemoteACPBackendDeps struct {
 
 	// TokenSource supplies OAuth2 bearer tokens for daemon RPCs. May be nil
 	// in tests that use ConnDialer to establish insecure connections.
-	TokenSource oauth2.TokenSource
+	TokenSource RemoteTokenSource
 
 	// ClientTLSConfig is used for mTLS to the daemon. When nil and ConnDialer
 	// is also nil, the backend dials plaintext — only safe for tests.
@@ -214,7 +254,7 @@ type RemoteACPBackend struct {
 	backend string
 
 	pool        *grpcConnPool
-	tokenSource oauth2.TokenSource
+	tokenSource RemoteTokenSource
 	logger      interfaces.Logger
 	auditor     StoreAuditor
 
@@ -319,7 +359,11 @@ func (b *RemoteACPBackend) Close(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return err
 	}
-	_, rpcErr := client.Close(b.authCtx(ctx), &proto.CloseSessionRequest{
+	rpcCtx, err := b.authCtx(ctx)
+	if err != nil {
+		return err
+	}
+	_, rpcErr := client.Close(rpcCtx, &proto.CloseSessionRequest{
 		SessionId: sessionID,
 		TenantId:  b.registration.TenantID,
 	})
@@ -448,7 +492,11 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		// one; nil otherwise.
 		SigningRelay: relaySpec,
 	}
-	resp, rpcErr := client.Spawn(b.authCtx(ctx), pbReq)
+	rpcCtx, err := b.authCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, rpcErr := client.Spawn(rpcCtx, pbReq)
 	if rpcErr != nil {
 		// The daemon's configuration-fault class, when it attached one, so a
 		// dispatch that started no process is classified the same whether the
@@ -570,7 +618,11 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 
 	b.logger.Debugf("remote_acp_backend: Prompt backend=%s tenant=%s session=%s",
 		b.backend, b.registration.TenantID, req.SessionID)
-	stream, rpcErr := client.Prompt(b.authCtx(ctx), &proto.PromptSessionRequest{
+	rpcCtx, err := b.authCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stream, rpcErr := client.Prompt(rpcCtx, &proto.PromptSessionRequest{
 		Backend:      b.backend,
 		SessionId:    req.SessionID,
 		ProjectId:    req.ProjectID,
@@ -704,7 +756,11 @@ func (b *RemoteACPBackend) Infer(ctx context.Context, req *InferRequest) (<-chan
 		Metadata:     req.Metadata,
 	}
 
-	stream, rpcErr := client.Infer(b.authCtx(ctx), pbReq)
+	rpcCtx, err := b.authCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stream, rpcErr := client.Infer(rpcCtx, pbReq)
 	if rpcErr != nil {
 		return nil, &InferBackendError{Op: "Infer.Start", Err: rpcErr}
 	}
@@ -770,7 +826,11 @@ func (b *RemoteACPBackend) Status(ctx context.Context, sessionID string) (*Sessi
 	if err != nil {
 		return nil, err
 	}
-	resp, rpcErr := client.Status(b.authCtx(ctx), &proto.SessionStatusRequest{
+	rpcCtx, err := b.authCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, rpcErr := client.Status(rpcCtx, &proto.SessionStatusRequest{
 		SessionId: sessionID,
 		TenantId:  b.registration.TenantID,
 	})
@@ -804,7 +864,11 @@ func (b *RemoteACPBackend) ExecInSession(ctx context.Context, sessionID string, 
 	if err != nil {
 		return nil, err
 	}
-	resp, rpcErr := client.ExecSession(b.authCtx(ctx), &proto.ExecSessionRequest{
+	rpcCtx, err := b.authCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, rpcErr := client.ExecSession(rpcCtx, &proto.ExecSessionRequest{
 		TenantId:  b.registration.TenantID,
 		SessionId: sessionID,
 		Cmd:       spec.Cmd,
@@ -849,7 +913,11 @@ func (b *RemoteACPBackend) RemoveWorkspace(ctx context.Context, ws *SessionWorks
 	if err != nil {
 		return false, err
 	}
-	resp, rpcErr := client.RemoveWorkspace(b.authCtx(ctx), &proto.RemoveWorkspaceRequest{
+	rpcCtx, err := b.authCtx(ctx)
+	if err != nil {
+		return false, err
+	}
+	resp, rpcErr := client.RemoveWorkspace(rpcCtx, &proto.RemoveWorkspaceRequest{
 		TenantId:  ws.TenantID,
 		ProjectId: ws.ProjectID,
 		Key:       ws.Key,
@@ -896,7 +964,11 @@ func (b *RemoteACPBackend) ListModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, b.routingError("ListModels", &RemoteBackendDialError{Host: b.registration.Host, Err: err})
 	}
-	resp, err := cl.ListModels(b.authCtx(ctx), &proto.ListModelsRequest{
+	rpcCtx, err := b.authCtx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := cl.ListModels(rpcCtx, &proto.ListModelsRequest{
 		Backend:  b.backend,
 		TenantId: b.registration.TenantID,
 	})
@@ -926,18 +998,36 @@ func (b *RemoteACPBackend) client(ctx context.Context) (proto.FleetRuntimeClient
 
 // authCtx decorates the RPC context with tenant metadata and (when
 // configured) an OAuth2 bearer token. Both are passed in gRPC metadata
-// headers so middleware on either side can validate them.
-func (b *RemoteACPBackend) authCtx(ctx context.Context) context.Context {
+// headers so middleware on either side can validate them. A token that cannot
+// be had within ctx is a *RemoteBackendTokenError, and the caller must not send
+// the RPC without it.
+func (b *RemoteACPBackend) authCtx(ctx context.Context) (context.Context, error) {
+	md, err := b.authMetadata(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return metadata.NewOutgoingContext(ctx, md), nil
+}
+
+// authMetadata builds the metadata every daemon RPC carries, fetching the
+// bearer token within ctx. It is separate from authCtx for the signing relay,
+// whose stream outlives the context its token is fetched under.
+func (b *RemoteACPBackend) authMetadata(ctx context.Context) (metadata.MD, error) {
 	md := metadata.New(nil)
 	md.Set("x-quicbaas-tenant", b.registration.TenantID)
 	md.Set("x-quicbaas-agent-id", b.registration.ID)
-	if b.tokenSource != nil {
-		tok, err := b.tokenSource.Token()
-		if err == nil && tok != nil && tok.AccessToken != "" {
-			md.Set("authorization", "Bearer "+tok.AccessToken)
-		}
+	if b.tokenSource == nil {
+		return md, nil
 	}
-	return metadata.NewOutgoingContext(ctx, md)
+	tok, err := b.tokenSource.Token(ctx)
+	if err != nil {
+		return nil, &RemoteBackendTokenError{Host: b.registration.Host, Err: err}
+	}
+	if tok == nil || tok.AccessToken == "" {
+		return nil, &RemoteBackendTokenError{Host: b.registration.Host, Err: ErrRemoteBackendEmptyToken}
+	}
+	md.Set("authorization", "Bearer "+tok.AccessToken)
+	return md, nil
 }
 
 // =============================================================================

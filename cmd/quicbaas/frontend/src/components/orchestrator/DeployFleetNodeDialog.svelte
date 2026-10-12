@@ -13,6 +13,7 @@
 -->
 <script lang="ts">
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import { authStore } from '../../stores/auth.svelte.ts';
   import type { DeployFleetNodeResult, DeployFleetNodeSpec, SSHKey } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
@@ -53,9 +54,9 @@
   let sshHost = $state('');
   let insecureHostKey = $state(true);
   let server = $state('');
-  // 'system' is qrdb's canonical control-plane tenant; the legacy 'default'
-  // tenant was retired by qrdb's tenant-isolation refactor.
-  let tenant = $state('system');
+  // The node joins the operator's own tenant unless they name another; a
+  // hardcoded tenant deployed a tenant-scoped operator's node elsewhere (#312).
+  let tenant = $state(authStore.tenantID);
   let nodeBind = $state('0.0.0.0:9091');
   let backendsCSV = $state('acp');
   let binary = $state('bin/quicbaas-static');

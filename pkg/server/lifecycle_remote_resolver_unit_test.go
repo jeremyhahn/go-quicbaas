@@ -23,6 +23,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -159,7 +160,7 @@ func TestCentralOAuth2TokenSource_TokenRoundTrip(t *testing.T) {
 	// don't have. Reset the flag for plain-HTTP delivery.
 	ts.loopback = false
 
-	tok, err := ts.Token()
+	tok, err := ts.Token(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, tok)
 	assert.Equal(t, "abc.def", tok.AccessToken)
@@ -170,7 +171,7 @@ func TestCentralOAuth2TokenSource_TokenRoundTrip(t *testing.T) {
 
 	// Second call should use the cached token (still well within the
 	// 5-second expiry buffer).
-	tok2, err := ts.Token()
+	tok2, err := ts.Token(context.Background())
 	require.NoError(t, err)
 	assert.Same(t, tok, tok2, "Token must return the cached value when not yet expired")
 }
@@ -186,7 +187,7 @@ func TestCentralOAuth2TokenSource_RefreshHTTPErrorIsForwarded(t *testing.T) {
 		ClientID: "x", ClientSecret: "y",
 	}, srv.URL, "")
 	ts.loopback = false
-	_, err := ts.Token()
+	_, err := ts.Token(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status=401")
 }
@@ -202,7 +203,7 @@ func TestCentralOAuth2TokenSource_EmptyAccessTokenIsError(t *testing.T) {
 		ClientID: "x", ClientSecret: "y",
 	}, srv.URL, "")
 	ts.loopback = false
-	_, err := ts.Token()
+	_, err := ts.Token(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty access_token")
 }
@@ -223,7 +224,7 @@ func TestCentralOAuth2TokenSource_ZeroExpiresInDefaultsTTL(t *testing.T) {
 	}, srv.URL, "")
 	ts.loopback = false
 
-	tok, err := ts.Token()
+	tok, err := ts.Token(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, tok)
 	// expires_in=0 must default to a 5-minute TTL, not an already-expired token.

@@ -184,6 +184,26 @@ func (e *WebAuthnSettingsReadError) Unwrap() error {
 	return e.Cause
 }
 
+// WebAuthnTenantRPError reports a tenant whose resolved relying party — the
+// global config with the tenant's stored override merged on — fails the
+// relying-party shape rules. It is a fail-closed signal: the factory builds
+// no service for the tenant, so its ceremonies are denied rather than served
+// by a relying party that can never verify one. Correcting the tenant's
+// WebAuthn settings clears it.
+type WebAuthnTenantRPError struct {
+	TenantID string
+	Cause    error
+}
+
+// Error implements error.
+func (e *WebAuthnTenantRPError) Error() string {
+	return "iam.webauthn.factory: tenant " + e.TenantID +
+		" has an invalid relying party: " + e.Cause.Error()
+}
+
+// Unwrap returns the *TenantWebAuthnOverrideError naming the bad field.
+func (e *WebAuthnTenantRPError) Unwrap() error { return e.Cause }
+
 // WebAuthnLoginSessionError reports a failure to correlate a FinishLogin
 // assertion back to its originating BeginLogin ceremony session. It is an
 // auth fail-closed signal: the manager refuses to dispatch the assertion to
@@ -416,6 +436,13 @@ func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID stri
 	resolved, err := f.resolveConfig(ctx, tenantID)
 	if err != nil {
 		return nil, err
+	}
+	// Tenant writes validate the override, but one stored before they did
+	// would otherwise reach the relying party unchecked and fail only at
+	// ceremony time. Refuse to build it instead.
+	merged := TenantWebAuthnConfig{RPID: resolved.RPID, RPOrigins: resolved.RPOrigins}
+	if err := merged.Validate(); err != nil {
+		return nil, &WebAuthnTenantRPError{TenantID: tenantID, Cause: err}
 	}
 	cfg := &xkmssdk.WebAuthnConfig{
 		RPID:                    resolved.RPID,

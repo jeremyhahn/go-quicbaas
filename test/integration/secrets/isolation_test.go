@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -44,109 +45,164 @@ import (
 // Tenant Isolation Tests
 // =============================================================================
 
-// TestTenantIsolation_CrossTenantAccessPrevention verifies that secrets stored
-// with different tenant IDs are isolated from each other.
+// tenantSecretsClient calls the secrets REST API as one tenant. The vault
+// keys every secret by the caller's tenant, which REST binds from the
+// bearer's tenant_id claim and nothing else, so a tenant identity is a bearer
+// minted for a user of that tenant — never a tenant_id in the request body.
+type tenantSecretsClient struct {
+	endpoint string
+	bearer   string
+	client   *http.Client
+}
+
+// newTenantSecretsClient provisions tenantID (as the system admin) and logs
+// in as a tenant admin of it.
+func newTenantSecretsClient(t *testing.T, endpoint, tenantID string) *tenantSecretsClient {
+	t.Helper()
+	admin := &tenantSecretsClient{
+		endpoint: endpoint,
+		bearer:   helpers.AuthPIV(t, endpoint),
+		client:   helpers.NewHTTPClient(10 * time.Second),
+	}
+	status, body := admin.do(t, http.MethodPost, "/api/v1/tenants",
+		map[string]interface{}{"id": tenantID, "name": tenantID})
+	if status != http.StatusOK && status != http.StatusCreated && status != http.StatusConflict {
+		t.Fatalf("create tenant %s: status %d body=%s", tenantID, status, body)
+	}
+
+	bearer := helpers.AuthTenantAdmin(t, endpoint, tenantID)
+	require.NotEmpty(t, bearer, "tenant-admin bearer for %s", tenantID)
+	return &tenantSecretsClient{endpoint: endpoint, bearer: bearer, client: admin.client}
+}
+
+// do sends one request and returns its status and body.
+func (c *tenantSecretsClient) do(t *testing.T, method, path string, reqBody interface{}) (int, []byte) {
+	t.Helper()
+	var bodyReader io.Reader
+	if reqBody != nil {
+		data, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		bodyReader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequest(method, c.endpoint+path, bodyReader)
+	require.NoError(t, err)
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+c.bearer)
+
+	resp, err := c.client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, body
+}
+
+// store writes {"value": value} at path and returns the version written.
+func (c *tenantSecretsClient) store(t *testing.T, path, value string) uint64 {
+	t.Helper()
+	status, body := c.do(t, http.MethodPost, "/api/v1/secrets/"+path,
+		map[string]interface{}{"data": map[string]interface{}{"value": value}})
+	require.Equal(t, http.StatusCreated, status, "store %s: %s", path, body)
+	var resp service.StoreSecretResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	return resp.Version
+}
+
+// read returns the latest value at path and its version.
+func (c *tenantSecretsClient) read(t *testing.T, path string) (string, uint64) {
+	t.Helper()
+	status, body := c.do(t, http.MethodGet, "/api/v1/secrets/"+path, nil)
+	require.Equal(t, http.StatusOK, status, "read %s: %s", path, body)
+	var resp service.GetSecretResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	var data map[string]string
+	require.NoError(t, json.Unmarshal(resp.Data, &data))
+	return data["value"], resp.Version
+}
+
+// list returns the secret IDs the tenant enumerates under prefix.
+func (c *tenantSecretsClient) list(t *testing.T, prefix string) []string {
+	t.Helper()
+	status, body := c.do(t, http.MethodGet, "/api/v1/secrets/?prefix="+url.QueryEscape(prefix), nil)
+	require.Equal(t, http.StatusOK, status, "list %s: %s", prefix, body)
+	var resp service.ListSecretsResponse
+	require.NoError(t, json.Unmarshal(body, &resp))
+	ids := make([]string, 0, len(resp.Secrets))
+	for _, s := range resp.Secrets {
+		ids = append(ids, s.SecretID)
+	}
+	return ids
+}
+
+// TestTenantIsolation_CrossTenantAccessPrevention proves the vault keys a
+// secret by the caller's tenant: two tenants write the SAME path, each reads
+// back only its own value, and neither can read, list, update or delete the
+// other's secret. Writing two different paths, as this test once did, passes
+// with every bit of tenant scoping deleted (go-quicbaas#281).
 func TestTenantIsolation_CrossTenantAccessPrevention(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
 	endpoint := getRESTEndpoint()
-	sharedPath := fmt.Sprintf("shared/secret/%d", time.Now().UnixNano())
+	suffix := time.Now().UnixNano()
+	alpha := newTenantSecretsClient(t, endpoint, fmt.Sprintf("iso-alpha-%d", suffix))
+	beta := newTenantSecretsClient(t, endpoint, fmt.Sprintf("iso-beta-%d", suffix))
+	path := fmt.Sprintf("shared/secret/%d", suffix)
 
-	// Store secret for tenant-alpha
-	alphaData := map[string]interface{}{
-		"api_key":    "alpha-secret-key-12345",
-		"tenant":     "alpha",
-		"created_at": time.Now().Format(time.RFC3339),
-	}
+	require.Equal(t, uint64(1), alpha.store(t, path, "alpha-secret-key"))
 
-	alphaOpts := &SecretOptions{
-		TenantID:    "tenant-alpha",
-		Description: "Secret for tenant-alpha",
-		Metadata: map[string]string{
-			"environment": "test",
-			"owner":       "alpha-team",
-		},
-	}
-
-	alphaResp := createSecret(t, endpoint, sharedPath+"/alpha", alphaData, alphaOpts)
-	require.NotNil(t, alphaResp)
-	assert.Equal(t, sharedPath+"/alpha", alphaResp.SecretID)
-	t.Logf("Created secret for tenant-alpha at %s, version: %d", alphaResp.SecretID, alphaResp.Version)
-
-	// Store secret for tenant-beta at the same logical path structure
-	betaData := map[string]interface{}{
-		"api_key":    "beta-secret-key-67890",
-		"tenant":     "beta",
-		"created_at": time.Now().Format(time.RFC3339),
-	}
-
-	betaOpts := &SecretOptions{
-		TenantID:    "tenant-beta",
-		Description: "Secret for tenant-beta",
-		Metadata: map[string]string{
-			"environment": "test",
-			"owner":       "beta-team",
-		},
-	}
-
-	betaResp := createSecret(t, endpoint, sharedPath+"/beta", betaData, betaOpts)
-	require.NotNil(t, betaResp)
-	assert.Equal(t, sharedPath+"/beta", betaResp.SecretID)
-	t.Logf("Created secret for tenant-beta at %s, version: %d", betaResp.SecretID, betaResp.Version)
-
-	// Retrieve and verify tenant-alpha secret
-	t.Run("retrieve_tenant_alpha_secret", func(t *testing.T) {
-		_ = ctx
-		secret := getSecret(t, endpoint, sharedPath+"/alpha")
-		require.NotNil(t, secret)
-
-		var data map[string]interface{}
-		err := json.Unmarshal(secret.Data, &data)
-		require.NoError(t, err)
-
-		assert.Equal(t, "alpha-secret-key-12345", data["api_key"])
-		assert.Equal(t, "alpha", data["tenant"])
-		t.Logf("Successfully retrieved tenant-alpha secret with correct data")
+	t.Run("other_tenant_cannot_read", func(t *testing.T) {
+		status, body := beta.do(t, http.MethodGet, "/api/v1/secrets/"+path, nil)
+		assert.Equal(t, http.StatusNotFound, status, "tenant B read tenant A's secret: %s", body)
 	})
 
-	// Retrieve and verify tenant-beta secret
-	t.Run("retrieve_tenant_beta_secret", func(t *testing.T) {
-		secret := getSecret(t, endpoint, sharedPath+"/beta")
-		require.NotNil(t, secret)
-
-		var data map[string]interface{}
-		err := json.Unmarshal(secret.Data, &data)
-		require.NoError(t, err)
-
-		assert.Equal(t, "beta-secret-key-67890", data["api_key"])
-		assert.Equal(t, "beta", data["tenant"])
-		t.Logf("Successfully retrieved tenant-beta secret with correct data")
+	t.Run("other_tenant_cannot_list", func(t *testing.T) {
+		assert.Empty(t, beta.list(t, path), "tenant B enumerates tenant A's secret")
 	})
 
-	// Verify secrets are different (tenant isolation works)
-	t.Run("verify_tenant_isolation", func(t *testing.T) {
-		alphaSecret := getSecret(t, endpoint, sharedPath+"/alpha")
-		betaSecret := getSecret(t, endpoint, sharedPath+"/beta")
+	t.Run("other_tenant_cannot_update", func(t *testing.T) {
+		status, body := beta.do(t, http.MethodPut, "/api/v1/secrets/"+path+"/status",
+			map[string]interface{}{"status": service.SecretStatusDisabled})
+		assert.Equal(t, http.StatusNotFound, status, "tenant B changed tenant A's status: %s", body)
 
-		// Verify the raw data is different
-		assert.NotEqual(t, alphaSecret.Data, betaSecret.Data,
-			"Secrets for different tenants should have different data")
-
-		var alphaDataParsed, betaDataParsed map[string]interface{}
-		require.NoError(t, json.Unmarshal(alphaSecret.Data, &alphaDataParsed))
-		require.NoError(t, json.Unmarshal(betaSecret.Data, &betaDataParsed))
-
-		// Verify API keys are different
-		assert.NotEqual(t, alphaDataParsed["api_key"], betaDataParsed["api_key"],
-			"API keys should be different for different tenants")
-
-		t.Logf("Confirmed tenant isolation: secrets are properly separated")
+		status, body = beta.do(t, http.MethodPost, "/api/v1/secrets/"+path+"?action=rotate",
+			map[string]interface{}{"data": map[string]interface{}{"value": "hijacked"}})
+		assert.Equal(t, http.StatusNotFound, status, "tenant B rotated tenant A's secret: %s", body)
 	})
 
-	// Cleanup
-	deleteSecret(t, endpoint, sharedPath+"/alpha", true)
-	deleteSecret(t, endpoint, sharedPath+"/beta", true)
+	t.Run("other_tenant_cannot_delete", func(t *testing.T) {
+		status, body := beta.do(t, http.MethodDelete, "/api/v1/secrets/"+path+"?destroy=true", nil)
+		assert.Equal(t, http.StatusNotFound, status, "tenant B deleted tenant A's secret: %s", body)
+	})
+
+	t.Run("owner_secret_untouched", func(t *testing.T) {
+		value, version := alpha.read(t, path)
+		assert.Equal(t, "alpha-secret-key", value)
+		assert.Equal(t, uint64(1), version, "a foreign tenant's attempt created a version")
+	})
+
+	t.Run("same_path_holds_one_value_per_tenant", func(t *testing.T) {
+		// B's first write to A's path starts B's own history; it is not
+		// version 2 of A's secret.
+		require.Equal(t, uint64(1), beta.store(t, path, "beta-secret-key"))
+
+		alphaValue, _ := alpha.read(t, path)
+		betaValue, _ := beta.read(t, path)
+		assert.Equal(t, "alpha-secret-key", alphaValue)
+		assert.Equal(t, "beta-secret-key", betaValue)
+		assert.Equal(t, []string{path}, alpha.list(t, path))
+		assert.Equal(t, []string{path}, beta.list(t, path))
+	})
+
+	t.Run("own_delete_stays_in_own_namespace", func(t *testing.T) {
+		status, body := beta.do(t, http.MethodDelete, "/api/v1/secrets/"+path+"?destroy=true", nil)
+		require.Equal(t, http.StatusOK, status, "tenant B delete of its own secret: %s", body)
+
+		value, _ := alpha.read(t, path)
+		assert.Equal(t, "alpha-secret-key", value, "tenant B's delete reached tenant A")
+	})
+
+	status, body := alpha.do(t, http.MethodDelete, "/api/v1/secrets/"+path+"?destroy=true", nil)
+	require.Equal(t, http.StatusOK, status, "cleanup: %s", body)
 }
 
 // TestTenantIsolation_TenantSpecificDEKVerification verifies that tenant-specific
@@ -499,8 +555,8 @@ func TestAlgorithm_InvalidRejection(t *testing.T) {
 	bodyBytes, err := json.Marshal(reqBody)
 	require.NoError(t, err)
 
-	url := fmt.Sprintf("%s/api/v1/secrets/%s", endpoint, path)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(bodyBytes))
+	reqURL := fmt.Sprintf("%s/api/v1/secrets/%s", endpoint, path)
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(bodyBytes))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -1032,53 +1088,28 @@ func TestMultiProtocol_TenantIsolation(t *testing.T) {
 func testTenantIsolationForProtocol(t *testing.T, protocolName, basePath, endpoint string, _ interface{}) {
 	t.Helper()
 
-	// Create secrets for two tenants
-	tenant1Path := basePath + "/tenant1"
-	tenant2Path := basePath + "/tenant2"
+	// Two tenants write the SAME path; only their bearers tell them apart.
+	suffix := time.Now().UnixNano()
+	tenant1 := newTenantSecretsClient(t, endpoint, fmt.Sprintf("iso-1-%d", suffix))
+	tenant2 := newTenantSecretsClient(t, endpoint, fmt.Sprintf("iso-2-%d", suffix))
+	path := basePath + "/shared"
 
-	tenant1Data := map[string]interface{}{
-		"api_key":  "tenant1-key",
-		"protocol": protocolName,
-	}
+	tenant1.store(t, path, "tenant1-key")
+	status, body := tenant2.do(t, http.MethodGet, "/api/v1/secrets/"+path, nil)
+	assert.Equal(t, http.StatusNotFound, status, "[%s] tenant 2 read tenant 1's secret: %s", protocolName, body)
 
-	tenant2Data := map[string]interface{}{
-		"api_key":  "tenant2-key",
-		"protocol": protocolName,
-	}
-
-	// Create tenant1 secret
-	tenant1Opts := &SecretOptions{
-		TenantID:    "tenant-1",
-		Description: fmt.Sprintf("Tenant 1 secret via %s", protocolName),
-	}
-	resp1 := createSecret(t, endpoint, tenant1Path, tenant1Data, tenant1Opts)
-	require.NotNil(t, resp1)
-
-	// Create tenant2 secret
-	tenant2Opts := &SecretOptions{
-		TenantID:    "tenant-2",
-		Description: fmt.Sprintf("Tenant 2 secret via %s", protocolName),
-	}
-	resp2 := createSecret(t, endpoint, tenant2Path, tenant2Data, tenant2Opts)
-	require.NotNil(t, resp2)
-
-	// Verify isolation
-	secret1 := getSecret(t, endpoint, tenant1Path)
-	secret2 := getSecret(t, endpoint, tenant2Path)
-
-	var data1, data2 map[string]interface{}
-	require.NoError(t, json.Unmarshal(secret1.Data, &data1))
-	require.NoError(t, json.Unmarshal(secret2.Data, &data2))
-
-	assert.Equal(t, "tenant1-key", data1["api_key"])
-	assert.Equal(t, "tenant2-key", data2["api_key"])
-	assert.NotEqual(t, data1["api_key"], data2["api_key"])
+	tenant2.store(t, path, "tenant2-key")
+	value1, _ := tenant1.read(t, path)
+	value2, _ := tenant2.read(t, path)
+	assert.Equal(t, "tenant1-key", value1)
+	assert.Equal(t, "tenant2-key", value2)
 
 	t.Logf("[%s] Tenant isolation verified", protocolName)
 
-	// Cleanup - use tryDeleteSecret for graceful handling of not-found
-	tryDeleteSecret(t, endpoint, tenant1Path, true)
-	tryDeleteSecret(t, endpoint, tenant2Path, true)
+	for _, c := range []*tenantSecretsClient{tenant1, tenant2} {
+		status, body := c.do(t, http.MethodDelete, "/api/v1/secrets/"+path+"?destroy=true", nil)
+		require.Equal(t, http.StatusOK, status, "[%s] cleanup: %s", protocolName, body)
+	}
 }
 
 // testTenantIsolationForGRPC tests tenant isolation using gRPC client.

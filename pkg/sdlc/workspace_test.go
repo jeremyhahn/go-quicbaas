@@ -200,9 +200,12 @@ func TestForgeAccess_AnHTTPSReaderIsGivenNoAgentAtAll(t *testing.T) {
 	if _, ok := req.Env[orchestration.WorkspaceSigningAgentEnv]; ok {
 		t.Error("SSH_AUTH_SOCK was set for a container with no agent")
 	}
-	// The token still travels, as a sibling file the container reads through.
-	if workspace.Spec.ForgeTokenFile != orchestration.WorkspaceForgeTokenFile {
-		t.Errorf("forge token file = %q, want the token written beside the spec", workspace.Spec.ForgeTokenFile)
+	// The token still reaches the container, on its tmpfs credential tier.
+	if workspace.Spec.ForgeTokenFile != orchestration.WorkspaceForgeCredentialFile {
+		t.Errorf("forge token file = %q, want the credential tier's", workspace.Spec.ForgeTokenFile)
+	}
+	if workspace.forgeCredential() == nil {
+		t.Error("the workspace holds no forge credential to deliver")
 	}
 }
 
@@ -314,8 +317,8 @@ func TestForgeAccess_NamesTheWorkspaceAndPicksNoHostPath(t *testing.T) {
 			t.Fatalf("the spec directory is the executing host's to write and mount: %+v", mount)
 		}
 	}
-	if ws.Spec == nil || string(ws.Spec.Files[orchestration.WorkspaceForgeTokenFile]) != "t0ken" {
-		t.Fatal("the forge token must travel with the spec to the host that writes it")
+	if ws.Spec == nil || ws.Spec.Spec.ForgeTokenFile != orchestration.WorkspaceForgeCredentialFile {
+		t.Fatal("the spec must name the token file the checkout delivers to the credential tier")
 	}
 	if ws.Spec.Spec.KnownHostsFile != orchestration.WorkspaceKnownHostsFile ||
 		workspace.Spec.KnownHostsFile != orchestration.WorkspaceKnownHostsFile {

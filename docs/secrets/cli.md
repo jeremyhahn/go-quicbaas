@@ -60,7 +60,6 @@ quicbaas secrets put <path> (--data KEY=VALUE... | --from-stdin | --from-file PA
 | `--from-stdin` | bool | One source | false | Store the raw bytes of stdin verbatim; from an interactive terminal, one line read with echo disabled |
 | `--from-file` | string | One source | - | Store the raw bytes of a file verbatim |
 | `--ttl` | duration | No | 0 | Time-to-live (e.g., `1h`, `30m`, `7d`) |
-| `--tenant-id` | string | No | - | Tenant ID for tenant-specific encryption |
 | `--key-id` | string | No | - | Custom key identifier (DEKID or KeyID) |
 | `--algorithm` | string | No | `AES-256-GCM` | Encryption algorithm |
 
@@ -100,9 +99,6 @@ quicbaas secrets put app/config \
 
 # Store with TTL (expires in 1 hour)
 quicbaas secrets put temp/token --data token=abc123 --ttl 1h
-
-# Store with tenant-specific encryption
-quicbaas secrets put tenant/secret --data key=value --tenant-id tenant-123
 
 # Store with custom algorithm
 quicbaas secrets put app/secret --data key=value --algorithm ChaCha20-Poly1305
@@ -537,7 +533,6 @@ quicbaas secrets rotate <path> [value] [flags]
 | Flag | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `--data` | string | No | - | Complex data as KEY=VALUE (repeatable) |
-| `--tenant-id` | string | No | - | Tenant ID (inherits if not set) |
 | `--key-id` | string | No | - | Custom key ID (inherits if not set) |
 | `--algorithm` | string | No | - | Algorithm (inherits if not set) |
 
@@ -781,17 +776,23 @@ eval $(quicbaas secrets get ci/github-actions --output json | jq -r '.data | to_
 
 ### Multi-Tenant Secrets
 
-```bash
-# Store tenant-specific secret
-quicbaas secrets put app/api-key \
-  --data key=sk-tenant-abc123 \
-  --tenant-id tenant-abc
+The tenant is not a flag. Every secret is stored in the namespace of the
+tenant named by the caller's credential — the `tenant_id` claim of its bearer
+token — so two tenants can use the same path without seeing each other's
+value:
 
-# Store for different tenant
-quicbaas secrets put app/api-key \
-  --data key=sk-tenant-xyz789 \
-  --tenant-id tenant-xyz
+```bash
+# Logged in as a user of tenant-abc
+quicbaas secrets put app/api-key --data key=sk-tenant-abc123
+
+# Logged in as a user of tenant-xyz: the same path, a separate secret
+quicbaas secrets put app/api-key --data key=sk-tenant-xyz789
 ```
+
+The API's optional `tenant_id` request field is not an isolation mechanism
+either: it may name only the caller's own tenant (any other is refused with
+`403 cross_tenant_access`) and then selects that tenant's DEK. See
+[Tenant Scoping and Authorization](architecture.md#tenant-scoping-and-authorization).
 
 ### Key Rotation Script
 

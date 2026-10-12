@@ -165,16 +165,10 @@
    * APIError` so a probe rejected by a non-REST transport (or a test double)
    * that carries the same field classifies identically.
    *
-   * TRANSPORT SCOPE: today only the REST transport carries a status here. The
-   * Wails desktop transport cannot: cmd/quicbaas/errors_gui.go codes every
-   * binding failure ErrUnavailable regardless of cause, and Wails v2 delivers
-   * the error to JS as a bare string (no ErrorFormatter is configured), so a
-   * denial arrives with no status and no code and falls through to 'down' —
-   * the pre-fix behaviour, still live on the desktop build. Classifying it
-   * would mean matching the denial out of the message prose, which is exactly
-   * what this function exists to avoid, so the fix belongs where the code is
-   * destroyed rather than here. Filed as #236; that one needs a ruling on the
-   * binding error contract before it can be written.
+   * Both transports carry it: the Wails desktop transport classifies a
+   * binding failure from its cause (cmd/quicbaas/errors_gui.go), its error
+   * formatter sends the code and status to JS, and the TypeScript SDK turns
+   * that rejection into the same APIError the REST client throws (#236).
    */
   function httpStatus(err: unknown): number | undefined {
     const status = (err as { status?: unknown } | null | undefined)?.status;

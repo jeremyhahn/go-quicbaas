@@ -93,7 +93,7 @@ type checkoutStep struct {
 // second place for the evidence to be dropped from.
 type gitSteps struct {
 	// exec runs one command in the container, returning what it did.
-	exec func(spec *orchestration.ExecSpec) (*orchestration.ExecResult, error)
+	exec sessionExecFunc
 
 	// taskID names the attempt in every error.
 	taskID string
@@ -391,6 +391,10 @@ func (c *gitSteps) record(args []string, result *orchestration.ExecResult) {
 // The one checkout every runner drives
 // =============================================================================
 
+// sessionExecFunc runs one command in a session's container, returning what
+// it did.
+type sessionExecFunc func(spec *orchestration.ExecSpec) (*orchestration.ExecResult, error)
+
 // sessionExec is the one seam a runner runs a command in its session's
 // container through. Every git command the module runs — the clone, the
 // pre-flight's probes, the publish — goes through it, so there is no path by
@@ -399,7 +403,7 @@ func sessionExec(
 	ctx context.Context,
 	job *orchestration.JobRun,
 	sessionID string,
-) func(*orchestration.ExecSpec) (*orchestration.ExecResult, error) {
+) sessionExecFunc {
 	return func(spec *orchestration.ExecSpec) (*orchestration.ExecResult, error) {
 		return job.Exec(ctx, &orchestration.ExecSessionRequest{SessionID: sessionID, Spec: spec})
 	}
@@ -429,6 +433,11 @@ type containerCheckout struct {
 
 	// taskID names the attempt in every error.
 	taskID string
+
+	// credential is the forge token Make delivers to the container's
+	// credential tier before the first clone, nil for a checkout that needs
+	// none (go-quicbaas#899).
+	credential *forgeCredential
 }
 
 // Make clones the project and its context repositories inside the container
@@ -439,8 +448,16 @@ type containerCheckout struct {
 // could not reach the forge is the most common way an attempt dies, and the
 // only place a person can see why is the job it died on.
 func (c containerCheckout) Make(ctx context.Context) error {
+	exec := sessionExec(ctx, c.job, c.sessionID)
+	// The credential goes on the tier first: every https clone and fetch
+	// below reads it through the credential helper. A delivery that fails is
+	// the checkout's evidence, because it is the checkout's first step.
+	if err := c.credential.Deliver(exec, c.taskID, c.sessionID); err != nil {
+		c.job.Audit(auditCheckout, err.Error())
+		return err
+	}
 	cl := &cloner{
-		gitSteps: gitSteps{exec: sessionExec(ctx, c.job, c.sessionID), taskID: c.taskID, sessionID: c.sessionID},
+		gitSteps: gitSteps{exec: exec, taskID: c.taskID, sessionID: c.sessionID},
 		project:  c.project,
 		spec:     c.spec,
 	}

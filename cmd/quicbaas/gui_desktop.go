@@ -70,6 +70,7 @@ func launchGUI(log *logger.Logger, logFile string) error {
 			orch.shutdown(ctx)
 			conn.shutdown(ctx)
 		},
-		Bind: []interface{}{conn, orch, sessions, agents, embedded, agentDeploy, sshKeys, agentCatalog},
+		Bind:           []interface{}{conn, orch, sessions, agents, embedded, agentDeploy, sshKeys, agentCatalog},
+		ErrorFormatter: formatGUIError,
 	})
 }

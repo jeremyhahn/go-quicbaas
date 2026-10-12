@@ -136,6 +136,29 @@ func TestWebAuthnFactory_OverrideOrigins(t *testing.T) {
 	assert.Equal(t, []string{"https://vhost.example.com", "https://www.vhost.example.com"}, cfg.RPOrigins)
 }
 
+// TestWebAuthnFactory_StoredInvalidOverrideFailsClosed pins go-quicbaas#368:
+// an override stored before tenant writes were validated must not build a
+// relying party that can never verify a ceremony. The live xkms service
+// accepts a hostless origin, so only the factory's own check refuses it.
+func TestWebAuthnFactory_StoredInvalidOverrideFailsClosed(t *testing.T) {
+	settings := newFakeWebAuthnSettings()
+	settings.set("legacy-tenant", &iam.TenantWebAuthnConfig{
+		RPID:      "legacy.example.com",
+		RPOrigins: []string{"https://legacy.example.com", "https://"},
+	})
+
+	factory := buildLiveWebAuthnFactoryWithSettings(t, settings)
+	svc, err := factory.ServiceFor(context.Background(), "legacy-tenant")
+	assert.Nil(t, svc)
+	var rpErr *iam.WebAuthnTenantRPError
+	require.ErrorAs(t, err, &rpErr)
+	assert.Equal(t, "legacy-tenant", rpErr.TenantID)
+
+	// A tenant with no override is unaffected by its neighbour's bad one.
+	_, err = factory.ServiceFor(context.Background(), "other-tenant")
+	require.NoError(t, err)
+}
+
 // TestWebAuthnFactory_SettingsChangeRebuildsCachedService verifies scenario
 // (b): after a tenant updates its WebAuthn settings, OnTenantSettingsChanged
 // evicts the cached service so the next ServiceFor rebuilds it with the new RP.

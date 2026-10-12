@@ -186,7 +186,7 @@ func TestCloner_TheCloneAuthenticatesThroughTheMountedTokenAndCarriesNoSecret(t 
 	if err := c.Checkout(); err != nil {
 		t.Fatalf("Checkout: %v", err)
 	}
-	tokenFile := path.Join(orchestration.WorkspaceSpecDir, orchestration.WorkspaceForgeTokenFile)
+	tokenFile := orchestration.WorkspaceForgeCredentialFile
 	var authenticated int
 	for _, cmd := range container.commandsRun() {
 		if !strings.Contains(cmd, "credential.helper=") {
@@ -194,7 +194,7 @@ func TestCloner_TheCloneAuthenticatesThroughTheMountedTokenAndCarriesNoSecret(t 
 		}
 		authenticated++
 		if !strings.Contains(cmd, tokenFile) {
-			t.Errorf("the helper does not name the mounted token file: %q", cmd)
+			t.Errorf("the helper does not name the token file on the credential tier: %q", cmd)
 		}
 	}
 	if authenticated == 0 {

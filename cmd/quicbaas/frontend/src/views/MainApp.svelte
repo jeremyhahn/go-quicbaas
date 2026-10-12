@@ -111,6 +111,7 @@
     setAuthStatus,
     readAuthToken,
   } from '../stores/auth.svelte.ts';
+  import { tenantOptionsOf, withRequiredTenants, type TenantOption } from '../lib/tenantOptions.ts';
   import { fleetStore, refreshFleet } from '../stores/fleetStore.svelte.ts';
   import { isWailsRuntime } from '@quicbaas/sdk';
   import { getSDKClient } from '../stores/sdkClient.ts';
@@ -351,20 +352,13 @@
   // no way back to their own (go-quicbaas#309). The session's own tenant is
   // therefore always present and always selectable, whatever the call answers.
   // ---------------------------------------------------------------------------
-  let discoveredTenants = $state<Array<{ id: string; name: string }>>([]);
+  let discoveredTenants = $state<TenantOption[]>([]);
 
-  const tenantOptions = $derived.by(() => {
-    const options = [...discoveredTenants];
-    // Both the active tenant and the session tenant must appear, or the
-    // <select> renders a value it has no option for and the control shows
-    // blank. Prepended, so the session's own tenant heads the list.
-    for (const id of [orchestratorStore.activeTenantID, authStore.tenantID]) {
-      if (id !== '' && !options.some((t) => t.id === id)) {
-        options.unshift({ id, name: id });
-      }
-    }
-    return options;
-  });
+  // Both the active tenant and the session tenant must appear; the session's
+  // own tenant heads the list.
+  const tenantOptions = $derived(
+    withRequiredTenants(discoveredTenants, [orchestratorStore.activeTenantID, authStore.tenantID]),
+  );
 
   $effect(() => {
     // Read synchronously so the effect re-runs when the session changes: the
@@ -383,10 +377,7 @@
         // departed admin's tenant list in front of whoever signed in after
         // them. The listing belongs to the principal it was asked for.
         if (forSession !== authStore.sessionKey) return;
-        discoveredTenants = (resp?.tenants ?? []).map((t) => ({
-          id: t.id,
-          name: t.name || t.id,
-        }));
+        discoveredTenants = tenantOptionsOf(resp?.tenants ?? []);
       } catch {
         // Not authorized to enumerate tenants (or the call failed). The server,
         // not this component, decides which tenants a principal may see; the

@@ -47,9 +47,10 @@ type workspaceBackend struct {
 	closed   []string
 	sessions map[string]*ProvisionedWorkspace
 
-	// tokens is the forge token each spawn carried, read at spawn time: the
-	// orchestrator wipes the request's copy once the spawn is over.
-	tokens []string
+	// knownHosts is the pinned host key each spawn's spec carried, read at
+	// spawn time: the orchestrator wipes the request's copy once the spawn is
+	// over.
+	knownHosts []string
 
 	// execs is every command run in one of this host's session containers.
 	execs []string
@@ -76,7 +77,7 @@ func (b *workspaceBackend) Spawn(_ context.Context, req *SpawnRequest) (*Session
 	defer b.mu.Unlock()
 	b.spawns = append(b.spawns, req)
 	if req.Workspace != nil && req.Workspace.Spec != nil {
-		b.tokens = append(b.tokens, string(req.Workspace.Spec.Files[WorkspaceForgeTokenFile]))
+		b.knownHosts = append(b.knownHosts, string(req.Workspace.Spec.Files[WorkspaceKnownHostsFile]))
 	}
 	if b.spawnErr != nil {
 		return nil, b.spawnErr
@@ -210,8 +211,8 @@ func TestSpawnSession_FleetAgentProvisionsTheNamedWorkspace(t *testing.T) {
 	if got == nil || got.Workspace == nil || got.WorkDir != "" {
 		t.Fatalf("the agent must be handed the workspace by name and no host path: %+v", got)
 	}
-	if len(agent09.tokens) != 1 || agent09.tokens[0] != "forge-secret" {
-		t.Fatalf("the spec must travel to the agent that writes it: %q", agent09.tokens)
+	if len(agent09.knownHosts) != 1 || agent09.knownHosts[0] != testKnownHosts {
+		t.Fatalf("the spec must travel to the agent that writes it: %q", agent09.knownHosts)
 	}
 	// AND NOTHING ON THE DAEMON HOLDS IT AFTERWARDS: the request's copy is
 	// wiped once the spawn is over.

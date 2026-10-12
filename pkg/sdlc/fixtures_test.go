@@ -14,6 +14,7 @@
 package sdlc
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -1712,6 +1713,19 @@ type fakeContainer struct {
 	// decides whether a clone of an ssh remote authenticates; see authenticate.
 	sshAgentSocket string
 
+	// credential is what the credential tier's forge token file holds: set by
+	// a delivery, cleared by a revocation. credentialAt is how many checkout
+	// commands had run when it was first delivered, which is what says it reached
+	// the tier before the first command that needed it. Neither command is in
+	// execs, which holds only the commands that touch the checkout.
+	credential   []byte
+	credentialAt int
+
+	// credentialDeliveries and credentialRevoked count the deliveries that
+	// wrote the file and the revocations that removed it.
+	credentialDeliveries int
+	credentialRevoked    int
+
 	clones    []clonedRepo
 	configs   []gitConfigSet
 	fetches   []fetchCall
@@ -1834,6 +1848,9 @@ type pushedRef struct {
 func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (*orchestration.ExecResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if handled, result, err := c.credentialTier(containerID, spec); handled {
+		return result, err
+	}
 	c.execs = append(c.execs, containerExec{
 		ContainerID: containerID, WorkDir: spec.WorkDir, Cmd: append([]string(nil), spec.Cmd...),
 	})
@@ -2241,6 +2258,38 @@ func (c *fakeContainer) worktree(from string, args []string) (*orchestration.Exe
 // remove models "rm -f <path>", the one non-git command the publisher runs.
 // A file that was never there is a SUCCESS, exactly as rm -f answers, which
 // is what makes a real failure distinguishable from an ordinary one.
+// credentialTier answers the two commands that write and remove the forge
+// credential on the tmpfs; handled is false for every other command. A
+// stopped container refuses them as it refuses everything else.
+func (c *fakeContainer) credentialTier(containerID string, spec *orchestration.ExecSpec) (handled bool, result *orchestration.ExecResult, err error) {
+	cmd := spec.Cmd
+	delivery := len(cmd) == 5 && cmd[0] == verificationShell && cmd[2] == deliverForgeCredentialScript
+	revocation := len(cmd) == 4 && cmd[0] == removeCommand && cmd[3] == orchestration.WorkspaceForgeCredentialFile
+	if !delivery && !revocation {
+		return false, nil, nil
+	}
+	if c.stopped {
+		return true, nil, &orchestration.ContainerNotRunningError{
+			ContainerID: containerID,
+			Message:     "Error response from daemon: container " + containerID + " is not running",
+		}
+	}
+	if revocation {
+		c.credential = nil
+		c.credentialRevoked++
+		return true, &orchestration.ExecResult{}, nil
+	}
+	if cmd[4] != orchestration.WorkspaceForgeCredentialFile || len(spec.Stdin) == 0 {
+		return true, nil, &InvalidInputError{Field: "cmd", Message: "a forge credential was delivered empty or off the credential tier"}
+	}
+	c.credential = bytes.Clone(spec.Stdin)
+	c.credentialDeliveries++
+	if c.credentialDeliveries == 1 {
+		c.credentialAt = len(c.execs)
+	}
+	return true, &orchestration.ExecResult{}, nil
+}
+
 func (c *fakeContainer) remove(args []string) (*orchestration.ExecResult, error) {
 	force := false
 	var target string

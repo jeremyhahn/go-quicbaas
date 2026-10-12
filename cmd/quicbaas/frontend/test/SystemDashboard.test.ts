@@ -17,6 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/svelte';
+import { APIError } from '@quicbaas/sdk';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — must be defined before any imports that reference the mocks.
@@ -773,6 +774,20 @@ describe('SystemDashboard — orchestrator probe failure classification (#219)',
 
   it('renders a 401 denial as "not permitted" too', async () => {
     mockHealthCheck.mockRejectedValue(apiError(401, 'Unauthorized'));
+
+    render(SystemDashboard);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('not permitted').length).toBeGreaterThan(0);
+    });
+    expect(screen.queryAllByText('down')).toHaveLength(0);
+  });
+
+  it('renders a desktop (Wails) 403 denial as "not permitted" (#236)', async () => {
+    // The Wails transport rejects with the SDK's own APIError once
+    // wails.ts normalizes the Go formatter's payload, so the desktop build
+    // classifies a denial exactly like the REST build.
+    mockHealthCheck.mockRejectedValue(new APIError(403, 'permission denied'));
 
     render(SystemDashboard);
 

@@ -204,6 +204,18 @@ Use `Security().KMS()`, `Security().Secrets()` and `Security().Credentials()`:
 - **Scope and lifetime follow the job:** minted per `(tenant, project, job)`, TTL matched to
   the job lease, revoked on session close. This makes the session reaper a security control
   rather than only hygiene, and retires the shared-static-token pattern.
+
+> **Status (go-quicbaas#899).** Delivery and revocation are done: the forge token is off the
+> spawn request and every host's disk. It is written per session, over exec stdin, to a `0400`
+> file on a tmpfs credential tier, removed on every session close (a failed removal is a typed
+> error, logged and audited with no secret), and gone with the container on reap or crash. See
+> [the forge credential](../orchestration/autonomy-and-dispatch.md#the-forge-credential).
+> **Per-job minting is not done.** Gitea tokens carry no expiry and only category scopes, and
+> minting one needs a custody credential the daemon does not hold. So the tier holds the
+> project's stored token, not one scoped to `(tenant, project, job)` with a lease-bound TTL.
+> That needs a forge-side capability and a design decision. Commit signing already follows the
+> first bullet: an ephemeral, KMS-backed SSH agent per attempt, whose key never enters the
+> container.
 - **Cross-project access becomes policy, not a permission edit.** Rather than a standing
   write grant on another repository, the loop mints a scoped expiring credential for a
   specific unblocking task — the owner's "only when blocked, and own it to merge" ruling

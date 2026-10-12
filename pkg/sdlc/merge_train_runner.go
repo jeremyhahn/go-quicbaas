@@ -755,6 +755,7 @@ func (s *trainRun) spawnSession(ctx context.Context, t *MergeTrain) error {
 	}
 	checkout := containerCheckout{
 		job: s.job, sessionID: s.sessionID, spec: s.spec, project: project, taskID: TrainLeaseSubject(project.ID),
+		credential: s.workspace.forgeCredential(),
 	}
 	if err := checkout.Make(ctx); err != nil {
 		return err
@@ -796,7 +797,7 @@ func (s *trainRun) stillActive(ctx context.Context) error {
 // is idempotent.
 func (s *trainRun) teardownSession(ctx context.Context) {
 	if s.sessionID != "" {
-		s.job.Close(context.WithoutCancel(ctx), s.sessionID)
+		closeSession(context.WithoutCancel(ctx), s.job, s.sessionID, s.workspace)
 		s.sessionID = ""
 	}
 	for i := len(s.teardown) - 1; i >= 0; i-- {

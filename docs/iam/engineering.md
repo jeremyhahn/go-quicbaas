@@ -1989,6 +1989,28 @@ Production deployments should still pin `rp_id`, `rp_display_name` and
 a deployment behind a proxy or a different public hostname must state its own
 relying-party identity.
 
+**Per-tenant overrides.** A tenant may override `rp_id`, `rp_display_name` and
+`rp_origins` through `settings.webauthn` on its tenant record; an empty field
+inherits the global value. The override is held to the same RP ID and origin
+rules as the global relying party — the rules live in `pkg/webauthnrp`, which
+both `pkg/config` and `pkg/iam` call, so the two cannot drift:
+
+- **At write time.** `DefaultTenantManager.CreateTenant` and `UpdateTenant`,
+  the one write path every transport reaches, refuse a malformed override
+  before storing anything. The error is an `ErrInvalidInput`-coded `QBError`
+  wrapping `*iam.TenantWebAuthnOverrideError`, whose `Field` names
+  `settings.webauthn.rp_id` or `settings.webauthn.rp_origins`; REST returns
+  400 and gRPC `InvalidArgument`.
+- **At build time.** `WebAuthnServiceFactory` validates the merged
+  global-plus-override value before it builds a tenant's relying party, and
+  fails closed with `*iam.WebAuthnTenantRPError` (no service is built or
+  cached). This catches an override stored before write-time validation
+  existed; correcting the tenant's settings clears it.
+
+Only REST (`PUT /api/v1/tenants/{tenant_id}`) and MCP carry
+`settings.webauthn` today; the gRPC `TenantSettings` message and the Go SDK's
+tenant request have no WebAuthn fields.
+
 #### Go SDK Usage
 
 ```go

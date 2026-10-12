@@ -157,9 +157,9 @@ func TestPublisher_TheForgeTokenTravelsAsAPathNeverAValue(t *testing.T) {
 	if pushCmd == "" {
 		t.Fatal("nothing was pushed")
 	}
-	tokenFile := path.Join(orchestration.WorkspaceSpecDir, orchestration.WorkspaceForgeTokenFile)
+	tokenFile := orchestration.WorkspaceForgeCredentialFile
 	if !strings.Contains(pushCmd, tokenFile) {
-		t.Errorf("the push does not read the mounted token file: %q", pushCmd)
+		t.Errorf("the push does not read the token file on the credential tier: %q", pushCmd)
 	}
 	if !strings.Contains(pushCmd, "credential.helper= ") {
 		t.Errorf("the image's own credential helpers were not cleared: %q", pushCmd)

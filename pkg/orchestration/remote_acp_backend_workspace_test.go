@@ -61,7 +61,7 @@ func TestRemoteACPBackend_SpawnNamesTheWorkspaceAndReadsItsDirectory(t *testing.
 	if ws.GetTenantId() != "t1" || ws.GetProjectId() != "p1" || ws.GetKey() != "task-a1" {
 		t.Fatalf("workspace on the wire = %+v", ws)
 	}
-	if string(ws.GetSpecFiles()[WorkspaceForgeTokenFile]) != "forge-secret" {
+	if string(ws.GetSpecFiles()[WorkspaceKnownHostsFile]) != testKnownHosts {
 		t.Fatal("the spec files must reach the daemon that writes them")
 	}
 	if got.GetWorkDir() != "" || ws.GetPinnedDir() != "" {

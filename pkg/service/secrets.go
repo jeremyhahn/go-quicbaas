@@ -584,8 +584,11 @@ func (s *secretsService) DeleteSecret(ctx context.Context, req *DeleteSecretRequ
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("delete", "delete_failed").Inc()
 		}
+		// A path absent from the caller's namespace — including one that
+		// exists only in another tenant's — is not_found, as on every
+		// other verb, not an internal failure (go-quicbaas#281).
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: secretLookupCode(err),
 			Op:   "secrets.DeleteSecret",
 			Err:  &api.OperationFailedError{Operation: "delete secret", Cause: err},
 		}

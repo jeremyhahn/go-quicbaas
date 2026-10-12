@@ -203,7 +203,7 @@ func TestCentralOAuth2TokenSource_RefreshDecodesMalformedJSONAsError(t *testing.
 	}, srv.URL, "")
 	ts.loopback = false
 
-	tok, err := ts.Token()
+	tok, err := ts.Token(context.Background())
 	require.Error(t, err)
 	assert.Nil(t, tok)
 }
@@ -224,7 +224,7 @@ func TestCentralOAuth2TokenSource_DialError(t *testing.T) {
 	// test runs on a host with slow DNS or firewall rules.
 	ts.client = &http.Client{Timeout: 500 * time.Millisecond}
 
-	_, err := ts.Token()
+	_, err := ts.Token(context.Background())
 	require.Error(t, err)
 }
 

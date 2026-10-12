@@ -510,7 +510,7 @@ func (s *reviewRun) decorate(status *orchestration.JobStatus) {
 // release runs the run's teardown in reverse order and closes the reviewer.
 func (s *reviewRun) release(ctx context.Context) {
 	if s.sessionID != "" {
-		s.job.Close(context.WithoutCancel(ctx), s.sessionID)
+		closeSession(context.WithoutCancel(ctx), s.job, s.sessionID, s.workspace)
 		s.sessionID = ""
 	}
 	for i := len(s.teardown) - 1; i >= 0; i-- {
@@ -1060,11 +1060,12 @@ func placeReviewer(req *orchestration.SpawnSessionRequest, seat ReviewerConfig, 
 // runner and triage also drive.
 func (s *reviewRun) checkout() containerCheckout {
 	return containerCheckout{
-		job:       s.job,
-		sessionID: s.sessionID,
-		spec:      s.spec,
-		project:   s.job.Project,
-		taskID:    s.subject.String(),
+		job:        s.job,
+		credential: s.workspace.forgeCredential(),
+		sessionID:  s.sessionID,
+		spec:       s.spec,
+		project:    s.job.Project,
+		taskID:     s.subject.String(),
 	}
 }
 

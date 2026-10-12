@@ -100,7 +100,7 @@ POST /api/v1/secrets/{path}
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `tenant_id` | string | No | Tenant ID for tenant-specific DEK |
+| `tenant_id` | string | No | Must be the caller's own tenant (else `403 cross_tenant_access`); selects that tenant's DEK. The namespace always comes from the caller's credential |
 | `key_id` | string | No | Custom key identifier |
 | `algorithm` | string | No | Encryption algorithm |
 
@@ -124,7 +124,7 @@ POST /api/v1/secrets/{path}
 | `data` | string | Yes | Base64-encoded secret data |
 | `description` | string | No | Human-readable description |
 | `metadata` | object | No | Key-value metadata |
-| `tenant_id` | string | No | Tenant identifier |
+| `tenant_id` | string | No | The caller's own tenant, to select its DEK; any other is refused. It does not choose where the secret is stored |
 | `key_id` | string | No | Custom encryption key ID |
 | `algorithm` | string | No | Encryption algorithm |
 
@@ -764,7 +764,7 @@ message StoreSecretRequest {
   map<string, string> metadata = 5;
   map<string, string> tags = 6;
   google.protobuf.Timestamp expires_at = 7;
-  string tenant_id = 8;           // Optional: tenant ID
+  string tenant_id = 8;           // Optional: caller's own tenant; selects its DEK
   string key_id = 9;              // Optional: custom key ID
   string algorithm = 10;          // Optional: encryption algorithm
 }
@@ -1051,7 +1051,7 @@ Store a secret with automatic encryption.
     },
     "tenant_id": {
       "type": "string",
-      "description": "Tenant ID for tenant-specific DEK"
+      "description": "Caller's own tenant, selecting its DEK; any other tenant is refused"
     },
     "key_id": {
       "type": "string",

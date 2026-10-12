@@ -143,6 +143,14 @@ func (p *MountPolicy) authorizeMount(tenantID, field string, mount ContainerMoun
 			Reason: "no mount policy is configured",
 		}
 	}
+	// A TMPFS REACHES NOTHING ON THE HOST. The kernel materializes it in the
+	// container's own memory cgroup and it has no source to authorize, so it
+	// is admitted as it is; ContainerMount.Validate refuses one that names a
+	// source. It is how secret material reaches a container without touching
+	// a disk (WorkspaceCredentialDir, go-quicbaas#899).
+	if mount.Type == MountTypeTmpfs && source == "" {
+		return nil
+	}
 	if source == "" {
 		return &MountNotAllowedError{
 			Field:  field,

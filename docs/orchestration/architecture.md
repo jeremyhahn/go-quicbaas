@@ -351,7 +351,7 @@ Claude Code ←stdio→ QuicBaaS Channel Proxy ←gRPC→ Remote QuicBaaS Server
 its workspace (tenant, project, key) instead of giving a server path. The agent
 that runs the session provisions it under **its own** projects root
 (`quicbaas fleet serve --projects-root`, default `<--work-dir>/projects`),
-writes the workspace spec and forge token beside it, and reports the directory
+writes the workspace spec beside it, and reports the directory
 back; the server records it on the session. The job's later sessions — review
 rounds, a rolled-over worker, the respawn after a restart — are pinned to that
 agent with strict host affinity, and a pinned agent that is gone is a typed

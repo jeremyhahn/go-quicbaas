@@ -784,11 +784,12 @@ func (s *triageRun) openCheckout(ctx context.Context) error {
 // delivery runner and the reviewer also drive.
 func (s *triageRun) checkout() containerCheckout {
 	return containerCheckout{
-		job:       s.job,
-		sessionID: s.sessionID,
-		spec:      s.spec,
-		project:   s.job.Project,
-		taskID:    TriageLeaseSubject(s.job.Project.ID),
+		job:        s.job,
+		credential: s.workspace.forgeCredential(),
+		sessionID:  s.sessionID,
+		spec:       s.spec,
+		project:    s.job.Project,
+		taskID:     TriageLeaseSubject(s.job.Project.ID),
 	}
 }
 
@@ -872,7 +873,7 @@ func (s *triageRun) teardownSession(ctx context.Context) {
 		// context already cancelled — a shutdown, a supersession, a stall
 		// abort — and a close that inherits it fails immediately and leaves
 		// the container running with nothing left holding its id.
-		s.job.Close(context.WithoutCancel(ctx), s.sessionID)
+		closeSession(context.WithoutCancel(ctx), s.job, s.sessionID, s.workspace)
 		s.sessionID = ""
 	}
 	for i := len(s.teardown) - 1; i >= 0; i-- {

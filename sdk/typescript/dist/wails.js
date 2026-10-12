@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 import { adoptPage, } from './page.js';
-import { ConnectionError } from './errors.js';
+import { APIError, ConnectionError } from './errors.js';
 import { unsupportedClient } from './unsupported.js';
 // wailsUnsupported is why projects, sdlc and accounts refuse here: the
 // desktop app binds no Go struct for them (cmd/quicbaas/bindings_*.go binds
@@ -29,29 +29,59 @@ function wailsGo() {
     }
     return window.go;
 }
+function isWailsErrorPayload(reason) {
+    if (typeof reason !== 'object' || reason === null)
+        return false;
+    const payload = reason;
+    return typeof payload.status === 'number' && typeof payload.message === 'string';
+}
+// wailsError converts a binding rejection into the error the REST client
+// throws for the same failure: a structured payload becomes an APIError
+// carrying its status, so callers classify a denial the same way on both
+// transports. Any other rejection is passed through unchanged.
+export function wailsError(reason) {
+    if (isWailsErrorPayload(reason)) {
+        return new APIError(reason.status, reason.message);
+    }
+    return reason;
+}
+// normalizedBinding wraps every method of a Wails binding so its rejection
+// goes through wailsError.
+function normalizedBinding(binding) {
+    return new Proxy(binding, {
+        get(target, prop, receiver) {
+            const value = Reflect.get(target, prop, receiver);
+            if (typeof value !== 'function')
+                return value;
+            return (...args) => Promise.resolve(value.apply(target, args)).catch((reason) => {
+                throw wailsError(reason);
+            });
+        },
+    });
+}
 // connectionBinding returns the Wails-generated ConnectionBinding proxy.
 function connectionBinding() {
-    return wailsGo().main.ConnectionBinding;
+    return normalizedBinding(wailsGo().main.ConnectionBinding);
 }
 // orchestratorBinding returns the Wails-generated OrchestratorBinding proxy.
 function orchestratorBinding() {
-    return wailsGo().main.OrchestratorBinding;
+    return normalizedBinding(wailsGo().main.OrchestratorBinding);
 }
 // sessionBinding returns the Wails-generated SessionBinding proxy.
 // Phase 6 Go side: window.go.main.SessionBinding.
 function sessionBinding() {
-    return wailsGo().main.SessionBinding;
+    return normalizedBinding(wailsGo().main.SessionBinding);
 }
 // fleetDeployBinding returns the Wails-generated FleetDeployBinding proxy.
 // Wails exposes the Go struct at window.go.main.FleetDeployBinding.
 function fleetDeployBinding() {
-    return wailsGo().main.FleetDeployBinding;
+    return normalizedBinding(wailsGo().main.FleetDeployBinding);
 }
 // sshKeysBinding returns the Wails-generated SSHKeysBinding proxy. The
 // Go struct lives at window.go.main.SSHKeysBinding and mirrors the
 // sshkey.Client interface.
 function sshKeysBinding() {
-    return wailsGo().main.SSHKeysBinding;
+    return normalizedBinding(wailsGo().main.SSHKeysBinding);
 }
 // WailsSSHKeysClient implements SSHKeysClient over the Wails IPC. Each
 // call forwards to the Go binding, which dispatches through the shared

@@ -188,7 +188,7 @@ func TestWorkspaceSpecFiles_TheRetiredHistoryReachesTheAllowedSigners(t *testing
 	}
 	spec.SigningKey = "ssh-ed25519 AAAAkey agent"
 	spec.RetiredSigningKeys = []RetiredSigningKey{{PublicKey: retiredTestKey(t, 1), RetiredAt: retiredAt}}
-	_, dir := writtenSpec(t, spec, nil)
+	_, dir := writtenSpec(t, spec)
 	content, err := os.ReadFile(filepath.Join(dir, WorkspaceAllowedSignersFile))
 	if err != nil {
 		t.Fatal(err)

@@ -353,7 +353,8 @@ stays the one description of the checkout both sides act on.
 |---|---|
 | `/run/quicbaas/workspace` | the spec directory, mounted **read-only** |
 | `/run/quicbaas/workspace/workspace.json` | the spec; `$QUICBAAS_WORKSPACE_SPEC` names this path |
-| `/run/quicbaas/workspace/forge-token` | the forge token, mode `0400`; present only when the spec's `forge_token_file` names it |
+| `/run/quicbaas/credentials` | the credential tier: a 1 MiB **tmpfs**, mounted only when the checkout needs a forge token |
+| `/run/quicbaas/credentials/forge-token` | the forge token, mode `0400`, owned by the container's user; written after the container starts and removed when the session closes (see [the forge credential](#the-forge-credential)) |
 | `/run/quicbaas/ssh-agent.sock` | the ephemeral, KMS-backed SSH signing agent, mounted **read-only**; `$SSH_AUTH_SOCK` names this path. The agent is started per attempt with its socket directory at `<orchestration.sockets_root>/<12 hex characters>` (`AgentOptions.SocketDir`, go-xkms `sdk/go/client/ssh`); the directory and the socket are removed when the attempt ends. The derived sockets root is per-daemon, not per-user — see [the signing socket’s root](../sdlc/engineering.md#the-signing-sockets-root) |
 | `/workspace/<project name>` | the project checkout the container makes |
 | `/workspace/<context repo name>` | each context repository, beside it |
@@ -372,7 +373,7 @@ stays the one description of the checkout both sides act on.
   ],
   "branch": { "name": "issue/601-dispatcher-autonomy", "base": "main", "create": true },
   "checkout_root": "/workspace",
-  "forge_token_file": "forge-token"
+  "forge_token_file": "/run/quicbaas/credentials/forge-token"
 }
 ```
 
@@ -412,6 +413,39 @@ container was gone, in place of the `$ git …` line for the command that never
 ran. `CheckoutCommandError` is only for a git that ran and exited non-zero
 (go-quicbaas#932). Both are workspace faults, so the task is parked and no
 attempt is charged.
+
+### The forge credential
+
+The forge token never touches a disk (go-quicbaas#899):
+
+- **Not on the spawn request.** The spec files the executing host writes
+  beside the workspace hold `workspace.json` only. No container config,
+  label, environment variable or argument carries the token, and the session
+  runtime refuses a spec that names a token file among its files.
+- **Delivered per session.** Once the container exists, the checkout's first
+  step writes the token over an exec's standard input to
+  `/run/quicbaas/credentials/forge-token`, on the credential tier's tmpfs:
+  `umask 077`, then `chmod 0400`, as the container's user. A container that
+  cannot take it is a workspace fault (`ForgeCredentialDeliveryError`), parked
+  like any other, with the failure in the `sdlc:workspace_checkout` evidence.
+- **Revoked on close.** Every session close — success, failure, a review or
+  triage turn, a merge-train turn — removes the file before the container is
+  closed. A removal that fails is `ForgeCredentialRevokeError`: logged and
+  audited as `forge_credential`, naming the session and exit status, never the
+  token. The close then goes ahead anyway. Releasing the workspace zeroes the
+  daemon's copy.
+- **Crash and reap.** A container the reaper removes takes its tmpfs, and the
+  token, with it. A daemon that dies mid-job leaves the token only in the
+  memory of a container the reaper will remove, and nothing on any host's
+  disk.
+
+**This is the project's stored token, delivered per session — not a token
+minted per job.** Gitea's access tokens carry no expiry and are scoped by
+category (`write:repository`), not by repository. Minting one also needs a
+custody credential the daemon does not hold. So a token whose TTL follows the
+job's lease, scoped to one (tenant, project, job), needs a forge-side
+capability first. Until then, what the tier holds is as long-lived as the
+project's credential.
 
 **What the image must carry**, since the runner runs these in it: `git`,
 `ssh-keygen` (git's `gpg.format=ssh` signing invokes it), and whatever the
@@ -606,6 +640,21 @@ reason this is a correctness property rather than a label — it refuses an
 approval from the model family that wrote the code, and it checks the
 CONFIGURED reviewer, so the gate was satisfiable in configuration while being
 violated in fact (go-quicbaas#937).
+
+### The bearer token on a remote call
+
+Every `FleetRuntime` call carries a bearer token the control plane gets from
+its own `/oauth2/token` endpoint with the `client_credentials` grant. The token
+is fetched within the CALLER'S context (`RemoteTokenSource.Token(ctx)`), so a
+slow token endpoint cannot hold a REST or gRPC handler past its deadline. A
+valid cached token is reused. An expired one is refreshed by a single exchange
+shared by every caller that needs it; each caller waits on that exchange only
+as long as its own context allows, and the exchange still completes, bounded
+by its HTTP client's timeout, for the callers that remain. A token that cannot
+be had fails the call with `RemoteBackendTokenError` (`errors.Is`
+`ErrRemoteBackendToken`, and the caller's `context.Canceled` or
+`context.DeadlineExceeded` when that came first). The RPC is not sent
+unauthenticated (go-quicbaas#193).
 
 
 ### What this replaced

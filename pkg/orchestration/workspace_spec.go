@@ -50,9 +50,26 @@ const WorkspaceSpecDir = "/run/quicbaas/workspace"
 // WorkspaceSpecFile is the spec file's name inside WorkspaceSpecDir.
 const WorkspaceSpecFile = "workspace.json"
 
-// WorkspaceForgeTokenFile is the forge token's file name inside
-// WorkspaceSpecDir. Present only when the caller supplied a token.
-const WorkspaceForgeTokenFile = "forge-token"
+// WorkspaceCredentialDir is the container's credential tier: a tmpfs of its
+// own, mounted on every spawn that holds a forge credential (go-quicbaas#899).
+//
+// SECRET MATERIAL NEVER TOUCHES A DISK. The spec directory is written to the
+// executing host's projects root and bind-mounted; a token beside it would sit
+// on that host's persistent storage for the life of the session, and on it for
+// good when a crash skipped the release. A tmpfs has no host source: it lives
+// in the container's memory cgroup and is gone when the container is.
+const WorkspaceCredentialDir = "/run/quicbaas/credentials" //nolint:gosec // G101: a mount path, not a credential
+
+// WorkspaceForgeCredentialFile is the forge token's path in the container, on
+// WorkspaceCredentialDir. The runner writes it through an exec once the
+// container exists, the token on the exec's stdin, and git's credential
+// helper reads it at the moment git asks.
+const WorkspaceForgeCredentialFile = WorkspaceCredentialDir + "/forge-token"
+
+// WorkspaceCredentialTmpfsBytes bounds the credential tier. It holds one
+// token, so a page would do; a megabyte leaves room without letting the tier
+// spend the container's memory budget.
+const WorkspaceCredentialTmpfsBytes int64 = 1 << 20
 
 // WorkspaceAllowedSignersFile is the allowed_signers file's name inside
 // WorkspaceSpecDir. Present only when the attempt signs its commits, and
@@ -169,8 +186,9 @@ type WorkspaceSpec struct {
 	// caller says otherwise.
 	CheckoutRoot string `json:"checkout_root"`
 
-	// ForgeTokenFile names the file holding the forge token, relative to the
-	// spec file's own directory. Empty when no token was supplied.
+	// ForgeTokenFile is the forge token's path in the container, on the
+	// credential tier (WorkspaceForgeCredentialFile). Empty when the spawn
+	// holds no token. The token is never in the spec directory.
 	ForgeTokenFile string `json:"forge_token_file,omitempty"`
 
 	// SSHHostKey is the forge's pinned host public key, one OpenSSH
@@ -273,12 +291,13 @@ type WorkspaceSpecFiles struct {
 	Spec WorkspaceSpec
 
 	// Files is the directory's content by file name: the spec itself, and
-	// the forge token and known_hosts when the spec names them.
+	// known_hosts and allowed_signers when the spec names them. Never a
+	// credential: see WorkspaceCredentialDir.
 	Files map[string][]byte
 }
 
-// Wipe zeroes every file's bytes and drops them, so the forge token held for
-// a spawn does not outlive the moment it was written or sent. It is safe on a
+// Wipe zeroes every file's bytes and drops them, so nothing held for a spawn
+// outlives the moment it was written or sent. It is safe on a
 // nil receiver and idempotent.
 func (f *WorkspaceSpecFiles) Wipe() {
 	if f == nil {
@@ -292,17 +311,19 @@ func (f *WorkspaceSpecFiles) Wipe() {
 	}
 }
 
-// NewWorkspaceSpecFiles decides the spec directory for spec and forgeToken:
-// which sibling files it holds, and their bytes.
+// NewWorkspaceSpecFiles decides the spec directory for spec: which sibling
+// files it holds, and their bytes. forgeCredential says whether the spawn
+// holds a forge token, which the spec then names on the credential tier; the
+// token itself is not among the files (go-quicbaas#899).
 //
 // AN SSH CHECKOUT IS REFUSED WITHOUT A PINNED HOST KEY, here, before any
 // container is started. There is no accept-new and no learned key: a spec
 // whose project is cloned over ssh and whose binding pinned nothing names a
 // forge nothing can vouch for, and the error says which binding field the
 // operator has to fill in.
-func NewWorkspaceSpecFiles(spec WorkspaceSpec, forgeToken []byte) (*WorkspaceSpecFiles, error) {
-	if len(forgeToken) > 0 {
-		spec.ForgeTokenFile = WorkspaceForgeTokenFile
+func NewWorkspaceSpecFiles(spec WorkspaceSpec, forgeCredential bool) (*WorkspaceSpecFiles, error) {
+	if forgeCredential {
+		spec.ForgeTokenFile = WorkspaceForgeCredentialFile
 	} else {
 		spec.ForgeTokenFile = ""
 	}
@@ -326,9 +347,6 @@ func NewWorkspaceSpecFiles(spec WorkspaceSpec, forgeToken []byte) (*WorkspaceSpe
 		return nil, &WorkspaceSpecInvalidError{Field: "spec", Message: "does not encode: " + marshalErr.Error()}
 	}
 	files := map[string][]byte{WorkspaceSpecFile: encoded}
-	if len(forgeToken) > 0 {
-		files[WorkspaceForgeTokenFile] = append([]byte(nil), forgeToken...)
-	}
 	if knownHosts != "" {
 		files[WorkspaceKnownHostsFile] = []byte(knownHosts)
 	}
@@ -488,6 +506,9 @@ func ApplyWorkspaceSpec(req *SpawnSessionRequest, files *WorkspaceSpecFiles, sig
 	}
 	req.Workspace.Spec = files
 	req.ExtraMounts = append(req.ExtraMounts, WorkspaceSpecMounts("", signingAgentSocket)...)
+	if files.Spec.ForgeTokenFile != "" {
+		req.ExtraMounts = append(req.ExtraMounts, WorkspaceCredentialMount())
+	}
 	if req.Env == nil {
 		req.Env = make(map[string]string, 3)
 	}
@@ -498,6 +519,16 @@ func ApplyWorkspaceSpec(req *SpawnSessionRequest, files *WorkspaceSpecFiles, sig
 	if files.Spec.KnownHostsFile != "" {
 		req.Env[WorkspaceSSHCommandEnv] = WorkspaceSSHCommand(
 			filepath.Join(WorkspaceSpecDir, files.Spec.KnownHostsFile))
+	}
+}
+
+// WorkspaceCredentialMount is the credential tier's mount: a sized tmpfs at
+// WorkspaceCredentialDir with no host source.
+func WorkspaceCredentialMount() ContainerMount {
+	return ContainerMount{
+		Target:         WorkspaceCredentialDir,
+		Type:           MountTypeTmpfs,
+		TmpfsSizeBytes: WorkspaceCredentialTmpfsBytes,
 	}
 }
 

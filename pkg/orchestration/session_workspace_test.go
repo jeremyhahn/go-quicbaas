@@ -21,7 +21,11 @@ import (
 	"testing"
 )
 
-// namedWorkspace is a valid named workspace carrying a spec with a token.
+// testKnownHosts is the pinned forge host key a test spec carries.
+const testKnownHosts = "forge.example ssh-ed25519 AAAA"
+
+// namedWorkspace is a valid named workspace carrying a spec and its pinned
+// host key.
 func namedWorkspace() *SessionWorkspace {
 	return &SessionWorkspace{
 		TenantID:  "t1",
@@ -29,7 +33,7 @@ func namedWorkspace() *SessionWorkspace {
 		Key:       "task-a1",
 		Spec: &WorkspaceSpecFiles{Files: map[string][]byte{
 			WorkspaceSpecFile:       []byte(`{"checkout_root":"/workspace"}`),
-			WorkspaceForgeTokenFile: []byte("forge-secret"),
+			WorkspaceKnownHostsFile: []byte(testKnownHosts),
 		}},
 	}
 }
@@ -71,9 +75,9 @@ func TestProvisionSession_MakesTheWorkspaceAndWritesTheSpecBesideIt(t *testing.T
 	if strings.HasPrefix(p.SpecDir, p.Dir+string(filepath.Separator)) {
 		t.Fatalf("the spec directory must not be under the read-write workspace mount: %q", p.SpecDir)
 	}
-	token, err := os.ReadFile(filepath.Join(p.SpecDir, WorkspaceForgeTokenFile))
-	if err != nil || string(token) != "forge-secret" {
-		t.Fatalf("token file = %q, %v", token, err)
+	knownHosts, err := os.ReadFile(filepath.Join(p.SpecDir, WorkspaceKnownHostsFile))
+	if err != nil || string(knownHosts) != testKnownHosts {
+		t.Fatalf("known_hosts = %q, %v", knownHosts, err)
 	}
 }
 
@@ -250,6 +254,9 @@ func TestProvisionSession_RefusesAnInvalidWorkspace(t *testing.T) {
 		"traversal project": func(w *SessionWorkspace) { w.ProjectID = ".." },
 		"separator key":     func(w *SessionWorkspace) { w.Key = "a/b" },
 		"foreign spec file": func(w *SessionWorkspace) { w.Spec.Files["../../etc/cron.d/x"] = []byte("x") },
+		// A host writes the spec directory to its persistent projects root,
+		// so a token is refused rather than written to disk (go-quicbaas#899).
+		"forge token file": func(w *SessionWorkspace) { w.Spec.Files["forge-token"] = []byte("secret") },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -433,7 +440,7 @@ func TestProvisionSession_WipesTheInMemorySpec(t *testing.T) {
 	t.Parallel()
 	m := newTestWorkspaceManager(t)
 	ws := namedWorkspace()
-	token := ws.Spec.Files[WorkspaceForgeTokenFile]
+	held := ws.Spec.Files[WorkspaceKnownHostsFile]
 	p, err := m.ProvisionSession(ws)
 	if err != nil {
 		t.Fatalf("ProvisionSession: %v", err)
@@ -442,12 +449,12 @@ func TestProvisionSession_WipesTheInMemorySpec(t *testing.T) {
 	if len(ws.Spec.Files) != 0 {
 		t.Fatalf("the spec is still held in memory: %v", ws.Spec.Files)
 	}
-	for _, b := range token {
+	for _, b := range held {
 		if b != 0 {
-			t.Fatal("the token's bytes were dropped but not zeroed")
+			t.Fatal("the spec's bytes were dropped but not zeroed")
 		}
 	}
-	if raw, err := os.ReadFile(filepath.Join(p.SpecDir, WorkspaceForgeTokenFile)); err != nil || string(raw) != "forge-secret" {
+	if raw, err := os.ReadFile(filepath.Join(p.SpecDir, WorkspaceKnownHostsFile)); err != nil || string(raw) != testKnownHosts {
 		t.Fatalf("the written copy = %q, %v", raw, err)
 	}
 	var none *WorkspaceSpecFiles
@@ -464,7 +471,7 @@ func TestSweepSessionSpecs_RemovesEveryTokenAndKeepsEveryCheckout(t *testing.T) 
 	var specs []string
 	var checkouts []string
 	for _, ws := range []*SessionWorkspace{namedWorkspace(), {TenantID: "t2", ProjectID: "p9", Key: "review-4-abc",
-		Spec: &WorkspaceSpecFiles{Files: map[string][]byte{WorkspaceForgeTokenFile: []byte("other-secret")}}}} {
+		Spec: &WorkspaceSpecFiles{Files: map[string][]byte{WorkspaceKnownHostsFile: []byte("other.example ssh-ed25519 BBBB")}}}} {
 		p, err := m.ProvisionSession(ws)
 		if err != nil {
 			t.Fatal(err)

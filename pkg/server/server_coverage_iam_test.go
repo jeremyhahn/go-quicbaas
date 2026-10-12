@@ -376,11 +376,11 @@ func TestCentralOAuth2TokenSource_CachedTokenSkipsRefresh(t *testing.T) {
 	}, srv.URL, "")
 	ts.loopback = false
 
-	first, err := ts.Token()
+	first, err := ts.Token(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, first)
 
-	second, err := ts.Token()
+	second, err := ts.Token(context.Background())
 	require.NoError(t, err)
 	assert.Same(t, first, second, "cached unexpired token must be returned")
 

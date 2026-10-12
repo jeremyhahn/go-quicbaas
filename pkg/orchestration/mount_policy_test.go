@@ -241,6 +241,31 @@ func TestMountPolicy_Authorize_DenyByDefault(t *testing.T) {
 	}
 }
 
+// TestMountPolicy_AdmitsASourcelessTmpfs: a tmpfs reaches nothing on the
+// host, so it needs no grant — it is how the forge credential reaches a
+// container without a disk (go-quicbaas#899). A tmpfs that names a source is
+// a bind in disguise and is judged like one, and a sourceless bind is still
+// refused.
+func TestMountPolicy_AdmitsASourcelessTmpfs(t *testing.T) {
+	t.Parallel()
+
+	f := newMountPolicyFixture(t)
+	if err := f.policy.Authorize("tenant-a", MountFieldExtraMounts, []ContainerMount{WorkspaceCredentialMount()}); err != nil {
+		t.Fatalf("the credential tier was refused: %v", err)
+	}
+
+	refused := map[string]ContainerMount{
+		"tmpfs with an ungranted source": {Type: MountTypeTmpfs, Source: "/etc", Target: "/mnt"},
+		"bind with no source":            {Target: "/mnt"},
+	}
+	for name, mount := range refused {
+		var denied *MountNotAllowedError
+		if err := f.policy.Authorize("tenant-a", MountFieldExtraMounts, []ContainerMount{mount}); !errors.As(err, &denied) {
+			t.Errorf("%s: err = %v, want *MountNotAllowedError", name, err)
+		}
+	}
+}
+
 func TestMountPolicy_Authorize_FirstViolationWins(t *testing.T) {
 	t.Parallel()
 

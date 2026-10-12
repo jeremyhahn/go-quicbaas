@@ -18,6 +18,8 @@ import (
 	"errors"
 	"io"
 
+	"google.golang.org/grpc/metadata"
+
 	"github.com/jeremyhahn/go-quicbaas/api/proto"
 )
 
@@ -49,8 +51,14 @@ func (b *RemoteACPBackend) openSigningRelay(
 	sessionID, socket string,
 	keys [][]byte,
 ) error {
+	// The token is fetched within the spawn's context; only the stream it
+	// opens outlives it.
+	md, err := b.authMetadata(ctx)
+	if err != nil {
+		return err
+	}
 	relayCtx, cancel := context.WithCancel(context.Background())
-	stream, err := client.SigningRelay(b.authCtx(relayCtx))
+	stream, err := client.SigningRelay(metadata.NewOutgoingContext(relayCtx, md))
 	if err != nil {
 		cancel()
 		return &SigningRelayOpenError{SessionID: sessionID, Reason: "the relay stream could not be opened", Cause: err}

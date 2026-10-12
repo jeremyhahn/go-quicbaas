@@ -709,7 +709,7 @@ func (p *remoteBackendPool) backendFor(
 	// fetch is unnecessary and causes TLS handshake noise when the loopback
 	// client tries to hit /oauth2/token. Skip the token source for embedded
 	// agents; only remote daemon backends need OAuth2 bearer tokens.
-	var tokenSource oauth2.TokenSource
+	var tokenSource orchestration.RemoteTokenSource
 	if !isEmbedded {
 		tokenSource = newCentralOAuth2TokenSource(p.centralCred, p.tokenURL, p.caCertPath)
 	}
@@ -795,10 +795,10 @@ func (p *remoteBackendPool) storeBackend(
 }
 
 // =============================================================================
-// centralOAuth2TokenSource — oauth2.TokenSource implementation
+// centralOAuth2TokenSource — orchestration.RemoteTokenSource implementation
 // =============================================================================
 
-// centralOAuth2TokenSource implements oauth2.TokenSource by calling the
+// centralOAuth2TokenSource implements orchestration.RemoteTokenSource by calling the
 // central's own /oauth2/token endpoint with client_credentials.
 //
 // Using the OIDC network round-trip (rather than minting the JWT in-process)
@@ -812,10 +812,25 @@ type centralOAuth2TokenSource struct {
 	loopback   bool
 	caCertPath string
 
-	mu        sync.Mutex
-	cached    *oauth2.Token
-	expiresAt time.Time
+	// mu guards cached and flight and is never held across the network
+	// call: a caller that finds a fetch in flight waits on it outside the
+	// lock, where its own context can release it (go-quicbaas#193).
+	mu     sync.Mutex
+	cached *oauth2.Token
+	flight *centralTokenFetch
 }
+
+// centralTokenFetch is one token exchange in flight, shared by every caller
+// that needs a token while it runs. done closes once tok and err are set.
+type centralTokenFetch struct {
+	done chan struct{}
+	tok  *oauth2.Token
+	err  error
+}
+
+// centralTokenExpiryLeeway is how long before its expiry a cached token is
+// already treated as expired, so a token is never sent with a moment to live.
+const centralTokenExpiryLeeway = 5 * time.Second
 
 // newCentralOAuth2TokenSource constructs the source. The http.Client is the
 // default client — we rely on the central's cert being self-trusted via the
@@ -833,31 +848,57 @@ func newCentralOAuth2TokenSource(cred *OrchestratorDaemonClient, tokenURL, caCer
 	}
 }
 
-// Token implements oauth2.TokenSource.
-func (t *centralOAuth2TokenSource) Token() (*oauth2.Token, error) {
+// Token returns the cached token while it is valid. Otherwise it waits, within
+// ctx, for one token exchange shared by every caller that needs it.
+func (t *centralOAuth2TokenSource) Token(ctx context.Context) (*oauth2.Token, error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.cached != nil && time.Until(t.expiresAt) > 5*time.Second {
-		return t.cached, nil
+	if t.cached != nil && time.Until(t.cached.Expiry) > centralTokenExpiryLeeway {
+		tok := t.cached
+		t.mu.Unlock()
+		return tok, nil
 	}
-	tok, err := t.refresh()
-	if err != nil {
-		return nil, err
+	f := t.flight
+	if f == nil {
+		f = &centralTokenFetch{done: make(chan struct{})}
+		t.flight = f
+		// THE EXCHANGE IS NOT CANCELLED WITH THE CALLER THAT STARTED IT.
+		// Others may be waiting on it; each leaves on its own context, and
+		// the exchange itself is bounded by the client's timeout.
+		go t.fetch(context.WithoutCancel(ctx), f)
 	}
-	t.cached = tok
-	t.expiresAt = tok.Expiry
-	return tok, nil
+	t.mu.Unlock()
+
+	select {
+	case <-f.done:
+		return f.tok, f.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// fetch runs one token exchange, caches a token it gets, and releases every
+// caller waiting on f.
+func (t *centralOAuth2TokenSource) fetch(ctx context.Context, f *centralTokenFetch) {
+	tok, err := t.refresh(ctx)
+	t.mu.Lock()
+	if err == nil {
+		t.cached = tok
+	}
+	t.flight = nil
+	t.mu.Unlock()
+	f.tok, f.err = tok, err
+	close(f.done)
 }
 
 // refresh performs the client_credentials exchange. Uses HTTP Basic auth per
 // RFC 6749 §2.3.1 since that is the form pkg/api/rest/iam_oidc.go's Token
 // handler prefers.
-func (t *centralOAuth2TokenSource) refresh() (*oauth2.Token, error) {
+func (t *centralOAuth2TokenSource) refresh(ctx context.Context) (*oauth2.Token, error) {
 	body := url.Values{}
 	body.Set("grant_type", "client_credentials")
 	body.Set("scope", strings.Join(t.cred.Scopes, " "))
 
-	req, err := http.NewRequest(http.MethodPost, t.tokenURL, strings.NewReader(body.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.tokenURL, strings.NewReader(body.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -894,7 +935,7 @@ func (t *centralOAuth2TokenSource) refresh() (*oauth2.Token, error) {
 		return nil, err
 	}
 	if out.AccessToken == "" {
-		return nil, errors.New("central token exchange: empty access_token")
+		return nil, &ServerMessageError{Message: "central token exchange: empty access_token"}
 	}
 	ttl := time.Duration(out.ExpiresIn) * time.Second
 	if ttl <= 0 {

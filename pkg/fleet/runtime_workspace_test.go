@@ -90,7 +90,7 @@ func agentWorkspace() *orchestration.SessionWorkspace {
 		Key:       "task-a1",
 		Spec: &orchestration.WorkspaceSpecFiles{Files: map[string][]byte{
 			orchestration.WorkspaceSpecFile:       []byte(`{}`),
-			orchestration.WorkspaceForgeTokenFile: []byte("forge-secret"),
+			orchestration.WorkspaceKnownHostsFile: []byte("forge.example ssh-ed25519 AAAA"),
 		}},
 	}
 }
@@ -131,9 +131,9 @@ func TestRuntime_Spawn_ProvisionsTheNamedWorkspaceUnderItsOwnRoot(t *testing.T) 
 	if sess.WorkDir != want {
 		t.Fatalf("session work dir = %q, want the provisioned %q", sess.WorkDir, want)
 	}
-	if token, err := os.ReadFile(filepath.Join(specDir, orchestration.WorkspaceForgeTokenFile)); err != nil ||
-		string(token) != "forge-secret" {
-		t.Fatalf("token = %q, %v", token, err)
+	if knownHosts, err := os.ReadFile(filepath.Join(specDir, orchestration.WorkspaceKnownHostsFile)); err != nil ||
+		string(knownHosts) != "forge.example ssh-ed25519 AAAA" {
+		t.Fatalf("known_hosts = %q, %v", knownHosts, err)
 	}
 
 	if err := f.runtime.Close(context.Background(), "acp", sess.ID); err != nil {
@@ -343,16 +343,18 @@ func TestConfig_ProjectsRoot(t *testing.T) {
 	}
 }
 
-// TestRuntime_ARestartLeavesNoForgeCredentialOnDisk is the regression for the
-// review of go-quicbaas#981: a daemon that dies while a session holds a spec
-// directory must not leave that session's forge token on disk. The session
-// state it persists names the workspace and nothing more; the startup sweep
-// removes every spec directory; the checkout — what the job's next session is
-// pinned to — survives. The token is also gone from the spawn request the
-// moment it was written.
-func TestRuntime_ARestartLeavesNoForgeCredentialOnDisk(t *testing.T) {
+// TestRuntime_ARestartLeavesNoSpecOnDisk is the regression for the review of
+// go-quicbaas#981: a daemon that dies while a session holds a spec directory
+// must not leave that spec on disk. The session state it persists names the
+// workspace and nothing more; the startup sweep removes every spec directory;
+// the checkout — what the job's next session is pinned to — survives. The
+// spec is also gone from the spawn request the moment it was written.
+//
+// The forge token is not among what a spec carries at all (go-quicbaas#899):
+// TestRuntime_RefusesASpecCarryingAForgeToken.
+func TestRuntime_ARestartLeavesNoSpecOnDisk(t *testing.T) {
 	t.Parallel()
-	const token = "forge-secret-7f3c9a"
+	const marker = "forge.example ssh-ed25519 AAAA7f3c9a"
 	workDir := t.TempDir()
 	projects := filepath.Join(workDir, "projects")
 	newRuntime := func() *Runtime {
@@ -378,7 +380,7 @@ func TestRuntime_ARestartLeavesNoForgeCredentialOnDisk(t *testing.T) {
 
 	before := newRuntime()
 	ws := agentWorkspace()
-	ws.Spec.Files[orchestration.WorkspaceForgeTokenFile] = []byte(token)
+	ws.Spec.Files[orchestration.WorkspaceKnownHostsFile] = []byte(marker)
 	req := &orchestration.SpawnRequest{Workspace: ws}
 	sess, err := before.Spawn(context.Background(), "tenant-a", nil, "acp", req)
 	if err != nil {
@@ -388,8 +390,8 @@ func TestRuntime_ARestartLeavesNoForgeCredentialOnDisk(t *testing.T) {
 		t.Fatal("the spawn request still holds the spec after it was written")
 	}
 	specDir := specMountSource(req)
-	if raw, err := os.ReadFile(filepath.Join(specDir, orchestration.WorkspaceForgeTokenFile)); err != nil || string(raw) != token {
-		t.Fatalf("the live session's token = %q, %v", raw, err)
+	if raw, err := os.ReadFile(filepath.Join(specDir, orchestration.WorkspaceKnownHostsFile)); err != nil || string(raw) != marker {
+		t.Fatalf("the live session's known_hosts = %q, %v", raw, err)
 	}
 
 	// The daemon dies: no Close. A fresh runtime over the same state starts.
@@ -409,7 +411,7 @@ func TestRuntime_ARestartLeavesNoForgeCredentialOnDisk(t *testing.T) {
 		t.Fatalf("persisted sessions = %+v, %v; want the workspace, re-attachable", persisted, err)
 	}
 
-	// NO CREDENTIAL MATERIAL ANYWHERE THIS DAEMON KEEPS STATE.
+	// NO SPEC MATERIAL ANYWHERE THIS DAEMON KEEPS STATE.
 	walkErr := filepath.WalkDir(workDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil || d.IsDir() {
 			return walkErr
@@ -418,8 +420,8 @@ func TestRuntime_ARestartLeavesNoForgeCredentialOnDisk(t *testing.T) {
 		if readErr != nil {
 			return readErr
 		}
-		if strings.Contains(string(raw), token) {
-			t.Errorf("%s holds the forge token after the restart", path)
+		if strings.Contains(string(raw), marker) {
+			t.Errorf("%s holds the dead session's spec after the restart", path)
 		}
 		return nil
 	})
@@ -430,5 +432,39 @@ func TestRuntime_ARestartLeavesNoForgeCredentialOnDisk(t *testing.T) {
 	// A daemon that provisions no workspaces has nothing to sweep.
 	if got, err := newWorkspaceRuntimeFixture(t, false).runtime.SweepOrphanWorkspaceSpecs(); err != nil || got != nil {
 		t.Fatalf("sweep without workspaces = %v, %v", got, err)
+	}
+}
+
+// TestRuntime_RefusesASpecCarryingAForgeToken pins go-quicbaas#899 on the
+// executing host: the spec directory is written to the persistent projects
+// root, so a spec that carries a forge token is refused before anything is
+// written or spawned, and the token reaches no file under the runtime's state.
+func TestRuntime_RefusesASpecCarryingAForgeToken(t *testing.T) {
+	t.Parallel()
+	const token = "forge-secret-7f3c9a"
+	f := newWorkspaceRuntimeFixture(t, true)
+	ws := agentWorkspace()
+	ws.Spec.Files["forge-token"] = []byte(token)
+
+	sess, err := f.runtime.Spawn(context.Background(), "tenant-a", nil, "acp", &orchestration.SpawnRequest{Workspace: ws})
+	var invalid *orchestration.SessionWorkspaceInvalidError
+	if !errors.As(err, &invalid) || sess != nil {
+		t.Fatalf("Spawn = %v, %v; want *SessionWorkspaceInvalidError", sess, err)
+	}
+	walkErr := filepath.WalkDir(f.root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return walkErr
+		}
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(raw), token) {
+			t.Errorf("%s holds the forge token", path)
+		}
+		return nil
+	})
+	if walkErr != nil && !os.IsNotExist(walkErr) {
+		t.Fatal(walkErr)
 	}
 }

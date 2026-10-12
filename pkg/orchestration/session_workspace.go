@@ -56,10 +56,11 @@ import (
 // sessionWorkspaceSpecFiles is the closed set of file names a spec directory
 // may hold. A host writing a spec directory from a wire request writes these
 // names and nothing else, so a caller cannot use the spec to place arbitrary
-// files under a tenant's workspace.
+// files under a tenant's workspace. No credential is among them: a host writes
+// the spec directory to its persistent projects root, so a spec carrying a
+// token is refused rather than written to disk (go-quicbaas#899).
 var sessionWorkspaceSpecFiles = map[string]struct{}{
 	WorkspaceSpecFile:       {},
-	WorkspaceForgeTokenFile: {},
 	WorkspaceKnownHostsFile: {},
 	// The allowed_signers a delivery's signing key is verified against.
 	WorkspaceAllowedSignersFile: {},
