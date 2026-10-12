@@ -65,7 +65,7 @@ duplicate trigger runs a second job that does the same work and writes a
 competing answer. The `review` runner answers `review:<projectID>:#<number>`;
 the `triage` runner answers `triage:<projectID>`, because a project's triage
 pass is about the project and not about one issue — see
-[triage.md](../software-factory/triage.md).
+[triage.md](../sdlc/triage.md).
 
 `OffProjectBudget` says the job does not spend a worker slot. It is carried
 on the record as `JobLease.OffBudget`, because the budget has three readers —
@@ -197,7 +197,7 @@ name — `sdlc`'s `reviewing`, which is finishable without a worker only when
 the `Delivery` records the head the container pushed — cannot be decided in
 `ResumeState`, whose only input is the interrupted state. It answers with the
 state, and the step reads the record and diverts. See the resume table in
-[job-admission.md](job-admission.md).
+[../accounts/architecture.md](../accounts/architecture.md#job-admission).
 
 ## Runner on the Task
 
@@ -236,8 +236,8 @@ conclusion, stall membership, and `JobContext.TaskID`/`Attempt`.
 |---|---|---|
 | `workflow` (`ControlLoop`, registered by the engine's `init`) | a lead agent decomposes a description into a DAG of work items executed by workers | the engine's eleven non-terminal states, unchanged (thirteen with `completed`/`failed`) |
 | `sdlc` (`pkg/sdlc/runner.go`, registered by the module) | one issue, one branch, one worker; no lead, no decomposition | `initializing → executing → validating → reviewing → (re-delegating → executing \| completing) → cleanup`, plus `escalating`. Its recovery answers per state (`runnerResumeStates`); `escalating` resumes at `escalating` so the park is delivered before the job fails |
-| `triage` (`pkg/sdlc/triage_runner.go`, registered by the module) | the front half of the loop: which issues are ready to be worked, and marks them. Per **project**, not per task; one session for however many issues it judges | `initializing → executing → cleanup`. See [triage.md](../software-factory/triage.md) |
-| `merge_train` (`pkg/sdlc/merge_train_runner.go`, registered by the module) | one project's queue of approved changes: builds a train branch, runs CI once on it, bisects a red one, lands the verified prefix. Per **project**, off the worker budget; a container only while it builds | `initializing → executing → validating → completing → cleanup`, and `cleanup → initializing` while the queue holds more. `executing` resumes at `initializing` (the build is abandoned and redone under a new number); the others resume where they were. See [merge-train.md](../software-factory/merge-train.md) |
+| `triage` (`pkg/sdlc/triage_runner.go`, registered by the module) | the front half of the loop: which issues are ready to be worked, and marks them. Per **project**, not per task; one session for however many issues it judges | `initializing → executing → cleanup`. See [triage.md](../sdlc/triage.md) |
+| `merge_train` (`pkg/sdlc/merge_train_runner.go`, registered by the module) | one project's queue of approved changes: builds a train branch, runs CI once on it, bisects a red one, lands the verified prefix. Per **project**, off the worker budget; a container only while it builds | `initializing → executing → validating → completing → cleanup`, and `cleanup → initializing` while the queue holds more. `executing` resumes at `initializing` (the build is abandoned and redone under a new number); the others resume where they were. See [merge-train.md](../sdlc/merge-train.md) |
 | `review` (`pkg/sdlc/review_runner.go`, registered by the module) | one pull request, one head, one verdict; a reviewer that writes no code | `initializing → executing → completing → cleanup`. Every interrupted review resumes at `initializing`: the forge is the record, and the first step asks it whether this head already carries this reviewer's verdict |
 
 `ControlLoop` does **not** itself implement `JobRunner` — its

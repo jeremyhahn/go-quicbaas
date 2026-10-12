@@ -172,7 +172,7 @@ registered spec, because it was written while this work was in flight.
 **that duplication is tracked as #883**: the charter moves into the `sdlc` set
 and the private `embed.FS` is deleted. It was deliberately built as one charter
 behind one accessor so the migration is a rename rather than a rewrite. See
-[triage.md](triage.md).
+[triage.md](../sdlc/triage.md).
 
 ## Scopes and resolution
 

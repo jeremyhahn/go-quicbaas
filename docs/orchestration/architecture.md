@@ -126,8 +126,8 @@ sdk/go/orchestration/          Type-alias re-export of the container-trust surfa
 
 Projects and pooled accounts (`project.go`, `account_*.go`) live in the same
 package but belong to the Software Factory; see
-[../software-factory/projects.md](../software-factory/projects.md) and
-[../software-factory/accounts.md](../software-factory/accounts.md).
+[../projects/architecture.md](../projects/architecture.md) and
+[../accounts/architecture.md](../accounts/architecture.md).
 
 ## Session persistence (AgentStore)
 
@@ -251,14 +251,14 @@ pre-side-effect chokepoint and both deny-by-default:
 - Container Trust, below: digest pinning, host attestation, measured launch.
 - Agent Orchestration Security, below: multi-tenancy, ACLs, sandbox and trust
   policy.
-- [Job Admission, Attempt Accounting, and Reaping](job-admission.md): durable
-  job leases, environment-fault refunds, the reaper and stall detector.
+- [Job Admission, Attempt Accounting, and Reaping](../accounts/architecture.md#job-admission):
+  durable job leases, environment-fault refunds, the reaper and stall detector.
 - [Autonomous Projects](autonomy-and-dispatch.md): `Project.Autonomous`, the
   task dispatcher, context repositories and the container workspace contract.
 - [Fleet](fleet.md) and [Job runners](job-runners.md).
-- The Software Factory modules: [SDLC](../software-factory/sdlc.md),
-  [projects](../software-factory/projects.md),
-  [pooled accounts](../software-factory/accounts.md) and
+- The Software Factory modules: [SDLC](../sdlc/architecture.md),
+  [projects](../projects/architecture.md),
+  [pooled accounts](../accounts/architecture.md) and
   [prompt sets](../software-factory/prompt-sets.md).
 
 
@@ -1943,7 +1943,7 @@ Four properties are load-bearing:
    and only as a **read-only** mount. The root itself, the session directory,
    and anything beside or below the socket stay denied -- which is also what
    stops a caller mounting the root to read the session names inside it. See
-   [SDLC configuration](../software-factory/sdlc.md#configuration).
+   [SDLC configuration](../sdlc/engineering.md#configuration).
 
 Raw (non-sandboxed) execution bind-mounts nothing, so its work directory is not
 a mount source and is not policy-checked. What isolates a raw agent from the
@@ -2698,39 +2698,8 @@ into a key, so keys stay safe to log and to expose in operator tooling.
 
 ### Project-name uniqueness
 
-A project name is unique within a tenant, and the store decides it: the name
-index entry is claimed with a guarded create (`PutIfAbsent`), so exactly one of
-any number of concurrent creators wins it. The other half of the rule is the
-order of the two writes a create makes:
-
-> **A name reservation is published only after its project's record exists.**
-
-Both writers uphold it — `Create` writes the record first, and a rename
-re-points the index of a record that already exists — and the heal that
-reclaims a stranded reservation depends on it. That heal fires on one
-predicate, *the reservation names a project with no record*, and the ordering is
-what makes the predicate decidable: a live holder always has a record by the
-time its reservation is visible, so a holder without one is a project that has
-been deleted, never a creator that is merely mid-write.
-
-Reserving first is the shape that looks safer, and is not. It opens a window in
-which a creator that has not yet written its record is indistinguishable from a
-crashed one; a rival heals the live reservation, takes the name, and both
-creators then write their own uncontested record keys and both succeed
-(go-quicbaas#845). No confirmation read closes that window, because such a read
-is not atomic with the healer. The invariant the ordering buys instead is
-exact:
-
-> **A creator that has not crashed cannot have its reservation taken.**
-
-The cost is a different residue. A crash between the record write and the
-reservation leaves an **orphan record**: a project reachable by ID and by
-`ListByTenant`, absent from the name index, whose name a later create is free
-to claim. That residue is inert — it refuses nobody a name and is visible to an
-operator — where the orphan reservation it replaces was a correctness defect.
-Reaping it belongs with the crashed-rename residue, and for the same reason: a
-create between its two writes has the same key state, so only liveness evidence
-separates them.
+The name-index ordering and its invariants are in
+[projects/architecture.md](../projects/architecture.md#name-uniqueness).
 
 ### Tenant isolation
 

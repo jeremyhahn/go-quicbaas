@@ -73,7 +73,7 @@ Comprehensive step-by-step walkthroughs for all 22+ views are available in GUI W
 - **Sessions list** — live view of running/paused/closed sessions, filterable by tenant, backend, and status
 - **Session attach** — history replay + live SSE tail. Renders each event kind with its own component (prompts, tool calls, file diffs, etc.). Scrollback virtualizes with IntersectionObserver sentinels.
 - **Fleet** — enrolled fleet node daemons, their heartbeat status, and the jobs they own
-- **Software Factory → Inference** — stateless prompt submission to a fleet-resident backend with optional streaming, host affinity, and a per-session history of the last 10 calls. See [agents/inference.md](../software-factory/user.md#using-the-gui) and Inference walkthrough for the full layout and error matrix.
+- **Software Factory → Inference** — stateless prompt submission to a fleet-resident backend with optional streaming, host affinity, and a per-session history of the last 10 calls. See [agents/inference.md](../orchestration/user.md#using-the-gui) and Inference walkthrough for the full layout and error matrix.
 
 ## Loading the UI
 

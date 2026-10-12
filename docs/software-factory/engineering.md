@@ -13,81 +13,16 @@ document covers the modules built on it.
 
 ## The SDLC module
 
-The engine's own contract is everything above. The `sdlc` module adds one
-service, two records and one closed set of typed errors on top of it; the
-design and the lifecycle are [sdlc.md](sdlc.md).
-
-### Exported surface
-
-| Symbol | Package | What it is |
-|---|---|---|
-| `sdlc.ProjectBinding` | `pkg/sdlc/binding.go:329` | The project's autonomous-development configuration: `Forge`, `Strategy`, `Worker`, `Verification`, `Review`, `MaxReviewRounds`, `Ranking` |
-| `sdlc.ForgeConfig` | `pkg/sdlc/binding.go:78` | The `forge:` half — type, API root, owner/repo, trigger label, label map, secret refs, pinned `SSHHostKey` |
-| `sdlc.ReviewPolicy` / `sdlc.WorkerConfig` / `sdlc.RankingPolicy` | `pkg/sdlc/binding.go:204,268,299` | Review gate, worker backend/model/image, dependency ranking |
-| `sdlc.Delivery` | `pkg/sdlc/delivery.go:155` | What one attempt delivered: branch, base, head SHA, `DeliveryPullRequest`, `[]ReviewRecord`, `[]CheckRecord` |
-| `sdlc.IssueSource` | `pkg/sdlc/issue_source.go:59` | The `forge_issue` `TaskSource`; `NewIssueSource(bindings, forges, pageLimit)` |
-| `sdlc.Hooks` | `pkg/sdlc/hooks.go:98` | The lifecycle moments; `NewHooks(HooksConfig)` |
-| `sdlc.SurfacePolicy` | `pkg/sdlc/blocked.go:36` | Retry attempts, interval and post timeout for surfacing a park to the issue |
-| `sdlc.UnblockCondition` / `sdlc.UnblockKind` | `pkg/sdlc/readmission.go:122,74` | The typed vocabulary a park is expressed in, and what a sweep can decide for itself |
-| `sdlc.DependencyAnalyzer` / `sdlc.DependencyManifest` | `pkg/sdlc/analyzer.go:99,66` | Blast-radius ranking inputs; `NewStaticManifestSource` for a declared graph |
-| `sdlc.WebhookRouteIndex` | `pkg/sdlc/webhook_index.go:57` | The system-plane index that routes an unauthenticated webhook to a tenant |
-| `service.SDLCService` | `pkg/service/sdlc_service.go` | `Bind`, `Unbind`, `Binding`, `GetBinding`, `ListBindings`, `Delivery`, `NudgeProject`, `ForgeFor`, `ForgeToken`, `WebhookSecret` |
-
-### Invariants
-
-- **`Bind` turns the project autonomous** (`enableAutonomy`,
-  `pkg/service/sdlc_service.go:172`) and registers no workflow: an `sdlc` job
-  has no workflow, and `default_workflow` belongs to the lead-driven
-  `workflow` runner.
-- **The binding stores secret *references*, never secret values.** `Bind`
-  proves each reference resolves in the tenant's secret store
-  (`checkSecrets`, `:247`) before the record is written.
-- **A binding is refused for a project the pipeline could not deliver**
-  (`checkProject`, `:230`): no signing policy, or a repository host outside
-  `sdlc.repo_hosts`.
-- **Tenancy is the caller's own.** The tenant bound to the request by the
-  authenticator wins; a `tenant_id` query naming another tenant is refused
-  rather than honoured (`sdlcTenant`, `pkg/api/rest/handlers_sdlc.go:55`).
-
-### Error semantics and the status mapping
-
-`respondSDLCError` (`pkg/api/rest/handlers_sdlc.go:80`) and its gRPC twin
-`convertSDLCError` (`pkg/api/grpc/server_sdlc.go:182`) are the two mappings;
-Unix inherits the gRPC one verbatim and QUIC the REST one.
-
-| Error | HTTP | gRPC |
-|---|---|---|
-| `sdlc.ErrNotFound`, `orchestration.ErrProjectNotFound`, `service.ProjectNotFoundError` | `404` | `NotFound` |
-| `sdlc.ErrAlreadyExists`, `sdlc.ErrVersionConflict`, `sdlc.ErrWebhookRouteConflict` | `409` | `AlreadyExists` |
-| `sdlc.ErrInvalidInput`, `sdlc.ForgeNotRegisteredError`, `sdlc.StrategyNotRegisteredError`, `orchestration.ErrWorkflowValidation` | `400` | `InvalidArgument` |
-| `rest.ErrSDLCTenantMismatch` — `tenant_id` is not the caller's own | `403` | `PermissionDenied` |
-| `rest.ErrSDLCServiceUnavailable` — the module is not running on this node (`sdlc.ErrUnavailable` at the seams) | `503` | `Unavailable` |
-| anything else | `500` | `Internal` |
-
-**Fail-closed paths.** `NewForgeBackend` refuses a forge type this build
-carries no adapter for rather than degrading; a webhook whose project,
-secret or signature does not check answers the same `401 unauthenticated`
-for all three, so the response distinguishes nothing an attacker could use;
-a verification criterion with no containerized session is refused with
-`VerificationNotContainerizedError` rather than run on the daemon; an
-`ssh://` repository with no pinned host key is refused before the worker
-spawns (`orchestration.SSHHostKeyError`).
-
-### Configuration and persistence
-
-The `sdlc:` section, what moved to `orchestration:`, and the keys the loader
-now refuses **by name** (`config.RefuseRemovedSDLCKeys`,
-`RemovedSDLCKeyError`) are in [sdlc.md](sdlc.md#configuration). The module
-persists two tenant-scoped records — the binding and the delivery — plus one
-system-plane webhook route index; everything else a reader sees is the
-engine's Project, Task, Job and Session.
+The git-delivery module's exported surface, invariants, typed errors
+and configuration are in
+[../sdlc/engineering.md](../sdlc/engineering.md).
 
 ## Projects and pooled accounts
 
 The Project record, its quota and permission matrix, and its service
-invariants are [projects.md](projects.md). The pooled-provider-account model,
+invariants are [projects/engineering.md](../projects/engineering.md). The pooled-provider-account model,
 its two-record split, selection strategies, limit holds, rotation and cost
-attribution are [accounts.md](accounts.md).
+attribution are [../accounts/architecture.md](../accounts/architecture.md).
 
 ## Prompt sets
 

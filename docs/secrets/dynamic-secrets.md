@@ -146,5 +146,5 @@ lifecycle is built on — work with an empty registry.
 ## Related
 
 - [architecture.md](architecture.md) — the secrets engine this sits beside
-- [../software-factory/accounts.md](../software-factory/accounts.md#credential-delivery-leases)
+- [../accounts/architecture.md](../accounts/architecture.md#delivery-leases)
   — the credential delivery lease, which composes this subsystem

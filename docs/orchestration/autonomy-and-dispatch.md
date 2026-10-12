@@ -31,7 +31,7 @@ It gates two loops:
 
 A **parked** project (`Project.Parked`) keeps both loops running for the work it
 has already started and refuses everything new; see
-[Parking a project](../software-factory/projects.md#parking-a-project).
+[Parking a project](../projects/architecture.md#parking).
 
 `Project.DefaultWorkflow` no longer gates anything. It keeps its original
 meaning — the workflow a Task under this project is auto-spawned into — for
@@ -39,21 +39,12 @@ projects whose work runs the `workflow` runner, and it is irrelevant to a
 project whose work runs a module runner such as `sdlc`. The SDLC module's
 `Bind` sets `Autonomous = true`; it does not require a default workflow.
 
-## A project id is a UUID
+## Project scoping
 
-`Project.ID` is the UUID `CreateProject` mints; `Project.Name` is free text the
-operator chose. They are not interchangeable, and passing the name where the id
-belongs used to be accepted silently (#613): the record was scoped to a project
-that does not exist, the project's listing did not show it, and the concurrency
-quota below did not count it, because both filter on the id.
-
-`CreateTask` and `StartJob` both refuse a `project_id` that is set but is not a
-UUID, with a typed `InvalidProjectIDError` naming the value. They are the two
-ways in — a task the engine will dispatch later, and a job started directly —
-and a job's lease pins the project segment of its key from whatever the job
-carried, so a name accepted here would key a lease under a project nobody
-registered (#613, #667). An **empty** `project_id` is still accepted and means
-unscoped, which is a real state — not every task or job belongs to a project.
+A `project_id` on a task or job is the project's UUID, never its name;
+`CreateTask` and `StartJob` refuse anything else with `InvalidProjectIDError`,
+and an empty id means unscoped. The rule and its reasons are in
+[projects/architecture.md](../projects/architecture.md#a-project-id-is-a-uuid).
 
 Work items are scoped by the engine, not by the agent that produced them. A
 lead's decomposition and a reviewer's follow-up items come back as free-form
@@ -132,7 +123,7 @@ auto-spawned, unbound pending task gets the `dispatch_reason` "project autonomy
 is off: nothing dispatches until it is switched on". Like every refusal, the
 reason is written once and warned once. It is cleared when a later sweep
 dispatches the task. A parked project drains only while autonomy is on (see
-[Parking a project](../software-factory/projects.md#parking-a-project)).
+[Parking a project](../projects/architecture.md#parking)).
 
 Per autonomous project, one sweep:
 
@@ -286,7 +277,7 @@ was not watching, so a spend refusal reads
 
 Everything the classifier does not recognize keeps the error's own text:
 inventing a category for an unrecognized fault is how a real failure stops
-being investigated. See [cost-enforcement.md](../software-factory/cost-enforcement.md).
+being investigated. See [../accounts/architecture.md](../accounts/architecture.md#spend-limits).
 
 The reason is written through the task store's compare-and-swap and **only
 when it changed**, with one bounded retry when another writer wins the race. A
@@ -346,7 +337,7 @@ against the kernel's limit, and admitted by the mount policy **by
 construction** rather than by an operator allowlist entry. That grant is the
 narrowest one that works: the socket file itself, one directory below the
 root, read-only, and actually a socket. See
-[SDLC configuration](../software-factory/sdlc.md#configuration).
+[SDLC configuration](../sdlc/engineering.md#configuration).
 
 ### The container workspace contract
 
@@ -363,7 +354,7 @@ stays the one description of the checkout both sides act on.
 | `/run/quicbaas/workspace` | the spec directory, mounted **read-only** |
 | `/run/quicbaas/workspace/workspace.json` | the spec; `$QUICBAAS_WORKSPACE_SPEC` names this path |
 | `/run/quicbaas/workspace/forge-token` | the forge token, mode `0400`; present only when the spec's `forge_token_file` names it |
-| `/run/quicbaas/ssh-agent.sock` | the ephemeral, KMS-backed SSH signing agent, mounted **read-only**; `$SSH_AUTH_SOCK` names this path. The agent is started per attempt with its socket directory at `<orchestration.sockets_root>/<12 hex characters>` (`AgentOptions.SocketDir`, go-xkms `sdk/go/client/ssh`); the directory and the socket are removed when the attempt ends. The derived sockets root is per-daemon, not per-user — see [the signing socket’s root](../software-factory/sdlc.md#the-signing-sockets-root) |
+| `/run/quicbaas/ssh-agent.sock` | the ephemeral, KMS-backed SSH signing agent, mounted **read-only**; `$SSH_AUTH_SOCK` names this path. The agent is started per attempt with its socket directory at `<orchestration.sockets_root>/<12 hex characters>` (`AgentOptions.SocketDir`, go-xkms `sdk/go/client/ssh`); the directory and the socket are removed when the attempt ends. The derived sockets root is per-daemon, not per-user — see [the signing socket’s root](../sdlc/engineering.md#the-signing-sockets-root) |
 | `/workspace/<project name>` | the project checkout the container makes |
 | `/workspace/<context repo name>` | each context repository, beside it |
 
@@ -429,7 +420,7 @@ toolchain and the `golangci-lint` / `gosec` / `govulncheck` that `make lint`,
 `make check` and `make security` are made of.
 `deployments/agents/software-factory-worker/` is the one this repository builds;
 see [the worker image](sandbox.md#the-worker-image) and
-[the worker image](../software-factory/sdlc.md#the-worker-image).
+[the worker image](../sdlc/engineering.md#the-worker-image).
 
 **No credential value ever reaches argv or the environment.** The two
 environment variables the spawn sets — `QUICBAAS_WORKSPACE_SPEC` and
@@ -521,7 +512,7 @@ worker otherwise:
 A refusal **names the repository** (`WorkspaceUnfitError`), parks the task with
 `workspace_unfit` — refunded, held for an operator, released by a re-label after
 the repair — and posts the cause to the issue. See
-[Job admission](job-admission.md#operator-faults--a-factory-that-could-not-present-the-work).
+[Job admission](../accounts/architecture.md#operator-faults).
 
 The reviewer's checkout is pre-flighted the same way. There is no park there — a
 review is not an attempt at a task — but a reviewer is never prompted on a tree

@@ -123,7 +123,7 @@ Flags (plus the [paging flags](#paging-sorting-and-search)):
 - `--task <id>` - Narrow the listing to the attempts at one task — every job
   that ran it, concluded ones included. That is the task's attempt history.
   The server applies the narrowing; see
-  [job-admission.md](job-admission.md#the-attempt-history-a-task-can-be-read-back-through).
+  [../accounts/architecture.md](../accounts/architecture.md#reading-the-attempt-history-back).
 
 ### orchestrator job cancel
 
@@ -174,51 +174,11 @@ Arguments:
 
 ## Health & Backends
 
-### orchestrator spend-policy
+### orchestrator spend-policy, cost, cost-settings
 
-Show or replace the tenant's own spend limits (go-quicbaas#1058): sliding
-windows, in tokens and/or list-price dollars, over every turn charged to the
-tenant. `get` shows each window's usage; `set` takes the shared
-`--spend-window` flags (the set replaces the limits) or `--clear-spend`.
-Setting requires `spend_policy:write`.
-
-```bash
-quicbaas orchestrator spend-policy get
-quicbaas orchestrator spend-policy set --spend-window name=monthly,size=720h,usd=2000
-quicbaas orchestrator spend-policy set --clear-spend
-```
-
-### orchestrator cost
-
-Show one scope of the consumption ledger: tokens, list-price equivalent and
-billed cost, local energy (and how much was measured), and a breakdown by host.
-The scope is a path — each flag needs every one above it. `--host` narrows to
-the turns one host ran (`-` for turns that name none). `--agent` narrows to the
-turns of the sessions one tenant Agent ran (`-` for raw-backend sessions) and
-prints that Agent's own spend windows. See
-[cost-enforcement.md](../software-factory/cost-enforcement.md#reading-the-ledger-the-spend-report).
-
-```bash
-quicbaas orchestrator cost
-quicbaas orchestrator cost --host gpu-host:9091
-quicbaas orchestrator cost --agent claude-coder
-quicbaas orchestrator cost --project p1 --task t1 --from 2026-09-01T00:00:00Z --output json
-```
-
-### orchestrator cost-settings
-
-Show or replace how the tenant's local inference is costed: the electricity
-price and each engine's device draw. A local turn costs `watts × seconds /
-3.6e6 kWh × $/kWh`. See
-[cost-enforcement.md](../software-factory/cost-enforcement.md#local-inference-is-costed-from-electricity).
-
-```bash
-quicbaas orchestrator cost-settings get
-quicbaas orchestrator cost-settings set --electricity-price 0.15 --engine-watts openvino=12 --engine-watts ollama=250
-quicbaas orchestrator cost-settings set --clear   # back to the configuration
-```
-
-`set` replaces the settings. Give every value you want kept.
+The tenant spend policy, the spend report and the local-inference cost
+settings are documented in
+[../accounts/cli.md](../accounts/cli.md#quicbaas-orchestrator-spend-policy).
 
 ### orchestrator health
 
@@ -319,42 +279,8 @@ Container ID:   container_xyz789
 
 ### orchestrator rotate-account
 
-Move a running session onto a different pooled provider account.
-
-The session keeps its identifier, transcript and cost history; the replacement
-account opens a new attribution segment, so no account is billed for another's
-turns. QuicBaaS also rotates automatically when a turn fails on a classified
-provider limit — this is the operator's door to the same verb.
-
-```bash
-quicbaas orchestrator rotate-account sess_abc123
-quicbaas orchestrator rotate-account sess_abc123 --reason "seat retired" --hold-outgoing
-```
-
-Arguments:
-- `<sessionID>` - Session to move
-
-Flags:
-- `--reason <text>` - Recorded on the closed account segment and in the
-  session transcript
-- `--hold-outgoing` - Hold the outgoing account out of the pool for the
-  server's default backoff so the next selection does not pick it again
-
-Only a session spawned with `--account-auto` or `--account-allow` may rotate;
-a bare `--account-id` pin is deliberate and is honored with a conflict error.
-
-Response (table format):
-```
-Session ID:        sess_abc123
-Previous Account:  acct_a
-Account:           acct_b
-Strategy:          least_usage
-Mode:              resume
-```
-
-`Mode` is `in_place` when the credential was swapped with no process restart
-(one-shot CLI sessions) or `resume` when the agent process was reconstituted
-against the replacement and the transcript replayed.
+Move a running session onto a different pooled provider account. See
+[../accounts/cli.md](../accounts/cli.md#quicbaas-orchestrator-rotate-account).
 
 ### orchestrator prompt
 

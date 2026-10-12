@@ -114,7 +114,7 @@ The sdlc runner's is not, so a slow review is reported and never ended.
 
 The provider axis reads each pooled account's own sliding windows (tokens and
 list-price dollars, see
-[cost-enforcement.md](cost-enforcement.md#spend-limits)) and the `AvailableAt`
+[../accounts/architecture.md](../accounts/architecture.md#spend-limits)) and the `AvailableAt`
 cooldown a provider refusal wrote — the same two authorities the spawn path
 consults, asked one step earlier. A project whose whole pool is spent is
 **deferred**, with a `RetryAt`, rather than spawning an agent whose first turn
@@ -369,6 +369,6 @@ The properties proved, with the tests that prove them:
 ## See also
 
 - [autonomy-and-dispatch.md](../orchestration/autonomy-and-dispatch.md) — the autonomy switch and the two sweeps
-- [job-admission.md](../orchestration/job-admission.md) — job leases, stall detection, supersession
-- [cost-enforcement.md](cost-enforcement.md) — the consumption ledger and account quotas
-- [sdlc.md](sdlc.md) — the delivery runner and the park the pre-flight uses
+- [../accounts/architecture.md](../accounts/architecture.md#job-admission) — job leases, stall detection, supersession
+- [../accounts/architecture.md](../accounts/architecture.md#the-consumption-ledger) — the consumption ledger and account quotas
+- [../sdlc/architecture.md](../sdlc/architecture.md) — the delivery runner and the park the pre-flight uses

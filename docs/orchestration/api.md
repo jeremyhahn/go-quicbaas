@@ -422,83 +422,9 @@ The seam itself is documented in [job-runners.md](job-runners.md).
 
 #### `GET /api/v1/orchestrator/cost` — the consumption ledger, rolled up
 
-One scope of the consumption ledger: the tokens spent under it, the drill-down
-to the level below, and the spend-policy status of every pooled account that
-paid.
-
-```
-GET /api/v1/orchestrator/cost
-  ?tenant_id=   optional; must be the authenticated principal's own tenant (403 otherwise)
-  &project_id=  narrow to one project
-  &task_id=     narrow to one task      (requires project_id)
-  &job_id=      narrow to one job       (requires task_id)
-  &session_id=  narrow to one session   (requires job_id)
-  &round=       narrow to one round     (requires session_id)
-  &from=        only turns at or after this RFC 3339 instant
-  &to=          only turns before this RFC 3339 instant (requires from;
-                from alone ranges up to now)
-  &host=        only turns that ran on this host ("-" for none)
-  &agent=       only turns of sessions that ran as this tenant Agent ("-"
-                for raw-backend sessions); the report then carries the
-                Agent's own limits (agent_policy_status, agent_windows)
-```
-
-```json
-{"level": "project", "tenant_id": "acme", "project_id": "p1",
- "project_name": "go-truststrap", "currency": "USD",
- "entries": 4, "input_tokens": 1000, "output_tokens": 1200,
- "cache_read_tokens": 3000, "cache_write_tokens": 0, "total_tokens": 5200,
- "equivalent_micros": 36500, "priced_entries": 4, "unpriced_entries": 0,
- "billed_micros": 0, "billed_entries": 4, "unbilled_entries": 0,
- "duration_ms": 184000, "successes": 4, "failures": 0,
- "child_level": "task",
- "children": [{"id": "task-1", "level": "task", "total_tokens": 5200, "equivalent_micros": 36500, "priced_entries": 4, "...": "the same totals"}],
- "accounts": [{"account_id": "a1", "display_name": "alice-work",
-               "billing": {"mode": "subscription", "monthly_fee_micros": 200000000},
-               "total_tokens": 5200, "equivalent_micros": 36500, "billed_micros": 0,
-               "policy_status": "none"}],
- "models": [{"engine": "claude", "model": "claude-opus-4-5-20251101", "total_tokens": 5200, "equivalent_micros": 36500}]}
-```
-
-ONE VERB FOR EVERY LEVEL: the ledger's attribution chain is a PATH, so a
-project's spend and a job's spend are the same prefix scan at two depths, and
-each level may be supplied only if every level above it is. A scope that skips
-one is refused (`400`) rather than answered by a filtered scan of the tenant's
-history.
-
-Every level of the report — the scope, each drill-down row, each account and
-each model — carries the same totals, with TWO money figures: the list-price
-`equivalent_micros` and the `billed_micros` actually added to the bill (zero
-per turn on a subscription). A client MUST consult `priced_entries` and
-`billed_entries` before rendering them: zero means unmeasured, rendered as a
-dash, never as a zero; `unpriced_entries` / `unbilled_entries` beside them make
-the figure a floor — see
-[cost-enforcement.md](../software-factory/cost-enforcement.md#pricing-what-a-turn-costs-twice). A drill-down row at the project level carries the project's `name`, and a
-report scoped to a project carries `project_name`; both are absent for a
-project that no longer exists, whose spend stays under its id.
-
-`from`/`to` narrow any scope to a time range, echoed as `from`/`to`. A tenant
-or project scope is read from its time-indexed quota plane, so a ranged read
-costs what the range is worth. A **tenant-level** report also carries each
-subscription's monthly fee pro-rated over the range
-(`accounts[].subscription_fee_micros`, summed as `subscription_fee_micros`);
-an unranged report shares fees from the first recorded turn to now. Below the
-tenant level no fee is shared, because one subscription serves every project.
-`policy_status` likewise distinguishes an account with no
-cap (`none`) from one this deployment could not read (`unknown`). A deployment
-recording no consumption answers `503`, not an empty report. Every report
-breaks its totals down by host (`hosts`), and `host` narrows any scope to the
-turns one host ran; totals count `measured_energy_entries` beside
-`electricity_entries`.
-
-Reachable from **every** transport: REST, gRPC
-(`quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport`), Unix — the
-same gRPC wire over a domain socket — QUIC — the REST surface over HTTP/3 —
-MCP (`quicbaas_orchestrator_cost`) and the embedded transport, plus the Go SDK
-(`client.Orchestrator().GetSpendReport`), the TypeScript SDK
-(`orchestrator.getSpendReport`) and the Wails desktop binding
-(`OrchestratorBinding.GetSpendReport`) and the CLI (`quicbaas orchestrator
-cost`). Permission `orchestrator:status`.
+The spend report: query parameters, the response, the two money figures and
+the transports are in [../accounts/api.md](../accounts/api.md#spend-report).
+Permission `orchestrator:status`.
 
 
 The project, pooled-account and agent-catalog matrices, the reference-field
@@ -823,43 +749,14 @@ of what remains.
 
 ### quicbaas_orchestrator_cost
 
-Read one scope of the consumption ledger: the tokens spent under it, the
-drill-down to the level below, and the spend policy of every pooled account
-that paid.
-
-**Arguments**
-
-| Name | Type | Required | Description |
-|---|---|---|---|
-| `tenant_id` | string | yes | Tenant whose spend to read |
-| `project_id` | string | no | Narrow to one project |
-| `task_id` | string | no | Narrow to one task (requires `project_id`) |
-| `job_id` | string | no | Narrow to one job (requires `task_id`) |
-| `session_id` | string | no | Narrow to one session (requires `job_id`) |
-| `round` | integer | no | Narrow to one round (requires `session_id`) |
-
-The chain is a PATH: a level supplied without the levels above it is refused.
-Supply `-` at a level to open the subtree of entries that have no value there
-(a job that belongs to no task).
-
-`equivalent_micros` and `billed_micros` are accompanied by `priced_entries` and
-`billed_entries`; when those are zero the figure is UNMEASURED, not free: report
-it as unavailable rather than as zero.
+Read one scope of the consumption ledger. Arguments and the response are in
+[../accounts/api.md](../accounts/api.md#spend-report).
 
 ### quicbaas_orchestrator_cost_settings_get / _set
 
-Read or replace a tenant's runtime cost settings: the electricity rate and the
-per-engine device draws its local inference is costed from. See
-[cost-enforcement.md](../software-factory/cost-enforcement.md#local-inference-is-costed-from-electricity).
-
-| Name | Type | Required | Description |
-|---|---|---|---|
-| `tenant_id` | string | yes | Tenant whose settings to read or replace |
-| `electricity_price_per_kwh` | number | no (set) | US dollars per kWh; absent inherits the configuration |
-| `engine_power_watts` | object | no (set) | Watts per engine name; 0 switches electricity costing off for that engine |
-
-A malformed value is refused (`CostSettingsArgumentError`) rather than read as
-absent.
+Read or replace a tenant's electricity rate and per-engine device draws.
+Arguments and errors are in
+[../accounts/api.md](../accounts/api.md#cost-settings).
 
 ---
 
@@ -928,47 +825,9 @@ Close and terminate an active agent session. Permission: `orchestrator:close`.
 
 ### quicbaas_orchestrator_rotate_account
 
-Move an agent session onto a different pooled provider account. Mirrors
-`POST /api/v1/orchestrator/sessions/{sessionID}/rotate-account`. Permission:
-`orchestrator:spawn` — the rotation closes the agent process and reconstitutes
-it against a newly selected pooled credential, which is a spawn's authority and
-not a close's.
-
-Only a session spawned with `account_auto` or `account_allow` may rotate; a
-bare `account_id` pin is honored and answered with a not-rotatable error.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `tenant_id` | string | Yes | Tenant the session belongs to |
-| `session_id` | string | Yes | Session to move |
-| `reason` | string | No | Recorded on the closed account segment and in the session transcript |
-| `hold_outgoing` | boolean | No | Hold the outgoing account out of the pool until `available_at` |
-| `available_at` | string | No | RFC 3339 time the held account rejoins the pool; ignored unless `hold_outgoing` is true, empty applies the server default backoff |
-
-**Example request:**
-```json
-{
-  "tenant_id": "acme",
-  "session_id": "sess_xyz789",
-  "reason": "seat retired",
-  "hold_outgoing": true
-}
-```
-
-**Example response:**
-```json
-{
-  "session_id": "sess_xyz789",
-  "previous_account_id": "acct_a",
-  "account_id": "acct_b",
-  "strategy": "least_usage",
-  "mode": "resume"
-}
-```
-
-`mode` is `in_place` when the credential was swapped with no process restart,
-or `resume` when the agent process was reconstituted and the transcript
-replayed.
+Move an agent session onto a different pooled provider account. Permission:
+`orchestrator:spawn`. Arguments and the response are in
+[../accounts/api.md](../accounts/api.md#rotating-a-sessions-account).
 
 ---
 
@@ -1376,7 +1235,7 @@ The orchestration surface uses six tool prefixes:
 | Prefix | Scope | Description |
 |--------|-------|-------------|
 | `quicbaas_orchestrator_*` | Session / project / job management | Agent lifecycle, project discovery, ACP session management, jobs, agent cache |
-| `quicbaas_agent_account_*` | Pooled provider accounts | Credential envelopes, rotation, usage — see [accounts.md](../software-factory/accounts.md) |
+| `quicbaas_agent_account_*` | Pooled provider accounts | Credential envelopes, rotation, usage — see [../accounts/api.md](../accounts/api.md) |
 | `quicbaas_fleet_*` | Fleet registry | Register / list / heartbeat the QuicBaaS fleet node daemons themselves |
 | `project_*` | Project CRUD and agent grants | `project_create`/`get`/`list`/`update`/`delete`, `project_grant_fleet_node`, `project_revoke_fleet_node` |
 | `quicbaas_task_*` | Task artifacts | `quicbaas_task_get_artifact`, `quicbaas_task_list_artifacts` |
@@ -1437,7 +1296,7 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_fleet_heartbeat` | `orchestrator:agent_heartbeat` | Update an agent's last-seen timestamp |
 
 The pooled-account family is documented in
-[accounts.md](../software-factory/accounts.md).
+[../accounts/api.md](../accounts/api.md).
 
 ### Observability metrics
 
@@ -1450,7 +1309,7 @@ These are Prometheus metrics, not MCP tools. They are registered in
 | `quicbaas_orch_peer_inbox_size` | Gauge | Current inbox size per agent |
 | `quicbaas_orch_file_locks_active` | Gauge | Number of active file locks |
 | `quicbaas_orch_file_lock_wait_duration_seconds` | Histogram | Time spent waiting for lock release |
-| `quicbaas_factory_tokens_total` | Counter | Tokens of every recorded turn, by `tenant`, `project`, `kind`, `provider`, `backend`, `model`, `direction` (bounded labels; see [cost-enforcement.md](../software-factory/cost-enforcement.md#metrics)) |
+| `quicbaas_factory_tokens_total` | Counter | Tokens of every recorded turn, by `tenant`, `project`, `kind`, `provider`, `backend`, `model`, `direction` (bounded labels; see [../accounts/engineering.md](../accounts/engineering.md#metrics)) |
 | `quicbaas_factory_cost_micros_total` | Counter | Cost of priced turns in micro-dollars, same labels with `basis` = `equivalent` or `billed` |
 | `quicbaas_factory_spend_deferrals_total` | Counter | Admission deferrals for a spent project or tenant, by `tenant`, `project`, `axis` |
 | `quicbaas_orch_job_budget_utilization` | Gauge | Budget utilization percentage per job |

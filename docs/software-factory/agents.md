@@ -127,7 +127,7 @@ An Agent's `account` uses the same selection machinery that every pooled spawn
 uses. `strategy` is one of the registered selection strategies (`static`,
 `least_usage`), and `accounts` narrows the candidates exactly as a spawn's
 `account_allow` does. Naming accounts also authorizes rotation between them.
-See [accounts.md](accounts.md#selection).
+See [../accounts/architecture.md](../accounts/architecture.md#selection).
 
 **Precedence.** An Agent's account policy governs that Agent's runs, and the
 project's pool covers everything else:
@@ -173,7 +173,7 @@ spend:
 - **Measured over** every turn of every session that ran as the Agent, pooled
   or local, whichever project it served. Each turn's ledger entry carries
   `resolved_agent_id`, and a copy is written to the Agent quota plane
-  ([cost-enforcement.md](cost-enforcement.md#five-keyspaces-over-one-record)).
+  ([../accounts/architecture.md](../accounts/architecture.md#five-keyspaces-over-one-record)).
 - **Checked at spawn**, per Agent, as a spawn by reference walks its
   candidates. A pool passes an over-budget Agent to its next member, and the
   switch is audited with reason `over_budget`. A spawn naming the Agent alone is
@@ -231,7 +231,7 @@ anything. A review already running for that pull request finishes normally,
 and every new review dispatch for it uses the chosen seat. The selection
 reports `redispatched: true` when a review by the chosen seat started at once,
 because none was running. See
-[review.md](review.md#the-per-pull-request-override).
+[review.md](../sdlc/review.md#the-per-pull-request-override).
 
 ## Surface
 

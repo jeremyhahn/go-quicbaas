@@ -3794,8 +3794,8 @@ alice-work   claude   Metered                             5,200 tokens
 ### See also
 
 - Software Factory → Jobs — monitor and manage jobs
-- [Cost enforcement](../software-factory/cost-enforcement.md) — the ledger, the spend cap and the breaker
-- [CLI: quicbaas orchestrator jobs list](../software-factory/cli.md#orchestration-jobs) — jobs via CLI
+- [Cost enforcement](../accounts/architecture.md#spend-limits) — the ledger, the spend cap and the breaker
+- [CLI: quicbaas orchestrator jobs list](../orchestration/cli.md#orchestration-jobs) — jobs via CLI
 
 
 ---
@@ -4060,7 +4060,7 @@ This agent will be unregistered from the fleet. Running jobs will be affected.
 ### See also
 
 - [CLI: quicbaas fleet deploy](../software-factory/cli.md) — full agent deployment walkthrough
-- [CLI: quicbaas orchestrator agents](../software-factory/cli.md#quicbaas-orchestrator-agents-list) — list agents via CLI
+- [CLI: quicbaas orchestrator agents](../orchestration/cli.md#quicbaas-orchestrator-agents-list) — list agents via CLI
 - Software Factory → Inference — submit prompts to registered fleet nodes
 - [agents/deploy.md](../software-factory/cli.md) — comprehensive agent bootstrapping guide
 
@@ -4252,7 +4252,7 @@ QUIC is a modern transport protocol that...
 ### See also
 
 - [agents/inference.md](../software-factory/user.md) — complete API and architecture reference
-- [CLI: quicbaas orchestrator inference](../software-factory/cli.md#quicbaas-orchestrator-inference) — stateless inference via CLI
+- [CLI: quicbaas orchestrator inference](../orchestration/cli.md#quicbaas-orchestrator-inference) — stateless inference via CLI
 - Software Factory → Sessions — persistent session-based prompts (for Claude, Codex, etc.)
 - Software Factory → Fleet — register and manage agents
 
@@ -4358,7 +4358,7 @@ Job a1b2c3d4… will be terminated. This cannot be undone.
 
 ### See also
 
-- [CLI: quicbaas orchestrator jobs](../software-factory/cli.md#orchestration-jobs) — start and list jobs via command line
+- [CLI: quicbaas orchestrator jobs](../orchestration/cli.md#orchestration-jobs) — start and list jobs via command line
 - Software Factory → Workflows — parameterized multi-step job execution
 - Software Factory → Live Events — real-time job event streaming
 
@@ -4898,7 +4898,7 @@ recipient_email: [user@example.com_________]
 
 ### See also
 
-- [CLI: quicbaas orchestrator workflows](../software-factory/cli.md#workflow-management) — manage workflows via CLI
+- [CLI: quicbaas orchestrator workflows](../orchestration/cli.md#workflow-management) — manage workflows via CLI
 - Software Factory → Jobs — monitor workflow execution as jobs
 - Software Factory → Inference — single-step stateless prompts
 - [configuration/workflow-settings.md](../software-factory/engineering.md) — advanced workflow configuration

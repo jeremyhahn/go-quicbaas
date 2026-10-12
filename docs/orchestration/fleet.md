@@ -181,7 +181,7 @@ Each heartbeat also carries the node's accelerator telemetry — NVIDIA GPU
 power, utilisation and memory (nvidia-smi), Intel NPU busy fraction (intel_vpu
 sysfs) and CPU package power (RAPL) — which the control plane files as
 per-node time series and integrates to cost local turns from measured energy.
-See [cost-enforcement.md](../software-factory/cost-enforcement.md#measured-energy-fleet-device-telemetry).
+See [../accounts/architecture.md](../accounts/architecture.md#measured-energy-from-fleet-telemetry).
 
 ## Names
 
