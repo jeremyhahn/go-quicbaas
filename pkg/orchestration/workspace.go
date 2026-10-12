@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // workspaceDirName is the leaf directory holding the project's working tree:
@@ -106,6 +107,24 @@ type WorkspaceManager struct {
 	// conclusions, when set, lets the startup sweep remove the workspace of a
 	// concluded task (SetConclusions).
 	conclusions WorkspaceConclusions
+
+	// policy, when set, is the mount policy every removal is checked against
+	// before anything is removed (SetMountPolicy).
+	policy *MountPolicy
+
+	// held counts the live sessions provisioned into each workspace directory,
+	// so a removal never takes a checkout a running container still mounts.
+	heldMu sync.Mutex
+	held   map[string]int
+
+	// locks serialises, per workspace directory, provisioning with taking
+	// its hold and a removal's held check with its delete (lockWorkspace).
+	// Guarded by heldMu.
+	locks map[string]*workspaceLock
+
+	// hooks lets a test stop at the points two of those sections can meet.
+	// Nil in production.
+	hooks *workspaceHooks
 }
 
 // NewWorkspaceManager returns a manager rooted at root, which must be an

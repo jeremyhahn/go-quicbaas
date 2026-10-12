@@ -47,6 +47,7 @@ var (
 	serveServerAddr       string
 	serveTenantID         string
 	serveBindAddr         string
+	serveAdvertiseAddr    string
 	serveBackendsCSV      string
 	serveSandboxPolicy    string
 	serveSandboxNetwork   string
@@ -126,6 +127,7 @@ Examples:
 	cmd.Flags().StringVar(&serveServerAddr, "server", "", "HTTPS endpoint of the QuicBaaS server (required)")
 	cmd.Flags().StringVar(&serveTenantID, "tenant", "", "Tenant this agent serves (required)")
 	cmd.Flags().StringVar(&serveBindAddr, "bind", "127.0.0.1:9091", "Local bind address for the FleetRuntime gRPC service")
+	cmd.Flags().StringVar(&serveAdvertiseAddr, "advertise", "", "host:port the control plane dials to reach this agent, when it differs from --bind (a wildcard bind, NAT, a mapped port). Also "+serveAdvertiseEnv+". Enrollment is refused when the control plane cannot resolve and dial it. Empty derives it from --bind and the node certificate.")
 	cmd.Flags().StringVar(&serveBackendsCSV, "backends", "acp,ollama", "Comma-separated backends this node serves, each by name: claude, codex, opencode, openvino, ollama-agent, vllm, ollama; or \"acp\", the group of every agent backend (openvino and vllm only when their URL is set). A node advertises exactly these, so placement never routes other work to it.")
 	cmd.Flags().StringVar(&serveSandboxPolicy, "sandbox-policy", "required", "Sandbox policy: required | preferred | opt-in")
 	cmd.Flags().StringVar(&serveSandboxNetwork, "sandbox-network", "", "Container network for sandboxed sessions: bridge (default) | none | host | <network name>. \"host\" removes network isolation and exposes this host's loopback services to the agent.")
@@ -389,6 +391,10 @@ func buildFleetRuntime(cfg *fleet.Config, backends map[string]orchestration.Agen
 	if wsErr != nil {
 		return nil, wsErr
 	}
+	// A workspace is removed only where the same policy admits it as a mount
+	// source (go-quicbaas#777).
+	mountPolicy := cfg.MountPolicy()
+	workspaces.SetMountPolicy(mountPolicy)
 	// Relayed signing sockets (go-quicbaas#1013) are bound under this root;
 	// the mount policy below admits exactly those sockets under it.
 	socketsRoot, socketsErr := cfg.EffectiveSocketsRoot()
@@ -408,7 +414,7 @@ func buildFleetRuntime(cfg *fleet.Config, backends map[string]orchestration.Agen
 		// the --allowed-mount-root allowlist. Nothing outside those is ever
 		// mounted, so a daemon cannot be talked into mounting an operator's
 		// filesystem.
-		MountPolicy:  cfg.MountPolicy(),
+		MountPolicy:  mountPolicy,
 		Workspaces:   workspaces,
 		SocketsRoot:  socketsRoot,
 		GoBuildCache: cfg.GoBuildCache(),
@@ -600,6 +606,7 @@ func buildServeConfig() (*fleet.Config, error) {
 		ServerAddr:               serveServerAddr,
 		TenantID:                 serveTenantID,
 		BindAddr:                 serveBindAddr,
+		AdvertiseAddr:            serveAdvertiseAddr,
 		Backends:                 backends,
 		SandboxPolicy:            policy,
 		SandboxNetwork:           serveSandboxNetwork,

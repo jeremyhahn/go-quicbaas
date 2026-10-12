@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,6 +97,14 @@ type SpawnServer interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	Addr() string
+}
+
+// ListenerBinder is a SpawnServer that binds its listener ahead of Start. The
+// daemon binds before it enrolls, because the control plane dials the node's
+// address while registering it (go-quicbaas#795); connections queue in the
+// listen backlog until Start serves them.
+type ListenerBinder interface {
+	Bind(ctx context.Context) error
 }
 
 // Daemon is the top-level lifecycle manager for the agent runtime. It owns
@@ -211,6 +220,15 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.state.Store(int32(stateEnrolling))
 		d.logger.Infof("fleet node daemon enrolling with server=%s tenant=%s",
 			d.cfg.ServerAddr, d.cfg.TenantID)
+
+		if binder, ok := d.spawnServer.(ListenerBinder); ok {
+			if err := binder.Bind(ctx); err != nil {
+				d.state.Store(int32(stateFailed))
+				d.recordRunErr(&OpError{Op: "spawn server", Cause: err})
+				startErr = err
+				return
+			}
+		}
 
 		identity, err := d.enrollWithRetry(ctx)
 		if err != nil {
@@ -481,7 +499,7 @@ func (d *Daemon) sendHeartbeat(ctx context.Context) {
 		SigningRelay:      d.runtime.SigningRelayEnabled(),
 		Images:            d.runtime.Images(ctx),
 		SequenceNumber:    d.hbSeq.Add(1),
-		BindAddr:          d.spawnServer.Addr(),
+		BindAddr:          d.dialAddr(),
 	}
 	if d.devices != nil {
 		status.Devices = d.devices.Sample(ctx)
@@ -496,6 +514,16 @@ func (d *Daemon) sendHeartbeat(ctx context.Context) {
 			d.signalReregisterFailure()
 		}
 	}
+}
+
+// dialAddr is the address the heartbeat reports for the control plane to
+// dial: the advertised address when one is configured, which a control plane
+// that lost its registry re-publishes the node under, else the bound one.
+func (d *Daemon) dialAddr() string {
+	if advertise := strings.TrimSpace(d.cfg.AdvertiseAddr); advertise != "" {
+		return advertise
+	}
+	return d.spawnServer.Addr()
 }
 
 // signalReregisterFailure asks the heartbeatLoop to exit cleanly. Uses

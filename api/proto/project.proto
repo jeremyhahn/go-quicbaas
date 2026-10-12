@@ -130,6 +130,14 @@ message Project {
     // key it signed with before the current one, each trusted only for
     // commits made before its retirement.
     repeated RetiredSigningKey git_signing_retired = 40;
+    // workspace_managed is true when the server owns the workspace directory
+    // (provisioned on create, torn down on delete). provisioning_state is
+    // "pending", "cloning", "ready" or "failed", empty for an unmanaged
+    // project; provisioning_error carries the reason when it failed.
+    bool   workspace_managed             = 41;
+    string provisioning_state            = 42;
+    string provisioning_error            = 43;
+    int64  provisioning_updated_at_unix  = 44;
 }
 
 // RetiredSigningKey is one entry of a project's trusted signing history.
@@ -186,6 +194,14 @@ message CreateProjectRequest {
     // same session on the account's current credential, "fresh" replaces it
     // with a new session on the same branch. Empty means "resume".
     string session_rotation      = 32;
+    // workspace_managed asks the server to provision the workspace and,
+    // when git_repo_url is set, clone it. Exclusive with workspace_path.
+    bool   workspace_managed         = 33;
+    // git_credential_secret_ref names a tenant secret holding an HTTPS
+    // token for the clone; it is resolved at clone time and never stored on
+    // the project. git_credential_username optionally pairs a username.
+    string git_credential_secret_ref = 34;
+    string git_credential_username   = 35;
 }
 
 message CreateProjectResponse {

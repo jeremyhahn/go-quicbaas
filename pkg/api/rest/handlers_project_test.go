@@ -225,6 +225,114 @@ func TestHandleGetProject_NotFound(t *testing.T) {
 	}
 }
 
+// TestHandleGetProjectByName_HappyPath proves the by-name route resolves the
+// project through GetProjectByName. Before it existed the SDK sent the name as
+// a list filter the list handler ignored, so a by-name lookup answered with a
+// page of every project instead.
+func TestHandleGetProjectByName_HappyPath(t *testing.T) {
+	var got *service.GetProjectByNameRequest
+	mockSvc := &mocks.MockProjectService{
+		GetProjectByNameFunc: func(_ context.Context, req *service.GetProjectByNameRequest) (*service.GetProjectResponse, error) {
+			got = req
+			return &service.GetProjectResponse{Project: &orchestration.Project{
+				ID: "proj-1", TenantID: req.TenantID, Name: req.Name,
+			}, Timestamp: time.Now()}, nil
+		},
+	}
+	srv := newProjectTestServer(mockSvc)
+
+	r := chi.NewRouter()
+	r.Get("/projects/by-name/{name}", srv.HandleGetProjectByName)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/by-name/my%20app?tenant_id=tenant-1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got == nil || got.TenantID != "tenant-1" || got.Name != "my app" {
+		t.Fatalf("service request = %+v, want tenant-1 / \"my app\"", got)
+	}
+	var resp GetProjectRESTResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Project == nil || resp.Project.ID != "proj-1" || resp.Project.Name != "my app" {
+		t.Fatalf("project = %+v, want proj-1 named \"my app\"", resp.Project)
+	}
+}
+
+func TestHandleGetProjectByName_Errors(t *testing.T) {
+	mockSvc := &mocks.MockProjectService{
+		GetProjectByNameFunc: func(context.Context, *service.GetProjectByNameRequest) (*service.GetProjectResponse, error) {
+			return nil, &service.ProjectNotFoundError{TenantID: "t", Name: "ghost"}
+		},
+	}
+	srv := newProjectTestServer(mockSvc)
+	r := chi.NewRouter()
+	r.Get("/projects/by-name/{name}", srv.HandleGetProjectByName)
+
+	cases := []struct {
+		name string
+		url  string
+		want int
+	}{
+		{"missing-tenant", "/projects/by-name/ghost", http.StatusBadRequest},
+		{"not-found", "/projects/by-name/ghost?tenant_id=t", http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.url, nil))
+			if w.Code != tc.want {
+				t.Errorf("expected %d, got %d: %s", tc.want, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandleCreateProject_ManagedWorkspace proves the managed-workspace inputs
+// reach the service and the provisioning record comes back in the flat
+// project shape.
+func TestHandleCreateProject_ManagedWorkspace(t *testing.T) {
+	updatedAt := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	var got *service.CreateProjectRequest
+	mockSvc := &mocks.MockProjectService{
+		CreateProjectFunc: func(_ context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error) {
+			got = req
+			return &service.CreateProjectResponse{Project: &orchestration.Project{
+				ID: "proj-1", TenantID: req.TenantID, Name: req.Name,
+				Provisioning: orchestration.ProjectProvisioning{
+					Managed: true, State: orchestration.ProvisioningStatePending, UpdatedAt: updatedAt,
+				},
+			}, Timestamp: time.Now()}, nil
+		},
+	}
+	srv := newProjectTestServer(mockSvc)
+
+	body := `{"tenant_id":"tenant-1","name":"api","git_repo_url":"https://git.example.test/api.git",` +
+		`"workspace_managed":true,"git_credential_secret_ref":"clone-token","git_credential_username":"bot"}`
+	w := httptest.NewRecorder()
+	srv.HandleCreateProject(w, httptest.NewRequest(http.MethodPost, "/projects", bytes.NewBufferString(body)))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if got == nil || !got.WorkspaceManaged || got.GitCredentialSecretRef != "clone-token" || got.GitCredentialUsername != "bot" {
+		t.Fatalf("service request lost the managed-workspace fields: %+v", got)
+	}
+	var resp CreateProjectRESTResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	p := resp.Project
+	if p == nil || !p.WorkspaceManaged || p.ProvisioningState != orchestration.ProvisioningStatePending ||
+		!p.ProvisioningUpdatedAt.Equal(updatedAt) {
+		t.Fatalf("provisioning not rendered: %+v", p)
+	}
+}
+
 // =============================================================================
 // HandleListProjects
 // =============================================================================

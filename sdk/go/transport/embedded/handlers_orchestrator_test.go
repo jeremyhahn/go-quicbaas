@@ -406,6 +406,38 @@ func TestHandleProjectCreate_AllFieldsRoundTrip(t *testing.T) {
 	assert.False(t, info.UpdatedAt.IsZero(), "UpdatedAt must be populated")
 }
 
+// TestHandleProjectCreate_ManagedWorkspace asserts the embedded transport
+// forwards WorkspaceManaged and projects the provisioning record back. Before
+// it did, an in-process caller asking for a managed workspace got a
+// bring-your-own-path project with no workspace at all.
+func TestHandleProjectCreate_ManagedWorkspace(t *testing.T) {
+	svc := newProjectTestHarness(t)
+	workspaces, err := orchestration.NewWorkspaceManager(t.TempDir())
+	require.NoError(t, err)
+	provisioner, err := service.NewProjectWorkspaceProvisioner(service.ProjectWorkspaceProvisionerConfig{
+		Workspaces: workspaces,
+		Store:      orchestration.NewInMemoryProjectStore(),
+	})
+	require.NoError(t, err)
+	wirer, ok := svc.projectSvc.(interface {
+		SetWorkspaceProvisioner(*service.ProjectWorkspaceProvisioner)
+	})
+	require.True(t, ok, "the project service must accept a workspace provisioner")
+	wirer.SetWorkspaceProvisioner(provisioner)
+
+	result, err := handleProjectCreate(context.Background(), svc, &projectSDK.CreateProjectRequest{
+		TenantID: "tenant-a", Name: "managed", WorkspaceManaged: true,
+	})
+	require.NoError(t, err)
+	info, ok := result.(*projectSDK.ProjectInfo)
+	require.True(t, ok, "expected *projectSDK.ProjectInfo, got %T", result)
+
+	assert.True(t, info.Provisioning.Managed)
+	assert.Equal(t, projectSDK.ProvisioningStateReady, info.Provisioning.State)
+	assert.False(t, info.Provisioning.UpdatedAt.IsZero(), "Provisioning.UpdatedAt must be populated")
+	assert.NotEmpty(t, info.Workspace.Path, "a managed project gets a server-chosen workspace")
+}
+
 // TestHandleProjectUpdate_AllFieldsRoundTrip asserts that handleProjectUpdate
 // forwards every settable field — Workspace.Path, Git.CurrentSHA, FleetNodeRoles,
 // quotas, metadata — to the service layer and that the returned project

@@ -56,6 +56,41 @@ func TestReadAgentTurn_TakesTheReplyAndTheCensus(t *testing.T) {
 	}
 }
 
+// TestReadAgentTurn_CountsTheBackendToolCensus: a backend that carries only
+// text in Content reports its tool calls on the census, and the turn counts
+// them — a turn that used tools is not read as one that used none (#799).
+func TestReadAgentTurn_CountsTheBackendToolCensus(t *testing.T) {
+	turn := ReadAgentTurn(&orchestration.PromptSessionResponse{
+		Content:    []orchestration.ContentBlock{{Type: "text", Text: "done"}},
+		StopReason: orchestration.StopReasonEndTurn,
+		ToolUse:    &orchestration.ToolUseCensus{Calls: 3},
+	})
+	if turn.ToolUses() != 3 {
+		t.Fatalf("tool uses = %d, want the census's 3", turn.ToolUses())
+	}
+	if turn.Blocks["text"] != 1 {
+		t.Fatalf("blocks = %v, want the text block still counted", turn.Blocks)
+	}
+}
+
+// TestReadAgentTurn_KeepsAReportedZeroApartFromNoReport: a zero census is
+// recorded as a zero tool_use entry, an absent census as no entry at all.
+func TestReadAgentTurn_KeepsAReportedZeroApartFromNoReport(t *testing.T) {
+	reported := ReadAgentTurn(&orchestration.PromptSessionResponse{
+		Content: []orchestration.ContentBlock{{Type: "text", Text: "done"}},
+		ToolUse: &orchestration.ToolUseCensus{},
+	})
+	if calls, ok := reported.Blocks["tool_use"]; !ok || calls != 0 {
+		t.Fatalf("blocks = %v, want a zero tool_use entry for a reported zero", reported.Blocks)
+	}
+	unreported := ReadAgentTurn(&orchestration.PromptSessionResponse{
+		Content: []orchestration.ContentBlock{{Type: "text", Text: "done"}},
+	})
+	if _, ok := unreported.Blocks["tool_use"]; ok {
+		t.Fatalf("blocks = %v, want no tool_use entry when the backend reports none", unreported.Blocks)
+	}
+}
+
 // TestReadAgentTurn_AnAnswerWithNothingInIt: a nil response, an empty content
 // list and blank text are the SAME turn — a worker that said nothing — and
 // none of them is an error here.

@@ -156,9 +156,11 @@ func (h *IAMHeartbeatRecoverer) Recover(ctx context.Context, r *http.Request, te
 		TenantID: certTenant,
 		Name:     nodeID,
 		Host:     host,
-		Backends: backends,
-		NodeType: "agent-runtime",
-		Kind:     "daemon",
+		// Re-published from a heartbeat, which is not probed.
+		Reachability: string(orchestration.FleetNodeReachabilityUnverified),
+		Backends:     backends,
+		NodeType:     "agent-runtime",
+		Kind:         "daemon",
 		Metadata: map[string]string{
 			"cert_cn":     peer.Subject.CommonName,
 			"cert_serial": peer.SerialNumber.Text(16),

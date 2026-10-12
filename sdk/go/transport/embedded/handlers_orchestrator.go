@@ -593,6 +593,8 @@ func handleOrchestratorListTasks(ctx context.Context, svc service.QuicBaaS, req 
 		AutoSpawn:  r.AutoSpawn,
 		AgentID:    r.AgentID,
 		JobID:      r.JobID,
+		SourceKind: orchestration.TaskSourceKind(r.SourceKind),
+		SourceRef:  r.SourceRef,
 	}, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
@@ -1522,6 +1524,10 @@ func handleProjectCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		WorkspaceTmpfsMB:    r.WorkspaceTmpfsMB,
 		ContainerMemoryMB:   r.ContainerMemoryMB,
 		SessionRotation:     orchestration.SessionRotationPolicy(r.SessionRotation),
+
+		WorkspaceManaged:       r.WorkspaceManaged,
+		GitCredentialSecretRef: r.GitCredentialSecretRef,
+		GitCredentialUsername:  r.GitCredentialUsername,
 	})
 	if err != nil {
 		return nil, err
@@ -1896,6 +1902,7 @@ func convertFleetNode(a *orchestration.FleetNode) *orchestratorSDK.FleetNode {
 		RegisteredAt: a.RegisteredAt,
 		Version:      a.Version,
 		Metadata:     a.Metadata,
+		Backends:     a.ServedBackends(),
 	}
 }
 
@@ -2058,9 +2065,14 @@ func convertProjectToSDK(p *orchestration.Project) *projectSDK.ProjectInfo {
 	if p == nil {
 		return nil
 	}
-	fleetNodeRoles := make(map[string]projectSDK.ProjectRole, len(p.Permissions.FleetNodeRoles))
-	for id, role := range p.Permissions.FleetNodeRoles {
-		fleetNodeRoles[id] = projectSDK.ProjectRole(role)
+	// An empty role matrix stays nil, as it arrives over every wire
+	// transport, so the in-process caller sees the same ProjectInfo.
+	var fleetNodeRoles map[string]projectSDK.ProjectRole
+	if len(p.Permissions.FleetNodeRoles) > 0 {
+		fleetNodeRoles = make(map[string]projectSDK.ProjectRole, len(p.Permissions.FleetNodeRoles))
+		for id, role := range p.Permissions.FleetNodeRoles {
+			fleetNodeRoles[id] = projectSDK.ProjectRole(role)
+		}
 	}
 	return &projectSDK.ProjectInfo{
 		ID:               p.ID,
@@ -2094,6 +2106,12 @@ func convertProjectToSDK(p *orchestration.Project) *projectSDK.ProjectInfo {
 				Retired:   retiredSigningKeysToSDK(p.Git.Signing.Retired),
 			},
 			SSHKey: projectSDK.KMSKeyRef{Name: p.Git.SSHKey.Name, Scope: p.Git.SSHKey.Scope, Owner: p.Git.SSHKey.Owner},
+		},
+		Provisioning: projectSDK.ProjectProvisioning{
+			Managed:   p.Provisioning.Managed,
+			State:     projectSDK.ProvisioningState(p.Provisioning.State),
+			Error:     p.Provisioning.Error,
+			UpdatedAt: p.Provisioning.UpdatedAt,
 		},
 		Permissions: projectSDK.ProjectPermissions{
 			FleetNodeRoles: fleetNodeRoles,

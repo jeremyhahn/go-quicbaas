@@ -36,6 +36,9 @@ import (
 type mockProjectService struct {
 	createFunc func(context.Context, *service.CreateProjectRequest) (*service.CreateProjectResponse, error)
 	getFunc    func(context.Context, *service.GetProjectRequest) (*service.GetProjectResponse, error)
+
+	getByNameFunc func(context.Context, *service.GetProjectByNameRequest) (*service.GetProjectResponse, error)
+
 	listFunc   func(context.Context, *service.ListProjectsRequest) (*service.ListProjectsResponse, error)
 	updateFunc func(context.Context, *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error)
 	deleteFunc func(context.Context, *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error)
@@ -58,6 +61,9 @@ func (m *mockProjectService) GetProject(ctx context.Context, req *service.GetPro
 }
 
 func (m *mockProjectService) GetProjectByName(ctx context.Context, req *service.GetProjectByNameRequest) (*service.GetProjectResponse, error) {
+	if m.getByNameFunc != nil {
+		return m.getByNameFunc(ctx, req)
+	}
 	return &service.GetProjectResponse{}, nil
 }
 
@@ -170,6 +176,7 @@ func TestExecuteProjectTool_AllHappyPaths(t *testing.T) {
 	}{
 		{"project_create", map[string]interface{}{"tenant_id": "t1", "name": "p1"}},
 		{"project_get", map[string]interface{}{"tenant_id": "t1", "project_id": "p1"}},
+		{"project_get_by_name", map[string]interface{}{"tenant_id": "t1", "name": "p1"}},
 		{"project_list", map[string]interface{}{"tenant_id": "t1"}},
 		{"project_update", map[string]interface{}{"tenant_id": "t1", "project_id": "p1", "name": "p2"}},
 		{"project_delete", map[string]interface{}{"tenant_id": "t1", "project_id": "p1"}},
@@ -212,7 +219,7 @@ func TestExecuteProjectTool_ServiceUnavailable(t *testing.T) {
 	reg := newProjectAdminRegistry(t, nil, nil) // Project() returns nil
 	ctx := context.Background()
 
-	for _, name := range []string{"project_create", "project_get", "project_list", "project_update", "project_delete"} {
+	for _, name := range []string{"project_create", "project_get", "project_get_by_name", "project_list", "project_update", "project_delete"} {
 		t.Run(name, func(t *testing.T) {
 			_, err := reg.executeProjectTool(ctx, name, map[string]interface{}{})
 			require.Error(t, err)
@@ -229,6 +236,9 @@ func TestExecuteProjectTool_ServiceError(t *testing.T) {
 		getFunc: func(context.Context, *service.GetProjectRequest) (*service.GetProjectResponse, error) {
 			return nil, sentinel
 		},
+		getByNameFunc: func(context.Context, *service.GetProjectByNameRequest) (*service.GetProjectResponse, error) {
+			return nil, sentinel
+		},
 		listFunc: func(context.Context, *service.ListProjectsRequest) (*service.ListProjectsResponse, error) {
 			return nil, sentinel
 		},
@@ -242,7 +252,7 @@ func TestExecuteProjectTool_ServiceError(t *testing.T) {
 	reg := newProjectAdminRegistry(t, svc, nil)
 	ctx := context.Background()
 
-	for _, name := range []string{"project_create", "project_get", "project_list", "project_update", "project_delete"} {
+	for _, name := range []string{"project_create", "project_get", "project_get_by_name", "project_list", "project_update", "project_delete"} {
 		t.Run(name, func(t *testing.T) {
 			_, err := reg.executeProjectTool(ctx, name, map[string]interface{}{})
 			require.ErrorIs(t, err, sentinel)
@@ -258,6 +268,7 @@ func TestExecuteProjectTool_UnknownTool(t *testing.T) {
 
 func TestIsProjectTool(t *testing.T) {
 	assert.True(t, isProjectTool("project_create"))
+	assert.True(t, isProjectTool("project_get_by_name"))
 	assert.True(t, isProjectTool("project_delete"))
 	assert.False(t, isProjectTool("quicbaas_fleet_disable"))
 	assert.False(t, isProjectTool(""))

@@ -1945,6 +1945,11 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 	// result message carries no aggregate; see collectStreamJSONUsage.
 	assistantUsage := &TokenUsage{}
 
+	// toolUse counts the tool_use blocks the turn's assistant messages carry.
+	// The stream publishes every tool call this way, so a turn with none
+	// reports a zero census rather than none.
+	toolUse := &ToolUseCensus{}
+
 	// limits collects the structured signals of a provider refusal as they
 	// stream past, so a failed turn can say whether the ACCOUNT was refused.
 	limits := &streamLimitSignals{}
@@ -1962,8 +1967,11 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 			model = msg.Message.Model
 		}
 		for _, c := range msg.Message.Content {
-			if c.Type == "text" {
+			switch c.Type {
+			case "text":
 				contentBlocks = append(contentBlocks, ContentBlock{Type: "text", Text: c.Text})
+			case "tool_use":
+				toolUse.Calls++
 			}
 		}
 		if msg.Message.StopReason != "" {
@@ -2015,6 +2023,7 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 		Model:      model,
 		StopReason: stopReason,
 		Usage:      collectStreamJSONUsage(result.Usage, assistantUsage),
+		ToolUse:    toolUse,
 	}, nil
 }
 
@@ -2256,6 +2265,10 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 	var contentMu sync.Mutex
 	var contentParts []string
 
+	// toolCalls counts the turn's tool_call updates: ACP announces every tool
+	// invocation with one, so a turn that sent none reports a zero census.
+	var toolCalls atomic.Int64
+
 	sess.transport.SetNotificationHandler(func(msg *JSONRPCMessage) {
 		if msg.Method != "session/update" || msg.Params == nil {
 			// Non-update notifications are rare; surface them as system
@@ -2288,6 +2301,9 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 			contentMu.Lock()
 			contentParts = append(contentParts, text)
 			contentMu.Unlock()
+		}
+		if params.Update.SessionUpdate == "tool_call" {
+			toolCalls.Add(1)
 		}
 
 		// Translate the update into its structured transcript event.
@@ -2339,6 +2355,7 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 			Model:      sess.model,
 			StopReason: StopReasonEndTurn,
 			Usage:      result.Usage.TokenUsage(),
+			ToolUse:    &ToolUseCensus{Calls: int(toolCalls.Load())},
 		}, nil
 	}
 
@@ -2349,6 +2366,7 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 	if parseErr != nil {
 		return nil, parseErr
 	}
+	parsed.ToolUse = &ToolUseCensus{Calls: int(toolCalls.Load())}
 	emitPromptResponseChunks(req.EventCallback, parsed)
 	return parsed, nil
 }

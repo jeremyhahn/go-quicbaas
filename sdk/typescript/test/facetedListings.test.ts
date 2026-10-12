@@ -125,6 +125,24 @@ describe('RestClient faceted filters', () => {
     expect(query.get('limit')).toBe('10');
   });
 
+  it('sends the tasks listing the source it asks the holder of', async () => {
+    fetchMock.mockResolvedValueOnce(mockOK({ tasks: [], total: 0, limit: 25, offset: 0 }));
+    const client = new RestClient('https://q');
+
+    const page = await client.orchestrator.listTasksPage('acme', {
+      project_id: 'proj-a',
+      source_kind: 'operator',
+      source_ref: 'owner/repo#12',
+    });
+
+    const query = queryOf(fetchMock);
+    expect(query.get('source_kind')).toBe('operator');
+    expect(query.get('source_ref')).toBe('owner/repo#12');
+    expect(query.get('project_id')).toBe('proj-a');
+    // A source nobody holds is an empty page, not an error.
+    expect(page.items).toEqual([]);
+  });
+
   it('sends the jobs listing its agent narrowing beside the others', async () => {
     fetchMock.mockResolvedValueOnce(mockOK({ jobs: [], total: 0, limit: 25, offset: 0 }));
     const client = new RestClient('https://q');

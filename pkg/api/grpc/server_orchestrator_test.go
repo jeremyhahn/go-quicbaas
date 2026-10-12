@@ -47,8 +47,10 @@ type grpcTestAgentService struct {
 	listJobsPaged bool
 	listWorkflows []*orchestration.WorkflowDefinition
 
-	// listAgents is what ListFleetNodes answers with.
-	listAgents []*orchestration.FleetNode
+	// listAgents is what ListFleetNodes answers with; listAgentsErr, when
+	// set, is the error it refuses with instead.
+	listAgents    []*orchestration.FleetNode
+	listAgentsErr error
 
 	createTaskFunc    func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error)
 	startJobFunc      func(ctx context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error)
@@ -234,6 +236,9 @@ func (m *grpcTestAgentService) GetFleetNode(ctx context.Context, tenantID, agent
 }
 
 func (m *grpcTestAgentService) ListFleetNodes(ctx context.Context, tenantID string, filter *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
+	if m.listAgentsErr != nil {
+		return nil, m.listAgentsErr
+	}
 	return m.listAgents, nil
 }
 
@@ -641,6 +646,45 @@ func TestOrchestratorGRPC_ListTasks_CarriesAttemptFilters(t *testing.T) {
 	assert.False(t, *got.AutoSpawn)
 	assert.Equal(t, "agent-1", got.AgentID)
 	assert.Equal(t, "job-1", got.JobID)
+}
+
+// TestOrchestratorGRPC_ListTasks_CarriesTheSourceFilter proves the source
+// predicate (go-quicbaas#730) crosses the gRPC server into the service filter.
+func TestOrchestratorGRPC_ListTasks_CarriesTheSourceFilter(t *testing.T) {
+	var got *orchestration.TaskFilter
+	agentSvc := &grpcTestAgentService{
+		listTasksFunc: func(_ context.Context, _ string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error) {
+			got = filter
+			return []*orchestration.Task{}, nil
+		},
+	}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	resp, err := server.ListTasks(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.ListTasksRequest{
+		TenantId: "tenant-1",
+		Filter:   &pb.TaskFilter{ProjectId: "project-1", SourceKind: "operator", SourceRef: "owner/repo#12"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, resp.GetTasks())
+	require.NotNil(t, got)
+	assert.Equal(t, orchestration.TaskSourceKindOperator, got.SourceKind)
+	assert.Equal(t, "owner/repo#12", got.SourceRef)
+	assert.Equal(t, "project-1", got.ProjectID)
+}
+
+// TestOrchestratorGRPC_ListTasks_RefusesAHalfSource proves a source kind
+// without a ref is InvalidArgument over gRPC, as it is a 400 over REST.
+func TestOrchestratorGRPC_ListTasks_RefusesAHalfSource(t *testing.T) {
+	store := orchestration.NewInMemoryTaskStore()
+	agentSvc := &grpcTestAgentService{listTasksFunc: store.ListTasks}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	_, err := server.ListTasks(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.ListTasksRequest{
+		TenantId: "tenant-1",
+		Filter:   &pb.TaskFilter{SourceKind: "operator"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestOrchestratorGRPC_ListTasks_EmptyTenant(t *testing.T) {

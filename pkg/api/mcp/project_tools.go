@@ -140,6 +140,20 @@ func (r *ToolRegistry) registerProjectTools() {
 					"type":        "integer",
 					"description": "Container memory limit in MiB (0 = the runtime's default)",
 				},
+				"agent_roles": projectRolesSchema("Initial project role per fleet node ID"),
+				"metadata":    projectMetadataSchema("Free-form string labels stored with the project"),
+				"workspace_managed": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Have the server provision the workspace (and clone git_repo_url into it); mutually exclusive with workspace_path",
+				},
+				"git_credential_secret_ref": map[string]interface{}{
+					"type":        "string",
+					"description": "Secret ID holding an HTTPS access token for the managed clone (requires workspace_managed and an https:// git_repo_url; exclusive with git_ssh_key_name)",
+				},
+				"git_credential_username": map[string]interface{}{
+					"type":        "string",
+					"description": "Username paired with the HTTPS access token (empty selects the provisioner default)",
+				},
 				"context_repos": map[string]interface{}{
 					"type":        "array",
 					"description": "Repositories the worker clones beside the project checkout",
@@ -174,6 +188,25 @@ func (r *ToolRegistry) registerProjectTools() {
 				},
 			},
 			"required": []string{"tenant_id", "project_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "project_get_by_name",
+		Description: "Retrieve a project by its unique name within a tenant.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID that owns the project",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Project name",
+				},
+			},
+			"required": []string{"tenant_id", "name"},
 		},
 	})
 
@@ -221,6 +254,26 @@ func (r *ToolRegistry) registerProjectTools() {
 				"workspace_path": map[string]interface{}{
 					"type":        "string",
 					"description": "Updated workspace path (optional)",
+				},
+				"host_affinity": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated preferred agent host (optional)",
+				},
+				"default_lead_agent": agentRefSchema("The Agent or pool that leads a job under this project when the job names none (optional)."),
+				"git_default_branch": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated default git branch (optional)",
+				},
+				"agent_roles": projectRolesSchema("Replacement project role per fleet node ID (optional)"),
+				"metadata":    projectMetadataSchema("Replacement string labels (optional)"),
+				"spend":       spendLimitsSchema("Replacement spend limits; an empty object clears them (optional)"),
+				"gpu_minutes": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum GPU compute budget in minutes; omit to leave it unchanged, 0 = unlimited",
+				},
+				"max_concurrency": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum concurrent workflow runs; omit to leave it unchanged, 0 = unlimited",
 				},
 				"git_current_sha": map[string]interface{}{
 					"type":        "string",
@@ -391,9 +444,15 @@ func (r *ToolRegistry) executeProjectCreate(ctx context.Context, args map[string
 		DefaultLeadAgent:     getAgentRef(args, "default_lead_agent"),
 		GitRepoURL:           getString(args, "git_repo_url"),
 		GitDefaultBranch:     getString(args, "git_default_branch"),
+		FleetNodeRoles:       getProjectRoles(args, "agent_roles"),
+		Metadata:             getStringMap(args, "metadata"),
 		Spend:                spend,
 		GPUMinutes:           int64(getInt(args, "gpu_minutes")),
 		MaxConcurrency:       getInt(args, "max_concurrency"),
+
+		WorkspaceManaged:       getBool(args, "workspace_managed"),
+		GitCredentialSecretRef: getString(args, "git_credential_secret_ref"),
+		GitCredentialUsername:  getString(args, "git_credential_username"),
 
 		DefaultWorkflow:     getString(args, "default_workflow"),
 		Autonomous:          getBool(args, "autonomous"),
@@ -436,6 +495,23 @@ func (r *ToolRegistry) executeProjectGet(ctx context.Context, args map[string]in
 	return resp, nil
 }
 
+// executeProjectGetByName handles the project_get_by_name MCP tool call.
+func (r *ToolRegistry) executeProjectGetByName(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	projectSvc, err := r.getProjectService()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := projectSvc.GetProjectByName(ctx, &service.GetProjectByNameRequest{
+		TenantID: getString(args, "tenant_id"),
+		Name:     getString(args, "name"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 // executeProjectList handles the project_list MCP tool call.
 func (r *ToolRegistry) executeProjectList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	projectSvc, err := r.getProjectService()
@@ -461,17 +537,6 @@ func (r *ToolRegistry) executeProjectUpdate(ctx context.Context, args map[string
 	projectSvc, err := r.getProjectService()
 	if err != nil {
 		return nil, err
-	}
-
-	// Convert agent_roles from map[string]interface{} to map[string]ProjectRole.
-	var fleetNodeRoles map[string]orchestration.ProjectRole
-	if raw, ok := args["agent_roles"].(map[string]interface{}); ok {
-		fleetNodeRoles = make(map[string]orchestration.ProjectRole, len(raw))
-		for k, v := range raw {
-			if s, ok := v.(string); ok {
-				fleetNodeRoles[k] = orchestration.ProjectRole(s)
-			}
-		}
 	}
 
 	contextRepos, err := getContextRepos(args, "context_repos")
@@ -502,7 +567,8 @@ func (r *ToolRegistry) executeProjectUpdate(ctx context.Context, args map[string
 		GitRepoURL:           getString(args, "git_repo_url"),
 		GitDefaultBranch:     getString(args, "git_default_branch"),
 		GitCurrentSHA:        getString(args, "git_current_sha"),
-		FleetNodeRoles:       fleetNodeRoles,
+		FleetNodeRoles:       getProjectRoles(args, "agent_roles"),
+		Metadata:             getStringMap(args, "metadata"),
 		Spend:                spend,
 		GPUMinutes:           getOptionalInt64(args, "gpu_minutes"),
 		MaxConcurrency:       getOptionalInt(args, "max_concurrency"),
@@ -568,7 +634,7 @@ func (r *ToolRegistry) getProjectService() (service.ProjectService, error) {
 // isProjectTool returns true if the tool name is a project management tool.
 func isProjectTool(name string) bool {
 	switch name {
-	case "project_create", "project_get", "project_list", "project_update", "project_delete":
+	case "project_create", "project_get", "project_get_by_name", "project_list", "project_update", "project_delete":
 		return true
 	default:
 		return false
@@ -578,16 +644,58 @@ func isProjectTool(name string) bool {
 // executeProjectTool dispatches project tool execution to the appropriate handler.
 func (r *ToolRegistry) executeProjectTool(ctx context.Context, name string, args map[string]interface{}) (interface{}, error) {
 	handlers := map[string]func(context.Context, map[string]interface{}) (interface{}, error){
-		"project_create": r.executeProjectCreate,
-		"project_get":    r.executeProjectGet,
-		"project_list":   r.executeProjectList,
-		"project_update": r.executeProjectUpdate,
-		"project_delete": r.executeProjectDelete,
+		"project_create":      r.executeProjectCreate,
+		"project_get":         r.executeProjectGet,
+		"project_get_by_name": r.executeProjectGetByName,
+		"project_list":        r.executeProjectList,
+		"project_update":      r.executeProjectUpdate,
+		"project_delete":      r.executeProjectDelete,
 	}
 	if h, ok := handlers[name]; ok {
 		return h(ctx, args)
 	}
 	return nil, api.NewUnknownToolError(name)
+}
+
+// projectRolesSchema describes an agent_roles argument: fleet node ID to
+// project role.
+func projectRolesSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "object",
+		"description": description,
+		"additionalProperties": map[string]interface{}{
+			"type": "string",
+			"enum": []string{
+				string(orchestration.ProjectRoleLead), string(orchestration.ProjectRoleWorker),
+				string(orchestration.ProjectRoleObserver), string(orchestration.ProjectRoleDenied),
+			},
+		},
+	}
+}
+
+// projectMetadataSchema describes a metadata argument: string keys to string
+// values.
+func projectMetadataSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":                 "object",
+		"description":          description,
+		"additionalProperties": map[string]interface{}{"type": "string"},
+	}
+}
+
+// getProjectRoles reads an agent_roles argument. Non-string roles are
+// skipped, and an argument with no usable entry is nil so an update leaves
+// the project's roles alone; the service validates each role.
+func getProjectRoles(args map[string]interface{}, key string) map[string]orchestration.ProjectRole {
+	raw := getStringMap(args, key)
+	if raw == nil {
+		return nil
+	}
+	roles := make(map[string]orchestration.ProjectRole, len(raw))
+	for nodeID, role := range raw {
+		roles[nodeID] = orchestration.ProjectRole(role)
+	}
+	return roles
 }
 
 // getOptionalBool returns the boolean argument when present, or nil when the

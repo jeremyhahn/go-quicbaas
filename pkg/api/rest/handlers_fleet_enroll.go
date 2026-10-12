@@ -65,6 +65,7 @@ type fleetIdentityStoreAccessor interface {
 type fleetEnrollRequest struct {
 	TenantID      string            `json:"tenant_id"`
 	BindAddr      string            `json:"bind_addr,omitempty"`
+	AdvertiseAddr string            `json:"advertise_addr,omitempty"`
 	SandboxPolicy string            `json:"sandbox_policy,omitempty"`
 	Hostname      string            `json:"hostname,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
@@ -199,6 +200,15 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 			" control-plane calls will stay unauthorized", err)
 	}
 
+	// The address is checked before anything is issued: a node the control
+	// plane cannot dial would be placed work it can never be sent, and every
+	// call routed to it would fail far from here (go-quicbaas#795).
+	dialHost, reachability, err := s.fleetNodeDialAddress(ctx, &req, peer)
+	if err != nil {
+		respondFleetEnrollError(w, r, http.StatusUnprocessableEntity, "agent_address_unreachable", err.Error())
+		return
+	}
+
 	accessor, ok := s.service.(fleetAppManagerAccessor)
 	if !ok {
 		respondFleetEnrollError(w, r, http.StatusInternalServerError, "server_error", "agent registrar service not available")
@@ -276,12 +286,6 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 	// already has credentials it will use, and a failed register can
 	// recover on the next heartbeat.
 	if registrar, ok := s.fleetRegistrar.(iam.FleetRegistrar); ok && registrar != nil {
-		// Translate the daemon's bind address into a dialable host. A
-		// bind of 0.0.0.0:<port> or [::]:<port> can't be dialed as-is;
-		// rewrite the host component using the daemon's self-reported
-		// hostname (which maps to its LAN IP via DNS/mDNS) so the
-		// RemoteACPBackend dispatcher can reach it over the network.
-		dialHost := dialableFleetNodeHost(req.BindAddr, req.Hostname, peer)
 		regMeta := mergeRegisterMetadata(&req, peer)
 		// Stamp OAuth2 client IDs into the registration record so that
 		// DisableFleetNode can revoke them at the IAM layer without a separate lookup.
@@ -294,10 +298,13 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 			TenantID: req.TenantID,
 			Name:     appName,
 			Host:     dialHost,
-			Backends: backendsFromRegisterMetadata(req.Metadata),
-			NodeType: "agent-runtime",
-			Kind:     "daemon",
-			Metadata: regMeta,
+			// Set only when the node declared it; Host is then the same.
+			AdvertisedAddress: strings.TrimSpace(req.AdvertiseAddr),
+			Reachability:      string(reachability),
+			Backends:          backendsFromRegisterMetadata(req.Metadata),
+			NodeType:          "agent-runtime",
+			Kind:              "daemon",
+			Metadata:          regMeta,
 		}
 		// A daemon already in the registry is REFRESHED by this call rather
 		// than refused (pkg/server fleetRegistrarAdapter), so the failures
@@ -337,6 +344,33 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 		EventIngestAddr:  ingestAddr,
 		MTLSClientID:     mtlsClientID,
 	})
+}
+
+// fleetNodeDialAddress returns the address the control plane registers an
+// enrolling node under and what it learned about reaching it.
+//
+// The node's advertised address wins when it declared one. Otherwise the
+// address is derived from its bind address: a bind of 0.0.0.0:<port> or
+// [::]:<port> can't be dialed as-is, so the host component is rewritten from
+// the certificate or the self-reported hostname so the RemoteACPBackend
+// dispatcher can reach it over the network.
+//
+// With a prober wired, an address the control plane cannot resolve and dial
+// is refused with its *orchestration.AgentAddressUnreachableError; without
+// one the address is registered as unverified.
+func (s *Server) fleetNodeDialAddress(ctx context.Context, req *fleetEnrollRequest, peer *x509.Certificate) (string, orchestration.FleetNodeReachability, error) {
+	address := strings.TrimSpace(req.AdvertiseAddr)
+	if address == "" {
+		address = dialableFleetNodeHost(req.BindAddr, req.Hostname, peer)
+	}
+	prober := s.fleetAddressProberOrNil()
+	if prober == nil {
+		return address, orchestration.FleetNodeReachabilityUnverified, nil
+	}
+	if err := prober.Probe(ctx, address); err != nil {
+		return "", "", err
+	}
+	return address, orchestration.FleetNodeReachable, nil
 }
 
 // extractFleetNodePeerCertificate pulls the mTLS peer certificate from the

@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -265,7 +266,7 @@ func (s *Server) startEmbeddedFleetNode() error {
 	// provisions live under this daemon's own projects root — the root its
 	// mount policy below already admits tenant-scoped.
 	projectsRoot := s.config.Orchestration.EffectiveProjectsRoot(s.config.Storage.DataDir)
-	workspaces, wsErr := orchestration.NewWorkspaceManager(projectsRoot)
+	workspaces, wsErr := s.embeddedFleetNodeWorkspaces(projectsRoot)
 	if wsErr != nil {
 		return &ServerCauseError{Message: "embedded agent: projects root", Cause: wsErr}
 	}
@@ -428,6 +429,19 @@ func (s *Server) startEmbeddedFleetNode() error {
 		nodeID, strings.Join(cfg.Backends, ","), effectiveHostAffinity, cfg.GPUAvailable)
 
 	return nil
+}
+
+// embeddedFleetNodeWorkspaces returns the WorkspaceManager the embedded fleet
+// node provisions through: the orchestrator's own when it manages the same
+// projects root. Two managers over one root would keep two hold registries,
+// and the sweep, consulting only the orchestrator's, would remove a checkout
+// an embedded session still mounts. Without an orchestrator manager there is
+// no sweep, and the node gets one of its own.
+func (s *Server) embeddedFleetNodeWorkspaces(projectsRoot string) (*orchestration.WorkspaceManager, error) {
+	if shared := s.sessionWorkspaces; shared != nil && shared.Root() == filepath.Clean(projectsRoot) {
+		return shared, nil
+	}
+	return orchestration.NewWorkspaceManager(projectsRoot)
 }
 
 // stopEmbeddedFleetNode gracefully shuts down the in-process fleet node runtime.

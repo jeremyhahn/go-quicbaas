@@ -124,6 +124,10 @@ func handleProjectCreate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		WorkspaceTmpfsMb:    tmpfsMB,
 		ContainerMemoryMb:   memoryMB,
 		SessionRotation:     string(sdkReq.SessionRotation),
+
+		WorkspaceManaged:       sdkReq.WorkspaceManaged,
+		GitCredentialSecretRef: sdkReq.GitCredentialSecretRef,
+		GitCredentialUsername:  sdkReq.GitCredentialUsername,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -417,6 +421,12 @@ func projectInfoFromProto(p *pb.Project) *project.ProjectInfo {
 				Retired:   retiredSigningKeysFromProto(p.GitSigningRetired),
 			},
 			SSHKey: project.KMSKeyRef{Name: p.GitSshKeyName, Scope: p.GitSshKeyScope, Owner: p.GitSshKeyOwner},
+		},
+		Provisioning: project.ProjectProvisioning{
+			Managed:   p.WorkspaceManaged,
+			State:     project.ProvisioningState(p.ProvisioningState),
+			Error:     p.ProvisioningError,
+			UpdatedAt: timeFromUnix(p.ProvisioningUpdatedAtUnix),
 		},
 		Permissions: project.ProjectPermissions{
 			FleetNodeRoles: projectRolesFromProto(p.AgentRoles),

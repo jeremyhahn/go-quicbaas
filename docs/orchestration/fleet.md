@@ -80,6 +80,48 @@ line. `--spec node.yaml --max-concurrent-jobs 2` deploys the spec with a
 capacity of 2; a flag left at its default never overrides the spec. The
 same rule applies to `fleet serve --config`.
 
+## The address the control plane dials
+
+The control plane reaches a node at one address: the dispatcher dials it for
+every spawn, prompt and model listing. By default that address is derived
+from the node's `bind_addr`, with a wildcard host (`0.0.0.0`, `[::]`)
+replaced by the certificate or host name. When that is not how the control
+plane reaches the node (NAT, a published port, a name only the control
+plane resolves), advertise the address explicitly:
+
+| Source | Setting |
+|---|---|
+| flag | `quicbaas fleet serve --advertise <host:port>` |
+| environment | `QUICBAAS_ADVERTISE_ADDR=<host:port>` |
+| config file (`node:` in a spec) | `advertise_addr: <host:port>` |
+
+Precedence is defaults < config file < environment < flags set on the
+command line. The value must be a `host:port` with a port in 1–65535 and a
+host that is not a wildcard; anything else is refused at start-up with
+`ErrConfigInvalidAdvertiseAddr`.
+
+**Registration refuses an address it cannot reach.** The node binds its
+listener before it enrolls, and the control plane resolves and dials the
+address being registered (advertised or derived) before recording it. An
+address that does not resolve or does not accept a connection is refused
+with `422 agent_address_unreachable` (`AgentAddressUnreachableError`, naming
+the address and whether parsing, resolution or the dial failed), and nothing
+is registered.
+
+The fleet node record carries what registration learned:
+
+| Field | Meaning |
+|---|---|
+| `advertised_address` | The address the node advertised, when it named one. |
+| `reachability` | `reachable` when the control plane dialed it at registration; `unverified` when it was not probed (a re-registration from a heartbeat). |
+
+**A model listing names the node it could not reach.** `GET
+/api/v1/fleet/{nodeID}/backends/{backend}/models` answers `503` when the
+node's daemon cannot be dialed or does not answer in time, and `502` when it
+answers with a server-side failure. The error names the backend and the
+daemon address. The web console's Inference page shows that message, and
+opens on the first stateless backend whose models list.
+
 ## Preflight
 
 `fleet deploy --preflight` runs every check and changes nothing. `agent

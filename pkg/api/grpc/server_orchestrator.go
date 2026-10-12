@@ -463,6 +463,8 @@ func (s *OrchestratorServer) ListTasks(ctx context.Context, req *pb.ListTasksReq
 			AutoSpawn:  req.Filter.AutoSpawn,
 			AgentID:    req.Filter.GetAgentId(),
 			JobID:      req.Filter.GetJobId(),
+			SourceKind: orchestration.TaskSourceKind(req.Filter.GetSourceKind()),
+			SourceRef:  req.Filter.GetSourceRef(),
 		}
 	}
 
@@ -1809,6 +1811,7 @@ func serviceFleetNodeToProto(agent *orchestration.FleetNode) *pb.FleetNode {
 		RegisteredAt: unixNanoTimestamp(agent.RegisteredAt),
 		Version:      agent.Version,
 		Metadata:     agent.Metadata,
+		Backends:     agent.ServedBackends(),
 	}
 }
 
@@ -1958,8 +1961,14 @@ func convertOrchestratorError(err error) error {
 		return status.Error(codes.Internal, agentRegistryErr.Error())
 	}
 
+	// A task store refusal of the request's own shape — a source predicate
+	// with a kind and no ref, a malformed key segment — is the caller's to
+	// correct, as REST's 400 already says; only the rest are server faults.
 	var taskStoreErr *orchestration.TaskStoreError
 	if stderrors.As(err, &taskStoreErr) {
+		if stderrors.Is(err, orchestration.ErrTaskStoreInvalidInput) {
+			return status.Error(codes.InvalidArgument, taskStoreErr.Error())
+		}
 		return status.Error(codes.Internal, taskStoreErr.Error())
 	}
 

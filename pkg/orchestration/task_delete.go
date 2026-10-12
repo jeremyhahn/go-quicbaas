@@ -69,11 +69,15 @@ func (s *agentServiceImpl) DeleteTask(ctx context.Context, tenantID, taskID stri
 		return err
 	}
 
+	// Read before the record goes: the attempts' workspaces are found through it.
+	attempts := s.attemptJobs(ctx, tenantID, taskID)
 	if err := s.taskStore.DeleteTask(ctx, tenantID, taskID); err != nil {
 		return err
 	}
 
 	s.logger.Debugf("deleted task: id=%s tenant=%s", taskID, tenantID)
+
+	s.discardAttemptWorkspaces(ctx, tenantID, taskID, attempts)
 
 	s.publishEvent(ctx, tenantID, "task_deleted", map[string]string{
 		"task_id": taskID,

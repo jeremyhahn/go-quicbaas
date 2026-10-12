@@ -164,9 +164,9 @@ func requireAgentWorkspace(session *Session, agentHost string) error {
 
 // workspacePlacement is the placement a spawn reports for the workspace it
 // named, nil when it named none.
-func workspacePlacement(ws *SessionWorkspace, agentHost, dir string) *WorkspacePlacement {
+func workspacePlacement(ws *SessionWorkspace, backend, agentHost, dir string) *WorkspacePlacement {
 	if ws == nil {
 		return nil
 	}
-	return &WorkspacePlacement{AgentHost: agentHost, Key: ws.Key, Dir: dir}
+	return &WorkspacePlacement{AgentHost: agentHost, Backend: backend, Key: ws.Key, Dir: dir}
 }

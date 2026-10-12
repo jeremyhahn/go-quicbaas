@@ -376,6 +376,10 @@ type Server struct {
 	// goroutine, started with the container runtime and stopped at shutdown.
 	orchContainerReaper *orchestrationSweeps
 
+	// orchWorkspaceSweep is the periodic sweep of concluded tasks' session
+	// workspaces, stopped at shutdown.
+	orchWorkspaceSweep *orchestrationSweeps
+
 	// sdlcLabelSweeps is the SDLC module's forge-label reconciliation
 	// goroutine, started by startSDLC and stopped before the module detaches.
 	sdlcLabelSweeps *sdlcLabelSweeps
@@ -664,6 +668,12 @@ type Server struct {
 	// running. Initialized by startEmbeddedFleetNode; cleaned up by
 	// stopEmbeddedFleetNode during graceful shutdown.
 	embeddedFleetNodeState *embeddedFleetNode
+
+	// sessionWorkspaces is the orchestrator's manager over the projects
+	// root, nil until startOrchestration builds one. The embedded fleet node
+	// provisions through the same manager, so the holds its sessions take
+	// are the ones the concluded-workspace sweep consults.
+	sessionWorkspaces *orchestration.WorkspaceManager
 
 	// embeddedDialerRegistry maps FleetNode.Host → bufconn dialer
 	// for embedded agents. The remote backend pool consults this registry
@@ -1225,6 +1235,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// from go away.
 		s.stopOrchestrationSweeps()
 		s.stopContainerReaper()
+		s.stopWorkspaceSweep()
 
 		// Nothing starts new jobs from here on, so the running ones can be
 		// drained: they get a bounded window to conclude while the stores

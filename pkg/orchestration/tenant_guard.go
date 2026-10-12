@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // Sentinel errors for tenant guard operations.
@@ -209,6 +210,23 @@ func (g *TenantGuard) ValidateTenantAccess(ctx context.Context, targetTenantID s
 	}
 
 	return nil
+}
+
+// authorizeCallerTarget refuses a request naming a tenant other than the
+// authenticated caller's own, with tenantctx.Target's typed forbidden error.
+//
+// The caller is the tenant go-qrdb's central key holds, which every transport
+// binds from the authenticated identity, and the rule is tenantctx.Target's,
+// the one the orchestrator transports already apply: the system tenant gets no
+// cross-tenant lift. A context with no caller bound is an in-process caller
+// that stamped only the orchestration key, such as a job's background loop;
+// the tenant guard governs it, as before.
+func authorizeCallerTarget(ctx context.Context, op, tenantID string) error {
+	if _, bound := tenantctx.Lookup(ctx); !bound {
+		return nil
+	}
+	_, err := tenantctx.Target(ctx, op, tenantID)
+	return err
 }
 
 // IsSuperAdminBlocked returns true always for orchestration operations.

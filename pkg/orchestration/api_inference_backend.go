@@ -119,6 +119,8 @@ func (b *APIInferenceBackend) Prompt(ctx context.Context, req *PromptRequest) (*
 		return nil, &PromptError{SessionID: "", Cause: err}
 	}
 
+	// ToolUse stays nil: Generate is called without tools and its response
+	// carries no tool calls to count.
 	return &PromptResponse{
 		Content: []ContentBlock{{
 			Type: "text",

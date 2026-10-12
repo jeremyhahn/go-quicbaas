@@ -176,6 +176,29 @@ func TestGRPCListTasks_ForwardsAttemptFilters(t *testing.T) {
 	}
 }
 
+// TestGRPCListTasks_ForwardsTheSourceFilter proves the source predicate
+// (go-quicbaas#730) builds a filter on its own: a listing narrowed only by
+// source must not go out unfiltered and list the whole tenant.
+func TestGRPCListTasks_ForwardsTheSourceFilter(t *testing.T) {
+	conn, fake := newCapturingListTasksConn(t)
+
+	if _, err := handleOrchestratorListTasks(context.Background(), conn, &orchestrator.ListTasksRequest{
+		TenantID:   "tenant-a",
+		SourceKind: "operator",
+		SourceRef:  "owner/repo#12",
+	}); err != nil {
+		t.Fatalf("handleOrchestratorListTasks: %v", err)
+	}
+
+	filter := (<-fake.got).GetFilter()
+	if filter == nil {
+		t.Fatal("outbound Filter is nil: the source predicate was dropped")
+	}
+	if filter.GetSourceKind() != "operator" || filter.GetSourceRef() != "owner/repo#12" {
+		t.Errorf("outbound source = %q/%q, want operator/owner/repo#12", filter.GetSourceKind(), filter.GetSourceRef())
+	}
+}
+
 // statefulListSessionsServer answers with one session in a fixed proto state,
 // so the client's rendering of that state can be asserted.
 type statefulListSessionsServer struct {

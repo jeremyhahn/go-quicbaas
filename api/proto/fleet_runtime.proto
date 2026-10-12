@@ -84,6 +84,12 @@ service FleetRuntime {
     // no relay, and a second attach. A dropped stream is final: the session's
     // signatures fail from then on, with no fallback.
     rpc SigningRelay(stream SigningRelayControlFrame) returns (stream SigningRelayNodeFrame);
+
+    // RemoveWorkspace removes a session workspace this daemon provisioned,
+    // for the caller's tenant, once its task is done with it
+    // (go-quicbaas#777). The daemon removes it under its own projects root
+    // only, never through a link, and refuses one a live session holds.
+    rpc RemoveWorkspace(RemoveWorkspaceRequest) returns (RemoveWorkspaceResponse);
 }
 
 // SigningRelayControlFrame is what the control plane sends on a SigningRelay
@@ -272,4 +278,18 @@ message ExecSessionResponse {
     bytes stdout = 2;
     bytes stderr = 3;
     bool truncated = 4;
+}
+
+// RemoveWorkspaceRequest names the session workspace to remove:
+// <projects_root>/<tenant_id>/<project_id>/workspace/<key> on this daemon.
+message RemoveWorkspaceRequest {
+    string tenant_id = 1;
+    string project_id = 2;
+    string key = 3;
+}
+
+// RemoveWorkspaceResponse reports whether there was a workspace to remove. An
+// absent one is not an error: removal is idempotent.
+message RemoveWorkspaceResponse {
+    bool removed = 1;
 }

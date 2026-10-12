@@ -377,6 +377,14 @@ export interface ListTasksRequest {
   /** job_id narrows the listing to the task whose latest attempt is that job. */
   job_id?: string;
 
+  /**
+   * source_kind and source_ref, set together, narrow the listing to the task
+   * holding that source reservation in project_id's scope. A source nobody
+   * holds lists nothing; it is not an error.
+   */
+  source_kind?: string;
+  source_ref?: string;
+
   /** The shared paging parameters; see PageParams in page.ts. */
   limit?: number;
   offset?: number;
@@ -417,13 +425,27 @@ export interface FleetNode {
   node_type: string;
   status: FleetNodeStatus;
   capabilities: string[];
+  /**
+   * Every backend name this node is matched on: the primary backend first,
+   * then each capability, each once. Never null (go-quicbaas#700).
+   */
+  backends: string[];
   work_dir: string;
   last_seen: number;
   registered_at: number;
   disabled_at?: number;
   version: number;
   metadata: Record<string, string>;
+  // advertised_address is the address the node asked the control plane to
+  // dial (`fleet serve --advertise`), when it named one.
+  advertised_address?: string;
+  // reachability is what registration learned about dialing the node:
+  // "reachable" when the control plane probed it, "unverified" otherwise.
+  reachability?: FleetNodeReachability;
 }
+
+// FleetNodeReachability is what registration learned about dialing a node.
+export type FleetNodeReachability = 'reachable' | 'unverified';
 
 // DisableFleetNodeRequest identifies a fleet node to disable globally.
 export interface DisableFleetNodeRequest {

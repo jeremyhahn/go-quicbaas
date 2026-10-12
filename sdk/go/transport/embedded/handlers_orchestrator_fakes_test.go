@@ -46,6 +46,13 @@ type fakeAgentService struct {
 	// listJobs is what ListJobs answers with when a test needs particular
 	// records; nil keeps the single bare job the conversion tests rely on.
 	listJobs []*orchestration.JobStatus
+
+	// fleetNodes is what ListFleetNodes answers with when a test needs
+	// particular records; nil keeps the single bare node.
+	fleetNodes []*orchestration.FleetNode
+
+	// listAgentsErr, when set, is the error ListFleetNodes refuses with.
+	listAgentsErr error
 }
 
 func (f *fakeAgentService) err() error {
@@ -171,8 +178,14 @@ func (f *fakeAgentService) GetFleetNode(ctx context.Context, tenantID, agentID s
 }
 
 func (f *fakeAgentService) ListFleetNodes(ctx context.Context, tenantID string, filter *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
+	if f.listAgentsErr != nil {
+		return nil, f.listAgentsErr
+	}
 	if err := f.err(); err != nil {
 		return nil, err
+	}
+	if f.fleetNodes != nil {
+		return f.fleetNodes, nil
 	}
 	return []*orchestration.FleetNode{{ID: "a1"}}, nil
 }

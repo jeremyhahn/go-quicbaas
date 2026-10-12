@@ -84,6 +84,15 @@ type CreateProjectRESTRequest struct {
 	// SessionRotation is what a persistent worker session does when the
 	// pooled provider account under it rotates: "resume" or "fresh".
 	SessionRotation orchestration.SessionRotationPolicy `json:"session_rotation,omitempty"`
+
+	// WorkspaceManaged asks the server to provision the workspace and clone
+	// git_repo_url into it; exclusive with workspace_path.
+	// GitCredentialSecretRef names a tenant secret holding an HTTPS token for
+	// that clone, optionally paired with GitCredentialUsername. The reference
+	// is never stored on the project.
+	WorkspaceManaged       bool   `json:"workspace_managed,omitempty"`
+	GitCredentialSecretRef string `json:"git_credential_secret_ref,omitempty"`
+	GitCredentialUsername  string `json:"git_credential_username,omitempty"`
 }
 
 // UpdateProjectRESTRequest is the JSON body for PUT /api/v1/projects/{id}.
@@ -223,6 +232,13 @@ type ProjectRESTResponse struct {
 	// SessionRotation is what a persistent worker session does when the
 	// pooled provider account under it rotates: "resume" or "fresh".
 	SessionRotation orchestration.SessionRotationPolicy `json:"session_rotation,omitempty"`
+
+	// Provisioning of a server-managed workspace, flat like every other
+	// field; all empty for a bring-your-own-path project.
+	WorkspaceManaged      bool                                   `json:"workspace_managed,omitempty"`
+	ProvisioningState     orchestration.ProjectProvisioningState `json:"provisioning_state,omitempty"`
+	ProvisioningError     string                                 `json:"provisioning_error,omitempty"`
+	ProvisioningUpdatedAt time.Time                              `json:"provisioning_updated_at,omitzero"`
 }
 
 // CreateProjectRESTResponse is returned on successful project creation.
@@ -346,6 +362,10 @@ func (s *Server) HandleCreateProject(w http.ResponseWriter, r *http.Request) {
 		WorkspaceTmpfsMB:    req.WorkspaceTmpfsMB,
 		ContainerMemoryMB:   req.ContainerMemoryMB,
 		SessionRotation:     req.SessionRotation,
+
+		WorkspaceManaged:       req.WorkspaceManaged,
+		GitCredentialSecretRef: req.GitCredentialSecretRef,
+		GitCredentialUsername:  req.GitCredentialUsername,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -383,6 +403,43 @@ func (s *Server) HandleGetProject(w http.ResponseWriter, r *http.Request) {
 	resp, err := projectSvc.GetProject(ctx, &service.GetProjectRequest{
 		TenantID:  tenantID,
 		ProjectID: projectID,
+	})
+	if err != nil {
+		handleProjectError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, &GetProjectRESTResponse{
+		Project:   projectToREST(resp.Project),
+		Timestamp: resp.Timestamp,
+	})
+}
+
+// HandleGetProjectByName handles GET /api/v1/projects/by-name/{name}.
+func (s *Server) HandleGetProjectByName(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		RespondBadRequest(w, r, "project name is required")
+		return
+	}
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		RespondBadRequest(w, r, "tenant_id query parameter is required")
+		return
+	}
+
+	projectSvc := s.service.Project()
+	if projectSvc == nil {
+		RespondError(w, r, http.StatusInternalServerError, errors.New("project service unavailable"))
+		return
+	}
+
+	resp, err := projectSvc.GetProjectByName(ctx, &service.GetProjectByNameRequest{
+		TenantID: tenantID,
+		Name:     name,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -630,6 +687,11 @@ func projectToREST(p *orchestration.Project) *ProjectRESTResponse {
 		WorkspaceTmpfsMB:    p.Storage.WorkspaceTmpfsMB,
 		ContainerMemoryMB:   p.Storage.ContainerMemoryMB,
 		SessionRotation:     p.SessionRotation,
+
+		WorkspaceManaged:      p.Provisioning.Managed,
+		ProvisioningState:     p.Provisioning.State,
+		ProvisioningError:     p.Provisioning.Error,
+		ProvisioningUpdatedAt: p.Provisioning.UpdatedAt,
 	}
 	if p.Permissions.FleetNodeRoles != nil {
 		resp.FleetNodeRoles = p.Permissions.FleetNodeRoles

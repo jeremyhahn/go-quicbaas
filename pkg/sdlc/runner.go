@@ -3241,8 +3241,54 @@ func (s *runnerRun) teardownWorker(ctx context.Context, completed bool) error {
 	}
 	s.closeWorker(ctx)
 	return s.job.RunStage(context.WithoutCancel(ctx), orchestration.JobStageDiscard, func(hookCtx context.Context) error {
-		return s.runner.hooks.Discard(hookCtx, s.job.Context(), completed)
+		if err := s.runner.hooks.Discard(hookCtx, s.job.Context(), completed); err != nil {
+			return err
+		}
+		s.discardWorkspaces(hookCtx, completed)
+		return nil
 	})
+}
+
+// discardWorkspaces removes the session workspaces the task is done with,
+// once the session is closed and its container gone (go-quicbaas#777).
+//
+// EVERY EARLIER ATTEMPT'S WORKSPACE GOES. Each attempt checks out under its own
+// key (workspaceKey), so nothing runs in an earlier one again.
+//
+// THIS ATTEMPT'S GOES ONLY WHEN IT DELIVERED. A parked attempt keeps its
+// checkout for the person it is waiting on, until the task is readmitted or
+// deleted; a cancelled one may resume on the same key; and any other failure
+// is the task's conclusion to judge — a requeue, a hold or a spent budget —
+// which this run does not know, so the sweep removes it once the task is
+// terminal and not parked.
+//
+// A FAILED REMOVAL IS LOGGED, NEVER RAISED. The attempt's outcome is already
+// decided, and the sweep retries whatever is left.
+func (s *runnerRun) discardWorkspaces(ctx context.Context, completed bool) {
+	if err := s.job.DiscardJobWorkspaces(ctx, s.earlierAttempts()); err != nil {
+		s.job.Logger.Warnf("sdlc runner: task %s: earlier attempt workspaces not removed: %s", s.taskID(), err.Error())
+	}
+	if !completed {
+		return
+	}
+	if err := s.job.DiscardWorkspace(ctx); err != nil {
+		s.job.Logger.Warnf("sdlc runner: task %s: workspace not removed: %s", s.taskID(), err.Error())
+	}
+}
+
+// earlierAttempts lists the jobs the task concluded before this one, empty
+// for a run that never resolved its task.
+func (s *runnerRun) earlierAttempts() []string {
+	if s.attempt == nil || s.attempt.task == nil {
+		return nil
+	}
+	var earlier []string
+	for _, jobID := range s.attempt.task.AttemptHistory() {
+		if jobID != s.job.JobID {
+			earlier = append(earlier, jobID)
+		}
+	}
+	return earlier
 }
 
 // closeWorker closes the worker's session — and its container with it — and

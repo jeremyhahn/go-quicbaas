@@ -1024,6 +1024,28 @@ func (r *Runtime) SweepOrphanWorkspaceSpecs() ([]string, error) {
 	return r.workspaces.SweepSessionSpecs()
 }
 
+// RemoveWorkspace removes a session workspace this daemon provisioned, once
+// the control plane's task is done with it (go-quicbaas#777), and reports
+// whether there was one to remove.
+//
+// THE AUTHENTICATED TENANT DECIDES, as it does for provisioning: a principal
+// enrolled for one tenant may not have this daemon remove another tenant's
+// checkout. The manager confines the removal to this daemon's projects root,
+// checks it against the mount policy, never follows a link, and refuses a
+// workspace a session on this daemon still holds.
+func (r *Runtime) RemoveWorkspace(tenantID string, ws *orchestration.SessionWorkspace) (bool, error) {
+	if ws == nil {
+		return false, &orchestration.SessionWorkspaceInvalidError{Field: "workspace", Reason: "is required"}
+	}
+	if ws.TenantID != tenantID {
+		return false, &orchestration.SessionWorkspaceTenantError{SpawnTenant: tenantID, WorkspaceTenant: ws.TenantID}
+	}
+	if r.workspaces == nil {
+		return false, &orchestration.SessionWorkspaceUnsupportedError{Host: "agent " + r.workDir}
+	}
+	return r.workspaces.RemoveSessionWorkspace(ws.TenantID, ws.ProjectID, ws.Key)
+}
+
 // LoadPersistedSessions reads every session record under <workDir>/sessions
 // and returns the decoded entries. Records that cannot be decoded are moved to
 // "<name>.corrupt" and surfaced via PersistedSessionCorruptError so an

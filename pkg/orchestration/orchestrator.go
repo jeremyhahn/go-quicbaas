@@ -172,6 +172,11 @@ type agentServiceImpl struct {
 	// with another daemon, so two sweeps, or a sweep and an operator's close,
 	// cannot both write an ending.
 	reconcileMu keyedMutex
+
+	// remoteWorkspaces remembers which concluded jobs' fleet node workspaces
+	// are gone and when a removal was last tried; see
+	// ReconcileRemoteWorkspaces.
+	remoteWorkspaces remoteWorkspaceLedger
 }
 
 // TenantPolicyProvider supplies per-tenant policy overrides that can tighten
@@ -1708,7 +1713,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			Model:       model,
 			ContainerID: containerID,
 			AgentID:     spawnedOnAgent,
-			Workspace:   workspacePlacement(req.Workspace, sessionHost, workDir),
+			Workspace:   workspacePlacement(req.Workspace, req.Backend, sessionHost, workDir),
 			Timestamp:   now,
 		}, nil
 	}
@@ -1992,7 +1997,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		Model:       session.Model,
 		ContainerID: session.ContainerID,
 		AgentID:     spawnedOnAgent,
-		Workspace:   workspacePlacement(req.Workspace, sessionHost, workDir),
+		Workspace:   workspacePlacement(req.Workspace, req.Backend, sessionHost, workDir),
 		Timestamp:   now,
 	}, nil
 }
@@ -2503,6 +2508,7 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 		StopReason: resp.StopReason,
 		Timestamp:  time.Now().UnixNano(),
 		Usage:      resp.Usage,
+		ToolUse:    resp.ToolUse,
 	}, nil
 }
 
@@ -4282,6 +4288,10 @@ func (s *agentServiceImpl) ReadmitTask(ctx context.Context, tenantID, taskID str
 
 	s.logger.Debugf("readmitted task: id=%s tenant=%s", taskID, tenantID)
 
+	// The next attempt checks out under a key of its own, so the workspaces
+	// the earlier ones kept are done with.
+	s.discardAttemptWorkspaces(ctx, tenantID, taskID, s.attemptJobs(ctx, tenantID, taskID))
+
 	s.publishEvent(ctx, tenantID, "task_readmitted", map[string]string{
 		"task_id": taskID,
 	})
@@ -5501,8 +5511,16 @@ func (s *agentServiceImpl) GetFleetNode(ctx context.Context, tenantID, agentID s
 }
 
 // ListFleetNodes lists all registered agents for a tenant.
+//
+// The caller may list only its own tenant's fleet (authorizeCallerTarget). The
+// check runs before the scan because the store does not refuse a foreign
+// prefix: it scans within the caller's own keyspace and finds nothing there,
+// which read as "this tenant has no fleet nodes".
 func (s *agentServiceImpl) ListFleetNodes(ctx context.Context, tenantID string, filter *FleetNodeFilter) ([]*FleetNode, error) {
 	if err := s.validateTenant(ctx); err != nil {
+		return nil, err
+	}
+	if err := authorizeCallerTarget(ctx, "orchestration.ListFleetNodes", tenantID); err != nil {
 		return nil, err
 	}
 	if s.fleetRegistry == nil {

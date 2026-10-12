@@ -485,6 +485,12 @@ func (h *orchestratorHandler) handleListTasks(ctx context.Context, req interface
 	if sdkReq.JobID != "" {
 		url += "&job_id=" + neturl.QueryEscape(sdkReq.JobID)
 	}
+	if sdkReq.SourceKind != "" {
+		url += "&source_kind=" + neturl.QueryEscape(sdkReq.SourceKind)
+	}
+	if sdkReq.SourceRef != "" {
+		url += "&source_ref=" + neturl.QueryEscape(sdkReq.SourceRef)
+	}
 	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListTasksResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {

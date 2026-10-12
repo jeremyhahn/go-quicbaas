@@ -1842,7 +1842,7 @@ func (r *ToolRegistry) executeFleetList(ctx context.Context, args map[string]int
 	}
 
 	return marshalResult(pageResultFields(nodes, map[string]interface{}{
-		"nodes":     nodes.Items,
+		"nodes":     orchestration.FleetNodeViews(nodes.Items),
 		"count":     len(nodes.Items),
 		"timestamp": time.Now().Format(time.RFC3339Nano),
 	}))
@@ -1873,7 +1873,7 @@ func (r *ToolRegistry) executeFleetStatus(ctx context.Context, args map[string]i
 	}
 
 	return marshalResult(map[string]interface{}{
-		"node":      node,
+		"node":      orchestration.NewFleetNodeView(node),
 		"timestamp": time.Now().Format(time.RFC3339Nano),
 	})
 }

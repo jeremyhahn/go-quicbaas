@@ -90,6 +90,8 @@ func (b *OllamaBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prompt
 		return nil, &PromptError{SessionID: "", Cause: err}
 	}
 
+	// ToolUse stays nil: the chat call offers the model no tools, and this
+	// backend parses no tool calls out of the reply.
 	return &PromptResponse{
 		Content: []ContentBlock{
 			{

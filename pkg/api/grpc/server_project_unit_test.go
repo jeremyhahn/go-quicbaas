@@ -842,3 +842,81 @@ func TestProjectServer_ForwardsASigningKeyRetirement(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.Nil(t, updated, "an unreadable retirement reached the service")
 }
+
+// TestProjectServer_AuthzErrorMapping pins the status code for each typed
+// project authorization error. Before these were mapped they all fell through
+// to Internal, so a client could not tell a refusal from a server fault.
+func TestProjectServer_AuthzErrorMapping(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want codes.Code
+	}{
+		{"access-denied", &service.ProjectAccessDeniedError{ProjectID: "p", FleetNodeID: "a",
+			RequiredRole: orchestration.ProjectRoleLead, ActualRole: orchestration.ProjectRoleObserver}, codes.PermissionDenied},
+		{"unresolved", &service.ProjectUnresolvedError{TenantID: "t", ProjectID: "p", FleetNodeID: "a"}, codes.NotFound},
+		{"role-invalid", &service.ProjectRoleInvalidError{Role: "overlord"}, codes.InvalidArgument},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newProjectServer(t, &grpcMockProjectService{
+				getFunc: func(context.Context, *service.GetProjectRequest) (*service.GetProjectResponse, error) {
+					return nil, tc.err
+				},
+				grantFunc: func(context.Context, *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
+					return nil, tc.err
+				},
+			})
+			ctx := context.Background()
+
+			_, err := srv.GetProject(ctx, &pb.GetProjectRequest{TenantId: "t", ProjectId: "p"})
+			assert.Equal(t, tc.want, status.Code(err), "GetProject")
+
+			_, err = srv.GrantFleetNodeRole(ctx, &pb.GrantFleetNodeRoleRequest{
+				TenantId: "t", ProjectId: "p", NodeId: "a", Role: "lead",
+			})
+			assert.Equal(t, tc.want, status.Code(err), "GrantFleetNodeRole")
+		})
+	}
+}
+
+// TestProjectServer_CarriesManagedWorkspace proves the managed-workspace
+// request fields reach the service and the provisioning record comes back on
+// the wire. Before the proto carried them, a gRPC client could not ask for a
+// managed workspace and never saw its provisioning state.
+func TestProjectServer_CarriesManagedWorkspace(t *testing.T) {
+	updatedAt := time.Unix(1_700_000_000, 0).UTC()
+	var created *service.CreateProjectRequest
+	srv := newProjectServer(t, &grpcMockProjectService{
+		createFunc: func(_ context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error) {
+			created = req
+			p := sampleProject()
+			p.Provisioning = orchestration.ProjectProvisioning{
+				Managed:   true,
+				State:     orchestration.ProvisioningStateFailed,
+				Error:     "clone refused",
+				UpdatedAt: updatedAt,
+			}
+			return &service.CreateProjectResponse{Project: p, Timestamp: time.Now()}, nil
+		},
+	})
+
+	resp, err := srv.CreateProject(context.Background(), &pb.CreateProjectRequest{
+		TenantId:               "tenant-1",
+		Name:                   "api",
+		GitRepoUrl:             "https://git.example.test/api.git",
+		WorkspaceManaged:       true,
+		GitCredentialSecretRef: "clone-token",
+		GitCredentialUsername:  "bot",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created)
+	assert.True(t, created.WorkspaceManaged)
+	assert.Equal(t, "clone-token", created.GitCredentialSecretRef)
+	assert.Equal(t, "bot", created.GitCredentialUsername)
+
+	assert.True(t, resp.Project.WorkspaceManaged)
+	assert.Equal(t, "failed", resp.Project.ProvisioningState)
+	assert.Equal(t, "clone refused", resp.Project.ProvisioningError)
+	assert.Equal(t, updatedAt.Unix(), resp.Project.ProvisioningUpdatedAtUnix)
+}

@@ -545,6 +545,10 @@ func (s *Server) HandleOrchestratorListTasks(w http.ResponseWriter, r *http.Requ
 		// task is this an attempt at" are the same binding read both ways.
 		AgentID: r.URL.Query().Get("agent_id"),
 		JobID:   r.URL.Query().Get("job_id"),
+		// source_kind and source_ref ask which task holds one source
+		// reservation in project_id's scope.
+		SourceKind: orchestration.TaskSourceKind(r.URL.Query().Get("source_kind")),
+		SourceRef:  r.URL.Query().Get("source_ref"),
 	}
 
 	statusParam := r.URL.Query().Get("status")
@@ -1114,6 +1118,9 @@ func (s *Server) HandleListFleetNodeBackendModels(w http.ResponseWriter, r *http
 
 	models, err := agentSvc.ListBackendModels(ctx, backendName)
 	if err != nil {
+		if respondDaemonRoutingError(w, r, err) {
+			return
+		}
 		handleOrchestratorError(w, r, err)
 		return
 	}
@@ -1574,66 +1581,10 @@ func (s *Server) HandleListFleetNodes(w http.ResponseWriter, r *http.Request) {
 	// time now that a fleet larger than a page can be asked for, and the
 	// envelope names both rather than overloading one.
 	envelope := nodes.Envelope("nodes")
-	envelope["nodes"] = fleetNodesResponse(nodes.Items)
+	envelope["nodes"] = orchestration.FleetNodeViews(nodes.Items)
 	envelope["count"] = len(nodes.Items)
 
 	RespondJSON(w, r, http.StatusOK, envelope)
-}
-
-// fleetNodeResponse is a FleetNode as the REST API renders it: every
-// field of the record, plus the "backends" the record does not itself carry.
-//
-// AN OPERATOR READING THE REGISTRY MUST SEE WHAT DISPATCH SEES. A daemon that
-// serves claude, codex and opencode is one record whose primary Backend names
-// only the first, and whose other two live in Capabilities beside traits like
-// "gpu". Reading "backend": "claude" off that record, an operator concludes a
-// task routed on "codex" cannot land there — and is wrong, because the
-// registry's backend filter and the remote backend resolver both match on the
-// whole list (fleetNodeServesBackend). "backends" is that list, so the answer the
-// API gives and the answer dispatch gives are the same one (go-quicbaas#681).
-//
-// Additive by construction: "backend" and "capabilities" are rendered
-// unchanged, because the TypeScript SDK's FleetNode and the Agent
-// Fleet UI read them.
-type fleetNodeResponse struct {
-	*orchestration.FleetNode
-
-	// Backends is every name this agent will be matched on: the primary
-	// backend first, then each capability. Never null for a registered
-	// agent, so an operator never has to guess whether an empty answer
-	// means "serves nothing" or "field absent".
-	Backends []string `json:"backends"`
-}
-
-// fleetNodesResponse renders a fleet listing.
-func fleetNodesResponse(agents []*orchestration.FleetNode) []fleetNodeResponse {
-	out := make([]fleetNodeResponse, 0, len(agents))
-	for _, agent := range agents {
-		out = append(out, newFleetNodeResponse(agent))
-	}
-	return out
-}
-
-// newFleetNodeResponse renders one registration, deduplicating the primary
-// backend against the capability list so a daemon that advertises its primary
-// in both places is not reported as serving it twice.
-func newFleetNodeResponse(agent *orchestration.FleetNode) fleetNodeResponse {
-	if agent == nil {
-		return fleetNodeResponse{Backends: []string{}}
-	}
-	backends := make([]string, 0, len(agent.Capabilities)+1)
-	seen := make(map[string]struct{}, len(agent.Capabilities)+1)
-	for _, name := range append([]string{agent.Backend}, agent.Capabilities...) {
-		if name == "" {
-			continue
-		}
-		if _, dup := seen[name]; dup {
-			continue
-		}
-		seen[name] = struct{}{}
-		backends = append(backends, name)
-	}
-	return fleetNodeResponse{FleetNode: agent, Backends: backends}
 }
 
 // HandleGetFleetNode handles GET /api/v1/fleet/{nodeID} - Get a fleet node.
@@ -1660,7 +1611,7 @@ func (s *Server) HandleGetFleetNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, newFleetNodeResponse(agent))
+	RespondJSON(w, r, http.StatusOK, orchestration.NewFleetNodeView(agent))
 }
 
 // HandleRemoveFleetNode handles DELETE /api/v1/fleet/{nodeID} - Remove a fleet node.

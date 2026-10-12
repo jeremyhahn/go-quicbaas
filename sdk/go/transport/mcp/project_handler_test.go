@@ -59,6 +59,11 @@ func sampleProject() *orchestration.Project {
 		Spend: orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{
 			{Name: "daily", Size: 24 * time.Hour, MaxTokens: 1000},
 		}},
+		Provisioning: orchestration.ProjectProvisioning{
+			Managed:   true,
+			State:     orchestration.ProvisioningStateReady,
+			UpdatedAt: time.Unix(1700000050, 0).UTC(),
+		},
 		Metadata:  map[string]string{"env": "prod"},
 		CreatedAt: time.Unix(1700000000, 0).UTC(),
 		UpdatedAt: time.Unix(1700000100, 0).UTC(),
@@ -86,6 +91,7 @@ func TestProjectMethodToolNames(t *testing.T) {
 	want := map[string]string{
 		"Create":              "project_create",
 		"Get":                 "project_get",
+		"GetByName":           "project_get_by_name",
 		"List":                "project_list",
 		"Update":              "project_update",
 		"Delete":              "project_delete",
@@ -100,12 +106,6 @@ func TestProjectMethodToolNames(t *testing.T) {
 	}
 	if len(projectMethodTools) != len(want) {
 		t.Errorf("tool map has %d entries, want %d", len(projectMethodTools), len(want))
-	}
-
-	// GetByName has no server-side tool; it must stay unmapped so the transport
-	// reports Unimplemented instead of calling a tool that does not exist.
-	if _, ok := projectToolName("GetByName"); ok {
-		t.Error("GetByName must not be mapped until the server registers a by-name tool")
 	}
 
 	// Every mapped method needs a response transform, or the call would succeed
@@ -140,9 +140,10 @@ func TestProjectMCPTransformResponse_HappyPaths(t *testing.T) {
 	proj := sampleProject()
 
 	envelopes := map[string]interface{}{
-		"Create": toolResult(t, &service.CreateProjectResponse{Project: proj, Timestamp: proj.CreatedAt}),
-		"Get":    toolResult(t, &service.GetProjectResponse{Project: proj, Timestamp: proj.CreatedAt}),
-		"Update": toolResult(t, &service.UpdateProjectResponse{Project: proj, Timestamp: proj.UpdatedAt}),
+		"Create":    toolResult(t, &service.CreateProjectResponse{Project: proj, Timestamp: proj.CreatedAt}),
+		"Get":       toolResult(t, &service.GetProjectResponse{Project: proj, Timestamp: proj.CreatedAt}),
+		"GetByName": toolResult(t, &service.GetProjectResponse{Project: proj, Timestamp: proj.CreatedAt}),
+		"Update":    toolResult(t, &service.UpdateProjectResponse{Project: proj, Timestamp: proj.UpdatedAt}),
 	}
 	for method, result := range envelopes {
 		out, err := h.transformResponse(method, result)
@@ -174,6 +175,10 @@ func TestProjectMCPTransformResponse_HappyPaths(t *testing.T) {
 		}
 		if info.Metadata["env"] != "prod" {
 			t.Errorf("%s lost metadata: %#v", method, info.Metadata)
+		}
+		if !info.Provisioning.Managed || info.Provisioning.State != project.ProvisioningStateReady ||
+			!info.Provisioning.UpdatedAt.Equal(proj.Provisioning.UpdatedAt) {
+			t.Errorf("%s lost provisioning: %#v", method, info.Provisioning)
 		}
 		if !info.CreatedAt.Equal(proj.CreatedAt) || !info.UpdatedAt.Equal(proj.UpdatedAt) {
 			t.Errorf("%s lost timestamps: %v / %v", method, info.CreatedAt, info.UpdatedAt)
@@ -243,19 +248,12 @@ func TestProjectMCPTransformResponse_HappyPaths(t *testing.T) {
 func TestProjectMCPTransformResponse_ErrorPaths(t *testing.T) {
 	h := newProjectMCPHandler()
 
-	err := func() error {
-		_, err := h.transformResponse("GetByName", map[string]interface{}{})
-		return err
-	}()
+	_, err := h.transformResponse("Teleport", map[string]interface{}{})
 	if err == nil {
-		t.Fatal("GetByName must fail: no MCP tool implements it")
+		t.Fatal("an unsupported method must fail")
 	}
 	if !sdkerrors.IsUnimplemented(err) {
-		t.Errorf("GetByName error must be Unimplemented, got %v", sdkerrors.Code(err))
-	}
-
-	if _, err := h.transformResponse("Teleport", map[string]interface{}{}); err == nil {
-		t.Error("an unsupported method must fail")
+		t.Errorf("an unsupported method must be Unimplemented, got %v", sdkerrors.Code(err))
 	}
 	if _, err := h.transformResponse("Get", nil); err == nil {
 		t.Error("an empty tool result must fail")
@@ -285,7 +283,7 @@ func TestProjectMCPTransformResponse_ErrorPaths(t *testing.T) {
 // TestProjectMCPUnsupportedMethodError pins the operation name carried by the
 // Unimplemented error so callers can tell which transport refused.
 func TestProjectMCPUnsupportedMethodError(t *testing.T) {
-	err := newProjectUnsupportedError("GetByName")
+	err := newProjectUnsupportedError("Teleport")
 	qb, ok := err.(*sdkerrors.QBError)
 	if !ok {
 		t.Fatalf("expected *QBError, got %T", err)
@@ -293,8 +291,8 @@ func TestProjectMCPUnsupportedMethodError(t *testing.T) {
 	if qb.Code != sdkerrors.CodeUnimplemented {
 		t.Errorf("code = %v, want Unimplemented", qb.Code)
 	}
-	if qb.Op != "mcp.project.GetByName" {
-		t.Errorf("op = %q, want mcp.project.GetByName", qb.Op)
+	if qb.Op != "mcp.project.Teleport" {
+		t.Errorf("op = %q, want mcp.project.Teleport", qb.Op)
 	}
 }
 

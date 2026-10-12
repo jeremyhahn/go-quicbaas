@@ -1052,3 +1052,59 @@ func TestRetiredSigningKeysFromProto_EmptyIsNil(t *testing.T) {
 		t.Fatalf("got %+v, want nil", got)
 	}
 }
+
+// managedProjectServer records the create request and answers with a
+// provisioning record, so a test can watch the managed-workspace fields cross
+// the wire in both directions.
+type managedProjectServer struct {
+	pb.UnimplementedProjectServiceServer
+	lastCreate *pb.CreateProjectRequest
+}
+
+func (s *managedProjectServer) CreateProject(_ context.Context, req *pb.CreateProjectRequest) (*pb.CreateProjectResponse, error) {
+	s.lastCreate = req
+	return &pb.CreateProjectResponse{Project: &pb.Project{
+		Id: "proj-1", TenantId: req.TenantId, Name: req.Name,
+		WorkspaceManaged:          req.WorkspaceManaged,
+		ProvisioningState:         "cloning",
+		ProvisioningUpdatedAtUnix: projectUpdatedAt.Unix(),
+	}}, nil
+}
+
+// TestProjectHandler_ManagedWorkspaceCrossesTheWire proves a gRPC client can
+// ask for a managed workspace with a clone credential and reads back the
+// provisioning state the server reports.
+func TestProjectHandler_ManagedWorkspaceCrossesTheWire(t *testing.T) {
+	fake := &managedProjectServer{}
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		pb.RegisterProjectServiceServer(s, fake)
+	})
+	h := newProjectHandler(srv.dial(t))
+
+	resp, err := h.handleRequest(context.Background(), "quicbaas.Project", "Create", &project.CreateProjectRequest{
+		TenantID: "tenant-1", Name: "api",
+		GitRepoURL:             "https://forge.example/org/api.git",
+		WorkspaceManaged:       true,
+		GitCredentialSecretRef: "clone-token",
+		GitCredentialUsername:  "bot",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !fake.lastCreate.WorkspaceManaged || fake.lastCreate.GitCredentialSecretRef != "clone-token" ||
+		fake.lastCreate.GitCredentialUsername != "bot" {
+		t.Fatalf("managed-workspace fields lost on the request: %+v", fake.lastCreate)
+	}
+	info, ok := resp.(*project.ProjectInfo)
+	if !ok {
+		t.Fatalf("wrong response type: %T", resp)
+	}
+	want := project.ProjectProvisioning{
+		Managed:   true,
+		State:     project.ProvisioningStateCloning,
+		UpdatedAt: time.Unix(projectUpdatedAt.Unix(), 0).UTC(),
+	}
+	if info.Provisioning != want {
+		t.Fatalf("Provisioning = %+v, want %+v", info.Provisioning, want)
+	}
+}

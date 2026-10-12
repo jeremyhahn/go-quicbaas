@@ -318,6 +318,10 @@ type Server struct {
 	// type assertion itself.
 	fleetRegistrar interface{}
 
+	// fleetAddressProber refuses, at enrollment, a fleet node address the
+	// control plane cannot resolve and dial. Nil registers it unprobed.
+	fleetAddressProber FleetAddressProber
+
 	// eventIngestURL is the gRPC URL the agent register handler hands
 	// back to a daemon on enrollment so the daemon dials the gRPC
 	// listener (h2 ALPN) for PushEvents instead of the REST listener

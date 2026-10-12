@@ -596,6 +596,7 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 				Model:      model,
 				StopReason: stop,
 				Usage:      &usage,
+				ToolUse:    &ToolUseCensus{Calls: len(toolBlocks)},
 			}, nil
 		}
 		if final {

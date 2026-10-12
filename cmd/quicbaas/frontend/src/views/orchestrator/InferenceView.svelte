@@ -155,10 +155,7 @@
         return true;
       });
       backends = list;
-      // Default to ollama if present, otherwise first available.
-      const ollama = list.find((b) => b.name === 'ollama' || b.type === 'ollama');
-      const firstStateless = list.find((b) => !isSessionOnlyBackend(b));
-      const chosen = ollama ?? firstStateless ?? list[0];
+      const chosen = await defaultBackend(list);
       if (chosen) {
         selectedBackend = chosen.name;
       }
@@ -167,6 +164,27 @@
     } finally {
       backendsLoading = false;
     }
+  }
+
+  // defaultBackend picks the backend the page opens on: the first stateless
+  // backend, ollama first, whose model listing answers with models, so the
+  // page does not open on a backend whose daemon is unreachable
+  // (go-quicbaas#795). When none answers it falls back to ollama, then the
+  // first stateless backend, then the first backend.
+  async function defaultBackend(list: AgentBackendInfo[]): Promise<AgentBackendInfo | undefined> {
+    const isOllama = (b: AgentBackendInfo) => b.name === 'ollama' || b.type === 'ollama';
+    const stateless = list.filter((b) => !isSessionOnlyBackend(b));
+    const candidates = [...stateless.filter(isOllama), ...stateless.filter((b) => !isOllama(b))];
+    const client = await getSDKClient();
+    for (const b of candidates) {
+      try {
+        const models = await client.orchestrator.listBackendModels('any', b.name);
+        if (models && models.length > 0) return b;
+      } catch {
+        // Unreachable or failing: try the next backend.
+      }
+    }
+    return list.find(isOllama) ?? stateless[0] ?? list[0];
   }
 
   async function loadFleet(): Promise<void> {

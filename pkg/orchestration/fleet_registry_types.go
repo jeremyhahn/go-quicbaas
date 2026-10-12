@@ -96,6 +96,15 @@ type FleetNode struct {
 	Status       FleetNodeStatus `json:"status"`
 	Capabilities []string        `json:"capabilities,omitempty"`
 
+	// AdvertisedAddress is the host:port the node itself declared the control
+	// plane should dial (fleet serve --advertise). Empty when the node
+	// declared none and Host was derived from its bind address.
+	AdvertisedAddress string `json:"advertised_address,omitempty"`
+
+	// Reachability is whether the control plane dialed Host when it last
+	// registered the node. Empty on a record that predates the field.
+	Reachability FleetNodeReachability `json:"reachability,omitempty"`
+
 	// MaxConcurrentJobs is how many orchestration jobs this daemon can run at
 	// once -- its contribution to the fleet's worker-slot capacity.
 	//

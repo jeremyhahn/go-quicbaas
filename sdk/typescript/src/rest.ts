@@ -684,6 +684,8 @@ class RestOrchestratorClient implements OrchestratorClient {
     appendListParam(params, 'auto_spawn', page?.auto_spawn);
     appendListParam(params, 'agent_id', page?.agent_id);
     appendListParam(params, 'job_id', page?.job_id);
+    appendListParam(params, 'source_kind', page?.source_kind);
+    appendListParam(params, 'source_ref', page?.source_ref);
     appendCSVParam(params, 'statuses', page?.statuses);
     appendPageParams(params, page);
     const raw = await this.fetchJSON<unknown>(`/tasks?${params.toString()}`);

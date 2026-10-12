@@ -390,4 +390,35 @@ describe('InferenceView', () => {
       expect(withAgent).toBe(true);
     });
   });
+
+  it('shows the routing failure that names the unreachable daemon', async () => {
+    const message = 'backend "ollama": fleet node daemon at 198.51.100.10:9091 is unreachable: connection refused';
+    mockListBackendModels.mockRejectedValue(new Error(message));
+
+    render(InferenceView);
+
+    await waitFor(() => {
+      expect(screen.getByText(/198\.51\.100\.10:9091 is unreachable/)).toBeTruthy();
+    });
+  });
+
+  it('defaults the backend to one whose models are reachable', async () => {
+    mockListBackends.mockResolvedValue([
+      { name: 'ollama', type: 'ollama', capabilities: {}, default_model: 'qwen3:1.7b' },
+      { name: 'vllm', type: 'vllm', capabilities: {}, default_model: '' },
+    ]);
+    mockListBackendModels.mockImplementation(async (_node: string, backend: string) => {
+      if (backend === 'ollama') {
+        throw new Error('backend "ollama": fleet node daemon at 198.51.100.10:9091 is unreachable');
+      }
+      return ['llama3.1:8b'];
+    });
+
+    render(InferenceView);
+
+    await waitFor(() => {
+      const select = screen.getByLabelText('Select inference backend') as HTMLSelectElement;
+      expect(select.value).toBe('vllm');
+    });
+  });
 });

@@ -329,14 +329,19 @@ func (s *Server) startOrchestration() error {
 		// spawn naming a workspace is then refused rather than placed
 		// somewhere the mount policy never admitted.
 		workspaces, wsErr := orchestration.NewWorkspaceManager(projectsRoot)
+		s.sessionWorkspaces = nil
 		if wsErr != nil {
 			s.logger.Warnf("Managed project workspaces disabled: %v", wsErr)
 		} else {
+			s.sessionWorkspaces = workspaces
 			// The spec directories an in-process session of a previous run
 			// left behind each hold a forge token; no session survived the
 			// restart to release them, so they go before anything spawns.
 			// The same sweep removes the workspace of every concluded task.
 			workspaces.SetConclusions(orchestration.TaskWorkspaceConclusions{Store: taskStore})
+			// Removal is checked against the same policy the workspace was
+			// admitted under as a bind-mount source (go-quicbaas#777).
+			workspaces.SetMountPolicy(mountPolicy)
 			specs, sweepErr := workspaces.SweepSessionSpecs()
 			if sweepErr != nil {
 				return sweepErr
@@ -345,6 +350,10 @@ func (s *Server) startOrchestration() error {
 				s.logger.Infof("Removed %d workspace spec(s) and concluded workspace(s) a previous run left behind", len(specs))
 			}
 			wirer.SetWorkspaceProvisioner(workspaces)
+			// Workspaces pinned to fleet nodes are reconciled on the same
+			// tick, through each node's RemoveWorkspace RPC.
+			remote, _ := agentSvc.(remoteWorkspaceReconciler)
+			s.startWorkspaceSweep(workspaces, remote)
 			if wireErr := s.wireProjectWorkspaces(projectStore, workspaces); wireErr != nil {
 				s.logger.Warnf("Managed project workspaces disabled: %v", wireErr)
 			}

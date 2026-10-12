@@ -622,6 +622,8 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		if usage != nil {
 			out.Usage = usage
 		}
+		// The wire frame carries no tool census, so out.ToolUse stays nil: a
+		// remote turn does not report its tool use.
 		out.Content = append(out.Content, protoContentBlocksToRuntime(frame.GetContent())...)
 		if req.EventCallback != nil {
 			for _, block := range frame.GetContent() {
@@ -828,6 +830,36 @@ func (b *RemoteACPBackend) ExecInSession(ctx context.Context, sessionID string, 
 	}, nil
 }
 
+// Compile-time check: a remote backend removes the session workspaces its
+// daemon holds.
+var _ WorkspaceRemover = (*RemoteACPBackend)(nil)
+
+// RemoveWorkspace implements WorkspaceRemover: the daemon removes the
+// workspace under its own projects root, with the same confinement and mount
+// policy it provisions under. A workspace of another tenant is refused here,
+// before the call: this backend speaks for its registration's tenant only.
+func (b *RemoteACPBackend) RemoveWorkspace(ctx context.Context, ws *SessionWorkspace) (bool, error) {
+	if err := ws.Validate(); err != nil {
+		return false, err
+	}
+	if ws.TenantID != b.registration.TenantID {
+		return false, &SessionWorkspaceTenantError{SpawnTenant: b.registration.TenantID, WorkspaceTenant: ws.TenantID}
+	}
+	client, err := b.client(ctx)
+	if err != nil {
+		return false, err
+	}
+	resp, rpcErr := client.RemoveWorkspace(b.authCtx(ctx), &proto.RemoveWorkspaceRequest{
+		TenantId:  ws.TenantID,
+		ProjectId: ws.ProjectID,
+		Key:       ws.Key,
+	})
+	if rpcErr != nil {
+		return false, &RemoteBackendRPCError{Op: "RemoveWorkspace", Err: rpcErr}
+	}
+	return resp.GetRemoved(), nil
+}
+
 // Capabilities reports the superset of capabilities a remote daemon exposes.
 // The actual backend on the other side may be ACP or Ollama; we don't
 // discover that here and instead advertise the intersection most callers
@@ -862,19 +894,25 @@ func (b *RemoteACPBackend) ToolGuidance() string { return "" }
 func (b *RemoteACPBackend) ListModels(ctx context.Context) ([]string, error) {
 	cl, err := b.client(ctx)
 	if err != nil {
-		return nil, &RemoteBackendDialError{Host: b.registration.Host, Err: err}
+		return nil, b.routingError("ListModels", &RemoteBackendDialError{Host: b.registration.Host, Err: err})
 	}
 	resp, err := cl.ListModels(b.authCtx(ctx), &proto.ListModelsRequest{
 		Backend:  b.backend,
 		TenantId: b.registration.TenantID,
 	})
 	if err != nil {
-		return nil, &RemoteBackendRPCError{Op: "ListModels", Err: err}
+		return nil, b.routingError("ListModels", &RemoteBackendRPCError{Op: "ListModels", Err: err})
 	}
 	if resp.GetModels() == nil {
 		return []string{}, nil
 	}
 	return resp.GetModels(), nil
+}
+
+// routingError names the daemon address and backend a failed op was routed
+// to, so a gateway can report which node did not answer (go-quicbaas#795).
+func (b *RemoteACPBackend) routingError(op string, err error) error {
+	return &DaemonRoutingError{Backend: b.backend, Address: b.registration.Host, Op: op, Err: err}
 }
 
 // client opens (or reuses) a gRPC connection to the registration's host.

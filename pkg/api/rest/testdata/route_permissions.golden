@@ -192,6 +192,7 @@ GET /api/v1/orchestrator/workflows/{name} permission orchestrator:workflow_read
 GET /api/v1/parameters/ permission parameters:list
 GET /api/v1/parameters/* permission parameters:read
 GET /api/v1/projects/ permission project:list
+GET /api/v1/projects/by-name/{name} permission project:read
 GET /api/v1/projects/{id} permission project:read
 GET /api/v1/query/{type}/{index} permission kv:range
 GET /api/v1/registry/services/{service} permission service_registry:read

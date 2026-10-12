@@ -195,6 +195,7 @@ GET /api/v1/orchestrator/workflows/{name}
 GET /api/v1/parameters/
 GET /api/v1/parameters/*
 GET /api/v1/projects/
+GET /api/v1/projects/by-name/{name}
 GET /api/v1/projects/{id}
 GET /api/v1/query/{type}/{index}
 GET /api/v1/registry/services/{service}

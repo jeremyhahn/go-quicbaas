@@ -269,6 +269,28 @@ type PromptResponse struct {
 	// agentServiceImpl.recordTurnUsage. Nil means "not measured", not "zero":
 	// no usage is recorded for such a turn rather than an estimate.
 	Usage *TokenUsage `json:"usage,omitempty"`
+
+	// ToolUse is the turn's tool census, or nil when the backend does not
+	// report tool use. It is the census, not Content, that answers "did this
+	// turn use a tool": Content carries the assistant's text, and only the
+	// OpenVINO backend adds a tool_use block per call to it.
+	//
+	// The ACP backend reports a census on its persistent paths (stream-json
+	// tool_use blocks, JSON-RPC tool_call updates), as does OpenVINO. The ACP
+	// one-shot and exec paths, codex exec, Ollama, API inference and the
+	// remote ACP backend leave it nil: their output either carries no tool
+	// record or none this package has captured and parses.
+	ToolUse *ToolUseCensus `json:"tool_use,omitempty"`
+}
+
+// ToolUseCensus counts the tool invocations an agent published in one turn.
+//
+// It keeps the same nil/zero distinction as TokenUsage: a nil census means the
+// backend does not report tool use, and a census whose Calls is zero means the
+// backend reported that the turn used no tool.
+type ToolUseCensus struct {
+	// Calls is how many tool invocations the turn published.
+	Calls int `json:"calls"`
 }
 
 // Session represents an active agent session.

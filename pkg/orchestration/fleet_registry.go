@@ -471,6 +471,8 @@ func (r *fleetRegistry) RefreshFleetNode(ctx context.Context, agent *FleetNode) 
 	refreshed := *current
 	refreshed.Name = agent.Name
 	refreshed.Host = agent.Host
+	refreshed.AdvertisedAddress = agent.AdvertisedAddress
+	refreshed.Reachability = agent.Reachability
 	refreshed.Backend = agent.Backend
 	refreshed.Capabilities = agent.Capabilities
 	refreshed.NodeType = agent.NodeType

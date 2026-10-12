@@ -25,7 +25,7 @@ func TestProjectHandlerHappyPaths(t *testing.T) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
+		_, _ = w.Write([]byte(projectEnvelopeBody))
 	}))
 	defer server.Close()
 
@@ -47,7 +47,7 @@ func TestProjectHandlerHappyPaths(t *testing.T) {
 			http.MethodGet, "/api/v1/projects/p1"},
 		{"GetByName", "GetByName",
 			&project.GetProjectByNameRequest{TenantID: "t1", Name: "proj"},
-			http.MethodGet, "/api/v1/projects"},
+			http.MethodGet, "/api/v1/projects/by-name/proj"},
 		{"Update", "Update",
 			&project.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1", Name: "renamed"},
 			http.MethodPut, "/api/v1/projects/p1"},
@@ -156,7 +156,7 @@ func TestProjectHandler_NewFieldsAreOnTheJSONWire(t *testing.T) {
 		}
 		bodies = append(bodies, body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
+		_, _ = w.Write([]byte(projectEnvelopeBody))
 	}))
 	defer server.Close()
 
@@ -228,7 +228,7 @@ func TestProjectHandler_NewFieldsAreOnTheJSONWire(t *testing.T) {
 // update → get against a stateful fake, asserting both fields ride the JSON
 // body out and the project shape back.
 func TestProjectHandler_AutonomyAndContextReposRoundTrip(t *testing.T) {
-	stored := project.ProjectInfo{ID: "p1", TenantID: "t1", Name: "api"}
+	stored := projectWire{ID: "p1", TenantID: "t1", Name: "api"}
 	var lastUpdate map[string]json.RawMessage
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +264,7 @@ func TestProjectHandler_AutonomyAndContextReposRoundTrip(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(stored); err != nil {
+		if err := json.NewEncoder(w).Encode(projectEnvelopeWire{Project: &stored}); err != nil {
 			t.Errorf("encode response: %v", err)
 		}
 	}))
@@ -396,7 +396,7 @@ func TestProjectHandler_StorageIsOnTheFlatJSONWire(t *testing.T) {
 		}
 		bodies = append(bodies, body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
+		_, _ = w.Write([]byte(projectEnvelopeBody))
 	}))
 	defer server.Close()
 
@@ -463,7 +463,7 @@ func TestProjectHandler_SessionRotationIsOnTheJSONWire(t *testing.T) {
 		}
 		bodies = append(bodies, body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"p1","session_rotation":"fresh"}`))
+		_, _ = w.Write([]byte(`{"project":{"id":"p1","session_rotation":"fresh"},"timestamp":"2026-10-11T00:00:00Z"}`))
 	}))
 	defer server.Close()
 
@@ -500,7 +500,7 @@ func TestProjectHandler_SessionRotationIsOnTheJSONWire(t *testing.T) {
 // update body only when set, and that the park record decodes off the
 // project that comes back.
 func TestProjectHandler_ParkAndResumeOverREST(t *testing.T) {
-	stored := project.ProjectInfo{ID: "p1", TenantID: "t1", Name: "api"}
+	stored := projectWire{ID: "p1", TenantID: "t1", Name: "api"}
 	parkedAt := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	var lastUpdate map[string]json.RawMessage
 
@@ -524,7 +524,7 @@ func TestProjectHandler_ParkAndResumeOverREST(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(stored); err != nil {
+		if err := json.NewEncoder(w).Encode(projectEnvelopeWire{Project: &stored}); err != nil {
 			t.Errorf("encode response: %v", err)
 		}
 	}))
@@ -563,5 +563,154 @@ func TestProjectHandler_ParkAndResumeOverREST(t *testing.T) {
 	}
 	if info.Parked || !info.ParkedAt.IsZero() {
 		t.Fatalf("resumed info = %+v, want an open project", info)
+	}
+}
+
+// projectEnvelopeBody is the smallest body the server answers a project
+// create, get, get-by-name or update with.
+const projectEnvelopeBody = `{"project":{"id":"p1"},"timestamp":"2026-10-11T00:00:00Z"}`
+
+// serverProjectRecord is one project as pkg/api/rest.ProjectRESTResponse
+// renders it: flat keys, wrapped in the {project, timestamp} envelope.
+const serverProjectRecord = `{
+	"id": "p1", "tenant_id": "t1", "name": "my app", "description": "d",
+	"workspace_agent_id": "node-1", "workspace_path": "/ws/p1",
+	"git_repo_url": "https://forge.example/org/app", "git_default_branch": "main",
+	"git_author_name": "agent-app", "git_signing_key_name": "app-signing",
+	"git_ssh_key_name": "app-access",
+	"agent_roles": {"node-1": "lead"},
+	"gpu_minutes": 30, "max_concurrency": 2,
+	"workspace_tier": "ephemeral", "workspace_tmpfs_mb": 4096,
+	"workspace_managed": true, "provisioning_state": "ready",
+	"provisioning_updated_at": "2026-10-11T12:00:00Z",
+	"metadata": {"team": "core"}
+}`
+
+// TestProjectHandler_DecodesTheServerEnvelope is the go-quicbaas#1261 decode
+// defect: create, get, get-by-name and update answer {project, timestamp}
+// with a flat record, and every one must come back as a populated
+// ProjectInfo rather than an empty one.
+func TestProjectHandler_DecodesTheServerEnvelope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"project":` + serverProjectRecord + `,"timestamp":"2026-10-11T12:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	updated := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	cases := map[string]interface{}{
+		"Create":    &project.CreateProjectRequest{TenantID: "t1", Name: "my app"},
+		"Get":       &project.GetProjectRequest{TenantID: "t1", ProjectID: "p1"},
+		"GetByName": &project.GetProjectByNameRequest{TenantID: "t1", Name: "my app"},
+		"Update":    &project.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1", Description: "d"},
+	}
+	for method, req := range cases {
+		t.Run(method, func(t *testing.T) {
+			resp, err := tr.Request(context.Background(), "Project", method, req)
+			if err != nil {
+				t.Fatalf("%s: %v", method, err)
+			}
+			info, ok := resp.(*project.ProjectInfo)
+			if !ok {
+				t.Fatalf("wrong response type: %T", resp)
+			}
+			if info.ID != "p1" || info.TenantID != "t1" || info.Name != "my app" {
+				t.Errorf("identity = %q/%q/%q, want p1/t1/my app", info.ID, info.TenantID, info.Name)
+			}
+			if info.Workspace.FleetNodeID != "node-1" || info.Workspace.Path != "/ws/p1" {
+				t.Errorf("workspace = %+v", info.Workspace)
+			}
+			if info.Git.RepoURL != "https://forge.example/org/app" || info.Git.DefaultBranch != "main" ||
+				info.Git.Author.Name != "agent-app" || info.Git.Signing.Key.Name != "app-signing" ||
+				info.Git.SSHKey.Name != "app-access" {
+				t.Errorf("git = %+v", info.Git)
+			}
+			if info.Permissions.FleetNodeRoles["node-1"] != project.ProjectRoleLead {
+				t.Errorf("roles = %v", info.Permissions.FleetNodeRoles)
+			}
+			if info.Quotas.GPUMinutes != 30 || info.Quotas.MaxConcurrency != 2 {
+				t.Errorf("quotas = %+v", info.Quotas)
+			}
+			if info.Storage.WorkspaceTier != project.WorkspaceTierEphemeral || info.Storage.WorkspaceTmpfsMB != 4096 {
+				t.Errorf("storage = %+v", info.Storage)
+			}
+			want := project.ProjectProvisioning{Managed: true, State: project.ProvisioningStateReady, UpdatedAt: updated}
+			if info.Provisioning != want {
+				t.Errorf("provisioning = %+v, want %+v", info.Provisioning, want)
+			}
+			if info.Metadata["team"] != "core" {
+				t.Errorf("metadata = %v", info.Metadata)
+			}
+		})
+	}
+}
+
+// TestProjectHandler_EmptyEnvelopeIsAnError: a 200 that carries no project
+// must not reach the caller as a zero ProjectInfo.
+func TestProjectHandler_EmptyEnvelopeIsAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"timestamp":"2026-10-11T12:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	_, err := tr.Request(context.Background(), "Project", "Get",
+		&project.GetProjectRequest{TenantID: "t1", ProjectID: "p1"})
+	if err == nil {
+		t.Fatal("expected an error for an envelope without a project")
+	}
+}
+
+// TestProjectHandler_GetByNameAddressesTheByNameRoute pins the canonical
+// GET /api/v1/projects/by-name/{name} route, with the name path-escaped and
+// the tenant carried as a query parameter.
+func TestProjectHandler_GetByNameAddressesTheByNameRoute(t *testing.T) {
+	var gotPath, gotTenant string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		gotTenant = r.URL.Query().Get("tenant_id")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(projectEnvelopeBody))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	if _, err := tr.Request(context.Background(), "Project", "GetByName",
+		&project.GetProjectByNameRequest{TenantID: "t 1", Name: "my app/x"}); err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	if want := "/api/v1/projects/by-name/my%20app%2Fx"; gotPath != want {
+		t.Errorf("path = %s, want %s", gotPath, want)
+	}
+	if gotTenant != "t 1" {
+		t.Errorf("tenant_id = %q, want %q", gotTenant, "t 1")
+	}
+}
+
+// TestProjectHandler_ListDecodesFlatProjects: the list body carries the same
+// flat records plus the paging envelope.
+func TestProjectHandler_ListDecodesFlatProjects(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"projects":[` + serverProjectRecord + `],"total":1,"limit":50,"offset":0}`))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	resp, err := tr.Request(context.Background(), "Project", "List", &project.ListProjectsRequest{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	list, ok := resp.(*project.ListProjectsResponse)
+	if !ok {
+		t.Fatalf("wrong response type: %T", resp)
+	}
+	if list.Total != 1 || len(list.Projects) != 1 {
+		t.Fatalf("list = %+v, want one project of total 1", list)
+	}
+	if p := list.Projects[0]; p.Workspace.Path != "/ws/p1" || p.Git.RepoURL == "" || !p.Provisioning.Managed {
+		t.Errorf("listed project lost its flat fields: %+v", p)
 	}
 }

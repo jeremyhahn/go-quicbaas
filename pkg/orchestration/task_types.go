@@ -418,6 +418,27 @@ type TaskFilter struct {
 	// (JobStatus.AgentID) and is resolved onto the task when the listing is
 	// paged. See agentServiceImpl.ListTasksPage.
 	AgentID string `json:"agent_id,omitempty"`
+
+	// SourceKind and SourceRef restrict the listing to the task that holds
+	// one source reservation: the answer to "which task adopted this issue".
+	// They are set together; one without the other is refused.
+	//
+	// THE ANSWER COMES FROM THE RESERVATION INDEX, not a scan. A source is
+	// reserved per project, so ProjectID names the scope the source is looked
+	// up in — an empty ProjectID asks for the unscoped reservation — and is
+	// part of the source's key rather than a facet when a source is set. A
+	// source nobody holds lists nothing; it is not an error.
+	SourceKind TaskSourceKind `json:"source_kind,omitempty"`
+	SourceRef  string         `json:"source_ref,omitempty"`
+}
+
+// Source returns the source reservation the filter asks for, or nil when it
+// asks for none.
+func (f *TaskFilter) Source() *TaskSourceRef {
+	if f == nil || (f.SourceKind == "" && f.SourceRef == "") {
+		return nil
+	}
+	return &TaskSourceRef{Kind: f.SourceKind, Ref: f.SourceRef}
 }
 
 // TaskStore manages orchestration tasks backed by QuicBaaS KV store.

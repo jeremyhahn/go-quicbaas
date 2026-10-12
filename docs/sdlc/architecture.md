@@ -550,6 +550,23 @@ reason, the token accounting, **the classification** (`outcome=`) when the
 turn changed nothing, and **the reply itself** — truncated at
 `TurnReplyLimit` (4096 bytes) with the cut marked, never dropped.
 
+**Tool use is counted from the backend's census, not from `Content`.** Most
+backends put only the assistant's text in `PromptResponse.Content`, so
+counting blocks alone reads a turn that ran tools as one that ran none
+(go-quicbaas#799). `PromptResponse.ToolUse` (a `ToolUseCensus`, beside
+`Usage`) carries the count, and `ReadAgentTurn` records it as the
+`tool_use` block count. Like `Usage`, nil and zero differ: a zero census is
+a backend reporting that the turn used no tool, and is recorded as
+`tool_use:0`; a nil census means the backend does not report tool use, and
+no `tool_use` entry is recorded.
+
+| Backend path | Census |
+|---|---|
+| ACP persistent stream-json | counts the assistant messages' `tool_use` blocks |
+| ACP JSON-RPC | counts `tool_call` session updates (`tool_call_update` is progress, not a call) |
+| OpenVINO | counts the tool calls it ran; also adds a `tool_use` block per call to `Content` |
+| ACP one-shot and exec, codex exec, Ollama, API inference, remote ACP | nil: their output carries no tool record this package parses |
+
 **The cap applies where the reply is WRITTEN, never before it is
 classified.** The stop declaration sits at the end of the reply, so capping
 at read time would cut it off any reply longer than the cap — and the turn

@@ -347,7 +347,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	}
 
 	// The Project surface is a closed set of tools. A method with no tool
-	// (GetByName) fails fast with a typed Unimplemented naming the transport
+	// fails fast with a typed Unimplemented naming the transport
 	// rather than asking the server for a tool it does not register.
 	if isProject {
 		if _, ok := projectToolName(method); !ok {

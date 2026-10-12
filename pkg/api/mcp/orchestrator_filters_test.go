@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -146,6 +147,30 @@ func TestMCPFleetList_NarrowsOnServedBackend(t *testing.T) {
 	require.Equal(t, "claude", svc.listFleetNodesPageFilter.Backend)
 	require.Equal(t, float64(2), facetCounts(t, decoded, "backend")["codex"],
 		"both codex-serving daemons must be counted")
+}
+
+// TestMCPFleetList_ScopeDeniedIsAnError pins that the service's fleet-listing
+// refusals reach an MCP caller as the typed forbidden error, never as an empty
+// listing (go-quicbaas#680).
+func TestMCPFleetList_ScopeDeniedIsAnError(t *testing.T) {
+	_, crossTenant := tenantctx.Target(tenantctx.WithSystem(context.Background()), "orchestration.ListFleetNodes", "acme")
+	denials := map[string]error{
+		"cross-tenant": crossTenant,
+		"scan denied":  errors.New(errors.ErrForbidden, "fleet.ListFleetNodes", "scope denied"),
+	}
+	for name, denial := range denials {
+		t.Run(name, func(t *testing.T) {
+			svc := &fleetMockAgentService{}
+			svc.listAgentsErr = denial
+			reg := newFleetRegistry(t, svc)
+
+			result, err := reg.executeAgentTool(tenantctx.WithSystem(context.Background()), "quicbaas_fleet_list",
+				map[string]interface{}{"tenant_id": "acme"})
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.Equal(t, errors.ErrForbidden, errors.Code(err))
+		})
+	}
 }
 
 // TestMCPListSessions_CarriesTheNewNarrowings proves the four arguments the

@@ -25,6 +25,7 @@ import (
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
@@ -229,6 +230,9 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	if s.fleetRegistry != nil {
 		registrar := newFleetRegistrarAdapter(s.fleetRegistry)
 		restServer.SetFleetRegistrar(registrar)
+		// Refuse at enrollment an address this control plane cannot reach,
+		// rather than registering a node every routed call then fails on.
+		restServer.SetFleetAddressProber(orchestration.NewAgentAddressProber(nil, nil, 0))
 
 		// Wire the heartbeat self-healing recoverer. When the central
 		// daemon restarts and loses its in-memory agent registry, an

@@ -57,7 +57,11 @@ func (f *TaskFilter) FacetBase() *TaskFilter {
 	}
 	base := *f
 	base.Statuses = nil
-	base.ProjectID = ""
+	// A source is reserved per project, so with a source set the project is
+	// part of the source's key and stays on the base (see TaskFilter.SourceKind).
+	if f.Source() == nil {
+		base.ProjectID = ""
+	}
 	base.AgentID = ""
 	return &base
 }

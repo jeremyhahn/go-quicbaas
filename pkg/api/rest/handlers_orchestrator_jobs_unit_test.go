@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // doOrchReq dispatches a request through the full router so chi URL params
@@ -247,11 +248,20 @@ func TestHandleOrchestratorListAgents_OK(t *testing.T) {
 func TestHandleOrchestratorListAgents_ScopeDenied(t *testing.T) {
 	s, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
-	agentSvc.listAgentsErr = qerrors.New(qerrors.ErrForbidden, "fleet.ListFleetNodes", "scope denied")
-
-	w := doOrchReq(t, s, http.MethodGet, "/api/v1/fleet?tenant_id=acme", "")
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", w.Code)
+	// The refusal the orchestration service returns for a system caller
+	// naming tenant acme (go-quicbaas#680), and the one a store whose Scan
+	// denies the prefix returns (go-qrdb#648).
+	_, crossTenant := tenantctx.Target(tenantctx.WithSystem(context.Background()), "orchestration.ListFleetNodes", "acme")
+	denials := map[string]error{
+		"cross-tenant": crossTenant,
+		"scan denied":  qerrors.New(qerrors.ErrForbidden, "fleet.ListFleetNodes", "scope denied"),
+	}
+	for name, denial := range denials {
+		agentSvc.listAgentsErr = denial
+		w := doOrchReq(t, s, http.MethodGet, "/api/v1/fleet?tenant_id=acme", "")
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("%s: expected 403, got %d", name, w.Code)
+		}
 	}
 }
 

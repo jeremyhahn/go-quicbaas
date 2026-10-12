@@ -356,6 +356,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// Project -> project (tools are registered without a quicbaas_ prefix)
 	"project_create":            {"project", "create"},
 	"project_get":               {"project", "read"},
+	"project_get_by_name":       {"project", "read"},
 	"project_list":              {"project", "list"},
 	"project_update":            {"project", "update"},
 	"project_delete":            {"project", "delete"},

@@ -89,18 +89,20 @@ func (a *fleetRegistrarAdapter) RegisterFleetNode(ctx context.Context, req *iam.
 	}
 
 	reg := &orchestration.FleetNode{
-		ID:           req.NodeID,
-		TenantID:     req.TenantID,
-		Name:         req.Name,
-		Host:         req.Host,
-		Backend:      primary,
-		NodeType:     req.NodeType,
-		Kind:         orchestration.FleetNodeKind(req.Kind),
-		Status:       orchestration.FleetNodeStatusRegistered,
-		Capabilities: req.Backends,
-		LastSeen:     now,
-		RegisteredAt: now,
-		Metadata:     req.Metadata,
+		ID:                req.NodeID,
+		TenantID:          req.TenantID,
+		Name:              req.Name,
+		Host:              req.Host,
+		AdvertisedAddress: req.AdvertisedAddress,
+		Reachability:      orchestration.FleetNodeReachability(req.Reachability),
+		Backend:           primary,
+		NodeType:          req.NodeType,
+		Kind:              orchestration.FleetNodeKind(req.Kind),
+		Status:            orchestration.FleetNodeStatusRegistered,
+		Capabilities:      req.Backends,
+		LastSeen:          now,
+		RegisteredAt:      now,
+		Metadata:          req.Metadata,
 	}
 
 	err := a.registry.RegisterFleetNode(ctx, reg)

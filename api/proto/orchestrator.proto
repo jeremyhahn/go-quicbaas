@@ -511,6 +511,12 @@ message TaskFilter {
     // agent_id and job_id resolve through the task's latest attempt.
     string agent_id = 9;
     string job_id = 10;
+
+    // source_kind and source_ref name one source reservation, set together:
+    // the listing is the task that holds it, read from the reservation index
+    // in the scope of project_id. A source nobody holds lists nothing.
+    string source_kind = 11;
+    string source_ref = 12;
 }
 
 // OrchestratorWorkItem represents a decomposed unit of work.
@@ -542,6 +548,10 @@ message FleetNode {
     uint64 version = 13;
     map<string, string> metadata = 14;
     string model = 15;
+    // backends is every name this node is matched on: the primary backend
+    // first, then each capability, each once (FleetNode.ServedBackends,
+    // go-quicbaas#700).
+    repeated string backends = 16;
 }
 
 // FleetNodeFilter specifies criteria for listing fleet nodes.

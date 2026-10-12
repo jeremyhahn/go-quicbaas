@@ -63,6 +63,8 @@ func provisionKeys(t *testing.T, m *WorkspaceManager, keys ...string) map[string
 		if err != nil {
 			t.Fatalf("ProvisionSession %s: %v", key, err)
 		}
+		// The session that made it has ended: nothing holds the workspace.
+		p.Release()
 		dirs[key] = p.Dir
 	}
 	return dirs
@@ -73,9 +75,13 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
+// reviewKeyLikeAttempt is a review checkout's key whose trailing hash reads
+// as an attempt suffix.
+const reviewKeyLikeAttempt = "review-7-abcdef0-default-a1234567"
+
 // TestSweepSessionSpecs_RemovesConcludedWorkspacesOnly: a completed and a
-// failed task's workspaces go; a pending task's, a task the store does not
-// hold, and a key that is no task's attempt stay.
+// failed task's workspaces go, and so does that of a task the store no longer
+// holds; a pending task's and a key that is no task's attempt stay.
 func TestSweepSessionSpecs_RemovesConcludedWorkspacesOnly(t *testing.T) {
 	t.Parallel()
 	m := newTestWorkspaceManager(t)
@@ -83,25 +89,60 @@ func TestSweepSessionSpecs_RemovesConcludedWorkspacesOnly(t *testing.T) {
 	seedConclusionTask(t, store, "done", TaskStatusCompleted)
 	seedConclusionTask(t, store, "dead", TaskStatusFailed)
 	seedConclusionTask(t, store, "live", TaskStatusPending)
-	dirs := provisionKeys(t, m, "done-a1", "done-a2", "dead-a1", "live-a1", "ghost-a1", "review-pr7")
+	dirs := provisionKeys(t, m, "done-a1", "done-a2", "dead-a1", "live-a1", "ghost-a1", "review-pr7", reviewKeyLikeAttempt)
 	m.SetConclusions(TaskWorkspaceConclusions{Store: store})
 
 	removed, err := m.SweepSessionSpecs()
 	if err != nil {
 		t.Fatalf("SweepSessionSpecs: %v", err)
 	}
-	if len(removed) != 3 {
-		t.Fatalf("removed %v, want the three concluded workspaces", removed)
+	if len(removed) != 4 {
+		t.Fatalf("removed %v, want the four concluded workspaces", removed)
 	}
-	for _, key := range []string{"done-a1", "done-a2", "dead-a1"} {
+	for _, key := range []string{"done-a1", "done-a2", "dead-a1", "ghost-a1"} {
 		if pathExists(dirs[key]) {
-			t.Errorf("workspace %s of a concluded task survived", key)
+			t.Errorf("workspace %s of a concluded or deleted task survived", key)
 		}
 	}
-	for _, key := range []string{"live-a1", "ghost-a1", "review-pr7"} {
+	for _, key := range []string{"live-a1", "review-pr7", reviewKeyLikeAttempt} {
 		if !pathExists(dirs[key]) {
-			t.Errorf("workspace %s was removed though its task is live or unknown", key)
+			t.Errorf("workspace %s was removed though it belongs to no concluded task", key)
 		}
+	}
+}
+
+// TestSweepConcludedWorkspaces_KeepsSpecsAndHeldWorkspaces: the periodic sweep
+// runs while sessions are live, so it leaves spec directories and every
+// workspace a session holds, and removes the rest of the concluded ones.
+func TestSweepConcludedWorkspaces_KeepsSpecsAndHeldWorkspaces(t *testing.T) {
+	t.Parallel()
+	m := newTestWorkspaceManager(t)
+	store := NewTaskStore(NewMemoryTaskKV(), NewProcessClaimArbiter())
+	seedConclusionTask(t, store, "done", TaskStatusCompleted)
+	dirs := provisionKeys(t, m, "done-a1")
+	held, err := m.ProvisionSession(&SessionWorkspace{
+		TenantID: "t1", ProjectID: "p1", Key: "done-a2",
+		Spec: &WorkspaceSpecFiles{Files: map[string][]byte{WorkspaceSpecFile: []byte("{}")}},
+	})
+	if err != nil {
+		t.Fatalf("ProvisionSession: %v", err)
+	}
+	m.SetConclusions(TaskWorkspaceConclusions{Store: store})
+
+	removed, err := m.SweepConcludedWorkspaces()
+	if err != nil {
+		t.Fatalf("SweepConcludedWorkspaces: %v", err)
+	}
+	if len(removed) != 1 || pathExists(dirs["done-a1"]) {
+		t.Fatalf("removed %v, want only the released done-a1", removed)
+	}
+	if !pathExists(held.Dir) || !pathExists(held.SpecDir) {
+		t.Fatal("the periodic sweep took a held workspace or its spec directory")
+	}
+
+	held.Release()
+	if removed, err := m.SweepConcludedWorkspaces(); err != nil || len(removed) != 1 || pathExists(held.Dir) {
+		t.Fatalf("after release: removed %v, err %v; want done-a2 removed", removed, err)
 	}
 }
 
@@ -139,7 +180,10 @@ func TestTaskWorkspaceConclusions_ProjectMismatchAndBlockedAreKept(t *testing.T)
 	if got, err := c.WorkspaceConcluded(ctx, "t1", "other", "done-a1"); err != nil || got {
 		t.Fatalf("other project: got %v, %v; want false", got, err)
 	}
-	for _, key := range []string{"done", "-a1", "done-a0", "done-ax"} {
+	if got, err := c.WorkspaceConcluded(ctx, "t1", "p1", "ghost-a1"); err != nil || !got {
+		t.Fatalf("task the store does not hold: got %v, %v; want true", got, err)
+	}
+	for _, key := range []string{"done", "-a1", "done-a0", "done-ax", reviewKeyLikeAttempt} {
 		if got, err := c.WorkspaceConcluded(ctx, "t1", "p1", key); err != nil || got {
 			t.Fatalf("key %q: got %v, %v; want false", key, got, err)
 		}

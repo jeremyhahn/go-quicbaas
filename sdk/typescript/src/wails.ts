@@ -361,6 +361,8 @@ class WailsOrchestratorClient implements OrchestratorClient {
     if (page?.auto_spawn !== undefined) req.auto_spawn = page.auto_spawn;
     if (page?.agent_id !== undefined) req.agent_id = page.agent_id;
     if (page?.job_id !== undefined) req.job_id = page.job_id;
+    if (page?.source_kind !== undefined) req.source_kind = page.source_kind;
+    if (page?.source_ref !== undefined) req.source_ref = page.source_ref;
     return adoptPage<Task>(await orchestratorBinding().ListTasks(req), 'tasks');
   }
 

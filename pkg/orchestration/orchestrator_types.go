@@ -980,6 +980,10 @@ type PromptSessionResponse struct {
 	// it is surfaced here so a caller can show what the turn cost without a
 	// second round trip to the usage API.
 	Usage *TokenUsage `json:"usage,omitempty"`
+
+	// ToolUse is the turn's tool census, or nil when the backend does not
+	// report tool use (see PromptResponse.ToolUse).
+	ToolUse *ToolUseCensus `json:"tool_use,omitempty"`
 }
 
 // PromptTurnAck acknowledges that the orchestrator accepted an agent turn for

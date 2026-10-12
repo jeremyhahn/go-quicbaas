@@ -70,6 +70,10 @@ var orchestratorMethodTools = map[string]string{
 	"ListTaskArtifacts": "quicbaas_task_list_artifacts",
 	"ListWorkflows":     "quicbaas_orchestrator_list_workflows",
 
+	// The fleet registry tools are named after the fleet, not the RPC
+	// (quicbaas_fleet_list, not quicbaas_orchestrator_list_fleet_nodes).
+	"ListFleetNodes": "quicbaas_fleet_list",
+
 	// A tenant's runtime cost settings (go-quicbaas#1058).
 	"GetCostSettings": "quicbaas_orchestrator_cost_settings_get",
 	"SetCostSettings": "quicbaas_orchestrator_cost_settings_set",
@@ -98,6 +102,7 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 
 	"ListBackends":      decodeMCPListBackends,
 	"ListRunners":       decodeMCPListRunners,
+	"ListFleetNodes":    decodeMCPListFleetNodes,
 	"ListTaskArtifacts": decodeMCPListTaskArtifacts,
 	"ListWorkflows":     decodeMCPListWorkflows,
 	"BlockTask":         decodeMCPBlockTask,
@@ -371,6 +376,21 @@ func decodeMCPListRunners(raw []byte) (interface{}, error) {
 	}
 	if resp.Runners == nil {
 		resp.Runners = []*orchestrator.JobRunnerInfo{}
+	}
+	return &resp, nil
+}
+
+// decodeMCPListFleetNodes decodes quicbaas_fleet_list output. The tool renders
+// each node as orchestration.FleetNodeView, whose JSON is the SDK FleetNode's,
+// served "backends" included (go-quicbaas#700).
+func decodeMCPListFleetNodes(raw []byte) (interface{}, error) {
+	var resp orchestrator.ListFleetNodesResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.ListFleetNodes", "failed to decode MCP fleet list result")
+	}
+	if resp.Nodes == nil {
+		resp.Nodes = []*orchestrator.FleetNode{}
 	}
 	return &resp, nil
 }

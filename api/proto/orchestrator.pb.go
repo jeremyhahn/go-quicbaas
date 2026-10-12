@@ -1373,8 +1373,13 @@ type TaskFilter struct {
 	// tasks queued for claim (false). Absence means every dispatch mode.
 	AutoSpawn *bool `protobuf:"varint,8,opt,name=auto_spawn,json=autoSpawn,proto3,oneof" json:"auto_spawn,omitempty"`
 	// agent_id and job_id resolve through the task's latest attempt.
-	AgentId       string `protobuf:"bytes,9,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	JobId         string `protobuf:"bytes,10,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	AgentId string `protobuf:"bytes,9,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	JobId   string `protobuf:"bytes,10,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	// source_kind and source_ref name one source reservation, set together:
+	// the listing is the task that holds it, read from the reservation index
+	// in the scope of project_id. A source nobody holds lists nothing.
+	SourceKind    string `protobuf:"bytes,11,opt,name=source_kind,json=sourceKind,proto3" json:"source_kind,omitempty"`
+	SourceRef     string `protobuf:"bytes,12,opt,name=source_ref,json=sourceRef,proto3" json:"source_ref,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1479,6 +1484,20 @@ func (x *TaskFilter) GetJobId() string {
 	return ""
 }
 
+func (x *TaskFilter) GetSourceKind() string {
+	if x != nil {
+		return x.SourceKind
+	}
+	return ""
+}
+
+func (x *TaskFilter) GetSourceRef() string {
+	if x != nil {
+		return x.SourceRef
+	}
+	return ""
+}
+
 // OrchestratorWorkItem represents a decomposed unit of work.
 type OrchestratorWorkItem struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1566,21 +1585,25 @@ func (x *OrchestratorWorkItem) GetDependencies() []string {
 
 // FleetNode represents a node registered in the fleet registry.
 type FleetNode struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	TenantId      string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Host          string                 `protobuf:"bytes,4,opt,name=host,proto3" json:"host,omitempty"`
-	Backend       string                 `protobuf:"bytes,5,opt,name=backend,proto3" json:"backend,omitempty"`
-	NodeType      string                 `protobuf:"bytes,6,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
-	Status        FleetNodeStatus        `protobuf:"varint,7,opt,name=status,proto3,enum=quicbaas.orchestrator.v1.FleetNodeStatus" json:"status,omitempty"`
-	Capabilities  []string               `protobuf:"bytes,8,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
-	WorkDir       string                 `protobuf:"bytes,10,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
-	LastSeen      *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
-	RegisteredAt  *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=registered_at,json=registeredAt,proto3" json:"registered_at,omitempty"`
-	Version       uint64                 `protobuf:"varint,13,opt,name=version,proto3" json:"version,omitempty"`
-	Metadata      map[string]string      `protobuf:"bytes,14,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Model         string                 `protobuf:"bytes,15,opt,name=model,proto3" json:"model,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Id           string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	TenantId     string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Name         string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Host         string                 `protobuf:"bytes,4,opt,name=host,proto3" json:"host,omitempty"`
+	Backend      string                 `protobuf:"bytes,5,opt,name=backend,proto3" json:"backend,omitempty"`
+	NodeType     string                 `protobuf:"bytes,6,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
+	Status       FleetNodeStatus        `protobuf:"varint,7,opt,name=status,proto3,enum=quicbaas.orchestrator.v1.FleetNodeStatus" json:"status,omitempty"`
+	Capabilities []string               `protobuf:"bytes,8,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	WorkDir      string                 `protobuf:"bytes,10,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
+	LastSeen     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	RegisteredAt *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=registered_at,json=registeredAt,proto3" json:"registered_at,omitempty"`
+	Version      uint64                 `protobuf:"varint,13,opt,name=version,proto3" json:"version,omitempty"`
+	Metadata     map[string]string      `protobuf:"bytes,14,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Model        string                 `protobuf:"bytes,15,opt,name=model,proto3" json:"model,omitempty"`
+	// backends is every name this node is matched on: the primary backend
+	// first, then each capability, each once (FleetNode.ServedBackends,
+	// go-quicbaas#700).
+	Backends      []string `protobuf:"bytes,16,rep,name=backends,proto3" json:"backends,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1711,6 +1734,13 @@ func (x *FleetNode) GetModel() string {
 		return x.Model
 	}
 	return ""
+}
+
+func (x *FleetNode) GetBackends() []string {
+	if x != nil {
+		return x.Backends
+	}
+	return nil
 }
 
 // FleetNodeFilter specifies criteria for listing fleet nodes.
@@ -12527,7 +12557,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\bmetadata\x18\x03 \x03(\v22.quicbaas.orchestrator.v1.TaskResult.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x83\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc3\x03\n" +
 	"\n" +
 	"TaskFilter\x12\x1b\n" +
 	"\tteam_name\x18\x01 \x01(\tR\bteamName\x12<\n" +
@@ -12544,7 +12574,11 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"auto_spawn\x18\b \x01(\bH\x00R\tautoSpawn\x88\x01\x01\x12\x19\n" +
 	"\bagent_id\x18\t \x01(\tR\aagentId\x12\x15\n" +
 	"\x06job_id\x18\n" +
-	" \x01(\tR\x05jobIdB\r\n" +
+	" \x01(\tR\x05jobId\x12\x1f\n" +
+	"\vsource_kind\x18\v \x01(\tR\n" +
+	"sourceKind\x12\x1d\n" +
+	"\n" +
+	"source_ref\x18\f \x01(\tR\tsourceRefB\r\n" +
 	"\v_auto_spawn\"\xbd\x01\n" +
 	"\x14OrchestratorWorkItem\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
@@ -12553,7 +12587,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05title\x18\x03 \x01(\tR\x05title\x12 \n" +
 	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1a\n" +
 	"\bpriority\x18\x05 \x01(\x05R\bpriority\x12\"\n" +
-	"\fdependencies\x18\x06 \x03(\tR\fdependencies\"\xe3\x04\n" +
+	"\fdependencies\x18\x06 \x03(\tR\fdependencies\"\xff\x04\n" +
 	"\tFleetNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x12\n" +
@@ -12569,7 +12603,8 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\rregistered_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\fregisteredAt\x12\x18\n" +
 	"\aversion\x18\r \x01(\x04R\aversion\x12M\n" +
 	"\bmetadata\x18\x0e \x03(\v21.quicbaas.orchestrator.v1.FleetNode.MetadataEntryR\bmetadata\x12\x14\n" +
-	"\x05model\x18\x0f \x01(\tR\x05model\x1a;\n" +
+	"\x05model\x18\x0f \x01(\tR\x05model\x12\x1a\n" +
+	"\bbackends\x18\x10 \x03(\tR\bbackends\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\t\x10\n" +

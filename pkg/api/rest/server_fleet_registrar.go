@@ -15,6 +15,8 @@
 
 package rest
 
+import "context"
+
 // SetFleetRegistrar wires the fleet-registry registrar used by the
 // mTLS agent-register handler. The caller should pass an
 // iam.FleetRegistrar implementation; the server stores it as an opaque
@@ -28,4 +30,26 @@ func (s *Server) SetFleetRegistrar(registrar interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fleetRegistrar = registrar
+}
+
+// FleetAddressProber checks that the control plane can resolve and dial a
+// fleet node's address. *orchestration.AgentAddressProber satisfies it.
+type FleetAddressProber interface {
+	Probe(ctx context.Context, address string) error
+}
+
+// SetFleetAddressProber wires the probe the mTLS agent-register handler runs
+// on the address it is about to register, refusing one the control plane
+// cannot reach. Passing nil registers addresses unprobed, as "unverified".
+func (s *Server) SetFleetAddressProber(prober FleetAddressProber) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fleetAddressProber = prober
+}
+
+// fleetAddressProberOrNil returns the wired prober, or nil.
+func (s *Server) fleetAddressProberOrNil() FleetAddressProber {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fleetAddressProber
 }

@@ -212,6 +212,35 @@ type ContextRepo struct {
 	Ref string `json:"ref"`
 }
 
+// ProvisioningState is the lifecycle state of a server-managed workspace.
+type ProvisioningState string
+
+const (
+	// ProvisioningStatePending means the workspace directory exists and the
+	// clone has not started.
+	ProvisioningStatePending ProvisioningState = "pending"
+	// ProvisioningStateCloning means the clone is in progress.
+	ProvisioningStateCloning ProvisioningState = "cloning"
+	// ProvisioningStateReady means sessions may run in the workspace.
+	ProvisioningStateReady ProvisioningState = "ready"
+	// ProvisioningStateFailed means provisioning failed; see
+	// ProjectProvisioning.Error.
+	ProvisioningStateFailed ProvisioningState = "failed"
+)
+
+// ProjectProvisioning tracks server-managed workspace provisioning. The zero
+// value describes a bring-your-own-path project the server never provisions.
+type ProjectProvisioning struct {
+	// Managed is true when the server owns the workspace directory.
+	Managed bool `json:"managed,omitempty"`
+	// State is the provisioning state; empty for an unmanaged project.
+	State ProvisioningState `json:"state,omitempty"`
+	// Error is the failure reason when State is failed.
+	Error string `json:"error,omitempty"`
+	// UpdatedAt is the time of the last state transition.
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
+}
+
 // ProjectInfo contains information about a project.
 //
 // The JSON tags are the canonical project wire shape. Every transport that
@@ -233,14 +262,15 @@ type ProjectInfo struct {
 	// started is dispatched, adopted or triaged, and work in flight
 	// finishes. ParkedAt and ParkedBy say when and by whom; both are zero
 	// while the project is open.
-	Parked       bool               `json:"parked,omitempty"`
-	ParkedAt     time.Time          `json:"parked_at,omitzero"`
-	ParkedBy     string             `json:"parked_by,omitempty"`
-	ContextRepos []ContextRepo      `json:"context_repos,omitempty"`
-	Git          ProjectGit         `json:"git"`
-	Permissions  ProjectPermissions `json:"permissions"`
-	Quotas       ProjectQuotas      `json:"quotas"`
-	Spend        spend.Limits       `json:"spend,omitzero"`
+	Parked       bool                `json:"parked,omitempty"`
+	ParkedAt     time.Time           `json:"parked_at,omitzero"`
+	ParkedBy     string              `json:"parked_by,omitempty"`
+	ContextRepos []ContextRepo       `json:"context_repos,omitempty"`
+	Git          ProjectGit          `json:"git"`
+	Provisioning ProjectProvisioning `json:"provisioning"`
+	Permissions  ProjectPermissions  `json:"permissions"`
+	Quotas       ProjectQuotas       `json:"quotas"`
+	Spend        spend.Limits        `json:"spend,omitzero"`
 	// SessionRotation is the project's session rotation policy: "resume",
 	// "fresh", or empty for a project that never chose one, which runs
 	// "resume".
@@ -324,6 +354,18 @@ type CreateProjectRequest struct {
 	// pooled provider account under it rotates. Empty is "resume"; an
 	// unrecognized policy is refused by the server.
 	SessionRotation SessionRotationPolicy `json:"session_rotation,omitempty"`
+
+	// WorkspaceManaged asks the server to provision the workspace and, when
+	// GitRepoURL is set, clone it in the background; the project's
+	// Provisioning reports progress. Exclusive with WorkspacePath.
+	WorkspaceManaged bool `json:"workspace_managed,omitempty"`
+
+	// GitCredentialSecretRef names a tenant secret holding an HTTPS access
+	// token for the clone. It needs WorkspaceManaged and an https://
+	// GitRepoURL, excludes GitSSHKeyName, and is never stored on the project.
+	// GitCredentialUsername optionally pairs a username with the token.
+	GitCredentialSecretRef string `json:"git_credential_secret_ref,omitempty"`
+	GitCredentialUsername  string `json:"git_credential_username,omitempty"`
 }
 
 // UpdateProjectRequest is a request to update an existing project.

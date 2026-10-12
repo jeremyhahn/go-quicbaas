@@ -145,6 +145,11 @@ type WorkspacePlacement struct {
 	// means the daemon's own in-process backend.
 	AgentHost string `json:"agent_host,omitempty"`
 
+	// Backend is the backend the session ran on, which a fleet node's
+	// workspace is reached through when it is removed. Empty on a placement
+	// recorded before the field existed.
+	Backend string `json:"backend,omitempty"`
+
 	// Key is the workspace key the placement is for.
 	Key string `json:"key"`
 
@@ -206,6 +211,11 @@ type WorkspaceProvisioner interface {
 	// the workspace of every concluded task. It is called at startup, while
 	// the host holds no session.
 	SweepSessionSpecs() ([]string, error)
+
+	// RemoveSessionWorkspace removes the named workspace and its checkout,
+	// reporting whether there was one to remove. It refuses a workspace a live
+	// session holds.
+	RemoveSessionWorkspace(tenantID, projectID, key string) (bool, error)
 }
 
 var _ WorkspaceProvisioner = (*WorkspaceManager)(nil)
@@ -276,14 +286,10 @@ func (m *WorkspaceManager) provisionSession(ws *SessionWorkspace) (*ProvisionedW
 
 	parent := filepath.Join(ws.ProjectID, workspaceDirName)
 	rel := filepath.Join(parent, ws.Key)
-	if pin := ws.Pin; pin != nil && pin.Key == ws.Key {
-		if err := requirePinnedWorkspace(tenant, ws, rel, dir); err != nil {
-			return nil, err
-		}
-	} else if err := makeConfinedDirs(tenant, dir, ws.ProjectID, parent, rel); err != nil {
+	if err := m.placeAndHold(tenant, ws, dir, parent, rel); err != nil {
 		return nil, err
 	}
-	provisioned := &ProvisionedWorkspace{Dir: dir}
+	provisioned := &ProvisionedWorkspace{Dir: dir, release: func() { m.unhold(dir) }}
 	if ws.Spec == nil {
 		return provisioned, nil
 	}
@@ -296,6 +302,7 @@ func (m *WorkspaceManager) provisionSession(ws *SessionWorkspace) (*ProvisionedW
 	// exactly as long as the session.
 	ws.Spec.Wipe()
 	if err != nil {
+		m.unhold(dir)
 		return nil, err
 	}
 	specRel := filepath.Join(parent, specName)
@@ -307,8 +314,31 @@ func (m *WorkspaceManager) provisionSession(ws *SessionWorkspace) (*ProvisionedW
 			_ = r.RemoveAll(specRel)
 			_ = r.Close()
 		}
+		m.unhold(dir)
 	}
 	return provisioned, nil
+}
+
+// placeAndHold creates the workspace directory (or checks the pinned one is
+// there) and takes its hold, under the workspace's lock: a removal either
+// finishes before the directory is placed, which then recreates it, or finds
+// it held. The workspace is held from here until the session releases it, so
+// no removal takes a checkout its container mounts.
+func (m *WorkspaceManager) placeAndHold(tenant *os.Root, ws *SessionWorkspace, dir, parent, rel string) error {
+	unlock := m.lockWorkspace(dir)
+	defer unlock()
+	if pin := ws.Pin; pin != nil && pin.Key == ws.Key {
+		if err := requirePinnedWorkspace(tenant, ws, rel, dir); err != nil {
+			return err
+		}
+	} else if err := makeConfinedDirs(tenant, dir, ws.ProjectID, parent, rel); err != nil {
+		return err
+	}
+	if m.hooks != nil && m.hooks.provisioned != nil {
+		m.hooks.provisioned(dir)
+	}
+	m.hold(dir)
+	return nil
 }
 
 // tenantRoot opens <root>/<tenant> as an os.Root, creating it (and the
@@ -423,6 +453,20 @@ var errNotADirectory = errors.New("not a directory")
 // directories only, never links, so a link a tenant planted cannot aim the
 // removal outside its subtree.
 func (m *WorkspaceManager) SweepSessionSpecs() ([]string, error) {
+	return m.sweep(true)
+}
+
+// SweepConcludedWorkspaces removes the workspace of every concluded task under
+// the projects root and returns what it removed. It leaves spec directories
+// and every workspace a live session holds in place, so it is safe while the
+// host serves sessions; the daemon runs it periodically.
+func (m *WorkspaceManager) SweepConcludedWorkspaces() ([]string, error) {
+	return m.sweep(false)
+}
+
+// sweep walks every tenant, removing concluded workspaces and, when specs is
+// set, every spec directory.
+func (m *WorkspaceManager) sweep(specs bool) ([]string, error) {
 	tenants, err := os.ReadDir(m.root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -435,7 +479,7 @@ func (m *WorkspaceManager) SweepSessionSpecs() ([]string, error) {
 		if !tenant.IsDir() || validateWorkspaceSegment("tenant_id", tenant.Name()) != nil {
 			continue
 		}
-		swept, sweepErr := m.sweepTenantSpecs(tenant.Name())
+		swept, sweepErr := m.sweepTenantSpecs(tenant.Name(), specs)
 		removed = append(removed, swept...)
 		if sweepErr != nil {
 			return removed, sweepErr
@@ -444,8 +488,9 @@ func (m *WorkspaceManager) SweepSessionSpecs() ([]string, error) {
 	return removed, nil
 }
 
-// sweepTenantSpecs removes one tenant's spec directories through its root.
-func (m *WorkspaceManager) sweepTenantSpecs(tenantID string) ([]string, error) {
+// sweepTenantSpecs removes one tenant's concluded workspaces and, when specs
+// is set, its spec directories, through its root.
+func (m *WorkspaceManager) sweepTenantSpecs(tenantID string, specs bool) ([]string, error) {
 	tenantDir := filepath.Join(m.root, tenantID)
 	root, err := os.OpenRoot(tenantDir)
 	if err != nil {
@@ -471,7 +516,7 @@ func (m *WorkspaceManager) sweepTenantSpecs(tenantID string) ([]string, error) {
 		}
 		for _, entry := range entries {
 			if entry.IsDir() && !strings.HasPrefix(entry.Name(), workspaceSpecDirName) {
-				path, sweepErr := m.sweepConcludedWorkspace(root, tenantDir, tenantID, project.Name(), parent, entry)
+				path, sweepErr := m.sweepConcludedWorkspace(tenantID, project.Name(), entry)
 				if sweepErr != nil {
 					return removed, sweepErr
 				}
@@ -480,7 +525,7 @@ func (m *WorkspaceManager) sweepTenantSpecs(tenantID string) ([]string, error) {
 				}
 				continue
 			}
-			if !entry.IsDir() {
+			if !entry.IsDir() || !specs {
 				continue
 			}
 			rel := filepath.Join(parent, entry.Name())

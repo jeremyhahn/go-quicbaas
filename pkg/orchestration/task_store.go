@@ -1097,6 +1097,9 @@ func (s *taskStore) ListTaskRecords(ctx context.Context, tenantID string, filter
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
+	if source := filter.Source(); source != nil {
+		return s.listSourceHolder(ctx, tenantID, filter, source)
+	}
 
 	// The scan is bounded to this tenant's subtree, so no other tenant's tasks
 	// are reachable from here.
@@ -1146,6 +1149,45 @@ func (s *taskStore) ListTaskRecords(ctx context.Context, tenantID string, filter
 
 // taskMatchesFilter reports whether task satisfies every populated field of
 // filter. A nil filter matches everything.
+// listSourceHolder answers a listing that names a source: the task the source
+// reservation index names as the source's holder, if it satisfies the rest of
+// the filter. The index is read, not the tenant's task subtree, so the answer
+// costs one lookup however many tasks the tenant owns. A source nobody holds,
+// or a holder whose record is gone, lists nothing.
+func (s *taskStore) listSourceHolder(ctx context.Context, tenantID string, filter *TaskFilter, source *TaskSourceRef) (*TaskListing, error) {
+	indexKey, err := taskSourceIndexKey(tenantID, filter.ProjectID, source)
+	if err != nil {
+		return nil, err
+	}
+	holderID, err := s.sourceHolder(ctx, indexKey)
+	if err != nil {
+		return nil, err
+	}
+	listing := &TaskListing{Tasks: make([]*Task, 0, 1)}
+	if holderID == "" {
+		return listing, nil
+	}
+
+	recordKey, err := taskRecordKey(tenantID, holderID)
+	if err != nil {
+		return nil, err
+	}
+	holder, err := s.load(ctx, recordKey, tenantID, holderID)
+	if err != nil {
+		var notFound *TaskNotFoundError
+		if errors.As(err, &notFound) {
+			// The reservation outlived its task: nothing holds the source.
+			return listing, nil
+		}
+		return nil, err
+	}
+	if holder.TenantID != tenantID || !taskMatchesFilter(holder, filter) {
+		return listing, nil
+	}
+	listing.Tasks = append(listing.Tasks, holder)
+	return listing, nil
+}
+
 func taskMatchesFilter(task *Task, filter *TaskFilter) bool {
 	if filter == nil {
 		return true
@@ -1176,6 +1218,10 @@ func taskMatchesFilter(task *Task, filter *TaskFilter) bool {
 	// attempt at; matching the whole history instead would answer with a task
 	// that has since been re-dispatched somewhere else.
 	if filter.JobID != "" && task.LatestAttemptJobID() != filter.JobID {
+		return false
+	}
+	if source := filter.Source(); source != nil &&
+		(task.Source == nil || task.Source.Kind != source.Kind || task.Source.Ref != source.Ref) {
 		return false
 	}
 	// AgentID is deliberately NOT matched here: it is derived from the

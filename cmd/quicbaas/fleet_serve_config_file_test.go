@@ -154,6 +154,42 @@ func TestResolveServeConfig_BadFlagValue(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestResolveServeConfig_AdvertisePrecedence: the advertised address follows
+// the configuration convention — flag beats environment beats file beats the
+// empty default — with or without a config file.
+func TestResolveServeConfig_AdvertisePrecedence(t *testing.T) {
+	path := writeServeConfig(t, serveConfigBody+"advertise_addr: file-host:9191\n")
+
+	cfg, err := resolveServeConfig(parsedServeCommand(t, "--config", path).Flags())
+	require.NoError(t, err)
+	assert.Equal(t, "file-host:9191", cfg.AdvertiseAddr)
+
+	t.Setenv(serveAdvertiseEnv, "env-host:9191")
+	cfg, err = resolveServeConfig(parsedServeCommand(t, "--config", path).Flags())
+	require.NoError(t, err)
+	assert.Equal(t, "env-host:9191", cfg.AdvertiseAddr)
+
+	cfg, err = resolveServeConfig(parsedServeCommand(t, "--server", "https://x:8443").Flags())
+	require.NoError(t, err)
+	assert.Equal(t, "env-host:9191", cfg.AdvertiseAddr, "the environment applies without a file too")
+
+	cfg, err = resolveServeConfig(parsedServeCommand(t, "--config", path, "--advertise", "flag-host:9191").Flags())
+	require.NoError(t, err)
+	assert.Equal(t, "flag-host:9191", cfg.AdvertiseAddr)
+}
+
+// TestServeEnvFields_NameStringFields: an environment entry naming a field
+// fleet.Config lacks, or one that is not a string, could never be applied.
+func TestServeEnvFields_NameStringFields(t *testing.T) {
+	cfgType := reflect.TypeOf(fleet.Config{})
+	for name, field := range serveEnvFields {
+		f, ok := cfgType.FieldByName(field)
+		if !ok || f.Type.Kind() != reflect.String {
+			t.Errorf("%s maps to %q, which is not a string field of fleet.Config", name, field)
+		}
+	}
+}
+
 // TestServeRequiredFlags_RelaxedOnlyWithConfig: a flag-only invocation still
 // needs --server and friends; with --config the file may supply them.
 func TestServeRequiredFlags_RelaxedOnlyWithConfig(t *testing.T) {

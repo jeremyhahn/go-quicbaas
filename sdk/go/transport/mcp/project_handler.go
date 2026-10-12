@@ -38,13 +38,10 @@ func isMCPProjectService(service string) bool {
 // (GrantFleetNodeRole), and neither carries the quicbaas_ prefix, so the
 // transport's generic service_method derivation would ask for tools that do
 // not exist.
-//
-// GetByName is deliberately absent: the server registers no by-name lookup
-// tool, so the transport reports Unimplemented rather than calling a tool that
-// is not there. Every other transport (REST, gRPC, QUIC, embedded) supports it.
 var projectMethodTools = map[string]string{
 	"Create":              "project_create",
 	"Get":                 "project_get",
+	"GetByName":           "project_get_by_name",
 	"List":                "project_list",
 	"Update":              "project_update",
 	"Delete":              "project_delete",
@@ -92,6 +89,7 @@ type projectMCPTransform func(raw []byte) (interface{}, error)
 var projectMCPTransforms = map[string]projectMCPTransform{
 	"Create":              decodeMCPProjectEnvelope,
 	"Get":                 decodeMCPProjectEnvelope,
+	"GetByName":           decodeMCPProjectEnvelope,
 	"Update":              decodeMCPProjectEnvelope,
 	"List":                decodeMCPProjectList,
 	"Delete":              decodeMCPProjectDelete,

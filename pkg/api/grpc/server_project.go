@@ -94,6 +94,10 @@ func (s *ProjectServer) CreateProject(ctx context.Context, req *pb.CreateProject
 		WorkspaceTmpfsMB:    int(req.WorkspaceTmpfsMb),
 		ContainerMemoryMB:   int(req.ContainerMemoryMb),
 		SessionRotation:     orchestration.SessionRotationPolicy(req.SessionRotation),
+
+		WorkspaceManaged:       req.WorkspaceManaged,
+		GitCredentialSecretRef: req.GitCredentialSecretRef,
+		GitCredentialUsername:  req.GitCredentialUsername,
 	})
 	if err != nil {
 		return nil, convertProjectError(err)
@@ -413,9 +417,15 @@ func projectToProto(p *orchestration.Project) *pb.Project {
 		Parked:              p.Parked,
 		ParkedBy:            p.ParkedBy,
 		GitSigningRetired:   retiredSigningKeysToProto(p.Git.Signing.Retired),
+		WorkspaceManaged:    p.Provisioning.Managed,
+		ProvisioningState:   string(p.Provisioning.State),
+		ProvisioningError:   p.Provisioning.Error,
 	}
 	if !p.ParkedAt.IsZero() {
 		pb.ParkedAtUnix = p.ParkedAt.Unix()
+	}
+	if !p.Provisioning.UpdatedAt.IsZero() {
+		pb.ProvisioningUpdatedAtUnix = p.Provisioning.UpdatedAt.Unix()
 	}
 	if p.Permissions.FleetNodeRoles != nil {
 		pb.AgentRoles = make(map[string]string, len(p.Permissions.FleetNodeRoles))
@@ -475,11 +485,20 @@ func convertProjectError(err error) error {
 	var notFound *service.ProjectNotFoundError
 	var alreadyExists *service.ProjectAlreadyExistsError
 	var invalid *service.ProjectInvalidError
+	var accessDenied *service.ProjectAccessDeniedError
+	var unresolved *service.ProjectUnresolvedError
+	var roleInvalid *service.ProjectRoleInvalidError
 
 	if isAgentCatalogError(err) {
 		return agentCatalogStatusError(err)
 	}
 	switch {
+	case stderrors.As(err, &accessDenied):
+		return status.Error(codes.PermissionDenied, err.Error())
+	case stderrors.As(err, &unresolved):
+		return status.Error(codes.NotFound, err.Error())
+	case stderrors.As(err, &roleInvalid):
+		return status.Error(codes.InvalidArgument, err.Error())
 	case stderrors.As(err, &notFound):
 		return status.Error(codes.NotFound, err.Error())
 	case stderrors.As(err, &alreadyExists):

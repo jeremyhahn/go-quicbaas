@@ -453,6 +453,9 @@ func (t AgentTurn) Capped() AgentTurn {
 // contentBlockText is the block type an assistant's own words arrive as.
 const contentBlockText = "text"
 
+// contentBlockToolUse is the block type a tool invocation is counted under.
+const contentBlockToolUse = "tool_use"
+
 // Describe renders the turn as a job event: a header of counts a reader
 // scans, then the reply itself.
 func (t AgentTurn) Describe() string {
@@ -546,6 +549,13 @@ func ReadAgentTurn(resp *orchestration.PromptSessionResponse) AgentTurn {
 			}
 			text.WriteString(chunk)
 		}
+	}
+	// THE BACKEND'S TOOL CENSUS IS THE TOOL COUNT when it reports one: most
+	// backends carry only text in Content, so the blocks alone would read a
+	// turn that used tools as one that used none. A census of zero is kept as
+	// a zero entry, so a reported "no tool" stays apart from an unreported one.
+	if resp.ToolUse != nil {
+		turn.Blocks[contentBlockToolUse] = resp.ToolUse.Calls
 	}
 	// THE DECLARATION IS READ FROM THE WHOLE TEXT, once, before any copy of
 	// it is bounded.

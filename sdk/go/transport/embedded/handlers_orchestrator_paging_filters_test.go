@@ -177,6 +177,30 @@ func TestEmbeddedListTasks_CarriesTheDispatchModeFilter(t *testing.T) {
 	}
 }
 
+// TestEmbeddedListTasks_CarriesTheSourceFilter proves the source predicate
+// (go-quicbaas#730) reaches the service in-process, beside the project it is
+// scoped to.
+func TestEmbeddedListTasks_CarriesTheSourceFilter(t *testing.T) {
+	agent := &fakeAgentService{}
+	svc := &orchMock{agent: agent}
+
+	if _, err := handleOrchestratorListTasks(context.Background(), svc, &orchestratorSDK.ListTasksRequest{
+		TenantID:   "t-1",
+		ProjectID:  "proj-1",
+		SourceKind: "operator",
+		SourceRef:  "owner/repo#12",
+	}); err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	got := agent.listTasksFilter
+	if got == nil {
+		t.Fatal("no filter reached the service")
+	}
+	if got.SourceKind != orchestration.TaskSourceKindOperator || got.SourceRef != "owner/repo#12" || got.ProjectID != "proj-1" {
+		t.Errorf("filter = %+v, want operator/owner/repo#12 in proj-1", got)
+	}
+}
+
 // TestEmbeddedListSessions_CarriesTheRoleFields proves the projection keeps
 // the three fields the Role badge is built from — the runner that decides the
 // role, the job it came from, and the model beside it. The projection dropped

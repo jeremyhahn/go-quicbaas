@@ -73,11 +73,7 @@ func (h *projectRESTHandler) handleCreate(ctx context.Context, req interface{}) 
 	if !ok {
 		return nil, errors.NewInvalidInput("project.Create", "invalid request type")
 	}
-	var resp project.ProjectInfo
-	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/projects", sdkReq, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+	return h.requestProject(ctx, "project.Create", http.MethodPost, "/api/v1/projects", sdkReq)
 }
 
 // handleGet handles GET /api/v1/projects/{id}.
@@ -86,26 +82,18 @@ func (h *projectRESTHandler) handleGet(ctx context.Context, req interface{}) (in
 	if !ok {
 		return nil, errors.NewInvalidInput("project.Get", "invalid request type")
 	}
-	url := "/api/v1/projects/" + sdkReq.ProjectID + "?tenant_id=" + sdkReq.TenantID
-	var resp project.ProjectInfo
-	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+	return h.requestProject(ctx, "project.Get", http.MethodGet, projectURL(sdkReq.TenantID, sdkReq.ProjectID), nil)
 }
 
-// handleGetByName handles GET /api/v1/projects?name={name}&tenant_id={id}.
+// handleGetByName handles GET /api/v1/projects/by-name/{name}?tenant_id={id}.
 func (h *projectRESTHandler) handleGetByName(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*project.GetProjectByNameRequest)
 	if !ok {
 		return nil, errors.NewInvalidInput("project.GetByName", "invalid request type")
 	}
-	url := "/api/v1/projects?tenant_id=" + sdkReq.TenantID + "&name=" + sdkReq.Name
-	var resp project.ProjectInfo
-	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
+	url := "/api/v1/projects/by-name/" + neturl.PathEscape(sdkReq.Name) +
+		"?tenant_id=" + neturl.QueryEscape(sdkReq.TenantID)
+	return h.requestProject(ctx, "project.GetByName", http.MethodGet, url, nil)
 }
 
 // handleUpdate handles PUT /api/v1/projects/{id}.
@@ -114,12 +102,25 @@ func (h *projectRESTHandler) handleUpdate(ctx context.Context, req interface{}) 
 	if !ok {
 		return nil, errors.NewInvalidInput("project.Update", "invalid request type")
 	}
-	url := "/api/v1/projects/" + sdkReq.ProjectID + "?tenant_id=" + sdkReq.TenantID
-	var resp project.ProjectInfo
-	if err := h.transport.doJSONRequest(ctx, http.MethodPut, url, sdkReq, &resp); err != nil {
+	return h.requestProject(ctx, "project.Update", http.MethodPut, projectURL(sdkReq.TenantID, sdkReq.ProjectID), sdkReq)
+}
+
+// requestProject sends one request whose response is the server's
+// {project, timestamp} envelope and returns the project it carries.
+func (h *projectRESTHandler) requestProject(ctx context.Context, op, method, url string, body interface{}) (*project.ProjectInfo, error) {
+	var resp projectEnvelopeWire
+	if err := h.transport.doJSONRequest(ctx, method, url, body, &resp); err != nil {
 		return nil, err
 	}
-	return &resp, nil
+	if resp.Project == nil {
+		return nil, errors.NewInternal(op, "response carried no project")
+	}
+	return resp.Project.toInfo(), nil
+}
+
+// projectURL addresses one project by ID within a tenant.
+func projectURL(tenantID, projectID string) string {
+	return "/api/v1/projects/" + neturl.PathEscape(projectID) + "?tenant_id=" + neturl.QueryEscape(tenantID)
 }
 
 // handleDelete handles DELETE /api/v1/projects/{id}.
@@ -147,11 +148,20 @@ func (h *projectRESTHandler) handleList(ctx context.Context, req interface{}) (i
 		url += "&autonomous=" + strconv.FormatBool(*sdkReq.Autonomous)
 	}
 	url += pageQuerySuffix(sdkReq.Params)
-	var resp project.ListProjectsResponse
+	var resp projectListWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err
 	}
-	return &resp, nil
+	out := &project.ListProjectsResponse{
+		Projects: make([]*project.ProjectInfo, 0, len(resp.Projects)),
+		Envelope: resp.Envelope,
+	}
+	for _, p := range resp.Projects {
+		if p != nil {
+			out.Projects = append(out.Projects, p.toInfo())
+		}
+	}
+	return out, nil
 }
 
 // handleGrantFleetNodeRole handles PUT /api/v1/projects/{id}/permissions/{node_id}.

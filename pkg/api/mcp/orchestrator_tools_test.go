@@ -204,8 +204,10 @@ type mockAgentService struct {
 	listJobsPageFilter       *orchestration.JobFilter
 	listFleetNodesPageFilter *orchestration.FleetNodeFilter
 
-	// listAgents backs the fleet listing the way listJobs backs the job one.
-	listAgents []*orchestration.FleetNode
+	// listAgents backs the fleet listing the way listJobs backs the job one;
+	// listAgentsErr, when set, is the error the listing refuses with instead.
+	listAgents    []*orchestration.FleetNode
+	listAgentsErr error
 
 	blockTaskFn       func(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error
 	getJobStatusFn    func(ctx context.Context, tenantID, jobID string) (*orchestration.JobStatus, error)
@@ -378,6 +380,9 @@ func (m *mockAgentService) GetFleetNode(ctx context.Context, tenantID, agentID s
 // than handed back whole: a tool that drops the caller's narrowing must fail
 // the test, and the narrowing that decides is the shipped one.
 func (m *mockAgentService) ListFleetNodes(ctx context.Context, tenantID string, filter *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
+	if m.listAgentsErr != nil {
+		return nil, m.listAgentsErr
+	}
 	matched := make([]*orchestration.FleetNode, 0, len(m.listAgents))
 	for _, agent := range m.listAgents {
 		if filter.Matches(agent) {

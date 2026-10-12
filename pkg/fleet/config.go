@@ -24,6 +24,7 @@ package fleet
 import (
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -58,6 +59,14 @@ type Config struct {
 	// BindAddr is the local listener address for the FleetRuntime gRPC
 	// service (e.g., "127.0.0.1:9091"). Required.
 	BindAddr string `json:"bind_addr" yaml:"bind_addr"`
+
+	// AdvertiseAddr is the host:port the control plane dials to reach the
+	// FleetRuntime service, when that differs from BindAddr — a wildcard bind,
+	// NAT, or a container port mapping. Optional: empty means the control plane
+	// derives the address from BindAddr and the node's certificate. Settable
+	// with --advertise, the QUICBAAS_ADVERTISE_ADDR environment variable, or
+	// this key; enrollment is refused when the control plane cannot dial it.
+	AdvertiseAddr string `json:"advertise_addr,omitempty" yaml:"advertise_addr,omitempty"`
 
 	// Backends lists which backends this daemon serves, each by its own name
 	// (claude, codex, opencode, openvino, ollama-agent, vllm, ollama), or the
@@ -310,6 +319,9 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.BindAddr) == "" {
 		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "bind_addr"}
+	}
+	if err := c.validateAdvertiseAddr(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.WorkDir) == "" {
 		return &SentinelDetailError{Sentinel: ErrConfigFieldRequired, Detail: "work_dir"}
@@ -642,4 +654,30 @@ var (
 	// one somebody wrote on purpose and got wrong, and it cannot be told apart
 	// from the unreported case once summed.
 	ErrConfigNegativeCapacity = errors.New("agent: max concurrent jobs must not be negative")
+
+	// ErrConfigInvalidAdvertiseAddr reports an advertise_addr that is not a
+	// dialable host:port: no port, a port out of range, or a wildcard host the
+	// control plane could never dial.
+	ErrConfigInvalidAdvertiseAddr = errors.New("agent: advertise address must be a dialable host:port")
 )
+
+// validateAdvertiseAddr refuses an advertised address the control plane could
+// never dial. An empty one is fine: the control plane derives the address.
+func (c *Config) validateAdvertiseAddr() error {
+	addr := strings.TrimSpace(c.AdvertiseAddr)
+	if addr == "" {
+		return nil
+	}
+	refused := &SentinelDetailError{Sentinel: ErrConfigInvalidAdvertiseAddr, Detail: fmt.Sprintf("advertise_addr: %q", c.AdvertiseAddr)}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return refused
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return refused
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		return refused
+	}
+	return nil
+}

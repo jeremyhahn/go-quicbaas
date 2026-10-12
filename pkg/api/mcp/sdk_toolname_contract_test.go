@@ -197,7 +197,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	// Every fleet verb is registered under quicbaas_fleet_*; the SDK derives
 	// quicbaas_orchestrator_* for all of them.
 	{"quicbaas.Orchestrator", "RegisterFleetNode"}:   gapNameDrift + "quicbaas_fleet_register",
-	{"quicbaas.Orchestrator", "ListFleetNodes"}:      gapNameDrift + "quicbaas_fleet_list",
 	{"quicbaas.Orchestrator", "RemoveFleetNode"}:     gapNameDrift + "quicbaas_fleet_remove",
 	{"quicbaas.Orchestrator", "FleetNodeHeartbeat"}:  gapNameDrift + "quicbaas_fleet_heartbeat",
 	{"quicbaas.Orchestrator", "DisableFleetNode"}:    gapNameDrift + "quicbaas_fleet_disable",
@@ -229,9 +228,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.ParameterStore", "GetParameters"}:    gapNameDrift + "quicbaas_parameter_batch_get",
 	{"quicbaas.ParameterStore", "SetParameters"}:    gapNameDrift + "quicbaas_parameter_batch_set",
 	{"quicbaas.ParameterStore", "DeleteParameters"}: gapNameDrift + "quicbaas_parameter_batch_delete",
-
-	// --- Project -----------------------------------------------------------
-	{"quicbaas.Project", "GetByName"}: gapAmbiguous + "project_get",
 
 	// --- Seal --------------------------------------------------------------
 	// The Seal case derives quicbaas_<lowercase method>, which is right for

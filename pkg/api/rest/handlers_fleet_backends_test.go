@@ -1,5 +1,7 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
+//go:build rest
+
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
 //
 // This file is part of go-quicbaas.
 //
@@ -11,120 +13,66 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build rest
-
 package rest
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"testing"
-
-	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
-// renderAgent marshals one rendered registration the way RespondJSON would,
-// so the assertions are about the bytes an operator actually receives.
-func renderAgent(t *testing.T, agent *orchestration.FleetNode) map[string]any {
-	t.Helper()
-
-	raw, err := json.Marshal(newFleetNodeResponse(agent))
-	require.NoError(t, err)
-
-	var got map[string]any
-	require.NoError(t, json.Unmarshal(raw, &got))
-	return got
-}
-
-// TestAgentResponse_RendersTheServedBackends is the operator-facing half of
-// go-quicbaas#681: a daemon serving claude, codex and opencode is one record
-// whose "backend" names only the first. Without "backends", reading the
-// registry told an operator the daemon could not take a task routed on
-// "codex" — the opposite of what dispatch does.
-func TestAgentResponse_RendersTheServedBackends(t *testing.T) {
-	t.Parallel()
-
-	got := renderAgent(t, &orchestration.FleetNode{
-		ID:           "agent-04",
-		TenantID:     "automatethethings",
-		Backend:      "claude",
-		Capabilities: []string{"claude", "codex", "opencode"},
-	})
-
-	require.Equal(t, []any{"claude", "codex", "opencode"}, got["backends"],
-		"the primary appears once, and every served name appears")
-
-	// Additive: the fields the TypeScript SDK and the Agent Fleet UI read are
-	// rendered unchanged beside it.
-	require.Equal(t, "claude", got["backend"])
-	require.Equal(t, []any{"claude", "codex", "opencode"}, got["capabilities"])
-	require.Equal(t, "agent-04", got["id"])
-	require.Equal(t, "automatethethings", got["tenant_id"])
-}
-
-// TestAgentResponse_BackendsShape covers the record shapes the fleet actually
-// produces, including the ones where the primary is absent from the
-// capability list.
-func TestAgentResponse_BackendsShape(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		agent *orchestration.FleetNode
-		want  []any
-	}{
-		"gpu trait rides beside the backend": {
-			&orchestration.FleetNode{
-				Backend:      "ollama",
-				Capabilities: []string{"ollama", "gpu"},
-			},
-			[]any{"ollama", "gpu"},
-		},
-		"primary absent from capabilities is still first": {
-			&orchestration.FleetNode{
-				Backend:      "claude",
-				Capabilities: []string{"gpu"},
-			},
-			[]any{"claude", "gpu"},
-		},
-		"no capabilities at all": {
-			&orchestration.FleetNode{Backend: "ollama"},
-			[]any{"ollama"},
-		},
-		"a record naming nothing renders an empty list, never null": {
-			&orchestration.FleetNode{ID: "unknown"},
-			[]any{},
-		},
+// TestListFleetNodes_RendersTheServedBackends proves the REST fleet listing
+// renders "backends" through the shared orchestration renderer
+// (go-quicbaas#700), and never as null.
+func TestListFleetNodes_RendersTheServedBackends(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	agentSvc.listAgents = []*orchestration.FleetNode{
+		{ID: "agent-04", Backend: "claude", Capabilities: []string{"claude", "codex", "opencode"}, RegisteredAt: 2},
+		{ID: "unknown", RegisteredAt: 1},
 	}
 
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tc.want, renderAgent(t, tc.agent)["backends"])
-		})
+	w := httptest.NewRecorder()
+	server.HandleListFleetNodes(w, orchReq(http.MethodGet, "/api/v1/fleet?tenant_id=acme", nil, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Nodes []struct {
+			ID       string    `json:"id"`
+			Backends *[]string `json:"backends"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding the listing: %v", err)
+	}
+	served := map[string]*[]string{}
+	for _, node := range body.Nodes {
+		served[node.ID] = node.Backends
+	}
+	if got := served["agent-04"]; got == nil || !reflect.DeepEqual(*got, []string{"claude", "codex", "opencode"}) {
+		t.Errorf("agent-04 backends = %v, want [claude codex opencode]", got)
+	}
+	if got := served["unknown"]; got == nil || len(*got) != 0 {
+		t.Errorf("a node serving nothing rendered backends = %v, want []", got)
 	}
 }
 
-// TestAgentsResponse_RendersEveryAgent pins the listing wrapper, including the
-// empty fleet an operator sees before the first daemon enrolls.
-func TestAgentsResponse_RendersEveryAgent(t *testing.T) {
-	t.Parallel()
+// TestListFleetNodes_RefusalRendersNoNodes proves a failing registry is an
+// error response, not a listing.
+func TestListFleetNodes_RefusalRendersNoNodes(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	agentSvc.listAgentsErr = orchestration.ErrFleetNodeNotFound
 
-	t.Run("a populated fleet", func(t *testing.T) {
-		t.Parallel()
-		rendered := fleetNodesResponse([]*orchestration.FleetNode{
-			{ID: "agent-04", Backend: "claude", Capabilities: []string{"claude", "codex"}},
-			{ID: "gpu-host", Backend: "ollama", Capabilities: []string{"ollama", "gpu"}},
-		})
-		require.Len(t, rendered, 2)
-		require.Equal(t, []string{"claude", "codex"}, rendered[0].Backends)
-		require.Equal(t, []string{"ollama", "gpu"}, rendered[1].Backends)
-	})
-
-	t.Run("an empty fleet marshals to an array", func(t *testing.T) {
-		t.Parallel()
-		raw, err := json.Marshal(fleetNodesResponse(nil))
-		require.NoError(t, err)
-		require.Equal(t, "[]", string(raw))
-	})
+	w := httptest.NewRecorder()
+	server.HandleListFleetNodes(w, orchReq(http.MethodGet, "/api/v1/fleet?tenant_id=acme", nil, nil))
+	if w.Code == http.StatusOK {
+		t.Fatalf("a failing registry answered 200: %s", w.Body.String())
+	}
 }

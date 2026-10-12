@@ -16,3 +16,10 @@ var PinFromPublicKey = xkmssdk.SSHPinFromPublicKey
 
 // ImportKnownHostsFile imports an OpenSSH known_hosts file into a Store.
 var ImportKnownHostsFile = xkmssdk.SSHImportKnownHostsFile
+
+// ValidateFingerprint returns nil for a well-formed OpenSSH "SHA256:<base64>"
+// host-key fingerprint and *InvalidFingerprintError otherwise.
+var ValidateFingerprint = xkmssdk.SSHValidateFingerprint
+
+// InvalidFingerprintError reports a malformed fingerprint string.
+type InvalidFingerprintError = xkmssdk.SSHInvalidFingerprintError

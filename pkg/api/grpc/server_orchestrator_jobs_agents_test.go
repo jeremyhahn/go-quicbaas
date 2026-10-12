@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -298,6 +299,28 @@ func TestOrchestratorGRPC_ListAgents(t *testing.T) {
 	resp, err = srv.ListFleetNodes(ctx, &pb.ListFleetNodesRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
+}
+
+// TestOrchestratorGRPC_ListAgents_ScopeDenied pins that the service's
+// fleet-listing refusals reach a gRPC (and Unix) caller as PermissionDenied,
+// never as an empty listing or Internal (go-quicbaas#680).
+func TestOrchestratorGRPC_ListAgents_ScopeDenied(t *testing.T) {
+	_, crossTenant := tenantctx.Target(tenantctx.WithSystem(context.Background()), "orchestration.ListFleetNodes", "acme")
+	denials := map[string]error{
+		"cross-tenant": crossTenant,
+		"scan denied":  errors.New(errors.ErrForbidden, "fleet.ListFleetNodes", "scope denied"),
+	}
+	for name, denial := range denials {
+		t.Run(name, func(t *testing.T) {
+			srv := NewOrchestratorServer(&grpcTestAgentService{listAgentsErr: denial}, createOrchestratorGRPCTestLogger())
+			ctx := tenantctx.WithTenant(context.Background(), "t1")
+
+			resp, err := srv.ListFleetNodes(ctx, &pb.ListFleetNodesRequest{TenantId: "t1"})
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		})
+	}
 }
 
 func TestOrchestratorGRPC_RemoveAgent(t *testing.T) {

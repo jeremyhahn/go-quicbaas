@@ -74,7 +74,7 @@ that response — `total` is how many matched.
 | Endpoint | Natural order | `sort` fields | `q` searches | Filters | Facets |
 |---|---|---|---|---|---|
 | `GET /api/v1/orchestrator/jobs` | `started_at:desc` | `agent_id`, `description`, `job_id`, `runner`, `started_at`, `state`, `task_id`, `updated_at` | job id, description, runner, state, task id | `task_id`, `runner`, `project_id`, `agent_id`, `statuses` (comma-separated), `job_ids` (comma-separated) | `state`, `runner`, `project_id`, `agent_id` |
-| `GET /api/v1/orchestrator/tasks` | `created_at:desc` | `agent_id`, `attempts`, `created_at`, `id`, `project_id`, `status`, `subject`, `updated_at` | id, subject, status, project id | `statuses` (comma-separated), `project_id`, `agent_id`, `job_id`, `auto_spawn` (`true`/`false`), `team_name`, `assigned_to`, `created_by`, `status` | `status`, `project_id`, `agent_id` |
+| `GET /api/v1/orchestrator/tasks` | `created_at:desc` | `agent_id`, `attempts`, `created_at`, `id`, `project_id`, `status`, `subject`, `updated_at` | id, subject, status, project id | `statuses` (comma-separated), `project_id`, `agent_id`, `job_id`, `auto_spawn` (`true`/`false`), `source_kind` + `source_ref` (together — see below), `team_name`, `assigned_to`, `created_by`, `status` | `status`, `project_id`, `agent_id` |
 | `GET /api/v1/orchestrator/sessions` | `created_at` (**oldest first** — this listing has always answered in creation order; ask for `sort=created_at:desc` to invert it) | `agent_id`, `backend`, `created_at`, `last_activity`, `model`, `project_id`, `runner`, `session_id`, `state` | session id, backend, model, state | `backend`, `status`, `project_id`, `job_id`, `runner`, `agent_id` | `backend`, `state`, `runner`, `agent_id` |
 | `GET /api/v1/orchestrator/backends` | `name` | `default_model`, `name`, `type` | name, type, default model | `tenant_id` | — |
 | `GET /api/v1/orchestrator/runners` | `name` | `name` | runner name, state, label | — | — |
@@ -105,10 +105,33 @@ resolves them for the listing:
 - `runner` and `agent_id` on the sessions listing come off the session's job,
   the same read that fills the row's `runner` badge.
 
+**`source_kind` + `source_ref` on the tasks listing ask which task holds one
+source reservation** — "which task adopted `owner/repo#12`". The answer is
+read from the source reservation index, not a scan, so it is one key lookup
+whatever the tenant's size. A source is reserved per project, so `project_id`
+is the scope the source is looked up in (absent means the unscoped
+reservation), not a facet. The two are set together: one without the other,
+or a kind no source registered, is a 400 (`InvalidArgument` over gRPC). A
+source nobody holds is an empty page, not an error. The other filters still
+apply to the holder. Every transport carries the pair — REST and QUIC as query
+parameters, gRPC and Unix as `TaskFilter.source_kind` / `source_ref`, the
+embedded transport and the Go SDK as `ListTasksRequest.SourceKind` /
+`SourceRef`, the TS SDK as `TaskPageParams.source_kind` / `source_ref`. MCP
+has no task-listing tool.
+
 **`backend` on the fleet listing is MEMBERSHIP, not equality.** A daemon
 started with `--backends acp` (the group) serves claude, codex and opencode from one
 record; `?backend=codex` matches it, and the `backend` facet counts it under
 each backend it serves.
+
+**Every fleet node record carries `backends`**: each name the node is
+matched on, primary backend first, then each capability, each name once.
+It is `[]` for a node that serves nothing, never `null`. One renderer,
+`orchestration.FleetNode.ServedBackends`, produces it for every transport:
+REST and QUIC (`GET /api/v1/fleet`, `GET /api/v1/fleet/{nodeID}`), gRPC and
+Unix (`FleetNode.backends`), MCP (`quicbaas_fleet_list`,
+`quicbaas_fleet_status`), the embedded transport, the Go SDK
+(`orchestrator.FleetNode.Backends`), and the TS SDK (`FleetNode.backends`).
 
 ### Facets
 

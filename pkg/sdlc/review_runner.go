@@ -954,7 +954,7 @@ func (s *reviewRun) workspaceKey() string {
 // deleted and re-added under another identity — apart.
 func reviewWorkspaceKey(pullRequest int, headSHA, profile, login string) string {
 	sum := sha256.Sum256([]byte(normalizeLogin(login)))
-	return "review-" + strconv.Itoa(pullRequest) + "-" + shortSHA(headSHA) + "-" +
+	return orchestration.ReviewWorkspaceKeyPrefix + strconv.Itoa(pullRequest) + "-" + shortSHA(headSHA) + "-" +
 		profile + "-" + hex.EncodeToString(sum[:4])
 }
 

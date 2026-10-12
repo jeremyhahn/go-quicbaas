@@ -430,6 +430,40 @@ What an agent persists about a session (`<work-dir>/sessions/*.json`) is the
 workspace path and nothing more; the token is re-delivered by the control plane
 on every spawn. The checkout stays for the job's next session.
 
+### Workspace teardown
+
+A checkout is removed by the **discard** stage, after the session is closed and
+its container is gone (go-quicbaas#777). It is removed on the host that holds
+it: the daemon through its own `WorkspaceManager`, a fleet node through its
+`RemoveWorkspace` RPC, reached with strict host affinity over the backend the
+pin records (`WorkspacePlacement.Backend`). The daemon's own backend is never a
+fallback for a fleet node's workspace.
+
+| The attempt ended | Removed at discard |
+|---|---|
+| delivered (task `completed`) | this attempt's workspace and every earlier one |
+| parked (task `escalated`) | the earlier attempts' only; the last is kept for the person the task waits on |
+| cancelled, or failed for any other reason | the earlier attempts' only; the task's conclusion decides the rest |
+
+The kept workspace of an escalated task is removed when the task is
+**readmitted** (the next attempt checks out under a new key) or **deleted**.
+The daemon also sweeps at startup and every 15 minutes
+(`WorkspaceManager.SweepConcludedWorkspaces`), removing a workspace whose task
+is `completed`, `failed` or `cancelled`, or unknown to the task store. It never
+removes a review workspace, a spec directory, or a workspace a live session
+holds. That sweep is what removes the last workspace of a task that ran out of
+attempts. Fleet nodes have no task store, so they sweep only spec directories;
+their workspaces go through `RemoveWorkspace`.
+
+Every removal stays inside `<projects_root>/<tenant>` through `os.Root`,
+refuses a link or non-directory at any level (`WorkspaceLinkError`,
+`WorkspaceIOError`), and checks the directory against the mount policy as the
+bind-mount source it was (`MountNotAllowedError`). A workspace a live session
+holds is refused with `WorkspaceHeldError`, which a fleet node returns as
+`FailedPrecondition`. Each failure is a `WorkspaceRemovalError`
+(`errors.Is(err, ErrWorkspaceRemoval)`) naming the job and path. It is logged
+and never changes the task's conclusion; the next sweep retries it.
+
 **The mount grant.** An agent's projects root is admitted **tenant-scoped** by
 its mount policy, exactly as the control plane admits its own, so it needs no
 `--allowed-mount-root` entry. It defaults to `<--work-dir>/projects`; set

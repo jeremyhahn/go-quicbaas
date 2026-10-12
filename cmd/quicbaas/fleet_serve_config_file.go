@@ -14,6 +14,7 @@
 package main
 
 import (
+	"os"
 	"reflect"
 
 	"github.com/spf13/cobra"
@@ -39,6 +40,7 @@ var serveFlagFields = map[string]string{
 	"server":                      "ServerAddr",
 	"tenant":                      "TenantID",
 	"bind":                        "BindAddr",
+	"advertise":                   "AdvertiseAddr",
 	"backends":                    "Backends",
 	"sandbox-policy":              "SandboxPolicy",
 	"sandbox-network":             "SandboxNetwork",
@@ -91,35 +93,58 @@ func relaxRequiredServeFlagsForConfigFile(cmd *cobra.Command, _ []string) error 
 	return nil
 }
 
-// resolveServeConfig builds the daemon's Config from three layers, lowest
+// serveAdvertiseEnv sets advertise_addr from the environment: the CLI's own
+// prefix plus the config key, upper-cased, per the configuration convention.
+const serveAdvertiseEnv = "QUICBAAS_ADVERTISE_ADDR"
+
+// serveEnvFields maps every environment variable `fleet serve` reads to the
+// string fleet.Config field it sets. A set variable beats the config file and
+// loses to a flag given on the command line.
+var serveEnvFields = map[string]string{
+	serveAdvertiseEnv: "AdvertiseAddr",
+}
+
+// resolveServeConfig builds the daemon's Config from four layers, lowest
 // first:
 //
 //  1. the flag defaults,
 //  2. the --config file, which replaces only the keys it names,
-//  3. every flag set explicitly on the command line.
+//  3. every variable in serveEnvFields that is set,
+//  4. every flag set explicitly on the command line.
 //
-// Without --config it is exactly the flag-built config. The result is not
-// validated here; runFleetServe validates the merged config once.
+// The result is not validated here; runFleetServe validates the merged config
+// once.
 func resolveServeConfig(flags *pflag.FlagSet) (*fleet.Config, error) {
 	fromFlags, err := buildServeConfig()
 	if err != nil {
 		return nil, err
 	}
-	if serveConfigFile == "" {
-		return fromFlags, nil
-	}
 
-	// A second build gives the file its own copies of the default slices and
-	// maps, so decoding into it cannot reach back into fromFlags.
+	// A second build gives the lower layers their own copies of the default
+	// slices and maps, so writing into it cannot reach back into fromFlags.
 	cfg, err := buildServeConfig()
 	if err != nil {
 		return nil, err
 	}
-	if err := fleet.LoadConfigFile(serveConfigFile, cfg); err != nil {
-		return nil, err
+	if serveConfigFile != "" {
+		if err := fleet.LoadConfigFile(serveConfigFile, cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	dst := reflect.ValueOf(cfg).Elem()
+	for name, field := range serveEnvFields {
+		value, ok := os.LookupEnv(name)
+		if !ok {
+			continue
+		}
+		target := dst.FieldByName(field)
+		if !target.IsValid() || target.Kind() != reflect.String {
+			return nil, &MessageError{Message: "agent serve: " + name + " maps to unknown string config field " + field}
+		}
+		target.SetString(value)
+	}
+
 	src := reflect.ValueOf(fromFlags).Elem()
 	var applyErr error
 	flags.Visit(func(flag *pflag.Flag) {

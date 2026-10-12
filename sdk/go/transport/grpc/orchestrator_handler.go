@@ -713,7 +713,8 @@ func handleOrchestratorListTasks(ctx context.Context, conn *grpc.ClientConn, req
 	}
 
 	// Build filter if any filter fields are set.
-	if sdkReq.Status != "" || sdkReq.TeamName != "" || sdkReq.AssignedTo != "" || sdkReq.ProjectID != "" || len(sdkReq.Statuses) > 0 || sdkReq.AutoSpawn != nil || sdkReq.AgentID != "" || sdkReq.JobID != "" {
+	if sdkReq.Status != "" || sdkReq.TeamName != "" || sdkReq.AssignedTo != "" || sdkReq.ProjectID != "" || len(sdkReq.Statuses) > 0 || sdkReq.AutoSpawn != nil || sdkReq.AgentID != "" || sdkReq.JobID != "" ||
+		sdkReq.SourceKind != "" || sdkReq.SourceRef != "" {
 		filter := &pb.TaskFilter{
 			TeamName:   sdkReq.TeamName,
 			AssignedTo: sdkReq.AssignedTo,
@@ -721,6 +722,8 @@ func handleOrchestratorListTasks(ctx context.Context, conn *grpc.ClientConn, req
 			AutoSpawn:  sdkReq.AutoSpawn,
 			AgentId:    sdkReq.AgentID,
 			JobId:      sdkReq.JobID,
+			SourceKind: sdkReq.SourceKind,
+			SourceRef:  sdkReq.SourceRef,
 		}
 		if sdkReq.Status != "" {
 			if val, exists := pb.TaskStatus_value[taskStatusToProtoEnum(sdkReq.Status)]; exists {
@@ -1630,6 +1633,9 @@ func fleetNodeFromProto(a *pb.FleetNode) *orchestrator.FleetNode {
 		RegisteredAt: timestampToUnix(a.GetRegisteredAt()),
 		Version:      a.GetVersion(),
 		Metadata:     a.GetMetadata(),
+		// proto3 cannot tell an empty list from an absent one; the SDK
+		// answers [] as REST does, never nil.
+		Backends: append([]string{}, a.GetBackends()...),
 	}
 }
 

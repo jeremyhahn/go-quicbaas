@@ -53,6 +53,10 @@ var (
 	// ErrSpawnServerNotStarted is returned by Addr when the server has not
 	// yet bound a listener.
 	ErrSpawnServerNotStarted = errors.New("agent: spawn server not started")
+
+	// ErrSpawnServerStopped is returned by Bind and Start once Stop has run:
+	// a stopped server does not bind again.
+	ErrSpawnServerStopped = errors.New("agent: spawn server stopped")
 )
 
 // GRPCSpawnServerDeps injects production dependencies into NewGRPCSpawnServer.
@@ -160,6 +164,36 @@ func (s *GRPCSpawnServer) Identity() *orchestration.AgentIdentity {
 	return s.identity
 }
 
+// Bind binds the listener without serving it, so the control plane's probe of
+// this node's address at enrollment reaches a listening socket; Start then
+// serves the same listener. Idempotent, and a no-op once bound.
+func (s *GRPCSpawnServer) Bind(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bindLocked(ctx)
+}
+
+// bindLocked binds the listener unless one is already bound. Caller holds mu.
+func (s *GRPCSpawnServer) bindLocked(ctx context.Context) error {
+	if s.stopped {
+		return ErrSpawnServerStopped
+	}
+	if s.listener != nil {
+		return nil
+	}
+	listener := s.listenerOverride
+	if listener == nil {
+		lc := net.ListenConfig{}
+		l, err := lc.Listen(ctx, "tcp", s.bindAddr)
+		if err != nil {
+			return &SpawnServerBindError{Addr: s.bindAddr, Err: err}
+		}
+		listener = l
+	}
+	s.listener = listener
+	return nil
+}
+
 // Start binds the listener, registers the FleetRuntime service, and serves
 // in a goroutine. Returns once the listener is bound (a serve error after
 // Start is exposed via a close-on-error channel observable by Stop).
@@ -171,16 +205,10 @@ func (s *GRPCSpawnServer) Start(ctx context.Context) error {
 		return nil // already started; Start is idempotent by design
 	}
 
-	listener := s.listenerOverride
-	if listener == nil {
-		lc := net.ListenConfig{}
-		l, err := lc.Listen(ctx, "tcp", s.bindAddr)
-		if err != nil {
-			return &SpawnServerBindError{Addr: s.bindAddr, Err: err}
-		}
-		listener = l
+	if err := s.bindLocked(ctx); err != nil {
+		return err
 	}
-	s.listener = listener
+	listener := s.listener
 
 	var opts []grpc.ServerOption
 	if s.tlsConfig != nil {
@@ -225,9 +253,17 @@ func (s *GRPCSpawnServer) Stop(ctx context.Context) error {
 	s.drainOnce.Do(func() { close(s.drainStarted) })
 	s.mu.Lock()
 	if s.stopped || s.grpcSrv == nil {
+		// A listener bound ahead of an enrollment that never completed has
+		// no server to close it.
+		var closeErr error
+		if !s.stopped && s.listener != nil {
+			if err := s.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				closeErr = &SpawnServerServeError{Err: err}
+			}
+		}
 		s.stopped = true
 		s.mu.Unlock()
-		return nil
+		return closeErr
 	}
 	srv := s.grpcSrv
 	serveErr := s.serveErr
@@ -513,6 +549,34 @@ func (s *GRPCSpawnServer) ExecSession(ctx context.Context, req *proto.ExecSessio
 		Stderr:    []byte(result.Stderr),
 		Truncated: truncated,
 	}, nil
+}
+
+// RemoveWorkspace removes a session workspace this daemon provisioned, after
+// authenticating the caller for the workspace's tenant under the spawn scope —
+// the authority that had it made is the authority that has it removed. See
+// Runtime.RemoveWorkspace for the scoping.
+func (s *GRPCSpawnServer) RemoveWorkspace(ctx context.Context, req *proto.RemoveWorkspaceRequest) (*proto.RemoveWorkspaceResponse, error) {
+	begin := time.Now()
+	identity, authErr := s.authorize(req.GetTenantId(), orchestration.AgentScopeRuntimeSpawn)
+	if authErr != nil {
+		s.auditRPC(ctx, "remove_workspace", req.GetTenantId(), "", "", authErr)
+		observeRPC("remove_workspace", authErr, begin)
+		return nil, authErr
+	}
+	removed, err := s.runtime.RemoveWorkspace(identity.TenantID, &orchestration.SessionWorkspace{
+		TenantID:  req.GetTenantId(),
+		ProjectID: req.GetProjectId(),
+		Key:       req.GetKey(),
+	})
+	if err != nil {
+		mapped := mapRuntimeError(err)
+		s.auditRPC(ctx, "remove_workspace", identity.TenantID, identity.AgentID, "", mapped)
+		observeRPC("remove_workspace", mapped, begin)
+		return nil, mapped
+	}
+	s.auditRPC(ctx, "remove_workspace", identity.TenantID, identity.AgentID, "", nil)
+	observeRPC("remove_workspace", nil, begin)
+	return &proto.RemoveWorkspaceResponse{Removed: removed}, nil
 }
 
 // protoSigningRelayToRuntime maps the wire's relay request; nil stays nil.
@@ -1087,6 +1151,12 @@ func mapRuntimeError(err error) error {
 	// root — never an internal fault. Its class travels as SpawnFaultEvidence
 	// so the control plane rebuilds ErrSessionWorkspace.
 	if errors.Is(err, orchestration.ErrSessionWorkspace) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	// A workspace removal refused because a session here still holds it is a
+	// precondition too: the sweep retries it once the session is gone.
+	var held *orchestration.WorkspaceHeldError
+	if errors.As(err, &held) {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	// A session that runs no container has nowhere for a command to run.

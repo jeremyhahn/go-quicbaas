@@ -536,6 +536,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/parameters/search", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleSearchParametersByTags }},
 		{Method: "GET", Pattern: "/api/v1/projects/", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListProjects }},
 		{Method: "POST", Pattern: "/api/v1/projects/", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCreateProject }},
+		{Method: "GET", Pattern: "/api/v1/projects/by-name/{name}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetProjectByName }},
 		{Method: "DELETE", Pattern: "/api/v1/projects/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleDeleteProject }},
 		{Method: "GET", Pattern: "/api/v1/projects/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetProject }},
 		{Method: "PUT", Pattern: "/api/v1/projects/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleUpdateProject }},

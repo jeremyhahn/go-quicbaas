@@ -246,6 +246,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"GET /api/v1/parameters/":                                                          {auth: RouteAuthPermission, resource: "parameters", action: "list"},
 	"GET /api/v1/parameters/*":                                                         {auth: RouteAuthPermission, resource: "parameters", action: "read"},
 	"GET /api/v1/projects/":                                                            {auth: RouteAuthPermission, resource: "project", action: "list"},
+	"GET /api/v1/projects/by-name/{name}":                                              {auth: RouteAuthPermission, resource: "project", action: "read"},
 	"GET /api/v1/projects/{id}":                                                        {auth: RouteAuthPermission, resource: "project", action: "read"},
 	"POST /api/v1/registry/instances":                                                  {auth: RouteAuthPermission, resource: "service_registry", action: "register"},
 	"POST /api/v1/registry/leases/{lease_id}/renew":                                    {auth: RouteAuthPermission, resource: "service_registry", action: "register"},

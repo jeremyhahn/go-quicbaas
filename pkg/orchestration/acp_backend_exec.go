@@ -205,6 +205,8 @@ func (b *ACPBackend) promptExec(ctx context.Context, sess *acpSession, req *Prom
 	}
 	sess.lastActivity.Store(time.Now().UnixNano())
 
+	// ToolUse stays nil: parseExecEvents reads only the agent message from
+	// the event stream, so this turn's tool calls are not counted.
 	return &PromptResponse{
 		SessionID:  sess.id,
 		Content:    []ContentBlock{{Type: "text", Text: turn.text}},

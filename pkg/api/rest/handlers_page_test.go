@@ -1014,6 +1014,67 @@ func TestListTasks_RefusesAnUnreadableDispatchMode(t *testing.T) {
 	}
 }
 
+// TestListTasks_NarrowsBySource proves the source predicate (go-quicbaas#730)
+// reaches the service with the project it is scoped to, and that a source
+// nobody holds answers an empty page rather than an error.
+func TestListTasks_NarrowsBySource(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	holder := &orchestration.Task{ID: "task-held", Subject: "held", Status: orchestration.TaskStatusPending,
+		ProjectID: "proj-1", Source: &orchestration.TaskSourceRef{Kind: orchestration.TaskSourceKindOperator, Ref: "owner/repo#12"}}
+
+	var seen *orchestration.TaskFilter
+	agentSvc.listTasksFunc = func(_ context.Context, _ string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error) {
+		seen = filter
+		if filter.SourceRef == holder.Source.Ref {
+			return []*orchestration.Task{holder}, nil
+		}
+		return []*orchestration.Task{}, nil
+	}
+
+	for _, tc := range []struct {
+		ref   string
+		total int
+	}{
+		{"owner%2Frepo%2312", 1},
+		{"owner%2Frepo%2399", 0},
+	} {
+		w := httptest.NewRecorder()
+		server.HandleOrchestratorListTasks(w, orchReq(http.MethodGet,
+			"/api/v1/orchestrator/tasks?tenant_id=acme&project_id=proj-1&source_kind=operator&source_ref="+tc.ref, nil, nil))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body=%s", tc.ref, w.Code, w.Body.String())
+		}
+		envelope, _ := decodePageEnvelope(t, w.Body.Bytes(), "tasks")
+		if envelope.Total != tc.total {
+			t.Errorf("%s: total = %d, want %d", tc.ref, envelope.Total, tc.total)
+		}
+		if seen == nil || seen.SourceKind != orchestration.TaskSourceKindOperator || seen.ProjectID != "proj-1" {
+			t.Fatalf("%s: filter = %+v, want the operator source scoped to proj-1", tc.ref, seen)
+		}
+	}
+}
+
+// TestListTasks_RefusesAHalfSource proves a source kind without a ref is a
+// bad request, not an empty page: the store refuses it as invalid input.
+func TestListTasks_RefusesAHalfSource(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	store := orchestration.NewInMemoryTaskStore()
+	agentSvc.listTasksFunc = store.ListTasks
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListTasks(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/tasks?tenant_id=acme&source_kind=operator", nil, nil))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestListSessions_CarriesTheJobBinding(t *testing.T) {
 	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()

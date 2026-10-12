@@ -110,9 +110,11 @@ func bindings() []binding {
 			goStructName: "orchestration.JobStatus",
 		},
 		{
+			// Fleet listings render each node through FleetNodeView, which
+			// adds the served "backends" to the registration's own fields.
 			tsInterface:  "FleetNode",
-			goStruct:     orchestration.FleetNode{},
-			goStructName: "orchestration.FleetNode",
+			goStruct:     orchestration.FleetNodeView{},
+			goStructName: "orchestration.FleetNodeView",
 		},
 		{
 			tsInterface:  "SpawnSessionResponse",

@@ -442,6 +442,11 @@ func (e *ProductionEnroller) bootstrap(ctx context.Context, cfg *Config, client 
 			"heartbeat_interval": cfg.EffectiveHeartbeat().String(),
 		},
 	}
+	// The address the control plane is to dial, when it is not the bind
+	// address; the control plane probes it and refuses one it cannot reach.
+	if advertise := strings.TrimSpace(cfg.AdvertiseAddr); advertise != "" {
+		payload["advertise_addr"] = advertise
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, &EnrollmentRequestError{Op: "encode register request", Cause: err}

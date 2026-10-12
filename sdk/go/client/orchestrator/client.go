@@ -1210,6 +1210,14 @@ type ListTasksRequest struct {
 	// that job.
 	JobID string `json:"job_id,omitempty"`
 
+	// SourceKind and SourceRef restrict the listing to the task holding one
+	// source reservation ("which task adopted this issue"). They are set
+	// together, and ProjectID is the scope the source is reserved in. The
+	// server answers from its reservation index; a source nobody holds lists
+	// nothing rather than failing.
+	SourceKind string `json:"source_kind,omitempty"`
+	SourceRef  string `json:"source_ref,omitempty"`
+
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.
 	page.Params
@@ -1499,6 +1507,12 @@ type FleetNode struct {
 	RegisteredAt int64             `json:"registered_at"`
 	Version      uint64            `json:"version"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+
+	// Backends is every name this node is matched on: the primary Backend
+	// first, then each capability, each once. Dispatch matches on this whole
+	// list, so a node whose Backend is "claude" may still run a task routed
+	// on "codex" (go-quicbaas#700). Never nil on a listing.
+	Backends []string `json:"backends"`
 }
 
 // GetFleetNodeRequest is a request to get an agent by ID.

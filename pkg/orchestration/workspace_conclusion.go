@@ -18,18 +18,25 @@ const workspaceAttemptMarker = "-a"
 // has concluded, so the startup sweep may remove the checkout.
 //
 // THE ANSWER FAILS CLOSED. true means the store positively says the task is
-// over; anything else — a live task, an unknown key, a store error — is false
-// or an error, and the sweep keeps the workspace in all three cases.
+// over or no longer holds it; anything else — a live task, a key that names no
+// task, a store error — is false or an error, and the sweep keeps the
+// workspace in all three cases.
 type WorkspaceConclusions interface {
 	// WorkspaceConcluded reports whether the workspace named by the tenant,
 	// project and key belongs to a concluded task.
 	WorkspaceConcluded(ctx context.Context, tenantID, projectID, key string) (bool, error)
 }
 
+// ReviewWorkspaceKeyPrefix begins every review checkout's workspace key. A
+// review key is no task's attempt, even where its trailing hash happens to read
+// as -a<digits>, so the task store is never asked about it.
+const ReviewWorkspaceKeyPrefix = "review-"
+
 // TaskWorkspaceConclusions resolves workspace conclusion from the task store.
 // A key names its task as <task id>-a<attempt>; a key that does not parse that
-// way, or whose task the store does not hold, belongs to no task this store
-// can vouch for and is never reported concluded.
+// way, or that names a review checkout, belongs to no task and is never
+// reported concluded. A task the store no longer holds IS concluded: it was
+// deleted, and nothing will run in its workspace again (go-quicbaas#777).
 type TaskWorkspaceConclusions struct {
 	Store TaskStore
 }
@@ -44,12 +51,12 @@ func (c TaskWorkspaceConclusions) WorkspaceConcluded(ctx context.Context, tenant
 		return false, nil
 	}
 	taskID, ok := workspaceKeyTaskID(key)
-	if !ok {
+	if !ok || strings.HasPrefix(key, ReviewWorkspaceKeyPrefix) {
 		return false, nil
 	}
 	task, err := c.Store.GetTask(ctx, tenantID, taskID)
 	if errors.Is(err, ErrTaskNotFound) {
-		return false, nil
+		return true, nil
 	}
 	if err != nil {
 		return false, err
@@ -105,18 +112,23 @@ func removeConfined(root *os.Root, rel string) error {
 
 // sweepConcludedWorkspace removes the session workspace entry when its task
 // has concluded, returning the removed path or "". Anything that is not a
-// plain directory with a valid key, and any resolver doubt, keeps it.
-func (m *WorkspaceManager) sweepConcludedWorkspace(root *os.Root, tenantDir, tenantID, projectID, parent string, entry fs.DirEntry) (string, error) {
-	if m.conclusions == nil || !entry.IsDir() || validateWorkspaceSegment("key", entry.Name()) != nil {
+// plain directory with a valid key, a workspace a live session holds, and any
+// resolver doubt, keeps it.
+func (m *WorkspaceManager) sweepConcludedWorkspace(tenantID, projectID string, entry fs.DirEntry) (string, error) {
+	if m.conclusions == nil || !entry.IsDir() {
+		return "", nil
+	}
+	dir, err := m.SessionWorkspacePath(tenantID, projectID, entry.Name())
+	if err != nil || m.isHeld(dir) {
 		return "", nil
 	}
 	concluded, err := m.conclusions.WorkspaceConcluded(context.Background(), tenantID, projectID, entry.Name())
 	if err != nil || !concluded {
 		return "", nil
 	}
-	rel := filepath.Join(parent, entry.Name())
-	if rmErr := removeConfined(root, rel); rmErr != nil {
-		return "", &WorkspaceIOError{Op: "sweep", Path: filepath.Join(tenantDir, rel), Err: rmErr}
+	removed, err := m.RemoveSessionWorkspace(tenantID, projectID, entry.Name())
+	if err != nil || !removed {
+		return "", err
 	}
-	return filepath.Join(tenantDir, rel), nil
+	return dir, nil
 }

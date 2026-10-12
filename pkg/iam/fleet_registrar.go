@@ -56,6 +56,15 @@ type FleetRegistrarRequest struct {
 	// Host is the daemon's reachable bind address.
 	Host string
 
+	// AdvertisedAddress is the address the daemon declared the control plane
+	// should dial, when it declared one; Host is then the same address.
+	AdvertisedAddress string
+
+	// Reachability is the outcome of the control plane's probe of Host:
+	// orchestration.FleetNodeReachable, or FleetNodeReachabilityUnverified
+	// when no probe ran.
+	Reachability string
+
 	// Backends is the declared backend list from the register payload.
 	Backends []string
 
