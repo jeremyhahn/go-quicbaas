@@ -36,10 +36,11 @@ The only composer: one SDK over the whole stack, plus the application layer it a
 - The owner-level IAM and authz rulings: #301, #329, #338, #348, #361, #392, #400, #402, #416, #422, #502, #509 (all `task:blocked`)
 - #195 — go-blockstore volumes in container orchestration
 - #28 — declarative workload placement
+- A QuicBaaS tenant agent replaces the Company Agent (roadmap only; no work scheduled)
 
 ## Dependencies
 
-- Up: go-xkms v0.49.0-alpha (latest v0.50.0-alpha), go-qrdb v0.30.1-alpha (v0.46.0-alpha), go-quicraft v0.15.0-alpha (v0.20.0), go-signal v0.2.0-alpha (`pkg/*` import, a `docs/00` L3 violation), go-libsignal, go-objstore, go-enclave, go-auth, go-truststrap, go-codec, go-frost, arduino-generic.
+- Up (pinned to release tags, `make check-library-pins`): go-xkms v0.49.0-alpha (latest v0.51.0-alpha), go-qrdb v0.30.1-alpha (v0.47.0-alpha), go-quicraft v0.15.0-alpha (v0.21.0-rc.1), go-signal v0.2.0-alpha (`pkg/*` import, a `docs/00` L3 violation), go-libsignal, go-objstore, go-enclave, go-auth, go-truststrap, go-codec, go-frost, arduino-generic.
 - Down: go-trusted-platform (pins v0.12.0-alpha), go-recountly.
 
 ## Non-goals

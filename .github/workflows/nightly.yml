@@ -4,8 +4,10 @@
 # Owner ruling 2026-08-20 (fail-fast pipeline for iteration speed): jobs that
 # are known-red with tracked issues, or that verify a slow-moving property, do
 # NOT run per push -- a known-red job burning 60-90 runner-minutes per push
-# produces information we already have. They run here nightly, plus on demand
-# via workflow_dispatch, and are NOT in any merge gate. When their tracked
+# produces information we already have. They run here on workflow_dispatch
+# only -- the coordinator dispatches the nightly full tier (handbook sdlc §5a;
+# go-quicbaas#1266), and no workflow carries a `schedule:` trigger (owner
+# ruling 2026-10-11) -- and are NOT in any merge gate. When their tracked
 # issues land (FIPS: this repo's fips140=only failures; Trivy: the install
 # diagnosis), a job may move back to ci.yml -- that move is deliberate, not
 # automatic.
@@ -22,8 +24,6 @@
 name: Nightly
 
 on:
-  schedule:
-    - cron: '0 3 * * *'
   workflow_dispatch:
 
 env:

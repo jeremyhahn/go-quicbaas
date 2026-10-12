@@ -1,5 +1,30 @@
 # ci-template: v1.15 (customized)
 #
+# TIERED CI adopted 2026-10-11 (handbook sdlc §5a; go-quicbaas#1266). Two tiers:
+#
+#   PR tier   -- lint, test (unit), build, security, plus the merge and
+#                snapshot gate infrastructure. Runs on every event.
+#   Full tier -- race, web, docker, and the FIPS build step inside `build`.
+#                Runs on push to main, on workflow_dispatch, and on a
+#                pull_request labelled `ci:full`. The rest of the full tier
+#                lives in integration.yml (same selection) and nightly.yml
+#                (workflow_dispatch only; the coordinator dispatches it
+#                nightly -- no workflow carries a `schedule:` trigger, owner
+#                ruling 2026-10-11).
+#
+# The full-tier condition is written out at every use rather than defined once:
+# a job-level `if:` sees only the github/needs/vars/inputs contexts, never
+# workflow `env`, so there is nowhere to name it. Every copy must read
+#
+#   github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+#   contains(github.event.pull_request.labels.*.name, 'ci:full')
+#
+# The pull_request trigger deliberately has no `labeled` type -- every task:*
+# label change would then cost a CI run -- so adding `ci:full` to a pull request
+# takes effect on its next push or branch update, not at once. CI Gate passes a
+# full-tier job the tier skipped and fails one that was selected and skipped or
+# failed.
+#
 # v1.15 adopted 2026-10-05 (#1156; automatethethings#209): every job starts at
 # once -- test, race, security, snapshot and docker no longer wait on lint +
 # build, so a run takes as long as its slowest job (v1.14). Jobs that read
@@ -59,6 +84,8 @@ on:
     # only the latest trunk state is validated. automerge v7's merge trains are
     # PRs into main and get their CI from pull_request.
     branches: [main]
+  # Default types only, no `labeled` (#1266): adding `ci:full` selects the full
+  # tier from the pull request's next push or branch update.
   pull_request:
     branches: [main]
   # Gitea has no API to re-run a finished run (ci-template v1.3).
@@ -173,7 +200,11 @@ jobs:
     # 4h23m before a human noticed and cancelled it, on a fleet where other PRs
     # were queued behind it. These ceilings sit well above the honest worst case
     # — they exist to catch a hang, not to police a slow run on a loaded fleet.
-    timeout-minutes: 45
+    # Lint takes 31-41 min on most runners. On the slowest runner, all three
+    # runs in the 12 h before 2026-10-12 07:00Z hit the old 45-minute ceiling
+    # (main run 48724 among them), so a slow runner turned main red. 75 leaves
+    # a margin for that runner and still catches a hang.
+    timeout-minutes: 75
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -422,6 +453,9 @@ jobs:
     # No lint/build in `needs` (v1.14): starts with them, not after them.
     # `merge` stays so the job can read needs.merge.outputs.base_sha (#436).
     needs: [merge]
+    # Full tier (header; sdlc §5a). The implicit success() still skips this job
+    # when `merge` fails.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -615,7 +649,11 @@ jobs:
       # CGO_ENABLED=0 builds and dolthub/go-mysql-server's internal/regex has
       # no file that satisfies `cgo && !gms_pure_go` without cgo, so the build
       # fails on "build constraints exclude all Go files".
+      #
+      # Full tier (header; sdlc §5a): a PR-tier run skips this step and the
+      # Build job still reports on the standard binaries.
       - name: Build FIPS binaries
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
         env:
           GOFIPS140: v1.0.0
         run: |
@@ -657,6 +695,10 @@ jobs:
     # would let one flake SKIP the unit, race, security and docker jobs and
     # cost a re-run of the whole pipeline. It gates the merge through `CI Gate`
     # below -- which is what #551 asked for -- and gates nothing else.
+    #
+    # Full tier (header; sdlc §5a). The implicit success() still skips this job
+    # when `merge` fails.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     timeout-minutes: 30
     steps:
       - name: Checkout code
@@ -780,8 +822,9 @@ jobs:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest
     # No `needs` (v1.14): it consumes no artefact of another job (it checks
-    # out and builds the image itself), so it starts at once. Push-only.
-    if: github.event_name == 'push'
+    # out and builds the image itself), so it starts at once. Full tier
+    # (header; sdlc §5a).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     permissions:
       contents: read
       packages: write
@@ -950,6 +993,10 @@ jobs:
   # evaluates empty on Gitea and reports success while jobs fail.
   # v1.9: fips and trivy moved to nightly.yml (known-red/long-horizon jobs off
   # the push path -- owner ruling 2026-08-20); they gate nothing here.
+  #
+  # Tiered CI (sdlc §5a, #1266): the gate fails a full-tier job that ran and
+  # failed, and passes one the tier skipped. The job name must stay `CI Gate`:
+  # branch protection requires `CI / CI Gate (pull_request)`.
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
@@ -957,14 +1004,35 @@ jobs:
     needs: [merge, lint, test, race, security, build, web, snapshot, docker]
     steps:
       - name: Fail closed on any non-success
+        env:
+          # The full-tier condition from the header, evaluated here so the gate
+          # can tell a skip the tier chose from a skip it did not.
+          FULL_TIER: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && 'true' || 'false' }}
         run: |
-          # skipped != failed, but BOTH fail the gate: a skipped job means the
-          # merge-result job it needs failed, and NAMING
-          # it as a skip prevents the go-qrdb#42 class -- a red that reads as
-          # a test failure while the tests never ran at all.
+          echo "full tier selected: $FULL_TIER (event=${{ github.event_name }})"
+          # PR-tier jobs carry no `if:`, so they run on every event. skipped !=
+          # failed, but BOTH fail the gate: a skipped job means the merge-result
+          # job it needs failed, and NAMING it as a skip prevents the go-qrdb#42
+          # class -- a red that reads as a test failure while the tests never
+          # ran at all.
           check() { case "$2" in
             success) echo "OK   $1";;
             skipped) echo "SKIP $1 (did not run -- see Merge Result and its job)"; BAD=1;;
+            *)       echo "FAIL $1 ($2)"; BAD=1;;
+          esac; }
+          # Full-tier jobs (race, web, docker) carry the full-tier `if:`. A skip
+          # passes only when this event did not select the full tier. When it
+          # did, a skip means the job never ran when it should have (race and
+          # web also skip when merge fails) -- fail closed rather than pass
+          # vacuously.
+          check_full() { case "$2" in
+            success) echo "OK   $1";;
+            skipped)
+              if [ "$FULL_TIER" = true ]; then
+                echo "SKIP $1 (full tier selected but the job did not run -- see Merge Result and its job)"; BAD=1
+              else
+                echo "OK   $1 (full tier not selected for this event)"
+              fi;;
             *)       echo "FAIL $1 ($2)"; BAD=1;;
           esac; }
           BAD=0
@@ -981,29 +1049,16 @@ jobs:
           esac
           check lint     "${{ needs.lint.result }}"
           check test     "${{ needs.test.result }}"
-          check race     "${{ needs.race.result }}"
           check security "${{ needs.security.result }}"
           check build    "${{ needs.build.result }}"
-          # web carries no `if:` and gates nothing downstream, so it neither
-          # skips legitimately nor causes anyone else to skip; it is a plain
-          # required input (#551).
-          check web      "${{ needs.web.result }}"
-          # snapshot carries no `if:` either: it runs on every event, so a
-          # skip here means merge failed and nothing measured what a
-          # verification's tree holds (#982).
+          # snapshot runs on every event, so a skip here means merge failed and
+          # nothing measured what a verification's tree holds (#982).
           check snapshot "${{ needs.snapshot.result }}"
-          # docker carries `if: github.event_name == 'push'` and no `needs`
-          # (v1.14), so a skip is legitimate on a non-push event and only
-          # there. A skip on a push means the job never ran when it should
-          # have -- fail closed rather than pass vacuously.
-          case "${{ needs.docker.result }}" in
-            success) echo "OK   docker" ;;
-            skipped)
-              if [ "${{ github.event_name }}" != 'push' ]; then
-                echo "OK   docker (push-only job, event=${{ github.event_name }})"
-              else
-                echo "FAIL docker (skipped on a push)"; BAD=1
-              fi ;;
-            *) echo "FAIL docker (${{ needs.docker.result }})"; BAD=1 ;;
-          esac
+          check_full race   "${{ needs.race.result }}"
+          # web gates nothing downstream, so it never causes another job to
+          # skip (#551).
+          check_full web    "${{ needs.web.result }}"
+          # docker has no `needs` (v1.14), so on a full-tier event it runs even
+          # when merge fails; a skip there is never legitimate.
+          check_full docker "${{ needs.docker.result }}"
           exit $BAD

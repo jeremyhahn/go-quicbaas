@@ -1356,9 +1356,21 @@ is credentials for the Gitea host — the same url-rewrite the runners use. No
 sibling checkout needs to exist on disk.
 
 To take a new version of a sibling, tag it in its own repo and bump the
-`require` here (`go get github.com/jeremyhahn/go-qrdb@v0.3.0-alpha`). Compile
-against the latest tagged version of each sibling rather than pinning to an
-old one.
+`require` here (`go get github.com/jeremyhahn/go-qrdb@v0.3.0-alpha`).
+
+### Deployment pins
+
+The go-qrdb, go-xkms and go-quicraft versions in `go.mod` and `sdk/go/go.mod`
+are the exact releases QuicBaaS deploys with. QuicBaaS never takes a library's
+unreleased main: `make check-library-pins` (part of `make test`) fails on a
+pseudo-version or a `replace` directive for any of the three, and `make
+proto-gen` reads go-qrdb's `authz.proto` from the pinned module rather than
+from a sibling checkout.
+
+Libraries change their APIs and formats whenever product quality needs it;
+nothing is frozen before a release candidate. A pin bump is a normal reviewed
+change. QuicBaaS deploys to the 3-node cluster only after go-qrdb's Raft
+clustering and storage have passed its 3-node test plan there.
 
 ### Coupled changes across repos
 

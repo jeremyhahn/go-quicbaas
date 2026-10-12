@@ -366,12 +366,14 @@ PROTOC_GEN_GO := $(shell which protoc-gen-go)
 PROTOC_GEN_GO_GRPC := $(shell which protoc-gen-go-grpc)
 BUF := buf
 
-# PROTO_QRDB_DIR points at a go-qrdb checkout so the quicbaas protos can import
-# pkg/api/grpc/proto/qrdbv1/authz.proto (the qrdb.v1.permission method option
-# the unified server's reflection interceptor enforces). Defaults to the
-# sibling checkout; override with PROTO_QRDB_DIR=/path/to/go-qrdb when the
-# layout differs.
-PROTO_QRDB_DIR ?= ../go-qrdb
+# PROTO_QRDB_DIR points at a go-qrdb source tree so the quicbaas protos can
+# import pkg/api/grpc/proto/qrdbv1/authz.proto (the qrdb.v1.permission method
+# option the unified server's reflection interceptor enforces). It defaults to
+# the go-qrdb release go.mod pins, read from the module cache, so generated code
+# always matches the qrdb QuicBaaS builds and deploys with -- never a sibling
+# checkout's unreleased main. Override it only to test against a qrdb change
+# before that change is tagged.
+PROTO_QRDB_DIR ?= $(shell GOWORK=off $(GOCMD) list -m -f '{{.Dir}}' github.com/jeremyhahn/go-qrdb 2>/dev/null)
 
 # Colors for output (using tput for portability)
 RED := $(shell tput setaf 1 2>/dev/null || echo "")
@@ -427,6 +429,7 @@ proto-gen: ## Generate protobuf code from .proto files
 	fi
 	@if [ ! -f "$(PROTO_QRDB_DIR)/pkg/api/grpc/proto/qrdbv1/authz.proto" ]; then \
 		echo "$(RED)qrdb authz.proto not found under PROTO_QRDB_DIR=$(PROTO_QRDB_DIR)$(NC)"; \
+		echo "$(RED)Fetch the pinned release: go mod download github.com/jeremyhahn/go-qrdb$(NC)"; \
 		exit 1; \
 	fi
 	@$(PROTOC) -I. -I$(PROTO_QRDB_DIR) \
@@ -1183,7 +1186,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # command, where a `@#` line is handed to bash as a COMMAND and fails with
 # exit 127. That is exactly how this comment broke `make test` in CI run 4119.
 .PHONY: test
-test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions ## Run unit tests (excludes integration tests)
+test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
@@ -1241,6 +1244,26 @@ check-case-collisions: ## Fail if two tracked paths differ only by letter case
 check-local-keygen: ## Fail if any non-test site creates a key pair or signs a certificate itself
 	@echo "$(BLUE)Checking for local key/certificate generation outside go-xkms...$(NC)"
 	@$(GOCMD) run ./scripts/localkeygen -dir pkg -dir cmd -dir sdk -dir test
+
+.PHONY: check-library-pins
+# QuicBaaS deploys on the exact go-qrdb, go-xkms and go-quicraft releases its
+# go.mod files pin, and never on a library's unreleased main (owner direction
+# 2026-10-11: QuicBaaS must never face a data migration because qrdb changed
+# under it). A pseudo-version (vX.Y.Z-0.<timestamp>-<commit>) is an untagged
+# commit and a replace directive swaps the release for something else, so
+# either one for these modules fails the build. Move a pin by bumping to a
+# published tag.
+LIBRARY_PIN_FILES := go.mod sdk/go/go.mod
+LIBRARY_PIN_MODULES := github\.com/jeremyhahn/go-(qrdb|xkms|quicraft)
+check-library-pins: ## Fail if go-qrdb, go-xkms or go-quicraft is taken from anything but a release tag
+	@echo "$(BLUE)Checking go-qrdb, go-xkms and go-quicraft are pinned to release tags...$(NC)"
+	@bad=$$(grep -HnE '$(LIBRARY_PIN_MODULES)(/[^ ]*)? +v[^ ]*[0-9]{14}-[0-9a-f]{12}|$(LIBRARY_PIN_MODULES)(/[^ ]*)?( +v[^ ]*)? *=>' $(LIBRARY_PIN_FILES)); \
+	if [ -n "$$bad" ]; then \
+		echo "$(RED)Library pinned to an untagged commit or replaced:$(NC)"; \
+		echo "$$bad"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Library pins are release tags$(NC)"
 
 .PHONY: check-coded-sentinels
 # A qrdb-coded sentinel is a *pkg/errors.QBError, which is a type alias for
@@ -4678,9 +4701,9 @@ bench-kvstore: ## Run kvstore package benchmarks
 # Its compose file builds the server from test/integration/Dockerfile.dev, which
 # resolves first-party modules from published tags (no sibling checkouts, no
 # go.work), so the image builds on a runner. It runs, off the gate, in the
-# `sdk-go-integration` job of .github/workflows/nightly.yml (schedule +
-# workflow_dispatch) via `make integration-test-sdk-go`. Moving it into ci.yml
-# is a deliberate change, not an automatic one.
+# `sdk-go-integration` job of .github/workflows/nightly.yml (workflow_dispatch,
+# the coordinator's nightly full tier) via `make integration-test-sdk-go`.
+# Moving it into ci.yml is a deliberate change, not an automatic one.
 .PHONY: test-sdk-go
 test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"
