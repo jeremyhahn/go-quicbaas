@@ -87,7 +87,7 @@ func toSanitizedServiceError(err error) error {
 		return status.Error(codes.Internal, errMsgServerFailure)
 	}
 	if requestErrorCodes[qbErr.Code] {
-		return toServiceError(qbErr)
+		return toProtoError(qbErr)
 	}
-	return status.Error(mapServiceErrorCode(qbErr.Code), errMsgServerFailure)
+	return status.Error(errorCodeToGRPCCode(qbErr.Code), errMsgServerFailure)
 }
