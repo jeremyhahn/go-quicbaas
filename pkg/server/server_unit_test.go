@@ -814,13 +814,13 @@ func TestServer_StartSecrets_Disabled(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Server.GetSealManager and GetCertificateAuthority tests
+// Server.GetBarrierManager and GetCertificateAuthority tests
 // ---------------------------------------------------------------------------
 
 func TestServer_GetSealManager(t *testing.T) {
 	t.Run("returns nil before start", func(t *testing.T) {
 		srv := withTempServer(t)
-		assert.Nil(t, srv.GetSealManager())
+		assert.Nil(t, srv.GetBarrierManager())
 	})
 }
 

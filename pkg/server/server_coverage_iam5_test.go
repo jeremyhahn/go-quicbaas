@@ -208,9 +208,9 @@ func TestServer_InitBarrier_SealEnabledBuildsManager(t *testing.T) {
 	srv.config.Seal.Threshold = 1
 	srv.config.Seal.TotalShares = 1
 
-	// The defaultNewSealManager seam handles the persistent-vs-memory
+	// The defaultNewBarrierManager seam handles the persistent-vs-memory
 	// fall-back internally. Either branch satisfies the contract:
-	// initBarrier returns nil and srv.sealManager is non-nil.
+	// initBarrier returns nil and srv.barrierManager is non-nil.
 	err := srv.initBarrier()
 	if err != nil {
 		// Some seal configurations fail validation under the test config;
@@ -218,7 +218,7 @@ func TestServer_InitBarrier_SealEnabledBuildsManager(t *testing.T) {
 		// returned the operation-failed error wrap correctly.
 		return
 	}
-	require.NotNil(t, srv.sealManager)
+	require.NotNil(t, srv.barrierManager)
 }
 
 func TestServer_Shutdown_TraversesMessagingBranch(t *testing.T) {

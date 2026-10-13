@@ -646,6 +646,24 @@ func TestRunDaemon_RefusesInvalidSelfServiceRegistration(t *testing.T) {
 	require.Contains(t, err.Error(), "iam.self_service_registration.default_role")
 }
 
+func TestRunDaemon_RefusesSystemTenantDynamicClientRegistration(t *testing.T) {
+	log = createTestLogger(t)
+	tempDir := t.TempDir()
+
+	cfg = config.Default()
+	cfg.Server.Mode = config.ServerModeStandalone
+	cfg.Storage.Backend = config.StorageBackendPebble
+	cfg.Storage.DataDir = tempDir
+	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
+	cfg.Server.Unix.Enabled = false
+	cfg.IAM.DynamicClientRegistration.Enabled = true
+	cfg.IAM.DynamicClientRegistration.AnonymousTenantID = config.SystemTenantID
+
+	err := runDaemon("refuse-dcr")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "iam.dynamic_client_registration.anonymous_tenant_id")
+}
+
 // =============================================================================
 // applyServerFlags embedded-fleet-node branches
 // =============================================================================

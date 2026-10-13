@@ -168,3 +168,58 @@ func TestTransactionValidationHelpers(t *testing.T) {
 	assert.True(t, isValidTransactionOpType(TxnOpGet))
 	assert.False(t, isValidTransactionOpType(TransactionOpType("invalid")))
 }
+
+// TestTransactionRequestValidation_FieldIndex guards the field name of a
+// validation error: the index must be rendered as decimal digits, not as the
+// rune with that code point (index 3 once rendered as U+0003).
+func TestTransactionRequestValidation_FieldIndex(t *testing.T) {
+	validCompare := CompareCondition{EntityType: "user", ID: 1, Target: CompareTargetVersion, Operator: CompareOpEqual}
+	validOp := TransactionOp{Type: TxnOpGet, EntityType: "user", ID: 1}
+
+	tests := []struct {
+		name  string
+		req   func() *TransactionRequest
+		field string
+	}{
+		{
+			name: "compare index 3",
+			req: func() *TransactionRequest {
+				compare := []CompareCondition{validCompare, validCompare, validCompare, {Target: CompareTargetVersion}}
+				return &TransactionRequest{Compare: compare, Success: []TransactionOp{validOp}}
+			},
+			field: "compare[3].entity_type",
+		},
+		{
+			name: "compare index 12",
+			req: func() *TransactionRequest {
+				compare := make([]CompareCondition, 13)
+				for i := range 12 {
+					compare[i] = validCompare
+				}
+				compare[12] = CompareCondition{EntityType: "user", Target: CompareTargetVersion}
+				return &TransactionRequest{Compare: compare, Success: []TransactionOp{validOp}}
+			},
+			field: "compare[12].id",
+		},
+		{
+			name: "success index 12",
+			req: func() *TransactionRequest {
+				success := make([]TransactionOp, 13)
+				for i := range 12 {
+					success[i] = validOp
+				}
+				success[12] = TransactionOp{Type: TxnOpGet, ID: 1}
+				return &TransactionRequest{Success: success}
+			},
+			field: "success[12].entity_type",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var verr *ValidationError
+			if assert.ErrorAs(t, tt.req().Validate(), &verr) {
+				assert.Equal(t, tt.field, verr.Field)
+			}
+		})
+	}
+}

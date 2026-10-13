@@ -14,10 +14,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -143,27 +143,31 @@ func runOrchInferenceStream(ctx context.Context, client OrchestratorClient, req 
 		return formatError(err)
 	}
 
-	bw := bufio.NewWriter(os.Stdout)
-	defer bw.Flush()
-
 	for chunk := range chunks {
 		if chunk == nil {
 			continue
 		}
-		if inferOutputFmt == "json" {
-			line, jErr := json.Marshal(chunk)
-			if jErr != nil {
-				return formatError(jErr)
-			}
-			_, _ = bw.Write(line)
-			_, _ = bw.WriteString("\n")
-		} else {
-			_, _ = bw.WriteString(inferenceBlockText(chunk.Delta))
+		if err := writeInferenceChunk(os.Stdout, inferOutputFmt, chunk); err != nil {
+			return formatError(err)
 		}
-		_ = bw.Flush()
 	}
 
 	return nil
+}
+
+// writeInferenceChunk writes one streamed chunk to w: a JSON line when format
+// is "json", otherwise the chunk's text.
+func writeInferenceChunk(w io.Writer, format string, chunk *orchestratorSDK.InferenceChunk) error {
+	if format == "json" {
+		line, err := json.Marshal(chunk)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(append(line, '\n'))
+		return err
+	}
+	_, err := io.WriteString(w, inferenceBlockText(chunk.Delta))
+	return err
 }
 
 // extractText concatenates the text from InferenceContentBlock slices.

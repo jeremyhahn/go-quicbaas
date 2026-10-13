@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -248,6 +249,50 @@ func TestRunOrchInferenceStream_ClientError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestWriteInferenceChunk_Formats(t *testing.T) {
+	chunk := &orchestratorSDK.InferenceChunk{
+		Delta: []orchestratorSDK.InferenceContentBlock{{Type: "text", Text: "hi"}},
+	}
+
+	var text bytes.Buffer
+	if err := writeInferenceChunk(&text, "text", chunk); err != nil {
+		t.Fatalf("text: %v", err)
+	}
+	if text.String() != "hi" {
+		t.Errorf("text output = %q, want %q", text.String(), "hi")
+	}
+
+	var jsonOut bytes.Buffer
+	if err := writeInferenceChunk(&jsonOut, "json", chunk); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if !strings.HasSuffix(jsonOut.String(), "\n") {
+		t.Errorf("json output %q is not newline-terminated", jsonOut.String())
+	}
+	var decoded orchestratorSDK.InferenceChunk
+	if err := json.Unmarshal(jsonOut.Bytes(), &decoded); err != nil {
+		t.Fatalf("json output is not valid JSON: %v", err)
+	}
+}
+
+// failingWriter rejects every write, standing in for a closed stdout.
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestWriteInferenceChunk_WriteFailureReturned(t *testing.T) {
+	cause := &mockOrchError{msg: "broken pipe"}
+	chunk := &orchestratorSDK.InferenceChunk{
+		Delta: []orchestratorSDK.InferenceContentBlock{{Type: "text", Text: "hi"}},
+	}
+
+	for _, format := range []string{"text", "json"} {
+		if err := writeInferenceChunk(failingWriter{err: cause}, format, chunk); !errors.Is(err, cause) {
+			t.Errorf("%s: error = %v, want %v", format, err, cause)
+		}
 	}
 }
 

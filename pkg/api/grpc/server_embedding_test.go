@@ -652,7 +652,7 @@ func TestServiceToProtoStatus(t *testing.T) {
 
 func TestServiceMetadataToProto(t *testing.T) {
 	t.Run("nil_metadata", func(t *testing.T) {
-		result := serviceMetadataToProto(nil)
+		result := serviceMetadataToProto(&responseNarrower{}, nil)
 		assert.Nil(t, result)
 	})
 
@@ -668,7 +668,7 @@ func TestServiceMetadataToProto(t *testing.T) {
 			Tags:       map[string]string{"env": "test"},
 			CacheHit:   true,
 		}
-		result := serviceMetadataToProto(meta)
+		result := serviceMetadataToProto(&responseNarrower{}, meta)
 		require.NotNil(t, result)
 		assert.Equal(t, "text-embedding-3-small", result.Model)
 		assert.Equal(t, pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI, result.Provider)
@@ -680,7 +680,7 @@ func TestServiceMetadataToProto(t *testing.T) {
 
 func TestServiceProviderInfoToProto(t *testing.T) {
 	t.Run("nil_provider_info", func(t *testing.T) {
-		result := serviceProviderInfoToProto(nil)
+		result := serviceProviderInfoToProto(&responseNarrower{}, nil)
 		assert.Nil(t, result)
 	})
 
@@ -701,7 +701,7 @@ func TestServiceProviderInfoToProto(t *testing.T) {
 			ErrorCount:         5,
 			AvgLatency:         50 * time.Millisecond,
 		}
-		result := serviceProviderInfoToProto(info)
+		result := serviceProviderInfoToProto(&responseNarrower{}, info)
 		require.NotNil(t, result)
 		assert.Equal(t, "openai", result.Name)
 		assert.Equal(t, pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI, result.Type)
@@ -730,7 +730,7 @@ func TestServiceProviderInfoToProto(t *testing.T) {
 			ErrorCount:         10,
 			AvgLatency:         100 * time.Millisecond,
 		}
-		result := serviceProviderInfoToProto(info)
+		result := serviceProviderInfoToProto(&responseNarrower{}, info)
 		require.NotNil(t, result)
 		assert.Equal(t, "voyage", result.Name)
 		assert.Equal(t, pb.EmbeddingProvider_EMBEDDING_PROVIDER_VOYAGE, result.Type)
@@ -753,7 +753,7 @@ func TestServiceProviderInfoToProto(t *testing.T) {
 			RateLimitPerMinute: 100,
 			IsDefault:          false,
 		}
-		result := serviceProviderInfoToProto(info)
+		result := serviceProviderInfoToProto(&responseNarrower{}, info)
 		require.NotNil(t, result)
 		assert.Equal(t, pb.EmbeddingStatus_EMBEDDING_STATUS_RATE_LIMITED, result.Status)
 	})
@@ -765,7 +765,7 @@ func TestServiceProviderInfoToProto(t *testing.T) {
 			Model:  "local-model",
 			Status: service.EmbeddingStatusUnavailable,
 		}
-		result := serviceProviderInfoToProto(info)
+		result := serviceProviderInfoToProto(&responseNarrower{}, info)
 		require.NotNil(t, result)
 		assert.Equal(t, pb.EmbeddingStatus_EMBEDDING_STATUS_UNAVAILABLE, result.Status)
 	})

@@ -599,6 +599,7 @@ func (v *Validator) validateIAM(cfg *IAMConfig) {
 	}
 	v.addSectionError(cfg.WebAuthn.Validate(), "iam.webauthn")
 	v.addSectionError(cfg.SelfServiceRegistration.Validate(), "iam.self_service_registration")
+	v.addSectionError(cfg.DynamicClientRegistration.Validate(), "iam.dynamic_client_registration")
 }
 
 // addSectionError records err from a section's own Validate method. A

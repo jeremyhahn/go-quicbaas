@@ -53,13 +53,13 @@ type covPushError struct {
 func (e *covPushError) Error() string { return e.msg }
 
 // =============================================================================
-// defaultNewSealManager (lifecycle.go:407) - currently 0%
+// defaultNewBarrierManager (lifecycle.go:407) - currently 0%
 // =============================================================================
 
 func TestCovPush_DefaultNewSealManager(t *testing.T) {
 	t.Parallel()
 	cfg := &quicbaasseal.Config{Threshold: 2, TotalShares: 3}
-	mgr, err := defaultNewSealManager(cfg, mustCreateLogger(), t.TempDir())
+	mgr, err := defaultNewBarrierManager(cfg, mustCreateLogger(), t.TempDir())
 	assert.NoError(t, err)
 	assert.NotNil(t, mgr)
 }
@@ -67,7 +67,7 @@ func TestCovPush_DefaultNewSealManager(t *testing.T) {
 func TestCovPush_DefaultNewSealManager_ZeroValues(t *testing.T) {
 	t.Parallel()
 	cfg := &quicbaasseal.Config{}
-	mgr, err := defaultNewSealManager(cfg, mustCreateLogger(), t.TempDir())
+	mgr, err := defaultNewBarrierManager(cfg, mustCreateLogger(), t.TempDir())
 	assert.NoError(t, err)
 	assert.NotNil(t, mgr)
 }

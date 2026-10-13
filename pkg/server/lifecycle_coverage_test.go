@@ -51,7 +51,7 @@ func saveAndRestoreLifecycleSeams(t *testing.T) {
 
 	seamMu.Lock()
 	origInitializeCAFn := initializeCAFn
-	origNewSealManagerFn := newSealManagerFn
+	origNewBarrierManagerFn := newBarrierManagerFn
 	origInitSealManagerFn := initSealManagerFn
 	origNewCacheManagerFn := newCacheManagerFn
 	origInitIAMComponentsFn := initIAMComponentsFn
@@ -64,7 +64,7 @@ func saveAndRestoreLifecycleSeams(t *testing.T) {
 	t.Cleanup(func() {
 		seamMu.Lock()
 		initializeCAFn = origInitializeCAFn
-		newSealManagerFn = origNewSealManagerFn
+		newBarrierManagerFn = origNewBarrierManagerFn
 		initSealManagerFn = origInitSealManagerFn
 		newCacheManagerFn = origNewCacheManagerFn
 		initIAMComponentsFn = origInitIAMComponentsFn
@@ -125,24 +125,24 @@ func TestLC_RegisterOllamaService_NoopDoesNotPanic(t *testing.T) {
 }
 
 // =============================================================================
-// server.go: SetSealManager, GetRaftNode, TriggerShutdown
+// server.go: SetBarrierManager, GetRaftNode, TriggerShutdown
 // =============================================================================
 
 func TestLC_SetSealManager(t *testing.T) {
 	t.Run("sets and retrieves seal manager", func(t *testing.T) {
 		srv := withTempServer(t)
-		assert.Nil(t, srv.GetSealManager())
+		assert.Nil(t, srv.GetBarrierManager())
 
 		// Reuse the mockSealManager from new_methods_test.go (same package, no build tag)
 		mock := &mockSealManager{}
-		srv.SetSealManager(mock)
-		assert.Equal(t, mock, srv.GetSealManager())
+		srv.SetBarrierManager(mock)
+		assert.Equal(t, mock, srv.GetBarrierManager())
 	})
 
 	t.Run("sets nil seal manager", func(t *testing.T) {
 		srv := withTempServer(t)
-		srv.SetSealManager(nil)
-		assert.Nil(t, srv.GetSealManager())
+		srv.SetBarrierManager(nil)
+		assert.Nil(t, srv.GetBarrierManager())
 	})
 }
 
@@ -185,7 +185,7 @@ func TestLC_ValidateFIPSMode_NoError(t *testing.T) {
 }
 
 // =============================================================================
-// lifecycle.go: defaultNewSealManager
+// lifecycle.go: defaultNewBarrierManager
 // =============================================================================
 
 func TestLC_DefaultNewSealManager_ReturnsManager(t *testing.T) {
@@ -194,7 +194,7 @@ func TestLC_DefaultNewSealManager_ReturnsManager(t *testing.T) {
 	sealCfg := &quicbaasseal.Config{
 		Mode: quicbaasseal.SealModeAuto,
 	}
-	mgr, err := defaultNewSealManager(sealCfg, log, t.TempDir())
+	mgr, err := defaultNewBarrierManager(sealCfg, log, t.TempDir())
 	assert.NoError(t, err)
 	assert.NotNil(t, mgr)
 }
@@ -594,7 +594,7 @@ func TestLC_InitBarrier_Disabled(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Seal.Enabled = false
 	assert.NoError(t, srv.initBarrier())
-	assert.Nil(t, srv.sealManager)
+	assert.Nil(t, srv.barrierManager)
 }
 
 func TestLC_InitBarrier_Enabled(t *testing.T) {
@@ -607,7 +607,7 @@ func TestLC_InitBarrier_Enabled(t *testing.T) {
 
 	err := srv.initBarrier()
 	assert.NoError(t, err)
-	assert.NotNil(t, srv.sealManager)
+	assert.NotNil(t, srv.barrierManager)
 }
 
 func TestLC_InitBarrier_CustomBarrierDir(t *testing.T) {
@@ -621,7 +621,7 @@ func TestLC_InitBarrier_CustomBarrierDir(t *testing.T) {
 
 	err := srv.initBarrier()
 	assert.NoError(t, err)
-	assert.NotNil(t, srv.sealManager)
+	assert.NotNil(t, srv.barrierManager)
 }
 
 // =============================================================================

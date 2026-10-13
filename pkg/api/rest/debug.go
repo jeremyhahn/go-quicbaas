@@ -69,5 +69,5 @@ func (s *Server) handleDebugRoute(w http.ResponseWriter, req *http.Request) {
 	shard := s.shardRouter.Route(et, id)
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(strconv.FormatUint(shard, 10)))
+	writeResponseBody(w, req, []byte(strconv.FormatUint(shard, 10)))
 }

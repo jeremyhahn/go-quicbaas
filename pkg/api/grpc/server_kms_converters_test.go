@@ -387,7 +387,9 @@ func TestConvertKeyHandle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertKeyHandle(tt.input)
+			var n responseNarrower
+			result := convertKeyHandle(&n, tt.input)
+			assert.NoError(t, n.err())
 			tt.validate(t, result)
 		})
 	}

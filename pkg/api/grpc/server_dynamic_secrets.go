@@ -396,8 +396,8 @@ func serviceCredentialToProto(cred *credentials.Credential) *pb.Credential {
 		protoCred.Host = host
 	}
 	if portStr, ok := cred.Data["port"]; ok {
-		if port, err := strconv.Atoi(portStr); err == nil && port > 0 && port <= 65535 {
-			protoCred.Port = int32(port) // #nosec G109 -- port is bounded to 0-65535 by the check on the same value above.
+		if port, err := strconv.ParseUint(portStr, 10, 16); err == nil && port > 0 {
+			protoCred.Port = int32(uint16(port))
 		}
 	}
 	if database, ok := cred.Data["database"]; ok {

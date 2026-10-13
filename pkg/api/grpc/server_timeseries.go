@@ -24,6 +24,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // timeseriesServiceInterface defines the timeseries service capability.
@@ -110,17 +111,14 @@ func (s *Server) TSWriteBatch(ctx context.Context, req *pb.TSWriteBatchRequest) 
 		return nil, toProtoError(err)
 	}
 
-	// Clamp PointsWritten to valid int32 range
-	pointsWritten := resp.PointsWritten
-	if pointsWritten > 0x7FFFFFFF {
-		pointsWritten = 0x7FFFFFFF
-	} else if pointsWritten < 0 {
-		pointsWritten = 0
+	pointsWritten, err := conv.SafeIntToInt32(resp.PointsWritten)
+	if err != nil {
+		return nil, responseRangeError("points_written", err)
 	}
 
 	return &pb.TSWriteBatchResponse{
 		Success:       resp.Success,
-		PointsWritten: int32(pointsWritten), // #nosec G115 - safe after bounds check
+		PointsWritten: pointsWritten,
 		Timestamp:     time.Now().UnixNano(),
 	}, nil
 }

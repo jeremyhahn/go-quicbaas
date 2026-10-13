@@ -160,12 +160,9 @@ func (c *Client) TSQuery(ctx context.Context, req *cli.TSQueryRequest) (*cli.TSQ
 	}
 
 	// Convert CLI request to proto request
-	// Clamp limit to valid int32 range
-	limit := req.Limit
-	if limit > 0x7FFFFFFF {
-		limit = 0x7FFFFFFF
-	} else if limit < 0 {
-		limit = 0
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
 	}
 	protoReq := &proto.TSQueryRequest{
 		Metric:          req.Metric,
@@ -175,7 +172,7 @@ func (c *Client) TSQuery(ctx context.Context, req *cli.TSQueryRequest) (*cli.TSQ
 		Aggregation:     req.Aggregation,
 		IntervalSeconds: int64(req.IntervalSec),
 		GroupBy:         req.GroupBy,
-		Limit:           int32(limit), // #nosec G115 - safe after bounds check
+		Limit:           limit,
 		Percentile:      req.Percentile,
 	}
 
@@ -449,17 +446,14 @@ func (c *Client) TSListMetrics(ctx context.Context, req *cli.TSListMetricsReques
 	}
 
 	// Convert CLI request to proto request
-	// Clamp limit to valid int32 range
-	limit := req.Limit
-	if limit > 0x7FFFFFFF {
-		limit = 0x7FFFFFFF
-	} else if limit < 0 {
-		limit = 0
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
 	}
 	protoReq := &proto.TSListMetricsRequest{
 		Prefix: req.Prefix,
 		Tags:   req.Tags,
-		Limit:  int32(limit), // #nosec G115 - safe after bounds check
+		Limit:  limit,
 		Cursor: req.Cursor,
 	}
 

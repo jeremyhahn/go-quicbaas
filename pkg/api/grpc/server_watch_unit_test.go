@@ -397,3 +397,27 @@ func TestWatch_EventConversion(t *testing.T) {
 		mockSvc.AssertExpectations(t)
 	})
 }
+
+// TestWatch_UnknownEventType proves that an event type the wire format does
+// not define fails the stream with Internal instead of being sent as a
+// different type.
+func TestWatch_UnknownEventType(t *testing.T) {
+	srv, mockSvc := createTestWatchServer(t)
+	stream := newMockWatchStream(context.Background())
+
+	mockSvc.On("Watch", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			responseChan := args.Get(2).(chan<- *service.WatchResponse)
+			responseChan <- &service.WatchResponse{
+				WatchID: 1,
+				Events:  []*service.WatchEvent{{Type: service.WatchEventType(99), Key: []byte("key")}},
+			}
+			close(responseChan)
+		}).
+		Return(int64(1), nil).Once()
+
+	err := srv.Watch(&pb.WatchRequest{Key: []byte("key")}, stream)
+
+	requireRangeStatus(t, err, codes.Internal, "events.type")
+	require.Empty(t, stream.sent)
+}

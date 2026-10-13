@@ -587,6 +587,23 @@ func (e *NoFleetNodesAvailableError) Unwrap() error {
 	return ErrNoFleetNodesAvailable
 }
 
+// WorkflowAgentIDError reports that no ID could be minted for a synthesized
+// workflow agent, because the random source failed.
+type WorkflowAgentIDError struct {
+	Role  string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *WorkflowAgentIDError) Error() string {
+	return "orchestration: could not mint an ID for workflow agent role " + e.Role + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the random-source failure.
+func (e *WorkflowAgentIDError) Unwrap() error {
+	return e.Cause
+}
+
 // NoMatchingFleetNodeError indicates no online agent satisfies the combined
 // backend, GPU, and host-affinity constraints for the request.
 type NoMatchingFleetNodeError struct {

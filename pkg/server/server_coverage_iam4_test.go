@@ -128,7 +128,7 @@ func TestServer_InitBarrier_DisabledReturnsNil(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Seal.Enabled = false
 	require.NoError(t, srv.initBarrier())
-	assert.Nil(t, srv.sealManager)
+	assert.Nil(t, srv.barrierManager)
 }
 
 // =============================================================================

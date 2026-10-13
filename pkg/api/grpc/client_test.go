@@ -670,7 +670,7 @@ func TestClient_AddMetadata_CachedMD(t *testing.T) {
 func TestServiceMetadataToProto_Nil_Coverage(t *testing.T) {
 	t.Parallel()
 
-	result := serviceMetadataToProto(nil)
+	result := serviceMetadataToProto(&responseNarrower{}, nil)
 	assert.Nil(t, result)
 }
 
@@ -685,7 +685,7 @@ func TestServiceMetadataToProto_ValidMetadata_Coverage(t *testing.T) {
 		InputType:  service.EmbeddingInputTypeDocument,
 	}
 
-	result := serviceMetadataToProto(metadata)
+	result := serviceMetadataToProto(&responseNarrower{}, metadata)
 	assert.NotNil(t, result)
 	assert.Equal(t, pb.EmbeddingProvider_EMBEDDING_PROVIDER_VOYAGE, result.Provider)
 	assert.Equal(t, "voyage-3", result.Model)

@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"math"
 	"strconv"
 	"strings"
@@ -27,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // kvEntry is the on-disk representation of a single secret version.
@@ -136,9 +136,7 @@ var kvWriteLocks [32]sync.Mutex
 // two paths may share a stripe and serialise harmlessly; one path never spans
 // two stripes.
 func lockKVPath(path string) *sync.Mutex {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(path))
-	return &kvWriteLocks[h.Sum32()%uint32(len(kvWriteLocks))]
+	return &kvWriteLocks[id.HashString(path)%uint64(len(kvWriteLocks))]
 }
 
 // nextVersionNumber allocates the next version for a path: one past the

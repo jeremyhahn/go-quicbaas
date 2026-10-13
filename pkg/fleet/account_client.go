@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/httpbody"
 )
 
 // =============================================================================
@@ -604,7 +605,11 @@ func (c *AccountAPIClient) attempt(ctx context.Context, method, path string, bod
 	if doErr != nil {
 		return &AccountAPIError{Op: op, Cause: doErr}
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	defer func() {
+		if err := httpbody.DrainClose(resp.Body); err != nil {
+			c.logger.Debugf("agent account api: release %s response body: %v", op, err)
+		}
+	}()
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:

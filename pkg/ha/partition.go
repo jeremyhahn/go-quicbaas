@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/httpbody"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -520,8 +520,14 @@ func (pd *PartitionDetector) pingPeer(ctx context.Context, peer *PeerState) (boo
 		}).Debug("pingPeer: health request failed")
 		return false, rtt
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
+	defer func() {
+		if err := httpbody.DrainClose(resp.Body); err != nil {
+			pd.logger.WithFields(map[string]interface{}{
+				"node_id": peer.NodeID,
+				"error":   err.Error(),
+			}).Debug("pingPeer: health response body release failed")
+		}
+	}()
 
 	// 200 = healthy; 503 = sealed/not-ready but the process is alive.
 	reachable := resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusServiceUnavailable

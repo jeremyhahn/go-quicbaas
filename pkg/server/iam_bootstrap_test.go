@@ -50,11 +50,11 @@ const bootstrapAdminEmail = "admin@" + qrdbsdk.SystemTenantID + ".qrdb.local"
 
 func TestPrintFirstBootBanner_GenerateAndDistribute(t *testing.T) {
 	var buf bytes.Buffer
-	writeFirstBootBanner(&buf, adminEnrollmentBanner{
+	require.NoError(t, writeFirstBootBanner(&buf, adminEnrollmentBanner{
 		CertPath:   "/var/lib/quicbaas/admin/admin.crt",
 		KeyPath:    "/var/lib/quicbaas/admin/admin.key",
 		Thumbprint: "Zm9vYmFy",
-	})
+	}))
 
 	output := buf.String()
 	assert.Contains(t, output, "/var/lib/quicbaas/admin/admin.crt",
@@ -68,10 +68,10 @@ func TestPrintFirstBootBanner_GenerateAndDistribute(t *testing.T) {
 
 func TestPrintFirstBootBanner_CSRSignPathOmitsKey(t *testing.T) {
 	var buf bytes.Buffer
-	writeFirstBootBanner(&buf, adminEnrollmentBanner{
+	require.NoError(t, writeFirstBootBanner(&buf, adminEnrollmentBanner{
 		CertPath:   "/var/lib/quicbaas/admin/admin.crt",
 		Thumbprint: "Zm9vYmFy",
-	})
+	}))
 
 	output := buf.String()
 	assert.Contains(t, output, "never reached this host",
@@ -84,12 +84,28 @@ func TestPrintFirstBootBanner_NoCertificateIssued(t *testing.T) {
 	// A CA-less deployment still prints a banner; it must say plainly that no
 	// certificate was issued rather than pointing at a file that is not there.
 	var buf bytes.Buffer
-	writeFirstBootBanner(&buf, adminEnrollmentBanner{})
+	require.NoError(t, writeFirstBootBanner(&buf, adminEnrollmentBanner{}))
 
 	output := buf.String()
 	require.NotEmpty(t, output)
 	assert.Contains(t, output, "NO admin certificate")
 	assert.NotContains(t, output, "admin.crt")
+}
+
+// failingStringWriter rejects every write, standing in for a closed stderr.
+type failingStringWriter struct{ err error }
+
+func (w failingStringWriter) WriteString(string) (int, error) { return 0, w.err }
+
+func TestPrintFirstBootBanner_WriteFailureReturned(t *testing.T) {
+	cause := errors.New("stderr closed")
+
+	err := writeFirstBootBanner(failingStringWriter{err: cause}, adminEnrollmentBanner{})
+
+	var fb *FirstBootBootstrapError
+	require.ErrorAs(t, err, &fb)
+	assert.Equal(t, "write enrollment banner", fb.Op)
+	assert.ErrorIs(t, fb.Cause, cause)
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +457,7 @@ func TestFirstBootBootstrap_FreshStorage_CreatesAdminAssignment(t *testing.T) {
 	var stderrCapture bytes.Buffer
 	origPrint := writeFirstBootBannerFn
 	writeFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
-		writeFirstBootBanner(&stderrCapture, b)
+		require.NoError(t, writeFirstBootBanner(&stderrCapture, b))
 	}
 	defer func() { writeFirstBootBannerFn = origPrint }()
 

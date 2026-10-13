@@ -14,7 +14,6 @@
 package kms
 
 import (
-	"crypto/rand"
 	"errors"
 	"strconv"
 	"sync"
@@ -121,21 +120,11 @@ type cacheEntry struct {
 	accessedAt atomic.Int64
 }
 
-// zeroMemory overwrites the key material with random data then zeros.
+// zeroMemory zeroes the key material and drops the slice.
 // Must be called with KeyCache.mu held for writing.
 func (e *cacheEntry) zeroMemory() {
-	if len(e.material) > 0 {
-		// First pass: fill with random data
-		_, _ = rand.Read(e.material)
-
-		// Second pass: zero out
-		for i := range e.material {
-			e.material[i] = 0
-		}
-
-		// Clear the slice
-		e.material = nil
-	}
+	clear(e.material)
+	e.material = nil
 }
 
 // CacheStats provides statistics about cache usage.

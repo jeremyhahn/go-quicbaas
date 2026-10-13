@@ -17,6 +17,7 @@ package grpc
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -158,6 +159,20 @@ func TestTSWriteBatch(t *testing.T) {
 		st, ok := status.FromError(err)
 		require.True(t, ok)
 		assert.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("points_written_out_of_range", func(t *testing.T) {
+		srv, mockSvc := createTSTestServer(t)
+
+		mockSvc.On("WriteBatch", mock.Anything, mock.Anything).
+			Return(&service.WriteBatchResponse{Success: true, PointsWritten: math.MaxInt32 + 1}, nil).Once()
+
+		req := &pb.TSWriteBatchRequest{
+			Points: []*pb.TSDataPoint{{Metric: "cpu", Value: 1, Timestamp: time.Now().UnixNano()}},
+		}
+
+		_, err := srv.TSWriteBatch(context.Background(), req)
+		requireRangeStatus(t, err, codes.Internal, "points_written")
 	})
 }
 
@@ -550,51 +565,6 @@ func TestTSDeleteSeriesWithTimeRange(t *testing.T) {
 // for forward compatibility if the interface is refactored to make timeseries optional.
 
 // --- Merged from coverage_91_target_timeseries_test.go ---
-
-// =============================================================================
-// TSWriteBatch int32 overflow/negative clamping paths
-// These tests require the timeseries build tag because TSWriteBatch and TSQuery
-// are only compiled when the timeseries tag is active. Without it, the
-// UnimplementedQuicBaaSServiceServer stub runs instead.
-// =============================================================================
-
-func TestServer_TSWriteBatch_PointsWrittenOverflow(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	mockSvc.On("WriteBatch", mock.Anything, mock.Anything).
-		Return(&service.WriteBatchResponse{
-			Success:       true,
-			PointsWritten: 0x80000000, // Exceeds int32 max
-			Timestamp:     time.Now(),
-		}, nil)
-
-	resp, err := srv.TSWriteBatch(context.Background(), &pb.TSWriteBatchRequest{
-		Points: []*pb.TSDataPoint{
-			{Metric: "cpu", Value: 1.0, Timestamp: time.Now().UnixNano()},
-		},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int32(0x7FFFFFFF), resp.PointsWritten)
-}
-
-func TestServer_TSWriteBatch_PointsWrittenNegative(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	mockSvc.On("WriteBatch", mock.Anything, mock.Anything).
-		Return(&service.WriteBatchResponse{
-			Success:       true,
-			PointsWritten: -1,
-			Timestamp:     time.Now(),
-		}, nil)
-
-	resp, err := srv.TSWriteBatch(context.Background(), &pb.TSWriteBatchRequest{
-		Points: []*pb.TSDataPoint{
-			{Metric: "cpu", Value: 1.0, Timestamp: time.Now().UnixNano()},
-		},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int32(0), resp.PointsWritten)
-}
 
 // =============================================================================
 // TSQuery with GroupedResults and AggregatedValue

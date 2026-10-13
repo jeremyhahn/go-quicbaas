@@ -23,6 +23,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // EmbeddingGenerate generates an embedding vector for a single text.
@@ -59,11 +60,16 @@ func (s *Server) EmbeddingGenerate(ctx context.Context, req *pb.EmbeddingGenerat
 	}
 
 	// Convert service response to proto response
-	return &pb.EmbeddingGenerateResponse{
+	var n responseNarrower
+	out := &pb.EmbeddingGenerateResponse{
 		Embedding: resp.Embedding,
-		Metadata:  serviceMetadataToProto(resp.Metadata),
+		Metadata:  serviceMetadataToProto(&n, resp.Metadata),
 		Timestamp: timestamppb.New(resp.Timestamp),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // EmbeddingBatchGenerate generates embeddings for multiple texts in a single request.
@@ -109,38 +115,29 @@ func (s *Server) EmbeddingBatchGenerate(ctx context.Context, req *pb.EmbeddingBa
 	}
 
 	// Convert service results to proto results
+	var n responseNarrower
 	protoResults := make([]*pb.EmbeddingBatchResult, len(resp.Results))
 	for i, result := range resp.Results {
 		protoResults[i] = &pb.EmbeddingBatchResult{
 			Id:        result.ID,
 			Embedding: result.Embedding,
-			Metadata:  serviceMetadataToProto(result.Metadata),
+			Metadata:  serviceMetadataToProto(&n, result.Metadata),
 			Error:     result.Error,
 		}
 	}
 
-	// Clamp counts to valid int32 range
-	successCount := resp.SuccessCount
-	if successCount > 0x7FFFFFFF {
-		successCount = 0x7FFFFFFF
-	}
-	errorCount := resp.ErrorCount
-	if errorCount > 0x7FFFFFFF {
-		errorCount = 0x7FFFFFFF
-	}
-	totalTokens := resp.TotalTokens
-	if totalTokens > 0x7FFFFFFF {
-		totalTokens = 0x7FFFFFFF
-	}
-
-	return &pb.EmbeddingBatchGenerateResponse{
+	out := &pb.EmbeddingBatchGenerateResponse{
 		Results:        protoResults,
-		SuccessCount:   int32(successCount), // #nosec G115 - safe after bounds check
-		ErrorCount:     int32(errorCount),   // #nosec G115 - safe after bounds check
-		TotalTokens:    int32(totalTokens),  // #nosec G115 - safe after bounds check
+		SuccessCount:   n.int32("success_count", resp.SuccessCount),
+		ErrorCount:     n.int32("error_count", resp.ErrorCount),
+		TotalTokens:    n.int32("total_tokens", resp.TotalTokens),
 		ProcessingTime: durationpb.New(resp.ProcessingTime),
 		Timestamp:      timestamppb.New(resp.Timestamp),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // EmbeddingListProviders returns all registered embedding providers with their capabilities.
@@ -167,9 +164,13 @@ func (s *Server) EmbeddingListProviders(ctx context.Context, req *pb.EmbeddingLi
 	}
 
 	// Convert service providers to proto providers
+	var n responseNarrower
 	protoProviders := make([]*pb.EmbeddingProviderInfo, len(resp.Providers))
 	for i, provider := range resp.Providers {
-		protoProviders[i] = serviceProviderInfoToProto(provider)
+		protoProviders[i] = serviceProviderInfoToProto(&n, provider)
+	}
+	if err := n.err(); err != nil {
+		return nil, err
 	}
 
 	return &pb.EmbeddingListProvidersResponse{
@@ -206,8 +207,14 @@ func (s *Server) EmbeddingGetProviderInfo(ctx context.Context, req *pb.Embedding
 		return nil, toProtoError(err)
 	}
 
+	var n responseNarrower
+	info := serviceProviderInfoToProto(&n, resp.Info)
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+
 	return &pb.EmbeddingGetProviderInfoResponse{
-		Info:      serviceProviderInfoToProto(resp.Info),
+		Info:      info,
 		Timestamp: timestamppb.New(resp.Timestamp),
 	}, nil
 }
@@ -267,20 +274,17 @@ func (s *Server) EmbeddingGetCacheStats(ctx context.Context, req *pb.EmbeddingGe
 		return nil, toProtoError(err)
 	}
 
-	// Clamp size and capacity to valid int32 range
-	size := resp.Size
-	if size > 0x7FFFFFFF {
-		size = 0x7FFFFFFF
-	}
-	capacity := resp.Capacity
-	if capacity > 0x7FFFFFFF {
-		capacity = 0x7FFFFFFF
+	var n responseNarrower
+	size := n.int32("size", resp.Size)
+	capacity := n.int32("capacity", resp.Capacity)
+	if err := n.err(); err != nil {
+		return nil, err
 	}
 
 	return &pb.EmbeddingGetCacheStatsResponse{
 		Enabled:            resp.Enabled,
-		Size:               int32(size),     // #nosec G115 - safe after bounds check
-		Capacity:           int32(capacity), // #nosec G115 - safe after bounds check
+		Size:               size,
+		Capacity:           capacity,
 		Hits:               resp.Hits,
 		Misses:             resp.Misses,
 		HitRate:            resp.HitRate,
@@ -316,14 +320,13 @@ func (s *Server) EmbeddingClearCache(ctx context.Context, req *pb.EmbeddingClear
 		return nil, toProtoError(err)
 	}
 
-	// Clamp entries cleared to valid int32 range
-	entriesCleared := resp.EntriesCleared
-	if entriesCleared > 0x7FFFFFFF {
-		entriesCleared = 0x7FFFFFFF
+	entriesCleared, err := conv.SafeIntToInt32(resp.EntriesCleared)
+	if err != nil {
+		return nil, responseRangeError("entries_cleared", err)
 	}
 
 	return &pb.EmbeddingClearCacheResponse{
-		EntriesCleared: int32(entriesCleared), // #nosec G115 - safe after bounds check
+		EntriesCleared: entriesCleared,
 		Provider:       serviceToProtoProvider(resp.Provider),
 		Timestamp:      timestamppb.New(resp.Timestamp),
 	}, nil
@@ -414,7 +417,7 @@ func serviceToProtoStatus(s service.EmbeddingStatus) pb.EmbeddingStatus {
 }
 
 // serviceMetadataToProto converts service EmbeddingMetadata to proto EmbeddingMetadata.
-func serviceMetadataToProto(m *service.EmbeddingMetadata) *pb.EmbeddingMetadata {
+func serviceMetadataToProto(n *responseNarrower, m *service.EmbeddingMetadata) *pb.EmbeddingMetadata {
 	if m == nil {
 		return nil
 	}
@@ -422,8 +425,8 @@ func serviceMetadataToProto(m *service.EmbeddingMetadata) *pb.EmbeddingMetadata 
 	return &pb.EmbeddingMetadata{
 		Model:          m.Model,
 		Provider:       serviceToProtoProvider(m.Provider),
-		Dimensions:     int32(m.Dimensions), // #nosec G115 - dimensions are small positive integers
-		Tokens:         int32(m.Tokens),     // #nosec G115 - tokens are small positive integers
+		Dimensions:     n.int32("metadata.dimensions", m.Dimensions),
+		Tokens:         n.int32("metadata.tokens", m.Tokens),
 		Source:         m.Source,
 		Language:       m.Language,
 		InputType:      serviceToProtoInputType(m.InputType),
@@ -434,7 +437,7 @@ func serviceMetadataToProto(m *service.EmbeddingMetadata) *pb.EmbeddingMetadata 
 }
 
 // serviceProviderInfoToProto converts service ProviderInfo to proto EmbeddingProviderInfo.
-func serviceProviderInfoToProto(p *service.ProviderInfo) *pb.EmbeddingProviderInfo {
+func serviceProviderInfoToProto(n *responseNarrower, p *service.ProviderInfo) *pb.EmbeddingProviderInfo {
 	if p == nil {
 		return nil
 	}
@@ -443,12 +446,12 @@ func serviceProviderInfoToProto(p *service.ProviderInfo) *pb.EmbeddingProviderIn
 		Name:               p.Name,
 		Type:               serviceToProtoProvider(p.Type),
 		Model:              p.Model,
-		Dimensions:         int32(p.Dimensions),   // #nosec G115 - dimensions are small positive integers
-		MaxTokens:          int32(p.MaxTokens),    // #nosec G115 - max tokens are small positive integers
-		MaxBatchSize:       int32(p.MaxBatchSize), // #nosec G115 - batch size is small positive integer
+		Dimensions:         n.int32("provider.dimensions", p.Dimensions),
+		MaxTokens:          n.int32("provider.max_tokens", p.MaxTokens),
+		MaxBatchSize:       n.int32("provider.max_batch_size", p.MaxBatchSize),
 		Status:             serviceToProtoStatus(p.Status),
 		ApiUrl:             p.APIURL,
-		RateLimitPerMinute: int32(p.RateLimitPerMinute), // #nosec G115 - rate limit is small positive integer
+		RateLimitPerMinute: n.int32("provider.rate_limit_per_minute", p.RateLimitPerMinute),
 		Timeout:            durationpb.New(p.Timeout),
 		IsDefault:          p.IsDefault,
 		LastError:          p.LastError,

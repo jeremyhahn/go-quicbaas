@@ -333,8 +333,12 @@ func (a *BackupClientAdapter) CreateBackupFromRequest(ctx context.Context, req B
 
 // ListBackupsFromRequest implements the BackupClient interface for CLI.
 func (a *BackupClientAdapter) ListBackupsFromRequest(ctx context.Context, req BackupListRequest) (*cli.BackupListResponse, error) {
+	limit, err := clientInt32("limit", req.GetLimit())
+	if err != nil {
+		return nil, err
+	}
 	protoReq := &proto.ListBackupsRequest{
-		Limit: int32(req.GetLimit()), // #nosec G115 -- limit is bounded by practical values
+		Limit: limit,
 	}
 
 	resp, err := a.client.ListBackups(ctx, protoReq)

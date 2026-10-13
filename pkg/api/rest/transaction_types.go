@@ -17,6 +17,7 @@ package rest
 
 import (
 	"encoding/json"
+	"strconv"
 	"time"
 )
 
@@ -147,25 +148,25 @@ func (req *TransactionRequest) Validate() error {
 	for i, cmp := range req.Compare {
 		if cmp.EntityType == "" {
 			return &ValidationError{
-				Field:   "compare[" + string(rune(i)) + "].entity_type",
+				Field:   "compare[" + strconv.Itoa(i) + "].entity_type",
 				Message: "entity_type is required",
 			}
 		}
 		if cmp.ID == 0 {
 			return &ValidationError{
-				Field:   "compare[" + string(rune(i)) + "].id",
+				Field:   "compare[" + strconv.Itoa(i) + "].id",
 				Message: "id is required",
 			}
 		}
 		if !isValidCompareTarget(cmp.Target) {
 			return &ValidationError{
-				Field:   "compare[" + string(rune(i)) + "].target",
+				Field:   "compare[" + strconv.Itoa(i) + "].target",
 				Message: "invalid compare target",
 			}
 		}
 		if !isValidCompareOperator(cmp.Operator) {
 			return &ValidationError{
-				Field:   "compare[" + string(rune(i)) + "].operator",
+				Field:   "compare[" + strconv.Itoa(i) + "].operator",
 				Message: "invalid compare operator",
 			}
 		}
@@ -191,25 +192,25 @@ func (req *TransactionRequest) Validate() error {
 func validateTransactionOp(op TransactionOp, index int, opList string) error {
 	if op.EntityType == "" {
 		return &ValidationError{
-			Field:   opList + "[" + string(rune(index)) + "].entity_type",
+			Field:   opList + "[" + strconv.Itoa(index) + "].entity_type",
 			Message: "entity_type is required",
 		}
 	}
 	if op.ID == 0 {
 		return &ValidationError{
-			Field:   opList + "[" + string(rune(index)) + "].id",
+			Field:   opList + "[" + strconv.Itoa(index) + "].id",
 			Message: "id is required",
 		}
 	}
 	if !isValidTransactionOpType(op.Type) {
 		return &ValidationError{
-			Field:   opList + "[" + string(rune(index)) + "].type",
+			Field:   opList + "[" + strconv.Itoa(index) + "].type",
 			Message: "invalid operation type",
 		}
 	}
 	if op.Type == TxnOpPut && len(op.Data) == 0 {
 		return &ValidationError{
-			Field:   opList + "[" + string(rune(index)) + "].data",
+			Field:   opList + "[" + strconv.Itoa(index) + "].data",
 			Message: "data is required for put operations",
 		}
 	}

@@ -389,8 +389,7 @@ func ContainerConfigDigest(spec *ContainerSpec) (string, error) {
 		return "", &InputValidationError{Field: "spec", Message: "cannot be nil"}
 	}
 
-	h := sha256.New()
-	w := &canonicalWriter{h: h}
+	w := &canonicalWriter{}
 
 	w.field("image", spec.PinnedImageReference())
 	w.field("digest", spec.ResolvedImageDigest())
@@ -430,7 +429,8 @@ func ContainerConfigDigest(spec *ContainerSpec) (string, error) {
 		w.number("mount.tmpfs_size", m.TmpfsSizeBytes)
 	}
 
-	return digestPrefixSHA256 + hex.EncodeToString(h.Sum(nil)), nil
+	sum := sha256.Sum256(w.buf)
+	return digestPrefixSHA256 + hex.EncodeToString(sum[:]), nil
 }
 
 // canonicalWriter serializes spec fields into a hash in an unambiguous,
@@ -438,17 +438,13 @@ func ContainerConfigDigest(spec *ContainerSpec) (string, error) {
 // no rearrangement of field names and values can produce the same byte
 // stream.
 type canonicalWriter struct {
-	h interface{ Write([]byte) (int, error) }
+	buf []byte
 }
 
-// write emits a length-prefixed byte string. hash.Hash never returns an
-// error from Write (documented in the hash package), so the return is
-// discarded deliberately rather than propagated through every call site.
+// write appends a length-prefixed byte string to the stream.
 func (w *canonicalWriter) write(b []byte) {
-	var length [8]byte
-	binary.BigEndian.PutUint64(length[:], uint64(len(b)))
-	_, _ = w.h.Write(length[:])
-	_, _ = w.h.Write(b)
+	w.buf = binary.BigEndian.AppendUint64(w.buf, uint64(len(b)))
+	w.buf = append(w.buf, b...)
 }
 
 // field emits a named string value.

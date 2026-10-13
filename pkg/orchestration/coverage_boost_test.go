@@ -1851,7 +1851,10 @@ func TestControlLoop_SynthesizeWorkflowAgents(t *testing.T) {
 				{Role: "worker", Backend: "acp", Capabilities: []string{"go"}, Count: 2},
 			},
 		}
-		agents := cl.synthesizeWorkflowAgents()
+		agents, err := cl.synthesizeWorkflowAgents()
+		if err != nil {
+			t.Fatalf("synthesizeWorkflowAgents: %v", err)
+		}
 		// lead is excluded; worker with count=2 yields 2 agents
 		if len(agents) != 2 {
 			t.Fatalf("expected 2 agents (excluding lead), got %d", len(agents))
@@ -1872,7 +1875,10 @@ func TestControlLoop_SynthesizeWorkflowAgents(t *testing.T) {
 				{Role: "reviewer", Backend: "acp"}, // count=0 defaults to 1
 			},
 		}
-		agents := cl.synthesizeWorkflowAgents()
+		agents, err := cl.synthesizeWorkflowAgents()
+		if err != nil {
+			t.Fatalf("synthesizeWorkflowAgents: %v", err)
+		}
 		if len(agents) != 1 {
 			t.Fatalf("expected 1 agent for default count, got %d", len(agents))
 		}

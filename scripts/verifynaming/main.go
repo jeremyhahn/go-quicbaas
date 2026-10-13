@@ -122,9 +122,8 @@ var aliasDirs = []string{
 	"pkg/seal",            // legacy seal package retained as compat layer
 	"pkg/service",         // legacy seal_service.go and SealService aliases on the interface aggregator
 	"pkg/testutil",        // MockSealClient kept for legacy tests
-	"pkg/server",          // SealManager wiring retained on the lifecycle layer
+	"pkg/server",          // gRPC no-op seal shim seam and SealService wiring on the lifecycle layer
 	"pkg/api",             // SealErrors retained for one release
-	"pkg/interfaces",      // SealManager interface alias on managers.go
 }
 
 func main() {

@@ -1136,6 +1136,31 @@ func TestConvertPolicyToProto_Full(t *testing.T) {
 	assert.Equal(t, int32(5), result.Priority)
 }
 
+// failingYAMLValue makes yaml.Marshal fail when it reaches the value.
+type failingYAMLValue struct{}
+
+func (failingYAMLValue) MarshalYAML() (interface{}, error) {
+	return nil, failingYAMLValueError{}
+}
+
+type failingYAMLValueError struct{}
+
+func (failingYAMLValueError) Error() string { return "value cannot be encoded" }
+
+func TestConvertPolicyToProto_SpecYAMLError(t *testing.T) {
+	policy := &iam.Policy{
+		Metadata: iam.PolicyMetadata{Name: "p1"},
+		Spec: iam.PolicySpec{
+			Subjects: iam.SubjectSelector{Match: map[string]interface{}{"bad": failingYAMLValue{}}},
+		},
+	}
+
+	result, err := convertPolicyToProto(policy)
+
+	assert.Nil(t, result)
+	requireRangeStatus(t, err, codes.Internal, "spec_yaml")
+}
+
 // =============================================================================
 // Subject Conversions
 // =============================================================================

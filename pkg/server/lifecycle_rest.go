@@ -322,11 +322,11 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// Wire the seal service into the QuicBaaS facade so that REST
 	// handlers can reach it via the service.SealService type assertion.
 	// This must run after initBarrier (called earlier in Start) has
-	// populated s.sealManager; when seal is disabled, sealManager is
+	// populated s.barrierManager; when seal is disabled, barrierManager is
 	// nil and we leave the facade's sealService as nil, which causes
 	// handlers to respond with ErrUnavailable rather than panic.
-	if s.sealManager != nil {
-		sealSvc := service.NewSealService(s.sealManager, logger.NewAdapter(s.logger))
+	if s.barrierManager != nil {
+		sealSvc := service.NewSealService(s.barrierManager, logger.NewAdapter(s.logger))
 		s.quicBaaSService.SetSealService(sealSvc)
 		s.logger.Info("Seal service wired into service facade")
 	}

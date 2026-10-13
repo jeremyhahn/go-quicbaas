@@ -24,10 +24,10 @@ func TestLifecycle_StopBackupManager_Nil(t *testing.T) {
 func TestLifecycle_SetSealManager(t *testing.T) {
 	t.Run("sets seal manager", func(t *testing.T) {
 		srv := withTempServer(t)
-		assert.Nil(t, srv.GetSealManager())
+		assert.Nil(t, srv.GetBarrierManager())
 
-		// SetSealManager is a simple setter
-		srv.SetSealManager(nil)
-		assert.Nil(t, srv.GetSealManager())
+		// SetBarrierManager is a simple setter
+		srv.SetBarrierManager(nil)
+		assert.Nil(t, srv.GetBarrierManager())
 	})
 }

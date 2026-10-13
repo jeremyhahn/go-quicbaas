@@ -18,13 +18,13 @@ package indexing
 import (
 	"context"
 	"encoding/binary"
-	"hash/fnv"
 	"sync/atomic"
 	"time"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // qrdbVectorIndex implements rag.VectorIndex backed by the qrdb SDK
@@ -130,9 +130,7 @@ func physicalNamespace(tenantID, logical string) string {
 // stringToUint64 converts an arbitrary RAG vector ID string to a stable
 // uint64 using FNV-1a 64-bit hashing.
 func stringToUint64(s string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(s))
-	return h.Sum64()
+	return id.HashString(s)
 }
 
 // uint64ToBytes serialises a uint64 to an 8-byte big-endian slice for

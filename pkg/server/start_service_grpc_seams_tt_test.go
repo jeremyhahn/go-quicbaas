@@ -72,7 +72,7 @@ func TestServer_StartGRPCServer_TT_SealManagerInitFailureTolerated(t *testing.T)
 	require.NoError(t, srv.startService())
 
 	// Force the seam to run by ensuring no seal manager is already present.
-	srv.sealManager = nil
+	srv.barrierManager = nil
 	initSealManagerFn = func(*logger.Logger) error { return errors.New("seal manager init failed") }
 
 	require.NoError(t, srv.startGRPCServer(),

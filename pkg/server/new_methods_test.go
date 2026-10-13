@@ -75,7 +75,7 @@ func TestGetCertificateAuthority_ReturnsCAWhenSet(t *testing.T) {
 }
 
 // =============================================================================
-// GetSealManager Tests
+// GetBarrierManager Tests
 // =============================================================================
 
 func TestGetSealManager_NilWhenSealDisabled(t *testing.T) {
@@ -88,7 +88,7 @@ func TestGetSealManager_NilWhenSealDisabled(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	result := srv.GetSealManager()
+	result := srv.GetBarrierManager()
 	assert.Nil(t, result, "seal manager should be nil when seal is disabled")
 }
 
@@ -102,9 +102,9 @@ func TestGetSealManager_ReturnsSealManagerWhenSet(t *testing.T) {
 	require.NoError(t, err)
 
 	mockSM := &mockSealManager{}
-	srv.sealManager = mockSM
+	srv.barrierManager = mockSM
 
-	result := srv.GetSealManager()
+	result := srv.GetBarrierManager()
 	assert.NotNil(t, result)
 	assert.Equal(t, mockSM, result)
 }
@@ -125,7 +125,7 @@ func TestInitBarrier_SealDisabled_Skips(t *testing.T) {
 
 	err = srv.initBarrier()
 	require.NoError(t, err)
-	assert.Nil(t, srv.sealManager, "seal manager should remain nil when seal is disabled")
+	assert.Nil(t, srv.barrierManager, "seal manager should remain nil when seal is disabled")
 }
 
 func TestInitBarrier_SealEnabled_Success(t *testing.T) {
@@ -141,20 +141,20 @@ func TestInitBarrier_SealEnabled_Success(t *testing.T) {
 
 	// Override the seam to inject a mock seal manager
 	seamMu.Lock()
-	origFn := newSealManagerFn
-	newSealManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) {
+	origFn := newBarrierManagerFn
+	newBarrierManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.BarrierManager, error) {
 		return &mockSealManager{}, nil
 	}
 	seamMu.Unlock()
 	defer func() {
 		seamMu.Lock()
-		newSealManagerFn = origFn
+		newBarrierManagerFn = origFn
 		seamMu.Unlock()
 	}()
 
 	err = srv.initBarrier()
 	require.NoError(t, err)
-	assert.NotNil(t, srv.sealManager, "seal manager should be set after initBarrier succeeds")
+	assert.NotNil(t, srv.barrierManager, "seal manager should be set after initBarrier succeeds")
 }
 
 func TestInitBarrier_SealEnabled_CreationError(t *testing.T) {
@@ -170,21 +170,21 @@ func TestInitBarrier_SealEnabled_CreationError(t *testing.T) {
 
 	// Override the seam to return an error
 	seamMu.Lock()
-	origFn := newSealManagerFn
-	newSealManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) {
+	origFn := newBarrierManagerFn
+	newBarrierManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.BarrierManager, error) {
 		return nil, &dberrors.MessageError{Message: "seal manager init failed"}
 	}
 	seamMu.Unlock()
 	defer func() {
 		seamMu.Lock()
-		newSealManagerFn = origFn
+		newBarrierManagerFn = origFn
 		seamMu.Unlock()
 	}()
 
 	err = srv.initBarrier()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create seal manager")
-	assert.Nil(t, srv.sealManager, "seal manager should remain nil on error")
+	assert.Nil(t, srv.barrierManager, "seal manager should remain nil on error")
 }
 
 func TestInitBarrier_DefaultBarrierDir(t *testing.T) {
@@ -201,15 +201,15 @@ func TestInitBarrier_DefaultBarrierDir(t *testing.T) {
 
 	var capturedDataDir string
 	seamMu.Lock()
-	origFn := newSealManagerFn
-	newSealManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) {
+	origFn := newBarrierManagerFn
+	newBarrierManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.BarrierManager, error) {
 		capturedDataDir = dataDir
 		return &mockSealManager{}, nil
 	}
 	seamMu.Unlock()
 	defer func() {
 		seamMu.Lock()
-		newSealManagerFn = origFn
+		newBarrierManagerFn = origFn
 		seamMu.Unlock()
 	}()
 
@@ -233,15 +233,15 @@ func TestInitBarrier_CustomBarrierDir(t *testing.T) {
 
 	var capturedCfg *quicbaasseal.Config
 	seamMu.Lock()
-	origFn := newSealManagerFn
-	newSealManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) {
+	origFn := newBarrierManagerFn
+	newBarrierManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.BarrierManager, error) {
 		capturedCfg = cfg
 		return &mockSealManager{}, nil
 	}
 	seamMu.Unlock()
 	defer func() {
 		seamMu.Lock()
-		newSealManagerFn = origFn
+		newBarrierManagerFn = origFn
 		seamMu.Unlock()
 	}()
 
@@ -268,15 +268,15 @@ func TestInitBarrier_RecoveryConfigPropagated(t *testing.T) {
 
 	var capturedCfg *quicbaasseal.Config
 	seamMu.Lock()
-	origFn := newSealManagerFn
-	newSealManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) {
+	origFn := newBarrierManagerFn
+	newBarrierManagerFn = func(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.BarrierManager, error) {
 		capturedCfg = cfg
 		return &mockSealManager{}, nil
 	}
 	seamMu.Unlock()
 	defer func() {
 		seamMu.Lock()
-		newSealManagerFn = origFn
+		newBarrierManagerFn = origFn
 		seamMu.Unlock()
 	}()
 
@@ -653,7 +653,7 @@ func (m *mockCertificateAuthority) CertStore() xkmscertstore.CertStore { return 
 func (m *mockCertificateAuthority) Config() *xkmsca.Identity { return nil }
 func (m *mockCertificateAuthority) Identity() string         { return "mock-ca" }
 
-// mockSealManager implements interfaces.SealManager for testing.
+// mockSealManager implements interfaces.BarrierManager for testing.
 type mockSealManager struct{}
 
 func (m *mockSealManager) Status(_ context.Context) (interface{}, error) {

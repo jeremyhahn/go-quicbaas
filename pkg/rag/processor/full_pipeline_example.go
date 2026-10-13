@@ -25,11 +25,11 @@ import (
 )
 
 // Example demonstrates a complete processing workflow.
-func Example() {
+func Example() error {
 	// Create a default processor
 	proc, err := New(DefaultConfig())
 	if err != nil {
-		return
+		return &ProcessorCauseError{Message: "failed to create processor", Cause: err}
 	}
 
 	// Example Go file content
@@ -50,7 +50,11 @@ func Calculate(a, b int) int {
 
 	// Process Go content
 	ctx := context.Background()
-	_, _ = proc.ProcessContent(ctx, []byte(goContent), "example.go")
+	if _, err := proc.ProcessContent(ctx, []byte(goContent), "example.go"); err != nil {
+		return &ProcessorCauseError{Message: "failed to process content", Cause: err}
+	}
+
+	return nil
 }
 
 // WalkAndProcess walks a directory tree and processes all supported files.
@@ -93,7 +97,9 @@ func WalkAndProcess(dir string) error {
 
 	// Process files
 	ctx := context.Background()
-	_, _ = proc.ProcessBatch(ctx, files)
+	if _, err := proc.ProcessBatch(ctx, files); err != nil {
+		return &ProcessorCauseError{Message: "failed to process files", Cause: err}
+	}
 
 	return nil
 }

@@ -35,7 +35,12 @@ func (s *SDLCServer) GetWorkerImageStatus(ctx context.Context, _ *pb.GetWorkerIm
 	if err != nil {
 		return nil, convertWorkerImageError(err)
 	}
-	return &pb.GetWorkerImageStatusResponse{Status: workerImageStatusToProto(st)}, nil
+	var n responseNarrower
+	out := workerImageStatusToProto(&n, st)
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return &pb.GetWorkerImageStatusResponse{Status: out}, nil
 }
 
 // RefreshWorkerImage implements pb.SDLCServiceServer.
@@ -48,7 +53,12 @@ func (s *SDLCServer) RefreshWorkerImage(ctx context.Context, _ *pb.RefreshWorker
 	if err != nil {
 		return nil, convertWorkerImageError(err)
 	}
-	return &pb.RefreshWorkerImageResponse{Status: workerImageStatusToProto(st)}, nil
+	var n responseNarrower
+	out := workerImageStatusToProto(&n, st)
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return &pb.RefreshWorkerImageResponse{Status: out}, nil
 }
 
 // convertWorkerImageError maps the refresh's refusals onto codes: no loop on
@@ -65,7 +75,7 @@ func convertWorkerImageError(err error) error {
 	}
 }
 
-func workerImageStatusToProto(st workerimage.Status) *pb.WorkerImageStatus {
+func workerImageStatusToProto(n *responseNarrower, st workerimage.Status) *pb.WorkerImageStatus {
 	out := &pb.WorkerImageStatus{
 		Serving:          st.Serving,
 		Running:          st.Running,
@@ -73,12 +83,12 @@ func workerImageStatusToProto(st workerimage.Status) *pb.WorkerImageStatus {
 		Queued:           st.Queued,
 	}
 	if st.Last != nil {
-		out.Last = workerImageReportToProto(st.Last)
+		out.Last = workerImageReportToProto(n, st.Last)
 	}
 	return out
 }
 
-func workerImageReportToProto(r *workerimage.Report) *pb.WorkerImageReport {
+func workerImageReportToProto(n *responseNarrower, r *workerimage.Report) *pb.WorkerImageReport {
 	return &pb.WorkerImageReport{
 		Trigger:        string(r.Trigger),
 		Outcome:        string(r.Outcome),
@@ -95,17 +105,17 @@ func workerImageReportToProto(r *workerimage.Report) *pb.WorkerImageReport {
 		Smokes:         workerImageChecksToProto(r.Smokes),
 		Promotions:     workerImagePromotionsToProto(r.Promotions),
 		Error:          r.Error,
-		Bound:          workerImageBoundToProto(r.Bound),
+		Bound:          workerImageBoundToProto(n, r.Bound),
 	}
 }
 
-func workerImageBoundToProto(bound []workerimage.BoundImage) []*pb.WorkerImageBound {
+func workerImageBoundToProto(n *responseNarrower, bound []workerimage.BoundImage) []*pb.WorkerImageBound {
 	out := make([]*pb.WorkerImageBound, 0, len(bound))
 	for _, b := range bound {
 		out = append(out, &pb.WorkerImageBound{
 			Image:  b.Image,
 			Agents: &pb.WorkerImageAgents{ClaudeCode: b.Agents.ClaudeCode, Codex: b.Agents.Codex},
-			Uses:   int32(b.Uses), // #nosec G115 -- a count of binding roles, bounded far below int32.
+			Uses:   n.int32("bound.uses", b.Uses),
 			Stale:  b.Stale,
 		})
 	}

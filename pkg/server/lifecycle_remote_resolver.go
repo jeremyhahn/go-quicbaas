@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -37,6 +38,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/httpbody"
 )
 
 // installRemoteBackendResolver wires the BackendDispatcher's optional
@@ -1130,7 +1132,11 @@ func (t *centralOAuth2TokenSource) refresh(ctx context.Context) (*oauth2.Token, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	defer func() {
+		if err := httpbody.DrainClose(resp.Body); err != nil {
+			slog.Debug("central token exchange: response body release failed", slog.String("error", err.Error()))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, &ServerMessageError{Message: fmt.Sprintf("central token exchange: status=%d", resp.StatusCode)}

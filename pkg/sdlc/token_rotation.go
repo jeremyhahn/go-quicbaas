@@ -16,12 +16,12 @@ package sdlc
 import (
 	"context"
 	"errors"
-	"hash/fnv"
 	"strconv"
 	"sync"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // =============================================================================
@@ -239,9 +239,7 @@ func NewTokenRotator(lifecycle ForgeTokenLifecycle, store TokenSecretStore) (*To
 
 // lockPath returns the process-wide stripe lock for a secret path.
 func lockPath(path string) *sync.Mutex {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(path))
-	return &rotationPathLocks[h.Sum32()%uint32(len(rotationPathLocks))]
+	return &rotationPathLocks[id.HashString(path)%uint64(len(rotationPathLocks))]
 }
 
 // Rotate replaces a forge token, and never destroys the old one on faith.

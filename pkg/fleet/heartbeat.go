@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/httpbody"
 )
 
 // TokenSource returns a short-lived OAuth2 Bearer token usable against the
@@ -342,7 +342,11 @@ func (s *HTTPHeartbeatSender) post(ctx context.Context, endpoint string, status 
 	if err != nil {
 		return &HeartbeatSendError{Op: "transport", Cause: err}
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	defer func() {
+		if err := httpbody.DrainClose(resp.Body); err != nil {
+			s.logger.Debugf("agent heartbeat: release response body: %v", err)
+		}
+	}()
 
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:

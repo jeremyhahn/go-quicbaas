@@ -16,6 +16,8 @@ package grpc
 import (
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gopkg.in/yaml.v3"
 
@@ -423,9 +425,10 @@ func convertPolicyToProto(p *iam.Policy) (*iampb.Policy, error) {
 
 	// Serialize the full policy to YAML for the spec_yaml field.
 	specYAML, err := yaml.Marshal(p)
-	if err == nil {
-		pb.SpecYaml = specYAML
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "spec_yaml: %v", err)
 	}
+	pb.SpecYaml = specYAML
 
 	return pb, nil
 }

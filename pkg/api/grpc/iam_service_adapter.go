@@ -340,7 +340,9 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 		}
 		for _, oldRole := range currentUser.Roles {
 			if !roleMap[oldRole] {
-				_ = a.identityStore.RevokeRole(ctx, user.TenantID, user.ID, oldRole)
+				if err := a.identityStore.RevokeRole(ctx, user.TenantID, user.ID, oldRole); err != nil {
+					return nil, err
+				}
 			}
 		}
 		// Add new roles not in old set
@@ -350,7 +352,9 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 		}
 		for _, newRole := range user.Roles {
 			if !oldRoleMap[newRole] {
-				_ = a.identityStore.AssignRole(ctx, user.TenantID, user.ID, newRole)
+				if err := a.identityStore.AssignRole(ctx, user.TenantID, user.ID, newRole); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

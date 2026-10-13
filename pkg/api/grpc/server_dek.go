@@ -377,8 +377,12 @@ func convertDEKMetadata(d *service.DEKMetadata) (*pb.DEKMetadata, error) {
 		rotatedAt = d.RotatedAt.Unix()
 	}
 
-	// Algorithm conversion should not fail for validated service data
-	alg, _ := convertServiceKeyAlgorithm(d.Algorithm)
+	var n responseNarrower
+	alg := n.keyAlgorithm("algorithm", d.Algorithm)
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+
 	return &pb.DEKMetadata{
 		Path:           d.Path,
 		Algorithm:      alg,

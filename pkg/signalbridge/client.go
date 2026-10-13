@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -172,10 +173,20 @@ func (c *SignalClient) Register(ctx context.Context, opts RegisterOptions) (*Sig
 
 	password := opts.Password
 	if password == "" {
-		password = generatePassword()
+		generated, err := generatePassword(rand.Reader)
+		if err != nil {
+			return nil, wrapError(op, ErrKindInternal, err, "generate password")
+		}
+		password = generated
 	}
-	regID := generateRegistrationID()
-	pniID := generateRegistrationID()
+	regID, err := generateRegistrationID(rand.Reader)
+	if err != nil {
+		return nil, wrapError(op, ErrKindInternal, err, "generate registration id")
+	}
+	pniID, err := generateRegistrationID(rand.Reader)
+	if err != nil {
+		return nil, wrapError(op, ErrKindInternal, err, "generate PNI registration id")
+	}
 
 	idkp, err := c.protocol.GenerateIdentityKeyPair()
 	if err != nil {
@@ -617,19 +628,23 @@ func kindForTransport(err error) ErrKind {
 	return ErrKindTransport
 }
 
-// generatePassword returns a random 18-byte base64-encoded token
-// suitable for HTTP Basic auth against go-signal.
-func generatePassword() string {
+// generatePassword returns a random 18-byte base64-encoded token read
+// from r, suitable for HTTP Basic auth against go-signal.
+func generatePassword(r io.Reader) (string, error) {
 	buf := make([]byte, 18)
-	_, _ = rand.Read(buf)
-	return base64.StdEncoding.EncodeToString(buf)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
-// generateRegistrationID returns a random value in [1, 16380]
+// generateRegistrationID returns a random value in [1, 16380] read from r,
 // matching the Signal Protocol registration ID range.
-func generateRegistrationID() uint32 {
+func generateRegistrationID(r io.Reader) (uint32, error) {
 	var buf [4]byte
-	_, _ = rand.Read(buf[:])
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return 0, err
+	}
 	v := binary.BigEndian.Uint32(buf[:])
-	return (v % 16380) + 1
+	return (v % 16380) + 1, nil
 }

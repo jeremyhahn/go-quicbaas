@@ -292,7 +292,7 @@ func TestRemoteBackendPool_BackendFor_CachesBackend(t *testing.T) {
 }
 
 // =============================================================================
-// lifecycle.go — defaultNewSealManager fall-back to in-memory
+// lifecycle.go — defaultNewBarrierManager fall-back to in-memory
 //
 // When NewPersistentDefaultSealManager fails to open the on-disk barrier dir
 // the helper returns the in-memory fall-back. Test by pointing at a temp dir
@@ -307,7 +307,7 @@ func TestDefaultNewSealManager_FallbackToMemoryOnPersistentError(t *testing.T) {
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)
 
-	mgr, err := defaultNewSealManager(nil, log, dir)
+	mgr, err := defaultNewBarrierManager(nil, log, dir)
 	// Either a clean fall-back to in-memory (err nil, mgr non-nil) or a
 	// genuine error — both prove the function ran the fall-back branch.
 	// The seal manager has lenient internal defaults; a non-nil manager

@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/shards"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -537,14 +538,35 @@ func (s *Server) ListEntityTypes(ctx context.Context, req *pb.ListEntityTypesReq
 	}
 
 	// Build proto response
+	totalCount, err := conv.SafeIntToUint64(serviceResp.TotalCount)
+	if err != nil {
+		return nil, responseRangeError("total_count", err)
+	}
 	resp := &pb.ListEntityTypesResponse{
 		EntityTypes:   serviceResp.EntityTypes,
 		NextPageToken: serviceResp.NextPageToken,
-		TotalCount:    uint64(serviceResp.TotalCount), // #nosec G115 -- TotalCount is always non-negative
+		TotalCount:    totalCount,
 	}
 
 	s.metrics.requestsTotal.With("ListEntityTypes", "success").Inc()
 	return resp, nil
+}
+
+// watchEventTypes maps service watch event types onto their wire values.
+var watchEventTypes = map[service.WatchEventType]pb.WatchEventType{
+	service.WatchEventTypeUnspecified: pb.WatchEventType_WATCH_EVENT_TYPE_UNSPECIFIED,
+	service.WatchEventTypePut:         pb.WatchEventType_WATCH_EVENT_TYPE_PUT,
+	service.WatchEventTypeDelete:      pb.WatchEventType_WATCH_EVENT_TYPE_DELETE,
+}
+
+// watchEventType returns the wire value of t, recording a failure for field
+// when the service reports a type the wire format does not define.
+func (n *responseNarrower) watchEventType(field string, t service.WatchEventType) pb.WatchEventType {
+	out, ok := watchEventTypes[t]
+	if !ok {
+		n.keep(field, api.NewInvalidFormatMessageError(field, fmt.Sprintf("unknown watch event type: %d", t)))
+	}
+	return out
 }
 
 // Watch monitors a key or key prefix for changes (streaming).
@@ -604,10 +626,11 @@ func (s *Server) Watch(req *pb.WatchRequest, stream pb.QuicBaaS_WatchServer) err
 	// Stream events to client
 	for serviceResp := range responseChan {
 		// Convert service events to proto events
+		var n responseNarrower
 		protoEvents := make([]*pb.WatchEvent, 0, len(serviceResp.Events))
 		for _, event := range serviceResp.Events {
 			protoEvents = append(protoEvents, &pb.WatchEvent{
-				Type:      pb.WatchEventType(event.Type), // #nosec G115 -- event.Type is bounded enum value
+				Type:      n.watchEventType("events.type", event.Type),
 				Key:       event.Key,
 				Value:     event.Value,
 				PrevValue: event.PrevValue,
@@ -615,6 +638,11 @@ func (s *Server) Watch(req *pb.WatchRequest, stream pb.QuicBaaS_WatchServer) err
 				Revision:  event.Revision,
 				Timestamp: event.Timestamp,
 			})
+		}
+		if err := n.err(); err != nil {
+			s.metrics.requestsTotal.With("Watch", "error").Inc()
+			s.logger.WithError(err).Error("Watch event conversion failed")
+			return err
 		}
 
 		// Send response to client
@@ -1375,11 +1403,16 @@ func (s *Server) CreateBackup(ctx context.Context, req *pb.CreateBackupRequest) 
 		return nil, toProtoError(err)
 	}
 
+	size, err := conv.SafeUint64ToInt64(serviceResp.Size)
+	if err != nil {
+		return nil, responseRangeError("size", err)
+	}
+
 	// Build proto response
 	resp := &pb.CreateBackupResponse{
 		BackupId:  serviceResp.BackupID,
 		Timestamp: serviceResp.Timestamp,
-		Size:      int64(serviceResp.Size), // #nosec G115 -- Size is always positive
+		Size:      size,
 	}
 
 	s.metrics.requestsTotal.With("CreateBackup", "success").Inc()
@@ -1397,9 +1430,14 @@ func (s *Server) ListBackups(ctx context.Context, req *pb.ListBackupsRequest) (*
 		"limit": req.Limit,
 	}).Debug("Processing ListBackups request")
 
+	limit, err := conv.SafeInt64ToUint64(int64(req.Limit))
+	if err != nil {
+		return nil, requestRangeError("limit", err)
+	}
+
 	// Convert proto request to service request
 	serviceReq := &service.ListBackupsRequest{
-		Limit: uint64(req.Limit), // #nosec G115 -- Limit is always non-negative
+		Limit: limit,
 	}
 
 	// Call service
@@ -1411,15 +1449,19 @@ func (s *Server) ListBackups(ctx context.Context, req *pb.ListBackupsRequest) (*
 	}
 
 	// Convert service backups to proto backups
+	var n responseNarrower
 	protoBackups := make([]*pb.BackupInfo, 0, len(serviceResp.Backups))
 	for _, backup := range serviceResp.Backups {
 		protoBackups = append(protoBackups, &pb.BackupInfo{
 			BackupId:   backup.BackupID,
 			BackupType: serviceNameToProtoBackupType(backup.Name),
 			Timestamp:  backup.Timestamp,
-			Size:       int64(backup.Size),        // #nosec G115 -- Size is always positive
-			NumShards:  int32(len(backup.Shards)), // #nosec G115 -- slice length is always bounded by practical limits
+			Size:       n.int64("backups.size", backup.Size),
+			NumShards:  n.int32("backups.num_shards", len(backup.Shards)),
 		})
+	}
+	if err := n.err(); err != nil {
+		return nil, err
 	}
 
 	// Build proto response

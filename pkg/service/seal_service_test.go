@@ -32,7 +32,7 @@ import (
 // Mock Seal Manager for Unit Testing
 // =============================================================================
 
-// mockSealManager implements interfaces.SealManager for testing.
+// mockSealManager implements interfaces.BarrierManager for testing.
 type mockSealManager struct {
 	isSealed               bool
 	isInitialized          bool

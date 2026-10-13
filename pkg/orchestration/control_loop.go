@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -421,7 +422,10 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 	// Synthesize virtual agent registrations from the workflow so that
 	// matchFleetNodeForTask can resolve them.
 	if len(agents) == 0 && cl.workflow != nil && cl.isConstrainedWorkflowMode() {
-		agents = cl.synthesizeWorkflowAgents()
+		agents, err = cl.synthesizeWorkflowAgents()
+		if err != nil {
+			return JobStateFailed, err
+		}
 	}
 
 	if len(agents) == 0 {
@@ -1149,7 +1153,7 @@ func (cl *ControlLoop) isConstrainedWorkflowMode() bool {
 // workflow's AgentRoleSpec entries. This allows matchFleetNodeForTask to resolve
 // agents when the fleet registry is empty but the workflow defines agent roles.
 // The lead role is excluded because it handles decomposition, not work execution.
-func (cl *ControlLoop) synthesizeWorkflowAgents() []*FleetNode {
+func (cl *ControlLoop) synthesizeWorkflowAgents() ([]*FleetNode, error) {
 	agents := make([]*FleetNode, 0, len(cl.workflow.Agents))
 	for i := range cl.workflow.Agents {
 		spec := &cl.workflow.Agents[i]
@@ -1163,9 +1167,10 @@ func (cl *ControlLoop) synthesizeWorkflowAgents() []*FleetNode {
 		}
 
 		for j := 0; j < count; j++ {
-			idBuf := make([]byte, 8)
-			_, _ = rand.Read(idBuf)
-			agentID := "wf-" + spec.Role + "-" + hex.EncodeToString(idBuf)
+			agentID, err := newWorkflowAgentID(rand.Reader, spec.Role)
+			if err != nil {
+				return nil, err
+			}
 
 			agents = append(agents, &FleetNode{
 				ID:           agentID,
@@ -1179,7 +1184,16 @@ func (cl *ControlLoop) synthesizeWorkflowAgents() []*FleetNode {
 			})
 		}
 	}
-	return agents
+	return agents, nil
+}
+
+// newWorkflowAgentID mints "wf-<role>-<16 hex>" from the random source r.
+func newWorkflowAgentID(r io.Reader, role string) (string, error) {
+	var idBuf [8]byte
+	if _, err := io.ReadFull(r, idBuf[:]); err != nil {
+		return "", &WorkflowAgentIDError{Role: role, Cause: err}
+	}
+	return "wf-" + role + "-" + hex.EncodeToString(idBuf[:]), nil
 }
 
 // defaultWorkerRole returns the first non-lead role defined in the workflow.

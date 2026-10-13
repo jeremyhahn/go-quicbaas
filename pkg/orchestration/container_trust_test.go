@@ -367,6 +367,31 @@ func TestContainerConfigDigest_Deterministic(t *testing.T) {
 	}
 }
 
+// TestContainerConfigDigest_PinnedValue pins the digest of a fixed spec. The
+// digest is recorded in attestation evidence, so a change to the canonical
+// encoding must fail here rather than silently invalidate stored measurements.
+func TestContainerConfigDigest_PinnedValue(t *testing.T) {
+	spec := &ContainerSpec{
+		Image:       "alpine:3.20",
+		ImageDigest: testDigest,
+		Env:         map[string]string{"A": "1", "B": "2"},
+		Mounts:      []ContainerMount{{Source: "/a", Target: "/x", ReadOnly: true}},
+		CapAdd:      []string{"NET_ADMIN"},
+		MemoryBytes: 1 << 20,
+		Command:     []string{"serve"},
+		User:        "1000:1000",
+	}
+	const want = "sha256:ab51dee8edabcbdf08fd0f8b0973048fb0e83ef77cdb230267586c44397289ac"
+
+	got, err := ContainerConfigDigest(spec)
+	if err != nil {
+		t.Fatalf("ContainerConfigDigest: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ContainerConfigDigest = %q, want %q", got, want)
+	}
+}
+
 // TestContainerConfigDigest_DeterministicAcrossMapOrdering is the guard the
 // measured-launch design depends on: Go randomizes map iteration order per
 // process AND per range statement, so a naive range over Env or Labels would

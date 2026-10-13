@@ -81,7 +81,7 @@ func saveAndRestoreSeams(t *testing.T) {
 	origPushServiceStartFn := pushServiceStartFn
 	origWatchBridgeStartFn := watchBridgeStartFn
 	origNewCAFn := newCAFn
-	origNewSealManagerFn := newSealManagerFn
+	origNewBarrierManagerFn := newBarrierManagerFn
 	origInitializeCAFn := initializeCAFn
 
 	// REST seams from lifecycle_rest.go
@@ -132,7 +132,7 @@ func saveAndRestoreSeams(t *testing.T) {
 		pushServiceStartFn = origPushServiceStartFn
 		watchBridgeStartFn = origWatchBridgeStartFn
 		newCAFn = origNewCAFn
-		newSealManagerFn = origNewSealManagerFn
+		newBarrierManagerFn = origNewBarrierManagerFn
 		initializeCAFn = origInitializeCAFn
 
 		// Restore REST seams

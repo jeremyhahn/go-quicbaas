@@ -345,7 +345,7 @@ func TestClient_TSQuery_WithGroupedResults(t *testing.T) {
 	assert.Equal(t, 1.5, *resp.AggregatedValue)
 }
 
-func TestClient_TSQuery_LimitClamping(t *testing.T) {
+func TestClient_TSQuery_LimitOutOfRange(t *testing.T) {
 	mock := &mockTSClient{}
 	client := &Client{
 		conn:   &grpc.ClientConn{},
@@ -361,7 +361,7 @@ func TestClient_TSQuery_LimitClamping(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test limit > max int32
+	// A limit beyond the int32 wire field is refused, not clamped.
 	req := &cli.TSQueryRequest{
 		Metric:    "test.metric",
 		StartTime: time.Now().Add(-1 * time.Hour),
@@ -369,13 +369,12 @@ func TestClient_TSQuery_LimitClamping(t *testing.T) {
 		Limit:     0xFFFFFFFF, // Greater than max int32
 	}
 
-	resp, err := client.TSQuery(ctx, req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
+	_, err := client.TSQuery(ctx, req)
+	requireClientRangeError(t, err, "limit")
 
-	// Test negative limit
+	// A negative limit fits the wire field and is left to the server.
 	req.Limit = -1
-	resp, err = client.TSQuery(ctx, req)
+	resp, err := client.TSQuery(ctx, req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }
@@ -577,7 +576,7 @@ func TestClient_TSListMetrics_Success(t *testing.T) {
 	assert.Len(t, resp.Metrics, 2)
 }
 
-func TestClient_TSListMetrics_LimitClamping(t *testing.T) {
+func TestClient_TSListMetrics_LimitOutOfRange(t *testing.T) {
 	mock := &mockTSClient{}
 	client := &Client{
 		conn:   &grpc.ClientConn{},
@@ -593,18 +592,17 @@ func TestClient_TSListMetrics_LimitClamping(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test limit > max int32
+	// A limit beyond the int32 wire field is refused, not clamped.
 	req := &cli.TSListMetricsRequest{
 		Limit: 0xFFFFFFFF,
 	}
 
-	resp, err := client.TSListMetrics(ctx, req)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
+	_, err := client.TSListMetrics(ctx, req)
+	requireClientRangeError(t, err, "limit")
 
-	// Test negative limit
+	// A negative limit fits the wire field and is left to the server.
 	req.Limit = -1
-	resp, err = client.TSListMetrics(ctx, req)
+	resp, err := client.TSListMetrics(ctx, req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }

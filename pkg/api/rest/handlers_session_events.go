@@ -416,7 +416,7 @@ func serveSessionEventsSSE(ctx context.Context, w http.ResponseWriter, r *http.R
 	if opts.Follow {
 		ch, unsubscribe, err := opts.Log.Subscribe(ctx, opts.TenantID, opts.SessionID)
 		if err != nil {
-			writeSSEError(w, flush, "subscribe failed: "+err.Error())
+			opts.warn(writeSSEError(w, flush, "subscribe failed: "+err.Error()))
 			return
 		}
 		liveCh = ch
@@ -440,7 +440,7 @@ func serveSessionEventsSSE(ctx context.Context, w http.ResponseWriter, r *http.R
 	for {
 		page, next, err := opts.Log.Range(ctx, opts.TenantID, opts.SessionID, cursor, 256)
 		if err != nil {
-			writeSSEError(w, flush, "range failed: "+err.Error())
+			opts.warn(writeSSEError(w, flush, "range failed: "+err.Error()))
 			return
 		}
 		for _, ev := range page {
@@ -525,7 +525,9 @@ func writeSSEEvent(w http.ResponseWriter, flush func() error, ev *orchestration.
 // connection. Clients can distinguish this from normal event frames via
 // the `event: error` header, and must not treat it as a dropped connection
 // to be retried — the server has decided the stream cannot continue.
-func writeSSEError(w http.ResponseWriter, flush func() error, msg string) {
-	_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg)
-	_ = flush()
+func writeSSEError(w http.ResponseWriter, flush func() error, msg string) error {
+	if _, err := fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg); err != nil {
+		return err
+	}
+	return flush()
 }

@@ -40,7 +40,6 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -1632,74 +1631,6 @@ func TestServer_TimeSeriesQuery_ValidationError_InvalidTimeRange(t *testing.T) {
 // =============================================================================
 // Embedding int32 overflow clamping paths
 // =============================================================================
-
-func TestServer_EmbeddingBatchGenerate_Int32Overflow(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	now := time.Now()
-
-	mockSvc.EmbeddingService = &mocks.MockEmbeddingService{
-		BatchGenerateEmbeddingsFunc: func(_ context.Context, _ *service.BatchGenerateEmbeddingsRequest) (*service.BatchGenerateEmbeddingsResponse, error) {
-			return &service.BatchGenerateEmbeddingsResponse{
-				Results:        []*service.BatchEmbeddingResult{},
-				SuccessCount:   0x100000000,
-				ErrorCount:     0x100000000,
-				TotalTokens:    0x100000000,
-				ProcessingTime: time.Millisecond,
-				Timestamp:      now,
-			}, nil
-		},
-	}
-
-	resp, err := srv.EmbeddingBatchGenerate(context.Background(), &pb.EmbeddingBatchGenerateRequest{
-		Items: []*pb.EmbeddingBatchItem{{Id: "1", Text: "test"}},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, int32(0x7FFFFFFF), resp.SuccessCount)
-	assert.Equal(t, int32(0x7FFFFFFF), resp.ErrorCount)
-	assert.Equal(t, int32(0x7FFFFFFF), resp.TotalTokens)
-}
-
-func TestServer_EmbeddingGetCacheStats_Int32Overflow(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	now := time.Now()
-
-	mockSvc.EmbeddingService = &mocks.MockEmbeddingService{
-		GetCacheStatsFunc: func(_ context.Context, _ *service.GetEmbeddingCacheStatsRequest) (*service.GetEmbeddingCacheStatsResponse, error) {
-			return &service.GetEmbeddingCacheStatsResponse{
-				Enabled:   true,
-				Size:      0x100000000,
-				Capacity:  0x100000000,
-				Hits:      100,
-				Misses:    10,
-				HitRate:   0.91,
-				Timestamp: now,
-			}, nil
-		},
-	}
-
-	resp, err := srv.EmbeddingGetCacheStats(context.Background(), &pb.EmbeddingGetCacheStatsRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(0x7FFFFFFF), resp.Size)
-	assert.Equal(t, int32(0x7FFFFFFF), resp.Capacity)
-}
-
-func TestServer_EmbeddingClearCache_Int32Overflow(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	now := time.Now()
-
-	mockSvc.EmbeddingService = &mocks.MockEmbeddingService{
-		ClearCacheFunc: func(_ context.Context, _ *service.ClearEmbeddingCacheRequest) (*service.ClearEmbeddingCacheResponse, error) {
-			return &service.ClearEmbeddingCacheResponse{
-				EntriesCleared: 0x100000000,
-				Timestamp:      now,
-			}, nil
-		},
-	}
-
-	resp, err := srv.EmbeddingClearCache(context.Background(), &pb.EmbeddingClearCacheRequest{All: true})
-	require.NoError(t, err)
-	assert.Equal(t, int32(0x7FFFFFFF), resp.EntriesCleared)
-}
 
 // =============================================================================
 // Transaction validation - invalid compare condition and failure operation

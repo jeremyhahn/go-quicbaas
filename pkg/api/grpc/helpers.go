@@ -119,6 +119,16 @@ func (n *responseNarrower) uint64(field string, v int) uint64 {
 	return out
 }
 
+// int64 returns v as an int64, recording a failure for field when v exceeds
+// the int64 range.
+func (n *responseNarrower) int64(field string, v uint64) int64 {
+	out, err := conv.SafeUint64ToInt64(v)
+	if !n.keep(field, err) {
+		return 0
+	}
+	return out
+}
+
 // keep records err as the failure for field unless an earlier failure is
 // already kept, and reports whether the narrower is still free of failures.
 func (n *responseNarrower) keep(field string, err error) bool {

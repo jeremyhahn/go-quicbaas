@@ -674,6 +674,15 @@ func TestStringToUint64_Stability(t *testing.T) {
 	}
 }
 
+// TestStringToUint64_PinnedValue pins the FNV-1a 64 id of a known vector ID.
+// The id is the persisted vector key, so the algorithm must never change.
+func TestStringToUint64_PinnedValue(t *testing.T) {
+	const want uint64 = 0x8a6663c975f34c65
+	if got := stringToUint64("rag-ns:abc123:0"); got != want {
+		t.Fatalf("stringToUint64 = %#x, want %#x", got, want)
+	}
+}
+
 func TestStringToUint64_Collision(t *testing.T) {
 	// Distinct inputs should produce distinct outputs (extremely high probability).
 	a := stringToUint64("rag-ns:abc:0")

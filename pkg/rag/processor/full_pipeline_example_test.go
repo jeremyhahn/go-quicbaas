@@ -4,6 +4,7 @@ package processor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,12 +182,8 @@ func Helper() string {
 	return "Helper function with enough content to create meaningful chunks for testing purposes"
 }
 `,
-		"README.md": `# Test Project
-
-This is a test project with enough markdown content to create meaningful chunks
-for testing the walk and process functionality. The processor should handle
-markdown files appropriately and create chunks based on the content structure.
-`,
+		"README.md": "# Test Project\n\n" +
+			strings.Repeat("This markdown section carries enough prose to clear the minimum chunk size. ", 10) + "\n",
 		"notes.txt": strings.Repeat("Plain text content with sufficient length for chunking. ", 15),
 	}
 
@@ -201,6 +198,26 @@ markdown files appropriately and create chunks based on the content structure.
 	err := WalkAndProcess(testDir)
 	if err != nil {
 		t.Errorf("WalkAndProcess() error = %v", err)
+	}
+}
+
+// TestWalkAndProcess_BatchFailureReturned verifies a file the processor
+// rejects surfaces as an error instead of being dropped.
+func TestWalkAndProcess_BatchFailureReturned(t *testing.T) {
+	testDir := t.TempDir()
+	// Too short to produce a markdown chunk.
+	if err := os.WriteFile(filepath.Join(testDir, "tiny.md"), []byte("# Hi\n"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	err := WalkAndProcess(testDir)
+
+	var causeErr *ProcessorCauseError
+	if !errors.As(err, &causeErr) {
+		t.Fatalf("WalkAndProcess() error = %v, want *ProcessorCauseError", err)
+	}
+	if causeErr.Message != "failed to process files" {
+		t.Errorf("Message = %q, want %q", causeErr.Message, "failed to process files")
 	}
 }
 

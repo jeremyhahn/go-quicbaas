@@ -693,11 +693,15 @@ type fleetEnrollErrorBody struct {
 func respondFleetEnrollError(w http.ResponseWriter, r *http.Request, status int, code, detail string) {
 	body := &fleetEnrollErrorBody{Error: code, ErrorDescription: detail}
 	w.Header().Set("Cache-Control", "no-store")
-	enc, _ := json.Marshal(body)
+	enc, err := json.Marshal(body)
+	if err != nil {
+		RespondInternalError(w, r, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Length", strconv.Itoa(len(enc)))
 	w.WriteHeader(status)
-	_, _ = w.Write(enc)
+	writeResponseBody(w, r, enc)
 }
 
 // Typed errors for fleet node mTLS register.

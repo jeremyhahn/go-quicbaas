@@ -127,8 +127,8 @@ var (
 	watchBridgeStartFn = func(b *watchbridge.WatchBridge, ctx context.Context) error { return b.Start(ctx) }
 	// Seam for CA construction.
 	newCAFn = xkmssdk.NewTrustedCA
-	// Seam for seal manager construction.
-	newSealManagerFn = defaultNewSealManager
+	// Seam for barrier manager construction.
+	newBarrierManagerFn = defaultNewBarrierManager
 	// Seam for CA initialization (allows tests to bypass full CA setup).
 	initializeCAFn = func(s *Server) error { return s.initializeCA() }
 )
@@ -927,12 +927,12 @@ func saveServerCert(issued *xkmssdk.TrustedCAIssuedCertificate, certPath string)
 	return nil
 }
 
-// defaultNewSealManager constructs a disk-persistent seal manager that
-// satisfies interfaces.SealManager. Initialization state is stored under
+// defaultNewBarrierManager constructs a disk-persistent barrier manager that
+// satisfies interfaces.BarrierManager. Initialization state is stored under
 // <dataDir>/barrier/seal_state.json so that initialized=true survives daemon
-// restarts. Production deployments can replace this via newSealManagerFn to
+// restarts. Production deployments can replace this via newBarrierManagerFn to
 // inject a real BarrierClient-backed manager.
-func defaultNewSealManager(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.SealManager, error) { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
+func defaultNewBarrierManager(cfg *quicbaasseal.Config, log *logger.Logger, dataDir string) (interfaces.BarrierManager, error) {
 	barrierDir := filepath.Join(dataDir, "barrier")
 	mgr, err := grpcapi.NewPersistentDefaultSealManager(cfg, barrierDir)
 	if err != nil {
@@ -968,12 +968,12 @@ func (s *Server) initBarrier() error {
 		RecoveryTotalKeys:   s.config.Seal.RecoveryTotal,
 	}
 
-	mgr, err := newSealManagerFn(sealCfg, s.logger, s.config.Storage.DataDir)
+	mgr, err := newBarrierManagerFn(sealCfg, s.logger, s.config.Storage.DataDir)
 	if err != nil {
 		return api.NewOperationFailedError("create seal manager", err)
 	}
 
-	s.sealManager = mgr
+	s.barrierManager = mgr
 
 	s.logger.WithFields(map[string]interface{}{
 		"barrier_dir":  barrierDir,
@@ -2248,7 +2248,7 @@ func (s *Server) startGRPCServer() error {
 	s.logger.Info("Initializing gRPC server...")
 
 	// Initialize seal manager for gRPC endpoints
-	if s.sealManager == nil {
+	if s.barrierManager == nil {
 		if err := initSealManagerFn(s.logger); err != nil {
 			s.logger.Warnf("Failed to initialize seal manager: %v (seal operations will be unavailable)", err)
 		}

@@ -1142,14 +1142,42 @@ func TestAdapter91_UpdateUser_WithRoles(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
+	role, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "viewer", Permissions: []string{"read"}})
+	require.NoError(t, err)
+
 	user := &iam.User{TenantID: "tenant-1", Email: "grace@example.com", Name: "Grace"}
 	created, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
-	created.Roles = []string{"viewer"}
+	created.Roles = []string{role.ID}
 	result, err := adapter.UpdateUser(ctx, created)
+	require.NoError(t, err)
 	assert.NotNil(t, result)
-	_ = err
+
+	stored, err := adapter.GetUser(ctx, "tenant-1", created.ID)
+	require.NoError(t, err)
+	assert.Contains(t, stored.Roles, role.ID)
+}
+
+// TestAdapter91_UpdateUser_UnknownRole proves a role assignment that the
+// identity store rejects fails the update instead of being dropped silently.
+func TestAdapter91_UpdateUser_UnknownRole(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	adapter := createTestIAMAdapter91(t)
+
+	user := &iam.User{TenantID: "tenant-1", Email: "heidi@example.com", Name: "Heidi"}
+	created, _, _, err := adapter.CreateUser(ctx, user, 0)
+	require.NoError(t, err)
+
+	created.Roles = []string{"no-such-role"}
+	result, err := adapter.UpdateUser(ctx, created)
+	require.Error(t, err)
+	assert.Nil(t, result)
+
+	stored, err := adapter.GetUser(ctx, "tenant-1", created.ID)
+	require.NoError(t, err)
+	assert.NotContains(t, stored.Roles, "no-such-role")
 }
 
 func TestAdapter91_DeleteUser_ByID(t *testing.T) {

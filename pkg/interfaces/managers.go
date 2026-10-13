@@ -348,13 +348,6 @@ type BarrierManager interface {
 	Close() error
 }
 
-// SealManager is a deprecated alias for BarrierManager retained for one
-// release while existing service-layer code migrates to the BarrierManager
-// name. New code MUST reference BarrierManager directly.
-//
-// Deprecated: use BarrierManager.
-type SealManager = BarrierManager
-
 // ParameterManager defines the interface for parameter storage operations.
 // Parameters are tenant-scoped key-value pairs with optional encryption, TTL, and tagging.
 // This interface provides low-level storage operations used by the ParameterStoreService.

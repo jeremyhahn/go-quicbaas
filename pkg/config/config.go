@@ -308,7 +308,9 @@ type IAMDynamicClientRegistrationConfig struct {
 }
 
 // Validate returns an error if the IAMDynamicClientRegistrationConfig contains
-// an invalid combination of field values. It is called during daemon startup.
+// an invalid combination of field values. The boot gate (Validate, through
+// Validator.validateIAM) calls it, so quicbaasd refuses to start when anonymous
+// registration would land clients in the system tenant.
 func (c *IAMDynamicClientRegistrationConfig) Validate() error {
 	if !c.Enabled {
 		return nil

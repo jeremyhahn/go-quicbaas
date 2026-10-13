@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/httpbody"
 )
 
 // Compression level constants for audit log compression.
@@ -878,10 +879,12 @@ func (s *SIEMExporter) doHTTPRequest(payload []byte, contentType string) error {
 	if err != nil {
 		return &SIEMError{Code: ErrCodeSIEMRequestFailed, Message: "request failed", Cause: err}
 	}
-	defer resp.Body.Close()
-
-	// Read and discard body to enable connection reuse
-	_, _ = io.Copy(io.Discard, resp.Body)
+	// Drain the body so the connection can be reused.
+	defer func() {
+		if err := httpbody.DrainClose(resp.Body); err != nil {
+			s.logger.WithError(err).Debug("SIEM response body release failed")
+		}
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &SIEMError{

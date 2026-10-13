@@ -303,7 +303,7 @@ func (s *Server) HandleGetObject(w http.ResponseWriter, r *http.Request) {
 
 	// Write body directly (not JSON)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(resp.Value)
+	writeResponseBody(w, r, resp.Value)
 }
 
 // HandleDeleteObject removes an object.

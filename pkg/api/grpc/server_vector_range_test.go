@@ -86,6 +86,20 @@ func TestVectorHandlers_ResponseOutOfRange(t *testing.T) {
 			},
 		},
 		{
+			name:  "ListNamespaces dimensions",
+			field: "dimensions",
+			setup: func(m *testutil.MockQuicBaaS) {
+				m.On("ListNamespaces", mock.Anything, mock.Anything).
+					Return(&service.ListNamespacesResponse{
+						Namespaces: []*service.NamespaceInfo{{Namespace: "ns1", Dimension: math.MaxUint32}},
+					}, nil)
+			},
+			call: func(srv *Server) error {
+				_, err := srv.ListNamespaces(ctx, &pb.ListNamespacesRequest{})
+				return err
+			},
+		},
+		{
 			name:  "ListNamespaces total count",
 			field: "total_count",
 			setup: func(m *testutil.MockQuicBaaS) {

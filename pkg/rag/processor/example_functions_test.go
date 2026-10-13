@@ -99,9 +99,9 @@ It contains multiple sections and paragraphs to test processing.
 		}
 	}()
 
-	// Run the example function
-	// Note: This will log output to stdout which is expected
-	Example()
+	if err := Example(); err != nil {
+		t.Fatalf("Example() error = %v", err)
+	}
 }
 
 // TestWalkAndProcess_BatchErrors tests batch processing with some errors

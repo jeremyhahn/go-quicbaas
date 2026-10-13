@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -32,11 +33,20 @@ import (
 func TestWriteSSEError(t *testing.T) {
 	rec := httptest.NewRecorder()
 
-	writeSSEError(rec, func() error { return nil }, "stream aborted")
+	err := writeSSEError(rec, func() error { return nil }, "stream aborted")
 
+	assert.NoError(t, err)
 	body := rec.Body.String()
 	assert.True(t, strings.Contains(body, "event: error"), "missing error event header: %q", body)
 	assert.True(t, strings.Contains(body, "data: stream aborted"), "missing error data line: %q", body)
+}
+
+func TestWriteSSEError_FlushFailureReturned(t *testing.T) {
+	flushErr := errors.New("connection reset")
+
+	err := writeSSEError(httptest.NewRecorder(), func() error { return flushErr }, "stream aborted")
+
+	assert.ErrorIs(t, err, flushErr)
 }
 
 // TestProjectToREST_Branches covers the nil-input guard and the populated

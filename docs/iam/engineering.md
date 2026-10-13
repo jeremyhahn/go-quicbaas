@@ -138,8 +138,8 @@ iam:
       #
       # Setting this enables UNAUTHENTICATED registration and names the tenant
       # such clients land in. It must never be "system": anonymous callers may
-      # not create control-plane clients (rejected by config validation and
-      # again at request time).
+      # not create control-plane clients. With enabled: true, quicbaasd refuses
+      # to start on "system", and the handler refuses it again at request time.
       anonymous_tenant_id: ""
 
   # MCP Authorization Configuration

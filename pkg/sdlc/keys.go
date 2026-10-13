@@ -17,9 +17,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"hash/fnv"
 	"path/filepath"
 	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // =============================================================================
@@ -94,14 +95,12 @@ func SegmentHash(value string) string {
 // in full, and every read compares the two, so a digest collision is refused
 // rather than answered with someone else's record.
 func entityIDFor(ref string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(ref))
-	id := h.Sum64()
-	if id == 0 {
+	entityID := id.HashString(ref)
+	if entityID == 0 {
 		// The DAO treats zero as "unset" and would assign a fresh id.
 		return 1
 	}
-	return id
+	return entityID
 }
 
 // WebhookRouteKey addresses the system-plane record that routes a webhook

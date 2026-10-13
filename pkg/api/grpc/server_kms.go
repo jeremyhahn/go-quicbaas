@@ -119,7 +119,7 @@ func (s *KMSServer) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest)
 
 		var n responseNarrower
 		resp := &pb.GenerateKeyResponse{
-			Key:       convertKeyHandle(svcResp.Key),
+			Key:       convertKeyHandle(&n, svcResp.Key),
 			Metadata:  convertKeyMetadata(&n, svcResp.Metadata),
 			Timestamp: svcResp.Timestamp.Unix(),
 		}
@@ -245,7 +245,7 @@ func (s *KMSServer) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetK
 
 		var n responseNarrower
 		resp := &pb.GetKeyResponse{
-			Key:       convertKeyHandle(svcResp.Key),
+			Key:       convertKeyHandle(&n, svcResp.Key),
 			Metadata:  convertKeyMetadata(&n, svcResp.Metadata),
 			Timestamp: svcResp.Timestamp.Unix(),
 		}
@@ -358,14 +358,18 @@ func (s *KMSServer) GetPublicKey(ctx context.Context, req *pb.GetPublicKeyReques
 		return nil, convertKMSError(err)
 	}
 
-	protoAlg, _ := convertServiceKeyAlgorithm(resp.Algorithm)
-	return &pb.GetPublicKeyResponse{
+	var n responseNarrower
+	out := &pb.GetPublicKeyResponse{
 		KeyId:     resp.KeyID,
 		PublicKey: resp.PublicKey,
-		Algorithm: protoAlg,
+		Algorithm: n.keyAlgorithm("algorithm", resp.Algorithm),
 		Version:   resp.Version,
 		Timestamp: resp.Timestamp.Unix(),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ListKeys returns all keys accessible to the requester with pagination.
@@ -398,14 +402,14 @@ func (s *KMSServer) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.
 			return nil, convertKMSError(err)
 		}
 
+		var n responseNarrower
 		keys := make([]*pb.KeyHandle, 0, len(svcResp.Keys))
 		for _, kh := range svcResp.Keys {
-			keys = append(keys, convertKeyHandle(kh))
+			keys = append(keys, convertKeyHandle(&n, kh))
 		}
-
-		totalCount, err := conv.SafeIntToInt32(svcResp.TotalCount)
-		if err != nil {
-			return nil, responseRangeError("total_count", err)
+		totalCount := n.int32("total_count", svcResp.TotalCount)
+		if err := n.err(); err != nil {
+			return nil, err
 		}
 
 		return &pb.ListKeysResponse{
@@ -728,12 +732,12 @@ func (s *KMSServer) ListKeyVersions(ctx context.Context, req *pb.ListKeyVersions
 		}
 
 		// Convert service response to proto
+		var n responseNarrower
 		versions := make([]*pb.KeyVersionInfo, 0, len(svcResp.Versions))
 		for _, v := range svcResp.Versions {
-			protoAlg, _ := convertServiceKeyAlgorithm(v.Algorithm)
 			versionInfo := &pb.KeyVersionInfo{
 				Version:   v.Version,
-				Algorithm: protoAlg,
+				Algorithm: n.keyAlgorithm("versions.algorithm", v.Algorithm),
 				CreatedAt: v.CreatedAt.Unix(),
 				Status:    convertServiceStatusToProto(v.Status),
 			}
@@ -741,6 +745,9 @@ func (s *KMSServer) ListKeyVersions(ctx context.Context, req *pb.ListKeyVersions
 				versionInfo.DisabledAt = v.DisabledAt.Unix()
 			}
 			versions = append(versions, versionInfo)
+		}
+		if err := n.err(); err != nil {
+			return nil, err
 		}
 
 		return &pb.ListKeyVersionsResponse{
@@ -1233,11 +1240,16 @@ func (s *KMSServer) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*p
 		UpdatedAt: now.Unix(),
 	}
 
-	return &pb.UnwrapKeyResponse{
-		Key:       convertKeyHandle(resp.Key),
+	var n responseNarrower
+	out := &pb.UnwrapKeyResponse{
+		Key:       convertKeyHandle(&n, resp.Key),
 		Metadata:  metadata,
 		Timestamp: now.Unix(),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // =============================================================================
@@ -1818,6 +1830,21 @@ func convertServiceKeyAlgorithm(alg service.KeyAlgorithm) (pb.KeyAlgorithm, erro
 	}
 }
 
+// keyAlgorithm returns alg as a proto key algorithm, recording an Internal
+// failure for field when the service returned an algorithm the wire format
+// cannot represent. An empty algorithm is unset, not unknown, and maps to
+// KEY_ALG_UNSPECIFIED.
+func (n *responseNarrower) keyAlgorithm(field string, alg service.KeyAlgorithm) pb.KeyAlgorithm {
+	if alg == "" {
+		return pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED
+	}
+	out, err := convertServiceKeyAlgorithm(alg)
+	if !n.keep(field, err) {
+		return pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED
+	}
+	return out
+}
+
 // convertProtoKeyAlgorithm converts pb.KeyAlgorithm to service.KeyAlgorithm.
 func convertProtoKeyAlgorithm(alg pb.KeyAlgorithm) service.KeyAlgorithm {
 	switch alg {
@@ -2033,15 +2060,14 @@ func convertKeyStatus(status service.KeyStatus) pb.KeyStatus {
 }
 
 // convertKeyHandle converts service.KeyHandle to pb.KeyHandle.
-func convertKeyHandle(kh *service.KeyHandle) *pb.KeyHandle {
+func convertKeyHandle(n *responseNarrower, kh *service.KeyHandle) *pb.KeyHandle {
 	if kh == nil {
 		return nil
 	}
-	alg, _ := convertServiceKeyAlgorithm(kh.Algorithm)
 	return &pb.KeyHandle{
 		KeyId:     kh.KeyID,
 		Version:   kh.Version,
-		Algorithm: alg,
+		Algorithm: n.keyAlgorithm("key.algorithm", kh.Algorithm),
 		Status:    convertKeyStatus(kh.Status),
 		CreatedAt: kh.CreatedAt.Unix(),
 	}
@@ -2052,7 +2078,7 @@ func convertKeyMetadata(n *responseNarrower, km *service.KeyMetadata) *pb.KeyMet
 	if km == nil {
 		return nil
 	}
-	alg, _ := convertServiceKeyAlgorithm(km.Algorithm)
+	alg := n.keyAlgorithm("metadata.algorithm", km.Algorithm)
 
 	var lastUsed int64
 	if km.LastUsedAt != nil {

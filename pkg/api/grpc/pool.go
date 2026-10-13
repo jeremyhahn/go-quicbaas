@@ -428,7 +428,12 @@ func NewConnectionPool(address string, opts ...PoolOption) (*ConnectionPool, err
 			conn, err := pool.createConnection(context.Background())
 			if err != nil {
 				// Close any connections created so far
-				_ = pool.Close()
+				if closeErr := pool.Close(); closeErr != nil {
+					pool.logger.WithFields(map[string]interface{}{
+						"error":   closeErr.Error(),
+						"address": address,
+					}).Warn("failed to close warmup connections after a failed dial")
+				}
 				return nil, errors.Wrapf(
 					err,
 					errors.ErrUnavailable,

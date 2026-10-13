@@ -91,6 +91,14 @@ func TestClient_RequestOutOfRange(t *testing.T) {
 				return err
 			},
 		},
+		{
+			name:  "ListBackupsFromRequest limit",
+			field: "limit",
+			call: func() error {
+				_, err := NewBackupClientAdapter(client).ListBackupsFromRequest(ctx, &mockBackupListRequest{limit: tooBig})
+				return err
+			},
+		},
 	}
 
 	for _, tt := range tests {

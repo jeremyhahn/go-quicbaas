@@ -208,6 +208,121 @@ func TestKMSHandlers_ResponseOutOfRange(t *testing.T) {
 	}
 }
 
+// TestKMSHandlers_UnknownServiceAlgorithm proves that an algorithm the
+// service returns but the wire format cannot represent fails the call with
+// Internal naming the field, instead of reaching the caller as
+// KEY_ALG_UNSPECIFIED.
+func TestKMSHandlers_UnknownServiceAlgorithm(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	const unknown = service.KeyAlgorithm("NOT-AN-ALGORITHM")
+
+	tests := []struct {
+		name  string
+		field string
+		svc   *mocks.MockKMSService
+		call  func(srv *KMSServer) error
+	}{
+		{
+			name:  "GetPublicKey algorithm",
+			field: "algorithm",
+			svc: &mocks.MockKMSService{
+				GetPublicKeyFunc: func(context.Context, *service.GetPublicKeyRequest) (*service.GetPublicKeyResponse, error) {
+					return &service.GetPublicKeyResponse{KeyID: "k1", Algorithm: unknown, Timestamp: now}, nil
+				},
+			},
+			call: func(srv *KMSServer) error {
+				_, err := srv.GetPublicKey(ctx, &pb.GetPublicKeyRequest{KeyId: "k1"})
+				return err
+			},
+		},
+		{
+			name:  "ListKeyVersions algorithm",
+			field: "versions.algorithm",
+			svc: &mocks.MockKMSService{
+				ListKeyVersionsFunc: func(context.Context, *service.ListKeyVersionsRequest) (*service.ListKeyVersionsResponse, error) {
+					return &service.ListKeyVersionsResponse{
+						Versions:  []*service.KeyVersionInfo{{Version: 1, Algorithm: unknown, CreatedAt: now}},
+						Timestamp: now,
+					}, nil
+				},
+			},
+			call: func(srv *KMSServer) error {
+				_, err := srv.ListKeyVersions(ctx, &pb.ListKeyVersionsRequest{KeyId: "k1"})
+				return err
+			},
+		},
+		{
+			name:  "ListKeys key algorithm",
+			field: "key.algorithm",
+			svc: &mocks.MockKMSService{
+				ListKeysFunc: func(context.Context, *service.ListKeysRequest) (*service.ListKeysResponse, error) {
+					return &service.ListKeysResponse{
+						Keys:      []*service.KeyHandle{{KeyID: "k1", Algorithm: unknown}},
+						Timestamp: now,
+					}, nil
+				},
+			},
+			call: func(srv *KMSServer) error {
+				_, err := srv.ListKeys(ctx, &pb.ListKeysRequest{})
+				return err
+			},
+		},
+		{
+			name:  "GetKey metadata algorithm",
+			field: "metadata.algorithm",
+			svc: &mocks.MockKMSService{
+				GetKeyFunc: func(context.Context, *service.GetKeyRequest) (*service.GetKeyResponse, error) {
+					return &service.GetKeyResponse{
+						Key:       &service.KeyHandle{KeyID: "k1", Algorithm: service.KeyAlgAES256GCM},
+						Metadata:  &service.KeyMetadata{KeyID: "k1", Algorithm: unknown},
+						Timestamp: now,
+					}, nil
+				},
+			},
+			call: func(srv *KMSServer) error {
+				_, err := srv.GetKey(ctx, &pb.GetKeyRequest{KeyId: "k1"})
+				return err
+			},
+		},
+		{
+			name:  "UnwrapKey key algorithm",
+			field: "key.algorithm",
+			svc: &mocks.MockKMSService{
+				UnwrapKeyFunc: func(context.Context, *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error) {
+					return &service.UnwrapKeyResponse{KeyID: "k1", Key: &service.KeyHandle{KeyID: "k1", Algorithm: unknown}}, nil
+				},
+			},
+			call: func(srv *KMSServer) error {
+				_, err := srv.UnwrapKey(ctx, &pb.UnwrapKeyRequest{
+					KeyId:           "k1",
+					WrappedMaterial: []byte{1},
+					WrappingKeyId:   "wk1",
+				})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := &mockKMSManager{}
+			srv := NewKMSServerWithService(mgr, tt.svc, newTestLogger())
+			requireRangeStatus(t, tt.call(srv), codes.Internal, tt.field)
+		})
+	}
+
+	t.Run("GetDEK algorithm", func(t *testing.T) {
+		svc := &mocks.MockKMSService{
+			GetDEKFunc: func(context.Context, *service.GetDEKRequest) (*service.GetDEKResponse, error) {
+				return &service.GetDEKResponse{DEK: &service.DEKMetadata{Path: "p", Algorithm: unknown}, Timestamp: now}, nil
+			},
+		}
+		_, err := NewDEKServer(svc, newTestLogger()).GetDEK(ctx, &pb.GetDEKRequest{Path: "p"})
+		requireRangeStatus(t, err, codes.Internal, "algorithm")
+	})
+}
+
 // TestClientKMSSetKeyRotationPolicy_RetainVersionsOutOfRange proves that a
 // caller's retention count beyond int32 is rejected with the typed conv error
 // before the client touches the connection.

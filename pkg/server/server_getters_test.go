@@ -113,8 +113,8 @@ func TestServer_GettersReturnFields(t *testing.T) {
 		assert.NotEmpty(t, srv.GetEffectiveMode())
 	})
 
-	t.Run("GetSealManager is nil when seal disabled", func(t *testing.T) {
-		assert.Nil(t, srv.GetSealManager())
+	t.Run("GetBarrierManager is nil when seal disabled", func(t *testing.T) {
+		assert.Nil(t, srv.GetBarrierManager())
 	})
 
 	t.Run("GetRaftNode is nil before init", func(t *testing.T) {

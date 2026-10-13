@@ -48,14 +48,29 @@ func RespondJSON(w http.ResponseWriter, r *http.Request, statusCode int, data in
 	buf.Reset()
 	defer jsonBufPool.Put(buf)
 
-	enc := json.NewEncoder(buf)
-	if err := enc.Encode(data); err == nil {
-		// Set Content-Length to avoid chunked encoding overhead in tests
-		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
-		_, _ = w.Write(buf.Bytes())
-	} else {
-		// Fallback to direct encoding on error (rare)
-		_ = json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(buf).Encode(data); err != nil {
+		// The status is already on the wire, so the failure can only be
+		// recorded for the operator.
+		slog.Error("response body encode failed",
+			slog.String("request_id", GetRequestID(r.Context())),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	// Set Content-Length to avoid chunked encoding overhead in tests
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	writeResponseBody(w, r, buf.Bytes())
+}
+
+// writeResponseBody writes body after the status line has been sent. The
+// status is already on the wire, so a failed write (typically a client that
+// went away) cannot be reported to the client; it is logged instead.
+func writeResponseBody(w http.ResponseWriter, r *http.Request, body []byte) {
+	if _, err := w.Write(body); err != nil {
+		slog.Warn("response body write failed",
+			slog.String("request_id", GetRequestID(r.Context())),
+			slog.String("error", err.Error()),
+		)
 	}
 }
 

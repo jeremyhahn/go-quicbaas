@@ -25,7 +25,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/common/safeconv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
@@ -88,10 +87,14 @@ func (s *Server) CreateNamespace(ctx context.Context, req *pb.CreateNamespaceReq
 	// Convert index type to string
 	indexType := protoIndexTypeToString(req.Config.IndexType)
 
+	dimension, err := conv.SafeIntToUint32(int(req.Config.Dimensions))
+	if err != nil {
+		return nil, requestRangeError("config.dimensions", err)
+	}
+
 	serviceReq := &service.CreateNamespaceRequest{
-		Namespace: req.Config.Namespace,
-		// Safe conversion: already validated positive in L60-62
-		Dimension:      safeconv.MustToUint32(req.Config.Dimensions),
+		Namespace:      req.Config.Namespace,
+		Dimension:      dimension,
 		DistanceMetric: distanceMetric,
 		IndexType:      indexType,
 		IndexConfig:    indexConfig,
@@ -273,11 +276,14 @@ func (s *Server) ListNamespaces(ctx context.Context, req *pb.ListNamespacesReque
 		if err != nil {
 			return nil, responseRangeError("vector_count", err)
 		}
+		dimensions, err := conv.SafeUint32ToInt32(ns.Dimension)
+		if err != nil {
+			return nil, responseRangeError("dimensions", err)
+		}
 		namespaces = append(namespaces, &pb.NamespaceInfo{
 			Config: &pb.NamespaceConfig{
-				Namespace: ns.Namespace,
-				// Safe conversion: dimension fits in int32 (max 4096)
-				Dimensions:     safeconv.MustToInt32(ns.Dimension),
+				Namespace:      ns.Namespace,
+				Dimensions:     dimensions,
 				DistanceMetric: stringToProtoDistanceMetric(ns.DistanceMetric),
 				IndexType:      stringToProtoIndexType(ns.IndexType),
 				IndexParams:    ns.IndexConfig,

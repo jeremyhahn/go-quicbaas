@@ -59,7 +59,7 @@ Root Key (per node, sealed to strategy)
 
 ### BarrierSealManager
 
-`pkg/seal/BarrierSealManager` is a thin SDK adapter that implements `interfaces.SealManager` by delegating operations to `transport.BarrierClient` from the go-qrdb SDK. It:
+`pkg/seal/BarrierSealManager` is a thin SDK adapter that implements `interfaces.BarrierManager` by delegating operations to `transport.BarrierClient` from the go-qrdb SDK. It:
 
 - Delegates seal lifecycle operations (init, unseal, seal, rekey) to the SDK client for non-EE paths
 - Does NOT import `go-qrdb/pkg/seal` directly

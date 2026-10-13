@@ -14,11 +14,14 @@
 package signalbridge
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 )
 
@@ -379,21 +382,54 @@ func TestIsRetryable(t *testing.T) {
 
 // TestGeneratePassword produces a base64 string of reasonable length.
 func TestGeneratePassword(t *testing.T) {
-	p := generatePassword()
+	p, err := generatePassword(rand.Reader)
+	if err != nil {
+		t.Fatalf("generatePassword: %v", err)
+	}
 	if len(p) < 20 {
 		t.Fatalf("too short: %q", p)
 	}
-	if p == generatePassword() {
+	q, err := generatePassword(rand.Reader)
+	if err != nil {
+		t.Fatalf("generatePassword: %v", err)
+	}
+	if p == q {
 		t.Fatalf("should be random")
 	}
 }
 
-// TestGenerateRegistrationID is in range.
+func TestGeneratePassword_RandomSourceFailure(t *testing.T) {
+	cause := errors.New("entropy exhausted")
+	if _, err := generatePassword(iotest.ErrReader(cause)); !errors.Is(err, cause) {
+		t.Fatalf("error = %v, want %v", err, cause)
+	}
+}
+
 func TestGenerateRegistrationID(t *testing.T) {
-	for i := 0; i < 32; i++ {
-		id := generateRegistrationID()
-		if id < 1 || id > 16380 {
-			t.Fatalf("out of range: %d", id)
-		}
+	tests := []struct {
+		name string
+		raw  []byte
+		want uint32
+	}{
+		{"zero maps to lower bound", []byte{0, 0, 0, 0}, 1},
+		{"max wraps into range", []byte{0xff, 0xff, 0xff, 0xff}, 256},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := generateRegistrationID(bytes.NewReader(tt.raw))
+			if err != nil {
+				t.Fatalf("generateRegistrationID: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("generateRegistrationID = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateRegistrationID_RandomSourceFailure(t *testing.T) {
+	cause := errors.New("entropy exhausted")
+	if _, err := generateRegistrationID(iotest.ErrReader(cause)); !errors.Is(err, cause) {
+		t.Fatalf("error = %v, want %v", err, cause)
 	}
 }

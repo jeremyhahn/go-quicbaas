@@ -889,7 +889,9 @@ const (
 // It is a package-level variable so unit tests can capture the output without
 // touching os.Stderr.
 var writeFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
-	writeFirstBootBanner(w, b)
+	if err := writeFirstBootBanner(w, b); err != nil {
+		slog.Warn("first-boot banner not written", slog.String("error", err.Error()))
+	}
 }
 
 // firstBootBootstrap detects a fresh installation (zero admin assignments) and
@@ -1660,7 +1662,7 @@ func (e *PIVBootstrapError) Unwrap() error { return e.Cause }
 // platform admin certificate and bound its SPKI thumbprint to the admin user.
 // The banner tells the operator where that material is and how to use it. There
 // is no invite token and no activation URL — §08 deleted that mechanism.
-func writeFirstBootBanner(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) {
+func writeFirstBootBanner(w interface{ WriteString(string) (int, error) }, b adminEnrollmentBanner) error {
 	const sep = "============================================================"
 	lines := []string{"", sep, "  FIRST-BOOT COMPLETE: platform admin created."}
 
@@ -1709,9 +1711,10 @@ func writeFirstBootBanner(w interface{ WriteString(string) (int, error) }, b adm
 		sep,
 		"",
 	)
-	for _, line := range lines {
-		_, _ = w.WriteString(line + "\n")
+	if _, err := w.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		return &FirstBootBootstrapError{Op: "write enrollment banner", Cause: err}
 	}
+	return nil
 }
 
 // getIssuerURL constructs the canonical external URL for this server — the
