@@ -206,6 +206,13 @@ func (h *iamHandler) transformRequest(service, method string, reqBody interface{
 	// Convert the request to a map via JSON round-trip
 	args := h.transport.convertToArguments(reqBody)
 	if args == nil {
+		// A request that cannot be encoded must not reach the tool as an
+		// empty argument set.
+		if reqBody != nil {
+			if _, err := json.Marshal(reqBody); err != nil {
+				return nil, errors.Wrap(err, errors.CodeInvalidInput, "mcp.iam."+method, "request is not JSON-encodable")
+			}
+		}
 		return nil, nil
 	}
 

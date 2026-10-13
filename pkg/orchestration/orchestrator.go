@@ -1454,6 +1454,9 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	}
 	// And the image, so the spawn is placed only on an agent that has it.
 	ctx = WithContainerImage(ctx, spawnImage(req))
+	// And where the spawn's job already holds a slot: only there may it skip
+	// the capacity gates. A host affinity alone names no slot.
+	ctx = WithJobSlotHosts(ctx, s.jobSlotHosts(req.JobID))
 
 	// A NAMED WORKSPACE IS ADMITTED BEFORE ANYTHING RESOLVES, and a pinned one
 	// resolves only to the host that holds it. See orchestrator_workspace.go.
@@ -5111,8 +5114,20 @@ func (s *agentServiceImpl) resolveBackendForSpawn(ctx context.Context, name, pro
 	// A local pin skips the fleet: the spawn continues a workspace that lives
 	// on this daemon (workspaceSpawnContext).
 	if s.remoteResolver != nil && !localBackendPinned(ctx) {
+		// The resolver reports a refusal through the context's holder; one
+		// is installed when the caller did not bring its own.
+		if ResolveErrorHolderFromContext(ctx) == nil {
+			ctx = WithResolveErrorHolder(ctx, NewResolveErrorHolder())
+		}
 		if b, ok := s.remoteResolver(WithSpawnPlacement(ctx), name, projectID); ok && b != nil {
 			return b, true, nil
+		}
+		// FAIL SAFE: every fleet node refused the spawn on health or
+		// capacity, and running it on an unmeasured local backend instead
+		// would be failing open.
+		var refused *FleetCapacityRefusedError
+		if errors.As(ResolveErrorHolderFromContext(ctx).Err(), &refused) {
+			return nil, false, refused
 		}
 		if err := strictAffinityRefusal(ctx, name); err != nil {
 			return nil, false, err

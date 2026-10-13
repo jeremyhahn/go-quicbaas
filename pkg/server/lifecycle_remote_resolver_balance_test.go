@@ -300,10 +300,10 @@ func TestRemoteResolver_ASpawnGoesOnlyWhereItsImageIs(t *testing.T) {
 	}
 
 	unknown := seenAgo("agent-05", "vs05:9091", time.Second)
-	if reg, constraint := pool.chooseDaemon([]*orchestration.FleetNode{unknown}, "codex", "", false, "", image, false); reg == nil {
+	if reg, constraint, _ := pool.chooseDaemon([]*orchestration.FleetNode{unknown}, "codex", "", false, "", image, nil, false); reg == nil {
 		t.Fatalf("an agent that never reported its images was refused (%s); unknown is not empty", constraint)
 	}
-	if reg, constraint := pool.chooseDaemon([]*orchestration.FleetNode{lacking}, "codex", "", false, "", image, false); reg != nil || constraint != "image" {
+	if reg, constraint, _ := pool.chooseDaemon([]*orchestration.FleetNode{lacking}, "codex", "", false, "", image, nil, false); reg != nil || constraint != "image" {
 		t.Fatalf("chooseDaemon = (%v, %q), want no agent and the image constraint", reg, constraint)
 	}
 }

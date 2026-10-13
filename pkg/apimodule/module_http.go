@@ -23,6 +23,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // identityGatedPermission is go-qrdb's identity-gated sentinel:
@@ -129,6 +130,12 @@ type SurfaceComposingError struct {
 // Error describes the composing state.
 func (e *SurfaceComposingError) Error() string {
 	return "quicbaas module: " + e.Surface + " is not yet available (server still composing)"
+}
+
+// ErrorCode classifies the composing state as unavailable, the class REST
+// (503) and gRPC (Unavailable) answer it with.
+func (e *SurfaceComposingError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrUnavailable
 }
 
 // lazyHTTPHandler returns a handler that resolves the REST surface on first

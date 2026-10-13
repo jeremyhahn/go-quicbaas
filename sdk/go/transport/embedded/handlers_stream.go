@@ -258,17 +258,8 @@ func handleOrchestratorInference(ctx context.Context, svc service.QuicBaaS, req 
 		return nil, err
 	}
 
-	// Convert orchestration.ContentBlock to SDK InferenceContentBlock.
-	sdkContent := make([]orchestratorSDK.InferenceContentBlock, len(resp.Content))
-	for i, block := range resp.Content {
-		sdkContent[i] = orchestratorSDK.InferenceContentBlock{
-			Type: block.Type,
-			Text: block.Text,
-		}
-	}
-
 	return &orchestratorSDK.InferenceResponse{
-		Content:    sdkContent,
+		Content:    inferenceContentBlocks(resp.Content),
 		Model:      resp.Model,
 		StopReason: resp.StopReason,
 	}, nil
@@ -358,16 +349,8 @@ func handleOrchestratorInferenceStream(ctx context.Context, svc service.QuicBaaS
 			if !ok {
 				return nil
 			}
-			// Convert orchestration.ContentBlock slices to SDK InferenceContentBlock.
-			sdkDelta := make([]orchestratorSDK.InferenceContentBlock, len(chunk.Delta))
-			for i, block := range chunk.Delta {
-				sdkDelta[i] = orchestratorSDK.InferenceContentBlock{
-					Type: block.Type,
-					Text: block.Text,
-				}
-			}
 			sdkChunk := &orchestratorSDK.InferenceChunk{
-				Delta:      sdkDelta,
+				Delta:      inferenceContentBlocks(chunk.Delta),
 				Model:      chunk.Model,
 				StopReason: chunk.StopReason,
 				Final:      chunk.Final,

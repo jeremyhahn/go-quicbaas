@@ -1727,78 +1727,24 @@ func (s *Server) HandleFleetNodeHeartbeat(w http.ResponseWriter, r *http.Request
 // unknown fields are ignored so older / newer agents stay
 // interoperable.
 type heartbeatBody struct {
-	BindAddr string `json:"bind_addr,omitempty"`
-
-	// Backends is the set of backend names the daemon's runtime is serving,
-	// and it is a POINTER so that "the daemon reported none" is a different
-	// answer from "the daemon reported nothing". Both decode to a nil slice,
-	// and they mean opposite things: a body with no backends key is an older
-	// daemon or a transport that carries no served list, which reconciles
-	// nothing; a body carrying an empty list is a daemon that constructed no
-	// backend at all, which is a fault to surface (go-quicbaas#699).
-	Backends *[]string `json:"backends"`
-
-	// MaxConcurrentJobs is how many orchestration jobs the daemon declares its
-	// host can run at once — its contribution to the fleet's worker-slot
-	// capacity. Zero, or an absent key, reports nothing and reconciles nothing;
-	// see orchestration.FleetNodeObservation.MaxConcurrentJobs for why that is not
-	// the same as reporting no slots.
-	MaxConcurrentJobs int `json:"max_concurrent_jobs,omitempty"`
-
+	BindAddr       string `json:"bind_addr,omitempty"`
 	SandboxPolicy  string `json:"sandbox_policy,omitempty"`
 	HasContainerRT bool   `json:"has_container_runtime,omitempty"`
 
-	// SigningAgents is the identifier of every control-plane sockets root the
-	// daemon can mount a signing socket from. A POINTER for the reason
-	// Backends is one: an absent key (an older daemon) reconciles nothing,
-	// while an empty list reports that it can reach none.
-	SigningAgents *[]string `json:"signing_agents"`
-
-	// SigningRelay reports whether the daemon can serve a session's signing
-	// socket from a relay over its FleetRuntime link (go-quicbaas#1013). A
-	// POINTER so an absent key (an older daemon) reconciles nothing.
-	SigningRelay *bool `json:"signing_relay,omitempty"`
-
-	// Images are the container images on the daemon's host. Absent is
-	// unknown; placement treats only a reported list as authoritative.
-	Images *[]string `json:"images,omitempty"`
-
-	// Devices is the daemon's accelerator telemetry: one sample per GPU, NPU
-	// and CPU package it can read. Absent reports nothing.
-	Devices []orchestration.DeviceSample `json:"devices,omitempty"`
+	// FleetHeartbeatReport is what the daemon reports about itself: served
+	// backends, slot count, signing traits, images, device telemetry and
+	// host metrics. Shared with every other transport so none decodes a
+	// heartbeat differently.
+	orchestration.FleetHeartbeatReport
 }
 
 // observation returns what the daemon reported about itself on this
-// heartbeat, or nil when it reported nothing at all. An empty served list is
-// carried through rather than dropped, because refusing it is the point: the
-// registry decides that, not the decoder.
+// heartbeat, or nil when it reported nothing at all.
 func (b *heartbeatBody) observation() *orchestration.FleetNodeObservation {
-	if b == nil || b.Backends == nil {
+	if b == nil {
 		return nil
 	}
-	// THE SLOT COUNT RIDES ON THE SERVED LIST rather than standing alone. An
-	// observation is refused outright when it reports no backend at all
-	// (FleetNodeObservation.Validate), so a body carrying a capacity and no
-	// backends key would be rejected rather than reconciled — and there is no
-	// such body: pkg/fleet writes both fields in one payload, and the
-	// transports that carry no served list carry no capacity either.
-	observation := &orchestration.FleetNodeObservation{
-		Backends:          *b.Backends,
-		MaxConcurrentJobs: b.MaxConcurrentJobs,
-	}
-	if b.SigningAgents != nil {
-		observation.SigningAgents = append([]string{}, *b.SigningAgents...)
-	}
-	if b.SigningRelay != nil {
-		relay := *b.SigningRelay
-		observation.SigningRelay = &relay
-	}
-	if b.Images != nil {
-		images := append([]string{}, (*b.Images)...)
-		observation.Images = &images
-	}
-	observation.Devices = b.Devices
-	return observation
+	return b.Observation()
 }
 
 // =============================================================================

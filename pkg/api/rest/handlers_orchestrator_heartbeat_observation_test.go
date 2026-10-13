@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -274,4 +275,33 @@ func TestHeartbeatBody_ObservationCarriesDeviceTelemetry(t *testing.T) {
 	var bare heartbeatBody
 	require.NoError(t, json.Unmarshal([]byte(`{"backends":["ollama"]}`), &bare))
 	assert.Nil(t, bare.observation().Devices, "a body with no devices reports nothing")
+}
+
+// TestHandleOrchestratorAgentHeartbeat_CarriesHostMetrics pins that the host
+// sample reaches the service intact: the collection time is parsed, a measured
+// reading keeps its value, and an unread one stays unread rather than zero.
+func TestHandleOrchestratorAgentHeartbeat_CarriesHostMetrics(t *testing.T) {
+	srv, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	observations := make(chan *orchestration.FleetNodeObservation, 1)
+	agentSvc.agentHeartbeatFunc = func(_ context.Context, _, _ string, observed *orchestration.FleetNodeObservation) error {
+		observations <- observed
+		return nil
+	}
+
+	w := doOrchReq(t, srv, http.MethodPost, "/api/v1/fleet/agent-1/heartbeat",
+		`{"backends":["claude"],"host_metrics":{"collected_at":"2026-10-12T09:30:00Z",`+
+			`"load1":{"value":1.25,"provenance":"measured"},"cpu_utilization":{"provenance":"unknown"}}}`)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	observed := <-observations
+	require.NotNil(t, observed)
+	require.NotNil(t, observed.HostMetrics)
+	assert.True(t, observed.HostMetrics.CollectedAt.Equal(time.Date(2026, 10, 12, 9, 30, 0, 0, time.UTC)))
+	load, ok := observed.HostMetrics.Load1.Value()
+	require.True(t, ok)
+	assert.Equal(t, 1.25, load)
+	assert.False(t, observed.HostMetrics.CPUUtilization.Known())
+	assert.False(t, observed.HostMetrics.MemTotalBytes.Known(), "an absent reading is unread")
 }

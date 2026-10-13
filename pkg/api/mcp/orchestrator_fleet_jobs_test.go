@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -141,6 +142,27 @@ func TestExecuteOrchestratorListJobs_NarrowsToTask(t *testing.T) {
 	require.NotNil(t, result)
 	require.NotNil(t, svc.listJobsFilter, "the tool's task_id never reached the service")
 	require.Equal(t, "task-a", svc.listJobsFilter.TaskID)
+}
+
+// The service stamps StartJob in Unix nanoseconds; the tool must render that
+// instant, not read the nanoseconds as seconds and land tens of millennia out.
+func TestExecuteOrchestratorStartJob_TimestampIsTheNanosecondInstant(t *testing.T) {
+	started := time.Date(2026, 10, 12, 8, 30, 15, 123456789, time.UTC)
+	svc := &fleetMockAgentService{
+		startJobFn: func(context.Context, *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error) {
+			return &orchestration.StartJobResponse{JobID: "job-1", Timestamp: started.UnixNano()}, nil
+		},
+	}
+	reg := newFleetRegistry(t, svc)
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
+
+	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_start_job",
+		map[string]interface{}{"description": "do work"})
+	require.NoError(t, err)
+
+	decoded, ok := result.(map[string]interface{})
+	require.True(t, ok, "tool result is %T, want a JSON object", result)
+	require.Equal(t, "2026-10-12T08:30:15.123456789Z", decoded["timestamp"])
 }
 
 // TestExecuteOrchestratorListJobs_WithoutTaskNarrowsNothing is the other

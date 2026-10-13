@@ -91,13 +91,12 @@ func (m *Module) mcpToolHandler(spec mcpapi.ToolSpec) mcpserver.ToolHandlerFunc 
 	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		backend := m.resolveMCP()
 		if backend == nil {
-			return mcpgo.NewToolResultError(
-				"quicbaas mcp surface is not yet available (server still composing)"), nil
+			return mcpapi.ToolErrorResult(m.log, spec.Name, &SurfaceComposingError{Surface: "mcp surface"}), nil
 		}
 
 		result, err := backend.InvokeTool(ctx, spec.Name, req.GetArguments())
 		if err != nil {
-			return mcpgo.NewToolResultError(err.Error()), nil
+			return mcpapi.ToolErrorResult(m.log, spec.Name, err), nil
 		}
 		out, err := json.Marshal(result)
 		if err != nil {

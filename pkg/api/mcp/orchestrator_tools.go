@@ -702,6 +702,13 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Fleet node ID",
 				},
+				"observation": map[string]interface{}{
+					"type": "object",
+					"description": "What the node reports about itself: backends (required for the observation to count), " +
+						"max_concurrent_jobs, signing_agents, signing_relay, images, devices and host_metrics. " +
+						"Each reading is {value, provenance}; a reading without a measured or derived provenance is unread, never zero. " +
+						"Omit for a bare heartbeat that reconciles nothing.",
+				},
 			},
 			"required": []string{"tenant_id", "node_id"},
 		},
@@ -1933,9 +1940,13 @@ func (r *ToolRegistry) executeFleetHeartbeat(ctx context.Context, args map[strin
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	// The MCP heartbeat tool carries no served-backend list, so it observes
-	// nothing and reconciles nothing.
-	err = agentSvc.FleetNodeHeartbeat(ctx, tenantID, nodeID, nil)
+	// The observation decodes through the same report a REST body does, so
+	// an absent observation reports nothing and reconciles nothing.
+	observed, err := orchestration.DecodeFleetHeartbeatReport(args["observation"])
+	if err != nil {
+		return nil, err
+	}
+	err = agentSvc.FleetNodeHeartbeat(ctx, tenantID, nodeID, observed)
 	if err != nil {
 		return nil, err
 	}
@@ -1979,7 +1990,7 @@ func (r *ToolRegistry) executeOrchestratorStartJob(ctx context.Context, args map
 
 	return marshalResult(map[string]interface{}{
 		"job_id":    resp.JobID,
-		"timestamp": time.Unix(resp.Timestamp, 0).Format(time.RFC3339Nano),
+		"timestamp": time.Unix(0, resp.Timestamp).UTC().Format(time.RFC3339Nano),
 	})
 }
 

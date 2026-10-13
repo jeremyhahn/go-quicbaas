@@ -207,17 +207,25 @@ func (r *Reading) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &in); err != nil {
 		return err
 	}
-	*r = Reading{}
-	if in.Value == nil {
-		return nil
-	}
-	switch provenanceByName[in.Provenance] {
-	case ProvenanceMeasured:
-		*r = Measured(*in.Value)
-	case ProvenanceDerived:
-		*r = Derived(*in.Value)
-	}
+	*r = ParseReading(in.Value, in.Provenance)
 	return nil
+}
+
+// ParseReading builds a Reading from its wire parts: a value that may be
+// absent and a provenance name. An absent value, or a provenance that is not
+// measured or derived, is an unread reading, so a transport cannot turn a
+// signal nobody read into a number.
+func ParseReading(value *float64, provenance string) Reading {
+	if value == nil {
+		return Reading{}
+	}
+	switch provenanceByName[provenance] {
+	case ProvenanceMeasured:
+		return Measured(*value)
+	case ProvenanceDerived:
+		return Derived(*value)
+	}
+	return Reading{}
 }
 
 // isReal reports whether a float is an actual number rather than NaN or an

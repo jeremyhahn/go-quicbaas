@@ -298,6 +298,7 @@ var agentCatalogFaults = []struct {
 }{
 	{ErrAgentPoolExhausted, AgentCatalogFaultExhausted},
 	{ErrAgentSpendExhausted, AgentCatalogFaultExhausted},
+	{ErrFleetCapacityRefused, AgentCatalogFaultExhausted},
 	{ErrAgentSpendUndecidable, AgentCatalogFaultUnavailable},
 	{ErrAgentUnknown, AgentCatalogFaultNotFound},
 	{ErrAgentPoolUnknown, AgentCatalogFaultNotFound},

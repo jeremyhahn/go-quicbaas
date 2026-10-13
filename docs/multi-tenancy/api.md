@@ -40,6 +40,12 @@ is the onboarding path when public registration is off. Server-side tool:
 |---|---|---|---|---|---|---|
 | `quicbaas.IAM.Tenant` / `Provision` | `POST /api/v1/tenants/{tenant_id}/provision` | yes | `IAMService/ProvisionTenant` | `quicbaas_iam_tenant_provision` | `quicbaas.IAM.Tenant/Provision` | `tenants:create` |
 
+QUIC carries the REST row over HTTP/3, and Unix carries the gRPC column over
+`AF_UNIX`. The `*provision*` tests under
+`sdk/go/transport/{rest,quic,grpc,mcp,unix}` cover provisioning on every SDK
+transport. Except for gRPC, which tests `invite` mode only, they cover both
+enrollment modes.
+
 Request and response fields:
 [../iam/api.md](../iam/api.md#tenants) (**Provision Tenant**).
 

@@ -1980,8 +1980,11 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 
 	// toolUse counts the tool_use blocks the turn's assistant messages carry.
 	// The stream publishes every tool call this way, so a turn with none
-	// reports a zero census rather than none.
+	// reports a zero census rather than none. A block that does not decode
+	// may have been a tool call, so it leaves the census unknown, as
+	// execTurn.toolUse does.
 	toolUse := &ToolUseCensus{}
+	toolUseUnknown := false
 
 	// limits collects the structured signals of a provider refusal as they
 	// stream past, so a failed turn can say whether the ACCOUNT was refused.
@@ -2001,7 +2004,10 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 			model = msg.Message.Model
 		}
 		for _, c := range msg.Message.Content {
-			if c.Type == ContentBlockToolUse {
+			switch c.Type {
+			case ContentBlockUnreadable:
+				toolUseUnknown = true
+			case ContentBlockToolUse:
 				toolUse.Calls++
 			}
 		}
@@ -2048,6 +2054,9 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 	// backend describes a completed turn identically.
 	if stopReason == "" {
 		stopReason = StopReasonEndTurn
+	}
+	if toolUseUnknown {
+		toolUse = nil
 	}
 	return &PromptResponse{
 		SessionID:  sess.id,

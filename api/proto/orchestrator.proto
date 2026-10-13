@@ -1632,6 +1632,67 @@ message RemoveFleetNodeResponse {
 message FleetNodeHeartbeatRequest {
     string tenant_id = 1;
     string node_id = 2;
+    // What the daemon reports about itself. Absent is a bare heartbeat that
+    // reports and reconciles nothing.
+    FleetNodeObservation observation = 3;
+}
+
+// FleetNodeObservation is the gRPC form of orchestration.FleetHeartbeatReport.
+// Its presence is the presence of the served-backend list: an observation
+// with no backends reports a daemon serving none, which the registry refuses.
+message FleetNodeObservation {
+    repeated string backends = 1;
+    // Zero reports nothing.
+    int32 max_concurrent_jobs = 2;
+    // signing_agents is a report only when signing_agents_reported is set; an
+    // unset flag reconciles nothing, and a set flag with no entries reports
+    // that no signing socket is reachable.
+    repeated string signing_agents = 3;
+    bool signing_agents_reported = 4;
+    optional bool signing_relay = 5;
+    // images is a report only when images_reported is set; unset is unknown.
+    repeated string images = 6;
+    bool images_reported = 7;
+    // devices is a report only when devices_reported is set; an unset flag
+    // reports nothing, and a set flag with no entries is a node with no
+    // device it can read.
+    repeated FleetDeviceSample devices = 8;
+    // Absent reports nothing.
+    FleetHostMetrics host_metrics = 9;
+    bool devices_reported = 10;
+}
+
+// FleetReading is one signal with its provenance. An absent value is an
+// unread signal, never zero.
+message FleetReading {
+    optional double value = 1;
+    // measured | derived | unknown
+    string provenance = 2;
+}
+
+// FleetDeviceSample is one accelerator's telemetry on one heartbeat.
+message FleetDeviceSample {
+    string kind = 1;
+    string id = 2;
+    string name = 3;
+    FleetReading power_watts = 4;
+    FleetReading utilization = 5;
+    FleetReading memory_used_bytes = 6;
+    FleetReading memory_total_bytes = 7;
+}
+
+// FleetHostMetrics is a node's host-wide sample on one heartbeat.
+message FleetHostMetrics {
+    google.protobuf.Timestamp collected_at = 1;
+    FleetReading cpu_utilization = 2;
+    FleetReading cpu_count = 3;
+    FleetReading load1 = 4;
+    FleetReading load5 = 5;
+    FleetReading load15 = 6;
+    FleetReading mem_total_bytes = 7;
+    FleetReading mem_available_bytes = 8;
+    FleetReading disk_total_bytes = 9;
+    FleetReading disk_available_bytes = 10;
 }
 
 message FleetNodeHeartbeatResponse {

@@ -77,6 +77,9 @@ var orchestratorMethodTools = map[string]string{
 	// A tenant's runtime cost settings (go-quicbaas#1058).
 	"GetCostSettings": "quicbaas_orchestrator_cost_settings_get",
 	"SetCostSettings": "quicbaas_orchestrator_cost_settings_set",
+
+	// The heartbeat tool is named after the fleet, not the RPC.
+	"FleetNodeHeartbeat": "quicbaas_fleet_heartbeat",
 }
 
 // orchestratorMCPTransform decodes one MCP tool result into its SDK type.
@@ -113,6 +116,8 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 
 	"GetCostSettings": decodeMCPCostSettings,
 	"SetCostSettings": decodeMCPCostSettings,
+
+	"FleetNodeHeartbeat": decodeMCPFleetNodeHeartbeat,
 }
 
 // transformResponse converts the raw MCP tool result to the expected SDK type
@@ -275,6 +280,21 @@ func decodeMCPBlockTask(raw []byte) (interface{}, error) {
 			"mcp.orchestrator.BlockTask", "failed to decode MCP block task result")
 	}
 	return &resp, nil
+}
+
+// decodeMCPFleetNodeHeartbeat reads the heartbeat tool's acknowledgement,
+// which names the field "acknowledged" where the SDK response says
+// "heartbeat".
+func decodeMCPFleetNodeHeartbeat(raw []byte) (interface{}, error) {
+	var ack struct {
+		NodeID       string `json:"node_id"`
+		Acknowledged bool   `json:"acknowledged"`
+	}
+	if err := json.Unmarshal(raw, &ack); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.FleetNodeHeartbeat", "failed to decode MCP fleet heartbeat result")
+	}
+	return &orchestrator.FleetNodeHeartbeatResponse{NodeID: ack.NodeID, Heartbeat: ack.Acknowledged}, nil
 }
 
 // decodeMCPReadmitTask decodes quicbaas_orchestrator_task_readmit output.

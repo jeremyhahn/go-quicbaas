@@ -1,6 +1,6 @@
 # Agent Fleet — User Guide
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Last verified: 2026-10-13
 > The runbook for a fleet node's whole life — declare it, preflight it,
 > deploy it, check it, stop, start and remove it, and fix it when it will not
 > come online. Conflicts with this document are defects.
@@ -317,6 +317,98 @@ power, utilisation and memory (nvidia-smi), Intel NPU busy fraction (intel_vpu
 sysfs) and CPU package power (RAPL) — which the control plane files as
 per-node time series and integrates to cost local turns from measured energy.
 See [../accounts/architecture.md](../accounts/architecture.md#measured-energy-from-fleet-telemetry).
+
+## Host metrics and fleet health
+
+Each heartbeat also carries a **host sample** (`host_metrics`), taken by the
+daemon just before it sends the heartbeat:
+
+| Field | Source | Provenance |
+|---|---|---|
+| `collected_at` | the daemon's clock when it took the sample (required) | — |
+| `cpu_utilization` | busy share of `/proc/stat` CPU time since the previous sample, in [0, 1] | derived; unread on the first sample |
+| `cpu_count` | online CPUs | measured |
+| `load1`, `load5`, `load15` | `/proc/loadavg` | measured |
+| `mem_total_bytes`, `mem_available_bytes` | `/proc/meminfo` (`MemAvailable`, not `MemFree`) | measured |
+| `disk_total_bytes`, `disk_available_bytes` | statfs on the daemon's work directory | measured |
+
+Every value is a reading, `{"value": <number>, "provenance": "measured" | "derived"}`.
+A value the daemon could not read is sent as `{"provenance": "unknown"}` and
+decodes as **unread, never as zero**. A reading with no value, an unknown or
+unrecognised provenance (`estimated` is not telemetry), or NaN is also unread.
+
+**Presence.** The observation is the `backends` key plus everything beside
+it. A heartbeat with no `backends` key reconciles nothing, and a bare
+heartbeat (no body) only refreshes liveness. `devices`, `signing_agents` and
+`images` keep the distinction between absent and empty: an absent list
+leaves the stored value alone, while an empty list reports "none". gRPC
+carries that distinction in `*_reported` flags on `FleetNodeObservation`,
+because proto3 cannot tell an empty repeated field from an unset one. Every
+transport — REST, gRPC, QUIC, MCP, Unix and embedded — delivers the same
+observation. `sdk/go/transport/internal/fleetparity` holds the test that
+pins this: each transport must deliver exactly what the REST body decodes to.
+
+**Health is fail-safe.** `FleetHealthJudge` (`pkg/orchestration`) judges a
+node from its last sample and gives one reason:
+
+| Reason | When |
+|---|---|
+| `unmeasured` | no sample, or a reading a check needs is unread |
+| `invalid_sample` | the sample fails validation (no `collected_at`, a reading out of range) |
+| `stale` | the sample is older than the fleet heartbeat timeout |
+| `memory_exhausted` | under 2 GiB available, or over 90 % used |
+| `cpu_saturated` | over 90 % CPU utilisation |
+| `disk_exhausted` | under 5 GiB available, or over 95 % used |
+| `ok` | none of the above |
+
+A node is healthy only when the reason is `ok`. A node that cannot be
+measured is never presumed healthy. The sample's age is the **older** of
+two ages: the time since the node's last heartbeat (the control plane's
+clock) and the time since `collected_at` (the node's clock). A node whose
+clock runs ahead therefore cannot keep a dead sample fresh, and a sample
+that arrives late is not aged from its arrival.
+
+Health is computed and exposed (`JudgeFleetHealth`).
+
+### Admission
+
+Placing a spawn admits the node through `FleetAdmission`
+(`pkg/orchestration`), which applies three gates in order and refuses at
+the first that fails:
+
+| Gate | Refusal reason | Rule |
+|---|---|---|
+| health | `unhealthy` | the node's health verdict is not `ok` — unmeasured, stale and invalid samples included |
+| declared width | `at_declared_width` | the node already runs `max_concurrent_jobs` jobs; an idle sample never lifts this bound (0 means unreported, not zero slots) |
+| measured room | `no_measured_room` | the sample leaves no room for another job, after the spawns placed since that sample |
+
+**Measured room** is how many more jobs fit under the health ceilings:
+the lesser of the spare CPU below 90 % divided by a job's cores, and the
+memory available above the health floor divided by a job's memory. Any
+reading it needs that is unread gives no room. The sample cannot show the
+spawns placed after it was taken, so placement counts those against the room
+until the next sample arrives.
+
+**The job profile** — what one job costs — starts at 1 core and 2 GiB. On
+each placement it is recalibrated from the healthy, fully measured nodes
+that run jobs: their CPU and memory in use divided by their live jobs. A
+recalibration needs at least 4 measured jobs; with fewer, the profile is
+kept. A host's baseline use is attributed to its jobs, which errs towards
+admitting less.
+
+**A pinned spawn** — one continuing a job on the node it started on — is
+judged on health only: the job already holds its slot.
+
+**The embedded node** is measured by the control plane's own host, sampled
+where it works (`server.embedded_fleet_node.data_dir`, else the storage data
+directory). Where the host cannot be read, the embedded node is unmeasured
+and refused like any other.
+
+**The refusal** is `FleetCapacityRefusedError`, which names each node and
+why it was refused and unwraps to `ErrFleetCapacityRefused`. It is
+classified with the exhausted agent pool, so REST answers 503 and gRPC
+`ResourceExhausted`. A spawn the fleet refused never falls through to a
+local backend.
 
 ## Names
 

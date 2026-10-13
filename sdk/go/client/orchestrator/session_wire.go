@@ -91,6 +91,18 @@ func (e *MissingTurnIDError) Error() string {
 type PromptContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+
+	// ToolName and ToolUseID identify the call on a tool_use block;
+	// ToolUseID alone ties a tool_result block back to its call.
+	ToolName  string `json:"tool_name,omitempty"`
+	ToolUseID string `json:"tool_use_id,omitempty"`
+
+	// IsError marks a tool_result block whose tool reported failure.
+	IsError bool `json:"is_error,omitempty"`
+
+	// Bytes is the size of the payload a non-text block stands for and does
+	// not carry: a tool call's input, a tool's output, or a thinking block.
+	Bytes int `json:"bytes,omitempty"`
 }
 
 // isText reports whether the block carries rendered text. An unset type is

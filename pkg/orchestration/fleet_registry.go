@@ -617,6 +617,9 @@ func (r *fleetRegistry) Heartbeat(ctx context.Context, tenantID, nodeID string, 
 	if reconcileFleetNodeImages(agent, observed) {
 		reconciled = true
 	}
+	// A fresh sample every beat is telemetry, not a change to the record's
+	// identity or capacity, so it is not audited as an update.
+	recordFleetNodeHostMetrics(agent, observed)
 
 	data, err := marshalFleetNode(agent, "failed to marshal heartbeat agent")
 	if err != nil {
@@ -726,6 +729,18 @@ func reconcileFleetNodeImages(agent *FleetNode, observed *FleetNodeObservation) 
 	}
 	agent.Images = images
 	return true
+}
+
+// recordFleetNodeHostMetrics replaces the host-metrics sample a registration
+// records with the one an observation reports. An observation silent on host
+// metrics keeps the previous sample, which then ages out at the stale bound
+// (FleetHealthJudge).
+func recordFleetNodeHostMetrics(agent *FleetNode, observed *FleetNodeObservation) {
+	if agent == nil || observed == nil || observed.HostMetrics == nil {
+		return
+	}
+	sample := *observed.HostMetrics
+	agent.HostMetrics = &sample
 }
 
 // FleetNodeHasImage reports whether a registration can run a spawn that names

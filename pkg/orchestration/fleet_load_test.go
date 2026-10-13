@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"context"
 	"reflect"
 	"slices"
 	"testing"
@@ -51,6 +52,79 @@ func TestLiveJobsByHost_NothingLiveIsAnEmptyFleet(t *testing.T) {
 	svc.sessions.Store("odd", "not a record")
 	if got := svc.LiveJobsByHost(); len(got) != 0 {
 		t.Fatalf("LiveJobsByHost = %v, want a malformed record skipped", got)
+	}
+}
+
+func TestJobSlotHosts_NamesTheHostsWhereTheJobIsLive(t *testing.T) {
+	svc := newTestService(t)
+	records := map[string]*sessionRecord{
+		"lead":     {JobID: "job-1", HostAffinity: "vs02:9091"},
+		"worker":   {JobID: "job-1", HostAffinity: "vs03:9091"},
+		"other":    {JobID: "job-2", HostAffinity: "vs04:9091"},
+		"local":    {JobID: "job-1", BackendLocal: true},
+		"unplaced": {JobID: "job-1"},
+	}
+	for id, rec := range records {
+		svc.sessions.Store(id, rec)
+	}
+	want := JobSlotHosts{"vs02:9091": {}, "vs03:9091": {}}
+	if got := svc.jobSlotHosts("job-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("jobSlotHosts(job-1) = %v, want %v", got, want)
+	}
+}
+
+func TestJobSlotHosts_NoJobHoldsNoSlot(t *testing.T) {
+	svc := newTestService(t)
+	svc.sessions.Store("ad-hoc", &sessionRecord{HostAffinity: "vs02:9091"})
+	if got := svc.jobSlotHosts(""); got != nil {
+		t.Fatalf("jobSlotHosts(\"\") = %v, want nil: an ad-hoc session is no job", got)
+	}
+	if got := svc.jobSlotHosts("job-9"); len(got) != 0 {
+		t.Fatalf("jobSlotHosts(job-9) = %v, want none for a job with nothing live", got)
+	}
+}
+
+func TestJobSlotHostsContext_RoundTripsAndIgnoresNoHosts(t *testing.T) {
+	hosts := JobSlotHosts{"vs02:9091": {}}
+	got := JobSlotHostsFromContext(WithJobSlotHosts(context.Background(), hosts))
+	if !got.Holds("vs02:9091") || got.Holds("vs03:9091") {
+		t.Fatalf("JobSlotHostsFromContext = %v, want only vs02:9091", got)
+	}
+	ctx := context.Background()
+	if WithJobSlotHosts(ctx, nil) != ctx || JobSlotHostsFromContext(ctx) != nil {
+		t.Fatal("no hosts must leave the context unmarked")
+	}
+	//nolint:staticcheck // SA1012: a nil context is the input under test.
+	if JobSlotHostsFromContext(nil) != nil {
+		t.Fatal("a nil context carries no slots")
+	}
+}
+
+// SpawnSession hands placement the hosts where the spawn's job already holds a
+// slot, and none for a job with nothing live.
+func TestSpawnSession_ThreadsTheJobSlotHostsToPlacement(t *testing.T) {
+	for name, tc := range map[string]struct {
+		jobID string
+		want  bool
+	}{
+		"job live on the host": {jobID: "job-1", want: true},
+		"another job":          {jobID: "job-2", want: false},
+		"no job":               {jobID: "", want: false},
+	} {
+		svc, _ := newStrictAffinityService(t, nil)
+		svc.sessions.Store("lead", &sessionRecord{JobID: "job-1", HostAffinity: "vs02:9091"})
+		var seen JobSlotHosts
+		svc.SetRemoteBackendResolver(func(ctx context.Context, _, _ string) (AgentBackend, bool) {
+			seen = JobSlotHostsFromContext(ctx)
+			return nil, false
+		})
+		ctx := ContextWithTenant(context.Background(), "tenant-1")
+		if _, err := svc.SpawnSession(ctx, &SpawnSessionRequest{Backend: "opencode", JobID: tc.jobID}); err != nil {
+			t.Fatalf("%s: SpawnSession: %v", name, err)
+		}
+		if got := seen.Holds("vs02:9091"); got != tc.want {
+			t.Errorf("%s: placement saw a slot on vs02:9091 = %v, want %v", name, got, tc.want)
+		}
 	}
 }
 

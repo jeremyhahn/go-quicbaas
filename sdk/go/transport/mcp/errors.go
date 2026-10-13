@@ -14,6 +14,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -129,6 +130,31 @@ func (e *JSONRPCError) mapToErrorCode() errors.ErrorCode {
 		}
 		return errors.CodeUnknown
 	}
+}
+
+// ToolError is the structured content of a tool result whose isError flag is
+// set. Code is one of the error codes above and classifies the failure, so a
+// tool refusal reaches the SDK caller with its typed code instead of as an
+// internal error. The result's text content carries the message.
+type ToolError struct {
+	Code int `json:"code"`
+}
+
+// toolErrorCode reads the error code from a failed tool result's structured
+// content. A result that carries none is an internal error.
+func toolErrorCode(structured interface{}) int {
+	if structured == nil {
+		return JSONRPCInternalError
+	}
+	raw, err := json.Marshal(structured)
+	if err != nil {
+		return JSONRPCInternalError
+	}
+	var toolErr ToolError
+	if err := json.Unmarshal(raw, &toolErr); err != nil || toolErr.Code == 0 {
+		return JSONRPCInternalError
+	}
+	return toolErr.Code
 }
 
 // ParseError represents an error parsing MCP responses.

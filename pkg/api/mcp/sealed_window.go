@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // SealedWindowProbe reports whether the storage barrier is currently sealed.
@@ -39,6 +40,12 @@ type SealedWindowError struct {
 // (mirroring qrdb's sealed envelope) so a caller cannot probe internal state.
 func (e *SealedWindowError) Error() string {
 	return "barrier sealed: tool " + e.Tool + " is not available until the barrier is unsealed"
+}
+
+// ErrorCode classifies the refusal as unavailable, the class REST (503) and
+// gRPC (Unavailable) answer a sealed barrier with.
+func (e *SealedWindowError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrUnavailable
 }
 
 // SetSealedWindowGate installs the sealed-window gate on the MCP tool

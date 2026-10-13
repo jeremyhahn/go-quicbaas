@@ -88,6 +88,12 @@ type HeartbeatStatus struct {
 	// (DeviceSampler), nil when the daemon samples none. The control plane
 	// files it per node and costs local turns from it.
 	Devices []orchestration.DeviceSample
+
+	// HostMetrics is the host's CPU, load, memory and disk at this heartbeat
+	// (HostMetricsSampler), nil when the daemon samples none. The control
+	// plane judges the node's health from it; a node that reports none is
+	// unmeasured and so unhealthy.
+	HostMetrics *orchestration.HostMetrics
 }
 
 // SpawnServer exposes the FleetRuntime gRPC service on the daemon's bind
@@ -116,6 +122,7 @@ type Daemon struct {
 	heartbeat   HeartbeatSender
 	spawnServer SpawnServer
 	devices     DeviceSampler
+	hostMetrics HostMetricsSampler
 	logger      interfaces.Logger
 
 	identity atomic.Pointer[orchestration.AgentIdentity]
@@ -177,6 +184,11 @@ type DaemonDeps struct {
 	// nil sends no device telemetry, and the control plane estimates this
 	// host's local turns from configured draws.
 	Devices DeviceSampler
+
+	// HostMetrics samples the host's CPU, load, memory and disk on each
+	// heartbeat. Optional: nil sends none, and the control plane judges this
+	// node unmeasured and so unhealthy.
+	HostMetrics HostMetricsSampler
 }
 
 // NewDaemon constructs a daemon from validated config plus its dependencies.
@@ -206,6 +218,7 @@ func NewDaemon(cfg *Config, deps DaemonDeps) (*Daemon, error) {
 		heartbeat:   deps.Heartbeat,
 		spawnServer: deps.SpawnServer,
 		devices:     deps.Devices,
+		hostMetrics: deps.HostMetrics,
 		logger:      deps.Logger,
 		stopCh:      make(chan struct{}),
 	}, nil
@@ -503,6 +516,9 @@ func (d *Daemon) sendHeartbeat(ctx context.Context) {
 	}
 	if d.devices != nil {
 		status.Devices = d.devices.Sample(ctx)
+	}
+	if d.hostMetrics != nil {
+		status.HostMetrics = d.hostMetrics.Sample(ctx)
 	}
 	if err := d.heartbeat.SendHeartbeat(ctx, identity, status); err != nil {
 		d.logger.Warnf("fleet node daemon heartbeat (seq=%d): %v", status.SequenceNumber, err)

@@ -294,6 +294,13 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 		return formatError(devErr)
 	}
 
+	// The host's CPU, load, memory and work-dir disk, sampled on every
+	// heartbeat so the control plane can judge this node's health.
+	hostMetrics, hmErr := fleet.NewHostMetricsSampler(logger, cfg.WorkDir)
+	if hmErr != nil {
+		return formatError(hmErr)
+	}
+
 	daemon, dErr := fleet.NewDaemon(cfg, fleet.DaemonDeps{
 		Runtime:     runtime,
 		Enroller:    enroller,
@@ -301,6 +308,7 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 		Heartbeat:   heartbeat,
 		Logger:      logger,
 		Devices:     devices,
+		HostMetrics: hostMetrics,
 	})
 	if dErr != nil {
 		return formatError(dErr)

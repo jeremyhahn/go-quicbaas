@@ -680,8 +680,14 @@ func (h *orchestratorHandler) handleFleetNodeHeartbeat(ctx context.Context, req 
 		return nil, errors.NewInvalidInput("orchestrator.FleetNodeHeartbeat", "invalid request type")
 	}
 	url := "/api/v1/fleet/" + sdkReq.NodeID + "/heartbeat?tenant_id=" + sdkReq.TenantID
+	// The observation's fields are the heartbeat body's top-level keys. A bare
+	// heartbeat sends no body at all rather than a JSON null.
+	var body interface{}
+	if sdkReq.Observation != nil {
+		body = sdkReq.Observation
+	}
 	var resp orchestrator.FleetNodeHeartbeatResponse
-	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

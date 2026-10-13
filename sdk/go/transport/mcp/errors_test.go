@@ -134,6 +134,30 @@ func TestMCPApplicationErrorCodesPinned(t *testing.T) {
 	}
 }
 
+func TestToolErrorCode(t *testing.T) {
+	tests := []struct {
+		name       string
+		structured interface{}
+		want       int
+	}{
+		{name: "absent", structured: nil, want: JSONRPCInternalError},
+		{name: "typed", structured: ToolError{Code: MCPAlreadyExists}, want: MCPAlreadyExists},
+		{name: "decoded map", structured: map[string]interface{}{"code": float64(MCPResourceNotFound)}, want: MCPResourceNotFound},
+		{name: "zero code", structured: map[string]interface{}{"code": 0}, want: JSONRPCInternalError},
+		{name: "wrong shape", structured: map[string]interface{}{"code": "forbidden"}, want: JSONRPCInternalError},
+		{name: "not an object", structured: []int{1, 2}, want: JSONRPCInternalError},
+		{name: "unencodable", structured: make(chan int), want: JSONRPCInternalError},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toolErrorCode(tc.structured); got != tc.want {
+				t.Fatalf("toolErrorCode = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseError(t *testing.T) {
 	t.Run("Error with underlying error", func(t *testing.T) {
 		underlying := stderrors.New("underlying error")

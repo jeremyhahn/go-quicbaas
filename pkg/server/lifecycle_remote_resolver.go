@@ -33,6 +33,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -96,8 +97,33 @@ func (s *Server) installRemoteBackendResolver(agentSvc orchestration.AgentServic
 	}
 	pool.embeddedDialers = s.embeddedDialerRegistry
 
+	// The embedded agent heartbeats nothing, so placement samples this host
+	// for it. Without a sampler it stays unmeasured and admission refuses it.
+	if sampler, samplerErr := s.embeddedHostMetricsSampler(adapter); samplerErr != nil {
+		s.logger.Warnf("Embedded agent host metrics unavailable; admission will refuse it: %v", samplerErr)
+	} else {
+		pool.embeddedMetrics = sampler.Sample
+	}
+
 	wirer.SetRemoteBackendResolver(pool.resolve)
 	s.logger.Info("Remote backend resolver installed: daemon-kind registrations will be dispatched via RemoteACPBackend")
+}
+
+// embeddedHostMetricsSampler returns a sampler of this host for the embedded
+// agent, measuring disk where the embedded agent works. It is sampled once
+// here because CPU utilisation is derived between two samples: the first
+// placement then reads a utilisation rather than finding it unread.
+func (s *Server) embeddedHostMetricsSampler(log interfaces.Logger) (fleet.HostMetricsSampler, error) {
+	workDir := s.config.Server.EmbeddedFleetNode.DataDir
+	if workDir == "" {
+		workDir = s.config.Storage.DataDir
+	}
+	sampler, err := fleet.NewHostMetricsSampler(log, workDir)
+	if err != nil {
+		return nil, err
+	}
+	sampler.Sample(context.Background())
+	return sampler, nil
 }
 
 // centralTokenEndpoint returns the fully-qualified /oauth2/token URL for this
@@ -170,8 +196,17 @@ type remoteBackendPool struct {
 	// signingAudit records every signature relayed to a fleet node.
 	signingAudit orchestration.SigningRelayAuditor
 
-	// placeMu guards placements.
+	// embeddedMetrics samples this host for the embedded agent, which
+	// heartbeats nothing. Nil leaves the embedded agent unmeasured, which
+	// admission refuses.
+	embeddedMetrics func(context.Context) *orchestration.HostMetrics
+
+	// placeMu guards placements and admission.
 	placeMu sync.Mutex
+	// admission is what a new session's agent must pass: health, declared
+	// width and measured room. Built on first use (admissionLocked) so its
+	// stale bound is staleAfter as configured.
+	admission *orchestration.FleetAdmission
 	// placements maps agent host -> when spawns were placed there, pruned to
 	// recentPlacementWindow on read.
 	placements map[string][]time.Time
@@ -266,7 +301,7 @@ func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID stri
 	// agent that holds it, whose own answer is the only one that counts — a
 	// missed heartbeat is not evidence the session is gone.
 	if orchestration.SpawnPlacementFromContext(ctx) {
-		allRegs = p.liveRegistrations(allRegs)
+		allRegs = p.measureEmbedded(ctx, p.liveRegistrations(allRegs))
 	}
 	signingTrait, signingErr := p.requiredSigningTrait(ctx)
 	if signingErr != nil {
@@ -276,7 +311,17 @@ func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID stri
 	// separately, a burst of concurrent spawns all ranked the fleet before any
 	// of them was recorded, and all chose the same agent.
 	placing := orchestration.SpawnPlacementFromContext(ctx)
-	reg, constraint := p.chooseDaemon(allRegs, backend, hostAffinity, gpuRequired, signingTrait, image, placing)
+	reg, constraint, refusals := p.chooseDaemon(allRegs, backend, hostAffinity, gpuRequired, signingTrait, image,
+		orchestration.JobSlotHostsFromContext(ctx), placing)
+	if reg == nil && len(refusals) > 0 {
+		// EVERY CANDIDATE REFUSED ON HEALTH OR CAPACITY. That is the answer,
+		// stashed so the spawn reports it instead of falling through to a
+		// local backend no one measured.
+		refused := &orchestration.FleetCapacityRefusedError{Backend: backend, Refusals: refusals}
+		orchestration.StashResolveError(ctx, refused)
+		p.logger.Warnf("remote resolver: %v tenant=%s", refused, tenantID)
+		return nil, false
+	}
 	if reg == nil {
 		noMatchErr := buildNoMatchError(backend, hostAffinity, gpuRequired, constraint)
 		// In hard mode (operator default OR per-request override) and when
@@ -302,22 +347,24 @@ func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID stri
 
 // chooseDaemon is pickDaemon made atomic with its record: under the placement
 // lock it ranks the fleet and, when place is set, records the choice before
-// any concurrent placement can rank.
+// any concurrent placement can rank. When place is set the choice must also
+// pass fleet admission; the refusals it returns are why no agent was chosen.
 func (p *remoteBackendPool) chooseDaemon(
 	regs []*orchestration.FleetNode,
 	backend, hostAffinity string,
 	gpuRequired bool,
 	signingTrait string,
 	image string,
+	slots orchestration.JobSlotHosts,
 	place bool,
-) (*orchestration.FleetNode, string) {
+) (*orchestration.FleetNode, string, []orchestration.FleetNodeRefusal) {
 	p.placeMu.Lock()
 	defer p.placeMu.Unlock()
-	reg, constraint := p.pickDaemonLocked(regs, backend, hostAffinity, gpuRequired, signingTrait, image)
+	reg, constraint, refusals := p.pickDaemonLocked(regs, backend, hostAffinity, gpuRequired, signingTrait, image, slots, place)
 	if reg != nil && place {
 		p.notePlacementLocked(reg.Host)
 	}
-	return reg, constraint
+	return reg, constraint, refusals
 }
 
 // pickDaemon chooses, among every daemon-kind or embedded agent that
@@ -336,7 +383,8 @@ func (p *remoteBackendPool) chooseDaemon(
 //  5. image — a spawn that names a container image goes only to an agent
 //     that has reported having it (or has never reported its images)
 //  6. capacity — an unpinned spawn skips an agent already at its advertised
-//     MaxConcurrentJobs
+//     MaxConcurrentJobs; a spawn being placed must also pass fleet admission
+//     (see leastLoaded)
 //
 // THE FIRST ELIGIBLE AGENT IS NOT THE ANSWER. It was, and every spawn landed on
 // whichever agent the registry listed first while the rest of the fleet sat
@@ -347,17 +395,21 @@ func (p *remoteBackendPool) pickDaemon(
 	gpuRequired bool,
 	signingTrait string,
 ) (reg *orchestration.FleetNode, failedConstraint string) {
-	return p.chooseDaemon(regs, backend, hostAffinity, gpuRequired, signingTrait, "", false)
+	reg, failedConstraint, _ = p.chooseDaemon(regs, backend, hostAffinity, gpuRequired, signingTrait, "", nil, false)
+	return reg, failedConstraint
 }
 
-// pickDaemonLocked is pickDaemon; the caller holds placeMu.
+// pickDaemonLocked is pickDaemon, applying fleet admission when admit is set;
+// the caller holds placeMu.
 func (p *remoteBackendPool) pickDaemonLocked(
 	regs []*orchestration.FleetNode,
 	backend, hostAffinity string,
 	gpuRequired bool,
 	signingTrait string,
 	image string,
-) (reg *orchestration.FleetNode, failedConstraint string) {
+	slots orchestration.JobSlotHosts,
+	admit bool,
+) (reg *orchestration.FleetNode, failedConstraint string, refusals []orchestration.FleetNodeRefusal) {
 	passedBackend := false
 	passedAffinity := false
 	passedGPU := false
@@ -406,22 +458,22 @@ func (p *remoteBackendPool) pickDaemonLocked(
 		// Identify the earliest constraint that blocked all candidates.
 		switch {
 		case !passedBackend:
-			return nil, "backend"
+			return nil, "backend", nil
 		case hostAffinity != "" && !passedAffinity:
-			return nil, "host_affinity"
+			return nil, "host_affinity", nil
 		case gpuRequired && !passedGPU:
-			return nil, "gpu"
+			return nil, "gpu", nil
 		case signingTrait != "" && !passedSigning:
-			return nil, "signing_agent"
+			return nil, "signing_agent", nil
 		default:
-			return nil, "image"
+			return nil, "image", nil
 		}
 	}
-	chosen := p.leastLoaded(eligible, hostAffinity != "")
+	chosen, refusals := p.leastLoaded(eligible, hostAffinity != "", slots, admit)
 	if chosen == nil {
-		return nil, "capacity"
+		return nil, "capacity", refusals
 	}
-	return chosen, ""
+	return chosen, "", nil
 }
 
 // canServeSigningSocket reports whether a spawn that mounts this daemon's
@@ -453,20 +505,53 @@ const recentPlacementWindow = 10 * time.Minute
 //  2. fewest placements within recentPlacementWindow;
 //  3. name, then host, so the choice is deterministic.
 //
-// A PINNED SPAWN IS NEVER SKIPPED FOR CAPACITY. Host affinity names the host
-// that holds the job's workspace, and the job's later sessions must reach it;
-// the job already holds its slot there.
+// A PINNED SELECTION IS NEVER SKIPPED FOR CAPACITY. Without admit the caller
+// routes an existing session's operation to the host that holds it; that
+// session's slot was counted when it was placed.
+//
+// A SPAWN BEING PLACED (admit) MUST PASS FLEET ADMISSION
+// (orchestration.FleetAdmission): health, declared width, and measured room
+// after the spawns placed since the agent's sample. Only on a host in slots,
+// where the spawn's job already has a live session, does it pass on health
+// alone; it shares that job's slot, but an unhealthy, unmeasured or stale
+// agent takes nothing. An affinity is not a slot: a new job aimed at a full
+// agent is refused like any other. The refusals are returned when no agent
+// passed.
 //
 // The caller holds placeMu.
-func (p *remoteBackendPool) leastLoaded(eligible []*orchestration.FleetNode, pinned bool) *orchestration.FleetNode {
+func (p *remoteBackendPool) leastLoaded(
+	eligible []*orchestration.FleetNode,
+	pinned bool,
+	slots orchestration.JobSlotHosts,
+	admit bool,
+) (*orchestration.FleetNode, []orchestration.FleetNodeRefusal) {
 	load := map[string]int{}
 	if p.liveLoad != nil {
 		load = p.liveLoad()
 	}
 	recent := p.recentPlacementsLocked()
+
+	var admission *orchestration.FleetAdmission
+	if admit {
+		built, err := p.admissionLocked()
+		if err != nil {
+			p.logger.Errorf("remote resolver: fleet admission unavailable, refusing placement: %v", err)
+			return nil, unavailableAdmissionRefusals(eligible, err)
+		}
+		admission = built
+		p.recalibrateLocked(admission, eligible, load)
+	}
+
 	var best *orchestration.FleetNode
+	var refusals []orchestration.FleetNodeRefusal
 	for _, r := range eligible {
-		if !pinned && r.MaxConcurrentJobs > 0 && load[r.Host] >= r.MaxConcurrentJobs {
+		if admission != nil {
+			if refusal := p.admitLocked(admission, r, load[r.Host], slots.Holds(r.Host)); refusal != nil {
+				p.logger.Debugf("remote resolver: skipping agent: %s", refusal)
+				refusals = append(refusals, *refusal)
+				continue
+			}
+		} else if !pinned && r.MaxConcurrentJobs > 0 && load[r.Host] >= r.MaxConcurrentJobs {
 			p.logger.Debugf("remote resolver: skipping agent %s (%s): at capacity %d/%d",
 				r.ID, r.Host, load[r.Host], r.MaxConcurrentJobs)
 			continue
@@ -475,7 +560,134 @@ func (p *remoteBackendPool) leastLoaded(eligible []*orchestration.FleetNode, pin
 			best = r
 		}
 	}
-	return best
+	if best != nil {
+		return best, nil
+	}
+	return nil, refusals
+}
+
+// fleetRecalibrationMinimumJobs is the fewest live jobs placement measures the
+// job profile from. Fewer leaves the profile as it was: one job's share of a
+// host is mostly the host's own baseline.
+const fleetRecalibrationMinimumJobs = 4
+
+// admissionLocked returns the fleet admission placement applies, building it
+// on first use with staleAfter as its stale bound. The caller holds placeMu.
+func (p *remoteBackendPool) admissionLocked() (*orchestration.FleetAdmission, error) {
+	if p.admission != nil {
+		return p.admission, nil
+	}
+	admission, err := orchestration.NewDefaultFleetAdmission(p.staleAfter)
+	if err != nil {
+		return nil, err
+	}
+	p.admission = admission
+	return admission, nil
+}
+
+// recalibrateLocked measures the job profile from the agents being ranked and
+// the jobs live on them, passing the spawns placed on each since its sample so
+// a sample is never divided by jobs it predates. A refused measurement keeps
+// the profile it had. The caller holds placeMu.
+func (p *remoteBackendPool) recalibrateLocked(admission *orchestration.FleetAdmission, nodes []*orchestration.FleetNode, live map[string]int) {
+	loads := make(map[string]orchestration.FleetNodeLoad, len(nodes))
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		// A host registered by several nodes keeps the most placements any of
+		// its samples missed, so no stale sample of it is measured.
+		load := loads[node.Host]
+		load.Live = live[node.Host]
+		load.PlacedSinceSample = max(load.PlacedSinceSample, p.placedSinceSampleLocked(node))
+		loads[node.Host] = load
+	}
+	adopted, err := admission.Recalibrate(nodes, loads, fleetRecalibrationMinimumJobs, p.clock())
+	if err != nil {
+		p.logger.Warnf("remote resolver: job profile not recalibrated: %v", err)
+		return
+	}
+	if adopted {
+		profile := admission.Profile()
+		p.logger.Debugf("remote resolver: job profile recalibrated: %.2f cores, %d bytes over %d jobs",
+			profile.CPUCores, profile.MemoryBytes, profile.SampleSize)
+	}
+}
+
+// admitLocked applies fleet admission to one agent. A spawn whose job already
+// holds a slot on the agent is judged on health alone. The caller holds
+// placeMu.
+func (p *remoteBackendPool) admitLocked(
+	admission *orchestration.FleetAdmission,
+	node *orchestration.FleetNode,
+	live int,
+	holdsSlot bool,
+) *orchestration.FleetNodeRefusal {
+	now := p.clock()
+	if holdsSlot {
+		return admission.AdmitContinuation(node, now)
+	}
+	return admission.Admit(node, orchestration.FleetNodeLoad{
+		Live:              live,
+		PlacedSinceSample: p.placedSinceSampleLocked(node),
+	}, now)
+}
+
+// placedSinceSampleLocked counts the spawns placed on node's host after its
+// latest host sample was collected: work that sample cannot show. The caller
+// holds placeMu.
+func (p *remoteBackendPool) placedSinceSampleLocked(node *orchestration.FleetNode) int {
+	if node == nil || node.HostMetrics == nil {
+		return 0
+	}
+	placed := 0
+	for _, at := range p.placements[node.Host] {
+		if at.After(node.HostMetrics.CollectedAt) {
+			placed++
+		}
+	}
+	return placed
+}
+
+// unavailableAdmissionRefusals refuses every eligible agent when admission
+// itself could not be built: placing unjudged would be failing open.
+func unavailableAdmissionRefusals(eligible []*orchestration.FleetNode, err error) []orchestration.FleetNodeRefusal {
+	refusals := make([]orchestration.FleetNodeRefusal, 0, len(eligible))
+	for _, r := range eligible {
+		refusals = append(refusals, orchestration.FleetNodeRefusal{
+			NodeID: r.ID,
+			Host:   r.Host,
+			Reason: orchestration.FleetAdmissionUnhealthy,
+			Detail: "fleet admission unavailable: " + err.Error(),
+		})
+	}
+	return refusals
+}
+
+// measureEmbedded gives each embedded agent this host's current sample. The
+// embedded agent is this process and heartbeats nothing, so its registration
+// carries no sample of its own; without a sampler it stays unmeasured, which
+// admission refuses.
+func (p *remoteBackendPool) measureEmbedded(ctx context.Context, regs []*orchestration.FleetNode) []*orchestration.FleetNode {
+	if p.embeddedMetrics == nil {
+		return regs
+	}
+	measured := make([]*orchestration.FleetNode, len(regs))
+	var sample *orchestration.HostMetrics
+	for i, r := range regs {
+		measured[i] = r
+		if r == nil || r.EffectiveKind() != orchestration.FleetNodeKindEmbedded {
+			continue
+		}
+		if sample == nil {
+			sample = p.embeddedMetrics(ctx)
+		}
+		embedded := *r
+		embedded.HostMetrics = sample
+		embedded.LastSeen = p.clock().UnixNano()
+		measured[i] = &embedded
+	}
+	return measured
 }
 
 // lessLoaded reports whether a ranks before b. See leastLoaded.

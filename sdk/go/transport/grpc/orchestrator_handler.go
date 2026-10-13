@@ -436,20 +436,46 @@ func handleOrchestratorPromptSession(ctx context.Context, conn *grpc.ClientConn,
 		)
 	}
 
-	blocks := make([]orchestrator.PromptContentBlock, 0, len(protoResp.GetContent()))
-	for _, block := range protoResp.GetContent() {
-		blocks = append(blocks, orchestrator.PromptContentBlock{
-			Type: block.GetType(),
-			Text: block.GetText(),
-		})
-	}
-
 	return orchestrator.NewPromptSessionResponse(
 		protoResp.GetSessionId(),
-		blocks,
+		promptContentBlocksFromProto(protoResp.GetContent()),
 		protoResp.GetModel(),
 		protoResp.GetStopReason(),
 	)
+}
+
+// promptContentBlocksFromProto converts a turn's proto content blocks to the
+// SDK's, tool metadata included.
+func promptContentBlocksFromProto(blocks []*pb.ContentBlock) []orchestrator.PromptContentBlock {
+	out := make([]orchestrator.PromptContentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, orchestrator.PromptContentBlock{
+			Type:      b.GetType(),
+			Text:      b.GetText(),
+			ToolName:  b.GetToolName(),
+			ToolUseID: b.GetToolUseId(),
+			IsError:   b.GetIsError(),
+			Bytes:     int(b.GetBytes()),
+		})
+	}
+	return out
+}
+
+// inferenceContentBlocksFromProto converts inference proto content blocks to
+// the SDK's, tool metadata included.
+func inferenceContentBlocksFromProto(blocks []*pb.ContentBlock) []orchestrator.InferenceContentBlock {
+	out := make([]orchestrator.InferenceContentBlock, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, orchestrator.InferenceContentBlock{
+			Type:      b.GetType(),
+			Text:      b.GetText(),
+			ToolName:  b.GetToolName(),
+			ToolUseID: b.GetToolUseId(),
+			IsError:   b.GetIsError(),
+			Bytes:     int(b.GetBytes()),
+		})
+	}
+	return out
 }
 
 func handleOrchestratorSessionStatus(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
@@ -1015,8 +1041,9 @@ func handleFleetHeartbeat(ctx context.Context, conn *grpc.ClientConn, req interf
 	}
 
 	protoReq := &pb.FleetNodeHeartbeatRequest{
-		TenantId: sdkReq.TenantID,
-		NodeId:   sdkReq.NodeID,
+		TenantId:    sdkReq.TenantID,
+		NodeId:      sdkReq.NodeID,
+		Observation: fleetObservationToProto(sdkReq.Observation),
 	}
 	protoResp := &pb.FleetNodeHeartbeatResponse{}
 
@@ -1760,13 +1787,7 @@ func handleOrchestratorInference(ctx context.Context, conn *grpc.ClientConn, req
 		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.Inference")
 	}
 
-	content := make([]orchestrator.InferenceContentBlock, 0, len(protoResp.GetContent()))
-	for _, b := range protoResp.GetContent() {
-		content = append(content, orchestrator.InferenceContentBlock{
-			Type: b.GetType(),
-			Text: b.GetText(),
-		})
-	}
+	content := inferenceContentBlocksFromProto(protoResp.GetContent())
 
 	return &orchestrator.InferenceResponse{
 		Content:    content,
@@ -1982,13 +2003,7 @@ func (s *inferenceStreamAdapter) Recv() (interface{}, error) {
 	if err := s.stream.RecvMsg(&chunk); err != nil {
 		return nil, convertGRPCError(err, "grpc.orchestrator.InferenceStream.Recv")
 	}
-	delta := make([]orchestrator.InferenceContentBlock, 0, len(chunk.GetDelta()))
-	for _, b := range chunk.GetDelta() {
-		delta = append(delta, orchestrator.InferenceContentBlock{
-			Type: b.GetType(),
-			Text: b.GetText(),
-		})
-	}
+	delta := inferenceContentBlocksFromProto(chunk.GetDelta())
 	return &orchestrator.InferenceChunk{
 		Delta:      delta,
 		Model:      chunk.GetModel(),

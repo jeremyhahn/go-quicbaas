@@ -133,6 +133,12 @@ type FleetNode struct {
 	// unknown rather than empty; an empty list is a host with no images.
 	Images []string `json:"images,omitempty"`
 
+	// HostMetrics is the latest host-wide sample the fleet node reported —
+	// CPU, load, memory and disk — that the fleet health verdict is formed
+	// from (FleetHealthJudge). NIL MEANS NEVER MEASURED, and a node never
+	// measured is unhealthy.
+	HostMetrics *HostMetrics `json:"host_metrics,omitempty"`
+
 	WorkDir      string            `json:"work_dir,omitempty"`
 	LastSeen     int64             `json:"last_seen"`
 	RegisteredAt int64             `json:"registered_at"`
@@ -454,6 +460,16 @@ type FleetNodeObservation struct {
 	// It reconciles nothing on the registration. NIL REPORTS NOTHING; an
 	// empty list is a node with no device it can read.
 	Devices []DeviceSample
+
+	// HostMetrics is the node's host-wide sample on this heartbeat (CPU,
+	// load, memory, disk), which replaces the one on the record.
+	//
+	// NIL REPORTS NOTHING AND RECONCILES NOTHING — an older build, or a
+	// daemon that could not sample this time. The record keeps its previous
+	// sample, which the health verdict ages from its collection time, so a
+	// node that stops sampling turns stale at the stale bound rather than
+	// staying healthy on old news.
+	HostMetrics *HostMetrics
 }
 
 // Validate rejects an observation that reports no served backend, or one whose

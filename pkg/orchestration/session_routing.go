@@ -53,6 +53,38 @@ func SpawnPlacementFromContext(ctx context.Context) bool {
 	return v
 }
 
+// JobSlotHosts is the set of agent hosts on which a spawn's job already has a
+// live session, and so already holds a slot (LiveJobsByHost counts a job once
+// per host however many sessions it runs there).
+type JobSlotHosts map[string]struct{}
+
+// Holds reports whether the job already holds a slot on host.
+func (h JobSlotHosts) Holds(host string) bool {
+	_, ok := h[host]
+	return ok
+}
+
+type jobSlotHostsKey struct{}
+
+// WithJobSlotHosts marks ctx as placing a spawn whose job already holds a slot
+// on each of hosts. Placement admits such a spawn on those hosts by health
+// alone; an affinity by itself proves no slot and is admitted like any new job.
+func WithJobSlotHosts(ctx context.Context, hosts JobSlotHosts) context.Context {
+	if len(hosts) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, jobSlotHostsKey{}, hosts)
+}
+
+// JobSlotHostsFromContext returns the hosts WithJobSlotHosts recorded, or nil.
+func JobSlotHostsFromContext(ctx context.Context) JobSlotHosts {
+	if ctx == nil {
+		return nil
+	}
+	hosts, _ := ctx.Value(jobSlotHostsKey{}).(JobSlotHosts)
+	return hosts
+}
+
 // remoteSessionPinKey carries the remote session an operation is routed for.
 type remoteSessionPinKey struct{}
 

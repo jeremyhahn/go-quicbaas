@@ -32,6 +32,17 @@ func (f *fakeIAMServer) ProvisionTenant(_ context.Context, req *iampb.ProvisionT
 	if err := f.err(); err != nil {
 		return nil, err
 	}
+	if req.AdminEnrollment == "cert" {
+		return &iampb.ProvisionTenantResponse{
+			TenantId:            req.TenantId,
+			AdminUserId:         "7",
+			AdminUsername:       req.AdminUsername,
+			AdminRoleId:         "tenant-admin",
+			AdminCertPem:        "issued for " + req.AdminCsrPem,
+			AdminCertThumbprint: "spki-sha256",
+			Timestamp:           timestamppb.New(provisionInviteExpiry),
+		}, nil
+	}
 	return &iampb.ProvisionTenantResponse{
 		TenantId:        req.TenantId,
 		AdminUserId:     "7",
@@ -72,6 +83,36 @@ func TestIAMHandler_ProvisionTenant_CarriesEveryField(t *testing.T) {
 	}
 	if !resp.Timestamp.Equal(provisionInviteExpiry) {
 		t.Errorf("timestamp not carried, got %v", resp.Timestamp)
+	}
+}
+
+// TestIAMHandler_ProvisionTenant_CertMode proves the cert enrollment path:
+// the admin CSR reaches the server, and the issued certificate and its bound
+// thumbprint come back with no pending admin and no invite.
+func TestIAMHandler_ProvisionTenant_CertMode(t *testing.T) {
+	h := newIAMHandlerWithServer(t, false)
+
+	out, err := h.handleRequest(context.Background(), "quicbaas.IAM.Tenant", "Provision", &iam.ProvisionTenantRequest{
+		TenantID:        "acme",
+		AdminUsername:   "root",
+		AdminEnrollment: iam.TenantAdminEnrollCert,
+		AdminCSRPEM:     "csr-pem",
+	})
+	if err != nil {
+		t.Fatalf("Provision failed: %v", err)
+	}
+	resp, ok := out.(*iam.ProvisionTenantResponse)
+	if !ok {
+		t.Fatalf("expected *iam.ProvisionTenantResponse, got %T", out)
+	}
+	if resp.AdminPending || resp.InviteToken != "" || resp.InviteExpiresAt != nil {
+		t.Errorf("cert mode returned an invite: %+v", resp)
+	}
+	if resp.AdminCertPEM != "issued for csr-pem" {
+		t.Errorf("admin CSR or issued certificate not carried, got %q", resp.AdminCertPEM)
+	}
+	if resp.AdminCertThumbprint != "spki-sha256" || resp.AdminRoleID != "tenant-admin" {
+		t.Errorf("cert binding fields not carried: %+v", resp)
 	}
 }
 

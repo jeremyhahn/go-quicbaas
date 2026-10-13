@@ -112,14 +112,7 @@ func handleOrchestratorPromptSession(ctx context.Context, svc service.QuicBaaS, 
 	}
 	// Flatten through the shared converter so the embedded transport applies
 	// the same content and turn-completion rules as the remote transports.
-	blocks := make([]orchestratorSDK.PromptContentBlock, 0, len(resp.Content))
-	for _, block := range resp.Content {
-		blocks = append(blocks, orchestratorSDK.PromptContentBlock{
-			Type: block.Type,
-			Text: block.Text,
-		})
-	}
-	return orchestratorSDK.NewPromptSessionResponse(resp.SessionID, blocks, resp.Model, resp.StopReason)
+	return orchestratorSDK.NewPromptSessionResponse(resp.SessionID, promptContentBlocks(resp.Content), resp.Model, resp.StopReason)
 }
 
 func handleOrchestratorSessionStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -965,9 +958,17 @@ func handleFleetHeartbeat(ctx context.Context, svc service.QuicBaaS, req interfa
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "FleetNodeHeartbeat")
 	}
-	// The SDK heartbeat request carries no served-backend list, so it observes
-	// nothing and reconciles nothing.
-	if err := agentSvc.FleetNodeHeartbeat(ctx, r.TenantID, r.NodeID, nil); err != nil {
+	// The observation decodes through the same report a REST body does, so
+	// presence and unread readings mean the same in-process as on the wire.
+	var observed *orchestration.FleetNodeObservation
+	if r.Observation != nil {
+		decoded, err := orchestration.DecodeFleetHeartbeatReport(r.Observation)
+		if err != nil {
+			return nil, err
+		}
+		observed = decoded
+	}
+	if err := agentSvc.FleetNodeHeartbeat(ctx, r.TenantID, r.NodeID, observed); err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.FleetNodeHeartbeatResponse{NodeID: r.NodeID, Heartbeat: true}, nil

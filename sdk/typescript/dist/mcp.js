@@ -53,6 +53,8 @@ function sessionFromMcpWire(wire) {
         session.job_id = wire.job_id;
     if (wire.runner !== undefined)
         session.runner = wire.runner;
+    if (wire.agent_id !== undefined)
+        session.agent_id = wire.agent_id;
     return session;
 }
 // addPageArgs copies the shared page parameters a caller set into a tool's
@@ -66,6 +68,31 @@ function addPageArgs(args, page) {
         args.sort = page.sort;
     if (page?.q !== undefined)
         args.q = page.q;
+}
+// asksForOnePage reports whether a caller of an unpaged verb named a page; one
+// that did gets that page, one that did not gets the whole set.
+function asksForOnePage(page) {
+    return page.limit !== undefined || page.offset !== undefined;
+}
+// atOffset is a listing request moved to the page starting at `offset`; the
+// first page sends no offset, as a caller that never paged would.
+function atOffset(page, offset) {
+    return offset === 0 ? page : { ...page, offset };
+}
+// walkPages fetches the page at each `next_offset` until a page names none,
+// returning every record. A page that does not advance the offset, or that is
+// empty, ends the walk rather than looping on a server that miscounts.
+async function walkPages(fetchPage) {
+    const items = [];
+    let offset = 0;
+    for (;;) {
+        const page = await fetchPage(offset);
+        items.push(...page.items);
+        const next = page.next_offset;
+        if (next === undefined || next <= offset || page.items.length === 0)
+            return items;
+        offset = next;
+    }
 }
 // unixNanos converts the RFC 3339 instant a tool answers into the Unix
 // nanoseconds the REST response carries; precision below a millisecond is
@@ -116,6 +143,10 @@ class McpOrchestratorClient {
     }
     async listWorkflowsPage(tenantID, page) {
         const args = { tenant_id: tenantID };
+        if (page?.project_id !== undefined)
+            args.project_id = page.project_id;
+        if (page?.mode !== undefined)
+            args.mode = page.mode;
         addPageArgs(args, page);
         const raw = await this.session.callTool('quicbaas_orchestrator_list_workflows', args);
         return adoptPage(raw, 'workflows');
@@ -124,8 +155,8 @@ class McpOrchestratorClient {
     // Jobs
     // =========================================================================
     async listJobs(tenantID, taskID) {
-        const page = await this.listJobsPage(tenantID, taskID === undefined ? undefined : { task_id: taskID });
-        return page.items;
+        const filter = taskID === undefined ? {} : { task_id: taskID };
+        return walkPages((offset) => this.listJobsPage(tenantID, atOffset(filter, offset)));
     }
     async getJobStatus(tenantID, jobID) {
         return this.session.callTool('quicbaas_orchestrator_get_job_status', {
@@ -172,8 +203,10 @@ class McpOrchestratorClient {
     // Fleet
     // =========================================================================
     async listFleetNodes(req) {
-        const page = await this.fleetNodesPage(req);
-        return { nodes: page.items, count: page.items.length };
+        const nodes = asksForOnePage(req)
+            ? (await this.fleetNodesPage(req)).items
+            : await walkPages((offset) => this.fleetNodesPage(atOffset(req, offset)));
+        return { nodes, count: nodes.length };
     }
     async fleetNodesPage(req) {
         if (req.model) {
@@ -254,8 +287,10 @@ class McpOrchestratorClient {
     // Sessions
     // =========================================================================
     async listSessions(req) {
-        const page = await this.sessionsPage(req);
-        return { sessions: page.items, count: page.items.length };
+        const sessions = asksForOnePage(req)
+            ? (await this.sessionsPage(req)).items
+            : await walkPages((offset) => this.sessionsPage(atOffset(req, offset)));
+        return { sessions, count: sessions.length };
     }
     async sessionsPage(req) {
         const args = { tenant_id: req.tenantID };
@@ -424,9 +459,8 @@ class McpOrchestratorClient {
     // Workflows
     // =========================================================================
     async listWorkflows(tenantID) {
-        const resp = await this.session.callTool('quicbaas_orchestrator_list_workflows', { tenant_id: tenantID });
-        const workflows = resp.workflows ?? [];
-        return { workflows, count: resp.count ?? workflows.length };
+        const workflows = await walkPages((offset) => this.listWorkflowsPage(tenantID, atOffset({}, offset)));
+        return { workflows, count: workflows.length };
     }
     async createWorkflow(_req) {
         throw mcpRefusal('orchestrator', 'createWorkflow', 'the server has no workflow-create tool');
@@ -543,17 +577,13 @@ class McpOrchestratorClient {
     // allPages walks a paged listing tool to its end, as the REST transport's
     // unpaged listings do, so the unpaged verbs answer the whole set.
     async allPages(tool, key) {
-        const items = [];
-        let offset = 0;
-        for (;;) {
+        return walkPages(async (offset) => {
             const resp = await this.session.callTool(tool, { offset });
-            const page = resp[key] ?? [];
-            items.push(...page);
-            const next = resp.next_offset;
-            if (next === undefined || next <= offset || page.length === 0)
-                return items;
-            offset = next;
-        }
+            return {
+                items: resp[key] ?? [],
+                next_offset: resp.next_offset,
+            };
+        });
     }
 }
 class McpAuthClient {

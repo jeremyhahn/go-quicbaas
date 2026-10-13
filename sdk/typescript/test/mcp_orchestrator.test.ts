@@ -72,8 +72,9 @@ const wired: WiredVerb[] = [
     }),
     tool: 'quicbaas_orchestrator_start_job',
     args: { description: 'build it', project_id: 'p1', max_iterations: 3, runner: 'module', lead: { agent_id: 'lead-1' } },
-    reply: { job_id: 'job-1', timestamp: '2026-10-12T00:00:00Z' },
-    want: { job_id: 'job-1', timestamp: Date.parse('2026-10-12T00:00:00Z') * 1e6 },
+    // The server's shape: time.Unix(0, ns).UTC().Format(time.RFC3339Nano).
+    reply: { job_id: 'job-1', timestamp: '2026-10-12T08:30:15.123456789Z' },
+    want: { job_id: 'job-1', timestamp: Date.UTC(2026, 9, 12, 8, 30, 15, 123) * 1e6 },
   },
   {
     name: 'cancelJob',

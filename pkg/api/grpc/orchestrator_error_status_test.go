@@ -45,3 +45,18 @@ func TestConvertOrchestratorError_AnAgentOverBudgetIsResourceExhausted(t *testin
 		t.Fatalf("an unchecked limit = %s, want Unavailable", got)
 	}
 }
+
+// A fleet refusing a spawn on health or capacity is answered as an exhausted
+// Agent pool is, on every transport.
+func TestConvertOrchestratorError_AFleetCapacityRefusalIsResourceExhausted(t *testing.T) {
+	refused := &orchestration.FleetCapacityRefusedError{
+		Backend:  "claude",
+		Refusals: []orchestration.FleetNodeRefusal{{NodeID: "n1", Host: "h1", Reason: orchestration.FleetAdmissionNoRoom}},
+	}
+	if got := status.Code(convertOrchestratorError(refused)); got != codes.ResourceExhausted {
+		t.Fatalf("code = %s, want ResourceExhausted", got)
+	}
+	if got := status.Code(convertOrchestratorError(orchestration.ErrAgentPoolExhausted)); got != codes.ResourceExhausted {
+		t.Fatalf("an exhausted pool = %s, want the same ResourceExhausted", got)
+	}
+}

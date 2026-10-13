@@ -1256,16 +1256,9 @@ func buildEntityKey(entityType string, entityID uint64) []byte {
 }
 
 // ErrMsgServerFailure is the response text for any error that describes the
-// SERVER rather than the caller's request.
-//
-// One sentence for every such class, deliberately. Distinguishing "storage is
-// unavailable" from "the leader moved" from "a file could not be opened" tells
-// an unauthenticated caller about the deployment's state, and the three are
-// equally unactionable by that caller: the error code and the HTTP status
-// already carry everything a client can branch on. The detail goes to the log,
-// where an operator can act on it, keyed by the same request ID the response
-// carries.
-const ErrMsgServerFailure = "the request could not be completed"
+// SERVER rather than the caller's request (see errors.ServerFailureMessage).
+// The cause is logged, keyed by the same request ID the response carries.
+const ErrMsgServerFailure = errors.ServerFailureMessage
 
 // sanitizedServerError builds the wire form of a server-state error: the code
 // and its retryability, and nothing that describes the deployment.
@@ -1316,6 +1309,25 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 			errMsg = qbErr.Code.String()
 		}
 
+		if !errors.DescribesRequest(qbErr.Code) {
+			// THE CLASS DESCRIBES THE SERVER, NOT THE REQUEST, so the caller
+			// gets a stable sentence and the operator gets the cause
+			// (go-quicbaas#427). errors.DescribesRequest is the one
+			// classification every transport shares, and it sanitizes any
+			// code added later until someone decides it is safe to echo.
+			//
+			// Measured before the change, on the public federated-login
+			// routes' helper: an inner error reading "open
+			// /etc/quicbaas/secrets/tenant-ca.key: permission denied" was
+			// returned verbatim in the response body for internal, unknown
+			// AND storage, with storage additionally naming the internal
+			// operation. Nothing was logged, so that text was reaching the
+			// caller and nobody else.
+			s.logServiceFailure(r, qbErr)
+			RespondError(w, r, httpStatus, sanitizedServerError(qbErr))
+			return
+		}
+
 		switch qbErr.Code {
 		case errors.ErrNotFound:
 			// Carry the full typed error string through so clients can tell
@@ -1353,23 +1365,9 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 				Message: errMsg,
 			})
 		default:
-			// EVERY REMAINING CLASS DESCRIBES THE SERVER, NOT THE REQUEST, so
-			// the caller gets a stable sentence and the operator gets the
-			// cause (go-quicbaas#427). This covers the infrastructure codes
-			// (leader/quorum/storage/raft/unavailable), internal and unknown,
-			// and -- deliberately -- any code added later: a new error class
-			// is sanitised until someone decides it is safe to echo, rather
-			// than echoed until someone notices it is not.
-			//
-			// Measured before the change, on the public federated-login
-			// routes' helper: an inner error reading "open
-			// /etc/quicbaas/secrets/tenant-ca.key: permission denied" was
-			// returned verbatim in the response body for internal, unknown
-			// AND storage, with storage additionally naming the internal
-			// operation. Nothing was logged, so that text was reaching the
-			// caller and nobody else.
-			s.logServiceFailure(r, qbErr)
-			RespondError(w, r, httpStatus, sanitizedServerError(qbErr))
+			// A request class without an envelope of its own keeps its
+			// message.
+			RespondError(w, r, httpStatus, qbErr)
 		}
 		return
 	}

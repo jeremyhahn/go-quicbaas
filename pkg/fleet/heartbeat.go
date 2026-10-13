@@ -298,6 +298,11 @@ func heartbeatRequestBody(status HeartbeatStatus) string {
 			images += `,"devices":` + string(devices)
 		}
 	}
+	if status.HostMetrics != nil {
+		if hostMetrics, err := json.Marshal(status.HostMetrics); err == nil {
+			images += `,"host_metrics":` + string(hostMetrics)
+		}
+	}
 	return fmt.Sprintf(
 		`{"active_sessions":%d,"sandbox_policy":%q,"backends":%s,"has_container_runtime":%t,`+
 			`"max_concurrent_jobs":%d,"signing_agents":%s,"signing_relay":%t,"sequence":%d,"bind_addr":%q%s}`,

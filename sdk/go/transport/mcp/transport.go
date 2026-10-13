@@ -881,7 +881,7 @@ func (t *Transport) callTool(ctx context.Context, name string, arguments map[str
 
 	// Check for tool error
 	if result.IsError {
-		return nil, t.extractToolError(result.Content)
+		return nil, t.extractToolError(result)
 	}
 
 	t.lastHealth.Store(time.Now().UnixNano())
@@ -1329,14 +1329,20 @@ func (t *Transport) extractContent(content []mcp.Content) (interface{}, error) {
 	return nil, nil
 }
 
-// extractToolError extracts an error from tool result content.
-func (t *Transport) extractToolError(content []mcp.Content) error {
-	for _, item := range content {
+// extractToolError turns a failed tool result into the SDK error its
+// structured error code names, with the text content as the message.
+func (t *Transport) extractToolError(result *mcp.CallToolResult) error {
+	rpcErr := &JSONRPCError{
+		Code:    toolErrorCode(result.StructuredContent),
+		Message: "tool execution failed",
+	}
+	for _, item := range result.Content {
 		if text, ok := mcp.AsTextContent(item); ok && text.Text != "" {
-			return errors.New(errors.CodeInternal, "mcp.callTool", text.Text)
+			rpcErr.Message = text.Text
+			break
 		}
 	}
-	return errors.New(errors.CodeInternal, "mcp.callTool", "tool execution failed")
+	return rpcErr.ToSDKError("mcp.callTool")
 }
 
 // convertHTTPError converts MCP client / HTTP transport errors to QBErrors.

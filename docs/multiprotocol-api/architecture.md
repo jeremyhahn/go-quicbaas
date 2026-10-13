@@ -644,13 +644,32 @@ All write operations support tunable consistency:
 
 Consistent error codes across all protocols:
 
-| Code | HTTP | gRPC | Meaning |
-|------|------|------|---------|
-| `not_found` | 404 | `NOT_FOUND` | Entity does not exist |
-| `invalid_input` | 400 | `INVALID_ARGUMENT` | Invalid request parameters |
-| `forbidden` | 403 | `PERMISSION_DENIED` | Authorization failed |
-| `unavailable` | 503 | `UNAVAILABLE` | Service temporarily unavailable |
-| `internal` | 500 | `INTERNAL` | Internal server error |
+| Code | HTTP | gRPC | MCP | Meaning |
+|------|------|------|-----|---------|
+| `not_found` | 404 | `NOT_FOUND` | -32004 | Entity does not exist |
+| `already_exists` | 409 | `ALREADY_EXISTS` | -32013 | Entity already exists |
+| `conflict` | 409 | `ALREADY_EXISTS` | -32005 | Version or state conflict |
+| `invalid_input` | 400 | `INVALID_ARGUMENT` | -32012 | Invalid request parameters |
+| `unauthorized` | 401 | `UNAUTHENTICATED` | -32001 | Authentication required |
+| `forbidden` | 403 | `PERMISSION_DENIED` | -32003 | Authorization failed |
+| `precondition_failed` | 412 | `FAILED_PRECONDITION` | -32009 | Required state not met |
+| `unavailable` | 503 | `UNAVAILABLE` | -32006 | Service temporarily unavailable, barrier sealed, or server still composing |
+| `internal` | 500 | `INTERNAL` | -32603 | Internal server error |
+
+Over MCP a refused tool call is a tool result with `isError` set. Its
+`structuredContent` is `{"code": N}`, where N is the MCP code above. The server
+maps the service error's code in one place (`pkg/api/mcp/tool_error.go`); the
+SDK MCP transport decodes it into the same `sdk/go/errors` code the other
+transports return. A tool error with no code, or an error the server cannot
+classify, is `INTERNAL`.
+
+The text content follows the REST disclosure rule, decided in one place
+(`errors.DescribesRequest` in `pkg/errors`). An error that describes the
+request (not found, invalid input, permission, authentication, conflict,
+already exists, timeout) keeps its message. Any other coded error describes the
+server: the caller gets `the request could not be completed` and the cause is
+logged server-side. The sealed-window and server-composing refusals keep their
+fixed text.
 
 ### Architecture
 

@@ -30,9 +30,25 @@ var placementClock = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 // placementClock.
 func seenAgo(name, host string, ago time.Duration, capabilities ...string) *orchestration.FleetNode {
 	r := onlineDaemon(name, host, "codex")
-	r.LastSeen = placementClock.Add(-ago).UnixNano()
+	seen := placementClock.Add(-ago)
+	r.LastSeen = seen.UnixNano()
+	r.HostMetrics = roomyHostMetrics(seen)
 	r.Capabilities = append([]string{"codex"}, capabilities...)
 	return r
+}
+
+// roomyHostMetrics is a healthy host sample collected at at: 16 cores at 25%
+// and 48 of 64 GiB available, room for 10 jobs at the seed job profile.
+func roomyHostMetrics(at time.Time) *orchestration.HostMetrics {
+	return &orchestration.HostMetrics{
+		CollectedAt:        at,
+		CPUUtilization:     orchestration.Derived(0.25),
+		CPUCount:           orchestration.Measured(16),
+		MemTotalBytes:      orchestration.Measured(64 << 30),
+		MemAvailableBytes:  orchestration.Measured(48 << 30),
+		DiskTotalBytes:     orchestration.Measured(1 << 40),
+		DiskAvailableBytes: orchestration.Measured(512 << 30),
+	}
 }
 
 func placementPool(agents ...*orchestration.FleetNode) *remoteBackendPool {

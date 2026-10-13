@@ -64,3 +64,20 @@ func (s *agentServiceImpl) LiveJobsByHost() map[string]int {
 	}
 	return load
 }
+
+// jobSlotHosts returns the agent hosts on which jobID has a live session: the
+// hosts where LiveJobsByHost already counts the job. An empty jobID is no job.
+func (s *agentServiceImpl) jobSlotHosts(jobID string) JobSlotHosts {
+	if jobID == "" {
+		return nil
+	}
+	hosts := JobSlotHosts{}
+	s.sessions.Range(func(_, value any) bool {
+		rec, isRecord := value.(*sessionRecord)
+		if isRecord && !rec.BackendLocal && rec.HostAffinity != "" && rec.JobID == jobID {
+			hosts[rec.HostAffinity] = struct{}{}
+		}
+		return true
+	})
+	return hosts
+}

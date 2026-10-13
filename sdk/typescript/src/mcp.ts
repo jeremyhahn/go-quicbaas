@@ -183,6 +183,7 @@ import {
   type PageResult,
   type SessionPageParams,
   type TaskPageParams,
+  type WorkflowPageParams,
 } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError, McpError, TransportNotSupportedError } from './errors.js';
 
@@ -233,6 +234,7 @@ interface McpSessionWire {
   container_id?: string;
   job_id?: string;
   runner?: string;
+  agent_id?: string;
 }
 
 function sessionFromMcpWire(wire: McpSessionWire): SessionStatusResponse {
@@ -247,6 +249,7 @@ function sessionFromMcpWire(wire: McpSessionWire): SessionStatusResponse {
   if (wire.container_id !== undefined) session.container_id = wire.container_id;
   if (wire.job_id !== undefined) session.job_id = wire.job_id;
   if (wire.runner !== undefined) session.runner = wire.runner;
+  if (wire.agent_id !== undefined) session.agent_id = wire.agent_id;
   return session;
 }
 
@@ -257,6 +260,35 @@ function addPageArgs(args: Record<string, unknown>, page?: PageParams): void {
   if (page?.offset !== undefined) args.offset = page.offset;
   if (page?.sort !== undefined) args.sort = page.sort;
   if (page?.q !== undefined) args.q = page.q;
+}
+
+// asksForOnePage reports whether a caller of an unpaged verb named a page; one
+// that did gets that page, one that did not gets the whole set.
+function asksForOnePage(page: PageParams): boolean {
+  return page.limit !== undefined || page.offset !== undefined;
+}
+
+// atOffset is a listing request moved to the page starting at `offset`; the
+// first page sends no offset, as a caller that never paged would.
+function atOffset<P extends PageParams>(page: P, offset: number): P {
+  return offset === 0 ? page : { ...page, offset };
+}
+
+// walkPages fetches the page at each `next_offset` until a page names none,
+// returning every record. A page that does not advance the offset, or that is
+// empty, ends the walk rather than looping on a server that miscounts.
+async function walkPages<T>(
+  fetchPage: (offset: number) => Promise<{ items: T[]; next_offset?: number }>,
+): Promise<T[]> {
+  const items: T[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await fetchPage(offset);
+    items.push(...page.items);
+    const next = page.next_offset;
+    if (next === undefined || next <= offset || page.items.length === 0) return items;
+    offset = next;
+  }
 }
 
 // McpTaskCreateReply is what the task_create tool answers.
@@ -324,9 +356,11 @@ class McpOrchestratorClient implements OrchestratorClient {
 
   async listWorkflowsPage(
     tenantID: string,
-    page?: PageParams,
+    page?: WorkflowPageParams,
   ): Promise<PageResult<WorkflowDefinition>> {
     const args: Record<string, unknown> = { tenant_id: tenantID };
+    if (page?.project_id !== undefined) args.project_id = page.project_id;
+    if (page?.mode !== undefined) args.mode = page.mode;
     addPageArgs(args, page);
     const raw = await this.session.callTool<unknown>('quicbaas_orchestrator_list_workflows', args);
     return adoptPage<WorkflowDefinition>(raw, 'workflows');
@@ -336,8 +370,8 @@ class McpOrchestratorClient implements OrchestratorClient {
   // Jobs
   // =========================================================================
   async listJobs(tenantID: string, taskID?: string): Promise<JobStatus[]> {
-    const page = await this.listJobsPage(tenantID, taskID === undefined ? undefined : { task_id: taskID });
-    return page.items;
+    const filter: JobPageParams = taskID === undefined ? {} : { task_id: taskID };
+    return walkPages((offset) => this.listJobsPage(tenantID, atOffset(filter, offset)));
   }
 
   async getJobStatus(tenantID: string, jobID: string): Promise<JobStatus> {
@@ -389,8 +423,10 @@ class McpOrchestratorClient implements OrchestratorClient {
   // Fleet
   // =========================================================================
   async listFleetNodes(req: ListFleetNodesRequest): Promise<ListFleetNodesResponse> {
-    const page = await this.fleetNodesPage(req);
-    return { nodes: page.items, count: page.items.length };
+    const nodes = asksForOnePage(req)
+      ? (await this.fleetNodesPage(req)).items
+      : await walkPages((offset) => this.fleetNodesPage(atOffset(req, offset)));
+    return { nodes, count: nodes.length };
   }
 
   private async fleetNodesPage(req: ListFleetNodesRequest): Promise<PageResult<FleetNode>> {
@@ -486,8 +522,10 @@ class McpOrchestratorClient implements OrchestratorClient {
   // Sessions
   // =========================================================================
   async listSessions(req: ListSessionsRequest): Promise<ListSessionsResponse> {
-    const page = await this.sessionsPage(req);
-    return { sessions: page.items, count: page.items.length };
+    const sessions = asksForOnePage(req)
+      ? (await this.sessionsPage(req)).items
+      : await walkPages((offset) => this.sessionsPage(atOffset(req, offset)));
+    return { sessions, count: sessions.length };
   }
 
   private async sessionsPage(req: ListSessionsRequest): Promise<PageResult<SessionStatusResponse>> {
@@ -656,12 +694,8 @@ class McpOrchestratorClient implements OrchestratorClient {
   // Workflows
   // =========================================================================
   async listWorkflows(tenantID: string): Promise<ListWorkflowsResponse> {
-    const resp = await this.session.callTool<{ workflows?: WorkflowDefinition[] | null; count?: number }>(
-      'quicbaas_orchestrator_list_workflows',
-      { tenant_id: tenantID },
-    );
-    const workflows = resp.workflows ?? [];
-    return { workflows, count: resp.count ?? workflows.length };
+    const workflows = await walkPages((offset) => this.listWorkflowsPage(tenantID, atOffset({}, offset)));
+    return { workflows, count: workflows.length };
   }
 
   async createWorkflow(_req: CreateWorkflowRequest): Promise<CreateWorkflowResponse> {
@@ -791,16 +825,13 @@ class McpOrchestratorClient implements OrchestratorClient {
   // allPages walks a paged listing tool to its end, as the REST transport's
   // unpaged listings do, so the unpaged verbs answer the whole set.
   private async allPages<T>(tool: string, key: string): Promise<T[]> {
-    const items: T[] = [];
-    let offset = 0;
-    for (;;) {
+    return walkPages<T>(async (offset) => {
       const resp = await this.session.callTool<Record<string, unknown>>(tool, { offset });
-      const page = (resp[key] as T[] | null | undefined) ?? [];
-      items.push(...page);
-      const next = resp.next_offset as number | undefined;
-      if (next === undefined || next <= offset || page.length === 0) return items;
-      offset = next;
-    }
+      return {
+        items: (resp[key] as T[] | null | undefined) ?? [],
+        next_offset: resp.next_offset as number | undefined,
+      };
+    });
   }
 }
 

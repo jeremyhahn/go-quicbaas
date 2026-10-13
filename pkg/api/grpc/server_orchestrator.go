@@ -1413,10 +1413,11 @@ func (s *OrchestratorServer) FleetNodeHeartbeat(ctx context.Context, req *pb.Fle
 		return nil, err
 	}
 
-	// The gRPC heartbeat request carries no served-backend list, so it
-	// observes nothing and reconciles nothing. Only the REST verb the daemon
-	// itself calls reports what its runtime is serving.
-	if err := s.agentSvc.FleetNodeHeartbeat(tenantCtx, tenantID, req.NodeId, nil); err != nil {
+	// The observation is what the daemon reports about itself: served
+	// backends, slot count, signing traits, images, device telemetry and
+	// host metrics. Absent is a bare heartbeat that reconciles nothing.
+	observed := fleetObservationFromProto(req.GetObservation())
+	if err := s.agentSvc.FleetNodeHeartbeat(tenantCtx, tenantID, req.NodeId, observed); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 

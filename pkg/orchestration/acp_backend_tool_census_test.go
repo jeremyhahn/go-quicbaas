@@ -57,6 +57,31 @@ func TestStreamJSONToolCensusHelper(t *testing.T) {
 	if os.Getenv("STREAM_JSON_TOOL_CENSUS_HELPER") != "1" {
 		return
 	}
+	serveStreamJSONTurn(toolCensusTurn)
+}
+
+// unreadableToolBlockTurn is a turn whose assistant message carries a
+// tool_use block that does not decode (its id is a number): the turn did call
+// a tool, but nobody can count it.
+var unreadableToolBlockTurn = []string{
+	`{"type":"assistant","message":{"role":"assistant","model":"m","content":[` +
+		`{"type":"tool_use","id":7,"name":"Read","input":{"file_path":"a.go"}}]}}`,
+	`{"type":"assistant","message":{"role":"assistant","model":"m","content":[{"type":"text","text":"done"}]}}`,
+	`{"type":"result","subtype":"success","session_id":"census-session","result":"done"}`,
+}
+
+// TestStreamJSONUnreadableToolBlockHelper is the subprocess that streams
+// unreadableToolBlockTurn for every prompt.
+func TestStreamJSONUnreadableToolBlockHelper(t *testing.T) {
+	if os.Getenv("STREAM_JSON_UNREADABLE_TOOL_BLOCK_HELPER") != "1" {
+		return
+	}
+	serveStreamJSONTurn(unreadableToolBlockTurn)
+}
+
+// serveStreamJSONTurn plays a stream-json CLI: it announces the session, then
+// answers every prompt line on stdin with turn, and exits when stdin closes.
+func serveStreamJSONTurn(turn []string) {
 	writeLine := func(line string) {
 		if _, err := os.Stdout.WriteString(line + "\n"); err != nil {
 			os.Exit(1)
@@ -67,7 +92,7 @@ func TestStreamJSONToolCensusHelper(t *testing.T) {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for scanner.Scan() {
-		for _, line := range toolCensusTurn {
+		for _, line := range turn {
 			writeLine(line)
 		}
 	}
@@ -119,6 +144,19 @@ func TestPromptStreamJSON_TurnWithoutToolsReportsAZeroCensus(t *testing.T) {
 	}
 	if resp.ToolUse.Calls != 0 {
 		t.Errorf("ToolUse.Calls = %d, want 0", resp.ToolUse.Calls)
+	}
+}
+
+// A tool block that does not decode may have been a tool call, so the census
+// is unknown, not a measured zero: a zero would make NonAnswer read a turn
+// that used a tool as tool-free and reprompt it.
+func TestPromptStreamJSON_UnreadableToolBlockLeavesTheCensusUnknown(t *testing.T) {
+	backend := newLifecycleCLIBackend(t, "TestStreamJSONUnreadableToolBlockHelper", "STREAM_JSON_UNREADABLE_TOOL_BLOCK_HELPER")
+
+	resp := promptPersistent(t, backend)
+
+	if resp.ToolUse != nil {
+		t.Fatalf("ToolUse = %+v, want nil: an undecodable block leaves the census unknown", resp.ToolUse)
 	}
 }
 

@@ -199,7 +199,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	// quicbaas_orchestrator_* for all of them.
 	{"quicbaas.Orchestrator", "RegisterFleetNode"}:   gapNameDrift + "quicbaas_fleet_register",
 	{"quicbaas.Orchestrator", "RemoveFleetNode"}:     gapNameDrift + "quicbaas_fleet_remove",
-	{"quicbaas.Orchestrator", "FleetNodeHeartbeat"}:  gapNameDrift + "quicbaas_fleet_heartbeat",
 	{"quicbaas.Orchestrator", "DisableFleetNode"}:    gapNameDrift + "quicbaas_fleet_disable",
 	{"quicbaas.Orchestrator", "EnableFleetNode"}:     gapNameDrift + "quicbaas_fleet_enable",
 	{"quicbaas.Orchestrator", "CreateTask"}:          gapNameDrift + "quicbaas_orchestrator_task_create",

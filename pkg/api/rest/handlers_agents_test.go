@@ -195,3 +195,15 @@ func TestHandleOrchestratorError_MapsCatalogRefusals(t *testing.T) {
 		assert.Equal(t, want, w.Code, "%T", err)
 	}
 }
+
+// A fleet refusing a spawn on health or capacity answers as an exhausted
+// Agent pool does: 503, not the 400 of a spawn no node could ever serve.
+func TestHandleOrchestratorError_AFleetCapacityRefusalIsServiceUnavailable(t *testing.T) {
+	refused := &orchestration.FleetCapacityRefusedError{
+		Backend:  "claude",
+		Refusals: []orchestration.FleetNodeRefusal{{NodeID: "n1", Host: "h1", Reason: orchestration.FleetAdmissionUnhealthy}},
+	}
+	w := httptest.NewRecorder()
+	handleOrchestratorError(w, systemRequest(http.MethodPost, "/", nil), refused)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
