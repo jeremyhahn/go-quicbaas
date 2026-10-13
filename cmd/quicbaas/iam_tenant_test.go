@@ -14,8 +14,13 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -70,6 +75,287 @@ func TestIAMTenantCreateCommand_EmptyTenantID(t *testing.T) {
 
 	err := runIAMTenantCreateCommand(cmd, []string{""})
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant ID is required")
+}
+
+// withTenantProvisionState resets the provision flags to their defaults,
+// installs the IAM mock client, and restores everything when the test ends.
+func withTenantProvisionState(t *testing.T) (*testMockIAMClient, *cobra.Command) {
+	t.Helper()
+	logCleanup := iamTenantUserTestInitLogger(t)
+	mockClient, mockCleanup := setupIAMMock(t)
+	origFormat := iamOutputFormat
+	t.Cleanup(func() {
+		iamOutputFormat = origFormat
+		tenantName = ""
+		newIAMTenantProvisionCommand()
+		mockCleanup()
+		logCleanup()
+	})
+	iamOutputFormat = "table"
+	tenantName = ""
+	return mockClient, newIAMTenantProvisionCommand()
+}
+
+// writeTestCSR writes a CSR file the provision command can read.
+func writeTestCSR(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "admin.csr")
+	require.NoError(t, os.WriteFile(path, []byte(testAdminCSRPEM), 0o600))
+	return path
+}
+
+const (
+	testAdminCSRPEM  = "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n"
+	testAdminCertPEM = "-----BEGIN CERTIFICATE-----\nMIIC\n-----END CERTIFICATE-----\n"
+)
+
+func TestIAMTenantProvisionCommand_CertModeMapsFlagsAndWritesCert(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	certOut := filepath.Join(t.TempDir(), "admin.crt")
+	require.NoError(t, cmd.Flags().Set("name", "Acme Corp"))
+	require.NoError(t, cmd.Flags().Set("isolation-type", "volume"))
+	require.NoError(t, cmd.Flags().Set("admin-username", "root"))
+	require.NoError(t, cmd.Flags().Set("admin-csr", writeTestCSR(t)))
+	require.NoError(t, cmd.Flags().Set("admin-cert-out", certOut))
+
+	var got *iam.ProvisionTenantRequest
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		got = req
+		return &iam.ProvisionTenantResponse{
+			TenantID:            req.TenantID,
+			AdminUsername:       req.AdminUsername,
+			AdminCertPEM:        testAdminCertPEM,
+			AdminCertThumbprint: "thumb",
+		}, nil
+	}
+
+	out, err := captureRoleStdout(t, func() error {
+		return runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, got)
+	assert.Equal(t, &iam.ProvisionTenantRequest{
+		TenantID:        "acme",
+		Name:            "Acme Corp",
+		IsolationType:   iam.TenantIsolationVolume,
+		AdminUsername:   "root",
+		AdminEnrollment: iam.TenantAdminEnrollCert,
+		AdminCSRPEM:     testAdminCSRPEM,
+	}, got)
+
+	written, err := os.ReadFile(certOut)
+	require.NoError(t, err)
+	assert.Equal(t, testAdminCertPEM, string(written))
+	info, err := os.Stat(certOut)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	assert.Contains(t, out, "written to "+certOut)
+	assert.Contains(t, out, "thumb")
+	assert.NotContains(t, out, "BEGIN CERTIFICATE-----", "the certificate goes to the file, not stdout")
+}
+
+func TestIAMTenantProvisionCommand_CertOutTightensExistingFileMode(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	certOut := filepath.Join(t.TempDir(), "admin.crt")
+	require.NoError(t, os.WriteFile(certOut, []byte("stale"), 0o644))
+	require.NoError(t, cmd.Flags().Set("admin-csr", writeTestCSR(t)))
+	require.NoError(t, cmd.Flags().Set("admin-cert-out", certOut))
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		return &iam.ProvisionTenantResponse{TenantID: req.TenantID, AdminCertPEM: testAdminCertPEM}, nil
+	}
+
+	_, err := captureRoleStdout(t, func() error {
+		return runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	})
+	require.NoError(t, err)
+
+	info, err := os.Stat(certOut)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestIAMTenantProvisionCommand_CertModePrintsCertWithoutOutPath(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	require.NoError(t, cmd.Flags().Set("admin-csr", writeTestCSR(t)))
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		return &iam.ProvisionTenantResponse{TenantID: req.TenantID, AdminCertPEM: testAdminCertPEM}, nil
+	}
+
+	out, err := captureRoleStdout(t, func() error {
+		return runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, testAdminCertPEM)
+}
+
+func TestIAMTenantProvisionCommand_CertOutMissingCertFromServer(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	certOut := filepath.Join(t.TempDir(), "admin.crt")
+	require.NoError(t, cmd.Flags().Set("admin-csr", writeTestCSR(t)))
+	require.NoError(t, cmd.Flags().Set("admin-cert-out", certOut))
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		return &iam.ProvisionTenantResponse{TenantID: req.TenantID}, nil
+	}
+
+	err := runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no admin certificate")
+	_, statErr := os.Stat(certOut)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestIAMTenantProvisionCommand_CertOutWriteError(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	certOut := filepath.Join(t.TempDir(), "missing-dir", "admin.crt")
+	require.NoError(t, cmd.Flags().Set("admin-csr", writeTestCSR(t)))
+	require.NoError(t, cmd.Flags().Set("admin-cert-out", certOut))
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		return &iam.ProvisionTenantResponse{TenantID: req.TenantID, AdminCertPEM: testAdminCertPEM}, nil
+	}
+
+	err := runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to write admin certificate")
+}
+
+func TestIAMTenantProvisionCommand_InviteModeMapsFlagsAndPrintsToken(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	require.NoError(t, cmd.Flags().Set("admin-enrollment", "invite"))
+	require.NoError(t, cmd.Flags().Set("admin-username", "alice"))
+	require.NoError(t, cmd.Flags().Set("invite-expiry-hours", "24"))
+
+	expires := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	var got *iam.ProvisionTenantRequest
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		got = req
+		return &iam.ProvisionTenantResponse{
+			TenantID:        req.TenantID,
+			AdminUsername:   req.AdminUsername,
+			AdminPending:    true,
+			InviteToken:     "tok-123",
+			InviteExpiresAt: &expires,
+		}, nil
+	}
+
+	out, err := captureRoleStdout(t, func() error {
+		return runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, got)
+	assert.Equal(t, &iam.ProvisionTenantRequest{
+		TenantID:          "acme",
+		AdminUsername:     "alice",
+		AdminEnrollment:   iam.TenantAdminEnrollInvite,
+		InviteExpiryHours: 24,
+	}, got)
+	assert.Contains(t, out, "Invite Token: tok-123")
+	assert.Contains(t, out, "2026-10-13 12:00:00")
+	assert.Contains(t, out, "single-use")
+	assert.Contains(t, out, "Admin Pending: true")
+}
+
+func TestIAMTenantProvisionCommand_JSONOutput(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	iamOutputFormat = "json"
+	require.NoError(t, cmd.Flags().Set("admin-enrollment", "invite"))
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		return &iam.ProvisionTenantResponse{TenantID: req.TenantID, InviteToken: "tok-123"}, nil
+	}
+
+	out, err := captureRoleStdout(t, func() error {
+		return runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, `"tenant_id": "acme"`)
+	assert.Contains(t, out, `"invite_token": "tok-123"`)
+}
+
+func TestIAMTenantProvisionCommand_CSRReadError(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	require.NoError(t, cmd.Flags().Set("admin-csr", filepath.Join(t.TempDir(), "absent.csr")))
+	called := false
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, _ *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		called = true
+		return nil, nil
+	}
+
+	err := runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read admin CSR file")
+	assert.False(t, called, "a CSR read failure must not reach the server")
+}
+
+func TestIAMTenantProvisionCommand_FlagConflicts(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   map[string]string
+		withCSR bool
+		wantMsg string
+	}{
+		{"cert without csr", nil, false, "--admin-csr is required"},
+		{"cert with invite expiry", map[string]string{"invite-expiry-hours": "24"}, true, "--invite-expiry-hours applies to invite"},
+		{"invite with csr", map[string]string{"admin-enrollment": "invite"}, true, "--admin-csr applies to cert"},
+		{"invite with cert out", map[string]string{"admin-enrollment": "invite", "admin-cert-out": "admin.crt"}, false, "--admin-cert-out applies to cert"},
+		{"unknown enrollment", map[string]string{"admin-enrollment": "password"}, false, "--admin-enrollment must be"},
+		{"negative invite expiry", map[string]string{"admin-enrollment": "invite", "invite-expiry-hours": "-1"}, false, "must not be negative"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient, cmd := withTenantProvisionState(t)
+			for flag, value := range tt.flags {
+				require.NoError(t, cmd.Flags().Set(flag, value))
+			}
+			if tt.withCSR {
+				require.NoError(t, cmd.Flags().Set("admin-csr", writeTestCSR(t)))
+			}
+			called := false
+			mockClient.tenantClient.ProvisionFunc = func(_ context.Context, _ *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+				called = true
+				return nil, nil
+			}
+
+			err := runIAMTenantProvisionCommand(cmd, []string{"acme"})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+			assert.False(t, called, "a flag conflict must not reach the server")
+		})
+	}
+}
+
+func TestIAMTenantProvisionCommand_ServerError(t *testing.T) {
+	mockClient, cmd := withTenantProvisionState(t)
+	require.NoError(t, cmd.Flags().Set("admin-csr", writeTestCSR(t)))
+	mockClient.tenantClient.ProvisionFunc = func(_ context.Context, _ *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+		return nil, errors.New(errors.ErrConflict, "iam", "tenant already exists")
+	}
+
+	err := runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tenant already exists")
+}
+
+func TestIAMTenantProvisionCommand_FactoryError(t *testing.T) {
+	_, cmd := withTenantProvisionState(t)
+	require.NoError(t, cmd.Flags().Set("admin-enrollment", "invite"))
+	iamClientFactory = func() (iam.Client, error) {
+		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
+	}
+
+	err := runIAMTenantProvisionCommand(cmd, []string{"acme"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection failed")
+}
+
+func TestIAMTenantProvisionCommand_EmptyTenantID(t *testing.T) {
+	_, cmd := withTenantProvisionState(t)
+
+	err := runIAMTenantProvisionCommand(cmd, []string{""})
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tenant ID is required")
 }
 
@@ -410,7 +696,7 @@ func TestNewIAMTenantCommand_FullStructure(t *testing.T) {
 	assert.NotEmpty(t, cmd.Long)
 
 	// Verify subcommands exist
-	expectedSubcmds := []string{"create", "get", "update", "delete", "list"}
+	expectedSubcmds := []string{"create", "provision", "get", "update", "delete", "list"}
 	for _, expected := range expectedSubcmds {
 		found := false
 		for _, sub := range cmd.Commands() {

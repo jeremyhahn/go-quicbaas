@@ -99,7 +99,7 @@ const familyCases: Array<{
   reason: string;
   skip?: string[];
 }> = [
-  { family: 'orchestrator', pick: (c) => c.orchestrator, reason: 'RegisterQUIC', skip: ['deployFleetNode'] },
+  { family: 'orchestrator', pick: (c) => c.orchestrator, reason: "serves the orchestrator's unary methods", skip: ['deployFleetNode'] },
   { family: 'auth', pick: (c) => c.auth, reason: 'frame protocol' },
   { family: 'barrier', pick: (c) => c.barrier, reason: 'frame protocol' },
   { family: 'ceremony', pick: (c) => c.ceremony, reason: 'frame protocol' },

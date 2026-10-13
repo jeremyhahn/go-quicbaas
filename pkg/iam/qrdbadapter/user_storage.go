@@ -345,38 +345,36 @@ func (s *QRDBUserStorage) DeleteUser(ctx context.Context, tenantID, userID strin
 
 // ListUsers returns the tenant's qrdb users. Every record projects, so there is
 // no "skipped because it had no correlation entry" case: a user that exists in
-// the tenant is a user this listing returns.
+// the tenant is a user this listing returns. qrdb lists by page/pageSize, so
+// iam.OffsetWindow reads the page or two that hold the exact offset/limit
+// window.
 func (s *QRDBUserStorage) ListUsers(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.User, error) {
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := svc.ListUsers(ctx, &qrdbsdk.ListUsersRequest{
-		TenantID: tenantID,
-		Page:     pageFromOffset(opts.Offset, opts.Limit),
-		PageSize: opts.Limit,
+	cores, err := iam.OffsetWindow(opts.Offset, opts.Limit, func(page, size int) ([]*qrdbsdk.User, error) {
+		resp, err := svc.ListUsers(ctx, &qrdbsdk.ListUsersRequest{
+			TenantID: tenantID,
+			Page:     page,
+			PageSize: size,
+		})
+		if err != nil {
+			return nil, mapQRDBUserError("list", err)
+		}
+		return resp.Users, nil
 	})
 	if err != nil {
-		return nil, mapQRDBUserError("list", err)
+		return nil, err
 	}
-	out := make([]*iam.User, 0, len(resp.Users))
-	for _, core := range resp.Users {
+	out := make([]*iam.User, 0, len(cores))
+	for _, core := range cores {
 		if core == nil {
 			continue
 		}
 		out = append(out, ToIAMUser(*core))
 	}
 	return out, nil
-}
-
-// pageFromOffset converts an (offset, limit) pair into qrdb's 1-based page
-// number. With a zero limit there is no paging, so page 1 is returned; with a
-// limit and a positive offset, the corresponding page is computed.
-func pageFromOffset(offset, limit int) int {
-	if limit <= 0 || offset <= 0 {
-		return 1
-	}
-	return offset/limit + 1
 }
 
 // orEmptySlice forces a non-nil slice so qrdb's partial UpdateUser performs a

@@ -311,7 +311,8 @@ func TestIAMServiceWrapper_CreateUser_IdentityStoreUnavailable(t *testing.T) {
 	wrapper := &iamServiceWrapper{provider: provider}
 
 	resp, err := wrapper.CreateUser(context.Background(), &IAMCreateUserRequest{
-		Email: "user@example.com",
+		TenantID: "t-1",
+		Email:    "user@example.com",
 	})
 
 	require.Error(t, err)
@@ -326,7 +327,8 @@ func TestIAMServiceWrapper_CreateUser_ProviderError(t *testing.T) {
 	wrapper := &iamServiceWrapper{provider: provider}
 
 	resp, err := wrapper.CreateUser(context.Background(), &IAMCreateUserRequest{
-		Email: "user@example.com",
+		TenantID: "t-1",
+		Email:    "user@example.com",
 	})
 
 	require.Error(t, err)
@@ -358,6 +360,43 @@ func TestIAMServiceWrapper_UpdateUser_IdentityStoreUnavailable(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "identity store not available")
+}
+
+// The request is judged before the wiring: with no identity store, a
+// malformed create is refused for its field, not as an unavailable store
+// (#335).
+func TestIAMServiceWrapper_CreateUser_MalformedEmailBeatsMissingIdentityStore(t *testing.T) {
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: nil}}
+
+	resp, err := wrapper.CreateUser(context.Background(), &IAMCreateUserRequest{
+		TenantID: "t-1",
+		Email:    "not-an-email",
+		Name:     "Sam",
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var verr *iam.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "email", verr.Field)
+}
+
+func TestIAMServiceWrapper_UpdateUser_MalformedEmailBeatsMissingIdentityStore(t *testing.T) {
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: nil}}
+	email := "not-an-email"
+
+	resp, err := wrapper.UpdateUser(context.Background(), &IAMUpdateUserRequest{
+		TenantID: "t-1",
+		UserID:   "u-1",
+		Email:    &email,
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var verr *iam.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "email", verr.Field)
 }
 
 func TestIAMServiceWrapper_DeleteUser_IdentityStoreUnavailable(t *testing.T) {
@@ -790,6 +829,20 @@ func TestIAMServiceWrapper_CreateUser_NoInviteStoreRefusesPending(t *testing.T) 
 
 	_, err = store.GetUserByEmail(ctx, "t-1", "sam@example.com")
 	assert.Error(t, err, "a pending user was written with no way to activate it")
+}
+
+// The request is judged before the wiring: a malformed pending create with no
+// invite store is refused for its email, not as an unavailable store (#335).
+func TestIAMServiceWrapper_CreateUser_MalformedEmailBeatsMissingInviteStore(t *testing.T) {
+	store, _ := newRoleTestIdentityStore()
+	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
+
+	_, err := wrapper.CreateUser(context.Background(), &IAMCreateUserRequest{TenantID: "t-1", Email: "not-an-email", Name: "Sam"})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, iam.ErrInviteStoreUnavailable)
+	var verr *iam.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Equal(t, "email", verr.Field)
 }
 
 // TestIAMServiceWrapper_CreateUser_InviteStoreErrorWritesNothing proves a

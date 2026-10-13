@@ -38,6 +38,8 @@ func dcrOptions(name string) RegisterAppOptions {
 // TestRegisterDCRApp_IssuesUsableToken verifies a DCR registration returns a
 // plaintext registration access token that authorizes exactly that client.
 func TestRegisterDCRApp_IssuesUsableToken(t *testing.T) {
+	t.Parallel()
+
 	m := newRegistrationTestManager()
 	ctx := context.Background()
 
@@ -74,6 +76,8 @@ func TestRegisterDCRApp_IssuesUsableToken(t *testing.T) {
 // a distinct credential, and that the stored form is a hash rather than the
 // secret itself.
 func TestRegisterDCRApp_TokensAreUniquePerClient(t *testing.T) {
+	t.Parallel()
+
 	storage := NewMemoryStorage()
 	m := NewAppManager(storage, nil)
 	ctx := context.Background()
@@ -109,6 +113,8 @@ func TestRegisterDCRApp_TokensAreUniquePerClient(t *testing.T) {
 // TestAuthorizeRegistrationAccess_Denials verifies every failure mode is
 // refused with the typed error and no application.
 func TestAuthorizeRegistrationAccess_Denials(t *testing.T) {
+	t.Parallel()
+
 	m := newRegistrationTestManager()
 	ctx := context.Background()
 
@@ -165,6 +171,8 @@ func TestAuthorizeRegistrationAccess_Denials(t *testing.T) {
 // TestAuthorizeRegistrationAccess_TenantScopeNarrows verifies the tenant
 // argument narrows (and never widens) the lookup.
 func TestAuthorizeRegistrationAccess_TenantScopeNarrows(t *testing.T) {
+	t.Parallel()
+
 	m := newRegistrationTestManager()
 	ctx := context.Background()
 
@@ -184,6 +192,8 @@ func TestAuthorizeRegistrationAccess_TenantScopeNarrows(t *testing.T) {
 // TestUpdateAppInTenant_Scoping verifies the tenant-scoped mutation helpers
 // refuse a client that belongs to another tenant, and leave it untouched.
 func TestUpdateAppInTenant_Scoping(t *testing.T) {
+	t.Parallel()
+
 	m := newRegistrationTestManager()
 	ctx := context.Background()
 
@@ -220,6 +230,8 @@ func TestUpdateAppInTenant_Scoping(t *testing.T) {
 // TestDeleteAppInTenant_Scoping verifies a cross-tenant delete is refused and
 // the client survives.
 func TestDeleteAppInTenant_Scoping(t *testing.T) {
+	t.Parallel()
+
 	m := newRegistrationTestManager()
 	ctx := context.Background()
 
@@ -246,6 +258,8 @@ func TestDeleteAppInTenant_Scoping(t *testing.T) {
 // TestGetAppRedactsCredentials verifies no read path leaks the stored client
 // secret or the registration token hash.
 func TestGetAppRedactsCredentials(t *testing.T) {
+	t.Parallel()
+
 	m := newRegistrationTestManager()
 	ctx := context.Background()
 

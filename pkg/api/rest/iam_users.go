@@ -201,9 +201,13 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	// A pending account is activated through an invite, so the invite store is
 	// resolved before anything is written: failing here leaves nothing behind.
+	// An unwired store is passed on as nil: CreateInvitedUser judges the
+	// request first, so a malformed one is answered 400 whatever the wiring
+	// (#335), and then refuses a well-formed pending create on the nil store
+	// with the same Unavailable every other transport reports.
 	var inviteStore iam.InviteStore
 	if opts.EffectiveLifecycle() == iam.LifecyclePending {
-		inviteStore, err = h.getInviteStore(ctx)
+		inviteStore, err = h.lookupInviteStore(ctx)
 		if err != nil {
 			h.server.handleServiceError(w, r, err)
 			return

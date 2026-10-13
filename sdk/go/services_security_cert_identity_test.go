@@ -39,7 +39,7 @@ type certBindingDirectory struct {
 func (d *certBindingDirectory) UserByCertThumbprint(_ context.Context, thumbprint string) (*qrdbsdk.User, error) {
 	u, ok := d.byThumbprint[thumbprint]
 	if !ok {
-		return nil, qrdbsdk.NewError(qrdbsdk.ErrCodeNotFound, "UserByCertThumbprint", "no user bound")
+		return nil, &qrdbsdk.UserNotFoundError{Lookup: "cert_spki/" + thumbprint}
 	}
 	return u, nil
 }
@@ -67,17 +67,9 @@ func newTestCert(t *testing.T) *x509.Certificate {
 	return cert
 }
 
-func newCertIdentityAuth(t *testing.T, bound map[string]*qrdbsdk.User) AuthService {
-	t.Helper()
-	dir := &certBindingDirectory{directoryUserServicer: newDirectory(), byThumbprint: bound}
-	kv := newMemKV()
-	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: kv, Admin: stubAdminService{}, User: dir})
-	return c.Security().Auth()
-}
-
 func TestAuthUserByCertificate_ResolvesBoundUserAndNotOthers(t *testing.T) {
 	admin, device := newTestCert(t), newTestCert(t)
-	auth := newCertIdentityAuth(t, map[string]*qrdbsdk.User{
+	auth := newCertIdentityEmbeddedAuth(t, map[string]*qrdbsdk.User{
 		ComputeSPKIThumbprint(admin):  {ID: 1, Username: "admin"},
 		ComputeSPKIThumbprint(device): {ID: 2, Username: "device"},
 	})
@@ -93,17 +85,8 @@ func TestAuthUserByCertificate_ResolvesBoundUserAndNotOthers(t *testing.T) {
 	}
 }
 
-func TestAuthUserByCertificate_UnboundIsTypedNotFound(t *testing.T) {
-	auth := newCertIdentityAuth(t, map[string]*qrdbsdk.User{})
-
-	_, err := auth.UserByCertificate(context.Background(), newTestCert(t))
-	if !sdkerrors.IsNotFound(err) {
-		t.Fatalf("want NotFoundError, got %T: %v", err, err)
-	}
-}
-
 func TestAuthUserByCertificate_InvalidCertificate(t *testing.T) {
-	auth := newCertIdentityAuth(t, map[string]*qrdbsdk.User{})
+	auth := newCertIdentityEmbeddedAuth(t, map[string]*qrdbsdk.User{})
 
 	for name, cert := range map[string]*x509.Certificate{"nil": nil, "no public key": {}} {
 		_, err := auth.UserByCertificate(context.Background(), cert)
@@ -114,7 +97,7 @@ func TestAuthUserByCertificate_InvalidCertificate(t *testing.T) {
 }
 
 func TestAuthUserByCertThumbprint_InvalidInput(t *testing.T) {
-	auth := newCertIdentityAuth(t, map[string]*qrdbsdk.User{})
+	auth := newCertIdentityEmbeddedAuth(t, map[string]*qrdbsdk.User{})
 
 	_, err := auth.UserByCertThumbprint(context.Background(), "")
 	if !sdkerrors.IsInvalidInput(err) {
@@ -125,10 +108,30 @@ func TestAuthUserByCertThumbprint_InvalidInput(t *testing.T) {
 func TestAuthUserByCertThumbprint_Found(t *testing.T) {
 	cert := newTestCert(t)
 	tp := ComputeSPKIThumbprint(cert)
-	auth := newCertIdentityAuth(t, map[string]*qrdbsdk.User{tp: {ID: 7, Username: "ops"}})
+	auth := newCertIdentityEmbeddedAuth(t, map[string]*qrdbsdk.User{tp: {ID: 7, Username: "ops"}})
 
 	got, err := auth.UserByCertThumbprint(context.Background(), tp)
 	if err != nil || got.ID != 7 {
 		t.Fatalf("got %+v, err %v", got, err)
+	}
+}
+
+// codedNotFoundDirectory reports an unbound thumbprint as qrdb's coded
+// not_found error rather than UserNotFoundError.
+type codedNotFoundDirectory struct {
+	*directoryUserServicer
+}
+
+func (codedNotFoundDirectory) UserByCertThumbprint(context.Context, string) (*qrdbsdk.User, error) {
+	return nil, qrdbsdk.NewError(qrdbsdk.ErrCodeNotFound, "UserByCertThumbprint", "no user bound")
+}
+
+func TestAuthUserByCertThumbprint_CodedNotFoundIsTypedNotFound(t *testing.T) {
+	dir := codedNotFoundDirectory{directoryUserServicer: newDirectory()}
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{KV: newMemKV(), Admin: stubAdminService{}, User: dir})
+
+	_, err := c.Security().Auth().UserByCertThumbprint(context.Background(), "unbound")
+	if !sdkerrors.IsNotFound(err) {
+		t.Fatalf("want NotFoundError, got %T: %v", err, err)
 	}
 }

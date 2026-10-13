@@ -428,6 +428,15 @@ func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 	}
 }
 
+// RegisterQUIC attaches the same late-bound services RegisterGRPC does to
+// go-qrdb's QUIC frame transport. The QUIC server's registrar projects each
+// unary method, authorized by its (qrdb.v1.permission) option; it skips the
+// methods PublicGRPCMethods lists (QUIC is mTLS-only) and every streaming
+// method.
+func (m *Module) RegisterQUIC(reg grpc.ServiceRegistrar) {
+	m.RegisterGRPC(reg)
+}
+
 // server returns the per-service implementation resolver: it binds the bundle
 // on first use and answers Unavailable while the facade is still composing or
 // when the capability is not enabled on this node.

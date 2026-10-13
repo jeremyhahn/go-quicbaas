@@ -260,9 +260,11 @@ func (e *HostModuleRouterInspectionError) Unwrap() error { return e.Cause }
 //     method of the descriptors RegisterQUIC registers onto its frame protocol,
 //     authorized by the method's (qrdb.v1.permission) option; a method without
 //     one panics QUIC server construction unless the module also lists it as
-//     public, in which case QUIC skips it. quicbaas's own module does not yet
-//     implement the hook: its EmbeddingService declares no permissions
-//     (go-quicbaas#819).
+//     public, in which case QUIC skips it. quicbaas's own module registers
+//     the RegisterGRPC services on the hook, so every unary, non-public
+//     method of its services is served over QUIC. Its public login and health
+//     methods, its streaming methods, and EmbeddingService (no permissions,
+//     so gRPC denies it too) are not.
 //   - embedded: the in-process transport is each capability owner's own SDK
 //     surface, independent of this seam. A host calls its module's Go API
 //     directly in-process.

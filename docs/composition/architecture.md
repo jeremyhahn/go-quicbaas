@@ -605,15 +605,70 @@ MCP**. Two transports need more:
   delegates to `RegisterGRPC`. Every projected method must declare a
   `(qrdb.v1.permission)` option, or QUIC server construction panics; a method
   the module also lists as public is skipped, because QUIC has no
-  unauthenticated path. Streaming methods are not projected. quicbaas's own
-  module does not implement the hook yet: its `EmbeddingService` declares no
-  permissions (go-quicbaas#819).
+  unauthenticated path (a public method that declares a permission is still
+  projected). Streaming methods are not projected. quicbaas's own module
+  registers its `RegisterGRPC` services on `RegisterQUIC` (go-quicbaas#819); see
+  [QUIC projection of the API module](#quic-projection-of-the-api-module).
 - **The embedded (in-process) transport.** That surface is each capability
   owner's own SDK, independent of this seam. A host calls its module's Go API
   directly in-process rather than routing through the node.
 
 Both are upstream go-qrdb gaps, not go-quicbaas omissions; a host that needs
 either files the gap against go-qrdb rather than working around it locally.
+
+### QUIC projection of the API module
+
+`pkg/apimodule.Module.RegisterQUIC` registers the same late-bound services as
+`RegisterGRPC`, so a QUIC call made before the facade is composed answers
+Unavailable, exactly as on gRPC. Every unary method projects onto QUIC under
+the permission its `(qrdb.v1.permission)` option declares, the same one gRPC
+enforces. Two carve-outs:
+
+- **Public methods are not served.** QUIC is mTLS-only and has no
+  unauthenticated path, so the methods `PublicGRPCMethods` lists, which declare
+  no permission, are skipped: `QuicBaaS/Health`, `QuicBaaS/Login`,
+  `Login/BeginLogin`, `Login/FinishLogin`, `FIDO2Service/BeginAuthentication`
+  and `FIDO2Service/FinishAuthentication`.
+- **Streaming methods are not served.** QUIC's frame protocol has no generic
+  streaming path; use gRPC, unix or REST for them.
+
+`EmbeddingService` authorizes each RPC with the verb REST and MCP apply to the
+same operation, on gRPC, unix and QUIC alike:
+
+| RPC | REST route | MCP tool | Permission |
+|---|---|---|---|
+| `EmbeddingGenerate` | `POST /api/v1/embedding/generate` | `quicbaas_embedding_generate` | `embedding:embed` |
+| `EmbeddingBatchGenerate` | `POST /api/v1/embedding/batch` | `quicbaas_embedding_batch` | `embedding:embed` |
+| `EmbeddingClearCache` | `DELETE /api/v1/embedding/cache` | `quicbaas_embedding_cache_clear` | `embedding:embed` |
+| `EmbeddingListProviders` | `GET /api/v1/embedding/providers` | `quicbaas_embedding_list_providers` | `embedding:list_models` |
+| `EmbeddingGetProviderInfo` | `GET /api/v1/embedding/providers/{provider}` | `quicbaas_embedding_get_provider` | `embedding:list_models` |
+| `EmbeddingSetDefaultProvider` | `PUT /api/v1/embedding/providers/default` | `quicbaas_embedding_set_default` | `embedding:list_models` |
+| `EmbeddingGetCacheStats` | `GET /api/v1/embedding/cache/stats` | `quicbaas_embedding_cache_stats` | `embedding:list_models` |
+
+Per service:
+
+| Service | Projects onto QUIC | Not on QUIC |
+|---|---|---|
+| `quicbaas.v1.QuicBaaS` | Yes, unary methods | `Health`, `Login` (public); `List`, `Watch`, `Query`, `ScanIndex`, `TimeSeriesQuery`, `StreamBatchPut` (streaming) |
+| `quicbaas.login.v1.Login` | No | `BeginLogin`, `FinishLogin` (public) |
+| `quicbaas.fido2.v1.FIDO2Service` | Yes, registration methods | `BeginAuthentication`, `FinishAuthentication` (public) |
+| `quicbaas.scheduler.v1.SchedulerService` | Yes, all | — |
+| `quicbaas.orchestrator.v1.OrchestratorService` | Yes, unary methods | `SubscribeJobEvents`, `PushEvents`, `SubscribeSessionEvents`, `InferenceStream` (streaming) |
+| `quicbaas.project.v1.ProjectService` | Yes, all | — |
+| `quicbaas.account.v1.AccountService` | Yes, all | — |
+| `quicbaas.ssh.v1.SSHService` | Yes, all | — |
+| `quicbaas.messaging.v1.MessagingService` | Yes, unary methods | `StreamNotifications` (streaming) |
+| `quicbaas.embedding.v1.EmbeddingService` | Yes, all | — |
+| `quicbaas.parameterstore.v1.ParameterStore` | Yes, all | — |
+| `quicbaas.dynamicsecrets.v1.DynamicSecretsService` | Yes, all | — |
+| `quicbaas.objectstorage.v1.ObjectStorageService` | Yes, unary methods | `StreamGetObject`, `StreamPutObject` (streaming) |
+| `quicbaas.objectstorage.v1.ObjectStorageAdmin` | Yes, all | — |
+| `quicbaas.ollama.v1.OllamaService` | Yes, all | — |
+| `quicbaas.kms.v1.SecretsManagement` | Yes, unary methods | `WatchSecretsByPrefix` (streaming) |
+
+`TestGRPCRegistrations_EveryProjectedMethodDeclaresAPermission` walks every
+descriptor `RegisterQUIC` registers, so a new RPC without a permission fails
+the unit tests instead of QUIC server startup.
 
 See [../go-sdk/api.md](../go-sdk/api.md) § *Mounting a host ServiceModule* for
 the exact call sequence and the SDK types a host implements against.

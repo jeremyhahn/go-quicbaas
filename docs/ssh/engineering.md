@@ -121,8 +121,66 @@ type AuthService interface {
 
     BeginLogin(ctx context.Context, req qrdbtransport.BeginLoginRequest) (*qrdbtransport.BeginLoginResponse, error)
     FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*FinishLoginResponse, error)
+
+    UserByCertificate(ctx context.Context, cert *x509.Certificate) (*QRDBUser, error)
+    UserByCertThumbprint(ctx context.Context, thumbprint string) (*QRDBUser, error)
 }
 ```
+
+### Certificate identity
+
+`UserByCertificate` resolves a verified mTLS client certificate to the
+qrdb user its SPKI thumbprint is bound to; `UserByCertThumbprint` takes
+a thumbprint already computed with `ComputeSPKIThumbprint`, the
+re-export of qrdb's single algorithm. Both ride the qrdb user client of
+the active transport (`GetUserByCertThumbprint`).
+
+| Case | Result |
+|------|--------|
+| nil or key-less certificate, empty thumbprint | `InvalidInput` |
+| no user bound to the key | `NotFound` |
+| user bound, but in another tenant than the caller's | `NotFound` |
+| user bound in the caller's tenant | the `QRDBUser` |
+
+The caller's tenant is the request context's
+(`transport.ContextWithTenant`), else the client's `WithTenant` option.
+A caller bound to no tenant resolves a user in any tenant. A
+cross-tenant hit is reported exactly like an unbound key, so the lookup
+never reveals that a certificate is bound elsewhere.
+
+Two guards enforce the tenant boundary. On the server, qrdb's user
+service routes the lookup to the tenant of the authenticated caller and
+reads that tenant's thumbprint index; a hit through the legacy global
+index is still checked against the user's live binding. In the SDK, the
+tenant check above re-applies the caller's bound tenant to whatever the
+server returns. QuicBaaS has no handler of its own on this path: qrdb's
+unified server serves it natively on every transport
+(`GET /users/by-cert-thumbprint/{thumbprint}` on REST,
+`GetUserByCertThumbprint` on gRPC and Unix, `user.GetByCertThumbprint`
+on QUIC, the `qrdb_user_get_by_cert_thumbprint` tool on MCP). Each
+qrdb client maps the server's not-found to `UserNotFoundError`, which
+the SDK reports as `NotFound`.
+
+This is the one SDK entry point for certificate-to-user resolution.
+The IAM `UserClient` has no `GetByCertThumbprint`; a tenant-scoped IAM
+variant would be the same lookup a second time.
+
+#### Transport coverage
+
+One case table runs on every transport: found in the caller's tenant;
+unbound certificate; another tenant's user, by context tenant and by
+client tenant; context tenant overriding client tenant; and a caller
+with no tenant.
+
+| Tier | Transports | Server |
+|------|------------|--------|
+| unit (`sdk/go/services_security_cert_identity_transports_test.go`) | embedded, gRPC (TCP loopback), Unix (gRPC over a socket in a temp dir) | qrdb's embedded dispatcher and gRPC service over a test directory |
+| integration (`test/integration/login/cert_identity_test.go`) | REST, gRPC, QUIC, Unix, MCP | the live daemon; the bootstrap admin certificate is the bound identity |
+
+REST, QUIC and MCP are only in the integration tier: their server
+handlers are qrdb's native unified-server handlers, which only a
+running node carries; the qrdb SDK re-exports a server registration
+for gRPC alone.
 
 ### FIDO2
 

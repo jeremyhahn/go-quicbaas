@@ -18,9 +18,17 @@ type cascadeFaultUserStorage struct {
 	*mockUserStorage
 	failListPastFirstPage bool
 	failUpdateID          string
+	// beforeListPastFirstPage, when set, runs once before the first list
+	// call with a non-zero offset, to interleave a concurrent change
+	// between cascade pages.
+	beforeListPastFirstPage func()
 }
 
 func (f *cascadeFaultUserStorage) ListUsers(ctx context.Context, tenantID string, opts ListOptions) ([]*User, error) {
+	if hook := f.beforeListPastFirstPage; hook != nil && opts.Offset > 0 {
+		f.beforeListPastFirstPage = nil
+		hook()
+	}
 	if f.failListPastFirstPage && opts.Offset > 0 {
 		return nil, &dberrors.MessageError{Message: "simulated list failure"}
 	}
@@ -165,6 +173,44 @@ func TestDeleteRole_ExactPageMultipleTerminates(t *testing.T) {
 		t.Errorf("%d users still hold the deleted role", len(ids))
 	}
 	assertRoleExists(t, store, role.ID, false)
+}
+
+// TestDeleteRole_ConcurrentUserDeleteBetweenPages deletes a user the cascade
+// has already passed, between its first and second page. Every later user
+// shifts down one place in the offset listing; the cascade must still strip
+// the role from every remaining holder before deleting it (#435).
+func TestDeleteRole_ConcurrentUserDeleteBetweenPages(t *testing.T) {
+	tests := []struct {
+		name    string
+		deleted int // index into the sorted users of the user deleted mid-cascade
+	}{
+		{name: "user inside the first page", deleted: 5},
+		{name: "last user of the first page", deleted: deleteRoleCascadePage - 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, users, role, all := newCascadeFixture(t, deleteRoleCascadePage+1)
+			grantRole(t, users, all, role.ID)
+			ctx := context.Background()
+			users.beforeListPastFirstPage = func() {
+				if err := store.DeleteUser(ctx, cascadeTenant, all[tt.deleted].ID); err != nil {
+					t.Errorf("concurrent DeleteUser: %v", err)
+				}
+			}
+
+			if err := store.DeleteRole(ctx, cascadeTenant, role.ID); err != nil {
+				t.Fatalf("DeleteRole: %v", err)
+			}
+
+			if users.beforeListPastFirstPage != nil {
+				t.Fatal("cascade never listed past its first page")
+			}
+			if ids := holderIDs(t, users, role.ID); len(ids) != 0 {
+				t.Errorf("users still hold the deleted role: %v", ids)
+			}
+			assertRoleExists(t, store, role.ID, false)
+		})
+	}
 }
 
 func TestDeleteRole_ListFailureMidCascadeKeepsRoleForRetry(t *testing.T) {

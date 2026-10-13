@@ -424,6 +424,8 @@ func TestDisablingAUserEndsAnIssuedCeremonySession(t *testing.T) {
 // account may do is how a closed hole reopens: the ceremony grant would refuse
 // while the OAuth2 grant kept minting.
 func TestOAuthRefreshGrant_RefusesADisabledUser(t *testing.T) {
+	t.Parallel()
+
 	provider, storage := newCeremonyProvider(t, nil)
 	ctx := context.Background()
 

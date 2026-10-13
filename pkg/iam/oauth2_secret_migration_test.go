@@ -83,6 +83,8 @@ func assertRotationRequired(t *testing.T, ok bool, err error) {
 // PBKDF2 digest is verified, and every other stored form is refused as
 // rotation-required rather than reported as a wrong secret.
 func TestVerifyClientSecret_FormsAndFailures(t *testing.T) {
+	t.Parallel()
+
 	const secret = "sk_correct-horse"
 
 	pbkdf2Hash, err := deriveSecretHash(secret)
@@ -126,12 +128,16 @@ func TestVerifyClientSecret_FormsAndFailures(t *testing.T) {
 // now there is one behaviour, and this test would catch a reintroduced
 // mode-dependent fallback in whichever mode CI happened to run.
 func TestVerifyClientSecret_LegacyRefusedInEveryMode(t *testing.T) {
+	t.Parallel()
+
 	ok, err := verifyClientSecret(legacyBcryptFixture, "sk_legacy-fixture")
 	assertRotationRequired(t, ok, err)
 	t.Logf("refused with fips140=only enabled: %v", fips140.Enabled())
 }
 
 func TestMemoryStorage_ValidateClientSecret_LegacyRefusedAndNotRewritten(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	store := NewMemoryStorage()
 	app := &Application{ClientID: "app_t1_mem", TenantID: "t1", ClientSecret: legacyBcryptFixture}
@@ -154,6 +160,8 @@ func TestMemoryStorage_ValidateClientSecret_LegacyRefusedAndNotRewritten(t *test
 }
 
 func TestMemoryStorage_ValidateClientSecret_WrongSecretIsNotRotationRequired(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	store := NewMemoryStorage()
 	hash, err := deriveSecretHash("sk_right")
@@ -177,6 +185,8 @@ func TestMemoryStorage_ValidateClientSecret_WrongSecretIsNotRotationRequired(t *
 }
 
 func TestMemoryStorage_ValidateClientSecret_PBKDF2NotRewritten(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	store := NewMemoryStorage()
 	const secret = "sk_modern"
@@ -203,6 +213,8 @@ func TestMemoryStorage_ValidateClientSecret_PBKDF2NotRewritten(t *testing.T) {
 }
 
 func TestBackendStorage_ValidateClientSecret_LegacyRefused(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	store := NewBackendStorage(newMockKVStore())
 	app := &Application{ClientID: "app_t1_backend", TenantID: "t1", ClientSecret: legacyBcryptFixture}
@@ -225,6 +237,8 @@ func TestBackendStorage_ValidateClientSecret_LegacyRefused(t *testing.T) {
 // TestBackendStorage_ValidateClientSecret_PBKDF2 confirms the persistent path
 // verifies a modern PBKDF2 secret in every mode.
 func TestBackendStorage_ValidateClientSecret_PBKDF2(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	store := NewBackendStorage(newMockKVStore())
 	const secret = "sk_modern-backend"
@@ -248,6 +262,8 @@ func TestBackendStorage_ValidateClientSecret_PBKDF2(t *testing.T) {
 // returns, or a legacy record becomes an oracle telling an unauthenticated
 // caller that this client ID exists and how its secret is stored.
 func TestValidateClient_DoesNotLeakRotationRequired(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	store := NewMemoryStorage()
 	app := &Application{ClientID: "app_t1_leak", TenantID: "t1", ClientSecret: legacyBcryptFixture}
@@ -272,6 +288,8 @@ func TestValidateClient_DoesNotLeakRotationRequired(t *testing.T) {
 // exported helper: a caller that provisions an application with a secret it
 // already holds gets a digest the normal verification path accepts.
 func TestHashClientSecret_ProducesVerifiableStoredForm(t *testing.T) {
+	t.Parallel()
+
 	const secret = "sk_operator-chosen"
 
 	stored, err := hashChosenSecret(t, secret)
@@ -306,6 +324,8 @@ func TestHashClientSecret_ProducesVerifiableStoredForm(t *testing.T) {
 // TestHashClientSecret_WrongSecretRejected is the error path: a digest must not
 // authenticate anything other than the secret it was derived from.
 func TestHashClientSecret_WrongSecretRejected(t *testing.T) {
+	t.Parallel()
+
 	stored, err := hashChosenSecret(t, "sk_right")
 	if err != nil {
 		t.Fatalf("HashClientSecret: %v", err)
@@ -423,6 +443,8 @@ func TestHashClientSecret_RefusesEmpty(t *testing.T) {
 // even against a record whose stored digest happens to be a digest of "", an
 // empty presented secret never authenticates.
 func TestValidateClientSecret_RefusesEmptyPresentedSecret(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	store := NewMemoryStorage()
 
@@ -563,6 +585,8 @@ func TestMemoryStorage_ValidateClientSecret_CancelledContext(t *testing.T) {
 // the whole suite green, because only the MemoryStorage mirror existed. An
 // empty secret must never authenticate on either store.
 func TestBackendStorage_ValidateClientSecret_RefusesEmptyPresentedSecret(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	store := NewBackendStorage(newMockKVStore())
 
@@ -597,6 +621,8 @@ func TestBackendStorage_ValidateClientSecret_RefusesEmptyPresentedSecret(t *test
 // by passing it through. Each is asserted here by the property, not by
 // inspection (#118, advisory 2).
 func TestOIDCCallSites_DoNotLeakRotationRequired(t *testing.T) {
+	t.Parallel()
+
 	const clientID = "app_tenant-a_legacy"
 	const secret = "sk_legacy-fixture"
 
@@ -670,6 +696,8 @@ func (c *capturingLogger) Warnf(format string, args ...interface{}) {
 // warning fires — and names the client and the remedy — is what stops the
 // signal being silently dropped by a later refactor.
 func TestValidateClientSecret_WarnsRotationRequired(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	for _, tc := range []struct {

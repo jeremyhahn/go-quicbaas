@@ -52,6 +52,8 @@ func grantedAppOptions(name string, scopes []string) RegisterAppOptions {
 // scope claim carries it, so the qrdb RBAC authorizer unions it in and the
 // heartbeat is authorized.
 func TestClientCredentialsGrant_IssuesTheApplicationGrant(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	provider, mgr, storage := newTenantRoutedOIDCProvider(t, tenantID)
 
@@ -103,6 +105,8 @@ func TestClientCredentialsGrant_IssuesTheApplicationGrant(t *testing.T) {
 // refused. Before #653 the token endpoint copied the request into the token,
 // so any client_credentials client could mint itself any permission it named.
 func TestClientCredentialsGrant_RefusesAnUngrantedPrincipal(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 
@@ -145,6 +149,8 @@ func TestClientCredentialsGrant_RefusesAnUngrantedPrincipal(t *testing.T) {
 // bounds the request: an app granted the heartbeat cannot escalate to a
 // task-creating orchestrator principal by naming a broader scope.
 func TestClientCredentialsGrant_RefusesScopeOutsideTheGrant(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 
@@ -326,6 +332,8 @@ func TestPermissionScopes(t *testing.T) {
 // TestAppManager_GrantScopes covers the grant-convergence verb and its error
 // path on an application that does not exist.
 func TestAppManager_GrantScopes(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	_, mgr, storage := newTenantRoutedOIDCProvider(t, tenantID)
 	ctx := tenantctx.WithTenant(context.Background(), tenantID)
@@ -407,6 +415,8 @@ func TestAgentRuntimeGrant_IsTheAdvertisedLeastPrivilegeSet(t *testing.T) {
 // half of the grant. It is the endpoint a current daemon prefers, so a grant
 // that only reached /oauth2/token would leave every mTLS agent refused.
 func TestTokenMTLS_IssuesTheApplicationGrant(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 
@@ -451,6 +461,8 @@ func TestTokenMTLS_IssuesTheApplicationGrant(t *testing.T) {
 // TestTokenMTLS_RefusesAnUngrantedPrincipal is the mTLS negative: a valid
 // certificate proves WHICH principal is asking, never WHAT it may do.
 func TestTokenMTLS_RefusesAnUngrantedPrincipal(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 

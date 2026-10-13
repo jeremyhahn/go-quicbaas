@@ -72,6 +72,43 @@ func TestREST_UpdateUserRefusesAnEmailShapedNameWith400(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "name")
 }
 
+// setupUserHandlerWithoutInviteStore is setupUserReadHandler on a server with
+// no invite store wired.
+func setupUserHandlerWithoutInviteStore(t *testing.T) (*IAMHandler, func()) {
+	t.Helper()
+	handler, _, cleanup := setupUserReadHandler(t)
+	svc, ok := handler.server.service.(*identityOnlyService)
+	require.True(t, ok)
+	svc.InviteStoreOverride = nil
+	return handler, cleanup
+}
+
+// TestREST_PendingCreateRefusesAMalformedEmailWith400WithoutInviteStore: the
+// request is judged before the wiring, so a malformed pending create is a 400
+// on a server with no invite store, not the 503 a well-formed one gets.
+func TestREST_PendingCreateRefusesAMalformedEmailWith400WithoutInviteStore(t *testing.T) {
+	handler, cleanup := setupUserHandlerWithoutInviteStore(t)
+	defer cleanup()
+
+	w := postUser(t, handler, "acme", `{"email":"not-an-email","username":"bob"}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "email", "the error does not name the field")
+}
+
+// TestREST_PendingCreateWithoutInviteStoreIsUnavailable: a well-formed pending
+// create on a server with no invite store is refused as unavailable, the
+// status gRPC reports for it, and writes no user.
+func TestREST_PendingCreateWithoutInviteStoreIsUnavailable(t *testing.T) {
+	handler, cleanup := setupUserHandlerWithoutInviteStore(t)
+	defer cleanup()
+
+	w := postUser(t, handler, "acme", `{"email":"bob@acme.com","username":"bob"}`)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
+
+	w = postUser(t, handler, "acme", `{"email":"bob@acme.com","username":"bob","lifecycle":"active"}`)
+	assert.Equal(t, http.StatusCreated, w.Code, "the refused pending create left a user behind: %s", w.Body.String())
+}
+
 // TestREST_CreateUserStoreFailureStaysServerError proves the fix did not widen
 // 400 to cover everything: a store failure that is not a validation error is
 // still the server's fault.

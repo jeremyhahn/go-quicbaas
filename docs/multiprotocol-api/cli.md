@@ -660,6 +660,7 @@ records what has been exercised, not what ought to work.
 | Command | gRPC | REST | QUIC | Unix | MCP | Tests | Status |
 |---------|------|------|------|------|-----|-------|--------|
 | `iam tenant create` | Y | Y | Y | - | Y | B | Complete |
+| `iam tenant provision` | Y | Y | - | Y | - | U | Complete |
 | `iam tenant get` | Y | Y | Y | - | Y | B | Complete |
 | `iam tenant update` | Y | Y | Y | - | Y | B | Complete |
 | `iam tenant delete` | Y | Y | Y | - | Y | B | Complete |

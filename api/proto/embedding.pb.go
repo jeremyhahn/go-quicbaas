@@ -13,6 +13,7 @@
 package proto
 
 import (
+	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
@@ -1621,7 +1622,7 @@ var File_api_proto_embedding_proto protoreflect.FileDescriptor
 
 const file_api_proto_embedding_proto_rawDesc = "" +
 	"\n" +
-	"\x19api/proto/embedding.proto\x12\x15quicbaas.embedding.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\"\x87\x04\n" +
+	"\x19api/proto/embedding.proto\x12\x15quicbaas.embedding.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x87\x04\n" +
 	"\x11EmbeddingMetadata\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x12D\n" +
 	"\bprovider\x18\x02 \x01(\x0e2(.quicbaas.embedding.v1.EmbeddingProviderR\bprovider\x12\x1e\n" +
@@ -1764,15 +1765,15 @@ const file_api_proto_embedding_proto_rawDesc = "" +
 	"\x1aEMBEDDING_STATUS_AVAILABLE\x10\x01\x12 \n" +
 	"\x1cEMBEDDING_STATUS_UNAVAILABLE\x10\x02\x12!\n" +
 	"\x1dEMBEDDING_STATUS_RATE_LIMITED\x10\x03\x12\x1a\n" +
-	"\x16EMBEDDING_STATUS_ERROR\x10\x042\xc5\a\n" +
-	"\x10EmbeddingService\x12v\n" +
-	"\x11EmbeddingGenerate\x12/.quicbaas.embedding.v1.EmbeddingGenerateRequest\x1a0.quicbaas.embedding.v1.EmbeddingGenerateResponse\x12\x85\x01\n" +
-	"\x16EmbeddingBatchGenerate\x124.quicbaas.embedding.v1.EmbeddingBatchGenerateRequest\x1a5.quicbaas.embedding.v1.EmbeddingBatchGenerateResponse\x12\x85\x01\n" +
-	"\x16EmbeddingListProviders\x124.quicbaas.embedding.v1.EmbeddingListProvidersRequest\x1a5.quicbaas.embedding.v1.EmbeddingListProvidersResponse\x12\x8b\x01\n" +
-	"\x18EmbeddingGetProviderInfo\x126.quicbaas.embedding.v1.EmbeddingGetProviderInfoRequest\x1a7.quicbaas.embedding.v1.EmbeddingGetProviderInfoResponse\x12\x94\x01\n" +
-	"\x1bEmbeddingSetDefaultProvider\x129.quicbaas.embedding.v1.EmbeddingSetDefaultProviderRequest\x1a:.quicbaas.embedding.v1.EmbeddingSetDefaultProviderResponse\x12\x85\x01\n" +
-	"\x16EmbeddingGetCacheStats\x124.quicbaas.embedding.v1.EmbeddingGetCacheStatsRequest\x1a5.quicbaas.embedding.v1.EmbeddingGetCacheStatsResponse\x12|\n" +
-	"\x13EmbeddingClearCache\x121.quicbaas.embedding.v1.EmbeddingClearCacheRequest\x1a2.quicbaas.embedding.v1.EmbeddingClearCacheResponseB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\x16EMBEDDING_STATUS_ERROR\x10\x042\xf2\b\n" +
+	"\x10EmbeddingService\x12\x8b\x01\n" +
+	"\x11EmbeddingGenerate\x12/.quicbaas.embedding.v1.EmbeddingGenerateRequest\x1a0.quicbaas.embedding.v1.EmbeddingGenerateResponse\"\x13\xc2\xf3\x18\x0fembedding:embed\x12\x9a\x01\n" +
+	"\x16EmbeddingBatchGenerate\x124.quicbaas.embedding.v1.EmbeddingBatchGenerateRequest\x1a5.quicbaas.embedding.v1.EmbeddingBatchGenerateResponse\"\x13\xc2\xf3\x18\x0fembedding:embed\x12\xa0\x01\n" +
+	"\x16EmbeddingListProviders\x124.quicbaas.embedding.v1.EmbeddingListProvidersRequest\x1a5.quicbaas.embedding.v1.EmbeddingListProvidersResponse\"\x19\xc2\xf3\x18\x15embedding:list_models\x12\xa6\x01\n" +
+	"\x18EmbeddingGetProviderInfo\x126.quicbaas.embedding.v1.EmbeddingGetProviderInfoRequest\x1a7.quicbaas.embedding.v1.EmbeddingGetProviderInfoResponse\"\x19\xc2\xf3\x18\x15embedding:list_models\x12\xaf\x01\n" +
+	"\x1bEmbeddingSetDefaultProvider\x129.quicbaas.embedding.v1.EmbeddingSetDefaultProviderRequest\x1a:.quicbaas.embedding.v1.EmbeddingSetDefaultProviderResponse\"\x19\xc2\xf3\x18\x15embedding:list_models\x12\xa0\x01\n" +
+	"\x16EmbeddingGetCacheStats\x124.quicbaas.embedding.v1.EmbeddingGetCacheStatsRequest\x1a5.quicbaas.embedding.v1.EmbeddingGetCacheStatsResponse\"\x19\xc2\xf3\x18\x15embedding:list_models\x12\x91\x01\n" +
+	"\x13EmbeddingClearCache\x121.quicbaas.embedding.v1.EmbeddingClearCacheRequest\x1a2.quicbaas.embedding.v1.EmbeddingClearCacheResponse\"\x13\xc2\xf3\x18\x0fembedding:embedB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_embedding_proto_rawDescOnce sync.Once

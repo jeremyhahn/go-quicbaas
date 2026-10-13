@@ -240,15 +240,25 @@ func contributeFilePermissions(fd protoreflect.FileDescriptor, set map[string]st
 	for i := 0; i < services.Len(); i++ {
 		methods := services.Get(i).Methods()
 		for j := 0; j < methods.Len(); j++ {
-			opts, ok := methods.Get(j).Options().(*descriptorpb.MethodOptions)
-			if !ok || !proto.HasExtension(opts, qrdbv1.E_Permission) {
-				continue
-			}
-			perm, ok := proto.GetExtension(opts, qrdbv1.E_Permission).(string)
-			if !ok || perm == "" || qrdbsdk.Permission(perm) == qrdbsdk.PermissionIdentityGated {
+			perm := methodPermission(methods.Get(j))
+			if perm == "" || qrdbsdk.Permission(perm) == qrdbsdk.PermissionIdentityGated {
 				continue
 			}
 			set[perm] = struct{}{}
 		}
 	}
+}
+
+// methodPermission returns the (qrdb.v1.permission) option a method
+// declares, or "" when it declares none.
+func methodPermission(method protoreflect.MethodDescriptor) string {
+	opts, ok := method.Options().(*descriptorpb.MethodOptions)
+	if !ok || !proto.HasExtension(opts, qrdbv1.E_Permission) {
+		return ""
+	}
+	perm, ok := proto.GetExtension(opts, qrdbv1.E_Permission).(string)
+	if !ok {
+		return ""
+	}
+	return perm
 }

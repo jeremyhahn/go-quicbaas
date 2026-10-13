@@ -103,6 +103,14 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 		{"/quicbaas.project.v1.ProjectService/GetProjectByName", "project", "read"},
 		{"/quicbaas.ollama.v1.OllamaService/Embed", "ollama", "embed"},
 		{"/quicbaas.ollama.v1.OllamaService/GetModelInfo", "ollama", "model_info"},
+		// Embedding mirrors REST /api/v1/embedding and the MCP embedding tools.
+		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingGenerate", "embedding", "embed"},
+		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingBatchGenerate", "embedding", "embed"},
+		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingClearCache", "embedding", "embed"},
+		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingListProviders", "embedding", "list_models"},
+		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingGetProviderInfo", "embedding", "list_models"},
+		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingSetDefaultProvider", "embedding", "list_models"},
+		{"/quicbaas.embedding.v1.EmbeddingService/EmbeddingGetCacheStats", "embedding", "list_models"},
 		// Per-tenant barrier (quicbaas.tenant.v1.TenantBarrier).
 		{"/quicbaas.tenant.v1.TenantBarrier/Init", "tenant_barrier", "init"},
 		{"/quicbaas.tenant.v1.TenantBarrier/Unseal", "tenant_barrier", "unseal"},
@@ -120,9 +128,8 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 
 func TestGRPCResourceAndAction_Unmapped(t *testing.T) {
 	// Surfaces with no qrdb permission family must be unmapped (default-deny).
-	// embedding, agent runtime, and RAG remain unregistered after Stage 0.5.
+	// Agent runtime and RAG remain unregistered after Stage 0.5.
 	for _, m := range []string{
-		"/quicbaas.embedding.v1.EmbeddingService/Generate",
 		"/quicbaas.fleet.v1.FleetRuntime/DoThing",
 		"/quicbaas.rag.v1.RAGService/Query",
 		"/quicbaas.unknown.v1.Mystery/DoThing",

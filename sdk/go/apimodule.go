@@ -87,11 +87,14 @@ var WithServiceModuleNodeInfo = apimodule.WithNodeInfo
 //     no-op. go-qrdb's QUIC transport is a frame protocol, so RegisterHTTP does
 //     not reach it; instead the QUIC server hands RegisterQUIC a registrar that
 //     projects each unary method of a gRPC service descriptor onto its frames,
-//     so a module usually implements it by delegating to RegisterGRPC. Every
-//     projected method must declare a (qrdb.v1.permission) option: one without
-//     panics the QUIC server at construction (its default-deny assertion),
-//     except a method the module also lists as public, which QUIC skips because
-//     it has no unauthenticated path. Streaming methods are not projected.
+//     so a module usually implements it by delegating to RegisterGRPC, as
+//     quicbaas's own API module does (less its EmbeddingService, which
+//     declares no permissions). Every projected method must declare a
+//     (qrdb.v1.permission) option: one without panics the QUIC server at
+//     construction (its default-deny assertion), except a method the module
+//     also lists as public, which QUIC skips because it has no unauthenticated
+//     path (a public method that does declare a permission is projected).
+//     Streaming methods are not projected.
 //   - The embedded (in-process) transport. That surface is each capability
 //     owner's own SDK; a host calls its module's Go API directly in-process
 //     instead of routing through the node.

@@ -2147,6 +2147,8 @@ func TestBackendStorage_GetAppByTenant(t *testing.T) {
 // =============================================================================
 
 func TestBackendStorage_ValidateClientSecret(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	kv := newMockKVStore91()
 	storage := NewBackendStorage(kv)
@@ -3163,6 +3165,8 @@ func TestBackendStorage_GetToken_NotFound(t *testing.T) {
 
 // Test ValidateClientSecret for non-existent app
 func TestBackendStorage_ValidateClientSecret_NotFound(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	kv := newMockKVStore91()
 	storage := NewBackendStorage(kv)

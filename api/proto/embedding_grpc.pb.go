@@ -41,6 +41,11 @@ const (
 // EmbeddingService provides semantic embedding generation and management.
 // It supports multiple embedding providers (Voyage AI, OpenAI, Ollama, LM Studio)
 // with intelligent caching, batch processing, and provider fallback capabilities.
+//
+// Permissions mirror the REST rules for /api/v1/embedding and the MCP
+// embedding tools: generation and cache invalidation are embedding:embed;
+// provider inspection, default selection and cache statistics are
+// embedding:list_models.
 type EmbeddingServiceClient interface {
 	// EmbeddingGenerate generates an embedding vector for a single text.
 	EmbeddingGenerate(ctx context.Context, in *EmbeddingGenerateRequest, opts ...grpc.CallOption) (*EmbeddingGenerateResponse, error)
@@ -143,6 +148,11 @@ func (c *embeddingServiceClient) EmbeddingClearCache(ctx context.Context, in *Em
 // EmbeddingService provides semantic embedding generation and management.
 // It supports multiple embedding providers (Voyage AI, OpenAI, Ollama, LM Studio)
 // with intelligent caching, batch processing, and provider fallback capabilities.
+//
+// Permissions mirror the REST rules for /api/v1/embedding and the MCP
+// embedding tools: generation and cache invalidation are embedding:embed;
+// provider inspection, default selection and cache statistics are
+// embedding:list_models.
 type EmbeddingServiceServer interface {
 	// EmbeddingGenerate generates an embedding vector for a single text.
 	EmbeddingGenerate(context.Context, *EmbeddingGenerateRequest) (*EmbeddingGenerateResponse, error)

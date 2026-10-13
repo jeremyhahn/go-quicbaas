@@ -113,6 +113,12 @@ func InviteURL(origin, tenantID, token string) string {
 // is returned. A rollback that itself fails is reported as *UserRollbackError.
 func (s *IdentityStore) CreateInvitedUser(ctx context.Context, tenantID string, opts CreateUserOptions,
 	invites InviteStore, ttl time.Duration) (*User, string, *InviteRecord, error) {
+	// The request is judged before the server's wiring: a malformed request
+	// is refused as malformed, never as "try again later" (#335).
+	if _, err := validateCreateUserOptions(tenantID, opts); err != nil {
+		return nil, "", nil, err
+	}
+
 	pending := opts.EffectiveLifecycle() == LifecyclePending
 	// Checked before any write: a pending user with no invite cannot be
 	// activated, and a retry cannot repair it because the identity exists.

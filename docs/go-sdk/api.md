@@ -2636,7 +2636,9 @@ MCP**. Two transports need more:
   of the gRPC descriptors registered there onto its frames, so a module usually
   delegates to `RegisterGRPC`. Every projected method needs a
   `(qrdb.v1.permission)` option or QUIC server construction panics; methods the
-  module lists as public are skipped, and streaming methods are not projected.
+  module lists as public are skipped unless they declare a permission, and
+  streaming methods are not projected. quicbaas's own API module registers its
+  `RegisterGRPC` services on `RegisterQUIC`.
 - **The embedded (in-process) transport** — that surface is each capability
   owner's own SDK. A host calls its module's Go API directly in-process
   instead of routing through the node.

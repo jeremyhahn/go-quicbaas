@@ -55,7 +55,8 @@ wrote" question in a multi-tenant deployment is this flag.
 When public registration is off, a system admin onboards a tenant by
 provisioning it. The tenant and its first admin are created in one call
 (`POST /api/v1/tenants/{tenant_id}/provision`, or `TenantClient.Provision` in
-the SDK). There is no CLI command for this yet.
+the SDK, or `quicbaas iam tenant provision` on the command line; see
+[cli.md](cli.md)).
 
 Provisioning accepts only `"isolation_type": "prefix"` for now: the tenant
 shares the system barrier and its IAM is readable as soon as it exists. An

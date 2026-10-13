@@ -321,9 +321,11 @@ func noCertTLSConfig(t *testing.T) *tls.Config {
 
 // newLoginClient builds an SDK Client for the given transport that presents the
 // supplied tls.Config (with or without a client cert). The address is resolved
-// from the standard integration helpers.
-func newLoginClient(t *testing.T, tr loginTransport, tlsCfg *tls.Config) (quicbaas.Client, error) {
+// from the standard integration helpers; extra options (e.g. WithTenant) are
+// applied after the defaults.
+func newLoginClient(t *testing.T, tr loginTransport, tlsCfg *tls.Config, extra ...quicbaas.Option) (quicbaas.Client, error) {
 	t.Helper()
+	opts := append([]quicbaas.Option{quicbaas.WithTimeout(30 * time.Second)}, extra...)
 	switch tr {
 	case transportREST:
 		endpoints := helpers.GetRESTEndpoints()
@@ -331,17 +333,14 @@ func newLoginClient(t *testing.T, tr loginTransport, tlsCfg *tls.Config) (quicba
 			return nil, fmt.Errorf("login-test: no REST endpoints")
 		}
 		return quicbaas.NewClient(endpoints[0],
-			quicbaas.WithREST(),
-			quicbaas.WithTLSConfig(tlsCfg),
-			quicbaas.WithTimeout(30*time.Second))
+			append(opts, quicbaas.WithREST(), quicbaas.WithTLSConfig(tlsCfg))...)
 	case transportGRPC:
 		endpoints := helpers.GetClusterEndpoints()
 		if len(endpoints) == 0 {
 			return nil, fmt.Errorf("login-test: no gRPC endpoints")
 		}
 		return quicbaas.NewClient(endpoints[0],
-			quicbaas.WithTLSConfig(tlsCfg),
-			quicbaas.WithTimeout(30*time.Second))
+			append(opts, quicbaas.WithTLSConfig(tlsCfg))...)
 	case transportQUIC:
 		endpoints := helpers.GetQUICEndpoints()
 		if len(endpoints) == 0 {
@@ -350,9 +349,7 @@ func newLoginClient(t *testing.T, tr loginTransport, tlsCfg *tls.Config) (quicba
 		quicCfg := tlsCfg.Clone()
 		quicCfg.NextProtos = []string{"quicbaas-quic"}
 		return quicbaas.NewClient(endpoints[0],
-			quicbaas.WithQUIC(),
-			quicbaas.WithTLSConfig(quicCfg),
-			quicbaas.WithTimeout(30*time.Second))
+			append(opts, quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg))...)
 	case transportUnix:
 		socket := helpers.GetUnixSocketPath()
 		if socket == "" {
@@ -361,9 +358,7 @@ func newLoginClient(t *testing.T, tr loginTransport, tlsCfg *tls.Config) (quicba
 		unixCfg := tlsCfg.Clone()
 		unixCfg.ServerName = "localhost"
 		return quicbaas.NewClient("unix://"+socket,
-			quicbaas.WithUnix(socket),
-			quicbaas.WithTLSConfig(unixCfg),
-			quicbaas.WithTimeout(30*time.Second))
+			append(opts, quicbaas.WithUnix(socket), quicbaas.WithTLSConfig(unixCfg))...)
 	case transportMCP:
 		endpoints := helpers.GetMCPEndpoints()
 		if len(endpoints) == 0 {
@@ -375,9 +370,7 @@ func newLoginClient(t *testing.T, tr loginTransport, tlsCfg *tls.Config) (quicba
 		// login tools (quicbaas_login_begin/finish) are public, so no bearer
 		// is required to drive the ceremony.
 		return quicbaas.NewClient(endpoints[0],
-			quicbaas.WithMCP(),
-			quicbaas.WithTLSConfig(tlsCfg),
-			quicbaas.WithTimeout(30*time.Second))
+			append(opts, quicbaas.WithMCP(), quicbaas.WithTLSConfig(tlsCfg))...)
 	default:
 		return nil, fmt.Errorf("login-test: unknown transport %q", tr)
 	}

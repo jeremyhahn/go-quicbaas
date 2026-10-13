@@ -16,6 +16,8 @@ package qrdbadapter
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -505,20 +507,126 @@ func TestListUsers_CoreErrorIsSurfaced(t *testing.T) {
 	}
 }
 
-func TestPageFromOffset(t *testing.T) {
+// seedListUsers seeds n users into the tenant, named in listing order.
+func seedListUsers(svc *fakeUserServicer, n int, roleIDs ...string) []string {
+	names := make([]string, n)
+	for i := range names {
+		names[i] = fmt.Sprintf("user-%04d@acme.test", i)
+		svc.seed(&qrdbsdk.User{Username: names[i], Email: names[i], TenantID: testTenant, RoleIDs: roleIDs})
+	}
+	return names
+}
+
+func usernames(users []*iam.User) []string {
+	out := make([]string, len(users))
+	for i, u := range users {
+		out[i] = u.Username
+	}
+	return out
+}
+
+// TestListUsers_HonoursExactOffsets is a regression against the old offset to
+// page translation (offset/limit + 1), which answered an offset that is not a
+// multiple of the limit with the page holding it rather than a window starting
+// at it: offset 255 with limit 256 returned users 0..255 again.
+func TestListUsers_HonoursExactOffsets(t *testing.T) {
 	for _, tc := range []struct {
-		offset, limit, want int
+		name          string
+		total         int
+		offset, limit int
+		from, to      int
 	}{
-		{0, 0, 1},
-		{0, 10, 1},
-		{10, 10, 2},
-		{25, 10, 3},
-		{5, 0, 1},
-		{-1, 10, 1},
+		{name: "first page", total: 600, offset: 0, limit: 256, from: 0, to: 256},
+		{name: "aligned offset", total: 600, offset: 256, limit: 256, from: 256, to: 512},
+		{name: "unaligned offset", total: 600, offset: 255, limit: 256, from: 255, to: 511},
+		{name: "unaligned offset reaching a short last page", total: 300, offset: 255, limit: 256, from: 255, to: 300},
+		{name: "offset at the end", total: 600, offset: 600, limit: 256, from: 0, to: 0},
+		{name: "unaligned offset past the end", total: 600, offset: 700, limit: 7, from: 0, to: 0},
+		{name: "limit zero lists the store's default page", total: 150, offset: 40, limit: 0, from: 0, to: fakeDefaultPageSize},
 	} {
-		if got := pageFromOffset(tc.offset, tc.limit); got != tc.want {
-			t.Errorf("pageFromOffset(%d,%d) = %d, want %d", tc.offset, tc.limit, got, tc.want)
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeUserServicer()
+			names := seedListUsers(svc, tc.total)
+			store := newTestUserStorage(t, svc)
+
+			users, err := store.ListUsers(context.Background(), testTenant, iam.ListOptions{Offset: tc.offset, Limit: tc.limit})
+			if err != nil {
+				t.Fatalf("ListUsers: %v", err)
+			}
+			if got, want := usernames(users), names[tc.from:tc.to]; !slices.Equal(got, want) {
+				t.Fatalf("ListUsers(offset %d, limit %d) returned %d users starting %v, want %d starting %v",
+					tc.offset, tc.limit, len(got), got[:min(1, len(got))], len(want), want[:min(1, len(want))])
+			}
+		})
+	}
+}
+
+// TestListUsers_SecondPageErrorIsSurfaced proves a failure reading the page
+// after the one holding an unaligned offset is mapped and returned, not
+// dropped in favour of a short window.
+func TestListUsers_SecondPageErrorIsSurfaced(t *testing.T) {
+	svc := &failingPageServicer{fakeUserServicer: newFakeUserServicer(), failPage: 2}
+	seedListUsers(svc.fakeUserServicer, 30)
+	store := newTestUserStorage(t, svc)
+
+	if _, err := store.ListUsers(context.Background(), testTenant, iam.ListOptions{Offset: 5, Limit: 10}); !errors.Is(err, errInjected) {
+		t.Fatalf("err = %v, want the second page's failure surfaced", err)
+	}
+}
+
+// failingPageServicer fails one page of ListUsers and serves every other call
+// from the embedded fake.
+type failingPageServicer struct {
+	*fakeUserServicer
+	failPage int
+}
+
+func (f *failingPageServicer) ListUsers(ctx context.Context, req *qrdbsdk.ListUsersRequest) (*qrdbsdk.ListUsersResponse, error) {
+	if req.Page == f.failPage {
+		return nil, errInjected
+	}
+	return f.fakeUserServicer.ListUsers(ctx, req)
+}
+
+// TestDeleteRole_StripsEveryHolderOverQRDBAdapter is the regression for the
+// cascade looping forever over this adapter: DeleteRole re-reads the last user
+// of each page as an anchor at an unaligned offset, which the old page
+// translation answered with the previous page, so the anchor never matched and
+// the scan restarted until cancelled. The holders span more than two cascade
+// pages (deleteRoleCascadePage is 256), and the deadline turns a loop into a
+// failure rather than a hung test.
+func TestDeleteRole_StripsEveryHolderOverQRDBAdapter(t *testing.T) {
+	const (
+		holders = 600
+		roleID  = "role-cascade"
+		keepID  = "role-keep"
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	svc := newFakeUserServicer()
+	seedListUsers(svc, holders, keepID, roleID)
+	users := newTestUserStorage(t, svc)
+	roles := iam.NewMemoryStorage()
+	if err := roles.CreateRole(ctx, &iam.Role{ID: roleID, TenantID: testTenant, Name: "cascade"}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	store := iam.NewIdentityStore(iam.IdentityStoreOptions{UserStorage: users, RoleStorage: roles})
+
+	if err := store.DeleteRole(ctx, testTenant, roleID); err != nil {
+		t.Fatalf("DeleteRole: %v", err)
+	}
+
+	for _, u := range svc.users {
+		if slices.Contains(u.RoleIDs, roleID) {
+			t.Fatalf("user %s still holds the deleted role", u.Username)
 		}
+		if !slices.Contains(u.RoleIDs, keepID) {
+			t.Fatalf("user %s lost a role the cascade must leave alone", u.Username)
+		}
+	}
+	if _, err := roles.GetRole(ctx, testTenant, roleID); !errors.Is(err, iam.ErrRoleNotFound) {
+		t.Fatalf("GetRole after DeleteRole: err = %v, want iam.ErrRoleNotFound", err)
 	}
 }
 

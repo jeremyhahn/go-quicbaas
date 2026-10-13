@@ -70,6 +70,8 @@ func issueBearerToken(t *testing.T, provider *OIDCProvider, appStorage *mockAppS
 
 // (a) cnf-bound token + valid DPoP proof over the request => allowed.
 func TestValidateAccessTokenWithDPoP_BoundValidProof(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	token, dpopKey := issueBoundToken(t, provider, appStorage, "keys.read")
 
@@ -92,6 +94,8 @@ func TestValidateAccessTokenWithDPoP_BoundValidProof(t *testing.T) {
 
 // (b) cnf-bound token presented as a bearer (no proof) => rejected (fail closed).
 func TestValidateAccessTokenWithDPoP_BoundMissingProof(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	token, _ := issueBoundToken(t, provider, appStorage, "keys.read")
 
@@ -107,6 +111,8 @@ func TestValidateAccessTokenWithDPoP_BoundMissingProof(t *testing.T) {
 
 // (c) cnf-bound token + proof with the wrong htu => rejected.
 func TestValidateAccessTokenWithDPoP_WrongHTU(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	token, dpopKey := issueBoundToken(t, provider, appStorage)
 
@@ -126,6 +132,8 @@ func TestValidateAccessTokenWithDPoP_WrongHTU(t *testing.T) {
 
 // (c) cnf-bound token + proof with the wrong htm => rejected.
 func TestValidateAccessTokenWithDPoP_WrongHTM(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	token, dpopKey := issueBoundToken(t, provider, appStorage)
 
@@ -145,6 +153,8 @@ func TestValidateAccessTokenWithDPoP_WrongHTM(t *testing.T) {
 
 // (c) cnf-bound token + proof from a DIFFERENT key (wrong jkt) => rejected.
 func TestValidateAccessTokenWithDPoP_WrongKey(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	token, _ := issueBoundToken(t, provider, appStorage)
 
@@ -165,6 +175,8 @@ func TestValidateAccessTokenWithDPoP_WrongKey(t *testing.T) {
 
 // (d) a replayed proof jti (same proof validated twice) => rejected.
 func TestValidateAccessTokenWithDPoP_ReplayRejected(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	token, dpopKey := issueBoundToken(t, provider, appStorage)
 
@@ -188,6 +200,8 @@ func TestValidateAccessTokenWithDPoP_ReplayRejected(t *testing.T) {
 // (e) plain bearer token (no cnf) => allowed without a proof, exactly as
 // ValidateAccessToken.
 func TestValidateAccessTokenWithDPoP_PlainBearer(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	token := issueBearerToken(t, provider, appStorage, "keys.read")
 

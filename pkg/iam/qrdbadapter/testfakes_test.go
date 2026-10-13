@@ -14,7 +14,9 @@
 package qrdbadapter
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -27,6 +29,10 @@ import (
 // WithoutEmailLoginKey, Lifecycle moves are checked and Enabled is DERIVED from
 // the result rather than written.
 // -----------------------------------------------------------------------------
+
+// fakeDefaultPageSize mirrors the qrdb user store's page size for a request
+// that names none.
+const fakeDefaultPageSize = 100
 
 type fakeUserServicer struct {
 	users  map[uint64]*qrdbsdk.User
@@ -231,17 +237,32 @@ func (f *fakeUserServicer) DeleteUser(_ context.Context, id uint64) error {
 	return nil
 }
 
-func (f *fakeUserServicer) ListUsers(_ context.Context, req *qrdbsdk.ListUsersRequest) (*qrdbsdk.ListUsersResponse, error) {
+// ListUsers pages the tenant's users the way the qrdb store does: in a stable
+// order, by 1-based Page of PageSize users, PageSize defaulting to
+// fakeDefaultPageSize. It honours ctx so a caller that loops on it ends at its
+// deadline instead of hanging the test.
+func (f *fakeUserServicer) ListUsers(ctx context.Context, req *qrdbsdk.ListUsersRequest) (*qrdbsdk.ListUsersResponse, error) {
 	if f.forceErr != nil {
 		return nil, f.forceErr
 	}
-	out := make([]*qrdbsdk.User, 0)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	all := make([]*qrdbsdk.User, 0)
 	for _, u := range f.users {
 		if u.TenantID == req.TenantID {
-			out = append(out, cloneUser(u))
+			all = append(all, cloneUser(u))
 		}
 	}
-	return &qrdbsdk.ListUsersResponse{Users: out, Total: len(out)}, nil
+	slices.SortFunc(all, func(a, b *qrdbsdk.User) int { return cmp.Compare(a.ID, b.ID) })
+
+	page, size := max(req.Page, 1), req.PageSize
+	if size <= 0 {
+		size = fakeDefaultPageSize
+	}
+	start := min((page-1)*size, len(all))
+	end := min(start+size, len(all))
+	return &qrdbsdk.ListUsersResponse{Users: all[start:end], Total: len(all), HasMore: end < len(all)}, nil
 }
 
 func (f *fakeUserServicer) EnableUser(_ context.Context, _ uint64) error  { return nil }

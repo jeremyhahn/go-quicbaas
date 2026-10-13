@@ -1421,6 +1421,8 @@ func TestSessionManager_ValidateSession_IdleSessionFinal(t *testing.T) {
 // =============================================================================
 
 func TestOIDCProvider_Token_ClientCredentialsGrantFinal(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	// Create RSA key for signing
@@ -1505,6 +1507,8 @@ func TestOIDCProvider_Token_ClientCredentialsGrantFinal(t *testing.T) {
 }
 
 func TestOIDCProvider_Token_ClientCredentialsGrant_InvalidClientFinal(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -1551,6 +1555,8 @@ func TestOIDCProvider_Token_ClientCredentialsGrant_InvalidClientFinal(t *testing
 }
 
 func TestOIDCProvider_Token_ClientCredentialsGrant_GrantNotAllowedFinal(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -2072,6 +2078,8 @@ func TestBackendStorage_ListAppsFinal(t *testing.T) {
 }
 
 func TestBackendStorage_ValidateClientSecretFinal(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	kv := newMockKVStore()

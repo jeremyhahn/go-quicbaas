@@ -114,6 +114,8 @@ func newClientAuthLogFixture(t *testing.T) (*BackendStorage, *captureLogger, str
 // TestValidateClientSecret_LogsWhichCheckRefused is the regression: each
 // distinct refusal names itself in the operator log.
 func TestValidateClientSecret_LogsWhichCheckRefused(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name       string
 		clientID   string
@@ -158,6 +160,8 @@ func TestValidateClientSecret_LogsWhichCheckRefused(t *testing.T) {
 // refusal shape: the record resolved, but it belongs to a different tenant than
 // the request was scoped to.
 func TestValidateClientSecret_LogsTheTenantMismatch(t *testing.T) {
+	t.Parallel()
+
 	storage, log, secret := newClientAuthLogFixture(t)
 
 	// The record resolves through the legacy global key under a foreign
@@ -174,6 +178,8 @@ func TestValidateClientSecret_LogsTheTenantMismatch(t *testing.T) {
 // TestValidateClientSecret_NeverLogsSecretMaterial is the error-handling half:
 // the diagnostic must not become the credential leak it was added to avoid.
 func TestValidateClientSecret_NeverLogsSecretMaterial(t *testing.T) {
+	t.Parallel()
+
 	storage, log, secret := newClientAuthLogFixture(t)
 	ctx := tenantctx.WithTenant(context.Background(), "automatethethings")
 

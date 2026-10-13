@@ -321,13 +321,7 @@ var errInviteStoreNotWired = dberrors.Wrap(iam.ErrInviteStoreUnavailable, dberro
 // after handler construction (SetIAMProvider), so it is resolved lazily per
 // request rather than captured on the handler. A nil store fails closed.
 func (h *IAMHandler) getInviteStore(ctx context.Context) (iam.InviteStore, error) {
-	svc, ok := h.server.service.(interface {
-		GetInviteStore(ctx context.Context) (iam.InviteStore, error)
-	})
-	if !ok {
-		return nil, errInviteStoreNotWired
-	}
-	store, err := svc.GetInviteStore(ctx)
+	store, err := h.lookupInviteStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -335,6 +329,19 @@ func (h *IAMHandler) getInviteStore(ctx context.Context) (iam.InviteStore, error
 		return nil, errInviteStoreNotWired
 	}
 	return store, nil
+}
+
+// lookupInviteStore is getInviteStore without the wiring check: it returns a
+// nil store when none is wired. User create uses it to leave that judgement
+// to CreateInvitedUser, which validates the request first (#335).
+func (h *IAMHandler) lookupInviteStore(ctx context.Context) (iam.InviteStore, error) {
+	svc, ok := h.server.service.(interface {
+		GetInviteStore(ctx context.Context) (iam.InviteStore, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return svc.GetInviteStore(ctx)
 }
 
 // getIdentityStore is a helper that retrieves the IdentityStore from the service.

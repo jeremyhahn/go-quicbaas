@@ -95,6 +95,8 @@ func TestAgentClientID_DegenerateIdentityNamesNoTenant(t *testing.T) {
 // seam: a repeat enrollment returns the SAME client with a usable secret, and
 // leaves no orphan behind.
 func TestRegisterAgentApp_IsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	mgr, storage := newAgentAppManager(t, tenantID)
 

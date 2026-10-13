@@ -1086,6 +1086,8 @@ func TestAuditPolicy_Validate(t *testing.T) {
 // =============================================================================
 
 func TestAppManager_ValidateClientCredentials(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -1222,6 +1224,8 @@ func TestValidateRedirectURI(t *testing.T) {
 // =============================================================================
 
 func TestAppManager_UpdateApp_EdgeCases(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -1275,6 +1279,8 @@ func TestAppManager_UpdateApp_EdgeCases(t *testing.T) {
 // =============================================================================
 
 func TestAppManager_DeleteApp_EdgeCases(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -1308,6 +1314,8 @@ func TestAppManager_DeleteApp_EdgeCases(t *testing.T) {
 // =============================================================================
 
 func TestAppManager_RotateSecret_EdgeCases(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 

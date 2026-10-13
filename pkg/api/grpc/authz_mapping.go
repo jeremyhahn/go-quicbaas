@@ -26,8 +26,7 @@ import (
 // declared public in publicGRPCMethods. Any new service registered by the
 // broker MUST be added here.
 //
-// Services whose methods are intentionally unmapped (embedding, RAG, agent
-// runtime) are NOT listed here; they are denied by default-deny and their
+// Services whose methods are intentionally unmapped (RAG, agent runtime) are NOT listed here; they are denied by default-deny and their
 // absence from this slice documents that posture explicitly.
 //
 // The qrdb.v1 composition services (qrdb.v1.QRDBService and
@@ -69,6 +68,7 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.AccountService_ServiceDesc,
 	pb.SSHService_ServiceDesc,
 	pb.OllamaService_ServiceDesc,
+	pb.EmbeddingService_ServiceDesc,
 }
 
 // This file maps gRPC FullMethod names onto qrdb-canonical (resource, action)
@@ -91,8 +91,13 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 // store (parameters), dynamic_secrets, project, ollama. Before Stage 0.5 these
 // were unmapped and blanket-denied under RequireAuthz default-deny.
 //
+// EmbeddingService maps onto qrdb's embedding family exactly as the REST
+// /api/v1/embedding rules and the MCP embedding tools do: generation and cache
+// invalidation are embedding:embed; provider inspection, default selection and
+// cache statistics are embedding:list_models.
+//
 // Surfaces that the qrdb permission registry still does NOT define a resource
-// family for — embedding, agent runtime, RAG — remain intentionally absent and
+// family for — agent runtime, RAG — remain intentionally absent and
 // denied under RequireAuthz default-deny. Granting them requires first
 // registering a qrdb permission family for the surface; inventing a name here
 // would not resolve against the PDP.
@@ -882,6 +887,15 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.ollama.v1.OllamaService/Embed":          {"ollama", "embed"},
 	"/quicbaas.ollama.v1.OllamaService/EmbedBatch":     {"ollama", "embed"},
 	"/quicbaas.ollama.v1.OllamaService/EmbedWithModel": {"ollama", "embed"},
+
+	// ---- quicbaas.embedding.v1.EmbeddingService ----
+	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingGenerate":           {"embedding", "embed"},
+	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingBatchGenerate":      {"embedding", "embed"},
+	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingClearCache":         {"embedding", "embed"},
+	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingListProviders":      {"embedding", "list_models"},
+	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingGetProviderInfo":    {"embedding", "list_models"},
+	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingSetDefaultProvider": {"embedding", "list_models"},
+	"/quicbaas.embedding.v1.EmbeddingService/EmbeddingGetCacheStats":      {"embedding", "list_models"},
 
 	// ==== qrdb.v1 composition surface ====
 	//

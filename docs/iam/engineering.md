@@ -3340,7 +3340,9 @@ if iam.IsRoleNotFound(err) {
 The reason is that `ListOptions{Limit: 0}` does NOT mean "all rows" on every
 store. `QRDBRoleStorage` maps it to qrdb's `PageSize: 0`, which qrdb treats as
 its default page of 100 — so a list-and-filter over a tenant holding more than
-100 roles could fail to find a role that exists (go-quicbaas#541).
+100 roles could fail to find a role that exists (go-quicbaas#541). A positive
+`Limit` is exact on every store: the qrdb user and role adapters read the one or
+two qrdb pages that hold `[Offset, Offset+Limit)` through `iam.OffsetWindow`.
 
 Each store answers it without scanning a page:
 

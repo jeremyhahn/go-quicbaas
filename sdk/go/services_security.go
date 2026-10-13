@@ -29,6 +29,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"sync"
 	"time"
 
@@ -702,6 +703,12 @@ type AuthService interface {
 	// empty thumbprint and NotFound when no user is bound to it. The lookup
 	// rides the qrdb client of the active transport (embedded, gRPC, REST,
 	// QUIC, MCP or Unix).
+	//
+	// It is tenant-safe: when the caller is bound to a tenant (the context's
+	// tenant, else the client's WithTenant option), a user of another tenant
+	// resolves as NotFound, never as a hit. It is the single SDK entry point
+	// for certificate-to-user resolution; the IAM user client has no
+	// thumbprint lookup of its own.
 	UserByCertThumbprint(ctx context.Context, thumbprint string) (*QRDBUser, error)
 }
 
@@ -2008,15 +2015,29 @@ func (s *authServiceImpl) UserByCertThumbprint(ctx context.Context, thumbprint s
 	}
 	u, err := users.GetUserByCertThumbprint(ctx, thumbprint)
 	if err != nil {
-		if IsDatabaseErrorCode(err, ErrNotFound) {
+		var unbound *qrdbtransport.UserNotFoundError
+		if errors.As(err, &unbound) || IsDatabaseErrorCode(err, ErrNotFound) {
 			return nil, sdkerrors.NewNotFound("auth.UserByCertThumbprint", "no user is bound to this certificate")
 		}
 		return nil, err
 	}
-	if u == nil {
+	// A user outside the caller's tenant is indistinguishable from no user,
+	// so the lookup never reveals that a certificate is bound elsewhere.
+	if u == nil || !s.c.inBoundTenant(ctx, u.TenantID) {
 		return nil, sdkerrors.NewNotFound("auth.UserByCertThumbprint", "no user is bound to this certificate")
 	}
 	return u, nil
+}
+
+// inBoundTenant reports whether tenantID is visible to a caller bound to a
+// tenant: the request context's tenant (transport.ContextWithTenant), else the
+// client's WithTenant option. A caller bound to no tenant sees every tenant.
+func (c *client) inBoundTenant(ctx context.Context, tenantID string) bool {
+	bound := transport.TenantFromContext(ctx)
+	if bound == "" {
+		bound = c.opts.tenantID
+	}
+	return bound == "" || bound == tenantID
 }
 
 // =============================================================================

@@ -146,6 +146,8 @@ func TestCreateApp_RefusesSealedTenant(t *testing.T) {
 // round trip the burn-in exercised: register under one context, authenticate
 // under the token endpoint's.
 func TestValidateClientSecret_AcrossTheRegisterTokenBoundary(t *testing.T) {
+	t.Parallel()
+
 	kv := newRoutingTestKV()
 	kv.barrierTenant("automatethethings")
 	storage := NewBackendStorage(kv)

@@ -191,25 +191,29 @@ func (s *QRDBRoleStorage) DeleteRole(ctx context.Context, tenantID, roleID strin
 }
 
 // ListRoles returns the qrdb roles for a tenant, projected into the broker
-// model. Pagination is translated from the broker's offset/limit to qrdb's
-// page/pageSize: the broker callers use Limit only (Offset is rare for roles),
-// so a non-zero Limit maps to a single page of that size; an Offset advances
-// the page accordingly when both are set.
+// model. qrdb lists by page/pageSize, so OffsetWindow reads the page or two
+// that hold the broker's exact offset/limit window.
 func (s *QRDBRoleStorage) ListRoles(ctx context.Context, tenantID string, opts ListOptions) ([]*Role, error) {
 	rc, err := s.client(ctx)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := rc.ListRoles(ctx, &qrdbtransport.ListRolesRequest{
-		TenantID: tenantID,
-		Page:     pageFromOffset(opts.Offset, opts.Limit),
-		PageSize: opts.Limit,
+	transportRoles, err := OffsetWindow(opts.Offset, opts.Limit, func(page, size int) ([]*qrdbtransport.Role, error) {
+		resp, err := rc.ListRoles(ctx, &qrdbtransport.ListRolesRequest{
+			TenantID: tenantID,
+			Page:     page,
+			PageSize: size,
+		})
+		if err != nil {
+			return nil, mapQRDBRoleError("list", err)
+		}
+		return resp.Roles, nil
 	})
 	if err != nil {
-		return nil, mapQRDBRoleError("list", err)
+		return nil, err
 	}
-	out := make([]*Role, 0, len(resp.Roles))
-	for _, tr := range resp.Roles {
+	out := make([]*Role, 0, len(transportRoles))
+	for _, tr := range transportRoles {
 		out = append(out, transportRoleToIAM(tr))
 	}
 	return out, nil
@@ -264,17 +268,6 @@ func transportReconcileToIAM(tenantID string, resp *qrdbtransport.ReconcileRoles
 		})
 	}
 	return report
-}
-
-// pageFromOffset converts a (offset, limit) pair into qrdb's 1-based page
-// number. With a zero limit there is no paging, so page 1 is returned; with a
-// limit and an offset that is an exact multiple, the corresponding page is
-// computed (offset/limit + 1).
-func pageFromOffset(offset, limit int) int {
-	if limit <= 0 || offset <= 0 {
-		return 1
-	}
-	return offset/limit + 1
 }
 
 // transportRoleToIAM projects a qrdb transport Role onto the broker Role. The

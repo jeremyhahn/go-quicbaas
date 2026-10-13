@@ -58,6 +58,8 @@ func seedLegacyAccount(t *testing.T, svc *OrchestratorAuthService, name string) 
 // =============================================================================
 
 func TestHashSecret_ProducesNonInvertibleDigest(t *testing.T) {
+	t.Parallel()
+
 	const secret = "s3cr3t-client-secret"
 
 	digest, err := hashSecret(secret)
@@ -100,6 +102,8 @@ func TestHashSecret_ProducesNonInvertibleDigest(t *testing.T) {
 }
 
 func TestHashSecret_AcceptsSecretsOfAnyLength(t *testing.T) {
+	t.Parallel()
+
 	// PBKDF2 folds the whole input through HMAC and has no length ceiling.
 	// This is not incidental: bcrypt, which this replaced, errors above 72
 	// bytes, and generateRandomHex(32) already emits a 64-character secret —
@@ -119,6 +123,8 @@ func TestHashSecret_AcceptsSecretsOfAnyLength(t *testing.T) {
 }
 
 func TestParseSecretHash_RejectsMalformedDigests(t *testing.T) {
+	t.Parallel()
+
 	valid, err := hashSecret("s3cr3t-client-secret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -169,6 +175,8 @@ func TestParseSecretHash_RejectsMalformedDigests(t *testing.T) {
 }
 
 func TestCompareSecretHash_RejectsEveryWorkFactorButTheAccepted(t *testing.T) {
+	t.Parallel()
+
 	// A digest is verified at one work factor and one only. Accepting a
 	// cheaper stored count would be the whole non-enumeration property gone:
 	// an ineligible account is checked against timingEqualizerDigest at
@@ -288,6 +296,8 @@ func TestCompareSecretHash_RefusesAnOversizedWorkFactorWithoutRunningTheKDF(t *t
 }
 
 func TestVerifySecret_RejectsWrongAndLegacyValues(t *testing.T) {
+	t.Parallel()
+
 	const secret = "s3cr3t-client-secret"
 
 	digest, err := hashSecret(secret)
@@ -307,6 +317,8 @@ func TestVerifySecret_RejectsWrongAndLegacyValues(t *testing.T) {
 }
 
 func TestIsLegacySecretHash_ClassifiesStoredForms(t *testing.T) {
+	t.Parallel()
+
 	digest, err := hashSecret("s3cr3t-client-secret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -328,6 +340,8 @@ func TestIsLegacySecretHash_ClassifiesStoredForms(t *testing.T) {
 // =============================================================================
 
 func TestCreateServiceAccount_StoresKDFDigest(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 
 	account, creds, err := svc.CreateServiceAccount(context.Background(), validCreateRequest())
@@ -347,6 +361,8 @@ func TestCreateServiceAccount_StoresKDFDigest(t *testing.T) {
 }
 
 func TestRotateCredentials_RehashesAndRetiresOldSecret(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -376,6 +392,8 @@ func TestRotateCredentials_RehashesAndRetiresOldSecret(t *testing.T) {
 // =============================================================================
 
 func TestAuthenticateServiceAccount_Success(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -394,6 +412,8 @@ func TestAuthenticateServiceAccount_Success(t *testing.T) {
 }
 
 func TestAuthenticateServiceAccount_RejectsBadInput(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -434,6 +454,8 @@ func TestAuthenticateServiceAccount_RejectsBadInput(t *testing.T) {
 }
 
 func TestAuthenticateServiceAccount_RejectsLegacyHash(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -449,6 +471,8 @@ func TestAuthenticateServiceAccount_RejectsLegacyHash(t *testing.T) {
 }
 
 func TestAuthenticateServiceAccount_RejectsRevokedAndExpired(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -480,6 +504,8 @@ func TestAuthenticateServiceAccount_RejectsRevokedAndExpired(t *testing.T) {
 }
 
 func TestAuthenticateServiceAccount_CancelledContext(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 
 	_, creds, err := svc.CreateServiceAccount(context.Background(), validCreateRequest())
@@ -500,6 +526,8 @@ func TestAuthenticateServiceAccount_CancelledContext(t *testing.T) {
 // =============================================================================
 
 func TestInvalidateLegacySecretHashes_ClearsOnlyLegacyRecords(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -608,6 +636,8 @@ func (s *failingStore) ClearSecretHashIfUnchanged(ctx context.Context, accountID
 }
 
 func TestInvalidateLegacySecretHashes_PropagatesStoreErrors(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	listErr := errors.New("list failed")
 	clearErr := errors.New("clear failed")
@@ -672,6 +702,8 @@ func (s *interleavingStore) ClearSecretHashIfUnchanged(ctx context.Context, acco
 }
 
 func TestInvalidateLegacySecretHashes_DoesNotClobberAConcurrentRotation(t *testing.T) {
+	t.Parallel()
+
 	// Invalidation necessarily decides from a record it listed earlier. If it
 	// wrote back unconditionally, a secret issued in that window would be
 	// wiped and the operator would be holding credentials that never worked.
@@ -725,6 +757,8 @@ func TestInvalidateLegacySecretHashes_DoesNotClobberAConcurrentRotation(t *testi
 }
 
 func TestInvalidateLegacySecretHashes_DoesNotResurrectAConcurrentRevocation(t *testing.T) {
+	t.Parallel()
+
 	// The stale copy carries every field, not just SecretHash, so an
 	// unconditional write-back would restore Revoked=false and bring an
 	// account somebody had just shut off back to life.
@@ -757,6 +791,8 @@ func TestInvalidateLegacySecretHashes_DoesNotResurrectAConcurrentRevocation(t *t
 }
 
 func TestInvalidateLegacySecretHashes_DoesNotResurrectAConcurrentDeletion(t *testing.T) {
+	t.Parallel()
+
 	// Deletion is a writer too. If it were left outside the store's write
 	// lock, a delete landing between the conditional clear's read and its
 	// write would be undone by the store that follows, bringing back a record
@@ -880,6 +916,8 @@ func TestServiceAccountStore_DeletionIsNotUndoneByAConcurrentClear(t *testing.T)
 }
 
 func TestAuthenticateServiceAccount_SurfacesStoreFailures(t *testing.T) {
+	t.Parallel()
+
 	// A store outage answered with the opaque credential error would bury an
 	// operational failure under what reads as a wave of bad passwords — and
 	// bill a key derivation for each one. Only a genuinely missing record is a
@@ -930,6 +968,8 @@ func (s *lookupFailingStore) GetServiceAccountByClientID(ctx context.Context, cl
 }
 
 func TestInvalidateLegacySecretHashes_ClearsRevokedRecords(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -1054,6 +1094,8 @@ func authFailureCases(t *testing.T, svc *OrchestratorAuthService) []struct {
 }
 
 func TestAuthenticateServiceAccount_FailuresAreIndistinguishable(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -1181,6 +1223,8 @@ func TestAuthenticateServiceAccount_CostsTheSameWhateverTheStoredState(t *testin
 }
 
 func TestTimingEqualizerDigest_MatchesCurrentParameters(t *testing.T) {
+	t.Parallel()
+
 	// The equalizer only equalizes if verifying it costs what verifying a real
 	// digest costs. If this fails because pbkdf2Iterations moved, regenerate
 	// the constant rather than relaxing the check.

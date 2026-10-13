@@ -334,9 +334,15 @@ func validateCreateUserLifecycle(state Lifecycle) error {
 			"; supported: "+strings.Join(names, ", "))
 }
 
-// CreateUser creates a new user in the specified tenant.
-func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts CreateUserOptions) (*User, error) {
-	// Validate inputs
+// validateCreateUserOptions checks every part of a create request that can be
+// judged without a store, and returns the normalized auth methods.
+//
+// It runs above every read, write and dependency check, so a malformed
+// request is refused as malformed whatever the server's state: not as a
+// missing role, a spent quota or an unwired invite store (#335). Above every
+// write also means a rejected value leaves no user, quota use or invite
+// behind.
+func validateCreateUserOptions(tenantID string, opts CreateUserOptions) ([]string, error) {
 	if err := validateTenantID(tenantID); err != nil {
 		return nil, err
 	}
@@ -346,17 +352,42 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 	if err := validateUsername(opts.Username); err != nil {
 		return nil, err
 	}
-
-	// Both of these are validated here, above every write, so a rejected value
-	// leaves no user behind. Validating them next to the record literal would
-	// still return the right error and still be wrong: the tenant quota has
-	// been consumed by then and, once this seam grows an invite (#293), a
-	// token would have been minted for an account that is about to be refused.
 	authMethods, err := validateAuthMethods(opts.AuthMethods)
 	if err != nil {
 		return nil, err
 	}
 	if err := validateCreateUserLifecycle(opts.Lifecycle); err != nil {
+		return nil, err
+	}
+	if err := validateDisplayName(createUserDisplayName(opts)); err != nil {
+		return nil, err
+	}
+	return authMethods, nil
+}
+
+// ValidateCreateUserOptions reports the first field of a create request that
+// is malformed, without touching a store. A caller that must resolve its
+// stores first (the service wrapper) runs it beforehand, so a malformed
+// request is refused for its field even when no store is wired (#335).
+func ValidateCreateUserOptions(tenantID string, opts CreateUserOptions) error {
+	_, err := validateCreateUserOptions(tenantID, opts)
+	return err
+}
+
+// createUserDisplayName is the Name the request gives, or else its Username.
+// The fallback is already safe (validateUsername's charset excludes "@"); an
+// explicit Name is not, so validateCreateUserOptions checks the result.
+func createUserDisplayName(opts CreateUserOptions) string {
+	if name := strings.TrimSpace(opts.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(opts.Username)
+}
+
+// CreateUser creates a new user in the specified tenant.
+func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts CreateUserOptions) (*User, error) {
+	authMethods, err := validateCreateUserOptions(tenantID, opts)
+	if err != nil {
 		return nil, err
 	}
 
@@ -396,16 +427,7 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 	// here invents one, which is what used to require a correlation table to
 	// reconcile afterwards.
 	now := time.Now().UTC()
-	// Use Name if provided, otherwise fall back to Username. The fallback is
-	// already safe (validateUsername's charset excludes "@"); an explicit Name
-	// is not, so it is checked.
-	displayName := strings.TrimSpace(opts.Name)
-	if displayName == "" {
-		displayName = strings.TrimSpace(opts.Username)
-	}
-	if err := validateDisplayName(displayName); err != nil {
-		return nil, err
-	}
+	displayName := createUserDisplayName(opts)
 	roles := make([]string, 0)
 	if len(opts.Roles) > 0 {
 		roles = append(roles, opts.Roles...)
@@ -552,6 +574,10 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 	if err := validateUserID(userID); err != nil {
 		return nil, err
 	}
+	authMethods, err := validateUpdateUserOptions(opts)
+	if err != nil {
+		return nil, err
+	}
 
 	// Role references are resolved BEFORE any write, exactly as CreateUser
 	// resolves them. Assigning a role through AssignRole checks that
@@ -584,9 +610,6 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 	// Apply updates
 	if opts.Email != nil {
 		newEmail := strings.ToLower(strings.TrimSpace(*opts.Email))
-		if err := validateEmail(newEmail); err != nil {
-			return nil, err
-		}
 
 		// Check email uniqueness if changing
 		if newEmail != user.Email {
@@ -609,18 +632,10 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 	// assignment and ceremony subject resolves through, and a caller who sent
 	// both had one of them dropped without being told.
 	if opts.Name != nil {
-		name := strings.TrimSpace(*opts.Name)
-		if err := validateDisplayName(name); err != nil {
-			return nil, err
-		}
-		user.Name = name
+		user.Name = strings.TrimSpace(*opts.Name)
 	}
 	if opts.Username != nil {
-		username := strings.TrimSpace(*opts.Username)
-		if err := validateUsername(username); err != nil {
-			return nil, err
-		}
-		user.Username = username
+		user.Username = strings.TrimSpace(*opts.Username)
 	}
 
 	if opts.Attributes != nil {
@@ -647,22 +662,10 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 	// named the state meant that state — provided it is one this surface may
 	// assert at all.
 	if opts.Lifecycle != nil {
-		if err := validateUpdateUserLifecycle(*opts.Lifecycle); err != nil {
-			return nil, err
-		}
 		user.Lifecycle = *opts.Lifecycle
 	}
 
 	if opts.AuthMethods != nil {
-		// Held to the same closed set as create. Validating only the create
-		// path would make the rule true of one door into the same record: the
-		// REST create handler writes the caller's auth_methods a SECOND time
-		// through this function to attach the invite, and a bare UpdateUser
-		// could set any string at all.
-		authMethods, err := validateAuthMethods(*opts.AuthMethods)
-		if err != nil {
-			return nil, err
-		}
 		user.AuthMethods = authMethods
 	}
 
@@ -707,6 +710,49 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 	// create handler used to build its response from exactly this value; it now
 	// renders the token it holds from the invite store instead.
 	return user, nil
+}
+
+// validateUpdateUserOptions checks every field an update supplies, and returns
+// the normalized auth methods (nil when the update names none).
+//
+// Like validateCreateUserOptions it runs above every lookup, so a malformed
+// field is refused as malformed even when the user or a named role does not
+// exist (#335). Auth methods are held to the same closed set as create: the
+// REST create handler writes the caller's auth_methods a SECOND time through
+// UpdateUser to attach the invite, and a bare UpdateUser could otherwise set
+// any string at all.
+func validateUpdateUserOptions(opts UpdateUserOptions) ([]string, error) {
+	if opts.Email != nil {
+		if err := validateEmail(strings.ToLower(strings.TrimSpace(*opts.Email))); err != nil {
+			return nil, err
+		}
+	}
+	if opts.Name != nil {
+		if err := validateDisplayName(strings.TrimSpace(*opts.Name)); err != nil {
+			return nil, err
+		}
+	}
+	if opts.Username != nil {
+		if err := validateUsername(strings.TrimSpace(*opts.Username)); err != nil {
+			return nil, err
+		}
+	}
+	if opts.Lifecycle != nil {
+		if err := validateUpdateUserLifecycle(*opts.Lifecycle); err != nil {
+			return nil, err
+		}
+	}
+	if opts.AuthMethods == nil {
+		return nil, nil
+	}
+	return validateAuthMethods(*opts.AuthMethods)
+}
+
+// ValidateUpdateUserOptions is ValidateCreateUserOptions for an update: it
+// reports the first supplied field that is malformed, without a store.
+func ValidateUpdateUserOptions(opts UpdateUserOptions) error {
+	_, err := validateUpdateUserOptions(opts)
+	return err
 }
 
 // webAuthnCredentialCount is a credential tally that knows whether it was
@@ -990,6 +1036,13 @@ func (s *IdentityStore) UpdateRole(ctx context.Context, tenantID, roleID string,
 	if err := validateRoleID(roleID); err != nil {
 		return nil, err
 	}
+	// Checked before the lookup, so an empty name is refused as such even
+	// when the role does not exist (#335).
+	if opts.Name != nil {
+		if err := validateRoleName(strings.TrimSpace(*opts.Name)); err != nil {
+			return nil, err
+		}
+	}
 
 	role, err := s.roleStorage.GetRole(ctx, tenantID, roleID)
 	if err != nil {
@@ -997,11 +1050,7 @@ func (s *IdentityStore) UpdateRole(ctx context.Context, tenantID, roleID string,
 	}
 
 	if opts.Name != nil {
-		name := strings.TrimSpace(*opts.Name)
-		if name == "" {
-			return nil, fieldValidationError("name", "role name cannot be empty")
-		}
-		role.Name = name
+		role.Name = strings.TrimSpace(*opts.Name)
 	}
 
 	if opts.Description != nil {
@@ -1047,7 +1096,16 @@ func (s *IdentityStore) DeleteRole(ctx context.Context, tenantID, roleID string)
 	// leaves the user in the listing, so the offset must advance past each
 	// page; DeleteTenant keeps Offset at 0 only because it deletes the users
 	// it lists. Do not fold this loop into that idiom.
-	for offset := 0; ; {
+	//
+	// The storage lists by offset with no start key, so a concurrent
+	// DeleteUser of a user already passed shifts every later user down one
+	// place, and the next offset would skip one. Each page after the first
+	// therefore overlaps the one before by one user, the anchor. If the
+	// anchor is not where it was, the listing shifted under the scan, so it
+	// restarts from the top: users already stripped no longer hold the role
+	// and are passed over without a write.
+	offset, anchor := 0, ""
+	for {
 		users, err := s.userStorage.ListUsers(ctx, tenantID, ListOptions{
 			Limit:  deleteRoleCascadePage,
 			Offset: offset,
@@ -1055,13 +1113,18 @@ func (s *IdentityStore) DeleteRole(ctx context.Context, tenantID, roleID string)
 		if err != nil {
 			return api.NewOperationFailedError("list users at offset "+strconv.Itoa(offset), err)
 		}
+		if anchor != "" && (len(users) == 0 || users[0].ID != anchor) {
+			offset, anchor = 0, ""
+			continue
+		}
 		if err := s.stripRoleFromUsers(ctx, users, roleID); err != nil {
 			return err
 		}
 		if len(users) < deleteRoleCascadePage {
 			break
 		}
-		offset += len(users)
+		offset += len(users) - 1
+		anchor = users[len(users)-1].ID
 	}
 
 	if err := s.roleStorage.DeleteRole(ctx, tenantID, roleID); err != nil {

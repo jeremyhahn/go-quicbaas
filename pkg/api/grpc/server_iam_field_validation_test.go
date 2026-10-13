@@ -31,14 +31,17 @@ import (
 // same server over a domain socket: a field the identity store refuses is the
 // caller's mistake and answers InvalidArgument, not Internal.
 
+// The create is pending (no lifecycle given) on a stack with no invite store:
+// the request is judged before the wiring, so a malformed email is
+// InvalidArgument here, not the Unavailable a well-formed pending create gets
+// (TestGRPC_CreateUserWithoutInviteStoreIsUnavailable).
 func TestGRPC_CreateUserRefusesAMalformedEmailAsInvalidArgument(t *testing.T) {
 	srv, _ := newRealIAMGRPCStack(t)
 
 	_, err := srv.CreateUser(context.Background(), &iampb.CreateUserRequest{
-		TenantId:  "acme",
-		Email:     "not-an-email",
-		Name:      "Bob",
-		Lifecycle: string(iam.LifecycleActive),
+		TenantId: "acme",
+		Email:    "not-an-email",
+		Name:     "Bob",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "err: %v", err)
@@ -50,10 +53,12 @@ func TestGRPC_UpdateUserRefusesAnEmailShapedNameAsInvalidArgument(t *testing.T) 
 	ctx := context.Background()
 
 	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
-		TenantId:  "acme",
-		Email:     "kim@acme.test",
-		Username:  "kim",
-		Name:      "Kim",
+		TenantId: "acme",
+		Email:    "kim@acme.test",
+		Username: "kim",
+		Name:     "Kim",
+		// Active because this stack has no invite store to activate a
+		// pending user with; the update below is what is under test.
 		Lifecycle: string(iam.LifecycleActive),
 	})
 	require.NoError(t, err)
@@ -62,6 +67,20 @@ func TestGRPC_UpdateUserRefusesAnEmailShapedNameAsInvalidArgument(t *testing.T) 
 		TenantId: "acme",
 		UserId:   created.Id,
 		Name:     "kim@acme.test",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "err: %v", err)
+}
+
+// An update is judged before the user is looked up, so a malformed field is
+// InvalidArgument even when the user does not exist.
+func TestGRPC_UpdateUnknownUserWithAMalformedEmailIsInvalidArgument(t *testing.T) {
+	srv, _ := newRealIAMGRPCStack(t)
+
+	_, err := srv.UpdateUser(context.Background(), &iampb.UpdateUserRequest{
+		TenantId: "acme",
+		UserId:   "no-such-user",
+		Email:    "not-an-email",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "err: %v", err)

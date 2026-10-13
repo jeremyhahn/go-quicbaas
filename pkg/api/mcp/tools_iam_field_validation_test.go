@@ -36,12 +36,16 @@ func TestMCP_UserCreateMalformedEmailNamesTheField(t *testing.T) {
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
 	mock := &mockIAMService{
+		// The service layer's path: a pending create (no lifecycle given)
+		// through CreateInvitedUser, here with no invite store wired. The
+		// request is judged before the wiring, so the email is what is
+		// refused, not the missing store (#335).
 		createUserFunc: func(ctx context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
-			user, err := store.CreateUser(ctx, req.TenantID, iam.CreateUserOptions{
+			user, _, _, err := store.CreateInvitedUser(ctx, req.TenantID, iam.CreateUserOptions{
 				Email:    req.Email,
 				Username: req.Username,
 				Name:     req.Name,
-			})
+			}, nil, 0)
 			if err != nil {
 				return nil, err
 			}

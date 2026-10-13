@@ -1409,7 +1409,7 @@ test-unit: test ## Alias for test (unit tests only)
 .PHONY: test-verbose
 test-verbose: ## Run tests with verbose output
 	@echo "$(BLUE)Running tests (verbose)...$(NC)"
-	$(GOTEST) -v -race ./...
+	$(GOTEST) -v -race -timeout=30m ./...
 
 # Dynamic package test targets - use: make test-<package>
 # Examples: make test-xkms, make test-kms, make test-iam
@@ -4211,13 +4211,19 @@ integration-bench: ## Run integration benchmarks
 # IAM is always compiled (no build tag), so these targets use the standard
 # test tag set.
 .PHONY: test-iam
+# pkg/iam's secret tests each derive PBKDF2-SHA256 at the production 600,000
+# iterations, which the race detector slows down a lot. Most of them run in
+# parallel, but on a small runner the package can still pass go test's
+# default 10m timeout.
+IAM_RACE_TIMEOUT := 30m
+
 test-iam: ## Run IAM unit tests
-	go test -v -race -count=1 -tags '$(IAM_TEST_TAGS)' ./pkg/iam/...
+	go test -v -race -count=1 -timeout=$(IAM_RACE_TIMEOUT) -tags '$(IAM_TEST_TAGS)' ./pkg/iam/...
 
 .PHONY: test-iam-coverage
 test-iam-coverage:
 	@mkdir -p $(COVERAGE_DIR)
-	$(GOTEST) -v -race -tags '$(IAM_TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-iam.out -covermode=atomic ./pkg/iam/...
+	$(GOTEST) -v -race -timeout=$(IAM_RACE_TIMEOUT) -tags '$(IAM_TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-iam.out -covermode=atomic ./pkg/iam/...
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-iam.out -o $(COVERAGE_DIR)/coverage-iam.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-iam.out | grep total
 

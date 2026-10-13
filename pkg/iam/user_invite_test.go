@@ -126,7 +126,7 @@ func TestCreateInvitedUser_NoInviteStoreRefusesBeforeWriting(t *testing.T) {
 	store, mem := newInviteTestStore(t, nil)
 
 	_, _, _, err := store.CreateInvitedUser(ctx, "acme",
-		iam.CreateUserOptions{Email: "cy@acme.com", Username: "cy"}, nil, 0)
+		iam.CreateUserOptions{Email: "cy@acme.com", Username: "cyd"}, nil, 0)
 	require.ErrorIs(t, err, iam.ErrInviteStoreUnavailable)
 
 	_, getErr := mem.GetUserByEmail(ctx, "acme", "cy@acme.com")

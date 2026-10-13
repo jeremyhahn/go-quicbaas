@@ -343,7 +343,7 @@ The QUIC client sends nothing. Every verb of its other families rejects with
 
 | Family | Reason | Gap |
 |---|---|---|
-| `orchestrator` (jobs, tasks, sessions, fleet, workflows, attention, decompose, backends, runners, models, health, inference, worker image) and cost (cost settings, spend policy, spend report) | The server's QUIC listener serves no orchestrator method. | Server: quicbaas's API module does not implement go-qrdb's `RegisterQUIC` hook (go-quicbaas#819), so no QUIC route exists. |
+| `orchestrator` (jobs, tasks, sessions, fleet, workflows, attention, decompose, backends, runners, models, health, inference, worker image) and cost (cost settings, spend policy, spend report) | The server serves them over qrdb's frame protocol, which the SDK does not implement. | SDK: the server projects every unary orchestrator method onto QUIC (go-quicbaas#819); the four streaming methods stay off QUIC. The TypeScript QUIC client does not speak the frame protocol yet. |
 | `auth`, `barrier`, `ceremony`, `bootstrap`, `connection` (`connect`, `disconnect`) | The listener speaks qrdb's frame protocol, which the SDK does not implement. | SDK: go-qrdb serves `barrier.*` and `ceremony.*` on that protocol; a TypeScript client for it waits on the same owner decision as projects, sdlc and accounts. |
 
 `deployFleetNode` keeps its own `DeployNotSupportedError` on every non-REST

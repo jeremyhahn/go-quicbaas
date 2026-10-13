@@ -12,6 +12,7 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 // =============================================================================
 // Embedding Service
@@ -20,27 +21,46 @@ import "google/protobuf/duration.proto";
 // EmbeddingService provides semantic embedding generation and management.
 // It supports multiple embedding providers (Voyage AI, OpenAI, Ollama, LM Studio)
 // with intelligent caching, batch processing, and provider fallback capabilities.
+//
+// Permissions mirror the REST rules for /api/v1/embedding and the MCP
+// embedding tools: generation and cache invalidation are embedding:embed;
+// provider inspection, default selection and cache statistics are
+// embedding:list_models.
 service EmbeddingService {
   // EmbeddingGenerate generates an embedding vector for a single text.
-  rpc EmbeddingGenerate(EmbeddingGenerateRequest) returns (EmbeddingGenerateResponse);
+  rpc EmbeddingGenerate(EmbeddingGenerateRequest) returns (EmbeddingGenerateResponse) {
+    option (qrdb.v1.permission) = "embedding:embed";
+  }
 
   // EmbeddingBatchGenerate generates embeddings for multiple texts in a single request.
-  rpc EmbeddingBatchGenerate(EmbeddingBatchGenerateRequest) returns (EmbeddingBatchGenerateResponse);
+  rpc EmbeddingBatchGenerate(EmbeddingBatchGenerateRequest) returns (EmbeddingBatchGenerateResponse) {
+    option (qrdb.v1.permission) = "embedding:embed";
+  }
 
   // EmbeddingListProviders returns all registered embedding providers with their capabilities.
-  rpc EmbeddingListProviders(EmbeddingListProvidersRequest) returns (EmbeddingListProvidersResponse);
+  rpc EmbeddingListProviders(EmbeddingListProvidersRequest) returns (EmbeddingListProvidersResponse) {
+    option (qrdb.v1.permission) = "embedding:list_models";
+  }
 
   // EmbeddingGetProviderInfo returns detailed information about a specific provider.
-  rpc EmbeddingGetProviderInfo(EmbeddingGetProviderInfoRequest) returns (EmbeddingGetProviderInfoResponse);
+  rpc EmbeddingGetProviderInfo(EmbeddingGetProviderInfoRequest) returns (EmbeddingGetProviderInfoResponse) {
+    option (qrdb.v1.permission) = "embedding:list_models";
+  }
 
   // EmbeddingSetDefaultProvider sets the default embedding provider.
-  rpc EmbeddingSetDefaultProvider(EmbeddingSetDefaultProviderRequest) returns (EmbeddingSetDefaultProviderResponse);
+  rpc EmbeddingSetDefaultProvider(EmbeddingSetDefaultProviderRequest) returns (EmbeddingSetDefaultProviderResponse) {
+    option (qrdb.v1.permission) = "embedding:list_models";
+  }
 
   // EmbeddingGetCacheStats returns statistics about the embedding cache.
-  rpc EmbeddingGetCacheStats(EmbeddingGetCacheStatsRequest) returns (EmbeddingGetCacheStatsResponse);
+  rpc EmbeddingGetCacheStats(EmbeddingGetCacheStatsRequest) returns (EmbeddingGetCacheStatsResponse) {
+    option (qrdb.v1.permission) = "embedding:list_models";
+  }
 
   // EmbeddingClearCache invalidates all or specific embedding cache entries.
-  rpc EmbeddingClearCache(EmbeddingClearCacheRequest) returns (EmbeddingClearCacheResponse);
+  rpc EmbeddingClearCache(EmbeddingClearCacheRequest) returns (EmbeddingClearCacheResponse) {
+    option (qrdb.v1.permission) = "embedding:embed";
+  }
 }
 
 // =============================================================================

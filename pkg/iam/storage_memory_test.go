@@ -299,6 +299,8 @@ func TestMemoryStorage_RoleOperations(t *testing.T) {
 }
 
 func TestMemoryStorage_AppOperations(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 
@@ -1445,6 +1447,8 @@ func TestMemoryStorage_DeleteApp_NotFound(t *testing.T) {
 }
 
 func TestMemoryStorage_ValidateClientSecret_NotFound(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 

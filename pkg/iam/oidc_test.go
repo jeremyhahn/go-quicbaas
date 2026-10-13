@@ -503,6 +503,8 @@ func TestOIDCAuthorize(t *testing.T) {
 
 // Test Token with authorization code grant
 func TestOIDCTokenAuthorizationCode(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, tokenStorage, memStorage := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -609,6 +611,8 @@ func TestOIDCTokenAuthorizationCode(t *testing.T) {
 
 // Test Refresh function
 func TestOIDCRefresh(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, tokenStorage, memStorage := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -717,6 +721,8 @@ func TestOIDCRefresh(t *testing.T) {
 
 // Test Revoke function
 func TestOIDCRevoke(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, tokenStorage, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -1328,6 +1334,8 @@ func TestOIDCAuthorizeWithResourceIndicator(t *testing.T) {
 
 // TestOIDCTokenWithResourceIndicator tests token exchange with RFC 8707 resource parameter.
 func TestOIDCTokenWithResourceIndicator(t *testing.T) {
+	t.Parallel()
+
 	provider, privateKey, appStorage, tokenStorage, memStorage := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -1480,6 +1488,8 @@ func TestOIDCTokenWithResourceIndicator(t *testing.T) {
 
 // TestOIDCClientCredentialsWithResourceIndicator tests client credentials grant with resource parameter.
 func TestOIDCClientCredentialsWithResourceIndicator(t *testing.T) {
+	t.Parallel()
+
 	provider, privateKey, appStorage, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 

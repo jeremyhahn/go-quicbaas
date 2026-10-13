@@ -73,6 +73,8 @@ func newDPoPKey(t *testing.T) *ecdsa.PrivateKey {
 // TestToken_DPoPBindsCnfJkt verifies the token endpoint binds cnf.jkt from a
 // presented DPoP proof on the client_credentials grant.
 func TestToken_DPoPBindsCnfJkt(t *testing.T) {
+	t.Parallel()
+
 	provider, signingKey, appStorage, _, _ := createTestOIDCProvider(t)
 	clientID, secret := registerClientCredentialsApp(t, appStorage)
 
@@ -119,6 +121,8 @@ func TestToken_DPoPBindsCnfJkt(t *testing.T) {
 
 // TestToken_NoDPoPNoCnf verifies a bearer token (no proof) carries no cnf.
 func TestToken_NoDPoPNoCnf(t *testing.T) {
+	t.Parallel()
+
 	provider, signingKey, appStorage, _, _ := createTestOIDCProvider(t)
 	clientID, secret := registerClientCredentialsApp(t, appStorage)
 
@@ -143,6 +147,8 @@ func TestToken_NoDPoPNoCnf(t *testing.T) {
 // TestToken_InvalidDPoPFailsClosed verifies a presented-but-invalid proof is a
 // hard failure (no silent downgrade to bearer).
 func TestToken_InvalidDPoPFailsClosed(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	clientID, secret := registerClientCredentialsApp(t, appStorage)
 
@@ -173,6 +179,8 @@ func TestToken_InvalidDPoPFailsClosed(t *testing.T) {
 // TestToken_DPoPReplayRejected verifies a captured proof cannot be replayed at
 // the token endpoint to mint a second bound token.
 func TestToken_DPoPReplayRejected(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	clientID, secret := registerClientCredentialsApp(t, appStorage)
 

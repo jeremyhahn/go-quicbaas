@@ -22,6 +22,7 @@ barrier stops the control plane. They are one word apart on the command line.
 | Verb | Positional | Purpose |
 |---|---|---|
 | `create <id>` | tenant id | Create a tenant |
+| `provision <id>` | tenant id | Create a tenant, its Admin role and its admin in one step |
 | `get <id>` | tenant id | Read one tenant |
 | `list` | — | List tenants |
 | `update <id>` | tenant id | Modify a tenant |
@@ -50,6 +51,34 @@ quicbaas iam tenant delete acme-corp --yes
 `--tenant` (root, default `system`) selects the tenant a command *operates as*.
 The positional `<id>` names the tenant being *acted on*. They are not the same
 argument, and an administrative call typically sets neither to the other.
+
+### `provision`
+
+A system admin's one-step onboarding: the tenant, its tenant-scoped Admin
+role, and the tenant admin. An empty isolation type means a per-tenant
+`barrier` (`create` defaults to `prefix`), but the server accepts only
+`--isolation-type prefix` for now and refuses the others with
+`ProvisionBarrierIsolationError`; see [user.md](user.md).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--name` | tenant id | Display name |
+| `--isolation-type` | `barrier` | `prefix`, `barrier`, `volume` or `raft`; only `prefix` is accepted for now |
+| `--admin-username` | `admin` | Tenant admin login name |
+| `--admin-enrollment` | `cert` | `cert` or `invite` |
+| `--admin-csr` | — | Admin's PEM CSR file; required for `cert`, refused for `invite` |
+| `--admin-cert-out` | — | Write the issued certificate here (mode 0600); `cert` only, otherwise printed |
+| `--invite-expiry-hours` | server default | Invite lifetime; `invite` only |
+
+```bash
+quicbaas iam tenant provision acme-corp --isolation-type prefix --admin-csr admin.csr --admin-cert-out admin.crt
+quicbaas iam tenant provision acme-corp --isolation-type prefix --admin-enrollment invite --admin-username alice
+```
+
+In `invite` mode the admin is created pending and the command prints a
+single-use invite token once; deliver it over a secure channel. Flag
+conflicts are refused locally before any call; the server's validation stays
+authoritative.
 
 ## `quicbaas iam tenant barrier`
 

@@ -29,6 +29,8 @@ func TestAppManager_RotateSecret_Unknown(t *testing.T) {
 // A client_credentials-only app needs no redirect URIs; an invalid grant type
 // is rejected.
 func TestAppManager_RegisterApp_GrantTypeRules(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 

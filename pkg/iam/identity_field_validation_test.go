@@ -82,8 +82,8 @@ func TestFieldValidators_AcceptValidInput(t *testing.T) {
 	}
 }
 
-// TestIdentityStore_RoleNameChecksAreCoded covers the inline role-name checks
-// in CreateRole and UpdateRole, which do not go through validateRoleName.
+// TestIdentityStore_RoleNameChecksAreCoded covers the role-name checks in
+// CreateRole and UpdateRole.
 func TestIdentityStore_RoleNameChecksAreCoded(t *testing.T) {
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
@@ -99,6 +99,103 @@ func TestIdentityStore_RoleNameChecksAreCoded(t *testing.T) {
 	empty := ""
 	_, err = store.UpdateRole(ctx, "acme", role.ID, UpdateRoleOptions{Name: &empty})
 	assertCodedFieldValidationError(t, err, "name")
+}
+
+// TestCreateInvitedUser_InvalidInputBeatsMissingInviteStore: a malformed
+// request is answered as malformed whatever the server's wiring. Checking the
+// invite store first told the caller to retry later, and a retry against a
+// wired server would only have been refused for the field it should have been
+// told about the first time (#335).
+func TestCreateInvitedUser_InvalidInputBeatsMissingInviteStore(t *testing.T) {
+	tests := []struct {
+		name  string
+		opts  CreateUserOptions
+		field string
+	}{
+		{"malformed email", CreateUserOptions{Email: "not-an-email", Username: "cyd"}, "email"},
+		{"missing username", CreateUserOptions{Email: "cy@acme.com"}, "username"},
+		{"email-shaped display name", CreateUserOptions{Email: "cy@acme.com", Username: "cyd", Name: "cy@acme.com"}, "name"},
+		{"unsupported auth method", CreateUserOptions{Email: "cy@acme.com", Username: "cyd", AuthMethods: []string{"password"}}, "auth_methods"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mem := NewMemoryStorage()
+			store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
+
+			_, _, _, err := store.CreateInvitedUser(context.Background(), "acme", tt.opts, nil, 0)
+			if errors.Is(err, ErrInviteStoreUnavailable) {
+				t.Fatalf("the invite store was checked before the request: %v", err)
+			}
+			assertCodedFieldValidationError(t, err, tt.field)
+		})
+	}
+}
+
+// TestIdentityStore_UpdateUserValidatesBeforeLookup: an update naming a user
+// or role that does not exist, with a malformed field, is refused for the
+// field. Looking the records up first answered not-found, so the caller fixed
+// the id and was then refused for a field it could have fixed in the same go.
+func TestIdentityStore_UpdateUserValidatesBeforeLookup(t *testing.T) {
+	badEmail := "not-an-email"
+	emailName := "kim@acme.test"
+	badUsername := "a b"
+	badLifecycle := Lifecycle("bogus")
+	badMethods := []string{"password"}
+	missingRole := []string{"no-such-role"}
+	tests := []struct {
+		name  string
+		opts  UpdateUserOptions
+		field string
+	}{
+		{"malformed email", UpdateUserOptions{Email: &badEmail, Roles: &missingRole}, "email"},
+		{"email-shaped display name", UpdateUserOptions{Name: &emailName, Roles: &missingRole}, "name"},
+		{"malformed username", UpdateUserOptions{Username: &badUsername, Roles: &missingRole}, "username"},
+		{"unsupported lifecycle", UpdateUserOptions{Lifecycle: &badLifecycle, Roles: &missingRole}, "lifecycle"},
+		{"unsupported auth method", UpdateUserOptions{AuthMethods: &badMethods, Roles: &missingRole}, "auth_methods"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mem := NewMemoryStorage()
+			store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
+
+			_, err := store.UpdateUser(context.Background(), "acme", "no-such-user", tt.opts)
+			assertCodedFieldValidationError(t, err, tt.field)
+		})
+	}
+}
+
+// TestIdentityStore_UpdateRoleValidatesBeforeLookup: an empty role name is
+// refused for the name even when the role does not exist.
+func TestIdentityStore_UpdateRoleValidatesBeforeLookup(t *testing.T) {
+	mem := NewMemoryStorage()
+	store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
+	empty := " "
+
+	_, err := store.UpdateRole(context.Background(), "acme", "no-such-role", UpdateRoleOptions{Name: &empty})
+	assertCodedFieldValidationError(t, err, "name")
+}
+
+// The exported validators need no store, so the service wrapper can judge a
+// request before it resolves one (#335).
+func TestValidateCreateUserOptions(t *testing.T) {
+	valid := CreateUserOptions{Email: "sam@example.com", Username: "sam"}
+	if err := ValidateCreateUserOptions("t-1", valid); err != nil {
+		t.Fatalf("valid create: %v", err)
+	}
+
+	malformed := valid
+	malformed.Email = "not-an-email"
+	assertCodedFieldValidationError(t, ValidateCreateUserOptions("t-1", malformed), "email")
+}
+
+func TestValidateUpdateUserOptions(t *testing.T) {
+	name := "Sam"
+	if err := ValidateUpdateUserOptions(UpdateUserOptions{Name: &name}); err != nil {
+		t.Fatalf("valid update: %v", err)
+	}
+
+	email := "not-an-email"
+	assertCodedFieldValidationError(t, ValidateUpdateUserOptions(UpdateUserOptions{Email: &email}), "email")
 }
 
 func TestBatchValidate_ReturnsCodedFieldErrors(t *testing.T) {

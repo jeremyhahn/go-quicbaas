@@ -111,6 +111,8 @@ func TestNewOrchestratorAuthService_NilLogger(t *testing.T) {
 // =============================================================================
 
 func TestCreateServiceAccount_Success(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -150,6 +152,8 @@ func TestCreateServiceAccount_Success(t *testing.T) {
 }
 
 func TestCreateServiceAccount_WithExpiry(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -172,6 +176,8 @@ func TestCreateServiceAccount_WithExpiry(t *testing.T) {
 }
 
 func TestCreateServiceAccount_WithDeviceCert(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -189,6 +195,8 @@ func TestCreateServiceAccount_WithDeviceCert(t *testing.T) {
 }
 
 func TestCreateServiceAccount_DuplicateName(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -305,6 +313,8 @@ func TestCreateServiceAccount_EmptyScopes(t *testing.T) {
 }
 
 func TestCreateServiceAccount_DuplicateDeviceCert(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -344,6 +354,8 @@ func TestCreateServiceAccount_CancelledContext(t *testing.T) {
 // =============================================================================
 
 func TestRotateCredentials_Success(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -396,6 +408,8 @@ func TestRotateCredentials_EmptyAccountID(t *testing.T) {
 }
 
 func TestRotateCredentials_RevokedAccount(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -423,6 +437,8 @@ func TestRotateCredentials_RevokedAccount(t *testing.T) {
 // =============================================================================
 
 func TestRevokeServiceAccount_Success(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -479,6 +495,8 @@ func TestRevokeServiceAccount_EmptyAccountID(t *testing.T) {
 // =============================================================================
 
 func TestBindDeviceCert_Success(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -503,6 +521,8 @@ func TestBindDeviceCert_Success(t *testing.T) {
 }
 
 func TestBindDeviceCert_AlreadyBound(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -582,6 +602,8 @@ func TestBindDeviceCert_AccountNotFound(t *testing.T) {
 // =============================================================================
 
 func TestGetByDeviceCert_Success(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -635,6 +657,8 @@ func TestGetByDeviceCert_EmptyCertCN(t *testing.T) {
 // =============================================================================
 
 func TestListServiceAccounts_TenantIsolation(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 
@@ -724,6 +748,8 @@ func TestListServiceAccounts_EmptyResult(t *testing.T) {
 }
 
 func TestListServiceAccounts_ExcludesRevoked(t *testing.T) {
+	t.Parallel()
+
 	svc := newTestAuthService(t)
 	ctx := context.Background()
 

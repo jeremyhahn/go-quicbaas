@@ -118,6 +118,8 @@ func createTestAppManager(t *testing.T) *AppManager {
 }
 
 func TestAppManager_RegisterApp(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -168,6 +170,8 @@ func TestAppManager_RegisterApp(t *testing.T) {
 }
 
 func TestAppManager_RegisterApp_Defaults(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -248,6 +252,8 @@ func TestAppManager_RegisterApp_ValidationErrors(t *testing.T) {
 }
 
 func TestAppManager_GetApp(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -279,6 +285,8 @@ func TestAppManager_GetApp(t *testing.T) {
 }
 
 func TestAppManager_UpdateApp(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -321,6 +329,8 @@ func TestAppManager_UpdateApp(t *testing.T) {
 }
 
 func TestAppManager_DeleteApp(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -348,6 +358,8 @@ func TestAppManager_DeleteApp(t *testing.T) {
 }
 
 func TestAppManager_ListApps(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -381,6 +393,8 @@ func TestAppManager_ListApps(t *testing.T) {
 }
 
 func TestAppManager_RotateSecret(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -421,6 +435,8 @@ func TestAppManager_RotateSecret(t *testing.T) {
 }
 
 func TestAppManager_ValidateClient(t *testing.T) {
+	t.Parallel()
+
 	manager := createTestAppManager(t)
 	ctx := context.Background()
 
@@ -483,6 +499,8 @@ func TestGenerateClientID(t *testing.T) {
 }
 
 func TestGenerateClientSecret(t *testing.T) {
+	t.Parallel()
+
 	plaintext1, hashed1, err := generateClientSecret()
 	if err != nil {
 		t.Fatalf("generateClientSecret() error = %v", err)
@@ -524,6 +542,8 @@ func TestGenerateClientSecret(t *testing.T) {
 }
 
 func TestValidateClientSecret(t *testing.T) {
+	t.Parallel()
+
 	plaintext, hashed, err := generateClientSecret()
 	if err != nil {
 		t.Fatalf("generateClientSecret() error = %v", err)

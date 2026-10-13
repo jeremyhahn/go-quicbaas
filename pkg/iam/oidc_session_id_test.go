@@ -341,6 +341,8 @@ func TestGenerateTokenResponseForSession_LegacyRenewalDoesNotAdoptAMintedIdentif
 // Both halves in one case, because they are one rule: a record that names a
 // login replays it, a record that names none stays nameless.
 func TestRefreshTokenGrant_RenewsTheSessionItWasGiven(t *testing.T) {
+	t.Parallel()
+
 	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
 	ctx := context.Background()
 	user := seedCeremonyUser(t, storage, sessionIDTenant, sessionIDUser, []string{"operator"})

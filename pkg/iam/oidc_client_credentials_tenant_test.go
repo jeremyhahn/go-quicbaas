@@ -81,6 +81,8 @@ func newTenantRoutedOIDCProvider(t *testing.T, tenantID string) (*OIDCProvider, 
 // TestClientCredentialsGrant_AcceptsTheCredentialRegistrationIssued is the
 // #644 regression at the grant seam.
 func TestClientCredentialsGrant_AcceptsTheCredentialRegistrationIssued(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 
@@ -110,6 +112,8 @@ func TestClientCredentialsGrant_AcceptsTheCredentialRegistrationIssued(t *testin
 // opaque invalid_client, so the response cannot distinguish a client that
 // exists from one that does not.
 func TestClientCredentialsGrant_RefusesAWrongSecret(t *testing.T) {
+	t.Parallel()
+
 	const tenantID = "automatethethings"
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 

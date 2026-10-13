@@ -114,6 +114,8 @@ func TestValidateDefaultAudience(t *testing.T) {
 // TestTokenIssuance_DefaultAudience drives the client_credentials token path to
 // verify the server-side default audience behavior end to end.
 func TestTokenIssuance_DefaultAudience(t *testing.T) {
+	t.Parallel()
+
 	provider, privateKey, appStorage, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
@@ -251,6 +253,8 @@ func TestRegisterApp_RejectsInvalidDefaultAudience(t *testing.T) {
 // TestUpdateApp_DefaultAudience verifies update both sets a valid default and
 // rejects an invalid one.
 func TestUpdateApp_DefaultAudience(t *testing.T) {
+	t.Parallel()
+
 	storage := NewMemoryStorage()
 	mgr := NewAppManager(storage, nil)
 	ctx := context.Background()

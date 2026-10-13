@@ -220,14 +220,6 @@ func (w *iamServiceWrapper) ProvisionTenant(ctx context.Context, req *IAMProvisi
 // =============================================================================
 
 func (w *iamServiceWrapper) CreateUser(ctx context.Context, req *IAMCreateUserRequest) (*IAMCreateUserResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.CreateUser", "identity store not available")
-	}
-
 	// Generate username from email if not provided or invalid.
 	// The IdentityStore validates that Username matches a strict regex (3-64 alphanumeric characters).
 	username := req.Username
@@ -255,6 +247,20 @@ func (w *iamServiceWrapper) CreateUser(ctx context.Context, req *IAMCreateUserRe
 		AuthMethods: req.AuthMethods,
 		Lifecycle:   req.Lifecycle,
 		Roles:       req.Roles,
+	}
+
+	// The request is judged before the server's wiring: a malformed request
+	// is refused for its field, never as an unavailable store (#335).
+	if err := iam.ValidateCreateUserOptions(req.TenantID, opts); err != nil {
+		return nil, err
+	}
+
+	is, err := w.provider.GetIdentityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if is == nil {
+		return nil, errors.New(errors.ErrUnavailable, "iam.CreateUser", "identity store not available")
 	}
 
 	// A pending user is useless without its activation invite, so it is issued
@@ -303,14 +309,6 @@ func (w *iamServiceWrapper) GetUser(ctx context.Context, req *IAMGetUserRequest)
 }
 
 func (w *iamServiceWrapper) UpdateUser(ctx context.Context, req *IAMUpdateUserRequest) (*IAMUpdateUserResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.UpdateUser", "identity store not available")
-	}
-
 	opts := iam.UpdateUserOptions{}
 	if req.Email != nil {
 		opts.Email = req.Email
@@ -343,6 +341,19 @@ func (w *iamServiceWrapper) UpdateUser(ctx context.Context, req *IAMUpdateUserRe
 	}
 	if req.Roles != nil {
 		opts.Roles = req.Roles
+	}
+
+	// Judged before the wiring, as in CreateUser (#335).
+	if err := iam.ValidateUpdateUserOptions(opts); err != nil {
+		return nil, err
+	}
+
+	is, err := w.provider.GetIdentityStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if is == nil {
+		return nil, errors.New(errors.ErrUnavailable, "iam.UpdateUser", "identity store not available")
 	}
 
 	user, err := is.UpdateUser(ctx, req.TenantID, req.UserID, opts)

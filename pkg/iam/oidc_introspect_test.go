@@ -222,6 +222,8 @@ func TestOIDCIntrospect_EmptyToken(t *testing.T) {
 // TestOIDCAuthenticateClient verifies the introspection caller-authentication
 // primitive accepts valid client credentials and rejects bad ones.
 func TestOIDCAuthenticateClient(t *testing.T) {
+	t.Parallel()
+
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 

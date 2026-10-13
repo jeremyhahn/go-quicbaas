@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,7 +34,7 @@ import (
 // file was uncovered. These tests exercise the resolver-not-configured fail-
 // closed path, the qrdb error -> IAM-sentinel translation (RoleNotFound /
 // RoleNameExists / generic wrap), the happy-path delegation, and the
-// offset/limit -> page pagination math.
+// exact offset/limit window read over qrdb's pages.
 // =============================================================================
 
 // fakeRoleClient is a controllable qrdbtransport.RoleClient double. Only the
@@ -48,6 +49,9 @@ type fakeRoleClient struct {
 	deleteErr  error
 	listResp   *qrdbtransport.ListRolesResponse
 	listErr    error
+	// listPages, when set, serves ListRoles by page number; a page it does
+	// not hold fails with listErr.
+	listPages  map[int][]*qrdbtransport.Role
 	byNameResp *qrdbtransport.Role
 	byNameErr  error
 	recResp    *qrdbtransport.ReconcileRolesResponse
@@ -58,8 +62,10 @@ type fakeRoleClient struct {
 	gotDelete string
 	gotGet    string
 	gotList   *qrdbtransport.ListRolesRequest
-	gotRec    *qrdbtransport.ReconcileRolesRequest
-	gotByName *qrdbtransport.GetRoleByNameRequest
+	// listPagesAsked records the Page of every ListRoles request in order.
+	listPagesAsked []int
+	gotRec         *qrdbtransport.ReconcileRolesRequest
+	gotByName      *qrdbtransport.GetRoleByNameRequest
 }
 
 func (f *fakeRoleClient) CreateRole(_ context.Context, req *qrdbtransport.CreateRoleRequest) (*qrdbtransport.Role, error) {
@@ -84,7 +90,15 @@ func (f *fakeRoleClient) DeleteRole(_ context.Context, id string) error {
 
 func (f *fakeRoleClient) ListRoles(_ context.Context, req *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
 	f.gotList = req
-	return f.listResp, f.listErr
+	f.listPagesAsked = append(f.listPagesAsked, req.Page)
+	if f.listPages == nil {
+		return f.listResp, f.listErr
+	}
+	roles, ok := f.listPages[req.Page]
+	if !ok {
+		return nil, f.listErr
+	}
+	return &qrdbtransport.ListRolesResponse{Roles: roles}, nil
 }
 
 func (f *fakeRoleClient) ReconcileBuiltInRoles(_ context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
@@ -241,9 +255,9 @@ func TestQRDBRoleStorage_ListRoles(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, roles, 2)
 	assert.Equal(t, "admin", roles[0].Name)
-	// Offset 20 / Limit 10 -> page 3 (offset/limit + 1).
+	// Offset 20 / Limit 10 falls on a page boundary: page 3 alone.
 	require.NotNil(t, fc.gotList)
-	assert.Equal(t, 3, fc.gotList.Page)
+	assert.Equal(t, []int{3}, fc.listPagesAsked)
 	assert.Equal(t, 10, fc.gotList.PageSize)
 
 	// List error wraps as ErrInternal.
@@ -255,15 +269,40 @@ func TestQRDBRoleStorage_ListRoles(t *testing.T) {
 	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }
 
-func TestPageFromOffset(t *testing.T) {
-	// No limit -> page 1.
-	assert.Equal(t, 1, pageFromOffset(50, 0))
-	// No offset -> page 1.
-	assert.Equal(t, 1, pageFromOffset(0, 10))
-	// Negative inputs -> page 1.
-	assert.Equal(t, 1, pageFromOffset(-5, 10))
-	// Exact multiple -> computed page.
-	assert.Equal(t, 3, pageFromOffset(20, 10))
+// TestQRDBRoleStorage_ListRoles_UnalignedOffset is a regression against the
+// old offset to page translation, which answered offset 3 with limit 2 with
+// page 2 whole (roles 2 and 3) instead of the window starting at role 3.
+func TestQRDBRoleStorage_ListRoles_UnalignedOffset(t *testing.T) {
+	role := func(i int) *qrdbtransport.Role {
+		return &qrdbtransport.Role{ID: "r" + strconv.Itoa(i), Name: "role" + strconv.Itoa(i), TenantID: "t1"}
+	}
+	fc := &fakeRoleClient{listPages: map[int][]*qrdbtransport.Role{
+		1: {role(0), role(1)},
+		2: {role(2), role(3)},
+		3: {role(4)},
+	}}
+	s := NewQRDBRoleStorage(&fakeRoleResolver{client: fc})
+
+	roles, err := s.ListRoles(context.Background(), "t1", ListOptions{Offset: 3, Limit: 2})
+	require.NoError(t, err)
+	require.Len(t, roles, 2)
+	assert.Equal(t, "r3", roles[0].ID)
+	assert.Equal(t, "r4", roles[1].ID)
+	assert.Equal(t, []int{2, 3}, fc.listPagesAsked)
+}
+
+func TestQRDBRoleStorage_ListRoles_SecondPageErrorIsMapped(t *testing.T) {
+	fc := &fakeRoleClient{
+		listPages: map[int][]*qrdbtransport.Role{2: {{ID: "r2"}, {ID: "r3"}}},
+		listErr:   errors.New("scan failed"),
+	}
+	s := NewQRDBRoleStorage(&fakeRoleResolver{client: fc})
+
+	_, err := s.ListRoles(context.Background(), "t1", ListOptions{Offset: 3, Limit: 2})
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
+	assert.Equal(t, []int{2, 3}, fc.listPagesAsked)
 }
 
 func TestTransportRoleToIAM_Nil(t *testing.T) {

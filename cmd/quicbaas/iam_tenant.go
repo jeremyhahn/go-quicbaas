@@ -33,6 +33,14 @@ var (
 	tenantName        string
 	tenantMaxUsers    int
 	tenantMFARequired bool
+
+	// Tenant provision command flags.
+	tenantProvisionIsolationType     string
+	tenantProvisionAdminUsername     string
+	tenantProvisionAdminEnrollment   string
+	tenantProvisionAdminCSRPath      string
+	tenantProvisionAdminCertOut      string
+	tenantProvisionInviteExpiryHours int
 )
 
 // newIAMTenantCommand creates the tenant command group.
@@ -53,6 +61,7 @@ managed under "tenant barrier".`,
 
 	// Add subcommands
 	cmd.AddCommand(newIAMTenantCreateCommand())
+	cmd.AddCommand(newIAMTenantProvisionCommand())
 	cmd.AddCommand(newIAMTenantGetCommand())
 	cmd.AddCommand(newIAMTenantUpdateCommand())
 	cmd.AddCommand(newIAMTenantDeleteCommand())
@@ -161,6 +170,193 @@ func runIAMTenantCreateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// tenantProvisionOp names the provision verb in errors it returns.
+const tenantProvisionOp = "iam.tenant.provision"
+
+// newIAMTenantProvisionCommand creates the tenant provision command.
+func newIAMTenantProvisionCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "provision <id>",
+		Short: "Provision a tenant together with its tenant admin",
+		Long: `Provision a tenant in one step: create the tenant, create its
+tenant-scoped Admin role, and enroll the tenant admin.
+
+The admin is enrolled one of two ways:
+  cert    the admin's CSR (--admin-csr) is signed and the issued certificate
+          is bound to the admin. The certificate is written to
+          --admin-cert-out (mode 0600) when given, otherwise printed.
+  invite  a pending admin is created and a single-use invite token is
+          printed once. The admin redeems it to activate their account.
+
+Unlike "create", an empty isolation type means a per-tenant barrier. The
+server accepts only --isolation-type prefix for now: barrier, volume and raft
+(and so the empty default) are refused until qrdb can hold the tenant admin
+outside the sealed tenant barrier.
+
+Examples:
+  # Provision a tenant whose admin enrolls with a certificate
+  quicbaas iam tenant provision acme-corp --name "Acme Corp" --isolation-type prefix \
+    --admin-csr admin.csr --admin-cert-out admin.crt
+
+  # Provision a tenant whose admin activates through an invite
+  quicbaas iam tenant provision acme-corp --isolation-type prefix --admin-enrollment invite \
+    --admin-username alice --invite-expiry-hours 24`,
+		Args: cobra.ExactArgs(1),
+		RunE: runIAMTenantProvisionCommand,
+	}
+
+	cmd.Flags().StringVar(&tenantName, "name", "", "Tenant display name (defaults to the tenant ID)")
+	cmd.Flags().StringVar(&tenantProvisionIsolationType, "isolation-type", "", "Isolation type: prefix, barrier, volume or raft (empty means barrier; the server accepts only prefix for now)")
+	cmd.Flags().StringVar(&tenantProvisionAdminUsername, "admin-username", "", "Tenant admin login name (defaults to admin)")
+	cmd.Flags().StringVar(&tenantProvisionAdminEnrollment, "admin-enrollment", string(iam.TenantAdminEnrollCert), "Admin enrollment: cert or invite")
+	cmd.Flags().StringVar(&tenantProvisionAdminCSRPath, "admin-csr", "", "Path to the admin's PEM-encoded CSR (cert enrollment only)")
+	cmd.Flags().StringVar(&tenantProvisionAdminCertOut, "admin-cert-out", "", "Write the issued admin certificate to this path (cert enrollment only)")
+	cmd.Flags().IntVar(&tenantProvisionInviteExpiryHours, "invite-expiry-hours", 0, "Invite lifetime in hours, 0 = server default (invite enrollment only)")
+
+	return cmd
+}
+
+// runIAMTenantProvisionCommand executes the tenant provision command.
+func runIAMTenantProvisionCommand(cmd *cobra.Command, args []string) error {
+	tenantID := args[0]
+	if tenantID == "" {
+		return errors.New(errors.ErrInvalidInput, tenantProvisionOp, "tenant ID is required")
+	}
+
+	req, err := buildTenantProvisionRequest(tenantID)
+	if err != nil {
+		return err
+	}
+
+	format, err := cli.ParseOutputFormat(iamOutputFormat)
+	if err != nil {
+		return err
+	}
+
+	iamClient, err := createIAMClient()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	defer cancel()
+
+	// The response carries the invite token: log only the tenant ID.
+	log.Debugf("Provisioning tenant: %s", tenantID)
+	resp, err := iamClient.Tenant().Provision(ctx, req)
+	if err != nil {
+		return formatError(err)
+	}
+
+	if tenantProvisionAdminCertOut != "" {
+		if err := writeTenantAdminCert(tenantProvisionAdminCertOut, resp.AdminCertPEM); err != nil {
+			return err
+		}
+	}
+
+	if format == cli.OutputFormatJSON {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(resp)
+	}
+
+	printTenantProvisionResponse(resp)
+	return nil
+}
+
+// buildTenantProvisionRequest maps the provision flags onto the request,
+// reading the admin CSR in cert mode. It fails fast on flag combinations the
+// server would refuse; the server's validation stays authoritative.
+func buildTenantProvisionRequest(tenantID string) (*iam.ProvisionTenantRequest, error) {
+	if tenantProvisionInviteExpiryHours < 0 {
+		return nil, errors.New(errors.ErrInvalidInput, tenantProvisionOp, "--invite-expiry-hours must not be negative")
+	}
+
+	req := &iam.ProvisionTenantRequest{
+		TenantID:          tenantID,
+		Name:              tenantName,
+		IsolationType:     iam.TenantIsolationType(tenantProvisionIsolationType),
+		AdminUsername:     tenantProvisionAdminUsername,
+		AdminEnrollment:   iam.TenantAdminEnrollment(tenantProvisionAdminEnrollment),
+		InviteExpiryHours: tenantProvisionInviteExpiryHours,
+	}
+
+	switch req.AdminEnrollment {
+	case iam.TenantAdminEnrollCert:
+		if tenantProvisionAdminCSRPath == "" {
+			return nil, errors.New(errors.ErrInvalidInput, tenantProvisionOp, "--admin-csr is required for cert enrollment")
+		}
+		if tenantProvisionInviteExpiryHours != 0 {
+			return nil, errors.New(errors.ErrInvalidInput, tenantProvisionOp, "--invite-expiry-hours applies to invite enrollment only")
+		}
+		csr, err := os.ReadFile(tenantProvisionAdminCSRPath)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrInvalidInput, tenantProvisionOp, "failed to read admin CSR file %s", tenantProvisionAdminCSRPath)
+		}
+		req.AdminCSRPEM = string(csr)
+
+	case iam.TenantAdminEnrollInvite:
+		if tenantProvisionAdminCSRPath != "" {
+			return nil, errors.New(errors.ErrInvalidInput, tenantProvisionOp, "--admin-csr applies to cert enrollment only")
+		}
+		if tenantProvisionAdminCertOut != "" {
+			return nil, errors.New(errors.ErrInvalidInput, tenantProvisionOp, "--admin-cert-out applies to cert enrollment only")
+		}
+
+	default:
+		return nil, errors.Newf(errors.ErrInvalidInput, tenantProvisionOp, "--admin-enrollment must be %q or %q, got %q",
+			iam.TenantAdminEnrollCert, iam.TenantAdminEnrollInvite, tenantProvisionAdminEnrollment)
+	}
+
+	return req, nil
+}
+
+// writeTenantAdminCert writes the issued admin certificate PEM to path with
+// mode 0600, tightening the mode of a file that already exists.
+func writeTenantAdminCert(path, certPEM string) error {
+	if certPEM == "" {
+		return errors.New(errors.ErrInternal, tenantProvisionOp, "server returned no admin certificate")
+	}
+	if err := os.WriteFile(path, []byte(certPEM), 0o600); err != nil {
+		return errors.Wrapf(err, errors.ErrInternal, tenantProvisionOp, "failed to write admin certificate to %s", path)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return errors.Wrapf(err, errors.ErrInternal, tenantProvisionOp, "failed to set mode on admin certificate %s", path)
+	}
+	return nil
+}
+
+// printTenantProvisionResponse prints the provision result as text.
+func printTenantProvisionResponse(resp *iam.ProvisionTenantResponse) {
+	fmt.Println("Tenant provisioned successfully:")
+	fmt.Printf("  Tenant ID: %s\n", resp.TenantID)
+	fmt.Printf("  Admin User ID: %s\n", resp.AdminUserID)
+	fmt.Printf("  Admin Username: %s\n", resp.AdminUsername)
+	fmt.Printf("  Admin Role ID: %s\n", resp.AdminRoleID)
+	fmt.Printf("  Admin Pending: %v\n", resp.AdminPending)
+	fmt.Printf("  Provisioned: %s\n", resp.Timestamp.Format("2006-01-02 15:04:05"))
+
+	if resp.AdminCertThumbprint != "" {
+		fmt.Printf("  Admin Cert Thumbprint: %s\n", resp.AdminCertThumbprint)
+	}
+	if resp.AdminCertPEM != "" {
+		if tenantProvisionAdminCertOut != "" {
+			fmt.Printf("  Admin Certificate: written to %s\n", tenantProvisionAdminCertOut)
+		} else {
+			fmt.Println("  Admin Certificate:")
+			fmt.Print(resp.AdminCertPEM)
+		}
+	}
+
+	if resp.InviteToken != "" {
+		fmt.Printf("  Invite Token: %s\n", resp.InviteToken)
+		if resp.InviteExpiresAt != nil {
+			fmt.Printf("  Invite Expires: %s\n", resp.InviteExpiresAt.Format("2006-01-02 15:04:05"))
+		}
+		fmt.Println("The invite token is single-use and is shown only once: deliver it to the tenant admin over a secure channel.")
+	}
 }
 
 // newIAMTenantGetCommand creates the tenant get command.
