@@ -165,3 +165,36 @@ func TestOrchestratorSpawnSession_CarriesAccountAllow(t *testing.T) {
 		t.Fatalf("account_allow = %v, want [acct-a acct-b]", allow)
 	}
 }
+
+func TestOrchestratorSpawnSession_CarriesKeep(t *testing.T) {
+	bodies := make(chan map[string]interface{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		bodies <- body
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"session_id":"s1","backend":"claude"}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+	tr := newTestTransport(t, server)
+
+	for _, keep := range []bool{true, false} {
+		if _, err := tr.Request(context.Background(), "Orchestrator", "SpawnSession",
+			&orchestrator.SpawnSessionRequest{Backend: "claude", Keep: keep}); err != nil {
+			t.Fatalf("SpawnSession(keep=%v): %v", keep, err)
+		}
+		body := <-bodies
+		got, present := body["keep"]
+		if keep && got != true {
+			t.Errorf("spawn body keep = %v, want true", got)
+		}
+		if !keep && present {
+			t.Errorf("an unkept spawn sent keep = %v, want it absent", got)
+		}
+	}
+}

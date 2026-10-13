@@ -1775,6 +1775,70 @@ func TestApplyNotActionable_AClosedIssueIsNotAlsoEscalated(t *testing.T) {
 	}
 }
 
+// TestClearOtherDispositions_AFailedRemovalIsAuditedNotFatal proves a stale
+// disposition label the forge refuses to remove is recorded on the audit trail
+// rather than silently dropped.
+func TestClearOtherDispositions_AFailedRemovalIsAuditedNotFatal(t *testing.T) {
+	forge := newFakeForge()
+	forge.removeLabelErr = errors.New("forge refused the removal")
+	binding := testBinding()
+	binding.Forge.Labels[LabelEscalated] = "factory:escalated"
+	escalated := binding.Forge.Label(LabelEscalated)
+	issue := ForgeIssue{Number: 9, Title: "judged twice", Labels: []string{escalated}}
+	forge.issues[9] = &issue
+
+	var audits []orchestration.JobAuditEvent
+	run := triageRunFor(forge, binding)
+	run.job = orchestration.NewJobRun(orchestration.JobRunConfig{
+		JobID: "job-triage-audit", Runner: TriageRunnerName,
+		Config: &orchestration.JobConfig{TenantID: testTenant, ProjectID: testProject},
+		AuditFn: func(eventType, details string) {
+			audits = append(audits, orchestration.JobAuditEvent{Type: eventType, Details: details})
+		},
+	})
+
+	run.clearOtherDispositions(context.Background(), issue, LabelNeedsInfo)
+
+	if len(audits) != 1 || audits[0].Type != "sdlc:triage_label_stale" {
+		t.Fatalf("audits = %v, want one sdlc:triage_label_stale event", audits)
+	}
+	if !strings.Contains(audits[0].Details, "label="+escalated) ||
+		!strings.Contains(audits[0].Details, "forge refused the removal") {
+		t.Fatalf("the audit must name the label and the cause, got %q", audits[0].Details)
+	}
+}
+
+// TestClearOtherDispositions_RemovesOnlyTheOtherHeldDisposition covers the
+// success path: the kept disposition stays and nothing is audited.
+func TestClearOtherDispositions_RemovesOnlyTheOtherHeldDisposition(t *testing.T) {
+	forge := newFakeForge()
+	binding := testBinding()
+	binding.Forge.Labels[LabelEscalated] = "factory:escalated"
+	escalated := binding.Forge.Label(LabelEscalated)
+	needsInfo := binding.Forge.Label(LabelNeedsInfo)
+	issue := ForgeIssue{Number: 10, Title: "judged twice", Labels: []string{escalated, needsInfo}}
+	forge.issues[10] = &issue
+
+	var audits []orchestration.JobAuditEvent
+	run := triageRunFor(forge, binding)
+	run.job = orchestration.NewJobRun(orchestration.JobRunConfig{
+		JobID: "job-triage-audit", Runner: TriageRunnerName,
+		Config: &orchestration.JobConfig{TenantID: testTenant, ProjectID: testProject},
+		AuditFn: func(eventType, details string) {
+			audits = append(audits, orchestration.JobAuditEvent{Type: eventType, Details: details})
+		},
+	})
+
+	run.clearOtherDispositions(context.Background(), issue, LabelNeedsInfo)
+
+	if len(forge.labelRemovals) != 1 || forge.labelRemovals[0] != escalated {
+		t.Fatalf("removals = %v, want [%s]", forge.labelRemovals, escalated)
+	}
+	if len(audits) != 0 {
+		t.Fatalf("a clean removal audits nothing, got %v", audits)
+	}
+}
+
 // TestIsCandidate_EscalatedIsNotACandidateEvenWhenAnswered pins #1060:
 // escalated names a person as the next step, and a comment is not that person
 // removing the label, so the issue is never re-judged while it carries it.

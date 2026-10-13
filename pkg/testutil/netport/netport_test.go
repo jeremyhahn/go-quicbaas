@@ -16,6 +16,7 @@
 package netport
 
 import (
+	"crypto/rand"
 	"errors"
 	"net"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -917,6 +919,25 @@ func TestDefaultLockDir_IsKeyedByUser(t *testing.T) {
 	assert.Equal(t,
 		filepath.Join(os.TempDir(), "go-quicbaas-netport-"+strconv.Itoa(os.Getuid())),
 		defaultLockDir())
+}
+
+func TestRandomStart_StaysInsideTheWindow(t *testing.T) {
+	for range 64 {
+		start, err := randomStart(7, rand.Reader)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, start, 0)
+		assert.Less(t, start, 7)
+	}
+}
+
+func TestRandomStart_ReportsAFailingEntropySource(t *testing.T) {
+	cause := errors.New("entropy exhausted")
+	_, err := randomStart(7, iotest.ErrReader(cause))
+
+	var entropyErr *EntropyError
+	require.ErrorAs(t, err, &entropyErr)
+	assert.ErrorIs(t, err, cause)
+	assert.Contains(t, err.Error(), "choosing a start port")
 }
 
 // -----------------------------------------------------------------------------

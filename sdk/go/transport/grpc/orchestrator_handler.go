@@ -386,6 +386,7 @@ func handleOrchestratorSpawnSession(ctx context.Context, conn *grpc.ClientConn, 
 		// to cross the wire alongside AccountAuto.
 		AccountAllow: sdkReq.AccountAllow,
 		PromptAppend: sdkReq.PromptAppend,
+		Keep:         sdkReq.Keep,
 	}
 	protoResp := &pb.SpawnSessionResponse{}
 
@@ -1121,9 +1122,14 @@ func handleOrchestratorSpawnChildJob(ctx context.Context, conn *grpc.ClientConn,
 // handleOrchestratorStartJob converts an SDK StartJobRequest to proto, invokes
 // the gRPC StartJob RPC, and converts the proto response back to the SDK type.
 func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.orchestrator.StartJob"
 	sdkReq, ok := req.(*orchestrator.StartJobRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("grpc.orchestrator.StartJob", "invalid request type")
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	maxIterations, err := int32ToProto(op, "max_iterations", sdkReq.MaxIterations)
+	if err != nil {
+		return nil, err
 	}
 
 	tenantID := transport.TenantFromContext(ctx)
@@ -1134,7 +1140,7 @@ func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req 
 		Lead:          agentRefToProto(sdkReq.Lead),
 		LeadAgentId:   sdkReq.LeadAgentID,
 		ProjectId:     sdkReq.ProjectID,
-		MaxIterations: int32(sdkReq.MaxIterations), //nolint:gosec // G115: bounded count
+		MaxIterations: maxIterations,
 		PollInterval:  sdkReq.PollInterval,
 		WorkflowName:  sdkReq.WorkflowName,
 		WorkflowFile:  sdkReq.WorkflowFile,
@@ -1147,7 +1153,7 @@ func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req 
 
 	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_StartJob_FullMethodName, protoReq, protoResp)
 	if invokeErr != nil {
-		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.StartJob")
+		return nil, convertGRPCError(invokeErr, op)
 	}
 
 	return &orchestrator.StartJobResponse{

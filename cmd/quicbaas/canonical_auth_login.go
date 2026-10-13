@@ -202,8 +202,6 @@ var (
 	errHomeDirUnavailable = errors.New("cannot resolve home directory")
 	errXKMSServiceInUse   = errors.New("the in-process xkms service is already initialized by another component; local PIV cannot share it")
 	errEmptyPIVSignature  = errors.New("empty signature")
-	//nolint:unused // referenced only by the pkcs11-tagged build (piv_local_pkcs11.go)
-	errPKCS11ModuleRequired = errors.New("--pkcs11-module is required for the pkcs11 backend")
 )
 
 // PIVPINRequiredError is returned when --method piv on the pkcs11 backend

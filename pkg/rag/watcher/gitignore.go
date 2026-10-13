@@ -17,6 +17,7 @@ package watcher
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -45,6 +46,10 @@ func newGitIgnoreMatcher(patterns []string) (*gitIgnoreMatcher, error) {
 		}
 
 		pat := m.parsePattern(p)
+		// Reject a malformed glob here so matching never meets one.
+		if _, err := filepath.Match(filepath.ToSlash(pat.glob), ""); err != nil {
+			return nil, &WatcherCauseError{Message: "invalid exclude pattern " + strconv.Quote(p), Cause: err}
+		}
 		m.patterns = append(m.patterns, pat)
 	}
 
@@ -112,14 +117,12 @@ func (m *gitIgnoreMatcher) matchPattern(path string, p pattern) bool {
 	}
 
 	// Simple pattern matching
-	matched, _ := filepath.Match(glob, filepath.Base(path)) //nolint:gosec // Bad pattern correctly returns false (no match)
-	if matched {
+	if globMatch(glob, filepath.Base(path)) {
 		return true
 	}
 
 	// Try matching against full path
-	matched, _ = filepath.Match(glob, path) //nolint:gosec // Bad pattern correctly returns false (no match)
-	if matched {
+	if globMatch(glob, path) {
 		return true
 	}
 
@@ -153,8 +156,7 @@ func (m *gitIgnoreMatcher) matchWildcard(path, pattern string) bool {
 		return true
 	}
 
-	matched, _ := filepath.Match(pattern, path)
-	if matched {
+	if globMatch(pattern, path) {
 		return true
 	}
 
@@ -162,10 +164,17 @@ func (m *gitIgnoreMatcher) matchWildcard(path, pattern string) bool {
 	parts := strings.Split(path, "/")
 	for i := range parts {
 		segment := strings.Join(parts[i:], "/")
-		if matched, _ := filepath.Match(pattern, segment); matched {
+		if globMatch(pattern, segment) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// globMatch reports whether name matches glob. newGitIgnoreMatcher rejects
+// malformed globs, so Match's only error, ErrBadPattern, means no match.
+func globMatch(glob, name string) bool {
+	matched, err := filepath.Match(glob, name)
+	return err == nil && matched
 }

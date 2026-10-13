@@ -61,8 +61,8 @@ func (t *Tracer) TraceRaftApply(ctx context.Context, shardID, nodeID, term, inde
 		trace.WithAttributes(
 			AttrDBShardID.Int64(conv.ClampUint64ToInt64(shardID)),
 			AttrDBNodeID.Int64(conv.ClampUint64ToInt64(nodeID)),
-			AttrRaftTerm.Int64(int64(term)),      //nolint:gosec // G115: term for tracing attribute
-			AttrRaftLogIndex.Int64(int64(index)), //nolint:gosec // G115: index conversion for tracing
+			AttrRaftTerm.Int64(conv.ClampUint64ToInt64(term)),
+			AttrRaftLogIndex.Int64(conv.ClampUint64ToInt64(index)),
 		),
 	)
 
@@ -88,7 +88,7 @@ func (t *Tracer) TraceRaftSnapshot(ctx context.Context, shardID, nodeID, index u
 		trace.WithAttributes(
 			AttrDBShardID.Int64(conv.ClampUint64ToInt64(shardID)),
 			AttrDBNodeID.Int64(conv.ClampUint64ToInt64(nodeID)),
-			AttrRaftLogIndex.Int64(int64(index)), //nolint:gosec // G115: log index for tracing
+			AttrRaftLogIndex.Int64(conv.ClampUint64ToInt64(index)),
 		),
 	)
 
@@ -253,8 +253,8 @@ func (t *Tracer) TraceReplication(ctx context.Context, sourceNode, targetNode ui
 	spanCtx, span := t.tracer.Start(ctx, "replication.sync",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
-			attribute.Int64("replication.source_node", int64(sourceNode)), //nolint:gosec // G115: node ID for tracing
-			attribute.Int64("replication.target_node", int64(targetNode)), //nolint:gosec // G115: node ID for tracing
+			attribute.Int64("replication.source_node", conv.ClampUint64ToInt64(sourceNode)),
+			attribute.Int64("replication.target_node", conv.ClampUint64ToInt64(targetNode)),
 			attribute.Int("replication.entry_count", entryCount),
 		),
 	)

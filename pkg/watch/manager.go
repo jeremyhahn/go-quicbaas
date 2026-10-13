@@ -644,7 +644,7 @@ func (m *Manager) deliverEvents(w *Watch) {
 		case event := <-w.Events:
 			// Build response
 			resp := &WatchResponse{
-				WatchID:  int64(w.ID), //nolint:gosec // G115: watch ID conversion for proto
+				WatchID:  conv.ClampUint64ToInt64(w.ID),
 				Events:   []*WatchEvent{event},
 				Revision: event.Revision,
 			}

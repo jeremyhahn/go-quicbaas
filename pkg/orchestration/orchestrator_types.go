@@ -814,6 +814,13 @@ type SpawnSessionRequest struct {
 	Persistent      bool              `json:"persistent,omitempty"`       // persistent session with context across prompts
 	ExtraArgs       []string          `json:"extra_args,omitempty"`       // Additional CLI args for the agent command
 
+	// Keep marks a session bound to no job as one the operator means to keep,
+	// and is persisted on its record (SessionRecord.Keep). Reconciliation
+	// concludes every other job-less session once it has been quiet past the
+	// idle bound. It changes nothing for a session bound to a job, which still
+	// ends with its job.
+	Keep bool `json:"keep,omitempty"`
+
 	// TrustLevel is the integrity tier the caller requires of this session
 	// (see trust_policy.go). It is the trust-axis counterpart of SandboxMode:
 	// TrustLevelDefault — the zero value every legacy caller sends — resolves

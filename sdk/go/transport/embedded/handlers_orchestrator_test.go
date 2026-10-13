@@ -975,3 +975,18 @@ func TestEmbedded_PromptAppendReachesTheDomain(t *testing.T) {
 	require.NotNil(t, spawner.spawned)
 	assert.Equal(t, "spawn material", spawner.spawned.PromptAppend)
 }
+
+// TestEmbedded_SpawnKeepReachesTheDomain asserts the keep marker crosses the
+// in-process transport, and that a spawn which does not set it arrives unkept.
+func TestEmbedded_SpawnKeepReachesTheDomain(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		spawner := &capturingSpawnAgentService{fakeAgentService: &fakeAgentService{}}
+		tr, err := New(&orchMock{mockQuicBaaS: &mockQuicBaaS{}, agent: spawner, proj: &fakeProjectService{}, admin: &fakeFleetAdminService{}})
+		require.NoError(t, err)
+		_, err = tr.Request(context.Background(), "quicbaas.Orchestrator", "SpawnSession",
+			&orchestratorSDK.SpawnSessionRequest{AgentID: "claude-coder", Keep: keep})
+		require.NoError(t, err)
+		require.NotNil(t, spawner.spawned)
+		assert.Equal(t, keep, spawner.spawned.Keep)
+	}
+}

@@ -40,6 +40,10 @@
 // keeping. Its job concluding is the one fact that says it has nothing left to
 // be resumed for.
 //
+// A session bound to NO job has no job to conclude, so it gets its own row
+// (TestSessionStateMatrix_JoblessRow): it is kept only by an explicit mark,
+// and otherwise concluded once it is quiet past the idle bound.
+//
 // `closed` is a tombstone and `error` carries its own explanation; overwriting
 // either with a fresh conclusion would erase what a reader needs. An operator
 // can still close an errored record explicitly, which is asserted below.
@@ -302,6 +306,95 @@ func TestSessionStateMatrix_OperatorCloseRow(t *testing.T) {
 			t.Errorf("state = %q, want closed", got)
 		}
 	})
+}
+
+// TestSessionStateMatrix_JoblessRow is the row a session bound to NO job adds
+// (#843). No job will ever reach a terminal state for it, so the sweep is the
+// only path that can end it, and it does so on the idle bound alone unless
+// something explicit keeps it.
+//
+//	job-less record             | sweep
+//	----------------------------+-------
+//	kept (Keep)                 | left
+//	idle past the bound         | CLOSED
+//	resumable past the bound    | CLOSED
+//	idle under the bound        | left
+//	active (turn in flight)     | left
+//	already concluded           | left
+//	name-like project_id        | CLOSED
+//	the node's lead session     | left
+func TestSessionStateMatrix_JoblessRow(t *testing.T) {
+	past := func(bound time.Duration) time.Duration { return bound + time.Hour }
+	under := func(bound time.Duration) time.Duration { return bound / 2 }
+
+	cases := []struct {
+		name   string
+		record SessionRecord
+		// quiet is how long the record has been quiet, given the idle bound.
+		quiet      func(bound time.Duration) time.Duration
+		lead       bool
+		wantClosed bool
+	}{
+		{"kept", SessionRecord{Status: SessionStateIdle, Keep: true}, past, false, false},
+		{"idle past the bound", SessionRecord{Status: SessionStateIdle}, past, false, true},
+		{"resumable past the bound", SessionRecord{Status: SessionStateResumable}, past, false, true},
+		{"idle under the bound", SessionRecord{Status: SessionStateIdle}, under, false, false},
+		{"active", SessionRecord{Status: SessionStateActive}, past, false, false},
+		{"already concluded", SessionRecord{
+			Status: SessionStateClosed, ConclusionReason: ConcludedByOperator}, past, false, false},
+		// An older vintage wrote the project's NAME here. Nothing on the way
+		// to the ending validates it, and nothing may start to.
+		{"name-like project_id", SessionRecord{
+			Status: SessionStateIdle, ProjectID: "billing-service"}, past, false, true},
+		{"node lead session", SessionRecord{Status: SessionStateIdle}, past, true, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, store := reconcileHarness(t)
+			bound := svc.idleThresholds.longest()
+			if bound <= 0 {
+				t.Fatalf("the idle bound is %v; the row needs one to be measured against", bound)
+			}
+			seeded := tc.record
+			seeded.SessionID = "s-matrix"
+			seeded.TenantID = "t1"
+			seeded.Persistent = true
+			seeded.BackendLocal = true
+			seeded.LastActivity = time.Now().Add(-tc.quiet(bound)).UnixNano()
+			seedSession(t, store, &seeded)
+			if tc.lead {
+				svc.SetLeadSessionID(seeded.SessionID)
+			}
+
+			report, err := svc.SweepSessions(context.Background())
+			if err != nil {
+				t.Fatalf("SweepSessions: %v", err)
+			}
+			stored, err := store.GetSession(context.Background(), "t1", "s-matrix")
+			if err != nil {
+				t.Fatalf("GetSession: %v", err)
+			}
+
+			if !tc.wantClosed {
+				if stored.Status != seeded.Status || stored.ConclusionReason != seeded.ConclusionReason {
+					t.Errorf("record = %q/%q, want %q/%q unchanged; the sweep is not entitled to end it",
+						stored.Status, stored.ConclusionReason, seeded.Status, seeded.ConclusionReason)
+				}
+				if len(report.Findings) != 0 {
+					t.Errorf("findings = %+v, want none for a session left alone", report.Findings)
+				}
+				return
+			}
+			if stored.Status != SessionStateClosed || stored.ConclusionReason != ConcludedBySessionIdle {
+				t.Errorf("record = %q/%q, want %q/%q", stored.Status, stored.ConclusionReason,
+					SessionStateClosed, ConcludedBySessionIdle)
+			}
+			if got := report.Count(SessionReconcileConcluded); got != 1 {
+				t.Errorf("concluded findings = %d, want 1: %+v", got, report.Findings)
+			}
+		})
+	}
 }
 
 // remoteGoneBackend answers Close the way a real remote daemon does for a

@@ -120,7 +120,8 @@ func TestExtractKeyMetadata(t *testing.T) {
 			Owner:              "admin",
 		}
 
-		result := extractKeyMetadata("key-1", kmsMeta)
+		result, err := extractKeyMetadata("key-1", kmsMeta)
+		require.NoError(t, err)
 		assert.Equal(t, "key-1", result.KeyID)
 		assert.Equal(t, "test-key", result.Name)
 		assert.Equal(t, "test description", result.Description)
@@ -149,7 +150,8 @@ func TestExtractKeyMetadata(t *testing.T) {
 			Updated:   now,
 		}
 
-		result := extractKeyMetadata("key-2", kmsMeta)
+		result, err := extractKeyMetadata("key-2", kmsMeta)
+		require.NoError(t, err)
 		assert.Equal(t, "key-2", result.KeyID)
 		assert.Equal(t, KeyStatusDisabled, result.Status)
 		assert.Nil(t, result.LastUsedAt)
@@ -175,7 +177,8 @@ func TestExtractKeyMetadata(t *testing.T) {
 			Owner:              "system",
 		}
 
-		result := extractKeyMetadata("key-3", svcMeta)
+		result, err := extractKeyMetadata("key-3", svcMeta)
+		require.NoError(t, err)
 		assert.Equal(t, "key-3", result.KeyID)
 		assert.Equal(t, "svc-key", result.Name)
 		assert.Equal(t, "service key", result.Description)
@@ -191,7 +194,8 @@ func TestExtractKeyMetadata(t *testing.T) {
 	})
 
 	t.Run("returns fallback for unrecognized type", func(t *testing.T) {
-		result := extractKeyMetadata("key-4", "unexpected-type")
+		result, err := extractKeyMetadata("key-4", "unexpected-type")
+		require.NoError(t, err)
 		assert.Equal(t, "key-4", result.KeyID)
 		assert.Equal(t, KeyAlgAES256GCM, result.Algorithm)
 		assert.Equal(t, KeyStatusEnabled, result.Status)
@@ -199,7 +203,8 @@ func TestExtractKeyMetadata(t *testing.T) {
 	})
 
 	t.Run("returns fallback for nil input", func(t *testing.T) {
-		result := extractKeyMetadata("key-5", nil)
+		result, err := extractKeyMetadata("key-5", nil)
+		require.NoError(t, err)
 		assert.Equal(t, "key-5", result.KeyID)
 		assert.Equal(t, KeyAlgAES256GCM, result.Algorithm)
 	})

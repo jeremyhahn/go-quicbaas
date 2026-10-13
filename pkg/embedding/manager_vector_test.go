@@ -20,9 +20,10 @@ import (
 	"errors"
 	"testing"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // fakeProviderError is a typed error returned by fakeProvider to verify error
@@ -345,7 +346,6 @@ func TestMapQRDBError(t *testing.T) {
 		{"nil", nil, nil},
 		{"provider not found", &qrdbsdk.EmbeddingProviderNotFoundError{Name: "x"}, ErrProviderNotFound},
 		{"provider required", qrdbsdk.ErrEmbeddingProviderRequired, ErrProviderRequired},
-		{"provider invalid", qrdbsdk.ErrEmbeddingProviderInvalid, ErrProviderInvalid},
 		{"api url required", qrdbsdk.ErrEmbeddingAPIURLRequired, ErrAPIURLRequired},
 		{"api key required", qrdbsdk.ErrEmbeddingAPIKeyRequired, ErrAPIKeyRequired},
 		{"model required", qrdbsdk.ErrEmbeddingModelRequired, ErrModelRequired},

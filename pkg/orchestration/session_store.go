@@ -301,6 +301,15 @@ type SessionRecord struct {
 	// never resumed.
 	Persistent bool `json:"persistent,omitempty"`
 
+	// Keep is the operator's explicit mark on a session that is bound to no
+	// job and is to be kept anyway, set from SpawnSessionRequest.Keep when the
+	// session is spawned. Reconciliation concludes every other job-less
+	// session once it has been quiet past the idle bound (see joblessIdle),
+	// so this is the only thing that keeps one; the absence
+	// of a job is never read as a wish to keep it. A session bound to a job
+	// ends with its job whatever this says.
+	Keep bool `json:"keep,omitempty"`
+
 	// Status is the last known session state.
 	Status SessionState `json:"status"`
 

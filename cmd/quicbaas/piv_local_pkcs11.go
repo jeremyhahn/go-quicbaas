@@ -30,6 +30,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
+// errPKCS11ModuleRequired is returned when the pkcs11 backend is selected
+// without a --pkcs11-module path.
+var errPKCS11ModuleRequired = errors.New("--pkcs11-module is required for the pkcs11 backend")
+
 // pkcs11PIVSession is the PKCS#11-backed local PIV session.
 type pkcs11PIVSession struct {
 	store xkmssdk.PIVCertificateStorage

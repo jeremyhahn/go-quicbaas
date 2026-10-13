@@ -144,3 +144,17 @@ func TestProjectGRPC_StorageSizeOutOfWireRange(t *testing.T) {
 		t.Fatalf("update with an out-of-range size: err = %v, want invalid input", err)
 	}
 }
+
+// TestProjectGRPC_MaxConcurrencyOutOfWireRange: a concurrency cap the int32
+// wire cannot carry is refused, never wrapped onto a cap nobody asked for.
+func TestProjectGRPC_MaxConcurrencyOutOfWireRange(t *testing.T) {
+	h := newRealProjectHandler(t)
+	huge := math.MaxInt32 + 1
+
+	_, err := h.handleRequest(context.Background(), projectServicePrefix, "Update", &project.UpdateProjectRequest{
+		TenantID: "t1", ProjectID: "p1", MaxConcurrency: &huge,
+	})
+	if !errors.IsInvalidInput(err) || !strings.Contains(err.Error(), "max_concurrency") {
+		t.Fatalf("update with an out-of-range cap: err = %v, want an invalid-input refusal naming max_concurrency", err)
+	}
+}

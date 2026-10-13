@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/security"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // SpawnServer sentinel errors.
@@ -544,7 +545,7 @@ func (s *GRPCSpawnServer) ExecSession(ctx context.Context, req *proto.ExecSessio
 	s.auditRPC(ctx, "exec", identity.TenantID, identity.AgentID, req.GetSessionId(), nil)
 	observeRPC("exec", nil, begin)
 	return &proto.ExecSessionResponse{
-		ExitCode:  int32(result.ExitCode), //nolint:gosec // G115: an exit status fits in 32 bits
+		ExitCode:  conv.ClampIntToInt32(result.ExitCode),
 		Stdout:    []byte(result.Stdout),
 		Stderr:    []byte(result.Stderr),
 		Truncated: truncated,

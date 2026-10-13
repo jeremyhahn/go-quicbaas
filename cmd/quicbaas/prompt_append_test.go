@@ -105,6 +105,31 @@ func TestOrchestratorSpawnRefusesAnUnreadablePromptAppendFile(t *testing.T) {
 	assert.False(t, called, "nothing is spawned when the material cannot be read")
 }
 
+// TestOrchestratorSpawnCarriesKeep asserts --keep asks for a kept session and
+// that a spawn without it asks for an unkept one.
+func TestOrchestratorSpawnCarriesKeep(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		saveAndRestoreOrchestratorState(t)
+		var got *orchestratorSDK.SpawnSessionRequest
+		setMockOrchestratorFactory(&mockOrchestratorClient{
+			spawnSessionFn: func(_ context.Context, req *orchestratorSDK.SpawnSessionRequest) (*orchestratorSDK.SpawnSessionResponse, error) {
+				got = req
+				return &orchestratorSDK.SpawnSessionResponse{SessionID: "sess_new"}, nil
+			},
+		})
+		orchOutputFmt = "json"
+
+		cmd := newOrchSpawnCommand()
+		require.NoError(t, cmd.Flags().Set("agent", "claude-coder"))
+		if keep {
+			require.NoError(t, cmd.Flags().Set("keep", "true"))
+		}
+		require.NoError(t, cmd.RunE(cmd, []string{}))
+		require.NotNil(t, got)
+		assert.Equal(t, keep, got.Keep)
+	}
+}
+
 func TestOrchestratorTaskCreateCarriesPromptAppend(t *testing.T) {
 	saveAndRestoreOrchestratorState(t)
 	var got *orchestratorSDK.CreateTaskRequest

@@ -22,10 +22,11 @@ import (
 	"testing"
 	"time"
 
-	kctypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	kctypes "github.com/jeremyhahn/go-xkms/pkg/types"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -2903,56 +2904,6 @@ func TestParseSecretsRollbackResponse_UnmarshalError(t *testing.T) {
 func TestParseSecretsUpdateStatusResponse_UnmarshalError(t *testing.T) {
 	_, err := parseSecretsUpdateStatusResponse("not-a-map")
 	assert.Error(t, err)
-}
-
-// =============================================================================
-// Scheduler Helper Functions
-// =============================================================================
-
-func TestGetSchedulerLogLevel_Default(t *testing.T) {
-	origLevel := logLevel
-	defer func() { logLevel = origLevel }()
-
-	logLevel = ""
-	result := getSchedulerLogLevel()
-	assert.Equal(t, "info", result)
-}
-
-func TestGetSchedulerLogLevel_Custom(t *testing.T) {
-	origLevel := logLevel
-	defer func() { logLevel = origLevel }()
-
-	logLevel = "debug"
-	result := getSchedulerLogLevel()
-	assert.Equal(t, "debug", result)
-}
-
-func TestConstructSchedulerRESTBaseURL_PlainHTTP(t *testing.T) {
-	origTLS := tlsEnabled
-	defer func() { tlsEnabled = origTLS }()
-
-	tlsEnabled = false
-	url := constructSchedulerRESTBaseURL("localhost:8080")
-	assert.Equal(t, "http://localhost:8080", url)
-}
-
-func TestConstructSchedulerRESTBaseURL_HTTPS(t *testing.T) {
-	origTLS := tlsEnabled
-	defer func() { tlsEnabled = origTLS }()
-
-	tlsEnabled = true
-	url := constructSchedulerRESTBaseURL("localhost:8080")
-	assert.Equal(t, "https://localhost:8080", url)
-}
-
-func TestConstructSchedulerRESTBaseURL_WithScheme(t *testing.T) {
-	url := constructSchedulerRESTBaseURL("http://already-has-scheme:8080")
-	assert.Equal(t, "http://already-has-scheme:8080", url)
-}
-
-func TestConstructSchedulerRESTBaseURL_WithHTTPSScheme(t *testing.T) {
-	url := constructSchedulerRESTBaseURL("https://secure:8443")
-	assert.Equal(t, "https://secure:8443", url)
 }
 
 // =============================================================================

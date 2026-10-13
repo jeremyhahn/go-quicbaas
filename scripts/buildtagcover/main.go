@@ -118,8 +118,8 @@ func main() {
 				negated[tag] = true
 			}
 		}
-		//nolint:forbidigo // CLI tool output, consumed by the Makefile
-		fmt.Println(strings.Join(sortedSet(negated), " "))
+		// The Makefile consumes this line.
+		fmt.Fprintln(os.Stdout, strings.Join(sortedSet(negated), " "))
 		return
 	}
 
@@ -182,7 +182,7 @@ func main() {
 	}
 
 	if len(uncovered) == 0 {
-		fmt.Printf("Build-constraint coverage OK (%d distinct constraints, %d passes, %d local-only)\n", //nolint:forbidigo // CLI tool output
+		fmt.Fprintf(os.Stdout, "Build-constraint coverage OK (%d distinct constraints, %d passes, %d local-only)\n",
 			len(found), len(passes), len(localOnly))
 		return
 	}

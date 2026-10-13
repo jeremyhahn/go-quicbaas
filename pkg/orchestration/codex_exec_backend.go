@@ -164,11 +164,11 @@ func (b *CodexExecBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 
 	var sess *codexExecSession
 	if req.SessionID != "" {
-		v, ok := b.sessions.Load(req.SessionID)
+		found, ok := b.loadSession(req.SessionID)
 		if !ok {
 			return nil, &SessionNotFoundError{SessionID: req.SessionID}
 		}
-		sess = v.(*codexExecSession) //nolint:errcheck // we control the value type
+		sess = found
 	} else {
 		// Ephemeral session: no working directory was registered, fall back
 		// to the current process's cwd. Callers should prefer Spawn first.
@@ -348,14 +348,24 @@ func envValue(env []string, key string) string {
 	return ""
 }
 
+// loadSession returns the registered session for id. A value of any other
+// type is reported as absent rather than trusted.
+func (b *CodexExecBackend) loadSession(id string) (*codexExecSession, bool) {
+	v, ok := b.sessions.Load(id)
+	if !ok {
+		return nil, false
+	}
+	sess, ok := v.(*codexExecSession)
+	return sess, ok
+}
+
 // Status returns the registered session's state. Always SessionStateIdle
 // because codex exec is stateless.
 func (b *CodexExecBackend) Status(_ context.Context, sessionID string) (*SessionStatus, error) {
-	v, ok := b.sessions.Load(sessionID)
+	sess, ok := b.loadSession(sessionID)
 	if !ok {
 		return nil, &SessionNotFoundError{SessionID: sessionID}
 	}
-	sess := v.(*codexExecSession) //nolint:errcheck
 	return &SessionStatus{
 		SessionID:    sess.id,
 		State:        SessionStateIdle,

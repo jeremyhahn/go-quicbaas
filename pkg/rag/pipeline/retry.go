@@ -17,8 +17,10 @@ package pipeline
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
-	"math/rand"
+	"io"
+	"math/big"
 	"time"
 )
 
@@ -40,6 +42,10 @@ type RetryConfig struct {
 	// (go-quicbaas#423). Unexported, so it is not part of the API and no
 	// caller can set it.
 	wait func(ctx context.Context, d time.Duration) error
+
+	// entropy supplies the jitter. Nil means crypto/rand.Reader. Unexported
+	// for the same reason as wait: tests inject a failing reader.
+	entropy io.Reader
 }
 
 // waitRealTime is the default RetryConfig.wait: sleep for d unless the context
@@ -78,9 +84,11 @@ func RetryWithBackoff(ctx context.Context, config RetryConfig, fn func() error) 
 		if attempt > 0 {
 			delay := backoff
 			if config.EnableJitter {
-				// Add jitter: random value between 0.5x and 1.5x the backoff
-				jitter := float64(backoff) * (0.5 + rand.Float64()) //nolint:gosec // G404: Using math/rand for non-cryptographic jitter
-				delay = time.Duration(jitter)
+				jittered, err := jitteredDelay(backoff, config.entropy)
+				if err != nil {
+					return err
+				}
+				delay = jittered
 			}
 
 			wait := config.wait
@@ -113,6 +121,22 @@ func RetryWithBackoff(ctx context.Context, config RetryConfig, fn func() error) 
 	}
 
 	return lastErr
+}
+
+// jitteredDelay returns a uniformly random delay in [0.5, 1.5) times backoff,
+// drawn from entropy (crypto/rand.Reader when nil).
+func jitteredDelay(backoff time.Duration, entropy io.Reader) (time.Duration, error) {
+	if backoff <= 0 {
+		return backoff, nil
+	}
+	if entropy == nil {
+		entropy = rand.Reader
+	}
+	n, err := rand.Int(entropy, big.NewInt(int64(backoff)))
+	if err != nil {
+		return 0, &RetryJitterError{Cause: err}
+	}
+	return backoff/2 + time.Duration(n.Int64()), nil
 }
 
 // isRetryable determines if an error should be retried.

@@ -1033,6 +1033,36 @@ func TestChannelServer_Stop(t *testing.T) {
 	}
 }
 
+var errReaderClose = errors.New("close failed")
+
+// failingCloseReader is a reader whose Close always fails.
+type failingCloseReader struct{ io.Reader }
+
+func (failingCloseReader) Close() error { return errReaderClose }
+
+// warnRecordingLogger records Warn messages and discards everything else.
+type warnRecordingLogger struct {
+	channelTestLogger
+	warnings []string
+}
+
+func (l *warnRecordingLogger) Warn(msg string, _ ...any) { l.warnings = append(l.warnings, msg) }
+
+func TestChannelServer_StopReportsReaderCloseFailure(t *testing.T) {
+	logger := &warnRecordingLogger{}
+	srv := NewChannelServer(ChannelServerConfig{}, failingCloseReader{strings.NewReader("")}, io.Discard, logger)
+
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if !srv.closed.Load() {
+		t.Error("server should be closed after Stop() even when the reader fails to close")
+	}
+	if len(logger.warnings) != 1 {
+		t.Fatalf("warnings = %v, want one reader-close warning", logger.warnings)
+	}
+}
+
 func TestChannelServer_StartAfterStop(t *testing.T) {
 	var buf bytes.Buffer
 	srv := NewChannelServer(ChannelServerConfig{}, strings.NewReader(""), &buf, &channelTestLogger{})

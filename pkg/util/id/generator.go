@@ -85,8 +85,9 @@ func NewTimeSeriesGenerator() *TimeSeriesGenerator {
 // Ensures monotonically increasing IDs even when called in rapid succession.
 func (g *TimeSeriesGenerator) Generate() (uint64, error) {
 	for {
-		// UnixMicro returns int64, conversion to uint64 for monotonic ID generation
-		now := uint64(time.Now().UnixMicro()) //nolint:gosec // G115: time value conversion
+		// A clock before the epoch clamps to zero; the check below still
+		// keeps every ID above the last one.
+		now := conv.ClampInt64ToUint64(time.Now().UnixMicro())
 		last := g.lastID.Load()
 
 		// Ensure we always produce a larger ID than the last one

@@ -443,7 +443,9 @@ func (ct *kvCostTracker) AccountTokens(ctx context.Context, tenantID, accountID 
 // int64ToBytes encodes an int64 as a big-endian byte slice.
 func int64ToBytes(v int64) []byte {
 	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(v)) //nolint:gosec // G115: int64 to uint64 for binary encoding
+	// int64 and uint64 share a width, so the conversion reinterprets the
+	// two's-complement bits losslessly and bytesToInt64 reverses it exactly.
+	binary.BigEndian.PutUint64(buf, uint64(v))
 	return buf
 }
 
@@ -455,5 +457,5 @@ func bytesToInt64(data []byte) (int64, error) {
 			Message: "expected 8 bytes for int64 encoding",
 		}
 	}
-	return int64(binary.BigEndian.Uint64(data)), nil //nolint:gosec // G115: uint64 to int64 from binary decoding
+	return int64(binary.BigEndian.Uint64(data)), nil
 }

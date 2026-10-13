@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -200,7 +201,7 @@ func parseCeremonyOfficers(specs []string) ([]qrdbtransport.CeremonyOfficerReque
 		if !found || username == "" || path == "" {
 			return nil, &InitOfficerSpecError{Got: spec}
 		}
-		csrPEM, err := os.ReadFile(path) //nolint:gosec // operator-supplied path
+		csrPEM, err := os.ReadFile(filepath.Clean(path))
 		if err != nil {
 			return nil, &InitReadCSRError{Path: path, Err: err}
 		}
@@ -282,7 +283,7 @@ func runInitOfficerRegisterCommand(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	csrPEM, err := os.ReadFile(initCSRPath) //nolint:gosec // operator-supplied path
+	csrPEM, err := os.ReadFile(filepath.Clean(initCSRPath))
 	if err != nil {
 		return formatError(&InitReadCSRError{Path: initCSRPath, Err: err})
 	}

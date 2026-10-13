@@ -144,7 +144,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any) (
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			// Calculate backoff duration with exponential increase
-			backoff := c.retryBackoff * time.Duration(1<<uint(attempt-1)) //nolint:gosec // G115: attempt is bounded by maxRetries
+			backoff := c.retryBackoff << (attempt - 1)
 			select {
 			case <-ctx.Done():
 				return nil, &OllamaSentinelCauseError{Sentinel: ErrContextCanceled, Cause: ctx.Err()}

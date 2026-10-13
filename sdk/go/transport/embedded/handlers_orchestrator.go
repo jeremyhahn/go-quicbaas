@@ -65,6 +65,7 @@ func handleOrchestratorSpawnSession(ctx context.Context, svc service.QuicBaaS, r
 		// enumerated pool unreachable in-process.
 		AccountAllow: r.AccountAllow,
 		PromptAppend: r.PromptAppend,
+		Keep:         r.Keep,
 	})
 	if err != nil {
 		return nil, err

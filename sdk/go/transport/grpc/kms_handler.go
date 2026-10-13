@@ -299,9 +299,13 @@ func (h *kmsHandler) handleSetKeyPolicy(ctx context.Context, req interface{}) (i
 		return nil, errors.NewInvalidInput("kmsHandler.handleSetKeyPolicy",
 			"invalid request type, expected *kms.SetKeyPolicyRequest")
 	}
+	policy, err := sdkKeyPolicyToService(sdkReq.Policy)
+	if err != nil {
+		return nil, err
+	}
 	return h.client.KMSSetKeyPolicy(ctx, &service.SetKeyPolicyRequest{
 		KeyID:  sdkReq.KeyID,
-		Policy: sdkKeyPolicyToService(sdkReq.Policy),
+		Policy: policy,
 	})
 }
 
@@ -590,13 +594,16 @@ func sdkUpdateKeyMetadataToService(sdkReq *kmsclient.UpdateKeyMetadataRequest) *
 // sdkKeyPolicyToService converts the exported SDK KeyPolicy into the canonical
 // service KeyPolicy. Zero ExpiresAt/MaxUsageCount map to nil (no expiry /
 // no usage limit).
-func sdkKeyPolicyToService(p *kmsclient.KeyPolicy) *service.KeyPolicy {
+func sdkKeyPolicyToService(p *kmsclient.KeyPolicy) (*service.KeyPolicy, error) {
 	if p == nil {
-		return nil
+		return nil, nil
+	}
+	if p.Version < 0 {
+		return nil, errors.NewInvalidInput("kmsHandler.handleSetKeyPolicy", "policy version must not be negative")
 	}
 	svcPolicy := &service.KeyPolicy{
 		KeyID:             p.KeyID,
-		Version:           uint64(p.Version), //nolint:gosec // G115: policy version is non-negative
+		Version:           uint64(p.Version),
 		AllowedOperations: sdkUsagesToService(p.AllowedOperations),
 		AllowedPrincipals: p.AllowedPrincipals,
 		DeniedPrincipals:  p.DeniedPrincipals,
@@ -612,7 +619,7 @@ func sdkKeyPolicyToService(p *kmsclient.KeyPolicy) *service.KeyPolicy {
 		maxUsage := p.MaxUsageCount
 		svcPolicy.MaxUsageCount = &maxUsage
 	}
-	return svcPolicy
+	return svcPolicy, nil
 }
 
 // sdkAlgToKeyAttributes converts an SDK KeyAlgorithm to xkmssdk.KeyAttributes

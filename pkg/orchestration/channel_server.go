@@ -279,7 +279,10 @@ func (s *ChannelServer) closeOnce() {
 		close(s.done)
 		// Close the reader to unblock scanner.Scan() if it's waiting on I/O.
 		if s.readerCloser != nil {
-			_ = s.readerCloser.Close() //nolint:gosec // best-effort close during shutdown
+			// Shutdown proceeds either way; a failed close is only worth reporting.
+			if err := s.readerCloser.Close(); err != nil {
+				s.logger.Warn("channel server: closing reader failed", "error", err.Error())
+			}
 		}
 	}
 }

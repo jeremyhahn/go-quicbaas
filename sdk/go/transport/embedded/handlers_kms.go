@@ -24,6 +24,7 @@ import (
 
 	dekclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/dek"
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -386,9 +387,13 @@ func handleKMSSetKeyPolicy(ctx context.Context, svc service.QuicBaaS, req interf
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetKeyPolicy", "*service.SetKeyPolicyRequest or *kms.SetKeyPolicyRequest", reflect.TypeOf(req).String())
 	}
+	policy, err := sdkKeyPolicyToService(sdkReq.KeyID, sdkReq.Policy)
+	if err != nil {
+		return nil, err
+	}
 	return kms.SetKeyPolicy(ctx, &service.SetKeyPolicyRequest{
 		KeyID:  sdkReq.KeyID,
-		Policy: sdkKeyPolicyToService(sdkReq.KeyID, sdkReq.Policy),
+		Policy: policy,
 	})
 }
 
@@ -866,13 +871,16 @@ func kmsInt64Field(req interface{}, name string) (int64, bool) {
 // sdkKeyPolicyToService converts the exported SDK KeyPolicy into the canonical
 // service KeyPolicy. Zero ExpiresAt/MaxUsageCount map to nil (no expiry / no
 // usage limit).
-func sdkKeyPolicyToService(keyID string, p *kmsclient.KeyPolicy) *service.KeyPolicy {
+func sdkKeyPolicyToService(keyID string, p *kmsclient.KeyPolicy) (*service.KeyPolicy, error) {
 	if p == nil {
-		return nil
+		return nil, nil
+	}
+	if p.Version < 0 {
+		return nil, errors.NewInvalidInput("embedded.kms.SetKeyPolicy", "policy version must not be negative")
 	}
 	svcPolicy := &service.KeyPolicy{
 		KeyID:             keyID,
-		Version:           uint64(p.Version), //nolint:gosec // G115: policy version is non-negative
+		Version:           uint64(p.Version),
 		AllowedOperations: convertSDKUsagesToService(p.AllowedOperations),
 		AllowedPrincipals: p.AllowedPrincipals,
 		DeniedPrincipals:  p.DeniedPrincipals,
@@ -888,5 +896,5 @@ func sdkKeyPolicyToService(keyID string, p *kmsclient.KeyPolicy) *service.KeyPol
 		maxUsage := p.MaxUsageCount
 		svcPolicy.MaxUsageCount = &maxUsage
 	}
-	return svcPolicy
+	return svcPolicy, nil
 }

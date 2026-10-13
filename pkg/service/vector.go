@@ -29,6 +29,7 @@ import (
 	qbErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/shards"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -1846,7 +1847,7 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 			const baseNodeOverhead = 8 + 8 + 24 + 48 // 88 bytes
 
 			// Vector data size: 4 bytes per float32 dimension
-			vectorDataSize := uint64(stats.Dimensions) * 4 //nolint:gosec // G115: Dimensions is validated positive
+			vectorDataSize := conv.ClampIntToUint64(stats.Dimensions) * 4
 
 			// Connection data size: average connections * 8 bytes (uint64) * (maxLayer + 1)
 			avgConnectionsPerNode := stats.AvgConnections
@@ -2365,7 +2366,7 @@ func (v *vectorService) performCompaction(ctx context.Context, operationID, name
 	preStats, _ := v.storage.GetStats(ctx, namespace)
 	var preSizeBytes int64
 	if preStats != nil {
-		preSizeBytes = int64(preStats.SizeBytes) //nolint:gosec // G115: SizeBytes is bounded by storage capacity
+		preSizeBytes = conv.ClampUint64ToInt64(preStats.SizeBytes)
 	}
 
 	// Trigger compaction on storage
@@ -2384,7 +2385,7 @@ func (v *vectorService) performCompaction(ctx context.Context, operationID, name
 	postStats, _ := v.storage.GetStats(ctx, namespace)
 	var postSizeBytes int64
 	if postStats != nil {
-		postSizeBytes = int64(postStats.SizeBytes) //nolint:gosec // G115: SizeBytes is bounded by storage capacity
+		postSizeBytes = conv.ClampUint64ToInt64(postStats.SizeBytes)
 	}
 
 	// Calculate bytes compacted (reclaimed)

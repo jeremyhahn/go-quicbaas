@@ -249,6 +249,9 @@ func (b *OrchestratorBot) spawnOrDispatch(ctx context.Context, msg InboundMessag
 		Backend:      intent.Backend,
 		Model:        intent.Model,
 		HostAffinity: intent.Host,
+		// A chat session is bound to no job and lives between the operator's
+		// messages, so it is kept past the idle bound until they close it.
+		Keep: true,
 	}
 	resp, err := b.orchestrator.SpawnSession(ctx, req)
 	if err != nil {

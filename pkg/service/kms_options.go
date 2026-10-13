@@ -90,14 +90,14 @@ func WithAuditContext(ctx context.Context, username, userID, ipAddr string) cont
 
 // extractAuditContext extracts audit information from the context.
 func extractAuditContext(ctx context.Context) (username, userID, ipAddr string) {
-	if v := ctx.Value(contextKeyUsername); v != nil {
-		username = v.(string) //nolint:errcheck // type assertion guaranteed by context value
+	if v, ok := ctx.Value(contextKeyUsername).(string); ok {
+		username = v
 	}
-	if v := ctx.Value(contextKeyUserID); v != nil {
-		userID = v.(string) //nolint:errcheck // type assertion guaranteed by context value
+	if v, ok := ctx.Value(contextKeyUserID).(string); ok {
+		userID = v
 	}
-	if v := ctx.Value(contextKeyIPAddr); v != nil {
-		ipAddr = v.(string) //nolint:errcheck // type assertion guaranteed by context value
+	if v, ok := ctx.Value(contextKeyIPAddr).(string); ok {
+		ipAddr = v
 	}
 	return
 }
@@ -149,9 +149,14 @@ func (k *kmsServiceImpl) ExportKey(ctx context.Context, req *ExportKeyRequest) (
 		keyVersion = meta.Version
 		enabled = meta.Status == KeyStatusEnabled
 	case *kms.KeyMetadata:
+		version, versionErr := kmsKeyVersion("kms.ExportKey", meta.Version)
+		if versionErr != nil {
+			k.logAuditExport(ctx, req.KeyID, "", req.WrappingKeyID, req.WrappingAlgorithm, false)
+			return nil, versionErr
+		}
 		exportable = meta.Exportable
 		algorithm = meta.Algorithm
-		keyVersion = uint64(meta.Version) //nolint:gosec // G115: Version is validated positive
+		keyVersion = version
 		enabled = meta.State == kms.KeyStateEnabled
 	default:
 		// Unknown type - for security, reject the export

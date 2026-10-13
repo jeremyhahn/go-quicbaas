@@ -327,8 +327,9 @@ func compressData(data []byte, level int) ([]byte, error) {
 		return nil, err
 	}
 
+	// A failed write leaves the gzip writer holding only memory that is
+	// discarded with buf, so there is nothing to close on this path.
 	if _, err := writer.Write(data); err != nil {
-		writer.Close() //nolint:gosec // G104: best-effort cleanup on error path
 		return nil, err
 	}
 

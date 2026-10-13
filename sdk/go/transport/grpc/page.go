@@ -62,5 +62,11 @@ func pageEnvelopeFromProto(total, limit, offset, nextOffset int32) page.Envelope
 
 // wireInt32 clamps a non-negative paging value into the wire's int32.
 func wireInt32(v int) int32 {
-	return int32(min(max(v, 0), math.MaxInt32)) //nolint:gosec // G115: clamped to the int32 range
+	if v <= 0 {
+		return 0
+	}
+	if v >= math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(v)
 }

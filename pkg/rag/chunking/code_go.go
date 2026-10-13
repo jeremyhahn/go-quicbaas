@@ -19,8 +19,8 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
-	"go/printer"
 	"go/token"
 	"strings"
 )
@@ -77,6 +77,30 @@ func (e *GoParseError) Unwrap() error {
 	return e.Cause
 }
 
+// GoRenderError is returned when a parsed Go syntax node cannot be printed
+// back to source.
+type GoRenderError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *GoRenderError) Error() string {
+	return "failed to render Go source: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *GoRenderError) Unwrap() error {
+	return e.Cause
+}
+
+// writeNode writes node into buf as gofmt-formatted Go source.
+func writeNode(buf *bytes.Buffer, fset *token.FileSet, node any) error {
+	if err := format.Node(buf, fset, node); err != nil {
+		return &GoRenderError{Cause: err}
+	}
+	return nil
+}
+
 // Chunk splits Go source code into semantic chunks using AST parsing.
 func (c *GoCodeChunker) Chunk(content []byte, metadata Metadata) ([]Chunk, error) {
 	if len(content) == 0 {
@@ -98,10 +122,16 @@ func (c *GoCodeChunker) Chunk(content []byte, metadata Metadata) ([]Chunk, error
 
 	// Extract package declaration and imports
 	pkgDecl := c.extractPackageDecl(file, fset)
-	imports := c.extractImports(file, fset)
+	imports, err := c.extractImports(file, fset)
+	if err != nil {
+		return nil, err
+	}
 
 	// Extract all chunks (functions, methods, types)
-	chunks := c.extractChunks(file, fset, pkgDecl, imports, metadata)
+	chunks, err := c.extractChunks(file, fset, pkgDecl, imports, metadata)
+	if err != nil {
+		return nil, err
+	}
 
 	// Number chunks
 	for i := range chunks {
@@ -125,15 +155,17 @@ func (c *GoCodeChunker) extractPackageDecl(file *ast.File, fset *token.FileSet) 
 }
 
 // extractImports extracts import declarations.
-func (c *GoCodeChunker) extractImports(file *ast.File, fset *token.FileSet) []importInfo {
+func (c *GoCodeChunker) extractImports(file *ast.File, fset *token.FileSet) ([]importInfo, error) {
 	if !c.config.IncludeImports {
-		return nil
+		return nil, nil
 	}
 
 	var imports []importInfo
 	for _, imp := range file.Imports {
 		var buf bytes.Buffer
-		_ = printer.Fprint(&buf, fset, imp) //nolint:forbidigo // go/printer.Fprint is not fmt.Print
+		if err := writeNode(&buf, fset, imp); err != nil {
+			return nil, err
+		}
 
 		// Parse import path and name
 		path := strings.Trim(imp.Path.Value, `"`)
@@ -148,7 +180,7 @@ func (c *GoCodeChunker) extractImports(file *ast.File, fset *token.FileSet) []im
 			Source: buf.String(),
 		})
 	}
-	return imports
+	return imports, nil
 }
 
 // importInfo holds import declaration information.
@@ -159,7 +191,7 @@ type importInfo struct {
 }
 
 // extractChunks extracts all semantic chunks from the AST.
-func (c *GoCodeChunker) extractChunks(file *ast.File, fset *token.FileSet, pkgDecl string, imports []importInfo, metadata Metadata) []Chunk {
+func (c *GoCodeChunker) extractChunks(file *ast.File, fset *token.FileSet, pkgDecl string, imports []importInfo, metadata Metadata) ([]Chunk, error) {
 	var chunks []Chunk
 
 	// Track used imports per declaration
@@ -173,7 +205,10 @@ func (c *GoCodeChunker) extractChunks(file *ast.File, fset *token.FileSet, pkgDe
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
 			// Function or method
-			chunk := c.buildFunctionChunk(d, pkgDecl, imports, usedImports[d], fset, metadata)
+			chunk, err := c.buildFunctionChunk(d, pkgDecl, imports, usedImports[d], fset, metadata)
+			if err != nil {
+				return nil, err
+			}
 			chunks = append(chunks, chunk)
 
 		case *ast.GenDecl:
@@ -183,14 +218,20 @@ func (c *GoCodeChunker) extractChunks(file *ast.File, fset *token.FileSet, pkgDe
 				// Type definitions
 				for _, spec := range d.Specs {
 					if typeSpec, ok := spec.(*ast.TypeSpec); ok {
-						chunk := c.buildTypeChunk(d, typeSpec, pkgDecl, imports, usedImports[d], fset, metadata)
+						chunk, err := c.buildTypeChunk(d, typeSpec, pkgDecl, imports, usedImports[d], fset, metadata)
+						if err != nil {
+							return nil, err
+						}
 						chunks = append(chunks, chunk)
 					}
 				}
 			case token.CONST, token.VAR:
 				// Only include significant const/var blocks (with doc comments or multiple values)
 				if d.Doc != nil || len(d.Specs) > 1 {
-					chunk := c.buildDeclChunk(d, pkgDecl, imports, usedImports[d], fset, metadata)
+					chunk, err := c.buildDeclChunk(d, pkgDecl, imports, usedImports[d], fset, metadata)
+					if err != nil {
+						return nil, err
+					}
 					if chunk.Content != "" {
 						chunks = append(chunks, chunk)
 					}
@@ -199,11 +240,11 @@ func (c *GoCodeChunker) extractChunks(file *ast.File, fset *token.FileSet, pkgDe
 		}
 	}
 
-	return chunks
+	return chunks, nil
 }
 
 // buildFunctionChunk creates a chunk for a function or method.
-func (c *GoCodeChunker) buildFunctionChunk(fn *ast.FuncDecl, pkgDecl string, imports []importInfo, usedImports map[string]bool, fset *token.FileSet, metadata Metadata) Chunk {
+func (c *GoCodeChunker) buildFunctionChunk(fn *ast.FuncDecl, pkgDecl string, imports []importInfo, usedImports map[string]bool, fset *token.FileSet, metadata Metadata) (Chunk, error) {
 	var buf bytes.Buffer
 
 	// Add package declaration
@@ -215,14 +256,10 @@ func (c *GoCodeChunker) buildFunctionChunk(fn *ast.FuncDecl, pkgDecl string, imp
 	// Add imports
 	c.writeImports(&buf, imports, usedImports)
 
-	// Add doc comment
-	if c.config.IncludeComments && fn.Doc != nil {
-		_ = printer.Fprint(&buf, fset, fn.Doc) //nolint:forbidigo // go/printer.Fprint is not fmt.Print
-		buf.WriteString("\n")
+	// Add function declaration; the printer emits its doc comment with it.
+	if err := writeNode(&buf, fset, fn); err != nil {
+		return Chunk{}, err
 	}
-
-	// Add function declaration
-	_ = printer.Fprint(&buf, fset, fn) //nolint:forbidigo // go/printer.Fprint is not fmt.Print
 	buf.WriteString("\n")
 
 	content := buf.String()
@@ -244,7 +281,9 @@ func (c *GoCodeChunker) buildFunctionChunk(fn *ast.FuncDecl, pkgDecl string, imp
 	if fn.Recv != nil && len(fn.Recv.List) > 0 {
 		if typ := fn.Recv.List[0].Type; typ != nil {
 			var recvBuf bytes.Buffer
-			_ = printer.Fprint(&recvBuf, fset, typ) //nolint:gosec,forbidigo // G104: Error deliberately ignored - output to buffer always succeeds
+			if err := writeNode(&recvBuf, fset, typ); err != nil {
+				return Chunk{}, err
+			}
 			chunkMeta.ClassName = strings.Trim(recvBuf.String(), "*")
 		}
 	}
@@ -269,11 +308,11 @@ func (c *GoCodeChunker) buildFunctionChunk(fn *ast.FuncDecl, pkgDecl string, imp
 		Content:  content,
 		Metadata: chunkMeta,
 		Tokens:   tokens,
-	}
+	}, nil
 }
 
 // buildTypeChunk creates a chunk for a type definition.
-func (c *GoCodeChunker) buildTypeChunk(decl *ast.GenDecl, typeSpec *ast.TypeSpec, pkgDecl string, imports []importInfo, usedImports map[string]bool, fset *token.FileSet, metadata Metadata) Chunk {
+func (c *GoCodeChunker) buildTypeChunk(decl *ast.GenDecl, typeSpec *ast.TypeSpec, pkgDecl string, imports []importInfo, usedImports map[string]bool, fset *token.FileSet, metadata Metadata) (Chunk, error) {
 	var buf bytes.Buffer
 
 	// Add package declaration
@@ -285,15 +324,20 @@ func (c *GoCodeChunker) buildTypeChunk(decl *ast.GenDecl, typeSpec *ast.TypeSpec
 	// Add imports
 	c.writeImports(&buf, imports, usedImports)
 
-	// Add doc comment
+	// Add doc comment. It belongs to the enclosing GenDecl, so printing the
+	// TypeSpec alone would drop it.
 	if c.config.IncludeComments && decl.Doc != nil {
-		_ = printer.Fprint(&buf, fset, decl.Doc) //nolint:gosec,forbidigo // G104: Error deliberately ignored - output to buffer always succeeds
-		buf.WriteString("\n")
+		for _, comment := range decl.Doc.List {
+			buf.WriteString(comment.Text)
+			buf.WriteString("\n")
+		}
 	}
 
 	// Add type declaration
 	buf.WriteString("type ")
-	_ = printer.Fprint(&buf, fset, typeSpec) //nolint:gosec,forbidigo // G104: Error deliberately ignored - output to buffer always succeeds
+	if err := writeNode(&buf, fset, typeSpec); err != nil {
+		return Chunk{}, err
+	}
 	buf.WriteString("\n")
 
 	content := buf.String()
@@ -321,11 +365,11 @@ func (c *GoCodeChunker) buildTypeChunk(decl *ast.GenDecl, typeSpec *ast.TypeSpec
 		Content:  content,
 		Metadata: chunkMeta,
 		Tokens:   tokens,
-	}
+	}, nil
 }
 
 // buildDeclChunk creates a chunk for const/var declarations.
-func (c *GoCodeChunker) buildDeclChunk(decl *ast.GenDecl, pkgDecl string, imports []importInfo, usedImports map[string]bool, fset *token.FileSet, metadata Metadata) Chunk {
+func (c *GoCodeChunker) buildDeclChunk(decl *ast.GenDecl, pkgDecl string, imports []importInfo, usedImports map[string]bool, fset *token.FileSet, metadata Metadata) (Chunk, error) {
 	var buf bytes.Buffer
 
 	// Add package declaration
@@ -337,14 +381,10 @@ func (c *GoCodeChunker) buildDeclChunk(decl *ast.GenDecl, pkgDecl string, import
 	// Add imports
 	c.writeImports(&buf, imports, usedImports)
 
-	// Add doc comment
-	if c.config.IncludeComments && decl.Doc != nil {
-		_ = printer.Fprint(&buf, fset, decl.Doc) //nolint:gosec,forbidigo // G104: Error deliberately ignored - output to buffer always succeeds
-		buf.WriteString("\n")
+	// Add declaration; the printer emits its doc comment with it.
+	if err := writeNode(&buf, fset, decl); err != nil {
+		return Chunk{}, err
 	}
-
-	// Add declaration
-	_ = printer.Fprint(&buf, fset, decl) //nolint:gosec,forbidigo // G104: Error deliberately ignored - output to buffer always succeeds
 	buf.WriteString("\n")
 
 	content := buf.String()
@@ -375,7 +415,7 @@ func (c *GoCodeChunker) buildDeclChunk(decl *ast.GenDecl, pkgDecl string, import
 		Content:  content,
 		Metadata: chunkMeta,
 		Tokens:   tokens,
-	}
+	}, nil
 }
 
 // writeImports writes import declarations to the buffer.

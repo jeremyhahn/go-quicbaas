@@ -104,6 +104,11 @@ const (
 	// stopped heartbeating. The process is on a host that is no longer in the
 	// fleet, so nothing here can reach it again.
 	ConcludedByFleetNodeGone SessionConclusionReason = "agent_gone"
+
+	// ConcludedBySessionIdle is a session bound to no job, not marked kept,
+	// that stayed quiet past the idle bound. With no job to end it and no
+	// operator holding it, nothing else ever would.
+	ConcludedBySessionIdle SessionConclusionReason = "session_idle"
 )
 
 // sessionConclusionReasons is every reason a session may carry, keyed for
@@ -115,6 +120,7 @@ var sessionConclusionReasons = map[SessionConclusionReason]struct{}{
 	ConcludedByNodeRestart:   {},
 	ConcludedByJobConcluded:  {},
 	ConcludedByFleetNodeGone: {},
+	ConcludedBySessionIdle:   {},
 }
 
 // Valid reports whether r is one of the reasons this daemon writes. An empty

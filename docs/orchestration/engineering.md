@@ -268,6 +268,7 @@ atomic store mutation (`AgentStore.ConcludeSession`), and is never overwritten
 | `node_restart` | Startup reconciliation: the record cannot be re-attached. |
 | `job_concluded` | The job the session worked for reached a terminal state. |
 | `agent_gone` | The daemon the session is pinned to unregistered or fell silent. |
+| `session_idle` | The session is bound to no job, is not kept, and stayed quiet past the idle bound. |
 
 ### The four routes into it
 
@@ -329,12 +330,68 @@ The sweep needs **two** signals and never acts on the clock alone:
   (`JobIdleThresholds.longest()`), **and**
 - its job is in a terminal state (`job_concluded`), or the daemon it is pinned
   to is unregistered or has not heartbeated within
-  `orchestration.heartbeat_timeout` (default 90s) — `agent_gone`.
+  `orchestration.heartbeat_timeout` (default 90s) — `agent_gone`, or it is
+  bound to no job at all and nothing keeps it — `session_idle`.
 
 Both corroborating reads are fail-closed: a job status that cannot be read is
 not a terminal job, and a registry that cannot answer means nothing is gone. A
-quiet session with no job and no pin is left alone, because a long-running
-agent that has not spoken for an hour is what a long-running agent looks like.
+quiet session WITH a job is left alone until its job ends, because a
+long-running agent that has not spoken for an hour is what a long-running agent
+looks like.
+
+#### Sessions bound to no job
+
+A job-less session has no job that will ever conclude it, so the sweep ends it
+on the idle bound alone (#843). The bound is the same longest job idle bound;
+when every job state is switched off there is no bound and nothing is
+concluded on silence. The finding reads, for example:
+
+```
+session has been quiet for 59h55m0s, past the idle bound of 3h0m0s, and is bound to no job
+```
+
+A job-less session is left alone when:
+
+- `SessionRecord.Keep` is set — the operator's explicit keep mark. The
+  absence of a job is never read as a wish to keep a session;
+- it is this node's lead session (`orchestration.lead_agent`), which the node
+  holds by configuration;
+- its status is `active`, a turn in flight;
+- it is quiet for less than the bound, or already closed.
+
+This applies to `resumable` records too: the resumable refusal below exists to
+protect a session an operator is keeping, and a job-less one is kept only by
+saying so.
+
+**The stored record decides.** The verdict rests on the record's own fields —
+quiet time, keep mark, job binding — so it is asked again of the record the
+store holds when the ending is about to be written (`sessionStillDue`), under
+the same per-session lock as every other absent-session conclusion. A session
+whose record shows a prompt, a keep mark or a job binding written after the
+sweep listed it is not concluded and produces no finding.
+
+A prompt in flight is not yet on the record. `PromptSession` refuses a
+concluded session before the turn, but the turn writes the record (its
+activity stamp) only once the backend has answered, so a sweep that re-reads
+the record during a turn still sees it quiet and can conclude it mid-turn.
+Closing that window needs the conclusion to be claimed before its teardown,
+which the conclusion protocol does not do today: the record is its last write.
+
+**Keep is set at spawn.** `SpawnSessionRequest.keep` (proto field 35, JSON
+`keep`) is persisted on the record as `SessionRecord.Keep`. It is wired on
+every transport, the MCP spawn tool, the CLI (`orchestrator spawn --keep`) and
+the TypeScript SDK. It only changes job-less reconciliation: a session bound
+to a job still ends with its job. No verb sets it on an existing session.
+
+The in-repo job-less spawners decide it as follows:
+
+- the Signal bridge's chat spawn (`pkg/signalbridge/bot.go`) is kept: a chat
+  session lives between the operator's messages until they close it;
+- the worker-image smoke test (`pkg/sdlc/workerimage/smoke.go`) is not: it
+  is a probe, and an abandoned probe should be reaped;
+- the node's lead session (`pkg/server/lifecycle_agents.go`) needs no mark: it
+  is excluded as the lead;
+- CLI, MCP, REST, gRPC and SDK spawns are kept only when the caller asks.
 
 ### One conclusion, all of it or none
 

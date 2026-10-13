@@ -29,14 +29,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/robfig/cron/v3"
+
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/version"
 )
@@ -1046,8 +1048,7 @@ func (m *BackupManager) Close() error {
 
 func writeKeyValue(w io.Writer, key, value []byte) error {
 	// Write key length (4 bytes)
-	keyLen := uint32(len(key)) //nolint:gosec // G115: key length bounded by max key size
-	if err := writeUint32(w, keyLen); err != nil {
+	if err := writeLength(w, len(key)); err != nil {
 		return err
 	}
 
@@ -1057,8 +1058,7 @@ func writeKeyValue(w io.Writer, key, value []byte) error {
 	}
 
 	// Write value length (4 bytes)
-	valueLen := uint32(len(value)) //nolint:gosec // G115: value length bounded by max value size
-	if err := writeUint32(w, valueLen); err != nil {
+	if err := writeLength(w, len(value)); err != nil {
 		return err
 	}
 
@@ -1068,6 +1068,16 @@ func writeKeyValue(w io.Writer, key, value []byte) error {
 	}
 
 	return nil
+}
+
+// writeLength writes a 4-byte length prefix, refusing a length the prefix
+// cannot represent.
+func writeLength(w io.Writer, n int) error {
+	length, err := conv.SafeIntToUint32(n)
+	if err != nil {
+		return err
+	}
+	return writeUint32(w, length)
 }
 
 func readKeyValue(r io.Reader) ([]byte, []byte, error) {

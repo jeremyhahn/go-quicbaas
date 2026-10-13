@@ -57,6 +57,7 @@ func newDurableSessionRecord(
 		HostAffinity:    hostAffinity,
 		BackendLocal:    backendLocal,
 		Persistent:      req.Persistent,
+		Keep:            req.Keep,
 		Status:          SessionStateActive,
 		AccountID:       req.AccountID,
 		AccountStrategy: req.AccountStrategy,

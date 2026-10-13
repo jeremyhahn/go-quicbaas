@@ -203,7 +203,7 @@ func writePair(dir, stem string, issued *Issued) error {
 // read by a different container's process than the one that wrote them — which
 // is why the certificate mode is 0644 rather than something tighter.
 func writeFile(path string, data []byte, mode os.FileMode) error {
-	if err := os.WriteFile(path, data, mode); err != nil { //nolint:gosec // modes are chosen per file above
+	if err := os.WriteFile(path, data, mode); err != nil {
 		return &FileError{Op: "write", Path: path, Cause: err}
 	}
 	return nil

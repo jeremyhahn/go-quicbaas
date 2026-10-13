@@ -34,7 +34,7 @@ type KeyStore struct {
 	keys map[string]*keyEntry
 
 	// versionCounter tracks version numbers per key
-	versionCounter map[string]*atomic.Int64
+	versionCounter map[string]int
 
 	// usageCounter tracks usage counts per key
 	usageCounter map[string]*atomic.Uint64
@@ -49,7 +49,7 @@ type keyEntry struct {
 func NewKeyStore() *KeyStore {
 	return &KeyStore{
 		keys:           make(map[string]*keyEntry),
-		versionCounter: make(map[string]*atomic.Int64),
+		versionCounter: make(map[string]int),
 		usageCounter:   make(map[string]*atomic.Uint64),
 	}
 }
@@ -86,10 +86,7 @@ func (s *KeyStore) Put(metadata *KeyMetadata) error {
 
 	// Initialize version counter if not exists
 	if _, exists := s.versionCounter[metadata.KeyID]; !exists {
-		counter := &atomic.Int64{}
-		//nolint:gosec // G115: version is bounded, safe conversion
-		counter.Store(int64(metadata.Version))
-		s.versionCounter[metadata.KeyID] = counter
+		s.versionCounter[metadata.KeyID] = metadata.Version
 	}
 
 	// Initialize usage counter if not exists
@@ -237,7 +234,7 @@ func (s *KeyStore) GetPendingDeletion() []*KeyMetadata {
 	return s.GetByState(KeyStatePendingDeletion)
 }
 
-// IncrementVersion atomically increments the version counter for a key.
+// IncrementVersion increments the version counter for a key.
 // Returns the new version number.
 func (s *KeyStore) IncrementVersion(keyID string) (int, error) {
 	if keyID == "" {
@@ -259,19 +256,18 @@ func (s *KeyStore) IncrementVersion(keyID string) (int, error) {
 		}
 	}
 
-	counter, exists := s.versionCounter[keyID]
+	version, exists := s.versionCounter[keyID]
 	if !exists {
-		counter = &atomic.Int64{}
-		counter.Store(int64(s.keys[keyID].metadata.Version)) //nolint:gosec // G115: version counter conversion
-		s.versionCounter[keyID] = counter
+		version = s.keys[keyID].metadata.Version
 	}
 
-	newVersion := counter.Add(1)
+	newVersion := version + 1
+	s.versionCounter[keyID] = newVersion
 
 	// Update metadata version
-	s.keys[keyID].metadata.Version = int(newVersion) //nolint:gosec // G115: int64 to int conversion for version number
+	s.keys[keyID].metadata.Version = newVersion
 
-	return int(newVersion), nil
+	return newVersion, nil
 }
 
 // GetVersion returns the current version number for a key.
@@ -296,7 +292,7 @@ func (s *KeyStore) GetVersion(keyID string) (int, error) {
 		}
 	}
 
-	return int(entry.metadata.Version), nil //nolint:gosec // G115: uint64 to int conversion for version number
+	return entry.metadata.Version, nil
 }
 
 // IncrementUsage atomically increments the usage counter for a key.

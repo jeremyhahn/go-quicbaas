@@ -298,12 +298,8 @@ func setupBenchmarkContext(b *testing.B) context.Context {
 	b.Helper()
 
 	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) //nolint:gosec // cancel deferred in cleanup below
-
-	// Clean up on test completion
-	b.Cleanup(func() {
-		cancel()
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	b.Cleanup(cancel)
 
 	return ctx
 }

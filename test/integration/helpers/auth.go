@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -328,7 +329,7 @@ func loadCAPool(path string) (*x509.CertPool, error) {
 	if path == "" {
 		return pool, nil
 	}
-	pem, err := os.ReadFile(path) //nolint:gosec // path comes from test config
+	pem, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}

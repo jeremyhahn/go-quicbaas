@@ -117,6 +117,19 @@ func TestFNV1a(t *testing.T) {
 	}
 }
 
+// TestFNV1a_MatchesPublishedVectors pins the output to the FNV-1a 64-bit
+// reference values, so ring placement never shifts under a refactor.
+func TestFNV1a_MatchesPublishedVectors(t *testing.T) {
+	vectors := map[string]uint64{
+		"":       0xcbf29ce484222325,
+		"a":      0xaf63dc4c8601ec8c,
+		"foobar": 0x85944171f73967e8,
+	}
+	for key, want := range vectors {
+		assert.Equal(t, want, FNV1a(key), "FNV1a(%q)", key)
+	}
+}
+
 func TestFNV1a_Collision(t *testing.T) {
 	// Different keys should produce different hashes (collision resistance)
 	key1 := "test-key-1"

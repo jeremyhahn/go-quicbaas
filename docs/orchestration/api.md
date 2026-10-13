@@ -569,6 +569,7 @@ context. Mirrors `POST /api/v1/orchestrator/sessions`. Permission:
 | `sandbox_mode` | string | No | `default` \| `required` \| `none`; empty defers to the server SandboxPolicy |
 | `host_affinity` | string | No | Pin the session to a daemon by Name or Host |
 | `host_affinity_strict` | boolean | No | Fail instead of falling back when the pinned host is offline |
+| `keep` | boolean | No | Keep a session bound to no job past the idle bound that reconciliation otherwise concludes it at. Persisted on the session record. Changes nothing for a session bound to a job, which still ends with its job. Default `false` |
 | `gpu_required` | boolean | No | Restrict dispatch to daemons advertising GPU capability |
 | `persistent` | boolean | No | Multi-turn session keeping context across prompts (**default `true`**) |
 | `account_id` | string | No | Pin the session to a pooled provider account. A bare pin is deliberate: the session is never rotated off it. |
@@ -1285,7 +1286,7 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_orchestrator_discover` | `orchestrator:discover` | Scan directory tree for agent-enabled projects |
 | `quicbaas_orchestrator_register` | `orchestrator:agent_register` | Register a project for orchestration |
 | `quicbaas_orchestrator_list` | `orchestrator:list` | List registered projects (paginated) |
-| `quicbaas_orchestrator_spawn` | `orchestrator:spawn` | Create a persistent session on a backend |
+| `quicbaas_orchestrator_spawn` | `orchestrator:spawn` | Create a persistent session on a backend; `keep` marks a session bound to no job as kept past the idle bound |
 | `quicbaas_orchestrator_prompt` | `orchestrator:prompt` | Send a prompt to a session or backend |
 | `quicbaas_orchestrator_session_history` | `orchestrator:status` | Page through a session's durable event transcript |
 | `quicbaas_orchestrator_status` | `orchestrator:status` | Query session state, uptime, last activity |

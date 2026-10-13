@@ -170,6 +170,10 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "boolean",
 					"description": "Multi-turn session that keeps context across prompts. Defaults to true; set false for one-shot.",
 				},
+				"keep": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Keep a session bound to no job past the idle bound, which otherwise concludes it. A job-bound session still ends with its job. Optional.",
+				},
 				"account_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Pin the session to a specific pooled provider account. Optional.",
@@ -1284,6 +1288,7 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 		// registers no durable session, so a follow-up prompt would fail with
 		// "session not found". Callers opt out explicitly with persistent:false.
 		Persistent: optionalBool(args, "persistent", true),
+		Keep:       getBool(args, "keep"),
 
 		// Pooled provider account selection. account_auto is what makes the
 		// dynamic (least-usage) strategy requestable at all.

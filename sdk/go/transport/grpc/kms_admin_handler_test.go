@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // fakeKMSAdminServer implements the key-administration RPCs on the
@@ -291,6 +293,17 @@ func TestKMSHandler_SetKeyPolicy_InvalidRequestType(t *testing.T) {
 	h, _ := newKMSAdminHandlerWithServer(t, false)
 	if _, err := h.handleRequest(context.Background(), "quicbaas.KMS", "SetKeyPolicy", "bad"); err == nil {
 		t.Fatal("expected error for invalid request type")
+	}
+}
+
+// A negative policy version is refused before the call: converted to the
+// service's uint64 it would wrap to a huge version.
+func TestKMSHandler_SetKeyPolicy_RefusesNegativeVersion(t *testing.T) {
+	h, _ := newKMSAdminHandlerWithServer(t, false)
+	_, err := h.handleRequest(context.Background(), "quicbaas.KMS", "SetKeyPolicy",
+		&kmsclient.SetKeyPolicyRequest{KeyID: "k1", Policy: &kmsclient.KeyPolicy{Version: -1}})
+	if !errors.IsInvalidInput(err) || !strings.Contains(err.Error(), "policy version") {
+		t.Fatalf("err = %v, want an invalid-input refusal naming the policy version", err)
 	}
 }
 

@@ -27,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // recordingKMSService embeds mockKMSService and records the requests the
@@ -187,6 +188,18 @@ func TestHandleKMSSetKeyPolicy_SDKShape(t *testing.T) {
 	require.NotNil(t, rec.lastSetPolicy.Policy)
 	require.NotNil(t, rec.lastSetPolicy.Policy.MaxUsageCount)
 	assert.Equal(t, uint64(100), *rec.lastSetPolicy.Policy.MaxUsageCount)
+}
+
+// A negative policy version is refused before the service sees it: converted
+// to the service's uint64 it would wrap to a huge version.
+func TestHandleKMSSetKeyPolicy_RefusesNegativeVersion(t *testing.T) {
+	tr, rec := newRecordingKMSTransport(t)
+
+	_, err := tr.Request(context.Background(), "quicbaas.KMS", "SetKeyPolicy",
+		&kmsclient.SetKeyPolicyRequest{KeyID: "k1", Policy: &kmsclient.KeyPolicy{Version: -1}})
+	require.True(t, errors.IsInvalidInput(err), "err = %v, want invalid input", err)
+	assert.Contains(t, err.Error(), "policy version")
+	assert.Nil(t, rec.lastSetPolicy, "a negative version never reaches the service")
 }
 
 func TestHandleKMSSetKeyPolicy_InvalidType(t *testing.T) {

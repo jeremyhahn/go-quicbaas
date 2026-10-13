@@ -82,3 +82,12 @@ func TestOrchestratorSpawn_NoAccountFieldsStaysUnset(t *testing.T) {
 	assert.False(t, captured.AccountAuto)
 	assert.Empty(t, captured.AccountStrategy)
 }
+
+// TestOrchestratorSpawn_CarriesKeep asserts the keep marker reaches the
+// service layer, and that a spawn which does not set it is not kept: a
+// job-less session nobody marked is concluded once it has been quiet past the
+// idle bound.
+func TestOrchestratorSpawn_CarriesKeep(t *testing.T) {
+	assert.True(t, spawnWithBody(t, `{"backend":"claude","keep":true}`).Keep, "REST spawn dropped keep")
+	assert.False(t, spawnWithBody(t, `{"backend":"claude"}`).Keep, "REST spawn kept a session the caller did not mark")
+}

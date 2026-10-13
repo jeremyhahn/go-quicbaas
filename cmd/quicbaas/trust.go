@@ -24,8 +24,6 @@ package main
 import (
 	"context"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -319,12 +317,12 @@ func runTrustCrossSignedRoots(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	pool, err := client.CrossSignedRootPool(ctx)
+	roots, err := client.CrossSignedRoots(ctx)
 	if err != nil {
 		return formatError(err)
 	}
 
-	subjects := crossSignedRootSubjects(pool)
+	subjects := crossSignedRootSubjects(roots)
 	if trustRootsOut != "" {
 		body := strings.Join(subjects, "\n") + "\n"
 		if werr := os.WriteFile(trustRootsOut, []byte(body), 0o644); werr != nil { // #nosec G306 -- exported trust-root subjects are public material written to an operator-chosen path.
@@ -338,28 +336,12 @@ func runTrustCrossSignedRoots(cmd *cobra.Command, _ []string) error {
 	return formatTrustRoots(subjects, trustOutputFmt, cmd.OutOrStdout())
 }
 
-// crossSignedRootSubjects renders each root in the pool as an RFC 2253-style
-// subject string.
-//
-// x509.CertPool exposes no certificate iterator; Subjects() is the only
-// enumeration hook. It is deprecated solely because it returns nothing for
-// pools sourced from SystemCertPool — this pool is always built by the SDK
-// from explicit PEM/DER, so the results are complete.
-func crossSignedRootSubjects(pool *x509.CertPool) []string {
-	if pool == nil {
-		return nil
-	}
-	raw := pool.Subjects() //nolint:staticcheck // complete for non-system pools
-	subjects := make([]string, 0, len(raw))
-	for _, der := range raw {
-		var rdn pkix.RDNSequence
-		if _, err := asn1.Unmarshal(der, &rdn); err != nil {
-			subjects = append(subjects, "<unparsable subject>")
-			continue
-		}
-		var name pkix.Name
-		name.FillFromRDNSequence(&rdn)
-		subjects = append(subjects, name.String())
+// crossSignedRootSubjects renders each root as an RFC 2253-style subject
+// string.
+func crossSignedRootSubjects(roots []*x509.Certificate) []string {
+	subjects := make([]string, 0, len(roots))
+	for _, root := range roots {
+		subjects = append(subjects, root.Subject.String())
 	}
 	return subjects
 }

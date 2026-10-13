@@ -62,7 +62,9 @@
 package netport
 
 import (
-	"math/rand/v2"
+	"crypto/rand"
+	"io"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -192,6 +194,18 @@ func (e *MalformedPortRangeError) Error() string {
 	return "netport: malformed ip_local_port_range " + strconv.Quote(e.Content)
 }
 
+// EntropyError reports a random source that could not pick where in the
+// window to start looking.
+type EntropyError struct {
+	Cause error
+}
+
+func (e *EntropyError) Error() string {
+	return "netport: choosing a start port: " + e.Cause.Error()
+}
+
+func (e *EntropyError) Unwrap() error { return e.Cause }
+
 // outcome is why a candidate port was or was not taken.
 type outcome int
 
@@ -259,7 +273,10 @@ func reserveFrom(dir string, low, high, n int) ([]int, error) {
 	// having them all contend on its first port. Nothing here is a secret: the
 	// offset only picks where in a public range to begin looking, and the
 	// reservation itself is what makes the result exclusive.
-	start := rand.IntN(size) //nolint:gosec // G404: contention spreading, not a secret
+	start, err := randomStart(size, rand.Reader)
+	if err != nil {
+		return nil, err
+	}
 	for offset := 0; offset < size && len(ports) < n; offset++ {
 		port := low + (start+offset)%size
 		file, result, err := acquire(dir, port)
@@ -288,6 +305,15 @@ func reserveFrom(dir string, low, high, n int) ([]int, error) {
 		}
 	}
 	return ports, nil
+}
+
+// randomStart picks an offset in [0, size) from entropy.
+func randomStart(size int, entropy io.Reader) (int, error) {
+	offset, err := rand.Int(entropy, big.NewInt(int64(size)))
+	if err != nil {
+		return 0, &EntropyError{Cause: err}
+	}
+	return int(offset.Int64()), nil
 }
 
 // Release returns ports to the window. A port that is not reserved by this

@@ -2252,7 +2252,12 @@ type SpawnSessionRequest struct {
 	// the spawn resolves (system_prompt, else the Agent's own, else the
 	// role's built-in charter), separated by a horizontal rule. At most
 	// 64 KiB.
-	PromptAppend  string `protobuf:"bytes,34,opt,name=prompt_append,json=promptAppend,proto3" json:"prompt_append,omitempty"`
+	PromptAppend string `protobuf:"bytes,34,opt,name=prompt_append,json=promptAppend,proto3" json:"prompt_append,omitempty"`
+	// keep marks a session bound to no job as one the operator means to keep:
+	// reconciliation concludes every other job-less session once it has been
+	// quiet past the idle bound. It changes nothing for a session bound to a
+	// job, which still ends with its job. Persisted on the session record.
+	Keep          bool `protobuf:"varint,35,opt,name=keep,proto3" json:"keep,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2523,6 +2528,13 @@ func (x *SpawnSessionRequest) GetPromptAppend() string {
 		return x.PromptAppend
 	}
 	return ""
+}
+
+func (x *SpawnSessionRequest) GetKeep() bool {
+	if x != nil {
+		return x.Keep
+	}
+	return false
 }
 
 // SigningRelaySpec lists the public keys (ssh wire form) the relayed signing
@@ -12641,7 +12653,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\ahealthy\x18\x03 \x01(\x05R\ahealthy\x12\x1c\n" +
 	"\tunhealthy\x18\x04 \x01(\x05R\tunhealthy\x12\x16\n" +
 	"\x06closed\x18\x05 \x01(\x05R\x06closed\x12G\n" +
-	"\aresults\x18\x06 \x03(\v2-.quicbaas.orchestrator.v1.SessionHealthResultR\aresults\"\xad\r\n" +
+	"\aresults\x18\x06 \x03(\v2-.quicbaas.orchestrator.v1.SessionHealthResultR\aresults\"\xc1\r\n" +
 	"\x13SpawnSessionRequest\x12\x18\n" +
 	"\abackend\x18\x01 \x01(\tR\abackend\x12\x1d\n" +
 	"\n" +
@@ -12685,7 +12697,8 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\bagent_id\x18\x1f \x01(\tR\aagentId\x12\x17\n" +
 	"\apool_id\x18  \x01(\tR\x06poolId\x12\x12\n" +
 	"\x04role\x18! \x01(\tR\x04role\x12#\n" +
-	"\rprompt_append\x18\" \x01(\tR\fpromptAppend\x1a6\n" +
+	"\rprompt_append\x18\" \x01(\tR\fpromptAppend\x12\x12\n" +
+	"\x04keep\x18# \x01(\bR\x04keep\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +

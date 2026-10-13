@@ -315,6 +315,19 @@ func TestCodexExecBackend_SpawnStatusClose(t *testing.T) {
 	}
 }
 
+func TestCodexExecBackend_ForeignSessionValueIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	b := NewCodexExecBackend(CodexExecBackendConfig{Command: "/bin/echo"})
+	b.sessions.Store("foreign", "not a session")
+
+	if _, err := b.Status(ctx, "foreign"); !isSessionNotFound(err) {
+		t.Fatalf("Status: expected SessionNotFoundError, got %v", err)
+	}
+	if _, err := b.Prompt(ctx, &PromptRequest{SessionID: "foreign", Prompt: "hi"}); !isSessionNotFound(err) {
+		t.Fatalf("Prompt: expected SessionNotFoundError, got %v", err)
+	}
+}
+
 func isSessionNotFound(err error) bool {
 	var nf *SessionNotFoundError
 	return errors.As(err, &nf)

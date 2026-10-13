@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/storage"
 	"github.com/jeremyhahn/go-quicbaas/pkg/storage/memory"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // mockRaftNode implements interfaces.RaftNode for testing.
@@ -1339,6 +1341,23 @@ func TestWriteUint32(t *testing.T) {
 			assert.Equal(t, tt.value, result)
 		})
 	}
+}
+
+func TestWriteLength(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, writeLength(&buf, math.MaxUint32))
+	result, err := readUint32(&buf)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(math.MaxUint32), result)
+}
+
+func TestWriteLength_RefusesLengthBeyondPrefix(t *testing.T) {
+	var buf bytes.Buffer
+	err := writeLength(&buf, math.MaxUint32+1)
+
+	var overflow *conv.ConversionOverflowError
+	require.ErrorAs(t, err, &overflow)
+	assert.Zero(t, buf.Len(), "nothing may be written for a refused length")
 }
 
 func TestReadUint32_InsufficientData(t *testing.T) {

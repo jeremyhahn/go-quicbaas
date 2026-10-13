@@ -18,12 +18,12 @@ package service
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -174,17 +174,17 @@ func (u *AEADUsage) UsagePercent() uint64 {
 // AEADSafetyTracker tracks usage across all keys and DEKs.
 type AEADSafetyTracker struct {
 	// keyUsage maps key IDs to their usage trackers
-	keyUsage sync.Map
+	keyUsage syncMap[string, *AEADUsage]
 
 	// dekUsage maps DEK paths to their usage trackers
-	dekUsage sync.Map
+	dekUsage syncMap[string, *AEADUsage]
 
 	// keyConfigs stores per-key configuration overrides
 	// This allows configurations to persist even if the usage tracker is reset
-	keyConfigs sync.Map
+	keyConfigs syncMap[string, AEADSafetyConfig]
 
 	// dekConfigs stores per-DEK configuration overrides
-	dekConfigs sync.Map
+	dekConfigs syncMap[string, AEADSafetyConfig]
 
 	// serverConfig is the server-level default configuration
 	serverConfig AEADSafetyConfig
@@ -327,7 +327,7 @@ func (t *AEADSafetyTracker) RecordDEKEncrypt(ctx context.Context, dekPath string
 
 // recordOperation is the common implementation for recording operations.
 func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, bytesProcessed uint64, isDEK bool) error {
-	var usageMap *sync.Map
+	var usageMap *syncMap[string, *AEADUsage]
 	var keyType string
 
 	if isDEK {
@@ -339,10 +339,9 @@ func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, byte
 	}
 
 	// Get or create usage tracker
-	val, _ := usageMap.LoadOrStore(id, &AEADUsage{
+	usage := usageMap.LoadOrStore(id, &AEADUsage{
 		Config: t.getEffectiveConfig(id, isDEK),
 	})
-	usage := val.(*AEADUsage) //nolint:errcheck // type assertion guaranteed by sync.Map contract
 
 	// Increment counters
 	limitExceeded := usage.IncrementUsage(bytesProcessed)
@@ -401,7 +400,7 @@ func (t *AEADSafetyTracker) recordOperation(ctx context.Context, id string, byte
 // back to server defaults if no per-key config exists and enforceDefaults is enabled.
 func (t *AEADSafetyTracker) getEffectiveConfig(id string, isDEK bool) AEADSafetyConfig {
 	// Look up per-key/DEK config from the appropriate config map
-	var configMap *sync.Map
+	var configMap *syncMap[string, AEADSafetyConfig]
 	if isDEK {
 		configMap = &t.dekConfigs
 	} else {
@@ -409,8 +408,8 @@ func (t *AEADSafetyTracker) getEffectiveConfig(id string, isDEK bool) AEADSafety
 	}
 
 	// Check for stored per-key configuration
-	if val, ok := configMap.Load(id); ok {
-		return val.(AEADSafetyConfig) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+	if config, ok := configMap.Load(id); ok {
+		return config
 	}
 
 	// Fall back to server defaults if enforcing
@@ -430,8 +429,7 @@ func (t *AEADSafetyTracker) SetKeyConfig(keyID string, config AEADSafetyConfig) 
 	t.keyConfigs.Store(keyID, config)
 
 	// Also update the existing usage tracker if one exists
-	val, _ := t.keyUsage.LoadOrStore(keyID, &AEADUsage{})
-	usage := val.(*AEADUsage) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+	usage := t.keyUsage.LoadOrStore(keyID, &AEADUsage{})
 	usage.Config = config
 }
 
@@ -443,8 +441,7 @@ func (t *AEADSafetyTracker) SetDEKConfig(dekPath string, config AEADSafetyConfig
 	t.dekConfigs.Store(dekPath, config)
 
 	// Also update the existing usage tracker if one exists
-	val, _ := t.dekUsage.LoadOrStore(dekPath, &AEADUsage{})
-	usage := val.(*AEADUsage) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+	usage := t.dekUsage.LoadOrStore(dekPath, &AEADUsage{})
 	usage.Config = config
 }
 
@@ -454,8 +451,7 @@ func (t *AEADSafetyTracker) ClearKeyConfig(keyID string) {
 	t.keyConfigs.Delete(keyID)
 
 	// Update existing usage tracker to use defaults
-	if val, ok := t.keyUsage.Load(keyID); ok {
-		usage := val.(*AEADUsage) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+	if usage, ok := t.keyUsage.Load(keyID); ok {
 		if t.enforceDefaults {
 			usage.Config = t.serverConfig
 		} else {
@@ -470,8 +466,7 @@ func (t *AEADSafetyTracker) ClearDEKConfig(dekPath string) {
 	t.dekConfigs.Delete(dekPath)
 
 	// Update existing usage tracker to use defaults
-	if val, ok := t.dekUsage.Load(dekPath); ok {
-		usage := val.(*AEADUsage) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+	if usage, ok := t.dekUsage.Load(dekPath); ok {
 		if t.enforceDefaults {
 			usage.Config = t.serverConfig
 		} else {
@@ -494,18 +489,16 @@ func (t *AEADSafetyTracker) GetDEKConfig(dekPath string) AEADSafetyConfig {
 
 // GetKeyUsage returns the current usage for a key.
 func (t *AEADSafetyTracker) GetKeyUsage(keyID string) (operationCount, bytesProcessed uint64, usagePercent int) {
-	if val, ok := t.keyUsage.Load(keyID); ok {
-		usage := val.(*AEADUsage)                                                                  //nolint:errcheck // type assertion guaranteed by sync.Map contract
-		return usage.OperationCount.Load(), usage.BytesProcessed.Load(), int(usage.UsagePercent()) //nolint:gosec // G115: percentage bounded 0-100
+	if usage, ok := t.keyUsage.Load(keyID); ok {
+		return usage.OperationCount.Load(), usage.BytesProcessed.Load(), conv.ClampUint64ToInt(usage.UsagePercent())
 	}
 	return 0, 0, 0
 }
 
 // GetDEKUsage returns the current usage for a DEK.
 func (t *AEADSafetyTracker) GetDEKUsage(dekPath string) (operationCount, bytesProcessed uint64, usagePercent int) {
-	if val, ok := t.dekUsage.Load(dekPath); ok {
-		usage := val.(*AEADUsage)                                                                  //nolint:errcheck // type assertion guaranteed by sync.Map contract
-		return usage.OperationCount.Load(), usage.BytesProcessed.Load(), int(usage.UsagePercent()) //nolint:gosec // G115: percentage bounded 0-100
+	if usage, ok := t.dekUsage.Load(dekPath); ok {
+		return usage.OperationCount.Load(), usage.BytesProcessed.Load(), conv.ClampUint64ToInt(usage.UsagePercent())
 	}
 	return 0, 0, 0
 }
@@ -525,16 +518,14 @@ type SafetyCheckResult struct {
 func (t *AEADSafetyTracker) SafetyCheck(thresholdPercent int) []SafetyCheckResult {
 	var results []SafetyCheckResult
 
-	t.keyUsage.Range(func(key, value interface{}) bool {
-		keyID := key.(string)                              //nolint:errcheck // type assertion guaranteed by sync.Map contract
-		usage := value.(*AEADUsage)                        //nolint:errcheck // type assertion guaranteed by sync.Map contract
-		if int(usage.UsagePercent()) >= thresholdPercent { //nolint:gosec // G115: percentage bounded 0-100
+	t.keyUsage.Range(func(keyID string, usage *AEADUsage) bool {
+		if conv.ClampUint64ToInt(usage.UsagePercent()) >= thresholdPercent {
 			results = append(results, SafetyCheckResult{
 				ID:             keyID,
 				Type:           "key",
 				OperationCount: usage.OperationCount.Load(),
 				BytesProcessed: usage.BytesProcessed.Load(),
-				UsagePercent:   int(usage.UsagePercent()), //nolint:gosec // G115: percentage bounded 0-100
+				UsagePercent:   conv.ClampUint64ToInt(usage.UsagePercent()),
 				MaxOperations:  usage.Config.MaxOperations,
 				MaxBytes:       usage.Config.MaxBytes,
 			})
@@ -542,16 +533,14 @@ func (t *AEADSafetyTracker) SafetyCheck(thresholdPercent int) []SafetyCheckResul
 		return true
 	})
 
-	t.dekUsage.Range(func(key, value interface{}) bool {
-		dekPath := key.(string)                            //nolint:errcheck // type assertion guaranteed by sync.Map contract
-		usage := value.(*AEADUsage)                        //nolint:errcheck // type assertion guaranteed by sync.Map contract
-		if int(usage.UsagePercent()) >= thresholdPercent { //nolint:gosec // G115: percentage bounded 0-100
+	t.dekUsage.Range(func(dekPath string, usage *AEADUsage) bool {
+		if conv.ClampUint64ToInt(usage.UsagePercent()) >= thresholdPercent {
 			results = append(results, SafetyCheckResult{
 				ID:             dekPath,
 				Type:           "dek",
 				OperationCount: usage.OperationCount.Load(),
 				BytesProcessed: usage.BytesProcessed.Load(),
-				UsagePercent:   int(usage.UsagePercent()), //nolint:gosec // G115: percentage bounded 0-100
+				UsagePercent:   conv.ClampUint64ToInt(usage.UsagePercent()),
 				MaxOperations:  usage.Config.MaxOperations,
 				MaxBytes:       usage.Config.MaxBytes,
 			})
@@ -569,8 +558,7 @@ func (t *AEADSafetyTracker) SafetyReport() []SafetyCheckResult {
 
 // ResetUsage resets the usage counters for a key (called after rotation).
 func (t *AEADSafetyTracker) ResetKeyUsage(keyID string) {
-	if val, ok := t.keyUsage.Load(keyID); ok {
-		usage := val.(*AEADUsage) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+	if usage, ok := t.keyUsage.Load(keyID); ok {
 		usage.OperationCount.Store(0)
 		usage.BytesProcessed.Store(0)
 	}
@@ -578,8 +566,7 @@ func (t *AEADSafetyTracker) ResetKeyUsage(keyID string) {
 
 // ResetDEKUsage resets the usage counters for a DEK (called after rotation).
 func (t *AEADSafetyTracker) ResetDEKUsage(dekPath string) {
-	if val, ok := t.dekUsage.Load(dekPath); ok {
-		usage := val.(*AEADUsage) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+	if usage, ok := t.dekUsage.Load(dekPath); ok {
 		usage.OperationCount.Store(0)
 		usage.BytesProcessed.Store(0)
 	}

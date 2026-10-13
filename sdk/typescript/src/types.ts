@@ -1499,6 +1499,11 @@ export interface SpawnSessionRequest {
   // resolved prompt: the Agent's own, else its role's built-in charter. At
   // most 64 KiB.
   prompt_append?: string;
+  // keep marks a session bound to no job as one the operator means to keep:
+  // reconciliation concludes every other job-less session once it has been
+  // quiet past the idle bound. It changes nothing for a session bound to a
+  // job, which still ends with its job. Persisted on the session record.
+  keep?: boolean;
 }
 
 // SpawnSessionResponse is the response from creating a new session.

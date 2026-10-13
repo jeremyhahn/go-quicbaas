@@ -20,6 +20,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -725,8 +726,10 @@ func (k *kmsServiceImpl) GetKey(ctx context.Context, req *GetKeyRequest) (*GetKe
 	// Try to extract metadata from kms.KeyMetadata (the type returned by kmsManager.GetKey)
 	if kmsMeta, ok := keyMetadata.(*kms.KeyMetadata); ok {
 		name = kmsMeta.Name
-		//nolint:gosec // G115: Version is bounded by key rotation limits, safe for uint64
-		currentVersion = uint64(kmsMeta.Version)
+		currentVersion, err = kmsKeyVersion("kms.GetKey", kmsMeta.Version)
+		if err != nil {
+			return nil, err
+		}
 		algorithm = KeyAlgorithm(kmsMeta.Algorithm)
 		status = kmsStateToServiceStatus(kmsMeta.State)
 		createdAt = kmsMeta.Created
@@ -854,8 +857,10 @@ func (k *kmsServiceImpl) GetPublicKey(ctx context.Context, req *GetPublicKeyRequ
 	algorithm := KeyAlgECDSAP256 // Default for asymmetric
 
 	if kmsMeta, ok := keyMetadata.(*kms.KeyMetadata); ok {
-		//nolint:gosec // G115: Version is bounded by key rotation limits, safe for uint64
-		currentVersion = uint64(kmsMeta.Version)
+		currentVersion, err = kmsKeyVersion("kms.GetPublicKey", kmsMeta.Version)
+		if err != nil {
+			return nil, err
+		}
 		algorithm = KeyAlgorithm(kmsMeta.Algorithm)
 	} else if km, ok := keyMetadata.(*KeyMetadata); ok {
 		currentVersion = km.Version
@@ -913,9 +918,13 @@ func (k *kmsServiceImpl) ListKeys(ctx context.Context, req *ListKeysRequest) (*L
 	for _, key := range keys {
 		// Try to extract kms.KeyMetadata from the returned interface
 		if kmsMeta, ok := key.(*kms.KeyMetadata); ok {
+			version, versionErr := kmsKeyVersion("kms.ListKeys", kmsMeta.Version)
+			if versionErr != nil {
+				return nil, versionErr
+			}
 			keyHandles = append(keyHandles, &KeyHandle{
 				KeyID:     kmsMeta.KeyID,
-				Version:   uint64(kmsMeta.Version), //nolint:gosec // G115: Version bounded by rotation limits
+				Version:   version,
 				Algorithm: KeyAlgorithm(kmsMeta.Algorithm),
 				Status:    kmsStateToServiceStatus(kmsMeta.State),
 				CreatedAt: kmsMeta.Created,
@@ -949,7 +958,11 @@ func (k *kmsServiceImpl) ListKeys(ctx context.Context, req *ListKeysRequest) (*L
 				if versionField := val.FieldByName("Version"); versionField.IsValid() {
 					switch versionField.Kind() {
 					case reflect.Int, reflect.Int32, reflect.Int64:
-						handle.Version = uint64(versionField.Int()) //nolint:gosec // G115: Version bounded
+						version, versionErr := conv.SafeInt64ToUint64(versionField.Int())
+						if versionErr != nil {
+							return nil, WrapError(versionErr, errors.ErrInternal, "kms.ListKeys", "invalid key version in metadata")
+						}
+						handle.Version = version
 					case reflect.Uint, reflect.Uint32, reflect.Uint64:
 						handle.Version = versionField.Uint()
 					}
@@ -1040,7 +1053,10 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	if !ok {
 		return nil, WrapError(nil, errors.ErrInternal, "kms.RotateKey", "unexpected key metadata type")
 	}
-	oldVersion := uint64(oldMetadata.Version) //nolint:gosec // G115: Version is validated positive
+	oldVersion, err := kmsKeyVersion("kms.RotateKey", oldMetadata.Version)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call KMS manager to rotate key
 	newResult, err := k.kmsManager.RotateKey(ctx, scopedKeyID)
@@ -1055,7 +1071,10 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	if !ok {
 		return nil, WrapError(nil, errors.ErrInternal, "kms.RotateKey", "unexpected rotated key metadata type")
 	}
-	newVersion := uint64(newMetadata.Version) //nolint:gosec // G115: Version is validated positive
+	newVersion, err := kmsKeyVersion("kms.RotateKey", newMetadata.Version)
+	if err != nil {
+		return nil, err
+	}
 
 	resp := &RotateKeyResponse{
 		KeyID:      req.KeyID,
@@ -1271,7 +1290,10 @@ func (k *kmsServiceImpl) GetKeyMetadata(ctx context.Context, req *GetKeyMetadata
 		return nil, WrapError(err, errors.ErrNotFound, "kms.GetKeyMetadata", "key not found")
 	}
 
-	metadata := extractKeyMetadata(req.KeyID, keyData)
+	metadata, err := extractKeyMetadata(req.KeyID, keyData)
+	if err != nil {
+		return nil, err
+	}
 
 	resp := &GetKeyMetadataResponse{
 		Metadata:  metadata,
@@ -1338,7 +1360,10 @@ func (k *kmsServiceImpl) UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMe
 	}
 
 	// Build the service-layer response from the (now updated) key data
-	metadata := extractKeyMetadata(req.KeyID, keyData)
+	metadata, err := extractKeyMetadata(req.KeyID, keyData)
+	if err != nil {
+		return nil, err
+	}
 
 	resp := &UpdateKeyMetadataResponse{
 		Metadata:  metadata,
@@ -2066,19 +2091,35 @@ func serviceUsageToKMS(usages []KeyUsage) []kms.KeyUsage {
 
 // extractKeyMetadata converts the interface{} returned by kmsManager.GetKey into
 // a service-layer KeyMetadata. It handles *kms.KeyMetadata and *service.KeyMetadata
-// types, falling back to defaults for unrecognized types.
-func extractKeyMetadata(keyID string, keyData interface{}) *KeyMetadata {
+// types, falling back to defaults for unrecognized types. It fails only when a
+// *kms.KeyMetadata carries a negative version.
+// kmsKeyVersion converts a KMS manager key version to the service layer's
+// unsigned version. A negative version means the stored metadata is corrupt,
+// so it is reported as an internal error rather than wrapped to a huge value.
+func kmsKeyVersion(op string, version int) (uint64, error) {
+	v, err := conv.SafeIntToUint64(version)
+	if err != nil {
+		return 0, WrapError(err, errors.ErrInternal, op, "invalid key version in metadata")
+	}
+	return v, nil
+}
+
+func extractKeyMetadata(keyID string, keyData interface{}) (*KeyMetadata, error) {
 	now := time.Now()
 
 	// Try kms.KeyMetadata (returned by xkms backend / kms.KMSService cache)
 	if kmsMeta, ok := keyData.(*kms.KeyMetadata); ok {
+		version, err := kmsKeyVersion("kms.extractKeyMetadata", kmsMeta.Version)
+		if err != nil {
+			return nil, err
+		}
 		metadata := &KeyMetadata{
 			KeyID:              keyID,
 			Name:               kmsMeta.Name,
 			Description:        kmsMeta.Description,
 			Algorithm:          KeyAlgorithm(kmsMeta.Algorithm),
 			Status:             kmsStateToServiceStatus(kmsMeta.State),
-			Version:            uint64(kmsMeta.Version), //nolint:gosec // G115: bounded by key rotation limits
+			Version:            version,
 			Exportable:         kmsMeta.Exportable,
 			DeletionProtection: kmsMeta.DeletionProtection,
 			CreatedAt:          kmsMeta.Created,
@@ -2104,7 +2145,7 @@ func extractKeyMetadata(keyID string, keyData interface{}) *KeyMetadata {
 		if kmsMeta.RotationPolicy != nil {
 			metadata.RotationPolicy = kmsRotationToService(kmsMeta.RotationPolicy)
 		}
-		return metadata
+		return metadata, nil
 	}
 
 	// Try service.KeyMetadata (returned when cached as service type)
@@ -2140,7 +2181,7 @@ func extractKeyMetadata(keyID string, keyData interface{}) *KeyMetadata {
 			rp := *svcMeta.RotationPolicy
 			metadata.RotationPolicy = &rp
 		}
-		return metadata
+		return metadata, nil
 	}
 
 	// Fallback: return minimal metadata with defaults
@@ -2151,7 +2192,7 @@ func extractKeyMetadata(keyID string, keyData interface{}) *KeyMetadata {
 		Version:   1,
 		CreatedAt: now,
 		UpdatedAt: now,
-	}
+	}, nil
 }
 
 // getVersionStatus returns the status of a specific key version.
@@ -2478,8 +2519,10 @@ func (k *kmsServiceImpl) ListKeyVersions(ctx context.Context, req *ListKeyVersio
 
 	// Try to extract version info from kms.KeyMetadata (the type returned by kmsManager.GetKey)
 	if kmsMeta, ok := keyData.(*kms.KeyMetadata); ok {
-		//nolint:gosec // G115: Version is bounded by key rotation limits, safe for uint64
-		currentVersion = uint64(kmsMeta.Version)
+		currentVersion, err = kmsKeyVersion("kms.ListKeyVersions", kmsMeta.Version)
+		if err != nil {
+			return nil, err
+		}
 		algorithm = KeyAlgorithm(kmsMeta.Algorithm)
 		status = kmsStateToServiceStatus(kmsMeta.State)
 		createdAt = kmsMeta.Created
@@ -3236,7 +3279,7 @@ func (k *kmsServiceImpl) StartReencryption(ctx context.Context, req *StartReencr
 		OperationID:         operationID,
 		Started:             true,
 		StartedAt:           startedAt,
-		TotalEntities:       int64(totalKeys), //nolint:gosec // G115: totalKeys bounded by key count
+		TotalEntities:       int64(len(keys)),
 		EstimatedCompletion: estimatedCompletion,
 	}, nil
 }

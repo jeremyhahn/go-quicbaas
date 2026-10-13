@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -115,7 +116,7 @@ func secretsPutValue(cmd *cobra.Command) ([]byte, error) {
 
 // readSecretValueFile reads the file's bytes verbatim.
 func readSecretValueFile(path string) ([]byte, error) {
-	value, err := os.ReadFile(path) //nolint:gosec // G304: the operator names the file to store
+	value, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, &SecretsPutReadError{Source: path, Err: err}
 	}

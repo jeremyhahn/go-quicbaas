@@ -16,6 +16,7 @@
 package watcher
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,23 @@ func TestNewGitIgnoreMatcher_EmptyPatterns(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, matcher)
 	assert.Empty(t, matcher.patterns)
+}
+
+func TestNewGitIgnoreMatcher_RejectsMalformedGlob(t *testing.T) {
+	for _, raw := range []string{"[unclosed", "!/logs/[a-/", "dir/\\"} {
+		_, err := newGitIgnoreMatcher([]string{"*.tmp", raw})
+
+		var causeErr *WatcherCauseError
+		require.ErrorAs(t, err, &causeErr, raw)
+		require.ErrorIs(t, err, filepath.ErrBadPattern, raw)
+		assert.Contains(t, err.Error(), raw)
+	}
+}
+
+func TestGlobMatch(t *testing.T) {
+	assert.True(t, globMatch("*.go", "main.go"))
+	assert.False(t, globMatch("*.go", "main.rs"))
+	assert.False(t, globMatch("[unclosed", "[unclosed"), "a malformed glob matches nothing")
 }
 
 func TestGitIgnoreMatcher_ParsePattern(t *testing.T) {

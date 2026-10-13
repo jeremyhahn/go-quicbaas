@@ -217,20 +217,47 @@ func (s *agentServiceImpl) concludeSessionRecord(
 	record *SessionRecord,
 	reason SessionConclusionReason,
 ) (bool, error) {
+	verdict, err := s.concludeRecordIfDue(ctx, record, reason, nil)
+	return verdict == SessionReconcileConcluded, err
+}
+
+// sessionStillDue asks a verdict again of the record as the store holds it
+// NOW, and reports whether it still stands.
+//
+// A VERDICT THAT RESTS ON THE RECORD'S OWN FIELDS IS THE STORE'S TO DECIDE.
+// The job-terminal and fleet verdicts rest on facts outside the record — a
+// job state that never leaves terminal, a daemon that has left — so the copy a
+// sweep listed is as good as a fresh one. The job-less verdict rests on the
+// record itself: how long it has been quiet, whether an operator marked it
+// kept, whether it has since been bound to a job. Any of those can change
+// between the listing and the ending, and a session that was prompted in that
+// window is not idle, whatever the listed copy said.
+type sessionStillDue func(current *SessionRecord) bool
+
+// concludeRecordIfDue is concludeSessionRecord with a verdict that is asked
+// again of the stored record before anything is torn down. A nil due asks
+// nothing. It answers SessionReconcileLive when the stored record no longer
+// meets the verdict, and leaves that record untouched.
+func (s *agentServiceImpl) concludeRecordIfDue(
+	ctx context.Context,
+	record *SessionRecord,
+	reason SessionConclusionReason,
+	due sessionStillDue,
+) (SessionReconcileVerdict, error) {
 	if record == nil || record.SessionID == "" {
-		return false, &AgentServiceError{
+		return SessionReconcileFailed, &AgentServiceError{
 			Sentinel: ErrSessionIDRequired,
 			Message:  "a session conclusion names the record it concludes",
 		}
 	}
 	if !reason.Valid() {
-		return false, &AgentServiceError{
+		return SessionReconcileFailed, &AgentServiceError{
 			Sentinel: ErrSessionConclusionReasonRequired,
 			Message:  "session " + record.SessionID + " cannot be concluded without a known reason",
 		}
 	}
 	if record.Status == SessionStateClosed {
-		return false, nil
+		return SessionReconcileAlreadyConcluded, nil
 	}
 
 	tenantID := record.TenantID
@@ -242,12 +269,57 @@ func (s *agentServiceImpl) concludeSessionRecord(
 	// outcome. Going around that file would tear down a process a winner is
 	// already tearing down, and write a second terminal event behind it.
 	if _, live := s.liveSessionRecord(record.SessionID); live {
-		return s.concludeSession(
+		if due != nil {
+			verdict, err := s.storedRecordDue(ctx, storageTenant, record.SessionID, due)
+			if verdict != SessionReconcileConcluded || err != nil {
+				return verdict, err
+			}
+		}
+		written, err := s.concludeSession(
 			ctx, tenantID, storageTenant, record.SessionID,
 			reason, conclusionNudge, s.backendForSession(ctx, record.SessionID))
+		return writtenVerdict(written), err
 	}
 
-	return s.concludeAbsentSession(ctx, tenantID, storageTenant, record.SessionID, reason)
+	return s.concludeAbsentSessionIfDue(ctx, tenantID, storageTenant, record.SessionID, reason, due)
+}
+
+// storedRecordDue reads the session's record back from the store and asks due
+// of it. It answers SessionReconcileConcluded when the verdict still stands,
+// SessionReconcileAlreadyConcluded when the record is closed or gone, and
+// SessionReconcileLive when the record no longer meets the verdict.
+func (s *agentServiceImpl) storedRecordDue(
+	ctx context.Context, storageTenant, sessionID string, due sessionStillDue,
+) (SessionReconcileVerdict, error) {
+	current, err := s.store.GetSession(ctx, storageTenant, sessionID)
+	if err != nil {
+		if errors.Is(err, ErrAgentStoreNotFound) {
+			return SessionReconcileAlreadyConcluded, nil
+		}
+		return SessionReconcileFailed, err
+	}
+	return storedVerdict(current, due), nil
+}
+
+// storedVerdict is storedRecordDue over a record already read.
+func storedVerdict(current *SessionRecord, due sessionStillDue) SessionReconcileVerdict {
+	switch {
+	case current.Status == SessionStateClosed:
+		return SessionReconcileAlreadyConcluded
+	case due != nil && !due(current):
+		return SessionReconcileLive
+	default:
+		return SessionReconcileConcluded
+	}
+}
+
+// writtenVerdict maps a conclusion's "this call wrote the ending" onto the
+// verdict a pass reports.
+func writtenVerdict(written bool) SessionReconcileVerdict {
+	if written {
+		return SessionReconcileConcluded
+	}
+	return SessionReconcileAlreadyConcluded
 }
 
 // concludeAbsentSession ends a session this process does not hold live.
@@ -270,6 +342,18 @@ func (s *agentServiceImpl) concludeAbsentSession(
 	tenantID, storageTenant, sessionID string,
 	reason SessionConclusionReason,
 ) (bool, error) {
+	verdict, err := s.concludeAbsentSessionIfDue(ctx, tenantID, storageTenant, sessionID, reason, nil)
+	return verdict == SessionReconcileConcluded, err
+}
+
+// concludeAbsentSessionIfDue is concludeAbsentSession with a verdict asked
+// again of the record it re-reads under the lock; see sessionStillDue.
+func (s *agentServiceImpl) concludeAbsentSessionIfDue(
+	ctx context.Context,
+	tenantID, storageTenant, sessionID string,
+	reason SessionConclusionReason,
+	due sessionStillDue,
+) (SessionReconcileVerdict, error) {
 	unlock := s.reconcileMu.lock(storageTenant + "/" + sessionID)
 	defer unlock()
 
@@ -280,17 +364,17 @@ func (s *agentServiceImpl) concludeAbsentSession(
 	if err != nil {
 		if errors.Is(err, ErrAgentStoreNotFound) {
 			// A record that is gone has no ending left to write.
-			return false, nil
+			return SessionReconcileAlreadyConcluded, nil
 		}
-		return false, err
+		return SessionReconcileFailed, err
 	}
-	if current.Status == SessionStateClosed {
-		return false, nil
+	if verdict := storedVerdict(current, due); verdict != SessionReconcileConcluded {
+		return verdict, nil
 	}
 	if _, live := s.liveSessionRecord(sessionID); live {
 		// Installed since the caller listed. The live arbitration owns it now,
 		// and this pass is not entitled to conclude a session with a process.
-		return false, nil
+		return SessionReconcileAlreadyConcluded, nil
 	}
 
 	mem := &sessionRecord{
@@ -315,12 +399,12 @@ func (s *agentServiceImpl) concludeAbsentSession(
 	// and it is released here for the same reason the live path releases it.
 	mem.resumable.Store(true)
 	if err := s.concludeBackend(ctx, mem, storageTenant, sessionID, nil); err != nil {
-		return false, err
+		return SessionReconcileFailed, err
 	}
 	if err := s.finishDurable(ctx, mem, tenantID, storageTenant, sessionID, reason); err != nil {
-		return false, err
+		return SessionReconcileFailed, err
 	}
-	return true, nil
+	return SessionReconcileConcluded, nil
 }
 
 // recordSessionConclusionOnJob writes the session's ending into the job's own
@@ -465,6 +549,19 @@ func (s *agentServiceImpl) conclude(
 	reason SessionConclusionReason,
 	evidence string,
 ) SessionReconcileFinding {
+	return s.concludeIfDue(ctx, record, reason, evidence, nil)
+}
+
+// concludeIfDue is conclude with a verdict asked again of the stored record;
+// see sessionStillDue. A record that no longer meets it is reported
+// SessionReconcileLive and left untouched.
+func (s *agentServiceImpl) concludeIfDue(
+	ctx context.Context,
+	record *SessionRecord,
+	reason SessionConclusionReason,
+	evidence string,
+	due sessionStillDue,
+) SessionReconcileFinding {
 	finding := SessionReconcileFinding{
 		TenantID:  record.TenantID,
 		SessionID: record.SessionID,
@@ -472,20 +569,20 @@ func (s *agentServiceImpl) conclude(
 		Reason:    reason,
 		Evidence:  evidence,
 	}
-	written, err := s.concludeSessionRecord(ctx, record, reason)
+	verdict, err := s.concludeRecordIfDue(ctx, record, reason, due)
 	switch {
 	case err != nil:
 		finding.Verdict = SessionReconcileFailed
 		finding.Reason = ""
 		finding.Evidence = evidence + "; the conclusion could not be recorded: " + err.Error()
-	case written:
+	case verdict == SessionReconcileConcluded:
 		// The job-side cleanup is NOT done here. It is part of the conclusion
 		// itself now (finishDurable), ahead of the commit point, so that a
 		// job store that will not answer leaves the session retryable instead
 		// of leaving the job naming a session that no longer exists.
 		finding.Verdict = SessionReconcileConcluded
 	default:
-		finding.Verdict = SessionReconcileAlreadyConcluded
+		finding.Verdict = verdict
 		finding.Reason = ""
 	}
 	return finding
@@ -681,10 +778,15 @@ func sessionRecordUnfinished(record *SessionRecord) bool {
 // TWO SIGNALS, AND NEITHER IS THE CLOCK ALONE — the same house rule the stall
 // detector follows. A session is concluded only when it is BOTH quiet for
 // longer than the longest bound any job state carries AND corroborated by a
-// second fact: its job has reached a terminal state, or the daemon it is
-// pinned to is no longer registered. A session that is merely quiet is left
-// alone, because a long-running agent that has not spoken for an hour is
+// second fact: its job has reached a terminal state, the daemon it is pinned
+// to is no longer registered, or it is bound to no job at all and nothing
+// keeps it (see joblessIdle). A session with a job that is merely quiet is
+// left alone, because a long-running agent that has not spoken for an hour is
 // exactly what a long-running agent looks like.
+//
+// The job-less verdict rests on the record's own fields, so it is asked again
+// of the stored record when the ending is written (sessionStillDue): a session
+// prompted, kept or bound to a job since the listing is not concluded.
 //
 // The cross-tenant scan is deliberate and matches the reaper's, which lists
 // every tenant's leases in one pass: a maintenance sweep runs on no caller's
@@ -709,7 +811,17 @@ func (s *agentServiceImpl) SweepSessions(ctx context.Context) (SessionReconcileR
 		if !found {
 			return
 		}
-		report.Findings = append(report.Findings, s.conclude(tenantCtx, record, reason, evidence))
+		var due sessionStillDue
+		if reason == ConcludedBySessionIdle {
+			due = s.joblessStillDue(quietFor)
+		}
+		finding := s.concludeIfDue(tenantCtx, record, reason, evidence, due)
+		if finding.Verdict == SessionReconcileLive {
+			// Prompted, kept or bound to a job since it was listed: left alone,
+			// and a session left alone is not a finding.
+			return
+		}
+		report.Findings = append(report.Findings, finding)
 	})
 	if err != nil {
 		return report, err
@@ -729,6 +841,13 @@ func (s *agentServiceImpl) sweepVerdict(
 		return ConcludedByJobConcluded,
 			quiet + " and its job " + record.JobID + " is " + string(state), true
 	}
+	// A SESSION BOUND TO NO JOB HAS NO JOB TO END IT, so without this it is
+	// never concluded at all. It is asked before the resumable refusal below
+	// because that refusal protects a session an operator is keeping, and a
+	// job-less session is kept only by saying so (SessionRecord.Keep).
+	if s.joblessIdle(record, idle, quietFor) {
+		return ConcludedBySessionIdle, joblessEvidence(idle, quietFor), true
+	}
 	// ONLY THE JOB MAY END A RESUMABLE SESSION. It has no process by design, so
 	// "the daemon holding it is gone" is not a fact about it, and silence is
 	// its normal condition rather than evidence of anything. Ending it on
@@ -741,6 +860,53 @@ func (s *agentServiceImpl) sweepVerdict(
 			quiet + " and the daemon it is pinned to (" + agent + ") is no longer registered", true
 	}
 	return "", "", false
+}
+
+// joblessIdle reports whether a session bound to no job has been quiet past
+// the idle bound with nothing keeping it.
+//
+// The bound is the sweep's own: the longest idle bound any job state is
+// allowed. A job-less session quiet for longer than any working agent may sit
+// in any state is not waiting on work, and a second bound would be a second
+// answer to "how long is too quiet" that could drift from the first. With no
+// bound at all (every job state switched off) nothing is too quiet, so nothing
+// is concluded on silence alone.
+//
+// Each of the following keeps a job-less session, and none of them is the
+// absence of a job:
+//   - Keep, the operator's explicit mark;
+//   - being this node's lead session, which the node holds by configuration
+//     rather than for a job;
+//   - SessionStateActive, a turn in flight, which is activity whatever the
+//     clock says.
+func (s *agentServiceImpl) joblessIdle(record *SessionRecord, idle, quietFor time.Duration) bool {
+	switch {
+	case record.JobID != "", record.Keep, quietFor <= 0, idle < quietFor:
+		return false
+	case record.Status == SessionStateActive:
+		return false
+	case s.leadSessionID != "" && record.SessionID == s.leadSessionID:
+		return false
+	default:
+		return sessionRecordUnfinished(record)
+	}
+}
+
+// joblessStillDue asks joblessIdle again of the record the store holds when
+// the conclusion is about to be written, measured against the clock at that
+// moment; see sessionStillDue.
+func (s *agentServiceImpl) joblessStillDue(quietFor time.Duration) sessionStillDue {
+	return func(current *SessionRecord) bool {
+		idle := utcNow().Sub(time.Unix(0, sessionLastActivity(current)))
+		return s.joblessIdle(current, idle, quietFor)
+	}
+}
+
+// joblessEvidence is the reason a job-less session was concluded, in the
+// same terms the job-concluded verdict uses.
+func joblessEvidence(idle, quietFor time.Duration) string {
+	return "session has been quiet for " + idle.Round(time.Second).String() +
+		", past the idle bound of " + quietFor.String() + ", and is bound to no job"
 }
 
 // jobTerminalState reports the state of the session's job when that job has

@@ -36,6 +36,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // ExporterType defines the type of trace exporter.
@@ -148,7 +149,7 @@ func NewTracer(cfg *Config) (*Tracer, error) {
 			semconv.ServiceNameKey.String(cfg.ServiceName),
 			semconv.ServiceVersionKey.String(cfg.ServiceVersion),
 			attribute.String("environment", cfg.Environment),
-			attribute.Int64("node.id", int64(cfg.NodeID)), //nolint:gosec // G115: uint64 to int64 conversion for tracing attribute
+			attribute.Int64("node.id", conv.ClampUint64ToInt64(cfg.NodeID)),
 			attribute.String("db.system", "quicbaas"),
 		),
 	)
@@ -483,17 +484,17 @@ func DBAttributes(operation, key string, shardID uint64) []attribute.KeyValue {
 		AttrDBSystem.String("quicbaas"),
 		AttrDBOperation.String(operation),
 		AttrDBKey.String(key),
-		AttrDBShardID.Int64(int64(shardID)), //nolint:gosec // G115: uint64 to int64 conversion for tracing attribute
+		AttrDBShardID.Int64(conv.ClampUint64ToInt64(shardID)),
 	}
 }
 
 // RaftAttributes creates standard Raft operation attributes.
 func RaftAttributes(shardID, nodeID uint64, term, index uint64) []attribute.KeyValue {
 	return []attribute.KeyValue{
-		AttrDBShardID.Int64(int64(shardID)),  //nolint:gosec // G115: uint64 to int64 conversion for tracing attribute
-		AttrDBNodeID.Int64(int64(nodeID)),    //nolint:gosec // G115: uint64 to int64 conversion for tracing attribute
-		AttrRaftTerm.Int64(int64(term)),      //nolint:gosec // G115: uint64 to int64 conversion for tracing attribute
-		AttrRaftLogIndex.Int64(int64(index)), //nolint:gosec // G115: uint64 to int64 conversion for tracing attribute
+		AttrDBShardID.Int64(conv.ClampUint64ToInt64(shardID)),
+		AttrDBNodeID.Int64(conv.ClampUint64ToInt64(nodeID)),
+		AttrRaftTerm.Int64(conv.ClampUint64ToInt64(term)),
+		AttrRaftLogIndex.Int64(conv.ClampUint64ToInt64(index)),
 	}
 }
 

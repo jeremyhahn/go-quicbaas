@@ -1524,6 +1524,17 @@ func TestExtractAuditContext_Empty(t *testing.T) {
 	assert.Empty(t, ipAddr)
 }
 
+func TestExtractAuditContext_NonStringValues(t *testing.T) {
+	ctx := context.WithValue(systemTenantCtx(), contextKeyUsername, 42)
+	ctx = context.WithValue(ctx, contextKeyUserID, []byte("user"))
+	ctx = context.WithValue(ctx, contextKeyIPAddr, struct{}{})
+
+	username, userID, ipAddr := extractAuditContext(ctx)
+	assert.Empty(t, username, "a non-string username must be ignored, not panic")
+	assert.Empty(t, userID)
+	assert.Empty(t, ipAddr)
+}
+
 // =============================================================================
 // Mock Backend Registry
 // =============================================================================

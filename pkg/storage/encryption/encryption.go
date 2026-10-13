@@ -24,7 +24,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/subtle"
 	"io"
 
 	"golang.org/x/crypto/argon2"
@@ -263,9 +262,9 @@ func validateKeySize(key []byte, algorithm string) error {
 			"encryption.validateKeySize", algorithm, []string{AlgorithmAES128, AlgorithmAES256})
 	}
 
-	// Use constant-time comparison to prevent timing attacks
-	// Key length bounded by AES key sizes (16 or 32 bytes)
-	if subtle.ConstantTimeEq(int32(len(key)), int32(expectedSize)) != 1 { //nolint:gosec // G115: key sizes bounded
+	// A key's length is public (the error below reports it), so a plain
+	// comparison leaks nothing a constant-time one would hide.
+	if len(key) != expectedSize {
 		return api.NewKeySizeError("encryption.validateKeySize", algorithm, expectedSize, len(key))
 	}
 

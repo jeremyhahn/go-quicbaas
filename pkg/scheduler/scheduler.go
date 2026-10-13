@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // JobStorage defines the interface for job persistence.
@@ -1665,28 +1667,21 @@ func (s *SchedulerEngine) applyRunFailure(job *Job, reason string, now time.Time
 	if job.MaxRetries > 0 {
 		maxRetriesU64 = uint64(job.MaxRetries)
 	} else {
-		// Use default retries, clamped to valid range.
-		// Safe conversion: retries is checked to be >= 0 before conversion.
-		retries := s.config.DefaultRetries
-		if retries < 0 {
-			retries = 0
-		}
-		maxRetriesU64 = uint64(retries) //nolint:gosec // Safe: retries >= 0 after bounds check above
+		// Use default retries; a negative default means none.
+		maxRetriesU64 = conv.ClampIntToUint64(s.config.DefaultRetries)
 	}
 
 	// Retry within this firing while its budget lasts.
 	if job.FailCount < maxRetriesU64 {
 		job.Status = JobStatusPending
 		// Calculate next retry time with backoff.
-		// Cap fail count to prevent overflow in duration calculation.
-		// Safe conversions: RetryBackoff is time.Duration (int64), and we check
-		// backoffMultiplier against MaxInt64 to ensure the multiplication won't overflow.
+		// Cap fail count so the multiplication cannot overflow a Duration.
 		backoffMultiplier := job.FailCount
-		retryBackoffU64 := uint64(s.config.RetryBackoff) //nolint:gosec // Safe: Duration values are bounded
+		retryBackoffU64 := conv.ClampInt64ToUint64(int64(s.config.RetryBackoff))
 		if retryBackoffU64 > 0 && backoffMultiplier > math.MaxInt64/retryBackoffU64 {
 			backoffMultiplier = math.MaxInt64 / retryBackoffU64
 		}
-		job.NextRun = now.Add(s.config.RetryBackoff * time.Duration(backoffMultiplier)) //nolint:gosec // Safe: backoffMultiplier is bounded above
+		job.NextRun = now.Add(s.config.RetryBackoff * time.Duration(conv.ClampUint64ToInt64(backoffMultiplier)))
 		return
 	}
 

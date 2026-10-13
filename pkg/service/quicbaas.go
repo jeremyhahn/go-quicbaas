@@ -24,6 +24,7 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -978,11 +980,13 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 	}
 
 	// Build read options from request
-	readTimeoutMs := int64(req.TimeoutMs) //nolint:gosec // G115: timeout conversion for read options
-	if readTimeoutMs <= 0 {
-		readTimeoutMs = 5000 // Default 5s read timeout
+	readTimeout, err := readTimeoutDuration(req.TimeoutMs)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("Get", "invalid").Inc()
+		}
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "service.Get", Err: err}
 	}
-	readTimeout := time.Duration(readTimeoutMs) * time.Millisecond
 
 	// Use the shorter of: parent context deadline, or per-read timeout
 	if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
@@ -1234,13 +1238,11 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 	}
 
 	totalCount := uint64(len(entities))
+	pageLen := conv.ClampUint64ToInt(pageSize)
 	offset := 0
 
 	for offset < len(entities) {
-		end := offset + int(pageSize) //nolint:gosec // G115: uint64 to int conversion for pagination
-		if end > len(entities) {
-			end = len(entities)
-		}
+		end := offset + min(pageLen, len(entities)-offset)
 
 		batch := entities[offset:end]
 		nextPageToken := ""
@@ -2190,9 +2192,10 @@ func (q *queryService) Query(ctx context.Context, req *QueryRequest, stream chan
 	// Parse results and filter by value if provided
 	var entities []*Entity
 	for keyStr, data := range scanResult {
-		var id uint64
-		if idx := strings.LastIndex(keyStr, ":"); idx >= 0 {
-			_, _ = fmt.Sscanf(keyStr[idx+1:], "%d", &id) //nolint:errcheck // G104: parsing ID from key
+		id, parseErr := strconv.ParseUint(keyStr[strings.LastIndex(keyStr, ":")+1:], 10, 64)
+		if parseErr != nil {
+			// A key without a numeric entity ID is still returned, with ID 0
+			id = 0
 		}
 
 		// Filter by index value if requested
@@ -2622,7 +2625,7 @@ func (b *backupService) CreateBackup(ctx context.Context, req *CreateBackupReque
 	// Map result to service response
 	resp := &CreateBackupResponse{
 		BackupID:  backupResult.ID,
-		Size:      uint64(backupResult.Size), //nolint:gosec // G115: Size represents byte count, safe conversion
+		Size:      conv.ClampInt64ToUint64(backupResult.Size),
 		Timestamp: backupResult.Timestamp.UnixNano(),
 		Status:    "completed",
 	}
@@ -2641,7 +2644,7 @@ func (b *backupService) ListBackups(ctx context.Context, req *ListBackupsRequest
 	}
 
 	// Determine limit
-	limit := int(req.Limit) //nolint:gosec // G115: uint64 to int conversion for limit
+	limit := conv.ClampUint64ToInt(req.Limit)
 	if limit == 0 {
 		limit = 100 // Default limit
 	}
@@ -2677,7 +2680,7 @@ func (b *backupService) ListBackups(ctx context.Context, req *ListBackupsRequest
 			BackupID:    b.ID,
 			Name:        string(b.Type),
 			Description: fmt.Sprintf("Backup created at %s", b.Timestamp.Format(time.RFC3339)),
-			Size:        uint64(b.Size), //nolint:gosec // G115: Size represents byte count, safe conversion
+			Size:        conv.ClampInt64ToUint64(b.Size),
 			Timestamp:   b.Timestamp.UnixNano(),
 			Status:      "completed",
 			Shards:      shards,
@@ -2686,7 +2689,7 @@ func (b *backupService) ListBackups(ctx context.Context, req *ListBackupsRequest
 
 	resp := &ListBackupsResponse{
 		Backups:    backups,
-		TotalCount: uint64(backupList.TotalCount), //nolint:gosec // G115: TotalCount represents count, safe conversion
+		TotalCount: conv.ClampIntToUint64(backupList.TotalCount),
 	}
 
 	return resp, nil
@@ -2961,11 +2964,11 @@ func (c *cacheService) GetCacheStats(ctx context.Context, req *GetCacheStatsRequ
 	// Map to response
 	resp := &GetCacheStatsResponse{
 		HitRate:   stats.L1HitRate,
-		Size:      uint64(stats.L1Size),      //nolint:gosec // G115: L1Size represents cache size, safe conversion
-		MaxSize:   uint64(stats.L1Capacity),  //nolint:gosec // G115: int to uint64 conversion for cache size
-		Evictions: uint64(stats.L1Evictions), //nolint:gosec // G115: int64 to uint64 conversion for cache evictions
-		Hits:      uint64(stats.L1Hits),      //nolint:gosec // G115: int64 to uint64 conversion for cache hits
-		Misses:    uint64(stats.L1Misses),    //nolint:gosec // G115: int64 to uint64 conversion for cache misses
+		Size:      conv.ClampIntToUint64(stats.L1Size),
+		MaxSize:   conv.ClampIntToUint64(stats.L1Capacity),
+		Evictions: conv.ClampInt64ToUint64(stats.L1Evictions),
+		Hits:      conv.ClampInt64ToUint64(stats.L1Hits),
+		Misses:    conv.ClampInt64ToUint64(stats.L1Misses),
 	}
 
 	return resp, nil
@@ -2991,7 +2994,7 @@ func (c *cacheService) ClearCache(ctx context.Context, req *ClearCacheRequest) (
 		}
 	}
 	stats := cacheMgr.Stats()
-	entriesCleared := uint64(stats.L1Size) //nolint:gosec // G115: L1Size represents cache size, safe conversion
+	entriesCleared := conv.ClampIntToUint64(stats.L1Size)
 
 	// Clear the cache
 	c.svc.cacheManager.Clear()
@@ -3491,14 +3494,7 @@ func (t *timeSeriesService) TimeSeriesQuery(ctx context.Context, req *TimeSeries
 			continue // Skip if no value
 		}
 
-		// Extract entity ID field (supports both uint64 and float64 JSON representations)
-		var entityID uint64
-		if id, ok := entity["id"].(float64); ok {
-			entityID = uint64(id) //nolint:gosec // G115: float64 to uint64 conversion for entity ID
-		} else if id, ok := entity["entity_id"].(float64); ok {
-			entityID = uint64(id) //nolint:gosec // G115: float64 to uint64 conversion for entity ID
-		}
-		// entityID remains 0 if not present in entity
+		entityID := timeSeriesEntityID(entity)
 
 		// Extract metadata (exclude reserved fields)
 		metadata := make(map[string]string)
@@ -3526,27 +3522,17 @@ func (t *timeSeriesService) TimeSeriesQuery(ctx context.Context, req *TimeSeries
 	}
 
 	totalCount := uint64(len(dataPoints))
+	limited := dataPoints[:min(len(dataPoints), conv.ClampUint64ToInt(limit))]
 	offset := 0
 
 	// Send data points in batches
 	batchSize := 100
-	for offset < len(dataPoints) {
-		end := offset + batchSize
-		if end > len(dataPoints) {
-			end = len(dataPoints)
-		}
+	for offset < len(limited) {
+		end := offset + min(batchSize, len(limited)-offset)
 
-		// Apply limit
-		if uint64(offset) >= limit { //nolint:gosec // G115: int to uint64 conversion for offset comparison
-			break
-		}
-		if uint64(end) > limit { //nolint:gosec // G115: int to uint64 conversion for limit comparison
-			end = int(limit) //nolint:gosec // G115: uint64 to int conversion for slice index
-		}
-
-		batch := dataPoints[offset:end]
+		batch := limited[offset:end]
 		nextPageToken := ""
-		if end < len(dataPoints) && uint64(end) < limit { //nolint:gosec // G115: int to uint64 conversion for limit comparison
+		if end < len(limited) {
 			nextPageToken = fmt.Sprintf("%d", end)
 		}
 
@@ -3579,6 +3565,24 @@ func (t *timeSeriesService) TimeSeriesQuery(ctx context.Context, req *TimeSeries
 	}
 
 	return nil
+}
+
+// maxJSONEntityID is 2^64, the first float64 too large for a uint64 entity ID.
+const maxJSONEntityID = 1 << 64
+
+// timeSeriesEntityID returns the entity ID a decoded time-series entity
+// carries in its "id" or "entity_id" field. JSON numbers decode as float64;
+// an ID that is absent, negative, fractional or beyond uint64 is reported
+// as 0, the same as an entity without an ID.
+func timeSeriesEntityID(entity map[string]interface{}) uint64 {
+	id, ok := entity["id"].(float64)
+	if !ok {
+		id, ok = entity["entity_id"].(float64)
+	}
+	if !ok || id < 0 || id >= maxJSONEntityID || id != math.Trunc(id) {
+		return 0
+	}
+	return uint64(id)
 }
 
 func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointRequest) (*WritePointResponse, error) {
@@ -5321,6 +5325,30 @@ func (k *kvService) validateGetRequest(req *GetRequest) error {
 		}
 	}
 	return nil
+}
+
+// defaultReadTimeout bounds a read whose request leaves TimeoutMs unset.
+const defaultReadTimeout = 5 * time.Second
+
+// readTimeoutDuration converts a read timeout in milliseconds to a duration,
+// defaulting to defaultReadTimeout when it is zero. A timeout too large to
+// represent as a time.Duration is an error.
+func readTimeoutDuration(timeoutMs uint64) (time.Duration, error) {
+	if timeoutMs == 0 {
+		return defaultReadTimeout, nil
+	}
+	ms, err := conv.SafeUint64ToInt64(timeoutMs)
+	if err != nil {
+		return 0, err
+	}
+	if ms > int64(math.MaxInt64/time.Millisecond) {
+		return 0, &conv.ConversionOverflowError{
+			FromType: "uint64",
+			ToType:   "time.Duration",
+			Value:    strconv.FormatUint(timeoutMs, 10),
+		}
+	}
+	return time.Duration(ms) * time.Millisecond, nil
 }
 
 func (k *kvService) validateDeleteRequest(req *DeleteRequest) error {

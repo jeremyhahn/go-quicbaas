@@ -9,9 +9,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // kmsKeyIDReq mirrors the internal request the SDK builds for the reflective
@@ -156,6 +158,18 @@ func TestKMSHandlerMethodsValidation(t *testing.T) {
 				t.Fatalf("expected validation error for %s", tc.name)
 			}
 		})
+	}
+}
+
+// A negative policy version is refused before the request leaves: converted
+// to the service's uint64 it would wrap to a huge version.
+func TestKMSHandlerSetKeyPolicyRefusesNegativeVersion(t *testing.T) {
+	tr := newMappingTransport(t)
+
+	_, err := tr.Request(context.Background(), "KMS", "SetKeyPolicy",
+		&kmsclient.SetKeyPolicyRequest{KeyID: "k1", Policy: &kmsclient.KeyPolicy{Version: -1}})
+	if !errors.IsInvalidInput(err) || !strings.Contains(err.Error(), "policy version") {
+		t.Fatalf("err = %v, want an invalid-input refusal naming the policy version", err)
 	}
 }
 

@@ -92,6 +92,7 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 		// conversation context, and the session is not a resume candidate
 		// after a daemon restart. REST and MCP already carry the flag.
 		Persistent: req.Persistent,
+		Keep:       req.GetKeep(),
 
 		// Pooled provider account selection. AccountAuto is what makes the
 		// dynamic (least-usage) strategy requestable at all, so dropping it

@@ -78,9 +78,7 @@ func (r *router) Route(entityType string, id uint64) uint64 {
 		// No ID provided, fall back to first shard
 		return r.shardIDs[0]
 	}
-	// Simple modulo over configured shard IDs.
-	// The result of id % uint64(len) is always < len(r.shardIDs), so the
-	// conversion to int is safe since slice length is always <= max int.
-	idx := id % uint64(len(r.shardIDs)) //nolint:gosec // G115: len() is bounded by max int
-	return r.shardIDs[idx]
+	// Simple modulo over configured shard IDs. The remainder is below
+	// len(r.shardIDs), so it indexes the slice without narrowing.
+	return r.shardIDs[id%uint64(len(r.shardIDs))]
 }

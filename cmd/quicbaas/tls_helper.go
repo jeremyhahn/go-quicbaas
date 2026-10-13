@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 )
@@ -31,7 +32,7 @@ func grpcCAOnlyTLSOption(caFile string) (grpc.ClientOption, error) {
 	if caFile == "" {
 		return nil, &MessageError{Message: "grpcCAOnlyTLSOption: CA file path is required"}
 	}
-	caPEM, err := os.ReadFile(caFile) //nolint:gosec // caFile comes from operator config
+	caPEM, err := os.ReadFile(filepath.Clean(caFile))
 	if err != nil {
 		return nil, &OpError{Op: fmt.Sprintf("read CA cert %s", caFile), Cause: err}
 	}

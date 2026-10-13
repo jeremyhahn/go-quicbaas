@@ -285,10 +285,16 @@ func (p *KMSDEKProvider) convertToDEKMetadata(path string, keyMeta interface{}) 
 			switch v := version.(type) {
 			case uint64:
 				dek.Version = v
+			// A negative version is malformed metadata; keep the default
+			// rather than wrapping it to a huge unsigned value.
 			case int64:
-				dek.Version = uint64(v) //nolint:gosec // G115: version from KMS metadata, always positive
+				if v >= 0 {
+					dek.Version = uint64(v)
+				}
 			case int:
-				dek.Version = uint64(v) //nolint:gosec // G115: version from KMS metadata, always positive
+				if v >= 0 {
+					dek.Version = uint64(v)
+				}
 			case float64:
 				dek.Version = uint64(v)
 			}

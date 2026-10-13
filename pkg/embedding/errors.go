@@ -43,7 +43,6 @@ var (
 // Configuration validation sentinel errors.
 var (
 	ErrProviderRequired     = errors.New("provider is required")
-	ErrProviderInvalid      = errors.New("provider must be one of: voyage, ollama, lmstudio, openai")
 	ErrAPIURLRequired       = errors.New("api_url is required")
 	ErrAPIKeyRequired       = errors.New("api_key is required for Voyage AI")
 	ErrModelRequired        = errors.New("model is required")

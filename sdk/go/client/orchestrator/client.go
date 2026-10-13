@@ -737,6 +737,12 @@ type SpawnSessionRequest struct {
 	// follow-up prompt reached a process that was never registered.
 	Persistent *bool `json:"persistent,omitempty"`
 
+	// Keep marks a session bound to no job as one the operator means to keep.
+	// Reconciliation concludes every other job-less session once it has been
+	// quiet past the idle bound. It changes nothing for a session bound to a
+	// job, which still ends with its job.
+	Keep bool `json:"keep,omitempty"`
+
 	// MCPServers preconfigures MCP servers for the spawned agent (e.g. the
 	// QuicBaaS MCP endpoint, giving the agent cert-authenticated access to
 	// platform tools). Serialized as mcp_servers; the server forwards each

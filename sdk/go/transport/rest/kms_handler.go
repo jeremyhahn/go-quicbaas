@@ -585,9 +585,13 @@ func (h *kmsRESTHandler) handleSetKeyPolicy(ctx context.Context, req interface{}
 	if r.Policy == nil {
 		return nil, errors.NewInvalidInput("rest.kms.SetKeyPolicy", "policy is required")
 	}
+	policy, err := kmsSDKPolicyToService(r.KeyID, r.Policy)
+	if err != nil {
+		return nil, err
+	}
 	body := &service.SetKeyPolicyRequest{
 		KeyID:  r.KeyID,
-		Policy: kmsSDKPolicyToService(r.KeyID, r.Policy),
+		Policy: policy,
 	}
 	endpoint := "/api/v1/kms/keys/" + url.PathEscape(r.KeyID) + "/policy"
 	var wire kmsSetKeyPolicyWire
@@ -895,13 +899,16 @@ func kmsWireToRotationPolicy(wire *kmsRotationPolicyWire) *service.RotationPolic
 // kmsSDKPolicyToService converts the exported SDK KeyPolicy into the canonical
 // service KeyPolicy the server's SetKeyPolicy handler unmarshals. Zero
 // ExpiresAt/MaxUsageCount map to nil (no expiry / no usage limit).
-func kmsSDKPolicyToService(keyID string, p *kmsclient.KeyPolicy) *service.KeyPolicy {
+func kmsSDKPolicyToService(keyID string, p *kmsclient.KeyPolicy) (*service.KeyPolicy, error) {
 	if p == nil {
-		return nil
+		return nil, nil
+	}
+	if p.Version < 0 {
+		return nil, errors.NewInvalidInput("rest.kms.SetKeyPolicy", "policy version must not be negative")
 	}
 	svcPolicy := &service.KeyPolicy{
 		KeyID:             keyID,
-		Version:           uint64(p.Version), //nolint:gosec // G115: policy version is non-negative
+		Version:           uint64(p.Version),
 		AllowedOperations: make([]service.KeyUsage, 0, len(p.AllowedOperations)),
 		AllowedPrincipals: p.AllowedPrincipals,
 		DeniedPrincipals:  p.DeniedPrincipals,
@@ -920,7 +927,7 @@ func kmsSDKPolicyToService(keyID string, p *kmsclient.KeyPolicy) *service.KeyPol
 		maxUsage := p.MaxUsageCount
 		svcPolicy.MaxUsageCount = &maxUsage
 	}
-	return svcPolicy
+	return svcPolicy, nil
 }
 
 // kmsKeyIDFromRequest extracts the KeyID field from any KMS request struct that

@@ -57,6 +57,10 @@ var (
 	orchSpawnRole  string
 	orchJobLead    string
 
+	// orchSpawnKeep keeps a spawned session that is bound to no job past the
+	// idle bound reconciliation otherwise concludes it at.
+	orchSpawnKeep bool
+
 	// Run-time prompt material appended to what a spawn, a job or a task's
 	// attempts run with.
 	orchSpawnPromptAppend promptAppendFlags
@@ -197,7 +201,8 @@ Examples:
   quicbaas orchestrator spawn --pool reviewers --role review
   quicbaas orchestrator spawn --agent claude-coder --prompt-append-file ./context.md
   quicbaas orchestrator spawn --backend ollama --model llama3
-  quicbaas orchestrator spawn --backend claude --project proj_123`,
+  quicbaas orchestrator spawn --backend claude --project proj_123
+  quicbaas orchestrator spawn --agent claude-coder --keep`,
 		RunE: runOrchSpawn,
 	}
 
@@ -220,6 +225,8 @@ Examples:
 		"Account selection strategy: static | least_usage. Empty selects the registry default. Ignored unless --account-auto is set.")
 	cmd.Flags().StringSliceVar(&orchAccountAllow, "account-allow", nil,
 		"Restrict the session to these pooled account IDs and authorize it to rotate between them. Repeatable.")
+	cmd.Flags().BoolVar(&orchSpawnKeep, "keep", false,
+		"Keep the session past the idle bound that concludes a session bound to no job. A job-bound session still ends with its job.")
 
 	orchSpawnPromptAppend.register(cmd, "the session's resolved prompt (the Agent's own, else its role's built-in charter)")
 
@@ -274,6 +281,7 @@ func runOrchSpawn(cmd *cobra.Command, args []string) error {
 		SandboxMode:  mode,
 		HostAffinity: orchHostAffinity,
 		PromptAppend: promptAppend,
+		Keep:         orchSpawnKeep,
 
 		// Pooled provider account selection. --account-auto and
 		// --account-allow are the two things that authorize a later

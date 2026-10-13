@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -323,7 +324,14 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 
 	if req.Version > 0 {
 		// Get specific version
-		data, metadata, err = s.secretsManager.GetVersion(ctx, scopedID, int(req.Version)) //nolint:gosec // G115: Version represents version number, safe conversion
+		version, versionErr := secretVersionArg("secrets.GetSecret", req.Version)
+		if versionErr != nil {
+			if s.metrics != nil {
+				s.metrics.operationErrors.With("get", "invalid_input").Inc()
+			}
+			return nil, versionErr
+		}
+		data, metadata, err = s.secretsManager.GetVersion(ctx, scopedID, version)
 	} else {
 		// Get latest version
 		data, metadata, err = s.secretsManager.Get(ctx, scopedID)
@@ -655,7 +663,14 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 	}
 
 	// Get secret version from secrets manager using tenant-scoped ID
-	data, metadata, err := s.secretsManager.GetVersion(ctx, scopedID, int(req.Version)) //nolint:gosec // G115: Version represents version number, safe conversion
+	versionNumber, err := secretVersionArg("secrets.GetSecretVersion", req.Version)
+	if err != nil {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("get_version", "invalid_input").Inc()
+		}
+		return nil, err
+	}
+	data, metadata, err := s.secretsManager.GetVersion(ctx, scopedID, versionNumber)
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("get_version", "not_found").Inc()
@@ -680,7 +695,7 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 	// The version's author lives in the backend's per-version record, which
 	// GetVersion does not return. An outage reading it fails the call rather
 	// than answering with an empty created_by that reads as "nobody" (#862).
-	createdBy, err := s.secretVersionCreatedBy(ctx, scopedID, req.Version)
+	createdBy, err := s.secretVersionCreatedBy(ctx, scopedID, versionNumber)
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("get_version", "list_failed").Inc()
@@ -710,17 +725,38 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 
 // secretVersionCreatedBy returns the principal recorded as the author of one
 // version of the secret at scopedID, "" when the version records none.
-func (s *secretsService) secretVersionCreatedBy(ctx context.Context, scopedID string, version uint64) (string, error) {
+func (s *secretsService) secretVersionCreatedBy(ctx context.Context, scopedID string, version int) (string, error) {
 	versions, err := s.secretsManager.ListVersions(ctx, scopedID)
 	if err != nil {
 		return "", err
 	}
 	for _, vm := range versions {
-		if uint64(vm.Version) == version { //nolint:gosec // G115: Version is bounded by backend
+		if vm.Version == version {
 			return vm.CreatedBy, nil
 		}
 	}
 	return "", nil
+}
+
+// secretVersionArg converts a requested secret version to the int the
+// secrets manager takes. A version beyond int is invalid input.
+func secretVersionArg(op string, version uint64) (int, error) {
+	v, err := conv.SafeUint64ToInt(version)
+	if err != nil {
+		return 0, &errors.QBError{Code: errors.ErrInvalidInput, Op: op, Err: err}
+	}
+	return v, nil
+}
+
+// backendSecretVersion converts a version reported by the secrets manager
+// to the API's unsigned version. A negative version means the backend's
+// metadata is corrupt.
+func backendSecretVersion(op string, version int) (uint64, error) {
+	v, err := conv.SafeIntToUint64(version)
+	if err != nil {
+		return 0, &errors.QBError{Code: errors.ErrInternal, Op: op, Err: err}
+	}
+	return v, nil
 }
 
 // ListSecretVersions returns all versions of a secret.
@@ -779,9 +815,16 @@ func (s *secretsService) ListSecretVersions(ctx context.Context, req *ListSecret
 	// Return the original (unscoped) secret ID in each version
 	versions := make([]*SecretVersion, 0, len(versionMetadata))
 	for _, vm := range versionMetadata {
+		versionNumber, err := backendSecretVersion("secrets.ListSecretVersions", vm.Version)
+		if err != nil {
+			if s.metrics != nil {
+				s.metrics.operationErrors.With("list_versions", "list_failed").Inc()
+			}
+			return nil, err
+		}
 		version := &SecretVersion{
 			SecretID:  req.SecretID,
-			Version:   uint64(vm.Version), //nolint:gosec // G115: Version is bounded by backend
+			Version:   versionNumber,
 			CreatedAt: vm.CreatedAt,
 			CreatedBy: vm.CreatedBy,
 		}
@@ -837,7 +880,14 @@ func (s *secretsService) RollbackSecret(ctx context.Context, req *RollbackSecret
 	}
 
 	// Rollback through secrets manager using tenant-scoped ID
-	if err := s.secretsManager.Rollback(ctx, scopedID, int(req.TargetVersion)); err != nil { //nolint:gosec // G115: TargetVersion represents version number, safe conversion
+	targetVersion, err := secretVersionArg("secrets.RollbackSecret", req.TargetVersion)
+	if err != nil {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("rollback", "invalid_input").Inc()
+		}
+		return nil, err
+	}
+	if err := s.secretsManager.Rollback(ctx, scopedID, targetVersion); err != nil {
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("rollback", "rollback_failed").Inc()
 		}

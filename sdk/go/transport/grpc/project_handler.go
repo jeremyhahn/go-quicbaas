@@ -84,11 +84,11 @@ func handleProjectCreate(ctx context.Context, conn *grpc.ClientConn, req interfa
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
-	tmpfsMB, err := storageMBToProto(op, "workspace_tmpfs_mb", sdkReq.WorkspaceTmpfsMB)
+	tmpfsMB, err := int32ToProto(op, "workspace_tmpfs_mb", sdkReq.WorkspaceTmpfsMB)
 	if err != nil {
 		return nil, err
 	}
-	memoryMB, err := storageMBToProto(op, "container_memory_mb", sdkReq.ContainerMemoryMB)
+	memoryMB, err := int32ToProto(op, "container_memory_mb", sdkReq.ContainerMemoryMB)
 	if err != nil {
 		return nil, err
 	}
@@ -173,11 +173,15 @@ func handleProjectUpdate(ctx context.Context, conn *grpc.ClientConn, req interfa
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
-	tmpfsMB, err := optionalStorageMBToProto(op, "workspace_tmpfs_mb", sdkReq.WorkspaceTmpfsMB)
+	tmpfsMB, err := optionalInt32ToProto(op, "workspace_tmpfs_mb", sdkReq.WorkspaceTmpfsMB)
 	if err != nil {
 		return nil, err
 	}
-	memoryMB, err := optionalStorageMBToProto(op, "container_memory_mb", sdkReq.ContainerMemoryMB)
+	memoryMB, err := optionalInt32ToProto(op, "container_memory_mb", sdkReq.ContainerMemoryMB)
+	if err != nil {
+		return nil, err
+	}
+	maxConcurrency, err := optionalInt32ToProto(op, "max_concurrency", sdkReq.MaxConcurrency)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +201,7 @@ func handleProjectUpdate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		AgentRoles:       projectRolesToProto(sdkReq.FleetNodeRoles),
 		Spend:            optionalSpendLimitsToProto(sdkReq.Spend),
 		GpuMinutes:       sdkReq.GPUMinutes,
-		MaxConcurrency:   int32PtrFromInt(sdkReq.MaxConcurrency),
+		MaxConcurrency:   maxConcurrency,
 		Metadata:         sdkReq.Metadata,
 
 		DefaultWorkflow:          sdkReq.DefaultWorkflow,
@@ -442,37 +446,27 @@ func projectInfoFromProto(p *pb.Project) *project.ProjectInfo {
 	}
 }
 
-// int32PtrFromInt widens the optional concurrency cap for the wire,
-// preserving absence: a quota of zero means UNLIMITED, so nil and zero are
-// different instructions and must stay different across the transport.
-func int32PtrFromInt(v *int) *int32 {
-	if v == nil {
-		return nil
-	}
-	n := int32(*v) //nolint:gosec // G115: a concurrency cap is small by construction
-	return &n
-}
-
-// storageMBToProto narrows a storage size in MiB to the int32 the wire
-// carries. A size outside that range is refused rather than truncated: a
-// wrapped value could land on a plausible limit the operator never asked for.
-// A negative size passes through so the server's validation refuses it with
-// the same error every transport returns.
-func storageMBToProto(op, field string, v int) (int32, error) {
+// int32ToProto narrows a request field to the int32 the wire carries. A value
+// outside that range is refused rather than truncated: a wrapped value could
+// land on a plausible limit the operator never asked for. A negative value
+// passes through so the server's validation refuses it with the same error
+// every transport returns.
+func int32ToProto(op, field string, v int) (int32, error) {
 	if v > math.MaxInt32 || v < math.MinInt32 {
 		return 0, errors.NewInvalidInput(op, field+" is out of range")
 	}
 	return int32(v), nil
 }
 
-// optionalStorageMBToProto is storageMBToProto preserving absence: zero means
-// unsized / the runtime's default, so nil ("leave it alone") and zero ("lift
-// the limit") must stay different across the transport.
-func optionalStorageMBToProto(op, field string, v *int) (*int32, error) {
+// optionalInt32ToProto is int32ToProto preserving absence. Zero is an
+// instruction in these fields (an unlimited concurrency cap, an unsized
+// storage limit), so nil ("leave it alone") and zero must stay different
+// across the transport.
+func optionalInt32ToProto(op, field string, v *int) (*int32, error) {
 	if v == nil {
 		return nil, nil
 	}
-	n, err := storageMBToProto(op, field, *v)
+	n, err := int32ToProto(op, field, *v)
 	if err != nil {
 		return nil, err
 	}

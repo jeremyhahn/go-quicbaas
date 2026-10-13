@@ -869,6 +869,7 @@ export interface SpawnSessionRequest {
     account_strategy?: string;
     account_allow?: string[];
     prompt_append?: string;
+    keep?: boolean;
 }
 export interface SpawnSessionResponse {
     session_id: string;

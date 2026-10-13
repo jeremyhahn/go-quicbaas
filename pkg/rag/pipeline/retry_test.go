@@ -16,9 +16,11 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -311,6 +313,51 @@ func TestRetryWithJitter(t *testing.T) {
 		assert.Greater(t, interval, 10*time.Millisecond)
 		assert.Less(t, interval, 5*time.Second)
 	}
+}
+
+func TestJitteredDelay_StaysWithinHalfToOneAndAHalfBackoff(t *testing.T) {
+	backoff := 100 * time.Millisecond
+
+	lowest, err := jitteredDelay(backoff, bytes.NewReader(make([]byte, 16)))
+	require.NoError(t, err)
+	assert.Equal(t, backoff/2, lowest, "zero entropy must give the lower bound")
+
+	for range 100 {
+		delay, err := jitteredDelay(backoff, nil)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, delay, backoff/2)
+		assert.Less(t, delay, backoff+backoff/2)
+	}
+}
+
+func TestJitteredDelay_NonPositiveBackoffIsReturnedUnchanged(t *testing.T) {
+	delay, err := jitteredDelay(0, iotest.ErrReader(errors.New("unused")))
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), delay)
+}
+
+func TestRetryWithBackoff_JitterSourceFailureStopsRetrying(t *testing.T) {
+	entropyErr := errors.New("entropy exhausted")
+	calls := 0
+	config := RetryConfig{
+		MaxAttempts:    3,
+		InitialBackoff: 10 * time.Millisecond,
+		MaxBackoff:     time.Second,
+		Multiplier:     2.0,
+		EnableJitter:   true,
+		wait:           func(context.Context, time.Duration) error { return nil },
+		entropy:        iotest.ErrReader(entropyErr),
+	}
+
+	err := RetryWithBackoff(context.Background(), config, func() error {
+		calls++
+		return errors.New("transient")
+	})
+
+	var jitterErr *RetryJitterError
+	require.ErrorAs(t, err, &jitterErr)
+	require.ErrorIs(t, err, entropyErr)
+	assert.Equal(t, 1, calls, "no retry may run without a chosen delay")
 }
 
 func TestRetryZeroAttempts(t *testing.T) {

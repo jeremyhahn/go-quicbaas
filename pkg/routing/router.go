@@ -93,8 +93,7 @@ func (r *router) Route(entityType string, id uint64) uint64 {
 		// No ID provided, fall back to first shard deterministically
 		return shards[0]
 	}
-	// Simple modulo over configured shard IDs for determinism
-	// Modulo result is bounded by shard count (< 1000 typical)
-	idx := int(id % uint64(len(shards))) //nolint:gosec // G115: modulo result bounded by len(shards)
-	return shards[idx]
+	// Simple modulo over configured shard IDs for determinism. The remainder
+	// is below len(shards), so it indexes the slice without narrowing.
+	return shards[id%uint64(len(shards))]
 }

@@ -26,6 +26,7 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // systemNamespace is go-qrdb's reserved internal prefix
@@ -439,15 +440,23 @@ func (s *Storage) GetJobsDueForExecution(ctx context.Context, before time.Time, 
 }
 
 // SaveExecution stores a job execution record.
+// executionIDAt derives an execution ID from t in Unix nanoseconds. A time
+// before the epoch has no unsigned ID and is refused.
+func executionIDAt(t time.Time) (uint64, error) {
+	return conv.SafeInt64ToUint64(t.UnixNano())
+}
+
 func (s *Storage) SaveExecution(ctx context.Context, exec *scheduler.JobExecution) error {
 	if exec == nil {
 		return &scheduler.ErrStorageError{Op: "SaveExecution", Cause: ErrNilExecution}
 	}
 
 	if exec.ID == 0 {
-		// Use nanoseconds for unique IDs. UnixNano returns int64 which is always
-		// positive for valid timestamps, making the uint64 conversion safe.
-		exec.ID = uint64(time.Now().UnixNano()) //nolint:gosec // UnixNano is positive for valid timestamps
+		id, err := executionIDAt(time.Now())
+		if err != nil {
+			return &scheduler.ErrStorageError{Op: "SaveExecution", Cause: err}
+		}
+		exec.ID = id
 	}
 
 	data, err := json.Marshal(exec)

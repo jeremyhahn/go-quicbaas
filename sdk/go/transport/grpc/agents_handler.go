@@ -102,9 +102,14 @@ func handleAgentsCreate(ctx context.Context, c pb.AgentCatalogServiceClient, req
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.CreateAgent(ctx, &pb.CreateAgentRequest{TenantId: r.TenantID, Agent: agentToProto(r.Agent)})
+	const op = "grpc.agents.CreateAgent"
+	agent, err := agentToProto(op, r.Agent)
 	if err != nil {
-		return nil, convertGRPCError(err, "grpc.agents.CreateAgent")
+		return nil, err
+	}
+	resp, err := c.CreateAgent(ctx, &pb.CreateAgentRequest{TenantId: r.TenantID, Agent: agent})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
 	}
 	return agentFromProto(resp.GetAgent()), nil
 }
@@ -114,9 +119,14 @@ func handleAgentsUpdate(ctx context.Context, c pb.AgentCatalogServiceClient, req
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.UpdateAgent(ctx, &pb.UpdateAgentRequest{TenantId: r.TenantID, AgentId: r.AgentID, Agent: agentToProto(r.Agent)})
+	const op = "grpc.agents.UpdateAgent"
+	agent, err := agentToProto(op, r.Agent)
 	if err != nil {
-		return nil, convertGRPCError(err, "grpc.agents.UpdateAgent")
+		return nil, err
+	}
+	resp, err := c.UpdateAgent(ctx, &pb.UpdateAgentRequest{TenantId: r.TenantID, AgentId: r.AgentID, Agent: agent})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
 	}
 	return agentFromProto(resp.GetAgent()), nil
 }
@@ -238,9 +248,21 @@ func agentRefFromProto(ref *pb.AgentRef) agents.AgentRef {
 	return agents.AgentRef{AgentID: ref.GetAgentId(), PoolID: ref.GetPoolId()}
 }
 
-func agentToProto(a *agents.Agent) *pb.Agent {
+func agentToProto(op string, a *agents.Agent) (*pb.Agent, error) {
 	if a == nil {
-		return nil
+		return nil, nil
+	}
+	contextTokens, err := int32ToProto(op, "context_tokens", a.ContextTokens)
+	if err != nil {
+		return nil, err
+	}
+	maxConcurrent, err := int32ToProto(op, "max_concurrent", a.MaxConcurrent)
+	if err != nil {
+		return nil, err
+	}
+	reserve, err := int32ToProto(op, "placement.reserve", a.Placement.Reserve)
+	if err != nil {
+		return nil, err
 	}
 	return &pb.Agent{
 		Id: a.ID, Name: a.Name, Description: a.Description, Roles: a.Roles,
@@ -252,14 +274,14 @@ func agentToProto(a *agents.Agent) *pb.Agent {
 		Prompt:        &pb.AgentPrompt{CharterSet: a.Prompt.CharterSet, Charter: a.Prompt.Charter, System: a.Prompt.System},
 		McpScopes:     a.MCPScopes,
 		Capabilities:  a.Capabilities,
-		ContextTokens: int32(a.ContextTokens), //nolint:gosec // G115: a token budget fits int32
-		MaxConcurrent: int32(a.MaxConcurrent), //nolint:gosec // G115: bounded count
+		ContextTokens: contextTokens,
+		MaxConcurrent: maxConcurrent,
 		Placement: &pb.RolePolicy{
-			Prefer: a.Placement.Prefer, Reserve: int32(a.Placement.Reserve), //nolint:gosec // G115: bounded count
+			Prefer: a.Placement.Prefer, Reserve: reserve,
 			Exclusive: a.Placement.Exclusive,
 		},
 		Spend: spendLimitsToProto(a.Spend),
-	}
+	}, nil
 }
 
 func agentFromProto(a *pb.Agent) *agents.Agent {

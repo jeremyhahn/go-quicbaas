@@ -21,7 +21,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -115,34 +114,6 @@ func createSchedulerUnixClient() (SchedulerClient, error) {
 	}
 	opts = append(opts, grpcTLSOption()...)
 	return grpc.NewClient(address, opts...)
-}
-
-// getSchedulerLogLevel returns the current log level, defaulting to "info".
-//
-//nolint:unused // Called from scheduler_rest_client.go (rest) and scheduler_quic_client.go (quic).
-func getSchedulerLogLevel() string {
-	if logLevel != "" {
-		return logLevel
-	}
-	return "info"
-}
-
-// constructSchedulerRESTBaseURL constructs the base URL for REST API calls.
-//
-//nolint:unused // Called from scheduler_rest_client.go (rest build tag).
-func constructSchedulerRESTBaseURL(addr string) string {
-	// If address already has a scheme, use it as-is
-	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
-		return addr
-	}
-
-	// Determine scheme based on TLS configuration
-	scheme := "http"
-	if tlsEnabled {
-		scheme = "https"
-	}
-
-	return fmt.Sprintf("%s://%s", scheme, addr)
 }
 
 // newSchedulerCommand creates the scheduler command group.

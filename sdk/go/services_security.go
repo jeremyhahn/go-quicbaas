@@ -445,6 +445,11 @@ type TrustService interface {
 	// usable for verifying chains that bridge between issuers.
 	CrossSignedRootPool(ctx context.Context) (*x509.CertPool, error)
 
+	// CrossSignedRoots returns the same cross-signed roots as individual
+	// certificates, for callers that list or inspect them: an
+	// *x509.CertPool cannot be enumerated.
+	CrossSignedRoots(ctx context.Context) ([]*x509.Certificate, error)
+
 	// AutoImportAIA walks an AIA chain and imports referenced authority
 	// certificates into the local trust store. The provided certChain
 	// must be DER-encoded.
@@ -959,42 +964,58 @@ func (s *trustServiceImpl) PublishDANE(ctx context.Context, name string, port in
 type TrustCrossSignedRootPoolResponse = trustclient.CrossSignedRootPoolResponse
 
 func (s *trustServiceImpl) CrossSignedRootPool(ctx context.Context) (*x509.CertPool, error) {
+	roots, err := s.fetchCrossSignedRoots(ctx, "trust.CrossSignedRootPool")
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	for _, cert := range roots {
+		pool.AddCert(cert)
+	}
+	return pool, nil
+}
+
+func (s *trustServiceImpl) CrossSignedRoots(ctx context.Context) ([]*x509.Certificate, error) {
+	return s.fetchCrossSignedRoots(ctx, "trust.CrossSignedRoots")
+}
+
+// fetchCrossSignedRoots requests the cross-signed roots and parses each
+// entry, which the server sends as PEM or, failing that, raw DER.
+func (s *trustServiceImpl) fetchCrossSignedRoots(ctx context.Context, op string) ([]*x509.Certificate, error) {
 	if ctx == nil {
-		return nil, sdkerrors.NewInvalidInput("trust.CrossSignedRootPool", "context is required")
+		return nil, sdkerrors.NewInvalidInput(op, "context is required")
 	}
 	resp, err := s.t.Request(ctx, trustServiceName, "CrossSignedRootPool", &trustclient.CrossSignedRootPoolRequest{})
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return x509.NewCertPool(), nil
+		return nil, nil
 	}
 	payload, ok := resp.(*TrustCrossSignedRootPoolResponse)
 	if !ok {
-		return nil, sdkerrors.NewInternal("trust.CrossSignedRootPool", "invalid response type")
+		return nil, sdkerrors.NewInternal(op, "invalid response type")
 	}
 
-	pool := x509.NewCertPool()
+	roots := make([]*x509.Certificate, 0, len(payload.RootPEMs))
 	for _, derOrPEM := range payload.RootPEMs {
 		block, _ := pem.Decode(derOrPEM)
 		if block != nil {
 			cert, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
-				return nil, sdkerrors.Wrap(err, sdkerrors.CodeInternal,
-					"trust.CrossSignedRootPool", "failed to parse PEM root")
+				return nil, sdkerrors.Wrap(err, sdkerrors.CodeInternal, op, "failed to parse PEM root")
 			}
-			pool.AddCert(cert)
+			roots = append(roots, cert)
 			continue
 		}
 		// Fallback: try DER directly
 		cert, err := x509.ParseCertificate(derOrPEM)
 		if err != nil {
-			return nil, sdkerrors.Wrap(err, sdkerrors.CodeInternal,
-				"trust.CrossSignedRootPool", "failed to parse DER root")
+			return nil, sdkerrors.Wrap(err, sdkerrors.CodeInternal, op, "failed to parse DER root")
 		}
-		pool.AddCert(cert)
+		roots = append(roots, cert)
 	}
-	return pool, nil
+	return roots, nil
 }
 
 // trustAutoImportAIARequest aliases the leaf client/trust request type

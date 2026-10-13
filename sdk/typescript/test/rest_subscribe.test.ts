@@ -386,6 +386,18 @@ describe('RestOrchestratorClient.spawnSession', () => {
     expect(body.host_affinity).toBe('worker-01');
   });
 
+  it('sends keep only when the caller asks for a kept session', async () => {
+    fetchMock.mockResolvedValue(mockOK({ session_id: 'new-sess', backend: 'claude', container_id: '' }));
+
+    await client.orchestrator.spawnSession({ tenantID: 'acme', backend: 'claude', keep: true });
+    await client.orchestrator.spawnSession({ tenantID: 'acme', backend: 'claude' });
+
+    const kept = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string) as Record<string, unknown>;
+    const unkept = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(kept.keep).toBe(true);
+    expect(unkept.keep).toBeUndefined();
+  });
+
   it('throws APIError on non-2xx spawn response', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,

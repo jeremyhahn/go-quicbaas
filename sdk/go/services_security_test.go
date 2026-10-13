@@ -531,6 +531,48 @@ func TestTrust_CrossSignedRootPool_BadDER(t *testing.T) {
 	}
 }
 
+func TestTrust_CrossSignedRoots_ReturnsEachRootInOrder(t *testing.T) {
+	first := makeSelfSignedCert(t)
+	second := makeSelfSignedCert(t)
+	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+		return &TrustCrossSignedRootPoolResponse{
+			RootPEMs: [][]byte{pemEncode(first.Raw), second.Raw},
+		}, nil
+	}}}
+	roots, err := s.CrossSignedRoots(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(roots) != 2 || !roots[0].Equal(first) || !roots[1].Equal(second) {
+		t.Fatalf("roots = %v, want [first second]", roots)
+	}
+}
+
+func TestTrust_CrossSignedRoots_Errors(t *testing.T) {
+	s := &trustServiceImpl{t: &mockTransport{}}
+	if _, err := s.CrossSignedRoots(nil); !sdkerrors.IsInvalidInput(err) {
+		t.Errorf("nil context: expected InvalidInput, got %v", err)
+	}
+
+	bad := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+		return &TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{[]byte("totally invalid")}}, nil
+	}}}
+	if _, err := bad.CrossSignedRoots(context.Background()); err == nil {
+		t.Error("expected error parsing invalid DER cert")
+	}
+}
+
+func TestTrust_CrossSignedRoots_NilResponse_ReturnsNoRoots(t *testing.T) {
+	s := &trustServiceImpl{t: &mockTransport{}}
+	roots, err := s.CrossSignedRoots(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(roots) != 0 {
+		t.Fatalf("roots = %v, want none", roots)
+	}
+}
+
 func TestTrust_AutoImportAIA_Validation(t *testing.T) {
 	s := &trustServiceImpl{t: &mockTransport{}}
 	cert := makeSelfSignedCert(t)

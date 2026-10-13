@@ -328,6 +328,7 @@ func saveAndRestoreOrchestratorState(t *testing.T) {
 	origAccountAllow := orchAccountAllow
 	origRotateReason := orchRotateReason
 	origRotateHold := orchRotateHoldOutgoing
+	origSpawnKeep := orchSpawnKeep
 
 	t.Cleanup(func() {
 		orchestratorClientFactory = origFactory
@@ -355,6 +356,7 @@ func saveAndRestoreOrchestratorState(t *testing.T) {
 		orchAccountAllow = origAccountAllow
 		orchRotateReason = origRotateReason
 		orchRotateHoldOutgoing = origRotateHold
+		orchSpawnKeep = origSpawnKeep
 	})
 
 	globalTimeout = 5 * time.Second

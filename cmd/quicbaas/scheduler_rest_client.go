@@ -18,12 +18,38 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
+
+// getSchedulerLogLevel returns the current log level, defaulting to "info".
+func getSchedulerLogLevel() string {
+	if logLevel != "" {
+		return logLevel
+	}
+	return "info"
+}
+
+// constructSchedulerRESTBaseURL constructs the base URL for REST API calls.
+func constructSchedulerRESTBaseURL(addr string) string {
+	// If address already has a scheme, use it as-is
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+
+	// Determine scheme based on TLS configuration
+	scheme := "http"
+	if tlsEnabled {
+		scheme = "https"
+	}
+
+	return fmt.Sprintf("%s://%s", scheme, addr)
+}
 
 // RESTSchedulerClient wraps the REST client to implement the SchedulerClient interface.
 type RESTSchedulerClient struct {

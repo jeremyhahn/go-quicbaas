@@ -18,12 +18,13 @@ package hash
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"hash/fnv"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/minio/blake2b-simd"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // HashFunc defines the signature for hash functions used in consistent hashing.
@@ -52,9 +53,7 @@ func Blake2b(key string) uint64 {
 //   - Security properties are not needed
 //   - Load balancing/distribution is the primary goal
 func FNV1a(key string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(key)) //nolint:gosec // G104: hash.Hash.Write never returns error
-	return h.Sum64()
+	return id.HashBytes([]byte(key))
 }
 
 // SHA256 is the FIPS 140-3 approved hash function on the ring. It is served by

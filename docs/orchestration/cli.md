@@ -249,6 +249,9 @@ Flags:
 - `--prompt-append <text>` / `--prompt-append-file <path>` - Prompt material
   appended after the session's resolved prompt. `-` reads stdin. At most
   64 KiB.
+- `--keep` - Keep the session past the idle bound at which reconciliation
+  concludes a session bound to no job. A session bound to a job still ends
+  with its job.
 - `--project <id>` - Project ID to associate with session
 - `--sandbox <mode>` - `default` (server policy) | `required` | `none`
 - `--host-affinity <name|host>` - Pin the session to one fleet node daemon

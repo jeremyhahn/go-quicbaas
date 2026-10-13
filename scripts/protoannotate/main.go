@@ -91,7 +91,7 @@ func run() error {
 			return annErr
 		}
 		if n > 0 {
-			fmt.Printf("%s: %d RPCs annotated\n", file, n) //nolint:forbidigo // CLI tool output
+			fmt.Fprintf(os.Stdout, "%s: %d RPCs annotated\n", file, n)
 			total += n
 		}
 	}
@@ -105,9 +105,9 @@ func run() error {
 		}
 	}
 	sort.Strings(unmatched)
-	fmt.Printf("annotated %d RPCs from %d table entries\n", total, len(perms)) //nolint:forbidigo // CLI tool output
+	fmt.Fprintf(os.Stdout, "annotated %d RPCs from %d table entries\n", total, len(perms))
 	for _, method := range unmatched {
-		fmt.Printf("no proto RPC for table entry: %s\n", method) //nolint:forbidigo // CLI tool output
+		fmt.Fprintf(os.Stdout, "no proto RPC for table entry: %s\n", method)
 	}
 	return nil
 }

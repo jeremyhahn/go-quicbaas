@@ -155,13 +155,10 @@ func OpenPebbleStorage(config *PebbleStorageConfig) (PebbleStorage, error) {
 
 	// The index manager shares the storage's gate so that index reads observe
 	// the close of the store exactly as entry reads do.
+	// db and gate are both set here, so the index manager is built directly
+	// rather than through newGatedIndexManager's nil checks.
 	gate := newStoreGate()
-	indexMgr, err := newGatedIndexManager(db, gate)
-	if err != nil {
-		//nolint:gosec // G104: db.Close() error is intentionally ignored during cleanup on initialization failure
-		db.Close()
-		return nil, err
-	}
+	indexMgr := &indexManager{db: db, gate: gate}
 
 	return &pebbleStorage{db: db, config: cfg, indexManager: indexMgr, gate: gate}, nil
 }

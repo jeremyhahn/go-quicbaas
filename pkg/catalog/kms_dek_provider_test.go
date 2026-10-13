@@ -777,6 +777,24 @@ func TestConvertToDEKMetadata_MapMetadata(t *testing.T) {
 			expectedVer:    3,
 		},
 		{
+			name: "negative int64 version keeps the default",
+			metadata: map[string]interface{}{
+				"status":  "active",
+				"version": int64(-4),
+			},
+			expectedStatus: DEKStatusActive,
+			expectedVer:    1,
+		},
+		{
+			name: "negative int version keeps the default",
+			metadata: map[string]interface{}{
+				"status":  "active",
+				"version": -4,
+			},
+			expectedStatus: DEKStatusActive,
+			expectedVer:    1,
+		},
+		{
 			name: "active status uppercase",
 			metadata: map[string]interface{}{
 				"status":  "ACTIVE",

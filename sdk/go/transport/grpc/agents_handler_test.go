@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // fakeAgentCatalog is an AgentCatalogService client that records the last
@@ -96,8 +98,12 @@ func fullSDKAgent() *agents.Agent {
 
 func TestAgentsGRPC_AnAgentSurvivesTheWire(t *testing.T) {
 	want := fullSDKAgent()
-	assert.Equal(t, want, agentFromProto(agentToProto(want)))
-	assert.Nil(t, agentToProto(nil))
+	wire, err := agentToProto("test", want)
+	require.NoError(t, err)
+	assert.Equal(t, want, agentFromProto(wire))
+	wire, err = agentToProto("test", nil)
+	require.NoError(t, err)
+	assert.Nil(t, wire)
 	assert.Nil(t, agentFromProto(nil))
 	pool := &agents.Pool{ID: "p", Name: "P", Description: "d", Agents: []string{"a", "b"}}
 	assert.Equal(t, pool, agentPoolFromProto(agentPoolToProto(pool)))
@@ -116,8 +122,10 @@ func TestAgentsGRPC_AnAgentSurvivesTheWire(t *testing.T) {
 
 func TestAgentsGRPC_EveryVerbCarriesItsRequest(t *testing.T) {
 	ctx := context.Background()
+	wire, err := agentToProto("test", fullSDKAgent())
+	require.NoError(t, err)
 	fake := &fakeAgentCatalog{
-		agent: agentToProto(fullSDKAgent()),
+		agent: wire,
 		pool:  &pb.AgentPool{Id: "reviewers", Agents: []string{"codex-reviewer"}},
 		used:  []*pb.AgentUsage{{Kind: "binding", Id: "proj-1", Slot: "worker"}},
 	}
@@ -183,6 +191,30 @@ func TestAgentsGRPC_EveryVerbCarriesItsRequest(t *testing.T) {
 			fake.err = status.Error(codes.FailedPrecondition, "agent codex-reviewer is in use")
 			_, err = handler(ctx, fake, tc.req)
 			assert.Error(t, err, "a server refusal surfaces")
+		})
+	}
+}
+
+// A count the int32 wire cannot carry is refused before the call, never
+// wrapped onto a budget or cap nobody asked for.
+func TestAgentsGRPC_RefusesACountOutOfWireRange(t *testing.T) {
+	huge := math.MaxInt32 + 1
+	cases := map[string]func(a *agents.Agent){
+		"context_tokens":    func(a *agents.Agent) { a.ContextTokens = huge },
+		"max_concurrent":    func(a *agents.Agent) { a.MaxConcurrent = huge },
+		"placement.reserve": func(a *agents.Agent) { a.Placement.Reserve = huge },
+	}
+	for field, mutate := range cases {
+		t.Run(field, func(t *testing.T) {
+			for _, method := range []string{"CreateAgent", "UpdateAgent"} {
+				agent := fullSDKAgent()
+				mutate(agent)
+				fake := &fakeAgentCatalog{}
+				_, err := agentsMethodMap[method](context.Background(), fake, &agents.SaveAgentRequest{Agent: agent})
+				require.True(t, errors.IsInvalidInput(err), "%s: err = %v, want invalid input", method, err)
+				assert.Contains(t, err.Error(), field)
+				assert.Nil(t, fake.last, "%s: an out-of-range agent never reaches the server", method)
+			}
 		})
 	}
 }

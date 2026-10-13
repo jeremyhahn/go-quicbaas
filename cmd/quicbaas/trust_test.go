@@ -50,8 +50,8 @@ type mockTrustService struct {
 	daneErr   error
 	aiaChain  []*x509.Certificate
 	aiaErr    error
-	pool      *x509.CertPool
-	poolErr   error
+	roots     []*x509.Certificate
+	rootsErr  error
 	bootstrap quicbaas.TrustBootstrapClient
 }
 
@@ -61,10 +61,21 @@ func (m *mockTrustService) PublishDANE(_ context.Context, name string, port int,
 }
 
 func (m *mockTrustService) CrossSignedRootPool(_ context.Context) (*x509.CertPool, error) {
-	if m.poolErr != nil {
-		return nil, m.poolErr
+	if m.rootsErr != nil {
+		return nil, m.rootsErr
 	}
-	return m.pool, nil
+	pool := x509.NewCertPool()
+	for _, root := range m.roots {
+		pool.AddCert(root)
+	}
+	return pool, nil
+}
+
+func (m *mockTrustService) CrossSignedRoots(_ context.Context) ([]*x509.Certificate, error) {
+	if m.rootsErr != nil {
+		return nil, m.rootsErr
+	}
+	return m.roots, nil
 }
 
 func (m *mockTrustService) AutoImportAIA(_ context.Context, chain []*x509.Certificate) error {
@@ -315,10 +326,8 @@ func TestRunTrustAutoImportAIA_Success(t *testing.T) {
 
 func TestRunTrustCrossSignedRoots_Success(t *testing.T) {
 	root := selfSignedCert(t, "root.example.com")
-	pool := x509.NewCertPool()
-	pool.AddCert(root)
 
-	mt := &mockTrustService{pool: pool}
+	mt := &mockTrustService{roots: []*x509.Certificate{root}}
 	withMockTrust(t, mt)
 
 	var buf bytes.Buffer
@@ -328,10 +337,8 @@ func TestRunTrustCrossSignedRoots_Success(t *testing.T) {
 
 func TestRunTrustCrossSignedRoots_WritesFile(t *testing.T) {
 	root := selfSignedCert(t, "root.example.com")
-	pool := x509.NewCertPool()
-	pool.AddCert(root)
 
-	withMockTrust(t, &mockTrustService{pool: pool})
+	withMockTrust(t, &mockTrustService{roots: []*x509.Certificate{root}})
 	trustRootsOut = filepath.Join(t.TempDir(), "roots.txt")
 
 	var buf bytes.Buffer
@@ -345,10 +352,8 @@ func TestRunTrustCrossSignedRoots_WritesFile(t *testing.T) {
 
 func TestRunTrustCrossSignedRoots_WriteErrorIsTyped(t *testing.T) {
 	root := selfSignedCert(t, "root.example.com")
-	pool := x509.NewCertPool()
-	pool.AddCert(root)
 
-	withMockTrust(t, &mockTrustService{pool: pool})
+	withMockTrust(t, &mockTrustService{roots: []*x509.Certificate{root}})
 	// A directory path can never be opened for writing as a regular file.
 	trustRootsOut = t.TempDir()
 
@@ -358,9 +363,8 @@ func TestRunTrustCrossSignedRoots_WriteErrorIsTyped(t *testing.T) {
 	require.True(t, stderrors.As(err, &typed))
 }
 
-func TestCrossSignedRootSubjects_NilPool(t *testing.T) {
-	assert.Nil(t, crossSignedRootSubjects(nil))
-	assert.Empty(t, crossSignedRootSubjects(x509.NewCertPool()))
+func TestCrossSignedRootSubjects_NoRoots(t *testing.T) {
+	assert.Empty(t, crossSignedRootSubjects(nil))
 }
 
 // =============================================================================
@@ -407,7 +411,7 @@ func TestRunTrust_FactoryErrorPropagates(t *testing.T) {
 func TestRunTrust_ServerErrorPropagates(t *testing.T) {
 	cert := selfSignedCert(t, "leaf.example.com")
 	sentinel := stderrors.New("trust boom")
-	withMockTrust(t, &mockTrustService{aiaErr: sentinel, poolErr: sentinel})
+	withMockTrust(t, &mockTrustService{aiaErr: sentinel, rootsErr: sentinel})
 
 	trustAIAChainFile = certPEMFile(t, cert)
 	require.ErrorIs(t, runTrustAutoImportAIA(captureCmd(&bytes.Buffer{}), nil), sentinel)

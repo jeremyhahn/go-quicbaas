@@ -59,6 +59,12 @@ type fsWatcher struct {
 	stopCh  chan struct{}
 	wg      sync.WaitGroup
 
+	// stopMu serializes stops; stopErr records a failed close for every
+	// later Stop to return. closeNotifier closes the fsnotify watcher.
+	stopMu        sync.Mutex
+	stopErr       error
+	closeNotifier func() error
+
 	// Test seams (nil in production; a nil channel case never fires and a nil
 	// func is never called, so these have zero effect on shipped behavior).
 	// They let tests drive the debounce/batch cycle deterministically instead of
@@ -75,26 +81,27 @@ func New(config Config) (Watcher, error) {
 		return nil, &WatcherCauseError{Message: "invalid config", Cause: err}
 	}
 
+	// Build the matcher first: it can fail, and nothing needs releasing yet.
+	gitignore, err := newGitIgnoreMatcher(config.Exclude)
+	if err != nil {
+		return nil, &WatcherCauseError{Message: "failed to create gitignore matcher", Cause: err}
+	}
+
 	fw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, &WatcherCauseError{Message: "failed to create fsnotify watcher", Cause: err}
 	}
 
-	gitignore, err := newGitIgnoreMatcher(config.Exclude)
-	if err != nil {
-		_ = fw.Close() //nolint:gosec // G104: Error deliberately ignored - cleanup during error path
-		return nil, &WatcherCauseError{Message: "failed to create gitignore matcher", Cause: err}
-	}
-
 	w := &fsWatcher{
-		config:    config,
-		watcher:   fw,
-		events:    make(chan Event, config.BufferSize),
-		errors:    make(chan error, 10),
-		gitignore: gitignore,
-		debouncer: newDebouncer(config.DebounceDelay),
-		paths:     make(map[string]bool),
-		stopCh:    make(chan struct{}),
+		config:        config,
+		watcher:       fw,
+		closeNotifier: fw.Close,
+		events:        make(chan Event, config.BufferSize),
+		errors:        make(chan error, 10),
+		gitignore:     gitignore,
+		debouncer:     newDebouncer(config.DebounceDelay),
+		paths:         make(map[string]bool),
+		stopCh:        make(chan struct{}),
 	}
 
 	return w, nil
@@ -125,7 +132,7 @@ func (w *fsWatcher) Start(ctx context.Context) error {
 	// Wait for context cancellation
 	go func() {
 		<-ctx.Done()
-		_ = w.Stop() //nolint:gosec // G104: Error deliberately ignored - cleanup on context cancellation
+		w.shutdown()
 	}()
 
 	return nil
@@ -133,10 +140,24 @@ func (w *fsWatcher) Start(ctx context.Context) error {
 
 // Stop stops watching for events.
 func (w *fsWatcher) Stop() error {
+	w.shutdown()
+
+	w.stopMu.Lock()
+	defer w.stopMu.Unlock()
+	return w.stopErr
+}
+
+// shutdown stops the watcher if it is running. A failure to close the
+// fsnotify watcher is kept in stopErr, so a stop triggered by Start's context
+// still reaches the owner through its own Stop call.
+func (w *fsWatcher) shutdown() {
+	w.stopMu.Lock()
+	defer w.stopMu.Unlock()
+
 	w.mu.Lock()
 	if !w.started {
 		w.mu.Unlock()
-		return nil
+		return
 	}
 	w.started = false
 	w.mu.Unlock()
@@ -145,8 +166,9 @@ func (w *fsWatcher) Stop() error {
 	close(w.stopCh)
 
 	// Close fsnotify watcher
-	if err := w.watcher.Close(); err != nil {
-		return &WatcherCauseError{Message: "failed to close watcher", Cause: err}
+	if err := w.closeNotifier(); err != nil {
+		w.stopErr = &WatcherCauseError{Message: "failed to close watcher", Cause: err}
+		return
 	}
 
 	// Wait for goroutines
@@ -155,8 +177,6 @@ func (w *fsWatcher) Stop() error {
 	// Close channels
 	close(w.events)
 	close(w.errors)
-
-	return nil
 }
 
 // Events returns a read-only channel of file system events.

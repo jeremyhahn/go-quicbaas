@@ -49,6 +49,20 @@ var (
 	ErrInvalidMaxAttempts = errors.New("max attempts must be positive")
 )
 
+// RetryJitterError reports that the retry backoff could not read its jitter
+// source, so no delay was chosen and the retry loop stopped.
+type RetryJitterError struct {
+	Cause error
+}
+
+func (e *RetryJitterError) Error() string {
+	return "retry backoff jitter unavailable: " + e.Cause.Error()
+}
+
+func (e *RetryJitterError) Unwrap() error {
+	return e.Cause
+}
+
 // PipelineError wraps errors with context.
 type PipelineError struct {
 	Err       error

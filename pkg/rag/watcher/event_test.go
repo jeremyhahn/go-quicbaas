@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -473,6 +474,48 @@ func TestStop_IdempotentMultipleCalls(t *testing.T) {
 	// Calling Stop again should be idempotent
 	err = w.Stop()
 	assert.NoError(t, err)
+}
+
+func TestStop_ReportsCloseFailureFromContextCancellation(t *testing.T) {
+	config := Config{
+		Paths:         []string{t.TempDir()},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    100,
+	}
+	w, err := New(config)
+	require.NoError(t, err)
+
+	fw, ok := w.(*fsWatcher)
+	require.True(t, ok)
+	errClose := errors.New("close failed")
+	closeReal := fw.closeNotifier
+	fw.closeNotifier = func() error {
+		require.NoError(t, closeReal())
+		return errClose
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, w.Start(ctx))
+	cancel()
+
+	// Whether the cancellation or this call stops the watcher, the failed
+	// close must reach the owner, and keep reaching it.
+	for range 2 {
+		err = w.Stop()
+		var causeErr *WatcherCauseError
+		require.ErrorAs(t, err, &causeErr)
+		require.ErrorIs(t, err, errClose)
+	}
+}
+
+func TestNew_RejectsMalformedExcludePattern(t *testing.T) {
+	_, err := New(Config{
+		Paths:      []string{t.TempDir()},
+		Exclude:    []string{"[unclosed"},
+		BufferSize: 10,
+	})
+	require.ErrorIs(t, err, filepath.ErrBadPattern)
 }
 
 // TestFlushEvents_SmallBuffer tests flushEvents when the events channel is full.

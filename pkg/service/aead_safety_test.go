@@ -1741,9 +1741,8 @@ func TestAEADSafetyTracker_EdgeCases(t *testing.T) {
 		afterTime := time.Now().UnixNano()
 
 		// Access the usage directly to check LastUpdated
-		val, ok := tracker.keyUsage.Load("test-key")
+		usage, ok := tracker.keyUsage.Load("test-key")
 		require.True(t, ok)
-		usage := val.(*AEADUsage)
 
 		lastUpdated := usage.LastUpdated.Load()
 		assert.GreaterOrEqual(t, lastUpdated, beforeTime)

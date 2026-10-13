@@ -1234,8 +1234,10 @@ func (s *triageRun) clearOtherDispositions(ctx context.Context, issue ForgeIssue
 		if label == "" || !held[strings.ToLower(label)] {
 			continue
 		}
-		//nolint:errcheck // a stale display label is not worth failing a verdict over
-		_ = s.forge.RemoveIssueLabel(ctx, s.repo, issue.Number, label)
+		if err := s.forge.RemoveIssueLabel(ctx, s.repo, issue.Number, label); err != nil {
+			// A stale display label is not worth failing the verdict over; record it.
+			s.job.Audit("sdlc:triage_label_stale", "issue="+strconv.Itoa(issue.Number)+" label="+label+" error="+err.Error())
+		}
 	}
 }
 

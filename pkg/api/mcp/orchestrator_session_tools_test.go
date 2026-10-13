@@ -151,7 +151,7 @@ func TestSpawnToolSchemaExposesDispatchControls(t *testing.T) {
 	for _, key := range []string{
 		"tenant_id", "agent_id", "pool_id", "role", "backend", "project_id", "model", "system_prompt",
 		"work_dir", "sandbox_mode", "host_affinity", "host_affinity_strict",
-		"gpu_required", "persistent", "mcp_servers",
+		"gpu_required", "persistent", "keep", "mcp_servers",
 	} {
 		assert.Containsf(t, props, key, "spawn schema must declare %q", key)
 	}
@@ -331,6 +331,43 @@ func TestSpawnToolHonorsExplicitNonPersistent(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.False(t, gotPersistent)
+}
+
+// TestSpawnToolCarriesKeep asserts keep:true reaches the spawn request and that
+// a spawn which omits it asks for an unkept session.
+func TestSpawnToolCarriesKeep(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		args map[string]interface{}
+		want bool
+	}{
+		{name: "kept", args: map[string]interface{}{"keep": true}, want: true},
+		{name: "default", args: map[string]interface{}{}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotKeep := !tc.want
+			agentSvc := &mockAgentService{
+				spawnFn: func(_ context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+					gotKeep = req.Keep
+					return &orchestration.SpawnSessionResponse{SessionID: "s1"}, nil
+				},
+			}
+			reg := newFleetRegistry(t, agentSvc)
+
+			args := map[string]interface{}{"tenant_id": "acme", "backend": "claude", "project_id": "proj-1"}
+			for k, v := range tc.args {
+				args[k] = v
+			}
+			_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "acme"), "quicbaas_orchestrator_spawn", args)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, gotKeep)
+		})
+	}
 }
 
 // TestPromptToolDispatch asserts the prompt tool routes to an existing session

@@ -16,6 +16,7 @@ package tracing
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -566,6 +567,17 @@ func TestRaftAttributes(t *testing.T) {
 	assert.Equal(t, int64(100), attrs[2].Value.AsInt64())
 	assert.Equal(t, "raft.log_index", string(attrs[3].Key))
 	assert.Equal(t, int64(500), attrs[3].Value.AsInt64())
+}
+
+// A uint64 past the int64 range saturates instead of wrapping negative, so a
+// trace never shows a negative shard, node, term or log index.
+func TestRaftAttributes_ClampsOutOfRangeValues(t *testing.T) {
+	attrs := RaftAttributes(math.MaxUint64, math.MaxUint64, math.MaxUint64, math.MaxUint64)
+
+	require.Len(t, attrs, 4)
+	for _, attr := range attrs {
+		assert.Equal(t, int64(math.MaxInt64), attr.Value.AsInt64(), string(attr.Key))
+	}
 }
 
 func TestTxnAttributes(t *testing.T) {

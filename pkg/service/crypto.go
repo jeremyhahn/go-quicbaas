@@ -24,6 +24,7 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
 
@@ -572,9 +573,7 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 	// Track key usage for DEK generation (if tracker configured)
 	// The wrapped DEK is what gets encrypted with the KEK
 	if t.safetyTracker != nil {
-		//nolint:gosec // G115: keyBytes is bounded by cryptographic key sizes (16-64), safe for uint64
-		if err :=
-			t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(keyBytes)); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -641,9 +640,7 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 
 	// Track key usage for wrapped DEK generation (if tracker configured)
 	if t.safetyTracker != nil {
-		//nolint:gosec // G115: keyBytes is bounded by cryptographic key sizes (16-64), safe for uint64
-		if err :=
-			t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(keyBytes)); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{

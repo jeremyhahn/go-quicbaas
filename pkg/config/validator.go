@@ -666,8 +666,12 @@ func (v *Validator) ensureDirectoryWritable(path string) error {
 	if err != nil {
 		return api.NewDirectoryNotWritableError("config.Validator.ensureDirectoryWritable", err)
 	}
-	_ = f.Close()           //nolint:gosec // G104: intentionally ignoring close error for test file
-	_ = os.Remove(testFile) //nolint:gosec // G104: intentionally ignoring remove error for test file
+	if err := f.Close(); err != nil {
+		return api.NewDirectoryNotWritableError("config.Validator.ensureDirectoryWritable", err)
+	}
+	if err := os.Remove(testFile); err != nil {
+		return api.NewPathOperationError("config.Validator.ensureDirectoryWritable", "remove write probe", err)
+	}
 
 	return nil
 }

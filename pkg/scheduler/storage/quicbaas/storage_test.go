@@ -23,6 +23,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // mockKVStore is a simple in-memory KVStore implementation for testing.
@@ -1101,5 +1102,23 @@ func TestListJobs_MalformedData(t *testing.T) {
 
 	if len(jobs) != 1 {
 		t.Errorf("expected 1 valid job, got %d", len(jobs))
+	}
+}
+
+func TestExecutionIDAt_UsesUnixNanoseconds(t *testing.T) {
+	at := time.Unix(1_700_000_000, 42)
+	id, err := executionIDAt(at)
+	if err != nil {
+		t.Fatalf("executionIDAt: %v", err)
+	}
+	if want := uint64(1_700_000_000_000_000_042); id != want {
+		t.Fatalf("executionIDAt = %d, want %d", id, want)
+	}
+}
+
+func TestExecutionIDAt_RefusesTimeBeforeEpoch(t *testing.T) {
+	var negErr *conv.ConversionNegativeError
+	if _, err := executionIDAt(time.Unix(-1, 0)); !errors.As(err, &negErr) {
+		t.Fatalf("executionIDAt(pre-epoch) error = %v, want *conv.ConversionNegativeError", err)
 	}
 }

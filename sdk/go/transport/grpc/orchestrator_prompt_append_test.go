@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 
@@ -24,6 +25,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // promptAppendServer records the requests that carry run-time prompt material
@@ -88,4 +90,21 @@ func TestOrchestratorHandler_PromptAppendCrossesTheWire(t *testing.T) {
 	assert.Equal(t, "task material", fake.create.GetPromptAppend())
 	assert.Equal(t, "task material", task.(*orchestrator.Task).PromptAppend)
 	assert.Equal(t, "job material", status.(*orchestrator.JobStatus).PromptAppend)
+}
+
+// An iteration cap the int32 wire cannot carry is refused before the call,
+// never wrapped onto a cap nobody asked for.
+func TestOrchestratorHandler_StartJobRefusesMaxIterationsOutOfWireRange(t *testing.T) {
+	fake := &promptAppendServer{}
+	srv := newHandlerServer(t, func(s *grpc.Server) { pb.RegisterOrchestratorServiceServer(s, fake) })
+	h := newOrchestratorHandler(srv.dial(t))
+
+	_, err := h.handleRequest(context.Background(), "quicbaas.Orchestrator", "StartJob",
+		&orchestrator.StartJobRequest{TenantID: "t", Description: "d", MaxIterations: math.MaxInt32 + 1})
+	require.True(t, errors.IsInvalidInput(err), "err = %v, want invalid input", err)
+	assert.Contains(t, err.Error(), "max_iterations")
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	assert.Nil(t, fake.start, "an out-of-range job never reaches the server")
 }

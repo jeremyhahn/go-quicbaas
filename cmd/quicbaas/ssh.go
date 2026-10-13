@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -758,7 +759,12 @@ func isStdinTTY() bool {
 // interactive prompts a user who is not there instead of reading the (empty)
 // stream.
 func isTerminal(f *os.File) bool {
-	return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: a file descriptor always fits an int
+	fd := f.Fd()
+	if fd > math.MaxInt {
+		// A closed *os.File reports ^uintptr(0); no terminal has that descriptor.
+		return false
+	}
+	return term.IsTerminal(int(fd))
 }
 
 // printSSHKey emits the standard metadata block for a *sshSDK.Key.

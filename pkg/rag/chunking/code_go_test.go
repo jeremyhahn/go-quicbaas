@@ -16,6 +16,10 @@
 package chunking
 
 import (
+	"bytes"
+	"errors"
+	"go/ast"
+	"go/token"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -646,4 +650,49 @@ type (
 	assert.Equal(t, 2, len(chunks))
 	assert.Equal(t, "TypeA", chunks[0].Metadata.ClassName)
 	assert.Equal(t, "TypeB", chunks[1].Metadata.ClassName)
+}
+
+func TestWriteNode_PrintsGoSource(t *testing.T) {
+	var buf bytes.Buffer
+	err := writeNode(&buf, token.NewFileSet(), &ast.Ident{Name: "answer"})
+	require.NoError(t, err)
+	assert.Equal(t, "answer", buf.String())
+}
+
+func TestWriteNode_UnsupportedNodeReturnsRenderError(t *testing.T) {
+	var buf bytes.Buffer
+	err := writeNode(&buf, token.NewFileSet(), 42)
+
+	var renderErr *GoRenderError
+	require.ErrorAs(t, err, &renderErr)
+	assert.Contains(t, err.Error(), "failed to render Go source")
+	assert.NotNil(t, errors.Unwrap(err))
+}
+
+func TestGoCodeChunker_DocCommentAppearsOnceInEachChunk(t *testing.T) {
+	src := `package p
+
+// F does things.
+func F() {}
+
+// T is a type.
+type T struct{}
+
+// Limits group.
+const (
+	A = 1
+	B = 2
+)
+`
+	config := DefaultGoCodeChunkerConfig()
+	config.IncludeComments = true
+	config.IncludePackage = false
+	config.IncludeImports = false
+	chunks, err := NewGoCodeChunker(config).Chunk([]byte(src), Metadata{FilePath: "p.go"})
+	require.NoError(t, err)
+	require.Len(t, chunks, 3)
+
+	assert.Equal(t, "// F does things.\nfunc F() {}\n", chunks[0].Content)
+	assert.Equal(t, "// T is a type.\ntype T struct{}\n", chunks[1].Content)
+	assert.Equal(t, "// Limits group.\nconst (\n\tA = 1\n\tB = 2\n)\n", chunks[2].Content)
 }

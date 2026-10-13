@@ -523,6 +523,31 @@ func TestOrchestratorGRPC_Spawn_CarriesPersistentFlag(t *testing.T) {
 	assert.False(t, seen.Persistent, "gRPC spawn invented a persistent flag the caller did not set")
 }
 
+func TestOrchestratorGRPC_Spawn_CarriesKeep(t *testing.T) {
+	var seen *orchestration.SpawnSessionRequest
+	agentSvc := &grpcTestAgentService{
+		spawnSessionFunc: func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+			seen = req
+			return &orchestration.SpawnSessionResponse{SessionID: "session-abc", Backend: req.Backend}, nil
+		},
+	}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+
+	_, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{
+		Backend: "claude",
+		Keep:    true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, seen)
+	assert.True(t, seen.Keep, "gRPC spawn dropped the keep marker")
+
+	seen = nil
+	_, err = server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{Backend: "claude"})
+	require.NoError(t, err)
+	require.NotNil(t, seen)
+	assert.False(t, seen.Keep, "gRPC spawn kept a session the caller did not mark")
+}
+
 // TestOrchestratorGRPC_SessionStateConversion pins the resumable state across
 // the proto boundary: a session restored after a restart must not surface to a
 // gRPC client as UNSPECIFIED.
