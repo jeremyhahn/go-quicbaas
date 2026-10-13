@@ -371,6 +371,8 @@ func workerSaid(text string) *orchestration.PromptSessionResponse {
 	return &orchestration.PromptSessionResponse{
 		Content:    []orchestration.ContentBlock{{Type: "text", Text: text}},
 		StopReason: orchestration.StopReasonEndTurn,
+
+		ToolUse: &orchestration.ToolUseCensus{},
 	}
 }
 

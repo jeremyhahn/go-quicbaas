@@ -119,8 +119,6 @@ func (b *APIInferenceBackend) Prompt(ctx context.Context, req *PromptRequest) (*
 		return nil, &PromptError{SessionID: "", Cause: err}
 	}
 
-	// ToolUse stays nil: Generate is called without tools and its response
-	// carries no tool calls to count.
 	return &PromptResponse{
 		Content: []ContentBlock{{
 			Type: "text",
@@ -129,6 +127,11 @@ func (b *APIInferenceBackend) Prompt(ctx context.Context, req *PromptRequest) (*
 		Model:      resp.Model,
 		StopReason: string(resp.FinishReason),
 		Usage:      countedUsage(int64(resp.Usage.PromptTokens), int64(resp.Usage.CompletionTokens)),
+
+		// The generate request above offers the model no tools, so a turn
+		// here cannot use one: its census is a measured zero, not a missing
+		// one.
+		ToolUse: &ToolUseCensus{},
 	}, nil
 }
 

@@ -59,6 +59,104 @@ func TestParseExecEvents_RealCodexStream(t *testing.T) {
 	}
 }
 
+// codexToolStream is a codex turn that reasons, runs a command that succeeds,
+// edits a file and fails one MCP call, in that order (go-quicbaas#799).
+const codexToolStream = `{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000001"}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"look first"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls","aggregated_output":"a.go","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"a.go","kind":"update"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"mcp_tool_call","server":"s","tool":"search","status":"failed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"Done."}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}`
+
+func TestParseExecEvents_KeepsTheTurnsToolItems(t *testing.T) {
+	t.Parallel()
+	turn, err := parseExecEvents(codexToolStream)
+	if err != nil {
+		t.Fatalf("parseExecEvents: %v", err)
+	}
+	want := []ContentBlock{
+		{Type: ContentBlockThinking, Bytes: len("look first")},
+		{Type: ContentBlockToolUse, ToolName: "command_execution", ToolUseID: "item_1"},
+		{Type: ContentBlockToolResult, ToolUseID: "item_1"},
+		{Type: ContentBlockToolUse, ToolName: "file_change", ToolUseID: "item_2"},
+		{Type: ContentBlockToolResult, ToolUseID: "item_2"},
+		{Type: ContentBlockToolUse, ToolName: "search", ToolUseID: "item_3"},
+		{Type: ContentBlockToolResult, ToolUseID: "item_3", IsError: true},
+		{Type: ContentBlockText, Text: "Done."},
+	}
+	got := turn.content()
+	if len(got) != len(want) {
+		t.Fatalf("content = %+v, want %d blocks", got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("block %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if census := turn.toolUse(); census == nil || census.Calls != 3 {
+		t.Errorf("tool census = %+v, want 3 calls: one per tool item, none for reasoning or results", census)
+	}
+}
+
+// TestExecTurn_ToolUseWithoutToolItemsIsAZeroCensus: a turn whose stream
+// carried no tool item reports a measured zero, not a missing census.
+func TestExecTurn_ToolUseWithoutToolItemsIsAZeroCensus(t *testing.T) {
+	t.Parallel()
+	turn, err := parseExecEvents(`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"words"}}
+{"type":"turn.completed"}`)
+	if err != nil {
+		t.Fatalf("parseExecEvents: %v", err)
+	}
+	if census := turn.toolUse(); census == nil || census.Calls != 0 {
+		t.Fatalf("tool census = %+v, want a zero census", census)
+	}
+}
+
+// TestExecTurn_AnUnreadableItemMakesTheCensusUnknown: an item codex completed
+// but this parser could not decode may have been a tool call, so the turn's
+// census is unknown (nil) rather than a count that could read as "no tools",
+// whether or not other tool items decoded.
+func TestExecTurn_AnUnreadableItemMakesTheCensusUnknown(t *testing.T) {
+	t.Parallel()
+	for name, stream := range map[string]string{
+		"the only tool item is unreadable": `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","status":7}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"done"}}
+{"type":"turn.completed"}`,
+		"another tool item decoded": `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls","status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","status":7}}
+{"type":"turn.completed"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			turn, err := parseExecEvents(stream)
+			if err != nil {
+				t.Fatalf("parseExecEvents: %v", err)
+			}
+			if census := turn.toolUse(); census != nil {
+				t.Fatalf("tool census = %+v, want nil (unknown) when an item is unreadable", census)
+			}
+		})
+	}
+}
+
+func TestParseExecEvents_AMalformedItemIsCountedAndTheAnswerKept(t *testing.T) {
+	t.Parallel()
+	turn, err := parseExecEvents(`{"type":"item.completed","item":{"id":"item_1","type":"command_execution","status":7}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"kept"}}
+{"type":"turn.completed"}`)
+	if err != nil {
+		t.Fatalf("parseExecEvents: %v", err)
+	}
+	got := turn.content()
+	if len(got) != 2 || got[0].Type != ContentBlockUnreadable || got[0].Bytes == 0 {
+		t.Fatalf("content = %+v, want an unreadable block that says how much was lost, then the text", got)
+	}
+	if got[1] != (ContentBlock{Type: ContentBlockText, Text: "kept"}) {
+		t.Errorf("block 1 = %+v, want the answer", got[1])
+	}
+}
+
 func TestCodexExecUsage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

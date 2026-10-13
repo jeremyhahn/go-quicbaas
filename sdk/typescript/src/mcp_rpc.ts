@@ -18,6 +18,7 @@
 // It is the TypeScript counterpart of sdk/go/transport/mcp.
 
 import { APIError, McpError } from './errors.js';
+import { parseJSONPreservingLargeIntegers } from './json.js';
 import { resolveToken } from './rest.js';
 import type { ClientConfig } from './types.js';
 
@@ -75,7 +76,10 @@ export class McpSession {
       .map((item) => item.text ?? '')
       .join('');
     if (result?.isError) throw new McpError(tool, text || 'tool reported an error');
-    return (text ? JSON.parse(text) : undefined) as T;
+    // The tool's text is the same JSON the REST route returns, so it is parsed
+    // the same way: a 64-bit identity past 2^53 arrives as its exact decimal
+    // string (see json.ts).
+    return (text ? parseJSONPreservingLargeIntegers<T>(text) : (undefined as T));
   }
 
   // initialize performs the handshake once per session; concurrent callers

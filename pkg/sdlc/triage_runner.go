@@ -1098,7 +1098,7 @@ func (s *triageRun) recordVerdict(issue ForgeIssue, verdict TriageVerdict, turn 
 		details += " duplicate_of=" + strconv.Itoa(verdict.DuplicateOf)
 	}
 	details += " reply_bytes=" + strconv.Itoa(turn.ReplyBytes) +
-		" tool_uses=" + strconv.Itoa(turn.ToolUses()) +
+		" tool_uses=" + turn.DescribeToolUses() +
 		" stop_reason=" + turn.StopReason
 	s.job.Audit("sdlc:triage_verdict", details)
 	s.job.Emit(orchestration.JobStateExecuting,

@@ -209,7 +209,7 @@ describe('stub transport errors', () => {
     await expect(client.orchestrator.healthCheck()).rejects.toThrow('grpc-web transport');
   });
 
-  it('unix methods throw UnixNotImplementedError', async () => {
+  it('unix methods throw TransportNotSupportedError', async () => {
     const { createClient } = await import('../src/factory.js');
     const client = await createClient({
       transport: 'unix',
@@ -221,7 +221,7 @@ describe('stub transport errors', () => {
   it('mcp methods throw McpNotImplementedError', async () => {
     const { createClient } = await import('../src/factory.js');
     const client = await createClient({ transport: 'mcp', mcp: { endpoint: '' } });
-    await expect(client.orchestrator.healthCheck()).rejects.toThrow('mcp transport');
+    await expect(client.barrier.status()).rejects.toThrow('mcp transport');
   });
 
   it('quic methods throw QuicNotImplementedError', async () => {

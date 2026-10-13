@@ -2646,12 +2646,18 @@ func TestSecretsService_GetRotationPolicy_FalseEnabled(t *testing.T) {
 
 func TestSecretsService_GetSecret_ContextTimeout(t *testing.T) {
 	mockManager := newMockSecretsManager()
+	// Wait on Done(), never on a sleep past the deadline: ctx.Err() is set by
+	// the goroutine context.WithTimeout schedules, so a sleeper can read nil
+	// (see TestCryptoService_Sign_ContextTimeout).
 	mockManager.getFn = func(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
 		select {
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-			return nil, nil, errors.New("timeout")
+		case <-time.After(30 * time.Second):
+			// Only reachable if GetSecret stopped propagating the caller's
+			// context. Fail loudly instead of returning a generic error that
+			// would satisfy a bare require.Error for the wrong reason.
+			return nil, nil, errors.New("caller context was not propagated to the secrets manager")
 		}
 	}
 	logger := newMockLogger()
@@ -2666,7 +2672,9 @@ func TestSecretsService_GetSecret_ContextTimeout(t *testing.T) {
 
 	resp, err := svc.GetSecret(ctx, req)
 
-	require.Error(t, err)
+	// ErrorIs, not Error: the expiry must be what surfaced. A bare Error()
+	// also passes on the not-propagated branch above.
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Nil(t, resp)
 }
 

@@ -22,7 +22,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -51,6 +50,15 @@ func TestBootOrder_CARunsAfterStandaloneNodeInit(t *testing.T) {
 	cfg := createFTConfig(t)
 	cfg.Server.Embedded = true
 	cfg.Server.Mode = "" // empty → resolved to "standalone" by getEffectiveMode
+	// Boot order needs no network listener. With any protocol enabled the
+	// embedded node binds the fixture's REST/gRPC ports during initialize(),
+	// and a port taken by another job on a shared CI host failed this test
+	// before the CA seam ran (go-quicbaas#408). Standalone mode has no Raft
+	// host, so with these off initialize() binds no socket at all.
+	cfg.Server.REST.Enabled = false
+	cfg.Server.GRPC.Enabled = false
+	cfg.Server.MCP.Enabled = false
+	require.False(t, cfg.NetworkServing())
 
 	// Stub seams that would require external infrastructure.
 	seamMu.Lock()
@@ -62,11 +70,14 @@ func TestBootOrder_CARunsAfterStandaloneNodeInit(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	// Track whether qrdbNode was non-nil when initializeCAFn ran.
-	var nodeWasSetAtCAInit bool
+	// Record whether the CA seam ran at all, and whether qrdbNode was set
+	// when it did. The first separates an infrastructure failure from a
+	// boot-order violation; only the second is what this test asserts.
+	var caReached, nodeWasSetAtCAInit bool
 
 	seamMu.Lock()
 	initializeCAFn = func(s *Server) error {
+		caReached = true
 		nodeWasSetAtCAInit = s.qrdbNode != nil
 		// Return sentinel so initialize() aborts immediately after the CA step.
 		return errBootOrderSentinel
@@ -74,9 +85,13 @@ func TestBootOrder_CARunsAfterStandaloneNodeInit(t *testing.T) {
 	seamMu.Unlock()
 
 	err = srv.initialize()
-	// The sentinel must be the error we get (not some earlier failure).
-	require.True(t, errors.Is(err, errBootOrderSentinel),
-		"initialize must have reached initializeCAFn and returned the sentinel; got: %v", err)
+	if !caReached {
+		t.Fatalf("initialize() failed before reaching the CA seam, so boot order "+
+			"was not tested (an infrastructure failure, not a CA-before-node "+
+			"violation): %v", err)
+	}
+	require.ErrorIs(t, err, errBootOrderSentinel,
+		"initialize must return the CA seam's sentinel once the seam has run")
 	assert.True(t, nodeWasSetAtCAInit,
 		"s.qrdbNode must be non-nil when initializeCAFn is called — CA must run AFTER node init")
 

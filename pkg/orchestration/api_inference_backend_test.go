@@ -144,6 +144,9 @@ func TestAPIInferenceBackend_PromptDispatches(t *testing.T) {
 	if resp.StopReason != "stop" {
 		t.Errorf("StopReason = %q, want stop", resp.StopReason)
 	}
+	if resp.ToolUse == nil || resp.ToolUse.Calls != 0 {
+		t.Errorf("ToolUse = %+v, want a zero census: the request offers no tools, so zero tool use is measured", resp.ToolUse)
+	}
 }
 
 func TestAPIInferenceBackend_PromptValidates(t *testing.T) {

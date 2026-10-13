@@ -370,10 +370,11 @@ type AgentTurn struct {
 	// much was cut.
 	ReplyBytes int `json:"reply_bytes"`
 
-	// Blocks counts the content blocks the reply carried, by type. Tool use
-	// appears here as the backend reported it; a backend that publishes only
-	// assistant text reports only text, and an absent measurement is
-	// recorded as absent rather than inferred from the prose.
+	// Blocks counts the content blocks the reply carried, by type: text,
+	// tool_use, tool_result, thinking. Tool use appears here as the backend
+	// reported it, and an absent measurement is recorded as absent rather
+	// than inferred from the prose: a tool_use entry, zero included, is
+	// present only when the turn carried a tool census or a tool_use block.
 	Blocks map[string]int `json:"blocks,omitempty"`
 
 	// StopReason is the backend's own terminal reason for the turn.
@@ -402,15 +403,32 @@ type AgentTurn struct {
 	PromptDigest string `json:"prompt_digest,omitempty"`
 }
 
-// ToolUses is how many non-text content blocks the reply carried.
+// ToolUses is how many tool calls the reply carried. Results, reasoning and
+// text are not tool calls, so only tool_use blocks count. It is zero for a
+// turn whose backend does not report tool use; toolUseMeasured tells the two
+// apart.
 func (t AgentTurn) ToolUses() int {
-	uses := 0
-	for kind, count := range t.Blocks {
-		if kind != contentBlockText {
-			uses += count
-		}
+	return t.Blocks[orchestration.ContentBlockToolUse]
+}
+
+// toolUseMeasured reports whether the backend reported the turn's tool use, so
+// a zero ToolUses is a measurement. ReadAgentTurn records a tool_use entry
+// whenever the response carried a census or a tool_use block; a turn from a
+// backend whose PromptResponse.ToolUse is nil and whose content is only text
+// has none.
+func (t AgentTurn) toolUseMeasured() bool {
+	_, ok := t.Blocks[orchestration.ContentBlockToolUse]
+	return ok
+}
+
+// DescribeToolUses renders the tool call count for an event header:
+// "unreported" when the backend does not report tool use, so a reader never
+// takes a missing measurement for a turn that ran no tool.
+func (t AgentTurn) DescribeToolUses() string {
+	if !t.toolUseMeasured() {
+		return "unreported"
 	}
-	return uses
+	return strconv.Itoa(t.ToolUses())
 }
 
 // NonAnswer reports whether this turn answered something other than the
@@ -420,7 +438,8 @@ func (t AgentTurn) ToolUses() int {
 // carries text (an empty one is TurnOutcomeSilent and has its own path); it
 // declares no stop (a declaration IS an answer, however fast it was written);
 // the backend reported the turn ENDED rather than being cut off by a limit or
-// a tool budget; it used no tool; and it came back inside NonAnswerTurnBound.
+// a tool budget; it MEASURABLY used no tool, which a backend that does not
+// report tool use cannot show; and it came back inside NonAnswerTurnBound.
 // The checkout is not consulted here because this question is only asked
 // about a turn that already changed nothing.
 //
@@ -431,7 +450,7 @@ func (t AgentTurn) ToolUses() int {
 func (t AgentTurn) NonAnswer() bool {
 	return t.ReplyBytes > 0 &&
 		!t.StopDeclared &&
-		t.ToolUses() == 0 &&
+		t.toolUseMeasured() && t.ToolUses() == 0 &&
 		t.StopReason == orchestration.StopReasonEndTurn &&
 		t.Elapsed > 0 && t.Elapsed < NonAnswerTurnBound
 }
@@ -450,12 +469,6 @@ func (t AgentTurn) Capped() AgentTurn {
 	return capped
 }
 
-// contentBlockText is the block type an assistant's own words arrive as.
-const contentBlockText = "text"
-
-// contentBlockToolUse is the block type a tool invocation is counted under.
-const contentBlockToolUse = "tool_use"
-
 // Describe renders the turn as a job event: a header of counts a reader
 // scans, then the reply itself.
 func (t AgentTurn) Describe() string {
@@ -464,7 +477,7 @@ func (t AgentTurn) Describe() string {
 	b.WriteString(" round=" + strconv.Itoa(t.Round))
 	b.WriteString(" elapsed=" + t.Elapsed.Round(time.Millisecond).String())
 	b.WriteString(" reply_bytes=" + strconv.Itoa(t.ReplyBytes))
-	b.WriteString(" tool_uses=" + strconv.Itoa(t.ToolUses()))
+	b.WriteString(" tool_uses=" + t.DescribeToolUses())
 	if blocks := describeBlocks(t.Blocks); blocks != "" {
 		b.WriteString(" blocks=" + blocks)
 	}
@@ -540,7 +553,7 @@ func ReadAgentTurn(resp *orchestration.PromptSessionResponse) AgentTurn {
 			kind = "unspecified"
 		}
 		turn.Blocks[kind]++
-		if kind != contentBlockText {
+		if kind != orchestration.ContentBlockText {
 			continue
 		}
 		if chunk := strings.TrimSpace(block.Text); chunk != "" {
@@ -550,12 +563,13 @@ func ReadAgentTurn(resp *orchestration.PromptSessionResponse) AgentTurn {
 			text.WriteString(chunk)
 		}
 	}
-	// THE BACKEND'S TOOL CENSUS IS THE TOOL COUNT when it reports one: most
-	// backends carry only text in Content, so the blocks alone would read a
-	// turn that used tools as one that used none. A census of zero is kept as
-	// a zero entry, so a reported "no tool" stays apart from an unreported one.
+	// THE BACKEND'S TOOL CENSUS IS THE TOOL COUNT when it reports one: some
+	// backends that count their tool calls carry only text in Content, so the
+	// blocks alone would read a turn that used tools as one that used none. A
+	// census of zero is kept as a zero entry, so a reported "no tool" stays
+	// apart from an unreported one (see AgentTurn.toolUseMeasured).
 	if resp.ToolUse != nil {
-		turn.Blocks[contentBlockToolUse] = resp.ToolUse.Calls
+		turn.Blocks[orchestration.ContentBlockToolUse] = resp.ToolUse.Calls
 	}
 	// THE DECLARATION IS READ FROM THE WHOLE TEXT, once, before any copy of
 	// it is bounded.

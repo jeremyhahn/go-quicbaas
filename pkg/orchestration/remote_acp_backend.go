@@ -679,7 +679,9 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		out.Content = append(out.Content, protoContentBlocksToRuntime(frame.GetContent())...)
 		if req.EventCallback != nil {
 			for _, block := range frame.GetContent() {
-				if block.GetText() == "" {
+				// Only words are assistant chunks: a tool block carries no
+				// payload to stream.
+				if block.GetType() != ContentBlockText || block.GetText() == "" {
 					continue
 				}
 				req.EventCallback(&SessionEvent{
@@ -1218,7 +1220,14 @@ func protoContentBlocksToRuntime(in []*proto.ContentBlock) []ContentBlock {
 	}
 	out := make([]ContentBlock, len(in))
 	for i, b := range in {
-		out[i] = ContentBlock{Type: b.GetType(), Text: b.GetText()}
+		out[i] = ContentBlock{
+			Type:      b.GetType(),
+			Text:      b.GetText(),
+			ToolName:  b.GetToolName(),
+			ToolUseID: b.GetToolUseId(),
+			IsError:   b.GetIsError(),
+			Bytes:     int(b.GetBytes()),
+		}
 	}
 	return out
 }

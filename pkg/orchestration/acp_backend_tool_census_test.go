@@ -21,15 +21,14 @@ import (
 	"os"
 	"testing"
 	"time"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/inference"
 )
 
 // =============================================================================
 // Per-turn tool census (go-quicbaas#799).
 //
-// Content carries only the assistant's text, so a turn's tool use is reported
-// on PromptResponse.ToolUse. These tests pin both halves of its contract: a
+// A turn's tool use is reported on PromptResponse.ToolUse, whether or not the
+// backend also keeps tool_use blocks in Content. These tests pin both halves of
+// its contract: a
 // backend that reports tool use counts every call, and reports zero rather
 // than nothing for a turn that used none; a backend that does not report tool
 // use leaves the census nil.
@@ -99,10 +98,14 @@ func TestPromptStreamJSON_ToolCensusCountsEveryToolUseBlock(t *testing.T) {
 	if resp.ToolUse == nil || resp.ToolUse.Calls != 3 {
 		t.Fatalf("ToolUse = %+v, want 3 calls: two on the first assistant message, one on the second", resp.ToolUse)
 	}
+	toolBlocks := 0
 	for _, block := range resp.Content {
-		if block.Type != "text" {
-			t.Errorf("Content carries a %q block; tool use belongs on the census", block.Type)
+		if block.Type == ContentBlockToolUse {
+			toolBlocks++
 		}
+	}
+	if toolBlocks != resp.ToolUse.Calls {
+		t.Errorf("Content carries %d tool_use blocks, census says %d: the two must agree", toolBlocks, resp.ToolUse.Calls)
 	}
 }
 
@@ -206,25 +209,5 @@ func TestPromptJSONRPC_ToolCensusCountsToolCallUpdates(t *testing.T) {
 	}
 	if resp.ToolUse == nil || resp.ToolUse.Calls != 2 {
 		t.Fatalf("ToolUse = %+v, want 2 calls: a tool_call_update is progress on a call, not a new one", resp.ToolUse)
-	}
-}
-
-func TestAPIInferenceBackend_DoesNotReportToolUse(t *testing.T) {
-	be, err := NewAPIInferenceBackend(APIInferenceBackendConfig{
-		Wrapped: &stubInferenceBackend{
-			provider: "openai",
-			resp:     &inference.GenerateResponse{Content: "hi", Model: "gpt-5", FinishReason: inference.FinishReasonStop},
-		},
-		DefaultModel: "gpt-5",
-	})
-	if err != nil {
-		t.Fatalf("NewAPIInferenceBackend: %v", err)
-	}
-	resp, err := be.Prompt(context.Background(), &PromptRequest{Prompt: "hello"})
-	if err != nil {
-		t.Fatalf("Prompt: %v", err)
-	}
-	if resp.ToolUse != nil {
-		t.Fatalf("ToolUse = %+v, want nil: this backend does not report tool use, which is not a report of none", resp.ToolUse)
 	}
 }

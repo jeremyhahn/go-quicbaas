@@ -67,6 +67,12 @@ export interface TaskPageParams extends PageParams {
     agent_id?: string;
     /** job_id lists the tasks one job is an attempt at. */
     job_id?: string;
+    /**
+     * source_kind and source_ref, set together, list the task holding that
+     * source reservation ("which task adopted this issue") in project_id's scope.
+     */
+    source_kind?: string;
+    source_ref?: string;
 }
 /** SessionPageParams adds the sessions listing's own narrowings. */
 export interface SessionPageParams extends PageParams {

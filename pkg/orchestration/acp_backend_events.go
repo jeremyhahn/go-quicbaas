@@ -112,6 +112,64 @@ func emitStreamJSONEvents(cb SessionEventCallback, sessionID string, msg *stream
 	// lifecycle events already cover the turn outcome.
 }
 
+// streamJSONTurnBlocks reduces one stream-json message to the content blocks
+// a PromptResponse carries for it. It reads the same decoded blocks
+// emitStreamJSONEvents turns into session events: the assistant's text,
+// reasoning and tool calls, and the tool results the CLI reports back on a
+// "user" message. A non-text block keeps its identifiers and size, not its
+// payload (see ContentBlock).
+func streamJSONTurnBlocks(msg *streamJSONMessage) []ContentBlock {
+	if msg == nil || msg.Message == nil {
+		return nil
+	}
+	var blocks []ContentBlock
+	for _, c := range msg.Message.Content {
+		if block, ok := streamJSONTurnBlock(msg.Type, c); ok {
+			blocks = append(blocks, block)
+		}
+	}
+	return blocks
+}
+
+// streamJSONTurnBlock converts one block of a message of the given type, and
+// reports false for a block a turn does not carry (for example the text the
+// CLI echoes on a "user" message).
+func streamJSONTurnBlock(msgType string, c streamJSONContent) (ContentBlock, bool) {
+	if c.Type == ContentBlockUnreadable {
+		return ContentBlock{Type: ContentBlockUnreadable, Bytes: c.unreadableBytes}, true
+	}
+	if msgType == "user" {
+		if c.Type != ContentBlockToolResult {
+			return ContentBlock{}, false
+		}
+		return ContentBlock{
+			Type:      ContentBlockToolResult,
+			ToolUseID: c.ToolUseID,
+			IsError:   c.IsError,
+			Bytes:     len(c.Content),
+		}, true
+	}
+	if msgType != "assistant" {
+		return ContentBlock{}, false
+	}
+	switch c.Type {
+	case ContentBlockText:
+		return ContentBlock{Type: ContentBlockText, Text: c.Text}, true
+	case ContentBlockThinking:
+		return ContentBlock{Type: ContentBlockThinking, Bytes: len(c.Thinking)}, true
+	case ContentBlockToolUse:
+		return ContentBlock{
+			Type:      ContentBlockToolUse,
+			ToolName:  c.Name,
+			ToolUseID: c.ID,
+			Bytes:     len(c.Input),
+		}, true
+	}
+	// A block type this package does not know (redacted_thinking, say) is
+	// still counted under its own name.
+	return ContentBlock{Type: c.Type}, true
+}
+
 // flattenToolResultContent renders a stream-json tool_result "content" field
 // — either a JSON string or an array of {type,text} blocks — as plain text.
 // An unrecognized shape is passed through as its raw JSON so nothing is

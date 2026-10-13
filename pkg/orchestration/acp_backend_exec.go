@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -205,14 +206,13 @@ func (b *ACPBackend) promptExec(ctx context.Context, sess *acpSession, req *Prom
 	}
 	sess.lastActivity.Store(time.Now().UnixNano())
 
-	// ToolUse stays nil: parseExecEvents reads only the agent message from
-	// the event stream, so this turn's tool calls are not counted.
 	return &PromptResponse{
 		SessionID:  sess.id,
-		Content:    []ContentBlock{{Type: "text", Text: turn.text}},
+		Content:    turn.content(),
 		Model:      model,
 		StopReason: turn.stopReason,
 		Usage:      turn.usage,
+		ToolUse:    turn.toolUse(),
 	}, nil
 }
 
@@ -244,10 +244,42 @@ type execTurn struct {
 	stopReason string
 	usage      *TokenUsage
 
+	// blocks are the turn's non-text content blocks in the order codex
+	// completed them: a thinking block per reasoning item, and a tool_use
+	// block followed by its tool_result for every tool item. See
+	// execItemBlocks.
+	blocks []ContentBlock
+
 	// threadID is the conversation the turn ran in, from `thread.started`.
 	// Empty when the stream reported none, or reported one that is not a
 	// plain identifier (see validExecThreadID).
 	threadID string
+}
+
+// content is the turn's PromptResponse content: its non-text blocks, then
+// the answer.
+func (t execTurn) content() []ContentBlock {
+	return append(slices.Clip(t.blocks), ContentBlock{Type: ContentBlockText, Text: t.text})
+}
+
+// toolUse is the turn's tool census: one call per tool_use block. codex
+// completes every tool call as one tool item on the event stream, so a turn
+// with none ran none and reports a zero census.
+//
+// A completed item that could not be decoded may have been a tool call, so a
+// turn holding one has an UNKNOWN census (nil), never a count that could be
+// short: a zero read off such a turn would call it a turn that used no tools.
+func (t execTurn) toolUse() *ToolUseCensus {
+	census := &ToolUseCensus{}
+	for _, block := range t.blocks {
+		switch block.Type {
+		case ContentBlockUnreadable:
+			return nil
+		case ContentBlockToolUse:
+			census.Calls++
+		}
+	}
+	return census
 }
 
 // execEvent is the subset of the JSONL event stream this reads.
@@ -267,10 +299,9 @@ type execTurn struct {
 type execEvent struct {
 	Type     string `json:"type"`
 	ThreadID string `json:"thread_id,omitempty"`
-	Item     *struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"item,omitempty"`
+	// Item is decoded on its own, so an item that does not parse is
+	// counted as unreadable instead of dropping the whole event.
+	Item  json.RawMessage `json:"item,omitempty"`
 	Usage *struct {
 		InputTokens           int64 `json:"input_tokens"`
 		CachedInputTokens     int64 `json:"cached_input_tokens"`
@@ -279,6 +310,46 @@ type execEvent struct {
 		ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 	} `json:"usage,omitempty"`
 	Error string `json:"error,omitempty"`
+}
+
+// execItem is one item of a codex turn. Text is an agent_message's answer or
+// a reasoning item's text; Tool and Status describe a tool item.
+type execItem struct {
+	ID     string `json:"id,omitempty"`
+	Type   string `json:"type"`
+	Text   string `json:"text"`
+	Tool   string `json:"tool,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// execToolItems are the codex item types that are a tool call. Each one
+// arrives completed, carrying the call and its outcome together.
+var execToolItems = map[string]bool{
+	"command_execution": true,
+	"file_change":       true,
+	"mcp_tool_call":     true,
+	"web_search":        true,
+}
+
+// execItemBlocks converts one completed codex item to the content blocks a
+// turn carries for it: a thinking block for reasoning, and for a tool item a
+// tool_use block (named for the MCP tool, or else the item type) followed by
+// its tool_result. Other items carry none.
+func execItemBlocks(item *execItem) []ContentBlock {
+	if item.Type == "reasoning" {
+		return []ContentBlock{{Type: ContentBlockThinking, Bytes: len(item.Text)}}
+	}
+	if !execToolItems[item.Type] {
+		return nil
+	}
+	name := item.Tool
+	if name == "" {
+		name = item.Type
+	}
+	return []ContentBlock{
+		{Type: ContentBlockToolUse, ToolName: name, ToolUseID: item.ID},
+		{Type: ContentBlockToolResult, ToolUseID: item.ID, IsError: item.Status == "failed"},
+	}
 }
 
 // parseExecEvents reduces a JSONL event stream to the turn it describes.
@@ -309,9 +380,18 @@ func parseExecEvents(stdout string) (execTurn, error) {
 				turn.threadID = ev.ThreadID
 			}
 		case "item.completed":
-			if ev.Item != nil && ev.Item.Type == "agent_message" && ev.Item.Text != "" {
-				turn.text = ev.Item.Text
+			if len(ev.Item) == 0 {
+				continue
 			}
+			var item execItem
+			if err := json.Unmarshal(ev.Item, &item); err != nil {
+				turn.blocks = append(turn.blocks, ContentBlock{Type: ContentBlockUnreadable, Bytes: len(ev.Item)})
+				continue
+			}
+			if item.Type == "agent_message" && item.Text != "" {
+				turn.text = item.Text
+			}
+			turn.blocks = append(turn.blocks, execItemBlocks(&item)...)
 		case "turn.completed":
 			turn.stopReason = "end_turn"
 			if ev.Usage != nil {

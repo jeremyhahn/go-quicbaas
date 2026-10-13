@@ -56,6 +56,34 @@ func TestReadAgentTurn_TakesTheReplyAndTheCensus(t *testing.T) {
 	}
 }
 
+// TestReadAgentTurn_CountsToolCallsNotEveryBlock (go-quicbaas#799): a
+// stream-json turn carries results and reasoning beside its tool calls, and
+// only the calls are tool use.
+func TestReadAgentTurn_CountsToolCallsNotEveryBlock(t *testing.T) {
+	turn := ReadAgentTurn(&orchestration.PromptSessionResponse{
+		Content: []orchestration.ContentBlock{
+			{Type: orchestration.ContentBlockThinking, Bytes: 40},
+			{Type: orchestration.ContentBlockToolUse, ToolName: "Bash", ToolUseID: "tu_1"},
+			{Type: orchestration.ContentBlockToolResult, ToolUseID: "tu_1"},
+			{Type: orchestration.ContentBlockUnreadable, Bytes: 12},
+			{Type: orchestration.ContentBlockText, Text: "done"},
+		},
+		ToolUse: &orchestration.ToolUseCensus{Calls: 1},
+	})
+	if turn.ToolUses() != 1 {
+		t.Fatalf("tool uses = %d, want 1: results, reasoning and unreadable blocks are not calls", turn.ToolUses())
+	}
+	if turn.Blocks[orchestration.ContentBlockToolResult] != 1 || turn.Blocks[orchestration.ContentBlockThinking] != 1 {
+		t.Fatalf("blocks = %v, want every type kept in the census", turn.Blocks)
+	}
+	if turn.Reply != "done" {
+		t.Fatalf("reply = %q, want only the words", turn.Reply)
+	}
+	if got := turn.Describe(); !strings.Contains(got, "tool_uses=1") {
+		t.Fatalf("describe = %q, want tool_uses=1", got)
+	}
+}
+
 // TestReadAgentTurn_CountsTheBackendToolCensus: a backend that carries only
 // text in Content reports its tool calls on the census, and the turn counts
 // them — a turn that used tools is not read as one that used none (#799).
@@ -74,7 +102,9 @@ func TestReadAgentTurn_CountsTheBackendToolCensus(t *testing.T) {
 }
 
 // TestReadAgentTurn_KeepsAReportedZeroApartFromNoReport: a zero census is
-// recorded as a zero tool_use entry, an absent census as no entry at all.
+// recorded as a zero tool_use entry and described as 0, an absent census as
+// no entry at all and described as unreported, the way a nil Usage and a zero
+// one differ.
 func TestReadAgentTurn_KeepsAReportedZeroApartFromNoReport(t *testing.T) {
 	reported := ReadAgentTurn(&orchestration.PromptSessionResponse{
 		Content: []orchestration.ContentBlock{{Type: "text", Text: "done"}},
@@ -83,11 +113,38 @@ func TestReadAgentTurn_KeepsAReportedZeroApartFromNoReport(t *testing.T) {
 	if calls, ok := reported.Blocks["tool_use"]; !ok || calls != 0 {
 		t.Fatalf("blocks = %v, want a zero tool_use entry for a reported zero", reported.Blocks)
 	}
+	if got := reported.DescribeToolUses(); got != "0" {
+		t.Fatalf("reported zero described as %q, want 0", got)
+	}
 	unreported := ReadAgentTurn(&orchestration.PromptSessionResponse{
 		Content: []orchestration.ContentBlock{{Type: "text", Text: "done"}},
 	})
 	if _, ok := unreported.Blocks["tool_use"]; ok {
 		t.Fatalf("blocks = %v, want no tool_use entry when the backend reports none", unreported.Blocks)
+	}
+	if !strings.Contains(unreported.Describe(), "tool_uses=unreported") {
+		t.Fatalf("describe = %q, want the missing measurement named", unreported.Describe())
+	}
+}
+
+// TestReadAgentTurn_AnUnreadableToolItemIsUnreportedNotANonAnswer: a codex
+// turn holding an item the backend could not decode arrives with no census.
+// It must be described as unreported and must not be taken for a fast,
+// tool-less non-answer, however short and undeclared its reply.
+func TestReadAgentTurn_AnUnreadableToolItemIsUnreportedNotANonAnswer(t *testing.T) {
+	turn := ReadAgentTurn(&orchestration.PromptSessionResponse{
+		Content: []orchestration.ContentBlock{
+			{Type: orchestration.ContentBlockUnreadable, Bytes: 64},
+			{Type: orchestration.ContentBlockText, Text: "The expired monitor was watching the sweep logs."},
+		},
+		StopReason: orchestration.StopReasonEndTurn,
+	})
+	turn.Elapsed = 451 * time.Millisecond
+	if !strings.Contains(turn.Describe(), "tool_uses=unreported") {
+		t.Fatalf("describe = %q, want tool_uses=unreported", turn.Describe())
+	}
+	if turn.NonAnswer() {
+		t.Fatalf("NonAnswer() = true for a turn whose tool use is unknown: %+v", turn)
 	}
 }
 
@@ -365,9 +422,9 @@ func nonAnswerTurn(reply string, elapsed time.Duration, tools int) AgentTurn {
 	turn := NewAgentTurn(reply)
 	turn.Elapsed = elapsed
 	turn.StopReason = orchestration.StopReasonEndTurn
-	turn.Blocks = map[string]int{contentBlockText: 1}
-	if tools > 0 {
-		turn.Blocks["tool_use"] = tools
+	turn.Blocks = map[string]int{
+		orchestration.ContentBlockText:    1,
+		orchestration.ContentBlockToolUse: tools,
 	}
 	return turn
 }
@@ -398,6 +455,13 @@ func TestAgentTurn_NonAnswerReadsStructureNotProse(t *testing.T) {
 		},
 		"an unmeasured turn": {
 			nonAnswerTurn(missed, 0, 0), false,
+		},
+		"a turn whose tool use was not reported": {
+			func() AgentTurn {
+				turn := nonAnswerTurn(missed, 451*time.Millisecond, 0)
+				delete(turn.Blocks, orchestration.ContentBlockToolUse)
+				return turn
+			}(), false,
 		},
 		"a turn the backend cut off": {
 			func() AgentTurn {
@@ -486,7 +550,7 @@ func TestAgentTurn_DescribeSaysSoWhenThereIsNothingToSay(t *testing.T) {
 	if !strings.Contains(got, "the worker answered with no text") {
 		t.Fatalf("describe = %q", got)
 	}
-	if !strings.Contains(got, "tool_uses=0") || !strings.Contains(got, "reply_bytes=0") {
+	if !strings.Contains(got, "tool_uses=unreported") || !strings.Contains(got, "reply_bytes=0") {
 		t.Fatalf("describe = %q", got)
 	}
 	if strings.Contains(got, "blocks=") {

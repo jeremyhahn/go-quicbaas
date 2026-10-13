@@ -3,10 +3,6 @@ import type { AccountsClient } from './accounts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { ClientConfig } from './types.js';
-import { QuicBaaSError } from './errors.js';
-export declare class UnixNotImplementedError extends QuicBaaSError {
-    constructor(method: string);
-}
 export declare class UnixClient implements Client {
     readonly connection: ConnectionClient;
     readonly orchestrator: OrchestratorClient;

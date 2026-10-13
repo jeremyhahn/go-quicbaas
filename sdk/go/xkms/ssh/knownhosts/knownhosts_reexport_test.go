@@ -55,6 +55,7 @@ func TestValidateFingerprint_RejectsMalformed(t *testing.T) {
 		{"empty", ""},
 		{"missing prefix", body},
 		{"MD5 form", "MD5:" + body},
+		{"padded base64", "SHA256:" + base64.StdEncoding.EncodeToString(digest[:])},
 		{"short digest", "SHA256:" + body[:20]},
 		{"not base64", "SHA256:" + "!!" + body[2:]},
 	} {

@@ -16,6 +16,7 @@
 // handshake that issues an Mcp-Session-Id, and `tools/call` for every verb.
 // It is the TypeScript counterpart of sdk/go/transport/mcp.
 import { APIError, McpError } from './errors.js';
+import { parseJSONPreservingLargeIntegers } from './json.js';
 import { resolveToken } from './rest.js';
 // mcpProtocolVersion is the MCP revision that introduced Streamable HTTP.
 const mcpProtocolVersion = '2025-03-26';
@@ -58,7 +59,10 @@ export class McpSession {
             .join('');
         if (result?.isError)
             throw new McpError(tool, text || 'tool reported an error');
-        return (text ? JSON.parse(text) : undefined);
+        // The tool's text is the same JSON the REST route returns, so it is parsed
+        // the same way: a 64-bit identity past 2^53 arrives as its exact decimal
+        // string (see json.ts).
+        return (text ? parseJSONPreservingLargeIntegers(text) : undefined);
     }
     // initialize performs the handshake once per session; concurrent callers
     // share it, and a failed handshake is forgotten so the next call retries.

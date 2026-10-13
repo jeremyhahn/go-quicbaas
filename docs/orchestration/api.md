@@ -299,11 +299,13 @@ reach the daemon over desktop IPC; what comes back is a projected array with no
 envelope, which the SDK reports as a single page (`total` = its length, no
 `next_offset`) rather than as a first page of an unknown number. MCP pages
 `listProjectsPage` and `listAccountsPage` for real (see the table below);
-gRPC-Web, QUIC, Unix and Wails refuse those families outright. For every other
-family gRPC-Web, QUIC, Unix and MCP have no TypeScript transport wired yet:
-their `*Page` verbs delegate to their own unpaged sibling, so a caller gets that
-transport's typed refusal rather than an invented page. None of them throws
-"paging not supported".
+gRPC-Web, QUIC, Unix and Wails refuse those families outright. MCP's
+orchestrator `*Page` verbs delegate to their unpaged sibling and report its
+answer as a single page; `listTasksPage` refuses, because the server has no
+task-list tool. For every other family gRPC-Web, QUIC, Unix and MCP have no
+TypeScript transport wired yet: their `*Page` verbs delegate to their own
+unpaged sibling, so a caller gets that transport's typed refusal rather than an
+invented page. None of them throws "paging not supported".
 
 ### TypeScript transports: projects, sdlc, accounts
 
@@ -321,8 +323,57 @@ its declared type: every verb rejects with `TransportNotSupportedError`
 | Unix | no | no | no | The Unix transport is gRPC over `AF_UNIX`; the TypeScript SDK has no Node gRPC client or generated stubs. Needs an architecture decision. |
 | Wails | no | no | no | The desktop app exposes no Wails binding for these families. Use the REST transport against the embedded server. |
 
+On Unix the same refusal covers every other family too: each
+`client.orchestrator` verb (jobs, tasks, sessions, fleet, workflows,
+attention, decompose, backends, runners, worker image, cost settings, spend
+policy, spend report, inference, health), each `client.auth` verb, and
+`connection.connect`/`disconnect` reject with `TransportNotSupportedError`
+(family `orchestrator`, `auth` or `connection`) for the reason in the row
+above. The server does serve these services on its Unix socket; the gap is
+client-side. `deployFleetNode` keeps its `DeployNotSupportedError`.
+
 Prompts have no surface on any wire (server, Go SDK or TypeScript interface),
 so no transport carries them.
+
+### TypeScript QUIC transport: the other families
+
+The QUIC client sends nothing. Every verb of its other families rejects with
+`QuicNotImplementedError`, a `TransportNotSupportedError` subclass carrying
+`transport: 'quic'`, the family, the method and one of two reasons:
+
+| Family | Reason | Gap |
+|---|---|---|
+| `orchestrator` (jobs, tasks, sessions, fleet, workflows, attention, decompose, backends, runners, models, health, inference, worker image) and cost (cost settings, spend policy, spend report) | The server's QUIC listener serves no orchestrator method. | Server: quicbaas's API module does not implement go-qrdb's `RegisterQUIC` hook (go-quicbaas#819), so no QUIC route exists. |
+| `auth`, `barrier`, `ceremony`, `bootstrap`, `connection` (`connect`, `disconnect`) | The listener speaks qrdb's frame protocol, which the SDK does not implement. | SDK: go-qrdb serves `barrier.*` and `ceremony.*` on that protocol; a TypeScript client for it waits on the same owner decision as projects, sdlc and accounts. |
+
+`deployFleetNode` keeps its own `DeployNotSupportedError` on every non-REST
+transport. A `*Page` listing refuses with its unpaged sibling's method name.
+
+### TypeScript MCP transport: orchestrator
+
+`McpClient.orchestrator` calls the server's `quicbaas_orchestrator_*`,
+`quicbaas_fleet_*` and `quicbaas_sdlc_worker_image*` tools on the same session
+as the families above. A verb the server has no tool for, or an argument the
+tool does not read, rejects with `TransportNotSupportedError`; a tool failure
+is `McpError`.
+
+| Area | Wired verbs | Refused (server has no MCP tool) | Refused arguments |
+|---|---|---|---|
+| Jobs | `listJobs`, `getJobStatus`, `startJob`, `cancelJob` | `subscribeJobEvents` (no streaming tool) | `startJob`: `workflow_name`, `workflow_file`, `poll_interval`. `tenant_id` is not sent: the tool runs under the caller's tenant. |
+| Fleet | `listFleetNodes`, `getFleetNode`, `registerFleetNode`, `removeFleetNode`, `disableFleetNode`, `enableFleetNode` | `listBackendModels`; `deployFleetNode` is `DeployNotSupportedError` | `listFleetNodes`: `model`. `registerFleetNode`: `model`, `metadata`. |
+| Sessions | `listSessions`, `spawnSession`, `promptSession`, `closeSession`, `rotateSessionAccount`, `getSessionHistory`, `getSessionConversation` | `subscribeSession` (no streaming tool) | `spawnSession`: `env`, `sandboxed`. The session tools require `tenant_id`, so pass it on `promptSession`, `closeSession` and `rotateSessionAccount`. `promptSession` answers the asynchronous turn acknowledgement, as REST's 202 does. |
+| Spend and cost | `getSpendReport`, `getTenantSpendPolicy`, `setTenantSpendPolicy`, `getCostSettings`, `setCostSettings` | — | — |
+| Backends, runners, health | `listBackends`, `listRunners` (every page), `healthCheck` | — | — |
+| Inference | `inference` | `inferenceStream` (no streaming tool) | `host_affinity_strict` |
+| Workflows | `listWorkflows` | `createWorkflow`, `getWorkflow`, `updateWorkflow`, `deleteWorkflow` | — |
+| Tasks and attention | `createTask`, `readmitTask`, `deleteTask`, `listAttention`, `resolveAttention` | `listTasks`, `getTask`, `claimTask`, `completeTask`, `decomposeTask` (the decompose tool splits free text, not a stored task) | `createTask`: `host_affinity_strict`. |
+| Worker image | `getWorkerImageStatus`, `refreshWorkerImage` | — | — |
+
+`createTask` builds its `Task` from the request and the tool's reply. The tool
+returns no server-stamped times or `version`, so those fields are `0`. A task
+the tool saved but could not dispatch is reported as `McpError`, matching REST.
+`startJob` and `healthCheck` convert the tool's RFC 3339 instant to Unix
+nanoseconds; an instant that does not parse is `0`.
 
 A 200 whose body is not a listing — no records under the endpoint's key — is a
 typed `MalformedPageError` rather than an empty page, because a table rendering

@@ -267,6 +267,10 @@ class WailsOrchestratorClient {
             req.agent_id = page.agent_id;
         if (page?.job_id !== undefined)
             req.job_id = page.job_id;
+        if (page?.source_kind !== undefined)
+            req.source_kind = page.source_kind;
+        if (page?.source_ref !== undefined)
+            req.source_ref = page.source_ref;
         return adoptPage(await orchestratorBinding().ListTasks(req), 'tasks');
     }
     async listSessionsPage(tenantID, page) {

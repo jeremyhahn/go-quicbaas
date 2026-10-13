@@ -1620,8 +1620,12 @@ func serviceContentBlocksToProto(blocks []orchestration.ContentBlock) []*pb.Cont
 	result := make([]*pb.ContentBlock, len(blocks))
 	for i, b := range blocks {
 		result[i] = &pb.ContentBlock{
-			Type: b.Type,
-			Text: b.Text,
+			Type:      b.Type,
+			Text:      b.Text,
+			ToolName:  b.ToolName,
+			ToolUseId: b.ToolUseID,
+			IsError:   b.IsError,
+			Bytes:     int64(b.Bytes),
 		}
 	}
 	return result

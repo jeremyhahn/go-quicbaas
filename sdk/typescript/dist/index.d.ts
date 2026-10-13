@@ -29,7 +29,6 @@ export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } fro
 export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, RestClusterClient, } from './rest.js';
 export { RestCAClient, RestTrustClient, RestCryptoClient } from './rest.js';
 export { GrpcWebNotImplementedError } from './grpc_web.js';
-export { UnixNotImplementedError } from './unix.js';
 export { McpNotImplementedError, McpAccountsClient, McpProjectsClient, McpSdlcClient } from './mcp.js';
 export { McpSession } from './mcp_rpc.js';
 export { QuicNotImplementedError } from './quic.js';

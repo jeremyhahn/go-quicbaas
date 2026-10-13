@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -289,7 +290,11 @@ func TestDistributedSearch_ContextCanceled(t *testing.T) {
 	searcher := newMockShardSearcher()
 	searcher.delay = 2 * time.Second // slow shard
 
-	coord := NewDistributedSearchCoordinator(searcher, &distTestLogger{}, 100*time.Millisecond)
+	// The coordinator timeout outlasts the shard delay, so only the caller's
+	// cancellation can end the search early. With a timeout shorter than the
+	// delay, the coordinator's own deadline produced the error and the test
+	// passed even when SearchAcrossShards dropped the caller's context.
+	coord := NewDistributedSearchCoordinator(searcher, &distTestLogger{}, 30*time.Second)
 
 	shards := []DistributedShardInfo{
 		{ShardID: 1, NodeID: "node-1", Address: "localhost:9001"},
@@ -300,8 +305,9 @@ func TestDistributedSearch_ContextCanceled(t *testing.T) {
 	cancel() // immediately cancel
 
 	_, err := coord.SearchAcrossShards(ctx, shards, req)
-	if err == nil {
-		t.Fatal("expected error when context is canceled")
+	var timeoutErr *api.DistributedSearchTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("expected DistributedSearchTimeoutError from the canceled caller context, got %v", err)
 	}
 }
 

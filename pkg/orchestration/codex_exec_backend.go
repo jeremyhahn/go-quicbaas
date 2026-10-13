@@ -288,16 +288,13 @@ func (b *CodexExecBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		})
 	}
 
-	// ToolUse stays nil: parseExecEvents reads only the agent message from
-	// the event stream, so this turn's tool calls are not counted.
 	return &PromptResponse{
 		SessionID:  req.SessionID,
 		Model:      served,
 		StopReason: StopReasonEndTurn,
 		Usage:      turn.usage,
-		Content: []ContentBlock{
-			{Type: "text", Text: turn.text},
-		},
+		Content:    turn.content(),
+		ToolUse:    turn.toolUse(),
 	}, nil
 }
 

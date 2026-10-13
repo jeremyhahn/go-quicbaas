@@ -76,3 +76,26 @@ func TestGRPCSpawnServer_PromptWithNoUsageSendsNone(t *testing.T) {
 		t.Fatalf("usage_json = %q, want nothing: reported-nothing must stay distinguishable from zero", frame.GetUsageJson())
 	}
 }
+
+func TestGRPCSpawnServer_PromptSendsTheTurnsToolBlocks(t *testing.T) {
+	t.Parallel()
+	frame := promptFrame(t, &orchestration.PromptResponse{
+		SessionID: "sess-1",
+		Content: []orchestration.ContentBlock{
+			{Type: orchestration.ContentBlockToolUse, ToolName: "Bash", ToolUseID: "tu_1", Bytes: 16},
+			{Type: orchestration.ContentBlockToolResult, ToolUseID: "tu_1", IsError: true, Bytes: 9},
+			{Type: orchestration.ContentBlockText, Text: "done"},
+		},
+	})
+	blocks := frame.GetContent()
+	if len(blocks) != 3 {
+		t.Fatalf("content = %v, want 3 blocks", blocks)
+	}
+	use, result := blocks[0], blocks[1]
+	if use.GetToolName() != "Bash" || use.GetToolUseId() != "tu_1" || use.GetBytes() != 16 {
+		t.Errorf("tool_use block = %v, want Bash tu_1 of 16 bytes", use)
+	}
+	if !result.GetIsError() || result.GetToolUseId() != "tu_1" || result.GetBytes() != 9 {
+		t.Errorf("tool_result block = %v, want a failed result for tu_1 of 9 bytes", result)
+	}
+}

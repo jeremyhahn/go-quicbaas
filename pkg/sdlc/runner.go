@@ -2132,7 +2132,7 @@ func (s *runnerRun) repromptTurn(ctx context.Context, _ TurnVerdict, turn AgentT
 	s.job.Audit(auditNonAnswerReprompted, "attempt="+strconv.Itoa(turn.Attempt)+
 		" round="+strconv.Itoa(turn.Round)+
 		" elapsed="+turn.Elapsed.Round(time.Millisecond).String()+
-		" tool_uses="+strconv.Itoa(turn.ToolUses())+
+		" tool_uses="+turn.DescribeToolUses()+
 		"; the reply did not address the prompt, so the same prompt is sent once more: "+
 		"neither a new round nor a new attempt")
 	s.job.Emit(orchestration.JobStateExecuting, "the worker's reply did not address the prompt; "+

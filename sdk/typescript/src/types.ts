@@ -1522,6 +1522,9 @@ export interface SpawnSessionResponse {
 // PromptSessionRequest sends a prompt to an existing session.
 // Mirrors orchestrator.PromptSessionRequest.
 export interface PromptSessionRequest {
+  // tenant_id is the session's tenant. The MCP transport requires it; the
+  // REST route scopes by the caller and ignores it.
+  tenant_id?: string;
   session_id: string;
   prompt: string;
 }
@@ -1537,6 +1540,9 @@ export interface PromptSessionResponse {
 // CloseSessionRequest terminates a session.
 // Mirrors orchestrator.CloseSessionRequest.
 export interface CloseSessionRequest {
+  // tenant_id is the session's tenant. The MCP transport requires it; the
+  // REST route scopes by the caller and ignores it.
+  tenant_id?: string;
   session_id: string;
 }
 
@@ -1557,6 +1563,9 @@ export type AccountRotationMode = 'in_place' | 'resume';
 // the struct for the non-REST transports; REST treats the path segment as
 // authoritative and ignores a mismatched body value.
 export interface RotateSessionAccountRequest {
+  // tenant_id is the session's tenant. The MCP transport requires it; the
+  // REST route scopes by the caller.
+  tenant_id?: string;
   session_id: string;
   // reason is recorded on the closed account segment and in the session
   // transcript. Optional — an empty rotation carries no explanation.

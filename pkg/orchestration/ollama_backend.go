@@ -90,8 +90,6 @@ func (b *OllamaBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prompt
 		return nil, &PromptError{SessionID: "", Cause: err}
 	}
 
-	// ToolUse stays nil: the chat call offers the model no tools, and this
-	// backend parses no tool calls out of the reply.
 	return &PromptResponse{
 		Content: []ContentBlock{
 			{
@@ -102,6 +100,10 @@ func (b *OllamaBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prompt
 		Model:      resp.Model,
 		StopReason: StopReasonEndTurn,
 		Usage:      countedUsage(int64(resp.PromptEvalCount), int64(resp.EvalCount)),
+
+		// The chat request above offers the model no tools, so a turn here
+		// cannot use one: its census is a measured zero, not a missing one.
+		ToolUse: &ToolUseCensus{},
 	}, nil
 }
 

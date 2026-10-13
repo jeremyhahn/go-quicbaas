@@ -130,10 +130,6 @@ const (
 	// is looking at a give-up, not a judgement.
 	StopReasonToolBudgetSpent = "tool_budget_spent"
 
-	// contentBlockToolUse is the block type reported once per command the
-	// loop ran, before the answer block.
-	contentBlockToolUse = "tool_use"
-
 	toolBudgetSpentPrompt = "Your tool-call budget for this turn is spent and no further " +
 		"commands can be run. Answer now, in full, using only what you have " +
 		"already gathered, in exactly the format your instructions require. " +
@@ -612,8 +608,11 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 		messages = append(messages, choice.Message)
 		for _, call := range choice.Message.ToolCalls {
 			toolBlocks = append(toolBlocks, ContentBlock{
-				Type: contentBlockToolUse,
-				Text: call.Function.Name + " " + truncateForLog(call.Function.Arguments, 200),
+				Type:      ContentBlockToolUse,
+				Text:      call.Function.Name + " " + truncateForLog(call.Function.Arguments, 200),
+				ToolName:  call.Function.Name,
+				ToolUseID: call.ID,
+				Bytes:     len(call.Function.Arguments),
 			})
 			out := b.runTool(ctx, containerID, workDir, call)
 			messages = append(messages, ovMessage{

@@ -607,6 +607,39 @@ type streamJSONContent struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+
+	// unreadableBytes is the size of a block that could not be decoded,
+	// whose Type is then ContentBlockUnreadable. See
+	// streamJSONAssistant.UnmarshalJSON.
+	unreadableBytes int
+}
+
+// UnmarshalJSON decodes the message block by block, so one block the CLI
+// wrote in a shape this package does not expect costs that block alone. A
+// strict decode fails the whole line, and the reader drops an undecodable
+// line: the turn's text went with the one bad tool block beside it.
+func (a *streamJSONAssistant) UnmarshalJSON(data []byte) error {
+	type plain streamJSONAssistant
+	var wire struct {
+		plain
+		Content []json.RawMessage `json:"content,omitempty"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*a = streamJSONAssistant(wire.plain)
+	if len(wire.Content) == 0 {
+		return nil
+	}
+	a.Content = make([]streamJSONContent, 0, len(wire.Content))
+	for _, raw := range wire.Content {
+		var block streamJSONContent
+		if err := json.Unmarshal(raw, &block); err != nil {
+			block = streamJSONContent{Type: ContentBlockUnreadable, unreadableBytes: len(raw)}
+		}
+		a.Content = append(a.Content, block)
+	}
+	return nil
 }
 
 // streamJSONUserMessage is the input format for sending prompts to Claude Code
@@ -1960,6 +1993,7 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 		// attachers see what the agent is doing as it happens.
 		emitStreamJSONEvents(req.EventCallback, sess.id, msg)
 		limits.observe(msg)
+		contentBlocks = append(contentBlocks, streamJSONTurnBlocks(msg)...)
 		if msg.Type != "assistant" || msg.Message == nil {
 			return
 		}
@@ -1967,10 +2001,7 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 			model = msg.Message.Model
 		}
 		for _, c := range msg.Message.Content {
-			switch c.Type {
-			case "text":
-				contentBlocks = append(contentBlocks, ContentBlock{Type: "text", Text: c.Text})
-			case "tool_use":
+			if c.Type == ContentBlockToolUse {
 				toolUse.Calls++
 			}
 		}
@@ -2002,9 +2033,10 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 			},
 		}}
 	}
-	// Use accumulated content blocks, or fall back to the result text.
-	if len(contentBlocks) == 0 && result.Result != "" {
-		contentBlocks = []ContentBlock{{Type: "text", Text: result.Result}}
+	// Use the streamed text, or fall back to the result text when none of
+	// the streamed blocks was text.
+	if !slices.ContainsFunc(contentBlocks, isTextBlock) && result.Result != "" {
+		contentBlocks = append(contentBlocks, ContentBlock{Type: ContentBlockText, Text: result.Result})
 	}
 	if model == "" {
 		model = sess.model
@@ -2183,6 +2215,9 @@ func (b *ACPBackend) promptOneShotCLI(ctx context.Context, sess *acpSession, req
 		return nil, &PromptError{SessionID: sess.id, Cause: b.oneShotFailure(&result)}
 	}
 
+	// ToolUse stays nil: `--output-format json` prints only the
+	// final result object, not the blocks of the turn, so this path cannot
+	// see whether a tool ran.
 	resp := &PromptResponse{
 		SessionID:  sess.id,
 		Content:    []ContentBlock{{Type: "text", Text: result.Result}},
@@ -2349,6 +2384,9 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 			b.logger.Warnf("acp_backend: session/prompt result for session %s could not be decoded; the turn's usage is unreported: %s",
 				sess.id, decodeErr.Error())
 		}
+		// Content is the text alone: the agent's tool_call updates reach
+		// attachers through emitACPSessionUpdate and are counted on the
+		// census, not assembled into the turn's content on this path.
 		return &PromptResponse{
 			SessionID:  sess.id,
 			Content:    []ContentBlock{{Type: "text", Text: fullContent}},

@@ -12,22 +12,14 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 import { unsupportedClient } from './unsupported.js';
 import { wholeSetPage, } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
-// UnixNotImplementedError is thrown by all methods until the Unix socket
-// adapter is wired into this file.
-export class UnixNotImplementedError extends QuicBaaSError {
-    constructor(method) {
-        super(`unix transport: ${method} not implemented. ` +
-            'Add a Node.js net.Socket adapter that speaks the go-quicbaas framing protocol.');
-        this.name = 'UnixNotImplementedError';
-    }
+import { DeployNotSupportedError, TransportNotSupportedError } from './errors.js';
+// refuse rejects one verb of a family this transport cannot carry yet.
+function refuse(family, method) {
+    throw new TransportNotSupportedError('unix', family, unixUnsupported, method);
 }
-function notImpl(method) {
-    throw new UnixNotImplementedError(method);
-}
-// unixUnsupported is why projects, sdlc and accounts refuse here. The Unix
-// wire is gRPC over AF_UNIX, and the server does serve ProjectService,
-// SDLCService and AccountService on it; but speaking gRPC needs an HTTP/2
+// unixUnsupported is why every family refuses here. The Unix wire is gRPC
+// over AF_UNIX, and the server does serve the orchestrator, auth, projects,
+// sdlc and accounts services on it; but speaking gRPC needs an HTTP/2
 // gRPC client and generated stubs, which this SDK (no runtime dependencies)
 // does not carry, and a browser cannot open a socket at all.
 const unixUnsupported = 'the Unix wire is gRPC over AF_UNIX and the SDK has no Node gRPC client or ' +
@@ -38,8 +30,8 @@ class UnixConnectionClient {
     constructor(socketPath) {
         this._socketPath = socketPath;
     }
-    async connect(_address) { notImpl('connect'); }
-    async disconnect() { notImpl('disconnect'); }
+    async connect(_address) { refuse('connection', 'connect'); }
+    async disconnect() { refuse('connection', 'disconnect'); }
     isConnected() { return false; }
     getAddress() { return this._socketPath; }
     getTransport() { return this._transport; }
@@ -48,7 +40,7 @@ class UnixOrchestratorClient {
     // =========================================================================
     // The paged listings
     //
-    // This transport is not wired to the Unix socket yet, so every listing
+    // This transport cannot speak the Unix socket's gRPC yet, so every listing
     // here refuses through its unpaged sibling rather than answering a page it
     // never fetched.
     //
@@ -91,66 +83,66 @@ class UnixOrchestratorClient {
         const resp = await this.listWorkflows(tenantID);
         return wholeSetPage(resp.workflows ?? []);
     }
-    async listJobs(_tenantID, _taskID) { return notImpl('listJobs'); }
-    async getJobStatus(_tenantID, _jobID) { return notImpl('getJobStatus'); }
-    async startJob(_req) { return notImpl('startJob'); }
-    async cancelJob(_tenantID, _jobID) { return notImpl('cancelJob'); }
-    async listFleetNodes(_req) { return notImpl('listFleetNodes'); }
-    async getFleetNode(_req) { return notImpl('getFleetNode'); }
-    async listSessions(_req) { return notImpl('listSessions'); }
-    async listTasks(_tenantID) { return notImpl('listTasks'); }
-    async getTask(_tenantID, _taskID) { return notImpl('getTask'); }
-    async listBackends() { return notImpl('listBackends'); }
-    async listRunners() { return notImpl('listRunners'); }
-    async listBackendModels(_agentID, _backendName) { return notImpl('listBackendModels'); }
-    async healthCheck() { return notImpl('healthCheck'); }
-    subscribeJobEvents(_tenantID, _jobID, _onEvent) { return notImpl('subscribeJobEvents'); }
-    async spawnSession(_req) { return notImpl('spawnSession'); }
-    async promptSession(_req) { return notImpl('promptSession'); }
-    async closeSession(_req) { return notImpl('closeSession'); }
-    async rotateSessionAccount(_req) { return notImpl('rotateSessionAccount'); }
-    async getSessionHistory(_req) { return notImpl('getSessionHistory'); }
-    async getSessionConversation(_req) { return notImpl('getSessionConversation'); }
-    async getSpendReport(_req) { return notImpl('getSpendReport'); }
-    async getTenantSpendPolicy(_req) { return notImpl('getTenantSpendPolicy'); }
-    async setTenantSpendPolicy(_req) { return notImpl('setTenantSpendPolicy'); }
-    async getCostSettings(_req) { return notImpl('getCostSettings'); }
-    async setCostSettings(_req) { return notImpl('setCostSettings'); }
-    async getWorkerImageStatus() { return notImpl('getWorkerImageStatus'); }
-    async refreshWorkerImage() { return notImpl('refreshWorkerImage'); }
+    async listJobs(_tenantID, _taskID) { return refuse('orchestrator', 'listJobs'); }
+    async getJobStatus(_tenantID, _jobID) { return refuse('orchestrator', 'getJobStatus'); }
+    async startJob(_req) { return refuse('orchestrator', 'startJob'); }
+    async cancelJob(_tenantID, _jobID) { return refuse('orchestrator', 'cancelJob'); }
+    async listFleetNodes(_req) { return refuse('orchestrator', 'listFleetNodes'); }
+    async getFleetNode(_req) { return refuse('orchestrator', 'getFleetNode'); }
+    async listSessions(_req) { return refuse('orchestrator', 'listSessions'); }
+    async listTasks(_tenantID) { return refuse('orchestrator', 'listTasks'); }
+    async getTask(_tenantID, _taskID) { return refuse('orchestrator', 'getTask'); }
+    async listBackends() { return refuse('orchestrator', 'listBackends'); }
+    async listRunners() { return refuse('orchestrator', 'listRunners'); }
+    async listBackendModels(_agentID, _backendName) { return refuse('orchestrator', 'listBackendModels'); }
+    async healthCheck() { return refuse('orchestrator', 'healthCheck'); }
+    subscribeJobEvents(_tenantID, _jobID, _onEvent) { return refuse('orchestrator', 'subscribeJobEvents'); }
+    async spawnSession(_req) { return refuse('orchestrator', 'spawnSession'); }
+    async promptSession(_req) { return refuse('orchestrator', 'promptSession'); }
+    async closeSession(_req) { return refuse('orchestrator', 'closeSession'); }
+    async rotateSessionAccount(_req) { return refuse('orchestrator', 'rotateSessionAccount'); }
+    async getSessionHistory(_req) { return refuse('orchestrator', 'getSessionHistory'); }
+    async getSessionConversation(_req) { return refuse('orchestrator', 'getSessionConversation'); }
+    async getSpendReport(_req) { return refuse('orchestrator', 'getSpendReport'); }
+    async getTenantSpendPolicy(_req) { return refuse('orchestrator', 'getTenantSpendPolicy'); }
+    async setTenantSpendPolicy(_req) { return refuse('orchestrator', 'setTenantSpendPolicy'); }
+    async getCostSettings(_req) { return refuse('orchestrator', 'getCostSettings'); }
+    async setCostSettings(_req) { return refuse('orchestrator', 'setCostSettings'); }
+    async getWorkerImageStatus() { return refuse('orchestrator', 'getWorkerImageStatus'); }
+    async refreshWorkerImage() { return refuse('orchestrator', 'refreshWorkerImage'); }
     // eslint-disable-next-line @typescript-eslint/require-await
-    async *subscribeSession(_req) { return notImpl('subscribeSession'); }
+    async *subscribeSession(_req) { return refuse('orchestrator', 'subscribeSession'); }
     async deployFleetNode(_spec) { throw new DeployNotSupportedError('unix'); }
-    async inference(_req) { return notImpl('inference'); }
+    async inference(_req) { return refuse('orchestrator', 'inference'); }
     // eslint-disable-next-line @typescript-eslint/require-await
-    async *inferenceStream(_req, _signal) { return notImpl('inferenceStream'); }
-    async createWorkflow(_req) { return notImpl('createWorkflow'); }
-    async listWorkflows(_tenantID) { return notImpl('listWorkflows'); }
-    async getWorkflow(_tenantID, _name) { return notImpl('getWorkflow'); }
-    async updateWorkflow(_name, _def) { return notImpl('updateWorkflow'); }
-    async deleteWorkflow(_tenantID, _name) { return notImpl('deleteWorkflow'); }
-    async createTask(_req) { return notImpl('createTask'); }
-    async claimTask(_req) { return notImpl('claimTask'); }
-    async completeTask(_req) { return notImpl('completeTask'); }
-    async readmitTask(_tenantID, _taskID) { return notImpl('readmitTask'); }
-    async deleteTask(_req) { return notImpl('deleteTask'); }
-    async listAttention(_tenantID, _page) { return notImpl('listAttention'); }
-    async resolveAttention(_req) { return notImpl('resolveAttention'); }
-    async decomposeTask(_req) { return notImpl('decomposeTask'); }
-    async registerFleetNode(_req) { return notImpl('registerFleetNode'); }
-    async removeFleetNode(_req) { return notImpl('removeFleetNode'); }
-    async disableFleetNode(_req) { return notImpl('disableFleetNode'); }
-    async enableFleetNode(_req) { return notImpl('enableFleetNode'); }
+    async *inferenceStream(_req, _signal) { return refuse('orchestrator', 'inferenceStream'); }
+    async createWorkflow(_req) { return refuse('orchestrator', 'createWorkflow'); }
+    async listWorkflows(_tenantID) { return refuse('orchestrator', 'listWorkflows'); }
+    async getWorkflow(_tenantID, _name) { return refuse('orchestrator', 'getWorkflow'); }
+    async updateWorkflow(_name, _def) { return refuse('orchestrator', 'updateWorkflow'); }
+    async deleteWorkflow(_tenantID, _name) { return refuse('orchestrator', 'deleteWorkflow'); }
+    async createTask(_req) { return refuse('orchestrator', 'createTask'); }
+    async claimTask(_req) { return refuse('orchestrator', 'claimTask'); }
+    async completeTask(_req) { return refuse('orchestrator', 'completeTask'); }
+    async readmitTask(_tenantID, _taskID) { return refuse('orchestrator', 'readmitTask'); }
+    async deleteTask(_req) { return refuse('orchestrator', 'deleteTask'); }
+    async listAttention(_tenantID, _page) { return refuse('orchestrator', 'listAttention'); }
+    async resolveAttention(_req) { return refuse('orchestrator', 'resolveAttention'); }
+    async decomposeTask(_req) { return refuse('orchestrator', 'decomposeTask'); }
+    async registerFleetNode(_req) { return refuse('orchestrator', 'registerFleetNode'); }
+    async removeFleetNode(_req) { return refuse('orchestrator', 'removeFleetNode'); }
+    async disableFleetNode(_req) { return refuse('orchestrator', 'disableFleetNode'); }
+    async enableFleetNode(_req) { return refuse('orchestrator', 'enableFleetNode'); }
 }
 class UnixAuthClient {
-    async authValidate(_token) { return notImpl('authValidate'); }
-    async authLogin(_credentials) { return notImpl('authLogin'); }
-    async webAuthnBeginLogin(_tenantID, _email) { return notImpl('webAuthnBeginLogin'); }
-    async webAuthnFinishLogin(_challenge, _credential) { return notImpl('webAuthnFinishLogin'); }
-    async loginPIV() { return notImpl('loginPIV'); }
-    async logout(_token) { return notImpl('logout'); }
-    async registerBegin(_req) { return notImpl('registerBegin'); }
-    async registerFinish(_req) { return notImpl('registerFinish'); }
+    async authValidate(_token) { return refuse('auth', 'authValidate'); }
+    async authLogin(_credentials) { return refuse('auth', 'authLogin'); }
+    async webAuthnBeginLogin(_tenantID, _email) { return refuse('auth', 'webAuthnBeginLogin'); }
+    async webAuthnFinishLogin(_challenge, _credential) { return refuse('auth', 'webAuthnFinishLogin'); }
+    async loginPIV() { return refuse('auth', 'loginPIV'); }
+    async logout(_token) { return refuse('auth', 'logout'); }
+    async registerBegin(_req) { return refuse('auth', 'registerBegin'); }
+    async registerFinish(_req) { return refuse('auth', 'registerFinish'); }
 }
 // UnixClient is the stub entry point for the Unix domain socket transport.
 export class UnixClient {

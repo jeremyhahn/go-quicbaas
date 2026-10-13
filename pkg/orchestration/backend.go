@@ -258,7 +258,10 @@ type PromptRequest struct {
 
 // PromptResponse contains the agent's response.
 type PromptResponse struct {
-	SessionID  string         `json:"session_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+
+	// Content is every block of the turn, text and non-text; see
+	// ContentBlock.
 	Content    []ContentBlock `json:"content"`
 	Model      string         `json:"model,omitempty"`
 	StopReason string         `json:"stop_reason,omitempty"`
@@ -272,14 +275,18 @@ type PromptResponse struct {
 
 	// ToolUse is the turn's tool census, or nil when the backend does not
 	// report tool use. It is the census, not Content, that answers "did this
-	// turn use a tool": Content carries the assistant's text, and only the
-	// OpenVINO backend adds a tool_use block per call to it.
+	// turn use a tool": Content carries a tool_use block per call only where
+	// the backend's output records the call (stream-json, codex exec and
+	// OpenVINO), while the ACP JSON-RPC path counts tool_call updates and
+	// carries text alone.
 	//
 	// The ACP backend reports a census on its persistent paths (stream-json
-	// tool_use blocks, JSON-RPC tool_call updates), as does OpenVINO. The ACP
-	// one-shot and exec paths, codex exec, Ollama, API inference and the
-	// remote ACP backend leave it nil: their output either carries no tool
-	// record or none this package has captured and parses.
+	// tool_use blocks, JSON-RPC tool_call updates) and its exec path (codex
+	// tool items), as do codex exec and OpenVINO. Ollama and API inference
+	// offer the model no tools, so they report a zero census. The ACP
+	// one-shot path and the remote ACP backend leave it nil: the one-shot
+	// output carries no tool record, and the fleet wire does not carry the
+	// daemon's census.
 	ToolUse *ToolUseCensus `json:"tool_use,omitempty"`
 }
 
@@ -480,10 +487,56 @@ type SessionStatus struct {
 	Uptime int64 `json:"uptime"`
 }
 
-// ContentBlock represents a block of content in a response.
+// The content block types a backend reports.
+const (
+	ContentBlockText       = "text"
+	ContentBlockToolUse    = "tool_use"
+	ContentBlockToolResult = "tool_result"
+	ContentBlockThinking   = "thinking"
+
+	// ContentBlockUnreadable stands for a block the backend published that
+	// could not be decoded. It is kept, rather than dropped, so a census
+	// still shows that something was there.
+	ContentBlockUnreadable = "unreadable"
+)
+
+// ContentBlock is one block of a turn's content, in the order the agent
+// produced it.
+//
+// A turn carries EVERY block its backend published: the agent's words and
+// the tool calls, tool results and reasoning around them, so a caller can
+// count what the agent did as well as read what it said (go-quicbaas#799).
+// A reader that wants the answer takes the text blocks and skips the rest;
+// every consumer of Content does so.
+//
+// A non-text block carries identifiers and a size, never the payload: tool
+// inputs, tool outputs and reasoning are unbounded, attachers already see
+// them as session events, and no reader of a PromptResponse needs them.
 type ContentBlock struct {
 	Type string `json:"type"`
+
+	// Text is the agent's words on a text block. Other block types leave it
+	// empty, except that a backend may put a short bounded summary on a
+	// tool_use block (OpenVINOBackend names the command it ran).
 	Text string `json:"text,omitempty"`
+
+	// ToolName and ToolUseID identify the call on a tool_use block;
+	// ToolUseID alone ties a tool_result block back to its call.
+	ToolName  string `json:"tool_name,omitempty"`
+	ToolUseID string `json:"tool_use_id,omitempty"`
+
+	// IsError marks a tool_result block whose tool reported failure.
+	IsError bool `json:"is_error,omitempty"`
+
+	// Bytes is the size of the payload a non-text block stands for and does
+	// not carry: a tool call's input, a tool's output, the reasoning of a
+	// thinking block, or the raw bytes of an unreadable block.
+	Bytes int `json:"bytes,omitempty"`
+}
+
+// isTextBlock reports whether the block is the agent's words.
+func isTextBlock(b ContentBlock) bool {
+	return b.Type == ContentBlockText
 }
 
 // StopReasonEndTurn is the stop reason reported for a turn the agent finished

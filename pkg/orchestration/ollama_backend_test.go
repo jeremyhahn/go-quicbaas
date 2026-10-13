@@ -235,6 +235,9 @@ func TestOllamaBackend_Prompt(t *testing.T) {
 	if resp.StopReason != "end_turn" {
 		t.Errorf("StopReason = %q, want %q", resp.StopReason, "end_turn")
 	}
+	if resp.ToolUse == nil || resp.ToolUse.Calls != 0 {
+		t.Errorf("ToolUse = %+v, want a zero census: the request offers no tools, so zero tool use is measured", resp.ToolUse)
+	}
 }
 
 func TestOllamaBackend_Prompt_WithSystemPrompt(t *testing.T) {

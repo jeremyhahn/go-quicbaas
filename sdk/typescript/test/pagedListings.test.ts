@@ -25,8 +25,8 @@ import { RestClient } from '../src/rest.js';
 import { WailsClient } from '../src/wails.js';
 import { GrpcWebClient, GrpcWebNotImplementedError } from '../src/grpc_web.js';
 import { QuicClient, QuicNotImplementedError } from '../src/quic.js';
-import { UnixClient, UnixNotImplementedError } from '../src/unix.js';
-import { McpClient, McpNotImplementedError } from '../src/mcp.js';
+import { UnixClient } from '../src/unix.js';
+import { TransportNotSupportedError } from '../src/errors.js';
 import { MalformedPageError, adoptPage, wholeSetPage } from '../src/page.js';
 
 // mockOK is the fetch Response-alike the other REST tests use: both .json()
@@ -492,8 +492,7 @@ describe('transports that carry no paging', () => {
   }> = [
     { name: 'grpc-web', make: () => new GrpcWebClient('http://x'), error: GrpcWebNotImplementedError },
     { name: 'quic', make: () => new QuicClient('http://x'), error: QuicNotImplementedError },
-    { name: 'unix', make: () => new UnixClient('/tmp/x.sock'), error: UnixNotImplementedError },
-    { name: 'mcp', make: () => new McpClient('http://x'), error: McpNotImplementedError },
+    { name: 'unix', make: () => new UnixClient('/tmp/x.sock'), error: TransportNotSupportedError },
   ];
 
   for (const tc of cases) {

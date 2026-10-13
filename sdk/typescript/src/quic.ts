@@ -19,8 +19,9 @@
 // usage can additionally use the quic module from @node/quic or the
 // webtransport-ponyfill package.
 //
-// projects, sdlc and accounts reject every verb with TransportNotSupportedError
-// (see quicUnsupported). The other families still throw QuicNotImplementedError.
+// Every family rejects every verb with TransportNotSupportedError: projects,
+// sdlc and accounts directly, the rest through its QuicNotImplementedError
+// subclass (see quicUnsupported and quicNoOrchestratorRoute).
 // The go-quicbaas QUIC server endpoint is configured in config.quic.endpoint.
 
 import type {
@@ -137,34 +138,44 @@ import {
   type SessionPageParams,
   type TaskPageParams,
 } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
+import { DeployNotSupportedError, TransportNotSupportedError } from './errors.js';
 
-// QuicNotImplementedError is thrown by all methods until a QUIC/WebTransport
-// library is wired into this file.
-export class QuicNotImplementedError extends QuicBaaSError {
-  constructor(method: string) {
-    super(
-      `quic transport: ${method} not implemented. ` +
-      'Wire a WebTransport or QUIC client library for the go-quicbaas QUIC endpoint.',
-    );
+// QuicNotImplementedError is the refusal every QUIC verb rejects with. It is a
+// TransportNotSupportedError, so it names the transport, family, method and
+// reason, and a refusal never reaches the network.
+export class QuicNotImplementedError extends TransportNotSupportedError {
+  constructor(family: string, method: string, reason: string) {
+    super('quic', family, reason, method);
     this.name = 'QuicNotImplementedError';
   }
 }
 
-function notImpl(method: string): never {
-  throw new QuicNotImplementedError(method);
-}
-
-// quicUnsupported is why projects, sdlc and accounts refuse here. The server's
-// QUIC listener (pkg/server/transport_factory.go) speaks qrdb's frame protocol,
-// not REST over HTTP/3, and Node's fetch does not negotiate HTTP/3 anyway: a
-// REST client aimed at the QUIC endpoint would either fail against the real
-// listener or quietly fall back to TCP HTTP while claiming QUIC. Implementing
-// the frame protocol in TypeScript waits on an open owner decision on whether
-// and how a QUIC client listener is offered to SDK callers.
+// quicUnsupported is why most families refuse here. The server's QUIC listener
+// (pkg/server/transport_factory.go) speaks qrdb's frame protocol, not REST over
+// HTTP/3, and Node's fetch does not negotiate HTTP/3 anyway: a REST client
+// aimed at the QUIC endpoint would either fail against the real listener or
+// quietly fall back to TCP HTTP while claiming QUIC. Implementing the frame
+// protocol in TypeScript waits on an open owner decision on whether and how a
+// QUIC client listener is offered to SDK callers.
 const quicUnsupported =
   "the server's QUIC listener speaks qrdb's frame protocol, which this SDK " +
   'does not implement; use the rest transport';
+
+// quicNoOrchestratorRoute is why the orchestrator family refuses: even a frame
+// protocol client would find no method to call, because quicbaas's API module
+// does not implement go-qrdb's RegisterQUIC hook (go-quicbaas#819), so the QUIC
+// listener serves no orchestration, cost or worker-image verb.
+const quicNoOrchestratorRoute =
+  "the server's QUIC listener serves no orchestrator method (quicbaas's API " +
+  "module does not implement go-qrdb's RegisterQUIC hook); use the rest transport";
+
+function frameOnly(family: string, method: string): never {
+  throw new QuicNotImplementedError(family, method, quicUnsupported);
+}
+
+function noQuicRoute(method: string): never {
+  throw new QuicNotImplementedError('orchestrator', method, quicNoOrchestratorRoute);
+}
 
 class QuicConnectionClient implements ConnectionClient {
   private readonly _endpoint: string;
@@ -174,8 +185,8 @@ class QuicConnectionClient implements ConnectionClient {
     this._endpoint = endpoint;
   }
 
-  async connect(_address: string): Promise<void> { notImpl('connect'); }
-  async disconnect(): Promise<void> { notImpl('disconnect'); }
+  async connect(_address: string): Promise<void> { frameOnly('connection', 'connect'); }
+  async disconnect(): Promise<void> { frameOnly('connection', 'disconnect'); }
   isConnected(): boolean { return false; }
   getAddress(): string { return this._endpoint; }
   getTransport(): string { return this._transport; }
@@ -236,114 +247,114 @@ class QuicOrchestratorClient implements OrchestratorClient {
     return wholeSetPage(resp.workflows ?? []);
   }
 
-  async listJobs(_tenantID: string, _taskID?: string): Promise<JobStatus[]> { return notImpl('listJobs'); }
-  async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return notImpl('getJobStatus'); }
-  async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return notImpl('startJob'); }
-  async cancelJob(_tenantID: string, _jobID: string): Promise<void> { return notImpl('cancelJob'); }
-  async listFleetNodes(_req: ListFleetNodesRequest): Promise<ListFleetNodesResponse> { return notImpl('listFleetNodes'); }
-  async getFleetNode(_req: GetFleetNodeRequest): Promise<FleetNode> { return notImpl('getFleetNode'); }
-  async listSessions(_req: ListSessionsRequest): Promise<ListSessionsResponse> { return notImpl('listSessions'); }
-  async listTasks(_tenantID: string): Promise<Task[]> { return notImpl('listTasks'); }
-  async getTask(_tenantID: string, _taskID: string): Promise<Task> { return notImpl('getTask'); }
-  async listBackends(): Promise<AgentBackendInfo[]> { return notImpl('listBackends'); }
+  async listJobs(_tenantID: string, _taskID?: string): Promise<JobStatus[]> { return noQuicRoute('listJobs'); }
+  async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return noQuicRoute('getJobStatus'); }
+  async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return noQuicRoute('startJob'); }
+  async cancelJob(_tenantID: string, _jobID: string): Promise<void> { return noQuicRoute('cancelJob'); }
+  async listFleetNodes(_req: ListFleetNodesRequest): Promise<ListFleetNodesResponse> { return noQuicRoute('listFleetNodes'); }
+  async getFleetNode(_req: GetFleetNodeRequest): Promise<FleetNode> { return noQuicRoute('getFleetNode'); }
+  async listSessions(_req: ListSessionsRequest): Promise<ListSessionsResponse> { return noQuicRoute('listSessions'); }
+  async listTasks(_tenantID: string): Promise<Task[]> { return noQuicRoute('listTasks'); }
+  async getTask(_tenantID: string, _taskID: string): Promise<Task> { return noQuicRoute('getTask'); }
+  async listBackends(): Promise<AgentBackendInfo[]> { return noQuicRoute('listBackends'); }
 
-  async listRunners(): Promise<JobRunnerInfo[]> { return notImpl('listRunners'); }
-  async listBackendModels(_agentID: string, _backendName: string): Promise<string[]> { return notImpl('listBackendModels'); }
-  async healthCheck(): Promise<HealthCheckReport> { return notImpl('healthCheck'); }
-  subscribeJobEvents(_tenantID: string, _jobID: string, _onEvent: (event: JobEvent) => void): () => void { return notImpl('subscribeJobEvents'); }
-  async spawnSession(_req: SpawnSessionRequest): Promise<SpawnSessionResponse> { return notImpl('spawnSession'); }
-  async promptSession(_req: PromptSessionRequest): Promise<PromptSessionResponse> { return notImpl('promptSession'); }
-  async closeSession(_req: CloseSessionRequest): Promise<CloseSessionResponse> { return notImpl('closeSession'); }
-  async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> { return notImpl('rotateSessionAccount'); }
-  async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return notImpl('getSessionHistory'); }
-  async getSessionConversation(_req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> { return notImpl('getSessionConversation'); }
-  async getSpendReport(_req: GetSpendReportRequest): Promise<GetSpendReportResponse> { return notImpl('getSpendReport'); }
-  async getTenantSpendPolicy(_req: GetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('getTenantSpendPolicy'); }
-  async setTenantSpendPolicy(_req: SetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('setTenantSpendPolicy'); }
-  async getCostSettings(_req: GetCostSettingsRequest): Promise<CostSettings> { return notImpl('getCostSettings'); }
-  async setCostSettings(_req: SetCostSettingsRequest): Promise<CostSettings> { return notImpl('setCostSettings'); }
-  async getWorkerImageStatus(): Promise<WorkerImageStatus> { return notImpl('getWorkerImageStatus'); }
-  async refreshWorkerImage(): Promise<WorkerImageStatus> { return notImpl('refreshWorkerImage'); }
+  async listRunners(): Promise<JobRunnerInfo[]> { return noQuicRoute('listRunners'); }
+  async listBackendModels(_agentID: string, _backendName: string): Promise<string[]> { return noQuicRoute('listBackendModels'); }
+  async healthCheck(): Promise<HealthCheckReport> { return noQuicRoute('healthCheck'); }
+  subscribeJobEvents(_tenantID: string, _jobID: string, _onEvent: (event: JobEvent) => void): () => void { return noQuicRoute('subscribeJobEvents'); }
+  async spawnSession(_req: SpawnSessionRequest): Promise<SpawnSessionResponse> { return noQuicRoute('spawnSession'); }
+  async promptSession(_req: PromptSessionRequest): Promise<PromptSessionResponse> { return noQuicRoute('promptSession'); }
+  async closeSession(_req: CloseSessionRequest): Promise<CloseSessionResponse> { return noQuicRoute('closeSession'); }
+  async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> { return noQuicRoute('rotateSessionAccount'); }
+  async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return noQuicRoute('getSessionHistory'); }
+  async getSessionConversation(_req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> { return noQuicRoute('getSessionConversation'); }
+  async getSpendReport(_req: GetSpendReportRequest): Promise<GetSpendReportResponse> { return noQuicRoute('getSpendReport'); }
+  async getTenantSpendPolicy(_req: GetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return noQuicRoute('getTenantSpendPolicy'); }
+  async setTenantSpendPolicy(_req: SetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return noQuicRoute('setTenantSpendPolicy'); }
+  async getCostSettings(_req: GetCostSettingsRequest): Promise<CostSettings> { return noQuicRoute('getCostSettings'); }
+  async setCostSettings(_req: SetCostSettingsRequest): Promise<CostSettings> { return noQuicRoute('setCostSettings'); }
+  async getWorkerImageStatus(): Promise<WorkerImageStatus> { return noQuicRoute('getWorkerImageStatus'); }
+  async refreshWorkerImage(): Promise<WorkerImageStatus> { return noQuicRoute('refreshWorkerImage'); }
   // eslint-disable-next-line @typescript-eslint/require-await
-  async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return notImpl('subscribeSession'); }
+  async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return noQuicRoute('subscribeSession'); }
   async deployFleetNode(_spec: DeployFleetNodeSpec): Promise<DeployFleetNodeResult> { throw new DeployNotSupportedError('quic'); }
-  async inference(_req: InferenceRequest): Promise<InferenceResponse> { return notImpl('inference'); }
+  async inference(_req: InferenceRequest): Promise<InferenceResponse> { return noQuicRoute('inference'); }
   // eslint-disable-next-line @typescript-eslint/require-await
-  async *inferenceStream(_req: InferenceRequest, _signal?: AbortSignal): AsyncIterable<InferenceChunk> { return notImpl('inferenceStream'); }
-  async createWorkflow(_req: CreateWorkflowRequest): Promise<CreateWorkflowResponse> { return notImpl('createWorkflow'); }
-  async listWorkflows(_tenantID: string): Promise<ListWorkflowsResponse> { return notImpl('listWorkflows'); }
-  async getWorkflow(_tenantID: string, _name: string): Promise<WorkflowDefinition> { return notImpl('getWorkflow'); }
-  async updateWorkflow(_name: string, _def: WorkflowDefinition): Promise<WorkflowDefinition> { return notImpl('updateWorkflow'); }
-  async deleteWorkflow(_tenantID: string, _name: string): Promise<void> { return notImpl('deleteWorkflow'); }
-  async createTask(_req: CreateTaskRequest): Promise<CreateTaskResponse> { return notImpl('createTask'); }
-  async claimTask(_req: ClaimTaskRequest): Promise<void> { return notImpl('claimTask'); }
-  async completeTask(_req: CompleteTaskRequest): Promise<void> { return notImpl('completeTask'); }
-  async readmitTask(_tenantID: string, _taskID: string): Promise<void> { return notImpl('readmitTask'); }
-  async deleteTask(_req: import('./types.js').DeleteTaskRequest): Promise<import('./types.js').DeleteTaskResponse> { return notImpl('deleteTask'); }
-  async listAttention(_tenantID: string, _page?: import('./page.js').AttentionPageParams): Promise<import('./page.js').PageResult<import('./types.js').AttentionItem>> { return notImpl('listAttention'); }
-  async resolveAttention(_req: import('./types.js').AttentionResolveRequest): Promise<import('./types.js').AttentionItem> { return notImpl('resolveAttention'); }
-  async decomposeTask(_req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> { return notImpl('decomposeTask'); }
-  async registerFleetNode(_req: RegisterFleetNodeRequest): Promise<RegisterFleetNodeResponse> { return notImpl('registerFleetNode'); }
-  async removeFleetNode(_req: RemoveFleetNodeRequest): Promise<void> { return notImpl('removeFleetNode'); }
-  async disableFleetNode(_req: import('./types.js').DisableFleetNodeRequest): Promise<import('./types.js').DisableFleetNodeResponse> { return notImpl('disableFleetNode'); }
-  async enableFleetNode(_req: import('./types.js').EnableFleetNodeRequest): Promise<import('./types.js').EnableFleetNodeResponse> { return notImpl('enableFleetNode'); }
+  async *inferenceStream(_req: InferenceRequest, _signal?: AbortSignal): AsyncIterable<InferenceChunk> { return noQuicRoute('inferenceStream'); }
+  async createWorkflow(_req: CreateWorkflowRequest): Promise<CreateWorkflowResponse> { return noQuicRoute('createWorkflow'); }
+  async listWorkflows(_tenantID: string): Promise<ListWorkflowsResponse> { return noQuicRoute('listWorkflows'); }
+  async getWorkflow(_tenantID: string, _name: string): Promise<WorkflowDefinition> { return noQuicRoute('getWorkflow'); }
+  async updateWorkflow(_name: string, _def: WorkflowDefinition): Promise<WorkflowDefinition> { return noQuicRoute('updateWorkflow'); }
+  async deleteWorkflow(_tenantID: string, _name: string): Promise<void> { return noQuicRoute('deleteWorkflow'); }
+  async createTask(_req: CreateTaskRequest): Promise<CreateTaskResponse> { return noQuicRoute('createTask'); }
+  async claimTask(_req: ClaimTaskRequest): Promise<void> { return noQuicRoute('claimTask'); }
+  async completeTask(_req: CompleteTaskRequest): Promise<void> { return noQuicRoute('completeTask'); }
+  async readmitTask(_tenantID: string, _taskID: string): Promise<void> { return noQuicRoute('readmitTask'); }
+  async deleteTask(_req: import('./types.js').DeleteTaskRequest): Promise<import('./types.js').DeleteTaskResponse> { return noQuicRoute('deleteTask'); }
+  async listAttention(_tenantID: string, _page?: import('./page.js').AttentionPageParams): Promise<import('./page.js').PageResult<import('./types.js').AttentionItem>> { return noQuicRoute('listAttention'); }
+  async resolveAttention(_req: import('./types.js').AttentionResolveRequest): Promise<import('./types.js').AttentionItem> { return noQuicRoute('resolveAttention'); }
+  async decomposeTask(_req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> { return noQuicRoute('decomposeTask'); }
+  async registerFleetNode(_req: RegisterFleetNodeRequest): Promise<RegisterFleetNodeResponse> { return noQuicRoute('registerFleetNode'); }
+  async removeFleetNode(_req: RemoveFleetNodeRequest): Promise<void> { return noQuicRoute('removeFleetNode'); }
+  async disableFleetNode(_req: import('./types.js').DisableFleetNodeRequest): Promise<import('./types.js').DisableFleetNodeResponse> { return noQuicRoute('disableFleetNode'); }
+  async enableFleetNode(_req: import('./types.js').EnableFleetNodeRequest): Promise<import('./types.js').EnableFleetNodeResponse> { return noQuicRoute('enableFleetNode'); }
 }
 
 class QuicAuthClient implements AuthClient {
-  async authValidate(_token?: string): Promise<boolean> { return notImpl('authValidate'); }
-  async authLogin(_credentials: { username: string; password: string }): Promise<void> { return notImpl('authLogin'); }
-  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').WebAuthnLoginChallenge> { return notImpl('webAuthnBeginLogin'); }
-  async webAuthnFinishLogin(_challenge: import('./types.js').WebAuthnLoginChallenge, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return notImpl('webAuthnFinishLogin'); }
-  async loginPIV(): Promise<import('./types.js').AuthTokenResponse> { return notImpl('loginPIV'); }
-  async logout(_token?: string): Promise<void> { return notImpl('logout'); }
-  async registerBegin(_req: import('./interfaces.js').SelfRegisterBeginRequest): Promise<import('./interfaces.js').SelfRegisterBeginResponse> { return notImpl('registerBegin'); }
-  async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return notImpl('registerFinish'); }
+  async authValidate(_token?: string): Promise<boolean> { return frameOnly('auth', 'authValidate'); }
+  async authLogin(_credentials: { username: string; password: string }): Promise<void> { return frameOnly('auth', 'authLogin'); }
+  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').WebAuthnLoginChallenge> { return frameOnly('auth', 'webAuthnBeginLogin'); }
+  async webAuthnFinishLogin(_challenge: import('./types.js').WebAuthnLoginChallenge, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return frameOnly('auth', 'webAuthnFinishLogin'); }
+  async loginPIV(): Promise<import('./types.js').AuthTokenResponse> { return frameOnly('auth', 'loginPIV'); }
+  async logout(_token?: string): Promise<void> { return frameOnly('auth', 'logout'); }
+  async registerBegin(_req: import('./interfaces.js').SelfRegisterBeginRequest): Promise<import('./interfaces.js').SelfRegisterBeginResponse> { return frameOnly('auth', 'registerBegin'); }
+  async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return frameOnly('auth', 'registerFinish'); }
 }
 
-// QuicBarrierClient is a stub BarrierClient that throws QuicNotImplementedError
-// on every call. Real QUIC streaming wiring will replace this stub.
+// QuicBarrierClient refuses every verb: go-qrdb serves barrier.* on the QUIC
+// listener's frame protocol, which this SDK does not speak.
 export class QuicBarrierClient implements BarrierClient {
-  async status(): Promise<BarrierStatusResponse> { return notImpl('barrier.status'); }
-  async initialize(_req: BarrierInitRequest): Promise<void> { return notImpl('barrier.initialize'); }
-  async unseal(_req: BarrierUnsealRequest): Promise<void> { return notImpl('barrier.unseal'); }
-  async seal(): Promise<void> { return notImpl('barrier.seal'); }
-  async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return notImpl('barrier.initializeShamir'); }
-  async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return notImpl('barrier.unsealWithShare'); }
-  async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return notImpl('barrier.unsealWithShares'); }
-  async shamirListShares(): Promise<BarrierShamirSharesResponse> { return notImpl('barrier.shamirListShares'); }
-  async shamirDeleteShare(_req: BarrierShamirDeleteShareRequest): Promise<void> { return notImpl('barrier.shamirDeleteShare'); }
-  async shamirDeleteAllShares(): Promise<void> { return notImpl('barrier.shamirDeleteAllShares'); }
-  async shamirVerify(): Promise<void> { return notImpl('barrier.shamirVerify'); }
-  async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return notImpl('barrier.rekey'); }
-  async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return notImpl('barrier.generateRecoveryKeys'); }
-  async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return notImpl('barrier.recoverWithKeys'); }
-  async deleteRecoveryKeys(): Promise<void> { return notImpl('barrier.deleteRecoveryKeys'); }
-  async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return notImpl('barrier.recoveryStatus'); }
-  async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return notImpl('barrier.generateRootToken'); }
+  async status(): Promise<BarrierStatusResponse> { return frameOnly('barrier', 'status'); }
+  async initialize(_req: BarrierInitRequest): Promise<void> { return frameOnly('barrier', 'initialize'); }
+  async unseal(_req: BarrierUnsealRequest): Promise<void> { return frameOnly('barrier', 'unseal'); }
+  async seal(): Promise<void> { return frameOnly('barrier', 'seal'); }
+  async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return frameOnly('barrier', 'initializeShamir'); }
+  async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return frameOnly('barrier', 'unsealWithShare'); }
+  async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return frameOnly('barrier', 'unsealWithShares'); }
+  async shamirListShares(): Promise<BarrierShamirSharesResponse> { return frameOnly('barrier', 'shamirListShares'); }
+  async shamirDeleteShare(_req: BarrierShamirDeleteShareRequest): Promise<void> { return frameOnly('barrier', 'shamirDeleteShare'); }
+  async shamirDeleteAllShares(): Promise<void> { return frameOnly('barrier', 'shamirDeleteAllShares'); }
+  async shamirVerify(): Promise<void> { return frameOnly('barrier', 'shamirVerify'); }
+  async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return frameOnly('barrier', 'rekey'); }
+  async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return frameOnly('barrier', 'generateRecoveryKeys'); }
+  async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return frameOnly('barrier', 'recoverWithKeys'); }
+  async deleteRecoveryKeys(): Promise<void> { return frameOnly('barrier', 'deleteRecoveryKeys'); }
+  async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return frameOnly('barrier', 'recoveryStatus'); }
+  async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return frameOnly('barrier', 'generateRootToken'); }
 }
 
-// QuicCeremonyClient is a stub CeremonyClient that throws
-// QuicNotImplementedError on every call.
+// QuicCeremonyClient refuses every verb: go-qrdb serves ceremony.* on the QUIC
+// listener's frame protocol, which this SDK does not speak.
 export class QuicCeremonyClient implements CeremonyClient {
-  async initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> { return notImpl('ceremony.initialize'); }
-  async status(): Promise<CeremonyStatusResponse> { return notImpl('ceremony.status'); }
-  async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return notImpl('ceremony.claimCertBegin'); }
-  async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return notImpl('ceremony.claimCertComplete'); }
-  async claimShare(_req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse> { return notImpl('ceremony.claimShare'); }
-  async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return notImpl('ceremony.signCSR'); }
-  async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return notImpl('ceremony.enrollExternalOfficer'); }
+  async initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> { return frameOnly('ceremony', 'initialize'); }
+  async status(): Promise<CeremonyStatusResponse> { return frameOnly('ceremony', 'status'); }
+  async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return frameOnly('ceremony', 'claimCertBegin'); }
+  async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return frameOnly('ceremony', 'claimCertComplete'); }
+  async claimShare(_req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse> { return frameOnly('ceremony', 'claimShare'); }
+  async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return frameOnly('ceremony', 'signCSR'); }
+  async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return frameOnly('ceremony', 'enrollExternalOfficer'); }
 }
 
-// QuicBootstrapClient is a stub BootstrapClient that throws
-// QuicNotImplementedError on every call.
+// QuicBootstrapClient refuses every verb with QuicNotImplementedError.
 export class QuicBootstrapClient implements BootstrapClient {
-  async auto(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.auto'); }
-  async dane(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.dane'); }
-  async noise(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.noise'); }
-  async spki(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.spki'); }
+  async auto(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return frameOnly('bootstrap', 'auto'); }
+  async dane(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return frameOnly('bootstrap', 'dane'); }
+  async noise(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return frameOnly('bootstrap', 'noise'); }
+  async spki(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return frameOnly('bootstrap', 'spki'); }
 }
 
-// QuicClient is the stub entry point for the QUIC transport.
+// QuicClient is the entry point for the QUIC transport. It sends nothing: every
+// verb refuses with a typed reason (see quicUnsupported).
 export class QuicClient implements Client {
   readonly connection: ConnectionClient;
   readonly orchestrator: OrchestratorClient;

@@ -2661,6 +2661,30 @@ fully, and on one that stopped anywhere in between, and it is idempotent. So
 the deferred call belongs immediately after `NewServer`, before the `Start`
 error check — as in the *Mount it* example above.
 
+## Admin-factor validation (go-qrdb re-export)
+
+Every daemon in the stack parses the first-boot admin factors
+(`auth.admin_factors`, `--admin-factor`) through go-qrdb's one parser. A
+consumer validates the same setting at config load through the SDK, so its
+vocabulary cannot drift from the daemons'. These names are aliases of the
+go-qrdb SDK names (`sdk/go/types_admin_factor.go`):
+
+| Name | Purpose |
+|---|---|
+| `ParseAdminFactors(values []string) (*AdminEnrollmentPlan, error)` | Case and whitespace are normalised, comma lists and repeated values mix, duplicates collapse, mTLS is enrolled first, and an empty list yields the mTLS baseline |
+| `AdminEnrollmentPlan` | The ordered plan: `Factors()`, `Includes(f)` |
+| `AdminFactor` | One factor name (`mtls`, `fido2`, `piv`) |
+| `UnsupportedAdminFactorError` | Returned for a name this build cannot enroll; `Factor` holds the rejected name. Match with `errors.As` |
+
+```go
+_, err := quicbaas.ParseAdminFactors(cfg.Auth.AdminFactors)
+var unsupported *quicbaas.UnsupportedAdminFactorError
+if errors.As(err, &unsupported) {
+    // unsupported.Factor is the name the operator wrote; the error text
+    // lists the accepted names.
+}
+```
+
 ## go-xkms re-exports (`sdk/go/xkms/...`)
 
 `sdk/go/xkms` and its sub-packages give a consumer that must not import go-xkms
@@ -2680,6 +2704,7 @@ never a wrapper, so a value crosses the boundary without conversion and
 | `sdk/go/xkms/signserver` | The node-local, sign-only xkms server a remote-mode PKCS#11 module signs through (`Server`, `Config`, `Slot`, `New`), and KMS key-create with PKCS#11 identity: `ProvisionECKeyPair`, `KeyRequest`, `KeyPairRequest`, `ProvisionConfig`, `NewRemoteStorage` create a key with exactly the `CKA_LABEL` and `CKA_ID` the module exposes |
 | `sdk/go/xkms/spiffe` | SPIFFE IDs: `ParseTrustDomain`, `ParseWorkloadID`, `WorkloadIDFromURL`, `BuildURI`, `ParseID`, `TenantFromURIs`, `ID`, `WorkloadID`, `TrustDomain` |
 | `sdk/go/xkms/ssh/knownhosts` | The known_hosts store (`Store`, `NewBackendStore`, `Pin`, `PinFromPublicKey`, `ImportKnownHostsFile`) and the OpenSSH fingerprint validator (go-quicbaas#382): `ValidateFingerprint` accepts the `SHA256:<base64>` form `ssh-keygen -lf` prints and returns `*InvalidFingerprintError` otherwise |
+| `sdk/go/xkms/trust/fetcher` | The SPKI-pinned CA-bundle fetcher's defaults: `DefaultBundlePath` (`/v1/ca/bootstrap`) and `DefaultTimeout`, so the server that serves the bundle and the client that fetches it name one endpoint |
 | `sdk/go/xkms/{backend,certstore,fido2,luks,secure,ssh,storage,transport,trust}` | Keystore backends, certificate stores, FIDO2, LUKS, protected memory, SSH, storage, transport and trust bootstrap |
 
 ### Obtaining the PKCS#11 provider module (`libxkms_pkcs11.so`)

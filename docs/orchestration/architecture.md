@@ -3131,6 +3131,40 @@ The stream-json and one-shot paths normalise a completed turn to
 identically. An agent-reported stop reason (for example `max_tokens`) is always
 preserved; the CLI prints it whenever it is not an ordinary end of turn.
 
+#### Tool use in a turn's content (go-quicbaas#799)
+
+`PromptResponse.Content` holds every block of the turn, in order. Text
+blocks carry their words. A `tool_use`, `tool_result`, `thinking` or
+`unreadable` block carries no payload: only its identifiers and size
+(`tool_name`, `tool_use_id`, `is_error`, `bytes`). Its `text` is empty, so
+code that joins the text of every block still reads only the answer.
+OpenVINO's tool_use blocks are the one exception: they carry a bounded
+summary of the call. A block that cannot be decoded becomes an `unreadable`
+block. The text around it is kept.
+
+`PromptResponse.ToolUse` is the turn's tool census, the number of tool calls
+the agent made. A nil census means the backend does not report tool use; a
+zero census means it reported and no tool ran, the way a nil `Usage` differs
+from a zero one. The content fields cross every gRPC hop. The census does not
+yet cross the fleet wire, so a remote turn's census is nil.
+
+| Backend path | Blocks kept | `ToolUse` |
+|--------------|-------------|-----------|
+| stream-json CLI (claude) | text, thinking, tool_use, tool_result, unreadable | one call per tool_use block |
+| codex `exec --json` | text, thinking (`reasoning`), tool_use + tool_result per tool item, unreadable | one call per tool item |
+| OpenVINO tool loop | text, tool_use per command the loop ran | one call per command |
+| Ollama, API inference | text; the request offers no tools | zero |
+| ACP JSON-RPC (opencode, codex) | text; `tool_call` updates reach attachers only | one call per `tool_call` update |
+| One-shot CLI (`--output-format json`) | text from the result object | nil |
+| remote_acp | whatever the daemon's backend kept | nil |
+
+The sdlc turn census (`pkg/sdlc/turn.go`) takes its tool count from
+`PromptResponse.ToolUse`. When the census is nil, it counts the turn's
+`tool_use` blocks instead; a nil census with no `tool_use` block prints
+`tool_uses=unreported`. A turn whose tool use was not reported is never
+classified as a non-answer, because "used no tool" is one of that rule's
+measured conditions.
+
 ### Protocol Types
 
 #### Core Message Types
@@ -3154,7 +3188,7 @@ preserved; the CLI prints it whenever it is not an ordinary end of turn.
 | `SessionUpdate` | Event from agent during prompt execution. Contains content or a tool call. |
 | `ToolCall` | Agent requesting tool execution: `id`, `name`, `arguments`. |
 | `ToolResult` | Response sent back to agent: `tool_call_id`, `content`, `is_error`. |
-| `ContentBlock` | A unit of response content with `type` (e.g., `"text"`) and `text`. |
+| `ContentBlock` | One block of a turn: `type` (`text`, `tool_use`, `tool_result`, `thinking`, `unreadable`), `text` for words, and `tool_name`, `tool_use_id`, `is_error` and `bytes` for the rest. |
 
 ### Callback Handling
 

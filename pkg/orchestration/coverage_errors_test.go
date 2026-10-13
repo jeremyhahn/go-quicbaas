@@ -377,6 +377,9 @@ func TestCodexExecBackend_PromptSuccess(t *testing.T) {
 	if len(resp.Content) != 1 || resp.Content[0].Text != "OK" {
 		t.Fatalf("content = %+v, want the agent message OK", resp.Content)
 	}
+	if resp.ToolUse == nil || resp.ToolUse.Calls != 0 {
+		t.Fatalf("ToolUse = %+v, want a zero census: codex exec publishes every tool item, so a turn with none ran none", resp.ToolUse)
+	}
 	// codex's input_tokens includes the cached part; the fresh prompt is the
 	// difference (codexExecUsage).
 	if resp.Usage == nil || resp.Usage.InputTokens != 3073 || resp.Usage.CacheReadInputTokens != 12160 || resp.Usage.OutputTokens != 5 {

@@ -13,11 +13,11 @@
 
 // UnixClient is the transport implementation for Unix domain sockets.
 //
-// OPERATOR NOTE: This transport is only available in Node.js environments.
-// It requires a Node.js net.Socket adapter that speaks the same framing
-// protocol as the go-quicbaas UNIX transport server. The implementation
-// must be added here before this transport can be used. Browser environments
-// will always throw UnixNotImplementedError.
+// The server's Unix listener serves native gRPC over AF_UNIX and nothing
+// else. This SDK carries no gRPC client or generated stubs, so every verb
+// that needs the daemon rejects with TransportNotSupportedError naming the
+// family, the verb and the reason (see unixUnsupported). Browsers cannot open
+// a socket at all.
 
 import type { AuthClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
@@ -92,27 +92,16 @@ import {
   type SessionPageParams,
   type TaskPageParams,
 } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
+import { DeployNotSupportedError, TransportNotSupportedError } from './errors.js';
 
-// UnixNotImplementedError is thrown by all methods until the Unix socket
-// adapter is wired into this file.
-export class UnixNotImplementedError extends QuicBaaSError {
-  constructor(method: string) {
-    super(
-      `unix transport: ${method} not implemented. ` +
-      'Add a Node.js net.Socket adapter that speaks the go-quicbaas framing protocol.',
-    );
-    this.name = 'UnixNotImplementedError';
-  }
+// refuse rejects one verb of a family this transport cannot carry yet.
+function refuse(family: string, method: string): never {
+  throw new TransportNotSupportedError('unix', family, unixUnsupported, method);
 }
 
-function notImpl(method: string): never {
-  throw new UnixNotImplementedError(method);
-}
-
-// unixUnsupported is why projects, sdlc and accounts refuse here. The Unix
-// wire is gRPC over AF_UNIX, and the server does serve ProjectService,
-// SDLCService and AccountService on it; but speaking gRPC needs an HTTP/2
+// unixUnsupported is why every family refuses here. The Unix wire is gRPC
+// over AF_UNIX, and the server does serve the orchestrator, auth, projects,
+// sdlc and accounts services on it; but speaking gRPC needs an HTTP/2
 // gRPC client and generated stubs, which this SDK (no runtime dependencies)
 // does not carry, and a browser cannot open a socket at all.
 const unixUnsupported =
@@ -127,8 +116,8 @@ class UnixConnectionClient implements ConnectionClient {
     this._socketPath = socketPath;
   }
 
-  async connect(_address: string): Promise<void> { notImpl('connect'); }
-  async disconnect(): Promise<void> { notImpl('disconnect'); }
+  async connect(_address: string): Promise<void> { refuse('connection', 'connect'); }
+  async disconnect(): Promise<void> { refuse('connection', 'disconnect'); }
   isConnected(): boolean { return false; }
   getAddress(): string { return this._socketPath; }
   getTransport(): string { return this._transport; }
@@ -139,7 +128,7 @@ class UnixOrchestratorClient implements OrchestratorClient {
   // =========================================================================
   // The paged listings
   //
-  // This transport is not wired to the Unix socket yet, so every listing
+  // This transport cannot speak the Unix socket's gRPC yet, so every listing
   // here refuses through its unpaged sibling rather than answering a page it
   // never fetched.
   //
@@ -189,68 +178,68 @@ class UnixOrchestratorClient implements OrchestratorClient {
     return wholeSetPage(resp.workflows ?? []);
   }
 
-  async listJobs(_tenantID: string, _taskID?: string): Promise<JobStatus[]> { return notImpl('listJobs'); }
-  async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return notImpl('getJobStatus'); }
-  async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return notImpl('startJob'); }
-  async cancelJob(_tenantID: string, _jobID: string): Promise<void> { return notImpl('cancelJob'); }
-  async listFleetNodes(_req: ListFleetNodesRequest): Promise<ListFleetNodesResponse> { return notImpl('listFleetNodes'); }
-  async getFleetNode(_req: GetFleetNodeRequest): Promise<FleetNode> { return notImpl('getFleetNode'); }
-  async listSessions(_req: ListSessionsRequest): Promise<ListSessionsResponse> { return notImpl('listSessions'); }
-  async listTasks(_tenantID: string): Promise<Task[]> { return notImpl('listTasks'); }
-  async getTask(_tenantID: string, _taskID: string): Promise<Task> { return notImpl('getTask'); }
-  async listBackends(): Promise<AgentBackendInfo[]> { return notImpl('listBackends'); }
+  async listJobs(_tenantID: string, _taskID?: string): Promise<JobStatus[]> { return refuse('orchestrator', 'listJobs'); }
+  async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return refuse('orchestrator', 'getJobStatus'); }
+  async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return refuse('orchestrator', 'startJob'); }
+  async cancelJob(_tenantID: string, _jobID: string): Promise<void> { return refuse('orchestrator', 'cancelJob'); }
+  async listFleetNodes(_req: ListFleetNodesRequest): Promise<ListFleetNodesResponse> { return refuse('orchestrator', 'listFleetNodes'); }
+  async getFleetNode(_req: GetFleetNodeRequest): Promise<FleetNode> { return refuse('orchestrator', 'getFleetNode'); }
+  async listSessions(_req: ListSessionsRequest): Promise<ListSessionsResponse> { return refuse('orchestrator', 'listSessions'); }
+  async listTasks(_tenantID: string): Promise<Task[]> { return refuse('orchestrator', 'listTasks'); }
+  async getTask(_tenantID: string, _taskID: string): Promise<Task> { return refuse('orchestrator', 'getTask'); }
+  async listBackends(): Promise<AgentBackendInfo[]> { return refuse('orchestrator', 'listBackends'); }
 
-  async listRunners(): Promise<JobRunnerInfo[]> { return notImpl('listRunners'); }
-  async listBackendModels(_agentID: string, _backendName: string): Promise<string[]> { return notImpl('listBackendModels'); }
-  async healthCheck(): Promise<HealthCheckReport> { return notImpl('healthCheck'); }
-  subscribeJobEvents(_tenantID: string, _jobID: string, _onEvent: (event: JobEvent) => void): () => void { return notImpl('subscribeJobEvents'); }
-  async spawnSession(_req: SpawnSessionRequest): Promise<SpawnSessionResponse> { return notImpl('spawnSession'); }
-  async promptSession(_req: PromptSessionRequest): Promise<PromptSessionResponse> { return notImpl('promptSession'); }
-  async closeSession(_req: CloseSessionRequest): Promise<CloseSessionResponse> { return notImpl('closeSession'); }
-  async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> { return notImpl('rotateSessionAccount'); }
-  async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return notImpl('getSessionHistory'); }
-  async getSessionConversation(_req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> { return notImpl('getSessionConversation'); }
-  async getSpendReport(_req: GetSpendReportRequest): Promise<GetSpendReportResponse> { return notImpl('getSpendReport'); }
-  async getTenantSpendPolicy(_req: GetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('getTenantSpendPolicy'); }
-  async setTenantSpendPolicy(_req: SetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('setTenantSpendPolicy'); }
-  async getCostSettings(_req: GetCostSettingsRequest): Promise<CostSettings> { return notImpl('getCostSettings'); }
-  async setCostSettings(_req: SetCostSettingsRequest): Promise<CostSettings> { return notImpl('setCostSettings'); }
-  async getWorkerImageStatus(): Promise<WorkerImageStatus> { return notImpl('getWorkerImageStatus'); }
-  async refreshWorkerImage(): Promise<WorkerImageStatus> { return notImpl('refreshWorkerImage'); }
+  async listRunners(): Promise<JobRunnerInfo[]> { return refuse('orchestrator', 'listRunners'); }
+  async listBackendModels(_agentID: string, _backendName: string): Promise<string[]> { return refuse('orchestrator', 'listBackendModels'); }
+  async healthCheck(): Promise<HealthCheckReport> { return refuse('orchestrator', 'healthCheck'); }
+  subscribeJobEvents(_tenantID: string, _jobID: string, _onEvent: (event: JobEvent) => void): () => void { return refuse('orchestrator', 'subscribeJobEvents'); }
+  async spawnSession(_req: SpawnSessionRequest): Promise<SpawnSessionResponse> { return refuse('orchestrator', 'spawnSession'); }
+  async promptSession(_req: PromptSessionRequest): Promise<PromptSessionResponse> { return refuse('orchestrator', 'promptSession'); }
+  async closeSession(_req: CloseSessionRequest): Promise<CloseSessionResponse> { return refuse('orchestrator', 'closeSession'); }
+  async rotateSessionAccount(_req: RotateSessionAccountRequest): Promise<RotateSessionAccountResponse> { return refuse('orchestrator', 'rotateSessionAccount'); }
+  async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return refuse('orchestrator', 'getSessionHistory'); }
+  async getSessionConversation(_req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> { return refuse('orchestrator', 'getSessionConversation'); }
+  async getSpendReport(_req: GetSpendReportRequest): Promise<GetSpendReportResponse> { return refuse('orchestrator', 'getSpendReport'); }
+  async getTenantSpendPolicy(_req: GetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return refuse('orchestrator', 'getTenantSpendPolicy'); }
+  async setTenantSpendPolicy(_req: SetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return refuse('orchestrator', 'setTenantSpendPolicy'); }
+  async getCostSettings(_req: GetCostSettingsRequest): Promise<CostSettings> { return refuse('orchestrator', 'getCostSettings'); }
+  async setCostSettings(_req: SetCostSettingsRequest): Promise<CostSettings> { return refuse('orchestrator', 'setCostSettings'); }
+  async getWorkerImageStatus(): Promise<WorkerImageStatus> { return refuse('orchestrator', 'getWorkerImageStatus'); }
+  async refreshWorkerImage(): Promise<WorkerImageStatus> { return refuse('orchestrator', 'refreshWorkerImage'); }
   // eslint-disable-next-line @typescript-eslint/require-await
-  async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return notImpl('subscribeSession'); }
+  async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return refuse('orchestrator', 'subscribeSession'); }
   async deployFleetNode(_spec: DeployFleetNodeSpec): Promise<DeployFleetNodeResult> { throw new DeployNotSupportedError('unix'); }
-  async inference(_req: InferenceRequest): Promise<InferenceResponse> { return notImpl('inference'); }
+  async inference(_req: InferenceRequest): Promise<InferenceResponse> { return refuse('orchestrator', 'inference'); }
   // eslint-disable-next-line @typescript-eslint/require-await
-  async *inferenceStream(_req: InferenceRequest, _signal?: AbortSignal): AsyncIterable<InferenceChunk> { return notImpl('inferenceStream'); }
-  async createWorkflow(_req: CreateWorkflowRequest): Promise<CreateWorkflowResponse> { return notImpl('createWorkflow'); }
-  async listWorkflows(_tenantID: string): Promise<ListWorkflowsResponse> { return notImpl('listWorkflows'); }
-  async getWorkflow(_tenantID: string, _name: string): Promise<WorkflowDefinition> { return notImpl('getWorkflow'); }
-  async updateWorkflow(_name: string, _def: WorkflowDefinition): Promise<WorkflowDefinition> { return notImpl('updateWorkflow'); }
-  async deleteWorkflow(_tenantID: string, _name: string): Promise<void> { return notImpl('deleteWorkflow'); }
-  async createTask(_req: CreateTaskRequest): Promise<CreateTaskResponse> { return notImpl('createTask'); }
-  async claimTask(_req: ClaimTaskRequest): Promise<void> { return notImpl('claimTask'); }
-  async completeTask(_req: CompleteTaskRequest): Promise<void> { return notImpl('completeTask'); }
-  async readmitTask(_tenantID: string, _taskID: string): Promise<void> { return notImpl('readmitTask'); }
-  async deleteTask(_req: import('./types.js').DeleteTaskRequest): Promise<import('./types.js').DeleteTaskResponse> { return notImpl('deleteTask'); }
-  async listAttention(_tenantID: string, _page?: import('./page.js').AttentionPageParams): Promise<import('./page.js').PageResult<import('./types.js').AttentionItem>> { return notImpl('listAttention'); }
-  async resolveAttention(_req: import('./types.js').AttentionResolveRequest): Promise<import('./types.js').AttentionItem> { return notImpl('resolveAttention'); }
-  async decomposeTask(_req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> { return notImpl('decomposeTask'); }
-  async registerFleetNode(_req: RegisterFleetNodeRequest): Promise<RegisterFleetNodeResponse> { return notImpl('registerFleetNode'); }
-  async removeFleetNode(_req: RemoveFleetNodeRequest): Promise<void> { return notImpl('removeFleetNode'); }
-  async disableFleetNode(_req: import('./types.js').DisableFleetNodeRequest): Promise<import('./types.js').DisableFleetNodeResponse> { return notImpl('disableFleetNode'); }
-  async enableFleetNode(_req: import('./types.js').EnableFleetNodeRequest): Promise<import('./types.js').EnableFleetNodeResponse> { return notImpl('enableFleetNode'); }
+  async *inferenceStream(_req: InferenceRequest, _signal?: AbortSignal): AsyncIterable<InferenceChunk> { return refuse('orchestrator', 'inferenceStream'); }
+  async createWorkflow(_req: CreateWorkflowRequest): Promise<CreateWorkflowResponse> { return refuse('orchestrator', 'createWorkflow'); }
+  async listWorkflows(_tenantID: string): Promise<ListWorkflowsResponse> { return refuse('orchestrator', 'listWorkflows'); }
+  async getWorkflow(_tenantID: string, _name: string): Promise<WorkflowDefinition> { return refuse('orchestrator', 'getWorkflow'); }
+  async updateWorkflow(_name: string, _def: WorkflowDefinition): Promise<WorkflowDefinition> { return refuse('orchestrator', 'updateWorkflow'); }
+  async deleteWorkflow(_tenantID: string, _name: string): Promise<void> { return refuse('orchestrator', 'deleteWorkflow'); }
+  async createTask(_req: CreateTaskRequest): Promise<CreateTaskResponse> { return refuse('orchestrator', 'createTask'); }
+  async claimTask(_req: ClaimTaskRequest): Promise<void> { return refuse('orchestrator', 'claimTask'); }
+  async completeTask(_req: CompleteTaskRequest): Promise<void> { return refuse('orchestrator', 'completeTask'); }
+  async readmitTask(_tenantID: string, _taskID: string): Promise<void> { return refuse('orchestrator', 'readmitTask'); }
+  async deleteTask(_req: import('./types.js').DeleteTaskRequest): Promise<import('./types.js').DeleteTaskResponse> { return refuse('orchestrator', 'deleteTask'); }
+  async listAttention(_tenantID: string, _page?: import('./page.js').AttentionPageParams): Promise<import('./page.js').PageResult<import('./types.js').AttentionItem>> { return refuse('orchestrator', 'listAttention'); }
+  async resolveAttention(_req: import('./types.js').AttentionResolveRequest): Promise<import('./types.js').AttentionItem> { return refuse('orchestrator', 'resolveAttention'); }
+  async decomposeTask(_req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> { return refuse('orchestrator', 'decomposeTask'); }
+  async registerFleetNode(_req: RegisterFleetNodeRequest): Promise<RegisterFleetNodeResponse> { return refuse('orchestrator', 'registerFleetNode'); }
+  async removeFleetNode(_req: RemoveFleetNodeRequest): Promise<void> { return refuse('orchestrator', 'removeFleetNode'); }
+  async disableFleetNode(_req: import('./types.js').DisableFleetNodeRequest): Promise<import('./types.js').DisableFleetNodeResponse> { return refuse('orchestrator', 'disableFleetNode'); }
+  async enableFleetNode(_req: import('./types.js').EnableFleetNodeRequest): Promise<import('./types.js').EnableFleetNodeResponse> { return refuse('orchestrator', 'enableFleetNode'); }
 }
 
 class UnixAuthClient implements AuthClient {
-  async authValidate(_token?: string): Promise<boolean> { return notImpl('authValidate'); }
-  async authLogin(_credentials: { username: string; password: string }): Promise<void> { return notImpl('authLogin'); }
-  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').WebAuthnLoginChallenge> { return notImpl('webAuthnBeginLogin'); }
-  async webAuthnFinishLogin(_challenge: import('./types.js').WebAuthnLoginChallenge, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return notImpl('webAuthnFinishLogin'); }
-  async loginPIV(): Promise<import('./types.js').AuthTokenResponse> { return notImpl('loginPIV'); }
-  async logout(_token?: string): Promise<void> { return notImpl('logout'); }
-  async registerBegin(_req: import('./interfaces.js').SelfRegisterBeginRequest): Promise<import('./interfaces.js').SelfRegisterBeginResponse> { return notImpl('registerBegin'); }
-  async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return notImpl('registerFinish'); }
+  async authValidate(_token?: string): Promise<boolean> { return refuse('auth', 'authValidate'); }
+  async authLogin(_credentials: { username: string; password: string }): Promise<void> { return refuse('auth', 'authLogin'); }
+  async webAuthnBeginLogin(_tenantID: string, _email: string): Promise<import('./types.js').WebAuthnLoginChallenge> { return refuse('auth', 'webAuthnBeginLogin'); }
+  async webAuthnFinishLogin(_challenge: import('./types.js').WebAuthnLoginChallenge, _credential: import('./types.js').PublicKeyCredentialJSON): Promise<import('./types.js').AuthTokenResponse> { return refuse('auth', 'webAuthnFinishLogin'); }
+  async loginPIV(): Promise<import('./types.js').AuthTokenResponse> { return refuse('auth', 'loginPIV'); }
+  async logout(_token?: string): Promise<void> { return refuse('auth', 'logout'); }
+  async registerBegin(_req: import('./interfaces.js').SelfRegisterBeginRequest): Promise<import('./interfaces.js').SelfRegisterBeginResponse> { return refuse('auth', 'registerBegin'); }
+  async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return refuse('auth', 'registerFinish'); }
 }
 
 // UnixClient is the stub entry point for the Unix domain socket transport.

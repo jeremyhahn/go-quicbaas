@@ -1190,7 +1190,14 @@ func runtimeContentBlocksToProto(blocks []orchestration.ContentBlock) []*proto.C
 	}
 	out := make([]*proto.ContentBlock, len(blocks))
 	for i, b := range blocks {
-		out[i] = &proto.ContentBlock{Type: b.Type, Text: b.Text}
+		out[i] = &proto.ContentBlock{
+			Type:      b.Type,
+			Text:      b.Text,
+			ToolName:  b.ToolName,
+			ToolUseId: b.ToolUseID,
+			IsError:   b.IsError,
+			Bytes:     int64(b.Bytes),
+		}
 	}
 	return out
 }

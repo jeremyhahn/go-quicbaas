@@ -12,36 +12,45 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 import { unsupportedClient } from './unsupported.js';
 import { wholeSetPage, } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
-// QuicNotImplementedError is thrown by all methods until a QUIC/WebTransport
-// library is wired into this file.
-export class QuicNotImplementedError extends QuicBaaSError {
-    constructor(method) {
-        super(`quic transport: ${method} not implemented. ` +
-            'Wire a WebTransport or QUIC client library for the go-quicbaas QUIC endpoint.');
+import { DeployNotSupportedError, TransportNotSupportedError } from './errors.js';
+// QuicNotImplementedError is the refusal every QUIC verb rejects with. It is a
+// TransportNotSupportedError, so it names the transport, family, method and
+// reason, and a refusal never reaches the network.
+export class QuicNotImplementedError extends TransportNotSupportedError {
+    constructor(family, method, reason) {
+        super('quic', family, reason, method);
         this.name = 'QuicNotImplementedError';
     }
 }
-function notImpl(method) {
-    throw new QuicNotImplementedError(method);
-}
-// quicUnsupported is why projects, sdlc and accounts refuse here. The server's
-// QUIC listener (pkg/server/transport_factory.go) speaks qrdb's frame protocol,
-// not REST over HTTP/3, and Node's fetch does not negotiate HTTP/3 anyway: a
-// REST client aimed at the QUIC endpoint would either fail against the real
-// listener or quietly fall back to TCP HTTP while claiming QUIC. Implementing
-// the frame protocol in TypeScript waits on an open owner decision on whether
-// and how a QUIC client listener is offered to SDK callers.
+// quicUnsupported is why most families refuse here. The server's QUIC listener
+// (pkg/server/transport_factory.go) speaks qrdb's frame protocol, not REST over
+// HTTP/3, and Node's fetch does not negotiate HTTP/3 anyway: a REST client
+// aimed at the QUIC endpoint would either fail against the real listener or
+// quietly fall back to TCP HTTP while claiming QUIC. Implementing the frame
+// protocol in TypeScript waits on an open owner decision on whether and how a
+// QUIC client listener is offered to SDK callers.
 const quicUnsupported = "the server's QUIC listener speaks qrdb's frame protocol, which this SDK " +
     'does not implement; use the rest transport';
+// quicNoOrchestratorRoute is why the orchestrator family refuses: even a frame
+// protocol client would find no method to call, because quicbaas's API module
+// does not implement go-qrdb's RegisterQUIC hook (go-quicbaas#819), so the QUIC
+// listener serves no orchestration, cost or worker-image verb.
+const quicNoOrchestratorRoute = "the server's QUIC listener serves no orchestrator method (quicbaas's API " +
+    "module does not implement go-qrdb's RegisterQUIC hook); use the rest transport";
+function frameOnly(family, method) {
+    throw new QuicNotImplementedError(family, method, quicUnsupported);
+}
+function noQuicRoute(method) {
+    throw new QuicNotImplementedError('orchestrator', method, quicNoOrchestratorRoute);
+}
 class QuicConnectionClient {
     _endpoint;
     _transport = 'quic';
     constructor(endpoint) {
         this._endpoint = endpoint;
     }
-    async connect(_address) { notImpl('connect'); }
-    async disconnect() { notImpl('disconnect'); }
+    async connect(_address) { frameOnly('connection', 'connect'); }
+    async disconnect() { frameOnly('connection', 'disconnect'); }
     isConnected() { return false; }
     getAddress() { return this._endpoint; }
     getTransport() { return this._transport; }
@@ -93,108 +102,108 @@ class QuicOrchestratorClient {
         const resp = await this.listWorkflows(tenantID);
         return wholeSetPage(resp.workflows ?? []);
     }
-    async listJobs(_tenantID, _taskID) { return notImpl('listJobs'); }
-    async getJobStatus(_tenantID, _jobID) { return notImpl('getJobStatus'); }
-    async startJob(_req) { return notImpl('startJob'); }
-    async cancelJob(_tenantID, _jobID) { return notImpl('cancelJob'); }
-    async listFleetNodes(_req) { return notImpl('listFleetNodes'); }
-    async getFleetNode(_req) { return notImpl('getFleetNode'); }
-    async listSessions(_req) { return notImpl('listSessions'); }
-    async listTasks(_tenantID) { return notImpl('listTasks'); }
-    async getTask(_tenantID, _taskID) { return notImpl('getTask'); }
-    async listBackends() { return notImpl('listBackends'); }
-    async listRunners() { return notImpl('listRunners'); }
-    async listBackendModels(_agentID, _backendName) { return notImpl('listBackendModels'); }
-    async healthCheck() { return notImpl('healthCheck'); }
-    subscribeJobEvents(_tenantID, _jobID, _onEvent) { return notImpl('subscribeJobEvents'); }
-    async spawnSession(_req) { return notImpl('spawnSession'); }
-    async promptSession(_req) { return notImpl('promptSession'); }
-    async closeSession(_req) { return notImpl('closeSession'); }
-    async rotateSessionAccount(_req) { return notImpl('rotateSessionAccount'); }
-    async getSessionHistory(_req) { return notImpl('getSessionHistory'); }
-    async getSessionConversation(_req) { return notImpl('getSessionConversation'); }
-    async getSpendReport(_req) { return notImpl('getSpendReport'); }
-    async getTenantSpendPolicy(_req) { return notImpl('getTenantSpendPolicy'); }
-    async setTenantSpendPolicy(_req) { return notImpl('setTenantSpendPolicy'); }
-    async getCostSettings(_req) { return notImpl('getCostSettings'); }
-    async setCostSettings(_req) { return notImpl('setCostSettings'); }
-    async getWorkerImageStatus() { return notImpl('getWorkerImageStatus'); }
-    async refreshWorkerImage() { return notImpl('refreshWorkerImage'); }
+    async listJobs(_tenantID, _taskID) { return noQuicRoute('listJobs'); }
+    async getJobStatus(_tenantID, _jobID) { return noQuicRoute('getJobStatus'); }
+    async startJob(_req) { return noQuicRoute('startJob'); }
+    async cancelJob(_tenantID, _jobID) { return noQuicRoute('cancelJob'); }
+    async listFleetNodes(_req) { return noQuicRoute('listFleetNodes'); }
+    async getFleetNode(_req) { return noQuicRoute('getFleetNode'); }
+    async listSessions(_req) { return noQuicRoute('listSessions'); }
+    async listTasks(_tenantID) { return noQuicRoute('listTasks'); }
+    async getTask(_tenantID, _taskID) { return noQuicRoute('getTask'); }
+    async listBackends() { return noQuicRoute('listBackends'); }
+    async listRunners() { return noQuicRoute('listRunners'); }
+    async listBackendModels(_agentID, _backendName) { return noQuicRoute('listBackendModels'); }
+    async healthCheck() { return noQuicRoute('healthCheck'); }
+    subscribeJobEvents(_tenantID, _jobID, _onEvent) { return noQuicRoute('subscribeJobEvents'); }
+    async spawnSession(_req) { return noQuicRoute('spawnSession'); }
+    async promptSession(_req) { return noQuicRoute('promptSession'); }
+    async closeSession(_req) { return noQuicRoute('closeSession'); }
+    async rotateSessionAccount(_req) { return noQuicRoute('rotateSessionAccount'); }
+    async getSessionHistory(_req) { return noQuicRoute('getSessionHistory'); }
+    async getSessionConversation(_req) { return noQuicRoute('getSessionConversation'); }
+    async getSpendReport(_req) { return noQuicRoute('getSpendReport'); }
+    async getTenantSpendPolicy(_req) { return noQuicRoute('getTenantSpendPolicy'); }
+    async setTenantSpendPolicy(_req) { return noQuicRoute('setTenantSpendPolicy'); }
+    async getCostSettings(_req) { return noQuicRoute('getCostSettings'); }
+    async setCostSettings(_req) { return noQuicRoute('setCostSettings'); }
+    async getWorkerImageStatus() { return noQuicRoute('getWorkerImageStatus'); }
+    async refreshWorkerImage() { return noQuicRoute('refreshWorkerImage'); }
     // eslint-disable-next-line @typescript-eslint/require-await
-    async *subscribeSession(_req) { return notImpl('subscribeSession'); }
+    async *subscribeSession(_req) { return noQuicRoute('subscribeSession'); }
     async deployFleetNode(_spec) { throw new DeployNotSupportedError('quic'); }
-    async inference(_req) { return notImpl('inference'); }
+    async inference(_req) { return noQuicRoute('inference'); }
     // eslint-disable-next-line @typescript-eslint/require-await
-    async *inferenceStream(_req, _signal) { return notImpl('inferenceStream'); }
-    async createWorkflow(_req) { return notImpl('createWorkflow'); }
-    async listWorkflows(_tenantID) { return notImpl('listWorkflows'); }
-    async getWorkflow(_tenantID, _name) { return notImpl('getWorkflow'); }
-    async updateWorkflow(_name, _def) { return notImpl('updateWorkflow'); }
-    async deleteWorkflow(_tenantID, _name) { return notImpl('deleteWorkflow'); }
-    async createTask(_req) { return notImpl('createTask'); }
-    async claimTask(_req) { return notImpl('claimTask'); }
-    async completeTask(_req) { return notImpl('completeTask'); }
-    async readmitTask(_tenantID, _taskID) { return notImpl('readmitTask'); }
-    async deleteTask(_req) { return notImpl('deleteTask'); }
-    async listAttention(_tenantID, _page) { return notImpl('listAttention'); }
-    async resolveAttention(_req) { return notImpl('resolveAttention'); }
-    async decomposeTask(_req) { return notImpl('decomposeTask'); }
-    async registerFleetNode(_req) { return notImpl('registerFleetNode'); }
-    async removeFleetNode(_req) { return notImpl('removeFleetNode'); }
-    async disableFleetNode(_req) { return notImpl('disableFleetNode'); }
-    async enableFleetNode(_req) { return notImpl('enableFleetNode'); }
+    async *inferenceStream(_req, _signal) { return noQuicRoute('inferenceStream'); }
+    async createWorkflow(_req) { return noQuicRoute('createWorkflow'); }
+    async listWorkflows(_tenantID) { return noQuicRoute('listWorkflows'); }
+    async getWorkflow(_tenantID, _name) { return noQuicRoute('getWorkflow'); }
+    async updateWorkflow(_name, _def) { return noQuicRoute('updateWorkflow'); }
+    async deleteWorkflow(_tenantID, _name) { return noQuicRoute('deleteWorkflow'); }
+    async createTask(_req) { return noQuicRoute('createTask'); }
+    async claimTask(_req) { return noQuicRoute('claimTask'); }
+    async completeTask(_req) { return noQuicRoute('completeTask'); }
+    async readmitTask(_tenantID, _taskID) { return noQuicRoute('readmitTask'); }
+    async deleteTask(_req) { return noQuicRoute('deleteTask'); }
+    async listAttention(_tenantID, _page) { return noQuicRoute('listAttention'); }
+    async resolveAttention(_req) { return noQuicRoute('resolveAttention'); }
+    async decomposeTask(_req) { return noQuicRoute('decomposeTask'); }
+    async registerFleetNode(_req) { return noQuicRoute('registerFleetNode'); }
+    async removeFleetNode(_req) { return noQuicRoute('removeFleetNode'); }
+    async disableFleetNode(_req) { return noQuicRoute('disableFleetNode'); }
+    async enableFleetNode(_req) { return noQuicRoute('enableFleetNode'); }
 }
 class QuicAuthClient {
-    async authValidate(_token) { return notImpl('authValidate'); }
-    async authLogin(_credentials) { return notImpl('authLogin'); }
-    async webAuthnBeginLogin(_tenantID, _email) { return notImpl('webAuthnBeginLogin'); }
-    async webAuthnFinishLogin(_challenge, _credential) { return notImpl('webAuthnFinishLogin'); }
-    async loginPIV() { return notImpl('loginPIV'); }
-    async logout(_token) { return notImpl('logout'); }
-    async registerBegin(_req) { return notImpl('registerBegin'); }
-    async registerFinish(_req) { return notImpl('registerFinish'); }
+    async authValidate(_token) { return frameOnly('auth', 'authValidate'); }
+    async authLogin(_credentials) { return frameOnly('auth', 'authLogin'); }
+    async webAuthnBeginLogin(_tenantID, _email) { return frameOnly('auth', 'webAuthnBeginLogin'); }
+    async webAuthnFinishLogin(_challenge, _credential) { return frameOnly('auth', 'webAuthnFinishLogin'); }
+    async loginPIV() { return frameOnly('auth', 'loginPIV'); }
+    async logout(_token) { return frameOnly('auth', 'logout'); }
+    async registerBegin(_req) { return frameOnly('auth', 'registerBegin'); }
+    async registerFinish(_req) { return frameOnly('auth', 'registerFinish'); }
 }
-// QuicBarrierClient is a stub BarrierClient that throws QuicNotImplementedError
-// on every call. Real QUIC streaming wiring will replace this stub.
+// QuicBarrierClient refuses every verb: go-qrdb serves barrier.* on the QUIC
+// listener's frame protocol, which this SDK does not speak.
 export class QuicBarrierClient {
-    async status() { return notImpl('barrier.status'); }
-    async initialize(_req) { return notImpl('barrier.initialize'); }
-    async unseal(_req) { return notImpl('barrier.unseal'); }
-    async seal() { return notImpl('barrier.seal'); }
-    async initializeShamir(_req) { return notImpl('barrier.initializeShamir'); }
-    async unsealWithShare(_req) { return notImpl('barrier.unsealWithShare'); }
-    async unsealWithShares(_req) { return notImpl('barrier.unsealWithShares'); }
-    async shamirListShares() { return notImpl('barrier.shamirListShares'); }
-    async shamirDeleteShare(_req) { return notImpl('barrier.shamirDeleteShare'); }
-    async shamirDeleteAllShares() { return notImpl('barrier.shamirDeleteAllShares'); }
-    async shamirVerify() { return notImpl('barrier.shamirVerify'); }
-    async rekey(_req) { return notImpl('barrier.rekey'); }
-    async generateRecoveryKeys(_req) { return notImpl('barrier.generateRecoveryKeys'); }
-    async recoverWithKeys(_req) { return notImpl('barrier.recoverWithKeys'); }
-    async deleteRecoveryKeys() { return notImpl('barrier.deleteRecoveryKeys'); }
-    async recoveryStatus() { return notImpl('barrier.recoveryStatus'); }
-    async generateRootToken(_req) { return notImpl('barrier.generateRootToken'); }
+    async status() { return frameOnly('barrier', 'status'); }
+    async initialize(_req) { return frameOnly('barrier', 'initialize'); }
+    async unseal(_req) { return frameOnly('barrier', 'unseal'); }
+    async seal() { return frameOnly('barrier', 'seal'); }
+    async initializeShamir(_req) { return frameOnly('barrier', 'initializeShamir'); }
+    async unsealWithShare(_req) { return frameOnly('barrier', 'unsealWithShare'); }
+    async unsealWithShares(_req) { return frameOnly('barrier', 'unsealWithShares'); }
+    async shamirListShares() { return frameOnly('barrier', 'shamirListShares'); }
+    async shamirDeleteShare(_req) { return frameOnly('barrier', 'shamirDeleteShare'); }
+    async shamirDeleteAllShares() { return frameOnly('barrier', 'shamirDeleteAllShares'); }
+    async shamirVerify() { return frameOnly('barrier', 'shamirVerify'); }
+    async rekey(_req) { return frameOnly('barrier', 'rekey'); }
+    async generateRecoveryKeys(_req) { return frameOnly('barrier', 'generateRecoveryKeys'); }
+    async recoverWithKeys(_req) { return frameOnly('barrier', 'recoverWithKeys'); }
+    async deleteRecoveryKeys() { return frameOnly('barrier', 'deleteRecoveryKeys'); }
+    async recoveryStatus() { return frameOnly('barrier', 'recoveryStatus'); }
+    async generateRootToken(_req) { return frameOnly('barrier', 'generateRootToken'); }
 }
-// QuicCeremonyClient is a stub CeremonyClient that throws
-// QuicNotImplementedError on every call.
+// QuicCeremonyClient refuses every verb: go-qrdb serves ceremony.* on the QUIC
+// listener's frame protocol, which this SDK does not speak.
 export class QuicCeremonyClient {
-    async initialize(_req) { return notImpl('ceremony.initialize'); }
-    async status() { return notImpl('ceremony.status'); }
-    async claimCertBegin(_req) { return notImpl('ceremony.claimCertBegin'); }
-    async claimCertComplete(_req) { return notImpl('ceremony.claimCertComplete'); }
-    async claimShare(_req) { return notImpl('ceremony.claimShare'); }
-    async signCSR(_req) { return notImpl('ceremony.signCSR'); }
-    async enrollExternalOfficer(_req) { return notImpl('ceremony.enrollExternalOfficer'); }
+    async initialize(_req) { return frameOnly('ceremony', 'initialize'); }
+    async status() { return frameOnly('ceremony', 'status'); }
+    async claimCertBegin(_req) { return frameOnly('ceremony', 'claimCertBegin'); }
+    async claimCertComplete(_req) { return frameOnly('ceremony', 'claimCertComplete'); }
+    async claimShare(_req) { return frameOnly('ceremony', 'claimShare'); }
+    async signCSR(_req) { return frameOnly('ceremony', 'signCSR'); }
+    async enrollExternalOfficer(_req) { return frameOnly('ceremony', 'enrollExternalOfficer'); }
 }
-// QuicBootstrapClient is a stub BootstrapClient that throws
-// QuicNotImplementedError on every call.
+// QuicBootstrapClient refuses every verb with QuicNotImplementedError.
 export class QuicBootstrapClient {
-    async auto(_req) { return notImpl('bootstrap.auto'); }
-    async dane(_req) { return notImpl('bootstrap.dane'); }
-    async noise(_req) { return notImpl('bootstrap.noise'); }
-    async spki(_req) { return notImpl('bootstrap.spki'); }
+    async auto(_req) { return frameOnly('bootstrap', 'auto'); }
+    async dane(_req) { return frameOnly('bootstrap', 'dane'); }
+    async noise(_req) { return frameOnly('bootstrap', 'noise'); }
+    async spki(_req) { return frameOnly('bootstrap', 'spki'); }
 }
-// QuicClient is the stub entry point for the QUIC transport.
+// QuicClient is the entry point for the QUIC transport. It sends nothing: every
+// verb refuses with a typed reason (see quicUnsupported).
 export class QuicClient {
     connection;
     orchestrator;

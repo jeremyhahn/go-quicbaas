@@ -74,6 +74,11 @@ has no window to lose — there is no interval in which the port is unheld. Pref
 that shape when the API allows it, and reserve a number only when the port has
 to be known before the bind.
 
+Better still, bind nothing. A `pkg/server` test that never talks to the network
+should set `cfg.Server.REST.Enabled`, `GRPC.Enabled` and `MCP.Enabled` to
+`false`. Standalone mode has no Raft host, so the embedded node then opens no
+listener and the test has no port to lose (go-quicbaas#408).
+
 ## Bounds
 
 The window is 8192 ports immediately below the ephemeral range (24576–32767 on a

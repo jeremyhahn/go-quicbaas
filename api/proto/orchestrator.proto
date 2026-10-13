@@ -376,10 +376,16 @@ message ContainerSpec {
     string name = 7;
 }
 
-// ContentBlock represents a block of content in a response.
+// ContentBlock is one block of a turn's content: text, tool_use, tool_result,
+// thinking or unreadable. A non-text block carries identifiers and a size,
+// never its payload; see orchestration.ContentBlock.
 message ContentBlock {
     string type = 1;
     string text = 2;
+    string tool_name = 3;
+    string tool_use_id = 4;
+    bool is_error = 5;
+    int64 bytes = 6;
 }
 
 // SessionInfo contains summary information about an active session.

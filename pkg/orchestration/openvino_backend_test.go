@@ -170,10 +170,13 @@ func TestOpenVINOBackend_ReportsEveryToolCallAsABlock(t *testing.T) {
 	var tools, texts int
 	for _, block := range resp.Content {
 		switch block.Type {
-		case contentBlockToolUse:
+		case ContentBlockToolUse:
 			tools++
 			if !strings.Contains(block.Text, "run_command") {
 				t.Fatalf("a tool_use block names the tool, got %q", block.Text)
+			}
+			if block.ToolName != "run_command" || block.ToolUseID == "" || block.Bytes == 0 {
+				t.Fatalf("a tool_use block carries the name, id and argument size, got %+v", block)
 			}
 		case "text":
 			texts++
@@ -181,6 +184,9 @@ func TestOpenVINOBackend_ReportsEveryToolCallAsABlock(t *testing.T) {
 	}
 	if tools != 2 || texts != 1 {
 		t.Fatalf("want 2 tool_use blocks and 1 text block, got %+v", resp.Content)
+	}
+	if resp.ToolUse == nil || resp.ToolUse.Calls != 2 {
+		t.Fatalf("ToolUse = %+v, want a census of 2: the loop ran every tool call itself", resp.ToolUse)
 	}
 	if resp.StopReason != StopReasonEndTurn {
 		t.Fatalf("an answer given with rounds to spare is end_turn, got %q", resp.StopReason)
