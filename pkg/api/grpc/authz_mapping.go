@@ -279,6 +279,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/Logout":        {"user_authfactors", "login"},
 	"/quicbaas.v1.QuicBaaS/RefreshToken":  {"user_authfactors", "login"},
 	"/quicbaas.v1.QuicBaaS/ValidateToken": {"user_authfactors", "login"},
+	// IntrospectToken is RFC 7662 introspection for a resource server. REST's
+	// /oauth2/introspect refuses an unauthenticated caller; here the auth
+	// interceptor does, before this grant is checked.
+	"/quicbaas.v1.QuicBaaS/IntrospectToken": {"user_authfactors", "login"},
 
 	// ---- quicbaas.v1.QuicBaaS: seal ----
 	"/quicbaas.v1.QuicBaaS/Seal":       {"seal", "seal"},

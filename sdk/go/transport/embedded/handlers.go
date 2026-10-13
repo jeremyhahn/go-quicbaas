@@ -301,6 +301,14 @@ func handleValidateToken(ctx context.Context, svc service.QuicBaaS, req interfac
 	}, nil
 }
 
+func handleIntrospectToken(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*service.IntrospectTokenRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "IntrospectToken", "*service.IntrospectTokenRequest", reflect.TypeOf(req).String())
+	}
+	return svc.IntrospectToken(ctx, r)
+}
+
 // =============================================================================
 // RBAC Handlers
 // =============================================================================

@@ -71,10 +71,11 @@ type MockQuicBaaS struct {
 	VerifyBackupFunc  func(ctx context.Context, req *service.VerifyBackupRequest) (*service.VerifyBackupResponse, error)
 
 	// Auth Service function fields
-	LoginFunc         func(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error)
-	LogoutFunc        func(ctx context.Context, req *service.LogoutRequest) (*service.LogoutResponse, error)
-	RefreshTokenFunc  func(ctx context.Context, req *service.RefreshTokenRequest) (*service.RefreshTokenResponse, error)
-	ValidateTokenFunc func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
+	LoginFunc           func(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error)
+	LogoutFunc          func(ctx context.Context, req *service.LogoutRequest) (*service.LogoutResponse, error)
+	RefreshTokenFunc    func(ctx context.Context, req *service.RefreshTokenRequest) (*service.RefreshTokenResponse, error)
+	ValidateTokenFunc   func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
+	IntrospectTokenFunc func(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error)
 
 	// RBAC Service function fields
 	CreateAuthRoleFunc func(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error)
@@ -400,6 +401,13 @@ func (m *MockQuicBaaS) ValidateToken(ctx context.Context, req *service.ValidateT
 		return m.ValidateTokenFunc(ctx, req)
 	}
 	return &service.ValidateTokenResponse{}, nil
+}
+
+func (m *MockQuicBaaS) IntrospectToken(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error) {
+	if m.IntrospectTokenFunc != nil {
+		return m.IntrospectTokenFunc(ctx, req)
+	}
+	return &service.TokenIntrospection{}, nil
 }
 
 // =============================================================================

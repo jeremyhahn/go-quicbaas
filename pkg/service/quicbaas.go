@@ -2924,6 +2924,67 @@ func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenReque
 	}, nil
 }
 
+// IntrospectToken answers an RFC 7662 introspection for every transport. It
+// asks the same OIDC provider the REST /oauth2/introspect endpoint asks, so a
+// token is active on one transport exactly when it is active on all of them.
+// An inactive token is a result, not an error: the reply is Active=false and
+// nothing else, so no claim of a dead token leaks.
+func (a *authService) IntrospectToken(ctx context.Context, req *IntrospectTokenRequest) (*TokenIntrospection, error) {
+	if req == nil || req.Token == "" {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "service.IntrospectToken",
+			Err:  &api.RequiredFieldError{Field: "token"},
+		}
+	}
+	provider, err := a.sessionAuthority(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := provider.Introspect(ctx, &iam.IntrospectRequest{Token: req.Token})
+	if err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "service.IntrospectToken",
+			Err:  err,
+		}
+	}
+	return tokenIntrospectionFromIAM(resp), nil
+}
+
+// tokenIntrospectionFromIAM converts the provider's RFC 7662 reply into the
+// transport-neutral service model. Unix-second times of zero stay zero.
+func tokenIntrospectionFromIAM(resp *iam.IntrospectionResponse) *TokenIntrospection {
+	if !resp.Active {
+		return &TokenIntrospection{Active: false}
+	}
+	return &TokenIntrospection{
+		Active:       true,
+		Scope:        resp.Scope,
+		ClientID:     resp.ClientID,
+		Username:     resp.Username,
+		TokenType:    resp.TokenType,
+		ExpiresAt:    unixTimeOrZero(resp.ExpiresAt),
+		IssuedAt:     unixTimeOrZero(resp.IssuedAt),
+		NotBefore:    unixTimeOrZero(resp.NotBefore),
+		Subject:      resp.Subject,
+		Audience:     resp.Audience,
+		Issuer:       resp.Issuer,
+		JTI:          resp.JTI,
+		AttestLevel:  resp.AttestLevel,
+		AttestAAGUID: resp.AttestAAGUID,
+	}
+}
+
+// unixTimeOrZero converts Unix seconds to a time, keeping 0 as the zero time.
+func unixTimeOrZero(sec int64) time.Time {
+	if sec == 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0).UTC()
+}
+
 // rbacService serves the role half of the RBAC surface. Its verbs all operate
 // on the qrdb-backed IdentityStore and live in rbac_role_store.go: there is no
 // user half, because users are qrdb's and are reached through the IAM surface
@@ -4565,6 +4626,10 @@ func (s *quicBaaS) RefreshToken(ctx context.Context, req *RefreshTokenRequest) (
 
 func (s *quicBaaS) ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error) {
 	return s.authService.ValidateToken(ctx, req)
+}
+
+func (s *quicBaaS) IntrospectToken(ctx context.Context, req *IntrospectTokenRequest) (*TokenIntrospection, error) {
+	return s.authService.IntrospectToken(ctx, req)
 }
 
 func (s *quicBaaS) CreateAuthRole(ctx context.Context, req *AuthCreateRoleRequest) (*AuthCreateRoleResponse, error) {

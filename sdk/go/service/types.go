@@ -374,6 +374,8 @@ type (
 	RefreshTokenResponse  = pkgservice.RefreshTokenResponse
 	ValidateTokenRequest  = pkgservice.ValidateTokenRequest
 	ValidateTokenResponse = pkgservice.ValidateTokenResponse
+	// IntrospectTokenRequest carries the token an IntrospectToken call inspects.
+	IntrospectTokenRequest = pkgservice.IntrospectTokenRequest
 )
 
 // =============================================================================

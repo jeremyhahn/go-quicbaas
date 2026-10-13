@@ -18,6 +18,7 @@ import (
 	"errors"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,6 +94,20 @@ const triageHeadMarker = "head="
 // change", "the prerequisite has not landed" are answers about a tree, and a
 // merge is exactly what makes them wrong.
 const triageVerdictMarker = "verdict="
+
+// triageModelMarker and triagePromptMarker record WHICH MODEL, ON WHICH
+// PROMPT, wrote a verdict, so mis-triage can be counted per model and per
+// prompt revision (TriagePromptRevision). They follow the verdict field, and
+// a comment posted before they existed simply lacks them: every reader cuts
+// its own field out by key, so the order and presence of the others are free.
+const (
+	triageModelMarker  = "model="
+	triagePromptMarker = "prompt="
+)
+
+// triageUnknownModel is what triageModelMarker carries when the spawned
+// session reported no model.
+const triageUnknownModel = "unknown"
 
 // stateLabels for the triage runner's own states.
 const (
@@ -316,6 +331,10 @@ type triageRun struct {
 	forge     ForgeBackend
 	repo      RepoRef
 	sessionID string
+
+	// model is the model the spawned session reported, stamped into every
+	// verdict marker. Empty when the session reported none.
+	model string
 
 	// headSHA is the tip of the project's default branch when this pass
 	// started. It is stamped into every verdict this run posts, so a later
@@ -726,6 +745,7 @@ func (s *triageRun) spawnSession(ctx context.Context) error {
 		return &TriageSessionError{ProjectID: project.ID, Message: "the spawn returned no session"}
 	}
 	s.sessionID = resp.SessionID
+	s.model = strings.TrimSpace(resp.Model)
 	if strings.TrimSpace(resp.ContainerID) == "" {
 		return &TriageSessionError{
 			ProjectID: project.ID,
@@ -1012,7 +1032,10 @@ func (s *triageRun) judgeIssue(ctx context.Context, issue ForgeIssue) error {
 // reply whose prose is only the declaration fails the same test: a person
 // reading "the evidence:" followed by nothing has been told nothing. A
 // duplicate must name another OPEN issue -- itself, a closed one, or a number
-// the pass never listed is a reference a person cannot follow.
+// the pass never listed is a reference a person cannot follow -- and it must
+// share a named path or identifier with this issue (triageIssuesOverlap). A
+// needs-info verdict must ask a question (TriageQuestionMarker): one that
+// only summarizes the issue gives its author nothing to answer.
 func (s *triageRun) unusable(issue ForgeIssue, verdict TriageVerdict, reply string) string {
 	switch verdict.Outcome {
 	case TriageOutcomeUndeclared:
@@ -1021,13 +1044,22 @@ func (s *triageRun) unusable(issue ForgeIssue, verdict TriageVerdict, reply stri
 		return "the reply's declaration could not be read"
 	case TriageOutcomeReady:
 		return ""
+	case TriageOutcomeNeedsInfo:
+		if len(verdict.Questions) == 0 {
+			return "the reply asks no question"
+		}
 	case TriageOutcomeDuplicate:
 		if verdict.DuplicateOf == issue.Number {
 			return "the reply names the issue as a duplicate of itself"
 		}
-		if !s.isOpenCandidate(verdict.DuplicateOf) {
+		other, ok := s.openCandidate(verdict.DuplicateOf)
+		if !ok {
 			return "the reply names #" + strconv.Itoa(verdict.DuplicateOf) +
 				" as the duplicate, which is not an open issue of this project"
+		}
+		if !triageIssuesOverlap(issue, other) {
+			return "the reply names #" + strconv.Itoa(verdict.DuplicateOf) +
+				" as the duplicate, and the two issues name no path or identifier in common"
 		}
 	}
 	if triageEvidence(reply) == "" {
@@ -1039,8 +1071,36 @@ func (s *triageRun) unusable(issue ForgeIssue, verdict TriageVerdict, reply stri
 // isOpenCandidate reports whether number is among the open issues this pass
 // listed: the set the prompt offered as duplicate candidates.
 func (s *triageRun) isOpenCandidate(number int) bool {
+	_, ok := s.openCandidate(number)
+	return ok
+}
+
+// openCandidate is the open issue this pass listed under number, if any.
+func (s *triageRun) openCandidate(number int) (ForgeIssue, bool) {
 	for i := range s.open {
 		if s.open[i].Number == number && !issueClosed(&s.open[i]) {
+			return s.open[i], true
+		}
+	}
+	return ForgeIssue{}, false
+}
+
+// triageIssuesOverlap reports whether two issues name a path or identifier
+// in common. A duplicate verdict over two issues that share neither is not
+// read as one: go-quicbaas#1082, a DICE SDK re-export, was once called a
+// duplicate of #894, scheduler lease coalescing, because #894 was a real open
+// issue. Lexical only, through the same probes the fact pass extracts, so it
+// costs no model call and no checkout read.
+func triageIssuesOverlap(a, b ForgeIssue) bool {
+	left := ExtractTriageProbes(a.Title, a.Body)
+	right := ExtractTriageProbes(b.Title, b.Body)
+	return triageShareAny(left.Paths, right.Paths) || triageShareAny(left.Identifiers, right.Identifiers)
+}
+
+// triageShareAny reports whether the two lists have an element in common.
+func triageShareAny(a, b []string) bool {
+	for _, item := range a {
+		if slices.Contains(b, item) {
 			return true
 		}
 	}
@@ -1330,13 +1390,27 @@ func (s *triageRun) comment(ctx context.Context, issue ForgeIssue, verdict Triag
 			" reason=the verdict is the one already posted; not posted again")
 		return nil
 	}
-	body += "\n<!-- " + triageCommentMarker +
-		" " + triageHeadMarker + s.headSHA +
-		" " + triageVerdictMarker + string(verdict.Outcome) + " -->\n"
+	body += s.verdictMarker(string(verdict.Outcome))
 	if _, err := s.forge.CommentOnIssue(ctx, s.repo, issue.Number, body); err != nil {
 		return &TriageVerdictError{Issue: issue.Number, Reason: "the verdict could not be posted", Cause: err}
 	}
 	return nil
+}
+
+// verdictMarker is the hidden trailer on every comment this runner posts: the
+// head the verdict judged, the verdict code, and the model and prompt
+// revision that produced it. A model name is one token in the marker, so any
+// whitespace in it is folded to '_' and a field reader cannot split it.
+func (s *triageRun) verdictMarker(code string) string {
+	model := strings.Join(strings.Fields(s.model), "_")
+	if model == "" {
+		model = triageUnknownModel
+	}
+	return "\n<!-- " + triageCommentMarker +
+		" " + triageHeadMarker + s.headSHA +
+		" " + triageVerdictMarker + code +
+		" " + triageModelMarker + model +
+		" " + triagePromptMarker + TriagePromptRevision + " -->\n"
 }
 
 // evaluatedKey names one issue of this run's repository, whatever the head.
@@ -1417,7 +1491,8 @@ func triageEvidence(reply string) string {
 	kept := make([]string, 0, len(lines))
 	for _, raw := range lines {
 		line := triageDeclarationLine(raw)
-		if strings.HasPrefix(line, TriageDuplicateMarker) || strings.HasPrefix(line, TriageDeclarationMarker) {
+		if strings.HasPrefix(line, TriageDuplicateMarker) || strings.HasPrefix(line, TriageDeclarationMarker) ||
+			strings.HasPrefix(line, TriageQuestionMarker) {
 			continue
 		}
 		kept = append(kept, raw)

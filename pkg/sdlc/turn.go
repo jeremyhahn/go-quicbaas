@@ -14,6 +14,7 @@
 package sdlc
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -335,6 +336,15 @@ const MaxNonAnswerTurns = 1
 // scrolling an issue.
 const TurnReplyLimit = 4096
 
+// MaxFailedTools bounds how many failed calls a turn record names. A worker
+// that loops on one broken command can fail hundreds of times in a turn; the
+// count keeps the whole story and the names keep the head of it.
+const MaxFailedTools = 8
+
+// UnknownToolName names a failed tool_result whose call the turn did not
+// carry, so the failure is still counted and still named.
+const UnknownToolName = "unknown"
+
 // turnReplyEllipsis marks a reply the cap cut, so a reader can tell a short
 // answer from a long one they are seeing the head of.
 var turnReplyEllipsis = "\n… (truncated at " + strconv.Itoa(TurnReplyLimit) + " bytes)"
@@ -376,6 +386,23 @@ type AgentTurn struct {
 	// than inferred from the prose: a tool_use entry, zero included, is
 	// present only when the turn carried a tool census or a tool_use block.
 	Blocks map[string]int `json:"blocks,omitempty"`
+
+	// ToolFailures counts the tool_result blocks the backend marked as
+	// failed. IT IS READ FROM THE BLOCKS, NEVER FROM THE TEXT: the worker's
+	// words are untrusted input (go-quicbaas#218), so a reply saying "tool
+	// failed" records no failure and a call that really failed is recorded
+	// whatever the reply says. Nil when the turn carried no tool_result
+	// block, so a backend that reports no outcomes stays apart from a turn
+	// whose every call succeeded, as toolUseMeasured keeps "not reported"
+	// apart from "none".
+	ToolFailures *int `json:"tool_failures,omitempty"`
+
+	// FailedTools names the failed calls in the order their results
+	// arrived, each resolved by ToolUseID against the turn's tool_use blocks
+	// (UnknownToolName when none matches) and bounded at MaxFailedTools.
+	// FailedToolsCut is how many names the bound cut.
+	FailedTools    []string `json:"failed_tools,omitempty"`
+	FailedToolsCut int      `json:"failed_tools_cut,omitempty"`
 
 	// StopReason is the backend's own terminal reason for the turn.
 	StopReason string `json:"stop_reason,omitempty"`
@@ -462,10 +489,13 @@ func (t AgentTurn) Truncated() bool { return t.ReplyBytes > len(t.Reply) }
 // Capped answers the turn as it is written down: the same record with the
 // reply bounded at TurnReplyLimit and the cut marked. ReplyBytes keeps the
 // length before the cap, and the declaration keeps its own fields, so a
-// stored turn still says what it was even when its text is a head.
+// stored turn still says what it was even when its text is a head. The
+// failed tool names are bounded at MaxFailedTools the same way, with
+// FailedToolsCut counting what the bound cut.
 func (t AgentTurn) Capped() AgentTurn {
 	capped := t
 	capped.Reply = capReply(t.Reply)
+	capped.FailedTools, capped.FailedToolsCut = capFailedTools(t.FailedTools, t.FailedToolsCut)
 	return capped
 }
 
@@ -480,6 +510,16 @@ func (t AgentTurn) Describe() string {
 	b.WriteString(" tool_uses=" + t.DescribeToolUses())
 	if blocks := describeBlocks(t.Blocks); blocks != "" {
 		b.WriteString(" blocks=" + blocks)
+	}
+	if t.ToolFailures != nil {
+		b.WriteString(" tool_failures=" + strconv.Itoa(*t.ToolFailures))
+		names, cut := capFailedTools(t.FailedTools, t.FailedToolsCut)
+		if len(names) > 0 {
+			b.WriteString(" failed_tools=" + strings.Join(names, ","))
+		}
+		if cut > 0 {
+			b.WriteString(" failed_tools_cut=" + strconv.Itoa(cut))
+		}
 	}
 	if t.StopReason != "" {
 		b.WriteString(" stop_reason=" + t.StopReason)
@@ -517,6 +557,51 @@ func describeBlocks(blocks map[string]int) string {
 		parts = append(parts, kind+":"+strconv.Itoa(blocks[kind]))
 	}
 	return strings.Join(parts, ",")
+}
+
+// readToolFailures reads the failed tool calls out of a turn's blocks: how
+// many tool_result blocks carried IsError, and the names of those calls,
+// bounded at MaxFailedTools with the number cut. Text blocks are never
+// read, whatever they say. failures is nil when no tool_result block
+// arrived, because then the backend reported no outcome to count.
+func readToolFailures(content []orchestration.ContentBlock) (failures *int, names []string, cut int) {
+	callNames := map[string]string{}
+	for _, block := range content {
+		if strings.TrimSpace(block.Type) == orchestration.ContentBlockToolUse && block.ToolUseID != "" {
+			callNames[block.ToolUseID] = block.ToolName
+		}
+	}
+	for _, block := range content {
+		if strings.TrimSpace(block.Type) != orchestration.ContentBlockToolResult {
+			continue
+		}
+		if failures == nil {
+			failures = new(int)
+		}
+		if !block.IsError {
+			continue
+		}
+		*failures++
+		name := callNames[block.ToolUseID]
+		if block.ToolUseID == "" || name == "" {
+			name = UnknownToolName
+		}
+		names = append(names, name)
+	}
+	names, cut = capFailedTools(names, 0)
+	return failures, names, cut
+}
+
+// capFailedTools bounds a list of failed tool names at MaxFailedTools and
+// adds what it cut to the count already cut. The list it returns never
+// shares the caller's backing array, so a capped record cannot alias the
+// record it was capped from.
+func capFailedTools(names []string, cut int) ([]string, int) {
+	if len(names) > MaxFailedTools {
+		cut += len(names) - MaxFailedTools
+		names = names[:MaxFailedTools]
+	}
+	return slices.Clone(names), cut
 }
 
 // NewAgentTurn builds the record of a turn from the worker's whole reply.
@@ -577,6 +662,7 @@ func ReadAgentTurn(resp *orchestration.PromptSessionResponse) AgentTurn {
 	assembled.Blocks = turn.Blocks
 	assembled.StopReason = turn.StopReason
 	assembled.Usage = turn.Usage
+	assembled.ToolFailures, assembled.FailedTools, assembled.FailedToolsCut = readToolFailures(resp.Content)
 	return assembled
 }
 

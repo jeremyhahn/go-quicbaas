@@ -13,7 +13,15 @@
 
 package orchestration
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // =============================================================================
 // The worker's execution environment
@@ -97,6 +105,130 @@ const WorkerFullControlFlag = "--dangerously-skip-permissions"
 var claudeCodeBackends = map[string]bool{
 	"claude":      true,
 	"claude-code": true,
+}
+
+// WorkerSettingsFile is the Claude Code settings file the engine renders into
+// the agent configuration directory (CLAUDE_CONFIG_DIR). Only the backends in
+// claudeCodeBackends read it.
+//
+// THE FILE IS GENERATED. A host worker is spawned with --permission-mode
+// acceptEdits, which grants file edits and no shell, so the allow rules in
+// this file are the whole of what it may run. They come from daemon
+// configuration — orchestration.agent_shell_allow plus every
+// orchestration.verification_commands entry — and a file that says anything
+// else is rewritten at boot. A sandboxed worker runs with full control inside
+// its container and does not depend on this file.
+const WorkerSettingsFile = "settings.json"
+
+// workerSettings is the subset of the Claude Code settings schema the engine
+// renders.
+type workerSettings struct {
+	Permissions workerPermissions `json:"permissions"`
+}
+
+// workerPermissions is the permissions block of the Claude Code settings.
+type workerPermissions struct {
+	Allow []string `json:"allow"`
+}
+
+// WorkerShellRules returns the Claude Code permission rules for a host
+// worker's shell, each rule once and in configuration order.
+//
+// Each shellAllow entry is a command prefix and becomes two rules: the bare
+// command, Bash(go), and the command with arguments, Bash(go *). The space
+// before the wildcard is a word boundary, so "go" does not allow "gofmt".
+// Each verificationCommands entry is already an exact command and becomes one
+// exact rule; the operator never lists it twice.
+func WorkerShellRules(shellAllow, verificationCommands []string) []string {
+	rules := make([]string, 0, 2*len(shellAllow)+len(verificationCommands))
+	seen := make(map[string]bool, cap(rules))
+	add := func(rule string) {
+		if !seen[rule] {
+			seen[rule] = true
+			rules = append(rules, rule)
+		}
+	}
+	for _, prefix := range shellAllow {
+		prefix = strings.TrimSpace(prefix)
+		add("Bash(" + prefix + ")")
+		add("Bash(" + prefix + " *)")
+	}
+	for _, command := range verificationCommands {
+		add("Bash(" + strings.TrimSpace(command) + ")")
+	}
+	return rules
+}
+
+// RenderWorkerSettings returns the settings.json content for a host worker
+// allowed the given shell prefixes and verification commands. Empty inputs
+// render an empty allow list: the worker keeps its edit grant and no shell.
+func RenderWorkerSettings(shellAllow, verificationCommands []string) ([]byte, error) {
+	settings := workerSettings{Permissions: workerPermissions{
+		Allow: WorkerShellRules(shellAllow, verificationCommands),
+	}}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	// A command such as "make test && make lint" stays readable in the file.
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(settings); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// WriteWorkerSettings renders the worker settings into dir/settings.json,
+// creating dir (0700) if it is missing and writing the file (0600) atomically.
+// A file already holding the rendered content is left alone.
+//
+// replaced reports that a file was there and said something else — hand
+// edited, or rendered from an older configuration — and has been overwritten,
+// so the caller can say so.
+func WriteWorkerSettings(dir string, shellAllow, verificationCommands []string) (replaced bool, err error) {
+	path := filepath.Join(dir, WorkerSettingsFile)
+	want, err := RenderWorkerSettings(shellAllow, verificationCommands)
+	if err != nil {
+		return false, &WorkerSettingsWriteError{Path: path, Cause: err}
+	}
+	have, readErr := os.ReadFile(path)
+	switch {
+	case readErr == nil && bytes.Equal(have, want):
+		return false, nil
+	case readErr != nil && !errors.Is(readErr, fs.ErrNotExist):
+		return false, &WorkerSettingsWriteError{Path: path, Cause: readErr}
+	}
+	if err := writeFileAtomic(dir, path, want); err != nil {
+		return false, &WorkerSettingsWriteError{Path: path, Cause: err}
+	}
+	return readErr == nil, nil
+}
+
+// writeFileAtomic writes data to path through a temporary file in dir and a
+// rename, so a session starting mid-write reads the old file or the new one,
+// never half of one. os.CreateTemp creates the file 0600.
+func writeFileAtomic(dir, path string, data []byte) (err error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+WorkerSettingsFile+".*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, os.Remove(tmp.Name()))
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return errors.Join(err, tmp.Close())
+	}
+	if err := tmp.Sync(); err != nil {
+		return errors.Join(err, tmp.Close())
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // WorkerSpawnArgs is the extra argv a worker session is spawned with, or nil

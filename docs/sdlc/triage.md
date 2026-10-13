@@ -91,6 +91,19 @@ SDLC-TRIAGE-DUPLICATE: #25
 SDLC-TRIAGE: duplicate
 ```
 
+A needs-info verdict must ask at least one question its author can answer,
+each on its own line above the verdict:
+
+```
+SDLC-TRIAGE-QUESTION: Which of the three `Encode` overloads is affected?
+SDLC-TRIAGE: needs-info
+```
+
+Every question line is kept, in reply order, up to five, each cut to 300
+characters; an empty question line asks nothing. The posted comment lists
+them numbered under **Questions for the author**, so the reader sees what to
+answer, and the marker lines themselves are left out of the comment.
+
 `ParseTriageDeclaration` finds the **last** declaration of each marker rather
 than assuming the final line, and tolerates the decoration a model puts around
 it (quoting, emphasis, code fences) — so a reply that quotes the marker while
@@ -128,7 +141,14 @@ written nowhere on the forge, and judged again on a later pass — when it is:
   is empty — the charter demands evidence, and "the evidence:" followed by
   nothing tells a person nothing;
 - a `duplicate` naming the issue itself, or an issue that is not among the
-  open issues the pass listed.
+  open issues the pass listed;
+- a `duplicate` whose two issues name no file path or backticked identifier
+  in common (`ExtractTriageProbes` over both titles and bodies; lexical, no
+  model call). go-quicbaas#1082 was once called a duplicate of #894, a DICE
+  SDK re-export against scheduler lease coalescing, because #894 was open;
+- a `needs-info` that asks no `SDLC-TRIAGE-QUESTION:`. A summary of the
+  issue under "What is missing:" gives its author nothing to answer, and it
+  parked well-scoped issues (go-quicbaas#826, #851).
 
 These are a model failing — out of rounds, or lost the marker vocabulary —
 not findings about the work. Posting them used to make each one triage's last
@@ -143,8 +163,8 @@ skips the issue after two (`sdlc:triage_skipped`), and asks again only when the
 head moves or somebody comments — the two things that change what the model is
 shown. The count is per node process; a restart asks again.
 
-What this cannot catch is a duplicate that names a real open issue for a
-wrong reason. The charter now tells the model it holds the other issues by
+What the overlap test cannot catch is a duplicate that names a real open
+issue sharing a path or identifier for a wrong reason. The charter tells the model it holds the other issues by
 number and title only and that a shared area is not the same work; if that
 class keeps recurring on a small model, the answer is a larger one, not more
 parsing.
@@ -225,6 +245,20 @@ fleet. That is the pathology this runner exists to remove.
 The record of a verdict is therefore triage's own **comment**, tagged
 `quicbaas-sdlc:triage`, and `spokenToSinceTriage` asks one question of the
 thread: **who spoke last?**
+
+The tag is a hidden trailer that also records what the verdict was formed
+from, so mis-triage can be counted per model and prompt:
+
+```
+<!-- quicbaas-sdlc:triage head=<sha> verdict=<outcome> model=<model> prompt=<revision> -->
+```
+
+`model` is the model the triage session reported at spawn (`unknown` when it
+reported none); `prompt` is `TriagePromptRevision`, a hash prefix of the
+charter and `TriagePrompt`'s text that `TestTriagePromptRevisionPinned` pins,
+so editing the prompt without bumping it fails the tests. Each reader cuts
+its own field out by key, so a comment posted before `model` and `prompt`
+existed still reads.
 
 - **nobody has commented** → judged. Triage has never spoken, so there is
   nothing to wait on.

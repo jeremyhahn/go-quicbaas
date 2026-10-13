@@ -15,7 +15,9 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -39,6 +41,11 @@ const (
 	authRefreshPath  = "/api/v1/iam/refresh"
 	authValidatePath = "/api/v1/iam/validate"
 )
+
+// authIntrospectPath is the RFC 7662 introspection endpoint. It takes a
+// form-encoded body and authenticates the caller by mTLS or client
+// credentials, not by a bearer token.
+const authIntrospectPath = "/oauth2/introspect"
 
 // isAuthService checks if the service name is an Auth service.
 func isAuthService(svc string) bool {
@@ -91,6 +98,8 @@ func (h *authRESTHandler) handleRequest(ctx context.Context, svc, method string,
 		return h.handleRefreshToken(ctx, req)
 	case "ValidateToken":
 		return h.handleValidateToken(ctx, req)
+	case "IntrospectToken":
+		return h.handleIntrospectToken(ctx, req)
 	case "BeginLogin":
 		return h.handleBeginLogin(ctx, req)
 	case "FinishLogin":
@@ -243,6 +252,67 @@ func (h *authRESTHandler) handleValidateToken(ctx context.Context, req interface
 		TenantID:  resp.TenantID,
 		Roles:     resp.Roles,
 		ExpiresAt: expiresAt,
+	}, nil
+}
+
+// authIntrospectResponse is the RFC 7662 introspection reply served at
+// authIntrospectPath; times are Unix seconds.
+type authIntrospectResponse struct {
+	Active       bool     `json:"active"`
+	Scope        string   `json:"scope"`
+	ClientID     string   `json:"client_id"`
+	Username     string   `json:"username"`
+	TokenType    string   `json:"token_type"`
+	ExpiresAt    int64    `json:"exp"`
+	IssuedAt     int64    `json:"iat"`
+	NotBefore    int64    `json:"nbf"`
+	Subject      string   `json:"sub"`
+	Audience     []string `json:"aud"`
+	Issuer       string   `json:"iss"`
+	JTI          string   `json:"jti"`
+	AttestLevel  string   `json:"attest_level"`
+	AttestAAGUID string   `json:"attest_aaguid"`
+}
+
+// handleIntrospectToken handles IntrospectToken requests. The server answers
+// 200 {"active":false} for a token it does not accept, so an inactive reply
+// carries nothing but Active=false.
+func (h *authRESTHandler) handleIntrospectToken(ctx context.Context, req interface{}) (interface{}, error) {
+	const op = "authRESTHandler.handleIntrospectToken"
+	introspectReq, ok := req.(*service.IntrospectTokenRequest)
+	if !ok || introspectReq == nil {
+		return nil, errors.NewInvalidInput(op, "invalid request type, expected *service.IntrospectTokenRequest")
+	}
+
+	form := url.Values{"token": {introspectReq.Token}}
+	raw, err := h.transport.doRawRequest(ctx, http.MethodPost, authIntrospectPath,
+		[]byte(form.Encode()), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	if err != nil {
+		return nil, err
+	}
+
+	var resp authIntrospectResponse
+	if err := json.Unmarshal(raw.Body, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, op, "failed to decode introspection response")
+	}
+	if !resp.Active {
+		return &service.TokenIntrospection{Active: false}, nil
+	}
+	return &service.TokenIntrospection{
+		Active:       true,
+		Scope:        resp.Scope,
+		ClientID:     resp.ClientID,
+		Username:     resp.Username,
+		TokenType:    resp.TokenType,
+		ExpiresAt:    unixToTime(resp.ExpiresAt),
+		IssuedAt:     unixToTime(resp.IssuedAt),
+		NotBefore:    unixToTime(resp.NotBefore),
+		Subject:      resp.Subject,
+		Audience:     resp.Audience,
+		Issuer:       resp.Issuer,
+		JTI:          resp.JTI,
+		AttestLevel:  resp.AttestLevel,
+		AttestAAGUID: resp.AttestAAGUID,
 	}, nil
 }
 

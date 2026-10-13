@@ -299,6 +299,12 @@ func (m *MockQuicBaaS) ValidateToken(ctx context.Context, req *service.ValidateT
 	return resp, args.Error(1)
 }
 
+func (m *MockQuicBaaS) IntrospectToken(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error) {
+	args := m.Called(ctx, req)
+	resp, _ := args.Get(0).(*service.TokenIntrospection)
+	return resp, args.Error(1)
+}
+
 // =============================================================================
 // RBAC Service Methods (part of service.QuicBaaS)
 // =============================================================================

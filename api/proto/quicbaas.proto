@@ -235,6 +235,12 @@ service QuicBaaS {
       option (qrdb.v1.permission) = "user_authfactors:login";
   }
 
+  // IntrospectToken returns a token's RFC 7662 introspection state for a
+  // resource server.
+  rpc IntrospectToken(IntrospectTokenRequest) returns (IntrospectTokenResponse) {
+      option (qrdb.v1.permission) = "user_authfactors:login";
+  }
+
   // Role Management (Phase 4). Users are served by quicbaas.iam.v1.IAMService.
 
   // CreateRole creates a new role.
@@ -1573,6 +1579,60 @@ message ValidateTokenResponse {
   // tenant_id is the tenant the token was issued into (the tenant_id claim).
   // Empty for a token minted without tenant context.
   string tenant_id = 6;
+}
+
+// IntrospectTokenRequest asks for a token's RFC 7662 introspection state.
+message IntrospectTokenRequest {
+  // token is the access token to introspect.
+  string token = 1;
+}
+
+// IntrospectTokenResponse is the RFC 7662 introspection of a token. An
+// inactive token carries active=false and no other field.
+message IntrospectTokenResponse {
+  // active reports whether the token is valid, unexpired and unrevoked.
+  bool active = 1;
+
+  // scope is the space-separated scope list.
+  string scope = 2;
+
+  // client_id is the OAuth client the token was issued to.
+  string client_id = 3;
+
+  // username is the human-readable subject name.
+  string username = 4;
+
+  // token_type is the token type ("Bearer").
+  string token_type = 5;
+
+  // expires_at is when the token expires (Unix seconds; 0 when unset).
+  int64 expires_at = 6;
+
+  // issued_at is when the token was issued (Unix seconds; 0 when unset).
+  int64 issued_at = 7;
+
+  // not_before is the earliest time the token is valid (Unix seconds; 0 when unset).
+  int64 not_before = 8;
+
+  // subject is the token subject.
+  string subject = 9;
+
+  // audience is the token audience.
+  repeated string audience = 10;
+
+  // issuer is the token issuer.
+  string issuer = 11;
+
+  // jti is the JWT ID.
+  string jti = 12;
+
+  // attest_level is the key provenance the token's attest_level claim records
+  // ("hardware", "software" or "none"); empty when unattested.
+  string attest_level = 13;
+
+  // attest_aaguid is the hex FIDO2 authenticator model from the token's
+  // attest_aaguid claim; empty for PIV and unattested tokens.
+  string attest_aaguid = 14;
 }
 
 // Phase 4: Role Management Messages

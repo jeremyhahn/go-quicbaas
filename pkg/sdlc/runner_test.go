@@ -175,6 +175,10 @@ type fakeAgents struct {
 	// was refused as running no container.
 	containerID string
 
+	// model is the model a spawn reports running, empty for a backend that
+	// names none.
+	model string
+
 	// host is where the sessions run: it provisions each spawn's named
 	// workspace and reports where (go-quicbaas#981).
 	host executingHost
@@ -214,7 +218,7 @@ func (f *fakeAgents) SpawnSession(_ context.Context, req *orchestration.SpawnSes
 		f.container.sshAgentSocket = req.Env[orchestration.WorkspaceSigningAgentEnv]
 		f.container.mu.Unlock()
 	}
-	resp := &orchestration.SpawnSessionResponse{SessionID: sessionID, Backend: req.Backend, Workspace: placement}
+	resp := &orchestration.SpawnSessionResponse{SessionID: sessionID, Backend: req.Backend, Model: f.model, Workspace: placement}
 	if !f.noContainer {
 		resp.ContainerID = "container-" + itoa(f.seq)
 		if f.containerID != "" {

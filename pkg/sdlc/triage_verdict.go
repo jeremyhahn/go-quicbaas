@@ -14,6 +14,7 @@
 package sdlc
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -47,6 +48,20 @@ const TriageDeclarationMarker = "SDLC-TRIAGE:"
 // verdict line stays one code from a closed set and the reference can be
 // absent without making the verdict unparseable.
 const TriageDuplicateMarker = "SDLC-TRIAGE-DUPLICATE:"
+
+// TriageQuestionMarker introduces one question a needs-info verdict asks the
+// issue's author. A needs-info verdict MUST ask at least one: without a
+// question the verdict is a summary of the issue that nobody can answer, and
+// a well-scoped issue stays parked (go-quicbaas#826, #851, #1082).
+const TriageQuestionMarker = "SDLC-TRIAGE-QUESTION:"
+
+// triageMaxQuestions and triageMaxQuestionLen bound what a reply can put on
+// an issue through TriageQuestionMarker. A question past the length is cut,
+// and questions past the count are dropped.
+const (
+	triageMaxQuestions   = 5
+	triageMaxQuestionLen = 300
+)
 
 // TriageCloseMarker is how a not-actionable verdict says the issue is a STALE
 // REPORT — the work is already on the default branch — rather than something a
@@ -158,6 +173,11 @@ type TriageDeclaration struct {
 	// agent named none or named one that does not read as a positive issue
 	// number.
 	DuplicateOf int `json:"duplicate_of,omitempty"`
+
+	// Questions are the TriageQuestionMarker lines, in reply order, bounded
+	// by triageMaxQuestions and triageMaxQuestionLen. Empty lines are not
+	// questions.
+	Questions []string `json:"questions,omitempty"`
 }
 
 // TriageVerdict is what one classified reply means: what it was, what the
@@ -189,6 +209,10 @@ type TriageVerdict struct {
 	// DuplicateOf is carried through from the declaration so the comment can
 	// name the issue without re-parsing the reply.
 	DuplicateOf int
+
+	// Questions are carried through from the declaration so the comment
+	// lists what the author is asked to answer.
+	Questions []string
 
 	// Headline is the sentence that introduces the agent's text wherever the
 	// outcome is reported.
@@ -258,6 +282,9 @@ var triageVerdicts = map[TriageOutcome]TriageVerdict{
 // fence or a signature after its declaration has still declared it, and a
 // reply that quotes the marker while thinking aloud and then declares for
 // real is read on its real declaration.
+//
+// TriageQuestionMarker is the exception: a verdict may ask several questions,
+// so every marked line is kept, in reply order, up to triageMaxQuestions.
 func ParseTriageDeclaration(reply string) TriageDeclaration {
 	var decl TriageDeclaration
 	lines := strings.Split(reply, "\n")
@@ -272,12 +299,28 @@ func ParseTriageDeclaration(reply string) TriageDeclaration {
 		case !decl.ClosesAsAlreadyDone && strings.HasPrefix(line, TriageCloseMarker):
 			decl.ClosesAsAlreadyDone = strings.EqualFold(
 				triageMarkerValue(line, TriageCloseMarker), TriageCloseReasonAlreadyDone)
-		}
-		if decl.Declared && decl.DuplicateOf != 0 && decl.ClosesAsAlreadyDone {
-			break
+		case strings.HasPrefix(line, TriageQuestionMarker):
+			if question := triageQuestion(line); question != "" {
+				decl.Questions = append(decl.Questions, question)
+			}
 		}
 	}
+	// The scan runs backwards; a person reads the questions in reply order.
+	slices.Reverse(decl.Questions)
+	if len(decl.Questions) > triageMaxQuestions {
+		decl.Questions = decl.Questions[:triageMaxQuestions]
+	}
 	return decl
+}
+
+// triageQuestion is the question on a TriageQuestionMarker line, cut to
+// triageMaxQuestionLen runes. Empty when the line asks nothing.
+func triageQuestion(line string) string {
+	question := strings.TrimSpace(strings.TrimPrefix(line, TriageQuestionMarker))
+	if runes := []rune(question); len(runes) > triageMaxQuestionLen {
+		question = strings.TrimSpace(string(runes[:triageMaxQuestionLen]))
+	}
+	return question
 }
 
 // triageDeclarationLine strips the decoration a model puts around a
@@ -323,6 +366,7 @@ func ClassifyTriage(decl TriageDeclaration) TriageVerdict {
 	verdict := triageVerdicts[classifyTriageOutcome(decl)]
 	verdict.DuplicateOf = decl.DuplicateOf
 	verdict.ClosesAsAlreadyDone = decl.ClosesAsAlreadyDone
+	verdict.Questions = decl.Questions
 	return verdict
 }
 
@@ -347,7 +391,8 @@ func classifyTriageOutcome(decl TriageDeclaration) TriageOutcome {
 }
 
 // TriageComment renders what a person reads on the issue: the verdict's
-// headline, the issue a duplicate points at, and the agent's own evidence.
+// headline, the issue a duplicate points at, the agent's own evidence, and
+// the questions the verdict asks, numbered so an answer can name one.
 //
 // A verdict that writes no comment renders none — the ready path speaks
 // through its label, and a comment on every ready issue would be noise on
@@ -364,6 +409,12 @@ func TriageComment(verdict TriageVerdict, evidence string) string {
 	b.WriteString("\n")
 	if body := strings.TrimSpace(evidence); body != "" {
 		b.WriteString("\n" + body + "\n")
+	}
+	if len(verdict.Questions) > 0 {
+		b.WriteString("\n**Questions for the author:**\n\n")
+		for i, question := range verdict.Questions {
+			b.WriteString(strconv.Itoa(i+1) + ". " + question + "\n")
+		}
 	}
 	return b.String()
 }

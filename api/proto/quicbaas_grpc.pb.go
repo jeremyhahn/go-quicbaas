@@ -62,6 +62,7 @@ const (
 	QuicBaaS_Logout_FullMethodName               = "/quicbaas.v1.QuicBaaS/Logout"
 	QuicBaaS_RefreshToken_FullMethodName         = "/quicbaas.v1.QuicBaaS/RefreshToken"
 	QuicBaaS_ValidateToken_FullMethodName        = "/quicbaas.v1.QuicBaaS/ValidateToken"
+	QuicBaaS_IntrospectToken_FullMethodName      = "/quicbaas.v1.QuicBaaS/IntrospectToken"
 	QuicBaaS_CreateRole_FullMethodName           = "/quicbaas.v1.QuicBaaS/CreateRole"
 	QuicBaaS_DeleteRole_FullMethodName           = "/quicbaas.v1.QuicBaaS/DeleteRole"
 	QuicBaaS_ListRoles_FullMethodName            = "/quicbaas.v1.QuicBaaS/ListRoles"
@@ -184,6 +185,9 @@ type QuicBaaSClient interface {
 	RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*RefreshTokenResponse, error)
 	// ValidateToken validates an authentication token.
 	ValidateToken(ctx context.Context, in *ValidateTokenRequest, opts ...grpc.CallOption) (*ValidateTokenResponse, error)
+	// IntrospectToken returns a token's RFC 7662 introspection state for a
+	// resource server.
+	IntrospectToken(ctx context.Context, in *IntrospectTokenRequest, opts ...grpc.CallOption) (*IntrospectTokenResponse, error)
 	// CreateRole creates a new role.
 	CreateRole(ctx context.Context, in *CreateRoleRequest, opts ...grpc.CallOption) (*CreateRoleResponse, error)
 	// DeleteRole deletes a role.
@@ -654,6 +658,16 @@ func (c *quicBaaSClient) ValidateToken(ctx context.Context, in *ValidateTokenReq
 	return out, nil
 }
 
+func (c *quicBaaSClient) IntrospectToken(ctx context.Context, in *IntrospectTokenRequest, opts ...grpc.CallOption) (*IntrospectTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IntrospectTokenResponse)
+	err := c.cc.Invoke(ctx, QuicBaaS_IntrospectToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *quicBaaSClient) CreateRole(ctx context.Context, in *CreateRoleRequest, opts ...grpc.CallOption) (*CreateRoleResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateRoleResponse)
@@ -963,6 +977,9 @@ type QuicBaaSServer interface {
 	RefreshToken(context.Context, *RefreshTokenRequest) (*RefreshTokenResponse, error)
 	// ValidateToken validates an authentication token.
 	ValidateToken(context.Context, *ValidateTokenRequest) (*ValidateTokenResponse, error)
+	// IntrospectToken returns a token's RFC 7662 introspection state for a
+	// resource server.
+	IntrospectToken(context.Context, *IntrospectTokenRequest) (*IntrospectTokenResponse, error)
 	// CreateRole creates a new role.
 	CreateRole(context.Context, *CreateRoleRequest) (*CreateRoleResponse, error)
 	// DeleteRole deletes a role.
@@ -1124,6 +1141,9 @@ func (UnimplementedQuicBaaSServer) RefreshToken(context.Context, *RefreshTokenRe
 }
 func (UnimplementedQuicBaaSServer) ValidateToken(context.Context, *ValidateTokenRequest) (*ValidateTokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ValidateToken not implemented")
+}
+func (UnimplementedQuicBaaSServer) IntrospectToken(context.Context, *IntrospectTokenRequest) (*IntrospectTokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IntrospectToken not implemented")
 }
 func (UnimplementedQuicBaaSServer) CreateRole(context.Context, *CreateRoleRequest) (*CreateRoleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateRole not implemented")
@@ -1828,6 +1848,24 @@ func _QuicBaaS_ValidateToken_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _QuicBaaS_IntrospectToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IntrospectTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QuicBaaSServer).IntrospectToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: QuicBaaS_IntrospectToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QuicBaaSServer).IntrospectToken(ctx, req.(*IntrospectTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _QuicBaaS_CreateRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateRoleRequest)
 	if err := dec(in); err != nil {
@@ -2336,6 +2374,10 @@ var QuicBaaS_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ValidateToken",
 			Handler:    _QuicBaaS_ValidateToken_Handler,
+		},
+		{
+			MethodName: "IntrospectToken",
+			Handler:    _QuicBaaS_IntrospectToken_Handler,
 		},
 		{
 			MethodName: "CreateRole",

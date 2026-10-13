@@ -3255,6 +3255,28 @@ runs on the daemon host. An agent spec or runner that states its own
 itself. See `docs/orchestration/sandbox.md` for the container side: the
 spawn uid is never root, and privilege inside the image is passwordless `sudo`.
 
+**A host worker's shell is generated** (#250). `acceptEdits` grants file edits
+and no shell, so a host worker could not run `go`, `gofmt` or `make` on its
+own. When `orchestration.agent_config_dir` is set, the daemon renders
+`<agent_config_dir>/settings.json` at boot, where the job lifecycle policy is
+built (`Server.renderWorkerSettings` → `orchestration.WriteWorkerSettings`):
+
+| Source | Rule rendered |
+|---|---|
+| each `orchestration.agent_shell_allow` prefix, e.g. `go` | `Bash(go)` and `Bash(go *)` — the bare command and the command with arguments; the space is a word boundary, so `go` does not allow `gofmt` |
+| each `orchestration.verification_commands` entry, e.g. `make test` | `Bash(make test)` — exact, as the `ExecutionGuard` matches it |
+
+A rule is listed once even when both sources name it. `agent_shell_allow`
+defaults to empty, which renders only the verification commands; it never
+widens on its own. An empty entry, or one with a line break, is refused at
+config load. The file is the engine's: one whose content differs (hand-edited
+or stale) is overwritten — atomically, `0600`, in a `0700` directory created
+if missing — with a WARN naming `orchestration.agent_shell_allow`, and a write
+failure fails boot. Only Claude Code reads the file; codex and opencode are
+not rendered, and a sandboxed worker does not depend on it. The rule syntax
+is Claude Code 2.1's (`CLAUDE_CODE_VERSION` in the Makefile pins the worker
+image); revisit it when that pin moves a major version.
+
 ### Workflow Modes
 
 #### Canned

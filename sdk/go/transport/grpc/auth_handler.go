@@ -61,6 +61,8 @@ func (h *authHandler) handleRequest(ctx context.Context, svc, method string, req
 		return h.handleRefreshToken(ctx, client, req)
 	case "ValidateToken":
 		return h.handleValidateToken(ctx, client, req)
+	case "IntrospectToken":
+		return h.handleIntrospectToken(ctx, client, req)
 	case "BeginLogin":
 		return h.handleBeginLogin(ctx, req)
 	case "FinishLogin":
@@ -174,6 +176,42 @@ func (h *authHandler) handleValidateToken(ctx context.Context, client pb.QuicBaa
 		TenantID:  pbResp.GetTenantId(),
 		Roles:     pbResp.GetRoles(),
 		ExpiresAt: time.Unix(pbResp.GetExpiresAt(), 0),
+	}, nil
+}
+
+// handleIntrospectToken handles IntrospectToken requests. The server sends
+// times as Unix seconds, 0 when unset; an inactive token arrives as
+// active=false alone and is returned as exactly that.
+func (h *authHandler) handleIntrospectToken(ctx context.Context, client pb.QuicBaaSClient, req interface{}) (interface{}, error) {
+	r, ok := req.(*service.IntrospectTokenRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("authHandler.handleIntrospectToken",
+			"invalid request type, expected *service.IntrospectTokenRequest")
+	}
+
+	pbResp, err := client.IntrospectToken(ctx, &pb.IntrospectTokenRequest{Token: r.Token})
+	if err != nil {
+		return nil, convertGRPCError(err, "authHandler.handleIntrospectToken")
+	}
+	if !pbResp.GetActive() {
+		return &service.TokenIntrospection{Active: false}, nil
+	}
+
+	return &service.TokenIntrospection{
+		Active:       true,
+		Scope:        pbResp.GetScope(),
+		ClientID:     pbResp.GetClientId(),
+		Username:     pbResp.GetUsername(),
+		TokenType:    pbResp.GetTokenType(),
+		ExpiresAt:    timeFromUnix(pbResp.GetExpiresAt()),
+		IssuedAt:     timeFromUnix(pbResp.GetIssuedAt()),
+		NotBefore:    timeFromUnix(pbResp.GetNotBefore()),
+		Subject:      pbResp.GetSubject(),
+		Audience:     pbResp.GetAudience(),
+		Issuer:       pbResp.GetIssuer(),
+		JTI:          pbResp.GetJti(),
+		AttestLevel:  pbResp.GetAttestLevel(),
+		AttestAAGUID: pbResp.GetAttestAaguid(),
 	}, nil
 }
 

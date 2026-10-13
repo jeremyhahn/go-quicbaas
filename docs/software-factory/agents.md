@@ -121,6 +121,32 @@ The CLI carries the field as `--prompt-append <text>` or
 `--prompt-append-file <path>` (`-` reads stdin) on `orchestrator spawn`,
 `orchestrator run` and `orchestrator task create`.
 
+## Host worker shell commands
+
+A Claude Code worker that runs on the daemon host is spawned with
+`--permission-mode acceptEdits`: it may edit files and run nothing. The
+commands it may run come from configuration:
+
+```yaml
+orchestration:
+  agent_config_dir: /var/lib/quicbaas/agents/claude
+  agent_shell_allow: [go, gofmt, make, "git status"]   # default: empty
+  verification_commands: [make build, make test, make lint]
+```
+
+At boot the daemon writes `<agent_config_dir>/settings.json`. Each
+`agent_shell_allow` entry is a command prefix and allows that command with or
+without arguments (`go` allows `go build ./...`, not `gofmt`). Each
+verification command is allowed exactly, so it is not listed again here. An
+empty `agent_shell_allow` allows only the verification commands. An empty
+entry, or one with a line break, is refused when the config loads.
+
+The file is generated. Edit the config, not the file: a file that differs is
+overwritten at the next boot with a WARN naming
+`orchestration.agent_shell_allow`. With `agent_config_dir` unset nothing is
+written. Container workers are unaffected; they run with full control inside
+their sandbox.
+
 ## Accounts
 
 An Agent's `account` uses the same selection machinery that every pooled spawn

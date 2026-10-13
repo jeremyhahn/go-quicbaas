@@ -68,10 +68,11 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Backup/Verify":  handleVerifyBackup,
 
 	// Auth operations
-	"quicbaas.Auth/Login":         handleLogin,
-	"quicbaas.Auth/Logout":        handleLogout,
-	"quicbaas.Auth/RefreshToken":  handleRefreshToken,
-	"quicbaas.Auth/ValidateToken": handleValidateToken,
+	"quicbaas.Auth/Login":           handleLogin,
+	"quicbaas.Auth/Logout":          handleLogout,
+	"quicbaas.Auth/RefreshToken":    handleRefreshToken,
+	"quicbaas.Auth/IntrospectToken": handleIntrospectToken,
+	"quicbaas.Auth/ValidateToken":   handleValidateToken,
 
 	// Unified login ceremony (BeginLogin / FinishLogin) — routes through the
 	// LoginCeremony() facade. Embedded path is in-process trusted.

@@ -14,6 +14,10 @@
 package sdlc
 
 import (
+	"encoding/json"
+	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +85,182 @@ func TestReadAgentTurn_CountsToolCallsNotEveryBlock(t *testing.T) {
 	}
 	if got := turn.Describe(); !strings.Contains(got, "tool_uses=1") {
 		t.Fatalf("describe = %q, want tool_uses=1", got)
+	}
+}
+
+// TestReadAgentTurn_RefusalTextIsNoToolFailure (go-quicbaas#234): a worker's
+// words are untrusted, so a reply that SAYS a tool failed or was refused
+// records no failure. The turn carries one successful result, so the
+// failures are measured, and the count must be zero: a reader that took
+// failures from the text would count these sentences and fail here.
+// describeFailures prints a failure count for a test message: the number, or
+// "unmeasured" when the turn carried no tool_result.
+func describeFailures(failures *int) string {
+	if failures == nil {
+		return "unmeasured"
+	}
+	return strconv.Itoa(*failures)
+}
+
+func TestReadAgentTurn_RefusalTextIsNoToolFailure(t *testing.T) {
+	turn := ReadAgentTurn(&orchestration.PromptSessionResponse{
+		Content: []orchestration.ContentBlock{
+			{Type: orchestration.ContentBlockToolUse, ToolName: "Bash", ToolUseID: "tu_1"},
+			{Type: orchestration.ContentBlockToolResult, ToolUseID: "tu_1"},
+			{Type: orchestration.ContentBlockText, Text: "This command requires approval"},
+			{Type: orchestration.ContentBlockText, Text: "tool failed"},
+		},
+	})
+	if turn.ToolFailures == nil || *turn.ToolFailures != 0 {
+		t.Fatalf("tool failures = %s, want a measured zero: text is never an outcome", describeFailures(turn.ToolFailures))
+	}
+	if len(turn.FailedTools) != 0 {
+		t.Fatalf("failed tools = %v, want none", turn.FailedTools)
+	}
+}
+
+// TestReadAgentTurn_NamesTheFailedCall: a tool_result the backend marked as
+// an error is one failure, named by the tool_use it answers; a successful
+// result beside it is not a failure; a result whose call the turn did not
+// carry is still counted, under UnknownToolName.
+func TestReadAgentTurn_NamesTheFailedCall(t *testing.T) {
+	turn := ReadAgentTurn(&orchestration.PromptSessionResponse{
+		Content: []orchestration.ContentBlock{
+			{Type: orchestration.ContentBlockToolUse, ToolName: "Read", ToolUseID: "tu_ok"},
+			{Type: orchestration.ContentBlockToolResult, ToolUseID: "tu_ok"},
+			{Type: orchestration.ContentBlockToolUse, ToolName: "Bash", ToolUseID: "tu_bad"},
+			{Type: orchestration.ContentBlockToolResult, ToolUseID: "tu_bad", IsError: true},
+			{Type: orchestration.ContentBlockToolResult, ToolUseID: "tu_orphan", IsError: true},
+			{Type: orchestration.ContentBlockToolResult, IsError: true},
+		},
+	})
+	if turn.ToolFailures == nil || *turn.ToolFailures != 3 {
+		t.Fatalf("tool failures = %s, want 3", describeFailures(turn.ToolFailures))
+	}
+	want := []string{"Bash", UnknownToolName, UnknownToolName}
+	if !slices.Equal(turn.FailedTools, want) {
+		t.Fatalf("failed tools = %v, want %v", turn.FailedTools, want)
+	}
+	if turn.FailedToolsCut != 0 {
+		t.Fatalf("failed tools cut = %d, want 0", turn.FailedToolsCut)
+	}
+	got := turn.Describe()
+	if !strings.Contains(got, "tool_failures=3") || !strings.Contains(got, "failed_tools=Bash,unknown,unknown") {
+		t.Fatalf("describe = %q, want the failures and their names", got)
+	}
+}
+
+// TestReadAgentTurn_BoundsTheFailedNames: a worker that fails the same call
+// many times keeps the whole count and the head of the names, and says how
+// many names were cut, on the record and in its event.
+func TestReadAgentTurn_BoundsTheFailedNames(t *testing.T) {
+	const failed = MaxFailedTools + 5
+	content := make([]orchestration.ContentBlock, 0, 2*failed)
+	for i := 0; i < failed; i++ {
+		id := "tu_" + strconv.Itoa(i)
+		content = append(content,
+			orchestration.ContentBlock{Type: orchestration.ContentBlockToolUse, ToolName: "Bash", ToolUseID: id},
+			orchestration.ContentBlock{Type: orchestration.ContentBlockToolResult, ToolUseID: id, IsError: true},
+		)
+	}
+	turn := ReadAgentTurn(&orchestration.PromptSessionResponse{Content: content})
+	if turn.ToolFailures == nil || *turn.ToolFailures != failed {
+		t.Fatalf("tool failures = %s, want %d", describeFailures(turn.ToolFailures), failed)
+	}
+	if len(turn.FailedTools) != MaxFailedTools || turn.FailedToolsCut != 5 {
+		t.Fatalf("failed tools = %d names, %d cut; want %d and 5", len(turn.FailedTools), turn.FailedToolsCut, MaxFailedTools)
+	}
+	if got := turn.Describe(); !strings.Contains(got, "failed_tools_cut=5") {
+		t.Fatalf("describe = %q, want failed_tools_cut=5", got)
+	}
+}
+
+// TestAgentTurn_CappedBoundsFailedNamesAssembledByHand: Capped bounds what is
+// stored, so a record built field by field with too many names is cut on the
+// way to the store, and the capped copy does not share the original's names.
+func TestAgentTurn_CappedBoundsFailedNamesAssembledByHand(t *testing.T) {
+	names := make([]string, MaxFailedTools+2)
+	for i := range names {
+		names[i] = "Edit"
+	}
+	failures := len(names)
+	turn := AgentTurn{ToolFailures: &failures, FailedTools: names, FailedToolsCut: 1}
+	capped := turn.Capped()
+	if len(capped.FailedTools) != MaxFailedTools || capped.FailedToolsCut != 3 {
+		t.Fatalf("capped = %d names, %d cut; want %d and 3", len(capped.FailedTools), capped.FailedToolsCut, MaxFailedTools)
+	}
+	capped.FailedTools[0] = "changed"
+	if turn.FailedTools[0] != "Edit" {
+		t.Fatal("the capped record shares its names with the original")
+	}
+}
+
+// TestReadAgentTurn_NoBlocksLeavesFailuresUnmeasured: a turn whose backend
+// reported no tool_result keeps today's shape, failures absent rather than
+// zero, on the record, in its JSON and in its event.
+func TestReadAgentTurn_NoBlocksLeavesFailuresUnmeasured(t *testing.T) {
+	for name, resp := range map[string]*orchestration.PromptSessionResponse{
+		"nil response":       nil,
+		"no blocks":          {},
+		"only text":          {Content: []orchestration.ContentBlock{{Type: orchestration.ContentBlockText, Text: "tool failed"}}},
+		"census, no results": {ToolUse: &orchestration.ToolUseCensus{Calls: 2}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			turn := ReadAgentTurn(resp)
+			if turn.ToolFailures != nil || turn.FailedTools != nil || turn.FailedToolsCut != 0 {
+				t.Fatalf("failures = %v %v %d, want unmeasured", turn.ToolFailures, turn.FailedTools, turn.FailedToolsCut)
+			}
+			encoded, err := json.Marshal(turn)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if strings.Contains(string(encoded), "tool_failures") || strings.Contains(string(encoded), "failed_tools") {
+				t.Fatalf("json = %s, want no failure fields", encoded)
+			}
+			if strings.Contains(turn.Describe(), "tool_failures") {
+				t.Fatal("an unmeasured turn described a failure count")
+			}
+		})
+	}
+}
+
+// TestAgentTurn_SurvivesItsJSONRecord: the turn is stored and published as
+// JSON, so every field must come back from its own encoding. The sentinel
+// sets every exported field, checked by reflection, so a field added later
+// without a value, or dropped by its tag, fails here rather than vanishing
+// from the record (the contract go-quicbaas#248 keeps for crossing types).
+func TestAgentTurn_SurvivesItsJSONRecord(t *testing.T) {
+	failures := 2
+	sentinel := AgentTurn{
+		Attempt: 3, Round: 2, Elapsed: 1500 * time.Millisecond,
+		Reply: "ran it\nSDLC-STOP: question", ReplyBytes: 26,
+		Blocks:         map[string]int{"text": 1, "tool_use": 2, "tool_result": 2},
+		ToolFailures:   &failures,
+		FailedTools:    []string{"Bash", UnknownToolName},
+		FailedToolsCut: 4,
+		StopReason:     orchestration.StopReasonEndTurn,
+		Usage:          &orchestration.TokenUsage{InputTokens: 10, OutputTokens: 20},
+		StopCode:       TurnStopQuestion,
+		StopDeclared:   true,
+		Outcome:        TurnOutcomeQuestion,
+		PromptDigest:   "sha256:abc",
+	}
+	value := reflect.ValueOf(sentinel)
+	for i := 0; i < value.NumField(); i++ {
+		if value.Type().Field(i).IsExported() && value.Field(i).IsZero() {
+			t.Errorf("AgentTurn.%s is left at its zero value by the sentinel: give it one", value.Type().Field(i).Name)
+		}
+	}
+	encoded, err := json.Marshal(sentinel)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded AgentTurn
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(sentinel, decoded) {
+		t.Fatalf("round trip lost a field:\n sent: %#v\n  got: %#v", sentinel, decoded)
 	}
 }
 

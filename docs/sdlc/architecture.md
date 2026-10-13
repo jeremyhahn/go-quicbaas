@@ -568,6 +568,18 @@ no `tool_use` entry is recorded.
 | OpenVINO | counts the tool calls it ran; also adds a `tool_use` block per call to `Content` |
 | ACP one-shot and exec, codex exec, Ollama, API inference, remote ACP | nil: their output carries no tool record this package parses |
 
+**Failed tool calls are read from `tool_result` blocks, never from the
+reply** (go-quicbaas#234). The worker's words are untrusted input, so a reply
+that says "tool failed" or "this command requires approval" records nothing.
+`ReadAgentTurn` counts the `tool_result` blocks the backend marked `IsError`
+into `tool_failures`, and names each failed call in `failed_tools` by its
+`ToolUseID`'s `tool_use` block (`unknown` when the turn carried no matching
+call), bounded at `MaxFailedTools` (8) with `failed_tools_cut` counting the
+names cut. A turn with no `tool_result` block has no `tool_failures` at all,
+so a backend that reports no outcomes stays apart from a turn whose every
+call succeeded. The event header carries the same fields. Nothing classifies
+on them yet: `ClassifyTurn` and the park reasons are unchanged.
+
 **The cap applies where the reply is WRITTEN, never before it is
 classified.** The stop declaration sits at the end of the reply, so capping
 at read time would cut it off any reply longer than the cap — and the turn

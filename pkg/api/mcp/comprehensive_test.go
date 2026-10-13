@@ -281,6 +281,10 @@ func (m *mockService) ValidateToken(ctx context.Context, req *service.ValidateTo
 	return nil, nil
 }
 
+func (m *mockService) IntrospectToken(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error) {
+	return nil, nil
+}
+
 // RBAC Operations.
 func (m *mockService) CreateAuthRole(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error) {
 	return nil, nil

@@ -282,3 +282,66 @@ func TestAuthService_LogoutWithoutProvider(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
 }
+
+// issueAttestedSession issues a session bearer whose factor proved a hardware
+// key, so introspection has attestation claims to carry.
+func issueAttestedSession(t *testing.T, provider *iam.OIDCProvider) string {
+	t.Helper()
+	accessToken, _, err := provider.IssueSessionToken(context.Background(), iam.SessionIdentity{
+		Subject:      sessionSubject,
+		TenantID:     sessionTenant,
+		AuthMethod:   "fido2",
+		MFAVerified:  true,
+		AttestLevel:  "hardware",
+		AttestAAGUID: "cb69481e8ff7403993ec0a2729a154a8",
+	})
+	require.NoError(t, err)
+	return accessToken
+}
+
+func TestAuthService_IntrospectTokenReportsActiveClaims(t *testing.T) {
+	svc, provider, users := newSessionAuthServiceWithUsers(t)
+	seedSessionUser(t, users)
+	accessToken := issueAttestedSession(t, provider)
+
+	resp, err := svc.IntrospectToken(context.Background(), &IntrospectTokenRequest{Token: accessToken})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, resp.Active)
+	assert.Equal(t, sessionSubject, resp.Subject)
+	assert.Equal(t, "hardware", resp.AttestLevel)
+	assert.Equal(t, "cb69481e8ff7403993ec0a2729a154a8", resp.AttestAAGUID)
+	assert.Equal(t, "Bearer", resp.TokenType)
+	assert.WithinDuration(t, time.Now().Add(15*time.Minute), resp.ExpiresAt, 5*time.Second)
+	assert.False(t, resp.IssuedAt.IsZero())
+}
+
+func TestAuthService_IntrospectTokenInactiveCarriesNothing(t *testing.T) {
+	svc, _ := newSessionAuthService(t)
+
+	resp, err := svc.IntrospectToken(context.Background(), &IntrospectTokenRequest{Token: "not-a-jwt"})
+	require.NoError(t, err)
+	assert.Equal(t, &TokenIntrospection{Active: false}, resp)
+}
+
+func TestAuthService_IntrospectTokenRejectsMissingToken(t *testing.T) {
+	svc, _ := newSessionAuthService(t)
+
+	for name, req := range map[string]*IntrospectTokenRequest{"nil": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.IntrospectToken(context.Background(), req)
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+		})
+	}
+}
+
+func TestAuthService_IntrospectTokenWithoutProvider(t *testing.T) {
+	svc := &authService{svc: &quicBaaS{logger: createTestLogger(t)}}
+
+	_, err := svc.IntrospectToken(context.Background(), &IntrospectTokenRequest{Token: "x"})
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrConfiguration, qbErr.Code)
+}

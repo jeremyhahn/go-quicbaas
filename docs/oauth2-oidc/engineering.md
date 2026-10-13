@@ -204,6 +204,23 @@ methods are accepted:
 The verified client certificate (when present) is also the **service identity**
 recorded on the dual-identity audit entry.
 
+#### Every transport
+
+Introspection is also `Security().Auth().IntrospectToken` in the SDK, served on
+every transport through the service layer (`AuthService.IntrospectToken`):
+
+| Transport | Served by | Caller requirement |
+|-----------|-----------|--------------------|
+| REST, QUIC (HTTP/3) | `POST /oauth2/introspect` | mTLS or client credentials, as above |
+| gRPC, Unix socket | `QuicBaaS/IntrospectToken` | authenticated, `user_authfactors:login` |
+| MCP | tool `quicbaas_introspecttoken` | authenticated, `user_authfactors:login` |
+| Embedded | in-process handler | the host process |
+
+Every transport returns the same `service.TokenIntrospection`, including
+`AttestLevel` and `AttestAAGUID`. An inactive token returns exactly
+`Active=false`, and a missing token is an invalid-input error. No transport
+lets an unauthenticated caller introspect.
+
 #### Reused crypto
 
 Introspection reuses the OIDC provider's signature-verification + claim-parsing

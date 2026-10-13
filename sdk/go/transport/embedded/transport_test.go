@@ -119,6 +119,7 @@ type mockQuicBaaS struct {
 	scanIndexFunc        func(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error
 	timeSeriesQueryFunc  func(ctx context.Context, req *service.TimeSeriesQueryRequest, stream chan<- *service.TimeSeriesQueryResponse) error
 	validateTokenFunc    func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
+	introspectTokenFunc  func(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error)
 	kmsService           service.KMSService
 	secretsService       service.SecretsService
 	objectStorageService service.ObjectStorageService
@@ -331,6 +332,13 @@ func (m *mockQuicBaaS) ValidateToken(ctx context.Context, req *service.ValidateT
 		return m.validateTokenFunc(ctx, req)
 	}
 	return &service.ValidateTokenResponse{Valid: true}, nil
+}
+
+func (m *mockQuicBaaS) IntrospectToken(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error) {
+	if m.introspectTokenFunc != nil {
+		return m.introspectTokenFunc(ctx, req)
+	}
+	return &service.TokenIntrospection{}, nil
 }
 
 // RBAC operations

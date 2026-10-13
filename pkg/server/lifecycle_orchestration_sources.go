@@ -55,6 +55,31 @@ func (s *Server) executionGuard() (orchestration.ExecutionGuard, error) {
 	return orchestration.NewExecutionGuard(s.config.Orchestration.VerificationCommands)
 }
 
+// renderWorkerSettings writes the host worker's shell allowlist
+// (orchestration.agent_shell_allow plus every verification command) into the
+// engine's agent configuration directory, so a fresh data dir does not
+// silently leave host workers with edits and no shell. The file is generated:
+// one that says anything else is overwritten, and the overwrite is logged so
+// an operator who hand-edited it learns where the setting now lives. Unset
+// agent_config_dir writes nothing.
+func (s *Server) renderWorkerSettings() error {
+	cfg := s.config.Orchestration
+	if cfg.AgentConfigDir == "" {
+		return nil
+	}
+	replaced, err := orchestration.WriteWorkerSettings(
+		cfg.AgentConfigDir, cfg.AgentShellAllow, cfg.VerificationCommands)
+	if err != nil {
+		return err
+	}
+	if replaced {
+		s.logger.Warnf("orchestration: %s/%s differed from the configuration and was regenerated; "+
+			"set worker shell commands in orchestration.agent_shell_allow, not in the file",
+			cfg.AgentConfigDir, orchestration.WorkerSettingsFile)
+	}
+	return nil
+}
+
 // orchestrationSweepCollaborators are the stores a sweep over projects needs:
 // the tenants to enumerate, the projects to visit and the leases that say how
 // many jobs each project is already running. A boot missing any of them runs

@@ -206,6 +206,7 @@ func TestTransport_MapToToolName(t *testing.T) {
 		// Auth operations
 		{"quicbaas.Auth", "Login", "quicbaas_login"},
 		{"quicbaas.Auth", "Logout", "quicbaas_logout"},
+		{"quicbaas.Auth", "IntrospectToken", "quicbaas_introspecttoken"},
 
 		// Backup operations
 		{"quicbaas.Backup", "Create", "quicbaas_backup_create"},

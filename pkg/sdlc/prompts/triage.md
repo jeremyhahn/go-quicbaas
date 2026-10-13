@@ -134,7 +134,16 @@ The code is one of:
 - `needs-info` — it could be worked once a specific named thing is supplied.
   Name exactly what is missing. "Please clarify" is not an acceptable answer;
   "the issue does not say which of the three `Encode` overloads is affected"
-  is.
+  is. You MUST also ask at least one question, each on its own line above the
+  verdict, about a fact the issue lacks and its author can supply:
+
+        SDLC-TRIAGE-QUESTION: Which of the three `Encode` overloads is affected?
+        SDLC-TRIAGE: needs-info
+
+  A summary of the issue is not a question. A needs-info verdict that asks
+  nothing is not read, because nobody can answer it and the issue stays parked.
+  If you cannot name a question, the issue is not missing anything: judge it
+  `ready` or `not-actionable` instead.
 - `not-actionable` — no worker should be spawned: the work is already done,
   the issue is out of scope, it is a tracker rather than work, or it needs a
   decision reserved for a person.
@@ -160,7 +169,8 @@ The code is one of:
         SDLC-TRIAGE: duplicate
 
   A duplicate verdict naming no issue is unreadable and is treated as
-  not-actionable, which wastes the one useful thing you found.
+  not-actionable, which wastes the one useful thing you found. Two issues that
+  name no file, path or identifier in common are not read as duplicates.
 
 A reply with no declaration is read as no verdict at all, and the issue is
 left for a person. Prose that sounds approving is never read as `ready` — only

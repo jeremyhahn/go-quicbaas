@@ -171,8 +171,10 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// Aggregate / time-series
 	"quicbaas_aggregate": {"timeseries", "aggregate"},
 
-	// Auth (logout)
-	"quicbaas_logout": {"user_authfactors", "login"},
+	// Auth (logout, introspection). Introspection carries the grant the gRPC
+	// IntrospectToken RPC declares.
+	"quicbaas_logout":          {"user_authfactors", "login"},
+	"quicbaas_introspecttoken": {"user_authfactors", "login"},
 
 	// ---- Stage 0.5: broker data-plane surfaces (qrdb-registered) ----
 

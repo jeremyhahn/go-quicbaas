@@ -88,7 +88,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	// --- Auth ------------------------------------------------------------
 	{"quicbaas.Auth", "GetJWKS"}:                 gapNoTool,
 	{"quicbaas.Auth", "GetOpenIDConfiguration"}:  gapNoTool,
-	{"quicbaas.Auth", "IntrospectToken"}:         gapNoTool,
 	{"quicbaas.Auth", "Login"}:                   gapNoTool,
 	{"quicbaas.Auth", "RefreshToken"}:            gapNoTool,
 	{"quicbaas.Auth", "ValidateToken"}:           gapNoTool,

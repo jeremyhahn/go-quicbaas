@@ -51,6 +51,17 @@ import (
 //go:embed prompts/triage.md
 var triagePrompts embed.FS
 
+// TriagePromptRevision names the triage prompt a verdict was written under:
+// the charter and the per-issue text TriagePrompt wraps around it. It is
+// stamped into every verdict marker so mis-triage can be counted per prompt.
+//
+// IT IS A HASH PREFIX, PINNED BY A TEST: TestTriagePromptRevisionPinned
+// hashes the charter and a fixed TriagePrompt render, so editing either
+// without changing this constant fails the build's tests rather than
+// silently stamping new verdicts with an old revision. Set it to the value
+// the failing test prints.
+const TriagePromptRevision = "b08bfaf994bf"
+
 // triageCharter is the embedded charter, read once at init. A read failure
 // is a build that embedded nothing, which is a programming error rather than
 // a runtime condition — but it is reported through TriageCharter returning
@@ -208,7 +219,8 @@ func TriagePrompt(spec TriagePromptSpec) (string, error) {
 	// The instruction goes LAST, after the evidence it applies to. Anything
 	// appended here is outside every cached prefix, so keep it short.
 	b.WriteString("\nJudge issue #" + strconv.Itoa(spec.Issue.Number) +
-		" against the charter and end with its verdict declaration.\n")
+		" against the charter and end with its verdict declaration. A needs-info " +
+		"verdict must ask at least one `" + TriageQuestionMarker + "` question about a fact the issue lacks.\n")
 
 	return b.String(), nil
 }

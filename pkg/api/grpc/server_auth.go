@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -105,4 +106,49 @@ func (s *Server) ValidateToken(ctx context.Context, req *pb.ValidateTokenRequest
 		Roles:     serviceResp.Roles,
 		ExpiresAt: serviceResp.ExpiresAt,
 	}, nil
+}
+
+// IntrospectToken implements the IntrospectToken RPC: the RFC 7662
+// introspection REST serves at /oauth2/introspect, answered by the same
+// service-layer method. An inactive token is a normal reply carrying only
+// active=false.
+func (s *Server) IntrospectToken(ctx context.Context, req *pb.IntrospectTokenRequest) (*pb.IntrospectTokenResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is nil")
+	}
+
+	introspection, err := s.service.IntrospectToken(ctx, &service.IntrospectTokenRequest{
+		Token: req.GetToken(),
+	})
+	if err != nil {
+		return nil, toProtoError(err)
+	}
+	if !introspection.Active {
+		return &pb.IntrospectTokenResponse{Active: false}, nil
+	}
+
+	return &pb.IntrospectTokenResponse{
+		Active:       true,
+		Scope:        introspection.Scope,
+		ClientId:     introspection.ClientID,
+		Username:     introspection.Username,
+		TokenType:    introspection.TokenType,
+		ExpiresAt:    unixSecondsOrZero(introspection.ExpiresAt),
+		IssuedAt:     unixSecondsOrZero(introspection.IssuedAt),
+		NotBefore:    unixSecondsOrZero(introspection.NotBefore),
+		Subject:      introspection.Subject,
+		Audience:     introspection.Audience,
+		Issuer:       introspection.Issuer,
+		Jti:          introspection.JTI,
+		AttestLevel:  introspection.AttestLevel,
+		AttestAaguid: introspection.AttestAAGUID,
+	}, nil
+}
+
+// unixSecondsOrZero converts a time to Unix seconds, keeping the zero time as 0.
+func unixSecondsOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }

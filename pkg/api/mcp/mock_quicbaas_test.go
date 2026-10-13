@@ -112,6 +112,14 @@ func (m *MockQuicBaaS) ValidateToken(ctx context.Context, req *service.ValidateT
 	return args.Get(0).(*service.ValidateTokenResponse), args.Error(1)
 }
 
+func (m *MockQuicBaaS) IntrospectToken(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*service.TokenIntrospection), args.Error(1)
+}
+
 func (m *MockQuicBaaS) Transaction(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {

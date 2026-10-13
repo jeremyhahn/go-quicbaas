@@ -1591,6 +1591,18 @@ type OrchestrationConfig struct {
 	// refuses every command.
 	VerificationCommands []string `mapstructure:"verification_commands"`
 
+	// AgentShellAllow is the shell command prefixes a Claude Code worker
+	// that runs on the daemon host may run (for example "go", "gofmt",
+	// "make", "git status"). The daemon renders them, with every
+	// VerificationCommands entry as an exact rule, into the settings.json
+	// of AgentConfigDir at boot; a host worker spawned in acceptEdits mode
+	// has no shell otherwise. Container workers are unaffected: they run
+	// with full control inside their sandbox.
+	//
+	// Default: empty, which allows only the verification commands. Ignored
+	// when AgentConfigDir is unset.
+	AgentShellAllow []string `mapstructure:"agent_shell_allow"`
+
 	// AgentConfigDir is the configuration directory every Claude Code
 	// session the engine spawns reads (CLAUDE_CONFIG_DIR). A directory the
 	// engine owns is a directory with no operator credential in it — the

@@ -149,8 +149,7 @@ func (s *triageRun) admitMember(ctx context.Context, issue ForgeIssue, planned P
 // clusterComment tags a cluster comment as triage's own word on the issue, at
 // the head the facts were measured against.
 func (s *triageRun) clusterComment(body string) string {
-	return body + "\n<!-- " + triageCommentMarker + " " + triageHeadMarker + s.headSHA +
-		" " + triageVerdictMarker + clusteredVerdictCode + " -->\n"
+	return body + s.verdictMarker(clusteredVerdictCode)
 }
 
 // clusteredVerdictCode is the verdict a cluster comment records. It is not a

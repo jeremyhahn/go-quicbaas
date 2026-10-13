@@ -792,6 +792,19 @@ func (v *Validator) validateOrchestration(cfg *OrchestrationConfig) {
 		}
 	}
 
+	// Each shell allowlist entry becomes one permission rule in the worker
+	// settings file. An empty entry would be a rule allowing every command,
+	// and a line break would let one entry smuggle a second rule.
+	for i, prefix := range cfg.AgentShellAllow {
+		if strings.TrimSpace(prefix) == "" {
+			v.addError(fmt.Sprintf("orchestration.agent_shell_allow[%d]", i),
+				"must not be empty; an empty prefix would allow every shell command")
+		} else if strings.ContainsAny(prefix, "\r\n") {
+			v.addError(fmt.Sprintf("orchestration.agent_shell_allow[%d]", i),
+				fmt.Sprintf("must not contain a line break: %q", prefix))
+		}
+	}
+
 	// The agent configuration directory is put on a session's environment
 	// verbatim, so a relative path would resolve against whatever the
 	// session's working directory is — a different directory per session.

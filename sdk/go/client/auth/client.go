@@ -113,10 +113,6 @@ type revokeAllSessionsRequest struct{}
 
 type revokeAllSessionsResponse struct{}
 
-type introspectTokenRequest struct {
-	Token string `json:"token"`
-}
-
 type getJWKSRequest struct{}
 
 type getOpenIDConfigurationRequest struct{}
@@ -480,7 +476,7 @@ func (c *client) IntrospectToken(ctx context.Context, token string) (*service.To
 		return nil, errors.NewInvalidInput("auth.IntrospectToken", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "IntrospectToken", &introspectTokenRequest{
+	resp, err := c.transport.Request(ctx, serviceName, "IntrospectToken", &service.IntrospectTokenRequest{
 		Token: token,
 	})
 	if err != nil {

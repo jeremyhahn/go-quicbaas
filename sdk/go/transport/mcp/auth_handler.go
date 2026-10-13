@@ -44,6 +44,8 @@ func (h *authHandler) transformResponse(method string, resp interface{}) (interf
 		return h.transformRefreshTokenResponse(resp)
 	case "ValidateToken":
 		return h.transformValidateTokenResponse(resp)
+	case "IntrospectToken":
+		return h.transformIntrospectTokenResponse(resp)
 	case "BeginLogin":
 		return h.transformBeginLoginResponse(resp)
 	case "FinishLogin":
@@ -214,6 +216,21 @@ func (h *authHandler) transformValidateTokenResponse(resp interface{}) (*service
 	}
 
 	return result, nil
+}
+
+// transformIntrospectTokenResponse converts the MCP tool result map into
+// service.TokenIntrospection. The server encodes that same struct, so a JSON
+// round-trip restores it field for field, including the RFC 3339 times.
+func (h *authHandler) transformIntrospectTokenResponse(resp interface{}) (*service.TokenIntrospection, error) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return nil, errors.NewInternal("mcp.authHandler", "failed to re-marshal IntrospectToken response")
+	}
+	var out service.TokenIntrospection
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, errors.NewInternal("mcp.authHandler", "failed to decode IntrospectToken response")
+	}
+	return &out, nil
 }
 
 // isMCPAuthService returns true if the service is an Auth service.

@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -283,6 +284,13 @@ func TestTriageComment_NamesWhatIsMissing(t *testing.T) {
 			contains: []string{"The issue names no file and no reproduction."},
 		},
 		{
+			name: "needs-info numbers the questions it asks",
+			verdict: ClassifyTriage(TriageDeclaration{Code: TriageCodeNeedsInfo, Declared: true,
+				Questions: []string{"Which overload?", "Which version?"}}),
+			evidence: "The issue names no overload and no version.",
+			contains: []string{"Questions for the author", "1. Which overload?\n", "2. Which version?\n"},
+		},
+		{
 			name:     "a duplicate names the issue it duplicates",
 			verdict:  ClassifyTriage(TriageDeclaration{Code: TriageCodeDuplicate, Declared: true, DuplicateOf: 25}),
 			evidence: "Same stale README.",
@@ -398,5 +406,55 @@ func TestParseTriageDeclaration_CloseMarker(t *testing.T) {
 	// No marker at all.
 	if d := ParseTriageDeclaration("SDLC-TRIAGE: not-actionable"); d.ClosesAsAlreadyDone {
 		t.Fatal("a bare not-actionable must never close")
+	}
+}
+
+func TestParseTriageDeclaration_CollectsQuestions(t *testing.T) {
+	long := strings.Repeat("é", triageMaxQuestionLen+40)
+	tests := []struct {
+		name  string
+		reply string
+		want  []string
+	}{
+		{
+			name: "several questions, in reply order",
+			reply: "Two facts are missing.\n\nSDLC-TRIAGE-QUESTION: Which overload?\n" +
+				"> **SDLC-TRIAGE-QUESTION: Which version?**\nSDLC-TRIAGE: needs-info",
+			want: []string{"Which overload?", "Which version?"},
+		},
+		{
+			name:  "an empty question line asks nothing",
+			reply: "SDLC-TRIAGE-QUESTION:   \nSDLC-TRIAGE-QUESTION: Which overload?\nSDLC-TRIAGE: needs-info",
+			want:  []string{"Which overload?"},
+		},
+		{
+			name:  "an over-long question is cut",
+			reply: "SDLC-TRIAGE-QUESTION: " + long + "\nSDLC-TRIAGE: needs-info",
+			want:  []string{long[:triageMaxQuestionLen*len("é")]},
+		},
+		{
+			name: "questions past the bound are dropped",
+			reply: "SDLC-TRIAGE-QUESTION: q1\nSDLC-TRIAGE-QUESTION: q2\nSDLC-TRIAGE-QUESTION: q3\n" +
+				"SDLC-TRIAGE-QUESTION: q4\nSDLC-TRIAGE-QUESTION: q5\nSDLC-TRIAGE-QUESTION: q6\nSDLC-TRIAGE: needs-info",
+			want: []string{"q1", "q2", "q3", "q4", "q5"},
+		},
+		{
+			name:  "a reply with no question",
+			reply: "The issue names no overload.\n\nSDLC-TRIAGE: needs-info",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			decl := ParseTriageDeclaration(tc.reply)
+			if !slices.Equal(decl.Questions, tc.want) {
+				t.Fatalf("Questions = %q, want %q", decl.Questions, tc.want)
+			}
+			if verdict := ClassifyTriage(decl); !slices.Equal(verdict.Questions, tc.want) {
+				t.Fatalf("the verdict carries %q, want %q", verdict.Questions, tc.want)
+			}
+			if !decl.Declared || decl.Code != TriageCodeNeedsInfo {
+				t.Fatalf("the questions must not disturb the verdict line, got %+v", decl)
+			}
+		})
 	}
 }

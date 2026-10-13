@@ -14,9 +14,12 @@
 package sdlc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // =============================================================================
@@ -36,6 +39,7 @@ func TestTriageCharter_IsEditableTextCarryingTheContract(t *testing.T) {
 	required := []string{
 		TriageDeclarationMarker,
 		TriageDuplicateMarker,
+		TriageQuestionMarker,
 		TriageCodeReady,
 		TriageCodeNeedsInfo,
 		TriageCodeNotActionable,
@@ -105,6 +109,41 @@ func TestTriageCharter_IsNotAGoConstant(t *testing.T) {
 	}
 	if TriageCharter() != strings.TrimSpace(string(raw)) {
 		t.Fatal("TriageCharter must serve the embedded file, not a copy that can drift from it")
+	}
+}
+
+// TestTriagePromptRevisionPinned fails whenever the charter or TriagePrompt's
+// own text changes without TriagePromptRevision changing with it, so a verdict
+// marker never names a prompt it was not written under. The renders cover
+// both closing branches, a re-judged discussion, and the empty sections.
+func TestTriagePromptRevisionPinned(t *testing.T) {
+	asked := time.Unix(1_700_000_000, 0).UTC()
+	full := TriagePromptSpec{
+		Repo:  RepoRef{Owner: "acme", Repo: "api"},
+		Issue: ForgeIssue{Number: 7, Title: "Fix the encoder", Body: "Encode panics."},
+		Comments: []ForgeComment{
+			{Body: "Which overload?\n<!-- " + triageCommentMarker + " -->", Author: "agent", Created: asked},
+			{Body: "The streaming one.", Author: "author", Created: asked.Add(time.Hour)},
+		},
+		OpenIssues:   []ForgeIssue{{Number: 7, Title: "Fix the encoder", State: "open"}},
+		Verification: []string{"go test ./..."},
+		Facts:        "## Facts\n\nnone",
+	}
+	closing := full
+	closing.MayClose = true
+	bare := TriagePromptSpec{Repo: full.Repo, Issue: ForgeIssue{Number: 7, Title: "Fix the encoder"}}
+
+	template := TriageCharter()
+	for _, spec := range []TriagePromptSpec{full, closing, bare} {
+		prompt, err := TriagePrompt(spec)
+		if err != nil {
+			t.Fatalf("TriagePrompt: %v", err)
+		}
+		template += "\x00" + prompt
+	}
+	digest := sha256.Sum256([]byte(template))
+	if got := hex.EncodeToString(digest[:])[:len(TriagePromptRevision)]; got != TriagePromptRevision {
+		t.Fatalf("the triage prompt changed: set TriagePromptRevision to %q", got)
 	}
 }
 

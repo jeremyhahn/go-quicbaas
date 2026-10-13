@@ -607,6 +607,17 @@ type AuthService interface {
 	//   - ValidateTokenResponse: Contains user info and token validity
 	//   - error: ErrUnauthorized, ErrTimeout
 	ValidateToken(ctx context.Context, req *ValidateTokenRequest) (*ValidateTokenResponse, error)
+
+	// IntrospectToken reports an access token's RFC 7662 introspection
+	// state for a resource server. An inactive, expired, revoked or
+	// unparseable token is not an error: it yields exactly Active=false.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Introspect token request with the token to inspect
+	// Returns:
+	//   - TokenIntrospection: Active plus the token's claims when active
+	//   - error: ErrInvalidInput (no token), ErrConfiguration
+	IntrospectToken(ctx context.Context, req *IntrospectTokenRequest) (*TokenIntrospection, error)
 }
 
 // =============================================================================
@@ -1306,6 +1317,8 @@ type (
 		Roles     []string
 		ExpiresAt int64
 	}
+	// IntrospectTokenRequest carries the token a resource server inspects.
+	IntrospectTokenRequest struct{ Token string }
 )
 
 // RBAC Operations Types - defined in rbac_types.go with type aliases for backwards compatibility.

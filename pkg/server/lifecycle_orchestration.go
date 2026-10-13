@@ -261,6 +261,9 @@ func (s *Server) startOrchestration() error {
 			return policyErr
 		}
 		wirer.SetJobLifecyclePolicy(lifecyclePolicy)
+		if err := s.renderWorkerSettings(); err != nil {
+			return err
+		}
 
 		claimArbiter, arbiterErr := s.taskClaimArbiter()
 		if arbiterErr != nil {

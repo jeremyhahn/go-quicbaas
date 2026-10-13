@@ -34,6 +34,23 @@ curl --cert client.crt \
      https://localhost:8443/api/v1/health
 ```
 
+### Token Introspection
+
+`Security().Auth().IntrospectToken` (RFC 7662) is served on every transport
+and returns the same `service.TokenIntrospection`, including `AttestLevel`
+and `AttestAAGUID`:
+
+| Transport | Endpoint | Caller requirement |
+|-----------|----------|--------------------|
+| REST, QUIC | `POST /oauth2/introspect` (form field `token`) | mTLS or client credentials; otherwise `401 invalid_client` |
+| gRPC, Unix | `QuicBaaS/IntrospectToken` | authenticated, `user_authfactors:login` |
+| MCP | tool `quicbaas_introspecttoken` (`token`) | authenticated, `user_authfactors:login` |
+| Embedded | in-process | the host process |
+
+An inactive, expired, revoked or unparseable token returns only
+`Active=false`. A missing token is `invalid_input` (`400 invalid_request` on
+REST). See [OAuth2/OIDC engineering](../oauth2-oidc/engineering.md#every-transport).
+
 ## OpenAPI Documentation
 
 Interactive docs: `http://localhost:8080/swagger/`

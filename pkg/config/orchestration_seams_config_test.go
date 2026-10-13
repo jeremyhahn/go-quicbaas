@@ -14,10 +14,42 @@
 package config
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestOrchestrationConfig_AgentShellAllowFromFile proves the key is read from
+// a config file under its documented name and that an invalid entry is
+// refused at load with a typed validation error naming the entry.
+func TestOrchestrationConfig_AgentShellAllowFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quicbaas.yaml")
+	yaml := "orchestration:\n  agent_shell_allow:\n    - go\n    - \"  \"\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadFromFile: %v", err)
+	}
+	if got := strings.Join(cfg.Orchestration.AgentShellAllow, "|"); got != "go|  " {
+		t.Fatalf("agent_shell_allow = %q, want %q", got, "go|  ")
+	}
+
+	var verrs ValidationErrors
+	if !errors.As(Validate(cfg), &verrs) {
+		t.Fatalf("Validate did not return ValidationErrors")
+	}
+	for _, ve := range verrs {
+		if ve.Field == "orchestration.agent_shell_allow[1]" {
+			return
+		}
+	}
+	t.Fatalf("no validation error on orchestration.agent_shell_allow[1]: %v", verrs)
+}
 
 // TestOrchestrationConfig_SeamDefaults pins the shipped defaults for the
 // task-source sweep, the command allowlist and the per-moment bounds. The
@@ -103,6 +135,20 @@ func TestValidateOrchestration_Seams(t *testing.T) {
 			name:      "a relative agent config dir is refused",
 			mutate:    func(c *OrchestrationConfig) { c.AgentConfigDir = "agents/claude" },
 			wantError: "orchestration.agent_config_dir",
+		},
+		{
+			name:   "a shell allowlist of prefixes is valid",
+			mutate: func(c *OrchestrationConfig) { c.AgentShellAllow = []string{"go", "git status"} },
+		},
+		{
+			name:      "an empty shell allowlist entry is refused",
+			mutate:    func(c *OrchestrationConfig) { c.AgentShellAllow = []string{"go", " \t"} },
+			wantError: "orchestration.agent_shell_allow[1]",
+		},
+		{
+			name:      "a shell allowlist entry with a newline is refused",
+			mutate:    func(c *OrchestrationConfig) { c.AgentShellAllow = []string{"go\nrm -rf /"} },
+			wantError: "orchestration.agent_shell_allow[0]",
 		},
 		{
 			name:      "a negative prepare bound is refused",

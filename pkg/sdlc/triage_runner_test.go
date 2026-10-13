@@ -256,7 +256,8 @@ func TestTriageRunner_ReadyAppliesTheTriggerLabel(t *testing.T) {
 func TestTriageRunner_NeedsInfoLabelsAndNamesWhatIsMissing(t *testing.T) {
 	rig := newTriageRig(t)
 	rig.forge.putIssue(102, "Fix the encoder")
-	rig.answers("The issue does not say which of the three Encode overloads is affected.\n\nSDLC-TRIAGE: needs-info")
+	rig.answers("The issue does not say which of the three Encode overloads is affected.\n\n" +
+		"SDLC-TRIAGE-QUESTION: Which of the three Encode overloads is affected?\nSDLC-TRIAGE: needs-info")
 
 	if err := rig.run(); err != nil {
 		t.Fatalf("run: %v", err)
@@ -316,8 +317,9 @@ func TestTriageRunner_AlreadyDoneWorkIsNeverReady(t *testing.T) {
 			reply: "main already carries this: README.md:1 documents the new CLI.\n\nSDLC-TRIAGE: not-actionable",
 		},
 		{
-			name:  "reported as needs-info when the agent could not be certain",
-			reply: "README.md:1 looks current, but the issue names no specific section.\n\nSDLC-TRIAGE: needs-info",
+			name: "reported as needs-info when the agent could not be certain",
+			reply: "README.md:1 looks current, but the issue names no specific section.\n\n" +
+				"SDLC-TRIAGE-QUESTION: Which README section is stale?\nSDLC-TRIAGE: needs-info",
 		},
 	}
 	for _, tc := range tests {
@@ -348,8 +350,8 @@ func TestTriageRunner_AlreadyDoneWorkIsNeverReady(t *testing.T) {
 // first, is not handed to a worker, and the comment says WHICH issue.
 func TestTriageRunner_DuplicateIsIdentifiedAndNamed(t *testing.T) {
 	rig := newTriageRig(t)
-	rig.forge.putIssue(25, "README is stale")
-	rig.forge.putIssue(52, "README is stale")
+	rig.forge.putIssue(25, "README.md is stale")
+	rig.forge.putIssue(52, "README.md is stale")
 	// The first issue is ready; the second is the same work.
 	rig.answers(
 		"A verifiable objective, scoped to one change.\n\nSDLC-TRIAGE: ready",
@@ -380,8 +382,8 @@ func TestTriageRunner_DuplicateIsIdentifiedAndNamed(t *testing.T) {
 // prompt that named nothing.
 func TestTriageRunner_DuplicateCandidatesReachThePrompt(t *testing.T) {
 	rig := newTriageRig(t)
-	rig.forge.putIssue(25, "README is stale")
-	rig.forge.putIssue(52, "README is stale")
+	rig.forge.putIssue(25, "README.md is stale")
+	rig.forge.putIssue(52, "README.md is stale")
 	rig.answers("SDLC-TRIAGE: needs-info")
 
 	if err := rig.run(); err != nil {
@@ -1012,7 +1014,7 @@ func TestTriageRunner_ReportsAForgeWriteItCouldNotMake(t *testing.T) {
 		},
 		{
 			name:        "the needs-info label is refused after the comment landed",
-			reply:       "The issue names no version.\n\nSDLC-TRIAGE: needs-info",
+			reply:       "The issue names no version.\n\nSDLC-TRIAGE-QUESTION: Which version is affected?\nSDLC-TRIAGE: needs-info",
 			addLabelErr: errors.New("forge refused the label"),
 			wantTrigger: false,
 		},
@@ -2032,9 +2034,9 @@ func TestTriageRunner_AVerdictReplacesThePreviousDisposition(t *testing.T) {
 func TestTriageRunner_AnIdenticalVerdictIsNotPostedAgain(t *testing.T) {
 	rig := newTriageRig(t)
 	trigger := rig.binding.Forge.TriggerLabel
-	rig.forge.putIssue(981, "agent-side workspaces", trigger)
-	rig.forge.putIssue(982, "agent-side sockets", trigger)
-	rig.forge.putIssue(1013, "relay the signing agent")
+	rig.forge.putIssue(981, "agent-side workspaces in pkg/sdlc/agent.go", trigger)
+	rig.forge.putIssue(982, "agent-side sockets in pkg/sdlc/agent.go", trigger)
+	rig.forge.putIssue(1013, "relay the signing agent from pkg/sdlc/agent.go")
 	duplicateOf := func(number string) string {
 		return "The same work as " + number + ".\n\nSDLC-TRIAGE-DUPLICATE: " + number + "\nSDLC-TRIAGE: duplicate"
 	}
@@ -2128,8 +2130,8 @@ func TestSameTriageVerdict_ComparesOutcomeAndHeadline(t *testing.T) {
 // spends no model turn re-reaching it.
 func TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged(t *testing.T) {
 	rig := newTriageRig(t)
-	rig.forge.putIssue(981, "agent-side workspaces", rig.binding.Forge.TriggerLabel)
-	rig.forge.putIssue(1013, "relay the signing agent")
+	rig.forge.putIssue(981, "agent-side workspaces in pkg/sdlc/agent.go", rig.binding.Forge.TriggerLabel)
+	rig.forge.putIssue(1013, "relay the signing agent from pkg/sdlc/agent.go")
 	duplicate := "The same work as #981.\n\nSDLC-TRIAGE-DUPLICATE: #981\nSDLC-TRIAGE: duplicate"
 
 	rig.answers(duplicate)
@@ -2178,12 +2180,14 @@ func TestTriageRunner_TwoDifferentQuestionsAreBothPosted(t *testing.T) {
 	rig := newTriageRig(t)
 	rig.forge.putIssue(40, "Encode is slow")
 
-	rig.answers("The issue does not say which of the three Encode overloads is affected.\n\nSDLC-TRIAGE: needs-info")
+	rig.answers("The issue does not say which of the three Encode overloads is affected.\n\n" +
+		"SDLC-TRIAGE-QUESTION: Which of the three Encode overloads is affected?\nSDLC-TRIAGE: needs-info")
 	if err := rig.run(); err != nil {
 		t.Fatalf("first pass: %v", err)
 	}
 	rig.forge.putComment(40, "The streaming one.", time.Now().Add(time.Hour))
-	rig.answers("What latency should the streaming Encode meet?\n\nSDLC-TRIAGE: needs-info")
+	rig.answers("The issue names no latency target.\n\n" +
+		"SDLC-TRIAGE-QUESTION: What latency should the streaming Encode meet?\nSDLC-TRIAGE: needs-info")
 	if err := rig.run(); err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
@@ -2195,6 +2199,135 @@ func TestTriageRunner_TwoDifferentQuestionsAreBothPosted(t *testing.T) {
 	}
 	if len(questions) != 2 || !strings.Contains(questions[0], "overloads") || !strings.Contains(questions[1], "latency") {
 		t.Fatalf("triage's questions = %q, want both, in order", questions)
+	}
+}
+
+// triageSummaryReply is the shape go-quicbaas#826 and #851 were parked with:
+// a review that restates the issue under "What is missing:" and asks its
+// author nothing.
+const triageSummaryReply = "## Review of Issue #826\n\n### Issue Summary\n\n" +
+	"The issue asks for the scheduler to coalesce leases in pkg/scheduler/lease.go.\n\n" +
+	"### What is missing:\n\nThe issue describes lease coalescing for the scheduler.\n\n"
+
+func TestTriageRunner_ANeedsInfoThatAsksNothingIsNotAVerdict(t *testing.T) {
+	rig := newTriageRig(t)
+	rig.forge.putIssue(826, "Coalesce scheduler leases")
+	rig.answers(triageSummaryReply + "SDLC-TRIAGE: needs-info")
+
+	if err := rig.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := rig.comments(826); len(got) != 0 {
+		t.Fatalf("a needs-info that asks nothing is not posted, got %v", got)
+	}
+	if got := rig.labels(826); len(got) != 0 {
+		t.Fatalf("a needs-info that asks nothing parks nothing, got %v", got)
+	}
+	details, ok := rig.auditDetails("sdlc:triage_unusable")
+	if !ok || !strings.Contains(details, "issue=826") || !strings.Contains(details, "asks no question") {
+		t.Fatalf("the audit trail names the issue and the reason, got %q", details)
+	}
+}
+
+func TestTriageRunner_ANeedsInfoListsTheQuestionsItAsks(t *testing.T) {
+	rig := newTriageRig(t)
+	rig.forge.putIssue(851, "Coalesce scheduler leases")
+	rig.answers(triageSummaryReply +
+		"SDLC-TRIAGE-QUESTION: Should a coalesced lease keep the earliest or the latest deadline?\n" +
+		"SDLC-TRIAGE: needs-info")
+
+	if err := rig.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !rig.hasLabel(851, rig.binding.Forge.Label(LabelNeedsInfo)) {
+		t.Fatalf("a needs-info that asks a question is parked, got %v", rig.labels(851))
+	}
+	comments := rig.comments(851)
+	if len(comments) != 1 {
+		t.Fatalf("needs-info comments exactly once, got %d", len(comments))
+	}
+	if !strings.Contains(comments[0], "1. Should a coalesced lease keep the earliest or the latest deadline?") {
+		t.Fatalf("the comment must list the question, got:\n%s", comments[0])
+	}
+	if strings.Contains(comments[0], TriageQuestionMarker) {
+		t.Fatalf("the marker itself means nothing to a reader, got:\n%s", comments[0])
+	}
+}
+
+func TestTriageRunner_ADuplicateMustShareAPathOrIdentifier(t *testing.T) {
+	const dice = "Add `dice.Attestation` to sdk/go/xkms/dice/dice.go."
+	tests := []struct {
+		name   string
+		cited  string
+		usable bool
+	}{
+		// go-quicbaas#1082 cited #894: a DICE SDK re-export against
+		// scheduler lease coalescing, which share nothing.
+		{name: "two issues sharing nothing", cited: "Coalesce leases in pkg/scheduler/lease.go via `LeaseCoalescer`."},
+		{name: "a shared path", cited: "Export the attestation from sdk/go/xkms/dice/dice.go.", usable: true},
+		{name: "a shared identifier", cited: "`dice.Attestation` is missing from the SDK.", usable: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newTriageRig(t)
+			rig.forge.putIssue(894, "the cited issue", rig.binding.Forge.TriggerLabel).Body = tc.cited
+			rig.forge.putIssue(1082, "Re-export DICE attestation").Body = dice
+			rig.answers("The same work as #894.\n\nSDLC-TRIAGE-DUPLICATE: #894\nSDLC-TRIAGE: duplicate")
+
+			if err := rig.run(); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			posted := len(rig.comments(1082)) == 1
+			if posted != tc.usable {
+				t.Fatalf("duplicate posted = %v, want %v: %v", posted, tc.usable, rig.comments(1082))
+			}
+			if tc.usable {
+				return
+			}
+			details, ok := rig.auditDetails("sdlc:triage_unusable")
+			if !ok || !strings.Contains(details, "no path or identifier in common") {
+				t.Fatalf("the audit trail names why the duplicate was set aside, got %q", details)
+			}
+		})
+	}
+}
+
+func TestTriageRunner_TheVerdictMarkerNamesModelAndPrompt(t *testing.T) {
+	tests := map[string]struct {
+		model, want string
+	}{
+		"a reported model":     {model: "glm 4.6", want: triageModelMarker + "glm_4.6"},
+		"no model is reported": {want: triageModelMarker + triageUnknownModel},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			rig := newTriageRig(t)
+			rig.agents.model = tc.model
+			rig.forge.putIssue(102, "Fix the encoder")
+			rig.answers("The issue names no overload.\n\n" +
+				"SDLC-TRIAGE-QUESTION: Which overload?\nSDLC-TRIAGE: needs-info")
+
+			if err := rig.run(); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			comments := rig.comments(102)
+			if len(comments) != 1 {
+				t.Fatalf("needs-info comments exactly once, got %d", len(comments))
+			}
+			posted := comments[0]
+			if !strings.Contains(posted, " "+tc.want+" ") {
+				t.Fatalf("the marker must carry %q, got:\n%s", tc.want, posted)
+			}
+			if !strings.Contains(posted, " "+triagePromptMarker+TriagePromptRevision+" -->") {
+				t.Fatalf("the marker must carry the prompt revision, got:\n%s", posted)
+			}
+			if got := triageVerdictCode(posted); got != string(TriageOutcomeNeedsInfo) {
+				t.Fatalf("triageVerdictCode = %q on the new marker", got)
+			}
+			if got := triageVerdictHead(posted); got != fakeForgeHeadSHA {
+				t.Fatalf("triageVerdictHead = %q on the new marker, want %q", got, fakeForgeHeadSHA)
+			}
+		})
 	}
 }
 

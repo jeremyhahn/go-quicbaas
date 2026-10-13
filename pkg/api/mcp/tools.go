@@ -634,6 +634,18 @@ func (r *ToolRegistry) registerTools() {
 		},
 	})
 
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_introspecttoken",
+		Description: "Introspect an access token (RFC 7662): reports whether it is active and, when it is, its subject, expiry and attestation level",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"token": map[string]interface{}{"type": "string", "description": "The access token to introspect."},
+			},
+			"required": []string{"token"},
+		},
+	})
+
 	// RBAC Operations -- ROLES ONLY.
 	//
 	// There are deliberately no user tools here. quicbaas_iam_user_* is the one
@@ -1124,6 +1136,8 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 	// Auth Operations
 	case "quicbaas_logout":
 		return r.executeLogout(ctx, args)
+	case "quicbaas_introspecttoken":
+		return r.executeIntrospectToken(ctx, args)
 
 	// RBAC Operations
 	case "qrdb_role_create":
@@ -2361,6 +2375,17 @@ func (r *ToolRegistry) executeLogout(ctx context.Context, args map[string]interf
 		AccessToken: getString(args, "accessToken"),
 	}
 	resp, err := r.service.Logout(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIntrospectToken(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	req := &service.IntrospectTokenRequest{
+		Token: getString(args, "token"),
+	}
+	resp, err := r.service.IntrospectToken(ctx, req)
 	if err != nil {
 		return nil, err
 	}
