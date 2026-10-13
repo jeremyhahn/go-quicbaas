@@ -228,7 +228,11 @@ func (s *TriageScheduler) Sweep(ctx context.Context, tenants orchestration.Tenan
 			continue
 		}
 		for _, binding := range bindings {
-			if binding == nil {
+			// A project whose mode runs no sweep (`webhook`) is triaged by
+			// its deliveries alone; skipping it is not a failure.
+			// A project whose mode runs no sweep (`webhook`) is triaged by
+			// its deliveries alone; skipping it is not a failure.
+			if binding == nil || !binding.Discovery.Admits(DiscoveryPathSweep) {
 				continue
 			}
 			if err := ctx.Err(); err != nil {

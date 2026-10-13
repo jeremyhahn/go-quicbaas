@@ -115,6 +115,24 @@ secrets/app/config
     └── max_version: 3
 ```
 
+### Concurrent Writers
+
+The internal KV backend (`pkg/secrets/kv_backend.go`) keeps each version
+under `_qb/secrets/<path>/v/<N>` and names the current one in a pointer at
+`_qb/secrets/<path>/current`. When the injected store arbitrates guarded
+writes (`PutIfAbsent`, `CompareAndSwap`, `CompareAndDelete`, as the server's
+store does), every pointer write is conditional on the exact pointer bytes
+the writer read:
+
+- the first Store of a path is `PutIfAbsent`;
+- Store, soft Delete and Rollback are `CompareAndSwap`;
+- Destroy is `CompareAndDelete`.
+
+A writer whose read went stale fails with `ErrWriteConflict`, removes the
+version entry it reserved, and leaves the winner's write in place; retrying
+re-reads the pointer. On a store without these verbs the pointer write is
+unconditional, so run exactly one writer process per shared store.
+
 ## Security Model
 
 ### Defense in Depth

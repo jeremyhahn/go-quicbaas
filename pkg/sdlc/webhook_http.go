@@ -62,9 +62,10 @@ func NewWebhookHTTPHandler(ingestor *WebhookIngestor, params WebhookPathParams, 
 }
 
 type webhookAcceptedResponse struct {
-	Accepted bool `json:"accepted"`
-	Nudged   bool `json:"nudged"`
-	Parked   bool `json:"parked,omitempty"`
+	Accepted bool   `json:"accepted"`
+	Nudged   bool   `json:"nudged"`
+	Parked   bool   `json:"parked,omitempty"`
+	Ignored  string `json:"ignored,omitempty"`
 }
 
 type webhookRefusedResponse struct {
@@ -116,7 +117,7 @@ func (h *WebhookHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	if encodeErr := json.NewEncoder(w).Encode(webhookAcceptedResponse{Accepted: true, Nudged: result.Nudged, Parked: result.Parked != nil}); encodeErr != nil && h.onError != nil {
+	if encodeErr := json.NewEncoder(w).Encode(webhookAcceptedResponse{Accepted: true, Nudged: result.Nudged, Parked: result.Parked != nil, Ignored: string(result.Ignored)}); encodeErr != nil && h.onError != nil {
 		h.onError(r, encodeErr)
 	}
 }

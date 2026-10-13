@@ -78,6 +78,9 @@ type guardedKVStore interface {
 	PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
 	// CompareAndDelete removes key only while it still holds expected.
 	CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
+	// CompareAndSwap replaces key's value with next only while it still
+	// holds expected, atomically; an absent key stays absent.
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
 }
 
 const (
@@ -95,18 +98,16 @@ const (
 // CONCURRENCY CONTRACT (stated, not assumed — reviews 980/#120 ruling):
 // within one process, process-global path-striped locks serialize every
 // write path. ACROSS processes the backend discovers the store's guarded
-// verbs (guardedKVStore) and arbitrates the decisive pointer writes at the
-// storage layer: Destroy's pointer delete is conditional on the exact
-// observed generation (a re-published pointer refuses the destroy and the
-// acknowledged write survives), and a path's FIRST publish is
-// conditional-on-absent (two racing first Stores cannot both be
-// acknowledged onto one pointer). The stated remainder, tracked on
-// go-quicbaas#120: a pointer UPDATE between two concurrent Stores is
-// last-write-wins (no compare-and-swap verb exists; both versions persist
-// under never-reused numbers and the pointer names one acknowledged
-// write), and the soft-delete pointer write shares that shape. On a store
-// WITHOUT the guarded verbs, deploy exactly one writer process per shared
-// secrets store.
+// verbs (guardedKVStore) and arbitrates EVERY pointer write at the storage
+// layer, conditional on the exact generation the writer observed: a path's
+// first publish is conditional-on-absent, every pointer update (Store, soft
+// Delete, Rollback) is a compare-and-swap against the raw pointer bytes the
+// writer read, and Destroy's pointer delete is a compare-and-delete against
+// them. A writer whose observation went stale fails closed with
+// ErrWriteConflict, unreserves any version entry it reserved, and leaves the
+// winner's acknowledged write standing. On a store WITHOUT the guarded verbs
+// the pointer write is an unconditional put: deploy exactly one writer
+// process per shared secrets store.
 //
 // Key layout:
 //
@@ -196,11 +197,10 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 	lock.Lock()
 	defer lock.Unlock()
 
-	cur, err := b.loadCurrent(ctx, path)
+	cur, observedRaw, err := b.loadCurrentRaw(ctx, path)
 	if err != nil {
 		return err
 	}
-	observed := cur.Version
 
 	now := time.Now()
 	createdBy := auth.PrincipalFromContext(ctx)
@@ -228,7 +228,7 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 	cur.Version = nextVer
 	cur.Deleted = false
 	cur.DeletedAt = nil
-	if err := b.writeCurrent(ctx, path, cur, observed); err != nil {
+	if err := b.writeCurrent(ctx, path, cur, observedRaw); err != nil {
 		if delErr := b.store.Delete(ctx, versionKey(path, nextVer)); delErr != nil && !qberrors.IsNotFound(delErr) {
 			return errors.Join(err, &SecretsCauseError{
 				Message: "unreserve version " + strconv.Itoa(nextVer) + " after failed publication", Cause: delErr})
@@ -337,7 +337,7 @@ func (b *KVBackend) Delete(ctx context.Context, path string) error {
 	lock.Lock()
 	defer lock.Unlock()
 
-	cur, err := b.loadCurrent(ctx, path)
+	cur, observedRaw, err := b.loadCurrentRaw(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -347,7 +347,7 @@ func (b *KVBackend) Delete(ctx context.Context, path string) error {
 	now := time.Now()
 	cur.Deleted = true
 	cur.DeletedAt = &now
-	return b.writeCurrent(ctx, path, cur, cur.Version)
+	return b.writeCurrent(ctx, path, cur, observedRaw)
 }
 
 // Destroy permanently removes all versions of a secret.
@@ -503,7 +503,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	lock.Lock()
 	defer lock.Unlock()
 
-	cur, err := b.loadCurrent(ctx, path)
+	cur, observedRaw, err := b.loadCurrentRaw(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -559,9 +559,9 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	cur.Deleted = false
 	cur.DeletedAt = nil
 	// Rollback demands an existing history, so the pointer write is always
-	// an UPDATE (observed non-zero) — never the guarded first publish. The
-	// same unreserve-on-failure applies (review 995).
-	if err := b.writeCurrent(ctx, path, cur, 1); err != nil {
+	// an UPDATE, conditional on the pointer this rollback read. The same
+	// unreserve-on-failure applies (review 995).
+	if err := b.writeCurrent(ctx, path, cur, observedRaw); err != nil {
 		if delErr := b.store.Delete(ctx, versionKey(path, nextVer)); delErr != nil && !qberrors.IsNotFound(delErr) {
 			return errors.Join(err, &SecretsCauseError{
 				Message: "unreserve version " + strconv.Itoa(nextVer) + " after failed publication", Cause: delErr})
@@ -619,34 +619,37 @@ func (b *KVBackend) loadCurrentRaw(ctx context.Context, path string) (*kvCurrent
 	return &cur, raw, nil
 }
 
-// writeCurrent publishes the pointer. observedVersion is what the caller's
-// read saw before mutating: 0 means the path was ABSENT, and on a guarded
-// store the first publish rides PutIfAbsent — two cross-process writers
-// racing a first Store cannot both be acknowledged onto one pointer; the
-// loser fails closed with ErrWriteConflict and re-derives on retry
-// (go-quicbaas#120). A non-zero observedVersion is a pointer UPDATE, which
-// the available guarded verbs cannot make conditional (no compare-and-swap);
-// two concurrent Stores to one path remain last-write-wins there — the
-// stated #120 remainder, distinct from data loss: both versions exist under
-// never-reused numbers and the pointer names one of the acknowledged writes.
-func (b *KVBackend) writeCurrent(ctx context.Context, path string, cur *kvCurrentEntry, observedVersion int) error {
+// writeCurrent publishes the pointer, conditional on observedRaw — the exact
+// pointer bytes the caller's read saw before mutating (go-quicbaas#120). On a
+// guarded store a nil observedRaw (the path was ABSENT) rides PutIfAbsent and
+// a non-nil one rides CompareAndSwap, so two cross-process writers racing
+// one pointer cannot both be acknowledged: the loser fails closed with
+// ErrWriteConflict and re-derives on retry. On an unguarded store the write
+// is an unconditional put, the single-writer deployment the type states.
+func (b *KVBackend) writeCurrent(ctx context.Context, path string, cur *kvCurrentEntry, observedRaw []byte) error {
 	raw, err := json.Marshal(cur)
 	if err != nil {
 		return &SecretsSentinelCauseError{Sentinel: ErrSerializationFailed, Cause: err}
 	}
-	if g, ok := b.store.(guardedKVStore); ok && observedVersion == 0 {
-		stored, err := g.PutIfAbsent(ctx, currentKey(path), raw)
-		if err != nil {
+	g, guarded := b.store.(guardedKVStore)
+	if !guarded {
+		if err := b.store.Put(ctx, currentKey(path), raw); err != nil {
 			return &SecretsCauseError{Message: "write current pointer", Cause: err}
-		}
-		if !stored {
-			return &SecretsSentinelCauseError{Sentinel: ErrWriteConflict,
-				Cause: errors.New("another writer published this path's first pointer")}
 		}
 		return nil
 	}
-	if err := b.store.Put(ctx, currentKey(path), raw); err != nil {
+	var stored bool
+	if observedRaw == nil {
+		stored, err = g.PutIfAbsent(ctx, currentKey(path), raw)
+	} else {
+		stored, err = g.CompareAndSwap(ctx, currentKey(path), observedRaw, raw)
+	}
+	if err != nil {
 		return &SecretsCauseError{Message: "write current pointer", Cause: err}
+	}
+	if !stored {
+		return &SecretsSentinelCauseError{Sentinel: ErrWriteConflict,
+			Cause: &PointerConflictError{FirstPublish: observedRaw == nil}}
 	}
 	return nil
 }

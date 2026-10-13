@@ -195,20 +195,32 @@ takes `both`.
 | mode | behaviour | when |
 |---|---|---|
 | `both` (default) | a delivery acts immediately; the pass reconciles whatever it missed | production |
-| `poll` | the pass only; a delivery that arrives anyway is ignored for review dispatch | a forge that cannot reach this node — air-gapped, NAT, no inbound route — or one with no webhook support |
+| `poll` | the pass only; a delivery that arrives anyway is verified, acknowledged and ignored | a forge that cannot reach this node — air-gapped, NAT, no inbound route — or one with no webhook support |
 | `webhook` | the delivery only; the pass makes no forge call for this project | a trusted, observed delivery path where latency matters most |
+
+What acts on each path, and what the operator must provide:
+
+| mode | a verified delivery | the periodic passes | the operator provides |
+|---|---|---|---|
+| `both` | nudges the issue poller, wakes triage, readmits on a ruling, dispatches a review | review floor and triage backstop | forge API token; a webhook secret if deliveries are wanted (without one the passes alone discover) |
+| `poll` | nothing — answered `202` with `"ignored":"poll"` so the forge does not retry | review floor and triage backstop | forge API token |
+| `webhook` | nudges the issue poller, wakes triage, readmits on a ruling, dispatches a review | none | forge API token; `forge.webhook_secret_ref` (refused at bind time without it); a node the forge can reach — a server certificate whose SAN covers the advertised address — and forge repo-admin to create the hook |
 
 `both` is the default because webhook delivery is at-least-once **and
 droppable**: deleting the pass trades a token cost for a liveness bug, where one
 lost delivery strands a finished change until a person notices. The modes are
 independent rather than a flag in front of one code path — `poll` works with no
 ingress configured at all, and `webhook` does not silently degrade to polling —
-and a mode this module does not implement is refused when the project is bound,
-not discovered later as a project that looks configured and finds nothing.
+and a mode this module does not implement, or a `webhook` binding with no
+webhook secret, is refused when the project is bound, not discovered later as a
+project that looks configured and finds nothing.
 
-A `poll`-only project still has its issue poller nudged by a verified delivery:
-the mode selects how **reviews** are discovered, not whether a delivery is worth
-anything.
+A delivery to a `poll` project is still verified and routed first: an unsigned
+or misrouted one is refused exactly as for any other mode, and only a genuine
+one is answered "ignored".
+
+The engine's issue poller is not yet governed by the mode: it sweeps every bound
+project on one node-wide interval, `webhook` projects included.
 
 ## What the reviewer is told — CI already passed, review only
 

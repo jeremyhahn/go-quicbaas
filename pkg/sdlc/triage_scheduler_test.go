@@ -225,6 +225,85 @@ func TestTriageSweep_NudgesEveryBoundProject(t *testing.T) {
 	}
 }
 
+// TestTriageSweep_DiscoveryModeDecidesWhetherTheProjectIsSwept proves the
+// backstop asks each binding's mode: a `webhook` project is triaged by its
+// deliveries alone, and skipping it is neither a nudge nor a failure.
+func TestTriageSweep_DiscoveryModeDecidesWhetherTheProjectIsSwept(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mode  DiscoveryMode
+		swept bool
+	}{
+		"the default sweeps":     {mode: "", swept: true},
+		"both sweeps":            {mode: DiscoveryBoth, swept: true},
+		"poll sweeps":            {mode: DiscoveryPoll, swept: true},
+		"webhook does not sweep": {mode: DiscoveryWebhook, swept: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestStore(t)
+			binding := testBinding()
+			binding.Discovery = tc.mode
+			if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+				t.Fatalf("put binding: %v", err)
+			}
+			starter := &fakeJobStarter{}
+			scheduler, err := NewTriageScheduler(TriageSchedulerConfig{Bindings: store, Jobs: starter})
+			if err != nil {
+				t.Fatalf("NewTriageScheduler: %v", err)
+			}
+			swept, err := scheduler.Sweep(ctx, &fakeTenants{ids: []string{testTenant}})
+			if err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+			want := 0
+			if tc.swept {
+				want = 1
+			}
+			if swept != want || len(starter.requests()) != want {
+				t.Fatalf("swept %d, started %d jobs; want %d", swept, len(starter.requests()), want)
+			}
+			if failures := scheduler.SweepFailures(); len(failures) != 0 {
+				t.Fatalf("a skipped project is not a failure: %v", failures)
+			}
+		})
+	}
+}
+
+// TestTriageSweep_SkipsOnlyTheWebhookProject sweeps one tenant holding a
+// project in each mode and proves only the `poll` and `both` ones start a job.
+func TestTriageSweep_SkipsOnlyTheWebhookProject(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	modes := map[string]DiscoveryMode{"proj-poll": DiscoveryPoll, "proj-webhook": DiscoveryWebhook, "proj-both": DiscoveryBoth}
+	for id, mode := range modes {
+		binding := testBinding()
+		binding.ProjectID = id
+		binding.Discovery = mode
+		if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+			t.Fatalf("put binding %s: %v", id, err)
+		}
+	}
+	starter := &fakeJobStarter{}
+	scheduler, err := NewTriageScheduler(TriageSchedulerConfig{Bindings: store, Jobs: starter})
+	if err != nil {
+		t.Fatalf("NewTriageScheduler: %v", err)
+	}
+	swept, err := scheduler.Sweep(ctx, &fakeTenants{ids: []string{testTenant}})
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if swept != 2 {
+		t.Fatalf("swept %d projects, want 2", swept)
+	}
+	started := map[string]bool{}
+	for _, request := range starter.requests() {
+		started[request.ProjectID] = true
+	}
+	if !started["proj-poll"] || !started["proj-both"] || started["proj-webhook"] {
+		t.Fatalf("triage jobs started for %v, want proj-poll and proj-both only", started)
+	}
+}
+
 // TestTriageSweep_RefusesWhenTheTenantsCannotBeListed proves the one failure
 // that stops the sweep is not knowing what it was meant to visit. Everything
 // narrower is per project.

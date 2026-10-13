@@ -105,7 +105,9 @@ type ForgeConfig struct {
 	TriggerLabel string `json:"trigger_label"`
 
 	// WebhookSecretRef names the tenant secret holding the webhook HMAC key.
-	// Empty means the project is polled only.
+	// Without it no delivery verifies, so the project is discovered by the
+	// sweep alone. Required when the binding's Discovery is `webhook`, which
+	// runs no sweep; see DiscoveryMode.
 	WebhookSecretRef string `json:"webhook_secret_ref,omitempty"`
 
 	// TokenSecretRef names the tenant secret holding the forge API token.
@@ -516,6 +518,15 @@ func (b *ProjectBinding) Validate() error {
 	}
 	if err := b.Discovery.Validate(); err != nil {
 		return err
+	}
+	// A WEBHOOK-ONLY PROJECT WITH NO SECRET DISCOVERS NOTHING: every delivery
+	// fails verification and the mode admits no sweep. `both` with no secret
+	// stays legal, because the sweep is its floor.
+	if b.Discovery.Effective() == DiscoveryWebhook && strings.TrimSpace(b.Forge.WebhookSecretRef) == "" {
+		return &InvalidInputError{
+			Field:   "forge.webhook_secret_ref",
+			Message: "is required when discovery is " + string(DiscoveryWebhook) + ": that mode runs no sweep, so an unverifiable delivery would leave the project inert",
+		}
 	}
 	if err := b.Readiness.Validate(); err != nil {
 		return err

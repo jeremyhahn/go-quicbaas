@@ -217,3 +217,19 @@ func (e *SecretsCauseError) Error() string {
 func (e *SecretsCauseError) Unwrap() error {
 	return e.Cause
 }
+
+// PointerConflictError is the cause of an ErrWriteConflict raised when the
+// store refuses a guarded pointer write: the pointer no longer held the
+// generation the writer observed.
+type PointerConflictError struct {
+	// FirstPublish is true when the writer observed the path absent.
+	FirstPublish bool
+}
+
+// Error implements the error interface.
+func (e *PointerConflictError) Error() string {
+	if e.FirstPublish {
+		return "another writer published this path's first pointer"
+	}
+	return "another writer moved this path's pointer after it was read"
+}

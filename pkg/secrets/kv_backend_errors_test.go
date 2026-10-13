@@ -68,6 +68,13 @@ func (e *errKVStore) PutIfAbsent(ctx context.Context, key string, value []byte) 
 	return e.inMemKV.PutIfAbsent(ctx, key, value)
 }
 
+func (e *errKVStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	if e.putErr != nil && strings.Contains(key, e.putErrOn) {
+		return false, e.putErr
+	}
+	return e.inMemKV.CompareAndSwap(ctx, key, expected, next)
+}
+
 func (e *errKVStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
 	if e.deleteErr != nil && strings.Contains(key, e.deleteErrOn) {
 		return false, e.deleteErr

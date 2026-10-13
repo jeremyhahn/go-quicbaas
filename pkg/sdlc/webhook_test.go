@@ -300,6 +300,39 @@ func TestWebhookHTTP_AcceptsAndRefuses(t *testing.T) {
 	}
 }
 
+// TestWebhookHTTP_AcknowledgesAnIgnoredDelivery proves a verified delivery to
+// a poll-only project is answered 2xx, so the forge does not retry it, and
+// that the body names the mode that ignored it.
+func TestWebhookHTTP_AcknowledgesAnIgnoredDelivery(t *testing.T) {
+	rig := newWebhookRig(t)
+	binding := testBinding()
+	binding.Discovery = DiscoveryPoll
+	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+		t.Fatal(err)
+	}
+	h, seen := newWebhookHTTP(t, rig, 64)
+
+	rec := post(h, testProject, `{"action":"opened"}`, "sig")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("ignored delivery: %d %s", rec.Code, rec.Body.String())
+	}
+	var accepted webhookAcceptedResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatalf("body = %s: %v", rec.Body.String(), err)
+	}
+	if !accepted.Accepted || accepted.Nudged || accepted.Ignored != string(DiscoveryPoll) {
+		t.Fatalf("body = %s, want accepted, not nudged, ignored by %s", rec.Body.String(), DiscoveryPoll)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("an ignored delivery is not an error, yet the operator saw %v", *seen)
+	}
+
+	rig.forge.verifyErr = &WebhookUnverifiedError{Type: ForgeGitea, Reason: "hmac"}
+	if rec := post(h, testProject, `{"action":"opened"}`, "bad"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("a badly signed delivery to a poll-only project: %d", rec.Code)
+	}
+}
+
 // TestWebhookHTTP_ReportsATriageWakeFailureAndStillAccepts proves the
 // handler accepts a delivery whose triage wake failed — the forge must not
 // retry it — and hands the failure to the operator's error hook, so an
@@ -459,25 +492,81 @@ func TestWebhookIngest_AnIssueDeliveryAsksForNoReview(t *testing.T) {
 // half of a delivery, and STILL nudges the poller — because the mode selects
 // how reviews are discovered, not whether a verified delivery is worth
 // anything.
-func TestWebhookIngest_APollOnlyProjectIgnoresTheReviewHalfOfADelivery(t *testing.T) {
+func TestWebhookIngest_APollOnlyProjectIgnoresAVerifiedDelivery(t *testing.T) {
 	rig := newWebhookRig(t)
 	rig.reviews.started = true
+	triage := &fakeNudger{}
+	rig.ingestor.SetTriageNudger(triage)
+	rulings := &fakeRulings{}
+	rig.ingestor.SetRulingReadmitter(rulings)
 	binding := testBinding()
 	binding.Discovery = DiscoveryPoll
 	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
-	rig.forge.parseEvent = &ForgeEvent{Kind: EventCheckRunUpdated, Repo: testRepoRef, PullRequestNumber: 41}
 
-	result, err := rig.ingestor.Ingest(context.Background(), delivery())
-	if err != nil {
-		t.Fatalf("Ingest: %v", err)
+	// Every kind a delivery acts on: the poller nudge, the triage wake, the
+	// ruling readmission and the review dispatch.
+	for _, event := range []*ForgeEvent{
+		{Kind: EventIssueOpened, Repo: testRepoRef, IssueNumber: 7},
+		{Kind: EventIssueCommented, Repo: testRepoRef, IssueNumber: 24},
+		{Kind: EventCheckRunUpdated, Repo: testRepoRef, PullRequestNumber: 41},
+	} {
+		rig.forge.parseEvent = event
+		result, err := rig.ingestor.Ingest(context.Background(), delivery())
+		if err != nil {
+			t.Fatalf("Ingest(%s): %v", event.Kind, err)
+		}
+		if result.Ignored != DiscoveryPoll {
+			t.Fatalf("Ingest(%s).Ignored = %q, want %q", event.Kind, string(result.Ignored), DiscoveryPoll)
+		}
+		if result.Nudged || result.Triaged || result.RulingReadmitted || result.ReviewStarted {
+			t.Fatalf("a poll-only project acted on a delivery: %+v", result)
+		}
 	}
-	if result.ReviewStarted || len(rig.reviews.requests()) != 0 {
-		t.Fatalf("a poll-only project reviewed from a delivery: %+v", result)
+	if len(rig.nudger.nudges) != 0 || len(triage.nudges) != 0 || len(rulings.calls) != 0 || len(rig.reviews.requests()) != 0 {
+		t.Fatalf("a poll-only project acted on a delivery: nudges=%v triage=%v rulings=%v reviews=%v",
+			rig.nudger.nudges, triage.nudges, rulings.calls, rig.reviews.requests())
 	}
-	if !result.Nudged {
-		t.Fatal("a poll-only project must still have its poller nudged")
+
+	// The mode is asked only once the delivery is proven: a bad signature is
+	// refused exactly as it is for any other mode.
+	rig.forge.verifyErr = &WebhookUnverifiedError{Type: ForgeGitea, Reason: "hmac"}
+	if _, err := rig.ingestor.Ingest(context.Background(), delivery()); !errors.Is(err, ErrWebhookUnverified) {
+		t.Fatalf("a badly signed delivery to a poll-only project: err = %v, want ErrWebhookUnverified", err)
+	}
+}
+
+// TestWebhookIngest_ADeliveryModeActsOnAVerifiedDelivery proves `both` (and
+// the empty default) and `webhook` keep acting on a delivery: the poller is
+// nudged and triage woken, and nothing is reported ignored.
+func TestWebhookIngest_ADeliveryModeActsOnAVerifiedDelivery(t *testing.T) {
+	for _, mode := range []DiscoveryMode{"", DiscoveryBoth, DiscoveryWebhook} {
+		t.Run(mode.String()+"/"+string(mode), func(t *testing.T) {
+			rig := newWebhookRig(t)
+			triage := &fakeNudger{}
+			rig.ingestor.SetTriageNudger(triage)
+			binding := testBinding()
+			binding.Discovery = mode
+			if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
+				t.Fatal(err)
+			}
+			rig.forge.parseEvent = &ForgeEvent{Kind: EventIssueOpened, Repo: testRepoRef, IssueNumber: 7}
+
+			result, err := rig.ingestor.Ingest(context.Background(), delivery())
+			if err != nil {
+				t.Fatalf("Ingest: %v", err)
+			}
+			if result.Ignored != "" {
+				t.Fatalf("Ignored = %q for a mode that admits deliveries", string(result.Ignored))
+			}
+			if !result.Nudged || len(rig.nudger.nudges) != 1 {
+				t.Fatalf("the poller was not nudged: %+v nudges=%v", result, rig.nudger.nudges)
+			}
+			if !result.Triaged || len(triage.nudges) != 1 {
+				t.Fatalf("triage was not woken: %+v triage=%v", result, triage.nudges)
+			}
+		})
 	}
 }
 

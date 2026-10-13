@@ -96,8 +96,10 @@ func (m DiscoveryMode) Effective() DiscoveryMode {
 
 // Admits reports whether this mode lets path act.
 //
-// EVERY TRIGGER ASKS BEFORE IT ACTS, and there are two of them: DispatchReview
-// for a delivery and ReviewSweeper for a sweep. A third would ask here too.
+// EVERY TRIGGER ASKS BEFORE IT ACTS, and there are four of them: for a
+// delivery, WebhookIngestor.Ingest (which gates the nudge, the triage wake and
+// the ruling readmission) and DispatchReview; for a sweep, ReviewSweeper and
+// TriageScheduler.Sweep. A fifth would ask here too.
 func (m DiscoveryMode) Admits(path DiscoveryPath) bool {
 	return discoveryPaths[m.Effective()][path]
 }

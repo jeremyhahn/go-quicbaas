@@ -88,6 +88,19 @@ func (k *inMemKV) CompareAndDelete(_ context.Context, key string, expected []byt
 	return true, nil
 }
 
+func (k *inMemKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	current, ok := k.data[key]
+	if !ok || !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	cp := make([]byte, len(next))
+	copy(cp, next)
+	k.data[key] = cp
+	return true, nil
+}
+
 // plainKV forwards ONLY the base KVStoreWriter verbs — explicitly, never by
 // embedding, so the guarded verbs cannot be promoted by accident. It is the
 // capability-ABSENT store the fallback paths are proven against.
@@ -518,6 +531,12 @@ func (g *guardedHookedKV) PutIfAbsent(ctx context.Context, key string, value []b
 	g.fireOnWrite(key)
 	return g.base.PutIfAbsent(ctx, key, value)
 }
+
+func (g *guardedHookedKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	g.fireOnWrite(key)
+	return g.base.CompareAndSwap(ctx, key, expected, next)
+}
+
 func (g *guardedHookedKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
 	return g.base.CompareAndDelete(ctx, key, expected)
 }
@@ -925,6 +944,13 @@ func TestKVBackend_FallbackWithoutGuardedVerbsStillDestroysAndStores(t *testing.
 	data, _, err := b.Get(ctx, "app/secret")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("v2"), data["k"])
+	require.NoError(t, b.Rollback(ctx, "app/secret", 1))
+	data, _, err = b.Get(ctx, "app/secret")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v1"), data["k"])
+	require.NoError(t, b.Delete(ctx, "app/secret"))
+	_, _, err = b.Get(ctx, "app/secret")
+	require.ErrorIs(t, err, ErrSecretDeleted)
 	require.NoError(t, b.Destroy(ctx, "app/secret"))
 	_, _, err = b.Get(ctx, "app/secret")
 	require.ErrorIs(t, err, ErrSecretNotFound)

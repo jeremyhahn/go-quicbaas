@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -100,7 +101,7 @@ func authTenantAdmin(ctx context.Context, baseURL, tenantID, adminBearer string)
 	tenantAdminAuthCache.Unlock()
 
 	// Step 1: have the fixture CA issue an ephemeral tenant-scoped client cert.
-	certPEM, keyPEM, err := issueTenantClientCert(ctx, tenantID)
+	certPEM, keyPEM, err := IssueTenantClientCert(ctx, tenantID)
 	if err != nil {
 		return "", &TenantAdminCertError{TenantID: tenantID, Cause: err}
 	}
@@ -114,7 +115,7 @@ func authTenantAdmin(ctx context.Context, baseURL, tenantID, adminBearer string)
 	}
 
 	// Step 3: activate the user via the PIV invite flow, binding the cert.
-	if err := activateUserWithCert(ctx, baseURL, inviteToken, certPEM); err != nil {
+	if err := ActivateInvitePIV(ctx, baseURL, tenantID, inviteToken, certPEM); err != nil {
 		return "", fmt.Errorf("authTenantAdmin: activate user %q in tenant %q: %w", userID, tenantID, err)
 	}
 
@@ -156,7 +157,7 @@ func (e *TenantAdminCertError) Error() string {
 
 func (e *TenantAdminCertError) Unwrap() error { return e.Cause }
 
-// issueTenantClientCert asks the fixture CA for a tenant-admin client
+// IssueTenantClientCert asks the fixture CA for a tenant-admin client
 // credential scoped to tenantID, and returns the certificate and private key as
 // PEM.
 //
@@ -168,7 +169,7 @@ func (e *TenantAdminCertError) Unwrap() error { return e.Cause }
 //
 // The tenant segment is the sanitized tenant id, matching the email local part
 // built for the same identity, so the SAN and the user record agree.
-func issueTenantClientCert(ctx context.Context, tenantID string) (certPEM, keyPEM []byte, err error) {
+func IssueTenantClientCert(ctx context.Context, tenantID string) (certPEM, keyPEM []byte, err error) {
 	// Verify the fixture trust anchor is loadable before continuing, so a
 	// missing container mount fails here rather than at TLS handshake time.
 	if _, err := IntegrationCertPool(); err != nil {
@@ -228,16 +229,27 @@ func createTenantAdminUser(ctx context.Context, baseURL, tenantID, email, adminB
 	return resp.ID, resp.InviteToken, nil
 }
 
-// activateUserWithCert calls the PIV invite-activation endpoint to bind the
-// given cert PEM to the pending user identified by inviteToken. After this
-// call the user's PIV-attested cert binding is set and the user transitions to Active.
-// The endpoint is public (no auth bearer required).
-func activateUserWithCert(ctx context.Context, baseURL, inviteToken string, certPEM []byte) error {
+// ActivateInvitePIV calls tenantID's PIV invite-activation endpoint to bind
+// the given cert PEM to the pending user identified by inviteToken. After
+// this call the user's PIV-attested cert binding is set and the user
+// transitions to Active. The endpoint is public (no auth bearer required).
+// A refused activation returns an *AuthBadStatusError carrying the status.
+func ActivateInvitePIV(ctx context.Context, baseURL, tenantID, inviteToken string, certPEM []byte) error {
 	reqBody := map[string]interface{}{
 		"cert_pem": string(certPEM),
 	}
-	_, err := postJSON(ctx, baseURL+"/api/v1/iam/invites/"+inviteToken+"/activate/piv", "", reqBody)
+	endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/iam/" + url.PathEscape(tenantID) +
+		"/invites/" + url.PathEscape(inviteToken) + "/activate/piv"
+	_, err := postJSON(ctx, endpoint, "", reqBody)
 	return err
+}
+
+// LoginWithCert performs the mTLS PIV login with an in-memory client cert
+// and key, trusting the PIV CA the suite's other logins trust, and returns
+// the issued bearer token.
+func LoginWithCert(ctx context.Context, baseURL string, certPEM, keyPEM []byte) (string, error) {
+	bearer, _, err := postLoginWithCert(ctx, strings.TrimRight(baseURL, "/"), certPEM, keyPEM, pivCAFile())
+	return bearer, err
 }
 
 // assignTenantAdmin creates a tenant_admin admin-assignment scoped to the

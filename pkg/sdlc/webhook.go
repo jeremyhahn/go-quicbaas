@@ -57,6 +57,12 @@ type WebhookIngestResult struct {
 	ProjectID string
 	Event     *ForgeEvent
 
+	// Ignored is the project's discovery mode when that mode does not admit
+	// the delivery path (`poll`); empty when the delivery was acted on. An
+	// ignored delivery was still verified and is NOT an error — the forge must
+	// not retry it — but nothing was nudged, woken, readmitted or dispatched.
+	Ignored DiscoveryMode
+
 	// Nudged says the poller was asked to sweep the project.
 	Nudged bool
 
@@ -210,6 +216,13 @@ func (i *WebhookIngestor) Ingest(ctx context.Context, delivery WebhookDelivery) 
 		return nil, err
 	}
 	result := &WebhookIngestResult{TenantID: tenantID, ProjectID: binding.ProjectID, Event: event}
+	// THE MODE IS ASKED AFTER THE DELIVERY IS PROVEN, never before: an
+	// unsigned or misrouted delivery is refused whatever the project's mode,
+	// and only a genuine one is answered "ignored".
+	if !binding.Discovery.Admits(DiscoveryPathDelivery) {
+		result.Ignored = binding.Discovery.Effective()
+		return result, nil
+	}
 	if event.Kind == EventUnsupported {
 		return result, nil
 	}

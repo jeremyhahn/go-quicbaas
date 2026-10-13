@@ -122,3 +122,45 @@ func TestProjectBinding_ValidatesItsDiscoveryMode(t *testing.T) {
 		t.Fatalf("an unknown mode was bound: %v", err)
 	}
 }
+
+// TestProjectBinding_AWebhookOnlyProjectNeedsASecret proves a `webhook`
+// binding with no webhook secret is refused at bind time — every delivery
+// would fail verification and the mode runs no sweep, so the project would
+// discover nothing — while `both` with no secret stays legal on its sweep.
+func TestProjectBinding_AWebhookOnlyProjectNeedsASecret(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mode    DiscoveryMode
+		ref     string
+		refused bool
+	}{
+		"webhook with no secret is refused":      {mode: DiscoveryWebhook, ref: "", refused: true},
+		"webhook with a blank secret is refused": {mode: " Webhook ", ref: "  ", refused: true},
+		"webhook with a secret is accepted":      {mode: DiscoveryWebhook, ref: "wh"},
+		"both with no secret is accepted":        {mode: DiscoveryBoth, ref: ""},
+		"the default with no secret is accepted": {mode: "", ref: ""},
+		"poll with no secret is accepted":        {mode: DiscoveryPoll, ref: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			binding := testBinding()
+			binding.Discovery = tc.mode
+			binding.Forge.WebhookSecretRef = tc.ref
+			err := binding.Validate()
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("Validate: %v", err)
+				}
+				return
+			}
+			var invalid *InvalidInputError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("Validate = %v, want *InvalidInputError", err)
+			}
+			if invalid.Field != "forge.webhook_secret_ref" {
+				t.Fatalf("Field = %q, want forge.webhook_secret_ref", invalid.Field)
+			}
+			if !strings.Contains(invalid.Message, string(DiscoveryWebhook)) {
+				t.Fatalf("the refusal does not name the mode: %q", invalid.Message)
+			}
+		})
+	}
+}
