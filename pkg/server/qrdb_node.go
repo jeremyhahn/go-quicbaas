@@ -702,6 +702,10 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		return nil, &QRDBNodeError{Stage: "build xkms module webauthn credential store decorator", Cause: err}
 	}
 
+	// The self-service flag below opens public WebAuthn registration on the
+	// xkms module; say so once, at the point the flag takes effect.
+	s.warnSelfServiceRegistrationPosture()
+
 	xkmsModule, err := xkmssdk.NewServiceModule(
 		func() *xkmslib.XKMSService {
 			svc, getErr := xkmssdk.Get()

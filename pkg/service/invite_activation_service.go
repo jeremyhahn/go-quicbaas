@@ -232,11 +232,10 @@ func (s *inviteActivationService) ActivateFIDO2Finish(ctx context.Context, tenan
 		return nil, err
 	}
 
-	// The proven attestation is not used here: invite activation does not
-	// mint a session, it transitions the account to active and the user logs
-	// in afterwards. The gate has already refused the ceremony if this
-	// account's policy required hardware.
-	if _, err := mgr.FinishRegistration(ctx, record.TenantID, email, credential); err != nil {
+	// Invite activation does not mint a session: it transitions the account
+	// to active and the user logs in afterwards. The gate has already refused
+	// the ceremony if this account's policy required hardware.
+	if err := mgr.FinishInviteRegistration(ctx, record.TenantID, email, credential); err != nil {
 		return nil, err
 	}
 

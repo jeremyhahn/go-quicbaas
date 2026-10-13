@@ -51,6 +51,10 @@ func (f *fakeLegacyWebAuthnManager) FinishRegistration(_ context.Context, _, _ s
 	return nil, nil
 }
 
+func (f *fakeLegacyWebAuthnManager) FinishInviteRegistration(_ context.Context, _, _ string, _ map[string]interface{}) error {
+	return nil
+}
+
 func (f *fakeLegacyWebAuthnManager) BeginLogin(_ context.Context, _, _ string) (map[string]interface{}, error) {
 	return nil, nil
 }

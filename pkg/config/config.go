@@ -333,7 +333,9 @@ var ValidRoleNames = map[string]struct{}{
 }
 
 // Validate returns an error if the IAMSelfServiceRegistrationConfig contains
-// an invalid combination of field values. It is called during daemon startup.
+// an invalid combination of field values. The boot gate (Validate, through
+// Validator.validateIAM) calls it, so quicbaasd refuses to start on an
+// invalid enabled section instead of failing at the first registration.
 func (c *IAMSelfServiceRegistrationConfig) Validate() error {
 	if !c.Enabled {
 		return nil
@@ -361,11 +363,7 @@ func (c *IAMSelfServiceRegistrationConfig) Validate() error {
 		}
 		modeSet[m] = struct{}{}
 	}
-	defMode := c.DefaultIsolationMode
-	if defMode == "" {
-		defMode = TenantIsolationKeyspace
-	}
-	if _, ok := modeSet[defMode]; !ok {
+	if _, ok := modeSet[c.DefaultIsolationMode]; !ok {
 		return &ConfigValidationError{
 			Field:   "iam.self_service_registration.default_isolation_mode",
 			Message: "default_isolation_mode must be one of allowed_isolation_modes",
@@ -380,6 +378,32 @@ func (c *IAMSelfServiceRegistrationConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// IAMSelfServiceRegistrationKeys are the self-service registration keys,
+// bound to the environment by BindIAMSelfServiceRegistrationEnv.
+//
+// EXPLICIT, BECAUSE AutomaticEnv IS NOT ENOUGH: a key no config file names is
+// not decoded from the environment, so without these bindings an
+// environment-only deployment could not turn registration on or off.
+//
+// `allowed_isolation_modes` IS DELIBERATELY ABSENT: viper does not decode a
+// list from the environment reliably through Unmarshal, so it is file-only.
+var IAMSelfServiceRegistrationKeys = []string{
+	"iam.self_service_registration.enabled",
+	"iam.self_service_registration.require_admin_approval",
+	"iam.self_service_registration.require_email_verification",
+	"iam.self_service_registration.default_role",
+	"iam.self_service_registration.default_isolation_mode",
+	"iam.self_service_registration.tenant_barrier_volume_pool",
+}
+
+// BindIAMSelfServiceRegistrationEnv binds the self-service registration keys
+// to their environment variables (QUICBAAS_IAM_SELF_SERVICE_REGISTRATION_*).
+func BindIAMSelfServiceRegistrationEnv(v *viper.Viper) {
+	for _, key := range IAMSelfServiceRegistrationKeys {
+		_ = v.BindEnv(key)
+	}
 }
 
 // ConfigValidationError is a typed error for configuration validation failures.

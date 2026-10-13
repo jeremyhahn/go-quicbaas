@@ -376,6 +376,7 @@ func bindEnvVars() {
 	config.BindSDLCSurfacingEnv(viper.GetViper())
 	config.BindSDLCLabelReconcileEnv(viper.GetViper())
 	config.BindSDLCWorkerImageEnv(viper.GetViper())
+	config.BindIAMSelfServiceRegistrationEnv(viper.GetViper())
 
 	// Server configuration - nested protocol configs.
 	_ = viper.BindEnv("server.host")

@@ -245,6 +245,21 @@ func DefaultConfig() *Config {
 			// act.
 			VerificationCommands: []string{"make build", "make test", "make lint"},
 		},
+		// Self-service registration stays off, but if an operator turns it
+		// on, a new account is held pending admin approval unless the
+		// operator explicitly opts out with require_admin_approval: false,
+		// and the registrant is granted the documented "User" role unless
+		// default_role names another. New tenants get keyspace isolation,
+		// and barrier or volume tenants use the "default" pool, unless the
+		// operator names others.
+		IAM: IAMConfig{
+			SelfServiceRegistration: IAMSelfServiceRegistrationConfig{
+				RequireAdminApproval:    true,
+				DefaultRole:             "User",
+				DefaultIsolationMode:    TenantIsolationKeyspace,
+				TenantBarrierVolumePool: "default",
+			},
+		},
 		Seal:      DefaultSealConfig(),
 		CA:        DefaultCAConfig(),
 		QRDB:      DefaultQRDBConfig(),

@@ -54,6 +54,7 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	BindSDLCSurfacingEnv(l.v)
 	BindSDLCLabelReconcileEnv(l.v)
 	BindSDLCWorkerImageEnv(l.v)
+	BindIAMSelfServiceRegistrationEnv(l.v)
 
 	// Handle empty path - return defaults
 	if configFile == "" {

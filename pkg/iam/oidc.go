@@ -838,6 +838,9 @@ func (p *OIDCProvider) UserInfo(ctx context.Context, accessToken string) (*UserI
 	// record was found by uid, and a ceremony-minted token's subject is not its
 	// id — answering with user.ID would return a sub the caller never presented
 	// and break the match this line exists to satisfy.
+	//
+	// No attest_level / attest_aaguid here, unlike Introspect: userinfo is
+	// profile data (OIDC Core §5.3), not session provenance (go-quicbaas#393).
 	return &UserInfoResponse{
 		Sub:           claims.Subject,
 		Name:          user.Name,

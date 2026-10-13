@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -77,13 +79,10 @@ func TestRegisterSelfFinish_CreatesTheRegistrantAsTenantAdmin(t *testing.T) {
 	assert.Equal(t, iam.LifecycleActive, user.Lifecycle,
 		"with neither gate configured the registrant is active")
 
-	// The Admin grant is NOT asserted here. grantRoleIfMissing goes through
-	// UpdateUser, which now refuses a role reference that names nothing, and
-	// this fixture's tenant manager carries no role seeder — production wires
-	// one (iam_init.go SetRoleSeeder), so a real tenant has its built-in roles
-	// by the time the grant runs. Asserting it against a fixture that cannot
-	// seed would test the fixture. TestGrantRoleIfMissing_Branches covers the
-	// grant itself, against a store where the role exists.
+	// The creator holds the tenant's Admin role and the default role ("User"),
+	// as the role IDs the tenant carries: User.Roles holds IDs, and a name in
+	// their place resolves to no role and does not count as Admin.
+	requireHoldsBuiltInRoles(t, store, "acme-inc", user, qrdbsdk.RoleNameAdmin, "user")
 }
 
 // TestRegisterSelfFinish_DerivesAHandleFromAnAwkwardEmail covers the local

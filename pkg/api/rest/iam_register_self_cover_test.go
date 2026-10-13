@@ -31,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
@@ -65,6 +66,9 @@ func setupSelfRegHandler(t *testing.T, cfg config.IAMSelfServiceRegistrationConf
 		RoleStorage: memStorage,
 		Tenants:     tenants,
 	})
+	// Seed each created tenant's built-in roles, as production does, so the
+	// registrant's Admin and default-role grants have roles to resolve.
+	tenants.roleSeeder = qrdbadapter.WrapRole(store)
 
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	require.NoError(t, err)

@@ -18,6 +18,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -598,13 +600,18 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Grant roles: Admin@<their-tenant> always, plus the configured default_role.
-	h.grantRoleIfMissing(ctx, identityStore, sess.tenantID, createdUser.ID, "Admin")
-	defaultRole := cfg.DefaultRole
-	if defaultRole == "" {
-		defaultRole = "User"
-	}
-	if defaultRole != "Admin" {
-		h.grantRoleIfMissing(ctx, identityStore, sess.tenantID, createdUser.ID, defaultRole)
+	// It FAILS CLOSED. A creator without the Admin role owns a tenant nobody can
+	// administer, so a failed grant leaves no account behind and mints nothing.
+	// The cleanup runs on a context detached from the request, so a client that
+	// disconnects cannot strand a half-provisioned account that blocks a retry.
+	if err := grantSelfRegistrationRoles(ctx, identityStore, sess.tenantID, createdUser.ID, cfg.DefaultRole); err != nil {
+		if delErr := identityStore.DeleteUser(context.WithoutCancel(ctx), sess.tenantID, createdUser.ID); delErr != nil {
+			err = errors.Join(err, delErr)
+		}
+		h.server.logger.WithError(err).Error("iam.self_registration: role grant failed, registration refused")
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "registration could not grant the tenant's built-in roles"))
+		return
 	}
 
 	if cfg.RequireAdminApproval {
@@ -784,25 +791,79 @@ func (h *IAMHandler) RejectUser(w http.ResponseWriter, r *http.Request) {
 // Private helpers
 // --------------------------------------------------------------------------
 
-// grantRoleIfMissing appends a role to the user when not already present.
-func (h *IAMHandler) grantRoleIfMissing(
+// SelfRegistrationRoleGrantError reports that a self-registered tenant creator
+// could not be granted one of the tenant's built-in roles. Registration fails
+// closed on it: the account is deleted and no session is minted, because a
+// creator who holds no Admin role owns a tenant nobody can administer.
+type SelfRegistrationRoleGrantError struct {
+	TenantID string
+	Role     string
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *SelfRegistrationRoleGrantError) Error() string {
+	return "iam.self_registration: grant role " + e.Role + " in tenant " + e.TenantID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the cause, so a caller can still read what the store said.
+func (e *SelfRegistrationRoleGrantError) Unwrap() error {
+	return e.Cause
+}
+
+// builtInRoleName maps a configured role name (config.ValidRoleNames spells
+// them "Admin", "User", "SO", ...) to the name qrdb seeds the built-in role
+// under, which is the lower-case form ("admin", "user", "so", ...).
+func builtInRoleName(configured string) string {
+	return strings.ToLower(configured)
+}
+
+// grantSelfRegistrationRoles grants the tenant creator the tenant's Admin role
+// and the configured default role. The first failure is returned; nothing is
+// left half-granted silently, because the caller deletes the account on error.
+func grantSelfRegistrationRoles(
+	ctx context.Context,
+	store *iam.IdentityStore,
+	tenantID, userID, defaultRole string,
+) error {
+	if defaultRole == "" {
+		defaultRole = "User"
+	}
+	roles := []string{qrdbsdk.RoleNameAdmin}
+	if name := builtInRoleName(defaultRole); name != qrdbsdk.RoleNameAdmin {
+		roles = append(roles, name)
+	}
+	for _, roleName := range roles {
+		if err := grantBuiltInRole(ctx, store, tenantID, userID, roleName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// grantBuiltInRole assigns the tenant's built-in role named roleName to the
+// user. User.Roles holds role IDs, so the name is resolved to the role the
+// tenant actually carries before it is assigned; a name written in its place
+// would name no role, and IsAdministrativeAccount compares IDs.
+// A role the user already holds is a success, so a re-grant is a no-op.
+func grantBuiltInRole(
 	ctx context.Context,
 	store *iam.IdentityStore,
 	tenantID, userID, roleName string,
-) {
-	user, err := store.GetUser(ctx, tenantID, userID)
+) error {
+	role, err := store.GetRoleByName(ctx, tenantID, roleName)
 	if err != nil {
-		return
+		return &SelfRegistrationRoleGrantError{TenantID: tenantID, Role: roleName, Cause: err}
 	}
-	for _, r := range user.Roles {
-		if r == roleName {
-			return
-		}
+	err = store.AssignRole(ctx, tenantID, userID, role.ID)
+	// coded-sentinel-ok: the already-exists class is the intent. AssignRole
+	// raises it only for a role the user already holds: its validation and
+	// lookups raise invalid-input or not-found, and its one write updates the
+	// role list of an existing record, which has no uniqueness to collide with.
+	if err != nil && !errors.Is(err, iam.ErrRoleAlreadyAssigned) {
+		return &SelfRegistrationRoleGrantError{TenantID: tenantID, Role: roleName, Cause: err}
 	}
-	roles := make([]string, 0, len(user.Roles)+1)
-	roles = append(roles, user.Roles...)
-	roles = append(roles, roleName)
-	_, _ = store.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{Roles: &roles})
+	return nil
 }
 
 // getTenantManager retrieves the TenantManager from the service layer.

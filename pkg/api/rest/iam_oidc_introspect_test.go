@@ -143,6 +143,22 @@ const (
 // real audit logger, and registers a confidential client_credentials client.
 func setupIntrospectHandler(t *testing.T) (*IAMHandler, *iam.OIDCProvider, iam.AuditLogger, func()) {
 	t.Helper()
+	f := newIntrospectFixture(t)
+	return f.handler, f.provider, f.auditLogger, f.cleanup
+}
+
+// introspectFixture is the introspection handler with the stores behind it,
+// for tests that must seed a user before minting a user token.
+type introspectFixture struct {
+	handler       *IAMHandler
+	provider      *iam.OIDCProvider
+	auditLogger   iam.AuditLogger
+	identityStore *iam.IdentityStore
+	cleanup       func()
+}
+
+func newIntrospectFixture(t *testing.T) *introspectFixture {
+	t.Helper()
 
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	require.NoError(t, err)
@@ -213,7 +229,13 @@ func setupIntrospectHandler(t *testing.T) (*IAMHandler, *iam.OIDCProvider, iam.A
 		_ = auditLogger.Close()
 		server.Close()
 	}
-	return handler, provider, auditLogger, cleanup
+	return &introspectFixture{
+		handler:       handler,
+		provider:      provider,
+		auditLogger:   auditLogger,
+		identityStore: identityStore,
+		cleanup:       cleanup,
+	}
 }
 
 // mintToken issues an access token through the public client_credentials grant.

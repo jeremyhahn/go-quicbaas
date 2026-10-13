@@ -624,6 +624,28 @@ func TestRunDaemon_RefusesInvalidConfig(t *testing.T) {
 	require.Contains(t, err.Error(), "security.require_authz")
 }
 
+// TestRunDaemon_RefusesInvalidSelfServiceRegistration shows the boot gate
+// runs the self-service registration section's own validation: an enabled
+// section naming an unknown default role stops the daemon at startup
+// instead of failing at the first registration.
+func TestRunDaemon_RefusesInvalidSelfServiceRegistration(t *testing.T) {
+	log = createTestLogger(t)
+	tempDir := t.TempDir()
+
+	cfg = config.Default()
+	cfg.Server.Mode = config.ServerModeStandalone
+	cfg.Storage.Backend = config.StorageBackendPebble
+	cfg.Storage.DataDir = tempDir
+	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
+	cfg.Server.Unix.Enabled = false
+	cfg.IAM.SelfServiceRegistration.Enabled = true
+	cfg.IAM.SelfServiceRegistration.DefaultRole = "NoSuchRole"
+
+	err := runDaemon("refuse-selfreg")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "iam.self_service_registration.default_role")
+}
+
 // =============================================================================
 // applyServerFlags embedded-fleet-node branches
 // =============================================================================

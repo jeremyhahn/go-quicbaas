@@ -95,6 +95,34 @@ func TestBindEnvVars_BindsEveryLabelReconcileKey(t *testing.T) {
 	}
 }
 
+// TestBindEnvVars_BindsEverySelfServiceRegistrationKey pins that the daemon's
+// own viper binds the self-service registration keys, so an environment-only
+// deployment can turn registration on through either loader.
+func TestBindEnvVars_BindsEverySelfServiceRegistrationKey(t *testing.T) {
+	viper.Reset()
+	defer viper.Reset()
+
+	viper.SetEnvPrefix("QUICBAAS")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	bindEnvVars()
+
+	if len(config.IAMSelfServiceRegistrationKeys) == 0 {
+		t.Fatal("no self-service registration keys to check; this test would pass vacuously")
+	}
+	for _, key := range config.IAMSelfServiceRegistrationKeys {
+		envName := "QUICBAAS_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+		t.Setenv(envName, "Auditor")
+		if !viper.IsSet(key) {
+			t.Errorf("%s does not reach %q on the daemon's own viper; the knob is bound on one loader only", envName, key)
+			continue
+		}
+		if got := viper.GetString(key); got != "Auditor" {
+			t.Errorf("%s reached %q as %q, want the value set", envName, key, got)
+		}
+	}
+}
+
 // TestInitConfig_RefusesARemovedSDLCKeyOnTheDaemonsOwnViper covers the OTHER
 // half of the same two-loader divergence.
 //

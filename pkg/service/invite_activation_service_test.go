@@ -51,7 +51,7 @@ func (s *inviteTestSource) GetAuditLogger(context.Context) (iam.AuditLogger, err
 }
 
 // recordingWebAuthnManager records the email each ceremony was addressed by
-// and fails FinishRegistration with finishErr.
+// and fails FinishInviteRegistration with finishErr.
 type recordingWebAuthnManager struct {
 	stubWebAuthnManager
 	beginEmail  string
@@ -64,9 +64,9 @@ func (m *recordingWebAuthnManager) BeginInviteRegistration(_ context.Context, _,
 	return map[string]interface{}{"challenge": "c"}, nil
 }
 
-func (m *recordingWebAuthnManager) FinishRegistration(_ context.Context, _, email string, _ map[string]interface{}) (*iam.AttestationResult, error) {
+func (m *recordingWebAuthnManager) FinishInviteRegistration(_ context.Context, _, email string, _ map[string]interface{}) error {
 	m.finishEmail = email
-	return nil, m.finishErr
+	return m.finishErr
 }
 
 // fixedInviteStore returns one record from Lookup whatever it holds, and

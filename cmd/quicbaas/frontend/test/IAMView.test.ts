@@ -190,6 +190,7 @@ describe('IAMView', () => {
       expect(select.value).toBe('acme');
       expect(optionValues(select)).toEqual(['acme']);
       expect(listUsers).toHaveBeenCalledWith('acme');
+      expect(listUsers).not.toHaveBeenCalledWith('system');
       // A refused listing is not an error on the Users tab.
       expect(screen.queryByText('forbidden')).not.toBeInTheDocument();
     });
@@ -210,6 +211,20 @@ describe('IAMView', () => {
       await waitFor(() => expect(optionValues(select)).toEqual(['globex', 'acme']));
       expect(select.value).toBe('acme');
       expect(optionValues(select)).not.toContain('system');
+    });
+
+    it('keeps system selected for an operator signed in to the system tenant', async () => {
+      setAuthenticated({ access_token: sessionToken('system') });
+      const listTenants = vi.fn().mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+      const listUsers = stubIAM(listTenants);
+
+      render(IAMView);
+
+      await waitFor(() => expect(listTenants).toHaveBeenCalled());
+      const select = screen.getByLabelText('Tenant') as HTMLSelectElement;
+      expect(select.value).toBe('system');
+      expect(optionValues(select)).toEqual(['system']);
+      expect(listUsers).toHaveBeenCalledWith('system');
     });
   });
 

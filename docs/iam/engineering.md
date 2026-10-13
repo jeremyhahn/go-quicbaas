@@ -264,6 +264,59 @@ iam:
       compress: true
 ```
 
+### Self-service registration
+
+`iam.self_service_registration.enabled` defaults to `false`: tenants are
+created by an administrator and users join by invite. Setting it to `true`
+lets anyone who can reach the server create a tenant and become its Admin.
+Turn it on only when public sign-up is intended.
+
+`require_admin_approval` defaults to `true`: a self-registered account stays
+pending until a platform admin approves it. Set it to `false` only if
+registrants should be active at once.
+
+`default_role` defaults to `User`: the role granted to the registrant inside
+their new tenant, in addition to Admin. It must be one of `Admin`,
+`Operator`, `User`, `Auditor`, `Custodian` or `SO`; any other value fails
+validation.
+
+`default_isolation_mode` defaults to `keyspace`: the isolation a new tenant
+gets when the registrant does not choose one. It must be one of
+`allowed_isolation_modes` (which defaults to `[keyspace]`); an explicit empty
+value fails validation.
+
+`tenant_barrier_volume_pool` defaults to `default`: the volume pool used for
+tenants created with `barrier` or `volume` isolation. Allowing either mode
+without naming a pool therefore validates; an explicit empty pool with either
+mode allowed fails validation.
+
+These checks run in the boot-time config validator, and only when `enabled`
+is `true`: `quicbaasd` refuses to start on an invalid enabled section, naming
+the offending key, instead of failing at the first registration. A disabled
+section is not checked.
+
+Each scalar key can be set from the environment alone, with no entry in the
+config file: `QUICBAAS_IAM_SELF_SERVICE_REGISTRATION_ENABLED`,
+`..._REQUIRE_ADMIN_APPROVAL`, `..._REQUIRE_EMAIL_VERIFICATION`,
+`..._DEFAULT_ROLE`, `..._DEFAULT_ISOLATION_MODE` and
+`..._TENANT_BARRIER_VOLUME_POOL`. `allowed_isolation_modes` is a list and is
+read from the file only.
+
+When the server starts with `enabled: true`, it logs one warning that names
+the flag, says whether `require_admin_approval` is on, and states that anyone
+can create a tenant and become its Admin.
+
+```yaml
+iam:
+  self_service_registration:
+    enabled: false                # invite-only (default)
+    require_admin_approval: true  # default
+    default_role: User            # default
+    allowed_isolation_modes: [keyspace]  # default
+    default_isolation_mode: keyspace     # default
+    tenant_barrier_volume_pool: default  # default
+```
+
 ## Deployment Mode Examples
 
 ### Integrated Mode (Dev/Small Deployments)
@@ -2788,6 +2841,37 @@ enroll the factor.
 - Authentication - General authentication guide
 - [MFA](api.md#mfa-api) - TOTP multi-factor authentication
 
+
+---
+
+## Self-service Registration
+
+`POST /api/v1/auth/register/begin` and `/register/finish` let a visitor create
+a new tenant and become its first user through a WebAuthn ceremony. Configure
+it under `iam.self_service_registration`:
+
+- `enabled` defaults to `false`. Onboarding is then invite-only: a system
+  administrator provisions the tenant and its first admin (owner ruling
+  2026-09-01), and both endpoints answer 403.
+- `default_role` is one of `Admin`, `Operator`, `User`, `Auditor`, `Custodian`
+  or `SO`, and defaults to `User`.
+
+**Roles granted.** The registrant receives the new tenant's built-in `admin`
+role and the built-in role named by `default_role`. A `default_role` of `Admin`
+grants it only once. Each role is looked up by name in the tenant and assigned
+by its role ID, because `User.Roles` holds IDs and the administrator check
+compares IDs. Granting a role the user already holds succeeds without a change.
+
+**Fail-closed.** Registration does not continue unless every grant succeeds. If
+a role cannot be resolved or assigned, finish answers 500 and returns no token
+or session. The new account is deleted on a context detached from the request,
+so a client disconnect cannot leave an account behind that blocks a retry. If
+that deletion fails too, its error is joined to the grant error in the server
+log. The tenant the ceremony created is not removed.
+
+**Status.** go-quicbaas#482 still blocks the flow end to end: who owns account
+creation during self-registration (quicbaas or qrdb's registration primitive)
+is undecided, so the flow is not supported for production use yet.
 
 ---
 

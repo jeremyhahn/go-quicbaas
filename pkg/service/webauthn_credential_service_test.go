@@ -120,6 +120,10 @@ func (stubWebAuthnManager) FinishRegistration(context.Context, string, string, m
 	return nil, nil
 }
 
+func (stubWebAuthnManager) FinishInviteRegistration(context.Context, string, string, map[string]interface{}) error {
+	return nil
+}
+
 func (stubWebAuthnManager) BeginLogin(context.Context, string, string) (map[string]interface{}, error) {
 	return nil, nil
 }

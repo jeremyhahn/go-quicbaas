@@ -94,8 +94,14 @@ type WebAuthnManager interface {
 	// invitation the caller has already validated. It is the only
 	// unauthenticated path that may enrol a pre-existing account's first
 	// passkey, and go-xkms refuses it for any account that is not pending or
-	// already holds a credential. FinishRegistration completes it.
+	// already holds a credential. FinishInviteRegistration completes it.
 	BeginInviteRegistration(ctx context.Context, tenantID, email string) (map[string]interface{}, error)
+
+	// FinishInviteRegistration completes the ceremony BeginInviteRegistration
+	// opened. go-xkms binds the credential only while the account is still
+	// pending; the ordinary FinishRegistration refuses a pending account, so
+	// it cannot close an invitation ceremony.
+	FinishInviteRegistration(ctx context.Context, tenantID, email string, credential map[string]interface{}) error
 
 	// FinishRegistration completes the ceremony and returns what the assurance
 	// gate PROVED about the authenticator.

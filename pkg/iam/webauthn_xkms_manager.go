@@ -237,6 +237,28 @@ func (m *XKMSWebAuthnManager) BeginInviteRegistration(ctx context.Context, tenan
 // the authenticator's storage was established: the caller must then not claim
 // hardware.
 func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, userID string, credential map[string]interface{}) (*AttestationResult, error) {
+	return m.finishRegistration(ctx, tenantID, userID, credential, func(ctx context.Context, svc *xkmssdk.WebAuthnService, sessionID string, parsed *protocol.ParsedCredentialCreationData) error {
+		_, _, err := svc.FinishRegistration(ctx, sessionID, parsed)
+		return err
+	})
+}
+
+// FinishInviteRegistration completes the ceremony BeginInviteRegistration
+// opened. go-xkms binds the credential only while the account is still
+// pending, which the ordinary FinishRegistration refuses. Activating the
+// account and redeeming the invitation stay with the caller.
+func (m *XKMSWebAuthnManager) FinishInviteRegistration(ctx context.Context, tenantID, email string, credential map[string]interface{}) error {
+	_, err := m.finishRegistration(ctx, tenantID, email, credential, func(ctx context.Context, svc *xkmssdk.WebAuthnService, sessionID string, parsed *protocol.ParsedCredentialCreationData) error {
+		_, err := svc.FinishInviteRegistration(ctx, sessionID, parsed)
+		return err
+	})
+	return err
+}
+
+// finishRegistration resolves the stashed session, verifies the attestation
+// chain and runs finish, the xkms call that differs between an ordinary and
+// an invite-authorized ceremony.
+func (m *XKMSWebAuthnManager) finishRegistration(ctx context.Context, tenantID, userID string, credential map[string]interface{}, finish func(context.Context, *xkmssdk.WebAuthnService, string, *protocol.ParsedCredentialCreationData) error) (*AttestationResult, error) {
 	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
 		return nil, err
@@ -273,7 +295,7 @@ func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, 
 	// the context simply carries no verified chain.
 	ctx = m.verifyAttestationChain(ctx, tenantID, userID, parsed)
 	ctx, recorder := contextWithAttestationRecorder(ctx)
-	if _, _, err := svc.FinishRegistration(ctx, sessionID, parsed); err != nil {
+	if err := finish(ctx, svc, sessionID, parsed); err != nil {
 		return nil, err
 	}
 	m.regSessions.Delete(m.regKey(tenantID, userID))

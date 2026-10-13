@@ -289,7 +289,7 @@ func TestStopQRDBNode_NilNodeIsNoop(t *testing.T) {
 // DataDir is still required because qrdb's vector storage subsystem is
 // PebbleDB-backed and BuildServices rejects an empty data directory.
 // The caller must call node.Close(); the temp dir is cleaned up by t.
-func buildMemoryStandaloneNode(t *testing.T) *qrdbnode.Node {
+func buildMemoryStandaloneNode(t *testing.T, nodeOpts ...qrdbnode.NodeOption) *qrdbnode.Node {
 	t.Helper()
 
 	cfg := &config.Config{}
@@ -311,6 +311,7 @@ func buildMemoryStandaloneNode(t *testing.T) *qrdbnode.Node {
 		context.Background(),
 		qcfg,
 		serverOpts,
+		nodeOpts...,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, node)

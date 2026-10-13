@@ -49,11 +49,13 @@ var errUserStoreUnavailable = &iam.IAMMessageError{Message: "user store unavaila
 // invite is spent. It counts calls so a test can assert the ceremony was not
 // re-run.
 type stubWebAuthn struct {
-	// beginCalls counts the invitation ceremony; publicBeginCalls counts
-	// the public one, which invite activation must never use.
-	beginCalls       int
-	publicBeginCalls int
-	finishCalls      int
+	// beginCalls and finishCalls count the invitation ceremony;
+	// publicBeginCalls and publicFinishCalls count the public one, which
+	// invite activation must never use.
+	beginCalls        int
+	publicBeginCalls  int
+	finishCalls       int
+	publicFinishCalls int
 
 	// finishErr, when set, is what the ceremony refuses with. It is how a test
 	// drives the attestation gate's policy refusals through the handlers
@@ -74,11 +76,13 @@ func (s *stubWebAuthn) BeginInviteRegistration(context.Context, string, string) 
 }
 
 func (s *stubWebAuthn) FinishRegistration(context.Context, string, string, map[string]interface{}) (*iam.AttestationResult, error) {
+	s.publicFinishCalls++
+	return nil, s.finishErr
+}
+
+func (s *stubWebAuthn) FinishInviteRegistration(context.Context, string, string, map[string]interface{}) error {
 	s.finishCalls++
-	if s.finishErr != nil {
-		return nil, s.finishErr
-	}
-	return nil, nil
+	return s.finishErr
 }
 
 func (s *stubWebAuthn) BeginLogin(context.Context, string, string) (map[string]interface{}, error) {
@@ -368,6 +372,19 @@ func TestActivateFIDO2Begin_UsesTheInvitationCeremony(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "begin failed: %s", w.Body.String())
 	assert.Equal(t, 1, f.webauthn.beginCalls, "invite activation must open the invitation ceremony")
 	assert.Zero(t, f.webauthn.publicBeginCalls, "invite activation must never open the public ceremony")
+}
+
+// TestActivateFIDO2Finish_UsesTheInvitationCeremony is the finish half of the
+// same contract: go-xkms's public finish refuses the still-pending invitee,
+// so only the invitation finish can close the ceremony.
+func TestActivateFIDO2Finish_UsesTheInvitationCeremony(t *testing.T) {
+	f, cleanup := setupActivation(t, writeSucceeds)
+	defer cleanup()
+
+	w := f.finish(t)
+	require.Equal(t, http.StatusOK, w.Code, "finish failed: %s", w.Body.String())
+	assert.Equal(t, 1, f.webauthn.finishCalls, "invite activation must close the invitation ceremony")
+	assert.Zero(t, f.webauthn.publicFinishCalls, "invite activation must never close the public ceremony")
 }
 
 // TestInviteRoutes_SpentTokenIsOpaque proves a spent token gets the SAME

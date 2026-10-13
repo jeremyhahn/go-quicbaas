@@ -189,6 +189,12 @@ security:
       log_denied: true
       log_allowed: false  # Set to true for verbose logging
 
+# IAM configuration
+iam:
+  # Self-service tenant registration. The default is invite-only (false).
+  self_service_registration:
+    enabled: false  # true lets anyone create a tenant and become its Admin
+
 # Backup configuration
 backup:
   enabled: false

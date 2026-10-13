@@ -50,6 +50,11 @@ type testTenantManager struct {
 	// assert on fields (the engine provisioning knobs) that the persisted
 	// Tenant record does not carry.
 	lastCreateOpts iam.CreateTenantOptions
+
+	// roleSeeder, when set, seeds the built-in roles into each created tenant
+	// the way production's DefaultTenantManager does (iam_init.go
+	// SetRoleSeeder). Nil leaves the tenant without roles.
+	roleSeeder iam.TenantRoleSeeder
 }
 
 func (m *testTenantManager) CreateTenant(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
@@ -68,6 +73,11 @@ func (m *testTenantManager) CreateTenant(ctx context.Context, opts iam.CreateTen
 	}
 	if err := m.storage.CreateTenant(ctx, tenant); err != nil {
 		return nil, err
+	}
+	if m.roleSeeder != nil {
+		if err := m.roleSeeder.SeedBuiltInRoles(ctx, tenant.ID); err != nil {
+			return nil, err
+		}
 	}
 	return tenant, nil
 }

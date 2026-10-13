@@ -597,14 +597,23 @@ func (v *Validator) validateIAM(cfg *IAMConfig) {
 	if cfg == nil {
 		return
 	}
-	if err := cfg.WebAuthn.Validate(); err != nil {
-		var cve *ConfigValidationError
-		if errors.As(err, &cve) {
-			v.addError(cve.Field, cve.Message)
-		} else {
-			v.addError("iam.webauthn", err.Error())
-		}
+	v.addSectionError(cfg.WebAuthn.Validate(), "iam.webauthn")
+	v.addSectionError(cfg.SelfServiceRegistration.Validate(), "iam.self_service_registration")
+}
+
+// addSectionError records err from a section's own Validate method. A
+// ConfigValidationError keeps the field it names; any other error is filed
+// under the section's field.
+func (v *Validator) addSectionError(err error, sectionField string) {
+	if err == nil {
+		return
 	}
+	var cve *ConfigValidationError
+	if errors.As(err, &cve) {
+		v.addError(cve.Field, cve.Message)
+		return
+	}
+	v.addError(sectionField, err.Error())
 }
 
 // addError adds a validation error.
