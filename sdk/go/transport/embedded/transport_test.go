@@ -31,6 +31,7 @@ import (
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
@@ -498,6 +499,7 @@ func (m *mockQuicBaaS) SetDynamicSecretsService(svc service.DynamicSecretsServic
 func (m *mockQuicBaaS) SetAgentService(agent orchestration.AgentService)             {}
 func (m *mockQuicBaaS) SDLC() *service.SDLCService                                   { return nil }
 func (m *mockQuicBaaS) SetSDLCService(*service.SDLCService)                          {}
+func (m *mockQuicBaaS) SetProjectBindingReader(sdlc.BindingReader)                   {}
 func (m *mockQuicBaaS) WatchManager() *watch.Manager                                 { return nil }
 func (m *mockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider)            {}
 func (m *mockQuicBaaS) Database() service.DatabaseService                            { return nil }

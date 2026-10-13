@@ -47,28 +47,44 @@ func TestMain(m *testing.M) {
 // http.DefaultTransport's connection pool with keepalive connections that
 // could cause later tests to hang when reusing stale connections.
 func waitForClusterReady() bool {
-	endpoint := getRESTEndpoint()
+	endpoints := getRESTEndpoints()
 	client := helpers.NewHTTPClient(5 * time.Second)
 
-	deadline := time.Now().Add(4 * time.Minute)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(endpoint + "/api/v1/health/ready")
-		if err == nil {
+	deadline := time.After(4 * time.Minute)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		// Any one node serving is enough: the failover targets run with a
+		// node deliberately stopped, which may be node1.
+		for _, endpoint := range endpoints {
+			resp, err := client.Get(endpoint + "/api/v1/health/ready")
+			if err != nil {
+				continue
+			}
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				fmt.Println("Cluster is ready for cluster tests")
 				return true
 			}
 		}
-		time.Sleep(2 * time.Second)
+		select {
+		case <-deadline:
+			return false
+		case <-ticker.C:
+		}
 	}
-	return false
 }
 
-// getRESTEndpoint returns the primary REST API endpoint.
-func getRESTEndpoint() string {
-	if endpoint := os.Getenv("QUICBAAS_NODE1_URL"); endpoint != "" {
-		return endpoint
+// getRESTEndpoints returns the REST API endpoints of the configured nodes.
+func getRESTEndpoints() []string {
+	var endpoints []string
+	for _, env := range []string{"QUICBAAS_NODE1_URL", "QUICBAAS_NODE2_URL", "QUICBAAS_NODE3_URL"} {
+		if endpoint := os.Getenv(env); endpoint != "" {
+			endpoints = append(endpoints, endpoint)
+		}
 	}
-	return "https://test-node1:8080"
+	if len(endpoints) == 0 {
+		return []string{"https://test-node1:8080"}
+	}
+	return endpoints
 }

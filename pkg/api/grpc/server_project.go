@@ -484,6 +484,7 @@ func convertProjectError(err error) error {
 	}
 	var notFound *service.ProjectNotFoundError
 	var alreadyExists *service.ProjectAlreadyExistsError
+	var bound *service.ProjectBoundError
 	var invalid *service.ProjectInvalidError
 	var accessDenied *service.ProjectAccessDeniedError
 	var unresolved *service.ProjectUnresolvedError
@@ -503,6 +504,9 @@ func convertProjectError(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	case stderrors.As(err, &alreadyExists):
 		return status.Error(codes.AlreadyExists, err.Error())
+	case stderrors.As(err, &bound):
+		// The project still has an SDLC binding: unbind first.
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case stderrors.As(err, &invalid):
 		return status.Error(codes.InvalidArgument, err.Error())
 	default:

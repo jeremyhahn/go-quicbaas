@@ -271,6 +271,21 @@ func TestValidateServerMode(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "additional SAN IPs in any notation are valid",
+			modify: func(cfg *Config) {
+				cfg.Server.AdditionalSANIPs = []string{"192.0.2.10", "0:0:0:0:0:0:0:1"}
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid additional SAN IP",
+			modify: func(cfg *Config) {
+				cfg.Server.AdditionalSANIPs = []string{"192.0.2.10", "192.0.2.300"}
+			},
+			expectError: true,
+			errorField:  "server.additional_san_ips",
+		},
+		{
 			name: "memory backend with cluster mode is valid",
 			modify: func(cfg *Config) {
 				cfg.Server.Mode = ServerModeCluster

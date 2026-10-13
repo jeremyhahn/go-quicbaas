@@ -615,6 +615,31 @@ peer to race.
 Leadership is queried live per check, never cached — a cached bool is
 how a deposed leader goes on believing it leads.
 
+### Proving it on a 3-node cluster
+
+`make integration-test-cluster-scheduler` boots a 3-node compose cluster
+with the scheduler on. It counts firings from run records
+(`GetJobHistory`), not from logs, in three tests that run in this order:
+
+1. `TestSchedulerLeaderFiring_NodeAffinity` — a job pinned to a follower
+   runs on that node only. Run records do not name the node, so the test
+   checks that the pinned node's `CompletedJobs` count goes up and the
+   other follower's stays the same.
+2. `TestSchedulerLeaderFiring_SteadyState` — a cluster-wide `@every 4s`
+   job shows the same history on all three nodes: one execution per
+   firing, no missed period.
+3. The target then stops the leader's container (the test runner gets no
+   Docker socket). `TestSchedulerLeaderFiring_AfterLeaderStop` waits for a
+   new leader. It asserts that no firing ran twice in any period, that the
+   job resumes within three periods, and that no firing is missed after
+   that.
+
+The tests carry the `scheduler_proof` build tag, and only this target
+passes it, so `make integration-test`, `integration-test-cluster` and any
+other runner built with just the `integration` tag never compile them.
+This target does not run in CI; run it by hand. Forced leadership transfer is
+not covered, because the go-qrdb SDK has no transfer-leadership call.
+
 ### Wire-protocol exposure
 
 `Job.NodeAffinity` is exposed on:

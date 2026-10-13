@@ -1910,6 +1910,65 @@ integration-test-cluster-membership: ## Phase F: Run dynamic-membership integrat
 	@$(GOTEST) -v -tags integration -timeout 180s -run TestQRDBCluster_DynamicMembership \
 		./test/integration/cluster/...
 
+# #105 item 2: a cluster-wide scheduler job fires once per tick on a 3-node
+# cluster, and still once per tick after the platform-shard leader is stopped.
+# The steady-state test records the leader; this target (not the test runner,
+# which never gets the Docker socket) stops that node's container. The tests
+# carry the scheduler_proof build tag, so only this target compiles them.
+.PHONY: integration-test-cluster-scheduler
+integration-test-cluster-scheduler: ## #105: Prove leader-gated scheduler firing on a 3-node cluster, before and after stopping the leader (Docker)
+	@echo "$(BLUE)Running scheduler leader-firing proof (3-node Raft cluster, leader stop)...$(NC)"
+	@if ! docker compose version > /dev/null 2>&1 && ! command -v docker-compose > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker Compose is not installed$(NC)"; \
+		exit 1; \
+	fi
+	@COMPOSE_FILE="test/integration/docker-compose.cluster.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_CLUSTER)"; \
+	CLUSTER_DIR="test/integration"; \
+	ABS_CLUSTER_DIR="$$PWD/$$CLUSTER_DIR"; \
+	STATE_FILE="$$ABS_CLUSTER_DIR/cluster-logs/scheduler-proof.env"; \
+	cleanup() { \
+		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true; \
+		if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
+			docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
+		fi; \
+		rm -rf $$CLUSTER_DIR/cluster-data $$CLUSTER_DIR/cluster-logs 2>/dev/null || true; \
+	}; \
+	echo "$(YELLOW)Cleaning up any previous cluster-test containers and bind-mount data dirs...$(NC)"; \
+	cleanup; \
+	trap cleanup EXIT; \
+	for N in node1 node2 node3; do \
+		mkdir -p $$CLUSTER_DIR/cluster-data/$$N $$CLUSTER_DIR/cluster-logs/$$N; \
+		chmod 0777 $$CLUSTER_DIR/cluster-data/$$N $$CLUSTER_DIR/cluster-logs/$$N; \
+	done; \
+	echo "$(YELLOW)Building cluster-test image...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	echo "$(YELLOW)Starting 3-node quicbaas cluster...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d quicbaas-node1 quicbaas-node2 quicbaas-node3 || exit 1; \
+	NODE1_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node1 8080); \
+	NODE2_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node2 8080); \
+	NODE3_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node3 8080); \
+	export QUICBAAS_NODE1_URL="http://localhost:$${NODE1_HTTP##*:}"; \
+	export QUICBAAS_NODE2_URL="http://localhost:$${NODE2_HTTP##*:}"; \
+	export QUICBAAS_NODE3_URL="http://localhost:$${NODE3_HTTP##*:}"; \
+	export QUICBAAS_SCHEDULER_PROOF_STATE="$$STATE_FILE"; \
+	echo "$(YELLOW)Control: a job pinned to one follower runs only there...$(NC)"; \
+	$(GOTEST) -v -tags 'integration scheduler_proof' -timeout 300s -run '^TestSchedulerLeaderFiring_NodeAffinity$$' ./test/integration/cluster/ || exit $$?; \
+	echo "$(YELLOW)Steady state: one run per firing, identical history on every node...$(NC)"; \
+	$(GOTEST) -v -tags 'integration scheduler_proof' -timeout 300s -run '^TestSchedulerLeaderFiring_SteadyState$$' ./test/integration/cluster/ || exit $$?; \
+	. "$$STATE_FILE"; \
+	echo "$(YELLOW)Stopping platform-shard leader quicbaas-node$$SCHEDULER_PROOF_LEADER_NODE_ID...$(NC)"; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE stop quicbaas-node$$SCHEDULER_PROOF_LEADER_NODE_ID || exit 1; \
+	echo "$(YELLOW)After leader stop: the survivors resume, no firing runs twice...$(NC)"; \
+	$(GOTEST) -v -tags 'integration scheduler_proof' -timeout 300s -run '^TestSchedulerLeaderFiring_AfterLeaderStop$$' ./test/integration/cluster/; \
+	RESULT=$$?; \
+	if [ $$RESULT -eq 0 ]; then \
+		echo "$(GREEN)✓ Scheduler leader-firing proof PASSED$(NC)"; \
+	else \
+		echo "$(RED)✗ Scheduler leader-firing proof FAILED (exit $$RESULT)$(NC)"; \
+	fi; \
+	exit $$RESULT
+
 .PHONY: integration-test-seal
 integration-test-seal: ## Run cloud-backed barrier seal integration tests (awskms+vault emulators) in Docker
 	@echo "$(BLUE)Running cloud-seal integration tests (awskms + vault)...$(NC)"

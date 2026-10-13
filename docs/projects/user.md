@@ -174,7 +174,11 @@ backend` finds a project by a substring of its name on every transport.
 
 ## Delete a project
 
+Unbind a bound project first. Delete refuses a project with an SDLC binding
+and never offboards it for you.
+
 ```bash
+quicbaas sdlc unbind "$PROJECT_ID"
 quicbaas project delete "$PROJECT_ID"
 ```
 

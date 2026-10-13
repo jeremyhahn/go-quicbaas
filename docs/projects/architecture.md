@@ -96,6 +96,17 @@ nothing changes.
 Delete removes the record and its name reservation. A managed project's
 workspace directory is torn down with it.
 
+A project with an SDLC binding is refused with `ProjectBoundError`, before
+anything is torn down. Delete never cascades into offboarding: unbind first
+(`quicbaas sdlc unbind <project-id>`), then delete. A binding store that
+cannot be read also refuses the delete (`ProjectBindingCheckError`). The
+binding reader is wired on every node with a tenant store resolver, whether
+or not the SDLC module is enabled. A node without a resolver has no binding
+store, so no binding can exist, and the delete goes ahead.
+
+Known gap: the check and the delete are separate writes. A bind that commits
+between them leaves a binding on a deleted project.
+
 ## Identity: id, name and source repository
 
 ### A project id is a UUID

@@ -601,6 +601,12 @@ func (s *Server) initializeCA() error {
 	// deployments that mount their own CA (e.g. integration tests sharing a
 	// single CA across all nodes) bypass the auto-generated per-node CA path
 	// while keeping the default behaviour intact for plain installs.
+	//
+	// operatorCertPaths records whether the operator configured the cert or
+	// key path. Only then are files found there the operator's own: files at
+	// the defaulted paths are the server cert this CA issued on an earlier
+	// boot, and loading them would skip the SAN check in issueServerCert.
+	operatorCertPaths := s.config.Security.TLSCertFile != "" || s.config.Security.TLSKeyFile != ""
 	if s.config.Security.TLSCertFile == "" {
 		s.config.Security.TLSCertFile = filepath.Join(certsDir, "server.crt")
 	}
@@ -618,7 +624,7 @@ func (s *Server) initializeCA() error {
 	// directly and skip the per-boot CA-issued server cert path. This makes
 	// the listener serve the operator's cert chain instead of a freshly-
 	// issued, per-node cert that no external client can trust.
-	if s.config.Security.TLSCertFile != "" && s.config.Security.TLSKeyFile != "" {
+	if operatorCertPaths {
 		if _, certErr := os.Stat(s.config.Security.TLSCertFile); certErr == nil {
 			if _, keyErr := os.Stat(s.config.Security.TLSKeyFile); keyErr == nil {
 				pair, loadErr := tls.LoadX509KeyPair(s.config.Security.TLSCertFile, s.config.Security.TLSKeyFile)
@@ -659,47 +665,23 @@ func (s *Server) initializeCA() error {
 	}
 
 	// Issue a server TLS certificate - CA generates the key through its keystore backend
-	dnsNames := []string{"localhost"}
-	ipStrings := []string{"127.0.0.1", "::1"}
 	certCN := s.config.Server.Host
 	if certCN == "" || certCN == "0.0.0.0" {
 		certCN = "localhost"
 	}
-	// When Host is a routable hostname or IP, include it in the SANs so
-	// remote callers can verify this server. Parse as IP to route into the
-	// correct SAN field rather than mixing IPs into the DNSNames list.
-	if s.config.Server.Host != "" && s.config.Server.Host != "0.0.0.0" {
-		if ip := net.ParseIP(s.config.Server.Host); ip != nil {
-			ipStrings = append(ipStrings, s.config.Server.Host)
-		} else {
-			dnsNames = append(dnsNames, s.config.Server.Host)
-		}
-	}
-	// Include the machine hostname so peers can verify this node's certificate
-	if hostname, err := os.Hostname(); err == nil && hostname != "" && hostname != "localhost" {
-		dnsNames = append(dnsNames, hostname)
-	}
-	// Operator-supplied additional SANs — required when remote fleet nodes
-	// reach the central by an IP or FQDN that differs from Host (e.g.,
-	// a GPU host dialing the central across a LAN).
-	dnsNames = append(dnsNames, s.config.Server.AdditionalSANDNS...)
-	ipStrings = append(ipStrings, s.config.Server.AdditionalSANIPs...)
 
 	serverRequest := &xkmssdk.TrustedCACertificateRequest{
 		Subject: xkmssdk.TrustedCASubject{
 			CommonName:   certCN,
 			Organization: s.config.CA.RootOrganization,
 		},
-		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{
-			DNS: dnsNames,
-			IPs: ipStrings,
-		},
+		SANS:  s.serverCertSANs(),
 		Valid: s.config.CA.DefaultValidityDays,
 	}
 
-	issuedCert, err := xkmsCA.IssueCertificate(context.Background(), serverRequest)
-	if err != nil && !errors.Is(err, xkmssdk.ErrCertificateAlreadyExists) {
-		return api.NewOperationFailedError("issue server TLS certificate", err)
+	issuedCert, err := s.issueServerCert(context.Background(), xkmsCA, serverRequest)
+	if err != nil {
+		return err
 	}
 
 	// Build server key attributes matching what the CA generated. The TLS
@@ -819,34 +801,22 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 	// Issue a server TLS certificate through the external CA
 	s.logger.Info("Issuing server TLS certificate from external CA")
 
-	dnsNames := []string{"localhost"}
 	certCN := s.config.Server.Host
 	if certCN == "" || certCN == "0.0.0.0" {
 		certCN = "localhost"
 	}
-	if s.config.Server.Host != "" && s.config.Server.Host != "0.0.0.0" {
-		dnsNames = append(dnsNames, s.config.Server.Host)
-	}
-	if hostname, err := os.Hostname(); err == nil && hostname != "" && hostname != "localhost" {
-		dnsNames = append(dnsNames, hostname)
-	}
-	ipStrings := []string{"127.0.0.1", "::1"}
 
 	serverRequest := &xkmssdk.TrustedCACertificateRequest{
 		Subject: xkmssdk.TrustedCASubject{
 			CommonName:   certCN,
 			Organization: s.config.CA.RootOrganization,
 		},
-		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{
-			DNS: dnsNames,
-			IPs: ipStrings,
-		},
+		SANS:  s.serverCertSANs(),
 		Valid: s.config.CA.DefaultValidityDays,
 	}
 
-	_, err := s.xkmsCA.IssueCertificate(context.Background(), serverRequest)
-	if err != nil && !errors.Is(err, xkmssdk.ErrCertificateAlreadyExists) {
-		return api.NewOperationFailedError("issue server TLS certificate from external CA", err)
+	if _, err := s.issueServerCert(context.Background(), s.xkmsCA, serverRequest); err != nil {
+		return err
 	}
 
 	// Build key attributes for TLSConfig lookup
@@ -2171,6 +2141,12 @@ func (s *Server) startService() error {
 				s.logger.Info("unified login ceremony facade wired from qrdb node")
 			}
 		}
+	}
+
+	// Project deletes are checked against SDLC bindings on every node with a
+	// tenant store resolver, independent of whether the SDLC module runs.
+	if err := s.wireProjectBindings(svc); err != nil {
+		return err
 	}
 
 	// Wire the embedded node's identity clients into the GLOBAL XKMSService

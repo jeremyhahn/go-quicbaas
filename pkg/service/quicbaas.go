@@ -50,6 +50,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
@@ -4954,6 +4955,17 @@ func (s *quicBaaS) SDLC() *SDLCService {
 // SetSDLCService attaches the SDLC module's service.
 func (s *quicBaaS) SetSDLCService(svc *SDLCService) {
 	s.sdlcService = svc
+}
+
+// SetProjectBindingReader wires the SDLC binding store project deletes are
+// checked against, so a bound project is refused rather than deleted out
+// from under its binding.
+func (s *quicBaaS) SetProjectBindingReader(bindings sdlc.BindingReader) {
+	projects, ok := s.projectService.(*projectServiceImpl)
+	if !ok {
+		return
+	}
+	projects.SetBindingReader(bindings)
 }
 
 // Messaging returns the Messaging notification service (returns nil if not configured).

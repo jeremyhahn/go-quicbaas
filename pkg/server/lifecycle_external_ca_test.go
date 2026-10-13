@@ -33,7 +33,10 @@ type externalCAMock struct {
 	issueErr  error
 	serverCfg *tls.Config
 	serverErr error
+	certs     xkmssdk.CertStore
 }
+
+func (m *externalCAMock) CertStore() xkmssdk.CertStore { return m.certs }
 
 func (m *externalCAMock) IssueCertificate(_ context.Context, _ *xkmsca.CertificateRequest) (*xkmsca.IssuedCertificate, error) {
 	if m.issueErr != nil {
@@ -135,9 +138,12 @@ func TestIssueTLSCertFromExternalCA_AlreadyExistsRSA(t *testing.T) {
 		logger: buildTestLogger(t),
 	}
 	s.config.CA.RootKeyAlgorithm = "RSA"
+	certs := newSANCertStoreMock(t)
+	certs.certs["localhost"] = newSANTestLeaf(t, "localhost", s.serverCertSANs())
 	s.xkmsCA = &externalCAMock{
 		issueErr:  xkmssdk.ErrCertificateAlreadyExists,
 		serverCfg: &tls.Config{},
+		certs:     certs,
 	}
 
 	if err := s.issueTLSCertFromExternalCA(); err != nil {

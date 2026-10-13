@@ -90,9 +90,12 @@ timeseries:
 vector:
   enabled: false
 
-# Scheduler disabled.
+# Scheduler enabled: the cluster scheduler suite proves leader-gated firing
+# (each cluster-wide job fires once per tick, cluster-wide).
 scheduler:
-  enabled: false
+  enabled: true
+  tick_interval: 1s
+  max_concurrent_jobs: 10
 
 # Orchestration disabled.
 orchestration:

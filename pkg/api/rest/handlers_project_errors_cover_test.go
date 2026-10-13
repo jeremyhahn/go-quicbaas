@@ -35,6 +35,7 @@ func TestHandleProjectError_Dispatch(t *testing.T) {
 	}{
 		{"not_found", &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}, http.StatusNotFound},
 		{"already_exists", &service.ProjectAlreadyExistsError{TenantID: "t", Name: "n"}, http.StatusConflict},
+		{"bound", &service.ProjectBoundError{TenantID: "t", ProjectID: "p"}, http.StatusConflict},
 		{"invalid", &service.ProjectInvalidError{Field: "name", Message: "bad"}, http.StatusBadRequest},
 		{"access_denied", &service.ProjectAccessDeniedError{ProjectID: "p", FleetNodeID: "a"}, http.StatusForbidden},
 		// A project the authorizer could not read is a refusal, not a server

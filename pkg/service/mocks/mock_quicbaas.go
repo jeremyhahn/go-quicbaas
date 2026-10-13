@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
@@ -965,6 +966,10 @@ func (m *MockQuicBaaS) SDLC() *service.SDLCService {
 func (m *MockQuicBaaS) SetSDLCService(svc *service.SDLCService) {
 	m.sdlcService = svc
 }
+
+// SetProjectBindingReader is a no-op: a test that needs a delete checked
+// against bindings wires the reader onto its own project service.
+func (m *MockQuicBaaS) SetProjectBindingReader(sdlc.BindingReader) {}
 
 func (m *MockQuicBaaS) Database() service.DatabaseService {
 	return nil

@@ -16,6 +16,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -159,6 +160,13 @@ func (v *Validator) validateServer(cfg *ServerConfig) {
 
 	if cfg.Host == "" {
 		v.addError("server.host", "host cannot be empty")
+	}
+
+	// An entry that is not an IP would never reach the server certificate.
+	for _, entry := range cfg.AdditionalSANIPs {
+		if net.ParseIP(entry) == nil {
+			v.addError("server.additional_san_ips", fmt.Sprintf("invalid IP address: %q", entry))
+		}
 	}
 
 	// Validate REST configuration

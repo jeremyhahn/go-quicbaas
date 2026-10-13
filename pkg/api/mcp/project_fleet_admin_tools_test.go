@@ -260,6 +260,24 @@ func TestExecuteProjectTool_ServiceError(t *testing.T) {
 	}
 }
 
+// A bound project's delete reaches the MCP caller with the unbind remedy in
+// the text the client sees (go-quicbaas#891).
+func TestExecuteProjectDelete_BoundCarriesUnbindRemedy(t *testing.T) {
+	svc := &mockProjectService{
+		deleteFunc: func(_ context.Context, req *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error) {
+			return nil, &service.ProjectBoundError{TenantID: req.TenantID, ProjectID: req.ProjectID}
+		},
+	}
+	reg := newProjectAdminRegistry(t, svc, nil)
+
+	_, err := reg.executeProjectTool(context.Background(), "project_delete",
+		map[string]interface{}{"tenant_id": "t1", "project_id": "p1"})
+
+	var bound *service.ProjectBoundError
+	require.ErrorAs(t, err, &bound)
+	assert.Contains(t, toolErrorMessage(nil, "project_delete", err), "unbind")
+}
+
 func TestExecuteProjectTool_UnknownTool(t *testing.T) {
 	reg := newProjectAdminRegistry(t, &mockProjectService{}, nil)
 	_, err := reg.executeProjectTool(context.Background(), "project_nonexistent", map[string]interface{}{})

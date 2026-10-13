@@ -340,6 +340,18 @@ func TestProjectServer_ServiceErrorMapping(t *testing.T) {
 		assert.Equal(t, codes.NotFound, status.Code(err))
 	})
 
+	// A bound project is refused until it is unbound (go-quicbaas#891).
+	t.Run("delete-bound", func(t *testing.T) {
+		srv := newProjectServer(t, &grpcMockProjectService{
+			deleteFunc: func(context.Context, *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error) {
+				return nil, &service.ProjectBoundError{TenantID: "t", ProjectID: "p"}
+			},
+		})
+		_, err := srv.DeleteProject(ctx, &pb.DeleteProjectRequest{TenantId: "t", ProjectId: "p"})
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.Contains(t, status.Convert(err).Message(), "unbind")
+	})
+
 	t.Run("getbyname-error", func(t *testing.T) {
 		srv := newProjectServer(t, &grpcMockProjectService{
 			getByName: func(context.Context, *service.GetProjectByNameRequest) (*service.GetProjectResponse, error) {

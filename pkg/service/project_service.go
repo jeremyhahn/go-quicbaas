@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 )
 
 // =============================================================================
@@ -408,6 +409,40 @@ func (e *ProjectAlreadyExistsError) Error() string {
 	return "project already exists: tenant=" + e.TenantID + " name=" + e.Name
 }
 
+// ProjectBoundError is returned when a delete names a project that still has
+// an SDLC binding. Delete does not offboard: the binding, its webhook route
+// and the forge webhook are removed by unbind, which must run first.
+type ProjectBoundError struct {
+	TenantID  string
+	ProjectID string
+}
+
+// Error implements the error interface. The remedy comes first.
+func (e *ProjectBoundError) Error() string {
+	return "run unbind (quicbaas sdlc unbind) before deleting project " + e.ProjectID +
+		": it has an SDLC binding: tenant=" + e.TenantID
+}
+
+// ProjectBindingCheckError is returned when a delete cannot read the
+// project's SDLC binding. The delete is refused: an unreadable store does not
+// prove the project is unbound.
+type ProjectBindingCheckError struct {
+	TenantID  string
+	ProjectID string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *ProjectBindingCheckError) Error() string {
+	return "cannot check project " + e.ProjectID + " for an SDLC binding: tenant=" + e.TenantID +
+		": " + e.Cause.Error()
+}
+
+// Unwrap returns the binding store's error.
+func (e *ProjectBindingCheckError) Unwrap() error {
+	return e.Cause
+}
+
 // ProjectInvalidError is returned when a project request fails validation.
 type ProjectInvalidError struct {
 	Field   string
@@ -505,6 +540,9 @@ type projectServiceImpl struct {
 	sshKeys SSHKeyGetter
 	fleet   orchestration.FleetNodeLister
 	agents  AgentRefChecker
+
+	// bindings is read by DeleteProject: a bound project is refused.
+	bindings sdlc.BindingReader
 }
 
 // projectStoreContext binds the request's tenant to the context the project
@@ -597,6 +635,32 @@ type AgentRefChecker interface {
 // refused rather than stored unverified.
 func (s *projectServiceImpl) SetAgentRefChecker(checker AgentRefChecker) {
 	s.agents = checker
+}
+
+// SetBindingReader wires the SDLC binding store DeleteProject consults. The
+// server binds it on every node whose qrdb node has a tenant store resolver,
+// whether or not the SDLC module runs there, because bindings persist in the
+// tenant keyspace either way. A node with no resolver has no binding store,
+// so no binding can exist; without a reader a delete proceeds.
+func (s *projectServiceImpl) SetBindingReader(bindings sdlc.BindingReader) {
+	s.bindings = bindings
+}
+
+// refuseBound returns a *ProjectBoundError when the project has an SDLC
+// binding, and the read error when the binding store cannot be read: a store
+// that cannot answer does not prove the project is unbound.
+func (s *projectServiceImpl) refuseBound(ctx context.Context, tenantID, projectID string) error {
+	if s.bindings == nil {
+		return nil
+	}
+	_, err := s.bindings.GetBinding(ctx, tenantID, projectID)
+	if err == nil {
+		return &ProjectBoundError{TenantID: tenantID, ProjectID: projectID}
+	}
+	if stderrors.Is(err, sdlc.ErrNotFound) {
+		return nil
+	}
+	return &ProjectBindingCheckError{TenantID: tenantID, ProjectID: projectID, Cause: err}
 }
 
 // validateDefaultLead refuses a default lead the tenant does not define, or
@@ -1177,6 +1241,12 @@ func (s *projectServiceImpl) DeleteProject(ctx context.Context, req *DeleteProje
 	project, err := s.store.Get(ctx, req.TenantID, req.ProjectID)
 	if err != nil {
 		return nil, s.convertStoreError(err)
+	}
+
+	// Refused before the teardown, so a refused delete leaves the managed
+	// workspace intact.
+	if err := s.refuseBound(ctx, req.TenantID, req.ProjectID); err != nil {
+		return nil, err
 	}
 
 	if project.Provisioning.Managed {

@@ -134,7 +134,8 @@ Content-Type: application/json
 ### Delete
 
 `DELETE /api/v1/projects/{id}?tenant_id=acme` → `200` with
-`{project_id, deleted, timestamp}`.
+`{project_id, deleted, timestamp}`. A project with an SDLC binding is
+refused with `409`; the message names `unbind` as the remedy.
 
 ### Grant and revoke
 
@@ -185,6 +186,7 @@ There is no get-by-name tool, and the SDK's MCP transport answers
 | Bad paging input | `400` | `InvalidArgument` |
 | `ProjectNotFoundError` | `404` | `NotFound` |
 | `ProjectAlreadyExistsError` (name taken) | `409` | `AlreadyExists` |
+| `ProjectBoundError` (delete of a bound project) | `409` | `FailedPrecondition` |
 | `ProjectInvalidError` | `400` | `InvalidArgument` |
 | `ProjectAccessDeniedError` | `403` | `Internal` (gap) |
 | `ProjectUnresolvedError` | `403` | `Internal` (gap) |

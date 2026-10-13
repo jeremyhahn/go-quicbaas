@@ -185,7 +185,8 @@ quicbaas project revoke-role "$PROJECT_ID" --node node-build-02
 
 ## `delete`
 
-No flags. A managed workspace is removed with the project.
+No flags. A managed workspace is removed with the project. A project with
+an SDLC binding is refused; run `quicbaas sdlc unbind <project-id>` first.
 
 ```bash
 quicbaas project delete "$PROJECT_ID"

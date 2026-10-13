@@ -44,6 +44,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
 
@@ -237,6 +238,11 @@ type QuicBaaS interface {
 	// SetSDLCService attaches the SDLC module's service. Called by the server
 	// once the module has started, the way SetAgentService is.
 	SetSDLCService(svc *SDLCService)
+
+	// SetProjectBindingReader attaches the SDLC binding store a project
+	// delete is checked against. Called by the server on every node whose
+	// qrdb node has a tenant store resolver, with or without the SDLC module.
+	SetProjectBindingReader(bindings sdlc.BindingReader)
 
 	// SetDatabaseService sets the Database lifecycle management service.
 	// This is called after the database manager is initialized.

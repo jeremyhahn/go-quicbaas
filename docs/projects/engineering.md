@@ -128,6 +128,8 @@ Reference checks are shared with other services; their two failure modes
 | --- | --- | --- | --- |
 | `service.ProjectNotFoundError` | — | service | no such project in the tenant |
 | `service.ProjectAlreadyExistsError` | `orchestration.ErrProjectAlreadyExists` | service | name taken in the tenant |
+| `service.ProjectBoundError` | — | service | delete of a project with an SDLC binding; unbind first |
+| `service.ProjectBindingCheckError` | wraps the store error | service | delete refused: the binding store could not be read |
 | `service.ProjectInvalidError` | `orchestration.ErrProjectInvalid` | service | a field failed validation |
 | `service.ProjectAccessDeniedError` | `orchestration.ErrProjectAccessDenied` | service, authz | role below the required one |
 | `service.ProjectUnresolvedError` | `orchestration.ErrProjectUnresolved` | service, authz | the project could not be read; a refusal |

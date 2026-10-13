@@ -1757,6 +1757,37 @@ TLS 1.2 cipher suites:
 | TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 | ECDHE-ECDSA with AES-128-GCM |
 | TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 | ECDHE-ECDSA with AES-256-GCM |
 
+#### Server Certificate SANs
+
+When no operator cert is configured, the server issues its own TLS
+certificate from its CA (`pkg/server/server_cert_sans.go`). Its SANs are:
+
+- `localhost`, `127.0.0.1` and `::1`;
+- `server.host`, unless it is empty or `0.0.0.0`;
+- the machine hostname;
+- `server.additional_san_dns` and `server.additional_san_ips`.
+
+Each SAN appears once. DNS names are compared without regard to case. IPs
+are compared by value, so `::1` and `0:0:0:0:0:0:0:1` are one entry. A host
+or DNS entry that parses as an IP becomes an IP SAN. The config validator
+rejects an entry in `server.additional_san_ips` that is not an IP.
+
+On each boot the server compares the stored certificate with this set. If a
+configured SAN is missing, the server revokes the stored certificate
+(reason: superseded) and issues a new one over the same key. It logs one
+line naming the added SANs. Adding a SAN to the configuration therefore
+takes effect at the next restart. A certificate that already covers the set
+is kept as it is.
+
+Before revoking, the server asks the CA whether the stored serial is already
+revoked. A boot that revoked the certificate but stopped before deleting it
+leaves a revoked certificate stored; the next boot skips the revocation,
+which the CA would refuse, and replaces the certificate. If the CA cannot
+answer, the server refuses to start.
+
+An operator-supplied `security.tls_cert_file` / `tls_key_file` is served as
+given and is never re-issued.
+
 ### gRPC FIPS Validation
 
 QuicBaaS includes gRPC interceptors that validate FIPS compliance for every request.

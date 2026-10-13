@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -431,6 +432,32 @@ func TestHandleDeleteProject_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// A bound project's delete is a conflict whose body names the unbind remedy
+// (go-quicbaas#891).
+func TestHandleDeleteProject_BoundIsConflict(t *testing.T) {
+	mockSvc := &mocks.MockProjectService{
+		DeleteProjectFunc: func(ctx context.Context, req *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error) {
+			return nil, &service.ProjectBoundError{TenantID: req.TenantID, ProjectID: req.ProjectID}
+		},
+	}
+
+	srv := newProjectTestServer(mockSvc)
+
+	r := chi.NewRouter()
+	r.Delete("/projects/{id}", srv.HandleDeleteProject)
+
+	req := httptest.NewRequest(http.MethodDelete, "/projects/proj-1?tenant_id=t", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "unbind") {
+		t.Errorf("response %q does not name the unbind remedy", w.Body.String())
 	}
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -570,6 +571,8 @@ func (m *mockService) SetMessagingService(ms messaging.Service) {
 
 func (m *mockService) SDLC() *service.SDLCService          { return nil }
 func (m *mockService) SetSDLCService(*service.SDLCService) {}
+
+func (m *mockService) SetProjectBindingReader(sdlc.BindingReader) {}
 
 func (m *mockService) SetAgentService(agent orchestration.AgentService) {
 	// No-op for mock
