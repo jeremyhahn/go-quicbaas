@@ -18,6 +18,7 @@ package rest
 import (
 	"bytes"
 	"encoding/json"
+	stderrors "errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -82,6 +83,15 @@ func newErrorResponse(r *http.Request, err error) ErrorResponse {
 		if len(qbErr.Context) > 0 {
 			errResp.Details = qbErr.Context
 		}
+		return errResp
+	}
+
+	// Handle limiter refusals
+	var rateErr *RateLimitError
+	if stderrors.As(err, &rateErr) {
+		errResp.Error = rateErr.Error()
+		errResp.Code = errors.ErrRateLimited.String()
+		errResp.Retryable = errors.ErrRateLimited.IsRetryable()
 		return errResp
 	}
 

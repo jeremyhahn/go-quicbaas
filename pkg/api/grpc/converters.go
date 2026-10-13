@@ -14,13 +14,7 @@
 package grpc
 
 import (
-	stderrors "errors"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -131,69 +125,5 @@ func serviceTransactionOpTypeToProto(opType service.TransactionOpType) pb.Transa
 		return pb.TransactionOpType_TRANSACTION_OP_TYPE_DELETE
 	default:
 		return pb.TransactionOpType_TRANSACTION_OP_TYPE_UNSPECIFIED
-	}
-}
-
-// toServiceError converts errors to gRPC status errors
-// This wraps the existing toProtoError function for consistency.
-func toServiceError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	// Check if it's already a gRPC status error
-	if _, ok := status.FromError(err); ok {
-		return err
-	}
-
-	// Check if it's a QBError.
-	var qbErr *errors.QBError
-	if !stderrors.As(err, &qbErr) {
-		// Wrap unknown errors as internal
-		qbErr = &errors.QBError{
-			Code: errors.ErrInternal,
-			Op:   "unknown",
-			Err:  err,
-		}
-	}
-
-	// Map QBError code to gRPC code
-	code := mapServiceErrorCode(qbErr.Code)
-	message := qbErr.Error()
-
-	return status.Error(code, message)
-}
-
-// mapServiceErrorCode maps QuicBaaS error codes to gRPC status codes.
-func mapServiceErrorCode(errCode errors.ErrorCode) codes.Code {
-	switch errCode {
-	case errors.ErrNotFound:
-		return codes.NotFound
-	case errors.ErrConflict, errors.ErrAlreadyExists:
-		return codes.AlreadyExists
-	case errors.ErrTimeout, errors.ErrDeadlineExceeded:
-		return codes.DeadlineExceeded
-	case errors.ErrInvalidInput, errors.ErrValidation, errors.ErrOutOfRange:
-		return codes.InvalidArgument
-	case errors.ErrUnauthorized:
-		return codes.Unauthenticated
-	case errors.ErrForbidden, errors.ErrCrossTenantAccess:
-		return codes.PermissionDenied
-	case errors.ErrUnavailable, errors.ErrLeaderNotAvailable, errors.ErrClusterNotReady:
-		return codes.Unavailable
-	case errors.ErrUnimplemented:
-		return codes.Unimplemented
-	case errors.ErrResourceExhausted:
-		return codes.ResourceExhausted
-	case errors.ErrPreconditionFailed:
-		return codes.FailedPrecondition
-	case errors.ErrAborted:
-		return codes.Aborted
-	case errors.ErrCanceled:
-		return codes.Canceled
-	case errors.ErrDataLoss:
-		return codes.DataLoss
-	default:
-		return codes.Internal
 	}
 }

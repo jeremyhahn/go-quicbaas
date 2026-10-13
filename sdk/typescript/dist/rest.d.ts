@@ -156,7 +156,7 @@ export declare class RestTenantBarrierClient implements TenantBarrierClient {
     constructor(baseUrl: string, config?: ClientConfig);
     private base;
     tenantBarrierInit(tenantId: string, req: TenantBarrierInitRequest): Promise<TenantBarrierInitResponse | undefined>;
-    tenantBarrierUnseal(tenantId: string, key: string): Promise<void>;
+    tenantBarrierUnseal(tenantId: string, key: Uint8Array): Promise<void>;
     tenantBarrierUnsealShare(tenantId: string, share: string): Promise<TenantBarrierUnsealShareResponse>;
     tenantBarrierSeal(tenantId: string): Promise<void>;
     tenantBarrierStatus(tenantId: string): Promise<TenantBarrierStatusResponse>;

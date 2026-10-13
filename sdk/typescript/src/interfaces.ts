@@ -1101,9 +1101,10 @@ export interface TenantBarrierClient {
   ): Promise<TenantBarrierInitResponse | undefined>;
 
   // tenantBarrierUnseal unseals the tenant's barrier with a single master key
-  // (passphrase strategy). The key is the base64-encoded master-key bytes.
+  // (passphrase strategy). The key is the raw master-key bytes; the REST
+  // client base64-encodes them.
   // Maps to POST /api/v1/tenants/{id}/barrier/unseal.
-  tenantBarrierUnseal(tenantId: string, key: string): Promise<void>;
+  tenantBarrierUnseal(tenantId: string, key: Uint8Array): Promise<void>;
 
   // tenantBarrierUnsealShare submits a single Shamir share toward the tenant's
   // unseal quorum and reports progress.

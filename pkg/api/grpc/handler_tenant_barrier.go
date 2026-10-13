@@ -176,7 +176,7 @@ func (s *TenantBarrierGRPCServer) Init(ctx context.Context, req *pb.TenantBarrie
 		return nil, err
 	}
 
-	passphrase := secretBytes(req.GetPassphrase())
+	passphrase := req.GetPassphrase()
 	defer secure.Wipe(passphrase)
 	result, err := s.tenantBarrierSvc.TenantBarrierInit(
 		ctx,
@@ -215,7 +215,9 @@ func (s *TenantBarrierGRPCServer) Unseal(ctx context.Context, req *pb.TenantBarr
 		return nil, err
 	}
 
-	if err := s.tenantBarrierSvc.TenantBarrierUnseal(ctx, req.GetTenantId(), req.GetKey()); err != nil {
+	key := req.GetKey()
+	defer secure.Wipe(key)
+	if err := s.tenantBarrierSvc.TenantBarrierUnseal(ctx, req.GetTenantId(), key); err != nil {
 		return nil, mapTenantBarrierError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -334,8 +336,7 @@ func (s *TenantBarrierGRPCServer) EnableEncryption(ctx context.Context, req *pb.
 		ShamirThreshold: int(req.GetShamirThreshold()),
 		ShamirTotal:     int(req.GetShamirTotal()),
 	}
-	if p := req.GetPassphrase(); p != "" {
-		passphrase := secretBytes(p)
+	if passphrase := req.GetPassphrase(); len(passphrase) > 0 {
 		defer secure.Wipe(passphrase)
 		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
 		if credErr != nil {

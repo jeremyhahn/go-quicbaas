@@ -312,7 +312,10 @@ func TestConvertGRPCError_AllCodes(t *testing.T) {
 		{codes.Unavailable, errors.CodeUnavailable},
 		{codes.DeadlineExceeded, errors.CodeTimeout},
 		{codes.Canceled, errors.CodeCanceled},
-		{codes.DataLoss, errors.CodeUnknown}, // Unknown grpc code
+		{codes.OutOfRange, errors.CodeInvalidInput},
+		{codes.DataLoss, errors.CodeInternal},
+		{codes.Unknown, errors.CodeUnknown},
+		{codes.Code(100), errors.CodeUnknown}, // not a gRPC code
 	}
 
 	for _, tt := range tests {

@@ -14,6 +14,7 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"testing"
@@ -21,6 +22,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	gproto "google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -295,7 +297,7 @@ func TestBarrierInitialize_Success(t *testing.T) {
 		},
 	}
 	srv := newTestBarrierServer(mock)
-	_, err := srv.BarrierInitialize(context.Background(), &pb.BarrierInitializeRequest{Secret: "topsecret"})
+	_, err := srv.BarrierInitialize(context.Background(), &pb.BarrierInitializeRequest{Secret: []byte("topsecret")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -326,7 +328,7 @@ func TestBarrierUnseal_Success(t *testing.T) {
 		},
 	}
 	srv := newTestBarrierServer(mock)
-	_, err := srv.BarrierUnseal(context.Background(), &pb.BarrierUnsealRequest{Secret: "key"})
+	_, err := srv.BarrierUnseal(context.Background(), &pb.BarrierUnsealRequest{Secret: []byte("key")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -377,7 +379,7 @@ func TestBarrierShamirInitialize_Success(t *testing.T) {
 	}
 	srv := newTestBarrierServer(mock)
 	resp, err := srv.BarrierShamirInitialize(context.Background(), &pb.BarrierShamirInitializeRequest{
-		Secret:      "s",
+		Secret:      []byte("s"),
 		Threshold:   2,
 		TotalShares: 3,
 	})
@@ -704,11 +706,11 @@ func TestBarrier_AllHandlersReturnUnavailableWhenUnwired(t *testing.T) {
 		call func() error
 	}{
 		{"BarrierInitialize", func() error {
-			_, err := srv.BarrierInitialize(ctx, &pb.BarrierInitializeRequest{Secret: "x"})
+			_, err := srv.BarrierInitialize(ctx, &pb.BarrierInitializeRequest{Secret: []byte("x")})
 			return err
 		}},
 		{"BarrierUnseal", func() error {
-			_, err := srv.BarrierUnseal(ctx, &pb.BarrierUnsealRequest{Secret: "x"})
+			_, err := srv.BarrierUnseal(ctx, &pb.BarrierUnsealRequest{Secret: []byte("x")})
 			return err
 		}},
 		{"BarrierSeal", func() error {
@@ -720,7 +722,7 @@ func TestBarrier_AllHandlersReturnUnavailableWhenUnwired(t *testing.T) {
 			return err
 		}},
 		{"BarrierShamirInitialize", func() error {
-			_, err := srv.BarrierShamirInitialize(ctx, &pb.BarrierShamirInitializeRequest{Secret: "x", Threshold: 2, TotalShares: 3})
+			_, err := srv.BarrierShamirInitialize(ctx, &pb.BarrierShamirInitializeRequest{Secret: []byte("x"), Threshold: 2, TotalShares: 3})
 			return err
 		}},
 		{"BarrierShamirUnsealShare", func() error {
@@ -794,7 +796,7 @@ func TestBarrierInitialize_WipesConvertedSecret(t *testing.T) {
 		},
 	}
 	srv := newTestBarrierServer(mock)
-	if _, err := srv.BarrierInitialize(context.Background(), &pb.BarrierInitializeRequest{Secret: "topsecret"}); err != nil {
+	if _, err := srv.BarrierInitialize(context.Background(), &pb.BarrierInitializeRequest{Secret: []byte("topsecret")}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(retained) == 0 {
@@ -804,5 +806,89 @@ func TestBarrierInitialize_WipesConvertedSecret(t *testing.T) {
 		if b != 0 {
 			t.Fatalf("byte %d is %#x, want 0: the handler did not wipe the secret", i, b)
 		}
+	}
+}
+
+// nonUTF8Credential is a credential a proto3 `string` field could not carry.
+var nonUTF8Credential = []byte{0x00, 0xff, 0xfe, 0x80, 0x7f}
+
+// overTheWire marshals msg and decodes the frame into a fresh message of the
+// same type, as a gRPC client and server would.
+func overTheWire[M gproto.Message](t *testing.T, msg M) M {
+	t.Helper()
+	frame, err := gproto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal %T: %v", msg, err)
+	}
+	decoded := msg.ProtoReflect().New().Interface().(M)
+	if err := gproto.Unmarshal(frame, decoded); err != nil {
+		t.Fatalf("unmarshal %T: %v", msg, err)
+	}
+	return decoded
+}
+
+func TestBarrierCredentialRPCs_NonUTF8SecretReachesServiceIntact(t *testing.T) {
+	var seen [][]byte
+	record := func(secret []byte) { seen = append(seen, bytes.Clone(secret)) }
+	mock := &mockBarrierService{
+		initFn: func(_ context.Context, secret []byte) error {
+			record(secret)
+			return nil
+		},
+		unsealFn: func(_ context.Context, secret []byte) error {
+			record(secret)
+			return nil
+		},
+		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+			record(secret)
+			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total}, nil
+		},
+	}
+	srv := newTestBarrierServer(mock)
+	ctx := context.Background()
+
+	if _, err := srv.BarrierInitialize(ctx, overTheWire(t, &pb.BarrierInitializeRequest{Secret: bytes.Clone(nonUTF8Credential)})); err != nil {
+		t.Fatalf("BarrierInitialize: %v", err)
+	}
+	if _, err := srv.BarrierUnseal(ctx, overTheWire(t, &pb.BarrierUnsealRequest{Secret: bytes.Clone(nonUTF8Credential)})); err != nil {
+		t.Fatalf("BarrierUnseal: %v", err)
+	}
+	shamirReq := &pb.BarrierShamirInitializeRequest{Secret: bytes.Clone(nonUTF8Credential), Threshold: 2, TotalShares: 3}
+	if _, err := srv.BarrierShamirInitialize(ctx, overTheWire(t, shamirReq)); err != nil {
+		t.Fatalf("BarrierShamirInitialize: %v", err)
+	}
+
+	if len(seen) != 3 {
+		t.Fatalf("service saw %d credentials, want 3", len(seen))
+	}
+	for i, got := range seen {
+		if !bytes.Equal(got, nonUTF8Credential) {
+			t.Fatalf("call %d: service saw %x, want %x", i, got, nonUTF8Credential)
+		}
+	}
+}
+
+func TestBarrierEnableEncryption_NonUTF8PassphraseReachesServiceIntact(t *testing.T) {
+	var matched bool
+	mock := &mockBarrierService{
+		enableEncryptionFn: func(_ context.Context, _ string, opts qrdbsdk.MigrationOptions) error {
+			plain, err := opts.Credentials.Secret.Open()
+			if err != nil {
+				t.Errorf("open the forwarded credential: %v", err)
+				return nil
+			}
+			defer plain.Destroy()
+			matched = plain.EqualTo(nonUTF8Credential)
+			return nil
+		},
+	}
+	srv := newTestBarrierServer(mock)
+	req := &pb.BarrierEnableEncryptionRequest{TargetStrategy: "passphrase", Passphrase: bytes.Clone(nonUTF8Credential)}
+
+	if _, err := srv.BarrierEnableEncryption(context.Background(), overTheWire(t, req)); err != nil {
+		t.Fatalf("BarrierEnableEncryption: %v", err)
+	}
+	if !matched {
+		t.Fatal("the service did not receive the passphrase bytes the client sent")
 	}
 }

@@ -208,10 +208,25 @@ goroutines sharing one client reached about 31,000 requests per second.
 
 - Keyed on the resolved client address (see [Client IP Detection](#client-ip-detection)).
   IPv6 sources are grouped by /64.
+- One budget per client across the whole REST surface. The routes the unified
+  API server serves through the quicbaas service module (`pkg/apimodule`,
+  bound by `Server.BindRoute`) use the same limiter instance as the core
+  router, so calling a module route does not give a client a second budget.
+  Module routes resolve the client address with the same `trusted_proxies`
+  rules. On a permission-gated module route, go-qrdb authenticates and
+  authorizes the request before the quicbaas handler runs, so a request it
+  rejects is answered by go-qrdb and does not count against the budget.
 - The bucket map is bounded at 100,000 sources. New sources beyond the cap
   share one overflow bucket. Idle buckets are cleaned up.
-- Returns 429 Too Many Requests when the limit is exceeded. The Go SDK reports
-  this as `CodeRateLimited` and does not retry.
+- Returns 429 Too Many Requests when the limit is exceeded, with the error
+  code `rate_limited`, `retryable: true`, and `Retry-After: 1`. Each limiter
+  refills at least one token per second, so one second is always enough for
+  the next request. The OAuth2 limiter below answers the same way. The Go SDK
+  reports this as `CodeRateLimited`, which `errors.IsRetryable` treats as
+  retryable. Its gRPC and MCP transports retry it up to `MaxRetries` times
+  (3 by default) with exponential backoff, and its REST transport does so only
+  for calls with no dedicated route handler; no transport waits for
+  `Retry-After`.
 - `/oauth2/token`, `/oauth2/revoke` and `/oauth2/introspect` keep their own
   stricter per-source limiter, keyed on the transport peer, whatever the
   global setting. It is defense in depth for the client-authentication KDF.
@@ -231,12 +246,19 @@ handler := rest.RateLimitMiddleware(0)(yourHandler)
 
 ### Response on Rate Limit
 
+```http
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+Retry-After: 1
+```
+
 ```json
 {
   "error": "rate limit exceeded: 100 requests per 1s",
+  "code": "rate_limited",
   "timestamp": "2026-10-12T12:00:00Z",
   "request_id": "…",
-  "retryable": false
+  "retryable": true
 }
 ```
 

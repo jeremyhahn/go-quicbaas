@@ -318,32 +318,11 @@ func convertPEPError(err error) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 
-	switch dErr.Code {
-	case dberrors.ErrNotFound:
-		return status.Error(codes.NotFound, dErr.Error())
-	case dberrors.ErrAlreadyExists:
-		return status.Error(codes.AlreadyExists, dErr.Error())
-	case dberrors.ErrInvalidInput, dberrors.ErrValidation:
-		return status.Error(codes.InvalidArgument, dErr.Error())
-	case dberrors.ErrUnauthorized:
-		return status.Error(codes.Unauthenticated, dErr.Error())
-	case dberrors.ErrForbidden:
-		return status.Error(codes.PermissionDenied, dErr.Error())
-	case dberrors.ErrTimeout, dberrors.ErrDeadlineExceeded:
-		return status.Error(codes.DeadlineExceeded, dErr.Error())
-	case dberrors.ErrResourceExhausted:
-		return status.Error(codes.ResourceExhausted, dErr.Error())
-	case dberrors.ErrUnavailable:
-		return status.Error(codes.Unavailable, dErr.Error())
-	case dberrors.ErrConflict:
+	// These services report conflict as a failed precondition, not AlreadyExists.
+	if dErr.Code == dberrors.ErrConflict {
 		return status.Error(codes.FailedPrecondition, dErr.Error())
-	case dberrors.ErrUnimplemented, dberrors.ErrNotImplemented:
-		return status.Error(codes.Unimplemented, dErr.Error())
-	case dberrors.ErrCanceled:
-		return status.Error(codes.Canceled, dErr.Error())
-	default:
-		return status.Error(codes.Internal, dErr.Error())
 	}
+	return status.Error(errorCodeToGRPCCode(dErr.Code), dErr.Error())
 }
 
 // PEPServiceAdapter adapts iam.PolicyEngine to the PEPService interface.

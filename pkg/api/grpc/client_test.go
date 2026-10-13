@@ -282,6 +282,25 @@ func TestConvertGRPCError(t *testing.T) {
 	}
 }
 
+// TestConvertGRPCError_RateLimitedRoundTrip pins that the root client tells a
+// throttled call apart from exhausted resources: both travel as gRPC
+// ResourceExhausted, and the client reads the code back from the status message.
+func TestConvertGRPCError_RateLimitedRoundTrip(t *testing.T) {
+	for _, code := range []errors.ErrorCode{errors.ErrRateLimited, errors.ErrResourceExhausted} {
+		t.Run(code.String(), func(t *testing.T) {
+			sent := ToGRPCError(errors.Newf(code, "kms.Encrypt", "refused"))
+			require.Equal(t, codes.ResourceExhausted, status.Code(sent))
+
+			var qbErr *errors.QBError
+			require.ErrorAs(t, convertGRPCError(sent, "Encrypt"), &qbErr)
+			assert.Equal(t, code, qbErr.Code)
+
+			require.ErrorAs(t, convertError(sent), &qbErr)
+			assert.Equal(t, code, qbErr.Code)
+		})
+	}
+}
+
 // --- Merged from coverage_additional_test.go ---
 
 // testLogger creates a logger for testing.

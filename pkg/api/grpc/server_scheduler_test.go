@@ -1967,7 +1967,12 @@ func TestSchedulerServer_ConvertSchedulerError(t *testing.T) {
 		{
 			name:         "unknown_error_code",
 			err:          errors.New(errors.ErrUnknown, "test", "unknown"),
-			expectedCode: codes.Internal,
+			expectedCode: codes.Unknown,
+		},
+		{
+			name:         "rate_limited",
+			err:          errors.New(errors.ErrRateLimited, "test", "too many requests"),
+			expectedCode: codes.ResourceExhausted,
 		},
 	}
 

@@ -2585,22 +2585,22 @@ export interface BarrierStatusResponse {
 // BarrierInitRequest holds the secret used to initialize the barrier with
 // a single master key. Mirrors transport.BarrierInitializeRequest.
 export interface BarrierInitRequest {
-  /** Passphrase used to derive the master key, base64-encoded. */
-  secret: string;
+  /** Passphrase used to derive the master key. The REST client base64-encodes it. */
+  secret: Uint8Array;
 }
 
 // BarrierUnsealRequest holds the secret used to unseal the barrier.
 // Mirrors transport.BarrierUnsealRequest.
 export interface BarrierUnsealRequest {
-  /** Passphrase used to unseal the barrier, base64-encoded. */
-  secret: string;
+  /** Passphrase used to unseal the barrier. The REST client base64-encodes it. */
+  secret: Uint8Array;
 }
 
 // BarrierShamirInitRequest initialises the barrier with Shamir secret
 // sharing. Mirrors transport.BarrierInitializeShamirRequest.
 export interface BarrierShamirInitRequest {
-  /** Optional passphrase used to derive the master key, base64-encoded. */
-  secret: string;
+  /** Optional passphrase used to derive the master key. The REST client base64-encodes it. */
+  secret: Uint8Array;
   /** Minimum shares required to reconstruct the master key. */
   threshold: number;
   /** Total shares to generate. */
@@ -2695,8 +2695,8 @@ export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 export interface TenantBarrierInitRequest {
   /** Sealing strategy to provision for the tenant. */
   strategy: TenantBarrierStrategy;
-  /** Passphrase used to derive the master key (passphrase strategy), base64-encoded. */
-  passphrase?: string;
+  /** Passphrase used to derive the master key (passphrase strategy). The REST client base64-encodes it. */
+  passphrase?: Uint8Array;
   /** Minimum shares required to reconstruct the master key (shamir strategy). */
   threshold?: number;
   /** Total shares to generate (shamir strategy). */

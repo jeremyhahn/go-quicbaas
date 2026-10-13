@@ -17,7 +17,6 @@ import (
 	stderrors "errors"
 	"fmt"
 
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -50,44 +49,10 @@ func toProtoError(err error) error {
 	}
 
 	// Map QBError code to gRPC code.
-	code := mapErrorCode(qbErr.Code)
+	code := errorCodeToGRPCCode(qbErr.Code)
 	message := qbErr.Error()
 
 	return status.Error(code, message)
-}
-
-// mapErrorCode maps QuicBaaS error codes to gRPC status codes.
-func mapErrorCode(errCode errors.ErrorCode) codes.Code {
-	switch errCode {
-	case errors.ErrNotFound:
-		return codes.NotFound
-	case errors.ErrConflict, errors.ErrAlreadyExists:
-		return codes.AlreadyExists
-	case errors.ErrTimeout, errors.ErrDeadlineExceeded:
-		return codes.DeadlineExceeded
-	case errors.ErrInvalidInput, errors.ErrValidation, errors.ErrOutOfRange:
-		return codes.InvalidArgument
-	case errors.ErrUnauthorized:
-		return codes.Unauthenticated
-	case errors.ErrForbidden, errors.ErrCrossTenantAccess:
-		return codes.PermissionDenied
-	case errors.ErrUnavailable, errors.ErrLeaderNotAvailable, errors.ErrClusterNotReady:
-		return codes.Unavailable
-	case errors.ErrUnimplemented:
-		return codes.Unimplemented
-	case errors.ErrResourceExhausted:
-		return codes.ResourceExhausted
-	case errors.ErrPreconditionFailed:
-		return codes.FailedPrecondition
-	case errors.ErrAborted:
-		return codes.Aborted
-	case errors.ErrCanceled:
-		return codes.Canceled
-	case errors.ErrDataLoss:
-		return codes.DataLoss
-	default:
-		return codes.Internal
-	}
 }
 
 // Validation functions

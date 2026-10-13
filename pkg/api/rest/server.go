@@ -277,6 +277,11 @@ type Server struct {
 	// trusts nothing.
 	clientIP *clientip.Resolver
 
+	// rateLimit is the global per-client-IP limiter, built once in NewServer
+	// so the core router (setupRouter) and every module route (BindRoute)
+	// draw on one budget per client. Nil when the operator opted out.
+	rateLimit func(http.Handler) http.Handler
+
 	router  *chi.Mux
 	server  *http.Server
 	service service.QuicBaaS
@@ -468,6 +473,9 @@ func NewServer(svc service.QuicBaaS, config *Config, log *logger.Logger) (*Serve
 		logger:    log.WithField("component", "rest-api"),
 		startTime: time.Now(),
 	}
+	if limit := config.EffectiveRateLimit(); limit > 0 {
+		s.rateLimit = RateLimitMiddleware(limit)
+	}
 	s.sessionPresence = orchestration.NewSessionPresence(orchestration.DefaultPresenceLinger, s.warnSessionStream)
 
 	// Default router: single-shard routing to shard 1
@@ -522,9 +530,10 @@ func (s *Server) setupRouter() {
 
 	// Rate limiting middleware: on unless the operator opted out. The
 	// endpoint-scoped OAuth2 limiter (RateLimitOAuth2ClientAuth) applies on
-	// top of this one, as defense in depth.
-	if limit := s.config.EffectiveRateLimit(); limit > 0 {
-		r.Use(RateLimitMiddleware(limit))
+	// top of this one, as defense in depth. The limiter instance is shared
+	// with BindRoute, so module routes spend the same per-client budget.
+	if s.rateLimit != nil {
+		r.Use(s.rateLimit)
 	}
 
 	// Route registration is table-driven: Routes() (routes.go) is the single

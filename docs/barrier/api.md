@@ -120,8 +120,12 @@ them. go-qrdb states the same limit for the encode side on
 wire format owns that copy" — and deserializing is that trade in reverse.
 
 **Decoding catches malformed base64 and nothing else — always encode.** A body
-whose credential is not well-formed base64 is refused with `400` and never
-reaches the barrier. That is the whole of the protection, and it is narrower
+whose credential is not well-formed base64 is refused with `400` and the
+typed `BarrierCredentialEncodingError` (`"barrier credential must be
+base64-encoded bytes"`), which names no field and echoes no input, and the
+request never reaches the barrier. Nothing about the refusal is logged, and the
+raw request body, which holds the credential's base64 text, is wiped once it
+has been decoded. That is the whole of the protection, and it is narrower
 than "a raw passphrase is caught": a raw credential that happens to be valid
 base64 (any run of the base64 alphabet whose length is a multiple of four —
 `password` is one) decodes successfully into DIFFERENT bytes, and the barrier
@@ -130,6 +134,25 @@ succeeds and leaves a barrier whose passphrase is not the one the operator
 typed. So a client must encode its credential rather than rely on being told
 off; `TestBarrierWire_RawCredentialThatIsValidBase64DecodesToOtherBytes` pins
 that limit so it is not mistaken for a guarantee.
+
+#### gRPC, Unix and QUIC — a credential is a `bytes` field
+
+The QuicBaaS-native `quicbaas.barrier.v1.Barrier` and
+`quicbaas.tenant.v1.TenantBarrier` services declare every barrier credential as
+`bytes` (go-quicbaas#962): `secret` on `BarrierInitializeRequest`,
+`BarrierUnsealRequest` and `BarrierShamirInitializeRequest`, and `passphrase` on
+`BarrierEnableEncryptionRequest`, `TenantBarrierInitRequest` and
+`TenantBarrierEnableEncryptionRequest`. The handlers pass the decoded `[]byte`
+straight to the barrier service and wipe it on return. proto3 encodes `bytes`
+and `string` identically, so the frames did not change;
+`TestBarrierCredentialFrames_StringAndBytesEncodeIdentically` in `api/proto`
+proves it. What changed is the generated Go type (`[]byte`, not `string`) and
+that a credential no longer has to be valid UTF-8. The Shamir share fields
+(`shares`, `share`) are still `string`.
+
+MCP is the one exception: a tool argument is a JSON string by definition of the
+protocol, so the server converts it to bytes in one function (`credentialArg`)
+and wipes the result after use.
 
 `enable-encryption` on `/api/v1` is the one shape that is NOT an alias: the
 migration is a QuicBaaS-native verb served on four QuicBaaS surfaces (REST

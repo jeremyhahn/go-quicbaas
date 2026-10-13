@@ -866,6 +866,31 @@ func TestFromGRPCError(t *testing.T) {
 			grpcErr:      status.Error(codes.Internal, "internal error"),
 			expectedCode: dberrors.ErrInternal,
 		},
+		{
+			name:         "resource exhausted",
+			grpcErr:      status.Error(codes.ResourceExhausted, "kms.Encrypt: resource_exhausted: quota spent"),
+			expectedCode: dberrors.ErrResourceExhausted,
+		},
+		{
+			name:         "rate limited with op",
+			grpcErr:      status.Error(codes.ResourceExhausted, "kms.Encrypt: rate_limited: slow down"),
+			expectedCode: dberrors.ErrRateLimited,
+		},
+		{
+			name:         "rate limited without op",
+			grpcErr:      status.Error(codes.ResourceExhausted, "rate_limited: slow down"),
+			expectedCode: dberrors.ErrRateLimited,
+		},
+		{
+			name:         "rate_limited only in the message text",
+			grpcErr:      status.Error(codes.ResourceExhausted, "kms.Encrypt: resource_exhausted: rate_limited"),
+			expectedCode: dberrors.ErrResourceExhausted,
+		},
+		{
+			name:         "rate_limited code on another status",
+			grpcErr:      status.Error(codes.Internal, "rate_limited: slow down"),
+			expectedCode: dberrors.ErrInternal,
+		},
 	}
 
 	for _, tt := range tests {

@@ -411,7 +411,7 @@ func (s *inviteActivationService) audit(ctx context.Context, tenantID, action st
 // userIsActive re-reads the user and reports whether it is active. A failed
 // read is not active.
 func userIsActive(ctx context.Context, store *iam.IdentityStore, tenantID, userID string) bool {
-	user, err := store.GetUser(ctx, tenantID, userID)
+	user, err := iam.RereadUserAfterFailedWrite(ctx, store, tenantID, userID)
 	if err != nil || user == nil {
 		return false
 	}

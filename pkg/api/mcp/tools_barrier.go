@@ -671,7 +671,7 @@ func executeBarrierInitialize(ctx context.Context, svc service.BarrierServicer, 
 	// The secret may be empty for the "none" barrier strategy (passthrough).
 	// Strategy-appropriate validation is the backend's responsibility, matching
 	// the gRPC/REST/QUIC transports which pass the secret through unvalidated.
-	secret := secretBytes(getString(args, "secret"))
+	secret := credentialArg(args, "secret")
 	defer secure.Wipe(secret)
 	if err := svc.BarrierInitialize(ctx, secret); err != nil {
 		return nil, err
@@ -681,7 +681,7 @@ func executeBarrierInitialize(ctx context.Context, svc service.BarrierServicer, 
 
 // executeBarrierUnseal implements qrdb_barrier_unseal.
 func executeBarrierUnseal(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	secret := secretBytes(getString(args, "secret"))
+	secret := credentialArg(args, "secret")
 	defer secure.Wipe(secret)
 	if len(secret) == 0 {
 		return nil, &BarrierThresholdInvalidError{Reason: "secret is required"}
@@ -702,7 +702,7 @@ func executeBarrierSeal(ctx context.Context, svc service.BarrierServicer, _ map[
 
 // executeBarrierShamirInitialize implements qrdb_barrier_shamir_initialize.
 func executeBarrierShamirInitialize(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	secret := secretBytes(getString(args, "secret"))
+	secret := credentialArg(args, "secret")
 	defer secure.Wipe(secret)
 	threshold := getInt(args, "threshold")
 	total := getInt(args, "total_shares")
@@ -878,8 +878,7 @@ func buildMigrationOptions(targetStrategy string, args map[string]interface{}) (
 		ShamirThreshold: getInt(args, "shamir_threshold"),
 		ShamirTotal:     getInt(args, "shamir_total"),
 	}
-	if p := getString(args, "passphrase"); p != "" {
-		passphrase := secretBytes(p)
+	if passphrase := credentialArg(args, "passphrase"); len(passphrase) > 0 {
 		defer secure.Wipe(passphrase)
 		creds, err := qrdbsdk.CredentialsFor(passphrase)
 		if err != nil {
@@ -1063,14 +1062,16 @@ func rootTokenToMap(info *service.RootTokenInfo) map[string]interface{} {
 	return resp
 }
 
-// secretBytes copies a credential out of the JSON-RPC argument string into a
-// slice the caller can wipe. MCP is go-qrdb's documented exception to the
+// credentialArg reads the barrier credential argument name and copies it into
+// a slice the caller wipes after use. It is the one place MCP turns a
+// credential string into bytes. MCP is go-qrdb's documented exception to the
 // wipeable-credential contract: a tool argument is a JSON string by definition
 // of the protocol, so the plaintext necessarily exists as an unwipeable Go
-// string before this point. Converting narrows what follows rather than
-// removing the residue, which is tracked as #962 and, for MCP alone, is not
-// removable at all.
-func secretBytes(s string) []byte {
+// string before this point. Converting narrows what follows; for MCP alone the
+// residue is not removable. Every other transport carries the credential as
+// bytes end to end.
+func credentialArg(args map[string]interface{}, name string) []byte {
+	s := getString(args, name)
 	if s == "" {
 		return nil
 	}

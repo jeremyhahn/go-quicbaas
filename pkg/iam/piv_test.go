@@ -559,6 +559,52 @@ func TestPIVActivator_UpdateFailureRevokesCreatedFactor(t *testing.T) {
 	}
 }
 
+// A user update that commits but reports failure (a lost response) must not
+// revoke the login factor: the user is active and bound, the invite is spent,
+// and no further activation could repair it.
+func TestPIVActivator_UpdateLostResponseKeepsFactor(t *testing.T) {
+	ctx := context.Background()
+	users := &flakyUpdateUserStorage{mockUserStorage: newMockUserStorage(), lostResponse: true}
+	rt := newPIVRollbackTest(t, users, nil)
+	leaf, certPEM := rt.leaf(t)
+
+	if err := rt.act.Activate(ctx, "t1", rt.token, certPEM); err != nil {
+		t.Fatalf("Activate = %v, want the persisted activation reconciled", err)
+	}
+	if ids := rt.factors.activeFactorIDs(); len(ids) != 1 {
+		t.Fatalf("active factors = %v, want the activation's factor kept", ids)
+	}
+	if _, err := rt.factors.LookupByCredentialKey(qrdbsdk.ContextWithTenant(ctx, "t1"), qrdbsdk.AuthFactorMTLS, MTLSCredentialKey(leaf)); err != nil {
+		t.Fatalf("login lookup = %v, want the factor usable", err)
+	}
+	user, err := users.GetUser(ctx, "t1", "1")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if user.Lifecycle != LifecycleActive || !user.HasPIVThumbprint(qrdbsdk.ComputeSPKIThumbprint(leaf)) {
+		t.Fatalf("user = %q with %v, want active and bound", user.Lifecycle, user.PIVThumbprints())
+	}
+	rt.assertInviteUsed(t, true)
+}
+
+// When the re-read after a failed update also fails, the outcome is unknown
+// and the activation keeps the safe behaviour: the factor is revoked.
+func TestPIVActivator_UpdateFailureWithFailedRereadRevokesFactor(t *testing.T) {
+	ctx := context.Background()
+	users := &flakyUpdateUserStorage{mockUserStorage: newMockUserStorage(), failUpdate: true, failReread: true}
+	rt := newPIVRollbackTest(t, users, nil)
+	_, certPEM := rt.leaf(t)
+
+	if err := rt.act.Activate(ctx, "t1", rt.token, certPEM); !errors.Is(err, errPIVTestUpdate) {
+		t.Fatalf("Activate = %v, want the update failure", err)
+	}
+	if ids := rt.factors.activeFactorIDs(); len(ids) != 0 {
+		t.Fatalf("active factors = %v, want the factor revoked", ids)
+	}
+	users.failReread = false
+	rt.assertNotActivated(t)
+}
+
 // TestPIVActivator_ConcurrentActivationsHaveOneWinner races two activations
 // with different certificates past every early-out to the invite redemption.
 // Exactly one wins; the loser gets a typed error and never enrolled a factor,
@@ -887,18 +933,30 @@ func TestPIVActivator_CleanupFailureSurfacesResidualFactor(t *testing.T) {
 // errPIVTestUpdate is flakyUpdateUserStorage's update failure.
 var errPIVTestUpdate = errors.New("user store update failed")
 
+// errPIVTestReread is flakyUpdateUserStorage's failure of the re-read that
+// follows an update.
+var errPIVTestReread = errors.New("user store read failed")
+
 // flakyUpdateUserStorage fails UpdateUser while failUpdate is set. When
 // cancelUpdate is set, UpdateUser instead cancels the request context and
 // fails with its error, as a store observing the cancellation would. It hands
 // out copies, so a failed update leaves the stored user untouched as a real
-// store would.
+// store would. When lostResponse is set, UpdateUser commits the user and then
+// fails, as a store whose response was lost would. When failReread is set,
+// every read after an update attempt fails.
 type flakyUpdateUserStorage struct {
 	*mockUserStorage
 	failUpdate   bool
 	cancelUpdate context.CancelFunc
+	lostResponse bool
+	failReread   bool
+	updated      bool
 }
 
 func (s *flakyUpdateUserStorage) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+	if s.failReread && s.updated {
+		return nil, errPIVTestReread
+	}
 	user, err := s.mockUserStorage.GetUser(ctx, tenantID, userID)
 	if err != nil {
 		return nil, err
@@ -908,6 +966,13 @@ func (s *flakyUpdateUserStorage) GetUser(ctx context.Context, tenantID, userID s
 }
 
 func (s *flakyUpdateUserStorage) UpdateUser(ctx context.Context, user *User) error {
+	s.updated = true
+	if s.lostResponse {
+		if err := s.mockUserStorage.UpdateUser(ctx, user); err != nil {
+			return err
+		}
+		return errPIVTestUpdate
+	}
 	if s.failUpdate {
 		return errPIVTestUpdate
 	}

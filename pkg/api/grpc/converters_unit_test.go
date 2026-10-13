@@ -62,42 +62,6 @@ func TestToProtoError_Coverage(t *testing.T) {
 // mapErrorCode Tests (helpers.go)
 // =============================================================================
 
-func TestMapErrorCode_Coverage(t *testing.T) {
-	tests := []struct {
-		name     string
-		code     errors.ErrorCode
-		expected codes.Code
-	}{
-		{name: "not_found", code: errors.ErrNotFound, expected: codes.NotFound},
-		{name: "conflict", code: errors.ErrConflict, expected: codes.AlreadyExists},
-		{name: "already_exists", code: errors.ErrAlreadyExists, expected: codes.AlreadyExists},
-		{name: "timeout", code: errors.ErrTimeout, expected: codes.DeadlineExceeded},
-		{name: "deadline_exceeded", code: errors.ErrDeadlineExceeded, expected: codes.DeadlineExceeded},
-		{name: "invalid_input", code: errors.ErrInvalidInput, expected: codes.InvalidArgument},
-		{name: "validation", code: errors.ErrValidation, expected: codes.InvalidArgument},
-		{name: "out_of_range", code: errors.ErrOutOfRange, expected: codes.InvalidArgument},
-		{name: "unauthorized", code: errors.ErrUnauthorized, expected: codes.Unauthenticated},
-		{name: "forbidden", code: errors.ErrForbidden, expected: codes.PermissionDenied},
-		{name: "unavailable", code: errors.ErrUnavailable, expected: codes.Unavailable},
-		{name: "leader_not_available", code: errors.ErrLeaderNotAvailable, expected: codes.Unavailable},
-		{name: "cluster_not_ready", code: errors.ErrClusterNotReady, expected: codes.Unavailable},
-		{name: "unimplemented", code: errors.ErrUnimplemented, expected: codes.Unimplemented},
-		{name: "resource_exhausted", code: errors.ErrResourceExhausted, expected: codes.ResourceExhausted},
-		{name: "precondition_failed", code: errors.ErrPreconditionFailed, expected: codes.FailedPrecondition},
-		{name: "aborted", code: errors.ErrAborted, expected: codes.Aborted},
-		{name: "canceled", code: errors.ErrCanceled, expected: codes.Canceled},
-		{name: "data_loss", code: errors.ErrDataLoss, expected: codes.DataLoss},
-		{name: "default_to_internal", code: errors.ErrorCode(9999), expected: codes.Internal},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := mapErrorCode(tt.code)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 // =============================================================================
 // Validation Function Tests (helpers.go) - only functions not already tested
 // =============================================================================

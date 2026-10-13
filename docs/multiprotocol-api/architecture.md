@@ -302,55 +302,48 @@ server:
 ```
 
 The limiter keys on the client address that `server.trusted_proxies`
-resolves. The OAuth2 client-authentication endpoints keep a stricter limiter
+resolves. Core routes and the module routes the unified API server serves
+share one limiter, so each client has one budget across the REST surface.
+Only REST is rate limited; gRPC, QUIC, MCP and Unix have no request limiter.
+The OAuth2 client-authentication endpoints keep a stricter limiter
 of their own. See
 [Rate Limiting Middleware](../security-hardening/api.md#rate-limiting-middleware)
 for the full behavior and how the default was measured.
 
 ## Error Handling
 
-Consistent error responses across all APIs.
-
-### Error Types
-
-```go
-type ErrorCode int32
-
-const (
-    OK                  ErrorCode = 0
-    NotFound            ErrorCode = 404
-    InvalidArgument     ErrorCode = 400
-    PermissionDenied    ErrorCode = 403
-    Internal            ErrorCode = 500
-    Unavailable         ErrorCode = 503
-)
-```
+Every transport carries the same lower-case error codes from `pkg/errors`
+(`not_found`, `invalid_input`, `unavailable`, `rate_limited`, ...). The full
+table, with HTTP status and retryability, is in
+[Error Handling](api.md#error-handling).
 
 ### REST Responses
 
+`RespondError` (`pkg/api/rest/response.go`) writes a flat object; there is no
+nested envelope:
+
 ```json
 {
-  "error": {
-    "code": 404,
-    "message": "key not found",
-    "details": {
-      "key": "user:123",
-      "shard_id": 1
-    }
-  }
+  "error": "unavailable: the request could not be completed",
+  "code": "unavailable",
+  "timestamp": "2026-10-12T12:00:00Z",
+  "request_id": "…",
+  "retryable": true
 }
 ```
 
+`code` is present for server-side classes and `rate_limited`. The client-error
+classes (400, 401, 403, 404, 408, 409) from the core service-error mapping
+carry no `code`. The QUIC transport carries REST over HTTP/3 and gets the same
+body.
+
 ### gRPC Status
 
-```go
-st := status.New(codes.NotFound, "key not found")
-st, _ = st.WithDetails(&pb.ErrorInfo{
-    Key: "user:123",
-    ShardId: 1,
-})
-return st.Err()
-```
+`toProtoError` (`pkg/api/grpc/helpers.go`) maps the code to a gRPC status
+(`not_found` to `NOT_FOUND`, `invalid_input` to `INVALID_ARGUMENT`, ...) and
+sets the message to `op: code: message`, for example
+`entity.get: not_found: user/1`. The Unix transport is gRPC over a local
+socket and returns the same status.
 
 ## Metrics & Monitoring
 
@@ -653,11 +646,11 @@ Consistent error codes across all protocols:
 
 | Code | HTTP | gRPC | Meaning |
 |------|------|------|---------|
-| NOT_FOUND | 404 | NOT_FOUND | Entity does not exist |
-| INVALID_ARGUMENT | 400 | INVALID_ARGUMENT | Invalid request parameters |
-| PERMISSION_DENIED | 403 | PERMISSION_DENIED | Authorization failed |
-| UNAVAILABLE | 503 | UNAVAILABLE | Service temporarily unavailable |
-| INTERNAL | 500 | INTERNAL | Internal server error |
+| `not_found` | 404 | `NOT_FOUND` | Entity does not exist |
+| `invalid_input` | 400 | `INVALID_ARGUMENT` | Invalid request parameters |
+| `forbidden` | 403 | `PERMISSION_DENIED` | Authorization failed |
+| `unavailable` | 503 | `UNAVAILABLE` | Service temporarily unavailable |
+| `internal` | 500 | `INTERNAL` | Internal server error |
 
 ### Architecture
 

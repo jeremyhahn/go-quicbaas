@@ -215,6 +215,46 @@ func TestCreateInvitedUser_FailedRollbackIsTyped(t *testing.T) {
 	assert.ErrorIs(t, err, cause, "the create's own failure must stay visible")
 }
 
+// userReaderFunc adapts a function to UserReader.
+type userReaderFunc func(ctx context.Context, tenantID, userID string) (*iam.User, error)
+
+func (f userReaderFunc) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+	return f(ctx, tenantID, userID)
+}
+
+func TestRereadUserAfterFailedWrite_DetachesFromCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	reader := userReaderFunc(func(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Error("re-read context has no deadline, want it bounded")
+		}
+		return &iam.User{ID: userID, TenantID: tenantID, Lifecycle: iam.LifecycleActive}, nil
+	})
+
+	user, err := iam.RereadUserAfterFailedWrite(ctx, reader, "t1", "u1")
+	if err != nil {
+		t.Fatalf("RereadUserAfterFailedWrite = %v, want the read to outlive the canceled request", err)
+	}
+	if user.ID != "u1" || user.Lifecycle != iam.LifecycleActive {
+		t.Fatalf("user = %+v, want the persisted user", user)
+	}
+}
+
+func TestRereadUserAfterFailedWrite_ReturnsReadError(t *testing.T) {
+	readErr := errors.New("read failed")
+	reader := userReaderFunc(func(context.Context, string, string) (*iam.User, error) {
+		return nil, readErr
+	})
+
+	if _, err := iam.RereadUserAfterFailedWrite(context.Background(), reader, "t1", "u1"); !errors.Is(err, readErr) {
+		t.Fatalf("RereadUserAfterFailedWrite = %v, want the read error", err)
+	}
+}
+
 func TestCreateInvitedUser_InvalidInputWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newInviteTestStore(t, nil)

@@ -25,7 +25,7 @@ import (
 
 // BindRoute binds a RouteSpec's handler on s with the middleware profile its
 // RouteGroup carries on the legacy router — the per-group request body limit
-// — but WITHOUT a per-route RBAC decorator: on the unified API server,
+// — plus the global per-client-IP rate limit, but WITHOUT a per-route RBAC decorator: on the unified API server,
 // go-qrdb's own middleware authenticates AND authorizes every non-public
 // route before this handler ever runs — its own mTLS chain first, then, for
 // a quicbaas platform-token caller qrdb's own authenticators do not
@@ -44,7 +44,17 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 		h = BodyLimitMiddleware(s.config.MaxUploadBodySize)(h)
 	}
 
-	return s.projectQRDBIdentity(h)
+	h = s.projectQRDBIdentity(h)
+
+	// The global limiter: the SAME instance setupRouter installs, so a
+	// client's budget spans core and module routes rather than doubling
+	// (#158). The unified server does not run setupRouter's chain, so the
+	// client address is resolved here too, honouring TrustedProxies the
+	// way the core routes do (#156); the limiter keys its buckets on it.
+	if s.rateLimit != nil {
+		h = s.rateLimit(h)
+	}
+	return ClientIPMiddleware(s.clientIP)(h)
 }
 
 // RouteEnabled reports whether the route's backing subsystem is configured

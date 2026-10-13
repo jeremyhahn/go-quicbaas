@@ -344,166 +344,77 @@ func TestGRPCCodeToErrorCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := grpcCodeToErrorCode(tt.grpcCode)
+			result, _ := FromGRPCError(status.Error(tt.grpcCode, "test"))
 			assert.Equal(t, tt.expectedCode, result)
 		})
 	}
 }
 
 func TestErrorCodeToGRPCCode(t *testing.T) {
-	tests := []struct {
-		name         string
-		errorCode    dberrors.ErrorCode
-		expectedCode codes.Code
-	}{
-		{
-			name:         "ErrUnknown",
-			errorCode:    dberrors.ErrUnknown,
-			expectedCode: codes.Unknown,
-		},
-		{
-			name:         "ErrNotFound",
-			errorCode:    dberrors.ErrNotFound,
-			expectedCode: codes.NotFound,
-		},
-		{
-			name:         "ErrConflict",
-			errorCode:    dberrors.ErrConflict,
-			expectedCode: codes.AlreadyExists,
-		},
-		{
-			name:         "ErrTimeout",
-			errorCode:    dberrors.ErrTimeout,
-			expectedCode: codes.DeadlineExceeded,
-		},
-		{
-			name:         "ErrInternal",
-			errorCode:    dberrors.ErrInternal,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrInvalidInput",
-			errorCode:    dberrors.ErrInvalidInput,
-			expectedCode: codes.InvalidArgument,
-		},
-		{
-			name:         "ErrUnauthorized",
-			errorCode:    dberrors.ErrUnauthorized,
-			expectedCode: codes.Unauthenticated,
-		},
-		{
-			name:         "ErrForbidden",
-			errorCode:    dberrors.ErrForbidden,
-			expectedCode: codes.PermissionDenied,
-		},
-		{
-			name:         "ErrUnavailable",
-			errorCode:    dberrors.ErrUnavailable,
-			expectedCode: codes.Unavailable,
-		},
-		{
-			name:         "ErrStorage",
-			errorCode:    dberrors.ErrStorage,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrRaft",
-			errorCode:    dberrors.ErrRaft,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrEncryption",
-			errorCode:    dberrors.ErrEncryption,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrDecryption",
-			errorCode:    dberrors.ErrDecryption,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrValidation",
-			errorCode:    dberrors.ErrValidation,
-			expectedCode: codes.InvalidArgument,
-		},
-		{
-			name:         "ErrConfiguration",
-			errorCode:    dberrors.ErrConfiguration,
-			expectedCode: codes.FailedPrecondition,
-		},
-		{
-			name:         "ErrCanceled",
-			errorCode:    dberrors.ErrCanceled,
-			expectedCode: codes.Canceled,
-		},
-		{
-			name:         "ErrDeadlineExceeded",
-			errorCode:    dberrors.ErrDeadlineExceeded,
-			expectedCode: codes.DeadlineExceeded,
-		},
-		{
-			name:         "ErrAlreadyExists",
-			errorCode:    dberrors.ErrAlreadyExists,
-			expectedCode: codes.AlreadyExists,
-		},
-		{
-			name:         "ErrResourceExhausted",
-			errorCode:    dberrors.ErrResourceExhausted,
-			expectedCode: codes.ResourceExhausted,
-		},
-		{
-			name:         "ErrPreconditionFailed",
-			errorCode:    dberrors.ErrPreconditionFailed,
-			expectedCode: codes.FailedPrecondition,
-		},
-		{
-			name:         "ErrAborted",
-			errorCode:    dberrors.ErrAborted,
-			expectedCode: codes.Aborted,
-		},
-		{
-			name:         "ErrOutOfRange",
-			errorCode:    dberrors.ErrOutOfRange,
-			expectedCode: codes.OutOfRange,
-		},
-		{
-			name:         "ErrUnimplemented",
-			errorCode:    dberrors.ErrUnimplemented,
-			expectedCode: codes.Unimplemented,
-		},
-		{
-			name:         "ErrDataLoss",
-			errorCode:    dberrors.ErrDataLoss,
-			expectedCode: codes.DataLoss,
-		},
-		{
-			name:         "ErrSnapshot",
-			errorCode:    dberrors.ErrSnapshot,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrReplication",
-			errorCode:    dberrors.ErrReplication,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrLeaderNotAvailable",
-			errorCode:    dberrors.ErrLeaderNotAvailable,
-			expectedCode: codes.Unavailable,
-		},
-		{
-			name:         "ErrClusterNotReady",
-			errorCode:    dberrors.ErrClusterNotReady,
-			expectedCode: codes.Unavailable,
-		},
+	want := map[dberrors.ErrorCode]codes.Code{
+		dberrors.ErrUnknown:                 codes.Unknown,
+		dberrors.ErrNotFound:                codes.NotFound,
+		dberrors.ErrConflict:                codes.AlreadyExists,
+		dberrors.ErrTimeout:                 codes.DeadlineExceeded,
+		dberrors.ErrInternal:                codes.Internal,
+		dberrors.ErrInvalidInput:            codes.InvalidArgument,
+		dberrors.ErrUnauthorized:            codes.Unauthenticated,
+		dberrors.ErrForbidden:               codes.PermissionDenied,
+		dberrors.ErrUnavailable:             codes.Unavailable,
+		dberrors.ErrStorage:                 codes.Internal,
+		dberrors.ErrRaft:                    codes.Internal,
+		dberrors.ErrEncryption:              codes.Internal,
+		dberrors.ErrDecryption:              codes.Internal,
+		dberrors.ErrValidation:              codes.InvalidArgument,
+		dberrors.ErrConfiguration:           codes.Internal,
+		dberrors.ErrCanceled:                codes.Canceled,
+		dberrors.ErrDeadlineExceeded:        codes.DeadlineExceeded,
+		dberrors.ErrAlreadyExists:           codes.AlreadyExists,
+		dberrors.ErrResourceExhausted:       codes.ResourceExhausted,
+		dberrors.ErrPreconditionFailed:      codes.FailedPrecondition,
+		dberrors.ErrAborted:                 codes.Aborted,
+		dberrors.ErrOutOfRange:              codes.InvalidArgument,
+		dberrors.ErrUnimplemented:           codes.Unimplemented,
+		dberrors.ErrDataLoss:                codes.DataLoss,
+		dberrors.ErrSnapshot:                codes.Internal,
+		dberrors.ErrReplication:             codes.Internal,
+		dberrors.ErrLeaderNotAvailable:      codes.Unavailable,
+		dberrors.ErrClusterNotReady:         codes.Unavailable,
+		dberrors.ErrQuorumLost:              codes.Internal,
+		dberrors.ErrSplitBrain:              codes.Internal,
+		dberrors.ErrRateLimited:             codes.ResourceExhausted,
+		dberrors.ErrNotImplemented:          codes.Unimplemented,
+		dberrors.ErrNotAllowed:              codes.PermissionDenied,
+		dberrors.ErrSystemKeyspaceViolation: codes.PermissionDenied,
+		dberrors.ErrCrossTenantAccess:       codes.PermissionDenied,
+		dberrors.ErrMissingTenantContext:    codes.InvalidArgument,
+		dberrors.ErrMissingJustification:    codes.InvalidArgument,
+		dberrors.ErrMissingUserContext:      codes.InvalidArgument,
+		dberrors.ErrCircuitOpen:             codes.Unavailable,
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := errorCodeToGRPCCode(tt.errorCode)
-			assert.Equal(t, tt.expectedCode, result)
+	for code, grpcCode := range want {
+		t.Run(code.String(), func(t *testing.T) {
+			assert.Equal(t, grpcCode, errorCodeToGRPCCode(code))
 		})
 	}
+
+	// pkg/errors numbers its codes contiguously from ErrUnknown, and every
+	// number past the last one stringifies as "unknown". Walking the range
+	// finds a code added upstream that neither this table nor grpcCodes
+	// covers, which would otherwise reach clients as Internal.
+	unknown := dberrors.ErrUnknown.String()
+	for code := dberrors.ErrUnknown + 1; code.String() != unknown; code++ {
+		if _, ok := want[code]; !ok {
+			t.Errorf("pkg/errors code %q (%d) has no expected gRPC code in this table", code.String(), code)
+		}
+		if _, ok := grpcCodes[code]; !ok {
+			t.Errorf("pkg/errors code %q (%d) has no entry in grpcCodes", code.String(), code)
+		}
+	}
+}
+
+func TestErrorCodeToGRPCCode_UnmappedCode(t *testing.T) {
+	assert.Equal(t, codes.Internal, errorCodeToGRPCCode(dberrors.ErrorCode(9999)))
 }
 
 // Test roundtrip conversion.
@@ -525,7 +436,7 @@ func TestErrorConversionRoundtrip(t *testing.T) {
 			grpcCode := errorCodeToGRPCCode(tt.errorCode)
 
 			// Convert back
-			resultCode := grpcCodeToErrorCode(grpcCode)
+			resultCode, _ := FromGRPCError(status.Error(grpcCode, "test"))
 
 			// Should match original
 			assert.Equal(t, tt.errorCode, resultCode)
@@ -556,13 +467,6 @@ func BenchmarkToGRPCError(b *testing.B) {
 	}
 }
 
-func BenchmarkGRPCCodeToErrorCode(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = grpcCodeToErrorCode(codes.NotFound)
-	}
-}
-
 func BenchmarkErrorCodeToGRPCCode(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -572,7 +476,7 @@ func BenchmarkErrorCodeToGRPCCode(b *testing.B) {
 
 // --- Merged from errors_exhaustive_test.go ---
 
-// TestGrpcCodeToErrorCode_AllGRPCCodes exhaustively tests grpcCodeToErrorCode with ALL gRPC status codes.
+// TestGrpcCodeToErrorCode_AllGRPCCodes exhaustively tests FromGRPCError with ALL gRPC status codes.
 func TestGrpcCodeToErrorCode_AllGRPCCodes(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -680,222 +584,7 @@ func TestGrpcCodeToErrorCode_AllGRPCCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := grpcCodeToErrorCode(tt.grpcCode)
-			assert.Equal(t, tt.expectedCode, result)
-		})
-	}
-}
-
-// TestErrorCodeToGRPCCode_AllErrorCodes exhaustively tests errorCodeToGRPCCode with ALL QuicBaaS error codes.
-func TestErrorCodeToGRPCCode_AllErrorCodes(t *testing.T) {
-	tests := []struct {
-		name         string
-		errorCode    dberrors.ErrorCode
-		expectedCode codes.Code
-	}{
-		// Explicitly mapped error codes
-		{
-			name:         "ErrUnknown maps to codes.Unknown",
-			errorCode:    dberrors.ErrUnknown,
-			expectedCode: codes.Unknown,
-		},
-		{
-			name:         "ErrNotFound maps to codes.NotFound",
-			errorCode:    dberrors.ErrNotFound,
-			expectedCode: codes.NotFound,
-		},
-		{
-			name:         "ErrConflict maps to codes.AlreadyExists",
-			errorCode:    dberrors.ErrConflict,
-			expectedCode: codes.AlreadyExists,
-		},
-		{
-			name:         "ErrTimeout maps to codes.DeadlineExceeded",
-			errorCode:    dberrors.ErrTimeout,
-			expectedCode: codes.DeadlineExceeded,
-		},
-		{
-			name:         "ErrInternal maps to codes.Internal",
-			errorCode:    dberrors.ErrInternal,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrInvalidInput maps to codes.InvalidArgument",
-			errorCode:    dberrors.ErrInvalidInput,
-			expectedCode: codes.InvalidArgument,
-		},
-		{
-			name:         "ErrUnauthorized maps to codes.Unauthenticated",
-			errorCode:    dberrors.ErrUnauthorized,
-			expectedCode: codes.Unauthenticated,
-		},
-		{
-			name:         "ErrForbidden maps to codes.PermissionDenied",
-			errorCode:    dberrors.ErrForbidden,
-			expectedCode: codes.PermissionDenied,
-		},
-		{
-			name:         "ErrUnavailable maps to codes.Unavailable",
-			errorCode:    dberrors.ErrUnavailable,
-			expectedCode: codes.Unavailable,
-		},
-		{
-			name:         "ErrStorage maps to codes.Internal",
-			errorCode:    dberrors.ErrStorage,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrRaft maps to codes.Internal",
-			errorCode:    dberrors.ErrRaft,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrEncryption maps to codes.Internal",
-			errorCode:    dberrors.ErrEncryption,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrDecryption maps to codes.Internal",
-			errorCode:    dberrors.ErrDecryption,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrValidation maps to codes.InvalidArgument",
-			errorCode:    dberrors.ErrValidation,
-			expectedCode: codes.InvalidArgument,
-		},
-		{
-			name:         "ErrConfiguration maps to codes.FailedPrecondition",
-			errorCode:    dberrors.ErrConfiguration,
-			expectedCode: codes.FailedPrecondition,
-		},
-		{
-			name:         "ErrCanceled maps to codes.Canceled",
-			errorCode:    dberrors.ErrCanceled,
-			expectedCode: codes.Canceled,
-		},
-		{
-			name:         "ErrDeadlineExceeded maps to codes.DeadlineExceeded",
-			errorCode:    dberrors.ErrDeadlineExceeded,
-			expectedCode: codes.DeadlineExceeded,
-		},
-		{
-			name:         "ErrAlreadyExists maps to codes.AlreadyExists",
-			errorCode:    dberrors.ErrAlreadyExists,
-			expectedCode: codes.AlreadyExists,
-		},
-		{
-			name:         "ErrResourceExhausted maps to codes.ResourceExhausted",
-			errorCode:    dberrors.ErrResourceExhausted,
-			expectedCode: codes.ResourceExhausted,
-		},
-		{
-			name:         "ErrPreconditionFailed maps to codes.FailedPrecondition",
-			errorCode:    dberrors.ErrPreconditionFailed,
-			expectedCode: codes.FailedPrecondition,
-		},
-		{
-			name:         "ErrAborted maps to codes.Aborted",
-			errorCode:    dberrors.ErrAborted,
-			expectedCode: codes.Aborted,
-		},
-		{
-			name:         "ErrOutOfRange maps to codes.OutOfRange",
-			errorCode:    dberrors.ErrOutOfRange,
-			expectedCode: codes.OutOfRange,
-		},
-		{
-			name:         "ErrUnimplemented maps to codes.Unimplemented",
-			errorCode:    dberrors.ErrUnimplemented,
-			expectedCode: codes.Unimplemented,
-		},
-		{
-			name:         "ErrDataLoss maps to codes.DataLoss",
-			errorCode:    dberrors.ErrDataLoss,
-			expectedCode: codes.DataLoss,
-		},
-		{
-			name:         "ErrSnapshot maps to codes.Internal",
-			errorCode:    dberrors.ErrSnapshot,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrReplication maps to codes.Internal",
-			errorCode:    dberrors.ErrReplication,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrLeaderNotAvailable maps to codes.Unavailable",
-			errorCode:    dberrors.ErrLeaderNotAvailable,
-			expectedCode: codes.Unavailable,
-		},
-		{
-			name:         "ErrClusterNotReady maps to codes.Unavailable",
-			errorCode:    dberrors.ErrClusterNotReady,
-			expectedCode: codes.Unavailable,
-		},
-		// Test error codes not explicitly mapped (should fall through to default)
-		{
-			name:         "ErrQuorumLost maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrQuorumLost,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrSplitBrain maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrSplitBrain,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrRateLimited maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrRateLimited,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrNotImplemented maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrNotImplemented,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrNotAllowed maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrNotAllowed,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrSystemKeyspaceViolation maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrSystemKeyspaceViolation,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrCrossTenantAccess maps to codes.PermissionDenied",
-			errorCode:    dberrors.ErrCrossTenantAccess,
-			expectedCode: codes.PermissionDenied,
-		},
-		{
-			name:         "ErrMissingTenantContext maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrMissingTenantContext,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrMissingJustification maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrMissingJustification,
-			expectedCode: codes.Internal,
-		},
-		{
-			name:         "ErrMissingUserContext maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrMissingUserContext,
-			expectedCode: codes.Internal,
-		},
-		// Test arbitrary unknown error code
-		{
-			name:         "Unknown ErrorCode 9999 maps to codes.Internal (default)",
-			errorCode:    dberrors.ErrorCode(9999),
-			expectedCode: codes.Internal,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := errorCodeToGRPCCode(tt.errorCode)
+			result, _ := FromGRPCError(status.Error(tt.grpcCode, "test"))
 			assert.Equal(t, tt.expectedCode, result)
 		})
 	}
@@ -1053,7 +742,7 @@ func TestToGRPCError_VariousErrorTypes(t *testing.T) {
 				Op:   "config.Load",
 				Err:  errors.New("missing required field"),
 			},
-			expectedCode: codes.FailedPrecondition,
+			expectedCode: codes.Internal,
 		},
 		{
 			name: "QBError with ErrSnapshot",
@@ -1315,62 +1004,8 @@ func TestGrpcCodeMapping_Completeness(t *testing.T) {
 	for _, code := range standardGRPCCodes {
 		t.Run(code.String(), func(t *testing.T) {
 			// Should not panic and should return a valid error code (non-negative)
-			result := grpcCodeToErrorCode(code)
+			result, _ := FromGRPCError(status.Error(code, "test"))
 			assert.GreaterOrEqual(t, int(result), 0, "code %v should map to a valid error code", code)
-		})
-	}
-}
-
-// TestErrorCodeMapping_Completeness verifies that all QuicBaaS error codes are handled.
-func TestErrorCodeMapping_Completeness(t *testing.T) {
-	// All QuicBaaS error codes
-	allErrorCodes := []dberrors.ErrorCode{
-		dberrors.ErrUnknown,
-		dberrors.ErrNotFound,
-		dberrors.ErrConflict,
-		dberrors.ErrTimeout,
-		dberrors.ErrInternal,
-		dberrors.ErrInvalidInput,
-		dberrors.ErrUnauthorized,
-		dberrors.ErrForbidden,
-		dberrors.ErrUnavailable,
-		dberrors.ErrStorage,
-		dberrors.ErrRaft,
-		dberrors.ErrEncryption,
-		dberrors.ErrDecryption,
-		dberrors.ErrValidation,
-		dberrors.ErrConfiguration,
-		dberrors.ErrCanceled,
-		dberrors.ErrDeadlineExceeded,
-		dberrors.ErrAlreadyExists,
-		dberrors.ErrResourceExhausted,
-		dberrors.ErrPreconditionFailed,
-		dberrors.ErrAborted,
-		dberrors.ErrOutOfRange,
-		dberrors.ErrUnimplemented,
-		dberrors.ErrDataLoss,
-		dberrors.ErrSnapshot,
-		dberrors.ErrReplication,
-		dberrors.ErrLeaderNotAvailable,
-		dberrors.ErrClusterNotReady,
-		dberrors.ErrQuorumLost,
-		dberrors.ErrSplitBrain,
-		dberrors.ErrRateLimited,
-		dberrors.ErrNotImplemented,
-		dberrors.ErrNotAllowed,
-		dberrors.ErrSystemKeyspaceViolation,
-		dberrors.ErrCrossTenantAccess,
-		dberrors.ErrMissingTenantContext,
-		dberrors.ErrMissingJustification,
-		dberrors.ErrMissingUserContext,
-	}
-
-	for _, errCode := range allErrorCodes {
-		t.Run(errCode.String(), func(t *testing.T) {
-			// Should not panic and should return a valid gRPC code
-			result := errorCodeToGRPCCode(errCode)
-			// Verify it's a known gRPC code by checking it's within valid range (0-16)
-			assert.LessOrEqual(t, uint32(result), uint32(16), "error code %v should map to a valid gRPC code", errCode)
 		})
 	}
 }

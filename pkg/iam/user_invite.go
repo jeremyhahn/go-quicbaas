@@ -32,7 +32,8 @@ const (
 	MaxInviteTTL = 7 * 24 * time.Hour
 
 	// inviteRollbackTimeout bounds the detached rollback of a failed create,
-	// and the detached revocation of a failed PIV activation's login factor.
+	// the detached re-read after a failed activation write, and the detached
+	// revocation of a failed PIV activation's login factor.
 	// It is generous because the rollback is the last chance to avoid a stranded
 	// account, and short enough that a wedged store cannot hold it forever.
 	inviteRollbackTimeout = 30 * time.Second
@@ -176,4 +177,21 @@ func (s *IdentityStore) rollbackInvitedUser(ctx context.Context, tenantID, userI
 		return &UserRollbackError{TenantID: tenantID, UserID: userID, Cause: cause, Rollback: rollbackErr}
 	}
 	return cause
+}
+
+// UserReader reads one user. UserStorage and IdentityStore both satisfy it.
+type UserReader interface {
+	GetUser(ctx context.Context, tenantID, userID string) (*User, error)
+}
+
+// RereadUserAfterFailedWrite reads the persisted user after a write that
+// reported failure. An error does not prove the write did not land: a commit
+// whose response was lost, or that outlived the caller's deadline, reports
+// failure on a user that changed. The read is detached from the request's
+// cancellation, which may be the very reason the write failed, and bounded
+// so a wedged store cannot hold the caller.
+func RereadUserAfterFailedWrite(ctx context.Context, users UserReader, tenantID, userID string) (*User, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteRollbackTimeout)
+	defer cancel()
+	return users.GetUser(ctx, tenantID, userID)
 }

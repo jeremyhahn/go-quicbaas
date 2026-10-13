@@ -490,6 +490,15 @@ var (
 		Err:  &IAMMessageError{Message: "audit storage is closed"},
 	}
 
+	// ErrAuditEventExists is returned when an audit event is saved under an
+	// ID the store already holds. Overwriting it would silently erase an
+	// audit record, so the store refuses the second write.
+	ErrAuditEventExists = &dberrors.QBError{
+		Code: dberrors.ErrAlreadyExists,
+		Op:   "iam.audit",
+		Err:  &IAMMessageError{Message: "audit event ID already exists"},
+	}
+
 	// Delegated Admin errors.
 
 	// ErrAdminAssignmentNotFound is returned when an admin assignment is not found.

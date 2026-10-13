@@ -140,12 +140,14 @@ service Barrier {
 
 // BarrierInitializeRequest initialises the barrier with a single master key.
 message BarrierInitializeRequest {
-  string secret = 1;
+  // secret is the raw master-key material, carried as bytes end to end.
+  bytes secret = 1;
 }
 
 // BarrierUnsealRequest unseals the barrier with a master key.
 message BarrierUnsealRequest {
-  string secret = 1;
+  // secret is the raw master-key material, carried as bytes end to end.
+  bytes secret = 1;
 }
 
 // BarrierStatusResponse describes the current barrier state.
@@ -159,7 +161,8 @@ message BarrierStatusResponse {
 
 // BarrierShamirInitializeRequest initialises the barrier with Shamir secret sharing.
 message BarrierShamirInitializeRequest {
-  string secret = 1;
+  // secret is the raw master-key material, carried as bytes end to end.
+  bytes secret = 1;
   int32 threshold = 2;
   int32 total_shares = 3;
 }
@@ -257,7 +260,7 @@ message BarrierEnableEncryptionRequest {
   string availability = 3;
 
   // passphrase is required for a passphrase-target migration.
-  string passphrase = 4;
+  bytes passphrase = 4;
 
   // shamir_threshold is the M-of-N quorum threshold for a Shamir-target
   // migration. Must be >= 2 and <= shamir_total.

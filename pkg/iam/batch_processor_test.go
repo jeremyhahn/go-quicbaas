@@ -2159,25 +2159,6 @@ func TestGenerateImpersonationSessionID(t *testing.T) {
 	}
 }
 
-func TestGenerateAuditLogID(t *testing.T) {
-	id1, err := generateAuditLogID()
-	if err != nil {
-		t.Fatalf("generateAuditLogID: %v", err)
-	}
-
-	if !strings.HasPrefix(id1, "audit_") {
-		t.Errorf("expected prefix 'audit_', got %s", id1)
-	}
-
-	id2, err := generateAuditLogID()
-	if err != nil {
-		t.Fatalf("generateAuditLogID: %v", err)
-	}
-	if id1 == id2 {
-		t.Error("expected unique IDs")
-	}
-}
-
 // =============================================================================
 // matchResourcePattern edge cases
 // =============================================================================

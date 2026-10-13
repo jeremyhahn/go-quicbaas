@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // Sentinel errors for gRPC client operations.
@@ -44,8 +45,7 @@ func FromGRPCError(err error) (errors.ErrorCode, bool) {
 		return errors.ErrUnknown, false
 	}
 
-	code := grpcCodeToErrorCode(s.Code())
-	return code, true
+	return service.StatusErrorCode(s), true
 }
 
 // ToGRPCError converts a QuicBaaS error to a gRPC status error.
@@ -89,7 +89,7 @@ func convertError(err error) error {
 		}
 	}
 
-	errCode := grpcCodeToErrorCode(s.Code())
+	errCode := service.StatusErrorCode(s)
 	return &errors.QBError{
 		Code: errCode,
 		Op:   "grpc",
@@ -97,102 +97,58 @@ func convertError(err error) error {
 	}
 }
 
-// grpcCodeToErrorCode maps gRPC status codes to QuicBaaS error codes.
-func grpcCodeToErrorCode(code codes.Code) errors.ErrorCode {
-	switch code {
-	case codes.OK:
-		return errors.ErrUnknown // Should never happen for errors
-	case codes.Canceled:
-		return errors.ErrCanceled
-	case codes.Unknown:
-		return errors.ErrUnknown
-	case codes.InvalidArgument:
-		return errors.ErrInvalidInput
-	case codes.DeadlineExceeded:
-		return errors.ErrDeadlineExceeded
-	case codes.NotFound:
-		return errors.ErrNotFound
-	case codes.AlreadyExists:
-		return errors.ErrAlreadyExists
-	case codes.PermissionDenied:
-		return errors.ErrForbidden
-	case codes.ResourceExhausted:
-		return errors.ErrResourceExhausted
-	case codes.FailedPrecondition:
-		return errors.ErrPreconditionFailed
-	case codes.Aborted:
-		return errors.ErrAborted
-	case codes.OutOfRange:
-		return errors.ErrOutOfRange
-	case codes.Unimplemented:
-		return errors.ErrUnimplemented
-	case codes.Internal:
-		return errors.ErrInternal
-	case codes.Unavailable:
-		return errors.ErrUnavailable
-	case codes.DataLoss:
-		return errors.ErrDataLoss
-	case codes.Unauthenticated:
-		return errors.ErrUnauthorized
-	default:
-		return errors.ErrInternal
-	}
-}
-
 // errorCodeToGRPCCode maps QuicBaaS error codes to gRPC status codes.
 func errorCodeToGRPCCode(code errors.ErrorCode) codes.Code {
-	switch code {
-	case errors.ErrUnknown:
-		return codes.Unknown
-	case errors.ErrNotFound:
-		return codes.NotFound
-	case errors.ErrConflict:
-		return codes.AlreadyExists
-	case errors.ErrTimeout:
-		return codes.DeadlineExceeded
-	case errors.ErrInternal:
-		return codes.Internal
-	case errors.ErrInvalidInput:
-		return codes.InvalidArgument
-	case errors.ErrUnauthorized:
-		return codes.Unauthenticated
-	case errors.ErrForbidden, errors.ErrCrossTenantAccess:
-		return codes.PermissionDenied
-	case errors.ErrUnavailable:
-		return codes.Unavailable
-	case errors.ErrStorage:
-		return codes.Internal
-	case errors.ErrRaft:
-		return codes.Internal
-	case errors.ErrEncryption, errors.ErrDecryption:
-		return codes.Internal
-	case errors.ErrValidation:
-		return codes.InvalidArgument
-	case errors.ErrConfiguration:
-		return codes.FailedPrecondition
-	case errors.ErrCanceled:
-		return codes.Canceled
-	case errors.ErrDeadlineExceeded:
-		return codes.DeadlineExceeded
-	case errors.ErrAlreadyExists:
-		return codes.AlreadyExists
-	case errors.ErrResourceExhausted:
-		return codes.ResourceExhausted
-	case errors.ErrPreconditionFailed:
-		return codes.FailedPrecondition
-	case errors.ErrAborted:
-		return codes.Aborted
-	case errors.ErrOutOfRange:
-		return codes.OutOfRange
-	case errors.ErrUnimplemented:
-		return codes.Unimplemented
-	case errors.ErrDataLoss:
-		return codes.DataLoss
-	case errors.ErrSnapshot, errors.ErrReplication:
-		return codes.Internal
-	case errors.ErrLeaderNotAvailable, errors.ErrClusterNotReady:
-		return codes.Unavailable
-	default:
-		return codes.Internal
+	if grpcCode, ok := grpcCodes[code]; ok {
+		return grpcCode
 	}
+	return codes.Internal
+}
+
+// grpcCodes maps every pkg/errors code to the gRPC status code a client
+// receives. Codes a client can act on follow their REST status (400 to
+// InvalidArgument, 403 to PermissionDenied, 429 to ResourceExhausted, ...);
+// server-side faults the client cannot correct map to Internal explicitly, so
+// that a code missing from this map is a defect TestErrorCodeToGRPCCode
+// catches rather than a silent fall-through to Internal.
+var grpcCodes = map[errors.ErrorCode]codes.Code{
+	errors.ErrUnknown:                 codes.Unknown,
+	errors.ErrNotFound:                codes.NotFound,
+	errors.ErrConflict:                codes.AlreadyExists,
+	errors.ErrTimeout:                 codes.DeadlineExceeded,
+	errors.ErrInternal:                codes.Internal,
+	errors.ErrInvalidInput:            codes.InvalidArgument,
+	errors.ErrUnauthorized:            codes.Unauthenticated,
+	errors.ErrForbidden:               codes.PermissionDenied,
+	errors.ErrUnavailable:             codes.Unavailable,
+	errors.ErrStorage:                 codes.Internal,
+	errors.ErrRaft:                    codes.Internal,
+	errors.ErrEncryption:              codes.Internal,
+	errors.ErrDecryption:              codes.Internal,
+	errors.ErrValidation:              codes.InvalidArgument,
+	errors.ErrConfiguration:           codes.Internal,
+	errors.ErrCanceled:                codes.Canceled,
+	errors.ErrDeadlineExceeded:        codes.DeadlineExceeded,
+	errors.ErrAlreadyExists:           codes.AlreadyExists,
+	errors.ErrResourceExhausted:       codes.ResourceExhausted,
+	errors.ErrPreconditionFailed:      codes.FailedPrecondition,
+	errors.ErrAborted:                 codes.Aborted,
+	errors.ErrOutOfRange:              codes.InvalidArgument,
+	errors.ErrUnimplemented:           codes.Unimplemented,
+	errors.ErrDataLoss:                codes.DataLoss,
+	errors.ErrSnapshot:                codes.Internal,
+	errors.ErrReplication:             codes.Internal,
+	errors.ErrLeaderNotAvailable:      codes.Unavailable,
+	errors.ErrClusterNotReady:         codes.Unavailable,
+	errors.ErrQuorumLost:              codes.Internal,
+	errors.ErrSplitBrain:              codes.Internal,
+	errors.ErrRateLimited:             codes.ResourceExhausted,
+	errors.ErrNotImplemented:          codes.Unimplemented,
+	errors.ErrNotAllowed:              codes.PermissionDenied,
+	errors.ErrSystemKeyspaceViolation: codes.PermissionDenied,
+	errors.ErrCrossTenantAccess:       codes.PermissionDenied,
+	errors.ErrMissingTenantContext:    codes.InvalidArgument,
+	errors.ErrMissingJustification:    codes.InvalidArgument,
+	errors.ErrMissingUserContext:      codes.InvalidArgument,
+	errors.ErrCircuitOpen:             codes.Unavailable,
 }

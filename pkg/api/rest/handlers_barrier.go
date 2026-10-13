@@ -16,6 +16,7 @@
 package rest
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -220,11 +221,18 @@ func readBarrierJSON(w http.ResponseWriter, r *http.Request, dst interface{}) bo
 		return false
 	}
 	defer r.Body.Close()
+	// The raw body holds the base64 text of any credential it carries.
+	defer secure.Wipe(body)
 
 	if len(body) == 0 {
 		return true
 	}
 	if err := json.Unmarshal(body, dst); err != nil {
+		var corrupt base64.CorruptInputError
+		if errors.As(err, &corrupt) {
+			RespondError(w, r, http.StatusBadRequest, &BarrierCredentialEncodingError{})
+			return false
+		}
 		RespondBadRequest(w, r, "invalid JSON body")
 		return false
 	}
@@ -752,6 +760,17 @@ const (
 // POST /v1/barrier/enable-encryption depends on is not wired or not yet able
 // to decide. The route fails closed on it (503) rather than admit a caller
 // no decision was rendered for.
+// BarrierCredentialEncodingError reports that a barrier credential field in a
+// REST request body is not well-formed base64. Every barrier credential on
+// this surface is bytes, so JSON carries it base64-encoded. The error names
+// no field and echoes no input: the rejected text may be a raw credential.
+type BarrierCredentialEncodingError struct{}
+
+// Error implements the error interface.
+func (e *BarrierCredentialEncodingError) Error() string {
+	return "barrier credential must be base64-encoded bytes"
+}
+
 type BarrierScopeAuthorizerUnavailableError struct {
 	// Reason says why no decision could be made.
 	Reason string

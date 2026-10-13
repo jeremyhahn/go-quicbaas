@@ -194,7 +194,9 @@ func (a *PIVActivator) Activate(ctx context.Context, tenantID, token string, cer
 	//     invite stays unspent. A factor store failure after the redeem spends
 	//     the invite, and the user must be re-invited.
 	//   - Only the winner writes the user. If that write fails, the factor
-	//     this call created is revoked; the invite is already spent.
+	//     this call created is revoked; the invite is already spent. A
+	//     failure whose write landed anyway (a lost response) is reconciled
+	//     from the persisted user instead, and the activation succeeds.
 	//   - A successful activation completes the claim, so no other invite of
 	//     the user can activate it unless an administrator returns the user to
 	//     pending. A failed one releases the claim, so the user can be
@@ -256,9 +258,35 @@ func (a *PIVActivator) commitActivation(ctx context.Context, tenantID, token str
 	user.SetPIVThumbprints(qrdbsdk.ComputeSPKIThumbprint(cert), xkmssdk.PIVThumbprintSHA256(cert))
 	user.Updated = time.Now().UTC()
 	if err := a.userStorage.UpdateUser(ctx, user); err != nil {
+		if a.activationPersisted(ctx, invite, cert) {
+			a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "failure", map[string]interface{}{
+				"error":     "user update reported failure but the activation persisted: " + err.Error(),
+				"factor_id": factor.FactorID,
+			})
+			return nil
+		}
 		return a.revokeCreatedFactor(ctx, invite, factor, &PIVActivationUpdateError{Cause: err})
 	}
 	return nil
+}
+
+// activationPersisted reports whether a user update that reported failure
+// landed anyway: the user is active and bound to this certificate. Revoking
+// the factor of such a user would leave it active with a spent invite and no
+// usable mTLS login, and no further activation could repair it because the
+// user is no longer pending.
+//
+// A failed re-read reports false, so the factor is revoked. The outcome is
+// then unknown either way, and revoking is the side that grants nothing: it
+// can strand an activated user, which an administrator repairs by returning
+// the user to pending, but it never leaves a login factor on an account that
+// stayed pending.
+func (a *PIVActivator) activationPersisted(ctx context.Context, invite *InviteRecord, cert *x509.Certificate) bool {
+	persisted, err := RereadUserAfterFailedWrite(ctx, a.userStorage, invite.TenantID, invite.UserID)
+	if err != nil || persisted == nil {
+		return false
+	}
+	return persisted.Lifecycle == LifecycleActive && persisted.HasPIVThumbprint(qrdbsdk.ComputeSPKIThumbprint(cert))
 }
 
 // releaseClaim gives up the claim of a failed activation so the user can be

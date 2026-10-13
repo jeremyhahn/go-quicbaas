@@ -4490,14 +4490,14 @@ export class RestBarrierClient implements BarrierClient {
   async initialize(req: BarrierInitRequest): Promise<void> {
     await this.http.fetchVoid('/api/v1/barrier/initialize', {
       method: 'POST',
-      body: JSON.stringify(req),
+      body: JSON.stringify({ secret: bytesToBase64(req.secret) }),
     });
   }
 
   async unseal(req: BarrierUnsealRequest): Promise<void> {
     await this.http.fetchVoid('/api/v1/barrier/unseal', {
       method: 'POST',
-      body: JSON.stringify(req),
+      body: JSON.stringify({ secret: bytesToBase64(req.secret) }),
     });
   }
 
@@ -4508,7 +4508,7 @@ export class RestBarrierClient implements BarrierClient {
   async initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> {
     return this.http.fetchJSON<BarrierShamirInitResponse>('/api/v1/barrier/shamir/initialize', {
       method: 'POST',
-      body: JSON.stringify(req),
+      body: JSON.stringify({ ...req, secret: bytesToBase64(req.secret) }),
     });
   }
 
@@ -4611,6 +4611,8 @@ export class RestTenantBarrierClient implements TenantBarrierClient {
     tenantId: string,
     req: TenantBarrierInitRequest,
   ): Promise<TenantBarrierInitResponse | undefined> {
+    const { passphrase, ...rest } = req;
+    const body = passphrase === undefined ? rest : { ...rest, passphrase: bytesToBase64(passphrase) };
     // The shamir strategy returns 200 with the minted shares; the none and
     // passphrase strategies return 204 No Content. fetchJSON yields undefined
     // on a 204, so the union return type already covers both cases.
@@ -4618,15 +4620,15 @@ export class RestTenantBarrierClient implements TenantBarrierClient {
       `${this.base(tenantId)}/init`,
       {
         method: 'POST',
-        body: JSON.stringify(req),
+        body: JSON.stringify(body),
       },
     );
   }
 
-  async tenantBarrierUnseal(tenantId: string, key: string): Promise<void> {
+  async tenantBarrierUnseal(tenantId: string, key: Uint8Array): Promise<void> {
     await this.http.fetchVoid(`${this.base(tenantId)}/unseal`, {
       method: 'POST',
-      body: JSON.stringify({ key }),
+      body: JSON.stringify({ key: bytesToBase64(key) }),
     });
   }
 

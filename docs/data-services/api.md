@@ -382,14 +382,20 @@ Service: `quicbaas.database.v1.DatabaseService`
 | 409 | `ALREADY_EXISTS` | Database already exists |
 | 500 | `INTERNAL` | Internal server error |
 
+The gRPC column is the gRPC status code. REST returns no upper-case code.
+
 ### Error Response Format
+
+REST returns the flat error body described in
+[Error Handling](../multiprotocol-api/api.md#error-handling). A 404 carries no
+`code` field:
 
 ```json
 {
-  "error": {
-    "code": "NOT_FOUND",
-    "message": "database 'acme_orders' not found"
-  }
+  "error": "resource not found: entity.get: not_found: database 'acme_orders' not found",
+  "timestamp": "2026-10-12T12:00:00Z",
+  "request_id": "…",
+  "retryable": false
 }
 ```
 

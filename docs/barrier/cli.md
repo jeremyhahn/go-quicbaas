@@ -251,8 +251,8 @@ to make that crossing is deleted rather than documented.
 
 **Request storage is not serialization, and the difference is the whole
 qualification.** What the request *holds* is now wipeable bytes for every
-transport. What a transport *writes on the wire* is its own matter, and two
-of those still produce an unwipeable copy:
+transport. What a transport *writes on the wire* is its own matter, and MCP
+still produces an unwipeable copy, once on each side:
 
 - **MCP** converts deliberately. An MCP tool argument is JSON and Go renders
   a `[]byte` as base64, so `sdk/go/transport/mcp` has one explicit
@@ -262,19 +262,17 @@ of those still produce an unwipeable copy:
   duration of the call, and no buffer discipline on either side removes it.
   Choose another transport for barrier operations if that residue is
   unacceptable.
-- **This daemon's own surfaces.** `string secret` in
-  `api/proto/barrier.proto`, the REST JSON request DTOs and the MCP tool
-  argument all still declare the credential as a string, so a passphrase
-  arriving from a *remote* caller exists as an unwipeable Go string before
-  any handler sees it. The handlers convert at the edge and wipe what they
-  made, which narrows the window rather than closing it. Retyping the proto
-  field and moving REST JSON to base64 is a client-visible wire change,
-  tracked as [#962](https://github.com/jeremyhahn/go-quicbaas/issues/962).
+- **The daemon's MCP tool argument.** The server side of MCP receives the
+  credential as a JSON string for the same reason and converts it in one
+  function (`credentialArg` in `pkg/api/mcp`), wiping the bytes after use.
+
+Every other surface of this daemon carries the credential as bytes: `bytes`
+fields on the gRPC, Unix and QUIC protobuf frames, and base64-encoded `[]byte`
+on REST. The handlers pass those bytes to the barrier service and wipe them.
 
 The end-to-end guarantee — protected memory from the terminal to the barrier,
-with no plaintext string anywhere — therefore holds for the CLI against an
-**embedded or in-process** node, and holds for the CLI's own handling of the
-passphrase in every case.
+with no plaintext string anywhere — therefore holds on every transport except
+MCP, and holds for the CLI's own handling of the passphrase in every case.
 
 **Still on argv.** `--so-pin`, `--user-pin` and `--share` remain
 argv-only and carry the same exposure, and are still held as plain Go

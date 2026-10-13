@@ -24,10 +24,10 @@ const (
 
 	// userActivationClaimLease is how long a claim protects an activation that
 	// never released it, for example because its process died. It covers the
-	// bounded work, the detached rollback and the release, with margin for
-	// clock skew between the node that took the claim and the node that
-	// later judges it expired.
-	userActivationClaimLease = userActivationWorkTimeout + 2*inviteRollbackTimeout + 2*time.Minute
+	// bounded work, the detached re-read and rollback, and the release, with
+	// margin for clock skew between the node that took the claim and the node
+	// that later judges it expired.
+	userActivationClaimLease = userActivationWorkTimeout + 3*inviteRollbackTimeout + 2*time.Minute
 
 	userActivationHolderBytes = 16
 )

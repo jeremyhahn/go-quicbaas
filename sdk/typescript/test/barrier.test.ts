@@ -111,7 +111,7 @@ describe('RestBarrierClient passphrase strategy', () => {
     fetchMock.mockResolvedValue(noContentResponse());
 
     const client = new RestClient('http://localhost');
-    await client.barrier.initialize({ secret: 'dG9wc2VjcmV0' });
+    await client.barrier.initialize({ secret: new TextEncoder().encode('topsecret') });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/initialize');
@@ -123,7 +123,7 @@ describe('RestBarrierClient passphrase strategy', () => {
     fetchMock.mockResolvedValue(noContentResponse());
 
     const client = new RestClient('http://localhost');
-    await client.barrier.unseal({ secret: 'dG9wc2VjcmV0' });
+    await client.barrier.unseal({ secret: new TextEncoder().encode('topsecret') });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/unseal');
@@ -147,6 +147,56 @@ describe('RestBarrierClient passphrase strategy', () => {
 // Shamir strategy — initialize, unseal, list, delete, verify
 // =============================================================================
 
+describe('RestBarrierClient credential bytes', () => {
+  it('base64-encodes a credential that is not valid UTF-8', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    const client = new RestClient('http://localhost');
+    await client.barrier.unseal({ secret: new Uint8Array([0x00, 0xff, 0xfe, 0x80]) });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ secret: 'AP/+gA==' });
+  });
+
+  it('base64-encodes the tenant init passphrase and leaves the other fields alone', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    const client = new RestClient('http://localhost');
+    await client.tenantBarrier.tenantBarrierInit('t1', {
+      strategy: 'passphrase',
+      passphrase: new TextEncoder().encode('topsecret'),
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/tenants/t1/barrier/init');
+    expect(JSON.parse(init.body as string)).toEqual({
+      strategy: 'passphrase',
+      passphrase: 'dG9wc2VjcmV0',
+    });
+  });
+
+  it('omits the tenant init passphrase when none is given', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    const client = new RestClient('http://localhost');
+    await client.tenantBarrier.tenantBarrierInit('t1', { strategy: 'none' });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ strategy: 'none' });
+  });
+
+  it('base64-encodes the tenant unseal key', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    const client = new RestClient('http://localhost');
+    await client.tenantBarrier.tenantBarrierUnseal('t1', new Uint8Array([0x00, 0xff, 0xfe, 0x80]));
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/tenants/t1/barrier/unseal');
+    expect(JSON.parse(init.body as string)).toEqual({ key: 'AP/+gA==' });
+  });
+});
+
 describe('RestBarrierClient Shamir strategy', () => {
   it('initialises the barrier with Shamir secret sharing', async () => {
     fetchMock.mockResolvedValue(
@@ -159,7 +209,7 @@ describe('RestBarrierClient Shamir strategy', () => {
 
     const client = new RestClient('http://localhost');
     const result = await client.barrier.initializeShamir({
-      secret: 'bWFzdGVy',
+      secret: new TextEncoder().encode('master'),
       threshold: 2,
       total_shares: 3,
     });

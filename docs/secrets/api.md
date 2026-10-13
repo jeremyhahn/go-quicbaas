@@ -203,9 +203,9 @@ GET /api/v1/secrets/{path}
 
 | Status | Code | Description |
 |--------|------|-------------|
-| 400 | `VALIDATION_ERROR` | Missing path |
-| 404 | `NOT_FOUND` | Secret not found |
-| 500 | `INTERNAL_ERROR` | Service error |
+| 400 | — | Missing path |
+| 404 | — | Secret not found |
+| 500 | `internal` | Service error (no `code` when the secrets service is not configured) |
 
 ---
 
@@ -1683,27 +1683,32 @@ When rotating a secret, encryption options are inherited from the previous versi
 
 ### Error Response Format
 
+The flat error body described in
+[Error Handling](../multiprotocol-api/api.md#error-handling):
+
 ```json
 {
-  "error": {
-    "code": "ERROR_CODE",
-    "message": "Human-readable description",
-    "field": "field_name"
-  }
+  "error": "validation error: secret path is required",
+  "timestamp": "2026-10-12T12:00:00Z",
+  "request_id": "…",
+  "retryable": false
 }
 ```
 
 ### Error Codes
 
-| Code | HTTP | Description |
-|------|------|-------------|
-| `VALIDATION_ERROR` | 400 | Invalid request parameters |
-| `NOT_FOUND` | 404 | Secret or version not found |
-| `CONFLICT` | 409 | Secret already exists |
-| `FORBIDDEN` | 403 | Permission denied |
-| `INTERNAL_ERROR` | 500 | Internal server error |
-| `SERVICE_UNAVAILABLE` | 503 | Leader not available |
-| `TIMEOUT` | 408 | Operation timeout |
+Codes are lower-case. The client-error classes (400, 403, 404, 408, 409)
+carry no `code` field; branch on the HTTP status.
+
+| `code` | HTTP | Description |
+|--------|------|-------------|
+| — | 400 | Invalid request parameters |
+| — | 404 | Secret or version not found |
+| — | 409 | Secret already exists |
+| — | 403 | Permission denied |
+| — | 408 | Operation timeout |
+| `internal` | 500 | Internal server error |
+| `leader_not_available` | 503 | Leader not available; retryable |
 
 ---
 

@@ -411,28 +411,9 @@ func convertMFAError(err error) error {
 		return status.Error(codes.Internal, err.Error())
 	}
 
-	switch dErr.Code {
-	case errors.ErrNotFound:
-		return status.Error(codes.NotFound, dErr.Error())
-	case errors.ErrAlreadyExists:
-		return status.Error(codes.AlreadyExists, dErr.Error())
-	case errors.ErrInvalidInput, errors.ErrValidation:
-		return status.Error(codes.InvalidArgument, dErr.Error())
-	case errors.ErrUnauthorized:
-		return status.Error(codes.Unauthenticated, dErr.Error())
-	case errors.ErrForbidden:
-		return status.Error(codes.PermissionDenied, dErr.Error())
-	case errors.ErrTimeout, errors.ErrDeadlineExceeded:
-		return status.Error(codes.DeadlineExceeded, dErr.Error())
-	case errors.ErrResourceExhausted:
-		return status.Error(codes.ResourceExhausted, dErr.Error())
-	case errors.ErrUnavailable:
-		return status.Error(codes.Unavailable, dErr.Error())
-	case errors.ErrConflict:
+	// These services report conflict as a failed precondition, not AlreadyExists.
+	if dErr.Code == errors.ErrConflict {
 		return status.Error(codes.FailedPrecondition, dErr.Error())
-	case errors.ErrUnimplemented, errors.ErrNotImplemented:
-		return status.Error(codes.Unimplemented, dErr.Error())
-	default:
-		return status.Error(codes.Internal, dErr.Error())
 	}
+	return status.Error(errorCodeToGRPCCode(dErr.Code), dErr.Error())
 }

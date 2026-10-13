@@ -484,10 +484,7 @@ func RateLimitMiddleware(requestsPerSecond int) func(http.Handler) http.Handler 
 
 			// Check if request is allowed
 			if !limiter.Allow(clientIP) {
-				RespondError(w, r, http.StatusTooManyRequests, &RateLimitError{
-					Limit:  requestsPerSecond,
-					Period: "1s",
-				})
+				respondRateLimited(w, r, requestsPerSecond)
 				return
 			}
 
@@ -552,7 +549,9 @@ func (e *RequestTimeoutError) Error() string {
 	return "request timeout after " + e.Timeout.String()
 }
 
-// RateLimitError represents a 429 error.
+// RateLimitError represents a 429 error. newErrorResponse renders it with the
+// errors.ErrRateLimited code and retryable set, so a client can tell a limiter
+// refusal from any other 429 without parsing the message.
 type RateLimitError struct {
 	Limit  int
 	Period string
@@ -560,6 +559,22 @@ type RateLimitError struct {
 
 func (e *RateLimitError) Error() string {
 	return "rate limit exceeded: " + strconv.Itoa(e.Limit) + " requests per " + e.Period
+}
+
+// rateLimitRetryAfter is the Retry-After, in whole seconds, of a rate-limited
+// response. Every REST limiter refills at a whole number of tokens per second,
+// at least one, so the token a refused client lacks is back within a second.
+const rateLimitRetryAfter = "1"
+
+// respondRateLimited writes the 429 a token-bucket limiter answers with: the
+// Retry-After header and a RateLimitError body for a limit of limit requests
+// per second.
+func respondRateLimited(w http.ResponseWriter, r *http.Request, limit int) {
+	w.Header().Set("Retry-After", rateLimitRetryAfter)
+	RespondError(w, r, http.StatusTooManyRequests, &RateLimitError{
+		Limit:  limit,
+		Period: "1s",
+	})
 }
 
 // PayloadTooLargeError represents a 413 Payload Too Large error.
@@ -939,10 +954,7 @@ func limiterKey(addr string) string {
 func RateLimitOAuth2ClientAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !oauth2ClientAuthLimiter().Allow(remoteAddrKey(r)) {
-			RespondError(w, r, http.StatusTooManyRequests, &RateLimitError{
-				Limit:  oauth2ClientAuthRateLimit,
-				Period: "1s",
-			})
+			respondRateLimited(w, r, oauth2ClientAuthRateLimit)
 			return
 		}
 		next(w, r)

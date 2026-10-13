@@ -49,6 +49,7 @@ func TestErrorCode_IsRetryable(t *testing.T) {
 		CodeUnavailable,
 		CodeTimeout,
 		CodeResourceExhausted,
+		CodeRateLimited,
 	}
 
 	nonRetryableCodes := []ErrorCode{
@@ -60,7 +61,6 @@ func TestErrorCode_IsRetryable(t *testing.T) {
 		CodeForbidden,
 		CodeConflict,
 		CodePreconditionFailed,
-		CodeRateLimited,
 		CodeInternal,
 		CodeCanceled,
 		CodeUnimplemented,

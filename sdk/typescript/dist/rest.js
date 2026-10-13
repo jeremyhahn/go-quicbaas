@@ -3209,13 +3209,13 @@ export class RestBarrierClient {
     async initialize(req) {
         await this.http.fetchVoid('/api/v1/barrier/initialize', {
             method: 'POST',
-            body: JSON.stringify(req),
+            body: JSON.stringify({ secret: bytesToBase64(req.secret) }),
         });
     }
     async unseal(req) {
         await this.http.fetchVoid('/api/v1/barrier/unseal', {
             method: 'POST',
-            body: JSON.stringify(req),
+            body: JSON.stringify({ secret: bytesToBase64(req.secret) }),
         });
     }
     async seal() {
@@ -3224,7 +3224,7 @@ export class RestBarrierClient {
     async initializeShamir(req) {
         return this.http.fetchJSON('/api/v1/barrier/shamir/initialize', {
             method: 'POST',
-            body: JSON.stringify(req),
+            body: JSON.stringify({ ...req, secret: bytesToBase64(req.secret) }),
         });
     }
     async unsealWithShare(req) {
@@ -3300,18 +3300,20 @@ export class RestTenantBarrierClient {
         return `/api/v1/tenants/${encodeURIComponent(tenantId)}/barrier`;
     }
     async tenantBarrierInit(tenantId, req) {
+        const { passphrase, ...rest } = req;
+        const body = passphrase === undefined ? rest : { ...rest, passphrase: bytesToBase64(passphrase) };
         // The shamir strategy returns 200 with the minted shares; the none and
         // passphrase strategies return 204 No Content. fetchJSON yields undefined
         // on a 204, so the union return type already covers both cases.
         return this.http.fetchJSON(`${this.base(tenantId)}/init`, {
             method: 'POST',
-            body: JSON.stringify(req),
+            body: JSON.stringify(body),
         });
     }
     async tenantBarrierUnseal(tenantId, key) {
         await this.http.fetchVoid(`${this.base(tenantId)}/unseal`, {
             method: 'POST',
-            body: JSON.stringify({ key }),
+            body: JSON.stringify({ key: bytesToBase64(key) }),
         });
     }
     async tenantBarrierUnsealShare(tenantId, share) {

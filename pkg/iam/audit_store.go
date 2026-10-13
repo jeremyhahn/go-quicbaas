@@ -85,7 +85,10 @@ func (s *MemoryAuditStorage) SaveEvent(ctx context.Context, event *AuditEvent) e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Store event
+	// Store event; an existing record is never overwritten.
+	if _, exists := s.events[event.ID]; exists {
+		return ErrAuditEventExists
+	}
 	s.events[event.ID] = event
 
 	// Update tenant index

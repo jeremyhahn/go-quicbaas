@@ -106,10 +106,10 @@ Response:
 Not found (404):
 ```json
 {
-  "error": {
-    "code": "NOT_FOUND",
-    "message": "Entity not found: user/1"
-  }
+  "error": "resource not found: entity.get: not_found: user/1",
+  "timestamp": "2026-10-12T12:00:00Z",
+  "request_id": "…",
+  "retryable": false
 }
 ```
 
@@ -728,46 +728,85 @@ Response:
 
 ## Error Handling
 
-All errors follow a consistent format:
+REST returns a flat JSON object; the QUIC transport carries the same REST
+requests over HTTP/3 and gets the same body. There is no nested envelope:
 
 ```json
 {
-  "error": {
-    "code": "ERROR_CODE",
-    "message": "Human-readable error message",
-    "details": {
-      "field": "additional context"
-    }
-  }
+  "error": "unavailable: the request could not be completed",
+  "code": "unavailable",
+  "timestamp": "2026-10-12T12:00:00Z",
+  "request_id": "…",
+  "retryable": true
 }
 ```
 
-Common error codes:
+| Field | Type | Present |
+|-------|------|---------|
+| `error` | string | always; human-readable message |
+| `code` | string | when the error carries a code (see below) |
+| `details` | object | when the error carries context |
+| `timestamp` | RFC 3339 time | always |
+| `request_id` | string | when the request has an ID |
+| `retryable` | bool | always |
 
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| `NOT_FOUND` | 404 | Entity not found |
-| `INVALID_INPUT` | 400 | Invalid request parameters |
-| `UNAUTHORIZED` | 401 | Authentication required |
-| `FORBIDDEN` | 403 | Permission denied |
-| `CONFLICT` | 409 | Version conflict (optimistic locking) |
-| `UNAVAILABLE` | 503 | Service temporarily unavailable |
-| `TIMEOUT` | 504 | Request timeout |
-| `INTERNAL` | 500 | Internal server error |
+Error codes are lower-case strings from `pkg/errors`. The HTTP status and
+`retryable` value come from the code:
+
+| Code | HTTP Status | Retryable | Description |
+|------|-------------|-----------|-------------|
+| `invalid_input` | 400 | no | Invalid request parameters |
+| `validation` | 400 | no | Request failed validation |
+| `unauthorized` | 401 | no | Authentication required |
+| `forbidden` | 403 | no | Permission denied |
+| `not_allowed` | 403 | no | Operation not allowed for this caller |
+| `cross_tenant_access` | 403 | no | Request names a tenant that is not the caller's |
+| `not_found` | 404 | no | Entity not found |
+| `timeout` | 408 | yes | Request timed out |
+| `deadline_exceeded` | 408 | yes | Request deadline passed |
+| `conflict` | 409 | no | Version conflict (optimistic locking) |
+| `already_exists` | 409 | no | Entity already exists |
+| `rate_limited` | 429 | yes | Rate limit exceeded; see [Rate Limiting](#rate-limiting) |
+| `internal` | 500 | no | Internal server error |
+| `unavailable` | 503 | yes | Service temporarily unavailable |
+| `leader_not_available` | 503 | yes | Raft leader election in progress |
+| `cluster_not_ready` | 503 | yes | Cluster still forming |
+| `circuit_open` | 503 | yes | Downstream circuit breaker open |
+
+The entity, batch, query, cluster and scheduler routes answer the
+client-error classes (400, 401, 403, 404, 408, 409) without a `code` field and
+with `retryable: false`; branch on the HTTP status for those. Server-side
+classes (500, 503) and `rate_limited` always carry `code` and `retryable`.
+Server-side messages are replaced by a fixed sentence; the cause is logged.
+
+gRPC and the Unix socket (gRPC over a local socket) return a gRPC status:
+the code maps to the nearest status (`not_found` to `NOT_FOUND`,
+`rate_limited` to `RESOURCE_EXHAUSTED`, ...; the full map is in the
+[gRPC status table](#grpc-status-codes)) and the message reads
+`op: code: message`, for example
+`entity.get: not_found: user/1`. MCP returns a JSON-RPC 2.0 error; see the
+[MCP API](../mcp-server/api.md#standard-json-rpc-errors).
 
 ## Rate Limiting
 
 Each source IP may send 1000 requests per second by default, with a burst of
-the same size. Set `server.rest.rate_limit` to change the limit, or to `-1`
-to turn it off. Over the limit, the server returns HTTP 429 and sends no
-rate-limit headers:
+the same size. The budget covers every REST route, including the module
+routes the unified API server serves. Set `server.rest.rate_limit` to change
+the limit, or to `-1` to turn it off. Over the limit, the server returns HTTP
+429 with `Retry-After: 1` and the code `rate_limited`. Core and module routes
+return the same body. No `X-RateLimit-*` headers are sent.
+
+Over gRPC, a `rate_limited` error arrives as `RESOURCE_EXHAUSTED` with
+`rate_limited` in the status message. gRPC carries no retry-after hint. The Go
+SDK reports it as the retryable `rate_limited` code on both transports.
 
 ```json
 {
   "error": "rate limit exceeded: 1000 requests per 1s",
+  "code": "rate_limited",
   "timestamp": "2026-10-12T12:00:00Z",
   "request_id": "…",
-  "retryable": false
+  "retryable": true
 }
 ```
 
@@ -1948,17 +1987,37 @@ if err != nil {
 }
 ```
 
-Common error codes:
+#### gRPC Status Codes
 
-| Code | Description |
-|------|-------------|
-| `NOT_FOUND` | Entity not found |
-| `INVALID_ARGUMENT` | Invalid request parameters |
-| `UNAVAILABLE` | Service temporarily unavailable |
-| `DEADLINE_EXCEEDED` | Request timeout |
-| `INTERNAL` | Internal server error |
-| `UNAUTHENTICATED` | Authentication required |
-| `PERMISSION_DENIED` | Permission denied |
+Every `pkg/errors` code maps to one gRPC status. The status message carries
+the lower-case code as `op: code: message` (see [Error Handling](#error-handling)),
+so codes that share a status, such as `rate_limited` and `resource_exhausted`,
+stay distinguishable. The IAM, MFA, PEP and federation services answer
+`conflict` with `FAILED_PRECONDITION`. An error that is not a `pkg/errors`
+error is `INTERNAL`.
+
+| Status | `pkg/errors` codes |
+|--------|--------------------|
+| `UNKNOWN` | `unknown` |
+| `INVALID_ARGUMENT` | `invalid_input`, `validation`, `out_of_range`, `missing_tenant_context`, `missing_user_context`, `missing_justification` |
+| `UNAUTHENTICATED` | `unauthorized` |
+| `PERMISSION_DENIED` | `forbidden`, `not_allowed`, `cross_tenant_access`, `system_keyspace_violation` |
+| `NOT_FOUND` | `not_found` |
+| `ALREADY_EXISTS` | `already_exists`, `conflict` |
+| `FAILED_PRECONDITION` | `precondition_failed` |
+| `ABORTED` | `aborted` |
+| `CANCELLED` | `canceled` |
+| `DEADLINE_EXCEEDED` | `timeout`, `deadline_exceeded` |
+| `RESOURCE_EXHAUSTED` | `rate_limited`, `resource_exhausted` |
+| `UNAVAILABLE` | `unavailable`, `leader_not_available`, `cluster_not_ready`, `circuit_open` |
+| `UNIMPLEMENTED` | `unimplemented`, `not_implemented` |
+| `DATA_LOSS` | `data_loss` |
+| `INTERNAL` | `internal`, `storage`, `raft`, `quorum_lost`, `split_brain`, `replication`, `snapshot`, `configuration`, `encryption`, `decryption` |
+
+Clients read the code back from the status. The root gRPC client
+(`pkg/api/grpc`) returns the `pkg/errors` code, reading `rate_limited` from a
+`RESOURCE_EXHAUSTED` status message. The Go SDK has fewer codes: it reads
+`OUT_OF_RANGE` as `invalid_input` and `DATA_LOSS` as `internal`.
 
 ### Performance
 

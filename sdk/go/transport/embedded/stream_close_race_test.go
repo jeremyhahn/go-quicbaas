@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,4 +69,49 @@ func TestStream_CloseRacesHandlerSend(t *testing.T) {
 		}
 	}
 	t.Fatal("Recv did not end with ErrRecvOnClosedStream after Close")
+}
+
+// TestStream_CloseSendRacesSend runs Send concurrently with CloseSend. Before
+// the fix, CloseSend closed sendCh under a Send that had already passed its
+// sendDone check, panicking with "send on closed channel". Every Send must
+// either be delivered to the handler or fail with ErrSendOnClosedStream, and
+// the handler must see end of input once.
+func TestStream_CloseSendRacesSend(t *testing.T) {
+	for range 200 {
+		s := newStream(context.Background(), 1)
+
+		received := make(chan int)
+		go func() {
+			n := 0
+			for range s.sendChan() {
+				n++
+			}
+			received <- n
+		}()
+
+		var delivered atomic.Int64
+		var senders sync.WaitGroup
+		start := make(chan struct{})
+		for range 4 {
+			senders.Add(1)
+			go func() {
+				defer senders.Done()
+				<-start
+				for i := 0; ; i++ {
+					err := s.Send(i)
+					if err != nil {
+						assert.ErrorIs(t, err, ErrSendOnClosedStream)
+						return
+					}
+					delivered.Add(1)
+				}
+			}()
+		}
+		close(start)
+		require.NoError(t, s.CloseSend())
+		require.NoError(t, s.CloseSend())
+		senders.Wait()
+
+		assert.Equal(t, delivered.Load(), int64(<-received))
+	}
 }

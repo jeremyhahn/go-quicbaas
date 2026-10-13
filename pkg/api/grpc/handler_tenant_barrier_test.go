@@ -14,6 +14,7 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
@@ -195,4 +196,73 @@ func TestTenantBarrierRPCs_GenericErrorNotFailedPrecondition(t *testing.T) {
 	srv := NewTenantBarrierGRPCServer(svc, nil)
 	_, err := srv.Seal(context.Background(), &pb.TenantBarrierSealRequest{TenantId: "t1"})
 	requireGRPCCode(t, err, codes.Internal)
+}
+
+func TestTenantBarrierRPCs_NonUTF8CredentialReachesServiceIntactAndIsWiped(t *testing.T) {
+	var initSeen, unsealSeen []byte
+	svc := &fakeTenantBarrierServicer{
+		initFn: func(_ context.Context, _ string, passphrase []byte, _, _ int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+			if !bytes.Equal(passphrase, nonUTF8Credential) {
+				t.Errorf("init passphrase = %x, want %x", passphrase, nonUTF8Credential)
+			}
+			initSeen = passphrase
+			return nil, nil
+		},
+		unsealFn: func(_ context.Context, _ string, key []byte) error {
+			if !bytes.Equal(key, nonUTF8Credential) {
+				t.Errorf("unseal key = %x, want %x", key, nonUTF8Credential)
+			}
+			unsealSeen = key
+			return nil
+		},
+	}
+	srv := NewTenantBarrierGRPCServer(svc, nil)
+	ctx := context.Background()
+
+	initReq := &pb.TenantBarrierInitRequest{TenantId: "t1", Strategy: "passphrase", Passphrase: bytes.Clone(nonUTF8Credential)}
+	if _, err := srv.Init(ctx, overTheWire(t, initReq)); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	unsealReq := &pb.TenantBarrierUnsealRequest{TenantId: "t1", Key: bytes.Clone(nonUTF8Credential)}
+	if _, err := srv.Unseal(ctx, overTheWire(t, unsealReq)); err != nil {
+		t.Fatalf("Unseal: %v", err)
+	}
+
+	for name, seen := range map[string][]byte{"init passphrase": initSeen, "unseal key": unsealSeen} {
+		if len(seen) == 0 {
+			t.Fatalf("%s: the double retained nothing; the test cannot prove the wipe", name)
+		}
+		if !bytes.Equal(seen, make([]byte, len(seen))) {
+			t.Fatalf("%s is %x after the call, want zeros: the handler did not wipe it", name, seen)
+		}
+	}
+}
+
+func TestTenantBarrierEnableEncryption_NonUTF8PassphraseReachesServiceIntact(t *testing.T) {
+	var matched bool
+	barrier := &mockBarrierService{
+		enableEncryptionFn: func(_ context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
+			if tenantID != "t1" {
+				t.Errorf("tenant = %q, want t1", tenantID)
+			}
+			plain, err := opts.Credentials.Secret.Open()
+			if err != nil {
+				t.Errorf("open the forwarded credential: %v", err)
+				return nil
+			}
+			defer plain.Destroy()
+			matched = plain.EqualTo(nonUTF8Credential)
+			return nil
+		},
+	}
+	srv := NewTenantBarrierGRPCServer(&fakeTenantBarrierServicer{}, nil)
+	srv.SetBarrierService(barrier)
+	req := &pb.TenantBarrierEnableEncryptionRequest{TenantId: "t1", TargetStrategy: "passphrase", Passphrase: bytes.Clone(nonUTF8Credential)}
+
+	if _, err := srv.EnableEncryption(context.Background(), overTheWire(t, req)); err != nil {
+		t.Fatalf("EnableEncryption: %v", err)
+	}
+	if !matched {
+		t.Fatal("the service did not receive the passphrase bytes the client sent")
+	}
 }

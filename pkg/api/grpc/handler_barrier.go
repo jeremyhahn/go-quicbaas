@@ -140,7 +140,7 @@ func (s *BarrierServer) BarrierInitialize(ctx context.Context, req *pb.BarrierIn
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	secret := secretBytes(req.GetSecret())
+	secret := req.GetSecret()
 	defer secure.Wipe(secret)
 	if err := s.barrierSvc.BarrierInitialize(ctx, secret); err != nil {
 		return nil, mapBarrierError(err)
@@ -156,7 +156,7 @@ func (s *BarrierServer) BarrierUnseal(ctx context.Context, req *pb.BarrierUnseal
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	secret := secretBytes(req.GetSecret())
+	secret := req.GetSecret()
 	defer secure.Wipe(secret)
 	if err := s.barrierSvc.BarrierUnseal(ctx, secret); err != nil {
 		return nil, mapBarrierError(err)
@@ -211,7 +211,7 @@ func (s *BarrierServer) BarrierShamirInitialize(ctx context.Context, req *pb.Bar
 	if req.GetThreshold() > req.GetTotalShares() {
 		return nil, status.Error(codes.InvalidArgument, "threshold cannot exceed total_shares")
 	}
-	secret := secretBytes(req.GetSecret())
+	secret := req.GetSecret()
 	defer secure.Wipe(secret)
 	info, err := s.barrierSvc.BarrierInitializeShamir(ctx, secret, int(req.GetThreshold()), int(req.GetTotalShares()))
 	if err != nil {
@@ -417,8 +417,7 @@ func (s *BarrierServer) BarrierEnableEncryption(ctx context.Context, req *pb.Bar
 		ShamirThreshold: int(req.GetShamirThreshold()),
 		ShamirTotal:     int(req.GetShamirTotal()),
 	}
-	if p := req.GetPassphrase(); p != "" {
-		passphrase := secretBytes(p)
+	if passphrase := req.GetPassphrase(); len(passphrase) > 0 {
 		defer secure.Wipe(passphrase)
 		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
 		if credErr != nil {
@@ -432,15 +431,4 @@ func (s *BarrierServer) BarrierEnableEncryption(ctx context.Context, req *pb.Bar
 		return nil, mapBarrierError(err)
 	}
 	return &emptypb.Empty{}, nil
-}
-
-// secretBytes copies a credential out of the protobuf-decoded string into a
-// slice the caller can wipe. The string itself is immutable and unwipeable, so
-// this narrows the plaintext's lifetime rather than removing it: the residue
-// is the `string secret` field in api/proto/barrier.proto, tracked as #962.
-func secretBytes(s string) []byte {
-	if s == "" {
-		return nil
-	}
-	return []byte(s)
 }

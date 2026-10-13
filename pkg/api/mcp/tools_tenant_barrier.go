@@ -273,7 +273,7 @@ func executeTenantBarrierInit(ctx context.Context, svc service.TenantBarrierServ
 		return nil, &TenantBarrierTenantIDRequiredError{}
 	}
 
-	passphrase := secretBytes(getString(args, "passphrase"))
+	passphrase := credentialArg(args, "passphrase")
 	defer secure.Wipe(passphrase)
 	result, err := svc.TenantBarrierInit(
 		ctx,

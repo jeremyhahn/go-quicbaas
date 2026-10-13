@@ -314,7 +314,7 @@ func (s *Server) Put(ctx context.Context, req *pb.PutRequest) (*pb.PutResponse, 
 	if err != nil {
 		s.metrics.requestsTotal.With("Put", "error").Inc()
 		s.logger.WithError(err).Error("Failed to Put")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Build proto response
@@ -370,7 +370,7 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	if err != nil {
 		s.metrics.requestsTotal.With("Get", "error").Inc()
 		s.logger.WithError(err).Error("Failed to Get")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Check if entity exists
@@ -429,7 +429,7 @@ func (s *Server) Delete(ctx context.Context, req *pb.DeleteRequest) (*pb.DeleteR
 	if err != nil {
 		s.metrics.requestsTotal.With("Delete", "error").Inc()
 		s.logger.WithError(err).Error("Failed to Delete")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Build proto response
@@ -498,7 +498,7 @@ func (s *Server) List(req *pb.ListRequest, stream pb.QuicBaaS_ListServer) error 
 
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("List", "error").Inc()
-			return toServiceError(&errors.QBError{
+			return toProtoError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.List",
 				Err:  err,
@@ -640,7 +640,7 @@ func (s *Server) Watch(req *pb.WatchRequest, stream pb.QuicBaaS_WatchServer) err
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("Watch", "error").Inc()
 			s.logger.WithError(err).Error("Failed to send watch response")
-			return toServiceError(&errors.QBError{
+			return toProtoError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.Watch",
 				Err:  err,
@@ -709,7 +709,7 @@ func (s *Server) Query(req *pb.QueryRequest, stream pb.QuicBaaS_QueryServer) err
 
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("Query", "error").Inc()
-			return toServiceError(&errors.QBError{
+			return toProtoError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.Query",
 				Err:  err,
@@ -783,7 +783,7 @@ func (s *Server) ScanIndex(req *pb.ScanRequest, stream pb.QuicBaaS_ScanIndexServ
 
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("ScanIndex", "error").Inc()
-			return toServiceError(&errors.QBError{
+			return toProtoError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.ScanIndex",
 				Err:  err,
@@ -818,7 +818,7 @@ func (s *Server) ClusterStatus(ctx context.Context, req *pb.ClusterStatusRequest
 	if err != nil {
 		s.metrics.requestsTotal.With("ClusterStatus", "error").Inc()
 		s.logger.WithError(err).Error("Failed to get cluster status")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Convert service response to proto response
@@ -875,7 +875,7 @@ func (s *Server) GetLeader(ctx context.Context, req *pb.GetLeaderRequest) (*pb.G
 	if err != nil {
 		s.metrics.requestsTotal.With("GetLeader", "error").Inc()
 		s.logger.WithError(err).Error("Failed to get leader")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	resp := &pb.GetLeaderResponse{
@@ -923,7 +923,7 @@ func (s *Server) Aggregate(ctx context.Context, req *pb.AggregateRequest) (*pb.A
 	if err != nil {
 		s.metrics.requestsTotal.With("Aggregate", "error").Inc()
 		s.logger.WithError(err).Error("Failed to aggregate")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	resp := &pb.AggregateResponse{
@@ -995,7 +995,7 @@ func (s *Server) TimeSeriesQuery(req *pb.TimeSeriesQueryRequest, stream pb.QuicB
 
 		if err := stream.Send(resp); err != nil {
 			s.metrics.requestsTotal.With("TimeSeriesQuery", "error").Inc()
-			return toServiceError(&errors.QBError{
+			return toProtoError(&errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "grpc.TimeSeriesQuery",
 				Err:  err,
@@ -1050,7 +1050,7 @@ func (s *Server) BatchPut(ctx context.Context, req *pb.BatchPutRequest) (*pb.Bat
 	if err != nil {
 		s.metrics.requestsTotal.With("BatchPut", "error").Inc()
 		s.logger.WithError(err).Error("Batch put failed")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Convert service responses to proto responses
@@ -1114,7 +1114,7 @@ func (s *Server) BatchGet(ctx context.Context, req *pb.BatchGetRequest) (*pb.Bat
 	serviceBatchResp, err := s.service.BatchGet(ctx, serviceBatchReq)
 	if err != nil {
 		s.metrics.requestsTotal.With("BatchGet", "error").Inc()
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Convert service responses to proto responses
@@ -1174,7 +1174,7 @@ func (s *Server) BatchDelete(ctx context.Context, req *pb.BatchDeleteRequest) (*
 	if err != nil {
 		s.metrics.requestsTotal.With("BatchDelete", "error").Inc()
 		s.logger.WithError(err).Error("Batch delete failed")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Convert service responses to proto responses
@@ -1273,7 +1273,7 @@ func (s *Server) Transaction(ctx context.Context, req *pb.TransactionRequest) (*
 	if err != nil {
 		s.metrics.requestsTotal.With("Transaction", "error").Inc()
 		s.logger.WithError(err).Error("Failed to execute transaction")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Convert service responses to proto responses
@@ -1322,7 +1322,7 @@ func (s *Server) Health(ctx context.Context, req *pb.HealthRequest) (*pb.HealthR
 	serviceResp, err := s.service.Health(ctx, serviceReq)
 	if err != nil {
 		s.metrics.requestsTotal.With("Health", "error").Inc()
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Convert service response to proto response
@@ -1381,7 +1381,7 @@ func (s *Server) CreateBackup(ctx context.Context, req *pb.CreateBackupRequest) 
 	if err != nil {
 		s.metrics.requestsTotal.With("CreateBackup", "error").Inc()
 		s.logger.WithError(err).Error("Failed to create backup")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Build proto response
@@ -1416,7 +1416,7 @@ func (s *Server) ListBackups(ctx context.Context, req *pb.ListBackupsRequest) (*
 	if err != nil {
 		s.metrics.requestsTotal.With("ListBackups", "error").Inc()
 		s.logger.WithError(err).Error("Failed to list backups")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Convert service backups to proto backups
@@ -1473,7 +1473,7 @@ func (s *Server) RestoreBackup(ctx context.Context, req *pb.RestoreBackupRequest
 	if err != nil {
 		s.metrics.requestsTotal.With("RestoreBackup", "error").Inc()
 		s.logger.WithError(err).Error("Failed to restore backup")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Build proto response
@@ -1517,7 +1517,7 @@ func (s *Server) DeleteBackup(ctx context.Context, req *pb.DeleteBackupRequest) 
 	if err != nil {
 		s.metrics.requestsTotal.With("DeleteBackup", "error").Inc()
 		s.logger.WithError(err).Error("Failed to delete backup")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Build proto response
@@ -1555,7 +1555,7 @@ func (s *Server) VerifyBackup(ctx context.Context, req *pb.VerifyBackupRequest) 
 	if err != nil {
 		s.metrics.requestsTotal.With("VerifyBackup", "error").Inc()
 		s.logger.WithError(err).Error("Failed to verify backup")
-		return nil, toServiceError(err)
+		return nil, toProtoError(err)
 	}
 
 	// Build verification message from issues

@@ -210,6 +210,27 @@ func newBarrierTestRegistry(t *testing.T, fake service.BarrierServicer) *ToolReg
 
 // TestBarrierToolsRegistered asserts every documented barrier tool is present
 // in the registry's tool list.
+func TestCredentialArg_CopiesTheStringIntoBytes(t *testing.T) {
+	args := map[string]interface{}{"secret": "s3cr3t ✓"}
+
+	got := credentialArg(args, "secret")
+
+	assert.Equal(t, []byte("s3cr3t ✓"), got)
+}
+
+func TestCredentialArg_AbsentOrNonStringIsNil(t *testing.T) {
+	cases := map[string]map[string]interface{}{
+		"absent":     {},
+		"empty":      {"secret": ""},
+		"non-string": {"secret": 42},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			assert.Nil(t, credentialArg(args, "secret"))
+		})
+	}
+}
+
 func TestBarrierToolsRegistered(t *testing.T) {
 	r := newBarrierTestRegistry(t, &fakeBarrierService{})
 	got := map[string]bool{}

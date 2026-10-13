@@ -329,6 +329,7 @@ func TestBarrierWire_MalformedBase64SecretIsRejected(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for a malformed base64 secret, got %d (body=%s)", w.Code, w.Body.String())
 	}
+	assertCredentialEncodingRefusal(t, w, "s3cr3t")
 	if called {
 		t.Fatal("a malformed credential reached the barrier service")
 	}
@@ -402,8 +403,38 @@ func TestTenantBarrierWire_MalformedBase64PassphraseIsRejected(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for a malformed base64 passphrase, got %d (body=%s)", w.Code, w.Body.String())
 	}
+	assertCredentialEncodingRefusal(t, w, "s3cr3t")
 	if called {
 		t.Fatal("a malformed credential reached the tenant barrier service")
+	}
+}
+
+// assertCredentialEncodingRefusal checks that a 400 for a malformed credential
+// carries BarrierCredentialEncodingError and does not echo the rejected text,
+// which may be a raw credential the caller forgot to encode.
+func assertCredentialEncodingRefusal(t *testing.T, w *httptest.ResponseRecorder, rejected string) {
+	t.Helper()
+	var resp ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if want := (&BarrierCredentialEncodingError{}).Error(); resp.Error != want {
+		t.Fatalf("error = %q, want %q", resp.Error, want)
+	}
+	if strings.Contains(w.Body.String(), rejected) {
+		t.Fatalf("the refusal echoed the rejected credential: %s", w.Body.String())
+	}
+}
+
+// TestBarrierWire_MalformedJSONIsNotACredentialEncodingError keeps the typed
+// refusal specific: a body that is not JSON at all is still "invalid JSON".
+func TestBarrierWire_MalformedJSONIsNotACredentialEncodingError(t *testing.T) {
+	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/v1/barrier/unseal", `{"secret":`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a truncated body, got %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), (&BarrierCredentialEncodingError{}).Error()) {
+		t.Fatalf("a truncated body was reported as a credential encoding error: %s", w.Body.String())
 	}
 }
 

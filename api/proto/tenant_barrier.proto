@@ -99,7 +99,7 @@ message TenantBarrierInitRequest {
   // tenant_id identifies the target tenant.
   string tenant_id = 1;
   // passphrase is the sealing passphrase (passphrase strategy).
-  string passphrase = 2;
+  bytes passphrase = 2;
   // threshold is the Shamir quorum threshold (Shamir strategy).
   int32 threshold = 3;
   // shares is the total number of Shamir shares (Shamir strategy).
@@ -204,7 +204,7 @@ message TenantBarrierEnableEncryptionRequest {
   string availability = 4;
 
   // passphrase is required for a passphrase-target migration.
-  string passphrase = 5;
+  bytes passphrase = 5;
 
   // shamir_threshold is the M-of-N quorum threshold for a Shamir-target
   // migration.

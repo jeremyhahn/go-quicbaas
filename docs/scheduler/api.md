@@ -218,16 +218,14 @@ All API requests require authentication via:
 - **MCP**: Session-based authentication
 - **Unix Socket**: Process UID/GID verification
 
-## Error Codes
+## Errors
 
-| Code | Description |
-|------|-------------|
-| `JOB_NOT_FOUND` | Job ID does not exist |
-| `INVALID_STATE_TRANSITION` | Invalid state change requested |
-| `HANDLER_NOT_FOUND` | Unknown handler type |
-| `INVALID_SCHEDULE` | Malformed schedule specification |
-| `PERMISSION_DENIED` | Insufficient permissions |
-| `TENANT_MISMATCH` | Job belongs to different tenant |
+Scheduler errors are not sent as scheduler-specific codes. Each transport
+reports them through its own status: REST and QUIC return the flat REST error
+body with an HTTP status (see [Error Responses](#error-responses)), gRPC and
+Unix return a gRPC status code (see the gRPC [Error Handling](#error-handling)).
+The shared lower-case error codes are listed in
+[Multi-Protocol API: Error Handling](../multiprotocol-api/api.md#error-handling).
 
 
 ---
@@ -714,45 +712,33 @@ GET /status
 
 ### Error Responses
 
-All endpoints return standard error responses:
+Errors use the flat REST error body shared by every route (see
+[Multi-Protocol API: Error Handling](../multiprotocol-api/api.md#error-handling)).
+Scheduler errors carry no `code` field and are sent with `retryable: false`;
+the HTTP status is the signal:
 
 ```json
 {
-  "error": {
-    "code": "SCHEDULER_JOB_NOT_FOUND",
-    "message": "Job with ID 12345 not found"
-  }
+  "error": "resource not found: job not found: 12345",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "request_id": "req-abc123",
+  "retryable": false
 }
 ```
 
 #### HTTP Status Codes
 
-| Status | Description |
-|--------|-------------|
-| 200 | Success |
-| 201 | Created |
-| 400 | Bad Request - Invalid input |
-| 401 | Unauthorized - Invalid/missing token |
-| 403 | Forbidden - Insufficient permissions |
-| 404 | Not Found - Resource not found |
-| 409 | Conflict - Invalid state transition |
-| 500 | Internal Server Error |
-
-#### Error Codes
-
-| Code | Description |
-|------|-------------|
-| `SCHEDULER_JOB_NOT_FOUND` | Job ID does not exist |
-| `SCHEDULER_JOB_EXISTS` | Job with same ID already exists |
-| `SCHEDULER_INVALID_JOB` | Invalid job definition |
-| `SCHEDULER_INVALID_SCHEDULE` | Malformed cron expression |
-| `SCHEDULER_HANDLER_NOT_FOUND` | Unknown handler type |
-| `SCHEDULER_HANDLER_FAILED` | Handler execution failed |
-| `SCHEDULER_JOB_TIMEOUT` | Job exceeded timeout |
-| `SCHEDULER_MAX_RETRIES` | Max retries exceeded |
-| `SCHEDULER_STOPPED` | Scheduler not running |
-| `SCHEDULER_UNAUTHORIZED` | Insufficient permissions |
-| `SCHEDULER_STORAGE_ERROR` | Storage operation failed |
+| Status | Scheduler condition |
+|--------|---------------------|
+| 400 | Invalid job definition or malformed schedule |
+| 401 | Missing or invalid token |
+| 403 | Caller is not authorized for the job |
+| 404 | Job or handler not found |
+| 409 | Job with the same ID already exists |
+| 429 | Job exceeded its maximum retries |
+| 500 | Handler or storage failure |
+| 503 | Scheduler is stopped or unavailable |
+| 504 | Job exceeded its timeout |
 
 
 ---
@@ -1189,18 +1175,19 @@ message GetSchedulerStatusResponse {
 
 ### Error Handling
 
-gRPC status codes map to scheduler errors:
+Scheduler errors are returned as a gRPC status; the status message is the
+error text. There are no scheduler-specific codes on the wire:
 
-| gRPC Code | Scheduler Error |
-|-----------|-----------------|
-| `NOT_FOUND` | `SCHEDULER_JOB_NOT_FOUND` |
-| `ALREADY_EXISTS` | `SCHEDULER_JOB_EXISTS` |
-| `INVALID_ARGUMENT` | `SCHEDULER_INVALID_JOB`, `SCHEDULER_INVALID_SCHEDULE` |
-| `FAILED_PRECONDITION` | Invalid state transition |
-| `PERMISSION_DENIED` | `SCHEDULER_UNAUTHORIZED` |
-| `UNAVAILABLE` | `SCHEDULER_STOPPED` |
-| `DEADLINE_EXCEEDED` | `SCHEDULER_JOB_TIMEOUT` |
-| `INTERNAL` | `SCHEDULER_STORAGE_ERROR`, `SCHEDULER_HANDLER_FAILED` |
+| gRPC Code | Scheduler condition |
+|-----------|---------------------|
+| `INVALID_ARGUMENT` | Missing `job_id`, name or handler; invalid job definition or schedule |
+| `NOT_FOUND` | Job or handler not found |
+| `ALREADY_EXISTS` | Job with the same ID already exists |
+| `PERMISSION_DENIED` | Caller is not authorized for the job |
+| `DEADLINE_EXCEEDED` | Job exceeded its timeout |
+| `RESOURCE_EXHAUSTED` | Job exceeded its maximum retries |
+| `UNAVAILABLE` | Scheduler is stopped or the job service is not available |
+| `INTERNAL` | Handler or storage failure |
 
 **Example Error Handling (Go):**
 
@@ -1808,16 +1795,9 @@ func main() {
 
 ### Error Handling
 
-Errors are returned with a non-zero status code and optional JSON error payload:
-
-```json
-{
-  "code": "SCHEDULER_JOB_NOT_FOUND",
-  "message": "Job with ID 12345 not found"
-}
-```
-
-Check the status byte first, then parse the error payload if status is not `0x00`.
+The QUIC transport carries the REST requests over HTTP/3, so errors are the
+same HTTP status and flat REST error body described in
+[Error Responses](#error-responses).
 
 
 ---
@@ -2307,32 +2287,10 @@ No input parameters required.
 
 ### Error Handling
 
-MCP tools return errors in the standard JSON-RPC 2.0 error format:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32000,
-    "message": "Job not found",
-    "data": {
-      "code": "SCHEDULER_JOB_NOT_FOUND",
-      "job_id": 12345
-    }
-  }
-}
-```
-
-#### Error Codes
-
-| Code | MCP Code | Description |
-|------|----------|-------------|
-| `SCHEDULER_JOB_NOT_FOUND` | -32001 | Job ID does not exist |
-| `SCHEDULER_INVALID_JOB` | -32002 | Invalid job definition |
-| `SCHEDULER_HANDLER_NOT_FOUND` | -32003 | Unknown handler |
-| `SCHEDULER_UNAUTHORIZED` | -32004 | Access denied |
-| `SCHEDULER_STOPPED` | -32005 | Scheduler not running |
+MCP tools return errors in the standard JSON-RPC 2.0 error envelope; the
+`message` is the scheduler error text. There are no scheduler-specific error
+codes. See
+[MCP Server API: Standard JSON-RPC Errors](../mcp-server/api.md#standard-json-rpc-errors).
 
 ### Usage Patterns
 
@@ -2832,18 +2790,15 @@ dragonctl scheduler status
 
 ### Error Handling
 
-```go
-if status != StatusOK {
-    var errResp struct {
-        Code    string `json:"code"`
-        Message string `json:"message"`
-    }
-    json.Unmarshal(respPayload, &errResp)
+The Unix socket serves gRPC, so errors are the gRPC status codes listed in the
+gRPC [Error Handling](#error-handling) section:
 
-    switch errResp.Code {
-    case "SCHEDULER_JOB_NOT_FOUND":
+```go
+if _, err := client.GetJob(ctx, req); err != nil {
+    switch status.Code(err) {
+    case codes.NotFound:
         // Handle not found
-    case "SCHEDULER_UNAUTHORIZED":
+    case codes.PermissionDenied:
         // Handle permission denied
     default:
         // Handle other errors

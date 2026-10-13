@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -572,7 +573,7 @@ func FromGRPCError(err error) error {
 	}
 
 	// Map gRPC code to QuicBaaS error code
-	code := grpcCodeToErrorCode(st.Code())
+	code := StatusErrorCode(st)
 
 	return &dberrors.QBError{
 		Code: code,
@@ -588,6 +589,25 @@ func grpcCodeToErrorCode(code codes.Code) dberrors.ErrorCode {
 		return errCode
 	}
 	return dberrors.ErrInternal
+}
+
+// StatusErrorCode maps a gRPC status to its QuicBaaS error code. The server
+// sends both rate_limited and resource_exhausted as ResourceExhausted and names
+// the code in the status message, which reads "op: code: message" (or
+// "code: message" without an op), so a throttled call reads back as
+// rate_limited.
+func StatusErrorCode(st *status.Status) dberrors.ErrorCode {
+	code := grpcCodeToErrorCode(st.Code())
+	if code != dberrors.ErrResourceExhausted {
+		return code
+	}
+	parts := strings.SplitN(st.Message(), ": ", 3)
+	for i := 0; i < len(parts) && i < 2; i++ {
+		if parts[i] == dberrors.ErrRateLimited.String() {
+			return dberrors.ErrRateLimited
+		}
+	}
+	return code
 }
 
 // =============================================================================

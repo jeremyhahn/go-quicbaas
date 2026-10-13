@@ -196,15 +196,12 @@ Detailed API documentation for each protocol:
 
 ## Error Codes
 
-| Code | Description |
-|------|-------------|
-| `CHANNEL_NOT_FOUND` | Channel does not exist |
-| `CHANNEL_EXISTS` | Channel already exists |
-| `SUBSCRIPTION_NOT_FOUND` | Subscription ID invalid |
-| `MAX_SUBSCRIBERS` | Channel subscriber limit reached |
-| `INVALID_PAYLOAD` | Message payload invalid |
-| `UNAUTHORIZED` | Insufficient permissions |
-| `RATE_LIMITED` | Too many requests |
+Messaging errors use the shared, lower-case error codes; see
+[Error Handling](../multiprotocol-api/api.md#error-handling). REST answers a
+missing channel or subscription with 404, an existing channel with 409, an
+invalid payload with 400, missing permissions with 403 and too many requests
+with 429 `rate_limited`. gRPC status codes are listed under
+[Error Codes](#error-codes-1) below.
 
 ## Related Documentation
 
@@ -719,13 +716,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ### Error Responses
 
-All endpoints return a standard error envelope:
+All endpoints return the flat error body described in
+[Error Handling](../multiprotocol-api/api.md#error-handling). Validation
+failures carry no `code` field:
 
 ```json
 {
-  "error": "channel name is required",
-  "code": "VALIDATION",
-  "details": {},
+  "error": "validation error: channel name is required",
   "timestamp": "2025-01-20T00:00:00Z",
   "request_id": "req_abc123",
   "retryable": false
@@ -748,6 +745,9 @@ All endpoints return a standard error envelope:
 | 503 | Service Unavailable -- leader not available |
 
 #### Common Error Conditions
+
+The `error` field of a 400 reads `validation error: ` followed by the message
+below.
 
 | Condition | Status | Error Message |
 |-----------|--------|---------------|

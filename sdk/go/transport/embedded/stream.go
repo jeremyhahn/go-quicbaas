@@ -15,6 +15,7 @@ package embedded
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 )
 
@@ -27,24 +28,37 @@ type stream struct {
 	sendCh   chan interface{}
 	closed   atomic.Bool
 	sendDone atomic.Bool
+	// sendQuit is closed by CloseSend to wake every Send blocked on a full
+	// sendCh before sendCh itself is closed.
+	sendQuit chan struct{}
+	// sendMu keeps CloseSend from closing sendCh under an in-flight Send:
+	// Send holds the read lock for its channel send, CloseSend takes the write
+	// lock to close sendCh.
+	sendMu sync.RWMutex
 }
 
 // newStream creates a new embedded stream.
 func newStream(ctx context.Context, bufferSize int) *stream {
 	ctx, cancel := context.WithCancel(ctx)
 	return &stream{
-		ctx:    ctx,
-		cancel: cancel,
-		recvCh: make(chan interface{}, bufferSize),
-		sendCh: make(chan interface{}, bufferSize),
+		ctx:      ctx,
+		cancel:   cancel,
+		recvCh:   make(chan interface{}, bufferSize),
+		sendCh:   make(chan interface{}, bufferSize),
+		sendQuit: make(chan struct{}),
 	}
 }
 
-// Send sends a message on the stream.
+// Send sends a message on the stream. It returns ErrSendOnClosedStream once
+// the stream or its send side is closed; a Send blocked when CloseSend runs
+// either completes or returns ErrSendOnClosedStream.
 func (s *stream) Send(msg interface{}) error {
 	if s.closed.Load() {
 		return ErrSendOnClosedStream
 	}
+
+	s.sendMu.RLock()
+	defer s.sendMu.RUnlock()
 	if s.sendDone.Load() {
 		return ErrSendOnClosedStream
 	}
@@ -52,6 +66,8 @@ func (s *stream) Send(msg interface{}) error {
 	select {
 	case <-s.ctx.Done():
 		return s.ctx.Err()
+	case <-s.sendQuit:
+		return ErrSendOnClosedStream
 	case s.sendCh <- msg:
 		return nil
 	}
@@ -101,11 +117,18 @@ func (s *stream) drainAfterClose() (interface{}, error) {
 	}
 }
 
-// CloseSend closes the send side of the stream.
+// CloseSend closes the send side of the stream; the handler sees end of input
+// when sendCh is closed. It first wakes any blocked Send, then waits for the
+// in-flight Sends to leave before closing sendCh, so no Send can panic.
 func (s *stream) CloseSend() error {
-	if s.sendDone.CompareAndSwap(false, true) {
-		close(s.sendCh)
+	if !s.sendDone.CompareAndSwap(false, true) {
+		return nil
 	}
+	close(s.sendQuit)
+
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	close(s.sendCh)
 	return nil
 }
 

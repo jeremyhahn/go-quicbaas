@@ -135,7 +135,7 @@ func (c ErrorCode) String() string {
 // IsRetryable returns true if errors with this code can be retried.
 func (c ErrorCode) IsRetryable() bool {
 	switch c {
-	case CodeUnavailable, CodeTimeout, CodeResourceExhausted:
+	case CodeUnavailable, CodeTimeout, CodeResourceExhausted, CodeRateLimited:
 		return true
 	default:
 		return false

@@ -218,28 +218,30 @@ GET /v1/ollama/health
 
 ## Error Responses
 
-All endpoints return standard error responses:
+All endpoints return the flat error body described in
+[Error Handling](../multiprotocol-api/api.md#error-handling):
 
 ```json
 {
-  "error": {
-    "code": "OLLAMA_UNAVAILABLE",
-    "message": "Ollama service is not available",
-    "details": "connection refused"
-  }
+  "error": "validation error: ollama service not configured",
+  "timestamp": "2026-10-12T12:00:00Z",
+  "request_id": "…",
+  "retryable": false
 }
 ```
 
-### Error Codes
+### HTTP Status Codes
 
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| `OLLAMA_NOT_CONFIGURED` | 503 | Ollama integration is not configured |
-| `OLLAMA_DISABLED` | 503 | Ollama integration is disabled |
-| `OLLAMA_UNAVAILABLE` | 503 | Cannot connect to Ollama |
-| `MODEL_NOT_FOUND` | 404 | Requested model not found |
-| `INVALID_REQUEST` | 400 | Invalid request parameters |
-| `TIMEOUT` | 504 | Request timed out |
+| HTTP Status | `code` | Meaning |
+|-------------|--------|---------|
+| 400 | — | Invalid request (missing `model`, `text` or `texts`, bad JSON) |
+| 404 | — | Requested model not found |
+| 503 | — | Ollama integration is not configured |
+| 503 | `unavailable` | Ollama cannot be reached; retryable |
+
+Error codes are the lower-case codes listed in
+[Error Handling](../multiprotocol-api/api.md#error-handling); client-error
+classes carry no `code` field.
 
 ## MCP Tools
 

@@ -25,7 +25,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // AdminStorage defines the interface for admin assignment persistence operations.
@@ -892,33 +891,6 @@ func generateImpersonationSessionID() (string, error) {
 		return "", err
 	}
 	return "imp_" + hex.EncodeToString(bytes), nil
-}
-
-// auditLogIDEntropyBytes is the size of an audit event ID. 128 bits keeps the
-// chance of two events sharing an ID negligible.
-const auditLogIDEntropyBytes = 16
-
-// auditLogIDEntropy is the randomness generateAuditLogID draws on. It is a
-// variable so a test can make the CSPRNG fail without touching the
-// process-global RNG state every other test in this package shares.
-var auditLogIDEntropy = xkms.Rand
-
-// generateAuditLogID generates a cryptographically secure random audit log ID.
-//
-// The ID is the key the audit store files an event under (AuditStorage
-// saves and fetches events by it), not a secret: it is returned to admins on the
-// impersonation session. So the property it must keep is uniqueness. A
-// timestamp fallback would give two events failing in the same nanosecond, or
-// on hosts with coarse clocks, the same key, and the second would silently
-// overwrite the first. A CSPRNG failure is therefore refused with
-// AuditLogIDGenerationError, and the caller does not perform the audited
-// operation.
-func generateAuditLogID() (string, error) {
-	b, err := auditLogIDEntropy(auditLogIDEntropyBytes)
-	if err != nil {
-		return "", &AuditLogIDGenerationError{Cause: err}
-	}
-	return "audit_" + hex.EncodeToString(b), nil
 }
 
 // matchResourcePattern checks if a resource ID matches a resource pattern.

@@ -16,6 +16,8 @@ package grpc
 
 import (
 	"context"
+	stderrors "errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +30,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	apigrpc "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -205,6 +209,7 @@ func (t *Transport) requestWithRetry(ctx context.Context, service, method string
 			return resp, nil
 		}
 
+		err = typedError(err)
 		lastErr = err
 
 		// Check if error is retryable
@@ -649,6 +654,43 @@ func (s *stream) Close() error {
 }
 
 // convertGRPCError converts a gRPC error to a QBError.
+// typedError gives a raw gRPC status error, as the service handlers return
+// it, the SDK error code its status maps to, so callers can branch on
+// errors.Code and errors.IsRetryable whichever service they called. Errors
+// that already carry an SDK code, and errors that are not gRPC statuses,
+// pass through unchanged.
+//
+// Handlers built on the server package's gRPC client (kms, crypto, scheduler,
+// secrets) return that package's error instead of a status. Its status is
+// rebuilt from the same code map the server uses, with the server's original
+// message, so both paths give a caller the same SDK code.
+func typedError(err error) error {
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
+		return err
+	}
+	var apiErr *qberrors.QBError
+	if stderrors.As(err, &apiErr) {
+		return convertGRPCError(apiStatusError(apiErr), "grpc.Request")
+	}
+	if _, ok := status.FromError(err); !ok {
+		return err
+	}
+	return convertGRPCError(err, "grpc.Request")
+}
+
+// apiStatusError rebuilds the gRPC status behind a server-package error. That
+// package's client keeps the status message as the wrapped error, so the
+// message is the one the server sent; an error with nothing wrapped keeps its
+// own text.
+func apiStatusError(apiErr *qberrors.QBError) error {
+	message := apiErr.Error()
+	if apiErr.Err != nil {
+		message = apiErr.Err.Error()
+	}
+	return status.Error(status.Code(apigrpc.ToGRPCError(apiErr)), message)
+}
+
 func convertGRPCError(err error, op string) error {
 	if err == nil {
 		return nil
@@ -674,7 +716,7 @@ func convertGRPCError(err error, op string) error {
 	case codes.Unauthenticated:
 		code = errors.CodeUnauthorized
 	case codes.ResourceExhausted:
-		code = errors.CodeResourceExhausted
+		code = resourceExhaustedCode(st.Message())
 	case codes.FailedPrecondition:
 		code = errors.CodePreconditionFailed
 	case codes.Aborted:
@@ -689,11 +731,33 @@ func convertGRPCError(err error, op string) error {
 		code = errors.CodeTimeout
 	case codes.Canceled:
 		code = errors.CodeCanceled
+	case codes.OutOfRange:
+		code = errors.CodeInvalidInput
+	case codes.DataLoss:
+		code = errors.CodeInternal
 	default:
 		code = errors.CodeUnknown
 	}
 
 	return errors.Wrap(err, code, op, st.Message())
+}
+
+// rateLimitedCode is the server's pkg/errors code for a call refused by rate
+// limiting. The server sends it, like resource_exhausted, as gRPC
+// ResourceExhausted, and names the code in the status message, which reads
+// "op: code: message" (or "code: message" without an op).
+const rateLimitedCode = "rate_limited"
+
+// resourceExhaustedCode tells a rate-limited call apart from exhausted
+// resources by the code the server wrote into the status message.
+func resourceExhaustedCode(message string) errors.ErrorCode {
+	parts := strings.SplitN(message, ": ", 3)
+	for i := 0; i < len(parts) && i < 2; i++ {
+		if parts[i] == rateLimitedCode {
+			return errors.CodeRateLimited
+		}
+	}
+	return errors.CodeResourceExhausted
 }
 
 // isRetryableError returns true if the error can be retried.

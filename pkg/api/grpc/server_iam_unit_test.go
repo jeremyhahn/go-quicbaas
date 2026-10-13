@@ -189,6 +189,24 @@ func TestConvertIAMError(t *testing.T) {
 			},
 			expectedCode: codes.Internal,
 		},
+		{
+			name: "rate limited error",
+			err: &errors.QBError{
+				Code: errors.ErrRateLimited,
+				Op:   "test",
+				Err:  stderrors.New("too many requests"),
+			},
+			expectedCode: codes.ResourceExhausted,
+		},
+		{
+			name: "conflict stays failed precondition",
+			err: &errors.QBError{
+				Code: errors.ErrConflict,
+				Op:   "test",
+				Err:  stderrors.New("conflict"),
+			},
+			expectedCode: codes.FailedPrecondition,
+		},
 	}
 
 	for _, tt := range tests {
