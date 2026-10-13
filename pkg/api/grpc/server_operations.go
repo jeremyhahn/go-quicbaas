@@ -114,16 +114,19 @@ func (s *Server) GetRebalanceProgress(ctx context.Context, req *pb.GetRebalanceP
 		return nil, toProtoError(err)
 	}
 
-	return &pb.GetRebalanceProgressResponse{
-		OperationId: serviceResp.OperationID,
-		//nolint:gosec // G115: ShardsMoved is bounded by cluster size, safe for int32
-		ShardsMoved: int32(serviceResp.ShardsMoved),
-		//nolint:gosec // G115: TotalShards is bounded by cluster size, safe for int32
-		TotalShards:     int32(serviceResp.TotalShards),
+	var narrow responseNarrower
+	out := &pb.GetRebalanceProgressResponse{
+		OperationId:     serviceResp.OperationID,
+		ShardsMoved:     narrow.int32("shards_moved", serviceResp.ShardsMoved),
+		TotalShards:     narrow.int32("total_shards", serviceResp.TotalShards),
 		PercentComplete: serviceResp.Progress,
 		ElapsedTime:     int64(serviceResp.ElapsedSeconds),
 		Status:          serviceResp.Status,
-	}, nil
+	}
+	if err := narrow.err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ReplaceNode replaces a failed node in the cluster.

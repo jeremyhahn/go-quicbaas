@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -849,6 +850,23 @@ func TestHandleKVList_FullCoverage(t *testing.T) {
 				}).Return(nil).Once()
 			},
 			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "list total count beyond int is a server failure",
+			path: "/api/v1/kv/users",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.ExpectedCalls = nil
+				m.On("List", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+					stream := args.Get(2).(chan<- *service.ListResponse)
+					stream <- &service.ListResponse{
+						Entities:   []*service.Entity{},
+						TotalCount: math.MaxUint64,
+					}
+					close(stream)
+				}).Return(nil).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			checkResponse:  requireServerFailure,
 		},
 		{
 			name:           "list with invalid consistency parameter",

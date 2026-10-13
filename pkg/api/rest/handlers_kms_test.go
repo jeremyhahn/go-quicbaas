@@ -1886,7 +1886,8 @@ func TestSvcKeyHandleToResponse(t *testing.T) {
 			CreatedAt: now,
 		}
 
-		resp := svcKeyHandleToResponse(kh)
+		resp, err := svcKeyHandleToResponse(kh)
+		require.NoError(t, err)
 
 		require.NotNil(t, resp)
 		assert.Equal(t, "test-key-001", resp.KeyID)
@@ -1905,7 +1906,8 @@ func TestSvcKeyHandleToResponse(t *testing.T) {
 			CreatedAt: time.Unix(0, 0),
 		}
 
-		resp := svcKeyHandleToResponse(kh)
+		resp, err := svcKeyHandleToResponse(kh)
+		require.NoError(t, err)
 
 		require.NotNil(t, resp)
 		assert.Equal(t, 0, resp.Version)
@@ -1934,7 +1936,8 @@ func TestSvcMetadataToRESTResponse(t *testing.T) {
 			Owner:              "admin-user",
 		}
 
-		resp := svcMetadataToRESTResponse(md)
+		resp, err := svcMetadataToRESTResponse(md)
+		require.NoError(t, err)
 
 		require.NotNil(t, resp)
 		assert.Equal(t, "meta-key-001", resp.KeyID)
@@ -1964,7 +1967,8 @@ func TestSvcMetadataToRESTResponse(t *testing.T) {
 			UpdatedAt: now,
 		}
 
-		resp := svcMetadataToRESTResponse(md)
+		resp, err := svcMetadataToRESTResponse(md)
+		require.NoError(t, err)
 
 		require.NotNil(t, resp)
 		assert.Equal(t, int64(0), resp.LastUsedAt)

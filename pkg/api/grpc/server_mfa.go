@@ -238,10 +238,15 @@ func (s *MFAServer) GetStatus(ctx context.Context, req *iampb.GetMFAStatusReques
 		return nil, convertMFAError(err)
 	}
 
+	backupCodesRemaining, err := responseInt32("backup_codes_remaining", mfaStatus.BackupCodesRemaining)
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &iampb.GetMFAStatusResponse{
 		Enabled:              mfaStatus.Enabled,
 		Method:               convertMFAMethodToProto(mfaStatus.Method),
-		BackupCodesRemaining: int32(mfaStatus.BackupCodesRemaining), //nolint:gosec // G115: Backup code count
+		BackupCodesRemaining: backupCodesRemaining,
 	}
 
 	if mfaStatus.EnrolledAt != nil && !mfaStatus.EnrolledAt.IsZero() {
@@ -335,9 +340,14 @@ func (s *MFAServer) VerifyBackupCode(ctx context.Context, req *iampb.VerifyBacku
 		remaining = backupStatus.Remaining
 	}
 
+	remainingCodes, err := responseInt32("remaining_codes", remaining)
+	if err != nil {
+		return nil, err
+	}
+
 	return &iampb.VerifyBackupCodeResponse{
 		Success:        true,
-		RemainingCodes: int32(remaining), //nolint:gosec // G115: Backup code count
+		RemainingCodes: remainingCodes,
 	}, nil
 }
 
@@ -360,9 +370,13 @@ func (s *MFAServer) GetBackupCodeStatus(ctx context.Context, req *iampb.GetBacku
 		return nil, convertMFAError(err)
 	}
 
+	var narrow responseNarrower
 	resp := &iampb.GetBackupCodeStatusResponse{
-		TotalCodes:     int32(backupStatus.Total),     //nolint:gosec // G115: Backup code count
-		RemainingCodes: int32(backupStatus.Remaining), //nolint:gosec // G115: Backup code count
+		TotalCodes:     narrow.int32("total_codes", backupStatus.Total),
+		RemainingCodes: narrow.int32("remaining_codes", backupStatus.Remaining),
+	}
+	if err := narrow.err(); err != nil {
+		return nil, err
 	}
 
 	if !backupStatus.GeneratedAt.IsZero() {

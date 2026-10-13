@@ -528,6 +528,53 @@ func TestSafeIntToInt32(t *testing.T) {
 	}
 }
 
+func TestSafeUint32ToInt32(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   uint32
+		want    int32
+		wantErr bool
+	}{
+		{
+			name:    "zero value",
+			input:   0,
+			want:    0,
+			wantErr: false,
+		},
+		{
+			name:    "max int32 value",
+			input:   math.MaxInt32,
+			want:    math.MaxInt32,
+			wantErr: false,
+		},
+		{
+			name:    "exceeds max int32",
+			input:   uint32(math.MaxInt32) + 1,
+			want:    0,
+			wantErr: true,
+		},
+		{
+			name:    "max uint32 value",
+			input:   math.MaxUint32,
+			want:    0,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SafeUint32ToInt32(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SafeUint32ToInt32(%d) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("SafeUint32ToInt32(%d) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSafeUint32ToUint8 tests SafeUint32ToUint8 with both valid and invalid inputs.
 func TestSafeUint32ToUint8(t *testing.T) {
 	tests := []struct {
@@ -926,6 +973,53 @@ func TestClampIntToInt32(t *testing.T) {
 			got := ClampIntToInt32(tt.input)
 			if got != tt.want {
 				t.Errorf("ClampIntToInt32(%d) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClampUint64ToInt32(t *testing.T) {
+	tests := []struct {
+		name  string
+		input uint64
+		want  int32
+	}{
+		{name: "zero value", input: 0, want: 0},
+		{name: "small value", input: 42, want: 42},
+		{name: "max int32 value", input: math.MaxInt32, want: math.MaxInt32},
+		{name: "just above max int32 saturates", input: math.MaxInt32 + 1, want: math.MaxInt32},
+		{name: "max uint64 saturates", input: math.MaxUint64, want: math.MaxInt32},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ClampUint64ToInt32(tt.input); got != tt.want {
+				t.Errorf("ClampUint64ToInt32(%d) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClampInt64ToInt32(t *testing.T) {
+	tests := []struct {
+		name  string
+		input int64
+		want  int32
+	}{
+		{name: "zero value", input: 0, want: 0},
+		{name: "small negative value", input: -42, want: -42},
+		{name: "max int32 value", input: math.MaxInt32, want: math.MaxInt32},
+		{name: "min int32 value", input: math.MinInt32, want: math.MinInt32},
+		{name: "just above max int32 saturates", input: math.MaxInt32 + 1, want: math.MaxInt32},
+		{name: "just below min int32 saturates", input: math.MinInt32 - 1, want: math.MinInt32},
+		{name: "max int64 saturates", input: math.MaxInt64, want: math.MaxInt32},
+		{name: "min int64 saturates", input: math.MinInt64, want: math.MinInt32},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ClampInt64ToInt32(tt.input); got != tt.want {
+				t.Errorf("ClampInt64ToInt32(%d) = %d, want %d", tt.input, got, tt.want)
 			}
 		})
 	}

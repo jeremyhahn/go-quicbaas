@@ -1305,7 +1305,8 @@ func TestMessagingServer_TypeConversions(t *testing.T) {
 	})
 
 	t.Run("service_channel_to_proto_nil", func(t *testing.T) {
-		result := serviceChannelToProto(nil)
+		result, err := serviceChannelToProto(nil)
+		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
 

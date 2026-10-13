@@ -33,11 +33,16 @@ func (c *Client) EnsureSecret(ctx context.Context, req *service.EnsureSecretRequ
 		return nil, status.Error(codes.InvalidArgument, "EnsureSecret: secret_id is required")
 	}
 
+	length, err := clientInt32("length", req.Length)
+	if err != nil {
+		return nil, err
+	}
+
 	secretsClient := pb.NewSecretsManagementClient(c.conn)
 
 	pbResp, err := secretsClient.EnsureSecret(ctx, &pb.EnsureSecretRequest{
 		SecretId: req.SecretID,
-		Length:   int32(req.Length), //nolint:gosec // G115: secret length is bounded by service-layer validation
+		Length:   length,
 		Encoding: req.Encoding,
 		TenantId: req.TenantID,
 	})

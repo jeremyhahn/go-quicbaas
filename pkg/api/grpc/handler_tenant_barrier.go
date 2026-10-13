@@ -195,12 +195,17 @@ func (s *TenantBarrierGRPCServer) Init(ctx context.Context, req *pb.TenantBarrie
 	// Share material is never returned (qrdb share-free contract);
 	// Security Officers claim their shares via the tenant barrier
 	// share-claim flow.
-	return &pb.TenantBarrierInitResponse{
+	n := &responseNarrower{}
+	resp := &pb.TenantBarrierInitResponse{
 		TenantId:    result.TenantID,
 		Strategy:    result.Strategy,
-		Threshold:   int32(result.Threshold),   //nolint:gosec // small count
-		TotalShares: int32(result.TotalShares), //nolint:gosec // small count
-	}, nil
+		Threshold:   n.int32("threshold", result.Threshold),
+		TotalShares: n.int32("total_shares", result.TotalShares),
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // Unseal unseals the per-tenant barrier with a single key (passphrase strategy).
@@ -245,13 +250,18 @@ func (s *TenantBarrierGRPCServer) UnsealShare(ctx context.Context, req *pb.Tenan
 	if progress == nil {
 		return &pb.TenantBarrierUnsealProgress{TenantId: req.GetTenantId()}, nil
 	}
-	return &pb.TenantBarrierUnsealProgress{
+	n := &responseNarrower{}
+	resp := &pb.TenantBarrierUnsealProgress{
 		TenantId:  progress.TenantID,
-		Required:  int32(progress.Required),  //nolint:gosec // small count
-		Submitted: int32(progress.Submitted), //nolint:gosec // small count
+		Required:  n.int32("required", progress.Required),
+		Submitted: n.int32("submitted", progress.Submitted),
 		Complete:  progress.Complete,
 		Sealed:    progress.Sealed,
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // Seal seals the per-tenant barrier.
@@ -291,15 +301,20 @@ func (s *TenantBarrierGRPCServer) Status(ctx context.Context, req *pb.TenantBarr
 	if info == nil {
 		return &pb.TenantBarrierStatusResponse{TenantId: req.GetTenantId()}, nil
 	}
-	return &pb.TenantBarrierStatusResponse{
+	n := &responseNarrower{}
+	resp := &pb.TenantBarrierStatusResponse{
 		TenantId:        info.TenantID,
 		Sealed:          info.Sealed,
 		Initialized:     info.Initialized,
 		Strategy:        info.Strategy,
 		HardwareBacked:  info.HardwareBacked,
-		ShamirThreshold: int32(info.ShamirThreshold), //nolint:gosec // small count
-		ShamirTotal:     int32(info.ShamirTotal),     //nolint:gosec // small count
-	}, nil
+		ShamirThreshold: n.int32("shamir_threshold", info.ShamirThreshold),
+		ShamirTotal:     n.int32("shamir_total", info.ShamirTotal),
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // EnableEncryption migrates a tenant's dedicated barrier from the none

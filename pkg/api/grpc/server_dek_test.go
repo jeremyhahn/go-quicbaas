@@ -962,7 +962,8 @@ func TestConvertDEKMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertDEKMetadata(tt.input)
+			result, err := convertDEKMetadata(tt.input)
+			require.NoError(t, err)
 			if tt.input == nil {
 				assert.Nil(t, result)
 			} else {

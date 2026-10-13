@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // KMSServer wraps the KMS manager for gRPC endpoints.
@@ -116,11 +117,16 @@ func (s *KMSServer) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest)
 
 		s.keyNames.Store(req.Name, keyID)
 
-		return &pb.GenerateKeyResponse{
+		var n responseNarrower
+		resp := &pb.GenerateKeyResponse{
 			Key:       convertKeyHandle(svcResp.Key),
-			Metadata:  convertKeyMetadata(svcResp.Metadata),
+			Metadata:  convertKeyMetadata(&n, svcResp.Metadata),
 			Timestamp: svcResp.Timestamp.Unix(),
-		}, nil
+		}
+		if err := n.err(); err != nil {
+			return nil, err
+		}
+		return resp, nil
 	}
 
 	// Fallback: call KMS manager directly (no tenant isolation)
@@ -151,11 +157,16 @@ func (s *KMSServer) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest)
 
 	now := time.Now()
 
-	return &pb.GenerateKeyResponse{
-		Key:       convertKMSKeyHandle(keyID, metadata, req.KeySpec),
-		Metadata:  convertKMSKeyMetadataFull(metadata),
+	var n responseNarrower
+	resp := &pb.GenerateKeyResponse{
+		Key:       convertKMSKeyHandle(&n, keyID, metadata, req.KeySpec),
+		Metadata:  convertKMSKeyMetadataFull(&n, metadata),
 		Timestamp: now.Unix(),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // ImportKey imports an externally generated key into the KMS.
@@ -198,11 +209,16 @@ func (s *KMSServer) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*p
 
 	now := time.Now()
 
-	return &pb.ImportKeyResponse{
-		Key:       convertKMSKeyHandle(keyID, metadata, req.KeySpec),
-		Metadata:  convertKMSKeyMetadataFull(metadata),
+	var n responseNarrower
+	resp := &pb.ImportKeyResponse{
+		Key:       convertKMSKeyHandle(&n, keyID, metadata, req.KeySpec),
+		Metadata:  convertKMSKeyMetadataFull(&n, metadata),
 		Timestamp: now.Unix(),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // GetKey retrieves key material or public key by key ID.
@@ -227,11 +243,16 @@ func (s *KMSServer) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetK
 			return nil, convertKMSError(err)
 		}
 
-		return &pb.GetKeyResponse{
+		var n responseNarrower
+		resp := &pb.GetKeyResponse{
 			Key:       convertKeyHandle(svcResp.Key),
-			Metadata:  convertKeyMetadata(svcResp.Metadata),
+			Metadata:  convertKeyMetadata(&n, svcResp.Metadata),
 			Timestamp: svcResp.Timestamp.Unix(),
-		}, nil
+		}
+		if err := n.err(); err != nil {
+			return nil, err
+		}
+		return resp, nil
 	}
 
 	// Fallback: call KMS manager directly (no tenant isolation)
@@ -245,7 +266,10 @@ func (s *KMSServer) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetK
 		return nil, status.Error(codes.Internal, "unexpected response type from KMS manager")
 	}
 
-	currentVersion := uint64(metadata.Version) //nolint:gosec // G115: Version is validated positive
+	currentVersion, err := conv.SafeIntToUint64(metadata.Version)
+	if err != nil {
+		return nil, responseRangeError("version", err)
+	}
 
 	// Determine which version to return
 	requestedVersion := req.Version
@@ -282,6 +306,7 @@ func (s *KMSServer) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetK
 		lastUsed = metadata.LastUsedAt.Unix()
 	}
 
+	var n responseNarrower
 	keyMetadata := &pb.KeyMetadata{
 		KeyId:              metadata.KeyID,
 		Name:               metadata.Name,
@@ -295,9 +320,12 @@ func (s *KMSServer) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetK
 		CreatedAt:          metadata.Created.Unix(),
 		UpdatedAt:          metadata.Updated.Unix(),
 		LastUsedAt:         lastUsed,
-		RotationPolicy:     convertKMSRotationPolicy(metadata.RotationPolicy),
+		RotationPolicy:     convertKMSRotationPolicy(&n, metadata.RotationPolicy),
 		Tags:               metadata.Tags,
 		Owner:              metadata.Owner,
+	}
+	if err := n.err(); err != nil {
+		return nil, err
 	}
 
 	return &pb.GetKeyResponse{
@@ -360,7 +388,7 @@ func (s *KMSServer) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.
 		}
 
 		svcReq := &service.ListKeysRequest{
-			Limit:  int(req.Limit), //nolint:gosec // G115: limit is bounded
+			Limit:  int(req.Limit),
 			Cursor: req.Cursor,
 			Filter: filter,
 		}
@@ -375,11 +403,16 @@ func (s *KMSServer) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.
 			keys = append(keys, convertKeyHandle(kh))
 		}
 
+		totalCount, err := conv.SafeIntToInt32(svcResp.TotalCount)
+		if err != nil {
+			return nil, responseRangeError("total_count", err)
+		}
+
 		return &pb.ListKeysResponse{
 			Keys:       keys,
 			NextCursor: svcResp.NextCursor,
 			HasMore:    svcResp.HasMore,
-			TotalCount: int32(svcResp.TotalCount), //nolint:gosec // G115: count is bounded
+			TotalCount: totalCount,
 			Timestamp:  svcResp.Timestamp.Unix(),
 		}, nil
 	}
@@ -390,11 +423,16 @@ func (s *KMSServer) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.
 		return nil, convertKMSError(err)
 	}
 
+	var n responseNarrower
 	keys := make([]*pb.KeyHandle, 0, len(results))
 	for _, result := range results {
 		if metadata, ok := result.(*kms.KeyMetadata); ok {
-			keys = append(keys, convertKMSKeyHandleFromMetadata(metadata))
+			keys = append(keys, convertKMSKeyHandleFromMetadata(&n, metadata))
 		}
+	}
+	totalCount := n.int32("total_count", len(results))
+	if err := n.err(); err != nil {
+		return nil, err
 	}
 
 	now := time.Now()
@@ -409,7 +447,7 @@ func (s *KMSServer) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.
 		Keys:       keys,
 		NextCursor: "",
 		HasMore:    hasMore,
-		TotalCount: int32(len(results)), //nolint:gosec // G115: len is bounded
+		TotalCount: totalCount,
 		Timestamp:  now.Unix(),
 	}, nil
 }
@@ -456,7 +494,10 @@ func (s *KMSServer) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*p
 	if !ok {
 		return nil, status.Error(codes.Internal, "unexpected response type from KMS manager")
 	}
-	oldVersion := uint64(oldMetadata.Version) //nolint:gosec // G115: Version is validated positive
+	oldVersion, err := conv.SafeIntToUint64(oldMetadata.Version)
+	if err != nil {
+		return nil, responseRangeError("old_version", err)
+	}
 
 	// Call KMS manager to rotate key
 	result, err := s.kmsMgr.RotateKey(ctx, req.KeyId)
@@ -470,12 +511,17 @@ func (s *KMSServer) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*p
 		return nil, status.Error(codes.Internal, "unexpected response type from KMS manager")
 	}
 
+	newVersion, err := conv.SafeIntToUint64(metadata.Version)
+	if err != nil {
+		return nil, responseRangeError("new_version", err)
+	}
+
 	now := time.Now()
 
 	return &pb.RotateKeyResponse{
 		KeyId:      req.KeyId,
 		OldVersion: oldVersion,
-		NewVersion: uint64(metadata.Version), //nolint:gosec // G115: Version is validated positive
+		NewVersion: newVersion,
 		Timestamp:  now.Unix(),
 	}, nil
 }
@@ -561,12 +607,15 @@ func (s *KMSServer) GetKeyMetadata(ctx context.Context, req *pb.GetKeyMetadataRe
 		return nil, status.Error(codes.Internal, "unexpected response type from KMS manager")
 	}
 
-	now := time.Now()
-
-	return &pb.GetKeyMetadataResponse{
-		Metadata:  convertKMSKeyMetadataFull(metadata),
-		Timestamp: now.Unix(),
-	}, nil
+	var n responseNarrower
+	resp := &pb.GetKeyMetadataResponse{
+		Metadata:  convertKMSKeyMetadataFull(&n, metadata),
+		Timestamp: time.Now().Unix(),
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // UpdateKeyMetadata updates mutable metadata fields for a key.
@@ -615,10 +664,15 @@ func (s *KMSServer) UpdateKeyMetadata(ctx context.Context, req *pb.UpdateKeyMeta
 		return nil, convertKMSError(err)
 	}
 
-	return &pb.UpdateKeyMetadataResponse{
-		Metadata:  convertKMSKeyMetadataFull(metadata),
+	var n responseNarrower
+	resp := &pb.UpdateKeyMetadataResponse{
+		Metadata:  convertKMSKeyMetadataFull(&n, metadata),
 		Timestamp: time.Now().Unix(),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // UpdateKeyStatus enables or disables a key or key version.
@@ -712,7 +766,10 @@ func (s *KMSServer) ListKeyVersions(ctx context.Context, req *pb.ListKeyVersions
 	// Build version list by iterating from version 1 to current version
 	// This generates synthetic version entries based on the current version counter
 	protoAlg := algorithmStringToProto(metadata.Algorithm)
-	currentVersion := uint64(metadata.Version) //nolint:gosec // G115: Version is validated positive
+	currentVersion, err := conv.SafeIntToUint64(metadata.Version)
+	if err != nil {
+		return nil, responseRangeError("version", err)
+	}
 
 	versions := make([]*pb.KeyVersionInfo, 0, currentVersion)
 	for v := uint64(1); v <= currentVersion; v++ {
@@ -888,10 +945,14 @@ func (s *KMSServer) SetKeyRotationPolicy(ctx context.Context, req *pb.SetKeyRota
 	if err != nil {
 		return nil, convertKMSError(err)
 	}
+	policy, err := serviceToProtoRotationPolicy(resp.Policy)
+	if err != nil {
+		return nil, responseRangeError("retain_versions", err)
+	}
 
 	return &pb.SetKeyRotationPolicyResponse{
 		KeyId:     resp.KeyID,
-		Policy:    serviceToProtoRotationPolicy(resp.Policy),
+		Policy:    policy,
 		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
@@ -915,10 +976,14 @@ func (s *KMSServer) GetKeyRotationPolicy(ctx context.Context, req *pb.GetKeyRota
 	if err != nil {
 		return nil, convertKMSError(err)
 	}
+	policy, err := serviceToProtoRotationPolicy(resp.Policy)
+	if err != nil {
+		return nil, responseRangeError("retain_versions", err)
+	}
 
 	return &pb.GetKeyRotationPolicyResponse{
 		KeyId:     resp.KeyID,
-		Policy:    serviceToProtoRotationPolicy(resp.Policy),
+		Policy:    policy,
 		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
@@ -966,21 +1031,27 @@ func protoToServiceRotationPolicy(p *pb.RotationPolicy) *service.RotationPolicy 
 	return rp
 }
 
-// serviceToProtoRotationPolicy converts a service RotationPolicy to a proto RotationPolicy.
-func serviceToProtoRotationPolicy(p *service.RotationPolicy) *pb.RotationPolicy {
+// serviceToProtoRotationPolicy converts a service RotationPolicy to a proto
+// RotationPolicy. It returns the conv error when retain_versions does not fit
+// the int32 wire field; the caller decides which side of the wire is at fault.
+func serviceToProtoRotationPolicy(p *service.RotationPolicy) (*pb.RotationPolicy, error) {
 	if p == nil {
-		return nil
+		return nil, nil
+	}
+	retain, err := conv.SafeIntToInt32(p.RetainVersions)
+	if err != nil {
+		return nil, err
 	}
 	proto := &pb.RotationPolicy{
 		Enabled:         p.Enabled,
 		IntervalSeconds: int64(p.Interval / time.Second),
-		RetainVersions:  int32(p.RetainVersions), //nolint:gosec // G115: retain_versions bounded
+		RetainVersions:  retain,
 		AutoRotate:      p.AutoRotate,
 	}
 	if !p.NextRotation.IsZero() {
 		proto.NextRotation = p.NextRotation.Unix()
 	}
-	return proto
+	return proto, nil
 }
 
 // GetSupportedAlgorithms returns the list of cryptographic algorithms supported by the backend.
@@ -1293,13 +1364,15 @@ func (s *KMSServer) SafetyReport(ctx context.Context, _ *pb.SafetyReportRequest)
 
 	now := time.Now()
 
+	// Every counter below is bounded by the item count, so one check here
+	// lets them all be accumulated in their int32 wire type.
+	if _, err := conv.SafeIntToInt32(len(resp.Items)); err != nil {
+		return nil, responseRangeError("items", err)
+	}
+
 	allItems := make([]*pb.SafetyWarning, 0, len(resp.Items))
-	keysAtWarning := 0
-	keysAtCritical := 0
-	deksAtWarning := 0
-	deksAtCritical := 0
-	totalKeys := 0
-	totalDEKs := 0
+	var keysAtWarning, keysAtCritical, deksAtWarning, deksAtCritical int32
+	var totalKeys, totalDEKs int32
 
 	for _, item := range resp.Items {
 		warning := &pb.SafetyWarning{
@@ -1335,12 +1408,12 @@ func (s *KMSServer) SafetyReport(ctx context.Context, _ *pb.SafetyReportRequest)
 
 	return &pb.SafetyReportResponse{
 		AllItems:       allItems,
-		TotalKeys:      int32(totalKeys),      //nolint:gosec // G115: bounded count
-		TotalDeks:      int32(totalDEKs),      //nolint:gosec // G115: bounded count
-		KeysAtWarning:  int32(keysAtWarning),  //nolint:gosec // G115: bounded count
-		KeysAtCritical: int32(keysAtCritical), //nolint:gosec // G115: bounded count
-		DeksAtWarning:  int32(deksAtWarning),  //nolint:gosec // G115: bounded count
-		DeksAtCritical: int32(deksAtCritical), //nolint:gosec // G115: bounded count
+		TotalKeys:      totalKeys,
+		TotalDeks:      totalDEKs,
+		KeysAtWarning:  keysAtWarning,
+		KeysAtCritical: keysAtCritical,
+		DeksAtWarning:  deksAtWarning,
+		DeksAtCritical: deksAtCritical,
 		Timestamp:      now.Unix(),
 	}, nil
 }
@@ -1617,10 +1690,10 @@ func kmsUsageListToProto(usages []kms.KeyUsage) []pb.KeyUsage {
 // =============================================================================
 
 // convertKMSKeyHandle creates a pb.KeyHandle from kms.KeyMetadata.
-func convertKMSKeyHandle(keyID string, metadata *kms.KeyMetadata, keySpec *pb.KeySpec) *pb.KeyHandle {
+func convertKMSKeyHandle(n *responseNarrower, keyID string, metadata *kms.KeyMetadata, keySpec *pb.KeySpec) *pb.KeyHandle {
 	return &pb.KeyHandle{
 		KeyId:     keyID,
-		Version:   uint64(metadata.Version), //nolint:gosec // G115: Version is validated positive
+		Version:   n.uint64("version", metadata.Version),
 		Algorithm: keySpec.Algorithm,
 		Status:    kmsStateToProtoStatus(metadata.State),
 		CreatedAt: metadata.Created.Unix(),
@@ -1628,44 +1701,18 @@ func convertKMSKeyHandle(keyID string, metadata *kms.KeyMetadata, keySpec *pb.Ke
 }
 
 // convertKMSKeyHandleFromMetadata creates a pb.KeyHandle from kms.KeyMetadata only.
-func convertKMSKeyHandleFromMetadata(metadata *kms.KeyMetadata) *pb.KeyHandle {
+func convertKMSKeyHandleFromMetadata(n *responseNarrower, metadata *kms.KeyMetadata) *pb.KeyHandle {
 	return &pb.KeyHandle{
 		KeyId:     metadata.KeyID,
-		Version:   uint64(metadata.Version), //nolint:gosec // G115: Version is validated positive
+		Version:   n.uint64("version", metadata.Version),
 		Algorithm: algorithmStringToProto(metadata.Algorithm),
 		Status:    kmsStateToProtoStatus(metadata.State),
 		CreatedAt: metadata.Created.Unix(),
 	}
 }
 
-// convertKMSKeyMetadata creates a pb.KeyMetadata from kms.KeyMetadata with request data.
-func convertKMSKeyMetadata(metadata *kms.KeyMetadata, name, description string, tags map[string]string, owner string) *pb.KeyMetadata {
-	var lastUsed int64
-	if metadata.LastUsedAt != nil {
-		lastUsed = metadata.LastUsedAt.Unix()
-	}
-
-	return &pb.KeyMetadata{
-		KeyId:              metadata.KeyID,
-		Name:               name,
-		Description:        description,
-		Algorithm:          algorithmStringToProto(metadata.Algorithm),
-		Status:             kmsStateToProtoStatus(metadata.State),
-		Usage:              kmsUsageListToProto(metadata.Usage),
-		Version:            uint64(metadata.Version), //nolint:gosec // G115: Version is validated positive
-		Exportable:         metadata.Exportable,
-		DeletionProtection: metadata.DeletionProtection,
-		CreatedAt:          metadata.Created.Unix(),
-		UpdatedAt:          metadata.Updated.Unix(),
-		LastUsedAt:         lastUsed,
-		RotationPolicy:     convertKMSRotationPolicy(metadata.RotationPolicy),
-		Tags:               tags,
-		Owner:              owner,
-	}
-}
-
 // convertKMSKeyMetadataFull creates a pb.KeyMetadata from kms.KeyMetadata with all fields.
-func convertKMSKeyMetadataFull(metadata *kms.KeyMetadata) *pb.KeyMetadata {
+func convertKMSKeyMetadataFull(n *responseNarrower, metadata *kms.KeyMetadata) *pb.KeyMetadata {
 	var lastUsed int64
 	if metadata.LastUsedAt != nil {
 		lastUsed = metadata.LastUsedAt.Unix()
@@ -1678,20 +1725,20 @@ func convertKMSKeyMetadataFull(metadata *kms.KeyMetadata) *pb.KeyMetadata {
 		Algorithm:          algorithmStringToProto(metadata.Algorithm),
 		Status:             kmsStateToProtoStatus(metadata.State),
 		Usage:              kmsUsageListToProto(metadata.Usage),
-		Version:            uint64(metadata.Version), //nolint:gosec // G115: Version is validated positive
+		Version:            n.uint64("version", metadata.Version),
 		Exportable:         metadata.Exportable,
 		DeletionProtection: metadata.DeletionProtection,
 		CreatedAt:          metadata.Created.Unix(),
 		UpdatedAt:          metadata.Updated.Unix(),
 		LastUsedAt:         lastUsed,
-		RotationPolicy:     convertKMSRotationPolicy(metadata.RotationPolicy),
+		RotationPolicy:     convertKMSRotationPolicy(n, metadata.RotationPolicy),
 		Tags:               metadata.Tags,
 		Owner:              metadata.Owner,
 	}
 }
 
 // convertKMSRotationPolicy converts kms.RotationPolicy to pb.RotationPolicy.
-func convertKMSRotationPolicy(rp *kms.RotationPolicy) *pb.RotationPolicy {
+func convertKMSRotationPolicy(n *responseNarrower, rp *kms.RotationPolicy) *pb.RotationPolicy {
 	if rp == nil {
 		return nil
 	}
@@ -1699,7 +1746,7 @@ func convertKMSRotationPolicy(rp *kms.RotationPolicy) *pb.RotationPolicy {
 		Enabled:         rp.Enabled,
 		IntervalSeconds: int64(rp.Interval.Seconds()),
 		NextRotation:    rp.NextRotation.Unix(),
-		RetainVersions:  int32(rp.RetainVersions), //nolint:gosec // G115: RetainVersions is small config value
+		RetainVersions:  n.int32("retain_versions", rp.RetainVersions),
 		AutoRotate:      rp.AutoRotate,
 	}
 }
@@ -2001,7 +2048,7 @@ func convertKeyHandle(kh *service.KeyHandle) *pb.KeyHandle {
 }
 
 // convertKeyMetadata converts service.KeyMetadata to pb.KeyMetadata.
-func convertKeyMetadata(km *service.KeyMetadata) *pb.KeyMetadata {
+func convertKeyMetadata(n *responseNarrower, km *service.KeyMetadata) *pb.KeyMetadata {
 	if km == nil {
 		return nil
 	}
@@ -2025,14 +2072,14 @@ func convertKeyMetadata(km *service.KeyMetadata) *pb.KeyMetadata {
 		CreatedAt:          km.CreatedAt.Unix(),
 		UpdatedAt:          km.UpdatedAt.Unix(),
 		LastUsedAt:         lastUsed,
-		RotationPolicy:     convertRotationPolicy(km.RotationPolicy),
+		RotationPolicy:     convertRotationPolicy(n, km.RotationPolicy),
 		Tags:               km.Tags,
 		Owner:              km.Owner,
 	}
 }
 
 // convertRotationPolicy converts service.RotationPolicy to pb.RotationPolicy.
-func convertRotationPolicy(rp *service.RotationPolicy) *pb.RotationPolicy {
+func convertRotationPolicy(n *responseNarrower, rp *service.RotationPolicy) *pb.RotationPolicy {
 	if rp == nil {
 		return nil
 	}
@@ -2040,7 +2087,7 @@ func convertRotationPolicy(rp *service.RotationPolicy) *pb.RotationPolicy {
 		Enabled:         rp.Enabled,
 		IntervalSeconds: int64(rp.Interval.Seconds()),
 		NextRotation:    rp.NextRotation.Unix(),
-		RetainVersions:  int32(rp.RetainVersions), //nolint:gosec // G115: RetainVersions is small config value
+		RetainVersions:  n.int32("retain_versions", rp.RetainVersions),
 		AutoRotate:      rp.AutoRotate,
 	}
 }

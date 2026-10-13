@@ -125,14 +125,22 @@ func (s *SecretsServer) ListSecrets(ctx context.Context, req *pb.ListSecretsRequ
 
 	secrets := make([]*pb.Secret, len(resp.Secrets))
 	for i, sec := range resp.Secrets {
-		secrets[i] = convertSecret(sec)
+		secrets[i], err = convertSecret(sec)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	totalCount, err := responseInt32("total_count", resp.TotalCount)
+	if err != nil {
+		return nil, err
 	}
 
 	return &pb.ListSecretsResponse{
 		Secrets:    secrets,
 		NextCursor: resp.NextCursor,
 		HasMore:    resp.HasMore,
-		TotalCount: int32(resp.TotalCount), //nolint:gosec // G115: TotalCount represents count, safe conversion
+		TotalCount: totalCount,
 		Timestamp:  resp.Timestamp.Unix(),
 	}, nil
 }
@@ -305,9 +313,14 @@ func (s *SecretsServer) SetRotationPolicy(ctx context.Context, req *pb.SetRotati
 		return nil, ToGRPCError(err)
 	}
 
+	policy, err := convertSecretRotationPolicy(resp.Policy)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.SetRotationPolicyResponse{
 		SecretId:  resp.SecretID,
-		Policy:    convertSecretRotationPolicy(resp.Policy),
+		Policy:    policy,
 		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
@@ -329,9 +342,14 @@ func (s *SecretsServer) GetRotationPolicy(ctx context.Context, req *pb.GetRotati
 		return nil, ToGRPCError(err)
 	}
 
+	policy, err := convertSecretRotationPolicy(resp.Policy)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.GetRotationPolicyResponse{
 		SecretId:  resp.SecretID,
-		Policy:    convertSecretRotationPolicy(resp.Policy),
+		Policy:    policy,
 		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
@@ -416,11 +434,16 @@ func (s *SecretsServer) GetSecretsByPrefix(ctx context.Context, req *pb.GetSecre
 		}
 	}
 
+	totalCount, err := responseInt32("total_count", resp.TotalCount)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.GetSecretsByPrefixResponse{
 		Secrets:    pbSecrets,
 		NextCursor: resp.NextCursor,
 		HasMore:    resp.HasMore,
-		TotalCount: int32(resp.TotalCount), //nolint:gosec // G115: TotalCount is bounded
+		TotalCount: totalCount,
 		Timestamp:  resp.Timestamp.Unix(),
 	}, nil
 }
@@ -490,9 +513,14 @@ func (s *SecretsServer) WatchSecretsByPrefix(req *pb.WatchSecretsRequest, stream
 // Conversion Helpers - Service to Proto Types
 // =============================================================================
 
-func convertSecret(sec *service.Secret) *pb.Secret {
+func convertSecret(sec *service.Secret) (*pb.Secret, error) {
 	if sec == nil {
-		return nil
+		return nil, nil
+	}
+
+	policy, err := convertSecretRotationPolicy(sec.RotationPolicy)
+	if err != nil {
+		return nil, err
 	}
 
 	return &pb.Secret{
@@ -502,10 +530,10 @@ func convertSecret(sec *service.Secret) *pb.Secret {
 		CurrentVersion: sec.CurrentVersion,
 		CreatedAt:      sec.CreatedAt.Unix(),
 		UpdatedAt:      sec.UpdatedAt.Unix(),
-		RotationPolicy: convertSecretRotationPolicy(sec.RotationPolicy),
+		RotationPolicy: policy,
 		Tags:           sec.Tags,
 		Owner:          sec.Owner,
-	}
+	}, nil
 }
 
 func convertSecretVersion(ver *service.SecretVersion) *pb.SecretVersion {
@@ -532,18 +560,23 @@ func convertSecretVersion(ver *service.SecretVersion) *pb.SecretVersion {
 	}
 }
 
-func convertSecretRotationPolicy(policy *service.SecretRotationPolicy) *pb.SecretRotationPolicy {
+func convertSecretRotationPolicy(policy *service.SecretRotationPolicy) (*pb.SecretRotationPolicy, error) {
 	if policy == nil {
-		return nil
+		return nil, nil
+	}
+
+	retainVersions, err := responseInt32("retain_versions", policy.RetainVersions)
+	if err != nil {
+		return nil, err
 	}
 
 	return &pb.SecretRotationPolicy{
 		Enabled:         policy.Enabled,
 		IntervalSeconds: int64(policy.Interval.Seconds()),
 		NextRotation:    policy.NextRotation.Unix(),
-		RetainVersions:  int32(policy.RetainVersions), //nolint:gosec // G115: RetainVersions represents count, safe conversion
+		RetainVersions:  retainVersions,
 		RotationLambda:  policy.RotationLambda,
-	}
+	}, nil
 }
 
 func convertProtoSecretRotationPolicy(policy *pb.SecretRotationPolicy) *service.SecretRotationPolicy {

@@ -1930,7 +1930,8 @@ func TestGRPCRemaining91_ClientKMS_ConvertProtoDEKMetadata_WithRotatedAt(t *test
 }
 
 func TestGRPCRemaining91_ClientKMS_ConvertProtoReencryptionProgress_Nil(t *testing.T) {
-	result := convertProtoReencryptionProgress(nil)
+	result, err := convertProtoReencryptionProgress(nil)
+	require.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -1943,7 +1944,8 @@ func TestGRPCRemaining91_ClientKMS_ConvertProtoReencryptionProgress_Full(t *test
 		StartedAt:           time.Now().Unix(),
 		EstimatedCompletion: time.Now().Add(time.Hour).Unix(),
 	}
-	result := convertProtoReencryptionProgress(pm)
+	result, err := convertProtoReencryptionProgress(pm)
+	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.True(t, result.InProgress)
 	assert.NotNil(t, result.StartedAt)

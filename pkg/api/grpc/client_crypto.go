@@ -250,6 +250,11 @@ func (c *Client) KMSGenerateRandom(ctx context.Context, req *service.GenerateRan
 		}
 	}
 
+	numBytes, err := clientInt32("num_bytes", req.NumBytes)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -257,7 +262,7 @@ func (c *Client) KMSGenerateRandom(ctx context.Context, req *service.GenerateRan
 	cryptoClient := pb.NewCryptoClient(c.conn)
 
 	pbReq := &pb.GenerateRandomRequest{
-		NumBytes: int32(req.NumBytes), //nolint:gosec // G115: bounded by input validation (max 1MB)
+		NumBytes: numBytes,
 	}
 
 	pbResp, err := cryptoClient.GenerateRandom(ctx, pbReq)

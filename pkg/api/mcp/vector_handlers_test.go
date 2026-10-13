@@ -522,16 +522,6 @@ func TestParseHelperFunctions(t *testing.T) {
 		assert.True(t, server.parseBoolParam(params, "missing", true))
 	})
 
-	t.Run("ParseIntParam", func(t *testing.T) {
-		params := map[string]interface{}{
-			"key1": float64(42),
-			"key2": "100",
-		}
-		assert.Equal(t, 42, server.parseIntParam(params, "key1", 0))
-		assert.Equal(t, 100, server.parseIntParam(params, "key2", 0))
-		assert.Equal(t, 99, server.parseIntParam(params, "missing", 99))
-	})
-
 	t.Run("ParseFloatParam", func(t *testing.T) {
 		params := map[string]interface{}{
 			"key1": float64(3.14),

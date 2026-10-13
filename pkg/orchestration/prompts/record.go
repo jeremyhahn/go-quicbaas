@@ -14,12 +14,13 @@
 package prompts
 
 import (
-	"hash/fnv"
 	"path/filepath"
 	"strings"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // MaxRevisions bounds the history a record carries inline. The oldest
@@ -120,15 +121,12 @@ func (r Ref) scopeSegment() string {
 // entityID derives the record's DAO entity id from its identity within the
 // tenant, so a read is one key and no secondary index exists to drift.
 func (r Ref) entityID() uint64 {
-	h := fnv.New64a()
-	// hash.Hash.Write never returns an error.
-	_, _ = h.Write([]byte(r.scopeSegment() + "/" + string(r.Set) + "/" + r.Name))
-	id := h.Sum64()
-	if id == 0 {
+	hashed := id.HashString(r.scopeSegment() + "/" + string(r.Set) + "/" + r.Name)
+	if hashed == 0 {
 		// Zero is reserved for "unset" on Record.ID.
 		return 1
 	}
-	return id
+	return hashed
 }
 
 // validateSegment refuses a value that cannot be one segment of an identity.

@@ -500,7 +500,7 @@ func TestConvertKeyMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertKeyMetadata(tt.input)
+			result := convertKeyMetadata(&responseNarrower{}, tt.input)
 			tt.validate(t, result)
 		})
 	}
@@ -564,7 +564,7 @@ func TestConvertRotationPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertRotationPolicy(tt.input)
+			result := convertRotationPolicy(&responseNarrower{}, tt.input)
 			tt.validate(t, result)
 		})
 	}

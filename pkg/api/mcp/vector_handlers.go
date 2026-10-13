@@ -28,6 +28,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // normalizeHealthStatus converts proto VectorHealthStatus enum to human-readable lowercase string.
@@ -81,7 +82,10 @@ func (s *MCPServer) handleUpsertVector(ctx context.Context, params map[string]in
 
 	consistency := s.parseStringParam(params, "consistency", "QUORUM")
 	skipIndexUpdate := s.parseBoolParam(params, "skip_index_update", false)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 5000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 5000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call actual gRPC service
 	resp, err := s.vectorClient.UpsertVector(ctx, &pb.UpsertVectorRequest{
@@ -165,15 +169,21 @@ func (s *MCPServer) handleBatchUpsertVectors(ctx context.Context, params map[str
 	// Optional parameters
 	consistency := s.parseStringParam(params, "consistency", "QUORUM")
 	skipIndexUpdate := s.parseBoolParam(params, "skip_index_update", false)
-	batchSize := s.parseIntParam(params, "batch_size", 1000)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 60000)
+	batchSize, err := s.parseInt32Param(params, "batch_size", 1000)
+	if err != nil {
+		return nil, err
+	}
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 60000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call streaming gRPC
 	stream, err := s.vectorClient.BatchUpsertVectors(ctx, &pb.BatchUpsertVectorsRequest{
 		Vectors:         pbVectors,
 		Consistency:     parseConsistencyLevel(consistency),
 		SkipIndexUpdate: skipIndexUpdate,
-		BatchSize:       int32(batchSize), //nolint:gosec // G115: Safe conversion - batch size validated to be <= 10000
+		BatchSize:       batchSize,
 		TimeoutMs:       int64(timeoutMs),
 	})
 	if err != nil {
@@ -232,7 +242,10 @@ func (s *MCPServer) handleGetVector(ctx context.Context, params map[string]inter
 	consistency := s.parseStringParam(params, "consistency", "QUORUM")
 	includeMetadata := s.parseBoolParam(params, "include_metadata", true)
 	includeVector := s.parseBoolParam(params, "include_vector", true)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 5000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 5000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	resp, err := s.vectorClient.GetVector(ctx, &pb.GetVectorRequest{
@@ -290,15 +303,21 @@ func (s *MCPServer) handleDeleteVector(ctx context.Context, params map[string]in
 
 	// Optional parameters
 	consistency := s.parseStringParam(params, "consistency", "QUORUM")
-	version := s.parseIntParam(params, "version", 0)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 5000)
+	version, err := s.parseUint64Param(params, "version")
+	if err != nil {
+		return nil, err
+	}
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 5000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	resp, err := s.vectorClient.DeleteVector(ctx, &pb.DeleteVectorRequest{
 		Namespace:   namespace,
 		Id:          id,
 		Consistency: parseConsistencyLevel(consistency),
-		Version:     uint64(version), //nolint:gosec // G115: Safe conversion - version from database
+		Version:     version,
 		TimeoutMs:   int64(timeoutMs),
 	})
 	if err != nil {
@@ -351,7 +370,10 @@ func (s *MCPServer) handleUpdateMetadata(ctx context.Context, params map[string]
 
 	// Optional parameters
 	merge := s.parseBoolParam(params, "merge", true)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 5000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 5000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	resp, err := s.vectorClient.UpdateMetadata(ctx, &pb.UpdateMetadataRequest{
@@ -402,7 +424,10 @@ func (s *MCPServer) handleBatchDeleteVectors(ctx context.Context, params map[str
 
 	// Optional parameters
 	consistency := s.parseStringParam(params, "consistency", "QUORUM")
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 60000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 60000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	resp, err := s.vectorClient.BatchDeleteVectors(ctx, &pb.BatchDeleteVectorsRequest{
@@ -446,7 +471,10 @@ func (s *MCPServer) handleSearchSimilar(ctx context.Context, params map[string]i
 		return nil, api.NewInvalidFormatError("query_vector", err)
 	}
 
-	k := s.parseIntParam(params, "k", 10)
+	k, err := s.parseInt32Param(params, "k", 10)
+	if err != nil {
+		return nil, err
+	}
 	if k < 1 || k > 10000 {
 		return nil, api.NewRangeError("k", 1, 10000)
 	}
@@ -456,9 +484,15 @@ func (s *MCPServer) handleSearchSimilar(ctx context.Context, params map[string]i
 	consistency := s.parseStringParam(params, "consistency", "QUORUM")
 	includeMetadata := s.parseBoolParam(params, "include_metadata", true)
 	includeVectors := s.parseBoolParam(params, "include_vectors", false)
-	efSearch := s.parseIntParam(params, "ef_search", 0)
+	efSearch, err := s.parseInt32Param(params, "ef_search", 0)
+	if err != nil {
+		return nil, err
+	}
 	minScore := s.parseFloatParam(params, "min_score", 0.0)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 10000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 10000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Parse metadata filters if provided
 	var metadataFilters []*pb.MetadataFilter
@@ -482,12 +516,12 @@ func (s *MCPServer) handleSearchSimilar(ctx context.Context, params map[string]i
 	stream, err := s.vectorClient.SearchSimilar(ctx, &pb.SearchSimilarRequest{
 		Namespace:       namespace,
 		QueryVector:     queryVector,
-		K:               int32(k), //nolint:gosec // G115: Safe conversion - k validated to be 1-10000
+		K:               k,
 		DistanceMetric:  parseDistanceMetric(distanceMetric),
 		Consistency:     parseConsistencyLevel(consistency),
 		IncludeMetadata: includeMetadata,
 		IncludeVectors:  includeVectors,
-		EfSearch:        int32(efSearch), //nolint:gosec // G115: Safe conversion - efSearch calculated from validated k
+		EfSearch:        efSearch,
 		MinScore:        float32(minScore),
 		MetadataFilters: metadataFilters,
 		TimeoutMs:       int64(timeoutMs),
@@ -572,7 +606,10 @@ func (s *MCPServer) handleSearchByID(ctx context.Context, params map[string]inte
 		return nil, api.NewRequiredFieldError("id")
 	}
 
-	k := s.parseIntParam(params, "k", 10)
+	k, err := s.parseInt32Param(params, "k", 10)
+	if err != nil {
+		return nil, err
+	}
 	if k < 1 || k > 10000 {
 		return nil, api.NewRangeError("k", 1, 10000)
 	}
@@ -583,21 +620,27 @@ func (s *MCPServer) handleSearchByID(ctx context.Context, params map[string]inte
 	consistency := s.parseStringParam(params, "consistency", "QUORUM")
 	includeMetadata := s.parseBoolParam(params, "include_metadata", true)
 	includeVectors := s.parseBoolParam(params, "include_vectors", false)
-	efSearch := s.parseIntParam(params, "ef_search", 0)
+	efSearch, err := s.parseInt32Param(params, "ef_search", 0)
+	if err != nil {
+		return nil, err
+	}
 	minScore := s.parseFloatParam(params, "min_score", 0.0)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 10000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 10000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	stream, err := s.vectorClient.SearchByID(ctx, &pb.SearchByIDRequest{
 		Namespace:       namespace,
 		Id:              id,
-		K:               int32(k),
+		K:               k,
 		IncludeSelf:     includeSelf,
 		DistanceMetric:  parseDistanceMetric(distanceMetric),
 		Consistency:     parseConsistencyLevel(consistency),
 		IncludeMetadata: includeMetadata,
 		IncludeVectors:  includeVectors,
-		EfSearch:        int32(efSearch), //nolint:gosec // G115: Safe conversion - efSearch calculated from validated k
+		EfSearch:        efSearch,
 		MinScore:        float32(minScore),
 		TimeoutMs:       int64(timeoutMs),
 	})
@@ -676,20 +719,25 @@ func (s *MCPServer) handleListVectors(ctx context.Context, params map[string]int
 	}
 
 	// Optional parameters
-	pageSize := s.parseIntParam(params, "page_size", 100)
-	if pageSize > 1000 {
-		pageSize = 1000
+	pageSize, err := s.parseInt32Param(params, "page_size", 100)
+	if err != nil {
+		return nil, err
 	}
+	// Saturation is the page-size contract: a larger page receives the cap.
+	pageSize = min(pageSize, 1000)
 	pageToken := s.parseStringParam(params, "page_token", "")
 	consistency := s.parseStringParam(params, "consistency", "QUORUM")
 	includeMetadata := s.parseBoolParam(params, "include_metadata", true)
 	includeVectors := s.parseBoolParam(params, "include_vectors", false)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 30000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 30000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	stream, err := s.vectorClient.ListVectors(ctx, &pb.ListVectorsRequest{
 		Namespace:       namespace,
-		PageSize:        int32(pageSize), //nolint:gosec // G115: Safe conversion - page size bounded to max 10000
+		PageSize:        pageSize,
 		PageToken:       pageToken,
 		Consistency:     parseConsistencyLevel(consistency),
 		IncludeMetadata: includeMetadata,
@@ -761,13 +809,16 @@ func (s *MCPServer) handleListVectors(ctx context.Context, params map[string]int
 func (s *MCPServer) handleListNamespaces(ctx context.Context, params map[string]interface{}) (*ToolResponse, error) {
 	// Optional parameters
 	prefix := s.parseStringParam(params, "prefix", "")
-	pageSize := s.parseIntParam(params, "page_size", 100)
+	pageSize, err := s.parseInt32Param(params, "page_size", 100)
+	if err != nil {
+		return nil, err
+	}
 	pageToken := s.parseStringParam(params, "page_token", "")
 
 	// Call gRPC service
 	resp, err := s.vectorClient.ListNamespaces(ctx, &pb.ListNamespacesRequest{
 		Prefix:    prefix,
-		PageSize:  int32(pageSize), //nolint:gosec // G115: Safe conversion - page size bounded to max 10000
+		PageSize:  pageSize,
 		PageToken: pageToken,
 	})
 	if err != nil {
@@ -806,7 +857,10 @@ func (s *MCPServer) handleCreateNamespace(ctx context.Context, params map[string
 		return nil, api.NewRequiredFieldError("namespace")
 	}
 
-	dimensions := s.parseIntParam(params, "dimensions", 0)
+	dimensions, err := s.parseInt32Param(params, "dimensions", 0)
+	if err != nil {
+		return nil, err
+	}
 	if dimensions < 1 || dimensions > 4096 {
 		return nil, api.NewRangeError("dimensions", 1, 4096)
 	}
@@ -819,10 +873,19 @@ func (s *MCPServer) handleCreateNamespace(ctx context.Context, params map[string
 	// Optional parameters
 	precision := s.parseStringParam(params, "precision", "FLOAT32")
 	indexType := s.parseStringParam(params, "index_type", "HNSW")
-	shardID := s.parseIntParam(params, "shard_id", 0)
-	replicationFactor := s.parseIntParam(params, "replication_factor", 3)
+	shardID, err := s.parseUint64Param(params, "shard_id")
+	if err != nil {
+		return nil, err
+	}
+	replicationFactor, err := s.parseInt32Param(params, "replication_factor", 3)
+	if err != nil {
+		return nil, err
+	}
 	compressionEnabled := s.parseBoolParam(params, "compression_enabled", false)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 10000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 10000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Parse optional JSON parameters
 	var indexParams map[string]string
@@ -848,12 +911,12 @@ func (s *MCPServer) handleCreateNamespace(ctx context.Context, params map[string
 	resp, err := s.vectorClient.CreateNamespace(ctx, &pb.CreateNamespaceRequest{
 		Config: &pb.NamespaceConfig{
 			Namespace:          namespace,
-			Dimensions:         int32(dimensions), //nolint:gosec // G115: Safe conversion - dimensions bounded to max 4096
+			Dimensions:         dimensions,
 			DistanceMetric:     parseDistanceMetric(distanceMetric),
 			Precision:          parsePrecision(precision),
 			IndexType:          parseIndexType(indexType),
-			ShardId:            uint64(shardID),          //nolint:gosec // G115: Safe conversion - shard ID from config
-			ReplicationFactor:  int32(replicationFactor), //nolint:gosec // G115: Safe conversion - replication factor bounded
+			ShardId:            shardID,
+			ReplicationFactor:  replicationFactor,
 			CompressionEnabled: compressionEnabled,
 			IndexParams:        indexParams,
 			Metadata:           metadata,
@@ -891,8 +954,14 @@ func (s *MCPServer) handleUpdateNamespace(ctx context.Context, params map[string
 	}
 
 	// Optional parameters
-	replicationFactor := s.parseIntParam(params, "replication_factor", 0)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 10000)
+	replicationFactor, err := s.parseInt32Param(params, "replication_factor", 0)
+	if err != nil {
+		return nil, err
+	}
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 10000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Parse optional JSON parameters
 	var indexParams map[string]string
@@ -917,7 +986,7 @@ func (s *MCPServer) handleUpdateNamespace(ctx context.Context, params map[string
 	// Call gRPC service
 	resp, err := s.vectorClient.UpdateNamespace(ctx, &pb.UpdateNamespaceRequest{
 		Namespace:         namespace,
-		ReplicationFactor: int32(replicationFactor), //nolint:gosec // G115: Safe conversion - replication factor bounded
+		ReplicationFactor: replicationFactor,
 		IndexParams:       indexParams,
 		Metadata:          metadata,
 		TimeoutMs:         int64(timeoutMs),
@@ -949,7 +1018,10 @@ func (s *MCPServer) handleDeleteNamespace(ctx context.Context, params map[string
 
 	// Optional parameters
 	force := s.parseBoolParam(params, "force", false)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 60000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 60000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	resp, err := s.vectorClient.DeleteNamespace(ctx, &pb.DeleteNamespaceRequest{
@@ -983,7 +1055,10 @@ func (s *MCPServer) handleGetNamespaceInfo(ctx context.Context, params map[strin
 
 	// Optional parameters
 	includeStats := s.parseBoolParam(params, "include_stats", true)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 5000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 5000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	resp, err := s.vectorClient.GetNamespaceInfo(ctx, &pb.GetNamespaceInfoRequest{
@@ -1018,7 +1093,10 @@ func (s *MCPServer) handleGetVectorStats(ctx context.Context, params map[string]
 	// Optional parameters
 	namespace := s.parseStringParam(params, "namespace", "")
 	includeDetails := s.parseBoolParam(params, "include_details", false)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 5000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 5000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC service
 	resp, err := s.vectorClient.GetVectorStats(ctx, &pb.GetVectorStatsRequest{
@@ -1094,7 +1172,10 @@ func (s *MCPServer) handleRebuildIndex(ctx context.Context, params map[string]in
 
 	// Optional parameters
 	async := s.parseBoolParam(params, "async", true)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 300000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 300000)
+	if err != nil {
+		return nil, err
+	}
 
 	var indexParams map[string]string
 	if indexParamsStr, ok := params["index_params"].(string); ok && indexParamsStr != "" {
@@ -1236,7 +1317,10 @@ func (s *MCPServer) handleCompactNamespace(ctx context.Context, params map[strin
 
 	// Optional parameters
 	async := s.parseBoolParam(params, "async", true)
-	timeoutMs := s.parseIntParam(params, "timeout_ms", 300000)
+	timeoutMs, err := s.parseIntParam(params, "timeout_ms", 300000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC admin service
 	resp, err := s.adminClient.CompactNamespace(ctx, &pb.CompactNamespaceRequest{
@@ -1304,14 +1388,17 @@ func (s *MCPServer) handleExportVectors(ctx context.Context, params map[string]i
 	// Optional parameters
 	format := s.parseStringParam(params, "format", "binary")
 	compression := s.parseStringParam(params, "compression", "gzip")
-	batchSize := s.parseIntParam(params, "batch_size", 1000)
+	batchSize, err := s.parseInt32Param(params, "batch_size", 1000)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call gRPC admin service (streaming)
 	stream, err := s.adminClient.ExportVectors(ctx, &pb.ExportVectorsRequest{
 		Namespace:   namespace,
 		Format:      format,
 		Compression: compression,
-		BatchSize:   int32(batchSize), //nolint:gosec // G115: Safe conversion - batch size bounded to max 10000
+		BatchSize:   batchSize,
 	})
 	if err != nil {
 		return nil, api.NewOperationFailedError("export vectors", err)
@@ -1491,17 +1578,58 @@ func (s *MCPServer) parseBoolParam(params map[string]interface{}, key string, de
 	return defaultValue
 }
 
-// parseIntParam safely parses an integer parameter with default.
-func (s *MCPServer) parseIntParam(params map[string]interface{}, key string, defaultValue int) int {
-	if val, ok := params[key].(float64); ok {
-		return int(val)
-	}
-	if val, ok := params[key].(string); ok {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
+// parseIntParam parses an integer parameter, or returns defaultValue when it
+// is absent or an empty string. A number an int cannot hold, or a string
+// that is not a base-10 int, is refused as invalid input.
+func (s *MCPServer) parseIntParam(params map[string]interface{}, key string, defaultValue int) (int, error) {
+	switch v := params[key].(type) {
+	case float64:
+		n, err := conv.SafeFloat64ToInt(v)
+		if err != nil {
+			return 0, newIntArgError(key, err)
 		}
+		return n, nil
+	case string:
+		if v == "" {
+			return defaultValue, nil
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, newIntArgError(key, err)
+		}
+		return n, nil
 	}
-	return defaultValue
+	return defaultValue, nil
+}
+
+// parseInt32Param parses an integer parameter for an int32 request field,
+// or returns defaultValue when it is absent. A value an int32 cannot hold is
+// refused as invalid input.
+func (s *MCPServer) parseInt32Param(params map[string]interface{}, key string, defaultValue int32) (int32, error) {
+	n, err := s.parseIntParam(params, key, int(defaultValue))
+	if err != nil {
+		return 0, err
+	}
+	v, err := conv.SafeIntToInt32(n)
+	if err != nil {
+		return 0, newIntArgError(key, err)
+	}
+	return v, nil
+}
+
+// parseUint64Param parses an integer parameter for a uint64 request field;
+// an absent parameter reads as zero. A negative value is refused as invalid
+// input.
+func (s *MCPServer) parseUint64Param(params map[string]interface{}, key string) (uint64, error) {
+	n, err := s.parseIntParam(params, key, 0)
+	if err != nil {
+		return 0, err
+	}
+	v, err := conv.SafeIntToUint64(n)
+	if err != nil {
+		return 0, newIntArgError(key, err)
+	}
+	return v, nil
 }
 
 // parseFloatParam safely parses a float parameter with default.

@@ -16,7 +16,9 @@ package grpc
 import (
 	stderrors "errors"
 	"fmt"
+	"math"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -24,6 +26,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // toProtoError converts a QBError to a gRPC status error.
@@ -53,6 +56,81 @@ func toProtoError(err error) error {
 	message := qbErr.Error()
 
 	return status.Error(code, message)
+}
+
+// requestRangeError maps a request field that does not fit the type the
+// service expects to codes.InvalidArgument: the caller sent the bad value.
+func requestRangeError(field string, err error) error {
+	return status.Errorf(codes.InvalidArgument, "%s: %v", field, err)
+}
+
+// responseRangeError maps a server-produced value that does not fit its wire
+// type to codes.Internal: the server cannot represent its own data.
+func responseRangeError(field string, err error) error {
+	return status.Errorf(codes.Internal, "%s: %v", field, err)
+}
+
+// responseInt32 narrows a server-produced value to an int32 wire field,
+// returning a codes.Internal error naming field when it does not fit.
+func responseInt32(field string, v int) (int32, error) {
+	out, err := conv.SafeIntToInt32(v)
+	if err != nil {
+		return 0, responseRangeError(field, err)
+	}
+	return out, nil
+}
+
+// clientInt32 narrows a caller-supplied int to its int32 wire field before
+// the client sends it. A value that does not fit is the caller's input
+// error, so it is rejected with a typed range error naming the field rather
+// than wrapped into a different number on the wire.
+func clientInt32(field string, v int) (int32, error) {
+	out, err := conv.SafeIntToInt32(v)
+	if err != nil {
+		return 0, api.NewRangeError(field, math.MinInt32, math.MaxInt32)
+	}
+	return out, nil
+}
+
+// responseNarrower narrows server-side int fields to their wire form while
+// a response literal is built. The first field that does not fit is kept as
+// a codes.Internal status; later calls return 0 and leave it intact, so the
+// caller checks err once after the literal instead of per field.
+type responseNarrower struct {
+	failure error
+}
+
+// int32 returns v as an int32, recording a range failure for field.
+func (n *responseNarrower) int32(field string, v int) int32 {
+	out, err := conv.SafeIntToInt32(v)
+	if !n.keep(field, err) {
+		return 0
+	}
+	return out
+}
+
+// uint64 returns v as a uint64, recording a failure for field when v is
+// negative.
+func (n *responseNarrower) uint64(field string, v int) uint64 {
+	out, err := conv.SafeIntToUint64(v)
+	if !n.keep(field, err) {
+		return 0
+	}
+	return out
+}
+
+// keep records err as the failure for field unless an earlier failure is
+// already kept, and reports whether the narrower is still free of failures.
+func (n *responseNarrower) keep(field string, err error) bool {
+	if n.failure == nil && err != nil {
+		n.failure = responseRangeError(field, err)
+	}
+	return n.failure == nil
+}
+
+// err returns the first range failure, or nil when every field fit.
+func (n *responseNarrower) err() error {
+	return n.failure
 }
 
 // Validation functions

@@ -62,7 +62,7 @@ func extractCodecPreference(ctx context.Context) string {
 func (s *Server) GetOptimized(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
 	ctx, endSpan := startGRPCSpan(ctx, "grpc.GetOptimized", map[string]interface{}{
 		"entity_type": req.EntityType,
-		"id":          int64(req.Id), //nolint:gosec // G115: ID for tracing attribute
+		"id":          req.Id,
 	})
 	defer endSpan()
 	start := time.Now()

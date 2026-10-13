@@ -15,7 +15,7 @@ package grpc
 
 import (
 	"context"
-	"math"
+	stderrors "errors"
 	"time"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -24,6 +24,7 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // KMSGenerateKey creates a new cryptographic key with the specified parameters.
@@ -148,6 +149,11 @@ func (c *Client) KMSListKeys(ctx context.Context, req *service.ListKeysRequest) 
 		req = &service.ListKeysRequest{}
 	}
 
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -155,7 +161,7 @@ func (c *Client) KMSListKeys(ctx context.Context, req *service.ListKeysRequest) 
 	kmsClient := pb.NewKeyManagementClient(c.conn)
 
 	pbReq := &pb.ListKeysRequest{
-		Limit:  int32(req.Limit), //nolint:gosec // G115: pagination limit bounded by protobuf
+		Limit:  limit,
 		Cursor: req.Cursor,
 		Filter: req.Filter,
 	}
@@ -218,6 +224,11 @@ func (c *Client) KMSDeleteKey(ctx context.Context, req *service.DeleteKeyRequest
 		return nil, api.NewNilInputError("Client.KMSDeleteKey", "request")
 	}
 
+	pendingWindowDays, err := clientInt32("pending_window_days", req.PendingWindowDays)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -226,7 +237,7 @@ func (c *Client) KMSDeleteKey(ctx context.Context, req *service.DeleteKeyRequest
 
 	pbReq := &pb.DeleteKeyRequest{
 		KeyId:             req.KeyID,
-		PendingWindowDays: int32(req.PendingWindowDays), //nolint:gosec // G115: bounded by protobuf
+		PendingWindowDays: pendingWindowDays,
 		Force:             req.Force,
 	}
 
@@ -390,6 +401,11 @@ func (c *Client) KMSListKeyVersions(ctx context.Context, req *service.ListKeyVer
 		return nil, api.NewNilInputError("Client.KMSListKeyVersions", "request")
 	}
 
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -398,7 +414,7 @@ func (c *Client) KMSListKeyVersions(ctx context.Context, req *service.ListKeyVer
 
 	pbReq := &pb.ListKeyVersionsRequest{
 		KeyId:  req.KeyID,
-		Limit:  int32(req.Limit), //nolint:gosec // G115: pagination limit bounded by protobuf
+		Limit:  limit,
 		Cursor: req.Cursor,
 	}
 
@@ -500,6 +516,11 @@ func (c *Client) KMSSetKeySafety(ctx context.Context, req *service.SetKeySafetyR
 		return nil, api.NewNilInputError("Client.KMSSetKeySafety", "request")
 	}
 
+	warningPercent, err := clientInt32("warning_percent", req.WarningPercent)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -510,7 +531,7 @@ func (c *Client) KMSSetKeySafety(ctx context.Context, req *service.SetKeySafetyR
 		KeyId:          req.KeyID,
 		MaxOperations:  req.MaxOperations,
 		MaxBytes:       req.MaxBytes,
-		WarningPercent: int32(req.WarningPercent), //nolint:gosec // G115: bounded by input validation
+		WarningPercent: warningPercent,
 	}
 
 	pbResp, err := kmsClient.SetKeySafety(ctx, pbReq)
@@ -927,6 +948,11 @@ func (c *Client) KMSCreateDEK(ctx context.Context, req *service.CreateDEKRequest
 		return nil, api.NewNilInputError("Client.KMSCreateDEK", "request")
 	}
 
+	warningPercent, err := clientInt32("warning_percent", req.WarningPercent)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -939,7 +965,7 @@ func (c *Client) KMSCreateDEK(ctx context.Context, req *service.CreateDEKRequest
 		Description:    req.Description,
 		MaxOperations:  req.MaxOperations,
 		MaxBytes:       req.MaxBytes,
-		WarningPercent: int32(req.WarningPercent), //nolint:gosec // G115: bounded by input validation
+		WarningPercent: warningPercent,
 	}
 
 	pbResp, err := dekClient.CreateDEK(ctx, pbReq)
@@ -986,6 +1012,11 @@ func (c *Client) KMSListDEKs(ctx context.Context, req *service.ListDEKsRequest) 
 		req = &service.ListDEKsRequest{}
 	}
 
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -995,7 +1026,7 @@ func (c *Client) KMSListDEKs(ctx context.Context, req *service.ListDEKsRequest) 
 	pbReq := &pb.ListDEKsRequest{
 		Prefix:    req.Prefix,
 		Recursive: req.Recursive,
-		Limit:     int32(req.Limit), //nolint:gosec // G115: pagination limit bounded by protobuf
+		Limit:     limit,
 		Cursor:    req.Cursor,
 	}
 
@@ -1103,9 +1134,11 @@ func (c *Client) KMSGetDEKStatus(ctx context.Context, req *service.GetDEKStatusR
 		Timestamp: time.Unix(pbResp.Timestamp, 0),
 	}
 
-	if pbResp.ReencryptionProgress != nil {
-		resp.ReencryptionProgress = convertProtoReencryptionProgress(pbResp.ReencryptionProgress)
+	progress, err := convertProtoReencryptionProgress(pbResp.ReencryptionProgress)
+	if err != nil {
+		return nil, err
 	}
+	resp.ReencryptionProgress = progress
 
 	return resp, nil
 }
@@ -1144,6 +1177,11 @@ func (c *Client) KMSSetDEKSafety(ctx context.Context, req *service.SetDEKSafetyR
 		return nil, api.NewNilInputError("Client.KMSSetDEKSafety", "request")
 	}
 
+	warningPercent, err := clientInt32("warning_percent", req.WarningPercent)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -1154,7 +1192,7 @@ func (c *Client) KMSSetDEKSafety(ctx context.Context, req *service.SetDEKSafetyR
 		Path:           req.Path,
 		MaxOperations:  req.MaxOperations,
 		MaxBytes:       req.MaxBytes,
-		WarningPercent: int32(req.WarningPercent), //nolint:gosec // G115: bounded by input validation
+		WarningPercent: warningPercent,
 	}
 
 	pbResp, err := dekClient.SetDEKSafety(ctx, pbReq)
@@ -1305,23 +1343,22 @@ func (c *Client) KMSStartReencryption(ctx context.Context, req *service.StartRee
 		return nil, api.NewNilInputError("Client.KMSStartReencryption", "request")
 	}
 
+	batchSize, err := clientInt32("batch_size", req.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
 
 	dekClient := pb.NewDEKManagementClient(c.conn)
 
-	// Bounds check for int to int32 conversion
-	batchSize := req.BatchSize
-	if batchSize > math.MaxInt32 {
-		batchSize = math.MaxInt32
-	}
-
 	pbReq := &pb.StartReencryptionRequest{
 		Path:        req.Path,
 		FromVersion: req.FromVersion,
 		ToVersion:   req.ToVersion,
-		BatchSize:   int32(batchSize), //nolint:gosec // G115: bounds checked above
+		BatchSize:   batchSize,
 		Force:       req.Force,
 	}
 
@@ -1361,11 +1398,16 @@ func (c *Client) KMSGetReencryptionProgress(ctx context.Context, req *service.Ge
 		return nil, convertError(err)
 	}
 
+	progress, err := convertProtoReencryptionProgress(pbResp.Progress)
+	if err != nil {
+		return nil, err
+	}
+
 	return &service.GetReencryptionProgressResponse{
 		OperationID: pbResp.OperationId,
 		Path:        pbResp.Path,
 		Status:      pbResp.Status,
-		Progress:    convertProtoReencryptionProgress(pbResp.Progress),
+		Progress:    progress,
 		Error:       pbResp.Error,
 		Timestamp:   time.Unix(pbResp.Timestamp, 0),
 	}, nil
@@ -1401,18 +1443,26 @@ func convertProtoDEKMetadata(pm *pb.DEKMetadata) *service.DEKMetadata {
 	return dek
 }
 
-// convertProtoReencryptionProgress converts proto ReencryptionProgress to service ReencryptionProgress.
-func convertProtoReencryptionProgress(pm *pb.ReencryptionProgress) *service.ReencryptionProgress {
+// convertProtoReencryptionProgress converts proto ReencryptionProgress to
+// service ReencryptionProgress. The proto carries the key counts as int32; a
+// negative count is a malformed response and is returned as a decode error.
+func convertProtoReencryptionProgress(pm *pb.ReencryptionProgress) (*service.ReencryptionProgress, error) {
 	if pm == nil {
-		return nil
+		return nil, nil
 	}
 
-	// Proto int32 values are counts that are always non-negative in this context
+	totalKeys, totalErr := conv.SafeInt64ToUint64(int64(pm.TotalKeys))
+	processedKeys, processedErr := conv.SafeInt64ToUint64(int64(pm.ProcessedKeys))
+	failedKeys, failedErr := conv.SafeInt64ToUint64(int64(pm.FailedKeys))
+	if err := stderrors.Join(totalErr, processedErr, failedErr); err != nil {
+		return nil, api.NewDecodeError("Client.convertProtoReencryptionProgress", "reencryption progress", err)
+	}
+
 	result := &service.ReencryptionProgress{
 		InProgress:    pm.InProgress,
-		TotalKeys:     uint64(pm.TotalKeys),     //nolint:gosec // G115: proto count values are non-negative
-		ProcessedKeys: uint64(pm.ProcessedKeys), //nolint:gosec // G115: proto count values are non-negative
-		FailedKeys:    uint64(pm.FailedKeys),    //nolint:gosec // G115: proto count values are non-negative
+		TotalKeys:     totalKeys,
+		ProcessedKeys: processedKeys,
+		FailedKeys:    failedKeys,
 	}
 
 	if pm.StartedAt > 0 {
@@ -1430,7 +1480,7 @@ func convertProtoReencryptionProgress(pm *pb.ReencryptionProgress) *service.Reen
 		result.PercentComplete = float64(pm.ProcessedKeys) / float64(pm.TotalKeys) * 100
 	}
 
-	return result
+	return result, nil
 }
 
 // convertServiceKeyAlgorithmToProto converts service.KeyAlgorithm to pb.KeyAlgorithm.

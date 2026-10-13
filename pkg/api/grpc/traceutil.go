@@ -17,6 +17,7 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -34,6 +35,10 @@ func startGRPCSpan(ctx context.Context, name string, attrs map[string]interface{
 			kvs = append(kvs, attribute.Int64(k, t))
 		case int:
 			kvs = append(kvs, attribute.Int64(k, int64(t)))
+		case uint64:
+			// OpenTelemetry has no unsigned attribute type, and an entity ID
+			// can exceed MaxInt64, so record it losslessly as a decimal string.
+			kvs = append(kvs, attribute.String(k, strconv.FormatUint(t, 10)))
 		default:
 			kvs = append(kvs, attribute.String(k, ""))
 		}

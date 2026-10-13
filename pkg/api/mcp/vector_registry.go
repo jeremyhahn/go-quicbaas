@@ -20,12 +20,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"strings"
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // registerVectorTools registers all Vector Database tools with the ToolRegistry.
@@ -147,9 +148,17 @@ func (r *ToolRegistry) handleVectorCreateNamespace(ctx context.Context, svc serv
 		return nil, api.NewRequiredFieldError("namespace or name")
 	}
 
-	dimensions := getInt(args, "dimensions")
-	if dimensions == 0 {
+	ints := newIntArgReader(args)
+	dimensionsArg := ints.Int("dimensions")
+	if err := ints.Err(); err != nil {
+		return nil, err
+	}
+	if dimensionsArg == 0 {
 		return nil, api.NewRequiredFieldError("dimensions")
+	}
+	dimensions, err := conv.SafeIntToUint32(dimensionsArg)
+	if err != nil {
+		return nil, newIntArgError("dimensions", err)
 	}
 
 	// Support both "distance_metric" and "metric" parameter names
@@ -165,7 +174,7 @@ func (r *ToolRegistry) handleVectorCreateNamespace(ctx context.Context, svc serv
 
 	req := &service.CreateNamespaceRequest{
 		Namespace:      namespace,
-		Dimension:      uint32(dimensions), //nolint:gosec // G115: Safe conversion - dimensions validated
+		Dimension:      dimensions,
 		DistanceMetric: distanceMetric,
 		IndexType:      indexType,
 	}
@@ -1085,7 +1094,5 @@ func (r *ToolRegistry) handleVectorGetCompactionProgress(ctx context.Context, sv
 
 // hashStringToID converts a string ID to uint64 using FNV-1a hash.
 func hashStringToID(s string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(s)) //nolint:gosec // G104: hash.Write never returns error
-	return h.Sum64()
+	return id.HashString(s)
 }

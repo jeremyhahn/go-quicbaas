@@ -316,13 +316,17 @@ func (r *ToolRegistry) executeDEKCreate(ctx context.Context, args map[string]int
 		return nil, api.NewServiceUnavailableError("KMS DEK")
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.CreateDEKRequest{
 		Path:           getString(args, "path"),
 		Algorithm:      service.KeyAlgorithm(getString(args, "algorithm")),
 		Description:    getString(args, "description"),
-		MaxOperations:  getUint64(args, "max_operations"),
-		MaxBytes:       getUint64(args, "max_bytes"),
-		WarningPercent: int(getUint64(args, "warning_percent")), //nolint:gosec // G115: WarningPercent bounded 0-100
+		MaxOperations:  ints.Uint64("max_operations"),
+		MaxBytes:       ints.Uint64("max_bytes"),
+		WarningPercent: ints.Int("warning_percent"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := kmsSvc.CreateDEK(ctx, req)
@@ -357,6 +361,9 @@ func (r *ToolRegistry) executeDEKGet(ctx context.Context, args map[string]interf
 	return marshalResult(resp)
 }
 
+// dekListMaxLimit is the page-size cap of quicbaas_dek_list.
+const dekListMaxLimit = 10000
+
 func (r *ToolRegistry) executeDEKList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	// Get KMS service first, then check if it implements DEK methods
 	baseSvc, err := r.getKMSService()
@@ -371,15 +378,15 @@ func (r *ToolRegistry) executeDEKList(ctx context.Context, args map[string]inter
 		return nil, api.NewServiceUnavailableError("KMS DEK")
 	}
 
-	limit := getUint64(args, "limit")
-	if limit > 10000 {
-		limit = 10000
+	limit, err := cappedIntArg(args, "limit", dekListMaxLimit)
+	if err != nil {
+		return nil, err
 	}
 
 	req := &service.ListDEKsRequest{
 		Prefix:    getString(args, "prefix"),
 		Recursive: getBool(args, "recursive"),
-		Limit:     int(limit), //nolint:gosec // G115: limit bounded above
+		Limit:     limit,
 	}
 
 	resp, err := kmsSvc.ListDEKs(ctx, req)
@@ -506,11 +513,15 @@ func (r *ToolRegistry) executeDEKSetSafety(ctx context.Context, args map[string]
 		return nil, api.NewServiceUnavailableError("KMS DEK")
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.SetDEKSafetyRequest{
 		Path:           getString(args, "path"),
-		MaxOperations:  getUint64(args, "max_operations"),
-		MaxBytes:       getUint64(args, "max_bytes"),
-		WarningPercent: int(getUint64(args, "warning_percent")), //nolint:gosec // G115: WarningPercent bounded 0-100
+		MaxOperations:  ints.Uint64("max_operations"),
+		MaxBytes:       ints.Uint64("max_bytes"),
+		WarningPercent: ints.Int("warning_percent"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := kmsSvc.SetDEKSafety(ctx, req)
@@ -551,29 +562,18 @@ func (r *ToolRegistry) executeDEKStartReencryption(ctx context.Context, args map
 		return nil, err
 	}
 
-	batchSize := 100
-	if b := getUint64(args, "batch_size"); b > 0 {
-		batchSize = int(b) //nolint:gosec // G115: safe conversion for batch size
-	}
-
-	concurrency := 4
-	if c := getUint64(args, "concurrency"); c > 0 {
-		concurrency = int(c) //nolint:gosec // G115: safe conversion for concurrency
-	}
-
-	throttleRate := 0
-	if t := getUint64(args, "throttle_rate"); t > 0 {
-		throttleRate = int(t) //nolint:gosec // G115: safe conversion for throttle rate
-	}
-
+	ints := newIntArgReader(args)
 	req := &service.StartReencryptionRequest{
 		Path:         getString(args, "path"),
-		FromVersion:  getUint64(args, "from_version"),
-		ToVersion:    getUint64(args, "to_version"),
-		BatchSize:    batchSize,
-		Concurrency:  concurrency,
-		ThrottleRate: throttleRate,
+		FromVersion:  ints.Uint64("from_version"),
+		ToVersion:    ints.Uint64("to_version"),
+		BatchSize:    ints.IntOr("batch_size", 100),
+		Concurrency:  ints.IntOr("concurrency", 4),
+		ThrottleRate: ints.Int("throttle_rate"),
 		Force:        getBool(args, "force"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := dekSvc.StartReencryption(ctx, req)

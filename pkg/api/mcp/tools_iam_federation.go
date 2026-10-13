@@ -568,14 +568,16 @@ func (r *ToolRegistry) executeIAMFederationListProviders(ctx context.Context, ar
 		return nil, err
 	}
 
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	offset := ints.Int("offset")
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	opts := iam.ListOptions{
-		Limit:  int(limit), //nolint:gosec // G115: limit is bounded by schema default
-		Offset: int(getUint64(args, "offset")),
+		Limit:  limit,
+		Offset: offset,
 	}
 
 	providers, err := fedMgr.ListProviders(ctx, getString(args, "tenant_id"), opts)

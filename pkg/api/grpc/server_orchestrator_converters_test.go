@@ -536,19 +536,21 @@ func TestServiceHealthReportToProtoTimestampIsNanoseconds(t *testing.T) {
 	const nanos = int64(1700000000_123456789)
 
 	t.Run("timestamp_reads_back_as_the_same_moment", func(t *testing.T) {
-		out := serviceHealthReportToProto(&orchestration.HealthCheckReport{
+		out, err := serviceHealthReportToProto(&orchestration.HealthCheckReport{
 			Timestamp:     nanos,
 			TotalSessions: 2,
 			Healthy:       1,
 			Unhealthy:     1,
 		})
+		require.NoError(t, err)
 		require.NotNil(t, out)
 		require.NotNil(t, out.Timestamp)
 		assert.Equal(t, int64(1700000000), out.Timestamp.AsTime().Unix())
 	})
 
 	t.Run("unset_timestamp_stays_unset", func(t *testing.T) {
-		out := serviceHealthReportToProto(&orchestration.HealthCheckReport{})
+		out, err := serviceHealthReportToProto(&orchestration.HealthCheckReport{})
+		require.NoError(t, err)
 		require.NotNil(t, out)
 		assert.Nil(t, out.Timestamp)
 	})

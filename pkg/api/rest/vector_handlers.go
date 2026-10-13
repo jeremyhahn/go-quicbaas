@@ -26,7 +26,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // ========================================
@@ -52,14 +54,19 @@ func (s *Server) HandleVectorHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response
+	ints := newResponseInt64s("rest.vector.health")
 	resp := &VectorHealthResponse{
 		Status:              convertHealthStatusToString(serviceResp.Status),
 		NodeID:              0,
 		Version:             "",
-		UptimeSeconds:       int64(serviceResp.UptimeSeconds), //nolint:gosec // G115: Safe conversion - uptime always positive
+		UptimeSeconds:       ints.Int64("uptime", serviceResp.UptimeSeconds),
 		NamespacesHealthy:   0,
 		NamespacesDegraded:  0,
 		NamespacesUnhealthy: 0,
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -103,10 +110,16 @@ func (s *Server) HandleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dimension, err := conv.SafeIntToUint32(req.Dimensions)
+	if err != nil {
+		s.handleServiceError(w, r, api.NewInvalidInputCauseError("invalid dimensions", err))
+		return
+	}
+
 	// Convert to service request
 	serviceReq := &service.CreateNamespaceRequest{
 		Namespace:   req.Namespace,
-		Dimension:   uint32(req.Dimensions), //nolint:gosec // G115: Safe conversion - dimensions validated 1-4096
+		Dimension:   dimension,
 		IndexConfig: req.IndexParams,
 		Metadata:    convertStringMapToInterface(req.Metadata),
 		ShardID:     req.ShardID,
@@ -199,10 +212,15 @@ func (s *Server) HandleDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response
+	ints := newResponseInt64s("rest.vector.namespace.delete")
 	resp := &DeleteNamespaceResponse{
 		Deleted:        serviceResp.Success,
-		VectorsDeleted: int64(serviceResp.VectorsDeleted), //nolint:gosec // G115: Safe conversion - count within reasonable range
+		VectorsDeleted: ints.Int64("vectors deleted", serviceResp.VectorsDeleted),
 		Timestamp:      timestampToTime(serviceResp.Timestamp),
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -243,16 +261,21 @@ func (s *Server) HandleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert namespaces
+	ints := newResponseInt64s("rest.vector.namespace.list")
 	namespaces := make([]NamespaceInfo, len(serviceResp.Namespaces))
 	for i, ns := range serviceResp.Namespaces {
 		namespaces[i] = NamespaceInfo{
 			Namespace:      ns.Namespace,
 			Dimensions:     int(ns.Dimension),
 			DistanceMetric: "",
-			VectorCount:    int64(ns.VectorCount), //nolint:gosec // G115: Safe conversion - count within uint64 range
+			VectorCount:    ints.Int64("vector count", ns.VectorCount),
 			CreatedAt:      timestampToTime(ns.CreatedAt),
 			UpdatedAt:      timestampToTime(ns.UpdatedAt),
 		}
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	// Build response
@@ -291,16 +314,21 @@ func (s *Server) HandleGetNamespaceInfo(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Build response - IndexConfig is map[string]string
+	ints := newResponseInt64s("rest.vector.namespace.info")
 	resp := &NamespaceInfo{
 		Namespace:    serviceResp.Namespace,
 		Dimensions:   int(serviceResp.Dimension),
-		VectorCount:  int64(serviceResp.VectorCount), //nolint:gosec // G115: Safe conversion - count within uint64 range
+		VectorCount:  ints.Int64("vector count", serviceResp.VectorCount),
 		IndexType:    serviceResp.IndexType,
 		IndexParams:  serviceResp.IndexConfig, // Already string map
 		StorageBytes: 0,
 		IndexBytes:   0,
 		CreatedAt:    timestampToTime(serviceResp.CreatedAt),
 		UpdatedAt:    timestampToTime(serviceResp.UpdatedAt),
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -333,12 +361,19 @@ func (s *Server) HandleGetNamespaceStats(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Build response
+	ints := newResponseInt64s("rest.vector.namespace.stats")
+	vectorCount := ints.Int64("vector count", serviceResp.VectorCount)
+	indexBytes := ints.Int64("index size", serviceResp.IndexSizeBytes)
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
 	resp := &NamespaceStatsItem{
 		Namespace:          serviceResp.Namespace,
-		VectorCount:        int64(serviceResp.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-		IndexedCount:       int64(serviceResp.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-		StorageBytes:       int64(serviceResp.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-		IndexBytes:         int64(serviceResp.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
+		VectorCount:        vectorCount,
+		IndexedCount:       vectorCount,
+		StorageBytes:       indexBytes,
+		IndexBytes:         indexBytes,
 		AvgSearchLatencyMs: 0.0,
 		SearchCount:        0,
 	}
@@ -408,11 +443,16 @@ func (s *Server) HandleUpsertVector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response
+	ints := newResponseInt64s("rest.vector.upsert")
 	resp := &UpsertVectorResponse{
 		ID:           fmt.Sprintf("%d", serviceResp.ID),
-		Version:      int64(serviceResp.Version), //nolint:gosec // G115: Safe conversion - version from database
+		Version:      ints.Int64("version", serviceResp.Version),
 		Timestamp:    timestampToTime(serviceResp.Timestamp),
 		IndexUpdated: !req.SkipIndexUpdate,
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -463,13 +503,18 @@ func (s *Server) HandleGetVector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response
+	ints := newResponseInt64s("rest.vector.get")
 	resp := &GetVectorResponse{
 		ID:        id,
 		Namespace: namespace,
 		Vector:    serviceResp.Vector,
 		Metadata:  convertInterfaceMapToString(serviceResp.Metadata),
-		Version:   int64(serviceResp.Version), //nolint:gosec // G115: Safe conversion - version from database
+		Version:   ints.Int64("version", serviceResp.Version),
 		Status:    "active",
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -686,12 +731,13 @@ func (s *Server) HandleListVectors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert results
+	ints := newResponseInt64s("rest.vector.list")
 	vectors := make([]VectorListItem, len(searchResp.Results))
 	for i, vec := range searchResp.Results {
 		vectors[i] = VectorListItem{
 			ID:        fmt.Sprintf("%d", vec.ID),
 			Metadata:  convertInterfaceMapToString(vec.Metadata),
-			Version:   int64(vec.Version), //nolint:gosec // G115: Safe conversion - version from database
+			Version:   ints.Int64("version", vec.Version),
 			CreatedAt: timestampToTime(vec.CreatedAt),
 			UpdatedAt: timestampToTime(vec.UpdatedAt),
 		}
@@ -707,8 +753,12 @@ func (s *Server) HandleListVectors(w http.ResponseWriter, r *http.Request) {
 		Vectors: vectors,
 		Pagination: PaginationInfo{
 			NextPageToken: nextPageToken,
-			TotalCount:    int64(searchResp.TotalCount), //nolint:gosec // G115: Safe conversion - count from search results
+			TotalCount:    ints.Int64("total count", searchResp.TotalCount),
 		},
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -784,10 +834,15 @@ func (s *Server) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ints := newResponseInt64s("rest.vector.metadata.update")
 	resp := &UpsertVectorResponse{
 		ID:        id,
-		Version:   int64(upsertResp.Version), //nolint:gosec // G115: Safe conversion - version from database
+		Version:   ints.Int64("version", upsertResp.Version),
 		Timestamp: timestampToTime(upsertResp.Timestamp),
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -1111,13 +1166,14 @@ func (s *Server) HandleSearchByMetadata(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Convert results
+	ints := newResponseInt64s("rest.vector.search.metadata")
 	results := make([]MetadataSearchResult, len(serviceResp.Results))
 	for i, vec := range serviceResp.Results {
 		results[i] = MetadataSearchResult{
 			ID:        fmt.Sprintf("%d", vec.ID),
 			Vector:    vec.Vector,
 			Metadata:  convertInterfaceMapToString(vec.Metadata),
-			Version:   int64(vec.Version), //nolint:gosec // G115: Safe conversion - version from database
+			Version:   ints.Int64("version", vec.Version),
 			CreatedAt: timestampToTime(vec.CreatedAt),
 			UpdatedAt: timestampToTime(vec.UpdatedAt),
 		}
@@ -1126,8 +1182,12 @@ func (s *Server) HandleSearchByMetadata(w http.ResponseWriter, r *http.Request) 
 	// Build response
 	resp := &SearchByMetadataResponse{
 		Results:    results,
-		TotalCount: int64(serviceResp.TotalCount), //nolint:gosec // G115: Safe conversion - count from search results
+		TotalCount: ints.Int64("total count", serviceResp.TotalCount),
 		NextCursor: serviceResp.NextCursor,
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -1231,6 +1291,7 @@ func (s *Server) HandleGetGlobalStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Aggregate statistics
+	ints := newResponseInt64s("rest.vector.cluster.stats")
 	var totalVectors uint64
 	var totalStorageBytes uint64
 	var totalIndexBytes uint64
@@ -1249,30 +1310,36 @@ func (s *Server) HandleGetGlobalStats(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		totalVectors += statsResp.VectorCount
-		totalStorageBytes += statsResp.IndexSizeBytes
-		totalIndexBytes += statsResp.IndexSizeBytes
+		totalVectors = ints.Add("total vectors", totalVectors, statsResp.VectorCount)
+		totalStorageBytes = ints.Add("total storage bytes", totalStorageBytes, statsResp.IndexSizeBytes)
+		totalIndexBytes = ints.Add("total index bytes", totalIndexBytes, statsResp.IndexSizeBytes)
 
+		vectorCount := ints.Int64("vector count", statsResp.VectorCount)
+		indexBytes := ints.Int64("index bytes", statsResp.IndexSizeBytes)
 		namespaceStats = append(namespaceStats, NamespaceStatsItem{
 			Namespace:    ns.Namespace,
-			VectorCount:  int64(statsResp.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-			IndexedCount: int64(statsResp.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-			StorageBytes: int64(statsResp.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-			IndexBytes:   int64(statsResp.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
+			VectorCount:  vectorCount,
+			IndexedCount: vectorCount,
+			StorageBytes: indexBytes,
+			IndexBytes:   indexBytes,
 		})
 	}
 
 	resp := &ClusterStatsResponse{
 		ClusterID:         "quicbaas-cluster",
 		TotalNodes:        1,
-		TotalVectors:      int64(totalVectors), //nolint:gosec // G115: Safe conversion - count within uint64 range
+		TotalVectors:      ints.Int64("total vectors", totalVectors),
 		TotalNamespaces:   len(listResp.Namespaces),
-		TotalStorageBytes: int64(totalStorageBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-		TotalIndexBytes:   int64(totalIndexBytes),   //nolint:gosec // G115: Safe conversion - size within uint64 range
+		TotalStorageBytes: ints.Int64("total storage bytes", totalStorageBytes),
+		TotalIndexBytes:   ints.Int64("total index bytes", totalIndexBytes),
 		ClusterQPS:        0.0,
 		NamespaceStats:    namespaceStats,
 		NodeStats:         []NodeStats{},
 		Timestamp:         time.Now(),
+	}
+	if err := ints.Err(); err != nil {
+		s.handleServiceError(w, r, err)
+		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)

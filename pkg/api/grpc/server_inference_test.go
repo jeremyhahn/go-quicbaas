@@ -54,9 +54,8 @@ func newInferBufconn(t *testing.T, agentSvc *grpcTestAgentService) (pb.Orchestra
 	pb.RegisterOrchestratorServiceServer(srv, NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger()))
 	go func() { _ = srv.Serve(lis) }()
 
-	conn, err := realgrpc.DialContext( //nolint:staticcheck // test only
-		context.Background(), "bufnet",
-		realgrpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+	conn, err := realgrpc.NewClient("passthrough:///bufnet",
+		realgrpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		realgrpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	require.NoError(t, err)

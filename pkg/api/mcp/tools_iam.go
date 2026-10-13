@@ -1354,14 +1354,16 @@ func (r *ToolRegistry) executeIAMTenantList(ctx context.Context, args map[string
 		return nil, err
 	}
 
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	offset := ints.Int("offset")
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	req := &service.ListTenantsRequest{
-		Limit:  int(limit), //nolint:gosec // G115: limit is bounded by schema default
-		Offset: int(getUint64(args, "offset")),
+		Limit:  limit,
+		Offset: offset,
 	}
 
 	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
@@ -1527,15 +1529,17 @@ func (r *ToolRegistry) executeIAMUserList(ctx context.Context, args map[string]i
 		return nil, err
 	}
 
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	offset := ints.Int("offset")
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	req := &service.IAMListUsersRequest{
 		TenantID: getString(args, "tenant_id"),
-		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
-		Offset:   int(getUint64(args, "offset")),
+		Limit:    limit,
+		Offset:   offset,
 	}
 
 	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
@@ -1700,15 +1704,17 @@ func (r *ToolRegistry) executeIAMRoleList(ctx context.Context, args map[string]i
 		return nil, err
 	}
 
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	offset := ints.Int("offset")
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	req := &service.IAMListRolesRequest{
 		TenantID: getString(args, "tenant_id"),
-		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
-		Offset:   int(getUint64(args, "offset")),
+		Limit:    limit,
+		Offset:   offset,
 	}
 
 	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
@@ -1914,15 +1920,17 @@ func (r *ToolRegistry) executeIAMPolicyList(ctx context.Context, args map[string
 		return nil, err
 	}
 
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	offset := ints.Int("offset")
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	req := &service.ListPoliciesRequest{
 		TenantID: getString(args, "tenant_id"),
-		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
-		Offset:   int(getUint64(args, "offset")),
+		Limit:    limit,
+		Offset:   offset,
 	}
 
 	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
@@ -2184,15 +2192,17 @@ func (r *ToolRegistry) executeIAMAppList(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	offset := ints.Int("offset")
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	req := &service.ListAppsRequest{
 		TenantID: getString(args, "tenant_id"),
-		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
-		Offset:   int(getUint64(args, "offset")),
+		Limit:    limit,
+		Offset:   offset,
 	}
 
 	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
@@ -2318,13 +2328,14 @@ func (r *ToolRegistry) executeIAMAuditQuery(ctx context.Context, args map[string
 		filter.ResourceID = resourceID
 	}
 
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	offset := ints.Int("offset")
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
-	filter.Limit = int(limit) //nolint:gosec // G115: limit bounded by schema
-
-	filter.Offset = int(getUint64(args, "offset")) //nolint:gosec // G115: offset bounded by schema
+	filter.Limit = limit
+	filter.Offset = offset
 
 	if startTime := getString(args, "start_time"); startTime != "" {
 		if t, parseErr := time.Parse(time.RFC3339, startTime); parseErr == nil {

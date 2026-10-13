@@ -723,7 +723,8 @@ func TestServiceCredentialToProto(t *testing.T) {
 
 func TestServiceLeaseToProto(t *testing.T) {
 	t.Run("nil_lease", func(t *testing.T) {
-		result := serviceLeaseToProto(nil)
+		result, err := serviceLeaseToProto(nil)
+		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
@@ -739,7 +740,8 @@ func TestServiceLeaseToProto(t *testing.T) {
 			RenewCount:  0,
 			MaxRenewals: 5,
 		}
-		result := serviceLeaseToProto(l)
+		result, err := serviceLeaseToProto(l)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "lease-123", result.LeaseId)
 		assert.Equal(t, "postgres/creds/readonly", result.SecretPath)
@@ -759,7 +761,8 @@ func TestServiceLeaseToProto(t *testing.T) {
 			RenewCount:  2, // Has been renewed
 			MaxRenewals: 10,
 		}
-		result := serviceLeaseToProto(l)
+		result, err := serviceLeaseToProto(l)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "lease-456", result.LeaseId)
 		assert.NotNil(t, result.RenewedAt) // Should be set when RenewCount > 0
@@ -775,7 +778,8 @@ func TestServiceLeaseToProto(t *testing.T) {
 			TTL:        2 * time.Hour,
 			Renewable:  false,
 		}
-		result := serviceLeaseToProto(l)
+		result, err := serviceLeaseToProto(l)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "lease-expired", result.LeaseId)
 		assert.Equal(t, pb.LeaseState_LEASE_STATE_EXPIRED, result.State)
@@ -793,7 +797,8 @@ func TestServiceLeaseToProto(t *testing.T) {
 			Renewable:  true,
 			RevokedAt:  &revokedAt,
 		}
-		result := serviceLeaseToProto(l)
+		result, err := serviceLeaseToProto(l)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "lease-revoked", result.LeaseId)
 		assert.Equal(t, pb.LeaseState_LEASE_STATE_REVOKED, result.State)

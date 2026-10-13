@@ -142,9 +142,14 @@ func (s *Server) ListDynamicSecretsRoles(ctx context.Context, req *pb.DynSecrets
 		protoRoles[i] = serviceRoleToProto(role)
 	}
 
+	count, err := responseInt32("count", resp.Count)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.DynSecretsListRolesResponse{
 		Roles:     protoRoles,
-		Count:     int32(resp.Count), //nolint:gosec // G115: count is bounded
+		Count:     count,
 		Timestamp: timestamppb.New(now),
 	}, nil
 }
@@ -213,11 +218,16 @@ func (s *Server) GenerateCredential(ctx context.Context, req *pb.GenerateCredent
 		return nil, toProtoError(err)
 	}
 
+	protoLease, err := serviceLeaseToProto(resp.Lease)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 
 	return &pb.GenerateCredentialResponse{
 		Credential: serviceCredentialToProto(resp.Credential),
-		Lease:      serviceLeaseToProto(resp.Lease),
+		Lease:      protoLease,
 		LeaseId:    resp.LeaseID,
 		Timestamp:  timestamppb.New(now),
 	}, nil
@@ -251,8 +261,13 @@ func (s *Server) RenewLease(ctx context.Context, req *pb.RenewLeaseRequest) (*pb
 		return nil, toProtoError(err)
 	}
 
+	protoLease, err := serviceLeaseToProto(resp.Lease)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.RenewLeaseResponse{
-		Lease:     serviceLeaseToProto(resp.Lease),
+		Lease:     protoLease,
 		Timestamp: timestamppb.New(resp.RenewedAt),
 	}, nil
 }
@@ -318,12 +333,20 @@ func (s *Server) ListLeases(ctx context.Context, req *pb.ListLeasesRequest) (*pb
 	// Convert service leases to proto leases
 	protoLeases := make([]*pb.Lease, len(resp.Leases))
 	for i, l := range resp.Leases {
-		protoLeases[i] = serviceLeaseToProto(l)
+		protoLeases[i], err = serviceLeaseToProto(l)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	count, err := responseInt32("count", resp.Count)
+	if err != nil {
+		return nil, err
 	}
 
 	return &pb.ListLeasesResponse{
 		Leases:    protoLeases,
-		Count:     int32(resp.Count), //nolint:gosec // G115: count is bounded
+		Count:     count,
 		Timestamp: timestamppb.New(now),
 	}, nil
 }
@@ -385,9 +408,14 @@ func serviceCredentialToProto(cred *credentials.Credential) *pb.Credential {
 }
 
 // serviceLeaseToProto converts service lease.Lease to proto Lease.
-func serviceLeaseToProto(l *lease.Lease) *pb.Lease {
+func serviceLeaseToProto(l *lease.Lease) (*pb.Lease, error) {
 	if l == nil {
-		return nil
+		return nil, nil
+	}
+
+	renewCount, err := responseInt32("renew_count", l.RenewCount)
+	if err != nil {
+		return nil, err
 	}
 
 	protoLease := &pb.Lease{
@@ -399,7 +427,7 @@ func serviceLeaseToProto(l *lease.Lease) *pb.Lease {
 		CreatedAt:  timestamppb.New(l.IssuedAt),
 		Renewable:  l.Renewable,
 		MaxTtl:     durationpb.New(l.TTL),
-		RenewCount: int32(l.RenewCount), //nolint:gosec // G115: renewal count is bounded
+		RenewCount: renewCount,
 		Metadata:   l.Metadata,
 	}
 
@@ -409,7 +437,7 @@ func serviceLeaseToProto(l *lease.Lease) *pb.Lease {
 		protoLease.RenewedAt = timestamppb.New(l.IssuedAt)
 	}
 
-	return protoLease
+	return protoLease, nil
 }
 
 // leaseStateToProto converts service lease.LeaseState to proto LeaseState.

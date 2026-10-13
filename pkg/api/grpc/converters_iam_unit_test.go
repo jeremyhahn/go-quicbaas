@@ -160,7 +160,8 @@ func TestConvertTenantToProto(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertTenantToProto(tt.input)
+			result, err := convertTenantToProto(tt.input)
+			require.NoError(t, err)
 			tt.validate(t, result)
 		})
 	}
@@ -641,7 +642,8 @@ func TestConvertPolicyToProto(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertPolicyToProto(tt.input)
+			result, err := convertPolicyToProto(tt.input)
+			require.NoError(t, err)
 			tt.validate(t, result)
 		})
 	}
@@ -850,7 +852,9 @@ func TestConvertProtoToTenant_Full(t *testing.T) {
 }
 
 func TestConvertTenantToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertTenantToProto(nil))
+	result, err := convertTenantToProto(nil)
+	require.NoError(t, err)
+	assert.Nil(t, result)
 }
 
 func TestConvertTenantToProto_Full(t *testing.T) {
@@ -866,7 +870,8 @@ func TestConvertTenantToProto_Full(t *testing.T) {
 		Updated: time.Now(),
 	}
 
-	result := convertTenantToProto(tenant)
+	result, err := convertTenantToProto(tenant)
+	require.NoError(t, err)
 	assert.Equal(t, "tenant-1", result.Id)
 	assert.Equal(t, "Test Tenant", result.Name)
 	assert.Equal(t, int32(50), result.Settings.MaxUsers)
@@ -1112,7 +1117,9 @@ func TestConvertProtoToPolicy_Full(t *testing.T) {
 }
 
 func TestConvertPolicyToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertPolicyToProto(nil))
+	result, err := convertPolicyToProto(nil)
+	require.NoError(t, err)
+	assert.Nil(t, result)
 }
 
 func TestConvertPolicyToProto_Full(t *testing.T) {
@@ -1123,7 +1130,8 @@ func TestConvertPolicyToProto_Full(t *testing.T) {
 			Created: time.Now(), Updated: time.Now(),
 		},
 	}
-	result := convertPolicyToProto(policy)
+	result, err := convertPolicyToProto(policy)
+	require.NoError(t, err)
 	assert.Equal(t, "p1", result.Name)
 	assert.Equal(t, int32(5), result.Priority)
 }
@@ -1604,7 +1612,9 @@ func TestConvertDeletionStatusToProto_AllTypes(t *testing.T) {
 // =============================================================================
 
 func TestConvertDataDeletionRequestToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertDataDeletionRequestToProto(nil))
+	result, err := convertDataDeletionRequestToProto(nil)
+	require.NoError(t, err)
+	assert.Nil(t, result)
 }
 
 func TestConvertDataDeletionRequestToProto_Full(t *testing.T) {
@@ -1627,7 +1637,8 @@ func TestConvertDataDeletionRequestToProto_Full(t *testing.T) {
 		},
 		Metadata: map[string]string{"k": "v"},
 	}
-	result := convertDataDeletionRequestToProto(r)
+	result, err := convertDataDeletionRequestToProto(r)
+	require.NoError(t, err)
 	assert.Equal(t, "del-1", result.Id)
 	assert.NotNil(t, result.GracePeriodEndsAt)
 	assert.NotNil(t, result.StartedAt)
@@ -1675,7 +1686,9 @@ func TestConvertProtoToDataDeletionRequest_Full(t *testing.T) {
 // =============================================================================
 
 func TestConvertDeletionSummaryToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertDeletionSummaryToProto(nil))
+	result, err := convertDeletionSummaryToProto(nil)
+	require.NoError(t, err)
+	assert.Nil(t, result)
 }
 
 func TestConvertProtoToDeletionSummary_Nil(t *testing.T) {
@@ -1687,7 +1700,9 @@ func TestConvertProtoToDeletionSummary_Nil(t *testing.T) {
 // =============================================================================
 
 func TestConvertUserDataExportToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertUserDataExportToProto(nil))
+	result, err := convertUserDataExportToProto(nil)
+	require.NoError(t, err)
+	assert.Nil(t, result)
 }
 
 func TestConvertUserDataExportToProto_Full(t *testing.T) {
@@ -1741,7 +1756,8 @@ func TestConvertUserDataExportToProto_Full(t *testing.T) {
 		},
 	}
 
-	result := convertUserDataExportToProto(export)
+	result, err := convertUserDataExportToProto(export)
+	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.NotNil(t, result.ExportMetadata)
 	assert.NotNil(t, result.Profile)
@@ -3113,7 +3129,8 @@ func TestConvertProtoToDataExportRequestComplete(t *testing.T) {
 }
 
 func TestConvertUserDataExportToProtoNilInput(t *testing.T) {
-	result := convertUserDataExportToProto(nil)
+	result, err := convertUserDataExportToProto(nil)
+	require.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -3201,7 +3218,8 @@ func TestConvertUserDataExportToProtoComplete(t *testing.T) {
 		},
 	}
 
-	result := convertUserDataExportToProto(export)
+	result, err := convertUserDataExportToProto(export)
+	require.NoError(t, err)
 
 	assert.NotNil(t, result)
 	assert.NotNil(t, result.ExportMetadata)
@@ -3250,7 +3268,8 @@ func TestConvertCredentialExportToProtoNilInput(t *testing.T) {
 }
 
 func TestConvertMFAInfoExportToProtoNilInput(t *testing.T) {
-	result := convertMFAInfoExportToProto(nil)
+	result, err := convertMFAInfoExportToProto(nil)
+	require.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -3303,7 +3322,8 @@ func TestConvertDeletionStatusToProtoAllValues(t *testing.T) {
 }
 
 func TestConvertDataDeletionRequestToProtoNilInput(t *testing.T) {
-	result := convertDataDeletionRequestToProto(nil)
+	result, err := convertDataDeletionRequestToProto(nil)
+	require.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -3333,7 +3353,8 @@ func TestConvertDataDeletionRequestToProtoComplete(t *testing.T) {
 		Metadata:           map[string]string{"source": "web"},
 	}
 
-	result := convertDataDeletionRequestToProto(req)
+	result, err := convertDataDeletionRequestToProto(req)
+	require.NoError(t, err)
 
 	assert.NotNil(t, result)
 	assert.Equal(t, "deletion-1", result.Id)
@@ -3383,7 +3404,8 @@ func TestConvertProtoToDataDeletionRequestComplete(t *testing.T) {
 }
 
 func TestConvertDeletionSummaryToProtoNilInput(t *testing.T) {
-	result := convertDeletionSummaryToProto(nil)
+	result, err := convertDeletionSummaryToProto(nil)
+	require.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -3401,7 +3423,8 @@ func TestConvertDeletionSummaryToProtoComplete(t *testing.T) {
 		},
 	}
 
-	result := convertDeletionSummaryToProto(summary)
+	result, err := convertDeletionSummaryToProto(summary)
+	require.NoError(t, err)
 
 	assert.NotNil(t, result)
 	assert.True(t, result.ProfileDeleted)

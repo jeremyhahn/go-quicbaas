@@ -230,11 +230,16 @@ func (s *SchedulerServer) ListJobs(ctx context.Context, req *pb.ListJobsRequest)
 		jobs[i] = serviceJobToProto(job)
 	}
 
+	totalCount, err := responseInt32("total_count", resp.TotalCount)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.ListJobsResponse{
 		Jobs:       jobs,
 		NextCursor: resp.NextCursor,
 		HasMore:    resp.HasMore,
-		TotalCount: int32(resp.TotalCount), //nolint:gosec // G115: bounded count
+		TotalCount: totalCount,
 		Timestamp:  resp.Timestamp.Unix(),
 	}, nil
 }

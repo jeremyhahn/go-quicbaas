@@ -576,9 +576,11 @@ func (r *ToolRegistry) executeIAMAdminAssignmentList(ctx context.Context, args m
 		return nil, err
 	}
 
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	offset := ints.Int("offset")
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	activeOnly := false
@@ -591,8 +593,8 @@ func (r *ToolRegistry) executeIAMAdminAssignmentList(ctx context.Context, args m
 		TenantID:   getString(args, "tenant_id"),
 		AdminRole:  iam.AdminRole(getString(args, "admin_role")),
 		ActiveOnly: activeOnly,
-		Limit:      int(limit), //nolint:gosec // G115: limit is bounded by schema default
-		Offset:     int(getUint64(args, "offset")),
+		Limit:      limit,
+		Offset:     offset,
 	}
 
 	assignments, err := adminMgr.ListAssignments(ctx, opts)

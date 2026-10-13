@@ -14,13 +14,16 @@
 package grpc
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // =============================================================================
@@ -205,7 +208,16 @@ func TestProtoToServiceRotationPolicy(t *testing.T) {
 
 func TestServiceToProtoRotationPolicy(t *testing.T) {
 	t.Run("nil_returns_nil", func(t *testing.T) {
-		assert.Nil(t, serviceToProtoRotationPolicy(nil))
+		out, err := serviceToProtoRotationPolicy(nil)
+		require.NoError(t, err)
+		assert.Nil(t, out)
+	})
+
+	t.Run("retain_versions_out_of_range", func(t *testing.T) {
+		out, err := serviceToProtoRotationPolicy(&service.RotationPolicy{RetainVersions: math.MaxInt32 + 1})
+		var overflow *conv.ConversionOverflowError
+		require.ErrorAs(t, err, &overflow)
+		assert.Nil(t, out)
 	})
 
 	t.Run("roundtrip", func(t *testing.T) {
@@ -216,7 +228,8 @@ func TestServiceToProtoRotationPolicy(t *testing.T) {
 			RetainVersions: 6,
 			AutoRotate:     true,
 		}
-		proto := serviceToProtoRotationPolicy(orig)
+		proto, err := serviceToProtoRotationPolicy(orig)
+		require.NoError(t, err)
 		assert.Equal(t, int64(7200), proto.IntervalSeconds)
 		assert.Equal(t, int32(6), proto.RetainVersions)
 		assert.Equal(t, int64(1700000000), proto.NextRotation)
@@ -229,7 +242,8 @@ func TestServiceToProtoRotationPolicy(t *testing.T) {
 	})
 
 	t.Run("zero_next_rotation_omitted", func(t *testing.T) {
-		out := serviceToProtoRotationPolicy(&service.RotationPolicy{Enabled: false})
+		out, err := serviceToProtoRotationPolicy(&service.RotationPolicy{Enabled: false})
+		require.NoError(t, err)
 		assert.Equal(t, int64(0), out.NextRotation)
 	})
 }

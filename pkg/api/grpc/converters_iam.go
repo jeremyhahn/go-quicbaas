@@ -65,9 +65,14 @@ func convertProtoToTenant(pb *iampb.Tenant) *iam.Tenant {
 }
 
 // convertTenantToProto converts a domain Tenant to a proto Tenant.
-func convertTenantToProto(t *iam.Tenant) *iampb.Tenant {
+func convertTenantToProto(t *iam.Tenant) (*iampb.Tenant, error) {
 	if t == nil {
-		return nil
+		return nil, nil
+	}
+
+	maxUsers, err := responseInt32("max_users", t.Settings.MaxUsers)
+	if err != nil {
+		return nil, err
 	}
 
 	pb := &iampb.Tenant{
@@ -77,7 +82,7 @@ func convertTenantToProto(t *iam.Tenant) *iampb.Tenant {
 
 	// Convert settings
 	settings := &iampb.TenantSettings{
-		MaxUsers:      int32(t.Settings.MaxUsers), //nolint:gosec // G115: MaxUsers is a reasonable config value
+		MaxUsers:      maxUsers,
 		MfaRequired:   t.Settings.MFAPolicy != nil && t.Settings.MFAPolicy.Required,
 		NamedNetworks: make(map[string]string),
 	}
@@ -95,7 +100,7 @@ func convertTenantToProto(t *iam.Tenant) *iampb.Tenant {
 	pb.CreatedAt = timestamppb.New(t.Created)
 	pb.UpdatedAt = timestamppb.New(t.Updated)
 
-	return pb
+	return pb, nil
 }
 
 // engineQuotasFromProto converts the tenant-create engine quota message to the
@@ -395,9 +400,14 @@ func convertProtoToPolicy(pb *iampb.Policy) *iam.Policy {
 }
 
 // convertPolicyToProto converts a domain Policy to a proto Policy.
-func convertPolicyToProto(p *iam.Policy) *iampb.Policy {
+func convertPolicyToProto(p *iam.Policy) (*iampb.Policy, error) {
 	if p == nil {
-		return nil
+		return nil, nil
+	}
+
+	priority, err := responseInt32("priority", p.Metadata.Priority)
+	if err != nil {
+		return nil, err
 	}
 
 	pb := &iampb.Policy{
@@ -405,7 +415,7 @@ func convertPolicyToProto(p *iam.Policy) *iampb.Policy {
 		TenantId:    p.Metadata.Tenant,
 		Description: p.Metadata.Description,
 		Labels:      p.Metadata.Labels,
-		Priority:    int32(p.Metadata.Priority), //nolint:gosec // G115: Priority is a small config value
+		Priority:    priority,
 	}
 
 	pb.CreatedAt = timestamppb.New(p.Metadata.Created)
@@ -417,7 +427,7 @@ func convertPolicyToProto(p *iam.Policy) *iampb.Policy {
 		pb.SpecYaml = specYAML
 	}
 
-	return pb
+	return pb, nil
 }
 
 // =============================================================================
@@ -1007,9 +1017,9 @@ func convertProtoToDataExportRequest(pb *iampb.DataExportRequest) *iam.DataExpor
 // =============================================================================
 
 // convertUserDataExportToProto converts a domain UserDataExport to a proto UserDataExport.
-func convertUserDataExportToProto(e *iam.UserDataExport) *iampb.UserDataExport {
+func convertUserDataExportToProto(e *iam.UserDataExport) (*iampb.UserDataExport, error) {
 	if e == nil {
-		return nil
+		return nil, nil
 	}
 
 	pb := &iampb.UserDataExport{
@@ -1055,11 +1065,13 @@ func convertUserDataExportToProto(e *iam.UserDataExport) *iampb.UserDataExport {
 		}
 	}
 
-	if e.MFAInfo != nil {
-		pb.MfaInfo = convertMFAInfoExportToProto(e.MFAInfo)
+	mfaInfo, err := convertMFAInfoExportToProto(e.MFAInfo)
+	if err != nil {
+		return nil, err
 	}
+	pb.MfaInfo = mfaInfo
 
-	return pb
+	return pb, nil
 }
 
 // convertExportMetadataToProto converts a domain ExportMetadata to a proto ExportMetadata.
@@ -1198,22 +1210,27 @@ func convertCredentialExportToProto(c *iam.CredentialExport) *iampb.CredentialEx
 }
 
 // convertMFAInfoExportToProto converts a domain MFAInfoExport to a proto MFAInfoExport.
-func convertMFAInfoExportToProto(m *iam.MFAInfoExport) *iampb.MFAInfoExport {
+func convertMFAInfoExportToProto(m *iam.MFAInfoExport) (*iampb.MFAInfoExport, error) {
 	if m == nil {
-		return nil
+		return nil, nil
+	}
+
+	backupCodes, err := responseInt32("backup_codes_remaining", m.BackupCodes)
+	if err != nil {
+		return nil, err
 	}
 
 	pb := &iampb.MFAInfoExport{
 		Enabled:              m.Enabled,
 		Method:               m.Method,
-		BackupCodesRemaining: int32(m.BackupCodes), //nolint:gosec // G115: Backup codes count is small
+		BackupCodesRemaining: backupCodes,
 	}
 
 	if m.EnrolledAt != nil {
 		pb.EnrolledAt = timestamppb.New(*m.EnrolledAt)
 	}
 
-	return pb
+	return pb, nil
 }
 
 // =============================================================================
@@ -1257,9 +1274,9 @@ func convertDeletionStatusToProto(status iam.DeletionStatus) iampb.DeletionStatu
 }
 
 // convertDataDeletionRequestToProto converts a domain DataDeletionRequest to a proto DataDeletionRequest.
-func convertDataDeletionRequestToProto(r *iam.DataDeletionRequest) *iampb.DataDeletionRequest {
+func convertDataDeletionRequestToProto(r *iam.DataDeletionRequest) (*iampb.DataDeletionRequest, error) {
 	if r == nil {
-		return nil
+		return nil, nil
 	}
 
 	pb := &iampb.DataDeletionRequest{
@@ -1289,11 +1306,13 @@ func convertDataDeletionRequestToProto(r *iam.DataDeletionRequest) *iampb.DataDe
 	if r.CancelledAt != nil {
 		pb.CancelledAt = timestamppb.New(*r.CancelledAt)
 	}
-	if r.DeletedDataSummary != nil {
-		pb.DeletedDataSummary = convertDeletionSummaryToProto(r.DeletedDataSummary)
+	summary, err := convertDeletionSummaryToProto(r.DeletedDataSummary)
+	if err != nil {
+		return nil, err
 	}
+	pb.DeletedDataSummary = summary
 
-	return pb
+	return pb, nil
 }
 
 // convertProtoToDataDeletionRequest converts a proto DataDeletionRequest to a domain DataDeletionRequest.
@@ -1343,29 +1362,33 @@ func convertProtoToDataDeletionRequest(pb *iampb.DataDeletionRequest) *iam.DataD
 }
 
 // convertDeletionSummaryToProto converts a domain DeletionSummary to a proto DeletionSummary.
-func convertDeletionSummaryToProto(s *iam.DeletionSummary) *iampb.DeletionSummary {
+func convertDeletionSummaryToProto(s *iam.DeletionSummary) (*iampb.DeletionSummary, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 
+	n := &responseNarrower{}
 	pb := &iampb.DeletionSummary{
 		ProfileDeleted:         s.ProfileDeleted,
-		SessionsDeleted:        int32(s.SessionsDeleted),        //nolint:gosec // G115: Reasonable count
-		AuditLogsAnonymized:    int32(s.AuditLogsAnonymized),    //nolint:gosec // G115: Reasonable count
-		ConsentsDeleted:        int32(s.ConsentsDeleted),        //nolint:gosec // G115: Reasonable count
-		CredentialsDeleted:     int32(s.CredentialsDeleted),     //nolint:gosec // G115: Reasonable count
-		RoleAssignmentsRemoved: int32(s.RoleAssignmentsRemoved), //nolint:gosec // G115: Reasonable count
-		TokensRevoked:          int32(s.TokensRevoked),          //nolint:gosec // G115: Reasonable count
+		SessionsDeleted:        n.int32("sessions_deleted", s.SessionsDeleted),
+		AuditLogsAnonymized:    n.int32("audit_logs_anonymized", s.AuditLogsAnonymized),
+		ConsentsDeleted:        n.int32("consents_deleted", s.ConsentsDeleted),
+		CredentialsDeleted:     n.int32("credentials_deleted", s.CredentialsDeleted),
+		RoleAssignmentsRemoved: n.int32("role_assignments_removed", s.RoleAssignmentsRemoved),
+		TokensRevoked:          n.int32("tokens_revoked", s.TokensRevoked),
 	}
 
 	if len(s.AdditionalData) > 0 {
 		pb.AdditionalData = make(map[string]int32, len(s.AdditionalData))
 		for k, v := range s.AdditionalData {
-			pb.AdditionalData[k] = int32(v) //nolint:gosec // G115: Reasonable count
+			pb.AdditionalData[k] = n.int32("additional_data", v)
 		}
 	}
 
-	return pb
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return pb, nil
 }
 
 // convertProtoToDeletionSummary converts a proto DeletionSummary to a domain DeletionSummary.

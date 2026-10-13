@@ -401,7 +401,7 @@ func TestOrchestratorGRPC_ListWorkflows_RefusesUnknownSort(t *testing.T) {
 }
 
 func TestWorkflowDefinitionToProto_PreservesFullRESTShape(t *testing.T) {
-	proto := workflowDefinitionToProto(&orchestration.WorkflowDefinition{
+	proto, err := workflowDefinitionToProto(&orchestration.WorkflowDefinition{
 		TenantID:    "tenant-a",
 		ProjectID:   "project-a",
 		Name:        "full-workflow",
@@ -474,6 +474,7 @@ func TestWorkflowDefinitionToProto_PreservesFullRESTShape(t *testing.T) {
 		},
 	})
 
+	require.NoError(t, err)
 	require.NotNil(t, proto)
 	require.Len(t, proto.GetAgents(), 1)
 	agent := proto.GetAgents()[0]

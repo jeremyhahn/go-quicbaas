@@ -199,6 +199,11 @@ func (c *Client) KMSSetKeyRotationPolicy(ctx context.Context, req *service.SetKe
 		return nil, api.NewNilInputError("Client.KMSSetKeyRotationPolicy", "request")
 	}
 
+	policy, err := serviceToProtoRotationPolicy(req.Policy)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
@@ -207,7 +212,7 @@ func (c *Client) KMSSetKeyRotationPolicy(ctx context.Context, req *service.SetKe
 
 	pbResp, err := kmsClient.SetKeyRotationPolicy(ctx, &pb.SetKeyRotationPolicyRequest{
 		KeyId:  req.KeyID,
-		Policy: serviceToProtoRotationPolicy(req.Policy),
+		Policy: policy,
 	})
 	if err != nil {
 		return nil, convertError(err)

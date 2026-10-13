@@ -166,6 +166,11 @@ func (c *Client) SchedulerListJobs(ctx context.Context, req *service.ListSchedul
 		req = &service.ListSchedulerJobsRequest{}
 	}
 
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.ListJobsRequest{
@@ -175,7 +180,7 @@ func (c *Client) SchedulerListJobs(ctx context.Context, req *service.ListSchedul
 		Status:         convertServiceToProtoJobStatus(req.Status),
 		Handler:        req.Handler,
 		Labels:         req.Labels,
-		Limit:          int32(req.Limit), //nolint:gosec // G115: pagination limit bounded by protobuf
+		Limit:          limit,
 		Cursor:         req.Cursor,
 	}
 
@@ -328,12 +333,17 @@ func (c *Client) SchedulerGetJobHistory(ctx context.Context, req *service.GetSch
 		}
 	}
 
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.GetJobHistoryRequest{
 		JobId:    req.JobID,
 		TenantId: req.TenantID,
-		Limit:    int32(req.Limit), //nolint:gosec // G115: pagination limit bounded by protobuf
+		Limit:    limit,
 		Cursor:   req.Cursor,
 	}
 

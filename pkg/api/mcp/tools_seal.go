@@ -188,12 +188,16 @@ func (r *ToolRegistry) executeSealStatus(ctx context.Context, args map[string]in
 }
 
 func (r *ToolRegistry) executeSealInit(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ints := newIntArgReader(args)
 	req := &service.SealInitRequest{
-		Threshold:           int(getUint64(args, "threshold")),    //nolint:gosec // G115: Threshold is small value (typically < 10)
-		TotalShares:         int(getUint64(args, "total_shares")), //nolint:gosec // G115: small value
+		Threshold:           ints.Int("threshold"),
+		TotalShares:         ints.Int("total_shares"),
 		RecoveryKeysEnabled: getBool(args, "recovery_keys_enabled"),
-		RecoveryThreshold:   int(getUint64(args, "recovery_threshold")),  //nolint:gosec // G115: small value
-		RecoveryTotalKeys:   int(getUint64(args, "recovery_total_keys")), //nolint:gosec // G115: small value
+		RecoveryThreshold:   ints.Int("recovery_threshold"),
+		RecoveryTotalKeys:   ints.Int("recovery_total_keys"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := r.service.Initialize(ctx, req)
@@ -228,11 +232,13 @@ func (r *ToolRegistry) executeSeal(ctx context.Context, args map[string]interfac
 }
 
 func (r *ToolRegistry) executeSealRekey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ints := newIntArgReader(args)
 	req := &service.RekeyRequest{
-		//nolint:gosec // G115: Threshold and shares are small values (typically < 100)
-		NewThreshold: int(getUint64(args, "new_threshold")),
-		//nolint:gosec // G115: Threshold and shares are small values (typically < 100)
-		NewTotalShares: int(getUint64(args, "new_total_shares")),
+		NewThreshold:   ints.Int("new_threshold"),
+		NewTotalShares: ints.Int("new_total_shares"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := r.service.Rekey(ctx, req)
@@ -243,11 +249,13 @@ func (r *ToolRegistry) executeSealRekey(ctx context.Context, args map[string]int
 }
 
 func (r *ToolRegistry) executeSealGenerateRecoveryKey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ints := newIntArgReader(args)
 	req := &service.GenerateRecoveryKeyRequest{
-		//nolint:gosec // G115: Recovery key count is small value (typically < 100)
-		RecoveryThreshold: int(getUint64(args, "recovery_threshold")),
-		//nolint:gosec // G115: Recovery key count is small value (typically < 100)
-		RecoveryTotalKeys: int(getUint64(args, "recovery_total_keys")),
+		RecoveryThreshold: ints.Int("recovery_threshold"),
+		RecoveryTotalKeys: ints.Int("recovery_total_keys"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := r.service.GenerateRecoveryKey(ctx, req)

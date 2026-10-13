@@ -1191,19 +1191,21 @@ func TestObjectStorageHelperFunctions(t *testing.T) {
 		assert.Equal(t, "", getStringFromMap(m, "key3"))
 	})
 
-	t.Run("getUint64FromMap", func(t *testing.T) {
+	t.Run("getUint64", func(t *testing.T) {
 		m := map[string]interface{}{
-			"float":  float64(123.5),
-			"int":    42,
-			"int64":  int64(100),
-			"uint64": uint64(200),
-			"string": "not a number",
+			"float":    float64(123.5),
+			"int":      42,
+			"int64":    int64(100),
+			"uint64":   uint64(200),
+			"string":   "not a number",
+			"negative": -7,
 		}
-		assert.Equal(t, uint64(123), getUint64FromMap(m, "float"))
-		assert.Equal(t, uint64(42), getUint64FromMap(m, "int"))
-		assert.Equal(t, uint64(100), getUint64FromMap(m, "int64"))
-		assert.Equal(t, uint64(200), getUint64FromMap(m, "uint64"))
-		assert.Equal(t, uint64(0), getUint64FromMap(m, "string"))
+		assert.Equal(t, uint64(123), getUint64(m, "float"))
+		assert.Equal(t, uint64(42), getUint64(m, "int"))
+		assert.Equal(t, uint64(100), getUint64(m, "int64"))
+		assert.Equal(t, uint64(200), getUint64(m, "uint64"))
+		assert.Equal(t, uint64(0), getUint64(m, "string"))
+		assert.Equal(t, uint64(0), getUint64(m, "negative"))
 	})
 
 	t.Run("getBoolFromMap", func(t *testing.T) {

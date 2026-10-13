@@ -18,7 +18,6 @@ package rest
 import (
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
@@ -27,7 +26,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 )
 
 // HandleKVPut handles PUT/POST requests to store key-value pairs with string keys.
@@ -415,11 +417,17 @@ func (s *Server) HandleKVList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	total, err := conv.SafeUint64ToInt(listResp.TotalCount)
+	if err != nil {
+		s.handleServiceError(w, r, api.NewEncodeError("rest.kv.list", "total count", err))
+		return
+	}
+
 	// Build response
 	resp := KVListResponse{
 		EntityType: entityType,
 		Items:      items,
-		Total:      int(listResp.TotalCount), //nolint:gosec // G115: TotalCount is bounded
+		Total:      total,
 		NextCursor: listResp.NextPageToken,
 		HasMore:    listResp.NextPageToken != "",
 	}
@@ -436,9 +444,5 @@ type kvDataWrapper struct {
 // hashStringKey converts a string key to a uint64 ID using FNV-1a hash.
 // This provides a consistent mapping from string keys to numeric IDs.
 func hashStringKey(entityType, key string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(entityType)) //nolint:gosec // G104: hash.Write never returns error
-	h.Write([]byte(":"))        //nolint:gosec // G104: hash.Write never returns error
-	h.Write([]byte(key))        //nolint:gosec // G104: hash.Write never returns error
-	return h.Sum64()
+	return id.HashString(entityType + ":" + key)
 }

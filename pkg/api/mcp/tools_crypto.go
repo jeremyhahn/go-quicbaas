@@ -675,8 +675,12 @@ func (r *ToolRegistry) executeCryptoRandom(ctx context.Context, args map[string]
 		return nil, api.NewServiceUnavailableError("crypto")
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.GenerateRandomRequest{
-		NumBytes: int(getUint64(args, "num_bytes")), //nolint:gosec // G115: uint64 to int conversion for byte count,
+		NumBytes: ints.Int("num_bytes"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := cryptoSvc.GenerateRandom(ctx, req)

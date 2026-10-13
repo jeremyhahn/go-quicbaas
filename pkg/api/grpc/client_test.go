@@ -594,7 +594,8 @@ func TestServiceCredentialToProto_Nil(t *testing.T) {
 func TestServiceLeaseToProto_Nil(t *testing.T) {
 	t.Parallel()
 
-	result := serviceLeaseToProto(nil)
+	result, err := serviceLeaseToProto(nil)
+	require.NoError(t, err)
 	assert.Nil(t, result)
 }
 

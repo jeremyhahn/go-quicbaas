@@ -257,9 +257,14 @@ func (s *ParameterStoreServer) DeleteParameters(
 		}
 	}
 
+	deletedCount, err := responseInt32("deleted_count", resp.DeletedCount)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.DeleteParametersResponse{
 		Results:      results,
-		DeletedCount: int32(resp.DeletedCount), //nolint:gosec // G115: DeletedCount represents count, safe conversion
+		DeletedCount: deletedCount,
 		Timestamp:    resp.Timestamp.UnixNano(),
 	}, nil
 }

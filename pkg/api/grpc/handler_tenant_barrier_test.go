@@ -18,6 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -196,6 +197,67 @@ func TestTenantBarrierRPCs_GenericErrorNotFailedPrecondition(t *testing.T) {
 	srv := NewTenantBarrierGRPCServer(svc, nil)
 	_, err := srv.Seal(context.Background(), &pb.TenantBarrierSealRequest{TenantId: "t1"})
 	requireGRPCCode(t, err, codes.Internal)
+}
+
+// TestTenantBarrierRPCs_ResponseOutOfRange proves that a share count too
+// large for its int32 wire field becomes codes.Internal instead of a wrapped
+// integer.
+func TestTenantBarrierRPCs_ResponseOutOfRange(t *testing.T) {
+	const tooBig = math.MaxInt32 + 1
+	ctx := context.Background()
+	initResult := func(threshold, total int) *fakeTenantBarrierServicer {
+		return &fakeTenantBarrierServicer{
+			initFn: func(context.Context, string, []byte, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+				return &qrdbtransport.TenantBarrierInitResponse{TenantID: "t1", Threshold: threshold, TotalShares: total}, nil
+			},
+		}
+	}
+	unsealProgress := func(required, submitted int) *fakeTenantBarrierServicer {
+		return &fakeTenantBarrierServicer{
+			unsealShareFn: func(context.Context, string, string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
+				return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: "t1", Required: required, Submitted: submitted}, nil
+			},
+		}
+	}
+	statusInfo := func(threshold, total int) *fakeTenantBarrierServicer {
+		return &fakeTenantBarrierServicer{
+			statusFn: func(context.Context, string) (*qrdbtransport.TenantBarrierStatusResponse, error) {
+				return &qrdbtransport.TenantBarrierStatusResponse{TenantID: "t1", ShamirThreshold: threshold, ShamirTotal: total}, nil
+			},
+		}
+	}
+	initCall := func(srv *TenantBarrierGRPCServer) error {
+		_, err := srv.Init(ctx, &pb.TenantBarrierInitRequest{TenantId: "t1", Strategy: "shamir"})
+		return err
+	}
+	unsealShareCall := func(srv *TenantBarrierGRPCServer) error {
+		_, err := srv.UnsealShare(ctx, &pb.TenantBarrierUnsealShareRequest{TenantId: "t1", Share: "s"})
+		return err
+	}
+	statusCall := func(srv *TenantBarrierGRPCServer) error {
+		_, err := srv.Status(ctx, &pb.TenantBarrierStatusRequest{TenantId: "t1"})
+		return err
+	}
+
+	cases := []struct {
+		name  string
+		field string
+		svc   *fakeTenantBarrierServicer
+		call  func(srv *TenantBarrierGRPCServer) error
+	}{
+		{name: "init threshold", field: "threshold", svc: initResult(tooBig, 5), call: initCall},
+		{name: "init total shares", field: "total_shares", svc: initResult(3, tooBig), call: initCall},
+		{name: "unseal share required", field: "required", svc: unsealProgress(tooBig, 1), call: unsealShareCall},
+		{name: "unseal share submitted", field: "submitted", svc: unsealProgress(3, tooBig), call: unsealShareCall},
+		{name: "status shamir threshold", field: "shamir_threshold", svc: statusInfo(tooBig, 5), call: statusCall},
+		{name: "status shamir total", field: "shamir_total", svc: statusInfo(3, tooBig), call: statusCall},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := NewTenantBarrierGRPCServer(c.svc, nil)
+			requireRangeStatus(t, c.call(srv), codes.Internal, c.field)
+		})
+	}
 }
 
 func TestTenantBarrierRPCs_NonUTF8CredentialReachesServiceIntactAndIsWiped(t *testing.T) {

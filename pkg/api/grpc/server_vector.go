@@ -27,6 +27,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/common/safeconv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // ========================================
@@ -225,9 +226,14 @@ func (s *Server) DeleteNamespace(ctx context.Context, req *pb.DeleteNamespaceReq
 		return nil, toProtoError(err)
 	}
 
+	vectorsDeleted, err := conv.SafeUint64ToInt64(resp.VectorsDeleted)
+	if err != nil {
+		return nil, responseRangeError("vectors_deleted", err)
+	}
+
 	return &pb.DeleteNamespaceResponse{
 		Deleted:        resp.Success,
-		VectorsDeleted: int64(resp.VectorsDeleted), //nolint:gosec // G115: Safe conversion - count within reasonable range
+		VectorsDeleted: vectorsDeleted,
 		Timestamp:      timestamppb.New(time.Unix(0, resp.Timestamp)),
 	}, nil
 }
@@ -263,6 +269,10 @@ func (s *Server) ListNamespaces(ctx context.Context, req *pb.ListNamespacesReque
 	// Convert response
 	namespaces := make([]*pb.NamespaceInfo, 0, len(resp.Namespaces))
 	for _, ns := range resp.Namespaces {
+		vectorCount, err := conv.SafeUint64ToInt64(ns.VectorCount)
+		if err != nil {
+			return nil, responseRangeError("vector_count", err)
+		}
 		namespaces = append(namespaces, &pb.NamespaceInfo{
 			Config: &pb.NamespaceConfig{
 				Namespace: ns.Namespace,
@@ -273,15 +283,20 @@ func (s *Server) ListNamespaces(ctx context.Context, req *pb.ListNamespacesReque
 				IndexParams:    ns.IndexConfig,
 				Metadata:       ns.Metadata,
 			},
-			VectorCount: int64(ns.VectorCount), //nolint:gosec // G115: Safe conversion - count within uint64 range
+			VectorCount: vectorCount,
 			CreatedAt:   timestamppb.New(time.Unix(0, ns.CreatedAt)),
 			UpdatedAt:   timestamppb.New(time.Unix(0, ns.UpdatedAt)),
 		})
 	}
 
+	totalCount, err := conv.SafeIntToInt32(resp.TotalCount)
+	if err != nil {
+		return nil, responseRangeError("total_count", err)
+	}
+
 	return &pb.ListNamespacesResponse{
 		Namespaces: namespaces,
-		TotalCount: int32(resp.TotalCount), //nolint:gosec // G115: Safe conversion - count within reasonable range
+		TotalCount: totalCount,
 	}, nil
 }
 
@@ -331,17 +346,26 @@ func (s *Server) GetNamespaceInfo(ctx context.Context, req *pb.GetNamespaceInfoR
 		}
 	}
 
+	dimensions, err := conv.SafeUint32ToInt32(resp.Dimension)
+	if err != nil {
+		return nil, responseRangeError("dimensions", err)
+	}
+	vectorCount, err := conv.SafeUint64ToInt64(resp.VectorCount)
+	if err != nil {
+		return nil, responseRangeError("vector_count", err)
+	}
+
 	return &pb.GetNamespaceInfoResponse{
 		Info: &pb.NamespaceInfo{
 			Config: &pb.NamespaceConfig{
 				Namespace:      resp.Namespace,
-				Dimensions:     int32(resp.Dimension), //nolint:gosec // G115: Safe conversion - dimension validated to be <= 4096
+				Dimensions:     dimensions,
 				DistanceMetric: stringToProtoDistanceMetric(resp.DistanceMetric),
 				IndexType:      stringToProtoIndexType(resp.IndexType),
 				IndexParams:    indexConfig,
 				Metadata:       metadata,
 			},
-			VectorCount: int64(resp.VectorCount), //nolint:gosec // G115: Safe conversion - count within uint64 range
+			VectorCount: vectorCount,
 			CreatedAt:   timestamppb.New(time.Unix(0, resp.CreatedAt)),
 			UpdatedAt:   timestamppb.New(time.Unix(0, resp.UpdatedAt)),
 		},
@@ -799,7 +823,7 @@ func (s *Server) BatchUpsertVectors(req *pb.BatchUpsertVectorsRequest, stream pb
 	return stream.Send(&pb.BatchUpsertVectorsResponse{
 		VectorsProcessed: int64(len(req.Vectors)),
 		VectorsSucceeded: int64(resp.InsertedCount),
-		VectorsFailed:    int64(len(req.Vectors) - resp.InsertedCount), //nolint:gosec // G115: Safe conversion - vector count bounded
+		VectorsFailed:    int64(len(req.Vectors) - resp.InsertedCount),
 		Timestamp:        timestamppb.New(time.Unix(0, resp.Timestamp)),
 		IsFinal:          true,
 	})
@@ -906,6 +930,10 @@ func (s *Server) SearchSimilar(req *pb.SearchSimilarRequest, stream pb.VectorDB_
 			vectorIDStr = strconv.FormatUint(res.ID, 10)
 		}
 
+		rank, err := conv.SafeIntToInt32(res.Rank)
+		if err != nil {
+			return responseRangeError("rank", err)
+		}
 		results = append(results, &pb.SimilarityResult{
 			Vector: &pb.VectorEntity{
 				Id:        vectorIDStr,
@@ -914,14 +942,14 @@ func (s *Server) SearchSimilar(req *pb.SearchSimilarRequest, stream pb.VectorDB_
 				Metadata:  metadata,
 			},
 			Score: res.Score,
-			Rank:  int32(res.Rank), //nolint:gosec // G115: Safe conversion - rank value bounded by k
+			Rank:  rank,
 		})
 	}
 
 	// Send response
 	return stream.Send(&pb.SearchSimilarResponse{
 		Results:         results,
-		TotalCandidates: int64(len(resp.Results)), //nolint:gosec // G115: Safe conversion - results count bounded
+		TotalCandidates: int64(len(resp.Results)),
 		SearchTimeMs:    searchDuration,
 		NodeId:          s.nodeID,
 		IsFinal:         true,
@@ -1040,6 +1068,10 @@ func (s *Server) SearchByID(req *pb.SearchByIDRequest, stream pb.VectorDB_Search
 			vectorIDStr = strconv.FormatUint(res.ID, 10)
 		}
 
+		rank, err := conv.SafeIntToInt32(res.Rank)
+		if err != nil {
+			return responseRangeError("rank", err)
+		}
 		results = append(results, &pb.SimilarityResult{
 			Vector: &pb.VectorEntity{
 				Id:        vectorIDStr,
@@ -1048,7 +1080,7 @@ func (s *Server) SearchByID(req *pb.SearchByIDRequest, stream pb.VectorDB_Search
 				Metadata:  metadata,
 			},
 			Score: res.Score,
-			Rank:  int32(res.Rank), //nolint:gosec // G115: Safe conversion - rank value bounded by k
+			Rank:  rank,
 		})
 
 		// Limit to K results
@@ -1060,7 +1092,7 @@ func (s *Server) SearchByID(req *pb.SearchByIDRequest, stream pb.VectorDB_Search
 	// Send response
 	return stream.Send(&pb.SearchByIDResponse{
 		Results:         results,
-		TotalCandidates: int64(len(searchResp.Results)), //nolint:gosec // G115: Safe conversion - results count bounded
+		TotalCandidates: int64(len(searchResp.Results)),
 		SearchTimeMs:    searchDuration,
 		NodeId:          s.nodeID,
 		IsFinal:         true,
@@ -1173,6 +1205,10 @@ func (s *Server) HybridSearch(req *pb.HybridSearchRequest, stream pb.VectorDB_Hy
 			vectorIDStr = strconv.FormatUint(res.ID, 10)
 		}
 
+		rank, err := conv.SafeIntToInt32(res.Rank)
+		if err != nil {
+			return responseRangeError("rank", err)
+		}
 		results = append(results, &pb.SimilarityResult{
 			Vector: &pb.VectorEntity{
 				Id:        vectorIDStr,
@@ -1181,7 +1217,7 @@ func (s *Server) HybridSearch(req *pb.HybridSearchRequest, stream pb.VectorDB_Hy
 				Metadata:  metadata,
 			},
 			Score: res.Score,
-			Rank:  int32(res.Rank), //nolint:gosec // G115: Safe conversion - rank value bounded by k
+			Rank:  rank,
 		})
 	}
 
@@ -1191,8 +1227,8 @@ func (s *Server) HybridSearch(req *pb.HybridSearchRequest, stream pb.VectorDB_Hy
 	// Send response
 	return stream.Send(&pb.HybridSearchResponse{
 		Results:          results,
-		TotalCandidates:  int64(resp.TotalCandidates), //nolint:gosec // G115: Safe conversion - results count bounded
-		TotalFiltered:    int64(resp.TotalFiltered),   //nolint:gosec // G115: Safe conversion - results count bounded
+		TotalCandidates:  int64(resp.TotalCandidates),
+		TotalFiltered:    int64(resp.TotalFiltered),
 		SearchTimeMs:     searchDuration,
 		RerankingApplied: rerankingApplied,
 		NodeId:           s.nodeID,
@@ -1311,10 +1347,15 @@ func (s *Server) SearchByMetadata(req *pb.SearchByMetadataRequest, stream pb.Vec
 		})
 	}
 
+	totalCount, err := conv.SafeUint64ToInt64(resp.TotalCount)
+	if err != nil {
+		return responseRangeError("total_count", err)
+	}
+
 	// Send response
 	return stream.Send(&pb.SearchByMetadataResponse{
 		Results:      results,
-		TotalCount:   int64(resp.TotalCount), //nolint:gosec // G115: Safe conversion - count bounded
+		TotalCount:   totalCount,
 		NextCursor:   resp.NextCursor,
 		SearchTimeMs: searchDuration,
 		NodeId:       s.nodeID,
@@ -1424,11 +1465,16 @@ func (s *Server) ListVectors(req *pb.ListVectorsRequest, stream pb.VectorDB_List
 		})
 	}
 
+	totalCount, err := conv.SafeUint64ToInt64(resp.TotalCount)
+	if err != nil {
+		return responseRangeError("total_count", err)
+	}
+
 	// Send response
 	return stream.Send(&pb.ListVectorsResponse{
 		Vectors:       vectors,
 		NextPageToken: resp.NextCursor,
-		TotalCount:    int64(resp.TotalCount), //nolint:gosec // G115: Safe conversion - count within reasonable range
+		TotalCount:    totalCount,
 		IsFinal:       true,
 	})
 }
@@ -1464,25 +1510,18 @@ func (s *Server) GetVectorStats(ctx context.Context, req *pb.GetVectorStatsReque
 			return nil, toProtoError(err)
 		}
 
-		namespaceStats := []*pb.NamespaceStats{
-			{
-				Namespace:          stats.Namespace,
-				VectorCount:        int64(stats.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-				IndexedCount:       int64(stats.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-				StorageBytes:       int64(stats.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-				IndexBytes:         int64(stats.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-				AvgSearchLatencyMs: stats.SearchPerformance.AverageSearchTimeMs,
-				SearchCount:        int64(stats.SearchPerformance.TotalSearches), //nolint:gosec // G115: Safe conversion - count within uint64 range
-			},
+		nsStats, err := namespaceStatsToProto(stats)
+		if err != nil {
+			return nil, err
 		}
 
 		return &pb.GetVectorStatsResponse{
-			TotalVectors:      int64(stats.VectorCount), //nolint:gosec // G115: Safe conversion - count within uint64 range
+			TotalVectors:      nsStats.VectorCount,
 			TotalNamespaces:   1,
-			TotalStorageBytes: int64(stats.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-			TotalIndexBytes:   int64(stats.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
+			TotalStorageBytes: nsStats.StorageBytes,
+			TotalIndexBytes:   nsStats.IndexBytes,
 			AvgDimension:      float64(stats.Dimension),
-			NamespaceStats:    namespaceStats,
+			NamespaceStats:    []*pb.NamespaceStats{nsStats},
 		}, nil
 	}
 
@@ -1495,6 +1534,11 @@ func (s *Server) GetVectorStats(ctx context.Context, req *pb.GetVectorStatsReque
 	listResp, err := vectorService.ListNamespaces(ctx, listReq)
 	if err != nil {
 		return nil, toProtoError(err)
+	}
+
+	totalNamespaces, err := conv.SafeIntToInt32(len(listResp.Namespaces))
+	if err != nil {
+		return nil, responseRangeError("total_namespaces", err)
 	}
 
 	var totalVectors int64
@@ -1514,21 +1558,18 @@ func (s *Server) GetVectorStats(ctx context.Context, req *pb.GetVectorStatsReque
 			continue
 		}
 
-		totalVectors += int64(stats.VectorCount)    //nolint:gosec // G115: Safe conversion - count within uint64 range
-		totalStorage += int64(stats.IndexSizeBytes) //nolint:gosec // G115: Safe conversion - size within uint64 range
-		totalIndex += int64(stats.IndexSizeBytes)   //nolint:gosec // G115: Safe conversion - size within uint64 range
-		totalDimensions += int64(stats.Dimension)   //nolint:gosec // G115: Safe conversion - dimension within uint32 range
+		nsStats, err := namespaceStatsToProto(stats)
+		if err != nil {
+			return nil, err
+		}
+
+		totalVectors += nsStats.VectorCount
+		totalStorage += nsStats.StorageBytes
+		totalIndex += nsStats.IndexBytes
+		totalDimensions += int64(stats.Dimension)
 
 		if req.IncludeDetails {
-			namespaceStats = append(namespaceStats, &pb.NamespaceStats{
-				Namespace:          stats.Namespace,
-				VectorCount:        int64(stats.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-				IndexedCount:       int64(stats.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-				StorageBytes:       int64(stats.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-				IndexBytes:         int64(stats.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-				AvgSearchLatencyMs: stats.SearchPerformance.AverageSearchTimeMs,
-				SearchCount:        int64(stats.SearchPerformance.TotalSearches), //nolint:gosec // G115: Safe conversion - count within uint64 range
-			})
+			namespaceStats = append(namespaceStats, nsStats)
 		}
 	}
 
@@ -1539,12 +1580,43 @@ func (s *Server) GetVectorStats(ctx context.Context, req *pb.GetVectorStatsReque
 
 	return &pb.GetVectorStatsResponse{
 		TotalVectors:      totalVectors,
-		TotalNamespaces:   int32(len(listResp.Namespaces)), //nolint:gosec // G115: Safe conversion - namespace count bounded
+		TotalNamespaces:   totalNamespaces,
 		TotalStorageBytes: totalStorage,
 		TotalIndexBytes:   totalIndex,
 		AvgDimension:      avgDimension,
 		NamespaceStats:    namespaceStats,
 	}, nil
+}
+
+// namespaceStatsToProto converts one namespace's index stats to the wire
+// form. The service counts in uint64 and the proto in int64, so a counter
+// past math.MaxInt64 is reported as codes.Internal rather than wrapped.
+func namespaceStatsToProto(stats *service.GetIndexStatsResponse) (*pb.NamespaceStats, error) {
+	vectorCount, err := conv.SafeUint64ToInt64(stats.VectorCount)
+	if err != nil {
+		return nil, responseRangeError("vector_count", err)
+	}
+	indexBytes, err := conv.SafeUint64ToInt64(stats.IndexSizeBytes)
+	if err != nil {
+		return nil, responseRangeError("index_bytes", err)
+	}
+
+	nsStats := &pb.NamespaceStats{
+		Namespace:    stats.Namespace,
+		VectorCount:  vectorCount,
+		IndexedCount: vectorCount,
+		StorageBytes: indexBytes,
+		IndexBytes:   indexBytes,
+	}
+	if perf := stats.SearchPerformance; perf != nil {
+		searchCount, err := conv.SafeUint64ToInt64(perf.TotalSearches)
+		if err != nil {
+			return nil, responseRangeError("search_count", err)
+		}
+		nsStats.AvgSearchLatencyMs = perf.AverageSearchTimeMs
+		nsStats.SearchCount = searchCount
+	}
+	return nsStats, nil
 }
 
 // ========================================
@@ -1628,11 +1700,20 @@ func (s *Server) GetIndexProgress(ctx context.Context, req *pb.GetIndexProgressR
 		return nil, toProtoError(err)
 	}
 
+	vectorsIndexed, err := conv.SafeUint64ToInt64(resp.VectorsProcessed)
+	if err != nil {
+		return nil, responseRangeError("vectors_indexed", err)
+	}
+	totalVectors, err := conv.SafeUint64ToInt64(resp.TotalVectors)
+	if err != nil {
+		return nil, responseRangeError("total_vectors", err)
+	}
+
 	return &pb.GetIndexProgressResponse{
 		OperationId:          resp.JobID,
 		Namespace:            resp.Namespace,
-		VectorsIndexed:       int64(resp.VectorsProcessed), //nolint:gosec // G115: Safe conversion
-		TotalVectors:         int64(resp.TotalVectors),     //nolint:gosec // G115: Safe conversion
+		VectorsIndexed:       vectorsIndexed,
+		TotalVectors:         totalVectors,
 		PercentComplete:      resp.PercentComplete,
 		ElapsedTimeMs:        resp.ElapsedTimeMs,
 		EstimatedRemainingMs: resp.EstimatedTimeRemainingMs,
@@ -1669,7 +1750,11 @@ func (s *Server) GetClusterStats(ctx context.Context, req *pb.GetClusterStatsReq
 	totalNodes := int32(1) // Default to single node
 	nodeAddresses := make(map[uint64]string)
 	if clusterErr == nil && clusterResp != nil && len(clusterResp.Nodes) > 0 {
-		totalNodes = int32(len(clusterResp.Nodes)) //nolint:gosec // G115: Safe - node count is bounded
+		nodeCount, err := conv.SafeIntToInt32(len(clusterResp.Nodes))
+		if err != nil {
+			return nil, responseRangeError("total_nodes", err)
+		}
+		totalNodes = nodeCount
 		for _, node := range clusterResp.Nodes {
 			nodeAddresses[node.NodeID] = node.Address
 		}
@@ -1684,6 +1769,11 @@ func (s *Server) GetClusterStats(ctx context.Context, req *pb.GetClusterStatsReq
 	listResp, err := vectorService.ListNamespaces(ctx, listReq)
 	if err != nil {
 		return nil, toProtoError(err)
+	}
+
+	totalNamespaces, err := conv.SafeIntToInt32(len(listResp.Namespaces))
+	if err != nil {
+		return nil, responseRangeError("total_namespaces", err)
 	}
 
 	var totalVectors int64
@@ -1702,20 +1792,17 @@ func (s *Server) GetClusterStats(ctx context.Context, req *pb.GetClusterStatsReq
 			continue
 		}
 
-		totalVectors += int64(stats.VectorCount)    //nolint:gosec // G115: Safe conversion - count within uint64 range
-		totalStorage += int64(stats.IndexSizeBytes) //nolint:gosec // G115: Safe conversion - size within uint64 range
-		totalIndex += int64(stats.IndexSizeBytes)   //nolint:gosec // G115: Safe conversion - size within uint64 range
+		nsStats, err := namespaceStatsToProto(stats)
+		if err != nil {
+			return nil, err
+		}
+
+		totalVectors += nsStats.VectorCount
+		totalStorage += nsStats.StorageBytes
+		totalIndex += nsStats.IndexBytes
 
 		if req.IncludeNamespaces {
-			namespaceStats = append(namespaceStats, &pb.NamespaceStats{
-				Namespace:          stats.Namespace,
-				VectorCount:        int64(stats.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-				IndexedCount:       int64(stats.VectorCount),    //nolint:gosec // G115: Safe conversion - count within uint64 range
-				StorageBytes:       int64(stats.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-				IndexBytes:         int64(stats.IndexSizeBytes), //nolint:gosec // G115: Safe conversion - size within uint64 range
-				AvgSearchLatencyMs: stats.SearchPerformance.AverageSearchTimeMs,
-				SearchCount:        int64(stats.SearchPerformance.TotalSearches), //nolint:gosec // G115: Safe conversion - count within uint64 range
-			})
+			namespaceStats = append(namespaceStats, nsStats)
 		}
 	}
 
@@ -1752,7 +1839,7 @@ func (s *Server) GetClusterStats(ctx context.Context, req *pb.GetClusterStatsReq
 		ClusterId:         "quicbaas-cluster",
 		TotalNodes:        totalNodes,
 		TotalVectors:      totalVectors,
-		TotalNamespaces:   int32(len(listResp.Namespaces)), //nolint:gosec // G115: Safe conversion - namespace count bounded
+		TotalNamespaces:   totalNamespaces,
 		TotalStorageBytes: totalStorage,
 		TotalIndexBytes:   totalIndex,
 		ClusterQps:        currentQPS,

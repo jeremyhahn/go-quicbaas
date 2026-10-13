@@ -103,10 +103,15 @@ func (c *Client) ListSecrets(ctx context.Context, req *service.ListSecretsReques
 		}
 	}
 
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
 	secretsClient := pb.NewSecretsManagementClient(c.conn)
 
 	pbReq := &pb.ListSecretsRequest{
-		Limit:  int32(req.Limit), //nolint:gosec // G115: bounded
+		Limit:  limit,
 		Cursor: req.Cursor,
 		Filter: req.Filter,
 	}
@@ -169,11 +174,16 @@ func (c *Client) ListSecretVersions(ctx context.Context, req *service.ListSecret
 		}
 	}
 
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
 	secretsClient := pb.NewSecretsManagementClient(c.conn)
 
 	pbReq := &pb.ListSecretVersionsRequest{
 		SecretId: req.SecretID,
-		Limit:    int32(req.Limit), //nolint:gosec // G115: bounded
+		Limit:    limit,
 		Cursor:   req.Cursor,
 	}
 
@@ -295,12 +305,17 @@ func (c *Client) GetSecretsByPrefix(ctx context.Context, req *service.GetSecrets
 		}
 	}
 
+	limit, err := clientInt32("limit", req.Limit)
+	if err != nil {
+		return nil, err
+	}
+
 	secretsClient := pb.NewSecretsManagementClient(c.conn)
 
 	pbReq := &pb.GetSecretsByPrefixRequest{
 		Prefix:      req.Prefix,
 		IncludeData: req.IncludeData,
-		Limit:       int32(req.Limit), //nolint:gosec // G115: Limit is bounded
+		Limit:       limit,
 		Cursor:      req.Cursor,
 	}
 

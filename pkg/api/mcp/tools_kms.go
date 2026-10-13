@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 func (r *ToolRegistry) registerKMSTools() {
@@ -682,14 +683,19 @@ func kmsMetadataToResponse(metadata *kms.KeyMetadata) *KMSKeyResponse {
 
 // svcMetadataToResponse converts *service.KeyMetadata to an MCP response.
 // This is used when routing through the service layer which returns service types.
-func svcMetadataToResponse(metadata *service.KeyMetadata) *KMSKeyResponse {
+func svcMetadataToResponse(metadata *service.KeyMetadata) (*KMSKeyResponse, error) {
 	if metadata == nil {
-		return &KMSKeyResponse{Timestamp: time.Now().Unix()}
+		return &KMSKeyResponse{Timestamp: time.Now().Unix()}, nil
+	}
+	version, err := kmsKeyVersion(metadata.Version)
+	if err != nil {
+		return nil, err
 	}
 	resp := &KMSKeyResponse{
 		KeyID:              metadata.KeyID,
 		Name:               metadata.Name,
 		Description:        metadata.Description,
+		Version:            version,
 		Algorithm:          string(metadata.Algorithm),
 		Status:             string(metadata.Status),
 		Exportable:         metadata.Exportable,
@@ -700,9 +706,6 @@ func svcMetadataToResponse(metadata *service.KeyMetadata) *KMSKeyResponse {
 		Owner:              metadata.Owner,
 		Timestamp:          time.Now().Unix(),
 	}
-
-	//nolint:gosec // G115: Version is bounded by KMS backend, safe for int conversion
-	resp.Version = int(metadata.Version)
 
 	if metadata.LastUsedAt != nil {
 		resp.LastUsedAt = metadata.LastUsedAt.Unix()
@@ -716,7 +719,18 @@ func svcMetadataToResponse(metadata *service.KeyMetadata) *KMSKeyResponse {
 		}
 	}
 
-	return resp
+	return resp, nil
+}
+
+// kmsKeyVersion converts a service key version to the int the MCP response
+// carries. A version the response cannot hold is a server fault, not a
+// request fault, so it is reported as an internal error.
+func kmsKeyVersion(version uint64) (int, error) {
+	v, err := conv.SafeUint64ToInt(version)
+	if err != nil {
+		return 0, api.NewEncodeError("mcp.kms", "key version", err)
+	}
+	return v, nil
 }
 
 // mcpArgsToUsage extracts key usage from MCP tool arguments.
@@ -774,7 +788,11 @@ func (r *ToolRegistry) executeKMSGenerateKey(ctx context.Context, args map[strin
 			return nil, err
 		}
 
-		return marshalResult(svcMetadataToResponse(svcResp.Metadata))
+		resp, err := svcMetadataToResponse(svcResp.Metadata)
+		if err != nil {
+			return nil, err
+		}
+		return marshalResult(resp)
 	}
 
 	// Fallback: call KMS manager directly (no tenant isolation)
@@ -837,7 +855,11 @@ func (r *ToolRegistry) executeKMSImportKey(ctx context.Context, args map[string]
 			return nil, err
 		}
 
-		return marshalResult(svcMetadataToResponse(svcResp.Metadata))
+		resp, err := svcMetadataToResponse(svcResp.Metadata)
+		if err != nil {
+			return nil, err
+		}
+		return marshalResult(resp)
 	}
 
 	// Fallback: call KMS manager directly (no tenant isolation)
@@ -899,7 +921,11 @@ func (r *ToolRegistry) executeKMSGetKey(ctx context.Context, args map[string]int
 			return nil, err
 		}
 
-		return marshalResult(svcMetadataToResponse(svcResp.Metadata))
+		resp, err := svcMetadataToResponse(svcResp.Metadata)
+		if err != nil {
+			return nil, err
+		}
+		return marshalResult(resp)
 	}
 
 	// Fallback: call KMS manager directly (no tenant isolation)
@@ -921,15 +947,18 @@ func (r *ToolRegistry) executeKMSGetKey(ctx context.Context, args map[string]int
 	return marshalResult(kmsMetadataToResponse(metadata))
 }
 
+// kmsListKeysMaxLimit is the page-size cap of quicbaas_kms_list_keys.
+const kmsListKeysMaxLimit = 10000
+
 func (r *ToolRegistry) executeKMSListKeys(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	limit, err := cappedIntArg(args, "limit", kmsListKeysMaxLimit)
+	if err != nil {
+		return nil, err
+	}
+
 	// Route through the service layer for tenant-aware key listing
 	kmsSvc, svcErr := r.getKMSService()
 	if svcErr == nil {
-		limit := getUint64(args, "limit")
-		if limit > 10000 {
-			limit = 10000
-		}
-
 		filter := make(map[string]string)
 		if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
 			for k, v := range filterRaw {
@@ -940,8 +969,7 @@ func (r *ToolRegistry) executeKMSListKeys(ctx context.Context, args map[string]i
 		}
 
 		svcReq := &service.ListKeysRequest{
-			//nolint:gosec // G115: limit is capped at 10000, safe for int conversion
-			Limit:  int(limit),
+			Limit:  limit,
 			Cursor: getString(args, "cursor"),
 			Filter: filter,
 		}
@@ -953,12 +981,15 @@ func (r *ToolRegistry) executeKMSListKeys(ctx context.Context, args map[string]i
 
 		keys := make([]*KMSKeyResponse, 0, len(svcResp.Keys))
 		for _, keyHandle := range svcResp.Keys {
+			version, err := kmsKeyVersion(keyHandle.Version)
+			if err != nil {
+				return nil, err
+			}
 			keys = append(keys, &KMSKeyResponse{
 				KeyID:     keyHandle.KeyID,
 				Algorithm: string(keyHandle.Algorithm),
 				Status:    string(keyHandle.Status),
-				//nolint:gosec // G115: Version is bounded by KMS backend, safe for int conversion
-				Version:   int(keyHandle.Version),
+				Version:   version,
 				CreatedAt: keyHandle.CreatedAt.Unix(),
 				Timestamp: time.Now().Unix(),
 			})
@@ -997,13 +1028,8 @@ func (r *ToolRegistry) executeKMSListKeys(ctx context.Context, args map[string]i
 		}
 	}
 
-	limit := getUint64(args, "limit")
-	if limit > 10000 {
-		limit = 10000
-	}
 	hasMore := false
-	//nolint:gosec // G115: limit is capped at 10000, safe for int comparison
-	if limit > 0 && int(limit) < len(keys) {
+	if limit > 0 && limit < len(keys) {
 		keys = keys[:limit]
 		hasMore = true
 	}
@@ -1127,16 +1153,15 @@ func (r *ToolRegistry) executeKMSDeleteKey(ctx context.Context, args map[string]
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
 	}
+	ints := newIntArgReader(args)
+	pendingDays := ints.IntOr("pending_window_days", 7)
+	if err := ints.Err(); err != nil {
+		return nil, err
+	}
 
 	// Route through the service layer for tenant-aware key deletion
 	kmsSvc, svcErr := r.getKMSService()
 	if svcErr == nil {
-		//nolint:gosec // G115: pendingDays is bounded by API schema (7-30), safe for int
-		pendingDays := int(getUint64(args, "pending_window_days"))
-		if pendingDays == 0 {
-			pendingDays = 7
-		}
-
 		svcReq := &service.DeleteKeyRequest{
 			KeyID:             keyID,
 			PendingWindowDays: pendingDays,
@@ -1176,12 +1201,6 @@ func (r *ToolRegistry) executeKMSDeleteKey(ctx context.Context, args map[string]
 	}
 
 	now := time.Now()
-
-	//nolint:gosec // G115: pendingDays is bounded by API schema (7-30), safe for int
-	pendingDays := int(getUint64(args, "pending_window_days"))
-	if pendingDays == 0 {
-		pendingDays = 7 // Default pending window
-	}
 	deletionDate := now.AddDate(0, 0, pendingDays)
 
 	return marshalResult(map[string]interface{}{
@@ -1207,8 +1226,12 @@ func (r *ToolRegistry) executeKMSGetMetadata(ctx context.Context, args map[strin
 			return nil, err
 		}
 
+		metadata, err := svcMetadataToResponse(svcResp.Metadata)
+		if err != nil {
+			return nil, err
+		}
 		return marshalResult(map[string]interface{}{
-			"metadata":  svcMetadataToResponse(svcResp.Metadata),
+			"metadata":  metadata,
 			"timestamp": svcResp.Timestamp.Unix(),
 		})
 	}
@@ -1273,8 +1296,12 @@ func (r *ToolRegistry) executeKMSUpdateMetadata(ctx context.Context, args map[st
 			return nil, err
 		}
 
+		metadata, err := svcMetadataToResponse(svcResp.Metadata)
+		if err != nil {
+			return nil, err
+		}
 		return marshalResult(map[string]interface{}{
-			"metadata":  svcMetadataToResponse(svcResp.Metadata),
+			"metadata":  metadata,
 			"timestamp": svcResp.Timestamp.Unix(),
 		})
 	}

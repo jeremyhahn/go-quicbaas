@@ -1991,7 +1991,8 @@ func newTestRegistryWithMockKMS(t *testing.T, mockKMS *MockKMSManager) *ToolRegi
 // =============================================================================
 
 func TestMCPCoverage91_SvcMetadataToResponse_NilMetadata(t *testing.T) {
-	resp := svcMetadataToResponse(nil)
+	resp, err := svcMetadataToResponse(nil)
+	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Empty(t, resp.KeyID)
 	assert.NotZero(t, resp.Timestamp)
@@ -2017,7 +2018,8 @@ func TestMCPCoverage91_SvcMetadataToResponse_FullMetadata(t *testing.T) {
 		Owner:              "admin",
 	}
 
-	resp := svcMetadataToResponse(metadata)
+	resp, err := svcMetadataToResponse(metadata)
+	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "svc-key-1", resp.KeyID)
 	assert.Equal(t, "test-svc-key", resp.Name)
@@ -2047,7 +2049,8 @@ func TestMCPCoverage91_SvcMetadataToResponse_NoLastUsed(t *testing.T) {
 		UpdatedAt: now,
 	}
 
-	resp := svcMetadataToResponse(metadata)
+	resp, err := svcMetadataToResponse(metadata)
+	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "svc-key-2", resp.KeyID)
 	assert.Zero(t, resp.LastUsedAt)

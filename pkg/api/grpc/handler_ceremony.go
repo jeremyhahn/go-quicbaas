@@ -252,8 +252,12 @@ func (s *CeremonyServer) CeremonyCompleteClaimShare(ctx context.Context, req *pb
 	if err != nil {
 		return nil, mapCeremonyError(err)
 	}
+	shareIndex, err := responseInt32("share_index", result.ShareIndex)
+	if err != nil {
+		return nil, err
+	}
 	return &pb.CeremonyCompleteClaimShareResponse{
-		ShareIndex: int32(result.ShareIndex), //nolint:gosec // small index
+		ShareIndex: shareIndex,
 		Share:      result.ShareJSON,
 	}, nil
 }

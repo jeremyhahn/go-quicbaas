@@ -31,9 +31,11 @@ import (
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // kmsListServiceFetchLimit is the upper bound the REST list handler passes to
@@ -460,9 +462,20 @@ func (s *Server) HandleGenerateKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		key, err := svcKeyHandleToResponse(svcResp.Key)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+		metadata, err := svcMetadataToRESTResponse(svcResp.Metadata)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+
 		resp := &GenerateKeyRESTResponse{
-			Key:       svcKeyHandleToResponse(svcResp.Key),
-			Metadata:  svcMetadataToRESTResponse(svcResp.Metadata),
+			Key:       key,
+			Metadata:  metadata,
 			Timestamp: svcResp.Timestamp.Unix(),
 		}
 		RespondJSON(w, r, http.StatusCreated, resp)
@@ -599,9 +612,20 @@ func (s *Server) HandleGetKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		key, err := svcKeyHandleToResponse(svcResp.Key)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+		metadata, err := svcMetadataToRESTResponse(svcResp.Metadata)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+
 		resp := &GetKeyRESTResponse{
-			Key:       svcKeyHandleToResponse(svcResp.Key),
-			Metadata:  svcMetadataToRESTResponse(svcResp.Metadata),
+			Key:       key,
+			Metadata:  metadata,
 			Timestamp: svcResp.Timestamp.Unix(),
 		}
 		RespondJSON(w, r, http.StatusOK, resp)
@@ -679,7 +703,11 @@ func (s *Server) HandleListKeys(w http.ResponseWriter, r *http.Request) {
 
 		keys := make([]*KeyHandleResponse, 0, len(svcResp.Keys))
 		for _, kh := range svcResp.Keys {
-			h := svcKeyHandleToResponse(kh)
+			h, err := svcKeyHandleToResponse(kh)
+			if err != nil {
+				s.handleServiceError(w, r, err)
+				return
+			}
 			if !isSystemKey(h.KeyID, h.Algorithm) {
 				keys = append(keys, h)
 			}
@@ -1379,12 +1407,10 @@ func (s *Server) HandleUnwrapKey(w http.ResponseWriter, r *http.Request) {
 
 	// Convert key handle if present
 	if svcResp.Key != nil {
-		resp.Key = &KeyHandleResponse{
-			KeyID:     svcResp.Key.KeyID,
-			Version:   int(svcResp.Key.Version), //nolint:gosec // G115: Version bounded by rotation limits
-			Algorithm: string(svcResp.Key.Algorithm),
-			Status:    string(svcResp.Key.Status),
-			CreatedAt: svcResp.Key.CreatedAt.Unix(),
+		resp.Key, err = svcKeyHandleToResponse(svcResp.Key)
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
 		}
 	}
 
@@ -2002,20 +2028,30 @@ func kmsMetadataToResponseFull(metadata *kms.KeyMetadata) *KeyMetadataResponse {
 	}
 }
 
-// svcKeyHandleToResponse converts a service KeyHandle to REST KeyHandleResponse.
-func svcKeyHandleToResponse(kh *service.KeyHandle) *KeyHandleResponse {
+// svcKeyHandleToResponse converts a service KeyHandle to REST
+// KeyHandleResponse, refusing a version the int field cannot hold.
+func svcKeyHandleToResponse(kh *service.KeyHandle) (*KeyHandleResponse, error) {
+	version, err := conv.SafeUint64ToInt(kh.Version)
+	if err != nil {
+		return nil, api.NewEncodeError("rest.kms", "key version", err)
+	}
 	return &KeyHandleResponse{
-		KeyID: kh.KeyID,
-		//nolint:gosec // G115: Version bounded by KMS backend, safe for int conversion
-		Version:   int(kh.Version),
+		KeyID:     kh.KeyID,
+		Version:   version,
 		Algorithm: string(kh.Algorithm),
 		Status:    string(kh.Status),
 		CreatedAt: kh.CreatedAt.Unix(),
-	}
+	}, nil
 }
 
-// svcMetadataToRESTResponse converts a service KeyMetadata to REST KeyMetadataResponse.
-func svcMetadataToRESTResponse(md *service.KeyMetadata) *KeyMetadataResponse {
+// svcMetadataToRESTResponse converts a service KeyMetadata to REST
+// KeyMetadataResponse, refusing a version the int field cannot hold.
+func svcMetadataToRESTResponse(md *service.KeyMetadata) (*KeyMetadataResponse, error) {
+	version, err := conv.SafeUint64ToInt(md.Version)
+	if err != nil {
+		return nil, api.NewEncodeError("rest.kms", "key metadata version", err)
+	}
+
 	var lastUsed int64
 	if md.LastUsedAt != nil {
 		lastUsed = md.LastUsedAt.Unix()
@@ -2027,14 +2063,13 @@ func svcMetadataToRESTResponse(md *service.KeyMetadata) *KeyMetadataResponse {
 	}
 
 	return &KeyMetadataResponse{
-		KeyID:       md.KeyID,
-		Name:        md.Name,
-		Description: md.Description,
-		Algorithm:   string(md.Algorithm),
-		Status:      string(md.Status),
-		Usage:       usage,
-		//nolint:gosec // G115: Version bounded by KMS backend, safe for int conversion
-		Version:            int(md.Version),
+		KeyID:              md.KeyID,
+		Name:               md.Name,
+		Description:        md.Description,
+		Algorithm:          string(md.Algorithm),
+		Status:             string(md.Status),
+		Usage:              usage,
+		Version:            version,
 		Exportable:         md.Exportable,
 		DeletionProtection: md.DeletionProtection,
 		CreatedAt:          md.CreatedAt.Unix(),
@@ -2042,7 +2077,7 @@ func svcMetadataToRESTResponse(md *service.KeyMetadata) *KeyMetadataResponse {
 		LastUsedAt:         lastUsed,
 		Tags:               md.Tags,
 		Owner:              md.Owner,
-	}
+	}, nil
 }
 
 // HandleSetDefaultKey handles PUT /v1/kms/keys/{name}/default - Mark a key as the system default.

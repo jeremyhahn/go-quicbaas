@@ -181,9 +181,14 @@ func (s *FederationServer) ListProviders(ctx context.Context, req *iampb.ListPro
 		pbProviders = append(pbProviders, convertExternalProviderToProto(provider))
 	}
 
+	total, err := responseInt32("total", len(providers))
+	if err != nil {
+		return nil, err
+	}
+
 	return &iampb.ListProvidersResponse{
 		Providers: pbProviders,
-		Total:     int32(len(providers)), //nolint:gosec // G115: Count from list
+		Total:     total,
 	}, nil
 }
 

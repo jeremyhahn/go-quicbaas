@@ -20,13 +20,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"strconv"
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/id"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
@@ -1428,22 +1429,13 @@ func getStringAlt(args map[string]interface{}, key1, key2 string) string {
 
 // Helper function to extract uint64 argument.
 func getUint64(args map[string]interface{}, key string) uint64 {
-	switch v := args[key].(type) {
-	case float64:
-		return uint64(v)
-	case int:
-		return uint64(v) //nolint:gosec // G115: int to uint64 conversion in type helper
-	case int64:
-		return uint64(v) //nolint:gosec // G115: int64 to uint64 conversion in type helper
-	case uint64:
-		return v
-	case string:
-		if v != "" {
-			i, _ := strconv.ParseUint(v, 10, 64)
-			return i
-		}
+	n, err := uint64Arg(args, key)
+	if err != nil {
+		// A value with no uint64 form reads as absent. Handlers that must
+		// refuse it read the argument through uint64Arg or intArgReader.
+		return 0
 	}
-	return 0
+	return n
 }
 
 // getUint64Alt extracts a uint64 argument, trying key1 first then falling back to key2.
@@ -1459,11 +1451,7 @@ func getUint64Alt(args map[string]interface{}, key1, key2 string) uint64 {
 // The entity type is included in the hash to match the REST KV API convention,
 // ensuring consistent ID generation across all protocols.
 func hashStringKey(entityType, key string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(entityType)) //nolint:gosec // G104: hash.Write never returns error
-	h.Write([]byte(":"))        //nolint:gosec // G104: hash.Write never returns error
-	h.Write([]byte(key))        //nolint:gosec // G104: hash.Write never returns error
-	return h.Sum64()
+	return id.HashString(entityType + ":" + key)
 }
 
 // getIDOrHashKey returns the ID from args, or if a string "key" is provided, hashes it to uint64.
@@ -1498,7 +1486,13 @@ func getInt(args map[string]interface{}, key string) int {
 	case int64:
 		return int(v)
 	case uint64:
-		return int(v) //nolint:gosec // G115: uint64 to int conversion in type helper
+		n, err := conv.SafeUint64ToInt(v)
+		if err != nil {
+			// A value an int cannot hold reads as absent, as an unparsable
+			// string does.
+			return 0
+		}
+		return n
 	case string:
 		if v != "" {
 			i, _ := strconv.Atoi(v)
@@ -2535,11 +2529,15 @@ func (r *ToolRegistry) executeAggregate(ctx context.Context, args map[string]int
 }
 
 func (r *ToolRegistry) executeMigrateData(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ints := newIntArgReader(args)
 	req := &service.MigrateDataRequest{
-		SourceShard: getUint64(args, "sourceShard"),
-		TargetShard: getUint64(args, "targetShard"),
+		SourceShard: ints.Uint64("sourceShard"),
+		TargetShard: ints.Uint64("targetShard"),
 		EntityTypes: getStringSlice(args, "entityTypes"),
-		Concurrency: int(getUint64(args, "concurrency")),
+		Concurrency: ints.Int("concurrency"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 	resp, err := r.service.MigrateData(ctx, req)
 	if err != nil {

@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // OrchestratorServer wraps the Agent orchestration service for gRPC endpoints.
@@ -663,6 +664,7 @@ func (s *OrchestratorServer) DecomposeTask(ctx context.Context, req *pb.Decompos
 		return nil, convertOrchestratorError(err)
 	}
 
+	var n responseNarrower
 	pbWorkItems := make([]*pb.OrchestratorWorkItem, len(resp.WorkItems))
 	for i, item := range resp.WorkItems {
 		pbWorkItems[i] = &pb.OrchestratorWorkItem{
@@ -670,9 +672,12 @@ func (s *OrchestratorServer) DecomposeTask(ctx context.Context, req *pb.Decompos
 			ProjectId:    item.ProjectID,
 			Title:        item.Title,
 			Description:  item.Description,
-			Priority:     int32(item.Priority), //nolint:gosec // G115: bounded count
+			Priority:     n.int32("priority", item.Priority),
 			Dependencies: item.Dependencies,
 		}
+	}
+	if err := n.err(); err != nil {
+		return nil, err
 	}
 
 	return &pb.DecomposeTaskResponse{
@@ -756,13 +761,14 @@ func (s *OrchestratorServer) GetJobStatus(ctx context.Context, req *pb.Orchestra
 		}
 	}
 
-	return &pb.OrchestratorGetJobStatusResponse{
+	var n responseNarrower
+	resp := &pb.OrchestratorGetJobStatusResponse{
 		JobId:       jobStatus.JobID,
 		State:       string(jobStatus.State),
-		Iteration:   int32(jobStatus.Iteration), //nolint:gosec // G115: bounded count
-		TaskCount:   int32(jobStatus.TaskCount), //nolint:gosec // G115: bounded count
-		Completed:   int32(jobStatus.Completed), //nolint:gosec // G115: bounded count
-		Failed:      int32(jobStatus.Failed),    //nolint:gosec // G115: bounded count
+		Iteration:   n.int32("iteration", jobStatus.Iteration),
+		TaskCount:   n.int32("task_count", jobStatus.TaskCount),
+		Completed:   n.int32("completed", jobStatus.Completed),
+		Failed:      n.int32("failed", jobStatus.Failed),
 		Description: jobStatus.Description,
 		StartedAt:   jobStatus.StartedAt,
 		UpdatedAt:   jobStatus.UpdatedAt,
@@ -789,13 +795,17 @@ func (s *OrchestratorServer) GetJobStatus(ctx context.Context, req *pb.Orchestra
 		AgentId:        jobStatus.AgentID,
 		Source:         taskSourceToProto(jobStatus.Source),
 		Stages:         jobStagesToProto(jobStatus.Stages),
-		Attempts:       jobAttemptsToProto(jobStatus.Attempts),
-		AttemptBudget:  int32(jobStatus.AttemptBudget), //nolint:gosec // G115: bounded count
+		Attempts:       jobAttemptsToProto(&n, jobStatus.Attempts),
+		AttemptBudget:  n.int32("attempt_budget", jobStatus.AttemptBudget),
 		TerminalReason: string(jobStatus.TerminalReason),
 		ReadmitAllowed: jobStatus.ReadmitAllowed,
-		Delivery:       jobDeliveryToProto(jobStatus.Delivery),
+		Delivery:       jobDeliveryToProto(&n, jobStatus.Delivery),
 		Verification:   jobVerificationToProto(jobStatus.Verification),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // jobVerificationToProto maps the last validator pipeline's results.
@@ -831,14 +841,14 @@ func jobStagesToProto(stages []orchestration.JobStageRecord) []*pb.OrchestratorJ
 }
 
 // jobAttemptsToProto maps the attempts at the job's task.
-func jobAttemptsToProto(attempts []orchestration.JobAttemptRecord) []*pb.OrchestratorJobAttempt {
+func jobAttemptsToProto(n *responseNarrower, attempts []orchestration.JobAttemptRecord) []*pb.OrchestratorJobAttempt {
 	if len(attempts) == 0 {
 		return nil
 	}
 	out := make([]*pb.OrchestratorJobAttempt, len(attempts))
 	for i, attempt := range attempts {
 		out[i] = &pb.OrchestratorJobAttempt{
-			Attempt: int32(attempt.Attempt), //nolint:gosec // G115: bounded count
+			Attempt: n.int32("attempt", attempt.Attempt),
 			JobId:   attempt.JobID,
 			Current: attempt.Current,
 		}
@@ -848,14 +858,14 @@ func jobAttemptsToProto(attempts []orchestration.JobAttemptRecord) []*pb.Orchest
 
 // jobDeliveryToProto maps the git side of the attempt, nil for a runner that
 // published none.
-func jobDeliveryToProto(delivery *orchestration.JobDelivery) *pb.OrchestratorJobDelivery {
+func jobDeliveryToProto(n *responseNarrower, delivery *orchestration.JobDelivery) *pb.OrchestratorJobDelivery {
 	if delivery == nil {
 		return nil
 	}
 	reviews := make([]*pb.OrchestratorJobReviewRound, len(delivery.Reviews))
 	for i, review := range delivery.Reviews {
 		reviews[i] = &pb.OrchestratorJobReviewRound{
-			Round:       int32(review.Round), //nolint:gosec // G115: bounded count
+			Round:       n.int32("round", review.Round),
 			Reviewer:    review.Reviewer,
 			Verdict:     review.Verdict,
 			HeadSha:     review.HeadSHA,
@@ -866,7 +876,7 @@ func jobDeliveryToProto(delivery *orchestration.JobDelivery) *pb.OrchestratorJob
 	return &pb.OrchestratorJobDelivery{
 		Branch:            delivery.Branch,
 		HeadSha:           delivery.HeadSHA,
-		PullRequestNumber: int32(delivery.PullRequestNumber), //nolint:gosec // G115: bounded count
+		PullRequestNumber: n.int32("pull_request_number", delivery.PullRequestNumber),
 		PullRequestUrl:    delivery.PullRequestURL,
 		PullRequestState:  delivery.PullRequestState,
 		Reviews:           reviews,
@@ -934,21 +944,25 @@ func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorL
 	}
 	jobs := result.Items
 
+	var n responseNarrower
 	pbJobs := make([]*pb.OrchestratorJobSummary, len(jobs))
 	for i, j := range jobs {
 		pbJobs[i] = &pb.OrchestratorJobSummary{
 			JobId:       j.JobID,
 			State:       string(j.State),
-			Iteration:   int32(j.Iteration), //nolint:gosec // G115: bounded count
-			TaskCount:   int32(j.TaskCount), //nolint:gosec // G115: bounded count
-			Completed:   int32(j.Completed), //nolint:gosec // G115: bounded count
-			Failed:      int32(j.Failed),    //nolint:gosec // G115: bounded count
+			Iteration:   n.int32("iteration", j.Iteration),
+			TaskCount:   n.int32("task_count", j.TaskCount),
+			Completed:   n.int32("completed", j.Completed),
+			Failed:      n.int32("failed", j.Failed),
 			Description: j.Description,
 			StartedAt:   j.StartedAt,
 			UpdatedAt:   j.UpdatedAt,
 			Error:       j.Error,
-			EventCount:  int32(len(j.Events)), //nolint:gosec // G115: bounded count
+			EventCount:  n.int32("event_count", len(j.Events)),
 		}
+	}
+	if err := n.err(); err != nil {
+		return nil, err
 	}
 
 	bindJobSummaries(pbJobs, jobs)
@@ -1006,12 +1020,16 @@ func (s *OrchestratorServer) SubscribeJobEvents(req *pb.SubscribeJobEventsReques
 			if !ok {
 				return nil // Channel closed, job completed
 			}
+			iteration, err := conv.SafeIntToInt32(evt.Iteration)
+			if err != nil {
+				return responseRangeError("iteration", err)
+			}
 			protoEvt := &pb.JobEvent{
 				JobId:     evt.JobID,
 				Type:      evt.Type,
 				State:     string(evt.State),
 				Message:   evt.Message,
-				Iteration: int32(evt.Iteration), //nolint:gosec // G115: bounded count
+				Iteration: iteration,
 				Metadata:  evt.Metadata,
 				Timestamp: evt.Timestamp,
 			}
@@ -1136,7 +1154,11 @@ func (s *OrchestratorServer) ListWorkflows(ctx context.Context, req *pb.Orchestr
 
 	workflows := make([]*pb.OrchestratorWorkflowDefinition, 0, len(result.Items))
 	for _, workflow := range result.Items {
-		workflows = append(workflows, workflowDefinitionToProto(workflow))
+		proto, err := workflowDefinitionToProto(workflow)
+		if err != nil {
+			return nil, err
+		}
+		workflows = append(workflows, proto)
 	}
 
 	return &pb.OrchestratorListWorkflowsResponse{
@@ -1148,10 +1170,11 @@ func (s *OrchestratorServer) ListWorkflows(ctx context.Context, req *pb.Orchestr
 	}, nil
 }
 
-func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) *pb.OrchestratorWorkflowDefinition {
+func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) (*pb.OrchestratorWorkflowDefinition, error) {
 	if definition == nil {
-		return nil
+		return nil, nil
 	}
+	var n responseNarrower
 	agents := make([]*pb.OrchestratorWorkflowAgentRoleSpec, 0, len(definition.Agents))
 	for _, agent := range definition.Agents {
 		agents = append(agents, &pb.OrchestratorWorkflowAgentRoleSpec{
@@ -1160,7 +1183,7 @@ func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) *pb
 			Model:           agent.Model,
 			Capabilities:    append([]string(nil), agent.Capabilities...),
 			McpScopes:       append([]string(nil), agent.MCPScopes...),
-			Count:           int32(agent.Count), //nolint:gosec // G115: workflow role fan-out bound
+			Count:           n.int32("agent_count", agent.Count),
 			Env:             cloneStringMap(agent.Env),
 			WorkspacePath:   agent.WorkspacePath,
 			PermissionMode:  agent.PermissionMode,
@@ -1168,7 +1191,7 @@ func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) *pb
 			Sandboxed:       agent.Sandboxed,
 			ContainerImage:  agent.ContainerImage,
 			HostAffinity:    agent.HostAffinity,
-			NumCtx:          int32(agent.NumCtx), //nolint:gosec // G115: workflow tuning bound
+			NumCtx:          n.int32("num_ctx", agent.NumCtx),
 			SystemPrompt:    agent.SystemPrompt,
 			PromptAppend:    agent.PromptAppend,
 		})
@@ -1183,14 +1206,14 @@ func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) *pb
 			Phase:     string(criterion.Phase),
 		})
 	}
-	return &pb.OrchestratorWorkflowDefinition{
+	proto := &pb.OrchestratorWorkflowDefinition{
 		Name:        definition.Name,
 		Description: definition.Description,
 		Mode:        string(definition.Mode),
 		Agents:      agents,
 		Settings: &pb.OrchestratorWorkflowSettings{
-			MaxIterations:  int32(definition.Settings.MaxIterations),  //nolint:gosec // G115: workflow tuning bound
-			MaxParallelism: int32(definition.Settings.MaxParallelism), //nolint:gosec // G115: workflow tuning bound
+			MaxIterations:  n.int32("max_iterations", definition.Settings.MaxIterations),
+			MaxParallelism: n.int32("max_parallelism", definition.Settings.MaxParallelism),
 			PollInterval:   definition.Settings.PollInterval,
 			TimeoutPerItem: definition.Settings.TimeoutPerItem,
 			TotalTimeout:   definition.Settings.TotalTimeout,
@@ -1198,15 +1221,15 @@ func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) *pb
 			Topology:       string(definition.Settings.Topology),
 			Isolation:      string(definition.Settings.Isolation),
 			PeerMessaging: &pb.OrchestratorWorkflowPeerMessagingSettings{
-				MaxMessageSize: int32(definition.Settings.PeerMessaging.MaxMessageSize), //nolint:gosec // G115: workflow tuning bound
-				MaxInboxSize:   int32(definition.Settings.PeerMessaging.MaxInboxSize),   //nolint:gosec // G115: workflow tuning bound
+				MaxMessageSize: n.int32("max_message_size", definition.Settings.PeerMessaging.MaxMessageSize),
+				MaxInboxSize:   n.int32("max_inbox_size", definition.Settings.PeerMessaging.MaxInboxSize),
 				OverflowAction: definition.Settings.PeerMessaging.OverflowAction,
 				InboxTtl:       definition.Settings.PeerMessaging.InboxTTL,
 			},
 			FileLocking: &pb.OrchestratorWorkflowFileLockSettings{
 				LeaseTtl:          definition.Settings.FileLocking.LeaseTTL,
 				HeartbeatInterval: definition.Settings.FileLocking.HeartbeatInterval,
-				MaxRenewals:       int32(definition.Settings.FileLocking.MaxRenewals), //nolint:gosec // G115: workflow tuning bound
+				MaxRenewals:       n.int32("max_renewals", definition.Settings.FileLocking.MaxRenewals),
 			},
 			VectorDb: &pb.OrchestratorWorkflowVectorDBSettings{
 				Enabled:        definition.Settings.VectorDB.Enabled,
@@ -1222,16 +1245,20 @@ func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) *pb
 			},
 			Recovery: &pb.OrchestratorWorkflowRecoverySettings{
 				AutoRestart:    definition.Settings.Recovery.AutoRestart,
-				MaxRestarts:    int32(definition.Settings.Recovery.MaxRestarts), //nolint:gosec // G115: workflow tuning bound
+				MaxRestarts:    n.int32("max_restarts", definition.Settings.Recovery.MaxRestarts),
 				RestartBackoff: definition.Settings.Recovery.RestartBackoff,
 			},
 			Verbosity: definition.Settings.Verbosity,
-			NumCtx:    int32(definition.Settings.NumCtx), //nolint:gosec // G115: workflow tuning bound
+			NumCtx:    n.int32("num_ctx", definition.Settings.NumCtx),
 			Hooks:     definition.Settings.Hooks,
 		},
 		TenantId:  definition.TenantID,
 		ProjectId: definition.ProjectID,
 	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return proto, nil
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
@@ -1263,8 +1290,13 @@ func (s *OrchestratorServer) Health(ctx context.Context, req *pb.OrchestratorHea
 		return nil, convertOrchestratorError(err)
 	}
 
+	pbReport, err := serviceHealthReportToProto(report)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.OrchestratorHealthResponse{
-		Report:    serviceHealthReportToProto(report),
+		Report:    pbReport,
 		Timestamp: timestamppb.Now(),
 	}, nil
 }
@@ -1772,9 +1804,9 @@ func orchestratorBackendInfoToProto(info *orchestration.AgentBackendInfo) *pb.Ag
 }
 
 // serviceHealthReportToProto converts a domain HealthCheckReport to proto HealthCheckReport.
-func serviceHealthReportToProto(report *orchestration.HealthCheckReport) *pb.HealthCheckReport {
+func serviceHealthReportToProto(report *orchestration.HealthCheckReport) (*pb.HealthCheckReport, error) {
 	if report == nil {
-		return nil
+		return nil, nil
 	}
 
 	results := make([]*pb.SessionHealthResult, len(report.Results))
@@ -1788,14 +1820,19 @@ func serviceHealthReportToProto(report *orchestration.HealthCheckReport) *pb.Hea
 		}
 	}
 
-	return &pb.HealthCheckReport{
+	var n responseNarrower
+	proto := &pb.HealthCheckReport{
 		Timestamp:     unixNanoTimestamp(report.Timestamp),
-		TotalSessions: int32(report.TotalSessions), //nolint:gosec // G115: bounded count
-		Healthy:       int32(report.Healthy),       //nolint:gosec // G115: bounded count
-		Unhealthy:     int32(report.Unhealthy),     //nolint:gosec // G115: bounded count
-		Closed:        int32(report.Closed),        //nolint:gosec // G115: bounded count
+		TotalSessions: n.int32("total_sessions", report.TotalSessions),
+		Healthy:       n.int32("healthy", report.Healthy),
+		Unhealthy:     n.int32("unhealthy", report.Unhealthy),
+		Closed:        n.int32("closed", report.Closed),
 		Results:       results,
 	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return proto, nil
 }
 
 // serviceFleetNodeToProto converts a domain FleetNode to proto FleetNode.

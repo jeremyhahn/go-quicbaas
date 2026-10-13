@@ -22,6 +22,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -543,6 +544,21 @@ func TestHandleList(t *testing.T) {
 			name:           "missing entity type",
 			path:           "/api/v1/entities/",
 			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name: "total count beyond int is a server failure",
+			path: "/api/v1/entities/users",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.ExpectedCalls = nil
+				m.On("List", mock.Anything, mock.Anything, mock.Anything).
+					Run(func(args mock.Arguments) {
+						stream := args.Get(2).(chan<- *service.ListResponse)
+						stream <- &service.ListResponse{TotalCount: math.MaxUint64}
+						close(stream)
+					}).Return(nil).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			checkResponse:  requireServerFailure,
 		},
 	}
 

@@ -123,7 +123,6 @@ func (s *streamTestServer) presenceKindCount(t *testing.T, kind orchestration.Se
 // sseClient reads raw SSE lines so tests can observe comment/keepalive frames
 // as well as events — an SSE decoder would hide exactly the frames under test.
 type sseClient struct {
-	resp   *http.Response
 	reader *bufio.Reader
 	cancel context.CancelFunc
 	lines  chan string
@@ -139,15 +138,20 @@ func openSSE(t *testing.T, srv *streamTestServer, query string) *sseClient {
 	require.NoError(t, err)
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := srv.srv.Client().Do(req) //nolint:bodyclose // closed by sseClient.close, registered with t.Cleanup below
+	resp, err := srv.srv.Client().Do(req)
 	if err != nil {
 		cancel()
 		t.Fatalf("open SSE stream: %v", err)
 	}
+	t.Cleanup(func() {
+		cancel()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Errorf("close SSE stream: %v", closeErr)
+		}
+	})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	client := &sseClient{
-		resp:   resp,
 		reader: bufio.NewReader(resp.Body),
 		cancel: cancel,
 		lines:  make(chan string, 256),
@@ -166,14 +170,13 @@ func openSSE(t *testing.T, srv *streamTestServer, query string) *sseClient {
 			}
 		}
 	}()
-	t.Cleanup(client.close)
 	return client
 }
 
-// close tears the connection down.
+// close tears the connection down by cancelling the request; the cleanup
+// registered by openSSE closes the body.
 func (c *sseClient) close() {
 	c.cancel()
-	_ = c.resp.Body.Close()
 }
 
 // nextMatching returns the first line satisfying match, or fails after the

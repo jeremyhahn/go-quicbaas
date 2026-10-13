@@ -14,9 +14,11 @@
 package grpc
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -24,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // Test toProtoError with various error types.
@@ -82,6 +85,100 @@ func TestToProtoError_Detailed(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRangeErrors(t *testing.T) {
+	_, overflow := conv.SafeUint64ToInt64(math.MaxUint64)
+	_, negative := conv.SafeIntToUint64(-1)
+
+	tests := []struct {
+		name     string
+		mapper   func(string, error) error
+		err      error
+		wantCode codes.Code
+	}{
+		{name: "request overflow", mapper: requestRangeError, err: overflow, wantCode: codes.InvalidArgument},
+		{name: "request negative", mapper: requestRangeError, err: negative, wantCode: codes.InvalidArgument},
+		{name: "response overflow", mapper: responseRangeError, err: overflow, wantCode: codes.Internal},
+		{name: "response negative", mapper: responseRangeError, err: negative, wantCode: codes.Internal},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, ok := status.FromError(tt.mapper("limit", tt.err))
+			assert.True(t, ok)
+			assert.Equal(t, tt.wantCode, st.Code())
+			assert.Equal(t, "limit: "+tt.err.Error(), st.Message())
+		})
+	}
+}
+
+func TestResponseNarrower(t *testing.T) {
+	t.Run("values in range", func(t *testing.T) {
+		var n responseNarrower
+		assert.Equal(t, int32(7), n.int32("a", 7))
+		assert.Equal(t, int32(math.MinInt32), n.int32("b", math.MinInt32))
+		assert.Equal(t, uint64(math.MaxInt), n.uint64("c", math.MaxInt))
+		assert.True(t, n.keep("d", nil))
+		assert.NoError(t, n.err())
+	})
+
+	t.Run("negative uint64 fails", func(t *testing.T) {
+		var n responseNarrower
+		assert.Zero(t, n.uint64("version", -1))
+
+		st, ok := status.FromError(n.err())
+		assert.True(t, ok)
+		assert.Equal(t, codes.Internal, st.Code())
+		assert.Contains(t, st.Message(), "version: ")
+	})
+
+	t.Run("kept error is not replaced", func(t *testing.T) {
+		var n responseNarrower
+		assert.False(t, n.keep("first", &conv.ConversionNegativeError{FromType: "int", ToType: "uint64", Value: "-1"}))
+		assert.False(t, n.keep("second", nil))
+		assert.Contains(t, n.err().Error(), "first: ")
+	})
+
+	t.Run("first failure is kept", func(t *testing.T) {
+		var n responseNarrower
+		assert.Zero(t, n.int32("first", math.MaxInt32+1))
+		assert.Zero(t, n.int32("second", math.MinInt32-1))
+		assert.Zero(t, n.int32("third", 1), "a narrower that has failed returns 0")
+
+		st, ok := status.FromError(n.err())
+		assert.True(t, ok)
+		assert.Equal(t, codes.Internal, st.Code())
+		assert.Contains(t, st.Message(), "first: int value 2147483648 overflows int32")
+	})
+}
+
+func TestClientInt32(t *testing.T) {
+	t.Run("value in range", func(t *testing.T) {
+		out, err := clientInt32("limit", math.MaxInt32)
+		require.NoError(t, err)
+		assert.Equal(t, int32(math.MaxInt32), out)
+	})
+
+	t.Run("value out of range", func(t *testing.T) {
+		out, err := clientInt32("limit", math.MinInt32-1)
+		assert.Zero(t, out)
+		requireClientRangeError(t, err, "limit")
+	})
+}
+
+func TestResponseInt32(t *testing.T) {
+	t.Run("value in range", func(t *testing.T) {
+		out, err := responseInt32("total", math.MinInt32)
+		require.NoError(t, err)
+		assert.Equal(t, int32(math.MinInt32), out)
+	})
+
+	t.Run("value out of range", func(t *testing.T) {
+		out, err := responseInt32("total", math.MaxInt32+1)
+		assert.Zero(t, out)
+		requireRangeStatus(t, err, codes.Internal, "total")
+	})
 }
 
 // Test validatePutRequest with comprehensive edge cases.

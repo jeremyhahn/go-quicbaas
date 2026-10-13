@@ -936,73 +936,85 @@ func (c *RESTClient) WatchSecretsByPrefix(ctx context.Context, req *service.Watc
 	httpReq.Header.Set("Connection", "keep-alive")
 
 	// Execute request
-	// The body is closed on the error path below and by the streaming
-	// goroutine that owns it once the stream is established.
-	resp, err := c.httpClient.Do(httpReq) //nolint:bodyclose // closed by the SSE reader goroutine started below
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, api.NewOperationFailedError("HTTP request", err)
 	}
 
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		respData, _ := io.ReadAll(resp.Body)
-		return nil, api.NewHTTPStatusError("RESTClient.WatchSecretsByPrefix", errors.ErrInternal, resp.StatusCode, string(respData))
+		return nil, watchStatusError(resp)
 	}
 
+	// The reader goroutine owns the body from here and closes it when the
+	// stream ends.
 	changes := make(chan *service.SecretChange, 100)
-
-	// Start goroutine to read SSE events
-	go func() {
-		defer close(changes)
-		defer resp.Body.Close()
-
-		reader := bufio.NewReader(resp.Body)
-		var eventType string
-		var dataBuffer bytes.Buffer
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				// Connection closed or error
-				return
-			}
-
-			line = strings.TrimSpace(line)
-
-			if line == "" {
-				// Empty line marks end of event
-				if eventType == "change" && dataBuffer.Len() > 0 {
-					var change service.SecretChange
-					if err := json.Unmarshal(dataBuffer.Bytes(), &change); err == nil {
-						select {
-						case changes <- &change:
-						case <-ctx.Done():
-							return
-						}
-					}
-				}
-				eventType = ""
-				dataBuffer.Reset()
-				continue
-			}
-
-			if strings.HasPrefix(line, "event:") {
-				eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			} else if strings.HasPrefix(line, "data:") {
-				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-				dataBuffer.WriteString(data)
-			}
-		}
-	}()
+	go readSecretChanges(ctx, resp.Body, changes)
 
 	return changes, nil
+}
+
+// watchStatusError closes resp's body and reports its non-OK status, with
+// the body as detail when it can be read.
+func watchStatusError(resp *http.Response) error {
+	defer resp.Body.Close()
+	detail, err := io.ReadAll(resp.Body)
+	if err != nil {
+		detail = []byte(err.Error())
+	}
+	return api.NewHTTPStatusError("RESTClient.WatchSecretsByPrefix", errors.ErrInternal, resp.StatusCode, string(detail))
+}
+
+// readSecretChanges sends each "change" event of the SSE stream in body to
+// changes until the stream ends or ctx is done, then closes body and
+// changes.
+func readSecretChanges(ctx context.Context, body io.ReadCloser, changes chan<- *service.SecretChange) {
+	defer close(changes)
+	defer body.Close()
+
+	reader := bufio.NewReader(body)
+	var eventType string
+	var dataBuffer bytes.Buffer
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			// Connection closed or error
+			return
+		}
+
+		line = strings.TrimSpace(line)
+
+		if line == "" {
+			// Empty line marks end of event
+			if eventType == "change" && dataBuffer.Len() > 0 {
+				var change service.SecretChange
+				if err := json.Unmarshal(dataBuffer.Bytes(), &change); err == nil {
+					select {
+					case changes <- &change:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+			eventType = ""
+			dataBuffer.Reset()
+			continue
+		}
+
+		if strings.HasPrefix(line, "event:") {
+			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		} else if strings.HasPrefix(line, "data:") {
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			dataBuffer.WriteString(data)
+		}
+	}
 }
 
 // =============================================================================

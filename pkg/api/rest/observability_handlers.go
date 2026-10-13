@@ -23,8 +23,10 @@ import (
 	"strconv"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // Phase4Handler provides REST API handlers for Phase 4 features.
@@ -117,17 +119,10 @@ func (h *Phase4Handler) HandleListBackups(w http.ResponseWriter, r *http.Request
 	// Convert to proto format
 	backups := make([]*pb.BackupInfo, 0, len(backupList.Backups))
 	for _, b := range backupList.Backups {
-		// NumShards is typically a small number (< 1000) representing shard count
-		numShards := b.Metadata.NumShards
-		if numShards > 2147483647 { // Max int32
-			numShards = 2147483647
-		}
-		info := &pb.BackupInfo{
-			BackupId:  b.ID,
-			Timestamp: b.Timestamp.UnixNano(),
-			Size:      b.Size,
-			NumShards: int32(numShards), //nolint:gosec // G115: bounded by max int32 check above
-			Tags:      b.Metadata.Tags,
+		info, err := backupInfoToProto(b)
+		if err != nil {
+			http.Error(w, ErrMsgServerFailure, http.StatusInternalServerError)
+			return
 		}
 		backups = append(backups, info)
 	}
@@ -139,6 +134,23 @@ func (h *Phase4Handler) HandleListBackups(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp) // Best effort encoding
+}
+
+// backupInfoToProto converts a stored backup to its wire form. A shard
+// count beyond the int32 wire field is refused rather than misreported,
+// since a restore relies on it.
+func backupInfoToProto(b *backup.Backup) (*pb.BackupInfo, error) {
+	numShards, err := conv.SafeIntToInt32(b.Metadata.NumShards)
+	if err != nil {
+		return nil, api.NewEncodeError("rest.backups.list", "shard count", err)
+	}
+	return &pb.BackupInfo{
+		BackupId:  b.ID,
+		Timestamp: b.Timestamp.UnixNano(),
+		Size:      b.Size,
+		NumShards: numShards,
+		Tags:      b.Metadata.Tags,
+	}, nil
 }
 
 // HandleRestoreBackup restores from a backup
@@ -236,20 +248,12 @@ func (h *Phase4Handler) HandleGetCacheStats(w http.ResponseWriter, r *http.Reque
 
 	stats := h.cacheMgr.Stats()
 
-	// L1Size and L1Capacity are cache sizes, typically small numbers
-	l1Size := stats.L1Size
-	if l1Size > 2147483647 { // Max int32
-		l1Size = 2147483647
-	}
-	l1Capacity := stats.L1Capacity
-	if l1Capacity > 2147483647 { // Max int32
-		l1Capacity = 2147483647
-	}
-
+	// The int32 wire fields are observability gauges: a cache larger than
+	// they hold reports as saturated rather than failing the stats read.
 	resp := &pb.GetCacheStatsResponse{
 		Enabled:     stats.Enabled,
-		L1Size:      int32(l1Size),     //nolint:gosec // G115: bounded by max int32 check above
-		L1Capacity:  int32(l1Capacity), //nolint:gosec // G115: bounded by max int32 check above
+		L1Size:      conv.ClampIntToInt32(stats.L1Size),
+		L1Capacity:  conv.ClampIntToInt32(stats.L1Capacity),
 		L1Hits:      stats.L1Hits,
 		L1Misses:    stats.L1Misses,
 		L1HitRate:   stats.L1HitRate,
@@ -276,15 +280,11 @@ func (h *Phase4Handler) HandleClearCache(w http.ResponseWriter, r *http.Request)
 	statsBefore := h.cacheMgr.Stats()
 	h.cacheMgr.Clear()
 
-	// L1Size is cache size before clearing, typically small
-	l1SizeBefore := statsBefore.L1Size
-	if l1SizeBefore > 2147483647 { // Max int32
-		l1SizeBefore = 2147483647
-	}
-
+	// EntriesCleared is an int32 gauge: the clear has already happened, so a
+	// count larger than the field holds reports as saturated, not as a failure.
 	resp := &pb.ClearCacheResponse{
 		Success:        true,
-		EntriesCleared: int32(l1SizeBefore), //nolint:gosec // G115: bounded by max int32 check above
+		EntriesCleared: conv.ClampIntToInt32(statsBefore.L1Size),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

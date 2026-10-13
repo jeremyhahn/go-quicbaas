@@ -194,6 +194,30 @@ func TestHandleTransaction(t *testing.T) {
 				assert.NotEmpty(t, w.Body.String())
 			},
 		},
+		{
+			name: "negative compare version is invalid input",
+			requestBody: TransactionRequest{
+				Compare: []CompareCondition{
+					{
+						EntityType: "users",
+						ID:         1,
+						Target:     CompareTargetVersion,
+						Operator:   CompareOpEqual,
+						Version:    -1,
+					},
+				},
+				Success: []TransactionOp{
+					{Type: TxnOpGet, EntityType: "users", ID: 1},
+				},
+			},
+			// No Transaction expectation: the mock panics if the
+			// refused request reaches the service.
+			setupMock:      func(*testutil.MockQuicBaaS) {},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				requireInvalidField(t, w, "compare version")
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -482,7 +506,8 @@ func TestConvertCompareConditions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertCompareConditions(tt.input)
+			result, err := convertCompareConditions(tt.input)
+			require.NoError(t, err)
 			tt.validate(t, result)
 		})
 	}

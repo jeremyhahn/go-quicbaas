@@ -1384,7 +1384,7 @@ func TestConvertKMSKeyMetadataFull(t *testing.T) {
 			Owner: "test-owner",
 		}
 
-		result := convertKMSKeyMetadataFull(metadata)
+		result := convertKMSKeyMetadataFull(&responseNarrower{}, metadata)
 
 		require.NotNil(t, result)
 		assert.Equal(t, "key-123", result.KeyId)
@@ -1411,7 +1411,7 @@ func TestConvertKMSKeyMetadataFull(t *testing.T) {
 			Updated:   now,
 		}
 
-		result := convertKMSKeyMetadataFull(metadata)
+		result := convertKMSKeyMetadataFull(&responseNarrower{}, metadata)
 
 		require.NotNil(t, result)
 		assert.Equal(t, "key-456", result.KeyId)
@@ -1432,61 +1432,10 @@ func TestConvertKMSKeyMetadataFull(t *testing.T) {
 			RotationPolicy: nil,
 		}
 
-		result := convertKMSKeyMetadataFull(metadata)
+		result := convertKMSKeyMetadataFull(&responseNarrower{}, metadata)
 
 		require.NotNil(t, result)
 		assert.Nil(t, result.RotationPolicy)
-	})
-}
-
-// =============================================================================
-// convertKMSKeyMetadata Tests
-// =============================================================================
-
-func TestConvertKMSKeyMetadata(t *testing.T) {
-	now := time.Now()
-	lastUsed := now.Add(-time.Hour)
-
-	t.Run("with_all_fields", func(t *testing.T) {
-		metadata := &kms.KeyMetadata{
-			KeyID:              "key-123",
-			Algorithm:          "AES-256-GCM",
-			State:              kms.KeyStateEnabled,
-			Usage:              []kms.KeyUsage{kms.KeyUsageEncrypt},
-			Version:            1,
-			Exportable:         true,
-			DeletionProtection: false,
-			Created:            now,
-			Updated:            now,
-			LastUsedAt:         &lastUsed,
-		}
-		tags := map[string]string{"env": "prod"}
-
-		result := convertKMSKeyMetadata(metadata, "my-key", "my description", tags, "admin")
-
-		require.NotNil(t, result)
-		assert.Equal(t, "key-123", result.KeyId)
-		assert.Equal(t, "my-key", result.Name)
-		assert.Equal(t, "my description", result.Description)
-		assert.Equal(t, tags, result.Tags)
-		assert.Equal(t, "admin", result.Owner)
-	})
-
-	t.Run("nil_last_used", func(t *testing.T) {
-		metadata := &kms.KeyMetadata{
-			KeyID:     "key-456",
-			Algorithm: "RSA-2048",
-			State:     kms.KeyStateDisabled,
-			Usage:     []kms.KeyUsage{kms.KeyUsageSign},
-			Version:   2,
-			Created:   now,
-			Updated:   now,
-		}
-
-		result := convertKMSKeyMetadata(metadata, "rsa-key", "", nil, "")
-
-		require.NotNil(t, result)
-		assert.Equal(t, int64(0), result.LastUsedAt)
 	})
 }
 
@@ -1498,7 +1447,7 @@ func TestConvertKMSRotationPolicy(t *testing.T) {
 	now := time.Now()
 
 	t.Run("nil_policy", func(t *testing.T) {
-		result := convertKMSRotationPolicy(nil)
+		result := convertKMSRotationPolicy(&responseNarrower{}, nil)
 		assert.Nil(t, result)
 	})
 
@@ -1511,7 +1460,7 @@ func TestConvertKMSRotationPolicy(t *testing.T) {
 			RetainVersions: 5,
 		}
 
-		result := convertKMSRotationPolicy(policy)
+		result := convertKMSRotationPolicy(&responseNarrower{}, policy)
 
 		require.NotNil(t, result)
 		assert.True(t, result.AutoRotate)

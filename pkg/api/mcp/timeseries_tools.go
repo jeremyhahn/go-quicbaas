@@ -25,6 +25,7 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // TimeSeriesRequiredFieldError represents a missing required field for a
@@ -623,7 +624,13 @@ func getInt64(args map[string]interface{}, key string) int64 {
 	case int64:
 		return v
 	case uint64:
-		return int64(v) //nolint:gosec // G115: uint64 to int64 conversion in type helper
+		n, err := conv.SafeUint64ToInt64(v)
+		if err != nil {
+			// A value an int64 cannot hold reads as absent, as an
+			// unparsable string does.
+			return 0
+		}
+		return n
 	case string:
 		if v != "" {
 			i, _ := strconv.ParseInt(v, 10, 64)

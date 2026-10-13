@@ -21,7 +21,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // HandleTransaction handles POST requests for transactions with compare-and-swap semantics.
@@ -57,9 +59,15 @@ func (s *Server) HandleTransaction(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debugf("Transaction: compare_count=%d, success_count=%d, failure_count=%d",
 		len(txnReq.Compare), len(txnReq.Success), len(txnReq.Failure))
 
+	compare, err := convertCompareConditions(txnReq.Compare)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
 	// Convert to service transaction request
 	serviceReq := &service.TransactionRequest{
-		Compare: convertCompareConditions(txnReq.Compare),
+		Compare: compare,
 		Success: convertTransactionOps(txnReq.Success),
 		Failure: convertTransactionOps(txnReq.Failure),
 	}
@@ -97,20 +105,25 @@ func (s *Server) HandleTransaction(w http.ResponseWriter, r *http.Request) {
 
 // Conversion helpers for transaction types
 
-// convertCompareConditions converts REST compare conditions to service compare conditions.
-func convertCompareConditions(conditions []CompareCondition) []*service.CompareCondition {
+// convertCompareConditions converts REST compare conditions to service
+// compare conditions, refusing a negative version as invalid input.
+func convertCompareConditions(conditions []CompareCondition) ([]*service.CompareCondition, error) {
 	result := make([]*service.CompareCondition, 0, len(conditions))
 	for _, cond := range conditions {
+		version, err := conv.SafeInt64ToUint64(cond.Version)
+		if err != nil {
+			return nil, api.NewInvalidInputCauseError("invalid compare version", err)
+		}
 		result = append(result, &service.CompareCondition{
 			EntityType: cond.EntityType,
 			ID:         cond.ID,
 			Target:     convertCompareTarget(cond.Target),
 			Operator:   convertCompareOperator(cond.Operator),
-			Version:    uint64(cond.Version), //nolint:gosec // G115: Version field conversion for transaction
+			Version:    version,
 			Value:      cond.Value,
 		})
 	}
-	return result
+	return result, nil
 }
 
 // convertTransactionOps converts REST transaction ops to service transaction ops.

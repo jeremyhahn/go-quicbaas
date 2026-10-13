@@ -30,7 +30,8 @@ import (
 
 func TestConvertSecret_AllCases(t *testing.T) {
 	t.Run("nil_returns_nil", func(t *testing.T) {
-		result := convertSecret(nil)
+		result, err := convertSecret(nil)
+		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
@@ -48,7 +49,8 @@ func TestConvertSecret_AllCases(t *testing.T) {
 			Owner:          "admin",
 		}
 
-		result := convertSecret(sec)
+		result, err := convertSecret(sec)
+		require.NoError(t, err)
 
 		require.NotNil(t, result)
 		assert.Equal(t, "secret-123", result.SecretId)
@@ -82,7 +84,8 @@ func TestConvertSecret_AllCases(t *testing.T) {
 			Owner: "svc-account",
 		}
 
-		result := convertSecret(sec)
+		result, err := convertSecret(sec)
+		require.NoError(t, err)
 
 		require.NotNil(t, result)
 		assert.Equal(t, "secret-456", result.SecretId)
@@ -104,7 +107,8 @@ func TestConvertSecret_AllCases(t *testing.T) {
 			Tags:           map[string]string{},
 		}
 
-		result := convertSecret(sec)
+		result, err := convertSecret(sec)
+		require.NoError(t, err)
 
 		require.NotNil(t, result)
 		assert.Empty(t, result.Tags)
@@ -213,7 +217,8 @@ func TestConvertSecretVersion_AllCases(t *testing.T) {
 
 func TestConvertSecretRotationPolicy_AllCases(t *testing.T) {
 	t.Run("nil_returns_nil", func(t *testing.T) {
-		result := convertSecretRotationPolicy(nil)
+		result, err := convertSecretRotationPolicy(nil)
+		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
@@ -227,7 +232,8 @@ func TestConvertSecretRotationPolicy_AllCases(t *testing.T) {
 			RotationLambda: "rotate-db-password",
 		}
 
-		result := convertSecretRotationPolicy(policy)
+		result, err := convertSecretRotationPolicy(policy)
+		require.NoError(t, err)
 
 		require.NotNil(t, result)
 		assert.True(t, result.Enabled)
@@ -246,7 +252,8 @@ func TestConvertSecretRotationPolicy_AllCases(t *testing.T) {
 			RotationLambda: "",
 		}
 
-		result := convertSecretRotationPolicy(policy)
+		result, err := convertSecretRotationPolicy(policy)
+		require.NoError(t, err)
 
 		require.NotNil(t, result)
 		assert.False(t, result.Enabled)
@@ -264,7 +271,8 @@ func TestConvertSecretRotationPolicy_AllCases(t *testing.T) {
 			RotationLambda: "arn:aws:lambda:us-east-1:123456789:function:custom-rotate",
 		}
 
-		result := convertSecretRotationPolicy(policy)
+		result, err := convertSecretRotationPolicy(policy)
+		require.NoError(t, err)
 
 		require.NotNil(t, result)
 		assert.Equal(t, int64(3600), result.IntervalSeconds)

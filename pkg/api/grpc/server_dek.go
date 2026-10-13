@@ -15,7 +15,6 @@ package grpc
 
 import (
 	"context"
-	"math"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -23,6 +22,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // DEKServer implements the DEKManagement gRPC service.
@@ -62,8 +62,13 @@ func (s *DEKServer) CreateDEK(ctx context.Context, req *pb.CreateDEKRequest) (*p
 		return nil, ToGRPCError(err)
 	}
 
+	dek, err := convertDEKMetadata(resp.DEK)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.CreateDEKResponse{
-		Dek:       convertDEKMetadata(resp.DEK),
+		Dek:       dek,
 		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
@@ -85,8 +90,13 @@ func (s *DEKServer) GetDEK(ctx context.Context, req *pb.GetDEKRequest) (*pb.GetD
 		return nil, ToGRPCError(err)
 	}
 
+	dek, err := convertDEKMetadata(resp.DEK)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.GetDEKResponse{
-		Dek:       convertDEKMetadata(resp.DEK),
+		Dek:       dek,
 		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
@@ -109,7 +119,11 @@ func (s *DEKServer) ListDEKs(ctx context.Context, req *pb.ListDEKsRequest) (*pb.
 
 	deks := make([]*pb.DEKMetadata, len(resp.DEKs))
 	for i, d := range resp.DEKs {
-		deks[i] = convertDEKMetadata(d)
+		dek, err := convertDEKMetadata(d)
+		if err != nil {
+			return nil, err
+		}
+		deks[i] = dek
 	}
 
 	return &pb.ListDEKsResponse{
@@ -189,8 +203,13 @@ func (s *DEKServer) GetDEKStatus(ctx context.Context, req *pb.GetDEKStatusReques
 		return nil, ToGRPCError(err)
 	}
 
+	dek, err := convertDEKMetadata(resp.DEK)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.GetDEKStatusResponse{
-		Dek:                  convertDEKMetadata(resp.DEK),
+		Dek:                  dek,
 		ReencryptionProgress: convertReencryptionProgress(resp.ReencryptionProgress),
 		Timestamp:            resp.Timestamp.Unix(),
 	}, nil
@@ -288,17 +307,14 @@ func (s *DEKServer) StartReencryption(ctx context.Context, req *pb.StartReencryp
 		return nil, ToGRPCError(err)
 	}
 
-	// Bounds check for int64 to int32 conversion
-	estimatedItems := resp.TotalEntities
-	if estimatedItems > math.MaxInt32 {
-		estimatedItems = math.MaxInt32
-	}
-
 	return &pb.StartReencryptionResponse{
-		OperationId:    resp.OperationID,
-		Path:           req.Path,
-		Started:        true,
-		EstimatedItems: int32(estimatedItems), //nolint:gosec // G115: bounds checked above
+		OperationId: resp.OperationID,
+		Path:        req.Path,
+		Started:     true,
+		// estimated_items is an estimate on an int32 wire field, so a larger
+		// entity count saturates rather than failing an operation that has
+		// already started.
+		EstimatedItems: conv.ClampInt64ToInt32(resp.TotalEntities),
 		Timestamp:      resp.StartedAt.Unix(),
 	}, nil
 }
@@ -346,9 +362,14 @@ func (s *DEKServer) GetReencryptionProgress(ctx context.Context, req *pb.GetReen
 // Conversion Helpers
 // =============================================================================
 
-func convertDEKMetadata(d *service.DEKMetadata) *pb.DEKMetadata {
+func convertDEKMetadata(d *service.DEKMetadata) (*pb.DEKMetadata, error) {
 	if d == nil {
-		return nil
+		return nil, nil
+	}
+
+	warningPercent, err := responseInt32("warning_percent", d.WarningPercent)
+	if err != nil {
+		return nil, err
 	}
 
 	var rotatedAt int64
@@ -370,10 +391,10 @@ func convertDEKMetadata(d *service.DEKMetadata) *pb.DEKMetadata {
 		BytesUsed:      d.BytesUsed,
 		MaxUsageCount:  d.MaxUsageCount,
 		MaxBytesUsed:   d.MaxBytesUsed,
-		WarningPercent: int32(d.WarningPercent), //nolint:gosec // G115: WarningPercent is 0-100
+		WarningPercent: warningPercent,
 		Description:    d.Description,
 		BackendType:    d.BackendType,
-	}
+	}, nil
 }
 
 func convertReencryptionProgress(p *service.ReencryptionProgress) *pb.ReencryptionProgress {
@@ -391,25 +412,14 @@ func convertReencryptionProgress(p *service.ReencryptionProgress) *pb.Reencrypti
 		estimatedCompletion = p.EstimatedCompletion.Unix()
 	}
 
-	// Bounds check for uint64 to int32 conversions
-	totalKeys := p.TotalKeys
-	if totalKeys > math.MaxInt32 {
-		totalKeys = math.MaxInt32
-	}
-	processedKeys := p.ProcessedKeys
-	if processedKeys > math.MaxInt32 {
-		processedKeys = math.MaxInt32
-	}
-	failedKeys := p.FailedKeys
-	if failedKeys > math.MaxInt32 {
-		failedKeys = math.MaxInt32
-	}
-
+	// The progress counters are int32 on the wire. A job beyond that size
+	// reports saturated counts instead of failing the progress query, so
+	// callers can still see that it is running.
 	return &pb.ReencryptionProgress{
 		InProgress:          p.InProgress,
-		TotalKeys:           int32(totalKeys),     //nolint:gosec // G115: bounds checked above
-		ProcessedKeys:       int32(processedKeys), //nolint:gosec // G115: bounds checked above
-		FailedKeys:          int32(failedKeys),    //nolint:gosec // G115: bounds checked above
+		TotalKeys:           conv.ClampUint64ToInt32(p.TotalKeys),
+		ProcessedKeys:       conv.ClampUint64ToInt32(p.ProcessedKeys),
+		FailedKeys:          conv.ClampUint64ToInt32(p.FailedKeys),
 		StartedAt:           startedAt,
 		EstimatedCompletion: estimatedCompletion,
 	}

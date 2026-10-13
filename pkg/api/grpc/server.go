@@ -28,7 +28,6 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -53,8 +52,6 @@ type Server struct {
 	qpsTracker *QPSTracker
 	// shardRouter selects shard for (entityType, id)
 	shardRouter interface{ Route(string, uint64) uint64 }
-	// sealManager is the injected seal manager for seal/unseal operations
-	sealManager interfaces.SealManager //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
 	// vectorShardID is the shard ID for vector operations, set at construction time.
 	vectorShardID uint64
 }
@@ -126,12 +123,6 @@ func (s *Server) SetVectorShardID(id uint64) {
 // value actually took effect.
 func (s *Server) VectorShardID() uint64 {
 	return s.vectorShardID
-}
-
-// SetSealManager sets the seal manager for seal/unseal operations.
-// This should be called during server initialization.
-func (s *Server) SetSealManager(mgr interfaces.SealManager) { //nolint:staticcheck // SA1019: legacy seal compatibility surface, deliberately retained until the seal API is removed.
-	s.sealManager = mgr
 }
 
 // RecordQuery increments the QPS counter. Should be called for each query operation.
@@ -271,7 +262,7 @@ func (p protocol) IsJSON() bool {
 func (s *Server) Put(ctx context.Context, req *pb.PutRequest) (*pb.PutResponse, error) {
 	ctx, endSpan := startGRPCSpan(ctx, "grpc.Put", map[string]interface{}{
 		"entity_type": req.EntityType,
-		"id":          int64(req.Id), // #nosec G115 -- ID for tracing
+		"id":          req.Id,
 	})
 	defer endSpan()
 	start := time.Now()
@@ -333,7 +324,7 @@ func (s *Server) Put(ctx context.Context, req *pb.PutRequest) (*pb.PutResponse, 
 func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
 	ctx, endSpan := startGRPCSpan(ctx, "grpc.Get", map[string]interface{}{
 		"entity_type": req.EntityType,
-		"id":          int64(req.Id), // #nosec G115 -- ID for tracing attribute
+		"id":          req.Id,
 	})
 	defer endSpan()
 	start := time.Now()
@@ -396,7 +387,7 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 func (s *Server) Delete(ctx context.Context, req *pb.DeleteRequest) (*pb.DeleteResponse, error) {
 	ctx, endSpan := startGRPCSpan(ctx, "grpc.Delete", map[string]interface{}{
 		"entity_type": req.EntityType,
-		"id":          int64(req.Id), // #nosec G115 -- ID for tracing attribute
+		"id":          req.Id,
 	})
 	defer endSpan()
 	start := time.Now()

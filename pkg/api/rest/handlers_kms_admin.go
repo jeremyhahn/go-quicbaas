@@ -168,8 +168,14 @@ func (s *Server) HandleGetKeyMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metadata, err := svcMetadataToRESTResponse(svcResp.Metadata)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
 	resp := &GetKeyMetadataRESTResponse{
-		Metadata:  svcMetadataToRESTResponse(svcResp.Metadata),
+		Metadata:  metadata,
 		Timestamp: svcResp.Timestamp.Unix(),
 	}
 	RespondJSON(w, r, http.StatusOK, resp)
@@ -219,8 +225,14 @@ func (s *Server) HandleUpdateKeyMetadata(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	metadata, err := svcMetadataToRESTResponse(svcResp.Metadata)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
 	resp := &UpdateKeyMetadataRESTResponse{
-		Metadata:  svcMetadataToRESTResponse(svcResp.Metadata),
+		Metadata:  metadata,
 		Timestamp: svcResp.Timestamp.Unix(),
 	}
 	RespondJSON(w, r, http.StatusOK, resp)

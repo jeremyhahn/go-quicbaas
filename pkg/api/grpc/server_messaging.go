@@ -60,8 +60,13 @@ func (s *MessagingServer) CreateChannel(ctx context.Context, req *pb.MessagingCr
 		return nil, convertMessagingError(err)
 	}
 
+	protoChannel, err := serviceChannelToProto(channel)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.MessagingCreateChannelResponse{
-		Channel:   serviceChannelToProto(channel),
+		Channel:   protoChannel,
 		Timestamp: time.Now().Unix(),
 	}, nil
 }
@@ -99,8 +104,13 @@ func (s *MessagingServer) GetChannel(ctx context.Context, req *pb.MessagingGetCh
 		return nil, convertMessagingError(err)
 	}
 
+	protoChannel, err := serviceChannelToProto(channel)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.MessagingGetChannelResponse{
-		Channel:   serviceChannelToProto(channel),
+		Channel:   protoChannel,
 		Timestamp: time.Now().Unix(),
 	}, nil
 }
@@ -132,12 +142,20 @@ func (s *MessagingServer) ListChannels(ctx context.Context, req *pb.MessagingLis
 
 	protoChannels := make([]*pb.Channel, len(channels))
 	for i, ch := range channels {
-		protoChannels[i] = serviceChannelToProto(ch)
+		protoChannels[i], err = serviceChannelToProto(ch)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	totalCount, err := responseInt32("total_count", len(channels))
+	if err != nil {
+		return nil, err
 	}
 
 	return &pb.MessagingListChannelsResponse{
 		Channels:   protoChannels,
-		TotalCount: int32(len(channels)), //nolint:gosec // G115: bounded count
+		TotalCount: totalCount,
 		HasMore:    false,
 		Timestamp:  time.Now().Unix(),
 	}, nil
@@ -522,21 +540,26 @@ func protoEventTypeToService(et pb.EventType) messaging.EventType {
 // =============================================================================
 
 // serviceChannelToProto converts messaging.Channel to pb.Channel.
-func serviceChannelToProto(channel *messaging.Channel) *pb.Channel {
+func serviceChannelToProto(channel *messaging.Channel) (*pb.Channel, error) {
 	if channel == nil {
-		return nil
+		return nil, nil
 	}
 
-	return &pb.Channel{
+	var narrow responseNarrower
+	out := &pb.Channel{
 		Name:        channel.Name,
 		Codec:       channel.Codec,
 		CreatedAt:   channel.CreatedAt.Unix(),
 		Subscribers: channel.Subscribers,
 		Persistent:  channel.Persistent,
-		MaxHistory:  int32(channel.MaxHistory), //nolint:gosec // G115: bounded value
-		BufferSize:  int32(channel.BufferSize), //nolint:gosec // G115: bounded value
+		MaxHistory:  narrow.int32("max_history", channel.MaxHistory),
+		BufferSize:  narrow.int32("buffer_size", channel.BufferSize),
 		TtlSeconds:  int64(channel.TTL.Seconds()),
 	}
+	if err := narrow.err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // serviceSubscriptionToProto converts messaging.Subscription to pb.Subscription.

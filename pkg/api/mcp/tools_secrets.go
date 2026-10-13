@@ -18,10 +18,10 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
-	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 func (r *ToolRegistry) registerSecretsTools() {
@@ -417,10 +417,14 @@ func (r *ToolRegistry) executeSecretsList(ctx context.Context, args map[string]i
 		}
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.ListSecretsRequest{
-		Limit:  int(getUint64(args, "limit")), //nolint:gosec // G115: uint64 to int conversion for API limit,
+		Limit:  ints.Int("limit"),
 		Cursor: getString(args, "cursor"),
 		Filter: filter,
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := secretsSvc.ListSecrets(ctx, req)
@@ -454,10 +458,14 @@ func (r *ToolRegistry) executeSecretsVersions(ctx context.Context, args map[stri
 		return nil, api.NewServiceUnavailableError("secrets")
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.ListSecretVersionsRequest{
 		SecretID: getString(args, "secret_id"),
-		Limit:    int(getUint64(args, "limit")), //nolint:gosec // G115: uint64 to int conversion for API limit,
+		Limit:    ints.Int("limit"),
 		Cursor:   getString(args, "cursor"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := secretsSvc.ListSecretVersions(ctx, req)
@@ -574,9 +582,10 @@ func (r *ToolRegistry) executeSecretsGetPrefix(ctx context.Context, args map[str
 		includeData = v
 	}
 
-	limit := 100
-	if v := getUint64(args, "limit"); v > 0 {
-		limit = int(v) //nolint:gosec // G115: uint64 to int conversion for API limit
+	ints := newIntArgReader(args)
+	limit := ints.IntOr("limit", 100)
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	req := &service.GetSecretsByPrefixRequest{
@@ -617,21 +626,29 @@ func (r *ToolRegistry) executeSecretsWatch(ctx context.Context, args map[string]
 		return nil, api.NewServiceUnavailableError("secrets")
 	}
 
-	timeoutSeconds := int64(30)
-	if v := getUint64(args, "timeout_seconds"); v > 0 {
-		timeoutSeconds = int64(v) //nolint:gosec // G115: uint64 to int64 conversion for timeout
+	ints := newIntArgReader(args)
+	timeoutSeconds := ints.Int64("timeout_seconds")
+	if timeoutSeconds == 0 {
+		timeoutSeconds = 30
 	}
 
 	req := &service.WatchSecretsRequest{
 		Prefix:       getString(args, "prefix"),
-		StartVersion: int64(getUint64(args, "start_version")), //nolint:gosec // G115: uint64 to int64 conversion for version
+		StartVersion: ints.Int64("start_version"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
+	}
+	timeout, err := conv.SafeSecondsToDuration(timeoutSeconds)
+	if err != nil {
+		return nil, newIntArgError("timeout_seconds", err)
 	}
 
 	// Create a context with timeout if specified
 	watchCtx := ctx
-	if timeoutSeconds > 0 {
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		watchCtx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		watchCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 

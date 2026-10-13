@@ -15,13 +15,13 @@ package grpc
 
 import (
 	stderrors "errors"
-	"math"
 	"strconv"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
 // =============================================================================
@@ -75,5 +75,5 @@ func convertListError(err error, convert func(error) error) error {
 // size of a listing held in memory — so the narrowing saturates rather than
 // wraps if that ever stops being true.
 func pageInt32(v int) int32 {
-	return int32(min(max(v, 0), math.MaxInt32)) //nolint:gosec // G115: clamped to the int32 range
+	return conv.ClampIntToInt32(max(v, 0))
 }

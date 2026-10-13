@@ -538,9 +538,10 @@ func (r *ToolRegistry) executeIAMGDPRDeletionRequest(ctx context.Context, args m
 		return nil, err
 	}
 
-	gracePeriodDays := int(getUint64(args, "grace_period_days"))
-	if gracePeriodDays == 0 {
-		gracePeriodDays = 30
+	ints := newIntArgReader(args)
+	gracePeriodDays := ints.IntOr("grace_period_days", 30)
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	// Parse delete categories

@@ -127,7 +127,7 @@ func TestMapTenantBarrierToolError_WrappedSentinel(t *testing.T) {
 func TestMapTenantBarrierToolError_GenericPassthrough(t *testing.T) {
 	// Scoped classification: an unrelated error must pass through unchanged.
 	mapped := mapTenantBarrierToolError(errTenantBarrierMCPBoom)
-	assert.Same(t, errTenantBarrierMCPBoom, mapped) //nolint:testifylint // identity is the contract
+	assert.Same(t, errTenantBarrierMCPBoom, mapped)
 }
 
 // =============================================================================

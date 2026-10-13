@@ -1105,12 +1105,16 @@ func (r *ToolRegistry) executeObjectList(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.ListObjectsRequest{
 		Prefix:      getString(args, "prefix"),
 		TenantID:    getString(args, "tenant_id"),
-		Limit:       int(getUint64(args, "limit")), // #nosec G115 -- limit is user-provided pagination value, reasonable size
+		Limit:       ints.Int("limit"),
 		Cursor:      getString(args, "cursor"),
 		IncludeTags: getBool(args, "include_tags"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := svc.ListObjects(ctx, req)
@@ -1155,12 +1159,16 @@ func (r *ToolRegistry) executeObjectListByTag(ctx context.Context, args map[stri
 		return nil, api.NewRequiredFieldError("tag_name")
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.ListByTagRequest{
 		TagName:  tagName,
 		TagValue: getString(args, "tag_value"),
 		TenantID: getString(args, "tenant_id"),
-		Limit:    int(getUint64(args, "limit")), // #nosec G115 -- limit is user-provided pagination value, reasonable size
+		Limit:    ints.Int("limit"),
 		Cursor:   getString(args, "cursor"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := svc.ListByTag(ctx, req)
@@ -1201,11 +1209,15 @@ func (r *ToolRegistry) executeObjectListByTenant(ctx context.Context, args map[s
 		return nil, api.NewRequiredFieldError("tenant_id")
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.ListByTenantRequest{
 		TenantID:    tenantID,
-		Limit:       int(getUint64(args, "limit")), // #nosec G115 -- limit is user-provided pagination value, reasonable size
+		Limit:       ints.Int("limit"),
 		Cursor:      getString(args, "cursor"),
 		IncludeTags: getBool(args, "include_tags"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := svc.ListByTenant(ctx, req)
@@ -1312,12 +1324,16 @@ func (r *ToolRegistry) executeObjectReplicate(ctx context.Context, args map[stri
 		return nil, api.NewEmptyCollectionError("targets")
 	}
 
+	ints := newIntArgReader(args)
 	req := &service.ReplicateObjectRequest{
 		Key:         key,
 		Targets:     targets,
 		TenantID:    getString(args, "tenant_id"),
 		Synchronous: getBool(args, "synchronous"),
-		Priority:    int(getUint64(args, "priority")), // #nosec G115 -- user input validated by service layer
+		Priority:    ints.Int("priority"),
+	}
+	if err := ints.Err(); err != nil {
+		return nil, err
 	}
 
 	resp, err := svc.ReplicateObject(ctx, req)
@@ -1534,11 +1550,15 @@ func (r *ToolRegistry) executeObjectSetPolicy(ctx context.Context, args map[stri
 
 	// Parse replication policy
 	if repRaw, ok := args["replication"].(map[string]interface{}); ok {
+		ints := newIntArgReader(repRaw)
 		req.ReplicationPolicy = &catalog.ReplicationPolicy{
 			Enabled:     getBoolFromMap(repRaw, "enabled"),
-			MinReplicas: int(getUint64FromMap(repRaw, "min_replicas")), // #nosec G115 -- user input bounded by service
+			MinReplicas: ints.Int("min_replicas"),
 			Mode:        catalog.ReplicationMode(getStringFromMap(repRaw, "mode")),
-			Priority:    int(getUint64FromMap(repRaw, "priority")), // #nosec G115 -- user input bounded by service
+			Priority:    ints.Int("priority"),
+		}
+		if err := ints.Err(); err != nil {
+			return nil, err
 		}
 		if targets, ok := repRaw["target_stores"].([]interface{}); ok {
 			for _, t := range targets {
@@ -1551,19 +1571,27 @@ func (r *ToolRegistry) executeObjectSetPolicy(ctx context.Context, args map[stri
 
 	// Parse archive policy
 	if archRaw, ok := args["archive"].(map[string]interface{}); ok {
+		ints := newIntArgReader(archRaw)
 		req.ArchivePolicy = &catalog.ArchivePolicy{
 			Enabled:           getBoolFromMap(archRaw, "enabled"),
-			ArchiveAfterDays:  int(getUint64FromMap(archRaw, "after_days")), // #nosec G115 -- config value bounded by service
+			ArchiveAfterDays:  ints.Int("after_days"),
 			TargetStore:       getStringFromMap(archRaw, "target_store"),
 			DeleteFromPrimary: getBoolFromMap(archRaw, "delete_from_primary"),
+		}
+		if err := ints.Err(); err != nil {
+			return nil, err
 		}
 	}
 
 	// Parse retention policy
 	if retRaw, ok := args["retention"].(map[string]interface{}); ok {
+		ints := newIntArgReader(retRaw)
 		req.RetentionPolicy = &catalog.RetentionPolicy{
 			Enabled:       getBoolFromMap(retRaw, "enabled"),
-			RetentionDays: int(getUint64FromMap(retRaw, "days")), // #nosec G115 -- config value bounded by service
+			RetentionDays: ints.Int("days"),
+		}
+		if err := ints.Err(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1819,21 +1847,6 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 		return v
 	}
 	return ""
-}
-
-// getUint64FromMap extracts a uint64 from a map.
-func getUint64FromMap(m map[string]interface{}, key string) uint64 {
-	switch v := m[key].(type) {
-	case float64:
-		return uint64(v)
-	case int:
-		return uint64(v) //nolint:gosec
-	case int64:
-		return uint64(v) //nolint:gosec
-	case uint64:
-		return v
-	}
-	return 0
 }
 
 // getBoolFromMap extracts a bool from a map.

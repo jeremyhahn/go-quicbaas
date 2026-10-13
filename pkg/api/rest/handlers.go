@@ -28,9 +28,11 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/version"
 )
 
@@ -695,10 +697,16 @@ func (s *Server) HandleList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	total, err := conv.SafeUint64ToInt(listResp.TotalCount)
+	if err != nil {
+		s.handleServiceError(w, r, api.NewEncodeError("rest.list", "total count", err))
+		return
+	}
+
 	// Build response
 	resp := ListResponse{
 		Entities:   entities,
-		Total:      int(listResp.TotalCount), //nolint:gosec // G115: TotalCount represents count, safe conversion
+		Total:      total,
 		HasMore:    listResp.NextPageToken != "",
 		NextCursor: listResp.NextPageToken,
 	}
@@ -1137,6 +1145,12 @@ func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	uptime, err := uptimeDuration(serviceResp.UptimeSeconds)
+	if err != nil {
+		s.handleServiceError(w, r, api.NewEncodeError("rest.health", "uptime", err))
+		return
+	}
+
 	// Overall status
 	status := convertHealthStatusToString(serviceResp.Status)
 
@@ -1144,7 +1158,7 @@ func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		Status:    status,
 		Checks:    checks,
 		Timestamp: time.Now(),
-		Uptime:    (time.Duration(serviceResp.UptimeSeconds) * time.Second).String(), //nolint:gosec // G115: UptimeSeconds represents duration, safe conversion
+		Uptime:    uptime.String(),
 	}
 
 	statusCode := http.StatusOK
@@ -1153,6 +1167,16 @@ func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, statusCode, resp)
+}
+
+// uptimeDuration converts the service's uptime in whole seconds to a
+// time.Duration, refusing a count a Duration cannot hold.
+func uptimeDuration(seconds uint64) (time.Duration, error) {
+	signed, err := conv.SafeUint64ToInt64(seconds)
+	if err != nil {
+		return 0, err
+	}
+	return conv.SafeSecondsToDuration(signed)
 }
 
 // HandleLiveness handles liveness probe requests.

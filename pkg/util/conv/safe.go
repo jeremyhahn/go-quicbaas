@@ -124,6 +124,14 @@ func SafeIntToInt32(v int) (int32, error) {
 	return int32(v), nil
 }
 
+// SafeUint32ToInt32 safely converts uint32 to int32, checking for overflow.
+func SafeUint32ToInt32(v uint32) (int32, error) {
+	if v > math.MaxInt32 {
+		return 0, &ConversionOverflowError{FromType: "uint32", ToType: "int32", Value: fmt.Sprintf("%d", v)}
+	}
+	return int32(v), nil
+}
+
 // SafeUint32ToUint8 safely converts uint32 to uint8, checking for overflow.
 func SafeUint32ToUint8(v uint32) (uint8, error) {
 	if v > math.MaxUint8 {
@@ -221,6 +229,25 @@ func ClampUint64ToInt64(v uint64) int64 {
 		return math.MaxInt64
 	}
 	return int64(v)
+}
+
+// ClampUint64ToInt32 safely converts uint64 to int32 by clamping to valid range.
+func ClampUint64ToInt32(v uint64) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(v)
+}
+
+// ClampInt64ToInt32 safely converts int64 to int32 by clamping to valid range.
+func ClampInt64ToInt32(v int64) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
 }
 
 // ClampInt64ToUint64 safely converts int64 to uint64 by clamping to valid range.

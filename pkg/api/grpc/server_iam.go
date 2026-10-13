@@ -182,7 +182,7 @@ func (s *IAMServer) CreateTenant(ctx context.Context, req *iampb.CreateTenantReq
 		return nil, convertIAMError(err)
 	}
 
-	return convertTenantToProto(created), nil
+	return convertTenantToProto(created)
 }
 
 // GetTenant retrieves a tenant by ID.
@@ -198,7 +198,7 @@ func (s *IAMServer) GetTenant(ctx context.Context, req *iampb.GetTenantRequest) 
 		return nil, convertIAMError(err)
 	}
 
-	return convertTenantToProto(tenant), nil
+	return convertTenantToProto(tenant)
 }
 
 // UpdateTenant updates an existing tenant.
@@ -231,7 +231,7 @@ func (s *IAMServer) UpdateTenant(ctx context.Context, req *iampb.UpdateTenantReq
 		return nil, convertIAMError(err)
 	}
 
-	return convertTenantToProto(updated), nil
+	return convertTenantToProto(updated)
 }
 
 // DeleteTenant deletes a tenant.
@@ -267,12 +267,21 @@ func (s *IAMServer) ListTenants(ctx context.Context, req *iampb.ListTenantsReque
 
 	pbTenants := make([]*iampb.Tenant, 0, len(tenants))
 	for _, tenant := range tenants {
-		pbTenants = append(pbTenants, convertTenantToProto(tenant))
+		converted, err := convertTenantToProto(tenant)
+		if err != nil {
+			return nil, err
+		}
+		pbTenants = append(pbTenants, converted)
+	}
+
+	total32, err := responseInt32("total", total)
+	if err != nil {
+		return nil, err
 	}
 
 	return &iampb.ListTenantsResponse{
 		Tenants: pbTenants,
-		Total:   int32(total), //nolint:gosec // G115: Total count from pagination
+		Total:   total32,
 	}, nil
 }
 
@@ -455,9 +464,14 @@ func (s *IAMServer) ListUsers(ctx context.Context, req *iampb.ListUsersRequest) 
 		pbUsers = append(pbUsers, convertUserToProto(user))
 	}
 
+	total32, err := responseInt32("total", total)
+	if err != nil {
+		return nil, err
+	}
+
 	return &iampb.ListUsersResponse{
 		Users: pbUsers,
-		Total: int32(total), //nolint:gosec // G115: Total count from pagination
+		Total: total32,
 	}, nil
 }
 
@@ -596,9 +610,14 @@ func (s *IAMServer) ListRoles(ctx context.Context, req *iampb.ListRolesRequest) 
 		pbRoles = append(pbRoles, convertRoleToProto(role))
 	}
 
+	total32, err := responseInt32("total", total)
+	if err != nil {
+		return nil, err
+	}
+
 	return &iampb.ListRolesResponse{
 		Roles: pbRoles,
-		Total: int32(total), //nolint:gosec // G115: Total count from pagination
+		Total: total32,
 	}, nil
 }
 
@@ -821,9 +840,14 @@ func (s *IAMServer) ListApps(ctx context.Context, req *iampb.ListAppsRequest) (*
 		pbApps = append(pbApps, appProto)
 	}
 
+	total32, err := responseInt32("total", total)
+	if err != nil {
+		return nil, err
+	}
+
 	return &iampb.ListAppsResponse{
 		Apps:  pbApps,
-		Total: int32(total), //nolint:gosec // G115: Total count from pagination
+		Total: total32,
 	}, nil
 }
 
@@ -923,7 +947,10 @@ func (s *IAMServer) CreatePolicy(ctx context.Context, req *iampb.CreatePolicyReq
 		return nil, convertIAMError(err)
 	}
 
-	pbPolicy := convertPolicyToProto(created)
+	pbPolicy, err := convertPolicyToProto(created)
+	if err != nil {
+		return nil, err
+	}
 	pbPolicy.SpecYaml = req.SpecYaml
 
 	return pbPolicy, nil
@@ -948,7 +975,7 @@ func (s *IAMServer) GetPolicy(ctx context.Context, req *iampb.GetPolicyRequest) 
 		return nil, convertIAMError(err)
 	}
 
-	return convertPolicyToProto(policy), nil
+	return convertPolicyToProto(policy)
 }
 
 // UpdatePolicy updates an existing policy.
@@ -983,7 +1010,10 @@ func (s *IAMServer) UpdatePolicy(ctx context.Context, req *iampb.UpdatePolicyReq
 		return nil, convertIAMError(err)
 	}
 
-	pbPolicy := convertPolicyToProto(updated)
+	pbPolicy, err := convertPolicyToProto(updated)
+	if err != nil {
+		return nil, err
+	}
 	if len(req.SpecYaml) > 0 {
 		pbPolicy.SpecYaml = req.SpecYaml
 	}
@@ -1034,12 +1064,21 @@ func (s *IAMServer) ListPolicies(ctx context.Context, req *iampb.ListPoliciesReq
 
 	pbPolicies := make([]*iampb.Policy, 0, len(policies))
 	for _, policy := range policies {
-		pbPolicies = append(pbPolicies, convertPolicyToProto(policy))
+		converted, err := convertPolicyToProto(policy)
+		if err != nil {
+			return nil, err
+		}
+		pbPolicies = append(pbPolicies, converted)
+	}
+
+	total32, err := responseInt32("total", total)
+	if err != nil {
+		return nil, err
 	}
 
 	return &iampb.ListPoliciesResponse{
 		Policies: pbPolicies,
-		Total:    int32(total), //nolint:gosec // G115: Total count from pagination
+		Total:    total32,
 	}, nil
 }
 
@@ -1300,9 +1339,14 @@ func (s *IAMServer) ListAdminAssignments(ctx context.Context, req *iampb.ListAdm
 		pbAssignments = append(pbAssignments, convertAdminAssignmentToProto(assignment))
 	}
 
+	total32, err := responseInt32("total", len(assignments))
+	if err != nil {
+		return nil, err
+	}
+
 	return &iampb.AdminAssignmentList{
 		Assignments: pbAssignments,
-		Total:       int32(len(assignments)), //nolint:gosec // G115: Count from list
+		Total:       total32,
 	}, nil
 }
 
@@ -1546,9 +1590,14 @@ func (s *IAMServer) ListUserConsents(ctx context.Context, req *iampb.ListUserCon
 		pbConsents = append(pbConsents, convertConsentToProto(consent))
 	}
 
+	total32, err := responseInt32("total", len(consents))
+	if err != nil {
+		return nil, err
+	}
+
 	return &iampb.ConsentList{
 		Consents: pbConsents,
-		Total:    int32(len(consents)), //nolint:gosec // G115: Count from list
+		Total:    total32,
 	}, nil
 }
 
@@ -1618,7 +1667,7 @@ func (s *IAMServer) GenerateExport(ctx context.Context, req *iampb.GenerateExpor
 		return nil, convertIAMError(err)
 	}
 
-	return convertUserDataExportToProto(export), nil
+	return convertUserDataExportToProto(export)
 }
 
 // =============================================================================
@@ -1656,7 +1705,7 @@ func (s *IAMServer) RequestDeletion(ctx context.Context, req *iampb.RequestDelet
 		return nil, convertIAMError(err)
 	}
 
-	return convertDataDeletionRequestToProto(deletionReq), nil
+	return convertDataDeletionRequestToProto(deletionReq)
 }
 
 // CancelDeletion cancels a pending deletion request.
@@ -1691,7 +1740,7 @@ func (s *IAMServer) ProcessDeletion(ctx context.Context, req *iampb.ProcessDelet
 		return nil, convertIAMError(err)
 	}
 
-	return convertDeletionSummaryToProto(summary), nil
+	return convertDeletionSummaryToProto(summary)
 }
 
 // GetDeletionStatus retrieves the status of a deletion request.
@@ -1707,7 +1756,7 @@ func (s *IAMServer) GetDeletionStatus(ctx context.Context, req *iampb.GetDeletio
 		return nil, convertIAMError(err)
 	}
 
-	return convertDataDeletionRequestToProto(deletionReq), nil
+	return convertDataDeletionRequestToProto(deletionReq)
 }
 
 // =============================================================================

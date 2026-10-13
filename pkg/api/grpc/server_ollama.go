@@ -84,9 +84,14 @@ func (s *OllamaServer) ListModels(ctx context.Context, req *pb.OllamaListModelsR
 		}
 	}
 
+	count, err := responseInt32("count", resp.Count)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.OllamaListModelsResponse{
 		Models: models,
-		Count:  int32(resp.Count), //nolint:gosec // G115: bounded count
+		Count:  count,
 	}, nil
 }
 
@@ -136,10 +141,15 @@ func (s *OllamaServer) Embed(ctx context.Context, req *pb.OllamaEmbedRequest) (*
 		return nil, convertOllamaError(err)
 	}
 
+	dimensions, err := responseInt32("dimensions", resp.Dimensions)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.OllamaEmbedResponse{
 		Embedding:      resp.Embedding,
 		Model:          resp.Model,
-		Dimensions:     int32(resp.Dimensions), //nolint:gosec // G115: bounded dimensions
+		Dimensions:     dimensions,
 		ProcessingTime: durationpb.New(resp.ProcessingTime),
 	}, nil
 }
@@ -166,10 +176,15 @@ func (s *OllamaServer) EmbedWithModel(ctx context.Context, req *pb.OllamaEmbedWi
 		return nil, convertOllamaError(err)
 	}
 
+	dimensions, err := responseInt32("dimensions", resp.Dimensions)
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.OllamaEmbedResponse{
 		Embedding:      resp.Embedding,
 		Model:          resp.Model,
-		Dimensions:     int32(resp.Dimensions), //nolint:gosec // G115: bounded dimensions
+		Dimensions:     dimensions,
 		ProcessingTime: durationpb.New(resp.ProcessingTime),
 	}, nil
 }
@@ -199,13 +214,18 @@ func (s *OllamaServer) EmbedBatch(ctx context.Context, req *pb.OllamaEmbedBatchR
 		}
 	}
 
-	return &pb.OllamaEmbedBatchResponse{
+	n := &responseNarrower{}
+	batch := &pb.OllamaEmbedBatchResponse{
 		Embeddings:     embeddings,
 		Model:          resp.Model,
-		Dimensions:     int32(resp.Dimensions), //nolint:gosec // G115: bounded dimensions
-		Count:          int32(resp.Count),      //nolint:gosec // G115: bounded count
+		Dimensions:     n.int32("dimensions", resp.Dimensions),
+		Count:          n.int32("count", resp.Count),
 		ProcessingTime: durationpb.New(resp.ProcessingTime),
-	}, nil
+	}
+	if err := n.err(); err != nil {
+		return nil, err
+	}
+	return batch, nil
 }
 
 // convertOllamaError converts Ollama service errors to gRPC status errors.
