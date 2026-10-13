@@ -53,6 +53,8 @@ you rotate, not after.
 MCP clients discover the authorization server rather than being configured with
 it. The discovery documents are served at their well-known paths and the flow is
 OAuth 2.1 with **mandatory PKCE (S256)** and Resource Indicators (RFC 8707).
+The authorization-code step does not complete yet, because `/oauth2/authorize`
+does not authenticate the user: see the known gap in `api.md`.
 `api.md` has the endpoint list and the exact discovery payloads.
 
 Two things bite here:

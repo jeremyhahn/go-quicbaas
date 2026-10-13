@@ -29,6 +29,29 @@ type EmbeddingConfig struct {
 | `Dimensions` | Vector dimensions | Auto-detected |
 | `Timeout` | HTTP timeout | 30s |
 
+#### Endpoint resolution
+
+`APIURL` resolves through the usual layers: flag, then environment
+(`QUICBAAS_RAG_EMBEDDING_API_URL`), then the config file
+(`rag.embedding.api_url`), then the defaults layer. The defaults layer is
+`pkg/config/upstream_defaults.go`, which states each built-in provider's
+endpoint once (`DefaultEmbeddingAPIURL`):
+
+| Provider | Default endpoint |
+|----------|------------------|
+| `ollama` | `http://localhost:11434` |
+| `lmstudio` | `http://localhost:1234` |
+| `openai` | `https://api.openai.com` |
+| `voyage` | `https://api.voyageai.com/v1/embeddings` |
+
+`EmbeddingConfig.ResolveAPIURL` returns the configured value or the provider
+default. The RAG factory and the server's embedding wiring both call it. A
+provider with no configured endpoint and no default fails with
+`*config.UpstreamEndpointMissingError` (`errors.Is` matches
+`config.ErrUpstreamEndpointMissing`). The error names the key to set. When RAG
+is not configured, the server's embedding manager dials `ollama.base_url`
+instead.
+
 ### Vector Configuration
 
 ```go

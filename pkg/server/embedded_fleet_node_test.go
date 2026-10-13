@@ -249,7 +249,7 @@ func TestBuildEmbeddedAgentBackends_UnknownKindSkipped(t *testing.T) {
 
 	log := makeNoopLogger()
 	// Mixing a valid backend with an unknown one: should succeed with just the valid backend.
-	backends, err := buildEmbeddedFleetNodeBackends([]string{"ollama", "unknown-kind"}, "", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
+	backends, err := buildEmbeddedFleetNodeBackends([]string{"ollama", "unknown-kind"}, config.DefaultOllamaBaseURL, orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
 	require.NoError(t, err)
 	_, ok := backends["ollama"]
 	assert.True(t, ok)
@@ -494,7 +494,7 @@ func TestBuildEmbeddedAgentBackends_ACPKinds(t *testing.T) {
 
 	log := makeNoopLogger()
 	backends, err := buildEmbeddedFleetNodeBackends(
-		[]string{"ollama", "claude", "codex", "opencode"}, "", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
+		[]string{"ollama", "claude", "codex", "opencode"}, config.DefaultOllamaBaseURL, orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
 	require.NoError(t, err)
 
 	for _, name := range []string{"ollama", "claude", "codex", "opencode"} {

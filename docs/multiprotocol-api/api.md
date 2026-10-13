@@ -1976,7 +1976,7 @@ func main() {
 
 ### Error Handling
 
-gRPC errors use standard status codes:
+gRPC errors use the standard gRPC status codes (so far exercised by the Go client only):
 
 ```go
 import (

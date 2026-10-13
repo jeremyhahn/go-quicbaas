@@ -15,6 +15,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	BindSDLCLabelReconcileEnv(l.v)
 	BindSDLCWorkerImageEnv(l.v)
 	BindIAMSelfServiceRegistrationEnv(l.v)
+	BindStorageDirEnv(l.v)
 
 	// Handle empty path - return defaults
 	if configFile == "" {
@@ -92,6 +94,7 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 			// turn TLS off.
 			cfg.Security.TLSEnabled = true
 			l.applyEnvironmentOverrides(cfg)
+			DeriveWALDir(l.v, cfg)
 			return cfg, nil
 		}
 
@@ -121,8 +124,36 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	// but have environment variables set. Viper's AutomaticEnv only works during Get()
 	// calls, not during Unmarshal for keys not in the config file.
 	l.applyEnvironmentOverrides(cfg)
+	DeriveWALDir(l.v, cfg)
 
 	return cfg, nil
+}
+
+// walSubdir is the directory under storage.data_dir that holds the WAL when
+// storage.wal_dir is not set explicitly.
+const walSubdir = "wal"
+
+// BindStorageDirEnv binds QUICBAAS_STORAGE_DATA_DIR and
+// QUICBAAS_STORAGE_WAL_DIR, so an environment-only value is decoded by
+// Unmarshal and observed by viper.IsSet in DeriveWALDir.
+func BindStorageDirEnv(v *viper.Viper) {
+	_ = v.BindEnv("storage.data_dir")
+	_ = v.BindEnv("storage.wal_dir")
+}
+
+// DeriveWALDir places the WAL at <storage.data_dir>/wal when storage.data_dir
+// was set by any source (flag bound to the key, environment or config file)
+// and storage.wal_dir was not. An explicit storage.wal_dir always wins, and
+// when neither key is set the defaults-layer pair is kept. Call it once, after
+// every source has been decoded into cfg.
+func DeriveWALDir(v *viper.Viper, cfg *Config) {
+	if !v.IsSet("storage.data_dir") || v.IsSet("storage.wal_dir") {
+		return
+	}
+	if cfg.Storage.DataDir == "" {
+		return
+	}
+	cfg.Storage.WALDir = filepath.Join(cfg.Storage.DataDir, walSubdir)
 }
 
 // applyEnvironmentOverrides applies environment variable overrides for config fields

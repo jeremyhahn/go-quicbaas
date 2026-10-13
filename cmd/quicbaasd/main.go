@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -237,7 +236,7 @@ func addServerFlags(cmd *cobra.Command) {
 	// Embedded fleet node flags.
 	cmd.Flags().BoolVar(&embeddedFleetNodeEnabled, "embedded-fleet-node", false, "Start an in-process fleet node alongside the orchestrator (default: false)")
 	cmd.Flags().StringArrayVar(&embeddedFleetNodeBackends, "embedded-fleet-node-backend", []string{"ollama"}, "Backend(s) the embedded fleet node exposes (repeatable)")
-	cmd.Flags().StringVar(&embeddedFleetNodeOllamaURL, "embedded-fleet-node-ollama-url", "http://127.0.0.1:11434", "Ollama API endpoint for the embedded fleet node")
+	cmd.Flags().StringVar(&embeddedFleetNodeOllamaURL, "embedded-fleet-node-ollama-url", config.DefaultConfig().Server.EmbeddedFleetNode.OllamaURL, "Ollama API endpoint for the embedded fleet node")
 	cmd.Flags().StringVar(&embeddedFleetNodeHostAffinity, "embedded-fleet-node-host-affinity", "", "Host-affinity tag for the embedded fleet node (default: hostname)")
 	cmd.Flags().BoolVar(&embeddedFleetNodeGPU, "embedded-fleet-node-gpu", false, "Advertise GPU capability for the embedded fleet node")
 	cmd.Flags().StringVar(&embeddedFleetNodeDataDir, "embedded-fleet-node-data-dir", "", "Working directory for embedded fleet node session state (default: <data-dir>/embedded-agent)")
@@ -332,6 +331,11 @@ func initConfig() {
 		fmt.Fprintf(os.Stderr, "Failed to unmarshal configuration: %v\n", err)
 		os.Exit(1)
 	}
+
+	// storage.data_dir is resolved from the --data-dir flag (bound in init),
+	// the environment or the config file by now, so this is the one place the
+	// WAL directory follows it.
+	config.DeriveWALDir(viper.GetViper(), cfg)
 
 	// Parse special environment variables that viper doesn't handle automatically.
 	parseSpecialEnvVars()
@@ -491,6 +495,10 @@ func bindEnvVars() {
 	_ = viper.BindEnv("ollama.base_url")
 	_ = viper.BindEnv("ollama.default_chat_model")
 	_ = viper.BindEnv("ollama.default_embedding_model")
+
+	// RAG embedding upstream. Empty resolves to the provider's defaults-layer
+	// endpoint (config.DefaultEmbeddingAPIURL).
+	_ = viper.BindEnv("rag.embedding.api_url")
 
 	// Embedded agent configuration.
 	_ = viper.BindEnv("server.embedded_fleet_node.enabled")
@@ -705,17 +713,9 @@ func applyServerFlags(cmd *cobra.Command) {
 		cfg.Server.GRPC.Enabled = grpcPort > 0
 	}
 	if cmd.Flags().Changed("data-dir") {
+		// storage.wal_dir was already derived from this value in initConfig,
+		// where the flag reaches the config through its viper binding.
 		cfg.Storage.DataDir = dataDir
-		// Relocate the WAL directory under the new data dir unless the operator
-		// explicitly pinned storage.wal_dir via env var or config file. viper.IsSet
-		// is true when the QUICBAAS_STORAGE_WAL_DIR env var is bound (see BindEnv in
-		// initConfig) or when the key is present in a loaded config file, so an
-		// explicit wal_dir always wins; --data-dir alone derives it. Without this,
-		// the absolute default (/var/lib/quicbaas/wal) survives a --data-dir
-		// override and fails the boot-time directory-writable validation.
-		if !viper.IsSet("storage.wal_dir") {
-			cfg.Storage.WALDir = filepath.Join(cfg.Storage.DataDir, "wal")
-		}
 	}
 
 	// Apply embedded agent flags.

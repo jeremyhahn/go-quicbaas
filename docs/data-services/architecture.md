@@ -1485,6 +1485,30 @@ server:
 | CI/CD testing | `standalone` (unit tests) or `devcluster` (integration) |
 | Multi-node local testing | `devcluster` |
 
+### Data and WAL Directories
+
+`storage.data_dir` is the node's data directory and `storage.wal_dir` its
+write-ahead log directory.
+
+```yaml
+storage:
+  data_dir: /srv/quicbaas   # WAL goes to /srv/quicbaas/wal
+```
+
+`storage.wal_dir` follows `storage.data_dir`: when `data_dir` is set by any
+source and `wal_dir` is not, the WAL directory is `<data_dir>/wal`. The rule is
+the same for every source of `data_dir`:
+
+| `data_dir` set by | `wal_dir` set by | Resolved `wal_dir` |
+|-------------------|------------------|--------------------|
+| config file, `QUICBAAS_STORAGE_DATA_DIR` or `--data-dir` | nothing | `<data_dir>/wal` |
+| any | config file or `QUICBAAS_STORAGE_WAL_DIR` | the explicit `wal_dir` |
+| nothing | nothing | the profile default (`/var/lib/quicbaas/wal`) |
+
+An explicit `wal_dir` always wins, so a WAL on a separate device is set with
+`wal_dir`. The derivation runs once, after the file, environment and flags are
+resolved (`config.DeriveWALDir`), for both the daemon and `config.Loader`.
+
 ### Storage Partitions
 
 Partitions provide physical data isolation at the storage layer. Each partition has its own data directory and optional configuration overrides.

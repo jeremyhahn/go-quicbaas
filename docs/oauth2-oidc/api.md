@@ -494,7 +494,7 @@ OAuth 2.1 authorization for the Model Context Protocol (MCP) API.
 
 ### Overview
 
-QuicBaaS's MCP server implements the [MCP Authorization Specification (2025)](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization), providing secure OAuth 2.1 authentication for AI assistants and MCP clients.
+QuicBaaS's MCP server serves the discovery and token endpoints of the [MCP Authorization Specification (2025)](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization) for AI assistants and MCP clients. The specification's authorization-code step does not complete yet: see the known gap under [Authorization Code Flow with PKCE](#authorization-code-flow-with-pkce).
 
 **Key Features:**
 - OAuth 2.1 with mandatory PKCE (S256)
@@ -585,13 +585,25 @@ Returns MCP server resource metadata:
 GET /.well-known/openid-configuration
 ```
 
-Returns OIDC discovery document (compatible with OAuth AS Metadata).
+Returns the OIDC discovery document. The fields an external relying party
+reads from it (`issuer`, the authorization, token and introspection endpoints,
+`jwks_uri`, and S256 in `code_challenge_methods_supported`) are checked by the
+interop leg's baseline (`pkg/api/rest/oidc_interop_test.go`).
 
 ### Authorization Flows
 
 #### Authorization Code Flow with PKCE
 
 PKCE is **mandatory** for all clients. Only the S256 challenge method is supported.
+
+> **Known gap (go-quicbaas#203): this flow does not complete end to end.**
+> `GET /oauth2/authorize` does not authenticate the resource owner: the code
+> it issues names no user and no tenant, so exchanging it at `/oauth2/token`
+> fails with `server_error` ("failed to get user"). The token endpoint's
+> handling of a user-bound code (PKCE S256, the ID token, introspection) is
+> verified with `golang.org/x/oauth2` and `lestrrat-go/jwx` by
+> `TestOIDCInterop_AuthorizationCodeWithPKCE`, which mints that code
+> in-process in place of the missing login step.
 
 ##### Step 1: Generate PKCE Values
 
@@ -1006,6 +1018,12 @@ curl -X POST https://quicbaas.example.com/oauth2/token \
 7. **Store tokens securely** (encrypted at rest)
 
 ### RFC References
+
+These are the specifications the provider is written against. An external
+client exercises only RFC 6749 (client credentials and the code exchange),
+RFC 7636 (S256), RFC 7662 and the discovery fields listed above; the rest are
+checked by this repository's own client alone. Per-claim status:
+[multiprotocol-api/engineering.md](../multiprotocol-api/engineering.md#interop-claims-audit).
 
 | RFC | Title | Usage |
 |-----|-------|-------|

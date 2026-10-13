@@ -67,6 +67,7 @@ func DefaultConfig() *Config {
 				Enabled: true,
 				Socket:  DefaultUnixSocket,
 			},
+			EmbeddedFleetNode: EmbeddedFleetNodeConfig{OllamaURL: DefaultOllamaBaseURL},
 		},
 		Storage: StorageConfig{
 			Backend:               StorageBackendPebble,
@@ -120,7 +121,7 @@ func DefaultConfig() *Config {
 		},
 		Ollama: OllamaConfig{
 			Enabled: true,
-			BaseURL: "http://localhost:11434",
+			BaseURL: DefaultOllamaBaseURL,
 		},
 		Backup: BackupConfig{
 			Enabled:            true,
@@ -373,6 +374,7 @@ func DefaultServerConfig() ServerConfig {
 			Enabled: true,
 			Socket:  DefaultUnixSocket,
 		},
+		EmbeddedFleetNode: EmbeddedFleetNodeConfig{OllamaURL: DefaultOllamaBaseURL},
 	}
 }
 

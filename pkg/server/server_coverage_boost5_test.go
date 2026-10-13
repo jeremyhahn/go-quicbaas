@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -87,16 +88,19 @@ func TestBoost5_BuildEmbeddedAgentBackends_AllSupportedKinds(t *testing.T) {
 	}
 }
 
-// TestBoost5_BuildEmbeddedAgentBackends_OllamaDefaultURL covers the inner
-// "url == empty → default to 127.0.0.1:11434" branch in the ollama
-// factory closure, which the existing ollama test does not specifically
-// assert (it passes a non-empty URL).
-func TestBoost5_BuildEmbeddedAgentBackends_OllamaDefaultURL(t *testing.T) {
+// TestBoost5_BuildEmbeddedAgentBackends_OllamaBlankURLRefused pins that a
+// blank Ollama URL is a typed configuration error naming the key, not a
+// silent dial of a guessed local endpoint: the defaults layer supplies the
+// URL, so a blank one reaching here is the operator's explicit blank.
+func TestBoost5_BuildEmbeddedAgentBackends_OllamaBlankURLRefused(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	backends, err := buildEmbeddedFleetNodeBackends([]string{"ollama"}, "", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
-	require.NoError(t, err)
-	_, ok := backends["ollama"]
-	assert.True(t, ok, "ollama factory must default URL when blank")
+	for _, blank := range []string{"", "   "} {
+		_, err := buildEmbeddedFleetNodeBackends([]string{"ollama"}, blank, orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
+		require.ErrorIs(t, err, config.ErrUpstreamEndpointMissing)
+		var missing *config.UpstreamEndpointMissingError
+		require.ErrorAs(t, err, &missing)
+		assert.Equal(t, "server.embedded_fleet_node.ollama_url", missing.Key)
+	}
 }

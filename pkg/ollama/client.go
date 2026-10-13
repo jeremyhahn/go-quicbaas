@@ -27,11 +27,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 const (
-	// DefaultBaseURL is the default Ollama API endpoint.
-	DefaultBaseURL = "http://localhost:11434"
+	// DefaultBaseURL is the default Ollama API endpoint, as stated by the
+	// configuration defaults layer.
+	DefaultBaseURL = config.DefaultOllamaBaseURL
 
 	// DefaultTimeout is the default HTTP timeout.
 	DefaultTimeout = 120 * time.Second

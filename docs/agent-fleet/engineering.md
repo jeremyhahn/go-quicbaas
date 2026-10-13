@@ -262,7 +262,7 @@ quotas, and monitoring.
 |---|---|
 | `--embedded-fleet-node` | off |
 | `--embedded-fleet-node-backend` (repeatable) | `ollama` |
-| `--embedded-fleet-node-ollama-url` | `http://127.0.0.1:11434` |
+| `--embedded-fleet-node-ollama-url` | `http://localhost:11434` (`config.DefaultOllamaBaseURL`) |
 | `--embedded-fleet-node-host-affinity` | hostname |
 | `--embedded-fleet-node-gpu` | off |
 | `--embedded-fleet-node-data-dir` | `<data-dir>/embedded-agent` |
@@ -276,6 +276,13 @@ Config keys under `server.embedded_fleet_node`: `enabled`, `backends`,
 `sandbox_network`, `sandbox_cap_add`, `sandbox_pids_limit`, `sandbox_ulimits`,
 `sandbox_image`, `image_registry` (config and env only, no flag) and
 `auto_pull`.
+
+`ollama_url` resolves flag, then environment
+(`QUICBAAS_SERVER_EMBEDDED_FLEET_NODE_OLLAMA_URL`), then file, then the
+defaults layer. If it resolves empty while the `ollama` backend is enabled, the
+fleet node does not start. Its startup error wraps
+`*config.UpstreamEndpointMissingError`, which names
+`server.embedded_fleet_node.ollama_url`.
 
 - The node ID is `embedded-<hostname>`.
 - Transport is gRPC's in-memory bufconn.

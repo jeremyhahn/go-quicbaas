@@ -987,3 +987,29 @@ make integration-test
 # Run benchmarks
 make bench-cmd
 ```
+
+## Interop claims audit
+
+Conformance and compatibility sentences on the HTTP/3, OIDC/OAuth2, gRPC and
+MCP surfaces (go-quicbaas#203). A claim is either enforced by a test that
+drives the server with an independent client, or its sentence was narrowed to
+what is true. The OIDC/OAuth2 leg is `pkg/api/rest/oidc_interop_test.go`: it
+serves the REST router on a loopback listener and drives it with
+`golang.org/x/oauth2` and `lestrrat-go/jwx/v2`.
+
+| Claim | File | Enforced by / narrowed |
+|---|---|---|
+| Discovery document carries issuer, endpoints and S256 | `docs/oauth2-oidc/api.md` | `TestOIDCInterop_*` (shared discovery baseline) |
+| Authorization endpoint redirects with code and state | `docs/oauth2-oidc/api.md` | `TestOIDCInterop_AuthorizeRedirectsWithCodeAndState` |
+| PKCE is mandatory (S256) | `docs/oauth2-oidc/api.md`, `docs/oauth2-oidc/user.md` | `TestOIDCInterop_WrongPKCEVerifierIsRefused` |
+| Code exchange returns a verifiable ID token (iss, aud, exp, signature, nonce) | `docs/oauth2-oidc/api.md` | `TestOIDCInterop_AuthorizationCodeWithPKCE` |
+| ID token signature is bound to the served JWKS | `docs/oauth2-oidc/api.md` | `TestOIDCInterop_ForeignKeySignatureFailsVerification` |
+| Client credentials grant (RFC 6749 §4.4) | `docs/go-sdk/api.md`, `docs/go-sdk/engineering.md` | `TestOIDCInterop_ClientCredentialsAndIntrospection` |
+| Token introspection (RFC 7662) | `docs/oauth2-oidc/engineering.md`, `docs/go-sdk/api.md` | `TestOIDCInterop_ClientCredentialsAndIntrospection` |
+| Browser authorization-code flow completes | `docs/oauth2-oidc/api.md`, `docs/oauth2-oidc/user.md` | Narrowed: `/oauth2/authorize` does not authenticate the user, so its codes fail exchange |
+| "Full authorization server" | `README.md` | Narrowed to the grants that work |
+| MCP authorization spec / OAuth 2.1 with PKCE | `docs/oauth2-oidc/api.md`, `docs/mcp-server/api.md` | Narrowed: token endpoint only until the authorize gap closes |
+| RFC 8705, 9449, 8707, 7591, 9728 | `docs/oauth2-oidc/api.md` (RFC References) | Narrowed: no external client exercises them yet |
+| MCP works with Claude, Codex, Gemini, Claude Desktop | `README.md`, `docs/mcp-server/api.md` | Narrowed: only mark3labs/mcp-go has been run against the server |
+| gRPC over TLS with `h2`, standard status codes | `docs/multiprotocol-api/architecture.md`, `docs/multiprotocol-api/api.md` | Narrowed: exercised by the Go client only |
+| QUIC transport served on `:10443`, with performance figures | `docs/multiprotocol-api/architecture.md` | Narrowed: nothing serves HTTP/3, so there is no server to measure |

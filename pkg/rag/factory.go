@@ -360,10 +360,25 @@ func (s *System) Close() error {
 
 // createEmbedder creates an embedding provider based on configuration.
 func createEmbedder(cfg config.EmbeddingConfig) (embedding.Provider, error) {
-	// Convert config to embedding.Config
+	switch cfg.Provider {
+	case "mock":
+		// For tests and mock provider
+		return &mockEmbedderAdapter{dimensions: cfg.Dimensions}, nil
+	case "ollama", "openai", "voyage", "lmstudio":
+	default:
+		return nil, &UnsupportedProviderError{Provider: cfg.Provider}
+	}
+
+	// The endpoint comes from the resolved configuration: the operator's
+	// api_url, else the provider's defaults-layer endpoint.
+	apiURL, err := cfg.ResolveAPIURL()
+	if err != nil {
+		return nil, err
+	}
+
 	embeddingCfg := embedding.Config{
 		Provider:     cfg.Provider,
-		APIURL:       cfg.APIURL,
+		APIURL:       apiURL,
 		APIKey:       cfg.APIKey,
 		Model:        cfg.Model,
 		Dimensions:   cfg.Dimensions,
@@ -372,42 +387,11 @@ func createEmbedder(cfg config.EmbeddingConfig) (embedding.Provider, error) {
 		MaxBatchSize: 128,
 	}
 
-	switch cfg.Provider {
-	case "mock":
-		// For tests and mock provider
-		return &mockEmbedderAdapter{dimensions: cfg.Dimensions}, nil
-
-	case "ollama":
-		// Ollama uses OpenAI-compatible API
-		if embeddingCfg.APIURL == "" {
-			embeddingCfg.APIURL = "http://localhost:11434"
-		}
-		return embedding.NewOpenAIProvider(embeddingCfg)
-
-	case "openai":
-		// OpenAI API
-		if embeddingCfg.APIURL == "" {
-			embeddingCfg.APIURL = "https://api.openai.com"
-		}
-		return embedding.NewOpenAIProvider(embeddingCfg)
-
-	case "voyage":
-		// Voyage AI
-		if embeddingCfg.APIURL == "" {
-			embeddingCfg.APIURL = "https://api.voyageai.com/v1/embeddings"
-		}
+	if cfg.Provider == "voyage" {
 		return embedding.NewVoyageProvider(embeddingCfg)
-
-	case "lmstudio":
-		// LMStudio uses OpenAI-compatible API
-		if embeddingCfg.APIURL == "" {
-			embeddingCfg.APIURL = "http://localhost:1234"
-		}
-		return embedding.NewOpenAIProvider(embeddingCfg)
-
-	default:
-		return nil, &UnsupportedProviderError{Provider: cfg.Provider}
 	}
+	// Ollama, OpenAI and LMStudio all speak the OpenAI-compatible API.
+	return embedding.NewOpenAIProvider(embeddingCfg)
 }
 
 // createVectorIndex creates and initializes the vector index.

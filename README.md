@@ -35,7 +35,7 @@
 - **Vector Search** - HNSW/IVF indexing with similarity search, hybrid search, and metadata filtering
 - **RAG Pipelines** - Embed -> search -> rerank -> build context with token-aware limits
 - **Embedding Providers** - Ollama, OpenAI, LMStudio, Voyage AI with caching
-- **MCP Protocol** - 520 registered tools, 478 of them reachable, for AI agent integration (Claude, Codex, Gemini, etc.)
+- **MCP Protocol** - 520 registered tools, 478 of them reachable, for AI agent integration (the server and SDK both use mark3labs/mcp-go; no other MCP client is run against it yet)
 
 ### Security & Identity
 - **IAM System** - Multi-tenant identity with users, groups, roles, policies, and sessions
@@ -43,7 +43,7 @@
 - **Policy Engine** - Time, network, and attribute conditions with bloom filter caching
 - **WebAuthn/FIDO2** - Passwordless authentication with passkeys and hardware keys
 - **MFA/TOTP** - Multi-factor authentication with backup codes
-- **OAuth2/OIDC** - Full authorization server and federated identity provider
+- **OAuth2/OIDC** - Authorization server (client credentials, token exchange, introspection, discovery) and federated identity provider; the browser authorization-code flow does not complete yet, because `/oauth2/authorize` does not authenticate the user
 - **SSO** - Single Sign-On across applications
 - **FIPS 140-3** - Compliant cryptography for regulated environments
 - **GDPR Compliance** - Consent management, data export, and right-to-deletion

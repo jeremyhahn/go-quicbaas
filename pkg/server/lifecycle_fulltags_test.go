@@ -264,7 +264,8 @@ func TestCovP7_BuildEmbeddingConfig_OllamaEnabled(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embeddingCfg := srv.buildEmbeddingConfig()
+	embeddingCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embeddingCfg)
 	assert.Equal(t, "ollama", embeddingCfg.Provider)
 	assert.Equal(t, "http://127.0.0.1:11434", embeddingCfg.APIURL)
@@ -288,7 +289,8 @@ func TestCovP7_BuildEmbeddingConfig_RAGEnabled(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embeddingCfg := srv.buildEmbeddingConfig()
+	embeddingCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embeddingCfg)
 	assert.Equal(t, "voyage", embeddingCfg.Provider)
 	assert.Equal(t, 1024, embeddingCfg.Dimensions)
@@ -312,7 +314,8 @@ func TestCovP7_BuildEmbeddingConfig_RAGDefaults(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embeddingCfg := srv.buildEmbeddingConfig()
+	embeddingCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embeddingCfg)
 	assert.Equal(t, 768, embeddingCfg.Dimensions)
 	assert.Equal(t, 120, embeddingCfg.Timeout)
@@ -333,7 +336,8 @@ func TestCovP7_BuildEmbeddingConfig_OllamaDefaults(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embeddingCfg := srv.buildEmbeddingConfig()
+	embeddingCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embeddingCfg)
 	assert.Equal(t, "ollama", embeddingCfg.Provider)
 	// Default values should be applied
@@ -480,10 +484,11 @@ func TestP9_BuildEmbeddingConfig_DefaultFallback(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embCfg := srv.buildEmbeddingConfig()
+	embCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embCfg)
 	assert.Equal(t, "ollama", embCfg.Provider)
-	assert.Equal(t, "http://localhost:11434", embCfg.APIURL)
+	assert.Equal(t, config.DefaultOllamaConfig().BaseURL, embCfg.APIURL, "the fallback must read the defaults layer")
 	assert.Equal(t, "nomic-embed-text", embCfg.Model)
 	assert.Equal(t, 768, embCfg.Dimensions)
 }
@@ -1016,7 +1021,8 @@ func TestP11_BuildEmbeddingConfig_OllamaFullDefaults(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embeddingCfg := srv.buildEmbeddingConfig()
+	embeddingCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embeddingCfg)
 	assert.Equal(t, "ollama", embeddingCfg.Provider)
 	assert.True(t, embeddingCfg.Timeout > 0)
@@ -1167,7 +1173,8 @@ func TestP15_BuildEmbeddingConfig_OllamaNegativeDurations(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embeddingCfg := srv.buildEmbeddingConfig()
+	embeddingCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embeddingCfg)
 	assert.Equal(t, "ollama", embeddingCfg.Provider)
 	// Negative durations should be replaced with positive defaults

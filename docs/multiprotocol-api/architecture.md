@@ -452,8 +452,8 @@ table-driven harness.
 | Transport | Default port | Wire | Auth | Streaming |
 |-----------|--------------|------|------|-----------|
 | REST      | `:18080` (TLS) | HTTP/1.1 + JSON | OAuth2 / mTLS | NDJSON over chunked |
-| gRPC      | `:19090` (TLS, `h2` ALPN) | Protocol Buffers | OAuth2 / mTLS | bidi streams |
-| QUIC      | `:10443` (TLS 1.3) | QUIC streams | OAuth2 / mTLS | native streams |
+| gRPC      | `:19090` (TLS, `h2` ALPN; Go client only so far) | Protocol Buffers | OAuth2 / mTLS | bidi streams |
+| QUIC      | not served; see [QUIC](#quic-sdk-client-only) | — | — | — |
 | MCP       | `:11443` (TLS) | JSON-RPC over WSS | OAuth2 / mTLS | server push |
 | Unix      | `/tmp/quicbaas.sock` | gRPC over UDS | filesystem perms (no TLS) | bidi streams |
 
@@ -545,7 +545,7 @@ QuicBaaS provides multiple API protocols for diverse client requirements. **All 
 | Protocol | Use Case | Transport | Performance | Documentation |
 |----------|----------|-----------|-------------|---------------|
 | gRPC | Service-to-service communication | Unix Socket/TCP, Binary | 150K+ ops/sec, <5ms P99 | grpc.md |
-| QUIC | Mobile clients, high-latency networks | UDP/TLS 1.3, Binary | 100K+ ops/sec, <3ms P99 | quic.md |
+| QUIC | Mobile clients, high-latency networks (SDK client only; no server today) | UDP/TLS 1.3, REST over HTTP/3 | not measured: nothing serves it | quic.md |
 | REST | Web applications, HTTP clients | HTTP/1.1-2, JSON | 25K+ ops/sec, <15ms P99 | rest.md |
 | MCP | AI agents, LLM integration | Stdio/HTTP, JSON-RPC | Context-aware operations | mcp.md |
 | Unix | Local CLI / desktop GUI | gRPC over UDS, no TLS | gRPC-equivalent, lowest latency | (uses gRPC docs) |

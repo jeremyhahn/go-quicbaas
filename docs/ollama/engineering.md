@@ -89,6 +89,13 @@ export QUICBAAS_OLLAMA_TIMEOUT=120s
 export QUICBAAS_OLLAMA_MAX_RETRIES=3
 ```
 
+`base_url` defaults to `config.DefaultOllamaBaseURL`, the one Ollama endpoint
+the defaults layer states. The embedded fleet node
+(`server.embedded_fleet_node.ollama_url`) and the RAG embedding default
+(`rag.embedding.api_url`, `QUICBAAS_RAG_EMBEDDING_API_URL`) use the same
+endpoint. When RAG is not configured, the server's embedding manager dials
+`base_url`.
+
 ## Example Configurations
 
 ### Development

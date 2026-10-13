@@ -523,8 +523,8 @@ func (c *Config) EffectiveSandboxSecurity() (orchestration.SandboxSecurity, erro
 }
 
 // DefaultOllamaBaseURL is the ollama server a daemon uses when none is
-// configured: the local one.
-const DefaultOllamaBaseURL = "http://127.0.0.1:11434"
+// configured: the local one, as stated by the configuration defaults layer.
+const DefaultOllamaBaseURL = config.DefaultOllamaBaseURL
 
 // DefaultCodexReasoningEffort is the depth codex reviews run at when the
 // deployment states none. Medium is the deliberate middle: minimal and low

@@ -149,7 +149,8 @@ func TestFT2_BuildEmbeddingConfig_RAGEnabled(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embCfg := srv.buildEmbeddingConfig()
+	embCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embCfg)
 	assert.Equal(t, "voyage", embCfg.Provider)
 	assert.Equal(t, "http://voyage.test:8080", embCfg.APIURL)
@@ -171,7 +172,8 @@ func TestFT2_BuildEmbeddingConfig_RAGDefaultTimeoutAndDimensions(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embCfg := srv.buildEmbeddingConfig()
+	embCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embCfg)
 	assert.Equal(t, 120, embCfg.Timeout)
 	assert.Equal(t, 768, embCfg.Dimensions)
@@ -187,7 +189,8 @@ func TestFT2_BuildEmbeddingConfig_OllamaFallback(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embCfg := srv.buildEmbeddingConfig()
+	embCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embCfg)
 	assert.Equal(t, "ollama", embCfg.Provider)
 }
@@ -202,10 +205,11 @@ func TestFT2_BuildEmbeddingConfig_DefaultConfig(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	embCfg := srv.buildEmbeddingConfig()
+	embCfg, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	require.NotNil(t, embCfg)
 	assert.Equal(t, "ollama", embCfg.Provider)
-	assert.Equal(t, "http://localhost:11434", embCfg.APIURL)
+	assert.Equal(t, config.DefaultOllamaConfig().BaseURL, embCfg.APIURL, "the fallback must read the defaults layer")
 	assert.Equal(t, "nomic-embed-text", embCfg.Model)
 }
 

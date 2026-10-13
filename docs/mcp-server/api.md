@@ -15,9 +15,9 @@ MCP enables AI assistants like Claude to interact with QuicBaaS using JSON-RPC 2
 - 46 database operations exposed as MCP tools
 - Live data views as MCP resources
 - Stdio and HTTP transports
-- Native Claude Desktop integration
+- Stdio transport for MCP hosts such as Claude Desktop (no MCP client other than mark3labs/mcp-go is run against it yet)
 - Vector similarity search for RAG workflows
-- OAuth 2.1 authorization with PKCE
+- OAuth 2.1 token endpoint with mandatory PKCE (S256); the authorization-code step does not complete yet (see [the known gap](../oauth2-oidc/api.md#authorization-code-flow-with-pkce))
 
 ## Authorization
 

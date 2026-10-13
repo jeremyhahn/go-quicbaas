@@ -31,7 +31,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -707,73 +706,101 @@ func TestApplyServerFlags_EmbeddedAgentDefaultDataDir(t *testing.T) {
 }
 
 // =============================================================================
-// applyServerFlags --data-dir / WAL derivation
+// storage.data_dir -> storage.wal_dir derivation
 // =============================================================================
 
-// TestApplyServerFlags_DataDirDerivesWALDir proves that passing --data-dir
-// without an explicit storage.wal_dir relocates the WAL directory under the
-// new data dir. This guards the live-GUI boot regression where the absolute
-// default (/var/lib/quicbaas/wal) survived a --data-dir override and failed
-// the boot-time directory-writable validation.
-func TestApplyServerFlags_DataDirDerivesWALDir(t *testing.T) {
-	viper.Reset()
-	defer viper.Reset()
+// TestInitConfig_WALDirFollowsDataDir drives the daemon's real config path
+// (initConfig, then applyServerFlags as runStart does) and proves that
+// storage.wal_dir follows storage.data_dir whichever source set it: config
+// file, environment or --data-dir. An explicit wal_dir from any source wins,
+// and with neither key set the defaults-layer WAL dir is kept. Before #176 only
+// --data-dir derived it, so a service unit with a config file and no flags kept
+// the absolute default (/var/lib/quicbaas/wal) and failed boot validation.
+func TestInitConfig_WALDirFollowsDataDir(t *testing.T) {
+	const (
+		fromDataDir  = "derived"
+		fromExplicit = "explicit"
+		fromDefault  = "default"
+	)
+	tests := []struct {
+		name        string
+		fileDataDir bool
+		fileWALDir  bool
+		envDataDir  bool
+		envWALDir   bool
+		flagDataDir bool
+		want        string
+	}{
+		{name: "config file data_dir only", fileDataDir: true, want: fromDataDir},
+		{name: "config file sets both", fileDataDir: true, fileWALDir: true, want: fromExplicit},
+		{name: "env data_dir only", envDataDir: true, want: fromDataDir},
+		{name: "env sets both", envDataDir: true, envWALDir: true, want: fromExplicit},
+		{name: "data-dir flag only", flagDataDir: true, want: fromDataDir},
+		{name: "data-dir flag with env wal_dir", flagDataDir: true, envWALDir: true, want: fromExplicit},
+		{name: "data-dir flag with config file wal_dir", flagDataDir: true, fileWALDir: true, want: fromExplicit},
+		{name: "neither set", want: fromDefault},
+	}
 
-	log = createTestLogger(t)
-	cfg = config.Default()
-	// Start from the absolute default that would fail validation under an
-	// unprivileged user (matches DefaultConfig).
-	cfg.Storage.WALDir = "/var/lib/quicbaas/wal"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origCfg, origLog, origCfgFile, origDataDir := cfg, log, cfgFile, dataDir
+			t.Cleanup(func() {
+				cfg, log, cfgFile, dataDir = origCfg, origLog, origCfgFile, origDataDir
+				viper.Reset()
+			})
+			viper.Reset()
 
-	tempDir := t.TempDir()
-	cmd := newServerFlagCmd()
-	require.NoError(t, cmd.Flags().Set("data-dir", tempDir))
+			dir := t.TempDir()
+			explicitWAL := filepath.Join(dir, "operator-wal")
 
-	applyServerFlags(cmd)
+			// Empty values read as unset, so the host environment cannot leak in.
+			t.Setenv("QUICBAAS_STORAGE_DATA_DIR", "")
+			t.Setenv("QUICBAAS_STORAGE_WAL_DIR", "")
+			if tt.envDataDir {
+				t.Setenv("QUICBAAS_STORAGE_DATA_DIR", dir)
+			}
+			if tt.envWALDir {
+				t.Setenv("QUICBAAS_STORAGE_WAL_DIR", explicitWAL)
+			}
 
-	require.Equal(t, tempDir, cfg.Storage.DataDir)
-	require.Equal(t, filepath.Join(tempDir, "wal"), cfg.Storage.WALDir,
-		"WAL dir must be derived under the --data-dir override")
+			storage := ""
+			if tt.fileDataDir {
+				storage += fmt.Sprintf("  data_dir: %s\n", dir)
+			}
+			if tt.fileWALDir {
+				storage += fmt.Sprintf("  wal_dir: %s\n", explicitWAL)
+			}
+			content := "logging:\n  level: warn\n"
+			if storage != "" {
+				content += "storage:\n" + storage
+			}
+			cfgFile = filepath.Join(dir, "quicbaas.yaml")
+			require.NoError(t, os.WriteFile(cfgFile, []byte(content), 0o600))
 
-	// The derived WAL dir must pass the boot-time config validator that
-	// runDaemon enforces before NewServer.
-	require.NoError(t, config.Validate(cfg),
-		"config with derived WAL dir must validate clean past the boot gate")
-}
+			// Bind --data-dir to storage.data_dir exactly as init() does.
+			cmd := newServerFlagCmd()
+			require.NoError(t, viper.BindPFlag("storage.data_dir", cmd.Flags().Lookup("data-dir")))
+			if tt.flagDataDir {
+				require.NoError(t, cmd.Flags().Set("data-dir", dir))
+			}
 
-// TestApplyServerFlags_ExplicitWALDirWins proves that an operator-supplied
-// storage.wal_dir (env var or config-file key, observed via viper.IsSet) is
-// NOT overridden by --data-dir. The explicit WAL location always wins.
-func TestApplyServerFlags_ExplicitWALDirWins(t *testing.T) {
-	viper.Reset()
-	defer viper.Reset()
+			initConfig()
+			applyServerFlags(cmd)
 
-	log = createTestLogger(t)
-	cfg = config.Default()
-
-	tempDir := t.TempDir()
-	explicitWAL := filepath.Join(tempDir, "operator-wal")
-	cfg.Storage.WALDir = explicitWAL
-
-	// Simulate the operator pinning the WAL via the bound env var. BindEnv makes
-	// viper.IsSet("storage.wal_dir") report true when the env var is present.
-	// Mirror initConfig's env wiring (prefix + dot->underscore replacer) so the
-	// QUICBAAS_STORAGE_WAL_DIR key resolves exactly as it does in production.
-	viper.SetEnvPrefix("QUICBAAS")
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	t.Setenv("QUICBAAS_STORAGE_WAL_DIR", explicitWAL)
-	require.NoError(t, viper.BindEnv("storage.wal_dir"))
-	require.True(t, viper.IsSet("storage.wal_dir"),
-		"sanity: env-backed wal_dir must be observable via viper.IsSet")
-
-	cmd := newServerFlagCmd()
-	require.NoError(t, cmd.Flags().Set("data-dir", tempDir))
-
-	applyServerFlags(cmd)
-
-	require.Equal(t, tempDir, cfg.Storage.DataDir)
-	require.Equal(t, explicitWAL, cfg.Storage.WALDir,
-		"explicit wal_dir must not be overridden by --data-dir")
+			switch tt.want {
+			case fromDataDir:
+				require.Equal(t, dir, cfg.Storage.DataDir)
+				require.Equal(t, filepath.Join(dir, "wal"), cfg.Storage.WALDir)
+				require.NoError(t, config.Validate(cfg),
+					"config with a derived WAL dir must pass the boot-time validator")
+			case fromExplicit:
+				require.Equal(t, dir, cfg.Storage.DataDir)
+				require.Equal(t, explicitWAL, cfg.Storage.WALDir)
+			case fromDefault:
+				require.Equal(t, config.Default().Storage.WALDir, cfg.Storage.WALDir)
+			}
+		})
+	}
 }
 
 // =============================================================================

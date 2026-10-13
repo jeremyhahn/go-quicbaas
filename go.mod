@@ -36,6 +36,7 @@ require (
 	github.com/jeremyhahn/go-xkms v0.49.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha
 	github.com/klauspost/compress v1.19.1
+	github.com/lestrrat-go/jwx/v2 v2.1.7
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
 	github.com/mochi-mqtt/server/v2 v2.7.9
@@ -215,7 +216,6 @@ require (
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
 	github.com/lestrrat-go/httprc v1.0.6 // indirect
 	github.com/lestrrat-go/iter v1.0.2 // indirect
-	github.com/lestrrat-go/jwx/v2 v2.1.7 // indirect
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/lestrrat-go/strftime v1.2.0 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect

@@ -30,9 +30,13 @@ func (s *Server) startEmbedding() error {
 	// Build embedding config from RAG embedding settings or Ollama config.
 	// The embedding manager uses its own Config type, so we map from
 	// the server-level configuration.
-	embeddingCfg := s.buildEmbeddingConfig()
-	if embeddingCfg == nil {
-		s.logger.Info("Embedding manager is disabled, skipping initialization")
+	embeddingCfg, err := s.buildEmbeddingConfig()
+	if err != nil {
+		// Embedding is optional: an unresolvable endpoint disables it, named
+		// so the operator knows which key to set.
+		s.logger.WithFields(map[string]interface{}{
+			"error": err.Error(),
+		}).Error("Embedding upstream is not configured, so embedding support is disabled")
 		return nil
 	}
 
@@ -106,10 +110,15 @@ func (s *Server) stopEmbedding() error {
 
 // buildEmbeddingConfig constructs an embedding.Config from the server configuration.
 // It checks RAG embedding settings first, then falls back to Ollama config.
-// Returns nil if no embedding configuration is available.
-func (s *Server) buildEmbeddingConfig() *embedding.Config {
+// It returns config.UpstreamEndpointMissingError when the RAG provider's
+// endpoint resolves empty.
+func (s *Server) buildEmbeddingConfig() (*embedding.Config, error) {
 	// Check RAG embedding configuration first
 	if s.config.RAG.Enabled && s.config.RAG.Embedding.Provider != "" {
+		apiURL, err := s.config.RAG.Embedding.ResolveAPIURL()
+		if err != nil {
+			return nil, err
+		}
 		timeout := s.config.RAG.Embedding.Timeout
 		if timeout <= 0 {
 			timeout = 120
@@ -120,7 +129,7 @@ func (s *Server) buildEmbeddingConfig() *embedding.Config {
 		}
 		return &embedding.Config{
 			Provider:       s.config.RAG.Embedding.Provider,
-			APIURL:         s.config.RAG.Embedding.APIURL,
+			APIURL:         apiURL,
 			APIKey:         s.config.RAG.Embedding.APIKey,
 			Model:          s.config.RAG.Embedding.Model,
 			Dimensions:     dimensions,
@@ -132,61 +141,40 @@ func (s *Server) buildEmbeddingConfig() *embedding.Config {
 			CacheCompress:  true,
 			MaxRetries:     3,
 			RetryBackoffMS: 1000,
-		}
+		}, nil
 	}
 
-	// Fall back to Ollama configuration
-	if s.config.Ollama.Enabled {
-		// Merge with defaults to fill in zero-value fields (Timeout, MaxRetries, etc.)
-		ollamaCfg := s.config.Ollama.MergeDefaults()
-
-		timeout := int(ollamaCfg.Timeout.Seconds())
-		if timeout <= 0 {
-			timeout = 120
-		}
-		maxRetries := ollamaCfg.MaxRetries
-		if maxRetries <= 0 {
-			maxRetries = 3
-		}
-		retryBackoffMS := int(ollamaCfg.RetryBackoff.Milliseconds())
-		if retryBackoffMS <= 0 {
-			retryBackoffMS = 1000
-		}
-
-		return &embedding.Config{
-			Provider:       "ollama",
-			APIURL:         ollamaCfg.BaseURL,
-			Model:          ollamaCfg.DefaultEmbeddingModel,
-			Dimensions:     768, // Default; OllamaProvider auto-adjusts for known models
-			MaxBatchSize:   128,
-			Timeout:        timeout,
-			CacheEnabled:   true,
-			CacheSize:      10000,
-			CacheTTL:       3600,
-			CacheCompress:  true,
-			MaxRetries:     maxRetries,
-			RetryBackoffMS: retryBackoffMS,
-		}
+	// Fall back to the Ollama configuration, so embedding is available when the
+	// vector build tag is set even without explicit RAG configuration. Merging
+	// with the defaults layer fills every field the operator left unset,
+	// including the base URL.
+	ollamaCfg := s.config.Ollama.MergeDefaults()
+	timeout := int(ollamaCfg.Timeout.Seconds())
+	if timeout <= 0 {
+		timeout = 120
 	}
-
-	// No embedding configuration available - create a default config with
-	// Ollama provider so embedding is always available when vector build tag is set.
-	// This allows the embedding service to be available even without explicit
-	// RAG or Ollama configuration.
+	maxRetries := ollamaCfg.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+	retryBackoffMS := int(ollamaCfg.RetryBackoff.Milliseconds())
+	if retryBackoffMS <= 0 {
+		retryBackoffMS = 1000
+	}
 	return &embedding.Config{
 		Provider:       "ollama",
-		APIURL:         "http://localhost:11434",
-		Model:          "nomic-embed-text",
-		Dimensions:     768,
+		APIURL:         ollamaCfg.BaseURL,
+		Model:          ollamaCfg.DefaultEmbeddingModel,
+		Dimensions:     768, // Default; OllamaProvider auto-adjusts for known models
 		MaxBatchSize:   128,
-		Timeout:        120,
+		Timeout:        timeout,
 		CacheEnabled:   true,
 		CacheSize:      10000,
 		CacheTTL:       3600,
 		CacheCompress:  true,
-		MaxRetries:     3,
-		RetryBackoffMS: 1000,
-	}
+		MaxRetries:     maxRetries,
+		RetryBackoffMS: retryBackoffMS,
+	}, nil
 }
 
 // qrdbManagerDefaultProviders mirrors go-qrdb's validateManagerConfig allowlist

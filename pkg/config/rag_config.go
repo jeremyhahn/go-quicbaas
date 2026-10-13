@@ -122,7 +122,7 @@ func DefaultRAGConfig() RAGConfig {
 		Embedding: EmbeddingConfig{
 			Provider:   "ollama",
 			Model:      "all-minilm",
-			APIURL:     "http://localhost:11434",
+			APIURL:     DefaultOllamaBaseURL,
 			Dimensions: 384,
 			Timeout:    30,
 		},

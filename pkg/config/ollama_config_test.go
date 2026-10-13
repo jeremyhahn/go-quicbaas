@@ -26,8 +26,8 @@ func TestDefaultOllamaConfig(t *testing.T) {
 		t.Error("expected default Enabled to be false")
 	}
 
-	if cfg.BaseURL != "http://localhost:11434" {
-		t.Errorf("expected BaseURL 'http://localhost:11434', got %s", cfg.BaseURL)
+	if cfg.BaseURL != DefaultOllamaBaseURL {
+		t.Errorf("expected BaseURL %q, got %s", DefaultOllamaBaseURL, cfg.BaseURL)
 	}
 
 	if cfg.DefaultEmbeddingModel != "nomic-embed-text" {
@@ -378,7 +378,7 @@ func TestConfigHasOllamaField(t *testing.T) {
 		t.Error("expected Ollama.Enabled to be true")
 	}
 
-	if cfg.Ollama.BaseURL != "http://localhost:11434" {
+	if cfg.Ollama.BaseURL != DefaultOllamaBaseURL {
 		t.Errorf("expected default BaseURL, got %s", cfg.Ollama.BaseURL)
 	}
 }

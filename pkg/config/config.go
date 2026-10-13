@@ -784,7 +784,8 @@ type EmbeddedFleetNodeConfig struct {
 	Backends []string `mapstructure:"backends"`
 
 	// OllamaURL is the Ollama API endpoint the embedded Ollama backend dials.
-	// Default: "http://127.0.0.1:11434"
+	// Default: DefaultOllamaBaseURL. An empty value is refused at startup
+	// when the "ollama" backend is enabled.
 	OllamaURL string `mapstructure:"ollama_url"`
 
 	// HostAffinity is the self-tag this node advertises so callers can pin

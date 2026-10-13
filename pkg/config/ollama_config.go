@@ -30,7 +30,7 @@ type OllamaConfig struct {
 
 	// BaseURL is the Ollama API endpoint.
 	// go-trusted-platform can configure this to point to an attested container.
-	// Default: "http://localhost:11434"
+	// Default: DefaultOllamaBaseURL.
 	BaseURL string `mapstructure:"base_url" yaml:"base_url" json:"base_url"`
 
 	// DefaultEmbeddingModel is the model used for embedding operations
@@ -63,7 +63,7 @@ type OllamaConfig struct {
 func DefaultOllamaConfig() OllamaConfig {
 	return OllamaConfig{
 		Enabled:               false,
-		BaseURL:               "http://localhost:11434",
+		BaseURL:               DefaultOllamaBaseURL,
 		DefaultEmbeddingModel: "nomic-embed-text",
 		Timeout:               120 * time.Second,
 		MaxRetries:            3,

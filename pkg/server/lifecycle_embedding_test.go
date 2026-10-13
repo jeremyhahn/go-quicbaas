@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 // =============================================================================
@@ -36,7 +38,8 @@ func TestFTFinal_BuildEmbeddingConfig_OllamaZeroTimeoutDefaults(t *testing.T) {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 
-	result := srv.buildEmbeddingConfig()
+	result, buildErr := srv.buildEmbeddingConfig()
+	require.NoError(t, buildErr)
 	assert.NotNil(t, result)
 	assert.Equal(t, "ollama", result.Provider)
 	assert.Equal(t, 120, result.Timeout)
@@ -53,4 +56,64 @@ func TestStopEmbedding_NilManagerIsNoOp(t *testing.T) {
 
 	srv.embeddingManager = nil
 	require.NoError(t, srv.stopEmbedding(), "stopping a nil embedding manager must be a no-op")
+}
+
+// TestBuildEmbeddingConfig_NoRAGUsesConfiguredOllamaBaseURL pins that with no
+// RAG embedding configured, the embedding upstream is the operator's
+// ollama.base_url, whether or not the Ollama service itself is enabled.
+func TestBuildEmbeddingConfig_NoRAGUsesConfiguredOllamaBaseURL(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		cfg := createFTConfig(t)
+		cfg.RAG.Enabled = false
+		cfg.Ollama.Enabled = enabled
+		cfg.Ollama.BaseURL = "http://ollama.example.test:9999"
+
+		srv, err := NewServer(cfg)
+		require.NoError(t, err)
+
+		result, err := srv.buildEmbeddingConfig()
+		require.NoError(t, err)
+		assert.Equal(t, "ollama", result.Provider)
+		assert.Equal(t, "http://ollama.example.test:9999", result.APIURL, "ollama.enabled=%v", enabled)
+	}
+}
+
+// TestBuildEmbeddingConfig_RAGEndpointResolvesFromDefaultsLayer pins that a
+// RAG provider with no api_url gets its defaults-layer endpoint, and that an
+// operator's api_url wins over it.
+func TestBuildEmbeddingConfig_RAGEndpointResolvesFromDefaultsLayer(t *testing.T) {
+	cfg := createFTConfig(t)
+	cfg.RAG.Enabled = true
+	cfg.RAG.Embedding = config.EmbeddingConfig{Provider: "openai", APIKey: "k", Dimensions: 1536}
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	result, err := srv.buildEmbeddingConfig()
+	require.NoError(t, err)
+	assert.Equal(t, config.DefaultEmbeddingAPIURL("openai"), result.APIURL)
+
+	srv.config.RAG.Embedding.APIURL = "https://openai.proxy.example.test"
+	result, err = srv.buildEmbeddingConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "https://openai.proxy.example.test", result.APIURL)
+}
+
+// TestBuildEmbeddingConfig_RAGEndpointUnresolvedIsTypedError pins that a RAG
+// provider with neither an api_url nor a defaults-layer endpoint is refused
+// with a typed error, and that startEmbedding then leaves embedding off
+// rather than dialling a guessed endpoint.
+func TestBuildEmbeddingConfig_RAGEndpointUnresolvedIsTypedError(t *testing.T) {
+	cfg := createFTConfig(t)
+	cfg.RAG.Enabled = true
+	cfg.RAG.Embedding = config.EmbeddingConfig{Provider: "custom-provider", Dimensions: 384}
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+
+	_, err = srv.buildEmbeddingConfig()
+	require.ErrorIs(t, err, config.ErrUpstreamEndpointMissing)
+
+	require.NoError(t, srv.startEmbedding())
+	assert.Nil(t, srv.embeddingManager, "an unresolved upstream must leave embedding disabled")
 }

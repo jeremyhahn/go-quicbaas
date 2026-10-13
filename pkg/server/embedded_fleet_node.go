@@ -621,12 +621,14 @@ func buildEmbeddedFleetNodeBackends(
 	type backendFactory func() (map[string]orchestration.AgentBackend, error)
 	factories := map[string]backendFactory{
 		"ollama": func() (map[string]orchestration.AgentBackend, error) {
-			url := ollamaURL
-			if url == "" {
-				url = "http://127.0.0.1:11434"
+			// The URL is resolved by the configuration layers; the defaults
+			// layer supplies config.DefaultOllamaBaseURL, so an empty value
+			// here is an operator's explicit blank, not something to guess.
+			if strings.TrimSpace(ollamaURL) == "" {
+				return nil, &config.UpstreamEndpointMissingError{Key: "server.embedded_fleet_node.ollama_url", Provider: "ollama"}
 			}
 			client := ollama.NewClient(ollama.ClientConfig{
-				BaseURL:    url,
+				BaseURL:    ollamaURL,
 				MaxRetries: 2,
 				Timeout:    10 * time.Minute,
 			})
