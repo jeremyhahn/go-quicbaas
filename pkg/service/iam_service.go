@@ -74,6 +74,19 @@ type IAMService interface {
 	//   - error: ErrUnauthorized, ErrTimeout
 	ListTenants(ctx context.Context, req *ListTenantsRequest) (*ListTenantsResponse, error)
 
+	// ProvisionTenant creates a tenant, seeds its built-in roles and enrolls
+	// its first admin, either by signing an admin CSR (cert) or by creating
+	// the admin pending and minting a one-time invite (invite). It never
+	// initializes a tenant barrier and never returns a private key. A re-run
+	// for the same tenant and admin is idempotent.
+	// Parameters:
+	//   - ctx: Request context with timeout and metadata
+	//   - req: Provision request with tenant id and admin enrollment mode
+	// Returns:
+	//   - IAMProvisionTenantResponse: Admin identity plus certificate or invite
+	//   - error: ErrInvalidInput, ErrUnavailable, ErrInternal, ErrTimeout
+	ProvisionTenant(ctx context.Context, req *IAMProvisionTenantRequest) (*IAMProvisionTenantResponse, error)
+
 	// =============================================================================
 	// User Operations
 	// =============================================================================

@@ -47,6 +47,14 @@ Routes: `pkg/api/rest/routes.go:290-301`. Permissions:
 `pkg/api/mcp/authz_qrdb.go:404-421`. MCP tools:
 `pkg/api/mcp/account_tools.go:70-246`.
 
+The `credential` argument of `quicbaas_agent_account_create` and
+`quicbaas_agent_account_rotate` has the REST body's shape: `access_token`,
+`refresh_token`, `expires_at` (RFC 3339), `token_endpoint`, `client_id`,
+`scopes`, `access_token_env_key`, `env`, and `files`, an object mapping a path
+relative to the session home (e.g. `.codex/auth.json`) to standard base64 file
+bytes. `files` is decoded with the REST rules; a value that is not such an
+object fails with `AccountCredentialFilesError` before the service is called.
+
 ### Authorization
 
 The permissions split three ways:

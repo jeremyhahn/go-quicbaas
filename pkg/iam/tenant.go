@@ -144,7 +144,7 @@ type DefaultTenantManager struct {
 
 	// userStorage, when wired, is the routed (qrdb-backed) user store used by
 	// DeleteTenant to deprovision the tenant's users — purging the broker
-	// profile, IDMap, and email/legacy-PIV index records that the legacy
+	// profile and IDMap records that the legacy
 	// BackendStorage cascade no longer reaches. Wired at server init via
 	// SetUserStorage. Nil leaves DeleteTenant's user-deprovision step a no-op.
 	userStorage UserStorage
@@ -442,7 +442,7 @@ func (m *DefaultTenantManager) DeleteTenant(ctx context.Context, id string) erro
 	}
 
 	// Deprovision the tenant's users through the routed (qrdb-backed) user
-	// store so each user's broker profile, IDMap, and email/legacy-PIV index
+	// store so each user's broker profile and IDMap
 	// records are purged — state the legacy BackendStorage cascade no longer
 	// reaches post-C1. Page until the listing is drained (a partial page or an
 	// empty page signals the end) rather than assuming a single page. Fail the

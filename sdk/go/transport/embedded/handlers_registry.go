@@ -149,12 +149,8 @@ func handleRegistryWatchStream(ctx context.Context, svc service.QuicBaaS, req in
 				Instance: registryclient.ServiceInstance(ev.Instance),
 				Revision: ev.Revision,
 			}
-			select {
-			case s.recvChan() <- out:
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-s.context().Done():
-				return s.context().Err()
+			if err := s.deliver(out); err != nil {
+				return err
 			}
 		}
 	}

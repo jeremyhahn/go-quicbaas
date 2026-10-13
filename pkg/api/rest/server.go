@@ -86,7 +86,12 @@ type Config struct {
 	// RequestTimeout is the maximum duration for request processing
 	RequestTimeout time.Duration
 
-	// RateLimit is the maximum requests per second (0 = disabled)
+	// RateLimit is the per-source-IP request rate, in requests per second,
+	// that the global limiter allows; the bucket also holds RateLimit
+	// requests of burst. Zero means DefaultRateLimit, so a Config built
+	// without the field, or from a config file that omits the key, is
+	// limited rather than silently open. RateLimitDisabled (any negative
+	// value) is the explicit opt-out. See EffectiveRateLimit.
 	RateLimit int
 
 	// TrustedProxies lists the CIDRs (or bare addresses) whose
@@ -210,6 +215,42 @@ type PIVClientCertConfig struct {
 }
 
 // DefaultConfig returns default REST API configuration.
+const (
+	// DefaultRateLimit is the global per-source-IP limit, in requests per
+	// second, applied when Config.RateLimit is zero (#158).
+	//
+	// Chosen by measuring the Go SDK against this router: NewClient sends no
+	// request and every SDK call sends exactly one, so an interactive client
+	// issues a handful of requests per user action. One sequential client
+	// reached about 5,600 requests per second on loopback, where a request
+	// costs about 0.18 ms. Across a network a sequential client is bound by
+	// the round trip, so at 1 ms or more it cannot exceed 1,000 per second.
+	// This limit therefore never throttles one sequential SDK client over a
+	// real network, and still bounds a single source that floods with many
+	// concurrent requests (eight goroutines on one client reached about
+	// 31,000 per second).
+	DefaultRateLimit = 1000
+
+	// RateLimitDisabled is the documented opt-out value for
+	// Config.RateLimit: it turns the global limiter off. Any negative value
+	// has the same effect. The endpoint-scoped OAuth2 limiter stays on.
+	RateLimitDisabled = -1
+)
+
+// EffectiveRateLimit returns the global limiter's requests-per-second rate,
+// or 0 when the operator opted out with a negative RateLimit. A zero
+// RateLimit resolves to DefaultRateLimit.
+func (c *Config) EffectiveRateLimit() int {
+	switch {
+	case c.RateLimit < 0:
+		return 0
+	case c.RateLimit == 0:
+		return DefaultRateLimit
+	default:
+		return c.RateLimit
+	}
+}
+
 func DefaultConfig() *Config {
 	return &Config{
 		Address:           ":8080",
@@ -220,7 +261,7 @@ func DefaultConfig() *Config {
 		MaxBodySize:       DefaultMaxBodySize,
 		MaxUploadBodySize: DefaultMaxUploadBodySize,
 		RequestTimeout:    30 * time.Second,
-		RateLimit:         0,   // No rate limiting by default
+		RateLimit:         DefaultRateLimit,
 		TrustedProxies:    nil, // Trust no proxy; attribute to the transport peer
 		ExposeShardHeader: true,
 	}
@@ -479,9 +520,11 @@ func (s *Server) setupRouter() {
 		r.Use(TimeoutMiddleware(s.config.RequestTimeout))
 	}
 
-	// Rate limiting middleware (if enabled)
-	if s.config.RateLimit > 0 {
-		r.Use(RateLimitMiddleware(s.config.RateLimit))
+	// Rate limiting middleware: on unless the operator opted out. The
+	// endpoint-scoped OAuth2 limiter (RateLimitOAuth2ClientAuth) applies on
+	// top of this one, as defense in depth.
+	if limit := s.config.EffectiveRateLimit(); limit > 0 {
+		r.Use(RateLimitMiddleware(limit))
 	}
 
 	// Route registration is table-driven: Routes() (routes.go) is the single

@@ -757,22 +757,21 @@ Common error codes:
 
 ## Rate Limiting
 
-Headers:
-```
-X-RateLimit-Limit: 1000
-X-RateLimit-Remaining: 999
-X-RateLimit-Reset: 1696550400
-```
+Each source IP may send 1000 requests per second by default, with a burst of
+the same size. Set `server.rest.rate_limit` to change the limit, or to `-1`
+to turn it off. Over the limit, the server returns HTTP 429 and sends no
+rate-limit headers:
 
-When rate limited (HTTP 429):
 ```json
 {
-  "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "Rate limit exceeded. Try again in 60 seconds."
-  }
+  "error": "rate limit exceeded: 1000 requests per 1s",
+  "timestamp": "2026-10-12T12:00:00Z",
+  "request_id": "…",
+  "retryable": false
 }
 ```
+
+See [Rate Limiting Middleware](../security-hardening/api.md#rate-limiting-middleware).
 
 ## Examples
 

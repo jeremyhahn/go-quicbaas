@@ -139,12 +139,15 @@ import (
 // /reference-values and /appraise-quote, handlers_attestation_verifier.go):
 // managing what it trusts under attestation:provision, reading and
 // appraising under attestation:verify.
+// PLUS 1 for tenant provisioning (POST /api/v1/tenants/{tenant_id}/provision,
+// iam_tenants.go, go-quicbaas#358): the control-plane onboarding path that
+// creates a tenant with its first admin when public registration is off.
 // PLUS 1 for the FIDO2 add-credential compat leg
 // (/api/v1/xkms/fido2/credentials/begin, handlers_xkms_fido2.go) under
 // user_authfactors:add.
 // PLUS 1 for the project by-name lookup (GET /api/v1/projects/by-name/{name},
 // go-quicbaas#1261) under project:read, the REST face of GetProjectByName.
-const baseRouteTableSize = 670
+const baseRouteTableSize = 671
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

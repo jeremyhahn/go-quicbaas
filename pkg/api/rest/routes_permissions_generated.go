@@ -589,7 +589,10 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/tenants/{tenant_id}/policies/test":                  {auth: RouteAuthPermission, resource: "tenants", action: "create"},
 	"POST /api/v1/tenants/{tenant_id}/policies/validate":              {auth: RouteAuthPermission, resource: "tenants", action: "create"},
 	"POST /api/v1/tenants/{tenant_id}/providers/":                     {auth: RouteAuthPermission, resource: "tenants", action: "create"},
-	"POST /api/v1/tenants/{tenant_id}/roles/":                         {auth: RouteAuthPermission, resource: "tenants", action: "create"},
+	// The same grant as POST /api/v1/tenants/: provisioning creates the tenant,
+	// and its admin is seeded only inside that tenant (go-quicbaas#358).
+	"POST /api/v1/tenants/{tenant_id}/provision": {auth: RouteAuthPermission, resource: "tenants", action: "create"},
+	"POST /api/v1/tenants/{tenant_id}/roles/":    {auth: RouteAuthPermission, resource: "tenants", action: "create"},
 	// The role-CREATE family, on go-qrdb's guidance (go-quicbaas#573), not a
 	// roles:reconcile verb of its own: such a verb would be absent from every
 	// role seeded before it existed, so nobody would hold the grant needed to

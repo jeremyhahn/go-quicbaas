@@ -1059,6 +1059,7 @@ func convertAccountStoreError(err error) error {
 		modeInvalid   *orchestration.AccountCredentialModeInvalidError
 		refreshNeeded *orchestration.AccountRefreshTokenRequiredError
 		staticRefresh *orchestration.AccountStaticTokenRefreshableError
+		emptyCred     *orchestration.AccountCredentialEmptyError
 		endpointUnres *orchestration.AccountProviderEndpointUnresolvedError
 		billing       *orchestration.AccountBillingInvalidError
 		quota         *orchestration.QuotaInvalidError
@@ -1088,6 +1089,12 @@ func convertAccountStoreError(err error) error {
 		return &AccountInvalidError{
 			Field:   "credential.refresh_token",
 			Message: "a static (none) account must not supply a refresh token",
+			Cause:   err,
+		}
+	case stderrors.As(err, &emptyCred):
+		return &AccountInvalidError{
+			Field:   "credential",
+			Message: "a static (none) account must supply an access token, env or files",
 			Cause:   err,
 		}
 	case stderrors.As(err, &quota):

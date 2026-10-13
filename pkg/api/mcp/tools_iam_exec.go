@@ -89,6 +89,8 @@ func (r *ToolRegistry) executeIAMTool(ctx context.Context, name string, args map
 		return r.executeIAMTenantUpdate(ctx, args)
 	case "quicbaas_iam_tenant_delete":
 		return r.executeIAMTenantDelete(ctx, args)
+	case "quicbaas_iam_tenant_provision":
+		return r.executeIAMTenantProvision(ctx, args)
 	case "quicbaas_iam_tenant_list":
 		return r.executeIAMTenantList(ctx, args)
 

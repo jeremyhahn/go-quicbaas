@@ -62,11 +62,12 @@ var iamToolMap = map[string]string{
 	"Admin.ListActiveImpersonations": "quicbaas_iam_impersonation_list",
 
 	// Tenant Operations
-	"Tenant.Create": "quicbaas_iam_tenant_create",
-	"Tenant.Get":    "quicbaas_iam_tenant_get",
-	"Tenant.Update": "quicbaas_iam_tenant_update",
-	"Tenant.Delete": "quicbaas_iam_tenant_delete",
-	"Tenant.List":   "quicbaas_iam_tenant_list",
+	"Tenant.Create":    "quicbaas_iam_tenant_create",
+	"Tenant.Get":       "quicbaas_iam_tenant_get",
+	"Tenant.Update":    "quicbaas_iam_tenant_update",
+	"Tenant.Delete":    "quicbaas_iam_tenant_delete",
+	"Tenant.List":      "quicbaas_iam_tenant_list",
+	"Tenant.Provision": "quicbaas_iam_tenant_provision",
 
 	// User Operations
 	"User.Create":         "quicbaas_iam_user_create",

@@ -202,10 +202,16 @@ func setupActivation(t *testing.T, mode activationWriteMode) (*activationFixture
 	// the same tokens. It needs no usable trust anchors here: PIVActivator
 	// looks the invite up before it parses the certificate, which is precisely
 	// why that route could be used as an enumeration oracle.
+	loginFactors, err := iam.NewCertLoginFactorEnroller(testutil.NewMemoryUserAuthFactors())
+	require.NoError(t, err)
+	claims, err := iamtest.NewMemoryActivationClaims()
+	require.NoError(t, err)
 	piv, err := iam.NewPIVActivator(iam.PIVActivatorDependencies{
-		Roots:       x509.NewCertPool(),
-		UserStorage: users,
-		InviteStore: invites,
+		Roots:            x509.NewCertPool(),
+		UserStorage:      users,
+		InviteStore:      invites,
+		LoginFactors:     loginFactors,
+		ActivationClaims: claims,
 	})
 	require.NoError(t, err)
 

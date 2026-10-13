@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // mockIAMService is a testify mock implementing the IAMService interface.
@@ -71,6 +72,14 @@ func (m *mockIAMService) ListTenants(ctx context.Context, limit, offset int) ([]
 		return nil, args.Int(1), args.Error(2)
 	}
 	return args.Get(0).([]*iam.Tenant), args.Int(1), args.Error(2)
+}
+
+func (m *mockIAMService) ProvisionTenant(ctx context.Context, req *service.IAMProvisionTenantRequest) (*service.IAMProvisionTenantResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*service.IAMProvisionTenantResponse), args.Error(1)
 }
 
 func (m *mockIAMService) CreateUser(ctx context.Context, user *iam.User, inviteTTL time.Duration) (*iam.User, string, *iam.InviteRecord, error) {

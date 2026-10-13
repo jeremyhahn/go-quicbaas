@@ -105,10 +105,32 @@ type IAMServiceAdapter struct {
 	// nil means the node reports the verbs as unavailable.
 	webauthnCredentials service.WebAuthnCredentialService
 
+	// provisioner is the control-plane tenant provisioner. Optional and set
+	// after construction (SetTenantProvisioner).
+	provisioner service.TenantProvisioner
+
 	// inviteStore issues the activation invite of a user created pending. Set
 	// after construction (SetInviteStore); nil means a pending create is
 	// refused with iam.ErrInviteStoreUnavailable before anything is written.
 	inviteStore iam.InviteStore
+
+	// inviteActivation redeems invites for the public activation verbs. Set
+	// after construction (SetInviteActivation); nil means the node reports
+	// the verbs as unavailable.
+	inviteActivation service.InviteActivationService
+}
+
+// SetInviteActivation wires the invite activation service the public gRPC
+// activation verbs delegate to — the same service REST and the embedded
+// transport use.
+func (a *IAMServiceAdapter) SetInviteActivation(svc service.InviteActivationService) {
+	a.inviteActivation = svc
+}
+
+// InviteActivation implements the optional capability the gRPC IAM server
+// probes for (server_iam_invite.go inviteActivationProvider).
+func (a *IAMServiceAdapter) InviteActivation() service.InviteActivationService {
+	return a.inviteActivation
 }
 
 // SetInviteStore wires the invite store CreateUser issues activation invites

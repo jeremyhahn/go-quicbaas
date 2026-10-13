@@ -32,6 +32,7 @@ type mockIAMComponents struct {
 	sessionManager    iam.SessionManager
 	inviteStore       iam.InviteStore
 	pivActivator      *iam.PIVActivator
+	provisioner       TenantProvisioner
 	adminManager      *iam.AdminManager
 	gdprManager       *iam.GDPRManager
 }
@@ -292,6 +293,7 @@ type mockIAMServiceProvider struct {
 	sessionMgr     SessionManager
 	inviteStore    iam.InviteStore
 	pivActivator   *iam.PIVActivator
+	provisioner    TenantProvisioner
 	adminMgr       *iam.AdminManager
 	gdprMgr        *iam.GDPRManager
 
@@ -309,6 +311,7 @@ type mockIAMServiceProvider struct {
 	sessionMgrErr     error
 	inviteStoreErr    error
 	pivActivatorErr   error
+	provisionerErr    error
 	adminMgrErr       error
 	gdprMgrErr        error
 }

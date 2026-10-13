@@ -116,6 +116,15 @@ var publicGRPCMethods = map[string]bool{
 	"/quicbaas.fido2.v1.FIDO2Service/BeginAuthentication":  true,
 	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication": true,
 
+	// Invite activation: the one-time invite token is the credential and the
+	// invitee holds no account token until activation completes. This mirrors
+	// the pre-auth posture of REST's /api/v1/iam/{tenant_id}/invites/{token}
+	// routes (preAuthRouteTemplates).
+	"/quicbaas.iam.v1.IAMService/GetInvite":           true,
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Begin":  true,
+	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Finish": true,
+	"/quicbaas.iam.v1.IAMService/ActivatePIV":         true,
+
 	// qrdb.v1 composition surface: Health is a liveness probe that carries no
 	// data, matching the public posture of /quicbaas.v1.QuicBaaS/Health. The
 	// qrdb SDK's gRPC and Unix transports probe it when building a client
@@ -253,6 +262,13 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// roles:create grants nothing new: a caller able to define a role is
 	// already able to set the permission sets this converges.
 	"/quicbaas.iam.v1.IAMService/ReconcileRoles": {"roles", "create"},
+
+	// ---- quicbaas.iam.v1.IAMService: control-plane tenant provisioning ----
+	//
+	// ProvisionTenant creates a tenant and its first admin, so it takes the
+	// tenant-create family, the same grant REST's
+	// POST /api/v1/tenants/{tenant_id}/provision requires (go-quicbaas#358).
+	"/quicbaas.iam.v1.IAMService/ProvisionTenant": {"tenants", "create"},
 
 	// ---- quicbaas.v1.QuicBaaS: auth (token lifecycle) ----
 	"/quicbaas.v1.QuicBaaS/Logout":        {"user_authfactors", "login"},

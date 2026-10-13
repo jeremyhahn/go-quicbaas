@@ -7,6 +7,7 @@ package rest
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,7 @@ type iamRecorder struct {
 	gotMethod  string
 	gotPath    string
 	gotRawPath string
+	gotBody    []byte
 	respBody   string
 }
 
@@ -30,6 +32,11 @@ func newIAMRecorder(t *testing.T) *iamRecorder {
 		rec.gotMethod = r.Method
 		rec.gotPath = r.URL.Path
 		rec.gotRawPath = r.URL.RequestURI()
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		rec.gotBody = body
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(rec.respBody))
 	}))
@@ -98,6 +105,9 @@ func TestIAMHandlerHappyPaths(t *testing.T) {
 		{"TenantList", iamTenantServicePrefix, "List",
 			map[string]interface{}{},
 			http.MethodGet, "/api/v1/tenants"},
+		{"TenantProvision", iamTenantServicePrefix, "Provision",
+			map[string]interface{}{"tenant_id": "t1", "admin_enrollment": "invite"},
+			http.MethodPost, "/api/v1/tenants/t1/provision"},
 
 		// Role
 		{"RoleCreate", iamRoleServicePrefix, "Create",
@@ -409,6 +419,18 @@ func TestIAMHandlerMissingTenantID(t *testing.T) {
 				t.Fatalf("expected tenant_id-required error for %s", svc)
 			}
 		})
+	}
+}
+
+// TestIAMHandlerTenantProvisionMissingTenantID verifies Provision refuses to
+// build a URL without the tenant it provisions.
+func TestIAMHandlerTenantProvisionMissingTenantID(t *testing.T) {
+	tr := newMappingTransport(t)
+
+	_, err := tr.Request(context.Background(), iamTenantServicePrefix, "Provision",
+		map[string]interface{}{"admin_enrollment": "invite"})
+	if err == nil || !strings.Contains(err.Error(), "tenant_id is required") {
+		t.Fatalf("expected tenant_id-required error, got %v", err)
 	}
 }
 

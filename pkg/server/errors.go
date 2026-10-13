@@ -15,6 +15,7 @@ package server
 
 import (
 	"errors"
+	"strconv"
 )
 
 // Server package errors.
@@ -385,6 +386,135 @@ func (e *RoleReconcileError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *RoleReconcileError) Unwrap() error {
 	return ErrRoleReconcile
+}
+
+// TenantProvisionUnavailableError reports that a seam tenant provisioning
+// composes is not wired on this server, so nothing was written.
+type TenantProvisionUnavailableError struct {
+	// Seam names the missing collaborator.
+	Seam string
+}
+
+// Error implements the error interface.
+func (e *TenantProvisionUnavailableError) Error() string {
+	return "tenant provisioning: " + e.Seam + " not available"
+}
+
+// TenantProvisionError wraps a failure from qrdb's ProvisionTenant.
+type TenantProvisionError struct {
+	TenantID string
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *TenantProvisionError) Error() string {
+	return "tenant provisioning: tenant " + e.TenantID + ": " + e.Cause.Error()
+}
+
+// Unwrap exposes the cause for errors.Is / errors.As.
+func (e *TenantProvisionError) Unwrap() error { return e.Cause }
+
+// TenantProvisionInviteError reports that the tenant and its pending admin
+// were provisioned but the activation invite could not be minted. Nothing is
+// rolled back: provisioning is idempotent, so re-running it resolves the same
+// pending admin and mints a fresh invite.
+type TenantProvisionInviteError struct {
+	TenantID    string
+	AdminUserID string
+	Cause       error
+}
+
+// Error implements the error interface.
+func (e *TenantProvisionInviteError) Error() string {
+	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUserID +
+		" is provisioned but its invite was not minted (re-run to retry): " + e.Cause.Error()
+}
+
+// Unwrap exposes the cause for errors.Is / errors.As.
+func (e *TenantProvisionInviteError) Unwrap() error { return e.Cause }
+
+// TenantProvisionLoginFactorError reports that the admin certificate was
+// issued and bound but could not be enrolled as the admin's mtls login factor,
+// so it cannot log in. The certificate is withheld and what the call created
+// (the admin, its binding, and the tenant if it was new) is deleted again, so
+// re-running provisioning starts over and issues a certificate that logs in.
+type TenantProvisionLoginFactorError struct {
+	TenantID    string
+	AdminUserID string
+	Cause       error
+}
+
+// Error implements the error interface.
+func (e *TenantProvisionLoginFactorError) Error() string {
+	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUserID +
+		" certificate was not enrolled as a login factor and was rolled back (re-run to retry): " + e.Cause.Error()
+}
+
+// Unwrap exposes the cause for errors.Is / errors.As.
+func (e *TenantProvisionLoginFactorError) Unwrap() error { return e.Cause }
+
+// TenantProvisionRollbackError reports that a cert-mode call failed after it
+// had created the tenant admin (the certificate could not be signed, bound or
+// enrolled as a login factor) and that deleting what the call created then
+// failed too. The admin is left without a usable login credential; a re-run
+// reports it as TenantAdminLoginCredentialMissingError. AdminUserID is empty
+// when the admin could not even be looked up.
+type TenantProvisionRollbackError struct {
+	TenantID    string
+	AdminUserID string
+	// Cause is the provisioning failure.
+	Cause error
+	// RollbackErr is the failure to delete what the call created.
+	RollbackErr error
+}
+
+// Error implements the error interface.
+func (e *TenantProvisionRollbackError) Error() string {
+	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUserID +
+		" was not given a login credential (" + e.Cause.Error() +
+		") and the rollback failed: " + e.RollbackErr.Error()
+}
+
+// Unwrap exposes both failures for errors.Is / errors.As.
+func (e *TenantProvisionRollbackError) Unwrap() []error { return []error{e.Cause, e.RollbackErr} }
+
+// TenantAdminLoginCredentialMissingError reports that a re-run found the
+// tenant's admin already provisioned but holding no active login factor, so
+// no one can log in as it. Provisioning cannot repair it without rotating the
+// admin's credential: the operator deletes the admin user (or the tenant) and
+// re-runs provisioning.
+type TenantAdminLoginCredentialMissingError struct {
+	TenantID      string
+	AdminUserID   string
+	AdminUsername string
+}
+
+// Error implements the error interface.
+func (e *TenantAdminLoginCredentialMissingError) Error() string {
+	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUsername + " (" + e.AdminUserID +
+		") exists without a login credential; delete the admin user or the tenant and re-run provisioning"
+}
+
+// TenantAdminAccountMismatchError reports that a re-run found an account under
+// the admin username that is not the tenant's administrator: it does not hold
+// the tenant-admin role, or it cannot authenticate (pending, disabled,
+// suspended, locked). Provisioning does not repair it; the operator deletes or
+// fixes the account and re-runs provisioning.
+type TenantAdminAccountMismatchError struct {
+	TenantID      string
+	AdminUserID   string
+	AdminUsername string
+	// Lifecycle is the account's lifecycle state.
+	Lifecycle string
+	// HasAdminRole reports whether the account holds the tenant-admin role.
+	HasAdminRole bool
+}
+
+// Error implements the error interface.
+func (e *TenantAdminAccountMismatchError) Error() string {
+	return "tenant provisioning: tenant " + e.TenantID + " account " + e.AdminUsername + " (" + e.AdminUserID +
+		") is not an active tenant administrator (lifecycle " + strconv.Quote(e.Lifecycle) +
+		", admin role " + strconv.FormatBool(e.HasAdminRole) + "); delete or fix the account and re-run provisioning"
 }
 
 // ErrPromptReconcile is returned when the boot-time prompt-set reconcile

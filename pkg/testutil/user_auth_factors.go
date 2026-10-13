@@ -57,7 +57,10 @@ type MemoryUserAuthFactors struct {
 }
 
 // Compile-time interface check.
-var _ qrdbsdk.UserAuthFactorServicer = (*MemoryUserAuthFactors)(nil)
+var (
+	_ qrdbsdk.UserAuthFactorServicer = (*MemoryUserAuthFactors)(nil)
+	_ qrdbsdk.ActiveFactorChecker    = (*MemoryUserAuthFactors)(nil)
+)
 
 // NewMemoryUserAuthFactors constructs an empty in-memory factor store.
 func NewMemoryUserAuthFactors() *MemoryUserAuthFactors {
@@ -172,6 +175,20 @@ func (m *MemoryUserAuthFactors) List(_ context.Context, userID uint64) ([]*qrdbs
 		}
 	}
 	return out, nil
+}
+
+// HasActiveFactor reports whether userID owns a non-revoked factor. It
+// answers from the canonical records, as qrdb's ActiveFactorChecker requires.
+func (m *MemoryUserAuthFactors) HasActiveFactor(_ context.Context, userID uint64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, f := range m.factors {
+		if f.UserID == userID && f.IsActive() {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Get returns the factor by id.

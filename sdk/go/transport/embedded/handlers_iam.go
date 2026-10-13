@@ -255,6 +255,50 @@ func handleIAMTenantList(ctx context.Context, svc service.QuicBaaS, req interfac
 	return out, nil
 }
 
+// iamServiceProvider is satisfied by the server's QuicBaaS, which exposes the
+// IAM service layer that owns tenant provisioning.
+type iamServiceProvider interface {
+	IAM() service.IAMService
+}
+
+// handleIAMTenantProvision creates a tenant and its first admin through the
+// IAM service, the same service-layer path the REST and gRPC handlers use.
+func handleIAMTenantProvision(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	p, ok := svc.(iamServiceProvider)
+	if !ok || p.IAM() == nil {
+		return nil, NewServiceNotConfiguredError("IAM.Tenant")
+	}
+	r, ok := req.(*iamsdk.ProvisionTenantRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Tenant", "Provision",
+			"*iam.ProvisionTenantRequest", reflect.TypeOf(req).String())
+	}
+	res, err := p.IAM().ProvisionTenant(ctx, &service.IAMProvisionTenantRequest{
+		TenantID:          r.TenantID,
+		Name:              r.Name,
+		IsolationType:     r.IsolationType,
+		AdminUsername:     r.AdminUsername,
+		AdminEnrollment:   service.IAMTenantAdminEnrollment(r.AdminEnrollment),
+		AdminCSRPEM:       r.AdminCSRPEM,
+		InviteExpiryHours: r.InviteExpiryHours,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &iamsdk.ProvisionTenantResponse{
+		TenantID:            res.TenantID,
+		AdminUserID:         res.AdminUserID,
+		AdminUsername:       res.AdminUsername,
+		AdminRoleID:         res.AdminRoleID,
+		AdminPending:        res.AdminPending,
+		AdminCertPEM:        res.AdminCertPEM,
+		AdminCertThumbprint: res.AdminCertThumbprint,
+		InviteToken:         res.InviteToken,
+		InviteExpiresAt:     res.InviteExpiresAt,
+		Timestamp:           res.Timestamp,
+	}, nil
+}
+
 func tenantToSDK(t *iam.Tenant) *iamsdk.Tenant {
 	if t == nil {
 		return nil

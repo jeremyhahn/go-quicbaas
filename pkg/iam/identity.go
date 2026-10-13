@@ -106,10 +106,10 @@ func (s *IdentityStore) GetTenant(ctx context.Context, tenantID string) (*Tenant
 // validateEmail checks if an email address is valid.
 func validateEmail(email string) error {
 	if email == "" {
-		return &ValidationError{Field: "email", Message: "email cannot be empty"}
+		return fieldValidationError("email", "email cannot be empty")
 	}
 	if !emailRegex.MatchString(email) {
-		return &ValidationError{Field: "email", Message: "invalid email format"}
+		return fieldValidationError("email", "invalid email format")
 	}
 	return nil
 }
@@ -117,10 +117,10 @@ func validateEmail(email string) error {
 // validateUsername checks if a username is valid.
 func validateUsername(username string) error {
 	if username == "" {
-		return &ValidationError{Field: "username", Message: "username cannot be empty"}
+		return fieldValidationError("username", "username cannot be empty")
 	}
 	if !usernameRegex.MatchString(username) {
-		return &ValidationError{Field: "username", Message: "username must be 3-64 alphanumeric characters, dash, or underscore"}
+		return fieldValidationError("username", "username must be 3-64 alphanumeric characters, dash, or underscore")
 	}
 	return nil
 }
@@ -143,10 +143,7 @@ func validateUsername(username string) error {
 // name an administrator types), and the guard has to come back with it.
 func validateDisplayName(name string) error {
 	if validateEmail(strings.TrimSpace(name)) == nil {
-		return &ValidationError{
-			Field:   "name",
-			Message: "display name must not be an email address",
-		}
+		return fieldValidationError("name", "display name must not be an email address")
 	}
 	return nil
 }
@@ -154,7 +151,7 @@ func validateDisplayName(name string) error {
 // validateTenantID checks if a tenant ID is valid and not empty.
 func validateTenantID(tenantID string) error {
 	if tenantID == "" {
-		return &ValidationError{Field: "tenant_id", Message: "tenant ID cannot be empty"}
+		return fieldValidationError("tenant_id", "tenant ID cannot be empty")
 	}
 	return nil
 }
@@ -162,7 +159,7 @@ func validateTenantID(tenantID string) error {
 // validateUserID checks if a user ID is valid and not empty.
 func validateUserID(userID string) error {
 	if userID == "" {
-		return &ValidationError{Field: "user_id", Message: "user ID cannot be empty"}
+		return fieldValidationError("user_id", "user ID cannot be empty")
 	}
 	return nil
 }
@@ -170,7 +167,7 @@ func validateUserID(userID string) error {
 // validateRoleID checks if a role ID is valid and not empty.
 func validateRoleID(roleID string) error {
 	if roleID == "" {
-		return &ValidationError{Field: "role_id", Message: "role ID cannot be empty"}
+		return fieldValidationError("role_id", "role ID cannot be empty")
 	}
 	return nil
 }
@@ -180,7 +177,7 @@ func validateRoleID(roleID string) error {
 // gets a field-named validation error instead of a store miss.
 func validateRoleName(name string) error {
 	if name == "" {
-		return &ValidationError{Field: "name", Message: "role name cannot be empty"}
+		return fieldValidationError("name", "role name cannot be empty")
 	}
 	return nil
 }
@@ -251,13 +248,12 @@ func validateUpdateUserLifecycle(state Lifecycle) error {
 			"; supported: "+strings.Join(names, ", "))
 }
 
-// fieldValidationError wraps a field validation failure in the coded error
-// every transport already maps to 400 / InvalidArgument.
-//
-// The neighbouring validators (validateEmail, validateUsername) return a bare
-// *ValidationError, which the REST error mapper does not recognise and reports
-// as 500 (#335); that gap is filed rather than widened here. errors.As still
-// reaches the *ValidationError, so the field name survives.
+// fieldValidationError is the one way pkg/iam reports a field validation
+// failure. It wraps the *ValidationError in the ErrInvalidInput coded error,
+// because every transport maps by code: REST and QUIC answer 400, gRPC and
+// Unix answer InvalidArgument. A bare *ValidationError carries no code and
+// would surface as 500 / Internal (#335). errors.As still reaches the
+// *ValidationError through the cause chain, so the field name survives.
 func fieldValidationError(field, message string) error {
 	return api.NewInvalidInputCauseError("invalid "+field,
 		&ValidationError{Field: field, Message: message})
@@ -884,7 +880,7 @@ func (s *IdentityStore) CreateRole(ctx context.Context, tenantID string, opts Cr
 		return nil, err
 	}
 	if opts.Name == "" {
-		return nil, &ValidationError{Field: "name", Message: "role name cannot be empty"}
+		return nil, fieldValidationError("name", "role name cannot be empty")
 	}
 
 	// Check tenant quota
@@ -1003,7 +999,7 @@ func (s *IdentityStore) UpdateRole(ctx context.Context, tenantID, roleID string,
 	if opts.Name != nil {
 		name := strings.TrimSpace(*opts.Name)
 		if name == "" {
-			return nil, &ValidationError{Field: "name", Message: "role name cannot be empty"}
+			return nil, fieldValidationError("name", "role name cannot be empty")
 		}
 		role.Name = name
 	}

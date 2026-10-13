@@ -147,7 +147,7 @@ func TestCertLoginFactorEnroller_EnrollMakesTheCertificateLoginResolvable(t *tes
 	cert := newTestCert(t, "admin", nil)
 	ctx := context.Background()
 
-	err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{
+	_, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{
 		UserID:      testAdminQRDBUserID,
 		Certificate: cert,
 		Label:       "admin certificate (admin)",
@@ -197,11 +197,21 @@ func TestCertLoginFactorEnroller_EnrollIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 
 	enrollment := iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: cert}
-	if err := enroller.Enroll(ctx, enrollment); err != nil {
+	first, err := enroller.Enroll(ctx, enrollment)
+	if err != nil {
 		t.Fatalf("first Enroll: %v", err)
 	}
-	if err := enroller.Enroll(ctx, enrollment); err != nil {
+	if !first.Created || first.FactorID == "" {
+		t.Fatalf("first Enroll result = %+v, want a created factor with an id", first)
+	}
+	second, err := enroller.Enroll(ctx, enrollment)
+	if err != nil {
 		t.Fatalf("second Enroll must be idempotent, got: %v", err)
+	}
+	// A re-enrollment must not claim the factor: a caller undoing its own
+	// failed operation would otherwise revoke a factor it did not create.
+	if second.Created || second.FactorID != first.FactorID {
+		t.Fatalf("second Enroll result = %+v, want the existing factor %q, not created", second, first.FactorID)
 	}
 
 	list, err := factors.List(ctx, testAdminQRDBUserID)
@@ -210,6 +220,47 @@ func TestCertLoginFactorEnroller_EnrollIsIdempotent(t *testing.T) {
 	}
 	if len(list) != 1 {
 		t.Fatalf("got %d factors after re-enrolling the same certificate, want exactly 1", len(list))
+	}
+}
+
+// TestCertLoginFactorEnroller_RemoveRevokesTheFactor ensures Remove revokes the
+// factor so the certificate no longer resolves at login.
+func TestCertLoginFactorEnroller_RemoveRevokesTheFactor(t *testing.T) {
+	enroller, factors := newTestEnroller(t)
+	cert := newTestCert(t, "admin", nil)
+	ctx := context.Background()
+
+	result, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: cert})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	if err := enroller.Remove(ctx, result.FactorID); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, iam.MTLSCredentialKey(cert)); !errors.Is(err, qrdbsdk.ErrFactorRevoked) {
+		t.Fatalf("login lookup after Remove = %v, want ErrFactorRevoked", err)
+	}
+}
+
+// TestCertLoginFactorEnroller_RemoveFailsTyped covers the error paths: an
+// unconfigured enroller, an empty id, and a store failure all surface typed.
+func TestCertLoginFactorEnroller_RemoveFailsTyped(t *testing.T) {
+	ctx := context.Background()
+
+	var nilEnroller *iam.CertLoginFactorEnroller
+	var cfgErr *iam.CertLoginFactorConfigError
+	if err := nilEnroller.Remove(ctx, "factor-1"); !errors.As(err, &cfgErr) {
+		t.Fatalf("nil enroller Remove = %v (%T), want CertLoginFactorConfigError", err, err)
+	}
+
+	enroller, _ := newTestEnroller(t)
+	if err := enroller.Remove(ctx, ""); !errors.As(err, &cfgErr) || cfgErr.Field != "FactorID" {
+		t.Fatalf("empty id Remove = %v (%T), want CertLoginFactorConfigError on FactorID", err, err)
+	}
+
+	var removeErr *iam.CertLoginFactorRemoveError
+	if err := enroller.Remove(ctx, "factor-missing"); !errors.As(err, &removeErr) || removeErr.FactorID != "factor-missing" {
+		t.Fatalf("unknown id Remove = %v (%T), want CertLoginFactorRemoveError naming the factor", err, err)
 	}
 }
 
@@ -222,17 +273,60 @@ func TestCertLoginFactorEnroller_EnrollRejectsCertificateOwnedByAnotherUser(t *t
 	cert := newTestCert(t, "admin", nil)
 	ctx := context.Background()
 
-	if err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: 1001, Certificate: cert}); err != nil {
+	if _, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: 1001, Certificate: cert}); err != nil {
 		t.Fatalf("first Enroll: %v", err)
 	}
 
-	err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: 2002, Certificate: cert})
+	_, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: 2002, Certificate: cert})
 	var mismatch *iam.CertLoginFactorOwnerMismatchError
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("Enroll error = %v (%T), want CertLoginFactorOwnerMismatchError", err, err)
 	}
 	if mismatch.RequestedUserID != 2002 || mismatch.EnrolledUserID != 1001 {
 		t.Fatalf("mismatch = %+v, want requested 2002 / enrolled 1001", mismatch)
+	}
+}
+
+// TestCertLoginFactorEnroller_CheckOwner verifies the read-only check accepts
+// an unenrolled certificate and the owner's own, and rejects another user's,
+// renewed over the same keypair, without writing a factor.
+func TestCertLoginFactorEnroller_CheckOwner(t *testing.T) {
+	enroller, _ := newTestEnroller(t)
+	ctx := context.Background()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	owned := newTestCert(t, "admin", key)
+	if _, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: 1001, Certificate: owned}); err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+
+	unenrolled := newTestCert(t, "other", nil)
+	if err := enroller.CheckOwner(ctx, 2002, unenrolled); err != nil {
+		t.Fatalf("CheckOwner(unenrolled) = %v, want nil", err)
+	}
+	if err := enroller.CheckOwner(ctx, 1001, owned); err != nil {
+		t.Fatalf("CheckOwner(owner) = %v, want nil", err)
+	}
+	err = enroller.CheckOwner(ctx, 2002, newTestCert(t, "admin", key))
+	var mismatch *iam.CertLoginFactorOwnerMismatchError
+	if !errors.As(err, &mismatch) || mismatch.RequestedUserID != 2002 || mismatch.EnrolledUserID != 1001 {
+		t.Fatalf("CheckOwner(another user's key) = %v (%T), want requested 2002 / enrolled 1001", err, err)
+	}
+	if _, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: 3003, Certificate: unenrolled}); err != nil {
+		t.Fatalf("CheckOwner must not enroll the certificate it checked: %v", err)
+	}
+}
+
+// TestCertLoginFactorEnroller_CheckOwnerNilReceiverFailsClosed ensures an
+// unconfigured enroller reports a config error rather than "no owner".
+func TestCertLoginFactorEnroller_CheckOwnerNilReceiverFailsClosed(t *testing.T) {
+	var enroller *iam.CertLoginFactorEnroller
+	err := enroller.CheckOwner(context.Background(), 1001, newTestCert(t, "admin", nil))
+	var configErr *iam.CertLoginFactorConfigError
+	if !errors.As(err, &configErr) {
+		t.Fatalf("CheckOwner on nil enroller = %v (%T), want CertLoginFactorConfigError", err, err)
 	}
 }
 
@@ -253,10 +347,10 @@ func TestCertLoginFactorEnroller_EnrollAcceptsRenewedCertificateForSameUser(t *t
 	}
 	ctx := context.Background()
 
-	if err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: original}); err != nil {
+	if _, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: original}); err != nil {
 		t.Fatalf("Enroll original: %v", err)
 	}
-	if err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: renewed}); err != nil {
+	if _, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: renewed}); err != nil {
 		t.Fatalf("Enroll renewed certificate for the same user must succeed, got: %v", err)
 	}
 }
@@ -269,7 +363,7 @@ func TestCertLoginFactorEnroller_EnrollFailsClosedOnStoreError(t *testing.T) {
 	storeErr := errors.New("kv unavailable")
 	factors.AddErr = storeErr
 
-	err := enroller.Enroll(context.Background(), iam.CertLoginFactorEnrollment{
+	_, err := enroller.Enroll(context.Background(), iam.CertLoginFactorEnrollment{
 		UserID:      testAdminQRDBUserID,
 		Certificate: newTestCert(t, "admin", nil),
 	})
@@ -294,7 +388,7 @@ func TestCertLoginFactorEnroller_EnrollFailsClosedOnUnreadableDuplicate(t *testi
 	cert := newTestCert(t, "admin", nil)
 	ctx := context.Background()
 
-	if err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: cert}); err != nil {
+	if _, err := enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: cert}); err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
 	list, err := factors.List(ctx, testAdminQRDBUserID)
@@ -305,7 +399,7 @@ func TestCertLoginFactorEnroller_EnrollFailsClosedOnUnreadableDuplicate(t *testi
 		t.Fatalf("Remove: %v", err)
 	}
 
-	err = enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: cert})
+	_, err = enroller.Enroll(ctx, iam.CertLoginFactorEnrollment{UserID: testAdminQRDBUserID, Certificate: cert})
 	var enrollErr *iam.CertLoginFactorEnrollError
 	if !errors.As(err, &enrollErr) {
 		t.Fatalf("Enroll error = %v (%T), want CertLoginFactorEnrollError for a revoked duplicate", err, err)
@@ -344,7 +438,7 @@ func TestCertLoginFactorEnroller_EnrollRejectsInvalidInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			enroller, factors := newTestEnroller(t)
-			err := enroller.Enroll(context.Background(), tt.enrollment)
+			_, err := enroller.Enroll(context.Background(), tt.enrollment)
 			var cfgErr *iam.CertLoginFactorConfigError
 			if !errors.As(err, &cfgErr) {
 				t.Fatalf("Enroll error = %v (%T), want CertLoginFactorConfigError", err, err)
@@ -377,7 +471,7 @@ func TestNewCertLoginFactorEnroller_RejectsNilServicer(t *testing.T) {
 // enroller: it must report a configuration error rather than panic.
 func TestCertLoginFactorEnroller_NilReceiverFailsClosed(t *testing.T) {
 	var enroller *iam.CertLoginFactorEnroller
-	err := enroller.Enroll(context.Background(), iam.CertLoginFactorEnrollment{
+	_, err := enroller.Enroll(context.Background(), iam.CertLoginFactorEnrollment{
 		UserID:      testAdminQRDBUserID,
 		Certificate: newTestCert(t, "admin", nil),
 	})

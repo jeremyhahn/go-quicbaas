@@ -48,6 +48,8 @@ func (m *mockIAMComponents) GetInviteStore() iam.InviteStore { return m.inviteSt
 
 func (m *mockIAMComponents) GetPIVActivator() *iam.PIVActivator { return m.pivActivator }
 
+func (m *mockIAMComponents) GetTenantProvisioner() TenantProvisioner { return m.provisioner }
+
 func (m *mockIAMComponents) GetAdminManager() *iam.AdminManager { return m.adminManager }
 
 func (m *mockIAMComponents) GetGDPRManager() *iam.GDPRManager { return m.gdprManager }

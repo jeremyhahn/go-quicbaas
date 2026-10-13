@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"io"
 	"sync/atomic"
 )
 
@@ -59,12 +58,13 @@ func (s *stream) Send(msg interface{}) error {
 }
 
 // Recv receives a message from the stream.
-// It allows draining buffered messages even after the stream is closed.
+// It allows draining buffered messages even after the stream is closed, and
+// returns ErrRecvOnClosedStream once a closed stream's buffer is empty.
 func (s *stream) Recv() (interface{}, error) {
 	// Drain a buffered message first: buffered values outlive Close.
 	select {
-	case msg, ok := <-s.recvCh:
-		return s.received(msg, ok)
+	case msg := <-s.recvCh:
+		return msg, nil
 	default:
 	}
 
@@ -82,8 +82,8 @@ func (s *stream) Recv() (interface{}, error) {
 			return s.drainAfterClose()
 		}
 		return nil, s.ctx.Err()
-	case msg, ok := <-s.recvCh:
-		return s.received(msg, ok)
+	case msg := <-s.recvCh:
+		return msg, nil
 	}
 }
 
@@ -94,24 +94,11 @@ func (s *stream) Recv() (interface{}, error) {
 // closes that window, because the value was sent before the close flag was set.
 func (s *stream) drainAfterClose() (interface{}, error) {
 	select {
-	case msg, ok := <-s.recvCh:
-		return s.received(msg, ok)
+	case msg := <-s.recvCh:
+		return msg, nil
 	default:
 		return nil, ErrRecvOnClosedStream
 	}
-}
-
-// received maps one receive from recvCh to Recv's result: the message, or the
-// terminal for a closed channel — ErrRecvOnClosedStream when Close closed it,
-// io.EOF for a natural end of stream.
-func (s *stream) received(msg interface{}, ok bool) (interface{}, error) {
-	if ok {
-		return msg, nil
-	}
-	if s.closed.Load() {
-		return nil, ErrRecvOnClosedStream
-	}
-	return nil, io.EOF
 }
 
 // CloseSend closes the send side of the stream.
@@ -122,19 +109,29 @@ func (s *stream) CloseSend() error {
 	return nil
 }
 
-// Close closes the stream entirely.
+// Close closes the stream entirely. It cancels the stream context, which
+// unblocks Recv and every deliver; it never closes recvCh, so a handler that
+// is mid-send when the caller closes the stream cannot panic.
 func (s *stream) Close() error {
 	if s.closed.CompareAndSwap(false, true) {
 		s.cancel()
-		// Close recv channel to unblock any receivers
-		close(s.recvCh)
 	}
 	return nil
 }
 
-// recvChan returns the receive channel for the service to send responses.
-func (s *stream) recvChan() chan<- interface{} {
-	return s.recvCh
+// deliver hands msg to the caller's Recv. It is the only path by which a
+// value enters recvCh. It returns the stream context's error, without
+// sending, once the stream is closed or its context is cancelled.
+func (s *stream) deliver(msg interface{}) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case s.recvCh <- msg:
+		return nil
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
 }
 
 // sendChan returns the send channel for the service to receive requests.

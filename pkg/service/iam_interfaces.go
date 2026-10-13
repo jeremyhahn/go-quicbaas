@@ -155,6 +155,14 @@ type SessionManager interface {
 	RevokeAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error
 }
 
+// TenantProvisioner creates a tenant, seeds its built-in roles and enrolls
+// its first admin through qrdb's bootstrap.ProvisionTenant. The server
+// implements it because the seams it composes (CA signer, auth-factor
+// servicer) live there. Requests reaching it have passed Validate.
+type TenantProvisioner interface {
+	Provision(ctx context.Context, req *IAMProvisionTenantRequest) (*IAMProvisionTenantResponse, error)
+}
+
 // IAMComponents aggregates all IAM component interfaces for the service layer.
 // This interface is implemented by the server package to provide IAM functionality.
 type IAMComponents interface {
@@ -191,6 +199,9 @@ type IAMComponents interface {
 	// GetPIVActivator returns the PIV invite-activation service, or nil when
 	// PIV activation is not configured (iam.piv_login disabled or no CA file).
 	GetPIVActivator() *iam.PIVActivator
+	// GetTenantProvisioner returns the control-plane tenant provisioner, or
+	// nil when IAM has none wired.
+	GetTenantProvisioner() TenantProvisioner
 	// GetAdminManager returns the admin manager for delegated administration.
 	GetAdminManager() *iam.AdminManager
 	// GetGDPRManager returns the GDPR compliance manager.
@@ -228,6 +239,8 @@ type IAMServiceProvider interface {
 	GetInviteStore(ctx context.Context) (iam.InviteStore, error)
 	// GetPIVActivator returns the PIV invite-activation service.
 	GetPIVActivator(ctx context.Context) (*iam.PIVActivator, error)
+	// GetTenantProvisioner returns the control-plane tenant provisioner.
+	GetTenantProvisioner(ctx context.Context) (TenantProvisioner, error)
 	// GetAdminManager returns the admin manager.
 	GetAdminManager(ctx context.Context) (*iam.AdminManager, error)
 	// GetGDPRManager returns the GDPR manager.

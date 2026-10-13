@@ -475,13 +475,11 @@ func RateLimitMiddleware(requestsPerSecond int) func(http.Handler) http.Handler 
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract client IP from request
+			// getClientIP is the transport peer, or the client a configured
+			// trusted proxy vouches for (ClientIPMiddleware, #156).
 			// limiterKey collapses an IPv6 source to its /64 so one
 			// allocation cannot mint an unbounded number of buckets, and so
-			// the limit applies to IPv6 clients at all. It does NOT make this
-			// key trustworthy: getClientIP still honours X-Forwarded-For with
-			// no trusted-proxy allowlist, so this bound is memory-only until
-			// #156 lands the trusted-proxy keying.
+			// the limit applies to IPv6 clients at all.
 			clientIP := limiterKey(getClientIP(r))
 
 			// Check if request is allowed

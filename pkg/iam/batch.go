@@ -277,7 +277,7 @@ type BatchExportResult struct {
 // Validate validates the BatchImportRequest.
 func (r *BatchImportRequest) Validate() error {
 	if r.TenantID == "" {
-		return &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return fieldValidationError("tenant_id", "tenant ID is required")
 	}
 
 	totalItems := len(r.Users) + len(r.Roles) + len(r.Policies)
@@ -291,16 +291,16 @@ func (r *BatchImportRequest) Validate() error {
 // Validate validates BatchImportOptions.
 func (o *BatchImportOptions) Validate() error {
 	if o.BatchSize < 0 {
-		return &ValidationError{Field: "batch_size", Message: "batch size cannot be negative"}
+		return fieldValidationError("batch_size", "batch size cannot be negative")
 	}
 	if o.BatchSize > MaxBatchSize {
-		return &ValidationError{Field: "batch_size", Message: "batch size exceeds maximum"}
+		return fieldValidationError("batch_size", "batch size exceeds maximum")
 	}
 	if o.Parallelism < 0 {
-		return &ValidationError{Field: "parallelism", Message: "parallelism cannot be negative"}
+		return fieldValidationError("parallelism", "parallelism cannot be negative")
 	}
 	if o.Parallelism > MaxParallelism {
-		return &ValidationError{Field: "parallelism", Message: "parallelism exceeds maximum"}
+		return fieldValidationError("parallelism", "parallelism exceeds maximum")
 	}
 	return nil
 }
@@ -308,12 +308,12 @@ func (o *BatchImportOptions) Validate() error {
 // Validate validates the BatchExportRequest.
 func (r *BatchExportRequest) Validate() error {
 	if r.TenantID == "" {
-		return &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return fieldValidationError("tenant_id", "tenant ID is required")
 	}
 
 	// At least one resource type must be requested
 	if !r.IncludeUsers && !r.IncludeRoles && !r.IncludePolicies {
-		return &ValidationError{Field: "include_*", Message: "at least one resource type must be included"}
+		return fieldValidationError("include_*", "at least one resource type must be included")
 	}
 
 	return nil

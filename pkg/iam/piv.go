@@ -39,6 +39,14 @@ type PIVActivatorDependencies struct {
 	// InviteStore is used to look up and consume invite tokens.
 	InviteStore InviteStore
 
+	// LoginFactors enrolls the activated certificate as the user's mtls login
+	// factor, the record the unified login ceremony resolves. Required.
+	LoginFactors *CertLoginFactorEnroller
+
+	// ActivationClaims arbitrates activations of the same user that present
+	// different invite tokens. Required.
+	ActivationClaims *UserActivationClaims
+
 	// AuditLogger records activation events (may be nil; activations are logged best-effort).
 	AuditLogger AuditLogger
 
@@ -56,6 +64,8 @@ type PIVActivator struct {
 	intermediates  *x509.CertPool
 	userStorage    UserStorage
 	inviteStore    InviteStore
+	loginFactors   *CertLoginFactorEnroller
+	claims         *UserActivationClaims
 	auditLogger    AuditLogger
 	trustedIssuers []string
 }
@@ -71,11 +81,19 @@ func NewPIVActivator(deps PIVActivatorDependencies) (*PIVActivator, error) {
 	if deps.InviteStore == nil {
 		return nil, &PIVActivatorConfigError{Reason: "invite store is required"}
 	}
+	if deps.LoginFactors == nil {
+		return nil, &PIVActivatorConfigError{Reason: "login factor enroller is required"}
+	}
+	if deps.ActivationClaims == nil {
+		return nil, &PIVActivatorConfigError{Reason: "activation claims are required"}
+	}
 	return &PIVActivator{
 		roots:          deps.Roots,
 		intermediates:  deps.Intermediates,
 		userStorage:    deps.UserStorage,
 		inviteStore:    deps.InviteStore,
+		loginFactors:   deps.LoginFactors,
+		claims:         deps.ActivationClaims,
 		auditLogger:    deps.AuditLogger,
 		trustedIssuers: deps.TrustedIssuers,
 	}, nil
@@ -136,11 +154,11 @@ func (a *PIVActivator) Activate(ctx context.Context, tenantID, token string, cer
 
 	// 4. Compute both PIV thumbprints. The primary is the canonical SPKI
 	// thumbprint (SHA-256 over SubjectPublicKeyInfo, base64url) that qrdb's
-	// UserByCertThumbprint resolves natively; the fallback is the legacy hex
-	// SHA-256 of the certificate DER, resolved via the broker-side legacy-PIV
-	// index for the migration window. Binding BOTH lets a renewal (same key,
-	// new cert) resolve via the stable SPKI thumbprint while persisted
-	// legacy-only deployments keep resolving via the fallback.
+	// UserByCertThumbprint resolves; the fallback is the legacy hex SHA-256 of
+	// the certificate DER, which qrdb's same cert-thumbprint index resolves.
+	// Binding BOTH lets a renewal (same key, new cert) resolve via the stable
+	// SPKI thumbprint while persisted legacy-only deployments keep resolving
+	// via the fallback.
 	spkiThumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 	legacyThumbprint := xkmssdk.PIVThumbprintSHA256(cert)
 
@@ -153,35 +171,195 @@ func (a *PIVActivator) Activate(ctx context.Context, tenantID, token string, cer
 		return ErrUserNotPending
 	}
 
-	// 6. Transition user to active. The invite is consumed from the invite
-	// store below, which is where it lives; there is no copy on the user record
+	// Steps 5a-8 run in the order check -> claim -> redeem -> enroll ->
+	// update, chosen so a factor exists only for the one activation that won
+	// both the user and the invite:
+	//
+	//   - The user claim arbitrates activations of the same user. A pending
+	//     user can hold several live invites (a retried provisioning mints
+	//     another), and each token is single-use only on its own, so two
+	//     activations with different tokens would both win their redemption.
+	//     The claim is a store-decided create-if-absent, taken before anything
+	//     is written; a loser returns ErrUserNotPending having written nothing.
+	//   - Redeem is the commit point for the invite. It is the store's
+	//     single-winner primitive for the token. A loser returns a typed error
+	//     and releases its claim.
+	//   - Only the winner enrolls. Two activations presenting the same
+	//     certificate share one factor (enrollment is idempotent), so if
+	//     losers enrolled, a loser that created the factor would revoke the
+	//     one the winner adopted. Enrolling after the commit point means no
+	//     loser ever holds a factor to revoke, whichever certificate it had.
+	//   - The ownership check before the redeem keeps the common user error,
+	//     a certificate already enrolled for another user, retryable: the
+	//     invite stays unspent. A factor store failure after the redeem spends
+	//     the invite, and the user must be re-invited.
+	//   - Only the winner writes the user. If that write fails, the factor
+	//     this call created is revoked; the invite is already spent.
+	//   - A successful activation completes the claim, so no other invite of
+	//     the user can activate it unless an administrator returns the user to
+	//     pending. A failed one releases the claim, so the user can be
+	//     re-invited.
+	//
+	// A factor that existed before this call (the same certificate already
+	// enrolled for this user) is never revoked here: it is not this call's.
+
+	// 5a. Reject a certificate enrolled as another user's login factor while
+	// the invite is still unspent. Enrollment re-checks it after the redeem.
+	if err := a.checkLoginFactorOwner(ctx, invite.TenantID, invite.UserID, cert); err != nil {
+		return &PIVActivationLoginFactorError{UserID: invite.UserID, Cause: err}
+	}
+
+	// 5b. Claim the user before anything is written.
+	claim, err := a.claims.Claim(ctx, invite.TenantID, invite.UserID, user.Updated)
+	if err != nil {
+		return err
+	}
+
+	// The claim's lease outlives this bound, so the claim cannot expire and be
+	// taken over while this activation is still writing.
+	workCtx, cancel := context.WithTimeout(ctx, userActivationWorkTimeout)
+	defer cancel()
+	if err := a.commitActivation(workCtx, tenantID, token, invite, user, cert); err != nil {
+		return a.releaseClaim(ctx, invite, claim, err)
+	}
+	a.completeClaim(ctx, invite, claim, user.Updated)
+
+	a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "success", map[string]interface{}{
+		"piv_spki_thumbprint": spkiThumbprint,
+		"piv_cert_thumbprint": legacyThumbprint,
+	})
+	return nil
+}
+
+// commitActivation runs the writes of an activation that holds the user's
+// claim: it redeems the invite, enrolls the certificate as the user's login
+// factor, and binds the certificate to the user as it marks the user active.
+func (a *PIVActivator) commitActivation(ctx context.Context, tenantID, token string, invite *InviteRecord, user *User, cert *x509.Certificate) error {
+	// 6. Consume the invite. The earlier Used check is an early-out for the
+	//    common case, not the enforcement point — that lives here.
+	if _, err := a.inviteStore.Redeem(ctx, tenantID, token); err != nil {
+		return &PIVActivationRedeemError{UserID: invite.UserID, Cause: err}
+	}
+
+	// 7. Enroll the certificate as the user's mtls login factor: the
+	// thumbprint binding alone does not let the unified login ceremony
+	// resolve it.
+	factor, err := a.enrollLoginFactor(ctx, invite.TenantID, invite.UserID, cert)
+	if err != nil {
+		return &PIVActivationLoginFactorError{UserID: invite.UserID, Cause: err}
+	}
+
+	// 8. Transition user to active. The invite was consumed from the invite
+	// store above, which is where it lives; there is no copy on the user record
 	// to clear.
 	user.Lifecycle = LifecycleActive
-	user.SetPIVThumbprints(spkiThumbprint, legacyThumbprint)
-	now := time.Now().UTC()
-	user.Updated = now
-
+	user.SetPIVThumbprints(qrdbsdk.ComputeSPKIThumbprint(cert), xkmssdk.PIVThumbprintSHA256(cert))
+	user.Updated = time.Now().UTC()
 	if err := a.userStorage.UpdateUser(ctx, user); err != nil {
-		return &PIVActivationUpdateError{Cause: err}
+		return a.revokeCreatedFactor(ctx, invite, factor, &PIVActivationUpdateError{Cause: err})
 	}
-
-	// 7. Consume the invite. Redeem is the single-winner primitive: concurrent
-	//    redemptions resolve to exactly one, so two racing activations cannot
-	//    both succeed. The earlier Used check is an early-out for the common
-	//    case, not the enforcement point — that lives here.
-	if _, err := a.inviteStore.Redeem(ctx, tenantID, token); err != nil {
-		// The user is already activated; log but don't fail the caller.
-		a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "warning", map[string]interface{}{
-			"warning": "failed to consume invite after activation: " + err.Error(),
-		})
-	} else {
-		a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "success", map[string]interface{}{
-			"piv_spki_thumbprint": spkiThumbprint,
-			"piv_cert_thumbprint": legacyThumbprint,
-		})
-	}
-
 	return nil
+}
+
+// releaseClaim gives up the claim of a failed activation so the user can be
+// re-invited, and returns the activation's error. The release is detached
+// from the request, as the factor revocation is: a client that disconnects
+// must not leave the user claimed until the lease expires. A release that
+// fails is audited; the lease still frees the user.
+func (a *PIVActivator) releaseClaim(ctx context.Context, invite *InviteRecord, claim *UserActivationClaim, activationErr error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteRollbackTimeout)
+	defer cancel()
+	if err := claim.Release(ctx); err != nil {
+		a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "failure", map[string]interface{}{
+			"error": "failed to release the activation claim of a failed activation: " + err.Error(),
+		})
+	}
+	return activationErr
+}
+
+// completeClaim records the successful activation on its claim. activatedAt is
+// the Updated time written to the active user. The user is already active, so
+// a failure is audited rather than returned: the lease-bound claim still
+// blocks every activation until it expires, and the user is no longer pending
+// afterwards.
+func (a *PIVActivator) completeClaim(ctx context.Context, invite *InviteRecord, claim *UserActivationClaim, activatedAt time.Time) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteRollbackTimeout)
+	defer cancel()
+	if err := claim.Complete(ctx, activatedAt); err != nil {
+		a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "failure", map[string]interface{}{
+			"error": "failed to complete the activation claim: " + err.Error(),
+		})
+	}
+}
+
+// revokeCreatedFactor undoes a failed activation's login factor and returns
+// the error the caller sees. A factor the activation did not create is left in
+// place. When the revocation itself fails, the returned error says a residual
+// factor may exist, and the failure is audit-logged with the factor id so an
+// operator can revoke it.
+//
+// The revocation runs detached from the request's cancellation, bounded by
+// inviteRollbackTimeout: the failure being undone may itself be the request's
+// cancellation, and a canceled revocation would leave the factor usable.
+func (a *PIVActivator) revokeCreatedFactor(ctx context.Context, invite *InviteRecord, factor CertLoginFactorEnrollResult, activationErr error) error {
+	if !factor.Created {
+		return activationErr
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteRollbackTimeout)
+	defer cancel()
+	err := a.loginFactors.Remove(qrdbsdk.ContextWithTenant(ctx, invite.TenantID), factor.FactorID)
+	if err == nil {
+		return activationErr
+	}
+	a.logAudit(ctx, invite.TenantID, invite.UserID, "piv_activate", "failure", map[string]interface{}{
+		"error":     "failed to revoke the login factor of a failed activation: " + err.Error(),
+		"factor_id": factor.FactorID,
+	})
+	return &PIVActivationFactorCleanupError{
+		UserID:     invite.UserID,
+		FactorID:   factor.FactorID,
+		Cause:      err,
+		Activation: activationErr,
+	}
+}
+
+// checkLoginFactorOwner rejects cert when it is already enrolled as another
+// user's login factor. Like enrollment, it binds the invited tenant into the
+// context the factor store routes by.
+func (a *PIVActivator) checkLoginFactorOwner(ctx context.Context, tenantID, userID string, cert *x509.Certificate) error {
+	qrdbUserID, err := ParseUserID(userID)
+	if err != nil {
+		return err
+	}
+	return a.loginFactors.CheckOwner(qrdbsdk.ContextWithTenant(ctx, tenantID), qrdbUserID, cert)
+}
+
+// enrollLoginFactor enrolls cert as userID's mtls login factor, recording the
+// tenant and the invite activation as its provenance. The factor store routes
+// by the context tenant, and the activation runs on a pre-authentication
+// context that need not carry one, so the invited tenant is bound into it.
+func (a *PIVActivator) enrollLoginFactor(ctx context.Context, tenantID, userID string, cert *x509.Certificate) (CertLoginFactorEnrollResult, error) {
+	qrdbUserID, err := ParseUserID(userID)
+	if err != nil {
+		return CertLoginFactorEnrollResult{}, err
+	}
+	label := "PIV certificate"
+	if cn := cert.Subject.CommonName; cn != "" {
+		label += " (" + cn + ")"
+	}
+	return a.loginFactors.Enroll(qrdbsdk.ContextWithTenant(ctx, tenantID), CertLoginFactorEnrollment{
+		UserID:      qrdbUserID,
+		Certificate: cert,
+		Label:       label,
+		Metadata: map[string]string{
+			"binding_source": pivInviteBindingSource,
+			"tenant_id":      tenantID,
+			"broker_user_id": userID,
+			"cert_subject":   cert.Subject.String(),
+			"cert_serial":    cert.SerialNumber.String(),
+			"cert_not_after": cert.NotAfter.UTC().Format(time.RFC3339),
+		},
+	})
 }
 
 // checkTrustedIssuer verifies that the certificate's issuer Subject DN is in the
@@ -244,17 +422,87 @@ func (e *PIVCertDecodeError) Error() string {
 	return "piv certificate decode error: " + e.Reason
 }
 
-// PIVActivationUpdateError is returned when the user update fails during activation.
+// PIVActivationUpdateError is returned when the user update fails after the
+// activation won its invite. The invite is spent and the user stays pending,
+// so the user must be re-invited; the login factor the activation created has
+// been revoked.
 type PIVActivationUpdateError struct {
 	Cause error
 }
 
 // Error implements the error interface.
 func (e *PIVActivationUpdateError) Error() string {
-	return "failed to update user during piv activation: " + e.Cause.Error()
+	return "failed to update user during piv activation (invite consumed, re-invite required): " + e.Cause.Error()
 }
 
 // Unwrap returns the underlying cause.
 func (e *PIVActivationUpdateError) Unwrap() error {
 	return e.Cause
+}
+
+// pivInviteBindingSource marks a login factor enrolled by PIV invite
+// activation.
+const pivInviteBindingSource = "piv_invite_activation"
+
+// PIVActivationLoginFactorError is returned when the activated certificate
+// cannot be enrolled as the user's mtls login factor. The user stays pending
+// and the invite unspent, so the activation can be retried.
+type PIVActivationLoginFactorError struct {
+	UserID string
+	Cause  error
+}
+
+// Error implements the error interface.
+func (e *PIVActivationLoginFactorError) Error() string {
+	return "failed to enroll the piv certificate as a login factor for user " + e.UserID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *PIVActivationLoginFactorError) Unwrap() error {
+	return e.Cause
+}
+
+// PIVActivationRedeemError is returned when an activation does not win its
+// invite: a concurrent activation consumed it first (Cause wraps
+// ErrInviteUsed), or the invite store failed. Nothing was committed: the user
+// is unchanged and the login factor the activation created has been revoked.
+type PIVActivationRedeemError struct {
+	UserID string
+	Cause  error
+}
+
+// Error implements the error interface.
+func (e *PIVActivationRedeemError) Error() string {
+	return "piv activation for user " + e.UserID + " did not consume its invite: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *PIVActivationRedeemError) Unwrap() error {
+	return e.Cause
+}
+
+// PIVActivationFactorCleanupError is returned when an activation failed and
+// the login factor it created could not be revoked. A residual factor may
+// exist and still authenticate the certificate: FactorID names it so an
+// operator can revoke it.
+type PIVActivationFactorCleanupError struct {
+	UserID   string
+	FactorID string
+
+	// Cause is the revocation failure.
+	Cause error
+
+	// Activation is the failure that made the revocation necessary.
+	Activation error
+}
+
+// Error implements the error interface.
+func (e *PIVActivationFactorCleanupError) Error() string {
+	return "piv activation for user " + e.UserID + " failed (" + e.Activation.Error() +
+		") and its login factor " + e.FactorID + " could not be revoked, so a residual factor may exist: " + e.Cause.Error()
+}
+
+// Unwrap returns both the revocation failure and the activation failure.
+func (e *PIVActivationFactorCleanupError) Unwrap() []error {
+	return []error{e.Cause, e.Activation}
 }

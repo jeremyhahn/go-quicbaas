@@ -150,13 +150,13 @@ type BatchOperation struct {
 // Validate validates the batch operation.
 func (op *BatchOperation) Validate() error {
 	if op.ID == "" {
-		return &ValidationError{Field: "id", Message: "operation ID is required"}
+		return fieldValidationError("id", "operation ID is required")
 	}
 	if op.TenantID == "" {
-		return &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return fieldValidationError("tenant_id", "tenant ID is required")
 	}
 	if op.Type == "" {
-		return &ValidationError{Field: "type", Message: "operation type is required"}
+		return fieldValidationError("type", "operation type is required")
 	}
 	return nil
 }
@@ -217,13 +217,13 @@ type BatchOptions struct {
 // Validate validates the batch options.
 func (o *BatchOptions) Validate() error {
 	if o.BatchSize < 0 {
-		return &ValidationError{Field: "batch_size", Message: "batch size cannot be negative"}
+		return fieldValidationError("batch_size", "batch size cannot be negative")
 	}
 	if o.Parallelism < 0 {
-		return &ValidationError{Field: "parallelism", Message: "parallelism cannot be negative"}
+		return fieldValidationError("parallelism", "parallelism cannot be negative")
 	}
 	if o.RateLimit < 0 {
-		return &ValidationError{Field: "rate_limit", Message: "rate limit cannot be negative"}
+		return fieldValidationError("rate_limit", "rate limit cannot be negative")
 	}
 	return nil
 }
@@ -273,7 +273,7 @@ type UserImportItem struct {
 // Validate validates the user import item.
 func (u *UserImportItem) Validate() error {
 	if u.Email == "" {
-		return &ValidationError{Field: "email", Message: "email is required"}
+		return fieldValidationError("email", "email is required")
 	}
 	return nil
 }
@@ -299,7 +299,7 @@ type RoleImportItem struct {
 // Validate validates the role import item.
 func (r *RoleImportItem) Validate() error {
 	if r.Name == "" {
-		return &ValidationError{Field: "name", Message: "name is required"}
+		return fieldValidationError("name", "name is required")
 	}
 	return nil
 }
@@ -331,7 +331,7 @@ type PolicyImportItem struct {
 // Validate validates the policy import item.
 func (p *PolicyImportItem) Validate() error {
 	if p.Policy == nil && p.Name == "" {
-		return &ValidationError{Field: "policy/name", Message: "policy or name is required"}
+		return fieldValidationError("policy/name", "policy or name is required")
 	}
 	return nil
 }

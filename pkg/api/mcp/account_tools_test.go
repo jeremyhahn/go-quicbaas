@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -274,6 +275,108 @@ func TestAccountMCP_RefusesMalformedCredentialExpiry(t *testing.T) {
 			if !strings.Contains(err.Error(), "credential.expires_at") {
 				t.Errorf("%s: error does not name the argument: %v", tool, err)
 			}
+		}
+	}
+}
+
+// TestAccountMCP_ForwardsCredentialFiles proves credential.files reaches the
+// service on create and rotate, decoded from base64 exactly as the REST body
+// decodes it: a file-based credential (Codex's .codex/auth.json) must not be
+// dropped into an empty envelope, nor a rotation erase the stored files.
+func TestAccountMCP_ForwardsCredentialFiles(t *testing.T) {
+	var created, rotated map[string][]byte
+	svc := &mocks.MockAccountService{
+		CreateAccountFunc: func(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error) {
+			created = req.Credential.Files
+			return &service.CreateAccountResponse{Account: mcpSampleAccount()}, nil
+		},
+		RotateAccountCredentialFunc: func(ctx context.Context, req *service.RotateAccountCredentialRequest) (*service.RotateAccountCredentialResponse, error) {
+			rotated = req.Credential.Files
+			return &service.RotateAccountCredentialResponse{AccountID: req.AccountID}, nil
+		},
+	}
+	reg := newAccountRegistry(t, svc)
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+
+	first := `{"tokens":{"id":"first"}}`
+	if _, err := reg.ExecuteTool(ctx, "quicbaas_agent_account_create", map[string]interface{}{
+		"tenant_id": "tenant-1", "provider": "codex",
+		"credential": map[string]interface{}{"files": map[string]interface{}{
+			".codex/auth.json": base64.StdEncoding.EncodeToString([]byte(first)),
+		}},
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got := string(created[".codex/auth.json"]); got != first || len(created) != 1 {
+		t.Fatalf("create files = %q, want only .codex/auth.json = %q", created, first)
+	}
+
+	second := `{"tokens":{"id":"second"}}`
+	if _, err := reg.ExecuteTool(ctx, "quicbaas_agent_account_rotate", map[string]interface{}{
+		"tenant_id": "tenant-1", "account_id": "acct-1",
+		"credential": map[string]interface{}{"files": map[string]interface{}{
+			".codex/auth.json": base64.StdEncoding.EncodeToString([]byte(second)),
+		}},
+	}); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if got := string(rotated[".codex/auth.json"]); got != second || len(rotated) != 1 {
+		t.Fatalf("rotate files = %q, want only .codex/auth.json = %q", rotated, second)
+	}
+}
+
+// TestAccountMCP_RefusesMalformedCredentialFiles proves a files argument that
+// is not an object of base64 strings stops at the transport with a typed error
+// instead of reaching the service as a credential with no files.
+func TestAccountMCP_RefusesMalformedCredentialFiles(t *testing.T) {
+	svc := &mocks.MockAccountService{
+		CreateAccountFunc: func(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error) {
+			t.Error("create reached the service with malformed files")
+			return &service.CreateAccountResponse{Account: mcpSampleAccount()}, nil
+		},
+		RotateAccountCredentialFunc: func(ctx context.Context, req *service.RotateAccountCredentialRequest) (*service.RotateAccountCredentialResponse, error) {
+			t.Error("rotate reached the service with malformed files")
+			return &service.RotateAccountCredentialResponse{AccountID: req.AccountID}, nil
+		},
+	}
+	reg := newAccountRegistry(t, svc)
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+
+	malformed := map[string]interface{}{
+		"not base64":    map[string]interface{}{".codex/auth.json": "%%% not base64 %%%"},
+		"not a string":  map[string]interface{}{".codex/auth.json": float64(7)},
+		"not an object": []interface{}{".codex/auth.json"},
+		"a bare string": "eyJ0b2tlbnMiOnt9fQ==",
+	}
+	for name, files := range malformed {
+		credential := map[string]interface{}{"files": files}
+		calls := map[string]map[string]interface{}{
+			"quicbaas_agent_account_create": {"tenant_id": "tenant-1", "provider": "codex", "credential": credential},
+			"quicbaas_agent_account_rotate": {"tenant_id": "tenant-1", "account_id": "acct-1", "credential": credential},
+		}
+		for tool, args := range calls {
+			_, err := reg.ExecuteTool(ctx, tool, args)
+			var filesErr *AccountCredentialFilesError
+			if !errors.As(err, &filesErr) {
+				t.Fatalf("%s with %s files: got %v, want AccountCredentialFilesError", tool, name, err)
+			}
+			if !strings.Contains(err.Error(), "credential.files") {
+				t.Errorf("%s: error does not name the argument: %v", tool, err)
+			}
+		}
+	}
+}
+
+// An absent or empty files argument leaves the credential without files, so
+// the empty-credential check downstream sees the envelope as it really is.
+func TestAccountCredentialFilesFromArgs_AbsentOrEmptyIsNil(t *testing.T) {
+	for _, raw := range []interface{}{nil, map[string]interface{}{}} {
+		files, err := accountCredentialFilesFromArgs(raw)
+		if err != nil {
+			t.Fatalf("accountCredentialFilesFromArgs(%v) error = %v", raw, err)
+		}
+		if files != nil {
+			t.Fatalf("accountCredentialFilesFromArgs(%v) = %v, want nil", raw, files)
 		}
 	}
 }

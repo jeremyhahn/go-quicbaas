@@ -40,6 +40,7 @@ const (
 	iamFederationServicePrefix = "quicbaas.IAM.Federation"
 	iamIdentityServicePrefix   = "quicbaas.IAM.Identity"
 	iamWebAuthnServicePrefix   = "quicbaas.IAM.WebAuthn"
+	iamInviteServicePrefix     = "quicbaas.IAM.Invite"
 
 	// Proto service name.
 	iamProtoServiceName     = "quicbaas.iam.v1.IAMService"
@@ -93,6 +94,8 @@ func (h *iamHandler) handleRequest(ctx context.Context, service, method string, 
 		return h.handleFederationRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamWebAuthnServicePrefix):
 		return h.handleWebAuthnRequest(ctx, method, req)
+	case strings.HasPrefix(service, iamInviteServicePrefix):
+		return h.handleInviteRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamIdentityServicePrefix):
 		return h.handleIdentityRequest(ctx, method, req)
 	default:
@@ -141,6 +144,8 @@ func (h *iamHandler) handleTenantRequest(ctx context.Context, method string, req
 		return h.handleDeleteTenant(ctx, client, req)
 	case "List":
 		return h.handleListTenants(ctx, client, req)
+	case "Provision":
+		return h.handleProvisionTenant(ctx, client, req)
 	default:
 		return nil, errors.NewUnimplemented("iamHandler.handleTenantRequest",
 			"unsupported method: "+method)

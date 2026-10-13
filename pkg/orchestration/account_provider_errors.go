@@ -44,6 +44,10 @@ var (
 	// written holding a refresh token nothing will ever redeem.
 	ErrAccountStaticTokenRefreshable = errors.New("account: static token credential must not carry a refresh token")
 
+	// ErrAccountCredentialEmpty indicates a static_token account was written
+	// with no access token, environment or files: nothing a spawn could use.
+	ErrAccountCredentialEmpty = errors.New("account: credential carries no access token, env or files")
+
 	// ErrAccountProviderDuplicate indicates the same provider was declared more
 	// than once when building an AccountProviderRegistry.
 	ErrAccountProviderDuplicate = errors.New("account: duplicate provider descriptor")
@@ -106,6 +110,20 @@ func (e *AccountStaticTokenRefreshableError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *AccountStaticTokenRefreshableError) Unwrap() error { return ErrAccountStaticTokenRefreshable }
+
+// AccountCredentialEmptyError reports a static_token account written with a
+// credential that holds no access token, environment or files.
+type AccountCredentialEmptyError struct {
+	Provider AccountProvider
+}
+
+// Error implements the error interface.
+func (e *AccountCredentialEmptyError) Error() string {
+	return ErrAccountCredentialEmpty.Error() + ": provider=" + string(e.Provider)
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *AccountCredentialEmptyError) Unwrap() error { return ErrAccountCredentialEmpty }
 
 // AccountProviderDuplicateError reports a provider declared twice when
 // building an AccountProviderRegistry.

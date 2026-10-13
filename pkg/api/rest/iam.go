@@ -196,6 +196,7 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 		r.Delete("/{tenant_id}", h.DeleteTenant)
 		r.Patch("/{tenant_id}/quotas", h.UpdateTenantEngineQuotas)
 		r.Patch("/{tenant_id}/entitlements", h.UpdateTenantEngineEntitlements)
+		r.Post("/{tenant_id}/provision", h.ProvisionTenant)
 
 		// Per-tenant barrier lifecycle (delegates to the embedded qrdb node via
 		// the broker's TenantBarrierServicer facade). Authorized as the

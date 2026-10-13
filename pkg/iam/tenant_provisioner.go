@@ -46,7 +46,7 @@ func (m *DefaultTenantManager) QRDBProvisioner() QRDBTenantProvisioner {
 
 // SetUserStorage wires the routed (qrdb-backed) user store at server init so
 // DeleteTenant can deprovision the tenant's users through it — purging the
-// broker profile, IDMap, and email/legacy-PIV index records that the legacy
+// broker profile and IDMap records that the legacy
 // BackendStorage cascade no longer reaches. When unset, DeleteTenant's
 // user-deprovision step is a no-op.
 func (m *DefaultTenantManager) SetUserStorage(s UserStorage) {

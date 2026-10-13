@@ -108,7 +108,7 @@ func TestActivatePIV_UnusableInviteStillCollapses(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "invite link is not valid")
 }
 
-// TestRespondInviteLookupError_ForeignCodesKeepTheirOwnStatus proves the lookup
+// TestRespondInviteError_ForeignCodesKeepTheirOwnStatus proves the lookup
 // bridge honours its own contract: only the invitation's own state collapses
 // into the opaque answer, and a store failure keeps its status.
 //
@@ -116,7 +116,7 @@ func TestActivatePIV_UnusableInviteStillCollapses(t *testing.T) {
 // codes, so a suspended tenant (Forbidden) and a store answering not-found were
 // both reported to the invitee as a bad link -- an outage rendered as a
 // mistyped URL, which is exactly what the helper's comment forbids.
-func TestRespondInviteLookupError_ForeignCodesKeepTheirOwnStatus(t *testing.T) {
+func TestRespondInviteError_ForeignCodesKeepTheirOwnStatus(t *testing.T) {
 	f, cleanup := setupActivation(t, writeSucceeds)
 	defer cleanup()
 
@@ -144,18 +144,17 @@ func TestRespondInviteLookupError_ForeignCodesKeepTheirOwnStatus(t *testing.T) {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest(http.MethodGet, "/api/v1/iam/acme/invites/tok", nil)
 
-			require.True(t, f.handler.respondInviteLookupError(w, r, tc.err),
-				"a non-nil error was reported as handled=false")
+			f.handler.respondInviteError(w, r, tc.err)
 			assert.NotContains(t, w.Body.String(), opaqueBody,
 				"a store failure was reported to the invitee as a bad link")
 		})
 	}
 }
 
-// TestRespondInviteLookupError_InviteStateStillCollapses is the positive half:
+// TestRespondInviteError_InviteStateStillCollapses is the positive half:
 // each of the three invite conditions still gets the single opaque answer, so
 // the enumeration oracle stays closed.
-func TestRespondInviteLookupError_InviteStateStillCollapses(t *testing.T) {
+func TestRespondInviteError_InviteStateStillCollapses(t *testing.T) {
 	f, cleanup := setupActivation(t, writeSucceeds)
 	defer cleanup()
 
@@ -163,7 +162,7 @@ func TestRespondInviteLookupError_InviteStateStillCollapses(t *testing.T) {
 	for _, err := range []error{iam.ErrInviteNotFound, iam.ErrInviteExpired, iam.ErrInviteUsed} {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, "/api/v1/iam/acme/invites/tok", nil)
-		require.True(t, f.handler.respondInviteLookupError(w, r, err))
+		f.handler.respondInviteError(w, r, err)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 		bodies = append(bodies, w.Body.String())
 	}

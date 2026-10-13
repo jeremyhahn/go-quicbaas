@@ -304,6 +304,9 @@ func (r *AccountProviderRegistry) ValidateCredential(provider AccountProvider, m
 		if cred.RefreshToken != "" {
 			return &AccountStaticTokenRefreshableError{Provider: provider}
 		}
+		if cred.AccessToken == "" && len(cred.Env) == 0 && len(cred.Files) == 0 {
+			return &AccountCredentialEmptyError{Provider: provider}
+		}
 		return nil
 	}
 

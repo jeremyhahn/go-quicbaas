@@ -725,6 +725,8 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_iam_tenant_list":   {"tenants", "list"},
 	"quicbaas_iam_tenant_update": {"tenants", "update"},
 	"quicbaas_iam_tenant_delete": {"tenants", "delete"},
+	// Provisioning creates the tenant and its first admin in one call.
+	"quicbaas_iam_tenant_provision": {"tenants", "create"},
 
 	"quicbaas_iam_app_register":      {"tenants", "create"},
 	"quicbaas_iam_app_get":           {"tenants", "read"},

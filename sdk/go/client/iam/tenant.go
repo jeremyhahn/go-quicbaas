@@ -169,6 +169,90 @@ type TenantClient interface {
 
 	// List lists tenants with optional filtering.
 	List(ctx context.Context, req *ListTenantsRequest) (*ListTenantsResponse, error)
+
+	// Provision creates a tenant together with its built-in roles and its
+	// first admin. It is the onboarding path when public registration is off,
+	// and needs the tenants:create grant.
+	Provision(ctx context.Context, req *ProvisionTenantRequest) (*ProvisionTenantResponse, error)
+}
+
+// TenantAdminEnrollment selects how a provisioned tenant's first admin gets
+// its credential.
+type TenantAdminEnrollment string
+
+const (
+	// TenantAdminEnrollCert signs the admin's own CSR and binds the issued
+	// certificate. The private key never leaves the admin. This is the
+	// default.
+	TenantAdminEnrollCert TenantAdminEnrollment = "cert"
+
+	// TenantAdminEnrollInvite creates the admin pending and returns a
+	// one-time invite token the admin redeems with a PIV certificate.
+	TenantAdminEnrollInvite TenantAdminEnrollment = "invite"
+)
+
+// ProvisionTenantRequest is a request to provision a tenant and its admin.
+type ProvisionTenantRequest struct {
+	// TenantID is the new tenant's id. Required.
+	TenantID string `json:"tenant_id"`
+
+	// Name is the human-readable tenant name. Empty defaults to TenantID.
+	Name string `json:"name,omitempty"`
+
+	// IsolationType selects the engine isolation strategy. Empty defaults to
+	// a per-tenant barrier, unlike Create whose default is prefix.
+	IsolationType TenantIsolationType `json:"isolation_type,omitempty"`
+
+	// AdminUsername is the tenant admin's login name. Empty defaults to
+	// "admin".
+	AdminUsername string `json:"admin_username,omitempty"`
+
+	// AdminEnrollment selects the admin credential path. Empty defaults to
+	// TenantAdminEnrollCert.
+	AdminEnrollment TenantAdminEnrollment `json:"admin_enrollment,omitempty"`
+
+	// AdminCSRPEM is the admin's PEM-encoded CSR. Required in cert mode and
+	// refused in invite mode.
+	AdminCSRPEM string `json:"admin_csr_pem,omitempty"`
+
+	// InviteExpiryHours bounds the invite's lifetime in invite mode. Zero
+	// selects the server's default.
+	InviteExpiryHours int `json:"invite_expiry_hours,omitempty"`
+}
+
+// ProvisionTenantResponse describes a provisioned tenant and its admin.
+type ProvisionTenantResponse struct {
+	// TenantID is the provisioned tenant.
+	TenantID string `json:"tenant_id"`
+
+	// AdminUserID is the tenant admin's user id (decimal).
+	AdminUserID string `json:"admin_user_id"`
+
+	// AdminUsername is the tenant admin's login name.
+	AdminUsername string `json:"admin_username"`
+
+	// AdminRoleID is the tenant-scoped Admin role the admin is bound to.
+	AdminRoleID string `json:"admin_role_id"`
+
+	// AdminPending reports that the admin awaits invite redemption.
+	AdminPending bool `json:"admin_pending"`
+
+	// AdminCertPEM is the issued admin certificate (cert mode only).
+	AdminCertPEM string `json:"admin_cert_pem,omitempty"`
+
+	// AdminCertThumbprint is the bound SPKI SHA-256 thumbprint (cert mode
+	// only).
+	AdminCertThumbprint string `json:"admin_cert_thumbprint,omitempty"`
+
+	// InviteToken is the one-time activation token (invite mode only).
+	InviteToken string `json:"invite_token,omitempty"`
+
+	// InviteExpiresAt is when InviteToken stops being redeemable (invite
+	// mode only).
+	InviteExpiresAt *time.Time `json:"invite_expires_at,omitempty"`
+
+	// Timestamp is when provisioning completed.
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // CreateTenantRequest is a request to create a tenant.
@@ -386,6 +470,28 @@ func (c *tenantClient) List(ctx context.Context, req *ListTenantsRequest) (*List
 }
 
 // Validation functions.
+
+// Provision creates a tenant together with its built-in roles and first admin.
+func (c *tenantClient) Provision(ctx context.Context, req *ProvisionTenantRequest) (*ProvisionTenantResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("iam.tenant.Provision", "request is required")
+	}
+	if req.TenantID == "" {
+		return nil, errors.NewInvalidInput("iam.tenant.Provision", "tenant ID is required")
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("iam.tenant.Provision", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, tenantServiceName, "Provision", req)
+	if err != nil {
+		return nil, err
+	}
+	if typed, ok := resp.(*ProvisionTenantResponse); ok {
+		return typed, nil
+	}
+	return convertMapResponse[ProvisionTenantResponse](resp, "iam.tenant.Provision")
+}
 
 func validateCreateTenantRequest(req *CreateTenantRequest) error {
 	if req == nil {

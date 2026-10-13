@@ -166,6 +166,11 @@ func (v *Validator) validateServer(cfg *ServerConfig) {
 		if cfg.REST.Port < 1 || cfg.REST.Port > 65535 {
 			v.addError("server.rest.port", fmt.Sprintf("REST port must be between 1 and 65535, got %d", cfg.REST.Port))
 		}
+		// -1 is the one documented opt-out; any other negative value is a
+		// typo whose meaning the operator did not state.
+		if cfg.REST.RateLimit < -1 {
+			v.addError("server.rest.rate_limit", fmt.Sprintf("REST rate limit must be -1 (disabled), 0 (default) or positive, got %d", cfg.REST.RateLimit))
+		}
 	}
 
 	// Validate gRPC configuration

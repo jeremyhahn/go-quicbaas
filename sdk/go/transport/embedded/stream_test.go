@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,26 +100,11 @@ func TestStream_Recv_Success(t *testing.T) {
 		ctx := context.Background()
 		s := newStream(ctx, 1)
 
-		s.recvChan() <- "response-data"
+		require.NoError(t, s.deliver("response-data"))
 
 		msg, err := s.Recv()
 		require.NoError(t, err)
 		assert.Equal(t, "response-data", msg)
-	})
-}
-
-func TestStream_Recv_ChannelClosed_NotExplicit(t *testing.T) {
-	t.Run("returns io.EOF when recvCh is closed directly", func(t *testing.T) {
-		ctx := context.Background()
-		s := newStream(ctx, 1)
-
-		// Close the recv channel directly (not via Close()) to simulate
-		// a natural end of stream without marking closed flag.
-		close(s.recvCh)
-
-		msg, err := s.Recv()
-		assert.Nil(t, msg)
-		assert.ErrorIs(t, err, io.EOF)
 	})
 }
 
@@ -165,9 +149,9 @@ func TestStream_Recv_DrainBuffer(t *testing.T) {
 		s := newStream(ctx, 3)
 
 		// Buffer messages before closing
-		s.recvChan() <- "msg1"
-		s.recvChan() <- "msg2"
-		s.recvChan() <- "msg3"
+		require.NoError(t, s.deliver("msg1"))
+		require.NoError(t, s.deliver("msg2"))
+		require.NoError(t, s.deliver("msg3"))
 
 		err := s.Close()
 		require.NoError(t, err)
@@ -240,19 +224,34 @@ func TestStream_Close(t *testing.T) {
 	})
 }
 
-func TestStream_RecvChan(t *testing.T) {
-	t.Run("returns write-only channel for recvCh", func(t *testing.T) {
-		ctx := context.Background()
-		s := newStream(ctx, 1)
+func TestStream_Deliver(t *testing.T) {
+	t.Run("delivered message is received", func(t *testing.T) {
+		s := newStream(context.Background(), 1)
 
-		ch := s.recvChan()
-		require.NotNil(t, ch)
+		require.NoError(t, s.deliver("via-deliver"))
+		msg, err := s.Recv()
+		require.NoError(t, err)
+		assert.Equal(t, "via-deliver", msg)
+	})
 
-		// Verify it is the same underlying channel by writing to recvChan
-		// and reading from recvCh.
-		ch <- "via-recv-chan"
-		msg := <-s.recvCh
-		assert.Equal(t, "via-recv-chan", msg)
+	t.Run("closed stream refuses the message", func(t *testing.T) {
+		s := newStream(context.Background(), 1)
+		require.NoError(t, s.Close())
+
+		err := s.deliver("late")
+		assert.ErrorIs(t, err, context.Canceled)
+		_, err = s.Recv()
+		assert.ErrorIs(t, err, ErrRecvOnClosedStream)
+	})
+
+	t.Run("Close unblocks a deliver waiting on a full buffer", func(t *testing.T) {
+		s := newStream(context.Background(), 1)
+		require.NoError(t, s.deliver("fills-buffer"))
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- s.deliver("blocked") }()
+		require.NoError(t, s.Close())
+		assert.ErrorIs(t, <-errCh, context.Canceled)
 	})
 }
 

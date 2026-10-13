@@ -516,6 +516,7 @@ POST /api/v1/tenants/{tenant_id}/policies/simulate permission tenants:create
 POST /api/v1/tenants/{tenant_id}/policies/test permission tenants:create
 POST /api/v1/tenants/{tenant_id}/policies/validate permission tenants:create
 POST /api/v1/tenants/{tenant_id}/providers/ permission tenants:create
+POST /api/v1/tenants/{tenant_id}/provision permission tenants:create
 POST /api/v1/tenants/{tenant_id}/roles/ permission tenants:create
 POST /api/v1/tenants/{tenant_id}/roles/reconcile permission tenants:create
 POST /api/v1/tenants/{tenant_id}/users/ permission tenants:create

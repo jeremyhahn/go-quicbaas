@@ -140,8 +140,9 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.IAM.Audit", "Record"}:      gapNoTool,
 	{"quicbaas.IAM.Audit", "RecordAsync"}: gapNoTool,
 
-	// The locked architecture has no invite tokens (admin enrollment is
-	// cert-based), so the invite surface is deliberately absent from MCP.
+	// End-user invite activation is served over REST, gRPC, Unix and the
+	// embedded transport. These verbs are pre-auth, so MCP invite tools wait
+	// on the owner's publicTools decision.
 	{"quicbaas.IAM.Invite", "ActivateFIDO2Begin"}:  gapNoTool,
 	{"quicbaas.IAM.Invite", "ActivateFIDO2Finish"}: gapNoTool,
 	{"quicbaas.IAM.Invite", "ActivatePIV"}:         gapNoTool,

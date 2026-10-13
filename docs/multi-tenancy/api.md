@@ -30,3 +30,32 @@ Every row below is derived from source, not from prose. The columns mean:
 - **Permission** — `resource:action` from
   `pkg/api/rest/routes_permissions_generated.go`.
 
+## Tenant provisioning
+
+`TenantClient.Provision` creates a tenant and its first admin in one call. It
+is the onboarding path when public registration is off. Server-side tool:
+`quicbaas_iam_tenant_provision`.
+
+| SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
+|---|---|---|---|---|---|---|
+| `quicbaas.IAM.Tenant` / `Provision` | `POST /api/v1/tenants/{tenant_id}/provision` | yes | `IAMService/ProvisionTenant` | `quicbaas_iam_tenant_provision` | `quicbaas.IAM.Tenant/Provision` | `tenants:create` |
+
+Request and response fields:
+[../iam/api.md](../iam/api.md#tenants) (**Provision Tenant**).
+
+## Invite activation
+
+A pending user, including an `invite`-mode tenant admin, activates with its
+one-time token. These verbs are pre-auth: the token is the credential, so they
+carry no permission and the gRPC methods are in the public method set. There
+are no MCP invite tools yet; they wait on a decision about public MCP tools.
+
+| SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
+|---|---|---|---|---|---|---|
+| `quicbaas.IAM.Invite` / `GetInvite` | `GET /api/v1/iam/{tenant_id}/invites/{token}` | yes | `IAMService/GetInvite` | — | `quicbaas.IAM.Invite/GetInvite` | public |
+| `quicbaas.IAM.Invite` / `ActivateFIDO2Begin` | `POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/begin` | yes | `IAMService/ActivateFIDO2Begin` | — | `quicbaas.IAM.Invite/ActivateFIDO2Begin` | public |
+| `quicbaas.IAM.Invite` / `ActivateFIDO2Finish` | `POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/finish` | yes | `IAMService/ActivateFIDO2Finish` | — | `quicbaas.IAM.Invite/ActivateFIDO2Finish` | public |
+| `quicbaas.IAM.Invite` / `ActivatePIV` | `POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv` | yes | `IAMService/ActivatePIV` | — | `quicbaas.IAM.Invite/ActivatePIV` | public |
+
+Request, response and error fields:
+[../iam/api.md](../iam/api.md#invite-activation).

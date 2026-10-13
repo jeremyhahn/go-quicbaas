@@ -976,39 +976,6 @@ func (u *User) PIVThumbprints() []string {
 	return out
 }
 
-// LegacyPIVThumbprints returns the legacy (hex SHA-256 of the certificate DER)
-// PIV-attested binding thumbprints — the subset of PIVThumbprints that are NOT
-// canonical SPKI thumbprints. The qrdb cert-thumbprint index resolves SPKI
-// thumbprints natively; the legacy hex digest is not an SPKI thumbprint, so a
-// broker-side index resolves it for the migration window and no-qrdb-index
-// deployments.
-func (u *User) LegacyPIVThumbprints() []string {
-	out := make([]string, 0, len(u.CertBindings))
-	for i := range u.CertBindings {
-		b := u.CertBindings[i]
-		if b.Kind == qrdbsdk.CertBindingPIVAttested && b.Thumbprint != "" && isLegacyHexThumbprint(b.Thumbprint) {
-			out = append(out, b.Thumbprint)
-		}
-	}
-	return out
-}
-
-// isLegacyHexThumbprint reports whether s is a legacy PIV thumbprint: the hex
-// encoding of a SHA-256 digest (64 lowercase hex characters). A canonical SPKI
-// thumbprint is base64url of 32 bytes (43 characters) and never matches.
-func isLegacyHexThumbprint(s string) bool {
-	if len(s) != 64 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 // PIVThumbprint returns the lookup thumbprint of the user's first PIV-attested
 // cert binding, or the empty string when the user has none. It is a convenience
 // for the bootstrap/SO-bind paths that establish exactly one PIV binding.
@@ -1042,8 +1009,8 @@ func (u *User) HasPIVThumbprint(thumbprint string) bool {
 // per supplied non-empty thumbprint, de-duplicating. Blank entries are skipped;
 // when every entry is blank all PIV-attested bindings are cleared. Non-PIV
 // bindings are preserved untouched. PIV activation supplies both the canonical
-// SPKI thumbprint (qrdb-native lookup) and the legacy hex digest (broker-side
-// fallback index) so both resolve the user.
+// SPKI thumbprint and the legacy hex digest; qrdb's cert-thumbprint index
+// resolves both.
 func (u *User) SetPIVThumbprints(thumbprints ...string) {
 	kept := u.CertBindings[:0:0]
 	for i := range u.CertBindings {

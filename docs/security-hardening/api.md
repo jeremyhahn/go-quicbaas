@@ -170,29 +170,73 @@ OPTIONS requests are handled automatically with 204 No Content response.
 
 ## Rate Limiting Middleware
 
-Implements token bucket rate limiting per client IP.
+A token bucket per source IP. It is **on by default** at 1000 requests per
+second per source, with a burst of the same size (go-quicbaas#158).
 
 ### Configuration
+
+```yaml
+server:
+  rest:
+    rate_limit: 1000   # requests per second per source IP
+```
+
+| `server.rest.rate_limit` | Effect |
+|---|---|
+| omitted or `0` | Default limit: `rest.DefaultRateLimit` (1000) |
+| positive | That many requests per second, with a burst of the same size |
+| `-1` | Opt-out: the global limiter is off |
+| below `-1` | Rejected at config validation |
+
+In Go, `rest.Config.RateLimit` uses the same values. Zero resolves to
+`rest.DefaultRateLimit`, and `rest.RateLimitDisabled` (`-1`) turns the
+limiter off. `Config.EffectiveRateLimit` returns the rate that applies.
+
+### How the default was chosen
+
+The default comes from measuring the Go SDK against the REST router.
+`NewClient` sends no request, and each SDK call sends exactly one, so an
+interactive client sends a few requests per user action. On loopback, one
+sequential client reached about 5,600 requests per second (about 0.18 ms per
+request). Over a network a sequential client is limited by the round trip, so
+at a round trip of 1 ms or more it cannot exceed 1000 requests per second.
+The default therefore never throttles a single sequential client over a real
+network. It does throttle one source that sends many requests at once: eight
+goroutines sharing one client reached about 31,000 requests per second.
+
+### Behavior
+
+- Keyed on the resolved client address (see [Client IP Detection](#client-ip-detection)).
+  IPv6 sources are grouped by /64.
+- The bucket map is bounded at 100,000 sources. New sources beyond the cap
+  share one overflow bucket. Idle buckets are cleaned up.
+- Returns 429 Too Many Requests when the limit is exceeded. The Go SDK reports
+  this as `CodeRateLimited` and does not retry.
+- `/oauth2/token`, `/oauth2/revoke` and `/oauth2/introspect` keep their own
+  stricter per-source limiter, keyed on the transport peer, whatever the
+  global setting. It is defense in depth for the client-authentication KDF.
+- Behind a load balancer, list it in `server.trusted_proxies`. If it is not
+  listed, every request appears to come from the balancer, and all clients
+  share one bucket.
+
+### Middleware use
 
 ```go
 // 100 requests per second per IP
 handler := rest.RateLimitMiddleware(100)(yourHandler)
 
-// Disable rate limiting
+// A rate of 0 or less passes every request through
 handler := rest.RateLimitMiddleware(0)(yourHandler)
 ```
-
-### Behavior
-
-- Token bucket algorithm with per-IP tracking
-- Automatic bucket cleanup for inactive clients
-- Returns 429 Too Many Requests when limit exceeded
 
 ### Response on Rate Limit
 
 ```json
 {
-  "error": "rate limit exceeded: 100 requests per 1s"
+  "error": "rate limit exceeded: 100 requests per 1s",
+  "timestamp": "2026-10-12T12:00:00Z",
+  "request_id": "…",
+  "retryable": false
 }
 ```
 
@@ -330,11 +374,13 @@ handler = rest.SecurityHeadersMiddleware()(handler)
 
 ## Client IP Detection
 
-The middleware correctly detects client IP behind proxies:
+`ClientIPMiddleware` resolves the client address once per request. Logging,
+tracing, audit records and the rate limiter all use that one value.
 
-1. `X-Forwarded-For` header (first IP)
-2. `X-Real-IP` header
-3. `RemoteAddr` (fallback)
+- By default it is the transport peer (`RemoteAddr`). `X-Forwarded-For` and
+  `X-Real-IP` are ignored, so a caller cannot choose its own address.
+- When the peer is in `server.trusted_proxies` (CIDRs or bare addresses),
+  the client those headers name is used instead (go-quicbaas#156).
 
 ## Best Practices
 
@@ -346,7 +392,7 @@ server:
     enabled: true
     port: 8080
     timeout: 30s
-    rate_limit: 100          # requests per second per IP
+    rate_limit: 1000         # requests per second per IP; -1 disables
     cors:
       enabled: true
       origins:

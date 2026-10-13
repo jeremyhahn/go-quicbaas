@@ -446,8 +446,8 @@ type UpdateUserOptions struct {
 
 	// PIVCertThumbprints, when non-nil, replaces the user's PIV-attested cert
 	// bindings with one binding per supplied thumbprint. Activation paths bind
-	// both the canonical SPKI thumbprint (qrdb-native lookup) and the legacy
-	// hex digest (broker-side fallback index) so both resolve the user; see
+	// both the canonical SPKI thumbprint and the legacy hex digest, and qrdb's
+	// cert-thumbprint index resolves both to the user; see
 	// User.SetPIVThumbprints. Takes precedence over PIVCertThumbprint.
 	PIVCertThumbprints *[]string
 

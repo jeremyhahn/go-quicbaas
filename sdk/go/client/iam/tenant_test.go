@@ -389,6 +389,95 @@ func TestTenantClient_Delete(t *testing.T) {
 	})
 }
 
+func TestTenantClient_Provision(t *testing.T) {
+	inviteReq := &ProvisionTenantRequest{TenantID: "acme", AdminEnrollment: TenantAdminEnrollInvite}
+
+	t.Run("map response from REST, gRPC or MCP", func(t *testing.T) {
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				if service != tenantServiceName || method != "Provision" {
+					t.Errorf("unexpected route %s/%s", service, method)
+				}
+				if req != inviteReq {
+					t.Error("expected the caller's request to be sent unchanged")
+				}
+				return map[string]interface{}{
+					"tenant_id":         "acme",
+					"admin_user_id":     "7",
+					"admin_pending":     true,
+					"invite_token":      "tok",
+					"invite_expires_at": "2026-10-13T00:00:00Z",
+				}, nil
+			},
+		}
+
+		resp, err := NewTenantClient(mt).Provision(context.Background(), inviteReq)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.AdminUserID != "7" || !resp.AdminPending || resp.InviteToken != "tok" {
+			t.Errorf("unexpected response: %+v", resp)
+		}
+		if resp.InviteExpiresAt == nil || resp.InviteExpiresAt.Year() != 2026 {
+			t.Errorf("expected the invite expiry to be decoded, got %v", resp.InviteExpiresAt)
+		}
+	})
+
+	t.Run("typed response from the embedded transport", func(t *testing.T) {
+		want := &ProvisionTenantResponse{TenantID: "acme", AdminCertPEM: "pem"}
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				return want, nil
+			},
+		}
+
+		resp, err := NewTenantClient(mt).Provision(context.Background(), &ProvisionTenantRequest{TenantID: "acme"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp != want {
+			t.Errorf("expected the typed response to be returned as is, got %+v", resp)
+		}
+	})
+
+	t.Run("invalid input never reaches the transport", func(t *testing.T) {
+		client := NewTenantClient(&mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				t.Error("transport must not be called")
+				return nil, nil
+			},
+		})
+		cases := map[string]struct {
+			ctx context.Context
+			req *ProvisionTenantRequest
+		}{
+			"nil request":     {ctx: context.Background(), req: nil},
+			"empty tenant ID": {ctx: context.Background(), req: &ProvisionTenantRequest{}},
+			"nil context":     {ctx: nil, req: inviteReq},
+		}
+		for name, tc := range cases {
+			t.Run(name, func(t *testing.T) {
+				_, err := client.Provision(tc.ctx, tc.req)
+				if !errors.IsInvalidInput(err) {
+					t.Errorf("expected invalid input error, got %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("transport error", func(t *testing.T) {
+		mt := &mockTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				return nil, errors.NewNotFound("test", "no such route")
+			},
+		}
+		_, err := NewTenantClient(mt).Provision(context.Background(), inviteReq)
+		if !errors.IsNotFound(err) {
+			t.Errorf("expected the transport error, got %v", err)
+		}
+	})
+}
+
 func TestTenantClient_List(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		mt := &mockTransport{

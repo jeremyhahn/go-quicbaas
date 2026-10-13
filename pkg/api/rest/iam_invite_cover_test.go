@@ -112,16 +112,6 @@ func TestActivateFIDO2Begin_Success(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "challenge")
 }
 
-// lookupInviteEmail returns the user's email through the identity store.
-func TestLookupInviteEmail(t *testing.T) {
-	handler, _, _, cleanup := setupInviteActivationHandler(t)
-	defer cleanup()
-
-	email, err := handler.lookupInviteEmail(context.Background(), inviteTenant, inviteUserID)
-	require.NoError(t, err)
-	assert.Equal(t, "invitee@example.com", email)
-}
-
 func inviteFinishReq(t *testing.T, token string) *http.Request {
 	t.Helper()
 	body := []byte(`{"credential":{"id":"abc","response":{}}}`)

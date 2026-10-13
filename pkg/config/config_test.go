@@ -188,6 +188,28 @@ func TestLoadFromEnv(t *testing.T) {
 	// Environment variables are read automatically
 }
 
+func TestLoadFromFile_RESTRateLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  int
+	}{
+		{"explicit limit", "250", 250},
+		{"documented opt-out", "-1", -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configFile := filepath.Join(t.TempDir(), "rate-limit.yaml")
+			yamlContent := "server:\n  rest:\n    port: 7777\n    rate_limit: " + tt.value + "\n"
+			require.NoError(t, os.WriteFile(configFile, []byte(yamlContent), 0o644))
+
+			cfg, err := LoadFromFile(configFile)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, cfg.Server.REST.RateLimit)
+		})
+	}
+}
+
 func TestLoadFromFile(t *testing.T) {
 	t.Run("non-existent file returns defaults", func(t *testing.T) {
 		cfg, err := LoadFromFile("/non/existent/config.yaml")
@@ -219,6 +241,9 @@ logging:
 		require.NoError(t, err)
 		assert.Equal(t, "testhost", cfg.Server.Host)
 		assert.Equal(t, 7777, cfg.Server.REST.Port)
+		// An omitted rate_limit decodes to 0, which the REST server reads
+		// as its default limit, never as "disabled".
+		assert.Equal(t, 0, cfg.Server.REST.RateLimit)
 		assert.Equal(t, "debug", cfg.Logging.Level)
 	})
 }

@@ -413,6 +413,113 @@ PUT /api/v1/tenants/{tenant_id}
 DELETE /api/v1/tenants/{tenant_id}
 ```
 
+**Provision Tenant**
+```
+POST /api/v1/tenants/{tenant_id}/provision
+```
+
+Creates the tenant and its first admin in one call. This is the sysadmin
+onboarding path for deployments that keep public registration
+(`/api/v1/auth/register/*`) off. Requires `tenants:create`, the same permission
+as tenant create.
+
+```json
+{
+  "name": "Acme Corporation",
+  "isolation_type": "barrier",
+  "admin_username": "admin",
+  "admin_enrollment": "invite",
+  "invite_expiry_hours": 72
+}
+```
+
+- `admin_enrollment` — `cert` (default) or `invite`.
+  - `cert` signs `admin_csr_pem` (required) and binds the certificate's SPKI
+    thumbprint to the admin. The response carries `admin_cert_pem` and
+    `admin_cert_thumbprint`. No private key ever crosses the wire.
+  - `invite` creates the admin as pending and returns a one-time
+    `invite_token` and `invite_expires_at`. Supplying a CSR in this mode is a
+    `400`, and so is invite mode for the system tenant. The admin activates
+    with the token through [invite activation](#invite-activation).
+- `isolation_type` — empty defaults to `barrier`, **not** `prefix` as on tenant
+  create. Provisioning does not initialize the tenant barrier.
+- `invite_expiry_hours` — zero selects the invite store default. A negative
+  value is a `400`.
+- `admin_username` — defaults to `admin`.
+
+A `tenant_id` in the body that differs from the path is a `400`, and so is an
+unknown field. The response is `201`:
+
+```json
+{
+  "tenant_id": "acme-corp",
+  "admin_user_id": "7",
+  "admin_username": "admin",
+  "admin_role_id": "...",
+  "admin_pending": true,
+  "invite_token": "...",
+  "invite_expires_at": "2026-10-15T12:00:00Z",
+  "timestamp": "2026-10-12T12:00:00Z"
+}
+```
+
+The same request reaches the server over gRPC as
+`IAMService/ProvisionTenant` (and therefore over Unix), over MCP as the
+`quicbaas_iam_tenant_provision` tool, and from the SDK as
+`iam.TenantClient.Provision` on every transport, embedded included.
+
+### Invite Activation
+
+A user created `pending` (including an `invite`-mode tenant admin) activates
+with its one-time invite token. These verbs are **pre-auth**: the token is the
+credential, so no bearer token is required, and REST, gRPC, Unix and the
+embedded transport all redeem through the same service
+(`service.InviteActivationService`).
+
+| SDK method (`quicbaas.IAM.Invite`) | REST route | gRPC (`IAMService/…`) |
+|---|---|---|
+| `GetInvite(ctx, tenantID, token)` | `GET /api/v1/iam/{tenant_id}/invites/{token}` | `GetInvite` |
+| `ActivateFIDO2Begin(ctx, tenantID, token)` | `POST …/invites/{token}/activate/fido2/begin` | `ActivateFIDO2Begin` |
+| `ActivateFIDO2Finish(ctx, tenantID, token, credential)` | `POST …/invites/{token}/activate/fido2/finish` | `ActivateFIDO2Finish` |
+| `ActivatePIV(ctx, tenantID, token, certPEM)` | `POST …/invites/{token}/activate/piv` | `ActivatePIV` |
+
+The four gRPC methods are in the public method set and carry no permission
+option. QUIC carries the REST rows. There are no MCP invite tools yet; they
+wait on a decision about public (pre-auth) MCP tools.
+
+`GetInvite` returns the invite's public metadata:
+
+```json
+{
+  "user_id": "7",
+  "email": "admin@acme.example",
+  "name": "Admin",
+  "auth_methods": ["webauthn", "piv"],
+  "expires_at": "2026-10-15T12:00:00Z"
+}
+```
+
+`ActivateFIDO2Begin` returns the WebAuthn `CredentialCreationOptions` for
+`navigator.credentials.create()`. `ActivateFIDO2Finish` takes the browser's
+`PublicKeyCredential` as `{"credential": {...}}`; `ActivatePIV` takes
+`{"cert_pem": "..."}`, whose chain the server's PIV trust pool must verify.
+Both return:
+
+```json
+{"user_id": "7", "message": "activation successful", "warning": ""}
+```
+
+gRPC carries the FIDO2 options and credential as JSON strings
+(`options_json`, `credential_json`).
+
+| Condition | REST | gRPC |
+|---|---|---|
+| Token absent, expired or already used (one opaque answer) | `404` | `NotFound` |
+| User is not pending | `409` | `FailedPrecondition` |
+| PIV chain verification failed | `422` | `InvalidArgument` |
+| Missing `tenant_id`, token, credential or `cert_pem` | `400` | `InvalidArgument` |
+| PIV activation not configured | `501` | `Unimplemented` |
+
 ### Users
 
 **List Users**

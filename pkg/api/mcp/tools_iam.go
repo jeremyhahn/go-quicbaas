@@ -176,6 +176,45 @@ func (r *ToolRegistry) registerTenantTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_tenant_provision",
+		Description: "Provision a tenant and its first admin (sysadmin onboarding when public registration is off)",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant identifier",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant display name",
+				},
+				"isolation_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant isolation type (defaults to barrier)",
+				},
+				"admin_username": map[string]interface{}{
+					"type":        "string",
+					"description": "Username of the first tenant admin",
+				},
+				"admin_enrollment": map[string]interface{}{
+					"type":        "string",
+					"description": "How the first admin enrolls: cert or invite",
+				},
+				"admin_csr_pem": map[string]interface{}{
+					"type":        "string",
+					"description": "PEM-encoded admin CSR, required for cert enrollment",
+				},
+				"invite_expiry_hours": map[string]interface{}{
+					"type":        "integer",
+					"description": "Lifetime of the admin invite token in hours",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name:        "quicbaas_iam_tenant_list",
 		Description: "List all tenants with pagination and filtering",
 		InputSchema: map[string]interface{}{
@@ -1280,6 +1319,29 @@ func (r *ToolRegistry) executeIAMTenantDelete(ctx context.Context, args map[stri
 	}
 
 	resp, err := iamSvc.DeleteTenant(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(resp)
+}
+
+func (r *ToolRegistry) executeIAMTenantProvision(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	iamSvc, err := r.getIAMService()
+	if err != nil {
+		return nil, err
+	}
+
+	req := &service.IAMProvisionTenantRequest{
+		TenantID:          getString(args, "tenant_id"),
+		Name:              getString(args, "name"),
+		IsolationType:     qrdbsdk.TenantIsolationType(getString(args, "isolation_type")),
+		AdminUsername:     getString(args, "admin_username"),
+		AdminEnrollment:   service.IAMTenantAdminEnrollment(getString(args, "admin_enrollment")),
+		AdminCSRPEM:       getString(args, "admin_csr_pem"),
+		InviteExpiryHours: getInt(args, "invite_expiry_hours"),
+	}
+
+	resp, err := iamSvc.ProvisionTenant(ctx, req)
 	if err != nil {
 		return nil, err
 	}

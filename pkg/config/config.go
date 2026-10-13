@@ -1999,6 +1999,12 @@ type ServerRESTConfig struct {
 	// independently of the other listeners. Empty = use Server.Host
 	// (current behavior).
 	BindAddress string `mapstructure:"bind_address"`
+
+	// RateLimit is the global per-source-IP request limit, in requests per
+	// second (the burst is the same size). Zero, which is also what an
+	// omitted key decodes to, means the REST default of 1000. -1 disables
+	// the global limiter; the endpoint-scoped OAuth2 limiter stays on.
+	RateLimit int `mapstructure:"rate_limit"`
 }
 
 // ServerMCPConfig contains MCP (Model Context Protocol) server configuration.

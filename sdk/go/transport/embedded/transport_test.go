@@ -1657,7 +1657,7 @@ func TestStream(t *testing.T) {
 
 		// Send on internal channel to simulate service
 		go func() {
-			s.recvChan() <- "test message"
+			assert.NoError(t, s.deliver("test message"))
 		}()
 
 		msg, err := s.Recv()
@@ -1681,14 +1681,6 @@ func TestStream(t *testing.T) {
 
 		_, err = s.Recv()
 		assert.Equal(t, ErrRecvOnClosedStream, err)
-	})
-
-	t.Run("recv EOF when channel closed", func(t *testing.T) {
-		s := newStream(ctx, 10)
-		close(s.recvCh)
-
-		_, err := s.Recv()
-		assert.Equal(t, io.EOF, err)
 	})
 
 	t.Run("CloseSend", func(t *testing.T) {

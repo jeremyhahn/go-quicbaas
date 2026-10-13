@@ -175,6 +175,7 @@ type quicBaaS struct {
 	pivService                PIVService
 	fido2Service              FIDO2Service
 	webauthnCredentialService WebAuthnCredentialService
+	inviteActivationService   InviteActivationService
 	acmeService               ACMEServicer
 	dynamicSecretsService     DynamicSecretsService
 	objectStorageService      ObjectStorageService
@@ -627,6 +628,10 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// resolves at call time, so it is wired unconditionally and reports
 	// ErrWebAuthnCredentialNotConfigured until IAM is up.
 	svc.webauthnCredentialService = NewWebAuthnCredentialService(svc, svc)
+
+	// Invite activation resolves the IAM components per call too, so it is
+	// wired unconditionally and reports the missing component until IAM is up.
+	svc.inviteActivationService = NewInviteActivationService(svc)
 
 	// Wire the composed ACME (RFC 8555) servicer when pkg/server built one.
 	// ACME composition (CA + qrdb-backed storage + base URL) lives in
@@ -4757,6 +4762,13 @@ func (s *quicBaaS) FIDO2() FIDO2Service {
 // is wired, so every transport can resolve it the same way.
 func (s *quicBaaS) WebAuthnCredentials() WebAuthnCredentialService {
 	return s.webauthnCredentialService
+}
+
+// InviteActivation returns the invite activation service — the pre-auth
+// surface that reads a pending invite and activates its account by passkey
+// or PIV certificate. It is always non-nil.
+func (s *quicBaaS) InviteActivation() InviteActivationService {
+	return s.inviteActivationService
 }
 
 // ACME returns the ACME (RFC 8555) composition service (returns nil if not

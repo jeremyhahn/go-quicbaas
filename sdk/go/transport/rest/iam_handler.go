@@ -45,6 +45,7 @@ const (
 	iamFederationServicePrefix = "quicbaas.IAM.Federation"
 	iamIdentityServicePrefix   = "quicbaas.IAM.Identity"
 	iamWebAuthnServicePrefix   = "quicbaas.IAM.WebAuthn"
+	iamInviteServicePrefix     = "quicbaas.IAM.Invite"
 )
 
 // isIAMService checks if the service name is an IAM service.
@@ -93,6 +94,8 @@ func (h *iamRESTHandler) handleRequest(ctx context.Context, service, method stri
 		return h.handleIdentityRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamWebAuthnServicePrefix):
 		return h.handleWebAuthnRequest(ctx, method, req)
+	case strings.HasPrefix(service, iamInviteServicePrefix):
+		return h.handleInviteRequest(ctx, method, req)
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleRequest",
 			"unsupported IAM service: "+service)
@@ -238,6 +241,14 @@ func (h *iamRESTHandler) handleTenantRequest(ctx context.Context, method string,
 	case "List":
 		// GET /api/v1/tenants
 		return h.doRequest(ctx, http.MethodGet, "/api/v1/tenants", nil)
+
+	case "Provision":
+		// POST /api/v1/tenants/{tenant_id}/provision
+		tenantID := getString(reqMap, "tenant_id")
+		if tenantID == "" {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleTenantRequest", "tenant_id is required")
+		}
+		return h.doRequest(ctx, http.MethodPost, "/api/v1/tenants/"+tenantID+"/provision", reqMap)
 
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleTenantRequest", "unsupported method: "+method)

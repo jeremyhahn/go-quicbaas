@@ -78,27 +78,50 @@ type ActivationResponse struct {
 	Warning string `json:"warning,omitempty"`
 }
 
-// InviteClient provides invite-based user activation operations.
+// InviteClient provides invite-based user activation operations. An invite
+// token is scoped to the tenant that issued it, so every verb names the
+// tenant as well; a token presented to another tenant is not found.
 type InviteClient interface {
 	// GetInvite returns publicly visible metadata for a pending invite.
 	// This endpoint is unauthenticated; use it to populate the activation UI.
-	GetInvite(ctx context.Context, token string) (*InviteMetadata, error)
+	GetInvite(ctx context.Context, tenantID, token string) (*InviteMetadata, error)
 
 	// ActivateFIDO2Begin starts a WebAuthn credential creation ceremony for the
 	// invite. Returns CredentialCreationOptions to be passed to
 	// navigator.credentials.create() in the browser.
-	ActivateFIDO2Begin(ctx context.Context, token string) (map[string]interface{}, error)
+	ActivateFIDO2Begin(ctx context.Context, tenantID, token string) (map[string]interface{}, error)
 
 	// ActivateFIDO2Finish completes the WebAuthn registration. Pass the parsed
 	// PublicKeyCredential response from the browser.
-	ActivateFIDO2Finish(ctx context.Context, token string, credential map[string]interface{}) (*ActivationResponse, error)
+	ActivateFIDO2Finish(ctx context.Context, tenantID, token string, credential map[string]interface{}) (*ActivationResponse, error)
 
 	// ActivatePIV activates the user with a PIV X.509 certificate PEM block.
 	// The certificate chain must be trusted by the server's configured root pool.
-	ActivatePIV(ctx context.Context, token string, certPEM string) (*ActivationResponse, error)
+	ActivatePIV(ctx context.Context, tenantID, token, certPEM string) (*ActivationResponse, error)
 }
 
-// inviteClient is the concrete REST-based InviteClient implementation.
+// inviteRequest addresses an invite: tokens are scoped to the tenant that
+// issued them, so every verb names both.
+type inviteRequest struct {
+	TenantID string `json:"tenant_id"`
+	Token    string `json:"token"`
+}
+
+// activateFIDO2FinishRequest is the request for ActivateFIDO2Finish.
+type activateFIDO2FinishRequest struct {
+	TenantID   string                 `json:"tenant_id"`
+	Token      string                 `json:"token"`
+	Credential map[string]interface{} `json:"credential"`
+}
+
+// activatePIVRequest is the request for ActivatePIV.
+type activatePIVRequest struct {
+	TenantID string `json:"tenant_id"`
+	Token    string `json:"token"`
+	CertPEM  string `json:"cert_pem"`
+}
+
+// inviteClient is the transport-backed InviteClient implementation.
 type inviteClient struct {
 	transport transport.Transport
 }
@@ -108,14 +131,26 @@ func newInviteClient(t transport.Transport) InviteClient {
 	return &inviteClient{transport: t}
 }
 
-// GetInvite returns metadata for the pending invite identified by token.
-func (c *inviteClient) GetInvite(ctx context.Context, token string) (*InviteMetadata, error) {
+// validateInviteScope checks the tenant and token every verb requires.
+func validateInviteScope(op, tenantID, token string) error {
+	if tenantID == "" {
+		return errors.NewInvalidInput(inviteServiceName+"."+op, "tenant ID is required")
+	}
 	if token == "" {
-		return nil, errors.NewInvalidInput(inviteServiceName+".GetInvite", "token is required")
+		return errors.NewInvalidInput(inviteServiceName+"."+op, "token is required")
+	}
+	return nil
+}
+
+// GetInvite returns metadata for the pending invite identified by token.
+func (c *inviteClient) GetInvite(ctx context.Context, tenantID, token string) (*InviteMetadata, error) {
+	if err := validateInviteScope("GetInvite", tenantID, token); err != nil {
+		return nil, err
 	}
 
-	resp, err := c.transport.Request(ctx, inviteServiceName, "GetInvite", map[string]interface{}{
-		"token": token,
+	resp, err := c.transport.Request(ctx, inviteServiceName, "GetInvite", &inviteRequest{
+		TenantID: tenantID,
+		Token:    token,
 	})
 	if err != nil {
 		return nil, err
@@ -125,13 +160,14 @@ func (c *inviteClient) GetInvite(ctx context.Context, token string) (*InviteMeta
 }
 
 // ActivateFIDO2Begin initiates the WebAuthn registration ceremony.
-func (c *inviteClient) ActivateFIDO2Begin(ctx context.Context, token string) (map[string]interface{}, error) {
-	if token == "" {
-		return nil, errors.NewInvalidInput(inviteServiceName+".ActivateFIDO2Begin", "token is required")
+func (c *inviteClient) ActivateFIDO2Begin(ctx context.Context, tenantID, token string) (map[string]interface{}, error) {
+	if err := validateInviteScope("ActivateFIDO2Begin", tenantID, token); err != nil {
+		return nil, err
 	}
 
-	resp, err := c.transport.Request(ctx, inviteServiceName, "ActivateFIDO2Begin", map[string]interface{}{
-		"token": token,
+	resp, err := c.transport.Request(ctx, inviteServiceName, "ActivateFIDO2Begin", &inviteRequest{
+		TenantID: tenantID,
+		Token:    token,
 	})
 	if err != nil {
 		return nil, err
@@ -144,17 +180,18 @@ func (c *inviteClient) ActivateFIDO2Begin(ctx context.Context, token string) (ma
 }
 
 // ActivateFIDO2Finish completes the WebAuthn registration.
-func (c *inviteClient) ActivateFIDO2Finish(ctx context.Context, token string, credential map[string]interface{}) (*ActivationResponse, error) {
-	if token == "" {
-		return nil, errors.NewInvalidInput(inviteServiceName+".ActivateFIDO2Finish", "token is required")
+func (c *inviteClient) ActivateFIDO2Finish(ctx context.Context, tenantID, token string, credential map[string]interface{}) (*ActivationResponse, error) {
+	if err := validateInviteScope("ActivateFIDO2Finish", tenantID, token); err != nil {
+		return nil, err
 	}
 	if credential == nil {
 		return nil, errors.NewInvalidInput(inviteServiceName+".ActivateFIDO2Finish", "credential is required")
 	}
 
-	resp, err := c.transport.Request(ctx, inviteServiceName, "ActivateFIDO2Finish", map[string]interface{}{
-		"token":      token,
-		"credential": credential,
+	resp, err := c.transport.Request(ctx, inviteServiceName, "ActivateFIDO2Finish", &activateFIDO2FinishRequest{
+		TenantID:   tenantID,
+		Token:      token,
+		Credential: credential,
 	})
 	if err != nil {
 		return nil, err
@@ -164,17 +201,18 @@ func (c *inviteClient) ActivateFIDO2Finish(ctx context.Context, token string, cr
 }
 
 // ActivatePIV activates the user via PIV certificate.
-func (c *inviteClient) ActivatePIV(ctx context.Context, token string, certPEM string) (*ActivationResponse, error) {
-	if token == "" {
-		return nil, errors.NewInvalidInput(inviteServiceName+".ActivatePIV", "token is required")
+func (c *inviteClient) ActivatePIV(ctx context.Context, tenantID, token, certPEM string) (*ActivationResponse, error) {
+	if err := validateInviteScope("ActivatePIV", tenantID, token); err != nil {
+		return nil, err
 	}
 	if certPEM == "" {
 		return nil, errors.NewInvalidInput(inviteServiceName+".ActivatePIV", "certPEM is required")
 	}
 
-	resp, err := c.transport.Request(ctx, inviteServiceName, "ActivatePIV", map[string]interface{}{
-		"token":    token,
-		"cert_pem": certPEM,
+	resp, err := c.transport.Request(ctx, inviteServiceName, "ActivatePIV", &activatePIVRequest{
+		TenantID: tenantID,
+		Token:    token,
+		CertPEM:  certPEM,
 	})
 	if err != nil {
 		return nil, err

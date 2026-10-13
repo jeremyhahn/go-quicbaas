@@ -157,6 +157,36 @@ func (e *CertLoginFactorEnrollError) Unwrap() error {
 	return e.Cause
 }
 
+// CertLoginFactorRemoveError is returned when an enrolled certificate login
+// factor cannot be revoked. The factor may still be active and able to log in.
+type CertLoginFactorRemoveError struct {
+	// FactorID identifies the factor that could not be revoked.
+	FactorID string
+
+	// Cause is the underlying revocation failure.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *CertLoginFactorRemoveError) Error() string {
+	if e == nil {
+		return "iam.certfactor: removal failed"
+	}
+	msg := "iam.certfactor: failed to revoke mtls login factor " + e.FactorID
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying cause for errors.Is / errors.As.
+func (e *CertLoginFactorRemoveError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
 // CertLoginFactorOwnerMismatchError reports that the certificate being bound is
 // already enrolled as a login factor for a DIFFERENT user. Accepting the binding
 // would advertise a credential that authenticates somebody else, so enrollment
@@ -202,6 +232,18 @@ type CertLoginFactorEnrollment struct {
 	Metadata map[string]string
 }
 
+// CertLoginFactorEnrollResult identifies the login factor an enrollment left
+// in place.
+type CertLoginFactorEnrollResult struct {
+	// FactorID is the qrdb id of the certificate's mtls login factor.
+	FactorID string
+
+	// Created reports whether this enrollment created the factor. It is false
+	// when the same certificate was already enrolled for the same user, so a
+	// caller undoing a failed operation knows the factor is not its to remove.
+	Created bool
+}
+
 // CertLoginFactorEnroller enrolls the qrdb mtls auth factor that makes a
 // certificate binding resolvable by the unified login ceremony. It is the single
 // place quicbaas derives certificate factor credentials, so the bootstrap PIV
@@ -230,18 +272,19 @@ func NewCertLoginFactorEnroller(factors qrdbsdk.UserAuthFactorServicer) (*CertLo
 
 // Enroll registers the certificate as an mtls login factor for the user. It is
 // idempotent: re-enrolling the same certificate for the same user succeeds
-// without writing a duplicate. See the package commentary above for the ordering
-// contract callers must honour (enroll BEFORE persisting the binding).
-func (e *CertLoginFactorEnroller) Enroll(ctx context.Context, enrollment CertLoginFactorEnrollment) error {
+// without writing a duplicate, and the result reports Created=false. See the
+// package commentary above for the ordering contract callers must honour (enroll
+// BEFORE persisting the binding).
+func (e *CertLoginFactorEnroller) Enroll(ctx context.Context, enrollment CertLoginFactorEnrollment) (CertLoginFactorEnrollResult, error) {
 	if e == nil || e.factors == nil {
-		return &CertLoginFactorConfigError{Field: "UserAuthFactorServicer"}
+		return CertLoginFactorEnrollResult{}, &CertLoginFactorConfigError{Field: "UserAuthFactorServicer"}
 	}
 	if enrollment.UserID == 0 {
-		return &CertLoginFactorConfigError{Field: "UserID"}
+		return CertLoginFactorEnrollResult{}, &CertLoginFactorConfigError{Field: "UserID"}
 	}
 	credential := MTLSCredentialKey(enrollment.Certificate)
 	if len(credential) == 0 {
-		return &CertLoginFactorConfigError{Field: "Certificate"}
+		return CertLoginFactorEnrollResult{}, &CertLoginFactorConfigError{Field: "Certificate"}
 	}
 
 	factor := &qrdbsdk.AuthFactor{
@@ -256,19 +299,81 @@ func (e *CertLoginFactorEnroller) Enroll(ctx context.Context, enrollment CertLog
 
 	err := e.factors.Add(ctx, enrollment.UserID, factor)
 	if err == nil {
-		return nil
+		return e.createdResult(ctx, enrollment.UserID, factor)
 	}
 	if !errors.Is(err, qrdbsdk.ErrFactorAlreadyExists) {
-		return &CertLoginFactorEnrollError{UserID: enrollment.UserID, Cause: err}
+		return CertLoginFactorEnrollResult{}, &CertLoginFactorEnrollError{UserID: enrollment.UserID, Cause: err}
 	}
-	return e.confirmOwnership(ctx, enrollment.UserID, factor)
+	factorID, err := e.confirmOwnership(ctx, enrollment.UserID, factor)
+	if err != nil {
+		return CertLoginFactorEnrollResult{}, err
+	}
+	return CertLoginFactorEnrollResult{FactorID: factorID}, nil
+}
+
+// createdResult reports the factor Add just created. qrdb writes the id it
+// generates back onto the factor; when it does not, the id is read back through
+// the credential index so a caller can always revoke what it created.
+func (e *CertLoginFactorEnroller) createdResult(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor) (CertLoginFactorEnrollResult, error) {
+	if factor.ID != "" {
+		return CertLoginFactorEnrollResult{FactorID: factor.ID, Created: true}, nil
+	}
+	stored, err := e.factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, factor.Credential)
+	if err != nil || stored == nil {
+		return CertLoginFactorEnrollResult{}, &CertLoginFactorEnrollError{UserID: userID, Cause: err}
+	}
+	return CertLoginFactorEnrollResult{FactorID: stored.ID, Created: true}, nil
+}
+
+// Remove revokes the login factor with the given id. It forces the removal
+// because the factor may be the user's only one: a caller undoing an activation
+// must be able to revoke the factor that activation created.
+func (e *CertLoginFactorEnroller) Remove(ctx context.Context, factorID string) error {
+	if e == nil || e.factors == nil {
+		return &CertLoginFactorConfigError{Field: "UserAuthFactorServicer"}
+	}
+	if factorID == "" {
+		return &CertLoginFactorConfigError{Field: "FactorID"}
+	}
+	if err := e.factors.Remove(ctx, factorID, true); err != nil {
+		return &CertLoginFactorRemoveError{FactorID: factorID, Cause: err}
+	}
+	return nil
+}
+
+// CheckOwner returns a *CertLoginFactorOwnerMismatchError when cert is already
+// enrolled as another user's login factor. It writes nothing, so a caller can
+// reject a certificate Enroll would refuse before it takes an irreversible
+// step. A failed lookup is not evidence of another owner: Enroll, which fails
+// closed, remains the enforcement point.
+func (e *CertLoginFactorEnroller) CheckOwner(ctx context.Context, userID uint64, cert *x509.Certificate) error {
+	if e == nil || e.factors == nil {
+		return &CertLoginFactorConfigError{Field: "UserAuthFactorServicer"}
+	}
+	for _, key := range [][]byte{MTLSCredentialKey(cert), MTLSSPKICredentialKey(cert)} {
+		if len(key) == 0 {
+			continue
+		}
+		existing, err := e.factors.LookupByCredentialKey(ctx, qrdbsdk.AuthFactorMTLS, key)
+		if err != nil || existing == nil {
+			continue
+		}
+		if existing.UserID != userID {
+			return &CertLoginFactorOwnerMismatchError{
+				RequestedUserID: userID,
+				EnrolledUserID:  existing.UserID,
+				FactorID:        existing.ID,
+			}
+		}
+	}
+	return nil
 }
 
 // confirmOwnership resolves the factor that already holds this certificate's
 // credential and accepts the duplicate ONLY when it belongs to the requesting
 // user. Both indexed keys are probed because qrdb reports a collision on either
 // the cert-DER credential or the renewal-stable SPKI credential.
-func (e *CertLoginFactorEnroller) confirmOwnership(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor) error {
+func (e *CertLoginFactorEnroller) confirmOwnership(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor) (string, error) {
 	keys := [][]byte{factor.Credential}
 	if len(factor.SPKICredential) > 0 {
 		keys = append(keys, factor.SPKICredential)
@@ -284,7 +389,7 @@ func (e *CertLoginFactorEnroller) confirmOwnership(ctx context.Context, userID u
 			continue
 		}
 		if existing.UserID != userID {
-			return &CertLoginFactorOwnerMismatchError{
+			return "", &CertLoginFactorOwnerMismatchError{
 				RequestedUserID: userID,
 				EnrolledUserID:  existing.UserID,
 				FactorID:        existing.ID,
@@ -292,11 +397,11 @@ func (e *CertLoginFactorEnroller) confirmOwnership(ctx context.Context, userID u
 		}
 		// Same certificate, same user: the login-resolvable factor already
 		// exists, so the binding is complete.
-		return nil
+		return existing.ID, nil
 	}
 	// qrdb reported a duplicate but the record cannot be read back (e.g. the
 	// existing factor is revoked, which leaves its index entry in place). Fail
 	// closed — a binding whose factor cannot be resolved is the exact defect
 	// this enrollment exists to prevent.
-	return &CertLoginFactorEnrollError{UserID: userID, Cause: lastErr}
+	return "", &CertLoginFactorEnrollError{UserID: userID, Cause: lastErr}
 }

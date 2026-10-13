@@ -36,11 +36,12 @@ func init() {
 // IAM entries.
 var iamUnaryHandlers = map[string]handlerFunc{
 	// Tenant
-	"quicbaas.IAM.Tenant/Create": handleIAMTenantCreate,
-	"quicbaas.IAM.Tenant/Get":    handleIAMTenantGet,
-	"quicbaas.IAM.Tenant/Update": handleIAMTenantUpdate,
-	"quicbaas.IAM.Tenant/Delete": handleIAMTenantDelete,
-	"quicbaas.IAM.Tenant/List":   handleIAMTenantList,
+	"quicbaas.IAM.Tenant/Create":    handleIAMTenantCreate,
+	"quicbaas.IAM.Tenant/Get":       handleIAMTenantGet,
+	"quicbaas.IAM.Tenant/Update":    handleIAMTenantUpdate,
+	"quicbaas.IAM.Tenant/Delete":    handleIAMTenantDelete,
+	"quicbaas.IAM.Tenant/List":      handleIAMTenantList,
+	"quicbaas.IAM.Tenant/Provision": handleIAMTenantProvision,
 
 	// User
 	"quicbaas.IAM.User/Create": handleIAMUserCreate,
@@ -108,6 +109,12 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.WebAuthn/ListWebAuthnCredentials":   handleIAMWebAuthnCredentialsList,
 	"quicbaas.IAM.WebAuthn/DeleteWebAuthnCredential":  handleIAMWebAuthnCredentialDelete,
 	"quicbaas.IAM.WebAuthn/DeleteWebAuthnCredentials": handleIAMWebAuthnCredentialsDeleteAll,
+
+	// Invite activation (public: the invite token is the credential)
+	"quicbaas.IAM.Invite/GetInvite":           handleIAMInviteGet,
+	"quicbaas.IAM.Invite/ActivateFIDO2Begin":  handleIAMInviteFIDO2Begin,
+	"quicbaas.IAM.Invite/ActivateFIDO2Finish": handleIAMInviteFIDO2Finish,
+	"quicbaas.IAM.Invite/ActivatePIV":         handleIAMInvitePIV,
 }
 
 // _ keeps the context import live for handlers that take ctx parameters

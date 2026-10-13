@@ -76,7 +76,7 @@ func (bm *BatchManager) ExportAll(ctx context.Context, req *BatchExportRequest) 
 // ExportUsers exports users from a tenant with optional filtering.
 func (bm *BatchManager) ExportUsers(ctx context.Context, tenantID string, filter ExportFilter) ([]*User, error) {
 	if tenantID == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return nil, fieldValidationError("tenant_id", "tenant ID is required")
 	}
 
 	if bm.identityStore == nil {
@@ -131,7 +131,7 @@ func (bm *BatchManager) ExportUsers(ctx context.Context, tenantID string, filter
 // ExportRoles exports roles from a tenant with optional filtering.
 func (bm *BatchManager) ExportRoles(ctx context.Context, tenantID string, filter ExportFilter) ([]*Role, error) {
 	if tenantID == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return nil, fieldValidationError("tenant_id", "tenant ID is required")
 	}
 
 	if bm.identityStore == nil {
@@ -186,7 +186,7 @@ func (bm *BatchManager) ExportRoles(ctx context.Context, tenantID string, filter
 // ExportPolicies exports policies from a tenant with optional filtering.
 func (bm *BatchManager) ExportPolicies(ctx context.Context, tenantID string, filter ExportFilter) ([]*Policy, error) {
 	if tenantID == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return nil, fieldValidationError("tenant_id", "tenant ID is required")
 	}
 
 	if bm.policyEngine == nil {

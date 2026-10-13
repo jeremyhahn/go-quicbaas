@@ -426,3 +426,19 @@ func (s *Server) buildTenantInviteStore() (iam.InviteStore, error) {
 	}
 	return iam.NewQRDBInviteStore(store), nil
 }
+
+// buildUserActivationClaims constructs the per-user activation claims over
+// the same tenant store resolver the invitation store uses, so a claim lives
+// beside the invites it arbitrates. A nil node yields nil claims, which the
+// PIV activator refuses exactly as it refuses a nil invitation store.
+func (s *Server) buildUserActivationClaims() (*iam.UserActivationClaims, error) {
+	node := s.getQRDBNode()
+	if node == nil {
+		return nil, nil
+	}
+	svcs := node.Services()
+	if svcs == nil || svcs.StoreResolver == nil {
+		return nil, nil
+	}
+	return iam.NewUserActivationClaims(svcs.StoreResolver)
+}

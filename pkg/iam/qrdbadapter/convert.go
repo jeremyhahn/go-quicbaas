@@ -217,38 +217,6 @@ func cloneStrings(in []string) []string {
 	return out
 }
 
-// legacyPIVThumbprintsFromBindings returns the legacy (hex SHA-256 of the cert
-// DER) PIV-attested thumbprints from a binding slice — the subset the broker
-// keeps in its own legacy-PIV index because qrdb's SPKI index cannot resolve
-// them. It mirrors iam.User.LegacyPIVThumbprints for use on a detached binding
-// slice (e.g. reconciling indexes on update/delete).
-func legacyPIVThumbprintsFromBindings(in []qrdbsdk.CertBinding) []string {
-	out := make([]string, 0, len(in))
-	for i := range in {
-		b := in[i]
-		if b.Kind == qrdbsdk.CertBindingPIVAttested && b.Thumbprint != "" && isLegacyHexThumbprint(b.Thumbprint) {
-			out = append(out, b.Thumbprint)
-		}
-	}
-	return out
-}
-
-// isLegacyHexThumbprint reports whether s is a legacy PIV thumbprint: the hex
-// encoding of a SHA-256 digest (64 lowercase hex characters). A canonical SPKI
-// thumbprint is base64url of 32 bytes (43 characters) and never matches.
-func isLegacyHexThumbprint(s string) bool {
-	if len(s) != 64 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 // cloneCertBindings returns a copy of in so the projection and the store record
 // never share a backing slice. CertBinding is a value type, so a shallow element
 // copy is a deep copy. A nil/empty input yields nil to keep empty round-trips

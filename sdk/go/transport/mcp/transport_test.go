@@ -244,6 +244,7 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.IAM.Tenant", "Update", "quicbaas_iam_tenant_update"},
 		{"quicbaas.IAM.Tenant", "Delete", "quicbaas_iam_tenant_delete"},
 		{"quicbaas.IAM.Tenant", "List", "quicbaas_iam_tenant_list"},
+		{"quicbaas.IAM.Tenant", "Provision", "quicbaas_iam_tenant_provision"},
 
 		// IAM User operations
 		{"quicbaas.IAM.User", "Create", "quicbaas_iam_user_create"},

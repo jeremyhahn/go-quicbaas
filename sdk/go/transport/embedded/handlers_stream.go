@@ -61,12 +61,8 @@ func handleListStream(ctx context.Context, svc service.QuicBaaS, req interface{}
 				}
 			}
 			// Send response to stream
-			select {
-			case s.recvChan() <- resp:
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-s.context().Done():
-				return s.context().Err()
+			if err := s.deliver(resp); err != nil {
+				return err
 			}
 		}
 	}
@@ -89,15 +85,8 @@ func handleWatchStream(ctx context.Context, svc service.QuicBaaS, req interface{
 	}
 
 	// Send the initial watch confirmation with watch ID
-	select {
-	case s.recvChan() <- &service.WatchResponse{
-		WatchID: watchID,
-		Created: true,
-	}:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-s.context().Done():
-		return s.context().Err()
+	if err := s.deliver(&service.WatchResponse{WatchID: watchID, Created: true}); err != nil {
+		return err
 	}
 
 	// Forward responses to the stream
@@ -112,12 +101,8 @@ func handleWatchStream(ctx context.Context, svc service.QuicBaaS, req interface{
 				return nil
 			}
 			// Send response to stream
-			select {
-			case s.recvChan() <- resp:
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-s.context().Done():
-				return s.context().Err()
+			if err := s.deliver(resp); err != nil {
+				return err
 			}
 		}
 	}
@@ -158,12 +143,8 @@ func handleQueryStream(ctx context.Context, svc service.QuicBaaS, req interface{
 				}
 			}
 			// Send response to stream
-			select {
-			case s.recvChan() <- resp:
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-s.context().Done():
-				return s.context().Err()
+			if err := s.deliver(resp); err != nil {
+				return err
 			}
 		}
 	}
@@ -204,12 +185,8 @@ func handleScanIndexStream(ctx context.Context, svc service.QuicBaaS, req interf
 				}
 			}
 			// Send response to stream
-			select {
-			case s.recvChan() <- resp:
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-s.context().Done():
-				return s.context().Err()
+			if err := s.deliver(resp); err != nil {
+				return err
 			}
 		}
 	}
@@ -250,12 +227,8 @@ func handleTimeSeriesQueryStream(ctx context.Context, svc service.QuicBaaS, req 
 				}
 			}
 			// Send response to stream
-			select {
-			case s.recvChan() <- resp:
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-s.context().Done():
-				return s.context().Err()
+			if err := s.deliver(resp); err != nil {
+				return err
 			}
 		}
 	}
@@ -348,12 +321,8 @@ func handleSubscribeJobEventsStream(ctx context.Context, svc service.QuicBaaS, r
 				Metadata:  evt.Metadata,
 				Timestamp: evt.Timestamp,
 			}
-			select {
-			case s.recvChan() <- sdkEvt:
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-s.context().Done():
-				return s.context().Err()
+			if err := s.deliver(sdkEvt); err != nil {
+				return err
 			}
 		}
 	}
@@ -412,12 +381,8 @@ func handleOrchestratorInferenceStream(ctx context.Context, svc service.QuicBaaS
 				StopReason: chunk.StopReason,
 				Final:      chunk.Final,
 			}
-			select {
-			case s.recvChan() <- sdkChunk:
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-s.context().Done():
-				return s.context().Err()
+			if err := s.deliver(sdkChunk); err != nil {
+				return err
 			}
 		}
 	}

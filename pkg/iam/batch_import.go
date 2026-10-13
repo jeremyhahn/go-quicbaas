@@ -121,7 +121,7 @@ func (bm *BatchManager) mergeResult(result *BatchImportResult, subResult *BatchI
 // ImportUsers imports users in bulk.
 func (bm *BatchManager) ImportUsers(ctx context.Context, tenantID string, users []*UserImport, opts BatchImportOptions) (*BatchImportResult, error) {
 	if tenantID == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return nil, fieldValidationError("tenant_id", "tenant ID is required")
 	}
 	if len(users) == 0 {
 		return &BatchImportResult{ProcessedItems: map[string][]string{"users": {}}}, nil
@@ -361,7 +361,7 @@ func (bm *BatchManager) importUser(ctx context.Context, tenantID string, user *U
 // ImportRoles imports roles in bulk.
 func (bm *BatchManager) ImportRoles(ctx context.Context, tenantID string, roles []*RoleImport, opts BatchImportOptions) (*BatchImportResult, error) {
 	if tenantID == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return nil, fieldValidationError("tenant_id", "tenant ID is required")
 	}
 	if len(roles) == 0 {
 		return &BatchImportResult{ProcessedItems: map[string][]string{"roles": {}}}, nil
@@ -532,7 +532,7 @@ func (bm *BatchManager) importRole(ctx context.Context, tenantID string, role *R
 // ImportPolicies imports policies in bulk.
 func (bm *BatchManager) ImportPolicies(ctx context.Context, tenantID string, policies []*PolicyImport, opts BatchImportOptions) (*BatchImportResult, error) {
 	if tenantID == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
+		return nil, fieldValidationError("tenant_id", "tenant ID is required")
 	}
 	if len(policies) == 0 {
 		return &BatchImportResult{ProcessedItems: map[string][]string{"policies": {}}}, nil

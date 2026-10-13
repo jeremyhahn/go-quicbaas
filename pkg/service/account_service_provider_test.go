@@ -232,6 +232,48 @@ func TestAccountService_RotateAccountCredential_ValidatesAgainstAccountMode(t *t
 	})
 }
 
+// An empty static credential is unusable at spawn time, so both write paths
+// refuse it rather than storing it (create) or erasing the stored one (rotate).
+func TestAccountService_RefusesAnEmptyStaticCredential(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestAccountService(t)
+
+	_, createErr := svc.CreateAccount(ctx, &CreateAccountRequest{
+		TenantID:   "tenant-a",
+		Provider:   orchestration.AccountProviderCodex,
+		Credential: &orchestration.AccountCredential{},
+	})
+	assertEmptyCredentialRefused(t, "CreateAccount", createErr)
+
+	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
+		TenantID: "tenant-a",
+		Provider: orchestration.AccountProviderCodex,
+		Credential: &orchestration.AccountCredential{
+			Files: map[string][]byte{".codex/auth.json": []byte(`{"tokens":{}}`)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount(files only) error = %v", err)
+	}
+	_, rotateErr := svc.RotateAccountCredential(ctx, &RotateAccountCredentialRequest{
+		TenantID:   "tenant-a",
+		AccountID:  created.Account.ID,
+		Credential: &orchestration.AccountCredential{AccessTokenEnvKey: "CODEX_API_KEY"},
+	})
+	assertEmptyCredentialRefused(t, "RotateAccountCredential", rotateErr)
+}
+
+func assertEmptyCredentialRefused(t *testing.T, op string, err error) {
+	t.Helper()
+	if !errors.Is(err, orchestration.ErrAccountCredentialEmpty) {
+		t.Fatalf("%s() error = %v, want ErrAccountCredentialEmpty", op, err)
+	}
+	var invalid *AccountInvalidError
+	if !errors.As(err, &invalid) || invalid.Field != "credential" {
+		t.Fatalf("%s() error = %v, want AccountInvalidError on field credential", op, err)
+	}
+}
+
 // TestAccountService_UpdateAccount_RejectsUnrecognizedMode proves the metadata
 // update path cannot write a mode nothing understands.
 func TestAccountService_UpdateAccount_RejectsUnrecognizedMode(t *testing.T) {

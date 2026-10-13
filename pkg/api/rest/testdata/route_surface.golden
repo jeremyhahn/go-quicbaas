@@ -524,6 +524,7 @@ POST /api/v1/tenants/{tenant_id}/policies/simulate
 POST /api/v1/tenants/{tenant_id}/policies/test
 POST /api/v1/tenants/{tenant_id}/policies/validate
 POST /api/v1/tenants/{tenant_id}/providers/
+POST /api/v1/tenants/{tenant_id}/provision
 POST /api/v1/tenants/{tenant_id}/roles/
 POST /api/v1/tenants/{tenant_id}/roles/reconcile
 POST /api/v1/tenants/{tenant_id}/users/

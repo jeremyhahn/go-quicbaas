@@ -114,3 +114,31 @@ func TestBuildRESTServer_LeavesSelfServiceRegistrationOffByDefault(t *testing.T)
 	assert.False(t, captured.IAMSelfServiceRegistration.Enabled,
 		"an unconfigured server must not open self-service registration")
 }
+
+// TestBuildRESTServer_CarriesRESTRateLimit pins the server.rest.rate_limit
+// projection: the operator's value reaches the REST server, and an omitted
+// key resolves to the REST default rather than to "no limit".
+func TestBuildRESTServer_CarriesRESTRateLimit(t *testing.T) {
+	tests := []struct {
+		name      string
+		rateLimit int
+		want      int
+	}{
+		{"omitted key keeps the default limit", 0, restapi.DefaultRateLimit},
+		{"explicit limit", 250, 250},
+		{"opt-out disables", restapi.RateLimitDisabled, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			saveAndRestoreSeams(t)
+
+			srv := createFTServerWithService(t)
+			srv.config.Server.REST.Enabled = true
+			srv.config.Server.REST.RateLimit = tt.rateLimit
+
+			captured := captureRESTConfig(t, srv)
+
+			assert.Equal(t, tt.want, captured.EffectiveRateLimit())
+		})
+	}
+}

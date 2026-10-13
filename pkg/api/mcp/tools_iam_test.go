@@ -52,7 +52,7 @@ func TestIAMToolsRegistration(t *testing.T) {
 	}
 
 	// We should have all IAM tools registered
-	expectedCount := 42 // 5 tenant + 7 user + 6 role + 6 policy + 6 app + 10 mfa + 2 pep
+	expectedCount := 43 // 6 tenant + 7 user + 6 role + 6 policy + 6 app + 10 mfa + 2 pep
 	if iamToolCount != expectedCount {
 		t.Errorf("Expected %d IAM tools, got %d", expectedCount, iamToolCount)
 	}
@@ -67,6 +67,7 @@ func TestIAMToolsRegistration(t *testing.T) {
 	// Verify specific tools exist
 	requiredTools := []string{
 		"quicbaas_iam_tenant_create",
+		"quicbaas_iam_tenant_provision",
 		"quicbaas_iam_user_create",
 		"quicbaas_iam_role_create",
 		"quicbaas_iam_policy_create",
@@ -624,6 +625,7 @@ type mockIAMService struct {
 	updateTenantFunc func(ctx context.Context, req *service.UpdateTenantRequest) (*service.UpdateTenantResponse, error)
 	deleteTenantFunc func(ctx context.Context, req *service.DeleteTenantRequest) (*service.DeleteTenantResponse, error)
 	listTenantsFunc  func(ctx context.Context, req *service.ListTenantsRequest) (*service.ListTenantsResponse, error)
+	provisionFunc    func(ctx context.Context, req *service.IAMProvisionTenantRequest) (*service.IAMProvisionTenantResponse, error)
 	createUserFunc   func(ctx context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error)
 	getUserFunc      func(ctx context.Context, req *service.IAMGetUserRequest) (*service.IAMGetUserResponse, error)
 	updateUserFunc   func(ctx context.Context, req *service.IAMUpdateUserRequest) (*service.IAMUpdateUserResponse, error)
@@ -685,6 +687,13 @@ func (m *mockIAMService) ListTenants(ctx context.Context, req *service.ListTenan
 		return m.listTenantsFunc(ctx, req)
 	}
 	return &service.ListTenantsResponse{Tenants: []*iam.Tenant{{ID: "t1", Name: "tenant1"}}, TotalCount: 1, Timestamp: time.Now()}, nil
+}
+
+func (m *mockIAMService) ProvisionTenant(ctx context.Context, req *service.IAMProvisionTenantRequest) (*service.IAMProvisionTenantResponse, error) {
+	if m.provisionFunc != nil {
+		return m.provisionFunc(ctx, req)
+	}
+	return &service.IAMProvisionTenantResponse{TenantID: req.TenantID, AdminUserID: "1", Timestamp: time.Now()}, nil
 }
 
 func (m *mockIAMService) CreateUser(ctx context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
@@ -944,6 +953,7 @@ func TestExecuteIAMTool_RoutesToTenantOps(t *testing.T) {
 		{"tenant_update", "quicbaas_iam_tenant_update", map[string]interface{}{"id": "t1", "name": "updated"}},
 		{"tenant_delete", "quicbaas_iam_tenant_delete", map[string]interface{}{"id": "t1"}},
 		{"tenant_list", "quicbaas_iam_tenant_list", map[string]interface{}{}},
+		{"tenant_provision", "quicbaas_iam_tenant_provision", map[string]interface{}{"tenant_id": "t1"}},
 	}
 
 	for _, tt := range tests {

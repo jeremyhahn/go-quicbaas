@@ -142,6 +142,14 @@ func (p *iamServiceAdapter) GetPIVActivator(_ context.Context) (*iam.PIVActivato
 	return p.components.GetPIVActivator(), nil
 }
 
+// GetTenantProvisioner returns the control-plane tenant provisioner.
+func (p *iamServiceAdapter) GetTenantProvisioner(_ context.Context) (TenantProvisioner, error) {
+	if p.components == nil {
+		return nil, nil
+	}
+	return p.components.GetTenantProvisioner(), nil
+}
+
 // GetAdminManager returns the admin manager from IAM components.
 func (p *iamServiceAdapter) GetAdminManager(_ context.Context) (*iam.AdminManager, error) {
 	if p.components == nil {

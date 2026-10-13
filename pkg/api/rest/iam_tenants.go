@@ -28,6 +28,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 )
 
@@ -219,6 +220,76 @@ func (h *IAMHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	)
 
 	RespondJSON(w, r, http.StatusCreated, tenant)
+}
+
+// ProvisionTenant handles POST /api/v1/tenants/{tenant_id}/provision.
+//
+// It is the control-plane onboarding path for when public registration is
+// off: a system admin creates the tenant, its built-in roles and its first
+// admin in one call. In cert mode the body carries the admin's CSR and the
+// response carries the signed certificate; in invite mode the admin is
+// created pending and the response carries a one-time invite token for PIV
+// activation. Authorized as tenants:create, the same grant CreateTenant needs.
+func (h *IAMHandler) ProvisionTenant(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "failed to read request body"))
+		return
+	}
+	defer r.Body.Close()
+
+	var req service.IAMProvisionTenantRequest
+	if err := decodeStrictJSON(body, &req); err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "invalid JSON body: "+err.Error()))
+		return
+	}
+	// The path names the tenant; a body that names another is refused
+	// rather than silently overridden.
+	if req.TenantID != "" && req.TenantID != tenantID {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "tenant_id in the body does not match the path"))
+		return
+	}
+	req.TenantID = tenantID
+
+	accessor, ok := h.server.service.(interface{ IAM() service.IAMService })
+	if !ok || accessor.IAM() == nil {
+		RespondIAMError(w, r, http.StatusInternalServerError,
+			NewIAMAPIError(ErrInternalError, "IAM service not available"))
+		return
+	}
+
+	resp, err := accessor.IAM().ProvisionTenant(ctx, &req)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	h.logAuditEvent(ctx, resp.TenantID,
+		iam.AuditEventTenantEvent,
+		iam.AuditCategoryAdministration,
+		"provision",
+		iam.AuditOutcomeSuccess,
+		&iam.AuditResource{Type: "tenant", ID: resp.TenantID},
+		map[string]interface{}{
+			"admin_user_id": resp.AdminUserID,
+			"enrollment":    string(req.Enrollment()),
+			"admin_pending": resp.AdminPending,
+		},
+	)
+
+	RespondJSON(w, r, http.StatusCreated, resp)
 }
 
 // GetTenant handles GET /api/v1/tenants/{tenant_id} - Get a specific tenant.

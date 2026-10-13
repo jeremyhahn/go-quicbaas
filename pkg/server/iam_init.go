@@ -61,6 +61,7 @@ type iamComponents struct {
 	sessionManager    iam.SessionManager
 	inviteStore       iam.InviteStore
 	pivActivator      *iam.PIVActivator
+	provisioner       *tenantProvisioner
 
 	// certLoginFactors enrolls the mtls auth factor that makes an admin
 	// certificate binding resolvable by the unified login ceremony. Without it
@@ -180,6 +181,15 @@ func (c *iamComponents) GetInviteStore() iam.InviteStore {
 // CA file).
 func (c *iamComponents) GetPIVActivator() *iam.PIVActivator {
 	return c.pivActivator
+}
+
+// GetTenantProvisioner returns the control-plane tenant provisioner.
+func (c *iamComponents) GetTenantProvisioner() service.TenantProvisioner {
+	// Return a true nil, not a nil *tenantProvisioner inside the interface.
+	if c.provisioner == nil {
+		return nil
+	}
+	return c.provisioner
 }
 
 // initializeIAMComponents creates and initializes all IAM components.
@@ -313,16 +323,13 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	if s.getQRDBNode() == nil {
 		return nil, &QRDBUserStorageRequiredError{}
 	}
-	qrdbUserStorage := qrdbadapter.NewQRDBUserStorage(
-		newPlatformUserServicerResolver(s),
-		iamKV,
-	)
+	qrdbUserStorage := qrdbadapter.NewQRDBUserStorage(newPlatformUserServicerResolver(s))
 	var userStorage iam.UserStorage = qrdbUserStorage
 
 	// Wire the routed user store into the tenant manager (built above, before
 	// userStorage existed) so DeleteTenant deprovisions the tenant's users
-	// through the qrdb-backed store — purging the qrdb records and the
-	// legacy-PIV index entries the legacy BackendStorage cascade misses.
+	// through the qrdb-backed store — purging the qrdb records the legacy
+	// BackendStorage cascade misses.
 	tenantManager.SetUserStorage(userStorage)
 
 	// Create identity store with storage backends
@@ -726,6 +733,17 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		return nil, inviteErr
 	}
 
+	// Certificate bindings (bootstrap admin PIV cert, provisioned tenant
+	// admin cert, PIV invite activation) must ALSO enroll an mtls auth factor
+	// in qrdb's UserAuthFactor store — the store the unified login ceremony
+	// resolves against. The servicer is resolved lazily per call (the
+	// embedded node exposes it only after unseal), so the enroller can be
+	// constructed here regardless of the node's current seal state.
+	certLoginFactors, err := iam.NewCertLoginFactorEnroller(newQRDBUserAuthFactorServicerProxy(s))
+	if err != nil {
+		return nil, &IAMComponentInitError{Component: "certificate login factor enroller", Cause: err}
+	}
+
 	// PIV invite activation (POST /api/v1/iam/invites/{token}/activate/piv):
 	// bind a chain-verified client certificate to a pending user and transition
 	// them to active. Gated by the SAME iam.piv_login trust anchor as the PIV
@@ -738,27 +756,23 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		if rootsErr != nil {
 			return nil, &IAMComponentInitError{Component: "PIV activator", Cause: rootsErr}
 		}
+		activationClaims, claimsErr := s.buildUserActivationClaims()
+		if claimsErr != nil {
+			return nil, &IAMComponentInitError{Component: "user activation claims", Cause: claimsErr}
+		}
 		pivActivator, err = iam.NewPIVActivator(iam.PIVActivatorDependencies{
-			Roots:          roots,
-			UserStorage:    userStorage,
-			InviteStore:    inviteStore,
-			AuditLogger:    auditLogger,
-			TrustedIssuers: s.config.IAM.PIVLogin.TrustedIssuers,
+			Roots:            roots,
+			UserStorage:      userStorage,
+			InviteStore:      inviteStore,
+			LoginFactors:     certLoginFactors,
+			ActivationClaims: activationClaims,
+			AuditLogger:      auditLogger,
+			TrustedIssuers:   s.config.IAM.PIVLogin.TrustedIssuers,
 		})
 		if err != nil {
 			return nil, &IAMComponentInitError{Component: "PIV activator", Cause: err}
 		}
 		s.logger.Infof("PIV invite activation enabled (roots: %s)", s.config.IAM.PIVLogin.CAFile)
-	}
-
-	// Certificate bindings (bootstrap admin PIV cert) must ALSO enroll
-	// an mtls auth factor in qrdb's UserAuthFactor store — the store the unified
-	// login ceremony resolves against. The servicer is resolved lazily per call
-	// (the embedded node exposes it only after unseal), so the enroller can be
-	// constructed here regardless of the node's current seal state.
-	certLoginFactors, err := iam.NewCertLoginFactorEnroller(newQRDBUserAuthFactorServicerProxy(s))
-	if err != nil {
-		return nil, &IAMComponentInitError{Component: "certificate login factor enroller", Cause: err}
 	}
 
 	components := &iamComponents{
@@ -780,6 +794,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		pivActivator:      pivActivator,
 		certLoginFactors:  certLoginFactors,
 	}
+	components.provisioner = s.newTenantProvisioner(components)
 
 	// (Default tenant was created earlier, before the orchestrator
 	// daemon-client bootstrap that depends on it.)
@@ -1494,9 +1509,9 @@ func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID, userID, p
 
 	// Bind BOTH thumbprints, exactly as the interactive PIV activation path
 	// does (see pkg/iam/piv.go): the canonical SPKI thumbprint that qrdb's
-	// UserByCertThumbprint index resolves natively and survives renewal with
-	// the same key, plus the legacy hex digest of the certificate DER that the
-	// broker-side fallback index resolves.
+	// UserByCertThumbprint index resolves and survives renewal with the same
+	// key, plus the legacy hex digest of the certificate DER, which the same
+	// qrdb index resolves.
 	thumbprints := []string{
 		qrdbsdk.ComputeSPKIThumbprint(cert),
 		xkmssdk.PIVThumbprintSHA256(cert),
@@ -1520,6 +1535,10 @@ const (
 	// adminCertBindingSourceFirstBoot marks the certificate qrdb's first-boot
 	// issued (generate-and-distribute) or CSR-signed for the platform admin.
 	adminCertBindingSourceFirstBoot = "first_boot_admin_cert"
+
+	// adminCertBindingSourceTenantProvision marks the certificate tenant
+	// provisioning CSR-signed for a new tenant's admin.
+	adminCertBindingSourceTenantProvision = "tenant_provision_admin_cert"
 )
 
 // AdminCertFactorUnavailableError reports that an admin certificate binding was
@@ -1559,19 +1578,37 @@ func enrollAdminCertLoginFactor(
 	cert *x509.Certificate,
 	source string,
 ) error {
-	if c == nil || c.certLoginFactors == nil {
+	if c == nil {
+		return &AdminCertFactorUnavailableError{Component: "certificate login factor enroller"}
+	}
+	return enrollCertLoginFactor(ctx, c.certLoginFactors, tenantID, userID, cert, source)
+}
+
+// enrollCertLoginFactor enrolls cert as userID's mtls login factor through
+// enroller, recording tenantID and source as the factor's provenance. The
+// factor store routes by the context tenant, which the caller's
+// pre-authentication context need not carry, so tenantID is bound into it.
+func enrollCertLoginFactor(
+	ctx context.Context,
+	enroller *iam.CertLoginFactorEnroller,
+	tenantID, userID string,
+	cert *x509.Certificate,
+	source string,
+) error {
+	if enroller == nil {
 		return &AdminCertFactorUnavailableError{Component: "certificate login factor enroller"}
 	}
 	qrdbUserID, err := iam.ParseUserID(userID)
 	if err != nil {
 		return err
 	}
-	return c.certLoginFactors.Enroll(ctx, iam.CertLoginFactorEnrollment{
+	_, err = enroller.Enroll(qrdbsdk.ContextWithTenant(ctx, tenantID), iam.CertLoginFactorEnrollment{
 		UserID:      qrdbUserID,
 		Certificate: cert,
 		Label:       adminCertFactorLabel(cert),
 		Metadata:    adminCertFactorMetadata(tenantID, userID, source, cert),
 	})
+	return err
 }
 
 // adminCertFactorLabel derives the operator-visible factor label from the bound
@@ -1726,6 +1763,18 @@ func (s *Server) inviteOrigin() string {
 	return origin
 }
 
+// tenantProvisionerGetter is the optional capability that exposes the
+// control-plane tenant provisioner to the gRPC IAM adapter.
+type tenantProvisionerGetter interface {
+	GetTenantProvisioner(ctx context.Context) (service.TenantProvisioner, error)
+}
+
+// inviteActivationGetter is the optional capability that exposes the invite
+// activation service to the gRPC IAM adapter.
+type inviteActivationGetter interface {
+	InviteActivation() service.InviteActivationService
+}
+
 // registerIAMService registers IAM-related gRPC services with the gRPC server.
 // It retrieves IAM components from the QuicBaaS service via the iamComponentsGetter
 // interface and creates gRPC server adapters for IAM, MFA, PEP, Session, and Audit.
@@ -1781,6 +1830,15 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	webauthnMgr, _ := getter.GetWebAuthnManager(ctx)
 	iamAdapter.SetWebAuthnCredentials(
 		service.NewWebAuthnCredentialServiceFor(identityStore, webauthnMgr))
+	// Control-plane tenant provisioning: the same provisioner the service
+	// layer hands REST, MCP and the embedded transport.
+	if pg, ok := getter.(tenantProvisionerGetter); ok {
+		provisioner, err := pg.GetTenantProvisioner(ctx)
+		if err != nil {
+			s.logger.WithError(err).Warn("Tenant provisioner unavailable; gRPC ProvisionTenant will report it unconfigured")
+		}
+		iamAdapter.SetTenantProvisioner(provisioner)
+	}
 	// CreateUser issues activation invites from the same store REST and the
 	// activation endpoints use. Without one, a pending create is refused as
 	// unavailable rather than leaving an account nothing can activate.
@@ -1789,6 +1847,11 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 		s.logger.WithError(err).Warn("Invite store unavailable; gRPC CreateUser refuses pending users")
 	}
 	iamAdapter.SetInviteStore(inviteStore)
+	// The public invite activation verbs redeem through the same service
+	// REST and the embedded transport use.
+	if ag, ok := s.quicBaaSService.(inviteActivationGetter); ok {
+		iamAdapter.SetInviteActivation(ag.InviteActivation())
+	}
 	iamServer := grpcapi.NewIAMServer(iamAdapter, s.logger)
 	iamServer.SetInviteOrigin(s.inviteOrigin())
 	iampb.RegisterIAMServiceServer(grpcServer, iamServer)

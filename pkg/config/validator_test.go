@@ -95,6 +95,24 @@ func TestValidateServerConfig(t *testing.T) {
 			errorField:  "server.rest.port",
 		},
 		{
+			name: "REST rate limit opt-out is valid",
+			modify: func(cfg *Config) {
+				cfg.Server.REST.Enabled = true
+				cfg.Server.REST.RateLimit = -1
+				cfg.Security.TLSEnabled = true
+			},
+			expectError: false,
+		},
+		{
+			name: "REST rate limit below the opt-out value",
+			modify: func(cfg *Config) {
+				cfg.Server.REST.Enabled = true
+				cfg.Server.REST.RateLimit = -2
+			},
+			expectError: true,
+			errorField:  "server.rest.rate_limit",
+		},
+		{
 			name: "invalid gRPC port",
 			modify: func(cfg *Config) {
 				cfg.Server.GRPC.Enabled = true

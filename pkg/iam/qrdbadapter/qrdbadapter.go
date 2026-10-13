@@ -420,17 +420,12 @@ func WrapUser(store *iam.IdentityStore) *UserAdapter { return &UserAdapter{store
 // underlying store reports a duplicate so qrdbfirstboot's idempotent
 // re-run path triggers.
 //
-// Identifier ownership: qrdb's User.ID is a server-assigned uint64
-// (qrdb's Snowflake generator) and is NOT caller-supplied — CreateUser
-// ignores any ID on the request. quicbaas keeps its own string UUID
-// (iam.User.ID) as the authoritative identity for its OIDC / PEP /
-// session / SPKI-binding layers, so the adapter does NOT cram the
-// quicbaas string id into qrdb's numeric ID field. The returned
-// qrdbsdk.User therefore carries no ID (zero value). quicbaas wires this
-// same adapter as qrdbfirstboot's CertBinder, and BindAdminCert addresses
-// the admin through the record remembered here rather than through qrdb's
-// numeric id. The stable cross-store correlation key is the username, which
-// is preserved verbatim on both sides.
+// Identifier: qrdb's User.ID is the server-assigned Snowflake id, and
+// iam.User.ID is that same id in canonical decimal (iam.FormatUserID). The
+// returned qrdbsdk.User carries it, together with the record's cert bindings:
+// qrdb's deferred tenant provisioning refuses an admin with no persisted id or
+// with a bound certificate, and attaches the invitation to that id.
+// BindAdminCert still addresses the admin through the record remembered here.
 func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserRequest) (*qrdbsdk.User, error) {
 	if a == nil || a.store == nil {
 		return nil, &NilDependencyError{Name: "IdentityStore"}
@@ -442,18 +437,22 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 	if tenantID == "" {
 		tenantID = qrdbsdk.SystemTenantID
 	}
-	// State is stated rather than defaulted. The default describes an account
-	// awaiting an invite, and the bootstrap admin is not one: enrollment here
-	// is CERT-BASED — first-boot issues the certificate and binds its SPKI
-	// thumbprint, and there is no invite token in the flow at all. Leaving the
-	// default would mark the one account that is already enrolled as pending
-	// activation.
+	// State is stated rather than defaulted. The bootstrap admin is not an
+	// account awaiting an invite: first-boot and cert-mode tenant provisioning
+	// issue the certificate and bind its SPKI thumbprint, so the admin is
+	// created active. Deferred tenant provisioning asks for Pending instead —
+	// the tenant admin then activates by redeeming an invitation — and qrdb
+	// refuses to hand back an admin the adapter created any other way.
+	lifecycle := iam.LifecycleActive
+	if req.Pending {
+		lifecycle = iam.LifecyclePending
+	}
 	opts := iam.CreateUserOptions{
 		Username:  req.Username,
 		Email:     syntheticEmail(req.Username, tenantID),
 		Name:      req.Username,
 		Roles:     req.RoleIDs,
-		Lifecycle: iam.LifecycleActive,
+		Lifecycle: lifecycle,
 	}
 	u, err := a.store.CreateUser(ctx, tenantID, opts)
 	if err != nil {
@@ -470,12 +469,7 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 		return nil, err
 	}
 	a.created = u
-	return &qrdbsdk.User{
-		Username:  u.Username,
-		TenantID:  u.TenantID,
-		RoleIDs:   u.Roles,
-		Lifecycle: u.Lifecycle,
-	}, nil
+	return storedUser(u)
 }
 
 // GetUserByUsername satisfies qrdbfirstboot.UserResolver. go-qrdb v0.25's
@@ -483,8 +477,9 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 // username, tenant, admin role grant and a live lifecycle — before it treats a
 // re-run's "username already exists" as idempotent success. Without a
 // resolver it cannot verify, so a first boot that failed after creating the
-// admin could never be resumed. The projection matches what CreateUser
-// returns.
+// admin could never be resumed. It is also qrdb's bootstrap.AdminUserLookup,
+// through which a deferred tenant-provisioning re-run resolves the
+// still-pending admin. The projection matches what CreateUser returns.
 func (a *UserAdapter) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbsdk.User, error) {
 	if a == nil || a.store == nil {
 		return nil, &NilDependencyError{Name: "IdentityStore"}
@@ -496,12 +491,23 @@ func (a *UserAdapter) GetUserByUsername(ctx context.Context, tenantID, username 
 	if err != nil {
 		return nil, err
 	}
-	return &qrdbsdk.User{
-		Username:  u.Username,
-		TenantID:  u.TenantID,
-		RoleIDs:   u.Roles,
-		Lifecycle: u.Lifecycle,
-	}, nil
+	return storedUser(u)
+}
+
+// storedUser projects a user the store has persisted into qrdb's shape. A
+// persisted user always carries its canonical id, so an empty or
+// non-canonical one is refused rather than projected as id 0: qrdb's
+// bootstrap reads the id as the identity a certificate binds to and an
+// invitation attaches to, and id 0 names nobody.
+func storedUser(u *iam.User) (*qrdbsdk.User, error) {
+	if u == nil || u.ID == "" {
+		return nil, ErrInvalidUserID
+	}
+	projected, err := FromIAMUser(u)
+	if err != nil {
+		return nil, err
+	}
+	return &projected, nil
 }
 
 // CreatedUser returns the quicbaas user record CreateUser most recently wrote,

@@ -18,6 +18,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"io"
 	"net/http"
 	"time"
@@ -26,6 +27,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // InviteMetadataResponse is returned by GET /api/v1/iam/{tenant_id}/invites/{token}.
@@ -68,17 +70,40 @@ func respondInviteUnusable(w http.ResponseWriter, r *http.Request) {
 		NewIAMAPIError(ErrNotFound, "invite link is not valid"))
 }
 
-// respondInviteLookupError renders a failed invite lookup and reports whether
-// it handled one. It returns false only when err is nil, so callers read as
-// `if h.respondInviteLookupError(w, r, err) { return }`.
+// inviteErrorResponse is the REST rendering of one invite activation
+// service error.
+type inviteErrorResponse struct {
+	err     *dberrors.QBError
+	status  int
+	code    string
+	message string
+}
+
+// inviteErrorResponses renders the activation service's own typed errors. They
+// are matched by the identity of the QBError in the chain, not errors.Is:
+// errors.Is compares QBError codes, so every internal error would match the
+// first internal entry.
+var inviteErrorResponses = []inviteErrorResponse{
+	{service.ErrInviteActivationTenantRequired, http.StatusBadRequest, ErrBadRequest, "tenant_id is required"},
+	{service.ErrInviteActivationTokenRequired, http.StatusBadRequest, ErrBadRequest, "token is required"},
+	{service.ErrInviteActivationCredentialRequired, http.StatusBadRequest, ErrBadRequest, "credential is required"},
+	{service.ErrInviteActivationCertRequired, http.StatusBadRequest, ErrBadRequest, "cert_pem is required"},
+	{service.ErrInviteActivationWebAuthnNotConfigured, http.StatusInternalServerError, ErrInternalError, "WebAuthn manager not available"},
+	{service.ErrInviteActivationUserNoEmail, http.StatusInternalServerError, ErrInternalError, "invite user has no email"},
+	{service.ErrInviteActivationIdentityStoreUnavailable, http.StatusInternalServerError, ErrInternalError, "identity store not initialized"},
+	{service.ErrInviteActivationPIVNotConfigured, http.StatusNotImplemented, "piv_not_configured", "PIV activation is not configured on this server"},
+}
+
+// respondInviteError renders a failed invite activation verb.
 //
 // The canonical store reports a spent or expired token as an ERROR rather than
 // returning a record to inspect (qrdb's Lookup runs checkUsable and refuses),
-// so this — not the callers' record.Used branch — is where those land. They
-// used to fall through to handleServiceError, which renders iam.ErrInviteUsed
-// by its QBError code, Forbidden: the activation UI showed "access denied:
-// invite has already been used", sending the invitee to look for a permissions
-// problem they do not have.
+// and the service reports a returned spent or expired record the same way, so
+// all three land in the IsInviteUnusable case. Before that case existed they
+// fell through to handleServiceError, which renders iam.ErrInviteUsed by its
+// QBError code, Forbidden: the activation UI showed "access denied: invite has
+// already been used", sending the invitee to look for a permissions problem
+// they do not have.
 //
 // Anything else is a real failure (storage, sealed tenant) and keeps its own
 // status; collapsing those into the opaque answer would report an outage as a
@@ -87,156 +112,128 @@ func respondInviteUnusable(w http.ResponseWriter, r *http.Request) {
 // so every forbidden and every not-found reaching here -- a sealed tenant, a
 // suspended one, a store that answered 404 -- was collapsed into "bad link",
 // which is exactly the outage-as-bad-link report this comment forbids
-// (go-quicbaas#434).
-func (h *IAMHandler) respondInviteLookupError(w http.ResponseWriter, r *http.Request, err error) bool {
+// (go-quicbaas#434). The PIV cases name their condition for the same reason:
+// ErrPIVCertRejected carries Forbidden, the code of ErrInviteExpired and
+// ErrInviteUsed, so a code match reported every failed chain verification as
+// an unusable invite.
+func (h *IAMHandler) respondInviteError(w http.ResponseWriter, r *http.Request, err error) {
+	var qbErr *dberrors.QBError
+	isQBErr := stderrors.As(err, &qbErr)
+	for _, resp := range inviteErrorResponses {
+		if isQBErr && qbErr == resp.err {
+			RespondIAMError(w, r, resp.status, NewIAMAPIError(resp.code, resp.message))
+			return
+		}
+	}
+
 	switch {
-	case err == nil:
-		return false
+	// Absent, expired and spent collapse to one opaque answer. PIV is if
+	// anything the more exposed route: PIVActivator resolves the invite
+	// BEFORE it parses or verifies the certificate, so an unauthenticated
+	// caller posting arbitrary non-empty cert_pem could otherwise probe
+	// tokens and read distinct statuses as an existence oracle.
 	case iam.IsInviteUnusable(err):
 		respondInviteUnusable(w, r)
+	case iam.IsUserNotPending(err):
+		RespondIAMError(w, r, http.StatusConflict,
+			NewIAMAPIError(ErrConflict, "user is not in pending state"))
+	case iam.IsPIVCertRejected(err):
+		RespondIAMError(w, r, http.StatusUnprocessableEntity,
+			NewIAMAPIError("piv_cert_rejected", "PIV certificate chain verification failed"))
 	default:
 		h.server.handleServiceError(w, r, err)
 	}
-	return true
+}
+
+// inviteActivation returns the invite activation service over this server's
+// IAM components. The verbs live in the service layer so every transport
+// shares one implementation.
+func (h *IAMHandler) inviteActivation() service.InviteActivationService {
+	return service.NewInviteActivationService(inviteActivationSource{h: h})
+}
+
+// inviteActivationSource adapts the server's service to the activation
+// service's component source. Each component is an optional capability of the
+// server's service; one it does not offer resolves to nil, which the
+// activation service reports as that component's typed not-configured error.
+type inviteActivationSource struct {
+	h *IAMHandler
+}
+
+// GetInviteStore implements service.InviteActivationSource.
+func (s inviteActivationSource) GetInviteStore(ctx context.Context) (iam.InviteStore, error) {
+	return s.h.getInviteStore(ctx)
+}
+
+// GetIdentityStore implements service.InviteActivationSource.
+func (s inviteActivationSource) GetIdentityStore(ctx context.Context) (*iam.IdentityStore, error) {
+	return s.h.getIdentityStore(ctx)
+}
+
+// GetWebAuthnManager implements service.InviteActivationSource.
+func (s inviteActivationSource) GetWebAuthnManager(ctx context.Context) (WebAuthnManager, error) {
+	svc, ok := s.h.server.service.(interface {
+		GetWebAuthnManager(ctx context.Context) (WebAuthnManager, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return svc.GetWebAuthnManager(ctx)
+}
+
+// GetPIVActivator implements service.InviteActivationSource.
+func (s inviteActivationSource) GetPIVActivator(ctx context.Context) (*iam.PIVActivator, error) {
+	svc, ok := s.h.server.service.(interface {
+		GetPIVActivator(ctx context.Context) (*iam.PIVActivator, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return svc.GetPIVActivator(ctx)
+}
+
+// GetAuditLogger implements service.InviteActivationSource.
+func (s inviteActivationSource) GetAuditLogger(ctx context.Context) (iam.AuditLogger, error) {
+	svc, ok := s.h.server.service.(interface {
+		GetAuditLogger(ctx context.Context) (iam.AuditLogger, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return svc.GetAuditLogger(ctx)
 }
 
 // GetInvite handles GET /api/v1/iam/{tenant_id}/invites/{token}.
 // Public endpoint — returns invite metadata without revealing the token itself.
 func (h *IAMHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	// The tenant is a path segment because invitations live in that tenant's
 	// own store: a token issued for one tenant is simply absent from another,
 	// which makes isolation structural rather than a check that could be
 	// forgotten. See the route mount in iam.go.
-	tenantID := chi.URLParam(r, "tenant_id")
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant_id is required"))
-		return
-	}
-
-	token := chi.URLParam(r, "token")
-	if token == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "token is required"))
-		return
-	}
-
-	inviteStore, err := h.getInviteStore(ctx)
+	meta, err := h.inviteActivation().GetInvite(r.Context(),
+		chi.URLParam(r, "tenant_id"), chi.URLParam(r, "token"))
 	if err != nil {
-		h.server.handleServiceError(w, r, err)
+		h.respondInviteError(w, r, err)
 		return
 	}
 
-	record, err := inviteStore.Lookup(ctx, tenantID, token)
-	if h.respondInviteLookupError(w, r, err) {
-		return
-	}
-
-	// A store that returns a spent or expired record instead of refusing gets
-	// the same opaque answer as one that refuses, so the two shapes are
-	// indistinguishable from outside.
-	if record.Used || time.Now().After(record.ExpiresAt) {
-		respondInviteUnusable(w, r)
-		return
-	}
-
-	// Fetch user metadata so the activation UI can display email/name.
-	store, storeErr := h.getIdentityStore(ctx)
-	resp := &InviteMetadataResponse{
-		UserID:    record.UserID,
-		ExpiresAt: record.ExpiresAt,
-	}
-	if storeErr == nil && store != nil {
-		if user, err := store.GetUser(ctx, record.TenantID, record.UserID); err == nil {
-			resp.Email = user.Email
-			resp.Name = user.Name
-			resp.AuthMethods = user.AuthMethods
-		}
-	}
-	if len(resp.AuthMethods) == 0 {
-		resp.AuthMethods = []string{"webauthn"}
-	}
-
-	RespondJSON(w, r, http.StatusOK, resp)
+	RespondJSON(w, r, http.StatusOK, &InviteMetadataResponse{
+		UserID:      meta.UserID,
+		Email:       meta.Email,
+		Name:        meta.Name,
+		AuthMethods: meta.AuthMethods,
+		ExpiresAt:   meta.ExpiresAt,
+	})
 }
 
 // ActivateFIDO2Begin handles POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/begin.
 // Returns the WebAuthn CredentialCreationOptions so the browser can call
 // navigator.credentials.create().
 func (h *IAMHandler) ActivateFIDO2Begin(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// The tenant is a path segment because invitations live in that tenant's
-	// own store: a token issued for one tenant is simply absent from another,
-	// which makes isolation structural rather than a check that could be
-	// forgotten. See the route mount in iam.go.
-	tenantID := chi.URLParam(r, "tenant_id")
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant_id is required"))
-		return
-	}
-
-	token := chi.URLParam(r, "token")
-	if token == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "token is required"))
-		return
-	}
-
-	inviteStore, err := h.getInviteStore(ctx)
+	options, err := h.inviteActivation().ActivateFIDO2Begin(r.Context(),
+		chi.URLParam(r, "tenant_id"), chi.URLParam(r, "token"))
 	if err != nil {
-		h.server.handleServiceError(w, r, err)
-		return
-	}
-
-	record, err := inviteStore.Lookup(ctx, tenantID, token)
-	if h.respondInviteLookupError(w, r, err) {
-		return
-	}
-
-	// A store that returns a spent or expired record instead of refusing gets
-	// the same opaque answer as one that refuses, so the two shapes are
-	// indistinguishable from outside.
-	if record.Used || time.Now().After(record.ExpiresAt) {
-		respondInviteUnusable(w, r)
-		return
-	}
-
-	// Delegate to the WebAuthn manager.
-	webAuthnMgr, ok := h.server.service.(interface {
-		GetWebAuthnManager(ctx context.Context) (WebAuthnManager, error)
-	})
-	if !ok {
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "WebAuthn manager not available"))
-		return
-	}
-
-	mgr, err := webAuthnMgr.GetWebAuthnManager(ctx)
-	if err != nil || mgr == nil {
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "WebAuthn manager not initialized"))
-		return
-	}
-
-	// xkms's WebAuthn ceremony uses the user's email as the lookup key.
-	// Resolve it from the IdentityStore via the invite's user id.
-	email, lookupErr := h.lookupInviteEmail(ctx, record.TenantID, record.UserID)
-	if lookupErr != nil || email == "" {
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "invite user has no email"))
-		return
-	}
-
-	// The invite's account already exists and is pending: its first passkey
-	// is enrolled through the invitation ceremony, the one unauthenticated
-	// path go-xkms allows for a pre-existing account (go-xkms#1294).
-	options, err := mgr.BeginInviteRegistration(ctx, record.TenantID, email)
-	if err != nil {
-		h.server.handleServiceError(w, r, err)
+		h.respondInviteError(w, r, err)
 		return
 	}
 
@@ -246,45 +243,6 @@ func (h *IAMHandler) ActivateFIDO2Begin(w http.ResponseWriter, r *http.Request) 
 // ActivateFIDO2Finish handles POST /api/v1/iam/{tenant_id}/invites/{token}/activate/fido2/finish.
 // Verifies the authenticator response, transitions the user to active, and consumes the invite.
 func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// The tenant is a path segment because invitations live in that tenant's
-	// own store: a token issued for one tenant is simply absent from another,
-	// which makes isolation structural rather than a check that could be
-	// forgotten. See the route mount in iam.go.
-	tenantID := chi.URLParam(r, "tenant_id")
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant_id is required"))
-		return
-	}
-
-	token := chi.URLParam(r, "token")
-	if token == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "token is required"))
-		return
-	}
-
-	inviteStore, err := h.getInviteStore(ctx)
-	if err != nil {
-		h.server.handleServiceError(w, r, err)
-		return
-	}
-
-	record, err := inviteStore.Lookup(ctx, tenantID, token)
-	if h.respondInviteLookupError(w, r, err) {
-		return
-	}
-
-	// A store that returns a spent or expired record instead of refusing gets
-	// the same opaque answer as one that refuses, so the two shapes are
-	// indistinguishable from outside.
-	if record.Used || time.Now().After(record.ExpiresAt) {
-		respondInviteUnusable(w, r)
-		return
-	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -293,161 +251,33 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 	}
 	defer r.Body.Close()
 
+	// An undecodable body is passed on as a missing credential: the service
+	// checks the invite first, so an unusable token gets the same opaque
+	// answer whatever the body carried.
 	var req struct {
 		Credential map[string]interface{} `json:"credential"`
 	}
-	if err := json.Unmarshal(body, &req); err != nil || req.Credential == nil {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "credential is required"))
-		return
+	if jsonErr := json.Unmarshal(body, &req); jsonErr != nil {
+		req.Credential = nil
 	}
 
-	webAuthnMgr, ok := h.server.service.(interface {
-		GetWebAuthnManager(ctx context.Context) (WebAuthnManager, error)
-	})
-	if !ok {
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "WebAuthn manager not available"))
-		return
-	}
-
-	mgr, err := webAuthnMgr.GetWebAuthnManager(ctx)
-	if err != nil || mgr == nil {
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "WebAuthn manager not initialized"))
-		return
-	}
-
-	// Match the ActivateFIDO2Begin lookup key — xkms's BeginRegistration
-	// keys ceremony sessions by email, so FinishRegistration must use
-	// the same identifier.
-	email, lookupErr := h.lookupInviteEmail(ctx, record.TenantID, record.UserID)
-	if lookupErr != nil || email == "" {
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "invite user has no email"))
-		return
-	}
-
-	// The proven attestation is not used here: invite activation does not mint
-	// a session, it transitions the account to active and the operator logs in
-	// afterwards. The gate has already refused the ceremony if this account's
-	// policy required hardware.
-	if _, err := mgr.FinishRegistration(ctx, record.TenantID, email, req.Credential); err != nil {
-		h.server.handleServiceError(w, r, err)
-		return
-	}
-
-	// Transition the user to active and clear the invite. This step is FATAL
-	// on failure, and it runs strictly before the invite is consumed, so a
-	// one-time token is never spent on an account that stayed `pending`.
-	// PIVActivator.Activate already orders its writes this way.
-	//
-	// Failing here does NOT make the ceremony repeatable: xkms persisted the
-	// credential inside FinishRegistration above and deleted the registration
-	// session, and a later begin excludes credentials the user already holds,
-	// so the same authenticator cannot re-register. What it preserves is the
-	// invite, which keeps the account activatable at all — by a different
-	// authenticator, or by an admin. Spending the token here instead would
-	// leave nothing to recover with.
-	store, storeErr := h.getIdentityStore(ctx)
-	if storeErr != nil {
-		h.server.handleServiceError(w, r, storeErr)
-		return
-	}
-	if store == nil {
-		RespondIAMError(w, r, http.StatusInternalServerError,
-			NewIAMAPIError(ErrInternalError, "identity store not initialized"))
-		return
-	}
-
-	// Activating is a lifecycle transition and nothing else. The invite itself
-	// lives in the invite store and is consumed there; there is no longer a copy
-	// on the user record to clear alongside it.
-	activeState := iam.LifecycleActive
-	var activationWarning string
-	if _, err := store.UpdateUser(ctx, record.TenantID, record.UserID, iam.UpdateUserOptions{
-		Lifecycle: &activeState,
-	}); err != nil {
-		h.logAuditEvent(ctx, record.TenantID, iam.AuditEventUserManagement,
-			iam.AuditCategorySecurity, "invite.activate", iam.AuditOutcomeFailure,
-			&iam.AuditResource{Type: "user", ID: record.UserID},
-			map[string]interface{}{"error": err.Error()})
-
-		// An error here does not prove the write did not land: a commit whose
-		// response was lost reports failure on a user that IS now active.
-		// Refusing unconditionally on that outcome is its own defect — it would
-		// leave a live one-time token on an activated account, redeemable by
-		// whoever else holds the link.
-		//
-		// So reconcile before deciding: re-read the user and let the persisted
-		// state settle it. Active means the activation happened and the invite
-		// must still be spent; anything else (including a failed re-read) keeps
-		// the fail-closed refusal, which leaves the invite intact and the
-		// account recoverable.
-		if !h.userIsActive(ctx, store, record.TenantID, record.UserID) {
-			h.server.handleServiceError(w, r, err)
-			return
-		}
-		activationWarning = "activation write reported an error but the account is active; the invite was consumed"
-	}
-
-	// Consume the invite. Redeem failure on a one-time token is
-	// security-relevant: if we cannot record the token as spent it remains
-	// redeemable, so we must NOT report success. The credential is already
-	// registered and the user is active, so the operator's authenticator works;
-	// we surface a 500 so the failure is visible and the unconsumed invite is
-	// not silently left live.
-	if _, err := inviteStore.Redeem(ctx, tenantID, token); err != nil {
-		h.logAuditEvent(ctx, record.TenantID, iam.AuditEventUserManagement,
-			iam.AuditCategorySecurity, "invite.mark_used", iam.AuditOutcomeFailure,
-			&iam.AuditResource{Type: "invite", ID: record.UserID},
-			map[string]interface{}{"error": err.Error()})
-		h.server.handleServiceError(w, r, err)
+	activation, err := h.inviteActivation().ActivateFIDO2Finish(r.Context(),
+		chi.URLParam(r, "tenant_id"), chi.URLParam(r, "token"), req.Credential)
+	if err != nil {
+		h.respondInviteError(w, r, err)
 		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, &ActivationResponse{
-		UserID:  record.UserID,
+		UserID:  activation.UserID,
 		Message: "activation successful",
-		Warning: activationWarning,
+		Warning: activation.Warning,
 	})
-}
-
-// userIsActive reports whether the user is persisted in the active state. It
-// answers the reconciliation question after an ambiguous activation write, so a
-// read failure is deliberately NOT distinguished from "not active": both mean
-// the activation is unconfirmed, and the caller must then keep the invite.
-func (h *IAMHandler) userIsActive(ctx context.Context, store *iam.IdentityStore, tenantID, userID string) bool {
-	user, err := store.GetUser(ctx, tenantID, userID)
-	if err != nil || user == nil {
-		return false
-	}
-	return user.Lifecycle == iam.LifecycleActive
 }
 
 // ActivatePIV handles POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv.
 // Accepts a PEM-encoded X.509 certificate, verifies the chain, and activates the user.
 func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// The tenant is a path segment because invitations live in that tenant's
-	// own store: a token issued for one tenant is simply absent from another,
-	// which makes isolation structural rather than a check that could be
-	// forgotten. See the route mount in iam.go.
-	tenantID := chi.URLParam(r, "tenant_id")
-	if tenantID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "tenant_id is required"))
-		return
-	}
-
-	token := chi.URLParam(r, "token")
-	if token == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "token is required"))
-		return
-	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -464,74 +294,16 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
 		return
 	}
-	if req.CertPEM == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "cert_pem is required"))
-		return
-	}
 
-	// Get the PIV activator from the service (if configured).
-	pivSvc, ok := h.server.service.(interface {
-		GetPIVActivator(ctx context.Context) (*iam.PIVActivator, error)
-	})
-	if !ok {
-		RespondIAMError(w, r, http.StatusNotImplemented,
-			NewIAMAPIError("piv_not_configured", "PIV activation is not configured on this server"))
+	activation, err := h.inviteActivation().ActivatePIV(r.Context(),
+		chi.URLParam(r, "tenant_id"), chi.URLParam(r, "token"), []byte(req.CertPEM))
+	if err != nil {
+		h.respondInviteError(w, r, err)
 		return
-	}
-
-	activator, err := pivSvc.GetPIVActivator(ctx)
-	if err != nil || activator == nil {
-		RespondIAMError(w, r, http.StatusNotImplemented,
-			NewIAMAPIError("piv_not_configured", "PIV activation is not configured on this server"))
-		return
-	}
-
-	if err := activator.Activate(ctx, tenantID, token, []byte(req.CertPEM)); err != nil {
-		switch {
-		// Absent, expired and spent collapse to one opaque answer here for
-		// exactly the reason they do on the FIDO2 routes. PIV is if anything
-		// the more exposed of the two: PIVActivator resolves the invite BEFORE
-		// it parses or verifies the certificate, so an unauthenticated caller
-		// posting arbitrary non-empty cert_pem could probe tokens and read the
-		// distinct statuses as an existence oracle.
-		//
-		// Each case names ITS condition rather than the condition's error code.
-		// errors.Is compared codes here (QBError is go-qrdb's QRDBError, whose
-		// Is looks at Code alone), and ErrPIVCertRejected carries Forbidden --
-		// the same code as ErrInviteExpired and ErrInviteUsed. The first case
-		// therefore matched a rejected certificate and the 422 below it could
-		// never run: every failed chain verification was reported to the caller
-		// as an unusable invite (go-quicbaas#434).
-		case iam.IsInviteUnusable(err):
-			respondInviteUnusable(w, r)
-		case iam.IsUserNotPending(err):
-			RespondIAMError(w, r, http.StatusConflict,
-				NewIAMAPIError(ErrConflict, "user is not in pending state"))
-		case iam.IsPIVCertRejected(err):
-			RespondIAMError(w, r, http.StatusUnprocessableEntity,
-				NewIAMAPIError("piv_cert_rejected", "PIV certificate chain verification failed"))
-		default:
-			h.server.handleServiceError(w, r, err)
-		}
-		return
-	}
-
-	// Look up the user ID from the (now-consumed) invite for the response.
-	// Activation already succeeded inside activator.Activate, so a lookup
-	// failure here is cosmetic: log it and return success with an empty UserID
-	// rather than failing a request whose side effect already committed.
-	userID := ""
-	if inviteStore, storeErr := h.getInviteStore(ctx); storeErr != nil {
-		h.server.logger.WithError(storeErr).Warn("piv activation: invite store unavailable for response user id lookup")
-	} else if record, lookupErr := inviteStore.Lookup(ctx, tenantID, token); lookupErr != nil {
-		h.server.logger.WithError(lookupErr).Warn("piv activation: failed to resolve invite for response user id")
-	} else if record != nil {
-		userID = record.UserID
 	}
 
 	RespondJSON(w, r, http.StatusOK, &ActivationResponse{
-		UserID:  userID,
+		UserID:  activation.UserID,
 		Message: "PIV activation successful",
 	})
 }
@@ -574,26 +346,4 @@ func (h *IAMHandler) getIdentityStore(ctx context.Context) (*iam.IdentityStore, 
 		return nil, nil
 	}
 	return svc.GetIdentityStore(ctx)
-}
-
-// lookupInviteEmail resolves the email for the user referenced by an
-// invite. xkms's WebAuthn ceremony uses the email as the persistent
-// lookup key (qrdb.Username); the invite record stores the quicbaas
-// IdentityStore user id, so we round-trip through GetUser.
-func (h *IAMHandler) lookupInviteEmail(ctx context.Context, tenantID, userID string) (string, error) {
-	store, err := h.getIdentityStore(ctx)
-	if err != nil {
-		return "", err
-	}
-	if store == nil {
-		return "", nil
-	}
-	user, err := store.GetUser(ctx, tenantID, userID)
-	if err != nil {
-		return "", err
-	}
-	if user == nil {
-		return "", nil
-	}
-	return user.Email, nil
 }

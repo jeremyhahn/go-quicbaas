@@ -50,6 +50,67 @@ wrote" question in a multi-tenant deployment is this flag.
 
 ## Common tasks
 
+### Provision a tenant with its first admin
+
+When public registration is off, a system admin onboards a tenant by
+provisioning it. The tenant and its first admin are created in one call
+(`POST /api/v1/tenants/{tenant_id}/provision`, or `TenantClient.Provision` in
+the SDK). There is no CLI command for this yet.
+
+Provisioning accepts only `"isolation_type": "prefix"` for now: the tenant
+shares the system barrier and its IAM is readable as soon as it exists. An
+empty isolation type means `barrier`, and `barrier`, `volume` and `raft` are
+all refused with `ProvisionBarrierIsolationError` before anything is written.
+Those types keep the tenant's IAM behind its own barrier, which stays sealed
+until the tenant admin initializes it, and qrdb cannot yet hold that admin
+anywhere outside the barrier. QuicBaaS does not initialize or unseal a
+tenant barrier for the admin, so it refuses the request rather than create a
+tenant nobody can log in to.
+
+The admin enrolls in one of two ways:
+
+- **`cert`** (the default): supply the admin's CSR, and the response returns
+  the signed certificate. The CSR is checked before anything is written: it
+  must be a PEM `CERTIFICATE REQUEST` whose signature verifies, over an RSA
+  key of at least 2048 bits, an ECDSA P-256, P-384 or P-521 key, or an
+  Ed25519 key. Otherwise provisioning fails with
+  `ProvisionAdminCSRInvalidError` or `ProvisionAdminCSRKeyError`. The
+  certificate is ready for login: provisioning enrolls it as the admin's
+  `mtls` login factor, so `quicbaas auth login --method mtls` works with it
+  straight away. If signing, binding or that enrollment fails, provisioning
+  fails, returns no certificate and deletes the admin it created, so you can
+  simply retry. The cleanup finishes even if your request is canceled or
+  times out meanwhile. It never deletes the tenant: qrdb retires a deleted
+  tenant ID for good, so the retry could not reuse it. The tenant may also
+  already hold an admin that a concurrent provision of the same ID created.
+  The cleanup deletes only the account this call created, never one a
+  concurrent call created. If the cleanup fails too, provisioning fails with
+  `TenantProvisionRollbackError`.
+- **`invite`**: the admin is created pending, and the response returns a
+  one-time invite token. Hand the token to the admin out of band. The admin
+  then activates it with a passkey or a PIV certificate. From the SDK, call
+  `InviteClient.GetInvite`, then `ActivateFIDO2Begin` and
+  `ActivateFIDO2Finish`, or `ActivatePIV`. Each call takes the tenant ID and
+  the token. The calls need no bearer token and work over REST, gRPC, Unix
+  and the embedded transport. MCP has no invite tools yet. Activating with a
+  PIV certificate also enrolls that certificate as an `mtls` login factor.
+
+Provisioning an existing tenant again in `cert` mode issues no new
+certificate and returns the existing admin's ID, but only when the account
+named by the admin username really is the admin:
+
+- it must be active and hold the tenant-admin role, or provisioning fails
+  with `TenantAdminAccountMismatchError`, which reports its lifecycle and
+  whether it holds the role. An ordinary or disabled account holding the
+  name is never reported as the admin;
+- it must have an active login factor, or provisioning fails with
+  `TenantAdminLoginCredentialMissingError`.
+
+Either way, fix or delete the account (or delete the tenant), then provision
+again. See
+[`api.md`](api.md) for the transports, and
+[`../iam/api.md`](../iam/api.md) for the request and response fields.
+
 ### Give a tenant its own barrier
 
 ```bash

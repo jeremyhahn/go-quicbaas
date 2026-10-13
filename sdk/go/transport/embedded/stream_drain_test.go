@@ -25,7 +25,9 @@ import (
 func TestStream_DrainAfterCloseHandsOutTheBufferedValue(t *testing.T) {
 	s := newStream(context.Background(), 4)
 	want := errors.New("handler error")
-	s.recvChan() <- want
+	if err := s.deliver(want); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +43,9 @@ func TestStream_DrainAfterCloseHandsOutTheBufferedValue(t *testing.T) {
 
 func TestStream_RecvAfterCloseReturnsBufferedThenClosed(t *testing.T) {
 	s := newStream(context.Background(), 4)
-	s.recvChan() <- "last"
+	if err := s.deliver("last"); err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}

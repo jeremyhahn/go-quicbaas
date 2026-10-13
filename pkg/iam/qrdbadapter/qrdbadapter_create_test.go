@@ -323,3 +323,83 @@ func TestUserAdapter_GetUserByUsername_Errors(t *testing.T) {
 		t.Fatalf("nil adapter = %v, want NilDependencyError", err)
 	}
 }
+
+// TestUserAdapter_CreateUser_PendingAdminSatisfiesDeferredProvisioning pins
+// the record qrdb's deferred tenant provisioning validates before it hands
+// the admin back as an invitation target: a persisted id, the exact tenant,
+// username and Admin role, lifecycle pending, and no cert binding. An adapter
+// that ignored Pending or dropped the id made every deferred run fail.
+func TestUserAdapter_CreateUser_PendingAdminSatisfiesDeferredProvisioning(t *testing.T) {
+	ctx := context.Background()
+	store := newStore()
+	if _, err := store.CreateRole(ctx, "acme", iam.CreateRoleOptions{ID: "role-admin", Name: "Admin"}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	a := WrapUser(store)
+	got, err := a.CreateUser(ctx, &qrdbsdk.CreateUserRequest{
+		Username: "owner",
+		TenantID: "acme",
+		RoleIDs:  []string{"role-admin"},
+		Pending:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if got.ID == 0 {
+		t.Fatal("a created user must carry its persisted id")
+	}
+	if got.Lifecycle != qrdbsdk.LifecyclePending {
+		t.Fatalf("Lifecycle = %q, want pending", got.Lifecycle)
+	}
+	if got.TenantID != "acme" || got.Username != "owner" || len(got.RoleIDs) != 1 || got.RoleIDs[0] != "role-admin" {
+		t.Fatalf("created %+v, want owner in acme holding role-admin", got)
+	}
+	if len(got.CertBindings) != 0 {
+		t.Fatalf("CertBindings = %v, want none", got.CertBindings)
+	}
+	stored, err := store.GetUserByUsername(ctx, "acme", "owner")
+	if err != nil {
+		t.Fatalf("store read: %v", err)
+	}
+	if stored.ID != iam.FormatUserID(got.ID) {
+		t.Fatalf("returned id %d does not name stored user %q", got.ID, stored.ID)
+	}
+}
+
+// TestUserAdapter_GetUserByUsername_ProjectsIDAndBindings pins the lookup a
+// deferred re-run resolves the still-pending admin through, and the cert
+// bindings qrdb checks to refuse an admin that is already enrolled.
+func TestUserAdapter_GetUserByUsername_ProjectsIDAndBindings(t *testing.T) {
+	ctx := context.Background()
+	store := newStore()
+	if _, err := store.CreateRole(ctx, "system", iam.CreateRoleOptions{ID: "role-admin", Name: "admin"}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	a := WrapUser(store)
+	created, err := a.CreateUser(ctx, &qrdbsdk.CreateUserRequest{Username: "admin", TenantID: "system", RoleIDs: []string{"role-admin"}})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := a.BindAdminCert(ctx, "system", created.ID, "ab12"); err != nil {
+		t.Fatalf("BindAdminCert: %v", err)
+	}
+
+	got, err := a.GetUserByUsername(ctx, "system", "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Fatalf("ID = %d, want %d", got.ID, created.ID)
+	}
+	if len(got.CertBindings) == 0 {
+		t.Fatal("a bound admin must project its cert binding")
+	}
+}
+
+func TestStoredUser_RefusesAMissingOrNonCanonicalID(t *testing.T) {
+	for _, u := range []*iam.User{nil, {ID: ""}, {ID: "007"}, {ID: "not-a-number"}} {
+		if _, err := storedUser(u); !errors.Is(err, ErrInvalidUserID) {
+			t.Fatalf("storedUser(%+v) = %v, want ErrInvalidUserID", u, err)
+		}
+	}
+}

@@ -167,6 +167,8 @@ type testMockTenantClient struct {
 	UpdateFunc func(ctx context.Context, tenantID string, req *iam.UpdateTenantRequest) (*iam.Tenant, error)
 	DeleteFunc func(ctx context.Context, tenantID string) error
 	ListFunc   func(ctx context.Context, req *iam.ListTenantsRequest) (*iam.ListTenantsResponse, error)
+
+	ProvisionFunc func(ctx context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error)
 }
 
 func (m *testMockTenantClient) Create(ctx context.Context, req *iam.CreateTenantRequest) (*iam.Tenant, error) {
@@ -217,6 +219,13 @@ func (m *testMockTenantClient) Delete(ctx context.Context, tenantID string) erro
 		return m.DeleteFunc(ctx, tenantID)
 	}
 	return nil
+}
+
+func (m *testMockTenantClient) Provision(ctx context.Context, req *iam.ProvisionTenantRequest) (*iam.ProvisionTenantResponse, error) {
+	if m.ProvisionFunc != nil {
+		return m.ProvisionFunc(ctx, req)
+	}
+	return &iam.ProvisionTenantResponse{TenantID: req.TenantID}, nil
 }
 
 func (m *testMockTenantClient) List(ctx context.Context, req *iam.ListTenantsRequest) (*iam.ListTenantsResponse, error) {
@@ -800,36 +809,36 @@ func (m *testMockPolicyClient) GetEffectivePermissions(ctx context.Context, tena
 
 // testMockInviteClient implements iam.InviteClient for testing.
 type testMockInviteClient struct {
-	GetInviteFunc           func(ctx context.Context, token string) (*iam.InviteMetadata, error)
-	ActivateFIDO2BeginFunc  func(ctx context.Context, token string) (map[string]interface{}, error)
-	ActivateFIDO2FinishFunc func(ctx context.Context, token string, credential map[string]interface{}) (*iam.ActivationResponse, error)
-	ActivatePIVFunc         func(ctx context.Context, token, certPEM string) (*iam.ActivationResponse, error)
+	GetInviteFunc           func(ctx context.Context, tenantID, token string) (*iam.InviteMetadata, error)
+	ActivateFIDO2BeginFunc  func(ctx context.Context, tenantID, token string) (map[string]interface{}, error)
+	ActivateFIDO2FinishFunc func(ctx context.Context, tenantID, token string, credential map[string]interface{}) (*iam.ActivationResponse, error)
+	ActivatePIVFunc         func(ctx context.Context, tenantID, token, certPEM string) (*iam.ActivationResponse, error)
 }
 
-func (m *testMockInviteClient) GetInvite(ctx context.Context, token string) (*iam.InviteMetadata, error) {
+func (m *testMockInviteClient) GetInvite(ctx context.Context, tenantID, token string) (*iam.InviteMetadata, error) {
 	if m.GetInviteFunc != nil {
-		return m.GetInviteFunc(ctx, token)
+		return m.GetInviteFunc(ctx, tenantID, token)
 	}
 	return &iam.InviteMetadata{UserID: "user_001", Email: "invitee@example.com", AuthMethods: []string{"fido2", "piv"}, ExpiresAt: time.Now().Add(24 * time.Hour)}, nil
 }
 
-func (m *testMockInviteClient) ActivateFIDO2Begin(ctx context.Context, token string) (map[string]interface{}, error) {
+func (m *testMockInviteClient) ActivateFIDO2Begin(ctx context.Context, tenantID, token string) (map[string]interface{}, error) {
 	if m.ActivateFIDO2BeginFunc != nil {
-		return m.ActivateFIDO2BeginFunc(ctx, token)
+		return m.ActivateFIDO2BeginFunc(ctx, tenantID, token)
 	}
 	return map[string]interface{}{"publicKey": map[string]interface{}{}}, nil
 }
 
-func (m *testMockInviteClient) ActivateFIDO2Finish(ctx context.Context, token string, credential map[string]interface{}) (*iam.ActivationResponse, error) {
+func (m *testMockInviteClient) ActivateFIDO2Finish(ctx context.Context, tenantID, token string, credential map[string]interface{}) (*iam.ActivationResponse, error) {
 	if m.ActivateFIDO2FinishFunc != nil {
-		return m.ActivateFIDO2FinishFunc(ctx, token, credential)
+		return m.ActivateFIDO2FinishFunc(ctx, tenantID, token, credential)
 	}
 	return &iam.ActivationResponse{UserID: "user_001", Message: "activated"}, nil
 }
 
-func (m *testMockInviteClient) ActivatePIV(ctx context.Context, token, certPEM string) (*iam.ActivationResponse, error) {
+func (m *testMockInviteClient) ActivatePIV(ctx context.Context, tenantID, token, certPEM string) (*iam.ActivationResponse, error) {
 	if m.ActivatePIVFunc != nil {
-		return m.ActivatePIVFunc(ctx, token, certPEM)
+		return m.ActivatePIVFunc(ctx, tenantID, token, certPEM)
 	}
 	return &iam.ActivationResponse{UserID: "user_001", Message: "activated"}, nil
 }

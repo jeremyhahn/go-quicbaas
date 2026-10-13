@@ -15,159 +15,10 @@ package qrdbadapter
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
-	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
-
-// -----------------------------------------------------------------------------
-// Routing KVStore test double — mirrors pkg/iam's tenant-routing test double:
-// it routes by the context tenant, isolates barrier tenants, and fails closed
-// for a sealed tenant (NEVER falling back to the shared store).
-// -----------------------------------------------------------------------------
-
-type sealedError struct{}
-
-func (sealedError) Error() string { return "tenant sealed" }
-
-var errTenantSealedTest = sealedError{}
-
-type memStore struct{ data map[string][]byte }
-
-func newMemStore() *memStore { return &memStore{data: make(map[string][]byte)} }
-
-func (m *memStore) Put(_ context.Context, key string, value []byte) error {
-	cp := make([]byte, len(value))
-	copy(cp, value)
-	m.data[key] = cp
-	return nil
-}
-
-func (m *memStore) Get(_ context.Context, key string) ([]byte, error) {
-	v, ok := m.data[key]
-	if !ok {
-		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "memstore.get"}
-	}
-	cp := make([]byte, len(v))
-	copy(cp, v)
-	return cp, nil
-}
-
-func (m *memStore) Delete(_ context.Context, key string) error { delete(m.data, key); return nil }
-
-func (m *memStore) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
-	for k, v := range m.data {
-		if strings.HasPrefix(k, prefix) {
-			if err := fn(k, v); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (m *memStore) List(_ context.Context, prefix string) ([]string, error) {
-	var keys []string
-	for k := range m.data {
-		if strings.HasPrefix(k, prefix) {
-			keys = append(keys, k)
-		}
-	}
-	return keys, nil
-}
-
-func (m *memStore) Exists(_ context.Context, key string) (bool, error) {
-	_, ok := m.data[key]
-	return ok, nil
-}
-
-func (m *memStore) keyCount() int { return len(m.data) }
-
-type routingTestKV struct {
-	shared *memStore
-	stores map[string]*memStore
-	sealed map[string]bool
-}
-
-func newRoutingTestKV() *routingTestKV {
-	return &routingTestKV{shared: newMemStore(), stores: make(map[string]*memStore), sealed: make(map[string]bool)}
-}
-
-func (r *routingTestKV) barrierTenant(tenantID string) *memStore {
-	st := newMemStore()
-	r.stores[tenantID] = st
-	return st
-}
-
-func (r *routingTestKV) sealTenant(tenantID string) { r.sealed[tenantID] = true }
-
-func (r *routingTestKV) resolve(ctx context.Context) (*memStore, error) {
-	tenantID := boundTenant(ctx)
-	if r.sealed[tenantID] {
-		return nil, errTenantSealedTest
-	}
-	if tenantID == "" {
-		return r.shared, nil
-	}
-	if st, ok := r.stores[tenantID]; ok {
-		return st, nil
-	}
-	return r.shared, nil
-}
-
-func (r *routingTestKV) Put(ctx context.Context, key string, value []byte) error {
-	st, err := r.resolve(ctx)
-	if err != nil {
-		return err
-	}
-	return st.Put(ctx, key, value)
-}
-
-func (r *routingTestKV) Get(ctx context.Context, key string) ([]byte, error) {
-	st, err := r.resolve(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return st.Get(ctx, key)
-}
-
-func (r *routingTestKV) Delete(ctx context.Context, key string) error {
-	st, err := r.resolve(ctx)
-	if err != nil {
-		return err
-	}
-	return st.Delete(ctx, key)
-}
-
-func (r *routingTestKV) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
-	st, err := r.resolve(ctx)
-	if err != nil {
-		return err
-	}
-	return st.Scan(ctx, prefix, fn)
-}
-
-func (r *routingTestKV) List(ctx context.Context, prefix string) ([]string, error) {
-	st, err := r.resolve(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return st.List(ctx, prefix)
-}
-
-func (r *routingTestKV) Exists(ctx context.Context, key string) (bool, error) {
-	st, err := r.resolve(ctx)
-	if err != nil {
-		return false, err
-	}
-	return st.Exists(ctx, key)
-}
-
-var _ interfaces.KVStore = (*routingTestKV)(nil)
 
 // -----------------------------------------------------------------------------
 // Fake qrdb UserServicer — an in-memory stand-in for the canonical user store.
@@ -437,14 +288,8 @@ func (r *fakeResolver) UserServicer(_ context.Context) (qrdbsdk.UserServicer, er
 	return r.svc, r.err
 }
 
-// newTestUserStorage wires a QRDBUserStorage over the in-memory fakes, giving
-// each named tenant its own barrier store so routing is exercised rather than
-// assumed.
-func newTestUserStorage(t *testing.T, svc qrdbsdk.UserServicer, tenants ...string) (*QRDBUserStorage, *routingTestKV) {
+// newTestUserStorage wires a QRDBUserStorage over the in-memory fake servicer.
+func newTestUserStorage(t *testing.T, svc qrdbsdk.UserServicer) *QRDBUserStorage {
 	t.Helper()
-	kv := newRoutingTestKV()
-	for _, tn := range tenants {
-		kv.barrierTenant(tn)
-	}
-	return NewQRDBUserStorage(&fakeResolver{svc: svc}, kv), kv
+	return NewQRDBUserStorage(&fakeResolver{svc: svc})
 }

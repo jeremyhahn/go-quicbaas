@@ -103,6 +103,7 @@ func iamManagedRouteSpecs() []RouteSpec {
 		{Method: "DELETE", Pattern: tenants, Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.DeleteTenant })},
 		{Method: "PATCH", Pattern: tenants + "/quotas", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.UpdateTenantEngineQuotas })},
 		{Method: "PATCH", Pattern: tenants + "/entitlements", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.UpdateTenantEngineEntitlements })},
+		{Method: "POST", Pattern: tenants + "/provision", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.ProvisionTenant })},
 
 		// ---- Per-tenant barrier lifecycle (Server methods, not IAMHandler) ----
 		{Method: "POST", Pattern: tenants + "/barrier/init", Group: GroupIAM, Handler: func(s *Server) http.HandlerFunc { return s.HandleTenantBarrierInit }},

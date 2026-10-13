@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"strconv"
 	"strings"
@@ -56,8 +57,10 @@ func (r *ToolRegistry) registerAccountTools() {
 			"client_id":            map[string]interface{}{"type": "string", "description": "OAuth2 client identifier"},
 			"access_token_env_key": map[string]interface{}{"type": "string", "description": "Environment variable the access token is projected into (e.g. CLAUDE_CODE_OAUTH_TOKEN)"},
 			"env":                  map[string]interface{}{"type": "object", "description": "Static environment variables injected into the spawned subprocess"},
-			"scopes":               map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "OAuth2 scopes"},
-			"expires_at":           map[string]interface{}{"type": "string", "format": "date-time", "description": "RFC 3339 time the access token stops working; omit when unknown"},
+			"files": map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string", "contentEncoding": "base64"},
+				"description": "Provider config files written into the session home, keyed by relative path (e.g. .codex/auth.json); values are standard base64"},
+			"scopes":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "OAuth2 scopes"},
+			"expires_at": map[string]interface{}{"type": "string", "format": "date-time", "description": "RFC 3339 time the access token stops working; omit when unknown"},
 		},
 	}
 
@@ -609,12 +612,40 @@ func accountCredentialFromArgs(args map[string]interface{}) (*orchestration.Acco
 	if env := getStringMap(raw, "env"); len(env) > 0 {
 		cred.Env = env
 	}
+	files, err := accountCredentialFilesFromArgs(raw["files"])
+	if err != nil {
+		return nil, err
+	}
+	cred.Files = files
 	expiresAt, err := accountCredentialExpiryFromArgs(raw["expires_at"])
 	if err != nil {
 		return nil, err
 	}
 	cred.ExpiresAt = expiresAt
 	return cred, nil
+}
+
+// accountCredentialFilesFromArgs decodes a credential.files argument: an object
+// mapping a path relative to the session home to standard base64 file bytes.
+// It decodes through encoding/json into map[string][]byte, the same field type
+// and therefore the same rules as the REST credential body, so a payload one
+// transport accepts the other accepts too. An absent or empty object yields nil.
+func accountCredentialFilesFromArgs(raw interface{}) (map[string][]byte, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil, &AccountCredentialFilesError{Err: err}
+	}
+	var files map[string][]byte
+	if err := json.Unmarshal(encoded, &files); err != nil {
+		return nil, &AccountCredentialFilesError{Err: err}
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
+	return files, nil
 }
 
 // accountCredentialExpiryFromArgs reads credential.expires_at, an RFC 3339
@@ -655,6 +686,23 @@ func (e *AccountCredentialExpiryError) Error() string {
 
 // Unwrap returns the parse failure.
 func (e *AccountCredentialExpiryError) Unwrap() error {
+	return e.Err
+}
+
+// AccountCredentialFilesError reports a credential.files argument that is not
+// an object of relative path to base64-encoded file bytes.
+type AccountCredentialFilesError struct {
+	// Err is the decode failure.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *AccountCredentialFilesError) Error() string {
+	return "mcp: credential.files must map relative paths to base64-encoded file bytes: " + e.Err.Error()
+}
+
+// Unwrap returns the decode failure.
+func (e *AccountCredentialFilesError) Unwrap() error {
 	return e.Err
 }
 

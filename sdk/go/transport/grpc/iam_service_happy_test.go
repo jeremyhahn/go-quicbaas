@@ -293,6 +293,7 @@ var iamServiceCases = []iamCase{
 	{"UpdateTenant", "quicbaas.IAM.Tenant", "Update", map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"display_name": "n", "settings": map[string]string{"a": "b"}}}},
 	{"DeleteTenant", "quicbaas.IAM.Tenant", "Delete", map[string]interface{}{"tenant_id": "t1"}},
 	{"ListTenants", "quicbaas.IAM.Tenant", "List", map[string]interface{}{"page_size": 10}},
+	{"ProvisionTenant", "quicbaas.IAM.Tenant", "Provision", map[string]interface{}{"tenant_id": "t1", "admin_enrollment": "invite"}},
 	// Role service.
 	{"CreateRole", "quicbaas.IAM.Role", "Create", map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"name": "role", "permissions": []string{"p1"}}}},
 	{"GetRole", "quicbaas.IAM.Role", "Get", map[string]interface{}{"tenant_id": "t1", "role_id": "r1"}},

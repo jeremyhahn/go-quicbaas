@@ -148,7 +148,10 @@ domain sentinel reachable through `errors.Is`):
 `AccountRefreshTokenRequiredError` (an `oauth2` account with no refresh token),
 `AccountProviderEndpointUnresolvedError` (no token endpoint from the account or
 its provider), `AccountStaticTokenRefreshableError` (a `none` account carrying a
-refresh token), `AccountCredentialModeInvalidError` (an unknown refresh policy).
+refresh token), `AccountCredentialEmptyError` (a `none` account whose credential
+holds no `access_token`, `env` or `files`: nothing a spawn could use; on rotate
+this also stops an empty envelope from erasing the stored one),
+`AccountCredentialModeInvalidError` (an unknown refresh policy).
 
 **Resolution errors** surface on the spawn path as fault classes, not
 transport statuses:

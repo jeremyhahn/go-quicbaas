@@ -55,6 +55,12 @@ func TestAccountProviderErrors_MessagesAndSentinels(t *testing.T) {
 			contains: []string{"provider=claude", "refresh token"},
 		},
 		{
+			name:     "empty credential",
+			err:      &AccountCredentialEmptyError{Provider: AccountProviderCodex},
+			sentinel: ErrAccountCredentialEmpty,
+			contains: []string{"provider=codex", "no access token, env or files"},
+		},
+		{
 			name:     "duplicate provider",
 			err:      &AccountProviderDuplicateError{Provider: "acme-llm"},
 			sentinel: ErrAccountProviderDuplicate,

@@ -149,7 +149,7 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		// Using a fixed 25s avoids a dependency on the WriteTimeout value
 		// which may not be properly parsed from some config paths.
 		RequestTimeout:    25 * time.Second,
-		RateLimit:         0, // No rate limiting by default
+		RateLimit:         s.config.Server.REST.RateLimit,
 		ExposeShardHeader: s.config.Server.ExposeShardHeader,
 		TrustedProxies:    s.config.Server.TrustedProxies,
 		NodeID:            s.config.Raft.NodeID,

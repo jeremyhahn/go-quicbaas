@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // IAMServer implements the IAM gRPC service.
@@ -57,6 +58,7 @@ type IAMService interface {
 	UpdateTenant(ctx context.Context, tenant *iam.Tenant) (*iam.Tenant, error)
 	DeleteTenant(ctx context.Context, id string) error
 	ListTenants(ctx context.Context, limit, offset int) ([]*iam.Tenant, int, error)
+	ProvisionTenant(ctx context.Context, req *service.IAMProvisionTenantRequest) (*service.IAMProvisionTenantResponse, error)
 
 	// User operations
 	//

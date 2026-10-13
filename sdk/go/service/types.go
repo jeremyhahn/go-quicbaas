@@ -145,6 +145,18 @@ type (
 
 	// IAMComponents provides IAM components.
 	IAMComponents = pkgservice.IAMComponents
+
+	// TenantProvisioner provisions a tenant and its admin in one step.
+	TenantProvisioner = pkgservice.TenantProvisioner
+
+	// IAMProvisionTenantRequest is a tenant-provisioning request.
+	IAMProvisionTenantRequest = pkgservice.IAMProvisionTenantRequest
+
+	// IAMProvisionTenantResponse is the result of provisioning a tenant.
+	IAMProvisionTenantResponse = pkgservice.IAMProvisionTenantResponse
+
+	// IAMTenantAdminEnrollment selects how a provisioned tenant admin enrolls.
+	IAMTenantAdminEnrollment = pkgservice.IAMTenantAdminEnrollment
 )
 
 // =============================================================================

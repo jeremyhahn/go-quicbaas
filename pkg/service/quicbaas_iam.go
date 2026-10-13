@@ -173,6 +173,15 @@ func (s *quicBaaS) GetPIVActivator(ctx context.Context) (*iam.PIVActivator, erro
 	return provider.GetPIVActivator(ctx)
 }
 
+// GetTenantProvisioner returns the control-plane tenant provisioner.
+func (s *quicBaaS) GetTenantProvisioner(ctx context.Context) (TenantProvisioner, error) {
+	provider := s.getIAMProvider()
+	if provider == nil {
+		return nil, nil
+	}
+	return provider.GetTenantProvisioner(ctx)
+}
+
 // GetAdminManager returns the admin manager from IAM components.
 // This method satisfies the interface expected by REST handlers for delegated administration.
 func (s *quicBaaS) GetAdminManager(ctx context.Context) (*iam.AdminManager, error) {

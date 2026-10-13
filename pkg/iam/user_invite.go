@@ -31,8 +31,9 @@ const (
 	// MaxInviteTTL caps how long any invite stays redeemable.
 	MaxInviteTTL = 7 * 24 * time.Hour
 
-	// inviteRollbackTimeout bounds the detached rollback of a failed create. It
-	// is generous because the rollback is the last chance to avoid a stranded
+	// inviteRollbackTimeout bounds the detached rollback of a failed create,
+	// and the detached revocation of a failed PIV activation's login factor.
+	// It is generous because the rollback is the last chance to avoid a stranded
 	// account, and short enough that a wedged store cannot hold it forever.
 	inviteRollbackTimeout = 30 * time.Second
 )

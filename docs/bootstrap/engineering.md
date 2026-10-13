@@ -167,9 +167,9 @@ delete them from the server.
 ### Pre-provisioned certificate (out-of-band)
 
 `auth.bootstrap_admin_piv_cert_path` binds an existing certificate instead of
-issuing one. It binds **both** thumbprints — the canonical SPKI thumbprint that
-qrdb's cert index resolves natively, and the legacy hex SHA-256 of the
-certificate DER that the broker-side fallback index resolves — and transitions
+issuing one. It binds **both** thumbprints — the canonical SPKI thumbprint and
+the legacy hex SHA-256 of the certificate DER, both resolved by qrdb's
+tenant-scoped cert-thumbprint index — and transitions
 the user to `active`. Primary use case: integration clusters that need a
 deterministic admin identity.
 

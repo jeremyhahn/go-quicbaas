@@ -371,6 +371,56 @@ func (h *iamHandler) handleDeleteTenant(ctx context.Context, client iampb.IAMSer
 	return nil, nil
 }
 
+func (h *iamHandler) handleProvisionTenant(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleProvisionTenant", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	if tenantID == "" {
+		return nil, errors.NewInvalidInput("handleProvisionTenant", "tenant_id is required")
+	}
+	name, _ := getString(reqMap, "name")
+	isolationType, _ := getString(reqMap, "isolation_type")
+	adminUsername, _ := getString(reqMap, "admin_username")
+	adminEnrollment, _ := getString(reqMap, "admin_enrollment")
+	adminCSRPEM, _ := getString(reqMap, "admin_csr_pem")
+	inviteExpiryHours, _ := getInt(reqMap, "invite_expiry_hours")
+
+	resp, err := client.ProvisionTenant(ctx, &iampb.ProvisionTenantRequest{
+		TenantId:          tenantID,
+		Name:              name,
+		IsolationType:     isolationType,
+		AdminUsername:     adminUsername,
+		AdminEnrollment:   adminEnrollment,
+		AdminCsrPem:       adminCSRPEM,
+		InviteExpiryHours: int32(inviteExpiryHours), //nolint:gosec // G115: hours, bounded by the server
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "handleProvisionTenant")
+	}
+
+	out := &iam.ProvisionTenantResponse{
+		TenantID:            resp.TenantId,
+		AdminUserID:         resp.AdminUserId,
+		AdminUsername:       resp.AdminUsername,
+		AdminRoleID:         resp.AdminRoleId,
+		AdminPending:        resp.AdminPending,
+		AdminCertPEM:        resp.AdminCertPem,
+		AdminCertThumbprint: resp.AdminCertThumbprint,
+		InviteToken:         resp.InviteToken,
+	}
+	if resp.InviteExpiresAt != nil {
+		expiresAt := resp.InviteExpiresAt.AsTime()
+		out.InviteExpiresAt = &expiresAt
+	}
+	if resp.Timestamp != nil {
+		out.Timestamp = resp.Timestamp.AsTime()
+	}
+	return out, nil
+}
+
 // handleListTenants handles ListTenants requests.
 func (h *iamHandler) handleListTenants(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
 	reqMap, ok := toMap(req)

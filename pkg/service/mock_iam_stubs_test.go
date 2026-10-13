@@ -59,6 +59,10 @@ func (p *mockIAMServiceProvider) GetInviteStore(_ context.Context) (iam.InviteSt
 func (p *mockIAMServiceProvider) GetPIVActivator(_ context.Context) (*iam.PIVActivator, error) {
 	return p.pivActivator, p.pivActivatorErr
 }
+
+func (p *mockIAMServiceProvider) GetTenantProvisioner(_ context.Context) (TenantProvisioner, error) {
+	return p.provisioner, p.provisionerErr
+}
 func (p *mockIAMServiceProvider) GetAdminManager(_ context.Context) (*iam.AdminManager, error) {
 	return p.adminMgr, p.adminMgrErr
 }

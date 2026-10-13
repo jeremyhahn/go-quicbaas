@@ -540,6 +540,155 @@ type IAMReconcileRolesResponse struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// IAMTenantAdminEnrollment selects how a provisioned tenant's first admin
+// obtains a credential.
+type IAMTenantAdminEnrollment string
+
+const (
+	// IAMTenantAdminEnrollCert signs an admin-supplied CSR and binds the
+	// issued certificate's SPKI thumbprint to the admin. The admin keeps the
+	// private key; none is ever generated or returned.
+	IAMTenantAdminEnrollCert IAMTenantAdminEnrollment = "cert"
+
+	// IAMTenantAdminEnrollInvite creates the admin pending and mints a
+	// one-time invite whose redemption binds the admin's first auth factor
+	// and activates the account.
+	IAMTenantAdminEnrollInvite IAMTenantAdminEnrollment = "invite"
+)
+
+// IAMProvisionTenantRequest asks for a tenant record, its built-in roles and
+// its first admin in one control-plane step. No tenant barrier is
+// initialized: the tenant admin bootstraps their own.
+type IAMProvisionTenantRequest struct {
+	// TenantID is the new tenant's id. Required.
+	TenantID string `json:"tenant_id"`
+
+	// Name is the human-readable tenant name. Empty defaults to TenantID.
+	Name string `json:"name,omitempty"`
+
+	// IsolationType selects the tenant isolation strategy. Empty defaults to
+	// a per-tenant barrier, unlike CreateTenant whose default is prefix.
+	// Only prefix is accepted for now: barrier, volume and raft (and so the
+	// empty default) are refused with ProvisionBarrierIsolationError until
+	// qrdb can hold the tenant admin outside the sealed tenant barrier.
+	IsolationType qrdbsdk.TenantIsolationType `json:"isolation_type,omitempty"`
+
+	// AdminUsername is the tenant admin's login name. Empty defaults to
+	// "admin".
+	AdminUsername string `json:"admin_username,omitempty"`
+
+	// AdminEnrollment selects the admin credential path. Empty defaults to
+	// IAMTenantAdminEnrollCert.
+	AdminEnrollment IAMTenantAdminEnrollment `json:"admin_enrollment,omitempty"`
+
+	// AdminCSRPEM is the admin's PEM-encoded CSR. Required in cert mode and
+	// refused in invite mode.
+	AdminCSRPEM string `json:"admin_csr_pem,omitempty"`
+
+	// InviteExpiryHours bounds the invite's lifetime in invite mode. Zero
+	// selects the default invite lifetime; a value above the maximum invite
+	// lifetime is capped to it.
+	InviteExpiryHours int `json:"invite_expiry_hours,omitempty"`
+}
+
+// Validate refuses a request that provisioning would reject, before anything
+// is written.
+func (r *IAMProvisionTenantRequest) Validate() error {
+	if r.TenantID == "" {
+		return &ProvisionTenantIDRequiredError{}
+	}
+	if r.InviteExpiryHours < 0 {
+		return &ProvisionInviteExpiryError{Hours: r.InviteExpiryHours}
+	}
+	switch r.Enrollment() {
+	case IAMTenantAdminEnrollCert:
+		if r.AdminCSRPEM == "" {
+			return &ProvisionAdminCSRRequiredError{}
+		}
+		if err := validateAdminCSR(r.AdminCSRPEM); err != nil {
+			return err
+		}
+	case IAMTenantAdminEnrollInvite:
+		if r.AdminCSRPEM != "" {
+			return &ProvisionConflictingEnrollmentError{}
+		}
+		if qrdbsdk.IsSystemTenant(r.TenantID) {
+			return &ProvisionSystemTenantInviteError{}
+		}
+	default:
+		return &ProvisionEnrollmentModeError{Mode: string(r.AdminEnrollment)}
+	}
+	return r.validateIsolation()
+}
+
+// barrierRoutedIsolation lists the isolation types whose IAM qrdb keeps
+// behind the tenant's own barrier rather than in the shared store.
+var barrierRoutedIsolation = map[qrdbsdk.TenantIsolationType]struct{}{
+	qrdbsdk.TenantIsolationBarrier: {},
+	qrdbsdk.TenantIsolationVolume:  {},
+	qrdbsdk.TenantIsolationRaft:    {},
+}
+
+// validateIsolation refuses an isolation type provisioning cannot complete.
+// qrdb creates a barrier-routed tenant's barrier sealed and uninitialised, so
+// the role seed and the admin user it then writes are refused with
+// ErrTenantSealed. The system tenant always resolves to the shared store.
+func (r *IAMProvisionTenantRequest) validateIsolation() error {
+	if qrdbsdk.IsSystemTenant(r.TenantID) {
+		return nil
+	}
+	isolation := r.IsolationType
+	if isolation == "" {
+		isolation = qrdbsdk.TenantIsolationBarrier
+	}
+	if _, routed := barrierRoutedIsolation[isolation]; routed {
+		return &ProvisionBarrierIsolationError{Isolation: string(isolation)}
+	}
+	return nil
+}
+
+// Enrollment returns the requested enrollment mode, defaulting to cert.
+func (r *IAMProvisionTenantRequest) Enrollment() IAMTenantAdminEnrollment {
+	if r.AdminEnrollment == "" {
+		return IAMTenantAdminEnrollCert
+	}
+	return r.AdminEnrollment
+}
+
+// IAMProvisionTenantResponse reports what provisioning created. It never
+// carries a private key.
+type IAMProvisionTenantResponse struct {
+	// TenantID is the provisioned tenant
+	TenantID string `json:"tenant_id"`
+
+	// AdminUserID is the tenant admin's user id (decimal)
+	AdminUserID string `json:"admin_user_id"`
+
+	// AdminUsername is the tenant admin's login name
+	AdminUsername string `json:"admin_username"`
+
+	// AdminRoleID is the tenant-scoped Admin role the admin is bound to
+	AdminRoleID string `json:"admin_role_id"`
+
+	// AdminPending reports that the admin awaits invite redemption
+	AdminPending bool `json:"admin_pending"`
+
+	// AdminCertPEM is the issued admin certificate (cert mode only)
+	AdminCertPEM string `json:"admin_cert_pem,omitempty"`
+
+	// AdminCertThumbprint is the bound SPKI SHA-256 thumbprint (cert mode only)
+	AdminCertThumbprint string `json:"admin_cert_thumbprint,omitempty"`
+
+	// InviteToken is the one-time activation token (invite mode only)
+	InviteToken string `json:"invite_token,omitempty"`
+
+	// InviteExpiresAt is when InviteToken stops being redeemable (invite mode only)
+	InviteExpiresAt *time.Time `json:"invite_expires_at,omitempty"`
+
+	// Timestamp is when provisioning completed
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // IAMAssignRoleRequest assigns a role to a user.
 type IAMAssignRoleRequest struct {
 	// TenantID is the owning tenant

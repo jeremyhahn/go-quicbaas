@@ -194,6 +194,27 @@ func (w *iamServiceWrapper) ListTenants(ctx context.Context, req *ListTenantsReq
 	}, nil
 }
 
+// ProvisionTenant validates the request, then hands it to the server's
+// provisioner. Validation failures are classified ErrInvalidInput with the
+// typed cause kept in the chain.
+func (w *iamServiceWrapper) ProvisionTenant(ctx context.Context, req *IAMProvisionTenantRequest) (*IAMProvisionTenantResponse, error) {
+	if req == nil {
+		return nil, errors.New(errors.ErrInvalidInput, "iam.ProvisionTenant", "request is required")
+	}
+	if err := req.Validate(); err != nil {
+		return nil, errors.Wrap(err, errors.ErrInvalidInput, "iam.ProvisionTenant")
+	}
+
+	provisioner, err := w.provider.GetTenantProvisioner(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if provisioner == nil {
+		return nil, errors.New(errors.ErrUnavailable, "iam.ProvisionTenant", "tenant provisioner not available")
+	}
+	return provisioner.Provision(ctx, req)
+}
+
 // =============================================================================
 // User Operations
 // =============================================================================

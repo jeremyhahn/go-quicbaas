@@ -60,9 +60,9 @@ func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Compute BOTH PIV lookup thumbprints. The primary is the canonical SPKI
 	// thumbprint (SHA-256 over SubjectPublicKeyInfo, base64url) qrdb's
-	// UserByCertThumbprint resolves natively; the fallback is the legacy hex
-	// SHA-256 of the certificate DER, resolved via the broker-side legacy-PIV
-	// index. Resolution tries SPKI first, then legacy — mirroring the
+	// UserByCertThumbprint resolves; the fallback is the legacy hex SHA-256 of
+	// the certificate DER, which qrdb's same cert-thumbprint index resolves.
+	// Resolution tries SPKI first, then legacy — mirroring the
 	// login-service mTLS primary + alt-lookup order — so a renewed cert (same
 	// key, new DER) resolves via the stable SPKI thumbprint while persisted
 	// legacy-only bindings keep resolving via the fallback.
@@ -125,8 +125,8 @@ func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx = loginContextWithTenant(ctx, tenantID)
 
-	// SPKI first, then legacy hex digest. Either resolves the same user; an
-	// unknown thumbprint fails closed.
+	// SPKI first, then legacy hex digest. Either resolves the same user through
+	// qrdb's cert-thumbprint index; an unknown thumbprint fails closed.
 	user, err := store.GetUserByPIVThumbprint(ctx, spkiThumbprint)
 	if err != nil || user == nil {
 		user, err = store.GetUserByPIVThumbprint(ctx, legacyThumbprint)

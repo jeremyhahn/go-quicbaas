@@ -364,6 +364,28 @@ func TestAccountProviderRegistry_ValidateCredential(t *testing.T) {
 			wantErr:  ErrAccountStaticTokenRefreshable,
 		},
 		{
+			name:     "static account with an empty credential",
+			registry: builtinOnly,
+			provider: AccountProviderCodex,
+			mode:     AccountRefreshNone,
+			cred:     &AccountCredential{AccessTokenEnvKey: "CODEX_API_KEY", Scopes: []string{"s"}},
+			wantErr:  ErrAccountCredentialEmpty,
+		},
+		{
+			name:     "static account carrying only files",
+			registry: builtinOnly,
+			provider: AccountProviderCodex,
+			mode:     AccountRefreshNone,
+			cred:     &AccountCredential{Files: map[string][]byte{".codex/auth.json": []byte(`{}`)}},
+		},
+		{
+			name:     "static account carrying only env",
+			registry: builtinOnly,
+			provider: AccountProviderCodex,
+			mode:     AccountRefreshNone,
+			cred:     &AccountCredential{Env: map[string]string{"CODEX_API_KEY": "k"}},
+		},
+		{
 			name:     "unrecognized mode",
 			registry: builtinOnly,
 			provider: AccountProviderClaude,

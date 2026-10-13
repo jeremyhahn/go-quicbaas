@@ -295,28 +295,20 @@ conn, _ := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(creds))
 
 ## Rate Limiting
 
-Protect APIs from abuse and ensure fair resource allocation.
-
-### Configuration
+The REST API rate-limits each source IP by default: 1000 requests per second,
+with a burst of the same size. Over the limit, a request gets 429.
 
 ```yaml
-security:
-  rate_limit:
-    enabled: true
-    requests_per_second: 1000
-    burst: 2000
-    by_api_key: true
+server:
+  rest:
+    rate_limit: 1000   # omitted or 0 = default; -1 disables
 ```
 
-### Implementation
-
-```go
-// Per-API-key rate limiter
-limiter := rate.NewLimiter(1000, 2000)
-if !limiter.Allow() {
-    return ErrRateLimitExceeded
-}
-```
+The limiter keys on the client address that `server.trusted_proxies`
+resolves. The OAuth2 client-authentication endpoints keep a stricter limiter
+of their own. See
+[Rate Limiting Middleware](../security-hardening/api.md#rate-limiting-middleware)
+for the full behavior and how the default was measured.
 
 ## Error Handling
 

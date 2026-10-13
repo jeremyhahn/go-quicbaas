@@ -50,7 +50,7 @@ func newTestUser() *iam.User {
 // identifier spaces afterwards.
 func TestCreateUser_StampsTheStoreAssignedIdentity(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -84,7 +84,7 @@ func TestCreateUser_StampsTheStoreAssignedIdentity(t *testing.T) {
 // unless the caller declares the omission.
 func TestCreateUser_SendsEmailOrDeclaresItsAbsence(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	// A user with no email is legitimate — an mTLS- or PIV-only identity that
@@ -123,7 +123,7 @@ func TestCreateUser_SendsEmailOrDeclaresItsAbsence(t *testing.T) {
 
 func TestCreateUser_DuplicateEmailMapsToAlreadyExists(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	if err := store.CreateUser(ctx, newTestUser()); err != nil {
@@ -136,7 +136,7 @@ func TestCreateUser_DuplicateEmailMapsToAlreadyExists(t *testing.T) {
 }
 
 func TestCreateUser_MalformedIDIsRefused(t *testing.T) {
-	store, _ := newTestUserStorage(t, newFakeUserServicer(), testTenant)
+	store := newTestUserStorage(t, newFakeUserServicer())
 	u := newTestUser()
 	u.ID = "not-a-snowflake"
 	if err := store.CreateUser(context.Background(), u); !errors.Is(err, iam.ErrInvalidUserID) {
@@ -147,7 +147,7 @@ func TestCreateUser_MalformedIDIsRefused(t *testing.T) {
 func TestCreateUser_CoreErrorIsWrapped(t *testing.T) {
 	svc := newFakeUserServicer()
 	svc.forceErr = errInjected
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	if err := store.CreateUser(context.Background(), newTestUser()); !errors.Is(err, errInjected) {
 		t.Fatalf("err = %v, want the store failure surfaced", err)
 	}
@@ -159,7 +159,7 @@ func TestCreateUser_CoreErrorIsWrapped(t *testing.T) {
 
 func TestGetUser_RoundTripsEveryProjectedField(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -188,7 +188,7 @@ func TestGetUser_RoundTripsEveryProjectedField(t *testing.T) {
 }
 
 func TestGetUser_MalformedIDIsNotFound(t *testing.T) {
-	store, _ := newTestUserStorage(t, newFakeUserServicer(), testTenant)
+	store := newTestUserStorage(t, newFakeUserServicer())
 	if _, err := store.GetUser(context.Background(), testTenant, "nonsense"); !errors.Is(err, iam.ErrUserNotFound) {
 		t.Fatalf("err = %v, want iam.ErrUserNotFound", err)
 	}
@@ -200,7 +200,7 @@ func TestGetUser_MalformedIDIsNotFound(t *testing.T) {
 // way was simply absent from, so the record existed and the login was refused.
 func TestGetUserByEmail_ResolvesThroughTheCanonicalIndex(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	// Seeded straight into qrdb — never through this adapter, so no broker-side
@@ -227,7 +227,7 @@ func TestGetUserByEmail_ResolvesThroughTheCanonicalIndex(t *testing.T) {
 
 func TestGetUserByEmail_IsTenantScoped(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant, "other")
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	svc.seed(&qrdbsdk.User{Username: "shared@x.test", Email: "shared@x.test", TenantID: "other"})
@@ -243,7 +243,7 @@ func TestGetUserByEmail_IsTenantScoped(t *testing.T) {
 
 func TestGetUserByEmail_NormalizesAndRejectsEmptyInput(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	svc.seed(&qrdbsdk.User{Username: "mixed@case.test", Email: "mixed@case.test", TenantID: testTenant})
@@ -261,7 +261,7 @@ func TestGetUserByEmail_NormalizesAndRejectsEmptyInput(t *testing.T) {
 
 func TestGetUserByUsername_ResolvesAndFailsClosed(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	svc.seed(&qrdbsdk.User{Username: "admin", TenantID: testTenant, Name: "Bootstrap Admin"})
@@ -284,7 +284,7 @@ func TestGetUserByUsername_ResolvesAndFailsClosed(t *testing.T) {
 
 func TestUpdateUser_AppliesAFullReplacement(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -313,7 +313,7 @@ func TestUpdateUser_AppliesAFullReplacement(t *testing.T) {
 // illegal move the store's decision instead of this adapter's.
 func TestUpdateUser_SendsLifecycleAsATransition(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -335,7 +335,7 @@ func TestUpdateUser_SendsLifecycleAsATransition(t *testing.T) {
 }
 
 func TestUpdateUser_UnknownAndMalformedIDs(t *testing.T) {
-	store, _ := newTestUserStorage(t, newFakeUserServicer(), testTenant)
+	store := newTestUserStorage(t, newFakeUserServicer())
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -368,7 +368,7 @@ func TestUpdateUser_UnknownAndMalformedIDs(t *testing.T) {
 // well-meaning "send the whole record" edit from reintroducing that.
 func TestMarkUserDeleting_SendsTheLifecycleAndNothingElse(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -401,7 +401,7 @@ func TestMarkUserDeleting_SendsTheLifecycleAndNothingElse(t *testing.T) {
 }
 
 func TestMarkUserDeleting_UnknownAndMalformedIDs(t *testing.T) {
-	store, _ := newTestUserStorage(t, newFakeUserServicer(), testTenant)
+	store := newTestUserStorage(t, newFakeUserServicer())
 	ctx := context.Background()
 
 	if err := store.MarkUserDeleting(ctx, testTenant, "nonsense"); !errors.Is(err, iam.ErrUserNotFound) {
@@ -417,7 +417,7 @@ func TestMarkUserDeleting_UnknownAndMalformedIDs(t *testing.T) {
 // DeleteUser as its first act; this layer does not add a third marker.
 func TestDeleteUser_RemovesTheRecord(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -437,7 +437,7 @@ func TestDeleteUser_RemovesTheRecord(t *testing.T) {
 // lifecycle-only request rather than a full-record write.
 func TestDeleteUser_SurvivesAMarkedRecord(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -453,7 +453,7 @@ func TestDeleteUser_SurvivesAMarkedRecord(t *testing.T) {
 }
 
 func TestDeleteUser_UnknownAndMalformedIDs(t *testing.T) {
-	store, _ := newTestUserStorage(t, newFakeUserServicer(), testTenant)
+	store := newTestUserStorage(t, newFakeUserServicer())
 	ctx := context.Background()
 
 	if err := store.DeleteUser(ctx, testTenant, "nonsense"); !errors.Is(err, iam.ErrUserNotFound) {
@@ -473,7 +473,7 @@ func TestDeleteUser_UnknownAndMalformedIDs(t *testing.T) {
 // user created outside this adapter was invisible to an operator listing them.
 func TestListUsers_ReturnsEveryTenantRecord(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	if err := store.CreateUser(ctx, newTestUser()); err != nil {
@@ -499,7 +499,7 @@ func TestListUsers_ReturnsEveryTenantRecord(t *testing.T) {
 func TestListUsers_CoreErrorIsSurfaced(t *testing.T) {
 	svc := newFakeUserServicer()
 	svc.forceErr = errInjected
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	if _, err := store.ListUsers(context.Background(), testTenant, iam.ListOptions{}); !errors.Is(err, errInjected) {
 		t.Fatalf("err = %v, want the store failure surfaced", err)
 	}
@@ -528,7 +528,7 @@ func TestPageFromOffset(t *testing.T) {
 
 func TestGetUserByPIVThumbprint_SPKIResolvesFirst(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	const spki = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKK"
@@ -546,56 +546,80 @@ func TestGetUserByPIVThumbprint_SPKIResolvesFirst(t *testing.T) {
 	}
 }
 
-// TestGetUserByPIVThumbprint_LegacyIndexIsTheOneIndexThisStoreKeeps proves the
-// remaining broker-side index earns its place: a legacy hex digest is not an
-// SPKI thumbprint, so qrdb's own index cannot resolve it.
-func TestGetUserByPIVThumbprint_LegacyIndexIsTheOneIndexThisStoreKeeps(t *testing.T) {
-	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
-	ctx := context.Background()
-
-	const legacy = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	u := newTestUser()
-	u.SetPIVThumbprints(legacy)
-	if err := store.CreateUser(ctx, u); err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
-
-	got, err := store.GetUserByPIVThumbprint(ctx, legacy)
-	if err != nil {
-		t.Fatalf("a legacy hex thumbprint must resolve through the fallback index: %v", err)
-	}
-	if got.ID != u.ID {
-		t.Fatalf("ID = %q, want %q", got.ID, u.ID)
-	}
-}
-
 func TestGetUserByPIVThumbprint_UnknownFailsClosed(t *testing.T) {
-	store, _ := newTestUserStorage(t, newFakeUserServicer(), testTenant)
+	store := newTestUserStorage(t, newFakeUserServicer())
 	if _, err := store.GetUserByPIVThumbprint(context.Background(), "nothing-bound-here"); !errors.Is(err, iam.ErrUserNotFound) {
 		t.Fatalf("err = %v, want iam.ErrUserNotFound", err)
 	}
 }
 
-// TestDeleteUser_DropsTheLegacyPIVIndex closes the stranded-lookup case: an
-// index entry outliving its user would resolve a thumbprint to an id that names
-// nothing.
-func TestDeleteUser_DropsTheLegacyPIVIndex(t *testing.T) {
+// A racing update used to be able to leave a broker-side index entry naming
+// the user for a binding the record no longer carries: the losing writer
+// published last. The record is now the only authority, so a thumbprint it does
+// not carry resolves nobody and there is no second lookup to fall through to.
+func TestGetUserByPIVThumbprint_ResolvesOnlyWhatTheRecordCarries(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
-	ctx := context.Background()
+	store := newTestUserStorage(t, svc)
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), testTenant)
 
-	const legacy = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	const (
+		loser  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		winner = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	)
 	u := newTestUser()
-	u.SetPIVThumbprints(legacy)
+	u.SetPIVThumbprints(winner)
 	if err := store.CreateUser(ctx, u); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	if err := store.DeleteUser(ctx, testTenant, u.ID); err != nil {
-		t.Fatalf("DeleteUser: %v", err)
+
+	if _, err := store.GetUserByPIVThumbprint(ctx, loser); !errors.Is(err, iam.ErrUserNotFound) {
+		t.Fatalf("err = %v, want a binding the record does not carry to resolve nobody", err)
 	}
-	if _, err := store.GetUserByPIVThumbprint(ctx, legacy); !errors.Is(err, iam.ErrUserNotFound) {
-		t.Fatalf("err = %v, want the index entry gone with its user", err)
+	if got, err := store.GetUserByPIVThumbprint(ctx, winner); err != nil || got.ID != u.ID {
+		t.Fatalf("winner resolved (%v, %v), want %q", got, err, u.ID)
+	}
+}
+
+func TestGetUserByPIVThumbprint_StoreFailureIsSurfacedNotReadAsAMiss(t *testing.T) {
+	svc := newFakeUserServicer()
+	svc.forceErr = errInjected
+	store := newTestUserStorage(t, svc)
+
+	_, err := store.GetUserByPIVThumbprint(context.Background(), "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	if !errors.Is(err, errInjected) {
+		t.Fatalf("err = %v, want the store failure surfaced", err)
+	}
+	if errors.Is(err, iam.ErrUserNotFound) {
+		t.Fatal("a store failure must not be reported as an unknown thumbprint")
+	}
+}
+
+func TestGetUserByPIVThumbprint_EmptyThumbprintFailsClosed(t *testing.T) {
+	svc := newFakeUserServicer()
+	store := newTestUserStorage(t, svc)
+	svc.seed(&qrdbsdk.User{
+		Username: "piv@acme.test", Email: "piv@acme.test", TenantID: testTenant,
+		CertBindings: []qrdbsdk.CertBinding{{Thumbprint: "", Kind: qrdbsdk.CertBindingPIVAttested}},
+	})
+
+	if _, err := store.GetUserByPIVThumbprint(context.Background(), ""); !errors.Is(err, iam.ErrUserNotFound) {
+		t.Fatalf("err = %v, want iam.ErrUserNotFound", err)
+	}
+}
+
+func TestUpdateUser_StoreFailureIsSurfaced(t *testing.T) {
+	svc := newFakeUserServicer()
+	store := newTestUserStorage(t, svc)
+	ctx := context.Background()
+
+	u := newTestUser()
+	if err := store.CreateUser(ctx, u); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	svc.forceErr = errInjected
+	u.SetPIVThumbprints("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	if err := store.UpdateUser(ctx, u); !errors.Is(err, errInjected) {
+		t.Fatalf("err = %v, want the store failure surfaced", err)
 	}
 }
 
@@ -606,35 +630,19 @@ func TestDeleteUser_DropsTheLegacyPIVIndex(t *testing.T) {
 func TestQRDBUserStorage_FailsClosedWithoutAServicer(t *testing.T) {
 	ctx := context.Background()
 
-	nilResolver := NewQRDBUserStorage(nil, newRoutingTestKV())
+	nilResolver := NewQRDBUserStorage(nil)
 	if _, err := nilResolver.GetUser(ctx, testTenant, "1001"); err == nil {
 		t.Fatal("a storage with no resolver must fail closed rather than panic")
 	}
 
-	nilServicer := NewQRDBUserStorage(&fakeResolver{svc: nil}, newRoutingTestKV())
+	nilServicer := NewQRDBUserStorage(&fakeResolver{svc: nil})
 	if _, err := nilServicer.GetUser(ctx, testTenant, "1001"); err == nil {
 		t.Fatal("a resolver that yields no servicer must fail closed")
 	}
 
-	errResolver := NewQRDBUserStorage(&fakeResolver{err: errInjected}, newRoutingTestKV())
+	errResolver := NewQRDBUserStorage(&fakeResolver{err: errInjected})
 	if _, err := errResolver.GetUser(ctx, testTenant, "1001"); !errors.Is(err, errInjected) {
 		t.Fatalf("err = %v, want the resolver failure surfaced", err)
-	}
-}
-
-// TestQRDBUserStorage_SealedTenantFailsClosed proves the legacy-PIV index
-// inherits the routing store's fail-closed behavior: a sealed tenant must not
-// fall back to the shared store, which would write a tenant's data outside its
-// barrier.
-func TestQRDBUserStorage_SealedTenantFailsClosed(t *testing.T) {
-	svc := newFakeUserServicer()
-	store, kv := newTestUserStorage(t, svc, testTenant)
-	kv.sealTenant(testTenant)
-
-	u := newTestUser()
-	u.SetPIVThumbprints("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	if err := store.CreateUser(context.Background(), u); err == nil {
-		t.Fatal("a sealed tenant must refuse the index write rather than route around the barrier")
 	}
 }
 
@@ -659,54 +667,9 @@ func TestMapQRDBUserError(t *testing.T) {
 	}
 }
 
-func TestIsLegacyHexThumbprint(t *testing.T) {
-	const validHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	for _, tc := range []struct {
-		in   string
-		want bool
-	}{
-		{validHex, true},
-		{"", false},
-		{"short", false},
-		// A canonical SPKI thumbprint is base64url of 32 bytes — 43 chars.
-		{"AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKK", false},
-		// Right length, wrong alphabet.
-		{"0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef", false},
-	} {
-		if got := isLegacyHexThumbprint(tc.in); got != tc.want {
-			t.Errorf("isLegacyHexThumbprint(%q) = %v, want %v", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestLegacyPIVThumbprintsFromBindings(t *testing.T) {
-	const legacy = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	got := legacyPIVThumbprintsFromBindings([]qrdbsdk.CertBinding{
-		{Thumbprint: legacy, Kind: qrdbsdk.CertBindingPIVAttested},
-		{Thumbprint: "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKK", Kind: qrdbsdk.CertBindingPIVAttested},
-		{Thumbprint: legacy, Kind: qrdbsdk.CertBindingSPKIThumbprint},
-		{Thumbprint: "", Kind: qrdbsdk.CertBindingPIVAttested},
-	})
-	if len(got) != 1 || got[0] != legacy {
-		t.Fatalf("got = %v, want only the PIV-attested legacy hex digest", got)
-	}
-	if got := legacyPIVThumbprintsFromBindings(nil); len(got) != 0 {
-		t.Fatalf("got = %v, want empty", got)
-	}
-}
-
-func TestSplitIndexValue(t *testing.T) {
-	if got := splitIndexValue("acme:1001"); got[0] != "acme" || got[1] != "1001" {
-		t.Fatalf("got = %v", got)
-	}
-	if got := splitIndexValue("no-colon"); got[0] != "" || got[1] != "" {
-		t.Fatalf("a malformed value must not decode, got %v", got)
-	}
-}
-
 func TestLastAuthIsAHighWaterMark(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -740,7 +703,7 @@ func TestLastAuthIsAHighWaterMark(t *testing.T) {
 // record persisted as pending holding an active bearer is the two disagreeing.
 func TestCreateUser_HonoursTheRequestedLifecycle(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -765,7 +728,7 @@ func TestCreateUser_HonoursTheRequestedLifecycle(t *testing.T) {
 // these drift, a role assignment by username silently stops finding users.
 func TestCoreUsername_MatchesTheStoresUsernameIndex(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
@@ -789,7 +752,7 @@ func TestCoreUsername_MatchesTheStoresUsernameIndex(t *testing.T) {
 // every transport already maps, not as a server failure.
 func TestCreateUser_ConcurrentDuplicateEmailIsAConflictNotAnInternalError(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	// The winner is already in the store, and carries a DIFFERENT username so
@@ -827,7 +790,7 @@ func (f *failAfterCreateServicer) UpdateUser(ctx context.Context, req *qrdbsdk.U
 func TestCreateUser_CompensatesAFailedFollowUp(t *testing.T) {
 	fake := newFakeUserServicer()
 	svc := &failAfterCreateServicer{fakeUserServicer: fake, failUpdate: errInjected}
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser() // carries Attributes, so the follow-up update runs
@@ -849,20 +812,11 @@ func TestCreateUser_CompensatesAFailedFollowUp(t *testing.T) {
 	}
 }
 
-// TestUpdateUser_StaleLegacyPIVEntryIsRemovedBeforeTheBindingIs is the ordering
-// that keeps a revoked certificate from outliving its revocation.
-//
-// The index write and the canonical write cannot be one atomic act, so one of
-// them goes first and the other is what a failure strands. Removing the index
-// entry first strands "the binding is valid but the legacy index no longer finds
-// it" — a lookup that costs nothing. The other order strands "the binding is
-// gone but the index still resolves it", and a retry cannot repair that: it
-// re-reads the record, no longer sees the old thumbprint, and never removes the
-// entry. A credential that stops resolving too early is recoverable; one that
-// never stops is not.
-func TestUpdateUser_StaleLegacyPIVEntryIsRemovedBeforeTheBindingIs(t *testing.T) {
+// A revoked certificate must stop resolving the user the moment the binding
+// leaves the record.
+func TestUpdateUser_RevokedThumbprintResolvesNobody(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	const legacy = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -885,12 +839,10 @@ func TestUpdateUser_StaleLegacyPIVEntryIsRemovedBeforeTheBindingIs(t *testing.T)
 	}
 }
 
-// TestDeleteUser_SweepsTheIndexBeforeTheRecordDisappears: once the canonical
-// record is gone a retry cannot re-read the thumbprints it owned, so an entry
-// that outlives the delete outlives every chance to remove it.
-func TestDeleteUser_SweepsTheIndexBeforeTheRecordDisappears(t *testing.T) {
+// A deleted user's certificate must resolve nobody.
+func TestDeleteUser_DeletedUsersThumbprintResolvesNobody(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	const legacy = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
@@ -903,7 +855,7 @@ func TestDeleteUser_SweepsTheIndexBeforeTheRecordDisappears(t *testing.T) {
 		t.Fatalf("DeleteUser: %v", err)
 	}
 	if _, err := store.GetUserByPIVThumbprint(ctx, legacy); !errors.Is(err, iam.ErrUserNotFound) {
-		t.Fatalf("err = %v, want the index entry gone with its user", err)
+		t.Fatalf("err = %v, want the thumbprint gone with its user", err)
 	}
 }
 
@@ -915,7 +867,7 @@ func TestDeleteUser_SweepsTheIndexBeforeTheRecordDisappears(t *testing.T) {
 // clear, answered success, and stayed restricted.
 func TestUpdateUser_AnEmptyAuthMethodSetClearsTheRestriction(t *testing.T) {
 	svc := newFakeUserServicer()
-	store, _ := newTestUserStorage(t, svc, testTenant)
+	store := newTestUserStorage(t, svc)
 	ctx := context.Background()
 
 	u := newTestUser()
