@@ -237,7 +237,8 @@ type queryErrorMock struct {
 	mockService
 }
 
-func (m *queryErrorMock) Query(_ context.Context, _ *service.QueryRequest, _ chan<- *service.QueryResponse) error {
+func (m *queryErrorMock) Query(_ context.Context, _ *service.QueryRequest, stream chan<- *service.QueryResponse) error {
+	close(stream)
 	return errors.New("query failed")
 }
 
@@ -262,7 +263,8 @@ type scanIndexErrorMock struct {
 	mockService
 }
 
-func (m *scanIndexErrorMock) ScanIndex(_ context.Context, _ *service.ScanRequest, _ chan<- *service.ScanResponse) error {
+func (m *scanIndexErrorMock) ScanIndex(_ context.Context, _ *service.ScanRequest, stream chan<- *service.ScanResponse) error {
+	close(stream)
 	return errors.New("scan index failed")
 }
 
@@ -278,6 +280,38 @@ func TestExecuteScanIndex_Error(t *testing.T) {
 		"endKey":     "z",
 	})
 	require.Error(t, err)
+}
+
+// TestExecuteQuery_ServiceClosesTheStream is the #1284 regression: the service
+// closes the stream it was handed, so the tool must not close it again. A
+// second close panics the goroutine and with it the server.
+func TestExecuteQuery_ServiceClosesTheStream(t *testing.T) {
+	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	reg := NewToolRegistry(&mockService{}, log)
+
+	result, err := reg.ExecuteTool(context.Background(), "quicbaas_query", map[string]interface{}{
+		"entityType": "users",
+		"indexName":  "email_idx",
+		"value":      "test@example.com",
+	})
+	require.NoError(t, err)
+	require.Len(t, result, 1, "the response the service streamed was lost")
+}
+
+// TestExecuteScanIndex_ServiceClosesTheStream is the ScanIndex counterpart of
+// TestExecuteQuery_ServiceClosesTheStream.
+func TestExecuteScanIndex_ServiceClosesTheStream(t *testing.T) {
+	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	reg := NewToolRegistry(&mockService{}, log)
+
+	result, err := reg.ExecuteTool(context.Background(), "quicbaas_scan_index", map[string]interface{}{
+		"entityType": "users",
+		"indexName":  "email_idx",
+		"startKey":   "a",
+		"endKey":     "z",
+	})
+	require.NoError(t, err)
+	require.Len(t, result, 1, "the response the service streamed was lost")
 }
 
 // =============================================================================

@@ -81,9 +81,11 @@ func (h *MQTTHandler) HandleConnection(ctx context.Context, conn *websocket.Conn
 		subscriptions: make(map[string]byte),
 	}
 
-	// Message delivery channel for this client
+	// Message delivery channel for this client. Hub callbacks send on it
+	// outside the hub lock, so one may still be sending after
+	// UnregisterClient returns: never close it. cancelDelivery stops the
+	// delivery goroutine, and the callbacks never block.
 	deliveryChan := make(chan mqttDelivery, 100)
-	defer close(deliveryChan)
 
 	// Register cleanup on connection close
 	defer func() {
@@ -158,10 +160,7 @@ func (h *MQTTHandler) deliverMessages(ctx context.Context, conn *websocket.Conn,
 		select {
 		case <-ctx.Done():
 			return
-		case delivery, ok := <-deliveryChan:
-			if !ok {
-				return
-			}
+		case delivery := <-deliveryChan:
 
 			// Build PUBLISH packet
 			packetID++

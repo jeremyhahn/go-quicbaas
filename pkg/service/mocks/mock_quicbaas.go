@@ -204,6 +204,7 @@ func (m *MockQuicBaaS) List(ctx context.Context, req *service.ListRequest, strea
 	if m.ListFunc != nil {
 		return m.ListFunc(ctx, req, stream)
 	}
+	close(stream)
 	return nil
 }
 
@@ -265,6 +266,7 @@ func (m *MockQuicBaaS) Query(ctx context.Context, req *service.QueryRequest, str
 	if m.QueryFunc != nil {
 		return m.QueryFunc(ctx, req, stream)
 	}
+	close(stream)
 	return nil
 }
 
@@ -272,6 +274,7 @@ func (m *MockQuicBaaS) ScanIndex(ctx context.Context, req *service.ScanRequest, 
 	if m.ScanIndexFunc != nil {
 		return m.ScanIndexFunc(ctx, req, stream)
 	}
+	close(stream)
 	return nil
 }
 
@@ -510,6 +513,7 @@ func (m *MockQuicBaaS) TimeSeriesQuery(ctx context.Context, req *service.TimeSer
 	if m.TimeSeriesQueryFunc != nil {
 		return m.TimeSeriesQueryFunc(ctx, req, stream)
 	}
+	close(stream)
 	return nil
 }
 

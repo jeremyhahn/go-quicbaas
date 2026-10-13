@@ -154,6 +154,7 @@ func (m *mockQuicBaaS) List(ctx context.Context, req *service.ListRequest, strea
 		Entities:   []*service.Entity{{ID: 1, Data: []byte("test")}},
 		TotalCount: 1,
 	}
+	close(stream)
 	return nil
 }
 
@@ -207,6 +208,7 @@ func (m *mockQuicBaaS) Query(ctx context.Context, req *service.QueryRequest, str
 		return m.queryFunc(ctx, req, stream)
 	}
 	stream <- &service.QueryResponse{Entities: []*service.Entity{{ID: 1}}}
+	close(stream)
 	return nil
 }
 
@@ -215,6 +217,7 @@ func (m *mockQuicBaaS) ScanIndex(ctx context.Context, req *service.ScanRequest, 
 		return m.scanIndexFunc(ctx, req, stream)
 	}
 	stream <- &service.ScanResponse{Entities: []*service.Entity{{ID: 1}}}
+	close(stream)
 	return nil
 }
 
@@ -401,6 +404,7 @@ func (m *mockQuicBaaS) TimeSeriesQuery(ctx context.Context, req *service.TimeSer
 		return m.timeSeriesQueryFunc(ctx, req, stream)
 	}
 	stream <- &service.TimeSeriesQueryResponse{DataPoints: []*service.TimeSeriesPoint{{ID: 1}}}
+	close(stream)
 	return nil
 }
 

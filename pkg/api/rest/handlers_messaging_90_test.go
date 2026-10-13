@@ -147,6 +147,7 @@ func TestHandleQueryEdgeCases(t *testing.T) {
 		mockService.ExpectedCalls = nil
 		mockService.On("Query", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
+				defer close(args.Get(2).(chan<- *service.QueryResponse))
 				ctx := args.Get(0).(context.Context)
 				select {
 				case <-ctx.Done():
@@ -223,6 +224,7 @@ func TestHandleRangeQueryEdgeCases(t *testing.T) {
 		mockService.ExpectedCalls = nil
 		mockService.On("ScanIndex", mock.Anything, mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
+				defer close(args.Get(2).(chan<- *service.ScanResponse))
 				ctx := args.Get(0).(context.Context)
 				select {
 				case <-ctx.Done():
@@ -367,6 +369,9 @@ func TestHandleListStreamingEdgeCases(t *testing.T) {
 
 		mockService.ExpectedCalls = nil
 		mockService.On("List", mock.Anything, mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) {
+				close(args.Get(2).(chan<- *service.ListResponse))
+			}).
 			Return(errors.Newf(errors.ErrInternal, "test", "stream error")).Once()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users", nil)

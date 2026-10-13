@@ -537,8 +537,8 @@ func TestHandleQueryServiceErrorBoost(t *testing.T) {
 
 	server.GetRouter().ServeHTTP(w, req)
 
-	// Stream closed without results should return OK
-	assert.Equal(t, http.StatusOK, w.Code)
+	// The stream closing first must not hide the error Query returned.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestHandleQueryWithResultsBoost(t *testing.T) {
@@ -599,8 +599,8 @@ func TestHandleRangeQueryServiceErrorBoost(t *testing.T) {
 
 	server.GetRouter().ServeHTTP(w, req)
 
-	// Stream closed should return OK
-	assert.Equal(t, http.StatusOK, w.Code)
+	// The stream closing first must not hide the error ScanIndex returned.
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestHandleRangeQueryWithMultipleResultsBoost(t *testing.T) {

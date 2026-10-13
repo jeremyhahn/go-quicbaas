@@ -186,14 +186,19 @@ func (s *PEPServer) Subscribe(req *iampb.SubscribeRequest, stream iampb.PEPServi
 		return status.Error(codes.InvalidArgument, "service_id is required")
 	}
 
-	// Create channel for policy updates
+	// The service goroutine is the only sender on updatesChan, so the
+	// handler never closes it: closing it here while the service is still
+	// sending panics the server. Cancelling ctx on return is what stops the
+	// service, which selects on ctx around every send.
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
 	updatesChan := make(chan *PolicyUpdate, 100)
-	defer close(updatesChan)
 
 	// Start subscription in background goroutine
 	errChan := make(chan error, 1)
 	go func() {
-		err := s.pepService.Subscribe(stream.Context(), req.ServiceId, req.ResourcePatterns, updatesChan)
+		err := s.pepService.Subscribe(ctx, req.ServiceId, req.ResourcePatterns, updatesChan)
 		if err != nil && !stderrors.Is(err, io.EOF) {
 			s.logger.WithError(err).Error("Policy subscription failed")
 			errChan <- err
@@ -204,7 +209,7 @@ func (s *PEPServer) Subscribe(req *iampb.SubscribeRequest, stream iampb.PEPServi
 	// Stream updates to client
 	for {
 		select {
-		case <-stream.Context().Done():
+		case <-ctx.Done():
 			s.logger.Debug("Client disconnected from policy subscription")
 			return nil
 
@@ -214,13 +219,7 @@ func (s *PEPServer) Subscribe(req *iampb.SubscribeRequest, stream iampb.PEPServi
 			}
 			return nil
 
-		case update, ok := <-updatesChan:
-			if !ok {
-				// Channel closed, subscription ended
-				s.logger.Debug("Policy subscription channel closed")
-				return nil
-			}
-
+		case update := <-updatesChan:
 			// Convert update to proto message
 			protoUpdate := &iampb.PolicyUpdate{
 				Type:       convertPolicyUpdateType(update.Type),

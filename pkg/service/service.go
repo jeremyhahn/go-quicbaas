@@ -330,7 +330,8 @@ type KVService interface {
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata
 	//   - req: List request with entity type, page size, page token
-	//   - stream: Channel to send paginated results
+	//   - stream: Channel to send paginated results; the implementation closes it
+	//     before returning, so callers must not
 	// Returns:
 	//   - error: ErrInvalidInput, ErrTimeout, ErrRaft
 	List(ctx context.Context, req *ListRequest, stream chan<- *ListResponse) error
@@ -424,7 +425,8 @@ type QueryService interface {
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata
 	//   - req: Query request with entity type, index name, value
-	//   - stream: Channel to send query results
+	//   - stream: Channel to send query results; the implementation closes it
+	//     before returning, so callers must not
 	// Returns:
 	//   - error: ErrInvalidInput, ErrTimeout, ErrRaft
 	Query(ctx context.Context, req *QueryRequest, stream chan<- *QueryResponse) error
@@ -434,7 +436,8 @@ type QueryService interface {
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata
 	//   - req: Scan request with entity type and index name
-	//   - stream: Channel to send scan results
+	//   - stream: Channel to send scan results; the implementation closes it
+	//     before returning, so callers must not
 	// Returns:
 	//   - error: ErrInvalidInput, ErrTimeout, ErrRaft
 	ScanIndex(ctx context.Context, req *ScanRequest, stream chan<- *ScanResponse) error
@@ -761,7 +764,8 @@ type TimeSeriesService interface {
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata
 	//   - req: Time-series query request with entity type and time range
-	//   - stream: Channel to send time-series data points
+	//   - stream: Channel to send time-series data points; the implementation
+	//     closes it before returning, so callers must not
 	// Returns:
 	//   - error: ErrInvalidInput, ErrTimeout
 	TimeSeriesQuery(ctx context.Context, req *TimeSeriesQueryRequest, stream chan<- *TimeSeriesQueryResponse) error

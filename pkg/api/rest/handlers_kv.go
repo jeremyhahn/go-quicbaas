@@ -378,7 +378,7 @@ func (s *Server) HandleKVList(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Wait for first response or error
-	listResp, timedOut, err := firstListResponse(ctx, stream, errChan)
+	listResp, timedOut, err := firstStreamResponse(ctx, stream, errChan)
 	switch {
 	case timedOut:
 		RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{

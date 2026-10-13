@@ -470,16 +470,10 @@ func (s *Server) List(req *pb.ListRequest, stream pb.QuicBaaS_ListServer) error 
 		PageToken:  req.PageToken,
 	}
 
-	// Create channel for streaming results
-	responseChan := make(chan *service.ListResponse, 1)
-
-	// Call service in goroutine
-	go func() {
-		err := s.service.List(stream.Context(), serviceReq, responseChan)
-		if err != nil {
-			s.logger.WithError(err).Error("List operation failed")
-		}
-	}()
+	// Call the service; its error is read once the results are drained.
+	responseChan, errChan := startServiceStream(func(out chan<- *service.ListResponse) error {
+		return s.service.List(stream.Context(), serviceReq, out)
+	})
 
 	// Stream results to client
 	for serviceResp := range responseChan {
@@ -510,6 +504,10 @@ func (s *Server) List(req *pb.ListRequest, stream pb.QuicBaaS_ListServer) error 
 				Err:  err,
 			})
 		}
+	}
+
+	if err := <-errChan; err != nil {
+		return s.streamServiceFailure("List", err)
 	}
 
 	s.metrics.requestsTotal.With("List", "success").Inc()
@@ -683,16 +681,10 @@ func (s *Server) Query(req *pb.QueryRequest, stream pb.QuicBaaS_QueryServer) err
 		Consistency: protoToServiceConsistency(req.Consistency),
 	}
 
-	// Create channel for streaming results
-	responseChan := make(chan *service.QueryResponse, 1)
-
-	// Call service in goroutine
-	go func() {
-		err := s.service.Query(stream.Context(), serviceReq, responseChan)
-		if err != nil {
-			s.logger.WithError(err).Error("Query operation failed")
-		}
-	}()
+	// Call the service; its error is read once the results are drained.
+	responseChan, errChan := startServiceStream(func(out chan<- *service.QueryResponse) error {
+		return s.service.Query(stream.Context(), serviceReq, out)
+	})
 
 	// Stream results to client
 	for serviceResp := range responseChan {
@@ -723,6 +715,10 @@ func (s *Server) Query(req *pb.QueryRequest, stream pb.QuicBaaS_QueryServer) err
 				Err:  err,
 			})
 		}
+	}
+
+	if err := <-errChan; err != nil {
+		return s.streamServiceFailure("Query", err)
 	}
 
 	s.metrics.requestsTotal.With("Query", "success").Inc()
@@ -759,16 +755,10 @@ func (s *Server) ScanIndex(req *pb.ScanRequest, stream pb.QuicBaaS_ScanIndexServ
 		Limit: 100, // Default limit
 	}
 
-	// Create channel for streaming results
-	responseChan := make(chan *service.ScanResponse, 1)
-
-	// Call service in goroutine
-	go func() {
-		err := s.service.ScanIndex(stream.Context(), serviceReq, responseChan)
-		if err != nil {
-			s.logger.WithError(err).Error("ScanIndex operation failed")
-		}
-	}()
+	// Call the service; its error is read once the results are drained.
+	responseChan, errChan := startServiceStream(func(out chan<- *service.ScanResponse) error {
+		return s.service.ScanIndex(stream.Context(), serviceReq, out)
+	})
 
 	// Stream results to client
 	for serviceResp := range responseChan {
@@ -799,6 +789,10 @@ func (s *Server) ScanIndex(req *pb.ScanRequest, stream pb.QuicBaaS_ScanIndexServ
 				Err:  err,
 			})
 		}
+	}
+
+	if err := <-errChan; err != nil {
+		return s.streamServiceFailure("ScanIndex", err)
 	}
 
 	s.metrics.requestsTotal.With("ScanIndex", "success").Inc()
@@ -974,16 +968,10 @@ func (s *Server) TimeSeriesQuery(req *pb.TimeSeriesQueryRequest, stream pb.QuicB
 		Limit: 100, // Default limit
 	}
 
-	// Create channel for streaming results
-	responseChan := make(chan *service.TimeSeriesQueryResponse, 1)
-
-	// Call service in goroutine
-	go func() {
-		err := s.service.TimeSeriesQuery(stream.Context(), serviceReq, responseChan)
-		if err != nil {
-			s.logger.WithError(err).Error("TimeSeriesQuery operation failed")
-		}
-	}()
+	// Call the service; its error is read once the results are drained.
+	responseChan, errChan := startServiceStream(func(out chan<- *service.TimeSeriesQueryResponse) error {
+		return s.service.TimeSeriesQuery(stream.Context(), serviceReq, out)
+	})
 
 	// Stream results to client
 	for serviceResp := range responseChan {
@@ -1013,6 +1001,10 @@ func (s *Server) TimeSeriesQuery(req *pb.TimeSeriesQueryRequest, stream pb.QuicB
 				Err:  err,
 			})
 		}
+	}
+
+	if err := <-errChan; err != nil {
+		return s.streamServiceFailure("TimeSeriesQuery", err)
 	}
 
 	s.metrics.requestsTotal.With("TimeSeriesQuery", "success").Inc()

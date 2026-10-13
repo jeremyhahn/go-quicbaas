@@ -27,6 +27,21 @@ import (
 // =============================================================================
 
 // handleListStream handles the KV List streaming operation.
+// serviceVerdict returns the error a streaming service call returned, once
+// its response channel has closed. The service closes the channel on its way
+// out and the caller's goroutine publishes the returned error only afterwards,
+// so a closed channel means the verdict is imminent, not that it is nil.
+func serviceVerdict(ctx context.Context, s *stream, errCh <-chan error) error {
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.context().Done():
+		return s.context().Err()
+	}
+}
+
 func handleListStream(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
 	r, ok := req.(*service.ListRequest)
 	if !ok {
@@ -52,13 +67,7 @@ func handleListStream(ctx context.Context, svc service.QuicBaaS, req interface{}
 			return s.context().Err()
 		case resp, ok := <-responseCh:
 			if !ok {
-				// Channel closed, check for error
-				select {
-				case err := <-errCh:
-					return err
-				default:
-					return nil
-				}
+				return serviceVerdict(ctx, s, errCh)
 			}
 			// Send response to stream
 			if err := s.deliver(resp); err != nil {
@@ -134,13 +143,7 @@ func handleQueryStream(ctx context.Context, svc service.QuicBaaS, req interface{
 			return s.context().Err()
 		case resp, ok := <-responseCh:
 			if !ok {
-				// Channel closed, check for error
-				select {
-				case err := <-errCh:
-					return err
-				default:
-					return nil
-				}
+				return serviceVerdict(ctx, s, errCh)
 			}
 			// Send response to stream
 			if err := s.deliver(resp); err != nil {
@@ -176,13 +179,7 @@ func handleScanIndexStream(ctx context.Context, svc service.QuicBaaS, req interf
 			return s.context().Err()
 		case resp, ok := <-responseCh:
 			if !ok {
-				// Channel closed, check for error
-				select {
-				case err := <-errCh:
-					return err
-				default:
-					return nil
-				}
+				return serviceVerdict(ctx, s, errCh)
 			}
 			// Send response to stream
 			if err := s.deliver(resp); err != nil {
@@ -218,13 +215,7 @@ func handleTimeSeriesQueryStream(ctx context.Context, svc service.QuicBaaS, req 
 			return s.context().Err()
 		case resp, ok := <-responseCh:
 			if !ok {
-				// Channel closed, check for error
-				select {
-				case err := <-errCh:
-					return err
-				default:
-					return nil
-				}
+				return serviceVerdict(ctx, s, errCh)
 			}
 			// Send response to stream
 			if err := s.deliver(resp); err != nil {

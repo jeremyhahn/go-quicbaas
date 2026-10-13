@@ -1926,6 +1926,7 @@ func TestCov91_HandleRangeQuery_ServiceError(t *testing.T) {
 	defer cleanup()
 
 	mockService.ScanIndexFunc = func(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error {
+		defer close(stream)
 		return &errors.QBError{Code: errors.ErrInternal, Op: "ScanIndex", Err: stderrors.New("range error")}
 	}
 

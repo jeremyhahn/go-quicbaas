@@ -287,7 +287,6 @@ func TestHandleKVList(t *testing.T) {
 				data2, _ := json.Marshal(wrapper2)
 
 				m.On("List", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-					// The channel is chan<- *service.ListResponse (send-only)
 					stream := args.Get(2).(chan<- *service.ListResponse)
 					stream <- &service.ListResponse{
 						Entities: []*service.Entity{
@@ -297,8 +296,7 @@ func TestHandleKVList(t *testing.T) {
 						TotalCount:    2,
 						NextPageToken: "",
 					}
-					// Note: We cannot close the channel here since it's send-only
-					// The handler will handle channel closure
+					close(stream)
 				}).Return(nil).Once()
 			},
 			expectedStatus: http.StatusOK,
@@ -776,6 +774,7 @@ func TestHandleKVList_FullCoverage(t *testing.T) {
 						TotalCount:    1,
 						NextPageToken: "",
 					}
+					close(stream)
 				}).Return(nil).Once()
 			},
 			expectedStatus: http.StatusOK,
@@ -822,6 +821,7 @@ func TestHandleKVList_FullCoverage(t *testing.T) {
 						TotalCount:    1,
 						NextPageToken: "another-token",
 					}
+					close(stream)
 				}).Return(nil).Once()
 			},
 			expectedStatus: http.StatusOK,
@@ -845,6 +845,7 @@ func TestHandleKVList_FullCoverage(t *testing.T) {
 						TotalCount:    0,
 						NextPageToken: "",
 					}
+					close(stream)
 				}).Return(nil).Once()
 			},
 			expectedStatus: http.StatusOK,
@@ -861,7 +862,7 @@ func TestHandleKVList_FullCoverage(t *testing.T) {
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
 				m.On("List", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-					// Send error through errChan by returning error from List
+					close(args.Get(2).(chan<- *service.ListResponse))
 				}).Return(&errors.QBError{Code: errors.ErrInternal, Op: "test", Err: &errors.MessageError{Message: "list failed"}}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
@@ -872,7 +873,8 @@ func TestHandleKVList_FullCoverage(t *testing.T) {
 			setupMock: func(m *testutil.MockQuicBaaS) {
 				m.ExpectedCalls = nil
 				m.On("List", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-					// Don't send anything to stream, let it return nil
+					// Close without sending a page.
+					close(args.Get(2).(chan<- *service.ListResponse))
 				}).Return(nil).Once()
 			},
 			expectedStatus: http.StatusOK,
@@ -901,6 +903,7 @@ func TestHandleKVList_FullCoverage(t *testing.T) {
 						TotalCount:    2,
 						NextPageToken: "",
 					}
+					close(stream)
 				}).Return(nil).Once()
 			},
 			expectedStatus: http.StatusOK,

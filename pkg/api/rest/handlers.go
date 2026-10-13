@@ -664,7 +664,7 @@ func (s *Server) HandleList(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Wait for first response or error
-	listResp, timedOut, err := firstListResponse(ctx, stream, errChan)
+	listResp, timedOut, err := firstStreamResponse(ctx, stream, errChan)
 	switch {
 	case timedOut:
 		RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{
@@ -813,19 +813,15 @@ func (s *Server) HandleQuery(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Wait for first response or error
-	var queryResp *service.QueryResponse
-	select {
-	case queryResp = <-stream:
-		// Got response
-	case err := <-errChan:
-		if err != nil {
-			s.handleServiceError(w, r, err)
-			return
-		}
-	case <-ctx.Done():
+	queryResp, timedOut, err := firstStreamResponse(ctx, stream, errChan)
+	switch {
+	case timedOut:
 		RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{
 			Timeout: 30 * time.Second,
 		})
+		return
+	case err != nil:
+		s.handleServiceError(w, r, err)
 		return
 	}
 
@@ -908,14 +904,16 @@ func (s *Server) HandleRangeQuery(w http.ResponseWriter, r *http.Request) {
 		close(errChan)
 	}()
 
-	// Collect all results
+	// Collect all results. ScanIndex closes stream on its way out and the
+	// goroutine publishes its verdict on errChan only afterwards, so a closed
+	// stream means the call has returned, not that it succeeded.
 	var allEntities []EntityItem
+collect:
 	for {
 		select {
 		case scanResp, ok := <-stream:
 			if !ok {
-				// Stream closed
-				goto done
+				break collect
 			}
 			// Handle nil response (shouldn't happen in loop but be defensive)
 			if scanResp == nil {
@@ -929,11 +927,6 @@ func (s *Server) HandleRangeQuery(w http.ResponseWriter, r *http.Request) {
 					Data:       entity.Data,
 				})
 			}
-		case err := <-errChan:
-			if err != nil {
-				s.handleServiceError(w, r, err)
-				return
-			}
 		case <-ctx.Done():
 			RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{
 				Timeout: 30 * time.Second,
@@ -942,7 +935,19 @@ func (s *Server) HandleRangeQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-done:
+	select {
+	case err := <-errChan:
+		if err != nil {
+			s.handleServiceError(w, r, err)
+			return
+		}
+	case <-ctx.Done():
+		RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{
+			Timeout: 30 * time.Second,
+		})
+		return
+	}
+
 	resp := QueryResponse{
 		Results: allEntities,
 		Count:   len(allEntities),

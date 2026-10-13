@@ -57,7 +57,7 @@ func TestFirstListResponse_PageSurvivesACompletedCall(t *testing.T) {
 		}
 		stream, errChan := completedList(want, nil)
 
-		resp, timedOut, err := firstListResponse(context.Background(), stream, errChan)
+		resp, timedOut, err := firstStreamResponse(context.Background(), stream, errChan)
 		if err != nil {
 			t.Fatalf("iteration %d: unexpected error %v", i, err)
 		}
@@ -67,6 +67,34 @@ func TestFirstListResponse_PageSurvivesACompletedCall(t *testing.T) {
 		if resp != want {
 			t.Fatalf("iteration %d: the page was dropped; a completed List that "+
 				"returned %d rows was observed as %v", i, want.TotalCount, resp)
+		}
+	}
+}
+
+// TestFirstStreamResponse_QueryResultSurvivesACompletedCall is the #1284
+// regression: Query buffered its one response and returned nil, so both the
+// response and the closed errChan were ready when HandleQuery selected, and
+// the handler answered with an empty result whenever errChan won.
+func TestFirstStreamResponse_QueryResultSurvivesACompletedCall(t *testing.T) {
+	const iterations = 64
+
+	for i := range iterations {
+		want := &service.QueryResponse{
+			Entities:   []*service.Entity{{ID: 1}},
+			TotalCount: 1,
+		}
+		stream := make(chan *service.QueryResponse, 1)
+		errChan := make(chan error, 1)
+		stream <- want
+		close(stream)
+		close(errChan)
+
+		resp, timedOut, err := firstStreamResponse(context.Background(), stream, errChan)
+		if err != nil || timedOut {
+			t.Fatalf("iteration %d: err = %v, timedOut = %v on a completed call", i, err, timedOut)
+		}
+		if resp != want {
+			t.Fatalf("iteration %d: the query result was dropped; got %v", i, resp)
 		}
 	}
 }
@@ -89,7 +117,7 @@ func TestFirstListResponse_ServiceErrorSurvivesAClosedStream(t *testing.T) {
 	for i := range iterations {
 		stream, errChan := completedList(nil, wantErr)
 
-		resp, timedOut, err := firstListResponse(context.Background(), stream, errChan)
+		resp, timedOut, err := firstStreamResponse(context.Background(), stream, errChan)
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("iteration %d: err = %v, want %v -- a service failure was "+
 				"reported as an empty success", i, err, wantErr)
@@ -109,7 +137,7 @@ func TestFirstListResponse_ServiceErrorSurvivesAClosedStream(t *testing.T) {
 func TestFirstListResponse_EmptyResultIsNotAnError(t *testing.T) {
 	stream, errChan := completedList(nil, nil)
 
-	resp, timedOut, err := firstListResponse(context.Background(), stream, errChan)
+	resp, timedOut, err := firstStreamResponse(context.Background(), stream, errChan)
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
 	}
@@ -127,7 +155,7 @@ func TestFirstListResponse_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	resp, timedOut, err := firstListResponse(ctx, make(chan *service.ListResponse, 1), make(chan error, 1))
+	resp, timedOut, err := firstStreamResponse(ctx, make(chan *service.ListResponse, 1), make(chan error, 1))
 	if !timedOut {
 		t.Error("a cancelled context was not reported as a timeout")
 	}
@@ -157,7 +185,7 @@ func TestFirstListResponse_ClosedStreamWithNoCompletionYetStillWaits(t *testing.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	resp, timedOut, err := firstListResponse(ctx, stream, errChan)
+	resp, timedOut, err := firstStreamResponse(ctx, stream, errChan)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}

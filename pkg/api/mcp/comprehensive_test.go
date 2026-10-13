@@ -152,11 +152,23 @@ func (m *mockService) Transaction(ctx context.Context, req *service.TransactionR
 }
 
 // Query Operations (not implemented).
+// Query and ScanIndex behave like the production service: they buffer one
+// response and close the stream themselves before returning.
 func (m *mockService) Query(ctx context.Context, req *service.QueryRequest, stream chan<- *service.QueryResponse) error {
+	stream <- &service.QueryResponse{
+		Entities:   []*service.Entity{{EntityType: req.EntityType, ID: 1, Data: []byte(`{"test":"data1"}`)}},
+		TotalCount: 1,
+	}
+	close(stream)
 	return nil
 }
 
 func (m *mockService) ScanIndex(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error {
+	stream <- &service.ScanResponse{
+		Entities:   []*service.Entity{{EntityType: req.EntityType, ID: 1, Data: []byte(`{"test":"data1"}`)}},
+		TotalCount: 1,
+	}
+	close(stream)
 	return nil
 }
 
@@ -362,6 +374,7 @@ func (m *mockService) Aggregate(ctx context.Context, req *service.AggregateReque
 }
 
 func (m *mockService) TimeSeriesQuery(ctx context.Context, req *service.TimeSeriesQueryRequest, stream chan<- *service.TimeSeriesQueryResponse) error {
+	close(stream)
 	return nil
 }
 

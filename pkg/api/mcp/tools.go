@@ -2167,7 +2167,6 @@ func (r *ToolRegistry) executeQuery(ctx context.Context, args map[string]interfa
 	stream := make(chan *service.QueryResponse, 64)
 	errCh := make(chan error, 1)
 	go func() {
-		defer close(stream)
 		errCh <- r.service.Query(ctx, req, stream)
 	}()
 
@@ -2195,7 +2194,6 @@ func (r *ToolRegistry) executeScanIndex(ctx context.Context, args map[string]int
 	stream := make(chan *service.ScanResponse, 64)
 	errCh := make(chan error, 1)
 	go func() {
-		defer close(stream)
 		errCh <- r.service.ScanIndex(ctx, req, stream)
 	}()
 

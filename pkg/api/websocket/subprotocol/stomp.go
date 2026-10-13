@@ -224,9 +224,11 @@ func (h *STOMPHandler) HandleConnection(ctx context.Context, conn *websocket.Con
 		pendingAcks:   make(map[string]*pendingMessage),
 	}
 
-	// Message delivery channel for this client
+	// Message delivery channel for this client. Hub callbacks send on it
+	// outside the hub lock, so one may still be sending after
+	// UnregisterClient returns: never close it. cancelDelivery stops the
+	// delivery goroutine, and the callbacks never block.
 	deliveryChan := make(chan stompDelivery, 100)
-	defer close(deliveryChan)
 
 	// Register cleanup on connection close
 	defer func() {
@@ -360,10 +362,7 @@ func (h *STOMPHandler) deliverMessages(ctx context.Context, conn *websocket.Conn
 		select {
 		case <-ctx.Done():
 			return
-		case delivery, ok := <-deliveryChan:
-			if !ok {
-				return
-			}
+		case delivery := <-deliveryChan:
 
 			messageID++
 			msgIDStr := strconv.FormatUint(messageID, 10)
