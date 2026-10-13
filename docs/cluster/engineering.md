@@ -144,16 +144,18 @@ Important:
 
 ```bash
 vim /etc/quicbaas/config.yaml
-quicbaas config validate
-systemctl reload quicbaas
+systemctl restart quicbaas
 ```
+
+There is no config verb. `quicbaasd` validates the configuration at boot and
+refuses to start on an invalid one, so check the unit's log after the restart.
 
 ### Data Rebalancing
 
 ```bash
 quicbaas rebalance plan
 quicbaas rebalance start --follow
-quicbaas rebalance status
+quicbaas rebalance status --operation <operation-id>
 ```
 
 Custom settings:
@@ -179,10 +181,9 @@ curl -X POST http://node1:18080/v1/cluster/snapshot
 
 # List snapshots
 ls /var/lib/quicbaas/raft/snapshots/
-
-# Verify integrity
-quicbaas snapshot verify /var/lib/quicbaas/raft/snapshots/latest
 ```
+
+There is no snapshot verb; `quicbaas backup verify <backup-id>` checks backups.
 
 Automated snapshots (cron):
 
@@ -369,7 +370,8 @@ storage:
 Manual:
 
 ```bash
-quicbaas snapshot create --output /backup/snapshot-$(date +%Y%m%d)
+quicbaas backup create snapshot-$(date +%Y%m%d) --storage-path /backup
+quicbaas backup list
 ```
 
 Automated (daily):
@@ -377,8 +379,7 @@ Automated (daily):
 ```bash
 cat > /etc/cron.daily/quicbaas-backup <<'EOF'
 #!/bin/bash
-quicbaas snapshot create --output /backup/daily-$(date +%Y%m%d)
-find /backup -name "daily-*" -mtime +7 -delete
+quicbaas backup create daily-$(date +%Y%m%d) --storage-path /backup --incremental
 EOF
 chmod +x /etc/cron.daily/quicbaas-backup
 ```
@@ -386,22 +387,8 @@ chmod +x /etc/cron.daily/quicbaas-backup
 ### Restoring from Backup
 
 ```bash
-# Stop cluster
-for node in node1 node2 node3; do
-  ssh $node "systemctl stop quicbaas"
-done
-
-# Restore data
-for node in node1 node2 node3; do
-  ssh $node "rm -rf /var/lib/quicbaas/data/*"
-  scp -r /backup/snapshot-20251219/* $node:/var/lib/quicbaas/data/
-done
-
-# Start cluster
-for node in node1 node2 node3; do
-  ssh $node "systemctl start quicbaas"
-  sleep 10
-done
+# Restore (the backup is verified first unless --verify=false)
+quicbaas backup restore <backup-id> --storage-path /backup
 
 # Verify
 quicbaas cluster status
@@ -410,10 +397,7 @@ quicbaas cluster status
 ### Point-in-Time Recovery
 
 ```bash
-quicbaas restore --snapshot /backup/snapshot-20251219 \
-  --replay-to-index 12345
-
-quicbaas data verify
+quicbaas backup restore <backup-id> --storage-path /backup --point-in-time 2025-12-19T12:00:00Z
 ```
 
 ## Troubleshooting
@@ -441,9 +425,6 @@ logging:
 
 # Check slow query log
 tail -f /var/log/quicbaas/slow-queries.log
-
-# Analyze query patterns
-quicbaas query analyze
 ```
 
 ### Memory Leaks
@@ -466,15 +447,15 @@ systemctl restart quicbaas
 # Check usage
 df -h /var/lib/quicbaas
 
-# Compact data
-quicbaas compact --path /var/lib/quicbaas/data
-
 # Clean old snapshots
 find /var/lib/quicbaas/raft/snapshots -mtime +7 -delete
 
-# Archive old logs
-quicbaas logs archive --older-than 30d
+# Remove old backups
+quicbaas backup list
+quicbaas backup delete <backup-id> --yes
 ```
+
+There is no compact or log-archive verb; PebbleDB compacts in the background.
 
 ## Operational Checklist
 
@@ -515,7 +496,7 @@ logging:
 Collect diagnostics:
 
 ```bash
-quicbaas diagnostics collect --output diagnostics.tar.gz
+quicbaas cluster status --output json > cluster-status.json
 journalctl -u quicbaas --since "1 hour ago" > logs.txt
 ```
 
@@ -652,20 +633,19 @@ cfssl gencert \
 
 ### CLI Usage
 
+`quicbaasd` has no TLS flags; Raft mTLS comes from the `raft` section of the
+configuration file (`mutual_tls`, `tls_cert_file`, `tls_key_file`,
+`tls_ca_file`).
+
 ```bash
-# Start with mTLS
-quicbaas server start \
-  --raft-mtls-enabled=true \
-  --raft-cert=/path/to/raft.crt \
-  --raft-key=/path/to/raft.key \
-  --raft-ca=/path/to/ca.crt
+# Start with mTLS configured in the file
+quicbaasd node --config /etc/quicbaas/config.yaml
 
 # Check cluster status
 quicbaas cluster status
 
-# Rotate certificates (requires restart)
-quicbaas config set raft.mtls.cert_file /path/to/new-raft.crt
-quicbaas server reload
+# Rotate certificates: edit raft.tls_cert_file / raft.tls_key_file, then restart
+systemctl restart quicbaas
 ```
 
 ### Deployment Patterns

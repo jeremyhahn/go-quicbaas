@@ -738,8 +738,8 @@ a tenant's cache, stop the daemon and remove its `<go_cache_dir>/<tenant>`.
 ## Verifying a deployment
 
 ```bash
-# The daemon's own view: every session it spawned, and the container each runs in.
-quicbaas agent sessions list
+# The daemon's own view: every session it spawned.
+quicbaas orchestrator sessions
 
 # The host's view: a required-mode daemon must have NO agent processes as children.
 ps --ppid "$(pgrep -f 'quicbaas fleet serve')" -o pid,comm --no-headers

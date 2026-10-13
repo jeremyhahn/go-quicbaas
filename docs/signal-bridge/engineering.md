@@ -355,21 +355,24 @@ Run a Signal bot backed by your QuicBaaS orchestrator. Operators chat with a nor
 ### Deployment
 
 1. Run a `go-signal` server (or use an existing one). The bridge needs a reachable base URL.
-2. Register a Signal account for the bot:
+2. Build the CLI with the bridge included. The `signalbridge` verb exists only
+   in builds tagged `quicbaas_signal`:
+   ```bash
+   go build -tags quicbaas_signal -o quicbaas ./cmd/quicbaas
+   ```
+3. Register a Signal account for the bot:
    ```bash
    quicbaas signalbridge register \
-     --server https://signal.example.com \
-     --number +15551234567 \
-     --captcha <captcha>
+     --go-signal-url https://signal.example.com \
+     --bot-identity +15551234567 \
+     --config /etc/quicbaas/signalbridge.yaml
    ```
-   After SMS verification, credentials are stored under `<datadir>/signalbridge/<number>/`.
-3. Start the bridge pointing at your QuicBaaS daemon:
+   `--state-path` overrides the state directory derived from the config.
+4. Start the bridge. The daemon address, tenant and Signal server come from the
+   bot config file:
    ```bash
-   quicbaas signalbridge run \
-     --server https://signal.example.com \
-     --number +15551234567 \
-     --quicbaas https://quicbaas.internal:8443 \
-     --tenant production
+   quicbaas signalbridge serve --config /etc/quicbaas/signalbridge.yaml
+   quicbaas signalbridge status --config /etc/quicbaas/signalbridge.yaml
    ```
 
 ### User Experience

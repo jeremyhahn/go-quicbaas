@@ -347,3 +347,90 @@ The rebalance plan includes:
 - Follow mode displays real-time progress updates
 - Rebalancing improves query performance by distributing load evenly
 - Imbalance is calculated as: max(shard_size) / avg(shard_size) - 1
+
+
+---
+
+## quicbaas upgrade
+
+Records a node upgrade job through the Operations API (`UpgradeNode`,
+`GetUpgradeStatus`) and reads it back.
+
+**The server records the job and does nothing else.** `UpgradeNode` stores an
+`upgrade-<uuid>` job with status `initiated` in the serving process's memory
+and returns. It does not drain, stop, replace or restart any node, and the job
+never moves past `initiated`. `current_version` is the fixed placeholder
+`1.0.0`. Jobs are lost when the server restarts. Upgrade a node by replacing
+its binary or image and restarting it; this verb does not do that for you.
+
+Both verbs use the active SDK transport (global `--transport`, `--address`).
+The Operations API is served on gRPC and embedded only: the REST routes are
+not served and there is no MCP tool (see [api.md](api.md)), so on those
+transports the call fails. There is no `--local` mode.
+
+### upgrade start
+
+```bash
+quicbaas upgrade start <version> [flags]
+```
+
+Creates an upgrade job for `<version>` and prints its operation ID.
+
+| Flag | Type | Default | Effect |
+|---|---|---|---|
+| `--node-id` | uint64 | `0` | Node to upgrade; `0` means all nodes. Sent to the server. |
+| `--server` | string | `""` | Server address; overrides global `--address`. |
+| `--output` | string | `table` | `table` or `json`. |
+| `--follow` | bool | `false` | Poll status every 3 s until the job reaches `completed`, `failed` or `rolled_back`. |
+| `--tls-cert`, `--tls-key`, `--tls-ca` | string | `""` | Client certificate, key and CA. Each fills the matching global flag when that flag is unset. |
+| `--max-unavailable` | int | `1` | Accepted and printed; not sent to the server. |
+| `--wait-time` | duration | `30s` | Accepted and printed; not sent to the server. |
+| `--health-timeout` | duration | `2m` | Accepted and printed; not sent to the server. |
+| `--rollback-on-failure` | bool | `true` | Accepted and printed; not sent to the server. |
+| `--drain-timeout` | duration | `5m` | Accepted; not sent to the server. |
+| `--verify-compatibility` | bool | `true` | Accepted; not sent to the server. |
+| `--skip-backup` | bool | `false` | Accepted; not sent to the server. |
+
+Refusals:
+
+- Anything other than exactly one positional `<version>` is a usage error.
+- An `--output` other than `table` or `json` is refused, but only after the
+  job has been created.
+- `--follow` stops at the global `--timeout` (default `30s`) with a deadline
+  error. Because the job stays `initiated`, `--follow` always ends this way.
+
+```bash
+quicbaas upgrade start v2.0.0 --transport grpc --address kms.example.com:50051 \
+  --tls-cert client.pem --tls-key client-key.pem --tls-ca ca.pem
+quicbaas upgrade start v2.0.0 --node-id 2 --output json
+```
+
+### upgrade status
+
+```bash
+quicbaas upgrade status --operation <operation-id> [flags]
+```
+
+Prints the job's status, progress and versions. `Nodes Upgraded` and
+`Total Nodes` are always `0`: the server does not report them.
+
+| Flag | Type | Default | Effect |
+|---|---|---|---|
+| `--operation` | string | `""` | Operation ID from `upgrade start`. Required in practice (see below). |
+| `--server` | string | `""` | Server address; overrides global `--address`. |
+| `--output` | string | `table` | `table` or `json`. |
+| `--tls-cert`, `--tls-key`, `--tls-ca` | string | `""` | As for `upgrade start`. |
+
+Refusals (all exit non-zero):
+
+- Empty `--operation`: the server requires a job ID. The flag's help text says
+  an empty value means "current upgrade"; the server does not support that.
+- Unknown operation ID: not found.
+- An ID of a job that is not an upgrade (for example a migration): invalid
+  input.
+- An `--output` other than `table` or `json`.
+
+```bash
+quicbaas upgrade status --operation upgrade-<uuid>
+quicbaas upgrade status --operation upgrade-<uuid> --output json
+```

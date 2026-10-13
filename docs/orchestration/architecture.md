@@ -594,9 +594,9 @@ type ContainerSpec struct {
 **Secrets Flow (Closed Loop):**
 ```
 1. Admin stores agent secrets in QuicBaaS Secrets Manager:
-   quicbaas secrets store "orchestrator/claude-code/anthropic-base-url" "http://ollama:11434"
-   quicbaas secrets store "orchestrator/claude-code/auth-token" "ollama"
-   quicbaas secrets store "orchestrator/openai-api-key" "sk-..."
+   quicbaas secrets put orchestrator/claude-code/anthropic-base-url --data value=http://ollama:11434
+   quicbaas secrets put orchestrator/claude-code/auth-token --data value=ollama
+   quicbaas secrets put orchestrator/openai-api-key --from-stdin
 
 2. Orchestrator receives SpawnSession request
    → Resolves secrets for the agent backend from QuicBaaS Secrets Manager

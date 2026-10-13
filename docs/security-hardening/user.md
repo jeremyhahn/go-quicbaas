@@ -64,29 +64,27 @@ QuicBaaS supports hardware security modules for enhanced key protection:
 ### Initialize Security
 
 ```bash
-# Initialize seal
-quicbaas seal init --shares 5 --threshold 3
+# Initialize the barrier with 3-of-5 Shamir shares
+quicbaas barrier init-shamir --total 5 --threshold 3
 
-# Unseal node
-quicbaas seal unseal --share "share1..."
-quicbaas seal unseal --share "share2..."
-quicbaas seal unseal --share "share3..."
+# Unseal by submitting shares (repeat --share or use --shares-file)
+quicbaas barrier unseal-shares --share "share1..." --share "share2..." --share "share3..."
 
 # Verify status
-quicbaas seal status
+quicbaas barrier status
 ```
 
 ### Manage Keys
 
 ```bash
 # Generate encryption key
-quicbaas kms generate --name mykey --algorithm AES-256-GCM
+quicbaas kms key generate mykey --algorithm AES-256-GCM
 
 # Encrypt data
 quicbaas kms encrypt mykey --data "sensitive"
 
 # Rotate key
-quicbaas kms rotate mykey
+quicbaas kms key rotate mykey
 ```
 
 ### Store Secrets
@@ -101,23 +99,32 @@ quicbaas secrets get database/prod
 
 ### Enable mTLS
 
+There are no TLS flags on `quicbaasd`; set Raft mTLS in the configuration file:
+
+```yaml
+raft:
+  mutual_tls: true
+  tls_cert_file: /path/to/raft.crt
+  tls_key_file: /path/to/raft.key
+  tls_ca_file: /path/to/ca.crt
+```
+
 ```bash
-# Start with Raft mTLS
-quicbaas server start \
-  --raft-mtls-enabled=true \
-  --raft-cert=/path/to/raft.crt \
-  --raft-key=/path/to/raft.key \
-  --raft-ca=/path/to/ca.crt
+quicbaasd node --config /etc/quicbaas/config.yaml
 ```
 
 ### Configure Audit Logging
 
-```bash
-# Enable audit logging with syslog
-quicbaas server start \
-  --audit-enabled=true \
-  --audit-syslog-enabled=true \
-  --audit-syslog-address="syslog.example.com:514"
+Authorization decisions are audited through the configuration file. The
+configuration has no syslog setting.
+
+```yaml
+security:
+  authorization:
+    audit:
+      enabled: true
+      log_denied: true
+      log_allowed: false
 ```
 
 ## Configuration

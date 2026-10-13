@@ -274,14 +274,11 @@ QUICBAAS_SECURITY_AUTHORIZATION_AUDIT_LOG_ALLOWED=false
 
 ### CLI Flags
 
+There are no authorization flags. `quicbaasd` reads these settings from the
+configuration file above:
+
 ```bash
-quicbaas server start \
-  --authz-provider=rbac \
-  --authz-rbac-enabled=true \
-  --authz-rbac-default-role="" \
-  --authz-rbac-allow-anonymous=true \
-  --authz-audit-enabled=true \
-  --authz-audit-log-denied=true
+quicbaasd start --config /etc/quicbaas/config.yaml
 ```
 
 ## Permission Matrix
@@ -754,7 +751,7 @@ curl -v http://localhost:8080/health
 
 ```bash
 # List user roles
-quicbaas user get alice --show-roles
+quicbaas iam user get <user-id>
 ```
 
 #### "roles [X] do not have Y permission on Z" Error
@@ -768,10 +765,10 @@ quicbaas user get alice --show-roles
 
 ```bash
 # Check role permissions
-quicbaas role get readwrite
+quicbaas iam role get <role-id>
 
 # Assign additional role
-quicbaas user assign-role alice admin
+quicbaas iam role assign <user-id> admin
 ```
 
 #### Custom Role Not Found

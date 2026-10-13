@@ -66,31 +66,33 @@ Distributed object storage with location-agnostic keys, multi-backend support, a
 
 ```bash
 # Store object using CLI
-quicbaas object put backups:daily/2024-01-15.tar.gz ./backup.tar.gz
+quicbaas object put backups/daily/2024-01-15.tar.gz --file ./backup.tar.gz
 
-# Store with custom metadata
-quicbaas object put tenant-acme:docs/report.pdf ./report.pdf \
+# Store with content type and tags
+quicbaas object put docs/report.pdf --file ./report.pdf \
   --content-type application/pdf \
   --tag department=finance \
   --tag classification=internal
 
-# Store with explicit backend
-quicbaas object put blobs:images/logo.png ./logo.png \
-  --backend s3-primary
+# Place a copy on a specific backend after writing
+quicbaas object replicate images/logo.png --dest s3-primary
 ```
 
 ### Retrieve an Object
 
 ```bash
 # Get object
-quicbaas object get tenant-acme:docs/report.pdf -o ./downloaded.pdf
+quicbaas object get docs/report.pdf -o ./downloaded.pdf
 
 # Get object metadata only
-quicbaas object head tenant-acme:docs/report.pdf
+quicbaas object head docs/report.pdf
 
-# Get catalog entry (shows all locations)
-quicbaas catalog get tenant-acme:docs/report.pdf
+# Get policies and metadata
+quicbaas object metadata get docs/report.pdf
 ```
+
+The tenant comes from the global `--tenant` flag, not from the key. Every verb
+and flag is in [cli.md](cli.md).
 
 ### REST API
 

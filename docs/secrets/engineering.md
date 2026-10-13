@@ -150,22 +150,13 @@ secrets:
 
 ## CLI Configuration
 
-### Set Default Key
+There is no config verb. Set the default key in the configuration file and
+restart `quicbaasd`; `default_key_id` is the only encryption setting it reads:
 
-```bash
-quicbaas config set secrets.encryption.default_key_id my-key
-```
-
-### Set Default Algorithm
-
-```bash
-quicbaas config set secrets.encryption.default_algorithm ChaCha20-Poly1305
-```
-
-### View Configuration
-
-```bash
-quicbaas config get secrets
+```yaml
+secrets:
+  encryption:
+    default_key_id: my-key
 ```
 
 ## Runtime Configuration

@@ -186,22 +186,19 @@ Command-line interface built with Cobra.
 
 **Commands:**
 ```bash
-# Key-value operations
-quicbaas kv get user:123
-quicbaas kv put user:123 --value '{"name":"Alice"}'
-quicbaas kv delete user:123
-
-# Batch operations
-quicbaas batch get --keys-file keys.txt
-quicbaas batch put --data-file data.json
+# Typed data operations (there is no kv or batch verb)
+quicbaas data put user 123 '{"name":"Alice"}' --json
+quicbaas data get user 123
+quicbaas data delete user 123 --yes
 
 # Vector operations
-quicbaas vector search --query-file query.bin --k 10
-quicbaas vector upsert --vector-file vec.bin --metadata '{"doc_id":"123"}'
+quicbaas vector search similar docs --vector 0.12,0.34,0.56 --k 10
+quicbaas vector upsert docs doc-123 --vector 0.12,0.34,0.56 --metadata doc_id=123
+quicbaas vector batch-upsert docs --file vectors.json
 
 # Cluster management
 quicbaas cluster status
-quicbaas cluster add-node --address 203.0.113.10:50051
+quicbaas node add node-4 203.0.113.10:50051
 ```
 
 ## Dual-Codec System

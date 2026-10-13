@@ -25,13 +25,10 @@ The Parameter Store integrates with QuicBaaS's IAM system to provide:
 
 ```bash
 # Assign role to user
-quicbaas user role add user-123 parameters-reader
-
-# Assign role to service account
-quicbaas serviceaccount role add app-backend parameters-writer
+quicbaas iam role assign user-123 parameters-reader
 
 # List user roles
-quicbaas user roles user-123
+quicbaas iam user get user-123
 ```
 
 ### Role Permissions
@@ -341,20 +338,19 @@ Use priority to layer policies:
 Enable audit logging for sensitive parameters:
 
 ```bash
-quicbaas parameter set /app/secrets/api-key "value" \
-  --kms-key default \
-  --audit-enabled \
-  --tags sensitivity=high
+curl -X PUT "http://localhost:8080/api/v1/parameters/app/secrets/api-key" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"value": "dmFsdWU=", "kms_key_id": "default", "audit_enabled": true, "tags": {"sensitivity": "high"}}'
 ```
 
 ### 5. Test Policies
 
-Use the policy simulation API:
+Evaluate a request against the active policies:
 
 ```bash
-# Simulate policy evaluation
-quicbaas iam simulate \
-  --subject user-123 \
+quicbaas iam policy test \
+  --subject '{"id": "user-123", "roles": ["parameters-writer"]}' \
   --action parameter:write \
   --resource "parameters:/production/database/password"
 ```
@@ -365,13 +361,13 @@ quicbaas iam simulate \
 
 1. Check user roles:
    ```bash
-   quicbaas user roles user-123
+   quicbaas iam user get user-123
    ```
 
 2. View policy evaluation:
    ```bash
-   quicbaas iam debug \
-     --subject user-123 \
+   quicbaas iam policy test \
+     --subject '{"id": "user-123", "roles": ["parameters-reader"]}' \
      --action parameter:read \
      --resource "parameters:/app/config"
    ```

@@ -60,52 +60,36 @@ QuicBaaS Credentials Engine provides dynamic credential generation for certifica
 
 ```bash
 # Issue client certificate
-quicbaas credentials cert issue my-client \
-  --usage client \
-  --validity 30
+quicbaas ca issue --common-name my-client --usage client --validity-days 30
 
 # Issue server certificate with SANs
-quicbaas credentials cert issue api-server \
+quicbaas ca issue --common-name api-server \
   --usage server \
-  --dns "api.example.com,api.internal" \
-  --ip "10.0.0.1"
+  --dns api.example.com \
+  --ip 192.0.2.10
 
 # Issue certificate for both client and server auth
-quicbaas credentials cert issue mtls-service \
-  --usage both \
-  --validity 365
+quicbaas ca issue --common-name mtls-service --usage both --validity-days 365
 ```
 
 ### Get CA Certificate
 
 ```bash
-# Get CA certificate PEM
-quicbaas credentials cert ca
+# CA certificate details
+quicbaas ca info
 
-# Get CA bundle (full chain)
-quicbaas credentials cert ca --bundle
-```
-
-### Sign a CSR
-
-```bash
-# Sign certificate signing request
-quicbaas credentials cert sign --csr ./request.csr --validity 30
-```
-
-### Verify a Certificate
-
-```bash
-# Verify certificate against CA
-quicbaas credentials cert verify --cert ./certificate.pem
+# CA bundle (PEM)
+quicbaas ca bundle
 ```
 
 ### Revoke a Certificate
 
 ```bash
-# Revoke by serial number
-quicbaas credentials cert revoke --serial 12345
+quicbaas ca revoke <serial>
 ```
+
+Signing an external CSR and verifying a certificate have no CLI verb; see
+[cli.md](cli.md).
 
 ## Certificate Flow
 
@@ -223,24 +207,20 @@ credentials:
 
 ```bash
 # Issue server certificate
-quicbaas credentials cert issue api-server \
+quicbaas ca issue --common-name api-server \
   --usage server \
-  --dns "api.example.com" \
-  --validity 90
+  --dns api.example.com \
+  --validity-days 90
 
 # Issue client certificate for service-to-service auth
-quicbaas credentials cert issue backend-client \
-  --usage client \
-  --validity 30
+quicbaas ca issue --common-name backend-client --usage client --validity-days 30
 ```
 
 ### Short-Lived Certificates
 
 ```bash
 # Issue certificate with 1-day validity
-quicbaas credentials cert issue ephemeral-client \
-  --usage client \
-  --validity 1
+quicbaas ca issue --common-name ephemeral-client --usage client --validity-days 1
 ```
 
 ### Programmatic Usage

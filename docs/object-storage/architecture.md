@@ -1109,48 +1109,40 @@ Retrieve object from archive:
 
 ```bash
 # Archive immediately
-quicbaas object archive tenant-acme:docs/old-report.pdf
+quicbaas object archive docs/old-report.pdf
 
 # Archive and delete from primary
-quicbaas object archive tenant-acme:docs/old-report.pdf --delete-primary
+quicbaas object archive docs/old-report.pdf --delete-from-primary
 
 # Archive to specific backend
-quicbaas object archive tenant-acme:docs/old-report.pdf \
-  --target s3-glacier \
-  --compression 9
-
-# Archive all objects in namespace older than N days
-quicbaas object archive --prefix tenant-acme: --older-than 90d
+quicbaas object archive docs/old-report.pdf \
+  --target-store s3-glacier \
+  --compression-level 9
 ```
+
+The CLI archives one object per call; bulk archival by age is the archive
+worker's job, driven by the bucket's lifecycle policy (`object lifecycle set`).
 
 #### Restore Object
 
 ```bash
-# Restore to hot tier
-quicbaas object restore tenant-acme:docs/old-report.pdf
+# Restore with defaults
+quicbaas object restore docs/old-report.pdf
 
-# Restore to specific backend
-quicbaas object restore tenant-acme:docs/old-report.pdf --target s3-primary
-
-# Check restore status (for slow backends like Glacier)
-quicbaas object restore-status tenant-acme:docs/old-report.pdf
+# Restore to specific backend and tier
+quicbaas object restore docs/old-report.pdf --target-backend s3-primary --tier hot
 ```
 
 #### View Tier Status
 
 ```bash
-# View object tier
-quicbaas catalog get tenant-acme:docs/report.pdf
-
-# List archived objects
-quicbaas object list --status archived
-
-# List objects eligible for archive
-quicbaas object list --archive-eligible
-
-# List objects exceeding retention
-quicbaas object list --retention-exceeded
+# Object metadata and policies, including its tier
+quicbaas object head docs/report.pdf
+quicbaas object metadata get docs/report.pdf
 ```
+
+The CLI has no restore-status verb and no list filters by status, archive
+eligibility or retention.
 
 ### REST API
 
@@ -1300,18 +1292,13 @@ quicbaas_objstore_restore_duration_seconds
 #### Debugging
 
 ```bash
-# Check archive worker status
-quicbaas status --component archive-worker
-
-# View archive queue
-quicbaas object list --archive-pending
-
-# Check retention candidates
-quicbaas object list --retention-exceeded
-
-# Force archive run
-quicbaas admin archive-run --dry-run
+# Check the bucket's lifecycle policy and one object's policies
+quicbaas object lifecycle get docs
+quicbaas object metadata get docs/report.pdf
 ```
+
+The CLI has no archive-worker status, queue listing or forced-run verb; watch
+the archive metrics above instead.
 
 
 ---
@@ -1730,46 +1717,21 @@ Try Primary (s3-primary)
 
 ```bash
 # Add replicas asynchronously
-quicbaas object replicate tenant-acme:docs/report.pdf \
-  --target gcs-west \
-  --target s3-backup
+quicbaas object replicate docs/report.pdf --dest gcs-west,s3-backup
 
-# Synchronous replication
-quicbaas object replicate tenant-acme:docs/report.pdf \
-  --target gcs-west \
-  --mode sync
-
-# Wait for async replication
-quicbaas object replicate tenant-acme:docs/report.pdf \
-  --target gcs-west \
-  --wait
+# Synchronous replication: wait for completion
+quicbaas object replicate docs/report.pdf --dest gcs-west --sync
 ```
 
 #### Check Replication Status
 
 ```bash
-# View locations
-quicbaas catalog locations tenant-acme:docs/report.pdf
-
-# List under-replicated objects
-quicbaas object list --under-replicated
-
-# List objects pending replication
-quicbaas object list --replication-status syncing
+# Check every replica location, repairing inconsistent ones
+quicbaas object verify docs/report.pdf --repair
 ```
 
-#### Force Replication
-
-```bash
-# Force immediate replication
-quicbaas object replicate tenant-acme:docs/report.pdf \
-  --target gcs-west \
-  --force
-
-# Replicate all objects in namespace
-quicbaas object replicate --prefix tenant-acme: \
-  --target s3-backup
-```
+The CLI replicates one object per call and has no list filters by replication
+state; watch `quicbaas_objstore_under_replicated_objects` instead.
 
 ### REST API
 
@@ -1862,18 +1824,15 @@ quicbaas_objstore_backend_replication_bytes
 #### Debugging
 
 ```bash
-# Check replication queue size
-quicbaas status --component replication
+# Verify replica consistency and repair
+quicbaas object verify docs/report.pdf --repair
 
-# View failed replications
-quicbaas object list --replication-status failed
-
-# Retry failed replications
-quicbaas object replicate --retry-failed --prefix tenant-acme:
-
-# Verify replica consistency
-quicbaas object verify tenant-acme:docs/report.pdf
+# Re-replicate one object
+quicbaas object replicate docs/report.pdf --dest s3-backup --sync
 ```
+
+The CLI has no replication-queue status or bulk retry verb; watch the
+replication metrics above instead.
 
 
 ---
@@ -2498,114 +2457,23 @@ result, err := catalog.Search(ctx, &SearchQuery{
 
 ### CLI Commands
 
-#### Get Catalog Entry
+The CLI has no `catalog` verb. Catalog entries are read through `object`:
 
 ```bash
-# Full catalog entry
-quicbaas catalog get tenant-acme:docs/report.pdf
+# Object metadata and policies
+quicbaas object head docs/report.pdf --output json
+quicbaas object metadata get docs/report.pdf
 
-# JSON output
-quicbaas catalog get tenant-acme:docs/report.pdf --format json
+# Check every replica location
+quicbaas object verify docs/report.pdf
 
-# Specific fields
-quicbaas catalog get tenant-acme:docs/report.pdf --fields key,size,status
+# Find objects by prefix or tag
+quicbaas object list docs --prefix 2026/
+quicbaas object list-by-tag --tag department=finance
 ```
 
-**Output:**
-```
-CATALOG ENTRY: tenant-acme:docs/report.pdf
-─────────────────────────────────────────────
-Object ID:      1234567890
-Checksum:       sha256:abc123...
-Size:           1.2 MB (1258291 bytes)
-Content-Type:   application/pdf
-Status:         active
-Version:        1
-
-LOCATIONS:
-  Primary:      s3-primary
-    ObjectRef:  obj/1234567890/v1
-    Status:     active
-    Stored:     650 KB (compressed)
-    Synced:     2024-01-15 10:30:00
-
-  Replica:      gcs-west
-    ObjectRef:  obj/1234567890/v1
-    Status:     active
-    Synced:     2024-01-15 10:35:00
-
-ENCRYPTION:
-  Enabled:      Yes
-  Key ID:       dek:tenant/acme/objects
-  Algorithm:    AES-256-GCM
-
-POLICIES:
-  Replication:  2 replicas, async mode
-  Archive:      after 90 days to s3-archive
-  Retention:    disabled
-
-METADATA:
-  Tenant:       tenant-acme
-  Owner:        user@example.com
-  Tags:         department=finance, classification=internal
-  Created:      2024-01-15 10:30:00
-  Modified:     2024-01-15 10:30:00
-  Last Access:  2024-01-15 12:00:00
-```
-
-#### Get Locations
-
-```bash
-# All storage locations
-quicbaas catalog locations tenant-acme:docs/report.pdf
-```
-
-**Output:**
-```
-STORE         STATUS    SIZE      COMPRESSED  SYNCED
-s3-primary    active    650 KB    Yes         2024-01-15 10:30:00
-gcs-west      active    650 KB    Yes         2024-01-15 10:35:00
-```
-
-#### Search Catalog
-
-```bash
-# Search by prefix
-quicbaas catalog search --prefix tenant-acme:
-
-# Search by tag
-quicbaas catalog search --tag department=finance
-
-# Search by size
-quicbaas catalog search --size-min 1MB --size-max 100MB
-
-# Complex search
-quicbaas catalog search \
-  --prefix tenant-acme: \
-  --status active \
-  --tag department=finance \
-  --created-after 2024-01-01 \
-  --sort size \
-  --order desc \
-  --limit 50
-```
-
-#### Update Metadata
-
-```bash
-# Add/update tags
-quicbaas catalog tag tenant-acme:docs/report.pdf \
-  department=finance \
-  classification=confidential
-
-# Remove tags
-quicbaas catalog untag tenant-acme:docs/report.pdf department
-
-# Set custom metadata
-quicbaas catalog set-meta tenant-acme:docs/report.pdf \
-  author="John Doe" \
-  version="1.2"
-```
+Tags are set at write time (`object put --tag`); there is no CLI verb to edit
+tags or custom metadata afterwards. See [cli.md](cli.md).
 
 ### REST API
 
@@ -2803,12 +2671,15 @@ type StoreUsage struct {
 #### CLI
 
 ```bash
-# Tenant usage
-quicbaas tenant usage tenant-acme
+# Backends and their health
+quicbaas object stats
 
-# Store usage
-quicbaas backend usage s3-primary
+# A tenant's objects, page by page
+quicbaas object list-by-tenant --tenant tenant-acme
 ```
+
+The CLI has no per-tenant or per-backend usage verb; usage totals are the
+`quicbaas_objstore_tenant_*` metrics.
 
 ### Metrics
 

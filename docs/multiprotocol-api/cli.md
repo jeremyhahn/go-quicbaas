@@ -23,8 +23,8 @@ go install github.com/jeremyhahn/go-quicbaas/cmd/quicbaas@latest
 ## Quick Start
 
 ```bash
-# Start server
-quicbaas server start
+# Start server (separate daemon binary)
+quicbaasd start
 
 # Basic operations
 quicbaas data put user john '{"name":"John Doe","email":"john@example.com"}'
@@ -210,47 +210,56 @@ quicbaas completion fish > ~/.config/fish/completions/quicbaas.fish
 
 ---
 
-## quicbaas server
+## Starting the server: quicbaasd
 
-Server management commands for QuicBaaS.
+The `quicbaas` CLI is a client; it has no server verb. The server is the
+separate `quicbaasd` binary, which has three run modes:
 
-### Commands
-
-#### start
-
-Start the QuicBaaS server with HTTP, gRPC, and Raft interfaces.
-
-```bash
-quicbaas start
-```
+| Command | Mode |
+|---------|------|
+| `quicbaasd start` | Local PebbleDB, no Raft (fastest single node) |
+| `quicbaasd cluster` | Single-node Raft cluster (development and testing) |
+| `quicbaasd node` | Member of a multi-node Raft cluster (production) |
 
 ##### Flags
-- `--http-port int`: HTTP server port (default: 8080)
-- `--grpc-port int`: gRPC server port (default: 9090)
-- `--raft-port int`: Raft communication port (default: 63000)
-- `--raft-address string`: Raft node address (default: <hostname>:<raft-port>)
-- `--node-id uint64`: Raft node ID (default: 1)
-- `--config string`: Path to configuration file
-- `--fips`: Enable FIPS mode
-- `--log-level string`: Log level (debug, info, warn, error) (default: "info")
+
+Global: `--config`, `--log-level` (default `info`), `--log-file`, `--fips`,
+`--data-dir` (default `./data`).
+
+All three modes:
+- `--unix-socket string`: Unix socket for local gRPC
+- `--http-port int`: REST API port (default `0`, disabled)
+- `--http-address string`: REST bind address (default from config, or `127.0.0.1`)
+- `--grpc-port int`: gRPC TCP port (default `0`, Unix socket only)
+- `--embedded-fleet-node` and its `--embedded-fleet-node-*` options
+
+`cluster` and `node` only:
+- `--raft-port int`: Raft port (default `63000`)
+- `--raft-address string`: Raft address (default `<hostname>:<raft-port>`)
+- `--node-id uint64`: Raft node ID (default `1`)
+
+`node` only:
+- `--discovery string`: `multicast` (default), `static`, `dns` or `kubernetes`
+- `--join-addresses string`: comma-separated peers for `static` discovery
 
 ##### Examples
 
 ```bash
-# Start server with defaults
-quicbaas start
+# Single node with defaults
+quicbaasd start
 
-# Start with custom ports
-quicbaas start --http-port 8080 --grpc-port 9090 --raft-port 63000
+# Enable REST and gRPC over TCP
+quicbaasd start --http-port 8080 --grpc-port 9090
 
-# Start in FIPS mode
-quicbaas start --fips --log-level debug
+# FIPS mode with debug logging
+quicbaasd start --fips --log-level debug
 
-# Start with custom configuration file
-quicbaas start --config /etc/quicbaas/config.yaml
+# Custom configuration file
+quicbaasd start --config /etc/quicbaas/config.yaml
 
-# Start as a cluster node
-quicbaas start --node-id 2 --raft-address 203.0.113.2:63000
+# Cluster member with static peers
+quicbaasd node --node-id 2 --raft-address 203.0.113.2:63000 \
+  --discovery static --join-addresses 203.0.113.1:63000,203.0.113.3:63000
 ```
 
 ### Server Features

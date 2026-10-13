@@ -1088,20 +1088,10 @@ one with `openssl rand -base64 32`.
 }
 ```
 
-**Verify audit log integrity:**
-
-```bash
-# Verify audit log chain
-quicbaas audit verify --file /var/log/quicbaas/audit.log
-
-# Output:
-# Verifying audit log integrity...
-# Entries checked: 10,234
-# Chain valid: true
-# First entry: 2025-01-01T00:00:00Z
-# Last entry: 2025-01-07T10:30:00Z
-# Status: VERIFIED
-```
+**Verify audit log integrity:** the CLI has no audit verifier. Check each
+event's `signature` in Go with `AuditLogger.VerifySignature(event)` from
+`pkg/security`. To read the IAM audit trail, use
+`quicbaas iam audit query --start-time 2025-01-07T00:00:00Z --outcome failure`.
 
 ---
 

@@ -103,6 +103,7 @@ predates the unified-API-server model and is a record of decisions, not a plan.
 | [vector/](vector/) | Vector namespaces, search, indexing |
 | [timeseries/](timeseries/) | Time-series write and query, retention |
 | [cluster/](cluster/) | Raft consensus, membership, discovery, rebalancing, node operations |
+| [service-registry/](service-registry/) | Tenant-private service discovery: lease-backed registration, resolve, ordered watch |
 | [kms/](kms/) | Key management and cryptographic operations |
 | [data-encryption-keys/](data-encryption-keys/) | DEK lifecycle, rotation, re-encryption, the safety interlock |
 | [secrets/](secrets/) | The secrets engine, dynamic secrets, secret-reference resolution |
@@ -111,6 +112,7 @@ predates the unified-API-server model and is a record of decisions, not a plan.
 | [certificate-authority/](certificate-authority/) | Certificate issuance, ACME (RFC 8555), trust anchors |
 | [ssh/](ssh/) | Server-held SSH keys, known hosts, authorized keys |
 | [bootstrap/](bootstrap/) | First-boot ceremony and trust bootstrap |
+| [attestation/](attestation/) | The attestation Verifier: endorsements, signed reference values, TPM quote appraisal; statement and chain verification |
 | [backup-restore/](backup-restore/) | Backup to S3/Azure/GCS/MinIO, restore, scheduling |
 | [codec/](codec/) | Serialization |
 | [security-hardening/](security-hardening/) | FIPS mode, TLS posture, ingress binding, the hardening baseline |

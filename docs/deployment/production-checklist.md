@@ -468,14 +468,15 @@ Recovery should be tested regularly:
 **Recovery Commands:**
 
 ```bash
-# Restore from backup
-quicbaas backup restore --name daily-backup --target /var/lib/quicbaas/data
+# Find the backup ID
+quicbaas backup list
 
-# Verify data integrity after restore
-quicbaas server verify
+# Verify the backup, then restore it (restore also verifies first by default)
+quicbaas backup verify <backup-id>
+quicbaas backup restore <backup-id>
 
 # Point-in-time recovery
-quicbaas backup restore --name daily-backup --target /var/lib/quicbaas/data --timestamp "2025-01-07T10:00:00Z"
+quicbaas backup restore <backup-id> --point-in-time 2025-01-07T10:00:00Z
 ```
 
 - [ ] Recovery tested within last 90 days

@@ -21,7 +21,7 @@ Get started with QuicBaaS agent orchestration in minutes.
 Orchestration is enabled by default. No configuration needed for basic setup.
 
 ```bash
-quicbaas server start
+quicbaasd start
 ```
 
 Check health:
@@ -165,7 +165,7 @@ quicbaas orchestrator task create --subject "Build authentication module" --team
 quicbaas orchestrator task list --status pending
 
 # Agent claims the task
-quicbaas agent claim task_abc123 --agent worker-1
+quicbaas orchestrator task claim task_abc123 --agent worker-1
 ```
 
 ### Task lifecycle

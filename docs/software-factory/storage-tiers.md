@@ -200,13 +200,13 @@ pkg/sdlc/publish.go  publisher.Publish, plan.Force → git push --force-with-lea
 
 ```bash
 # The tier a project is configured with (the record is the source of truth).
-quicbaas project get <id> -o json | jq .storage
+quicbaas project get <id> --output json | jq .storage
 
 # What the container actually got: a tmpfs with no host source, and a limit.
 docker inspect <container> --format '{{json .HostConfig.Mounts}}{{.HostConfig.Memory}}'
 
 # The branch is being published per turn, not only at teardown.
-quicbaas job events <job-id> | grep -E 'agent_turn|turn:push_failed'
+quicbaas orchestrator job events <job-id> | grep -E 'agent_turn|turn:push_failed'
 ```
 
 ## See also

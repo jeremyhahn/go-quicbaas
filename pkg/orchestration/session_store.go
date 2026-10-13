@@ -80,6 +80,12 @@ type AgentStore interface {
 
 	// UpdateSessionActivity stamps the last-activity time of a session.
 	UpdateSessionActivity(ctx context.Context, tenantID, sessionID string) error
+
+	// MarkSessionTurn records whether a turn is in flight on an open session
+	// (active while it runs, idle once it ends) and stamps its activity time.
+	// A record that is no longer open is left as it is, so a turn ending
+	// after its session was concluded cannot reopen it.
+	MarkSessionTurn(ctx context.Context, tenantID, sessionID string, inFlight bool) error
 }
 
 // =============================================================================
@@ -1136,6 +1142,29 @@ func (s *sessionStore) loadRaw(
 // UpdateSessionActivity stamps the session's activity time.
 func (s *sessionStore) UpdateSessionActivity(ctx context.Context, tenantID, sessionID string) error {
 	err := s.mutate(ctx, tenantID, sessionID, func(record *SessionRecord) {
+		record.LastActivity = time.Now().UnixNano()
+	})
+	s.audit(ctx, AuditActionUpdate, tenantID, sessionID, err)
+	return err
+}
+
+// MarkSessionTurn moves an open session between active and idle and stamps
+// its activity time.
+//
+// THE DURABLE STATUS IS THE IN-FLIGHT SIGNAL, because it is the only one
+// every node can read: the idle sweep walks every tenant's records and may
+// run on a node other than the one serving the turn. A closed, errored or
+// resumable record keeps its status, so a turn finishing after its session
+// was concluded does not reopen it.
+func (s *sessionStore) MarkSessionTurn(ctx context.Context, tenantID, sessionID string, inFlight bool) error {
+	status := SessionStateIdle
+	if inFlight {
+		status = SessionStateActive
+	}
+	err := s.mutate(ctx, tenantID, sessionID, func(record *SessionRecord) {
+		if sessionRecordOpen(record) {
+			record.Status = status
+		}
 		record.LastActivity = time.Now().UnixNano()
 	})
 	s.audit(ctx, AuditActionUpdate, tenantID, sessionID, err)

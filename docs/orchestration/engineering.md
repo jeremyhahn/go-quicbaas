@@ -1164,27 +1164,15 @@ Create and auto-spawn a task immediately:
 
 ```bash
 # Create and dispatch task to run "fix bug" on an available agent
-quicbaas task create \
+quicbaas orchestrator task create \
   --subject "fix bug" \
   --auto-spawn \
   --backend ollama \
   --gpu
 
-# With host affinity (strict)
-quicbaas task create \
-  --subject "process shard 42" \
-  --auto-spawn \
-  --host-affinity gpu-host-02 \
-  --host-affinity-strict
-
-# List only auto-spawned tasks
-quicbaas task list --filter auto-spawned
-
-# List queued (non-spawned) tasks
-quicbaas task list --filter queued
-
-# List all tasks regardless of spawn mode
-quicbaas task list --filter all
+# List tasks by status (the CLI has no spawn-mode filter)
+quicbaas orchestrator task list --status pending
+quicbaas orchestrator task list --statuses in_progress,completed
 ```
 
 ### UI Integration

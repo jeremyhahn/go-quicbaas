@@ -1175,8 +1175,10 @@ func TestAgentService_SpawnSession_PersistsToStore(t *testing.T) {
 	if record.ProjectID != "proj-persist" {
 		t.Errorf("expected project ID 'proj-persist', got %q", record.ProjectID)
 	}
-	if record.Status != SessionStateActive {
-		t.Errorf("expected active status, got %q", record.Status)
+	// No turn has run yet, so the session is idle (active means a turn is in
+	// flight).
+	if record.Status != SessionStateIdle {
+		t.Errorf("expected idle status, got %q", record.Status)
 	}
 	if record.LastActivity == 0 {
 		t.Error("expected non-zero last activity timestamp")

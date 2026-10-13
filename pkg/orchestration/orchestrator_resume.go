@@ -58,7 +58,9 @@ func newDurableSessionRecord(
 		BackendLocal:    backendLocal,
 		Persistent:      req.Persistent,
 		Keep:            req.Keep,
-		Status:          SessionStateActive,
+		// Idle until a turn runs: active means a turn is in flight, and the
+		// idle sweep spares an active session whatever the clock says.
+		Status:          SessionStateIdle,
 		AccountID:       req.AccountID,
 		AccountStrategy: req.AccountStrategy,
 		AccountAuto:     req.AccountAuto,

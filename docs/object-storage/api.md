@@ -1159,22 +1159,14 @@ Trigger compaction on a storage backend.
 ## Object Storage Admin Operations
 
 Administrative operations for managing backends, garbage collection, object repair, and compaction.
+The CLI has no admin verbs for these; `quicbaas object stats` lists backends with
+their health.
 
 ### Backend Management
 
 #### Create Backend
 
 Register a new storage backend.
-
-**CLI**
-
-```bash
-quicbaas object admin backend create s3-west \
-  --type s3 \
-  --tier hot \
-  --config bucket=my-bucket,region=us-west-2 \
-  --enabled
-```
 
 **REST API**
 
@@ -1218,14 +1210,6 @@ rpc CreateBackend(CreateBackendRequest) returns (CreateBackendResponse);
 
 Update backend configuration.
 
-**CLI**
-
-```bash
-quicbaas object admin backend update s3-west \
-  --tier warm \
-  --config prefix=archive/
-```
-
 **REST API**
 
 ```http
@@ -1264,16 +1248,6 @@ rpc UpdateBackend(UpdateBackendRequest) returns (UpdateBackendResponse);
 
 Remove a storage backend. Requires migration or force flag if objects exist.
 
-**CLI**
-
-```bash
-# Migrate objects to another backend before deletion
-quicbaas object admin backend delete s3-old --migrate-to s3-new
-
-# Force delete (data loss)
-quicbaas object admin backend delete s3-old --force
-```
-
 **REST API**
 
 ```http
@@ -1310,16 +1284,6 @@ rpc DeleteBackend(DeleteBackendRequest) returns (DeleteBackendResponse);
 #### Set Backend Status
 
 Enable or disable a backend.
-
-**CLI**
-
-```bash
-# Disable backend (stops new writes, reads still work)
-quicbaas object admin backend disable s3-maintenance
-
-# Enable backend
-quicbaas object admin backend enable s3-maintenance
-```
 
 **REST API**
 
@@ -1359,22 +1323,6 @@ Remove orphaned objects that exist in backends but not in the catalog.
 
 #### Run Garbage Collection
 
-**CLI**
-
-```bash
-# GC all backends
-quicbaas object admin gc run
-
-# GC specific backends
-quicbaas object admin gc run --backends s3-primary,gcs-west
-
-# Dry run (report only)
-quicbaas object admin gc run --dry-run
-
-# Aggressive mode
-quicbaas object admin gc run --aggressive
-```
-
 **REST API**
 
 ```http
@@ -1409,12 +1357,6 @@ rpc RunGarbageCollection(RunGarbageCollectionRequest) returns (RunGarbageCollect
 **MCP Tool**: `quicbaas_object_admin_run_gc`
 
 #### Get GC Progress
-
-**CLI**
-
-```bash
-quicbaas object admin gc status gc-abc123
-```
 
 **REST API**
 
@@ -1461,17 +1403,6 @@ rpc GetGarbageCollectionProgress(GetGarbageCollectionProgressRequest) returns (G
 Repair objects with inconsistent replicas across backends.
 
 #### Repair Object
-
-**CLI**
-
-```bash
-# Auto-detect source from checksums
-quicbaas object admin repair tenant-acme:docs/report.pdf
-
-# Specify source backend
-quicbaas object admin repair tenant-acme:docs/report.pdf \
-  --source-location s3-primary
-```
 
 **REST API**
 
@@ -1521,16 +1452,6 @@ Trigger compaction on storage backends that support it.
 
 #### Compact Backend
 
-**CLI**
-
-```bash
-# Standard compaction
-quicbaas object admin compact local-store
-
-# Aggressive compaction
-quicbaas object admin compact local-store --aggressive
-```
-
 **REST API**
 
 ```http
@@ -1572,19 +1493,6 @@ rpc CompactBackend(CompactBackendRequest) returns (CompactBackendResponse);
 ### Storage Statistics
 
 #### Get Storage Stats
-
-**CLI**
-
-```bash
-# Summary only
-quicbaas object admin stats
-
-# Include per-backend breakdown
-quicbaas object admin stats --backends
-
-# Include per-tenant breakdown
-quicbaas object admin stats --tenants
-```
 
 **REST API**
 

@@ -481,8 +481,9 @@ func TestPromptSession_ResumesAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if record.ResumeMode != ResumeModeReplay || record.Status != SessionStateActive {
-		t.Errorf("record after resume: mode=%q status=%q, want replay/active", record.ResumeMode, record.Status)
+	// Open again rather than resumable, and idle because its turns are over.
+	if record.ResumeMode != ResumeModeReplay || record.Status != SessionStateIdle {
+		t.Errorf("record after resume: mode=%q status=%q, want replay/idle", record.ResumeMode, record.Status)
 	}
 	events, _, err := second.log.Range(ctx, "tenant-a", sessionID, 1, 0)
 	if err != nil {

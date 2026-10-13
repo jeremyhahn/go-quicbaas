@@ -2876,27 +2876,12 @@ Can you tolerate ANY data loss?
 ```yaml
 raft:
   write_mode: "batched"  # sync, wal, or batched
-  batch:
-    max_size: 100
-    flush_interval: "5ms"
+  batch_max_size: 100
+  batch_flush_interval: "5ms"
 ```
 
-#### Via Environment Variables
-
-```bash
-export QUICBAAS_WRITE_MODE=batched
-export QUICBAAS_BATCH_SIZE=100
-export QUICBAAS_BATCH_FLUSH_INTERVAL=5ms
-```
-
-#### Via CLI Flags
-
-```bash
-quicbaas server \
-  --write-mode=batched \
-  --batch-size=100 \
-  --batch-flush-interval=5ms
-```
+The configuration file is the only way to set these: `quicbaasd` has no
+write-mode flags and binds no environment variables for them.
 
 ### API Usage
 
@@ -4786,16 +4771,13 @@ config.L0CompactionThreshold = 4
 - Old snapshots not released
 - Too many tombstones
 
-**Solutions**:
-```bash
-# Manual compaction
-quicbaas server compact --force
+**Solutions**: there is no manual compaction or stats verb. Tune compaction
+in the `storage` section of the configuration file and restart:
 
-# Check snapshots
-quicbaas server stats
-
-# Increase compaction resources
-config.MaxConcurrentCompactions = 4
+```yaml
+storage:
+  l0_compaction_threshold: 4
+  l0_stop_writes_threshold: 12
 ```
 
 #### Memory Pressure

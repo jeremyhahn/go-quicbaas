@@ -487,6 +487,11 @@ describe('an inherited session (page reload) is not mistaken for a new one', () 
 describe('the token factory reconciles the session before attaching a bearer', () => {
   const PROTECTED_ROW = { job_id: 'secret-A', tenant_id: 'burnin', state: 'executing' };
 
+  // One expiry for every token in this block, fixed when it is collected: the
+  // tests compare tokens built by separate loginToken calls by identity, so the
+  // bytes must not depend on the clock at the moment of each call.
+  const LOGIN_EXP = Math.floor(Date.now() / 1000) + 900;
+
   // A token for one login: the sid is what tells a renewal of that login apart
   // from a fresh one by the same principal into the same tenant.
   function loginToken(sid: string, issue: number): string {
@@ -498,7 +503,7 @@ describe('the token factory reconciles the session before attaching a bearer', (
         sid,
         // Distinct bytes per issue, so a renewal is a different credential.
         iat: issue,
-        exp: Math.floor(Date.now() / 1000) + 900,
+        exp: LOGIN_EXP,
       }),
     );
     return `${header}.${payload}.sig`;
@@ -595,6 +600,17 @@ describe('the token factory reconciles the session before attaching a bearer', (
 
     expect(await auth.getValidAccessToken()).toBe('');
     expect(auth.sessionGeneration()).toBeGreaterThan(before);
+  });
+
+  it('loginToken builds the same credential for the same login across a second boundary', () => {
+    // The tests above compare a token read back from the store with a second
+    // loginToken call by identity, so the clock ticking over a second between
+    // the two builds must not change the bytes.
+    let nowMs = 1_700_000_000_999;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs++);
+
+    expect(loginToken('s1', 1)).toBe(loginToken('s1', 1));
+    expect(loginToken('s1', 2)).not.toBe(loginToken('s1', 1));
   });
 
   it("an inherited session's first token read does not start a new generation", async () => {

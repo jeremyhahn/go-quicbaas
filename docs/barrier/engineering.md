@@ -282,23 +282,18 @@ Share 1 + Share 3 + Share 5 → Shamir Combine → Master Key → Unsealed
 ### Check Status
 
 ```bash
-# Check seal status
-quicbaas seal status
-quicbaas seal status --output json
+quicbaas barrier status
+quicbaas barrier status --output json
 ```
 
 ### Initialize
 
 ```bash
 # Initialize with 5 shares, threshold of 3
-quicbaas seal init --shares 5 --threshold 3
-
-# Custom configuration
-quicbaas seal init --shares 7 --threshold 4
+quicbaas barrier init-shamir --total 5 --threshold 3
 
 # With recovery keys (generated separately after init)
-quicbaas seal init --shares 5 --threshold 3
-quicbaas seal recovery generate --shares 3 --threshold 2
+quicbaas barrier recovery generate --total 3 --threshold 2
 ```
 
 Output stores key shares and root token securely.
@@ -306,29 +301,27 @@ Output stores key shares and root token securely.
 ### Unseal
 
 ```bash
-# Interactive (recommended)
-quicbaas seal unseal
+# Shamir: one --share per key holder, or --shares-file
+quicbaas barrier unseal-shares --share "base64:dGVzdC1zaGFyZS0x"
 
-# Via flag (less secure)
-quicbaas seal unseal --share "base64:dGVzdC1zaGFyZS0x"
+# Passphrase barrier
+quicbaas barrier unseal
 
 # Check progress
-quicbaas seal status
-# Output: Progress: 1/3 shares provided
+quicbaas barrier status
 ```
 
 ### Seal
 
 ```bash
-# Seal the system
-quicbaas seal seal
+quicbaas barrier seal
 ```
 
 ### Rekey
 
 ```bash
 # Generate new shares with same master key
-quicbaas seal rekey --shares 7 --threshold 4
+quicbaas barrier rekey --total 7 --threshold 4
 ```
 
 ## Configuration
@@ -472,9 +465,9 @@ CLI barrier suite. Per-tenant barriers may select any of these strategies via
 ## Migration: `seal` → `barrier`
 
 QuicBaaS, go-qrdb, and go-xkms have unified on the `barrier` vocabulary
-for the encryption-at-rest subsystem. The legacy `seal` surface is
-retained for **one release** with deprecation aliases; CI's
-`make verify-naming` watches the alias surface for new violations.
+for the encryption-at-rest subsystem. The legacy `seal` CLI verbs are
+removed and have no aliases; CI's `make verify-naming` watches for new
+violations.
 
 This page is the operator-facing migration table.
 
@@ -482,10 +475,10 @@ This page is the operator-facing migration table.
 
 | Old | New | Status |
 |-----|-----|--------|
-| `quicbaas seal status` | `quicbaas barrier status` | alias, warns to stderr |
-| `quicbaas seal unseal --share <S>` | `quicbaas barrier unseal --share <S>` | alias |
-| `quicbaas seal seal` | `quicbaas barrier seal` | alias |
-| `quicbaas seal init-shamir --threshold N --total M` | `quicbaas barrier init-shamir --threshold N --total M` | alias |
+| `quicbaas seal status` | `quicbaas barrier status` | removed |
+| `quicbaas seal unseal --share <S>` | `quicbaas barrier unseal-shares --share <S>` | removed |
+| `quicbaas seal seal` | `quicbaas barrier seal` | removed |
+| `quicbaas seal init-shamir --threshold N --total M` | `quicbaas barrier init-shamir --threshold N --total M` | removed |
 | `POST /api/v1/seal/status` | `GET /api/v1/barrier/status` | legacy retained, returns `Deprecation:` and `Sunset:` headers |
 | `POST /api/v1/seal/unseal` | `POST /api/v1/barrier/unseal` | legacy retained |
 | `POST /api/v1/seal/init` | `POST /api/v1/barrier/initialize` | legacy retained |

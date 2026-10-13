@@ -110,6 +110,10 @@ quicbaas rebalance start
 quicbaas rebalance status
 ```
 
+Upgrading a node is done by replacing its binary or image and restarting it.
+`quicbaas upgrade start` only records an upgrade job on the server and does
+not touch any node; see [cli.md](cli.md#quicbaas-upgrade).
+
 See [Operations Guide](engineering.md) for detailed procedures.
 
 ## Quick Start

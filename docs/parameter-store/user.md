@@ -30,26 +30,7 @@ The Parameter Store integrates with QuicBaaS's IAM system, providing fine-graine
 
 ## Quick Start
 
-### Store a Parameter (CLI)
-
-```bash
-# Store a simple string parameter
-quicbaas parameter set /app/database/host "db.example.com"
-
-# Store with encryption
-quicbaas parameter set /app/database/password "secret123" \
-  --kms-key default \
-  --type string
-
-# Store with tags and TTL
-quicbaas parameter set /app/cache/url "redis://localhost:6379" \
-  --tags env=prod,service=cache \
-  --ttl 3600
-
-# Store JSON configuration
-quicbaas parameter set /app/config/settings '{"debug": false, "timeout": 30}' \
-  --type json
-```
+The parameter store has no CLI ([cli.md](cli.md)); use the SDK, REST or MCP.
 
 ### Store a Parameter (REST API)
 
@@ -81,10 +62,7 @@ curl -X PUT "http://localhost:8080/api/v1/parameters/app/database/password" \
 ### Retrieve Parameters
 
 ```bash
-# Get a single parameter (CLI)
-quicbaas parameter get /app/database/host
-
-# Get a parameter (REST)
+# Get a parameter
 curl "http://localhost:8080/api/v1/parameters/app/database/host" \
   -H "Authorization: Bearer $TOKEN"
 
@@ -103,9 +81,6 @@ curl -X POST "http://localhost:8080/api/v1/parameters/search" \
 
 ```bash
 # Delete single parameter
-quicbaas parameter delete /app/database/host
-
-# REST API
 curl -X DELETE "http://localhost:8080/api/v1/parameters/app/database/host" \
   -H "Authorization: Bearer $TOKEN"
 ```
@@ -232,16 +207,19 @@ spec:
 Parameters can be encrypted using KMS envelope encryption:
 
 ```bash
-# Store encrypted parameter
-quicbaas parameter set /app/secrets/api-key "my-secret-key" \
-  --kms-key default \
-  --audit-enabled
+# Store encrypted parameter (value is base64)
+curl -X PUT "http://localhost:8080/api/v1/parameters/app/secrets/api-key" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"value": "bXktc2VjcmV0LWtleQ==", "kms_key_id": "default", "audit_enabled": true}'
 
 # Retrieve decrypted (default)
-quicbaas parameter get /app/secrets/api-key
+curl "http://localhost:8080/api/v1/parameters/app/secrets/api-key" \
+  -H "Authorization: Bearer $TOKEN"
 
 # Retrieve without decryption
-quicbaas parameter get /app/secrets/api-key --no-decrypt
+curl "http://localhost:8080/api/v1/parameters/app/secrets/api-key?with_decryption=false" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Encrypted parameters store the ciphertext with metadata about the encryption key, enabling automatic decryption on retrieval when `with_decryption=true` (default).

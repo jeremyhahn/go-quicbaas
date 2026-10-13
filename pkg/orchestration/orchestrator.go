@@ -2438,10 +2438,16 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 	// concurrent turn on the same device is charged its share of the draw
 	// rather than all of it (turn_energy.go).
 	endOccupancy := s.beginTurnOccupancy(plan.turnID, plan.backendName, plan.request.SessionID, started)
+	// The record says ACTIVE only while the turn runs: the idle sweep spares
+	// an active session and nothing else (session_reconcile.go joblessIdle).
+	s.markSessionTurn(ctx, plan.request.SessionID, true)
 	resp, err := plan.backend.Prompt(ctx, plan.request)
 	elapsed := time.Since(started)
 	endOccupancy(started.Add(elapsed))
 	if err != nil {
+		// A failed turn is over too. Left active, the session would be
+		// spared by the idle sweep for ever.
+		s.markSessionTurn(ctx, plan.request.SessionID, false)
 		// A FAILED TURN IS A LEDGER ENTRY TOO. Its tokens were spent if the
 		// backend reported any, and its OCCURRENCE is what the account's
 		// circuit breaker is derived from — a ledger holding only successes
@@ -2453,16 +2459,12 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 			s.holdOnAccountLimit(ctx, plan.request.SessionID, err))
 	}
 
-	// Update last activity in the store for persistent sessions.
+	// The turn is over: the session goes idle and its activity is stamped.
 	sessionID := plan.request.SessionID
 	if sessionID == "" {
 		sessionID = resp.SessionID
 	}
-	if sessionID != "" {
-		if updateErr := s.store.UpdateSessionActivity(ctx, StorageTenant(ctx), sessionID); updateErr != nil {
-			s.logger.Warnf("failed to update session activity: session=%s err=%s", sessionID, updateErr.Error())
-		}
-	}
+	s.markSessionTurn(ctx, sessionID, false)
 
 	// Append assistant output as a single aggregate AssistantChunk — but only
 	// when the backend streamed no chunks of its own during the turn. A
@@ -2510,6 +2512,20 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 		Usage:      resp.Usage,
 		ToolUse:    resp.ToolUse,
 	}, nil
+}
+
+// markSessionTurn records on the durable session record whether a turn is in
+// flight. It is written on a context that outlives the caller's cancellation:
+// a turn ended by a cancelled context still has to leave its session idle.
+// Best effort: a failed write is logged, and the turn's own result stands.
+func (s *agentServiceImpl) markSessionTurn(ctx context.Context, sessionID string, inFlight bool) {
+	if sessionID == "" {
+		return
+	}
+	if err := s.store.MarkSessionTurn(context.WithoutCancel(ctx), StorageTenant(ctx), sessionID, inFlight); err != nil {
+		s.logger.Warnf("failed to record session turn state: session=%s in_flight=%t err=%s",
+			sessionID, inFlight, err.Error())
+	}
 }
 
 // PromptSession sends a prompt to an agent session or backend and blocks until

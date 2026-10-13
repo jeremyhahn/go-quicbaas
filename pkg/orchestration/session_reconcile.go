@@ -878,7 +878,9 @@ func (s *agentServiceImpl) sweepVerdict(
 //   - being this node's lead session, which the node holds by configuration
 //     rather than for a job;
 //   - SessionStateActive, a turn in flight, which is activity whatever the
-//     clock says.
+//     clock says. A record is active only while a turn runs: it is spawned
+//     idle, and runPromptTurn marks it active for the turn and idle again
+//     when the turn ends, failed or not (markSessionTurn).
 func (s *agentServiceImpl) joblessIdle(record *SessionRecord, idle, quietFor time.Duration) bool {
 	switch {
 	case record.JobID != "", record.Keep, quietFor <= 0, idle < quietFor:

@@ -59,32 +59,26 @@ QuicBaaS includes a built-in certificate provider for development and standalone
 **Via CLI:**
 
 ```bash
-# Generate a CA certificate
-quicbaas cert generate-ca \
-  --common-name "QuicBaaS CA" \
-  --organization "My Organization" \
-  --validity-days 3650 \
-  --output-dir /etc/quicbaas/certs
+# There is no CA-generation verb: the server creates its CA at first boot
+# from the `ca` section of the configuration file. Inspect it with:
+quicbaas ca info
+quicbaas ca bundle
 
-# Generate a server certificate
-quicbaas cert issue \
+# Issue a server certificate
+quicbaas ca issue \
   --common-name "quicbaas-server" \
   --usage server \
-  --dns-names "localhost,quicbaas.example.com" \
-  --ip-addresses "127.0.0.1,10.0.0.1" \
+  --dns localhost --dns quicbaas.example.com \
+  --ip 127.0.0.1 --ip 192.0.2.10 \
   --validity-days 365 \
-  --ca-cert /etc/quicbaas/certs/ca.crt \
-  --ca-key /etc/quicbaas/certs/ca.key \
-  --output-dir /etc/quicbaas/certs
+  --output json > server-cert.json
 
-# Generate a client certificate
-quicbaas cert issue \
+# Issue a client certificate
+quicbaas ca issue \
   --common-name "quicbaas-client" \
   --usage client \
   --validity-days 365 \
-  --ca-cert /etc/quicbaas/certs/ca.crt \
-  --ca-key /etc/quicbaas/certs/ca.key \
-  --output-dir /etc/quicbaas/certs
+  --output json > client-cert.json
 ```
 
 **Via API:**
@@ -258,16 +252,8 @@ security:
   tls_client_auth: false  # Set to true for mTLS
 ```
 
-**CLI flags:**
-
-```bash
-quicbaas server start \
-  --tls-enabled=true \
-  --tls-cert=/etc/quicbaas/certs/server.crt \
-  --tls-key=/etc/quicbaas/certs/server.key \
-  --tls-ca=/etc/quicbaas/certs/ca.crt \
-  --tls-client-auth=false
-```
+**CLI flags:** `quicbaasd` has no TLS flags. Set the keys above in the
+configuration file and start with `quicbaasd start --config <file>`.
 
 ### REST API TLS Settings
 
@@ -438,17 +424,18 @@ Certificate rotation should be performed before certificates expire. QuicBaaS su
 **Step 1: Generate new certificates**
 
 ```bash
-# Generate new server certificate
-quicbaas cert issue \
+# Issue a new server certificate
+quicbaas ca issue \
   --common-name "quicbaas-server" \
   --usage server \
-  --dns-names "localhost,quicbaas.example.com" \
-  --ip-addresses "127.0.0.1,10.0.0.1" \
+  --dns localhost --dns quicbaas.example.com \
+  --ip 127.0.0.1 --ip 192.0.2.10 \
   --validity-days 365 \
-  --ca-cert /etc/quicbaas/certs/ca.crt \
-  --ca-key /etc/quicbaas/certs/ca.key \
-  --output-dir /etc/quicbaas/certs-new
+  --output json > server-cert-new.json
 ```
+
+Write the certificate and private key PEM from that output to
+`/etc/quicbaas/certs-new/server.crt` and `/etc/quicbaas/certs-new/server.key`.
 
 **Step 2: Update configuration**
 
@@ -460,12 +447,11 @@ security:
 
 **Step 3: Reload server configuration**
 
-```bash
-# Graceful reload (no downtime)
-quicbaas server reload
+There is no reload verb and `quicbaasd` does not reload on SIGHUP; restart it
+(one node at a time in a cluster):
 
-# Or send SIGHUP
-kill -HUP $(pidof quicbaas)
+```bash
+systemctl restart quicbaas
 ```
 
 **Step 4: Verify new certificate**
@@ -479,7 +465,7 @@ openssl s_client -connect localhost:8080 < /dev/null 2>/dev/null | \
 **Rolling rotation for Raft cluster:**
 
 1. Generate new certificates for all nodes
-2. Update and reload each node one at a time
+2. Update and restart each node one at a time
 3. Wait for cluster health before proceeding to next node
 4. Verify all nodes are using new certificates
 
@@ -489,7 +475,7 @@ quicbaas cluster status
 
 # Rotate node 1
 scp new-certs/* node1:/etc/quicbaas/certs/
-ssh node1 'quicbaas server reload'
+ssh node1 'systemctl restart quicbaas'
 
 # Wait and verify
 sleep 10
@@ -505,40 +491,38 @@ For compromised or expired certificates:
 **Step 1: Generate emergency certificates**
 
 ```bash
-# Quickly generate with short validity
-quicbaas cert issue \
+# Quickly issue with short validity
+quicbaas ca issue \
   --common-name "quicbaas-server-emergency" \
   --usage server \
-  --dns-names "localhost,quicbaas.example.com" \
-  --ip-addresses "127.0.0.1,10.0.0.1" \
+  --dns localhost --dns quicbaas.example.com \
+  --ip 127.0.0.1 --ip 192.0.2.10 \
   --validity-days 7 \
-  --ca-cert /etc/quicbaas/certs/ca.crt \
-  --ca-key /etc/quicbaas/certs/ca.key \
-  --output-dir /etc/quicbaas/certs-emergency
+  --output json > server-cert-emergency.json
 ```
 
-**Step 2: Force restart if reload fails**
+Write the certificate and private key PEM from that output to
+`/etc/quicbaas/certs-emergency/server.crt` and
+`/etc/quicbaas/certs-emergency/server.key`.
+
+**Step 2: Replace the certificates and restart**
 
 ```bash
 # Stop server
-quicbaas server stop
+systemctl stop quicbaas
 
 # Replace certificates
 cp /etc/quicbaas/certs-emergency/* /etc/quicbaas/certs/
 
 # Start server
-quicbaas server start
+systemctl start quicbaas
 ```
 
 **Step 3: For compromised CA, regenerate entire chain**
 
 ```bash
-# Generate new CA
-quicbaas cert generate-ca \
-  --common-name "QuicBaaS CA (Replacement)" \
-  --organization "My Organization" \
-  --validity-days 3650 \
-  --output-dir /etc/quicbaas/certs-new-ca
+# There is no CA-generation verb: the CA comes from the `ca` section of the
+# configuration file at first boot. Replacing it is a configuration change.
 
 # Generate new server and client certificates with new CA
 # Distribute new CA to all clients
@@ -572,11 +556,9 @@ Solution:
 # Check certificate SANs
 openssl x509 -in server.crt -noout -text | grep -A1 "Subject Alternative Name"
 
-# Regenerate certificate with correct SANs
-quicbaas cert issue \
-  --dns-names "correct-hostname.example.com" \
-  --ip-addresses "correct.ip.address" \
-  ...
+# Reissue the certificate with the correct SANs
+quicbaas ca issue --common-name quicbaas-server --usage server \
+  --dns correct-hostname.example.com --ip 192.0.2.10
 ```
 
 **Error: `x509: certificate has expired or is not yet valid`**
@@ -671,10 +653,7 @@ openssl x509 -in server.crt -noout -enddate
 **QuicBaaS health check with TLS:**
 
 ```bash
-# Health endpoint should work with TLS
-quicbaas health --tls-enabled --tls-ca=/etc/quicbaas/certs/ca.crt
-
-# Or via curl
+# Health endpoint should work with TLS (there is no health verb)
 curl --cacert /etc/quicbaas/certs/ca.crt \
      https://localhost:8080/health
 ```

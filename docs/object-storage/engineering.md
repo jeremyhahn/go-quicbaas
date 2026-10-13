@@ -678,10 +678,8 @@ tenants:
 Result: Objects use `dek:tenant/acme/objects` (tenant enforces)
 
 **Scenario 3: Object overrides everything**
-```bash
-quicbaas object put tenant-acme:secret/data.json ./data.json \
-  --encryption-key "dek:custom/mykey"
-```
+The put request sets `encryption_key_id: "dek:custom/mykey"` (the CLI does not
+expose this field).
 Result: Object uses `dek:custom/mykey` (object override always wins)
 
 ### Supported Algorithms
@@ -820,45 +818,24 @@ func (w *ReencryptionWorker) ReencryptForKey(keyID string, newVersion uint64) {
 #### Manual Re-encryption
 
 ```bash
-# Re-encrypt all objects for a key
-quicbaas kms rotate dek:tenant/acme/objects --reencrypt
-
-# Re-encrypt specific object
-quicbaas object reencrypt tenant-acme:docs/report.pdf
-
-# Check re-encryption status
-quicbaas object list --prefix tenant-acme: --encryption-version-below 3
+# Rotate the DEK; the re-encryption worker above rewrites old objects
+quicbaas kms key rotate dek:tenant/acme/objects
 ```
+
+The CLI has no per-object re-encrypt verb and no list filter by encryption.
 
 ### CLI Usage
 
-#### Store Encrypted Object
-
 ```bash
-# Use default encryption from config
-quicbaas object put tenant-acme:docs/report.pdf ./report.pdf
+# Store with the encryption resolved from config
+quicbaas object put docs/report.pdf --file ./report.pdf
 
-# Specify encryption key
-quicbaas object put tenant-acme:secret/data.json ./data.json \
-  --encryption-key "dek:tenant/acme/secrets"
-
-# Disable encryption (if allowed)
-quicbaas object put tenant-acme:public/readme.txt ./readme.txt \
-  --no-encrypt
+# View an object's metadata
+quicbaas object head docs/report.pdf --output json
 ```
 
-#### Check Encryption Status
-
-```bash
-# View encryption in catalog entry
-quicbaas catalog get tenant-acme:docs/report.pdf
-
-# List encrypted objects
-quicbaas object list --prefix tenant-acme: --encrypted
-
-# List objects with specific key
-quicbaas object list --encryption-key "dek:tenant/acme/objects"
-```
+`object put` has no encryption flags; the key is chosen by the configuration
+precedence above.
 
 ### REST API
 
@@ -925,13 +902,10 @@ curl -X PUT https://quicbaas:8080/api/v1/objects/tenant-acme/public/readme.txt \
 
 ```bash
 # Check KMS key status
-quicbaas kms get dek:tenant/acme/objects
+quicbaas kms key get dek:tenant/acme/objects
 
-# Verify encryption config resolution
-quicbaas object put --dry-run tenant-acme:test.txt ./test.txt
-
-# View catalog encryption metadata
-quicbaas catalog get tenant-acme:docs/report.pdf --format json | jq .encryption
+# View an object's metadata
+quicbaas object head docs/report.pdf --output json
 ```
 
 
@@ -1449,39 +1423,8 @@ object_storage:
 
 ### CLI Commands
 
-#### Manage ACLs
-
-```bash
-# Get object ACL
-quicbaas object acl get tenant-acme:docs/report.pdf
-
-# Set owner
-quicbaas object acl set-owner tenant-acme:docs/report.pdf newowner@example.com
-
-# Add grant
-quicbaas object acl grant tenant-acme:docs/report.pdf \
-  --principal finance-team \
-  --type group \
-  --permissions read,write
-
-# Remove grant
-quicbaas object acl revoke tenant-acme:docs/report.pdf \
-  --principal finance-team
-
-# Make public
-quicbaas object acl set-public tenant-acme:docs/readme.txt true
-```
-
-#### Check Permissions
-
-```bash
-# Check if user has access
-quicbaas auth check \
-  --user user@example.com \
-  --resource objstore \
-  --action write \
-  --context "key=tenant-acme:docs/report.pdf"
-```
+The CLI has no object ACL verbs and no permission-check verb; manage ACLs
+through the REST API below.
 
 ### REST API
 
@@ -1645,21 +1588,9 @@ quicbaas_objstore_authz_check_duration_seconds
 
 #### Debugging
 
-```bash
-# Check user permissions
-quicbaas auth list-permissions --user user@example.com
-
-# View effective policies
-quicbaas auth list-policies --tenant tenant-acme
-
-# Test authorization
-quicbaas auth check \
-  --user user@example.com \
-  --resource objstore \
-  --action write \
-  --context "key=tenant-acme:docs/report.pdf" \
-  --verbose
-```
+The CLI has no permission-listing or authorization-test verb. Check the
+caller's role bindings with `quicbaas iam user get` and the
+`quicbaas_objstore_authz_*` metrics above.
 
 
 ---
@@ -1707,7 +1638,7 @@ backup:
 #### Create Backup
 
 ```bash
-quicbaas backup create
+quicbaas backup create nightly --storage-type s3 --bucket my-quicbaas-backups --region us-east-1
 ```
 
 #### List Backups
@@ -1719,13 +1650,13 @@ quicbaas backup list
 #### Restore Backup
 
 ```bash
-quicbaas backup restore --id <backup-id>
+quicbaas backup restore <backup-id>
 ```
 
 #### Delete Backup
 
 ```bash
-quicbaas backup delete --id <backup-id>
+quicbaas backup delete <backup-id> --yes
 ```
 
 ### Backup Types
@@ -1735,7 +1666,7 @@ quicbaas backup delete --id <backup-id>
 Complete snapshot of all data:
 
 ```bash
-quicbaas backup create --type full
+quicbaas backup create full-2026-10-12
 ```
 
 #### Incremental Backup
@@ -1743,7 +1674,7 @@ quicbaas backup create --type full
 Only changes since last backup:
 
 ```bash
-quicbaas backup create --type incremental
+quicbaas backup create incr-2026-10-12 --incremental
 ```
 
 ### Compression
