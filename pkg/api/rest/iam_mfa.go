@@ -194,10 +194,12 @@ func (h *IAMHandler) CompleteMFAEnrollment(w http.ResponseWriter, r *http.Reques
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
-	if _, ok := requireUserIDParam(w, r); !ok {
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -221,7 +223,7 @@ func (h *IAMHandler) CompleteMFAEnrollment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := mfaMgr.CompleteEnrollment(ctx, req.EnrollmentID, req.Code); err != nil {
+	if err := mfaMgr.CompleteEnrollment(ctx, userID, callerTenant, req.EnrollmentID, req.Code); err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
@@ -242,10 +244,12 @@ func (h *IAMHandler) CancelMFAEnrollment(w http.ResponseWriter, r *http.Request)
 			NewIAMAPIError(ErrBadRequest, "tenant ID, user ID, and enrollment ID are required"))
 		return
 	}
-	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
-	if _, ok := requireUserIDParam(w, r); !ok {
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -256,7 +260,7 @@ func (h *IAMHandler) CancelMFAEnrollment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := mfaMgr.CancelEnrollment(ctx, enrollmentID); err != nil {
+	if err := mfaMgr.CancelEnrollment(ctx, userID, callerTenant, enrollmentID); err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
@@ -416,10 +420,12 @@ func (h *IAMHandler) VerifyMFAChallenge(w http.ResponseWriter, r *http.Request) 
 			NewIAMAPIError(ErrBadRequest, "tenant ID and user ID are required"))
 		return
 	}
-	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
-	if _, ok := requireUserIDParam(w, r); !ok {
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -443,7 +449,7 @@ func (h *IAMHandler) VerifyMFAChallenge(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp, err := mfaMgr.VerifyChallenge(ctx, req.ChallengeID, req.Code)
+	resp, err := mfaMgr.VerifyChallenge(ctx, userID, callerTenant, req.ChallengeID, req.Code)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return

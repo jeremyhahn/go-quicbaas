@@ -57,94 +57,98 @@ func TestNewMFAServiceAdapter(t *testing.T) {
 
 // adapterMockMFAService implements MFAService for adapter testing
 type adapterMockMFAService struct {
-	beginEnrollmentFunc     func(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
+	beginEnrollmentFunc     func(ctx context.Context, userID uint64, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
 	completeEnrollmentFunc  func(ctx context.Context, enrollmentID, code string) error
 	cancelEnrollmentFunc    func(ctx context.Context, enrollmentID string) error
-	beginChallengeFunc      func(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error)
+	beginChallengeFunc      func(ctx context.Context, userID uint64, tenantID, sessionToken string) (*iam.MFAChallenge, error)
 	verifyChallengeFunc     func(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error)
-	verifyCodeFunc          func(ctx context.Context, userID, tenantID, code string) error
-	getMFAStatusFunc        func(ctx context.Context, userID, tenantID string) (*iam.MFAStatus, error)
-	disableMFAFunc          func(ctx context.Context, userID, tenantID string) error
-	generateBackupCodesFunc func(ctx context.Context, userID, tenantID string) ([]string, error)
-	verifyBackupCodeFunc    func(ctx context.Context, userID, tenantID, code string) error
-	getBackupCodeStatusFunc func(ctx context.Context, userID, tenantID string) (*iam.BackupCodeStatus, error)
+	verifyCodeFunc          func(ctx context.Context, userID uint64, tenantID, code string) error
+	getMFAStatusFunc        func(ctx context.Context, userID uint64, tenantID string) (*iam.MFAStatus, error)
+	disableMFAFunc          func(ctx context.Context, userID uint64, tenantID string) error
+	generateBackupCodesFunc func(ctx context.Context, userID uint64, tenantID string) ([]string, error)
+	verifyBackupCodeFunc    func(ctx context.Context, userID uint64, tenantID, code string) error
+	getBackupCodeStatusFunc func(ctx context.Context, userID uint64, tenantID string) (*iam.BackupCodeStatus, error)
 }
 
-func (m *adapterMockMFAService) BeginEnrollment(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
+func (m *adapterMockMFAService) BeginEnrollment(ctx context.Context, userID uint64, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 	if m.beginEnrollmentFunc != nil {
 		return m.beginEnrollmentFunc(ctx, userID, tenantID, method)
 	}
 	return &iam.MFAEnrollResponse{EnrollmentID: "enroll-123"}, nil
 }
 
-func (m *adapterMockMFAService) CompleteEnrollment(ctx context.Context, enrollmentID, code string) error {
+func (m *adapterMockMFAService) CompleteEnrollment(ctx context.Context, _ uint64, _, enrollmentID, code string) error {
 	if m.completeEnrollmentFunc != nil {
 		return m.completeEnrollmentFunc(ctx, enrollmentID, code)
 	}
 	return nil
 }
 
-func (m *adapterMockMFAService) CancelEnrollment(ctx context.Context, enrollmentID string) error {
+func (m *adapterMockMFAService) CancelEnrollment(ctx context.Context, _ uint64, _, enrollmentID string) error {
 	if m.cancelEnrollmentFunc != nil {
 		return m.cancelEnrollmentFunc(ctx, enrollmentID)
 	}
 	return nil
 }
 
-func (m *adapterMockMFAService) BeginChallenge(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error) {
+func (m *adapterMockMFAService) BeginChallenge(ctx context.Context, userID uint64, tenantID, sessionToken string) (*iam.MFAChallenge, error) {
 	if m.beginChallengeFunc != nil {
 		return m.beginChallengeFunc(ctx, userID, tenantID, sessionToken)
 	}
 	return &iam.MFAChallenge{ID: "challenge-123"}, nil
 }
 
-func (m *adapterMockMFAService) VerifyChallenge(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error) {
+func (m *adapterMockMFAService) VerifyChallenge(ctx context.Context, _ uint64, _, challengeID, code string) (*iam.MFAVerifyResponse, error) {
 	if m.verifyChallengeFunc != nil {
 		return m.verifyChallengeFunc(ctx, challengeID, code)
 	}
 	return &iam.MFAVerifyResponse{Success: true}, nil
 }
 
-func (m *adapterMockMFAService) VerifyCode(ctx context.Context, userID, tenantID, code string) error {
+func (m *adapterMockMFAService) VerifyCode(ctx context.Context, userID uint64, tenantID, code string) error {
 	if m.verifyCodeFunc != nil {
 		return m.verifyCodeFunc(ctx, userID, tenantID, code)
 	}
 	return nil
 }
 
-func (m *adapterMockMFAService) GetMFAStatus(ctx context.Context, userID, tenantID string) (*iam.MFAStatus, error) {
+func (m *adapterMockMFAService) GetMFAStatus(ctx context.Context, userID uint64, tenantID string) (*iam.MFAStatus, error) {
 	if m.getMFAStatusFunc != nil {
 		return m.getMFAStatusFunc(ctx, userID, tenantID)
 	}
 	return &iam.MFAStatus{Enabled: true}, nil
 }
 
-func (m *adapterMockMFAService) DisableMFA(ctx context.Context, userID, tenantID string) error {
+func (m *adapterMockMFAService) DisableMFA(ctx context.Context, userID uint64, tenantID string) error {
 	if m.disableMFAFunc != nil {
 		return m.disableMFAFunc(ctx, userID, tenantID)
 	}
 	return nil
 }
 
-func (m *adapterMockMFAService) GenerateBackupCodes(ctx context.Context, userID, tenantID string) ([]string, error) {
+func (m *adapterMockMFAService) GenerateBackupCodes(ctx context.Context, userID uint64, tenantID string) ([]string, error) {
 	if m.generateBackupCodesFunc != nil {
 		return m.generateBackupCodesFunc(ctx, userID, tenantID)
 	}
 	return []string{"code1", "code2"}, nil
 }
 
-func (m *adapterMockMFAService) VerifyBackupCode(ctx context.Context, userID, tenantID, code string) error {
+func (m *adapterMockMFAService) VerifyBackupCode(ctx context.Context, userID uint64, tenantID, code string) error {
 	if m.verifyBackupCodeFunc != nil {
 		return m.verifyBackupCodeFunc(ctx, userID, tenantID, code)
 	}
 	return nil
 }
 
-func (m *adapterMockMFAService) GetBackupCodeStatus(ctx context.Context, userID, tenantID string) (*iam.BackupCodeStatus, error) {
+func (m *adapterMockMFAService) GetBackupCodeStatus(ctx context.Context, userID uint64, tenantID string) (*iam.BackupCodeStatus, error) {
 	if m.getBackupCodeStatusFunc != nil {
 		return m.getBackupCodeStatusFunc(ctx, userID, tenantID)
 	}
 	return &iam.BackupCodeStatus{Remaining: 5}, nil
+}
+
+func (m *adapterMockMFAService) IsMFARequired(context.Context, uint64, string) (bool, error) {
+	return false, nil
 }
 
 func TestMFAServiceAdapter_BeginEnrollment(t *testing.T) {
@@ -152,7 +156,7 @@ func TestMFAServiceAdapter_BeginEnrollment(t *testing.T) {
 	ctx := context.Background()
 
 	mockSvc := &adapterMockMFAService{
-		beginEnrollmentFunc: func(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
+		beginEnrollmentFunc: func(ctx context.Context, userID uint64, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 			return &iam.MFAEnrollResponse{
 				EnrollmentID: "test-enroll-id",
 				Secret:       "test-secret",
@@ -162,7 +166,7 @@ func TestMFAServiceAdapter_BeginEnrollment(t *testing.T) {
 	}
 
 	adapter := NewMFAServiceAdapter(mockSvc)
-	resp, err := adapter.BeginEnrollment(ctx, "user1", "tenant1", iam.MFAMethodTOTP)
+	resp, err := adapter.BeginEnrollment(ctx, "1001", "tenant1", iam.MFAMethodTOTP)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -176,7 +180,7 @@ func TestMFAServiceAdapter_CompleteEnrollment(t *testing.T) {
 	mockSvc := &adapterMockMFAService{}
 	adapter := NewMFAServiceAdapter(mockSvc)
 
-	err := adapter.CompleteEnrollment(ctx, "enroll-123", "123456")
+	err := adapter.CompleteEnrollment(ctx, "", "tenant-123", "enroll-123", "123456")
 	assert.NoError(t, err)
 }
 
@@ -187,7 +191,7 @@ func TestMFAServiceAdapter_CancelEnrollment(t *testing.T) {
 	mockSvc := &adapterMockMFAService{}
 	adapter := NewMFAServiceAdapter(mockSvc)
 
-	err := adapter.CancelEnrollment(ctx, "enroll-123")
+	err := adapter.CancelEnrollment(ctx, "", "tenant-123", "enroll-123")
 	assert.NoError(t, err)
 }
 
@@ -196,7 +200,7 @@ func TestMFAServiceAdapter_BeginChallenge(t *testing.T) {
 	ctx := context.Background()
 
 	mockSvc := &adapterMockMFAService{
-		beginChallengeFunc: func(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error) {
+		beginChallengeFunc: func(ctx context.Context, userID uint64, tenantID, sessionToken string) (*iam.MFAChallenge, error) {
 			return &iam.MFAChallenge{
 				ID:     "chal-456",
 				Method: iam.MFAMethodTOTP,
@@ -205,7 +209,7 @@ func TestMFAServiceAdapter_BeginChallenge(t *testing.T) {
 	}
 
 	adapter := NewMFAServiceAdapter(mockSvc)
-	resp, err := adapter.BeginChallenge(ctx, "user1", "tenant1", "session-token")
+	resp, err := adapter.BeginChallenge(ctx, "1001", "tenant1", "session-token")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -223,7 +227,7 @@ func TestMFAServiceAdapter_VerifyChallenge(t *testing.T) {
 	}
 
 	adapter := NewMFAServiceAdapter(mockSvc)
-	resp, err := adapter.VerifyChallenge(ctx, "chal-456", "123456")
+	resp, err := adapter.VerifyChallenge(ctx, "", "tenant-123", "chal-456", "123456")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -237,7 +241,7 @@ func TestMFAServiceAdapter_VerifyCode(t *testing.T) {
 	mockSvc := &adapterMockMFAService{}
 	adapter := NewMFAServiceAdapter(mockSvc)
 
-	err := adapter.VerifyCode(ctx, "user1", "tenant1", "123456")
+	err := adapter.VerifyCode(ctx, "1001", "tenant1", "123456")
 	assert.NoError(t, err)
 }
 
@@ -246,7 +250,7 @@ func TestMFAServiceAdapter_GetMFAStatus(t *testing.T) {
 	ctx := context.Background()
 
 	mockSvc := &adapterMockMFAService{
-		getMFAStatusFunc: func(ctx context.Context, userID, tenantID string) (*iam.MFAStatus, error) {
+		getMFAStatusFunc: func(ctx context.Context, userID uint64, tenantID string) (*iam.MFAStatus, error) {
 			return &iam.MFAStatus{
 				Enabled:              true,
 				Method:               iam.MFAMethodTOTP,
@@ -256,7 +260,7 @@ func TestMFAServiceAdapter_GetMFAStatus(t *testing.T) {
 	}
 
 	adapter := NewMFAServiceAdapter(mockSvc)
-	resp, err := adapter.GetMFAStatus(ctx, "user1", "tenant1")
+	resp, err := adapter.GetMFAStatus(ctx, "1001", "tenant1")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -270,7 +274,7 @@ func TestMFAServiceAdapter_DisableMFA(t *testing.T) {
 	mockSvc := &adapterMockMFAService{}
 	adapter := NewMFAServiceAdapter(mockSvc)
 
-	err := adapter.DisableMFA(ctx, "user1", "tenant1")
+	err := adapter.DisableMFA(ctx, "1001", "tenant1")
 	assert.NoError(t, err)
 }
 
@@ -279,13 +283,13 @@ func TestMFAServiceAdapter_GenerateBackupCodes(t *testing.T) {
 	ctx := context.Background()
 
 	mockSvc := &adapterMockMFAService{
-		generateBackupCodesFunc: func(ctx context.Context, userID, tenantID string) ([]string, error) {
+		generateBackupCodesFunc: func(ctx context.Context, userID uint64, tenantID string) ([]string, error) {
 			return []string{"code1", "code2", "code3"}, nil
 		},
 	}
 
 	adapter := NewMFAServiceAdapter(mockSvc)
-	codes, err := adapter.GenerateBackupCodes(ctx, "user1", "tenant1")
+	codes, err := adapter.GenerateBackupCodes(ctx, "1001", "tenant1")
 
 	assert.NoError(t, err)
 	assert.Len(t, codes, 3)
@@ -298,7 +302,7 @@ func TestMFAServiceAdapter_VerifyBackupCode(t *testing.T) {
 	mockSvc := &adapterMockMFAService{}
 	adapter := NewMFAServiceAdapter(mockSvc)
 
-	err := adapter.VerifyBackupCode(ctx, "user1", "tenant1", "backup-code")
+	err := adapter.VerifyBackupCode(ctx, "1001", "tenant1", "backup-code")
 	assert.NoError(t, err)
 }
 
@@ -307,17 +311,95 @@ func TestMFAServiceAdapter_GetBackupCodeStatus(t *testing.T) {
 	ctx := context.Background()
 
 	mockSvc := &adapterMockMFAService{
-		getBackupCodeStatusFunc: func(ctx context.Context, userID, tenantID string) (*iam.BackupCodeStatus, error) {
+		getBackupCodeStatusFunc: func(ctx context.Context, userID uint64, tenantID string) (*iam.BackupCodeStatus, error) {
 			return &iam.BackupCodeStatus{Remaining: 8}, nil
 		},
 	}
 
 	adapter := NewMFAServiceAdapter(mockSvc)
-	status, err := adapter.GetBackupCodeStatus(ctx, "user1", "tenant1")
+	status, err := adapter.GetBackupCodeStatus(ctx, "1001", "tenant1")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, status)
 	assert.Equal(t, 8, status.Remaining)
+}
+
+// TestMFAServiceAdapter_PassesParsedUserID proves the adapter hands the
+// manager the numeric id the wire carried, and zero for object verbs that
+// name no user.
+func TestMFAServiceAdapter_PassesParsedUserID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	var got uint64
+	mockSvc := &adapterMockMFAService{
+		verifyCodeFunc: func(_ context.Context, userID uint64, _, _ string) error {
+			got = userID
+			return nil
+		},
+	}
+	adapter := NewMFAServiceAdapter(mockSvc)
+
+	require.NoError(t, adapter.VerifyCode(ctx, "1001", "tenant1", "123456"))
+	assert.Equal(t, uint64(1001), got)
+}
+
+// TestMFAServiceAdapter_RejectsBadUserID proves a non-numeric or zero user id
+// is refused with *UserIDError before the manager is reached.
+func TestMFAServiceAdapter_RejectsBadUserID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	adapter := NewMFAServiceAdapter(&adapterMockMFAService{})
+
+	calls := map[string]func(userID string) error{
+		"BeginEnrollment": func(userID string) error {
+			_, err := adapter.BeginEnrollment(ctx, userID, "tenant1", iam.MFAMethodTOTP)
+			return err
+		},
+		"CompleteEnrollment": func(userID string) error {
+			return adapter.CompleteEnrollment(ctx, userID, "tenant1", "enroll-1", "123456")
+		},
+		"CancelEnrollment": func(userID string) error {
+			return adapter.CancelEnrollment(ctx, userID, "tenant1", "enroll-1")
+		},
+		"BeginChallenge": func(userID string) error {
+			_, err := adapter.BeginChallenge(ctx, userID, "tenant1", "session")
+			return err
+		},
+		"VerifyChallenge": func(userID string) error {
+			_, err := adapter.VerifyChallenge(ctx, userID, "tenant1", "chal-1", "123456")
+			return err
+		},
+		"VerifyCode": func(userID string) error {
+			return adapter.VerifyCode(ctx, userID, "tenant1", "123456")
+		},
+		"GetMFAStatus": func(userID string) error {
+			_, err := adapter.GetMFAStatus(ctx, userID, "tenant1")
+			return err
+		},
+		"DisableMFA": func(userID string) error {
+			return adapter.DisableMFA(ctx, userID, "tenant1")
+		},
+		"GenerateBackupCodes": func(userID string) error {
+			_, err := adapter.GenerateBackupCodes(ctx, userID, "tenant1")
+			return err
+		},
+		"VerifyBackupCode": func(userID string) error {
+			return adapter.VerifyBackupCode(ctx, userID, "tenant1", "backup")
+		},
+		"GetBackupCodeStatus": func(userID string) error {
+			_, err := adapter.GetBackupCodeStatus(ctx, userID, "tenant1")
+			return err
+		},
+	}
+
+	for name, call := range calls {
+		for _, bad := range []string{"user-1", "0"} {
+			err := call(bad)
+			var idErr *UserIDError
+			assert.True(t, errors.As(err, &idErr), "%s(%q): got %v, want *UserIDError", name, bad, err)
+		}
+	}
 }
 
 // =============================================================================

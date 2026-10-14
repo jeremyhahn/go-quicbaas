@@ -20,6 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // IAM returns the IAM service when IAM is enabled.
@@ -612,7 +613,12 @@ func (w *iamServiceWrapper) RegisterApp(ctx context.Context, req *RegisterAppReq
 		GrantTypes:   req.GrantTypes,
 	}
 
-	app, err := am.RegisterApp(ctx, req.TenantID, opts)
+	tenantID, err := tenantctx.Target(ctx, "iam.RegisterApp", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	app, err := am.RegisterApp(ctx, tenantID, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +639,12 @@ func (w *iamServiceWrapper) GetApp(ctx context.Context, req *GetAppRequest) (*Ge
 		return nil, errors.New(errors.ErrUnavailable, "iam.GetApp", "app manager not available")
 	}
 
-	app, err := am.GetApp(ctx, req.ClientID)
+	tenantID, err := tenantctx.Target(ctx, "iam.GetApp", "")
+	if err != nil {
+		return nil, err
+	}
+
+	app, err := am.GetAppInTenant(ctx, tenantID, req.ClientID)
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +675,12 @@ func (w *iamServiceWrapper) UpdateApp(ctx context.Context, req *UpdateAppRequest
 		opts.Name = req.Name
 	}
 
-	app, err := am.UpdateApp(ctx, req.ClientID, opts)
+	tenantID, err := tenantctx.Target(ctx, "iam.UpdateApp", "")
+	if err != nil {
+		return nil, err
+	}
+
+	app, err := am.UpdateAppInTenant(ctx, tenantID, req.ClientID, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -684,7 +700,12 @@ func (w *iamServiceWrapper) DeleteApp(ctx context.Context, req *DeleteAppRequest
 		return nil, errors.New(errors.ErrUnavailable, "iam.DeleteApp", "app manager not available")
 	}
 
-	err = am.DeleteApp(ctx, req.ClientID)
+	tenantID, err := tenantctx.Target(ctx, "iam.DeleteApp", "")
+	if err != nil {
+		return nil, err
+	}
+
+	err = am.DeleteAppInTenant(ctx, tenantID, req.ClientID)
 	if err != nil {
 		return nil, err
 	}
@@ -709,7 +730,12 @@ func (w *iamServiceWrapper) ListApps(ctx context.Context, req *ListAppsRequest) 
 		Offset: req.Offset,
 	}
 
-	apps, err := am.ListApps(ctx, req.TenantID, opts)
+	tenantID, err := tenantctx.Target(ctx, "iam.ListApps", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	apps, err := am.ListApps(ctx, tenantID, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -730,7 +756,12 @@ func (w *iamServiceWrapper) RotateAppSecret(ctx context.Context, req *RotateAppS
 		return nil, errors.New(errors.ErrUnavailable, "iam.RotateAppSecret", "app manager not available")
 	}
 
-	app, err := am.RotateSecret(ctx, req.ClientID)
+	tenantID, err := tenantctx.Target(ctx, "iam.RotateAppSecret", "")
+	if err != nil {
+		return nil, err
+	}
+
+	app, err := am.RotateSecretInTenant(ctx, tenantID, req.ClientID)
 	if err != nil {
 		return nil, err
 	}

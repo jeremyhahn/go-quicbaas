@@ -196,3 +196,79 @@ func TestFirstListResponse_ClosedStreamWithNoCompletionYetStillWaits(t *testing.
 		t.Errorf("resp = %v, want nil", resp)
 	}
 }
+
+// TestFirstListResponse_ExpiredContextBeatsAnEmptyCompletion guards
+// go-quicbaas#1326: a call that returned nothing and no error while the
+// request context had already expired must be reported as a timeout. Both
+// the completion and ctx.Done are ready, so a select between them picks at
+// random; many iterations make that random pick fail deterministically.
+func TestFirstListResponse_ExpiredContextBeatsAnEmptyCompletion(t *testing.T) {
+	const iterations = 500
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	t.Run("stream closed first", func(t *testing.T) {
+		for i := range iterations {
+			stream := make(chan *service.ListResponse)
+			close(stream)
+			errChan := make(chan error, 1)
+			errChan <- nil
+
+			resp, timedOut, err := firstStreamResponse(ctx, stream, errChan)
+			if !timedOut || err != nil || resp != nil {
+				t.Fatalf("iteration %d: resp = %v, timedOut = %v, err = %v; want nil, true, nil", i, resp, timedOut, err)
+			}
+		}
+	})
+
+	t.Run("nil error first", func(t *testing.T) {
+		for i := range iterations {
+			stream := make(chan *service.ListResponse)
+			errChan := make(chan error, 1)
+			errChan <- nil
+
+			resp, timedOut, err := firstStreamResponse(ctx, stream, errChan)
+			if !timedOut || err != nil || resp != nil {
+				t.Fatalf("iteration %d: resp = %v, timedOut = %v, err = %v; want nil, true, nil", i, resp, timedOut, err)
+			}
+		}
+	})
+}
+
+// TestFirstListResponse_ServiceErrorBeatsAnExpiredContext checks that a
+// service error already published when the context expires is reported as
+// that error, not as a timeout, whichever ready case the select picks.
+func TestFirstListResponse_ServiceErrorBeatsAnExpiredContext(t *testing.T) {
+	wantErr := errors.New("list failed")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for i := range 500 {
+		stream, errChan := completedList(nil, wantErr)
+
+		_, timedOut, err := firstStreamResponse(ctx, stream, errChan)
+		if timedOut || !errors.Is(err, wantErr) {
+			t.Fatalf("iteration %d: timedOut = %v, err = %v; want false, %v", i, timedOut, err, wantErr)
+		}
+	}
+}
+
+// TestFirstListResponse_PageBeatsAnExpiredContext checks that a page already
+// buffered when the context expires is returned, not discarded as a timeout.
+func TestFirstListResponse_PageBeatsAnExpiredContext(t *testing.T) {
+	want := &service.ListResponse{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for i := range 500 {
+		stream, errChan := completedList(want, nil)
+
+		resp, timedOut, err := firstStreamResponse(ctx, stream, errChan)
+		if timedOut || err != nil || resp != want {
+			t.Fatalf("iteration %d: resp = %v, timedOut = %v, err = %v; want page, false, nil", i, resp, timedOut, err)
+		}
+	}
+}

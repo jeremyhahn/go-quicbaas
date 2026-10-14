@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // mockMFAService implements MFAService for testing
@@ -57,14 +58,14 @@ func (m *mockMFAService) BeginEnrollment(ctx context.Context, userID, tenantID s
 	}, nil
 }
 
-func (m *mockMFAService) CompleteEnrollment(ctx context.Context, enrollmentID, code string) error {
+func (m *mockMFAService) CompleteEnrollment(ctx context.Context, _, _, enrollmentID, code string) error {
 	if m.completeEnrollmentFn != nil {
 		return m.completeEnrollmentFn(ctx, enrollmentID, code)
 	}
 	return nil
 }
 
-func (m *mockMFAService) CancelEnrollment(ctx context.Context, enrollmentID string) error {
+func (m *mockMFAService) CancelEnrollment(ctx context.Context, _, _, enrollmentID string) error {
 	if m.cancelEnrollmentFn != nil {
 		return m.cancelEnrollmentFn(ctx, enrollmentID)
 	}
@@ -82,7 +83,7 @@ func (m *mockMFAService) BeginChallenge(ctx context.Context, userID, tenantID, s
 	}, nil
 }
 
-func (m *mockMFAService) VerifyChallenge(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error) {
+func (m *mockMFAService) VerifyChallenge(ctx context.Context, _, _, challengeID, code string) (*iam.MFAVerifyResponse, error) {
 	if m.verifyChallengeFn != nil {
 		return m.verifyChallengeFn(ctx, challengeID, code)
 	}
@@ -172,7 +173,7 @@ func TestNewMFAServer(t *testing.T) {
 }
 
 func TestMFAServer_BeginEnrollment(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -235,7 +236,7 @@ func TestMFAServer_BeginEnrollment(t *testing.T) {
 }
 
 func TestMFAServer_CompleteEnrollment(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -277,7 +278,7 @@ func TestMFAServer_CompleteEnrollment(t *testing.T) {
 }
 
 func TestMFAServer_CancelEnrollment(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -303,7 +304,7 @@ func TestMFAServer_CancelEnrollment(t *testing.T) {
 }
 
 func TestMFAServer_BeginChallenge(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -348,7 +349,7 @@ func TestMFAServer_BeginChallenge(t *testing.T) {
 }
 
 func TestMFAServer_VerifyChallenge(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -391,7 +392,7 @@ func TestMFAServer_VerifyChallenge(t *testing.T) {
 }
 
 func TestMFAServer_VerifyCode(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -450,7 +451,7 @@ func TestMFAServer_VerifyCode(t *testing.T) {
 }
 
 func TestMFAServer_GetStatus(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -518,7 +519,7 @@ func TestMFAServer_GetStatus(t *testing.T) {
 }
 
 func TestMFAServer_Disable(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -560,7 +561,7 @@ func TestMFAServer_Disable(t *testing.T) {
 }
 
 func TestMFAServer_GenerateBackupCodes(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -602,7 +603,7 @@ func TestMFAServer_GenerateBackupCodes(t *testing.T) {
 }
 
 func TestMFAServer_VerifyBackupCode(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})
@@ -662,7 +663,7 @@ func TestMFAServer_VerifyBackupCode(t *testing.T) {
 }
 
 func TestMFAServer_GetBackupCodeStatus(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	t.Run("success", func(t *testing.T) {
 		server := newTestMFAServer(&mockMFAService{})

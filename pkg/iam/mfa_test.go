@@ -488,7 +488,7 @@ func TestCompleteEnrollment(t *testing.T) {
 
 			enrollmentID, code := tt.setup(t, m)
 
-			err = m.CompleteEnrollment(context.Background(), enrollmentID, code)
+			err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollmentID, code)
 
 			if tt.expectError != nil {
 				assert.Error(t, err)
@@ -535,7 +535,7 @@ func TestCancelEnrollment(t *testing.T) {
 		{
 			name:         "enrollment not found",
 			enrollmentID: "invalid-enrollment-id",
-			expectError:  nil, // DeleteEnrollment doesn't error on not found
+			expectError:  ErrMFAEnrollmentNotFound,
 		},
 	}
 
@@ -551,7 +551,7 @@ func TestCancelEnrollment(t *testing.T) {
 				enrollmentID = tt.enrollmentID
 			}
 
-			err = m.CancelEnrollment(context.Background(), enrollmentID)
+			err = m.CancelEnrollment(context.Background(), 123, "tenant-123", enrollmentID)
 
 			if tt.expectError != nil {
 				assert.Error(t, err)
@@ -697,7 +697,7 @@ func TestVerifyChallenge(t *testing.T) {
 				enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
 				require.NoError(t, err)
 				validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-				err = m.CompleteEnrollment(context.Background(), enrollResp.EnrollmentID, validCode)
+				err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
 				require.NoError(t, err)
 
 				// Create challenge
@@ -839,7 +839,7 @@ func TestVerifyChallenge(t *testing.T) {
 				enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
 				require.NoError(t, err)
 				validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-				err = m.CompleteEnrollment(context.Background(), enrollResp.EnrollmentID, validCode)
+				err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
 				require.NoError(t, err)
 
 				// Generate backup codes
@@ -868,7 +868,7 @@ func TestVerifyChallenge(t *testing.T) {
 
 			challengeID, code := tt.setup(t, m)
 
-			resp, err := m.VerifyChallenge(context.Background(), challengeID, code)
+			resp, err := m.VerifyChallenge(context.Background(), 123, "tenant-123", challengeID, code)
 
 			if tt.expectError != nil {
 				assert.Error(t, err)
@@ -902,7 +902,7 @@ func TestVerifyCode(t *testing.T) {
 				enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
 				require.NoError(t, err)
 				validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-				err = m.CompleteEnrollment(context.Background(), enrollResp.EnrollmentID, validCode)
+				err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
 				require.NoError(t, err)
 
 				secret, err := m.storage.GetSecret(context.Background(), 123, "tenant-123")
@@ -1721,7 +1721,7 @@ func TestMFAManagerWithUserStorage(t *testing.T) {
 
 	// Complete enrollment
 	code := generateValidTOTPCode(t, resp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), resp.EnrollmentID, code)
+	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", resp.EnrollmentID, code)
 	require.NoError(t, err)
 
 	// Verify secret was saved
@@ -1741,7 +1741,7 @@ func TestCompleteEnrollmentIncrementAttempts(t *testing.T) {
 
 	// Try with invalid code multiple times
 	for i := 0; i < 3; i++ {
-		err = m.CompleteEnrollment(context.Background(), resp.EnrollmentID, "000000")
+		err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", resp.EnrollmentID, "000000")
 		assert.ErrorIs(t, err, ErrMFACodeInvalid)
 
 		// Verify attempts are incremented
@@ -1776,7 +1776,7 @@ func TestVerifyChallengeIncrementAttempts(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try with invalid code
-	_, err = m.VerifyChallenge(context.Background(), challenge.ID, "000000")
+	_, err = m.VerifyChallenge(context.Background(), 123, "tenant-123", challenge.ID, "000000")
 	assert.ErrorIs(t, err, ErrMFACodeInvalid)
 
 	// Verify attempts are incremented
@@ -1794,7 +1794,7 @@ func TestVerifyCodeUpdatesLastUsed(t *testing.T) {
 	enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
 	require.NoError(t, err)
 	validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), enrollResp.EnrollmentID, validCode)
+	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
 	require.NoError(t, err)
 
 	// Get initial secret
@@ -1841,7 +1841,7 @@ func TestDisableMFAWithUserStorage(t *testing.T) {
 	enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
 	require.NoError(t, err)
 	validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), enrollResp.EnrollmentID, validCode)
+	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
 	require.NoError(t, err)
 
 	// Verify MFA is enabled
@@ -1947,7 +1947,7 @@ func TestBeginEnrollmentWithUserStorage(t *testing.T) {
 
 	// Complete enrollment
 	validCode := generateValidTOTPCode(t, resp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), resp.EnrollmentID, validCode)
+	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", resp.EnrollmentID, validCode)
 	require.NoError(t, err)
 
 	// The enrollment is recorded in the MFA store, which is what answers for
@@ -1976,7 +1976,7 @@ func TestCompleteEnrollmentDeletesEnrollment(t *testing.T) {
 
 	// Complete enrollment
 	validCode := generateValidTOTPCode(t, resp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), resp.EnrollmentID, validCode)
+	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", resp.EnrollmentID, validCode)
 	require.NoError(t, err)
 
 	// Verify enrollment is deleted
@@ -1993,7 +1993,7 @@ func TestVerifyChallengeDeletesChallenge(t *testing.T) {
 	enrollResp, err := m.BeginEnrollment(context.Background(), 123, "tenant-123", MFAMethodTOTP)
 	require.NoError(t, err)
 	validCode := generateValidTOTPCode(t, enrollResp.Secret, m.config)
-	err = m.CompleteEnrollment(context.Background(), enrollResp.EnrollmentID, validCode)
+	err = m.CompleteEnrollment(context.Background(), 123, "tenant-123", enrollResp.EnrollmentID, validCode)
 	require.NoError(t, err)
 
 	// Begin challenge
@@ -2010,7 +2010,7 @@ func TestVerifyChallengeDeletesChallenge(t *testing.T) {
 	code := generateValidTOTPCode(t, secret.Secret, m.config)
 
 	// Verify challenge
-	resp, err := m.VerifyChallenge(context.Background(), challenge.ID, code)
+	resp, err := m.VerifyChallenge(context.Background(), 123, "tenant-123", challenge.ID, code)
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 
@@ -2102,7 +2102,7 @@ func TestVerifyChallengeSecretNotFound(t *testing.T) {
 
 	// Try to verify without having a secret - code verification fails (no secret),
 	// then backup code verification also fails (no backup codes), so it returns ErrMFACodeInvalid
-	_, err = m.VerifyChallenge(context.Background(), challenge.ID, "123456")
+	_, err = m.VerifyChallenge(context.Background(), 123, "tenant-123", challenge.ID, "123456")
 	assert.ErrorIs(t, err, ErrMFACodeInvalid)
 
 	// Verify attempts were incremented

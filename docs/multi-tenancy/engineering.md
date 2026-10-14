@@ -188,6 +188,41 @@ On both transports, these are outside the check:
 - tenant provisioning and administration (`/api/v1/tenants/...` and the
   tenant barrier).
 
+### Objects Found by Id
+
+Checking the tenant a request names is not enough when the handler then
+looks the object up by its id alone. The verbs below look the object up
+inside the resolved tenant. An object owned by another tenant answers the
+same not-found as a missing id, so a caller cannot use the response to probe
+for ids that exist elsewhere.
+
+| Verbs | Lookup | Transports |
+|-------|--------|------------|
+| App get, update, delete, rotate secret | `AppManager.*InTenant` (`pkg/iam/oidc_app.go`) | REST, gRPC, service layer, embedded (get, delete) |
+| MFA enrollment complete and cancel, challenge verify | `MFAManager` takes the user and tenant (`pkg/iam/mfa.go`) | REST, gRPC, MCP |
+
+REST binds an MFA record to both the URL's user and its tenant. The gRPC and
+MCP MFA requests carry no user id, so those transports bind the caller's
+tenant only. The service layer's app verbs take the tenant from
+`tenantctx.Target`, and a context with no tenant is refused.
+
+The MFA manager refuses an empty tenant. Cancelling an unknown enrollment id
+answers not-found instead of succeeding silently.
+
+Verbs whose request carries a `tenant_id` honour it only when it names the
+caller's own tenant, through `tenantctx.Target`. Naming another tenant is
+refused before the manager is reached, and the system tenant gets no lift.
+
+| Verbs | Check | Transports |
+|-------|-------|------------|
+| App register and list | `tenantctx.Target` | service layer (MCP, QUIC), embedded |
+| App get and delete | `tenantctx.Target`, then the `InTenant` lookup | embedded |
+| MFA begin enrollment, status, disable, begin challenge, backup codes | `tenantctx.Target` (MCP `mfaTenant`), `requireCallerTenant` (gRPC) | MCP, gRPC |
+
+gRPC `VerifyCode` takes the same check. The embedded transport resolves the
+tenant from the call's binding (`inProcessTenant`): a host that names a
+tenant with `transport.ContextWithTenant` acts in that tenant only.
+
 ## Isolation Patterns by Service
 
 ### Full Key Scoping (KMS, Secrets, Parameter Store, Vector, TimeSeries)

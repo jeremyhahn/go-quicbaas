@@ -915,41 +915,53 @@ func (s *Server) HandleRangeQuery(w http.ResponseWriter, r *http.Request) {
 	// Collect all results. ScanIndex closes stream on its way out and the
 	// goroutine publishes its verdict on errChan only afterwards, so a closed
 	// stream means the call has returned, not that it succeeded.
+	//
+	// Once the context has expired the outcome follows firstStreamResponse's
+	// precedence (go-quicbaas#1326): a page already received wins, then a
+	// service error, then a timeout. Only a call still running at expiry,
+	// or one that returned nothing after it, is a timeout.
 	var allEntities []EntityItem
-collect:
+	received := false
 	for {
+		var scanResp *service.ScanResponse
+		var ok bool
 		select {
-		case scanResp, ok := <-stream:
-			if !ok {
-				break collect
-			}
-			// Handle nil response (shouldn't happen in loop but be defensive)
-			if scanResp == nil {
-				continue
-			}
-			// Convert to REST response
-			for _, entity := range scanResp.Entities {
-				allEntities = append(allEntities, EntityItem{
-					ID:         entity.ID,
-					EntityType: entity.EntityType,
-					Data:       entity.Data,
-				})
-			}
+		case scanResp, ok = <-stream:
 		case <-ctx.Done():
-			RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{
-				Timeout: 30 * time.Second,
+			// A page or the close already buffered still counts.
+			select {
+			case scanResp, ok = <-stream:
+			default:
+				RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{
+					Timeout: 30 * time.Second,
+				})
+				return
+			}
+		}
+		if !ok {
+			break
+		}
+		// Handle nil response (shouldn't happen in loop but be defensive)
+		if scanResp == nil {
+			continue
+		}
+		received = true
+		for _, entity := range scanResp.Entities {
+			allEntities = append(allEntities, EntityItem{
+				ID:         entity.ID,
+				EntityType: entity.EntityType,
+				Data:       entity.Data,
 			})
-			return
 		}
 	}
 
-	select {
-	case err := <-errChan:
-		if err != nil {
-			s.handleServiceError(w, r, err)
-			return
-		}
-	case <-ctx.Done():
+	// stream is closed, so the call has returned and its verdict is a send
+	// away: wait for it without racing ctx.Done.
+	if err := <-errChan; err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+	if !received && ctx.Err() != nil {
 		RespondError(w, r, http.StatusRequestTimeout, &RequestTimeoutError{
 			Timeout: 30 * time.Second,
 		})

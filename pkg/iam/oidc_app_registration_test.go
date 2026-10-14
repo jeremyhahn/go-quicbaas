@@ -18,6 +18,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // newRegistrationTestManager builds an AppManager over in-memory storage with
@@ -252,6 +254,43 @@ func TestDeleteAppInTenant_Scoping(t *testing.T) {
 	}
 	if _, err := m.AuthorizeRegistrationAccess(ctx, "", app.ClientID, token); err == nil {
 		t.Fatal("the credential must not outlive the client")
+	}
+}
+
+func TestRotateSecretInTenant_Scoping(t *testing.T) {
+	t.Parallel()
+
+	m := newRegistrationTestManager()
+	ctx := context.Background()
+
+	app, _, err := m.RegisterDCRApp(ctx, "tenant-a", dcrOptions("a"))
+	if err != nil {
+		t.Fatalf("RegisterDCRApp: %v", err)
+	}
+	before, err := m.storage.GetApp(ctx, app.ClientID)
+	if err != nil {
+		t.Fatalf("GetApp: %v", err)
+	}
+	oldHash := before.ClientSecret
+
+	_, err = m.RotateSecretInTenant(ctx, "tenant-b", app.ClientID)
+	if !dberrors.IsNotFound(err) {
+		t.Fatalf("cross-tenant rotate must be refused with not-found, got %v", err)
+	}
+	after, err := m.storage.GetApp(ctx, app.ClientID)
+	if err != nil {
+		t.Fatalf("GetApp: %v", err)
+	}
+	if after.ClientSecret != oldHash {
+		t.Fatal("a refused cross-tenant rotate must leave the secret unchanged")
+	}
+
+	rotated, err := m.RotateSecretInTenant(ctx, "tenant-a", app.ClientID)
+	if err != nil {
+		t.Fatalf("in-tenant rotate must succeed: %v", err)
+	}
+	if _, err := m.ValidateClient(ctx, app.ClientID, rotated.ClientSecret); err != nil {
+		t.Fatalf("the rotated secret must validate: %v", err)
 	}
 }
 

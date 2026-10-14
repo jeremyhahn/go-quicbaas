@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -1008,12 +1009,23 @@ func grantTypeToString(g iamsdk.GrantType) string {
 	}
 }
 
+// appTenant resolves the tenant an embedded app verb acts in: the tenant the
+// call is bound to. A request naming another tenant is refused, and the
+// system tenant gets no lift (go-quicbaas#1312).
+func appTenant(ctx context.Context, method string, req interface{}) (string, error) {
+	requested, _ := iamRequestField(req, "TenantID")
+	return tenantctx.Target(ctx, "quicbaas.IAM.App/"+method, requested)
+}
+
 func handleIAMAppRegister(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	mgr, err := appManagerFor(ctx, svc)
 	if err != nil {
 		return nil, err
 	}
-	tenantID, _ := iamRequestField(req, "TenantID")
+	tenantID, err := appTenant(ctx, "Register", req)
+	if err != nil {
+		return nil, err
+	}
 	var sdkReq *iamsdk.RegisterAppRequest
 	if r := iamRequestStructPtr(req, "App"); r != nil {
 		if rr, ok := r.(*iamsdk.RegisterAppRequest); ok {
@@ -1052,7 +1064,10 @@ func handleIAMAppList(ctx context.Context, svc service.QuicBaaS, req interface{}
 	if err != nil {
 		return nil, err
 	}
-	tenantID, _ := iamRequestField(req, "TenantID")
+	tenantID, err := appTenant(ctx, "List", req)
+	if err != nil {
+		return nil, err
+	}
 	apps, err := mgr.ListApps(ctx, tenantID, iam.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -1072,8 +1087,12 @@ func handleIAMAppGet(ctx context.Context, svc service.QuicBaaS, req interface{})
 	if err != nil {
 		return nil, err
 	}
+	tenantID, err := appTenant(ctx, "Get", req)
+	if err != nil {
+		return nil, err
+	}
 	clientID, _ := iamRequestField(req, "ClientID")
-	a, err := mgr.GetApp(ctx, clientID)
+	a, err := mgr.GetAppInTenant(ctx, tenantID, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -1086,8 +1105,12 @@ func handleIAMAppDelete(ctx context.Context, svc service.QuicBaaS, req interface
 	if err != nil {
 		return nil, err
 	}
+	tenantID, err := appTenant(ctx, "Delete", req)
+	if err != nil {
+		return nil, err
+	}
 	clientID, _ := iamRequestField(req, "ClientID")
-	if err := mgr.DeleteApp(ctx, clientID); err != nil {
+	if err := mgr.DeleteAppInTenant(ctx, tenantID, clientID); err != nil {
 		return nil, err
 	}
 	return nil, nil

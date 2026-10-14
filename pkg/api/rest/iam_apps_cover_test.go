@@ -31,7 +31,10 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
-const appsTenant = "tenant-apps"
+const (
+	appsTenant      = "tenant-apps"
+	otherAppsTenant = "tenant-other-apps"
+)
 
 // appMockService exposes a real AppManager to the IAM handlers.
 type appMockService struct {
@@ -48,6 +51,8 @@ func setupAppHandler(t *testing.T) (*IAMHandler, func()) {
 	memStorage := iam.NewMemoryStorage()
 	tenantMgr := &testTenantManager{storage: memStorage}
 	_, err := tenantMgr.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: appsTenant, Name: "Apps"})
+	require.NoError(t, err)
+	_, err = tenantMgr.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: otherAppsTenant, Name: "Other Apps"})
 	require.NoError(t, err)
 
 	manager := iam.NewAppManager(iam.NewBackendStorage(newIntrospectMemKV()), tenantMgr)
@@ -132,6 +137,63 @@ func TestAppLifecycle(t *testing.T) {
 	w = httptest.NewRecorder()
 	handler.DeleteApp(w, appRequest(t, http.MethodDelete, nil, appParams))
 	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// TestAppVerbs_OtherTenantsClientIsNotFound proves the app verbs look the
+// client up inside the caller's tenant: a caller naming its own tenant with
+// another tenant's client id gets the same 404 as for a missing client, and
+// the other tenant's app is left untouched.
+func TestAppVerbs_OtherTenantsClientIsNotFound(t *testing.T) {
+	handler, cleanup := setupAppHandler(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	handler.RegisterApp(w, appRequest(t, http.MethodPost, map[string]interface{}{
+		"name":          "Victim App",
+		"redirect_uris": []string{"https://victim.example/callback"},
+		"grant_types":   []string{"authorization_code"},
+	}, map[string]string{"tenant_id": otherAppsTenant}))
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	var app map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&app))
+	clientID, _ := app["client_id"].(string)
+	require.NotEmpty(t, clientID)
+
+	crossParams := map[string]string{"tenant_id": appsTenant, "client_id": clientID}
+	verbs := map[string]func() *httptest.ResponseRecorder{
+		"get": func() *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			handler.GetApp(rec, appRequest(t, http.MethodGet, nil, crossParams))
+			return rec
+		},
+		"update": func() *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			handler.UpdateApp(rec, appRequest(t, http.MethodPut, map[string]interface{}{"name": "Hijacked"}, crossParams))
+			return rec
+		},
+		"rotate": func() *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			handler.RotateSecret(rec, appRequest(t, http.MethodPost, nil, crossParams))
+			return rec
+		},
+		"delete": func() *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			handler.DeleteApp(rec, appRequest(t, http.MethodDelete, nil, crossParams))
+			return rec
+		},
+	}
+	for name, call := range verbs {
+		rec := call()
+		require.Equal(t, http.StatusNotFound, rec.Code, "%s: body: %s", name, rec.Body.String())
+	}
+
+	ownerParams := map[string]string{"tenant_id": otherAppsTenant, "client_id": clientID}
+	w = httptest.NewRecorder()
+	handler.GetApp(w, appRequest(t, http.MethodGet, nil, ownerParams))
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var got map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+	require.Equal(t, "Victim App", got["name"], "a refused cross-tenant update must not rename the app")
 }
 
 func TestRegisterApp_Validation(t *testing.T) {

@@ -125,12 +125,12 @@ type WebAuthnManager interface {
 type MFAManager interface {
 	// Enrollment operations
 	BeginEnrollment(ctx context.Context, userID uint64, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
-	CompleteEnrollment(ctx context.Context, enrollmentID, code string) error
-	CancelEnrollment(ctx context.Context, enrollmentID string) error
+	CompleteEnrollment(ctx context.Context, userID uint64, tenantID, enrollmentID, code string) error
+	CancelEnrollment(ctx context.Context, userID uint64, tenantID, enrollmentID string) error
 
 	// Challenge/verification operations
 	BeginChallenge(ctx context.Context, userID uint64, tenantID, sessionToken string) (*iam.MFAChallenge, error)
-	VerifyChallenge(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error)
+	VerifyChallenge(ctx context.Context, userID uint64, tenantID, challengeID, code string) (*iam.MFAVerifyResponse, error)
 	VerifyCode(ctx context.Context, userID uint64, tenantID, code string) error
 
 	// Status operations

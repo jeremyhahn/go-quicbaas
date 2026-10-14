@@ -1554,12 +1554,16 @@ type mockMFAManagerFull struct{}
 func (m *mockMFAManagerFull) BeginEnrollment(_ context.Context, _ uint64, _ string, _ iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 	return nil, nil
 }
-func (m *mockMFAManagerFull) CompleteEnrollment(_ context.Context, _, _ string) error { return nil }
-func (m *mockMFAManagerFull) CancelEnrollment(_ context.Context, _ string) error      { return nil }
+func (m *mockMFAManagerFull) CompleteEnrollment(_ context.Context, _ uint64, _, _, _ string) error {
+	return nil
+}
+func (m *mockMFAManagerFull) CancelEnrollment(_ context.Context, _ uint64, _, _ string) error {
+	return nil
+}
 func (m *mockMFAManagerFull) BeginChallenge(_ context.Context, _ uint64, _, _ string) (*iam.MFAChallenge, error) {
 	return nil, nil
 }
-func (m *mockMFAManagerFull) VerifyChallenge(_ context.Context, _, _ string) (*iam.MFAVerifyResponse, error) {
+func (m *mockMFAManagerFull) VerifyChallenge(_ context.Context, _ uint64, _, _, _ string) (*iam.MFAVerifyResponse, error) {
 	return nil, nil
 }
 func (m *mockMFAManagerFull) VerifyCode(_ context.Context, _ uint64, _, _ string) error { return nil }

@@ -32,12 +32,12 @@ import (
 type MFAManager interface {
 	// Enrollment
 	BeginEnrollment(ctx context.Context, userID uint64, tenantID string, method MFAMethod) (*MFAEnrollResponse, error)
-	CompleteEnrollment(ctx context.Context, enrollmentID, code string) error
-	CancelEnrollment(ctx context.Context, enrollmentID string) error
+	CompleteEnrollment(ctx context.Context, userID uint64, tenantID, enrollmentID, code string) error
+	CancelEnrollment(ctx context.Context, userID uint64, tenantID, enrollmentID string) error
 
 	// Verification
 	BeginChallenge(ctx context.Context, userID uint64, tenantID, sessionToken string) (*MFAChallenge, error)
-	VerifyChallenge(ctx context.Context, challengeID, code string) (*MFAVerifyResponse, error)
+	VerifyChallenge(ctx context.Context, userID uint64, tenantID, challengeID, code string) (*MFAVerifyResponse, error)
 	VerifyCode(ctx context.Context, userID uint64, tenantID, code string) error
 
 	// Management
@@ -220,19 +220,55 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID uint64, 
 	}, nil
 }
 
-// CompleteEnrollment verifies and completes MFA enrollment.
-func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID, code string) error {
+// enrollmentFor loads an enrollment only if it belongs to tenantID and, when
+// userID is non-zero, to userID. The enrollment id is caller-supplied, so a
+// record owned by anyone else answers ErrMFAEnrollmentNotFound, exactly as a
+// missing one does: the caller learns nothing about other tenants' records.
+// userID is zero only on transports whose request names no user.
+func (m *DefaultMFAManager) enrollmentFor(ctx context.Context, op string, userID uint64, tenantID, enrollmentID string) (*MFAEnrollment, error) {
+	if tenantID == "" {
+		return nil, NewIAMError(ErrMFAInvalid, op, "tenant ID is required", nil)
+	}
 	if enrollmentID == "" {
-		return NewIAMError(ErrMFAInvalid, "iam.mfa.enroll.complete", "enrollment ID is required", nil)
+		return nil, NewIAMError(ErrMFAInvalid, op, "enrollment ID is required", nil)
+	}
+	enrollment, err := m.storage.GetEnrollment(ctx, enrollmentID)
+	if err != nil {
+		return nil, err
+	}
+	if enrollment.TenantID != tenantID || (userID != 0 && enrollment.UserID != userID) {
+		return nil, ErrMFAEnrollmentNotFound
+	}
+	return enrollment, nil
+}
+
+// challengeFor is enrollmentFor for a challenge.
+func (m *DefaultMFAManager) challengeFor(ctx context.Context, op string, userID uint64, tenantID, challengeID string) (*MFAChallenge, error) {
+	if tenantID == "" {
+		return nil, NewIAMError(ErrMFAInvalid, op, "tenant ID is required", nil)
+	}
+	if challengeID == "" {
+		return nil, NewIAMError(ErrMFAInvalid, op, "challenge ID is required", nil)
+	}
+	challenge, err := m.storage.GetChallenge(ctx, challengeID)
+	if err != nil {
+		return nil, err
+	}
+	if challenge.TenantID != tenantID || (userID != 0 && challenge.UserID != userID) {
+		return nil, ErrMFAChallengeNotFound
+	}
+	return challenge, nil
+}
+
+// CompleteEnrollment verifies and completes an MFA enrollment that belongs to
+// tenantID and, when userID is non-empty, to userID.
+func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, userID uint64, tenantID, enrollmentID, code string) error {
+	enrollment, err := m.enrollmentFor(ctx, "iam.mfa.enroll.complete", userID, tenantID, enrollmentID)
+	if err != nil {
+		return err
 	}
 	if code == "" {
 		return NewIAMError(ErrMFACodeInvalid, "iam.mfa.enroll.complete", "code is required", nil)
-	}
-
-	// Get enrollment
-	enrollment, err := m.storage.GetEnrollment(ctx, enrollmentID)
-	if err != nil {
-		return err
 	}
 
 	// Check expiration
@@ -312,10 +348,11 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 	return nil
 }
 
-// CancelEnrollment cancels a pending MFA enrollment.
-func (m *DefaultMFAManager) CancelEnrollment(ctx context.Context, enrollmentID string) error {
-	if enrollmentID == "" {
-		return NewIAMError(ErrMFAInvalid, "iam.mfa.enroll.cancel", "enrollment ID is required", nil)
+// CancelEnrollment cancels a pending MFA enrollment that belongs to tenantID
+// and, when userID is non-empty, to userID.
+func (m *DefaultMFAManager) CancelEnrollment(ctx context.Context, userID uint64, tenantID, enrollmentID string) error {
+	if _, err := m.enrollmentFor(ctx, "iam.mfa.enroll.cancel", userID, tenantID, enrollmentID); err != nil {
+		return err
 	}
 
 	return m.storage.DeleteEnrollment(ctx, enrollmentID)
@@ -367,19 +404,15 @@ func (m *DefaultMFAManager) BeginChallenge(ctx context.Context, userID uint64, t
 	return challenge, nil
 }
 
-// VerifyChallenge verifies an MFA challenge.
-func (m *DefaultMFAManager) VerifyChallenge(ctx context.Context, challengeID, code string) (*MFAVerifyResponse, error) {
-	if challengeID == "" {
-		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.verify", "challenge ID is required", nil)
+// VerifyChallenge verifies an MFA challenge that belongs to tenantID and,
+// when userID is non-empty, to userID.
+func (m *DefaultMFAManager) VerifyChallenge(ctx context.Context, userID uint64, tenantID, challengeID, code string) (*MFAVerifyResponse, error) {
+	challenge, err := m.challengeFor(ctx, "iam.mfa.verify", userID, tenantID, challengeID)
+	if err != nil {
+		return nil, err
 	}
 	if code == "" {
 		return nil, NewIAMError(ErrMFACodeInvalid, "iam.mfa.verify", "code is required", nil)
-	}
-
-	// Get challenge
-	challenge, err := m.storage.GetChallenge(ctx, challengeID)
-	if err != nil {
-		return nil, err
 	}
 
 	// Check expiration

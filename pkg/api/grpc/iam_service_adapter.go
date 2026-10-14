@@ -26,66 +26,110 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// MFAServiceAdapter wraps an MFAManager to implement the MFAService interface for gRPC.
-// Since the interfaces are compatible, this is a simple type assertion wrapper.
+// MFAServiceAdapter wraps a service.MFAManager to implement the MFAService
+// interface for gRPC. The gRPC wire carries user IDs as decimal strings; the
+// manager keys users by uint64, so each verb parses the id before delegating.
+// Object verbs (complete, cancel, verify-challenge) name no user on the wire;
+// their empty id parses to zero, which binds the object to the tenant only.
 type MFAServiceAdapter struct {
-	mgr MFAService
+	mgr service.MFAManager
 }
 
-// NewMFAServiceAdapter creates a new MFA service adapter.
-// The mgr must implement the MFAService interface (service.MFAManager does).
+// NewMFAServiceAdapter creates a new MFA service adapter. It returns nil when
+// mgr is not a service.MFAManager.
 func NewMFAServiceAdapter(mgr interface{}) *MFAServiceAdapter {
-	// Type assert to MFAService - service.MFAManager implements all required methods
-	if svc, ok := mgr.(MFAService); ok {
+	if svc, ok := mgr.(service.MFAManager); ok {
 		return &MFAServiceAdapter{mgr: svc}
 	}
 	return nil
 }
 
-// Implement MFAService interface by delegating to the wrapped manager
-
 func (a *MFAServiceAdapter) BeginEnrollment(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
-	return a.mgr.BeginEnrollment(ctx, userID, tenantID, method)
+	uid, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.mgr.BeginEnrollment(ctx, uid, tenantID, method)
 }
 
-func (a *MFAServiceAdapter) CompleteEnrollment(ctx context.Context, enrollmentID, code string) error {
-	return a.mgr.CompleteEnrollment(ctx, enrollmentID, code)
+func (a *MFAServiceAdapter) CompleteEnrollment(ctx context.Context, userID, tenantID, enrollmentID, code string) error {
+	uid, err := parseOptionalUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.mgr.CompleteEnrollment(ctx, uid, tenantID, enrollmentID, code)
 }
 
-func (a *MFAServiceAdapter) CancelEnrollment(ctx context.Context, enrollmentID string) error {
-	return a.mgr.CancelEnrollment(ctx, enrollmentID)
+func (a *MFAServiceAdapter) CancelEnrollment(ctx context.Context, userID, tenantID, enrollmentID string) error {
+	uid, err := parseOptionalUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.mgr.CancelEnrollment(ctx, uid, tenantID, enrollmentID)
 }
 
 func (a *MFAServiceAdapter) BeginChallenge(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error) {
-	return a.mgr.BeginChallenge(ctx, userID, tenantID, sessionToken)
+	uid, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.mgr.BeginChallenge(ctx, uid, tenantID, sessionToken)
 }
 
-func (a *MFAServiceAdapter) VerifyChallenge(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error) {
-	return a.mgr.VerifyChallenge(ctx, challengeID, code)
+func (a *MFAServiceAdapter) VerifyChallenge(ctx context.Context, userID, tenantID, challengeID, code string) (*iam.MFAVerifyResponse, error) {
+	uid, err := parseOptionalUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.mgr.VerifyChallenge(ctx, uid, tenantID, challengeID, code)
 }
 
 func (a *MFAServiceAdapter) VerifyCode(ctx context.Context, userID, tenantID, code string) error {
-	return a.mgr.VerifyCode(ctx, userID, tenantID, code)
+	uid, err := parseUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.mgr.VerifyCode(ctx, uid, tenantID, code)
 }
 
 func (a *MFAServiceAdapter) GetMFAStatus(ctx context.Context, userID, tenantID string) (*iam.MFAStatus, error) {
-	return a.mgr.GetMFAStatus(ctx, userID, tenantID)
+	uid, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.mgr.GetMFAStatus(ctx, uid, tenantID)
 }
 
 func (a *MFAServiceAdapter) DisableMFA(ctx context.Context, userID, tenantID string) error {
-	return a.mgr.DisableMFA(ctx, userID, tenantID)
+	uid, err := parseUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.mgr.DisableMFA(ctx, uid, tenantID)
 }
 
 func (a *MFAServiceAdapter) GenerateBackupCodes(ctx context.Context, userID, tenantID string) ([]string, error) {
-	return a.mgr.GenerateBackupCodes(ctx, userID, tenantID)
+	uid, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.mgr.GenerateBackupCodes(ctx, uid, tenantID)
 }
 
 func (a *MFAServiceAdapter) VerifyBackupCode(ctx context.Context, userID, tenantID, code string) error {
-	return a.mgr.VerifyBackupCode(ctx, userID, tenantID, code)
+	uid, err := parseUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.mgr.VerifyBackupCode(ctx, uid, tenantID, code)
 }
 
 func (a *MFAServiceAdapter) GetBackupCodeStatus(ctx context.Context, userID, tenantID string) (*iam.BackupCodeStatus, error) {
-	return a.mgr.GetBackupCodeStatus(ctx, userID, tenantID)
+	uid, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.mgr.GetBackupCodeStatus(ctx, uid, tenantID)
 }
 
 // IAMServiceAdapter adapts IAM components to implement the IAMService interface.
@@ -509,10 +553,11 @@ func (a *IAMServiceAdapter) RegisterApp(ctx context.Context, app *iam.Applicatio
 	return a.appManager.RegisterApp(ctx, app.TenantID, opts)
 }
 
-// GetApp retrieves an application by client ID.
+// GetApp retrieves an application by client ID inside tenantID. The app
+// verbs below are tenant scoped so a client id from another tenant answers
+// not-found, the same as a missing client.
 func (a *IAMServiceAdapter) GetApp(ctx context.Context, tenantID, clientID string) (*iam.Application, error) {
-	// AppManager.GetApp only takes clientID
-	return a.appManager.GetApp(ctx, clientID)
+	return a.appManager.GetAppInTenant(ctx, tenantID, clientID)
 }
 
 // UpdateApp updates an existing application.
@@ -540,14 +585,12 @@ func (a *IAMServiceAdapter) UpdateApp(ctx context.Context, app *iam.Application)
 		opts.ResponseTypes = &app.ResponseTypes
 	}
 
-	// AppManager.UpdateApp only takes clientID, not tenantID
-	return a.appManager.UpdateApp(ctx, app.ClientID, opts)
+	return a.appManager.UpdateAppInTenant(ctx, app.TenantID, app.ClientID, opts)
 }
 
 // DeleteApp deletes an application.
 func (a *IAMServiceAdapter) DeleteApp(ctx context.Context, tenantID, clientID string) error {
-	// AppManager.DeleteApp only takes clientID
-	return a.appManager.DeleteApp(ctx, clientID)
+	return a.appManager.DeleteAppInTenant(ctx, tenantID, clientID)
 }
 
 // ListApps lists applications with pagination.
@@ -567,8 +610,7 @@ func (a *IAMServiceAdapter) ListApps(ctx context.Context, tenantID string, limit
 
 // RotateAppSecret rotates an application's client secret.
 func (a *IAMServiceAdapter) RotateAppSecret(ctx context.Context, tenantID, clientID string) (*iam.Application, error) {
-	// AppManager.RotateSecret only takes clientID
-	return a.appManager.RotateSecret(ctx, clientID)
+	return a.appManager.RotateSecretInTenant(ctx, tenantID, clientID)
 }
 
 // =============================================================================

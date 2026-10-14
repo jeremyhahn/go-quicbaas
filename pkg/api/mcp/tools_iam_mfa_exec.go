@@ -22,6 +22,7 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -48,6 +49,17 @@ func (r *ToolRegistry) getMFAManager(ctx context.Context) (service.MFAManager, e
 		return nil, &MFAServiceUnavailableError{Reason: "MFA service not configured"}
 	}
 	return mgr, nil
+}
+
+// mfaTenant reads the required tenant_id argument and honours it only when it
+// is the caller's own tenant; the system tenant gets no lift
+// (go-quicbaas#1312).
+func mfaTenant(ctx context.Context, args map[string]interface{}) (string, error) {
+	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		return "", &MFAInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+	}
+	return tenantctx.Target(ctx, "mcp.mfa", tenantID)
 }
 
 // =============================================================================
@@ -115,9 +127,9 @@ func (r *ToolRegistry) executeMFABeginEnroll(ctx context.Context, args map[strin
 		return nil, err
 	}
 
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		return nil, &MFAInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+	tenantID, err := mfaTenant(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 
 	method := getString(args, "method")
@@ -150,7 +162,14 @@ func (r *ToolRegistry) executeMFACompleteEnroll(ctx context.Context, args map[st
 		return nil, &MFAInvalidInputError{Field: "code", Message: "code is required"}
 	}
 
-	err = mgr.CompleteEnrollment(ctx, enrollmentID, code)
+	tenantID, err := tenantctx.Target(ctx, "mcp.mfa", "")
+	if err != nil {
+		return nil, err
+	}
+
+	// The tool names no user, so the enrollment is bound to the caller's
+	// tenant only.
+	err = mgr.CompleteEnrollment(ctx, 0, tenantID, enrollmentID, code)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +192,14 @@ func (r *ToolRegistry) executeMFACancelEnroll(ctx context.Context, args map[stri
 		return nil, &MFAInvalidInputError{Field: "enrollment_id", Message: "enrollment_id is required"}
 	}
 
-	err = mgr.CancelEnrollment(ctx, enrollmentID)
+	tenantID, err := tenantctx.Target(ctx, "mcp.mfa", "")
+	if err != nil {
+		return nil, err
+	}
+
+	// The tool names no user, so the enrollment is bound to the caller's
+	// tenant only.
+	err = mgr.CancelEnrollment(ctx, 0, tenantID, enrollmentID)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +229,9 @@ func (r *ToolRegistry) executeMFAGetStatus(ctx context.Context, args map[string]
 		return nil, err
 	}
 
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		return nil, &MFAInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+	tenantID, err := mfaTenant(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 
 	status, err := mgr.GetMFAStatus(ctx, userID, tenantID)
@@ -231,9 +257,9 @@ func (r *ToolRegistry) executeMFADisable(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		return nil, &MFAInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+	tenantID, err := mfaTenant(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 
 	err = mgr.DisableMFA(ctx, userID, tenantID)
@@ -266,9 +292,9 @@ func (r *ToolRegistry) executeMFABeginChallenge(ctx context.Context, args map[st
 		return nil, err
 	}
 
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		return nil, &MFAInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+	tenantID, err := mfaTenant(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 
 	sessionToken := getString(args, "session_token")
@@ -301,7 +327,14 @@ func (r *ToolRegistry) executeMFAVerifyChallenge(ctx context.Context, args map[s
 		return nil, &MFAInvalidInputError{Field: "code", Message: "code is required"}
 	}
 
-	resp, err := mgr.VerifyChallenge(ctx, challengeID, code)
+	tenantID, err := tenantctx.Target(ctx, "mcp.mfa", "")
+	if err != nil {
+		return nil, err
+	}
+
+	// The tool names no user, so the challenge is bound to the caller's
+	// tenant only.
+	resp, err := mgr.VerifyChallenge(ctx, 0, tenantID, challengeID, code)
 	if err != nil {
 		return nil, err
 	}
@@ -328,9 +361,9 @@ func (r *ToolRegistry) executeMFAGenerateBackupCodes(ctx context.Context, args m
 		return nil, err
 	}
 
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		return nil, &MFAInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+	tenantID, err := mfaTenant(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 
 	codes, err := mgr.GenerateBackupCodes(ctx, userID, tenantID)
@@ -359,9 +392,9 @@ func (r *ToolRegistry) executeMFAVerifyBackupCode(ctx context.Context, args map[
 		return nil, err
 	}
 
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		return nil, &MFAInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+	tenantID, err := mfaTenant(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 
 	code := getString(args, "code")
@@ -395,9 +428,9 @@ func (r *ToolRegistry) executeMFAGetBackupCodeStatus(ctx context.Context, args m
 		return nil, err
 	}
 
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		return nil, &MFAInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+	tenantID, err := mfaTenant(ctx, args)
+	if err != nil {
+		return nil, err
 	}
 
 	status, err := mgr.GetBackupCodeStatus(ctx, userID, tenantID)

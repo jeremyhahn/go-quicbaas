@@ -43,8 +43,12 @@ import "context"
 // ctx.Done backstops both.
 //
 // The three outcomes are distinct and the caller renders them differently:
-// a page (which may be the zero value when the call sent nothing, a legal empty result), a
-// service error, and the request context expiring.
+// a page (which may be the zero value when the call sent nothing, a legal empty
+// result), a service error, and the request context expiring. When more than
+// one is available they take precedence in that order: a page beats a service
+// error, and either beats a timeout. A call that produced neither a page nor
+// an error while the context had expired is a timeout, never an empty success:
+// its empty result may only be an artefact of the cancellation (go-quicbaas#1326).
 func firstStreamResponse[T any](
 	ctx context.Context,
 	stream <-chan T,
@@ -60,9 +64,12 @@ func firstStreamResponse[T any](
 		// here and must not both be reported as success.
 		select {
 		case callErr := <-errChan:
-			return resp, false, callErr
+			if callErr != nil {
+				return resp, false, callErr
+			}
+			return resp, ctx.Err() != nil, nil
 		case <-ctx.Done():
-			return resp, true, nil
+			return settleExpired(stream, errChan)
 		}
 
 	case callErr := <-errChan:
@@ -74,13 +81,35 @@ func firstStreamResponse[T any](
 		select {
 		case page, ok := <-stream:
 			if ok {
-				resp = page
+				return page, false, nil
 			}
 		default:
 		}
-		return resp, false, nil
+		return resp, ctx.Err() != nil, nil
 
 	case <-ctx.Done():
-		return resp, true, nil
+		return settleExpired(stream, errChan)
 	}
+}
+
+// settleExpired decides the outcome once the request context has expired.
+// A page or a service error that is already available still wins, because
+// a select with several ready cases picks at random and must not turn a
+// finished call into a timeout. Otherwise the outcome is a timeout.
+func settleExpired[T any](stream <-chan T, errChan <-chan error) (resp T, timedOut bool, err error) {
+	select {
+	case page, ok := <-stream:
+		if ok {
+			return page, false, nil
+		}
+	default:
+	}
+	select {
+	case callErr := <-errChan:
+		if callErr != nil {
+			return resp, false, callErr
+		}
+	default:
+	}
+	return resp, true, nil
 }

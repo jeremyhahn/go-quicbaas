@@ -169,3 +169,85 @@ func TestHandleRangeQuery_AnswersOnceTheDoubleClosesStream(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleRangeQuery_ExpiredContextPrecedence pins go-quicbaas#1326 for
+// ScanIndex: once the request context has expired, a page already received
+// wins, then a service error, then a timeout. The double expires the context
+// itself before it returns, so the handler sees both a finished call and an
+// expired context; the old final select picked between them at random, so
+// each case runs often enough to make a wrong pick certain.
+func TestHandleRangeQuery_ExpiredContextPrecedence(t *testing.T) {
+	const iterations = 500
+
+	tests := []struct {
+		name       string
+		scanIndex  func(cancel context.CancelFunc) func(context.Context, *service.ScanRequest, chan<- *service.ScanResponse) error
+		wantStatus int
+		wantCount  int
+	}{
+		{
+			name: "empty completion after expiry is a timeout",
+			scanIndex: func(cancel context.CancelFunc) func(context.Context, *service.ScanRequest, chan<- *service.ScanResponse) error {
+				return func(_ context.Context, _ *service.ScanRequest, stream chan<- *service.ScanResponse) error {
+					cancel()
+					close(stream)
+					return nil
+				}
+			},
+			wantStatus: http.StatusRequestTimeout,
+		},
+		{
+			name: "service error beats an expired context",
+			scanIndex: func(cancel context.CancelFunc) func(context.Context, *service.ScanRequest, chan<- *service.ScanResponse) error {
+				return func(_ context.Context, _ *service.ScanRequest, stream chan<- *service.ScanResponse) error {
+					close(stream)
+					cancel()
+					return internalServiceError("ScanIndex")
+				}
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "page received before expiry beats a timeout",
+			scanIndex: func(cancel context.CancelFunc) func(context.Context, *service.ScanRequest, chan<- *service.ScanResponse) error {
+				return func(_ context.Context, _ *service.ScanRequest, stream chan<- *service.ScanResponse) error {
+					stream <- &service.ScanResponse{Entities: []*service.Entity{{ID: 1, EntityType: "users"}}}
+					close(stream)
+					cancel()
+					return nil
+				}
+			},
+			wantStatus: http.StatusOK,
+			wantCount:  1,
+		},
+	}
+
+	body, err := json.Marshal(RangeQueryRequest{EntityType: "users", Index: "age", Start: 20, End: 30})
+	require.NoError(t, err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
+
+			for i := range iterations {
+				ctx, cancel := context.WithCancel(context.Background())
+				mockService.ScanIndexFunc = tt.scanIndex(cancel)
+
+				req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/query/range", bytes.NewReader(body))
+				w := httptest.NewRecorder()
+				server.HandleRangeQuery(w, req)
+				cancel()
+
+				if w.Code != tt.wantStatus {
+					t.Fatalf("iteration %d: status = %d, want %d", i, w.Code, tt.wantStatus)
+				}
+				if tt.wantStatus == http.StatusOK {
+					var resp QueryResponse
+					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+					require.Equal(t, tt.wantCount, resp.Count, "iteration %d", i)
+				}
+			}
+		})
+	}
+}

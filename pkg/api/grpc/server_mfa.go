@@ -38,12 +38,12 @@ type MFAServer struct {
 type MFAService interface {
 	// Enrollment operations
 	BeginEnrollment(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
-	CompleteEnrollment(ctx context.Context, enrollmentID, code string) error
-	CancelEnrollment(ctx context.Context, enrollmentID string) error
+	CompleteEnrollment(ctx context.Context, userID, tenantID, enrollmentID, code string) error
+	CancelEnrollment(ctx context.Context, userID, tenantID, enrollmentID string) error
 
 	// Challenge/verification operations
 	BeginChallenge(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error)
-	VerifyChallenge(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error)
+	VerifyChallenge(ctx context.Context, userID, tenantID, challengeID, code string) (*iam.MFAVerifyResponse, error)
 	VerifyCode(ctx context.Context, userID, tenantID, code string) error
 
 	// Status operations
@@ -79,6 +79,9 @@ func (s *MFAServer) BeginEnrollment(ctx context.Context, req *iampb.BeginMFAEnro
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.MFA", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -108,7 +111,14 @@ func (s *MFAServer) CompleteEnrollment(ctx context.Context, req *iampb.CompleteM
 		return nil, status.Error(codes.InvalidArgument, "code is required")
 	}
 
-	err := s.mfaService.CompleteEnrollment(ctx, req.EnrollmentId, req.Code)
+	tenantID, err := targetTenant(ctx, "grpc.MFA", "")
+	if err != nil {
+		return nil, err
+	}
+
+	// The request names no user, so the enrollment is bound to the
+	// caller's tenant only.
+	err = s.mfaService.CompleteEnrollment(ctx, "", tenantID, req.EnrollmentId, req.Code)
 	if err != nil {
 		return nil, convertMFAError(err)
 	}
@@ -126,7 +136,14 @@ func (s *MFAServer) CancelEnrollment(ctx context.Context, req *iampb.CancelMFAEn
 		return nil, status.Error(codes.InvalidArgument, "enrollment_id is required")
 	}
 
-	err := s.mfaService.CancelEnrollment(ctx, req.EnrollmentId)
+	tenantID, err := targetTenant(ctx, "grpc.MFA", "")
+	if err != nil {
+		return nil, err
+	}
+
+	// The request names no user, so the enrollment is bound to the
+	// caller's tenant only.
+	err = s.mfaService.CancelEnrollment(ctx, "", tenantID, req.EnrollmentId)
 	if err != nil {
 		return nil, convertMFAError(err)
 	}
@@ -149,6 +166,9 @@ func (s *MFAServer) BeginChallenge(ctx context.Context, req *iampb.BeginMFAChall
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.MFA", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -177,7 +197,14 @@ func (s *MFAServer) VerifyChallenge(ctx context.Context, req *iampb.VerifyMFACha
 		return nil, status.Error(codes.InvalidArgument, "code is required")
 	}
 
-	resp, err := s.mfaService.VerifyChallenge(ctx, req.ChallengeId, req.Code)
+	tenantID, err := targetTenant(ctx, "grpc.MFA", "")
+	if err != nil {
+		return nil, err
+	}
+
+	// The request names no user, so the challenge is bound to the
+	// caller's tenant only.
+	resp, err := s.mfaService.VerifyChallenge(ctx, "", tenantID, req.ChallengeId, req.Code)
 	if err != nil {
 		return nil, convertMFAError(err)
 	}
@@ -197,6 +224,9 @@ func (s *MFAServer) VerifyCode(ctx context.Context, req *iampb.VerifyMFACodeRequ
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.MFA", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -228,6 +258,9 @@ func (s *MFAServer) GetStatus(ctx context.Context, req *iampb.GetMFAStatusReques
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.MFA", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -269,6 +302,9 @@ func (s *MFAServer) Disable(ctx context.Context, req *iampb.DisableMFARequest) (
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.MFA", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -297,6 +333,9 @@ func (s *MFAServer) GenerateBackupCodes(ctx context.Context, req *iampb.Generate
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.MFA", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -320,6 +359,9 @@ func (s *MFAServer) VerifyBackupCode(ctx context.Context, req *iampb.VerifyBacku
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.MFA", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -360,6 +402,9 @@ func (s *MFAServer) GetBackupCodeStatus(ctx context.Context, req *iampb.GetBacku
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.MFA", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")

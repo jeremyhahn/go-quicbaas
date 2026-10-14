@@ -304,7 +304,7 @@ func TestVerifyChallengeSurfacesCorruptSecret(t *testing.T) {
 			m := newProtectedSecretTestManager(t)
 			challenge := storeCorruptSecretWithChallenge(t, m, tc.stored)
 
-			resp, err := m.VerifyChallenge(ctx, challenge.ID, "000000")
+			resp, err := m.VerifyChallenge(ctx, 40003, "tenant-corrupt", challenge.ID, "000000")
 			require.Error(t, err)
 			assert.Nil(t, resp)
 			assert.NotErrorIs(t, err, ErrMFACodeInvalid,
@@ -349,7 +349,7 @@ func TestVerifyChallengeDoesNotHideCorruptSecretBehindBackupCode(t *testing.T) {
 
 	challenge := storeCorruptSecretWithChallenge(t, m, testTOTPSecret+"A")
 
-	resp, err := m.VerifyChallenge(ctx, challenge.ID, codes[0])
+	resp, err := m.VerifyChallenge(ctx, 40003, "tenant-corrupt", challenge.ID, codes[0])
 	require.Error(t, err,
 		"a valid backup code must not paper over a corrupt primary secret")
 	// Unconditional: `if resp != nil { ... }` would silently skip the success
@@ -414,7 +414,7 @@ func TestVerifyChallengeKeepsBackupRecoveryForDisallowedAlgorithm(t *testing.T) 
 		"the policy must actually be refusing this enrollment's algorithm, "+
 			"or the backup-code recovery below is not testing the case it names")
 
-	resp, err := m.VerifyChallenge(ctx, challenge.ID, codes[0])
+	resp, err := m.VerifyChallenge(ctx, 40004, "tenant-sha1", challenge.ID, codes[0])
 	require.NoError(t, err,
 		"a backup code must still recover an enrollment whose algorithm the policy now refuses")
 	require.NotNil(t, resp)
@@ -552,7 +552,7 @@ func TestCompleteEnrollmentAcceptsCodeFromProvisionedSecret(t *testing.T) {
 	assert.Contains(t, resp.QRCodeURI, "secret="+resp.Secret)
 
 	code := generateValidTOTPCode(t, resp.Secret, m.config)
-	require.NoError(t, m.CompleteEnrollment(ctx, resp.EnrollmentID, code))
+	require.NoError(t, m.CompleteEnrollment(ctx, 99997, "tenant-enroll", resp.EnrollmentID, code))
 
 	// The completed enrollment verifies through the separate VerifyCode path.
 	verifyCode := generateValidTOTPCode(t, resp.Secret, m.config)
@@ -572,7 +572,7 @@ func TestCompleteEnrollmentRejectsCodeFromAnotherSecret(t *testing.T) {
 	require.NotEqual(t, testTOTPSecret, resp.Secret)
 
 	wrongCode := generateValidTOTPCode(t, testTOTPSecret, m.config)
-	assert.ErrorIs(t, m.CompleteEnrollment(ctx, resp.EnrollmentID, wrongCode), ErrMFACodeInvalid)
+	assert.ErrorIs(t, m.CompleteEnrollment(ctx, 40060, "tenant-wrong", resp.EnrollmentID, wrongCode), ErrMFACodeInvalid)
 
 	enrollment, err := m.storage.GetEnrollment(ctx, resp.EnrollmentID)
 	require.NoError(t, err)

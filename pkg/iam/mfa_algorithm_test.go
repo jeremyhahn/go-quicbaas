@@ -150,7 +150,7 @@ func TestEnrollAndVerifyUsesModeAlgorithm(t *testing.T) {
 	require.NoError(t, err)
 
 	code := generateValidTOTPCode(t, enrollment.Secret, m.config)
-	require.NoError(t, m.CompleteEnrollment(ctx, enrollment.EnrollmentID, code))
+	require.NoError(t, m.CompleteEnrollment(ctx, 1000123, "tenant-123", enrollment.EnrollmentID, code))
 
 	stored, err := m.storage.GetSecret(ctx, 1000123, "tenant-123")
 	require.NoError(t, err)
@@ -268,7 +268,7 @@ func TestCompleteEnrollmentUsesProvisionedParameters(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	require.NoError(t, completer.CompleteEnrollment(ctx, enrollment.EnrollmentID, code),
+	require.NoError(t, completer.CompleteEnrollment(ctx, 1000123, "tenant-123", enrollment.EnrollmentID, code),
 		"the code the authenticator was provisioned to produce must be accepted")
 
 	stored, err := storage.GetSecret(ctx, 1000123, "tenant-123")
@@ -305,7 +305,7 @@ func TestCompleteEnrollmentLegacyEnrollmentUsesSHA1(t *testing.T) {
 	require.NoError(t, m.storage.SaveEnrollment(ctx, legacy))
 
 	code := generateValidTOTPCode(t, legacy.Secret, m.config)
-	require.NoError(t, m.CompleteEnrollment(ctx, legacy.ID, code))
+	require.NoError(t, m.CompleteEnrollment(ctx, 1000123, "tenant-123", legacy.ID, code))
 
 	stored, err := m.storage.GetSecret(ctx, 1000123, "tenant-123")
 	require.NoError(t, err)
@@ -333,7 +333,7 @@ func TestVerifyChallengeSurfacesAlgorithmRejection(t *testing.T) {
 
 	forceFIPSPolicy(t)
 
-	resp, err := m.VerifyChallenge(ctx, challenge.ID, "000000")
+	resp, err := m.VerifyChallenge(ctx, 40002, "tenant-123", challenge.ID, "000000")
 	require.Error(t, err)
 	assert.Nil(t, resp)
 

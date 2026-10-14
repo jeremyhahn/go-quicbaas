@@ -22,6 +22,7 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestMFAHandlers_ResponseOutOfRange proves that a backup code count too
@@ -29,7 +30,7 @@ import (
 // integer.
 func TestMFAHandlers_ResponseOutOfRange(t *testing.T) {
 	const tooBig = math.MaxInt32 + 1
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 	backupStatus := func(total, remaining int) *mockMFAService {
 		return &mockMFAService{
 			getBackupCodeStatusFn: func(context.Context, string, string) (*iam.BackupCodeStatus, error) {

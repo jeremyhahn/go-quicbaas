@@ -49,14 +49,16 @@ func (f *fakeMFAManager) BeginEnrollment(_ context.Context, _ uint64, _ string, 
 	}, nil
 }
 
-func (f *fakeMFAManager) CompleteEnrollment(_ context.Context, _, _ string) error { return nil }
-func (f *fakeMFAManager) CancelEnrollment(_ context.Context, _ string) error      { return nil }
+func (f *fakeMFAManager) CompleteEnrollment(_ context.Context, _ uint64, _, _, _ string) error {
+	return nil
+}
+func (f *fakeMFAManager) CancelEnrollment(_ context.Context, _ uint64, _, _ string) error { return nil }
 
 func (f *fakeMFAManager) BeginChallenge(_ context.Context, _ uint64, _, _ string) (*iam.MFAChallenge, error) {
 	return &iam.MFAChallenge{ID: "chal-1", Method: iam.MFAMethodTOTP, ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 
-func (f *fakeMFAManager) VerifyChallenge(_ context.Context, _, _ string) (*iam.MFAVerifyResponse, error) {
+func (f *fakeMFAManager) VerifyChallenge(_ context.Context, _ uint64, _, _, _ string) (*iam.MFAVerifyResponse, error) {
 	return &iam.MFAVerifyResponse{Success: true, Token: "full-token", BackupCodesRemaining: 5}, nil
 }
 
@@ -256,7 +258,9 @@ func (errMFAManager) DisableMFA(context.Context, uint64, string) error { return 
 func (errMFAManager) GenerateBackupCodes(context.Context, uint64, string) ([]string, error) {
 	return nil, errFakeMFA
 }
-func (errMFAManager) CancelEnrollment(context.Context, string) error { return errFakeMFA }
+func (errMFAManager) CancelEnrollment(context.Context, uint64, string, string) error {
+	return errFakeMFA
+}
 
 func TestMFA_MoreErrors(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})

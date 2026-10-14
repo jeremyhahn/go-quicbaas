@@ -385,10 +385,18 @@ func (m *AppManager) ListApps(ctx context.Context, tenantID string, opts ListOpt
 	return apps, nil
 }
 
-// RotateSecret generates a new client secret for an application.
+// RotateSecret generates a new client secret for an application. The lookup is
+// NOT tenant scoped; callers that hold a tenant must use RotateSecretInTenant.
 func (m *AppManager) RotateSecret(ctx context.Context, clientID string) (*Application, error) {
+	return m.RotateSecretInTenant(ctx, "", clientID)
+}
+
+// RotateSecretInTenant generates a new client secret for an application,
+// requiring it to belong to tenantID. An empty tenantID falls back to the
+// unscoped lookup.
+func (m *AppManager) RotateSecretInTenant(ctx context.Context, tenantID, clientID string) (*Application, error) {
 	// Get existing application
-	app, err := m.storage.GetApp(ctx, clientID)
+	app, err := m.resolveApp(ctx, tenantID, clientID)
 	if err != nil {
 		return nil, err
 	}

@@ -204,7 +204,8 @@ func (h *IAMHandler) GetApp(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -237,7 +238,7 @@ func (h *IAMHandler) GetApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get app
-	app, err := mgr.GetApp(ctx, clientID)
+	app, err := mgr.GetAppInTenant(ctx, callerTenant, clientID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
@@ -256,7 +257,8 @@ func (h *IAMHandler) UpdateApp(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -323,7 +325,7 @@ func (h *IAMHandler) UpdateApp(w http.ResponseWriter, r *http.Request) {
 		PKCERequired:   req.PKCERequired,
 	}
 
-	app, err := mgr.UpdateApp(ctx, clientID, opts)
+	app, err := mgr.UpdateAppInTenant(ctx, callerTenant, clientID, opts)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
@@ -342,7 +344,8 @@ func (h *IAMHandler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -375,7 +378,7 @@ func (h *IAMHandler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete app
-	if err := mgr.DeleteApp(ctx, clientID); err != nil {
+	if err := mgr.DeleteAppInTenant(ctx, callerTenant, clientID); err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
 	}
@@ -393,7 +396,8 @@ func (h *IAMHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
-	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+	callerTenant, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -426,7 +430,7 @@ func (h *IAMHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Rotate secret
-	app, err := mgr.RotateSecret(ctx, clientID)
+	app, err := mgr.RotateSecretInTenant(ctx, callerTenant, clientID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -911,7 +912,7 @@ func BenchmarkBatchProcessor_ImportUsers(b *testing.B) {
 	items := make([]UserImportItem, 100)
 	for i := 0; i < 100; i++ {
 		items[i] = UserImportItem{
-			Email: "bench" + string(rune(i)) + "@example.com",
+			Email: "bench" + strconv.Itoa(i) + "@example.com",
 			Name:  "Benchmark User",
 		}
 	}

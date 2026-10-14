@@ -15,6 +15,7 @@ package catalog
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -571,7 +572,7 @@ func BenchmarkPebbleStoragePutEntry(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		key := "ns1:bench/obj" + string(rune(i))
+		key := "ns1:bench/obj" + strconv.Itoa(i)
 		entry := createPebbleTestEntry(key)
 		if err := storage.PutEntry(ctx, entry); err != nil {
 			b.Fatalf("failed to put entry: %v", err)
@@ -595,14 +596,14 @@ func BenchmarkPebbleStorageGetEntry(b *testing.B) {
 
 	// Pre-populate with entries
 	for i := 0; i < 1000; i++ {
-		key := "ns1:bench/obj" + string(rune(i))
+		key := "ns1:bench/obj" + strconv.Itoa(i)
 		entry := createPebbleTestEntry(key)
 		if err := storage.PutEntry(ctx, entry); err != nil {
 			b.Fatalf("failed to put entry: %v", err)
 		}
 	}
 
-	key := "ns1:bench/obj" + string(rune(500))
+	key := "ns1:bench/obj" + strconv.Itoa(500)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

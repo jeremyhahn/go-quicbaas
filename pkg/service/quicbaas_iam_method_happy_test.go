@@ -20,7 +20,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -72,7 +74,7 @@ func happyPolicy(tenantID, name string) *iam.Policy {
 // registerHappyApp creates an application and returns its client ID.
 func registerHappyApp(t *testing.T, w *iamServiceWrapper, tenantID, name string) string {
 	t.Helper()
-	resp, err := w.RegisterApp(context.Background(), &RegisterAppRequest{
+	resp, err := w.RegisterApp(tenantctx.WithTenant(context.Background(), tenantID), &RegisterAppRequest{
 		TenantID:     tenantID,
 		Name:         name,
 		RedirectURIs: []string{"https://app.example.com/callback"},
@@ -88,8 +90,8 @@ func registerHappyApp(t *testing.T, w *iamServiceWrapper, tenantID, name string)
 func TestIAMServiceWrapper_AppLifecycle_HappyPath(t *testing.T) {
 	provider, _ := newHappyAppProvider()
 	w := &iamServiceWrapper{provider: provider}
-	ctx := context.Background()
 	const tenantID = "tenant-apps"
+	ctx := tenantctx.WithTenant(context.Background(), tenantID)
 
 	clientID := registerHappyApp(t, w, tenantID, "billing-service")
 
@@ -142,7 +144,7 @@ func TestIAMServiceWrapper_AppLifecycle_HappyPath(t *testing.T) {
 func TestIAMServiceWrapper_App_BackendErrors(t *testing.T) {
 	provider, _ := newHappyAppProvider()
 	w := &iamServiceWrapper{provider: provider}
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	t.Run("RegisterApp_InvalidOptions", func(t *testing.T) {
 		// Empty name fails AppManager.validateRegisterOptions.
@@ -173,6 +175,64 @@ func TestIAMServiceWrapper_App_BackendErrors(t *testing.T) {
 	t.Run("RotateAppSecret_NotFound", func(t *testing.T) {
 		_, err := w.RotateAppSecret(ctx, &RotateAppSecretRequest{ClientID: "missing"})
 		require.Error(t, err)
+	})
+}
+
+// TestIAMServiceWrapper_AppVerbsStayInCallerTenant proves the service-layer
+// app verbs (served to MCP, QUIC and the embedded transport) look the client
+// up inside the caller's tenant: another tenant's client id answers
+// not-found and leaves that app untouched, and a context with no tenant is
+// refused before any lookup.
+func TestIAMServiceWrapper_AppVerbsStayInCallerTenant(t *testing.T) {
+	provider, _ := newHappyAppProvider()
+	w := &iamServiceWrapper{provider: provider}
+	clientID := registerHappyApp(t, w, "tenant-b", "victim")
+	attacker := tenantctx.WithTenant(context.Background(), "tenant-a")
+	owner := tenantctx.WithTenant(context.Background(), "tenant-b")
+	name := "hijacked"
+
+	t.Run("CrossTenantIsNotFound", func(t *testing.T) {
+		_, err := w.GetApp(attacker, &GetAppRequest{ClientID: clientID})
+		assert.True(t, errors.IsNotFound(err), "GetApp: %v", err)
+		_, err = w.UpdateApp(attacker, &UpdateAppRequest{ClientID: clientID, Name: &name})
+		assert.True(t, errors.IsNotFound(err), "UpdateApp: %v", err)
+		_, err = w.RotateAppSecret(attacker, &RotateAppSecretRequest{ClientID: clientID})
+		assert.True(t, errors.IsNotFound(err), "RotateAppSecret: %v", err)
+		_, err = w.DeleteApp(attacker, &DeleteAppRequest{ClientID: clientID})
+		assert.True(t, errors.IsNotFound(err), "DeleteApp: %v", err)
+	})
+
+	t.Run("NamingAnotherTenantIsRefused", func(t *testing.T) {
+		_, err := w.RegisterApp(attacker, &RegisterAppRequest{
+			TenantID:     "tenant-b",
+			Name:         "planted",
+			RedirectURIs: []string{"https://planted.example.com/callback"},
+		})
+		var crossTenant *tenantctx.CrossTenantError
+		assert.ErrorAs(t, err, &crossTenant, "RegisterApp")
+		_, err = w.ListApps(attacker, &ListAppsRequest{TenantID: "tenant-b"})
+		assert.ErrorAs(t, err, &crossTenant, "ListApps")
+	})
+
+	t.Run("NoCallerTenantIsRefused", func(t *testing.T) {
+		_, err := w.GetApp(context.Background(), &GetAppRequest{ClientID: clientID})
+		require.Error(t, err)
+		assert.False(t, errors.IsNotFound(err), "a missing caller tenant must not reach the lookup: %v", err)
+		_, err = w.ListApps(context.Background(), &ListAppsRequest{TenantID: "tenant-b"})
+		require.Error(t, err)
+	})
+
+	t.Run("OwnerSucceeds", func(t *testing.T) {
+		listed, err := w.ListApps(owner, &ListAppsRequest{TenantID: "tenant-b"})
+		require.NoError(t, err)
+		assert.Len(t, listed.Apps, 1, "a refused cross-tenant register must not plant an app")
+		resp, err := w.GetApp(owner, &GetAppRequest{ClientID: clientID})
+		require.NoError(t, err)
+		assert.Equal(t, "victim", resp.App.Name, "a refused cross-tenant update must not rename the app")
+		_, err = w.RotateAppSecret(owner, &RotateAppSecretRequest{ClientID: clientID})
+		require.NoError(t, err)
+		_, err = w.DeleteApp(owner, &DeleteAppRequest{ClientID: clientID})
+		require.NoError(t, err)
 	})
 }
 

@@ -25,6 +25,7 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestMFAServer_CompleteEnrollment_ServiceError(t *testing.T) {
@@ -34,7 +35,7 @@ func TestMFAServer_CompleteEnrollment_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.CompleteEnrollment(context.Background(), &iampb.CompleteMFAEnrollmentRequest{
+	_, err := srv.CompleteEnrollment(tenantctx.WithTenant(context.Background(), "t-1"), &iampb.CompleteMFAEnrollmentRequest{
 		EnrollmentId: "enroll-1", Code: "123456",
 	})
 	require.Error(t, err)
@@ -48,7 +49,7 @@ func TestMFAServer_CancelEnrollment_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.CancelEnrollment(context.Background(), &iampb.CancelMFAEnrollmentRequest{
+	_, err := srv.CancelEnrollment(tenantctx.WithTenant(context.Background(), "t-1"), &iampb.CancelMFAEnrollmentRequest{
 		EnrollmentId: "enroll-1",
 	})
 	require.Error(t, err)
@@ -62,7 +63,7 @@ func TestMFAServer_BeginChallenge_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.BeginChallenge(context.Background(), &iampb.BeginMFAChallengeRequest{
+	_, err := srv.BeginChallenge(tenantctx.WithTenant(context.Background(), "t-1"), &iampb.BeginMFAChallengeRequest{
 		UserId: "u-1", TenantId: "t-1",
 	})
 	require.Error(t, err)
@@ -76,7 +77,7 @@ func TestMFAServer_VerifyChallenge_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.VerifyChallenge(context.Background(), &iampb.VerifyMFAChallengeRequest{
+	_, err := srv.VerifyChallenge(tenantctx.WithTenant(context.Background(), "t-1"), &iampb.VerifyMFAChallengeRequest{
 		ChallengeId: "ch-1", Code: "123456",
 	})
 	require.Error(t, err)
@@ -90,7 +91,7 @@ func TestMFAServer_Disable_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.Disable(context.Background(), &iampb.DisableMFARequest{
+	_, err := srv.Disable(tenantctx.WithTenant(context.Background(), "t-1"), &iampb.DisableMFARequest{
 		UserId: "u-1", TenantId: "t-1",
 	})
 	require.Error(t, err)
@@ -104,7 +105,7 @@ func TestMFAServer_GenerateBackupCodes_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.GenerateBackupCodes(context.Background(), &iampb.GenerateBackupCodesRequest{
+	_, err := srv.GenerateBackupCodes(tenantctx.WithTenant(context.Background(), "t-1"), &iampb.GenerateBackupCodesRequest{
 		UserId: "u-1", TenantId: "t-1",
 	})
 	require.Error(t, err)
