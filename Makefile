@@ -1201,7 +1201,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # command, where a `@#` line is handed to bash as a COMMAND and fails with
 # exit 127. That is exactly how this comment broke `make test` in CI run 4119.
 .PHONY: test
-test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script ## Run unit tests (excludes integration tests)
+test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
@@ -1246,6 +1246,19 @@ check-workspace-script: ## Fail if a Dockerfile writes go.work inline instead of
 		exit 1; \
 	fi
 	@sh test/integration/mkworkspace_test.sh
+
+.PHONY: check-package-targets
+# Lanes 124b and 124c could not reach pkg/api/grpc through `make test-api/grpc`
+# (GNU make never matches a target with a slash against test-%) and fell back to
+# a hand-rolled `go test` with copied tags. This proves, with `make -n` only,
+# that test-%, bench-%, coverage-% and test-sdk-go-% resolve dash-named nested
+# and hyphenated packages to the right path and tag set, and that an unknown
+# name fails. scripts/package-targets-exit_test.sh then runs each of them with
+# a stand-in go whose tests fail, and fails if any target still exits 0.
+check-package-targets: ## Fail if a per-package make target does not reach its nested package or hides a test failure
+	@echo "$(BLUE)Checking per-package make targets resolve nested packages...$(NC)"
+	@TEST_TAGS='$(TEST_TAGS)' IAM_TEST_TAGS='$(IAM_TEST_TAGS)' MAKE='$(MAKE)' sh scripts/resolve-package_test.sh
+	@MAKE='$(MAKE)' sh scripts/package-targets-exit_test.sh
 
 .PHONY: check-local-keygen
 # go-xkms owns keys and certificates for the whole stack; go-quicbaas composes
@@ -1418,22 +1431,81 @@ test-verbose: ## Run tests with verbose output
 	@echo "$(BLUE)Running tests (verbose)...$(NC)"
 	$(GOTEST) -v -race -timeout=30m ./...
 
+# One package resolver for test-%, bench-%, coverage-% and their Go SDK forms
+# test-sdk-go-%, bench-sdk-go-% and coverage-sdk-go-%.
+# GNU make never matches `test-api/grpc` against test-% (it strips the
+# directory part first), so nested packages are named with dashes:
+# api-grpc reaches pkg/api/grpc, while a real hyphenated directory such as
+# server-tpm2-keys still reaches pkg/server/tpm2-keys. scripts/resolve-package.sh
+# documents the search. Resolving at expansion time puts the real path and tag
+# set in `make -n`, which scripts/resolve-package_test.sh relies on.
+PKG_ROOTS := pkg cmd
+
+# pkg_dir is the package directory the target stem names under roots $(1),
+# empty when none does.
+pkg_dir = $(shell scripts/resolve-package.sh '$*' $(1))
+
+# pkg_resolve opens a recipe: it sets PKG_DIR and PKG_PATH for the package
+# the target stem names under roots $(1), or fails with the error.
+pkg_resolve = PKG_DIR='$(call pkg_dir,$(1))'; \
+	if [ -z "$${PKG_DIR}" ]; then \
+		echo "$(RED)Error: Package '$*' not found in $(subst / ,/ or ,$(addsuffix /,$(1)))$(NC)"; \
+		exit 1; \
+	fi; \
+	PKG_PATH="./$${PKG_DIR}/..."
+
+# sdk_go_resolve opens a Go SDK recipe: pkg_resolve under sdk/go, plus
+# SDK_PKG_PATH, the package pattern inside the sdk/go module.
+sdk_go_resolve = $(call pkg_resolve,sdk/go); \
+	SDK_PKG_PATH="./$${PKG_DIR\#sdk/go/}/..."
+
+# pkg_cover_report writes the HTML report for the coverage profile
+# $${PROFILE}.out and prints its total for PKG_DIR. It runs in the module that
+# holds the package, since `go tool cover` reads the package sources. A report
+# that cannot be written fails the target rather than naming a missing file.
+pkg_cover_report = $(GOCMD) tool cover -html=$${PROFILE}.out -o $${PROFILE}.html || exit $$?; \
+	echo "$(GREEN)Coverage report: $${PROFILE}.html$(NC)"; \
+	TOTAL=$$($(GOCMD) tool cover -func=$${PROFILE}.out | grep total | awk '{print $$3}'); \
+	echo "$(GREEN)Total coverage for $${PKG_DIR}: $$TOTAL$(NC)"
+
+# pkg_tags is the tag set for the package the target stem names in pkg/ or cmd/.
+pkg_tags = $(if $(filter pkg/iam pkg/iam/%,$(call pkg_dir,$(PKG_ROOTS))),$(IAM_TEST_TAGS),$(TEST_TAGS))
+
 # Dynamic package test targets - use: make test-<package>
 # Examples: make test-xkms, make test-kms, make test-iam
-# Supports nested packages: make test-kms/xkms, make test-security/certs
-test-%: ## Run unit tests for a specific package (e.g., make test-xkms)
-	@PKG="$*"; \
-	PKG_PATH="./pkg/$${PKG}/..."; \
-	if [ ! -d "pkg/$${PKG}" ]; then \
-		PKG_PATH="./cmd/$${PKG}/..."; \
-		if [ ! -d "cmd/$${PKG}" ]; then \
-			echo "$(RED)Error: Package '$${PKG}' not found in pkg/ or cmd/$(NC)"; \
-			exit 1; \
-		fi; \
-	fi; \
-	case "$${PKG}" in iam|iam/*) TAGS='$(IAM_TEST_TAGS)';; *) TAGS='$(TEST_TAGS)';; esac; \
+# Nested packages use dashes: make test-api-grpc (pkg/api/grpc),
+# make test-iam-dpop (pkg/iam/dpop), make test-server-tpm2-keys
+test-%: ## Run unit tests for a specific package (e.g., make test-xkms, make test-api-grpc)
+	@$(call pkg_resolve,$(PKG_ROOTS)); \
+	TAGS='$(pkg_tags)'; \
 	echo "$(BLUE)Running tests for $${PKG_PATH}...$(NC)"; \
 	$(GOTEST) -v -tags "$${TAGS}" -timeout=5m $${PKG_PATH}
+
+# Go SDK package test targets - use: make test-sdk-go-<package>
+# sdk/go is its own module, so the tests run inside it with test-sdk-go's
+# flags. Example: make test-sdk-go-transport-grpc (sdk/go/transport/grpc)
+test-sdk-go-%: ## Run Go SDK unit tests for one package (e.g., make test-sdk-go-transport-grpc)
+	@$(sdk_go_resolve); \
+	echo "$(BLUE)Running Go SDK tests for $${PKG_PATH}...$(NC)"; \
+	cd sdk/go && go test -v -race -count=1 "$${SDK_PKG_PATH}"
+
+# Go SDK package benchmarks with bench-sdk-go's flags.
+# Example: make bench-sdk-go-transport-grpc (sdk/go/transport/grpc)
+bench-sdk-go-%: ## Run Go SDK benchmarks for one package (e.g., make bench-sdk-go-transport-grpc)
+	@$(sdk_go_resolve); \
+	echo "$(BLUE)Running Go SDK benchmarks for $${PKG_PATH}...$(NC)"; \
+	cd sdk/go && go test -bench=. -benchmem "$${SDK_PKG_PATH}"
+
+# Go SDK package coverage, written where coverage-% writes:
+# $(COVERAGE_DIR)/coverage-sdk-go-<package>.{out,html}.
+# Example: make coverage-sdk-go-transport-grpc (sdk/go/transport/grpc)
+coverage-sdk-go-%: ## Generate coverage report for one Go SDK package (e.g., make coverage-sdk-go-transport-grpc)
+	@$(sdk_go_resolve); \
+	PROFILE='$(abspath $(COVERAGE_DIR))/coverage-sdk-go-$(subst /,-,$*)'; \
+	echo "$(BLUE)Generating Go SDK coverage for $${PKG_PATH}...$(NC)"; \
+	mkdir -p $(COVERAGE_DIR); \
+	cd sdk/go && go test -coverprofile="$${PROFILE}.out" "$${SDK_PKG_PATH}" || exit $$?; \
+	$(pkg_cover_report)
 
 # Redis L2 Cache integration tests
 .PHONY: integration-test-cache-redis
@@ -2104,40 +2176,23 @@ build-desktop-windows: ## Cross-compile client for Windows — NOT YET WIRED
 # Dynamic coverage targets - use: make coverage-<package>
 # Examples: make coverage-xkms, make coverage-kms, make coverage-iam
 # Nested packages use dashes: make coverage-api-grpc (maps to pkg/api/grpc)
+# A failing go test fails the target before any report is written;
+# scripts/package-targets-exit_test.sh holds every per-package target to that.
 coverage-%: ## Generate coverage report for a specific package (e.g., make coverage-xkms)
-	@PKG="$*"; \
-	PKG_DIR=$$(echo "$${PKG}" | tr '-' '/'); \
-	SAFE_NAME=$$(echo "$${PKG}" | tr '/' '-'); \
-	PKG_PATH="./pkg/$${PKG_DIR}/..."; \
-	if [ ! -d "pkg/$${PKG_DIR}" ]; then \
-		PKG_PATH="./cmd/$${PKG_DIR}/..."; \
-		if [ ! -d "cmd/$${PKG_DIR}" ]; then \
-			echo "$(RED)Error: Package '$${PKG_DIR}' not found in pkg/ or cmd/$(NC)"; \
-			exit 1; \
-		fi; \
-	fi; \
-	case "$${PKG_DIR}" in iam|iam/*) TAGS='$(IAM_TEST_TAGS)';; *) TAGS='$(TEST_TAGS)';; esac; \
+	@$(call pkg_resolve,$(PKG_ROOTS)); \
+	PROFILE='$(COVERAGE_DIR)/coverage-$(subst /,-,$*)'; \
+	TAGS='$(pkg_tags)'; \
 	echo "$(BLUE)Generating coverage for $${PKG_PATH}...$(NC)"; \
 	mkdir -p $(COVERAGE_DIR); \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags "$${TAGS}" -coverprofile=$(COVERAGE_DIR)/coverage-$${SAFE_NAME}.out $${PKG_PATH}; \
-	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-$${SAFE_NAME}.out -o $(COVERAGE_DIR)/coverage-$${SAFE_NAME}.html; \
-	echo "$(GREEN)Coverage report: $(COVERAGE_DIR)/coverage-$${SAFE_NAME}.html$(NC)"; \
-	TOTAL=$$($(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-$${SAFE_NAME}.out | grep total | awk '{print $$3}'); \
-	echo "$(GREEN)Total coverage for $${PKG_DIR}: $$TOTAL$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags "$${TAGS}" -coverprofile=$${PROFILE}.out $${PKG_PATH} || exit $$?; \
+	$(pkg_cover_report)
 
 # Dynamic benchmark targets - use: make bench-<package>
 # Examples: make bench-xkms, make bench-kms, make bench-storage
+# Nested packages use dashes: make bench-api-grpc (maps to pkg/api/grpc)
 bench-%: ## Run benchmarks for a specific package (e.g., make bench-xkms)
-	@PKG="$*"; \
-	PKG_PATH="./pkg/$${PKG}/..."; \
-	if [ ! -d "pkg/$${PKG}" ]; then \
-		PKG_PATH="./cmd/$${PKG}/..."; \
-		if [ ! -d "cmd/$${PKG}" ]; then \
-			echo "$(RED)Error: Package '$${PKG}' not found in pkg/ or cmd/$(NC)"; \
-			exit 1; \
-		fi; \
-	fi; \
-	case "$${PKG}" in iam|iam/*) TAGS='$(IAM_TEST_TAGS)';; *) TAGS='$(TEST_TAGS)';; esac; \
+	@$(call pkg_resolve,$(PKG_ROOTS)); \
+	TAGS='$(pkg_tags)'; \
 	echo "$(BLUE)Running benchmarks for $${PKG_PATH}...$(NC)"; \
 	$(GOTEST) -tags "$${TAGS}" -bench=. -benchmem -run=^$$ $${PKG_PATH}
 
@@ -2147,6 +2202,8 @@ list-packages: ## List all packages with available test targets
 	@echo ""
 	@echo "$(GREEN)Unit Tests (test-<pkg>):$(NC)"
 	@echo "  Usage: make test-<package>"
+	@echo "  Nested packages use dashes: make test-api-grpc (pkg/api/grpc)"
+	@echo "  Go SDK packages: make test-sdk-go-transport-grpc (sdk/go/transport/grpc)"
 	@echo "  Available packages in pkg/:"
 	@for dir in pkg/*/; do \
 		if [ -d "$$dir" ]; then \
@@ -2193,10 +2250,12 @@ list-packages: ## List all packages with available test targets
 	@echo "    make integration-test-sdk-js     # All JavaScript SDK tests"
 	@echo ""
 	@echo "$(GREEN)Coverage (coverage-<pkg>):$(NC)"
-	@echo "  Usage: make coverage-<package>"
+	@echo "  Usage: make coverage-<package>   (nested: make coverage-api-grpc)"
+	@echo "  Go SDK packages: make coverage-sdk-go-transport-grpc (sdk/go/transport/grpc)"
 	@echo ""
 	@echo "$(GREEN)Benchmarks (bench-<pkg>):$(NC)"
-	@echo "  Usage: make bench-<package>"
+	@echo "  Usage: make bench-<package>      (nested: make bench-api-grpc)"
+	@echo "  Go SDK packages: make bench-sdk-go-transport-grpc (sdk/go/transport/grpc)"
 
 # Legacy target - deprecated, use list-packages instead
 .PHONY: list-integration-packages
@@ -4665,7 +4724,7 @@ integration-test-agents: ## Run full E2E agent orchestration tests with real age
 		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' \
 		$(GOTEST) -v -tags 'integration agents' -timeout 600s \
 		./test/integration/agents/... 2>&1 | tee integration-test-agents.log; \
-	TEST_EXIT=$$?; \
+	TEST_EXIT=$${PIPESTATUS[0]}; \
 	echo "$(BLUE)Stopping agent environment...$(NC)"; \
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \
 	if [ $$TEST_EXIT -eq 0 ]; then \

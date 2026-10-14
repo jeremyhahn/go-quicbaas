@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Batch soak survives a failed iteration** (#1317). The failure summary
+  piped `grep | head` under pipefail, so a failed iteration ended the step with
+  exit 141 instead of letting the loop go on. It now uses `grep -m`, also
+  prints each testify error, and keeps that iteration's service logs as
+  `soak-logs/<i>.compose.log`. A new always-run step brings the integration
+  stack down when the runner kills the loop at timeout or on cancel.
+
 ## [0.14.0-alpha] - 2026-10-02
 
 go-trusted-platform v0.2.0-alpha upstream step U3. Highlights: service registry,

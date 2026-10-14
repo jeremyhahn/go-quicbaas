@@ -257,11 +257,31 @@ jobs:
             else
               failed=$((failed + 1))
               echo "BATCH-FINDING soak iteration $i failed"
-              grep -E '^(--- FAIL|FAIL|panic:)|WARNING: DATA RACE' "soak-logs/$i.log" | head -n 40
+              # grep -m, not `grep | head`: under pipefail, head closing the
+              # pipe kills grep with SIGPIPE and the step with it (exit 141),
+              # and a log with no match must not end the loop either (#1317).
+              grep -E -m 40 '^(--- FAIL|FAIL|panic:)|WARNING: DATA RACE' "soak-logs/$i.log" || true
+              # testify prints the error itself on the line after `Error:`.
+              grep -E -m 20 -A 1 '^[[:space:]]+Error:[[:space:]]' "soak-logs/$i.log" || true
+              # The target writes the stack's service logs here on a failed
+              # run and overwrites them on the next; keep this iteration's.
+              if [ -f integration-compose.log ]; then
+                mv integration-compose.log "soak-logs/$i.compose.log"
+              fi
             fi
           done
           echo "soak: $i iterations, $failed failed"
           [ "$failed" -eq 0 ]
+
+      # The target's EXIT trap brings the stack down on every way out of an
+      # iteration, but not when the runner kills the step at timeout or on
+      # cancel. RUN_ID is the same for every make call in this job, so this
+      # names the same compose project the loop used.
+      - name: Tear down the integration stack
+        if: always()
+        run: |
+          make cluster-down-integration ||
+            echo "batch: integration stack teardown failed"
 
       - name: Upload soak logs (Gitea)
         if: failure() && github.server_url != 'https://github.com'

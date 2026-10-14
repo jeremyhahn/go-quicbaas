@@ -14,6 +14,7 @@
 package metrics
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -242,6 +243,61 @@ func TestMetricCacheTypeMismatchRecovery(t *testing.T) {
 			c.Inc()
 		})
 	})
+}
+
+// TestConcurrentConstructionSharesCollector builds the same metric from many
+// goroutines released at once. Every caller that misses the cache together
+// must get the one registered collector; none may panic with a duplicate
+// registration.
+func TestConcurrentConstructionSharesCollector(t *testing.T) {
+	const callers = 64
+
+	tests := []struct {
+		name  string
+		build func() any
+	}{
+		{"counter", func() any {
+			return NewCounter(CounterOpts{Namespace: "race", Name: "counter_total", Help: "h"}).counter
+		}},
+		{"gauge", func() any {
+			return NewGauge(GaugeOpts{Namespace: "race", Name: "gauge", Help: "h"}).gauge
+		}},
+		{"histogram", func() any {
+			return NewHistogram(HistogramOpts{Namespace: "race", Name: "histogram", Help: "h"}).histogram
+		}},
+		{"gauge vec", func() any {
+			return NewGaugeVec(GaugeOpts{Namespace: "race", Name: "gauge_vec", Help: "h"}, []string{"l"}).gaugeVec
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			SetRegistry(prometheus.NewRegistry())
+			defer SetRegistry(prometheus.NewRegistry())
+
+			start := make(chan struct{})
+			got := make([]any, callers)
+			panics := make([]any, callers)
+			var wg sync.WaitGroup
+			for i := range callers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					defer func() { panics[i] = recover() }()
+					<-start
+					got[i] = tt.build()
+				}()
+			}
+			close(start)
+			wg.Wait()
+
+			for i := range callers {
+				require.Nil(t, panics[i], "caller %d panicked", i)
+				require.NotNil(t, got[i], "caller %d got no collector", i)
+				assert.Same(t, got[0], got[i], "caller %d got a different collector", i)
+			}
+		})
+	}
 }
 
 // TestHistogramVecTypeAssertion tests the type assertion paths in HistogramVec.

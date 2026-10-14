@@ -190,242 +190,139 @@ type HistogramOpts struct {
 	Buckets     []float64
 }
 
-// NewCounter creates and registers a new counter metric.
-func NewCounter(opts CounterOpts) *Counter {
+// cachedMetric returns the metric cached under key, registering one with
+// build on a miss. The re-check and the registration run under one write
+// lock, so callers that miss the cache together register exactly once and
+// all receive the same collector. A cached entry of the wrong type is
+// evicted and replaced by a fresh registration.
+func cachedMetric[T any](key, kind string, build func(promauto.Factory) T) T {
 	registryMu.RLock()
 	reg := defaultRegistry
 	registryMu.RUnlock()
 
-	key := "counter:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name
 	metricCacheMu.RLock()
-	if v, ok := metricCache[key]; ok {
-		metricCacheMu.RUnlock()
-		if c, ok := v.(prometheus.Counter); ok {
-			return &Counter{counter: c}
-		}
-		// Cache contains wrong type; evict and re-register below
-		slog.Warn("metrics: cached metric type mismatch for counter, re-registering",
-			"key", key, "type", fmt.Sprintf("%T", v))
-		metricCacheMu.Lock()
-		delete(metricCache, key)
-		metricCacheMu.Unlock()
-	} else {
-		metricCacheMu.RUnlock()
+	v, ok := metricCache[key]
+	metricCacheMu.RUnlock()
+	if m, isT := v.(T); ok && isT {
+		return m
 	}
 
-	counter := promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Namespace:   opts.Namespace,
-		Subsystem:   opts.Subsystem,
-		Name:        opts.Name,
-		Help:        opts.Help,
-		ConstLabels: opts.ConstLabels,
-	})
-
 	metricCacheMu.Lock()
-	metricCache[key] = counter
-	metricCacheMu.Unlock()
+	defer metricCacheMu.Unlock()
+
+	if v, ok := metricCache[key]; ok {
+		if m, isT := v.(T); isT {
+			return m
+		}
+		slog.Warn("metrics: cached metric type mismatch for "+kind+", re-registering",
+			"key", key, "type", fmt.Sprintf("%T", v))
+		delete(metricCache, key)
+	}
+
+	m := build(promauto.With(reg))
+	metricCache[key] = m
+	return m
+}
+
+// NewCounter creates and registers a new counter metric.
+func NewCounter(opts CounterOpts) *Counter {
+	key := "counter:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name
+	counter := cachedMetric(key, "counter", func(f promauto.Factory) prometheus.Counter {
+		return f.NewCounter(prometheus.CounterOpts{
+			Namespace:   opts.Namespace,
+			Subsystem:   opts.Subsystem,
+			Name:        opts.Name,
+			Help:        opts.Help,
+			ConstLabels: opts.ConstLabels,
+		})
+	})
 	return &Counter{counter: counter}
 }
 
 // NewGauge creates and registers a new gauge metric.
 func NewGauge(opts GaugeOpts) *Gauge {
-	registryMu.RLock()
-	reg := defaultRegistry
-	registryMu.RUnlock()
-
 	key := "gauge:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name
-	metricCacheMu.RLock()
-	if v, ok := metricCache[key]; ok {
-		metricCacheMu.RUnlock()
-		if g, ok := v.(prometheus.Gauge); ok {
-			return &Gauge{gauge: g}
-		}
-		// Cache contains wrong type; evict and re-register below
-		slog.Warn("metrics: cached metric type mismatch for gauge, re-registering",
-			"key", key, "type", fmt.Sprintf("%T", v))
-		metricCacheMu.Lock()
-		delete(metricCache, key)
-		metricCacheMu.Unlock()
-	} else {
-		metricCacheMu.RUnlock()
-	}
-
-	gauge := promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-		Namespace:   opts.Namespace,
-		Subsystem:   opts.Subsystem,
-		Name:        opts.Name,
-		Help:        opts.Help,
-		ConstLabels: opts.ConstLabels,
+	gauge := cachedMetric(key, "gauge", func(f promauto.Factory) prometheus.Gauge {
+		return f.NewGauge(prometheus.GaugeOpts{
+			Namespace:   opts.Namespace,
+			Subsystem:   opts.Subsystem,
+			Name:        opts.Name,
+			Help:        opts.Help,
+			ConstLabels: opts.ConstLabels,
+		})
 	})
-
-	metricCacheMu.Lock()
-	metricCache[key] = gauge
-	metricCacheMu.Unlock()
 	return &Gauge{gauge: gauge}
 }
 
 // NewHistogram creates and registers a new histogram metric.
 func NewHistogram(opts HistogramOpts) *Histogram {
-	registryMu.RLock()
-	reg := defaultRegistry
-	registryMu.RUnlock()
-
 	buckets := opts.Buckets
 	if len(buckets) == 0 {
 		buckets = prometheus.DefBuckets
 	}
 
 	key := "hist:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name + ":" + fmt.Sprint(buckets)
-	metricCacheMu.RLock()
-	if v, ok := metricCache[key]; ok {
-		metricCacheMu.RUnlock()
-		if h, ok := v.(prometheus.Histogram); ok {
-			return &Histogram{histogram: h}
-		}
-		// Cache contains wrong type; evict and re-register below
-		slog.Warn("metrics: cached metric type mismatch for histogram, re-registering",
-			"key", key, "type", fmt.Sprintf("%T", v))
-		metricCacheMu.Lock()
-		delete(metricCache, key)
-		metricCacheMu.Unlock()
-	} else {
-		metricCacheMu.RUnlock()
-	}
-
-	histogram := promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-		Namespace:   opts.Namespace,
-		Subsystem:   opts.Subsystem,
-		Name:        opts.Name,
-		Help:        opts.Help,
-		ConstLabels: opts.ConstLabels,
-		Buckets:     buckets,
-	})
-	metricCacheMu.Lock()
-	metricCache[key] = histogram
-	metricCacheMu.Unlock()
-	return &Histogram{histogram: histogram}
-}
-
-// NewCounterVec creates and registers a new counter vector metric.
-func NewCounterVec(opts CounterOpts, labelNames []string) *CounterVec {
-	registryMu.RLock()
-	reg := defaultRegistry
-	registryMu.RUnlock()
-
-	key := "countervec:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name + ":" + fmt.Sprint(labelNames)
-
-	// Use write lock to prevent race condition during registration
-	metricCacheMu.Lock()
-	defer metricCacheMu.Unlock()
-
-	// Double-check cache after acquiring write lock
-	if v, ok := metricCache[key]; ok {
-		if cv, ok := v.(*prometheus.CounterVec); ok {
-			return &CounterVec{counterVec: cv}
-		}
-		// Cache contains wrong type; evict and re-register below
-		slog.Warn("metrics: cached metric type mismatch for counter vec, re-registering",
-			"key", key, "type", fmt.Sprintf("%T", v))
-		delete(metricCache, key)
-	}
-
-	// Not in cache - register new metric
-	counterVec := promauto.With(reg).NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace:   opts.Namespace,
-			Subsystem:   opts.Subsystem,
-			Name:        opts.Name,
-			Help:        opts.Help,
-			ConstLabels: opts.ConstLabels,
-		},
-		labelNames,
-	)
-
-	metricCache[key] = counterVec
-	return &CounterVec{counterVec: counterVec}
-}
-
-// NewGaugeVec creates and registers a new gauge vector metric.
-func NewGaugeVec(opts GaugeOpts, labelNames []string) *GaugeVec {
-	registryMu.RLock()
-	reg := defaultRegistry
-	registryMu.RUnlock()
-
-	key := "gaugevec:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name + ":" + fmt.Sprint(labelNames)
-
-	// Use write lock to prevent race condition during registration
-	metricCacheMu.Lock()
-	defer metricCacheMu.Unlock()
-
-	// Double-check cache after acquiring write lock
-	if v, ok := metricCache[key]; ok {
-		if gv, ok := v.(*prometheus.GaugeVec); ok {
-			return &GaugeVec{gaugeVec: gv}
-		}
-		// Cache contains wrong type; evict and re-register below
-		slog.Warn("metrics: cached metric type mismatch for gauge vec, re-registering",
-			"key", key, "type", fmt.Sprintf("%T", v))
-		delete(metricCache, key)
-	}
-
-	// Not in cache - register new metric
-	gaugeVec := promauto.With(reg).NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace:   opts.Namespace,
-			Subsystem:   opts.Subsystem,
-			Name:        opts.Name,
-			Help:        opts.Help,
-			ConstLabels: opts.ConstLabels,
-		},
-		labelNames,
-	)
-
-	metricCache[key] = gaugeVec
-	return &GaugeVec{gaugeVec: gaugeVec}
-}
-
-// NewHistogramVec creates and registers a new histogram vector metric.
-func NewHistogramVec(opts HistogramOpts, labelNames []string) *HistogramVec {
-	registryMu.RLock()
-	reg := defaultRegistry
-	registryMu.RUnlock()
-
-	buckets := opts.Buckets
-	if len(buckets) == 0 {
-		buckets = prometheus.DefBuckets
-	}
-
-	key := "histvec:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name + ":" + fmt.Sprint(labelNames) + ":" + fmt.Sprint(buckets)
-
-	// Use write lock to prevent race condition during registration
-	metricCacheMu.Lock()
-	defer metricCacheMu.Unlock()
-
-	// Double-check cache after acquiring write lock
-	if v, ok := metricCache[key]; ok {
-		if hv, ok := v.(*prometheus.HistogramVec); ok {
-			return &HistogramVec{histogramVec: hv}
-		}
-		// Cache contains wrong type; evict and re-register below
-		slog.Warn("metrics: cached metric type mismatch for histogram vec, re-registering",
-			"key", key, "type", fmt.Sprintf("%T", v))
-		delete(metricCache, key)
-	}
-
-	// Not in cache - register new metric
-	histogramVec := promauto.With(reg).NewHistogramVec(
-		prometheus.HistogramOpts{
+	histogram := cachedMetric(key, "histogram", func(f promauto.Factory) prometheus.Histogram {
+		return f.NewHistogram(prometheus.HistogramOpts{
 			Namespace:   opts.Namespace,
 			Subsystem:   opts.Subsystem,
 			Name:        opts.Name,
 			Help:        opts.Help,
 			ConstLabels: opts.ConstLabels,
 			Buckets:     buckets,
-		},
-		labelNames,
-	)
+		})
+	})
+	return &Histogram{histogram: histogram}
+}
 
-	metricCache[key] = histogramVec
+// NewCounterVec creates and registers a new counter vector metric.
+func NewCounterVec(opts CounterOpts, labelNames []string) *CounterVec {
+	key := "countervec:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name + ":" + fmt.Sprint(labelNames)
+	counterVec := cachedMetric(key, "counter vec", func(f promauto.Factory) *prometheus.CounterVec {
+		return f.NewCounterVec(prometheus.CounterOpts{
+			Namespace:   opts.Namespace,
+			Subsystem:   opts.Subsystem,
+			Name:        opts.Name,
+			Help:        opts.Help,
+			ConstLabels: opts.ConstLabels,
+		}, labelNames)
+	})
+	return &CounterVec{counterVec: counterVec}
+}
+
+// NewGaugeVec creates and registers a new gauge vector metric.
+func NewGaugeVec(opts GaugeOpts, labelNames []string) *GaugeVec {
+	key := "gaugevec:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name + ":" + fmt.Sprint(labelNames)
+	gaugeVec := cachedMetric(key, "gauge vec", func(f promauto.Factory) *prometheus.GaugeVec {
+		return f.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace:   opts.Namespace,
+			Subsystem:   opts.Subsystem,
+			Name:        opts.Name,
+			Help:        opts.Help,
+			ConstLabels: opts.ConstLabels,
+		}, labelNames)
+	})
+	return &GaugeVec{gaugeVec: gaugeVec}
+}
+
+// NewHistogramVec creates and registers a new histogram vector metric.
+func NewHistogramVec(opts HistogramOpts, labelNames []string) *HistogramVec {
+	buckets := opts.Buckets
+	if len(buckets) == 0 {
+		buckets = prometheus.DefBuckets
+	}
+
+	key := "histvec:" + opts.Namespace + ":" + opts.Subsystem + ":" + opts.Name + ":" + fmt.Sprint(labelNames) + ":" + fmt.Sprint(buckets)
+	histogramVec := cachedMetric(key, "histogram vec", func(f promauto.Factory) *prometheus.HistogramVec {
+		return f.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace:   opts.Namespace,
+			Subsystem:   opts.Subsystem,
+			Name:        opts.Name,
+			Help:        opts.Help,
+			ConstLabels: opts.ConstLabels,
+			Buckets:     buckets,
+		}, labelNames)
+	})
 	return &HistogramVec{histogramVec: histogramVec}
 }
 
