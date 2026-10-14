@@ -17,10 +17,18 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"time"
 
+	"github.com/google/uuid"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
+
+// sshSignAuditAction is the audit action of every SignDigest call.
+const sshSignAuditAction = "ssh.key.sign"
 
 // =============================================================================
 // SSH Service — the single server-side entry point for the SSH surface
@@ -164,13 +172,45 @@ func (e *SSHPassphraseDecodeError) Unwrap() error { return e.Err }
 // sshService composes the go-xkms SSH SDK client.
 type sshService struct {
 	client xkmsssh.Client
+	audit  AuditLoggerSource
 }
 
 // NewSSHService returns the SSH service backed by client. A nil client is
 // accepted and makes every verb fail with *SSHNotConfiguredError, which is
 // how a deployment without an SSH store reports itself to callers.
-func NewSSHService(client xkmsssh.Client) SSHService {
-	return &sshService{client: client}
+func NewSSHService(client xkmsssh.Client, opts ...SSHServiceOption) SSHService {
+	s := &sshService{client: client}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// AuditLoggerSource yields the audit logger an audited service writes to.
+type AuditLoggerSource interface {
+	GetAuditLogger(ctx context.Context) (iam.AuditLogger, error)
+}
+
+// SSHServiceOption configures NewSSHService.
+type SSHServiceOption func(*sshService)
+
+// WithSSHAudit records every SignDigest call, naming the calling principal, in
+// the audit log source yields. Without it signatures are not audited.
+func WithSSHAudit(source AuditLoggerSource) SSHServiceOption {
+	return func(s *sshService) { s.audit = source }
+}
+
+// SSHServiceFor is the SSH service over svc's SSH client, audited through svc
+// when svc carries an audit log. A nil svc yields an unconfigured service.
+func SSHServiceFor(svc QuicBaaS) SSHService {
+	if svc == nil {
+		return NewSSHService(nil)
+	}
+	var opts []SSHServiceOption
+	if source, ok := svc.(AuditLoggerSource); ok {
+		opts = append(opts, WithSSHAudit(source))
+	}
+	return NewSSHService(svc.SSHClient(), opts...)
 }
 
 // compile-time contract.
@@ -242,6 +282,12 @@ func (s *sshService) SignDigest(ctx context.Context, req SSHSignRequest) (*SSHSi
 	if len(req.Digest) == 0 {
 		return nil, &SSHMissingDigestError{}
 	}
+	sig, err := s.signDigest(ctx, req)
+	s.auditSign(ctx, req, err)
+	return sig, err
+}
+
+func (s *sshService) signDigest(ctx context.Context, req SSHSignRequest) (*SSHSignature, error) {
 	signer, err := s.client.Keys().Signer(ctx, xkmsssh.GetKeyRequest{
 		Scope: req.Scope, Owner: req.Owner, Name: req.Name,
 	})
@@ -253,6 +299,40 @@ func (s *sshService) SignDigest(ctx context.Context, req SSHSignRequest) (*SSHSi
 		return nil, err
 	}
 	return &SSHSignature{Format: sig.Format, Blob: sig.Blob, Rest: sig.Rest}, nil
+}
+
+// auditSign records a signature, or a refused one, against the principal that
+// asked for it. It is best effort: signing never fails because the audit log
+// is unavailable.
+func (s *sshService) auditSign(ctx context.Context, req SSHSignRequest, cause error) {
+	if s.audit == nil {
+		return
+	}
+	logger, err := s.audit.GetAuditLogger(ctx)
+	if err != nil || logger == nil {
+		return
+	}
+	event := &iam.AuditEvent{
+		ID:        uuid.New().String(),
+		Timestamp: time.Now().UTC(),
+		EventType: iam.AuditEventAppEvent,
+		Category:  iam.AuditCategorySecurity,
+		Action:    sshSignAuditAction,
+		Outcome:   iam.AuditOutcomeSuccess,
+		Resource:  &iam.AuditResource{Type: "ssh_key", ID: req.Scope + "/" + req.Owner + "/" + req.Name, Name: req.Name},
+	}
+	if subject, ok := auth.SubjectFromContext(ctx); ok {
+		event.TenantID = subject.TenantID
+		event.Actor = &iam.AuditActor{UserID: subject.UserID, Username: subject.Username, Roles: subject.Roles}
+		if event.Actor.Username == "" {
+			event.Actor.Username = subject.ID
+		}
+	}
+	if cause != nil {
+		event.Outcome = iam.AuditOutcomeFailure
+		event.Details = map[string]interface{}{"error": cause.Error()}
+	}
+	logger.LogAsync(event)
 }
 
 // AddKnownHost pins a host-key fingerprint.

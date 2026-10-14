@@ -81,6 +81,7 @@ RUN apk add --no-cache \
     netcat-openbsd \
     bind-tools \
     git \
+    openssh-keygen \
     make \
     docker-cli \
     docker-cli-compose
@@ -134,4 +135,4 @@ ENV QUICBAAS_TEST_MODE=integration \
     TEST_BUILD_TAGS="${BUILD_TAGS}"
 
 # Default command: wait for cluster readiness, then run integration tests.
-CMD ["sh", "-c", "echo 'Waiting for cluster to be fully operational...' && /usr/local/bin/health_check.sh && echo 'Starting integration tests...' && echo \"Build tags: integration ${TEST_BUILD_TAGS}\" && go test -v -tags \"integration ${TEST_BUILD_TAGS}\" -timeout 30m ./test/integration/..."]
+CMD ["sh", "-c", "echo 'Waiting for cluster to be fully operational...' && /usr/local/bin/health_check.sh && echo 'Starting integration tests...' && echo \"Build tags: integration ${TEST_BUILD_TAGS}\" && go test -v -tags \"integration ${TEST_BUILD_TAGS}\" -timeout 30m ./test/integration/... ./cmd/quicbaasd"]

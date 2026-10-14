@@ -27,8 +27,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -37,7 +35,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	pkgiam "github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -47,7 +44,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/embedded"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/fido2"
 )
 
@@ -588,8 +584,7 @@ func (s *passkeyServer) enroll(t *testing.T, tr transport.Transport) string {
 	return results[0].Enrollment.Metadata["credential_id"]
 }
 
-// embeddedFIDO2 carries the ceremony to the FIDO2 service in-process. gRPC,
-// MCP and Unix reach the same service and return its response unchanged.
+// embeddedFIDO2 carries the ceremony to the FIDO2 service in-process.
 func embeddedFIDO2(t *testing.T, svc service.FIDO2Service) transport.Transport {
 	t.Helper()
 	tr, err := embedded.New(&fido2QuicBaaS{fido2: svc})
@@ -598,48 +593,6 @@ func embeddedFIDO2(t *testing.T, svc service.FIDO2Service) transport.Transport {
 	}
 	t.Cleanup(func() { closeFIDO2Transport(t, tr) })
 	return tr
-}
-
-// restFIDO2 carries the ceremony over the SDK REST transport (which QUIC
-// wraps) to the server's two xkms FIDO2 routes. Each route does what the
-// server's handler does: decode the JSON request, call the FIDO2 service as
-// the authenticated caller, and answer with the service's response as JSON.
-func restFIDO2(t *testing.T, svc service.FIDO2Service) transport.Transport {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/xkms/fido2/credentials/begin", func(w http.ResponseWriter, r *http.Request) {
-		resp, err := svc.BeginAddCredential(passkeyCaller(r.Context()), "")
-		writeFIDO2Response(t, w, resp, err)
-	})
-	mux.HandleFunc("POST /api/v1/xkms/fido2/register/finish", func(w http.ResponseWriter, r *http.Request) {
-		var req xkmstransport.FinishRegistrationRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		resp, err := svc.FinishRegistration(passkeyCaller(r.Context()), r.URL.Query().Get("tenant_id"), &req)
-		writeFIDO2Response(t, w, resp, err)
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-
-	tr, err := rest.New(&transport.Config{Address: server.URL}, rest.WithDefaultTenant(passkeyTenant))
-	if err != nil {
-		t.Fatalf("rest.New: %v", err)
-	}
-	t.Cleanup(func() { closeFIDO2Transport(t, tr) })
-	return tr
-}
-
-func writeFIDO2Response(t *testing.T, w http.ResponseWriter, resp any, err error) {
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		t.Errorf("encode response: %v", err)
-	}
 }
 
 func closeFIDO2Transport(t *testing.T, tr transport.Transport) {
@@ -651,14 +604,10 @@ func closeFIDO2Transport(t *testing.T, tr transport.Transport) {
 // Every transport reports an enrolled passkey by the ID of the credential the
 // authenticator attested, and that ID names the factor the server stored.
 func TestAdminFactors_PasskeyCredentialIDOnEveryTransport(t *testing.T) {
-	transports := map[string]func(*testing.T, service.FIDO2Service) transport.Transport{
-		"embedded": embeddedFIDO2,
-		"rest":     restFIDO2,
-	}
-	for name, open := range transports {
+	for name, open := range adminFactorTransports {
 		t.Run(name, func(t *testing.T) {
 			s := newPasskeyServer(t)
-			credentialID := s.enroll(t, open(t, s.fido2))
+			credentialID := s.enroll(t, open(t, newAdminFactorServer(t, s.fido2, nil)))
 
 			if want := base64.RawURLEncoding.EncodeToString(s.authenticator.cred.ID); credentialID != want {
 				t.Fatalf("credential_id = %q, want the attested credential %q", credentialID, want)
@@ -669,6 +618,38 @@ func TestAdminFactors_PasskeyCredentialIDOnEveryTransport(t *testing.T) {
 			}
 			if factor.UserID != passkeyUserID {
 				t.Errorf("factor user = %d, want %d", factor.UserID, passkeyUserID)
+			}
+		})
+	}
+}
+
+// A passkey enrollment with no authenticator handler is refused in preflight
+// on every remote transport, before any request reaches the server.
+func TestAdminFactors_PasskeyWithoutHandlerRefusedOnEveryTransport(t *testing.T) {
+	for name, open := range adminFactorTransports {
+		if name == "embedded" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			s := newPasskeyServer(t)
+			server := newAdminFactorServer(t, s.fido2, nil)
+			enroller := newAdminFactorEnroller(s.client, s.client.Security().Auth().Factors(), &fido2TransportClient{t: open(t, server)})
+
+			_, err := enroller.Enroll(passkeyCaller(context.Background()), &AdminFactorEnrollRequest{
+				Factors:        []string{"fido2"},
+				Subject:        "root",
+				TenantID:       passkeyTenant,
+				RelyingPartyID: passkeyRPID,
+			})
+			if got := sdkerrors.Code(err); got != sdkerrors.CodePreconditionFailed {
+				t.Fatalf("Enroll = %v (code %v), want code %v", err, got, sdkerrors.CodePreconditionFailed)
+			}
+			var unavailable *qrdbsdk.AdminFactorUnavailableError
+			if !errors.As(err, &unavailable) {
+				t.Errorf("Enroll = %v, want *AdminFactorUnavailableError", err)
+			}
+			if calls := server.calls.Load(); calls != 0 {
+				t.Errorf("%d requests reached the server, want 0", calls)
 			}
 		})
 	}

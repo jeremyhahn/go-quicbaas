@@ -36,11 +36,16 @@ import (
 type scriptedGit struct {
 	answers map[string]*orchestration.ExecResult
 	ran     [][]string
+
+	// specs are the commands exactly as they were run, configuration and
+	// environment included.
+	specs []*orchestration.ExecSpec
 }
 
 func (g *scriptedGit) exec(spec *orchestration.ExecSpec) (*orchestration.ExecResult, error) {
 	_, args := splitGitConfig(spec.Cmd[1:])
 	g.ran = append(g.ran, args)
+	g.specs = append(g.specs, spec)
 	if answer, ok := g.answers[strings.Join(args, " ")]; ok {
 		return answer, nil
 	}

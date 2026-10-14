@@ -620,7 +620,7 @@ vet: ## Run go vet across every tag pass (untagged vet skips tag-gated packages)
 ##@ Build
 
 .PHONY: build
-build: build-daemon build-cli ## Build both daemon (quicbaasd) and client (quicbaas with embedded desktop GUI)
+build: build-daemon build-cli build-git-sign ## Build the daemon (quicbaasd), the client (quicbaas with embedded desktop GUI) and the worker git signing helper
 
 .PHONY: build-daemon
 build-daemon: ## Build the daemon (quicbaasd)
@@ -631,6 +631,13 @@ endif
 	@mkdir -p $(BIN_DIR)
 	CGO_ENABLED=0 $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)d ./$(DAEMON_CMD_DIR)
 	@echo "$(GREEN)Build successful: $(BIN_DIR)/$(APP_NAME)d$(NC)"
+
+.PHONY: build-git-sign
+build-git-sign: ## Build the worker git signing helper (quicbaas-git-sign, git's gpg.ssh.program)
+	@echo "$(BLUE)Building $(APP_NAME)-git-sign...$(NC)"
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=0 $(GOBUILD) $(BUILD_TAGS_ARG) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-git-sign ./cmd/$(APP_NAME)-git-sign
+	@echo "$(GREEN)Build successful: $(BIN_DIR)/$(APP_NAME)-git-sign$(NC)"
 
 # Frontend build configuration
 # The frontend is built outside the checkout (Node.js worker threads hit EPERM
@@ -4393,6 +4400,14 @@ integration-test-iam: ## Run IAM integration tests
 integration-test-placement: ## Run scheduler placement + job integration tests over REST, gRPC, QUIC, Unix and MCP
 	@echo "$(BLUE)Running scheduler placement integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/placement/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
+
+# The SDLC loop and webhook end-to-end suites are integration-tagged tests in
+# cmd/quicbaasd, outside test/integration, so the integration-test-% pattern
+# cannot reach them; the blanket `integration-test` runs them too (#141).
+.PHONY: integration-test-quicbaasd
+integration-test-quicbaasd: ## Run the integration-tagged quicbaasd end-to-end tests (SDLC loop, webhook) in Docker
+	@echo "$(BLUE)Running quicbaasd end-to-end integration tests...$(NC)"
+	@QUICBAAS_TEST_FILTER="./cmd/quicbaasd" $(MAKE) integration-test
 
 .PHONY: test-placement
 test-placement: ## Run scheduler placement unit tests (engine, store, service, every transport, SDK, CLI)

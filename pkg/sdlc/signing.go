@@ -137,9 +137,28 @@ type SigningSession struct {
 	// has to write a key file into the container and delete it again.
 	PublicKey string
 
+	// Helper, when set, signs through quicbaas-git-sign over the session's
+	// MCP connection instead of through the socket. The socket is still
+	// started and mounted; Helper only changes which one git uses.
+	Helper *SigningHelper
+
 	// Stop tears the agent down and removes the socket and its directory.
 	// It is always non-nil and always safe to call more than once.
 	Stop func(context.Context)
+}
+
+// SigningHelper is git's gpg.ssh.program for a session that signs over MCP.
+// The helper asks quicbaas to sign with the session's key under the session's
+// own principal, so every signature is authorized and audited per call and no
+// key material, socket or agent is in the container.
+type SigningHelper struct {
+	// Program is the helper's path inside the container.
+	Program string
+
+	// Env is the helper's environment for each signing git command: the MCP
+	// endpoint, the session's certificate paths and the key reference, under
+	// the gitsign.Env* and orchestration.MCP*EnvVar names.
+	Env map[string]string
 }
 
 // SigningAgent starts an ephemeral, KMS-backed SSH agent for one session.

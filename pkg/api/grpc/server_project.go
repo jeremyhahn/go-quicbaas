@@ -294,6 +294,7 @@ func (s *ProjectServer) ListProjects(ctx context.Context, req *pb.ListProjectsRe
 		Limit:      pageInt32(resp.Limit),
 		Offset:     pageInt32(resp.Offset),
 		NextOffset: pageInt32(resp.NextOffset),
+		Facets:     facetsToProto(resp.Facets),
 	}, nil
 }
 

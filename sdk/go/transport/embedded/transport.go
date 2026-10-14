@@ -478,7 +478,8 @@ func (t *Transport) Request(ctx context.Context, svcName, method string, req int
 		return nil, NewUnknownMethodError(svcName, method)
 	}
 
-	return handler(inProcessTenant(ctx), t.service, req)
+	resp, err := handler(inProcessTenant(ctx), t.service, req)
+	return resp, classifyServiceError(svcName, method, err)
 }
 
 // inProcessTenant binds the tenant an embedded call acts for, under go-qrdb's

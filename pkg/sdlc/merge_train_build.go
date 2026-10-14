@@ -124,7 +124,7 @@ func (b *containerTrainBuilder) Add(car TrainCar) (string, *TrainEjection, error
 	}
 	merge := gitConfigArgs(b.project, b.signing)
 	merge = append(merge, "merge", "--no-ff", "--no-edit", "-m", trainMergeMessage(car), car.HeadSHA)
-	result, err := b.probe(b.workDir, merge...)
+	result, err := b.probeEnv(b.workDir, signingEnv(b.signing), merge...)
 	if err != nil {
 		return "", nil, err
 	}

@@ -1829,6 +1829,7 @@ type containerExec struct {
 	ContainerID string
 	WorkDir     string
 	Cmd         []string
+	Env         map[string]string
 }
 
 // pushedRef is one publication: the local branch and the ref it was
@@ -1852,7 +1853,7 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		return result, err
 	}
 	c.execs = append(c.execs, containerExec{
-		ContainerID: containerID, WorkDir: spec.WorkDir, Cmd: append([]string(nil), spec.Cmd...),
+		ContainerID: containerID, WorkDir: spec.WorkDir, Cmd: append([]string(nil), spec.Cmd...), Env: spec.Env,
 	})
 	if root := path.Dir(c.checkout); c.checkout != "" && spec.WorkDir != root && !strings.HasPrefix(spec.WorkDir, root+"/") {
 		return nil, &orchestration.ContainerExecError{

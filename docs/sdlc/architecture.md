@@ -488,6 +488,43 @@ Three properties the argument vectors carry deliberately:
   go-quicbaas#751 is what that cost (`git clone … exited 128 (102 bytes of
   output withheld)` withheld `sh: ssh: not found`, the entire diagnosis).
 
+### Signing through quicbaas-git-sign
+
+A signing session can carry a **helper** (`sdlc.SigningHelper`) instead of
+relying on the agent socket alone (go-quicbaas#903). `gitConfigArgs` then adds
+`-c gpg.ssh.program=<helper>`, and only the git command that signs — the
+publisher's commit and the train build's merge — receives the helper's
+environment. The socket, its mount-policy carve-out and the sockets root are
+unchanged; removing them is the next slice.
+
+`quicbaas-git-sign` (`cmd/quicbaas-git-sign`, logic in `pkg/sdlc/gitsign`) is
+git's `gpg.ssh.program`:
+
+- **Invocation.** It accepts exactly `-Y sign -n git -f <public key file>
+  [<data file>]` (git's `-U` and `-q` are tolerated). It writes
+  `<data file>.sig`, or the signature to stdout when the data arrives on stdin.
+  Any other verb, a missing `-f`, a missing or foreign namespace, or an unknown
+  flag is an `ErrInvalidInvocation`, and no signature is written.
+- **Where the key is.** Nowhere in the container. The helper dials quicbaas
+  over MCP with the session's own client certificate
+  (`QUICBAAS_MCP_CERT`/`KEY`/`CA`) and calls `quicbaas_ssh_key_export` for the
+  public half and `quicbaas_ssh_key_sign` for each signature, naming the key
+  through `QUICBAAS_GIT_SIGN_KEY_NAME` (and the optional `_SCOPE` and
+  `_OWNER`) at `QUICBAAS_GIT_SIGN_MCP_URL`.
+- **Where the framing is.** In the helper. SSHSIG is a container format around
+  an ordinary signature, so the helper builds the signed data (magic,
+  namespace, `sha512` of the message) and armors the result. quicbaas signs it
+  with the existing sign verb, so no new verb crosses the five transports. The
+  helper refuses a key other than the one git named (`KeyMismatchError`), an
+  `ssh-rsa` (SHA-1) signature, and any signature that does not verify locally.
+  A refused signature fails the commit, so no unsigned commit lands.
+- **Authorization and audit.** The tools require `keys:get` and `keys:sign`
+  for the certificate's principal. An agent session's floor
+  (`iam.AgentSessionGrant`) holds neither, so it is refused with
+  `*rbac.PermissionDeniedError` until a signing session is granted them. Every
+  `SignDigest`, on every transport, records an `ssh.key.sign` audit event,
+  success or failure, naming the principal, its tenant and the key.
+
 ### The forge-access seam
 
 `forgeAccess` (`pkg/sdlc/workspace.go`) is the **one** way any of the module's

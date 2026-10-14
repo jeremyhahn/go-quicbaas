@@ -35,7 +35,7 @@ import (
 // deployment without an SSH store yields a service whose verbs all report
 // *service.SSHNotConfiguredError, which is the intended "SSH is off" signal.
 func sshService(svc service.QuicBaaS) service.SSHService {
-	return service.NewSSHService(svc.SSHClient())
+	return service.SSHServiceFor(svc)
 }
 
 // sshTypeError builds the standard invalid-request-type error for method.

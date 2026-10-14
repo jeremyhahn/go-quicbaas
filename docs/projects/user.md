@@ -156,10 +156,8 @@ of the given size. What each tier costs and guarantees is in
 quicbaas project get --name backend-service --tenant acme
 ```
 
-This works on the CLI's default Unix transport and on gRPC. Over REST and QUIC
-it does not resolve the name; see
-[engineering.md](engineering.md#known-gaps). `quicbaas project list --search
-backend` finds a project by a substring of its name on every transport.
+This works on every transport. `quicbaas project list --search backend` finds
+a project by a substring of its name.
 
 ## Why a task is refused
 

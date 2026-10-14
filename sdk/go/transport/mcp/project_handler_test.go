@@ -244,6 +244,42 @@ func TestProjectMCPTransformResponse_HappyPaths(t *testing.T) {
 	}
 }
 
+// TestProjectMCPTransformResponse_ListCarriesThePageEnvelope pins that the
+// applied limit, offset, next offset and facets of project_list reach the
+// caller, as they do over REST, gRPC and embedded.
+func TestProjectMCPTransformResponse_ListCarriesThePageEnvelope(t *testing.T) {
+	h := newProjectMCPHandler()
+	out, err := h.transformResponse("List", toolResult(t, map[string]interface{}{
+		"projects":    []*orchestration.Project{sampleProject()},
+		"total":       3,
+		"limit":       1,
+		"offset":      1,
+		"next_offset": 2,
+		"facets":      map[string]map[string]int{"autonomous": {"false": 3}},
+	}))
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	list, ok := out.(*project.ListProjectsResponse)
+	if !ok {
+		t.Fatalf("List decoded to %T", out)
+	}
+	if list.Total != 3 || list.Limit != 1 || list.Offset != 1 || list.NextOffset != 2 {
+		t.Errorf("List lost the page envelope: %#v", list.Envelope)
+	}
+	if list.Facets["autonomous"]["false"] != 3 {
+		t.Errorf("List lost the facets: %#v", list.Facets)
+	}
+}
+
+func TestProjectMCPTransformResponse_ListRejectsAMalformedEnvelope(t *testing.T) {
+	h := newProjectMCPHandler()
+	_, err := h.transformResponse("List", toolResult(t, map[string]interface{}{"limit": "twenty-five"}))
+	if sdkerrors.Code(err) != sdkerrors.CodeInternal {
+		t.Fatalf("a malformed list envelope must be an internal decode error, got %v", err)
+	}
+}
+
 // TestProjectMCPTransformResponse_ErrorPaths covers the failure modes.
 func TestProjectMCPTransformResponse_ErrorPaths(t *testing.T) {
 	h := newProjectMCPHandler()

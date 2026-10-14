@@ -5530,6 +5530,6 @@ func (s *quicBaaS) wireProjectReferences() {
 		projects.SetSecrets(s.secretsService)
 	}
 	if s.sshClient != nil {
-		projects.SetSSHKeys(NewSSHService(s.sshClient))
+		projects.SetSSHKeys(NewSSHService(s.sshClient, WithSSHAudit(s)))
 	}
 }

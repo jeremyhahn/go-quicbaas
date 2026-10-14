@@ -29,6 +29,7 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest/secureio"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // =============================================================================
@@ -345,8 +346,7 @@ func (s *Server) HandleExportSSHKeyPublic(w http.ResponseWriter, r *http.Request
 // the signer fall out of scope — the embedded SDK destroys the
 // enclave on each sign, so no explicit close is required.
 func (s *Server) HandleSignSSHDigest(w http.ResponseWriter, r *http.Request) {
-	client, ok := s.requireSSHClient(w, r)
-	if !ok {
+	if _, ok := s.requireSSHClient(w, r); !ok {
 		return
 	}
 	var req sshSignRequest
@@ -358,16 +358,15 @@ func (s *Server) HandleSignSSHDigest(w http.ResponseWriter, r *http.Request) {
 		writeSSHError(w, &SSHMissingDigestError{})
 		return
 	}
-	signer, err := client.Keys().Signer(r.Context(), xkmsssh.GetKeyRequest{
-		Scope: chi.URLParam(r, "scope"),
-		Owner: chi.URLParam(r, "owner"),
-		Name:  chi.URLParam(r, "name"),
+	// The SSH service audits every signature, granted or refused, so REST
+	// (and QUIC, which serves through this handler) record the same
+	// ssh.key.sign event as gRPC, MCP and the embedded transport.
+	sig, err := service.SSHServiceFor(s.service).SignDigest(r.Context(), service.SSHSignRequest{
+		Scope:  chi.URLParam(r, "scope"),
+		Owner:  chi.URLParam(r, "owner"),
+		Name:   chi.URLParam(r, "name"),
+		Digest: req.Digest,
 	})
-	if err != nil {
-		writeSSHError(w, err)
-		return
-	}
-	sig, err := signer.Sign(sshRandReader(r.Context()), req.Digest)
 	if err != nil {
 		writeSSHError(w, err)
 		return
@@ -734,8 +733,3 @@ func (p *sshBufferProvider) Passphrase(_ context.Context, _ string) (*secure.Buf
 	copy(cloned.Bytes(), p.buf.Bytes())
 	return cloned, nil
 }
-
-// sshRandReader is kept as a small indirection so callers can substitute
-// a deterministic reader during tests. It returns crypto/rand.Reader by
-// default (the ctx is accepted for future cancellation plumbing).
-var sshRandReader = func(_ context.Context) io.Reader { return sshCryptoRand() }

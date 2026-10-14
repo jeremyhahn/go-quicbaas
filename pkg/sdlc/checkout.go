@@ -348,8 +348,15 @@ func (c *gitSteps) run(workDir string, args ...string) (*orchestration.ExecResul
 // SessionContainerGoneError, naming the session and the container, and the
 // evidence says the container was gone instead of printing the command.
 func (c *gitSteps) probe(workDir string, args ...string) (*orchestration.ExecResult, error) {
+	return c.probeEnv(workDir, nil, args...)
+}
+
+// probeEnv is probe with extra environment for the command, such as a signing
+// helper's.
+func (c *gitSteps) probeEnv(workDir string, env map[string]string, args ...string) (*orchestration.ExecResult, error) {
 	result, err := c.exec(&orchestration.ExecSpec{
 		Cmd:     append([]string{gitCommand}, args...),
+		Env:     env,
 		WorkDir: workDir,
 	})
 	if err != nil {

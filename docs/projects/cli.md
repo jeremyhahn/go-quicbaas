@@ -116,9 +116,7 @@ quicbaas project get 3f2b6c1e-8d4a-4b7e-9a10-2c5d7e8f9a01
 quicbaas project get --name backend-service --output yaml
 ```
 
-`--name` resolves through `GetByName`, which is served on the Unix (default),
-gRPC and embedded transports; see
-[engineering.md](engineering.md#known-gaps) for REST, QUIC and MCP.
+`--name` resolves through `GetByName`, which every transport serves.
 
 ## `update`
 

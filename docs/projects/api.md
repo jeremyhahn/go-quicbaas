@@ -17,7 +17,7 @@ One permission per operation, identical on every transport. REST takes it from
 | --- | --- | --- | --- | --- |
 | Create | `project:create` | `POST /api/v1/projects/` | `CreateProject` | `project_create` |
 | Get | `project:read` | `GET /api/v1/projects/{id}` | `GetProject` | `project_get` |
-| Get by name | `project:read` | — (see [Known gaps](engineering.md#known-gaps)) | `GetProjectByName` | — |
+| Get by name | `project:read` | `GET /api/v1/projects/by-name/{name}` | `GetProjectByName` | `project_get_by_name` |
 | List | `project:list` | `GET /api/v1/projects/` | `ListProjects` | `project_list` |
 | Update (incl. park, resume) | `project:update` | `PUT /api/v1/projects/{id}` | `UpdateProject` | `project_update` |
 | Delete | `project:delete` | `DELETE /api/v1/projects/{id}` | `DeleteProject` | `project_delete` |

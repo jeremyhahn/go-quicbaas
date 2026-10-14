@@ -14,6 +14,11 @@
 package embedded
 
 import (
+	stderrors "errors"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -137,4 +142,79 @@ func NewPermissionDeniedError(service, method, reason string) *PermissionDeniedE
 		Method:  method,
 		Reason:  reason,
 	}
+}
+
+// domainSentinelCodes classes the project and SDLC sentinels a service
+// returns the way the gRPC, REST and MCP transports do, so an embedded caller
+// reads an unknown project or binding as CodeNotFound like every other caller.
+var domainSentinelCodes = []struct {
+	sentinel error
+	code     errors.ErrorCode
+}{
+	{pkgsdlc.ErrNotFound, errors.CodeNotFound},
+	{orchestration.ErrProjectNotFound, errors.CodeNotFound},
+	{orchestration.ErrTaskNotFound, errors.CodeNotFound},
+	{pkgsdlc.ErrAlreadyExists, errors.CodeAlreadyExists},
+	{pkgsdlc.ErrVersionConflict, errors.CodeAlreadyExists},
+	{pkgsdlc.ErrWebhookRouteConflict, errors.CodeAlreadyExists},
+	{orchestration.ErrTaskSourceAlreadyAdopted, errors.CodeAlreadyExists},
+	{pkgsdlc.ErrAdoptionRefused, errors.CodePreconditionFailed},
+	{orchestration.ErrTaskInvalidState, errors.CodePreconditionFailed},
+	{pkgsdlc.ErrAdoptionIncomplete, errors.CodeUnavailable},
+	{pkgsdlc.ErrUnavailable, errors.CodeUnavailable},
+	{pkgsdlc.ErrInvalidInput, errors.CodeInvalidInput},
+	{pkgsdlc.ErrReview, errors.CodeInvalidInput},
+	{orchestration.ErrWorkflowValidation, errors.CodeInvalidInput},
+	{orchestration.ErrInvalidInput, errors.CodeInvalidInput},
+}
+
+// domainErrorCode classes a project or SDLC service error, reporting false
+// for any other error.
+func domainErrorCode(err error) (errors.ErrorCode, bool) {
+	var (
+		accessDenied  *service.ProjectAccessDeniedError
+		notFound      *service.ProjectNotFoundError
+		unresolved    *service.ProjectUnresolvedError
+		alreadyExists *service.ProjectAlreadyExistsError
+		invalid       *service.ProjectInvalidError
+		roleInvalid   *service.ProjectRoleInvalidError
+		forge         *pkgsdlc.ForgeNotRegisteredError
+		strategy      *pkgsdlc.StrategyNotRegisteredError
+	)
+	switch {
+	case stderrors.As(err, &accessDenied):
+		return errors.CodeForbidden, true
+	case stderrors.As(err, &notFound), stderrors.As(err, &unresolved):
+		return errors.CodeNotFound, true
+	case stderrors.As(err, &alreadyExists):
+		return errors.CodeAlreadyExists, true
+	case stderrors.As(err, &invalid), stderrors.As(err, &roleInvalid),
+		stderrors.As(err, &forge), stderrors.As(err, &strategy):
+		return errors.CodeInvalidInput, true
+	}
+	for _, class := range domainSentinelCodes {
+		if stderrors.Is(err, class.sentinel) {
+			return class.code, true
+		}
+	}
+	return errors.CodeUnknown, false
+}
+
+// classifyServiceError gives a project or SDLC service error the SDK code the
+// network transports report for it, keeping the service error as the cause so
+// errors.As still finds it. Any other error, including one already coded, is
+// returned unchanged.
+func classifyServiceError(svcName, method string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var coded *errors.QBError
+	if stderrors.As(err, &coded) {
+		return err
+	}
+	code, ok := domainErrorCode(err)
+	if !ok {
+		return err
+	}
+	return errors.Wrap(err, code, "embedded."+svcName+"."+method, "service request failed")
 }

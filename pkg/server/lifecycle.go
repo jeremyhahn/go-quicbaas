@@ -2474,7 +2474,7 @@ func (s *Server) startGRPCServer() error {
 	// *service.SSHNotConfiguredError, which maps to codes.Unavailable — a
 	// clearer contract than an unregistered service's codes.Unimplemented.
 	sshServer := grpcapi.NewSSHServer(
-		service.NewSSHService(s.quicBaaSService.SSHClient()), s.logger)
+		service.SSHServiceFor(s.quicBaaSService), s.logger)
 	pb.RegisterSSHServiceServer(grpcServer, sshServer)
 	s.logger.Info("Registered SSH gRPC service")
 

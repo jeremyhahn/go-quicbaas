@@ -500,7 +500,7 @@ func (m *Module) bind() (*grpcServers, error) {
 		quicbaas: facade,
 		fido2:    facade,
 		login:    grpcapi.NewLoginServer(svc.LoginCeremony(), m.log),
-		ssh:      grpcapi.NewSSHServer(service.NewSSHService(svc.SSHClient()), m.log),
+		ssh:      grpcapi.NewSSHServer(service.SSHServiceFor(svc), m.log),
 	}
 	if schedulerSvc, placementSvc := svc.Scheduler(), svc.Placement(); schedulerSvc != nil || placementSvc != nil {
 		built.scheduler = grpcapi.NewSchedulerServer(schedulerSvc, placementSvc, m.log)

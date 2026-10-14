@@ -298,6 +298,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # CMD_E2E_PKGS adds the integration-tagged end-to-end suites that live
+    # beside their binary rather than under test/integration (the SDLC loop and
+    # webhook tests in cmd/quicbaasd); without it no gate compiles or runs them
+    # (go-quicbaas#141).
     command: >
       bash -c "
         set -o pipefail;
@@ -309,6 +313,7 @@ services:
         ls -la /workspace/go-quicbaas/bin/quicbaas &&
         echo '' &&
         ALL_PKG_ROOT='github.com/jeremyhahn/go-quicbaas/test/integration/...' &&
+        CMD_E2E_PKGS='github.com/jeremyhahn/go-quicbaas/cmd/quicbaasd' &&
         OLLAMA_PKGS_RE='/(agent|orchestration|orchestration_gpu|rag|embedding)$$' &&
         SEAL_LANE_PKGS_RE='/(tenantbarrier)$$' &&
         BASE_TAGS=$$(echo \"integration $$TEST_BUILD_TAGS\" | tr ' ' '\\n' | grep -vx -e rag -e gpu | tr '\\n' ' ' | sed 's/  */ /g; s/ $$//') &&
@@ -330,7 +335,7 @@ services:
         else
           echo 'Phase 1: non-ollama integration packages...' &&
           echo '' &&
-          BASE_PKGS=$$(go list -tags \"$$BASE_TAGS\" $$ALL_PKG_ROOT | grep -vE \"$$OLLAMA_PKGS_RE\" | grep -vE \"$$SEAL_LANE_PKGS_RE\") &&
+          BASE_PKGS=$$(go list -tags \"$$BASE_TAGS\" $$ALL_PKG_ROOT $$CMD_E2E_PKGS | grep -vE \"$$OLLAMA_PKGS_RE\" | grep -vE \"$$SEAL_LANE_PKGS_RE\") &&
           go test -v -p 1 -tags \"$$BASE_TAGS\" -timeout 60m $$BASE_PKGS 2>&1 | tee /test-results/integration-test.log;
           OVERALL_EXIT=$${PIPESTATUS[0]};
           if [ \"$$QUICBAAS_TEST_OLLAMA\" = '1' ] || [ \"$$QUICBAAS_TEST_OLLAMA\" = 'true' ]; then

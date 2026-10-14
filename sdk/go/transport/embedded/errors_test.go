@@ -14,11 +14,14 @@
 package embedded
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -161,4 +164,35 @@ func TestStreamNotSupportedError(t *testing.T) {
 		assert.Equal(t, "HealthService", err.Service)
 		assert.Equal(t, "Liveness", err.Method)
 	})
+}
+
+func TestClassifyServiceError_CodesProjectAndSDLCErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want sdkerrors.ErrorCode
+	}{
+		{"project not found", &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}, sdkerrors.CodeNotFound},
+		{"project already exists", &service.ProjectAlreadyExistsError{TenantID: "t", Name: "p"}, sdkerrors.CodeAlreadyExists},
+		{"project access denied", &service.ProjectAccessDeniedError{}, sdkerrors.CodeForbidden},
+		{"binding not found", pkgsdlc.ErrNotFound, sdkerrors.CodeNotFound},
+		{"binding invalid", &pkgsdlc.InvalidInputError{Field: "binding", Message: "is required"}, sdkerrors.CodeInvalidInput},
+		{"adoption refused", pkgsdlc.ErrAdoptionRefused, sdkerrors.CodePreconditionFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyServiceError("project", "Get", tc.err)
+			assert.Equal(t, tc.want, sdkerrors.Code(got))
+			assert.ErrorIs(t, got, tc.err, "the service error stays the cause")
+		})
+	}
+}
+
+func TestClassifyServiceError_LeavesOtherErrorsUnchanged(t *testing.T) {
+	require.NoError(t, classifyServiceError("project", "Get", nil))
+
+	coded := sdkerrors.NewNotFound("project.Get", "project")
+	assert.Same(t, coded, classifyServiceError("project", "Get", coded))
+
+	assert.Equal(t, context.Canceled, classifyServiceError("project", "Get", context.Canceled))
 }

@@ -9,6 +9,8 @@ reimplementation paths.
 
 ## Test suites
 
+`make integration-test` runs every package under `test/integration/` plus the integration-tagged end-to-end tests in `cmd/quicbaasd` (the SDLC loop and webhook suites); `make integration-test-quicbaasd` runs that package alone.
+
 ### Standalone (no-Raft, in-process, no docker required)
 
 Location: `test/integration/standalone/`

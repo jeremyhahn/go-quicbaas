@@ -130,18 +130,15 @@ func decodeMCPProjectEnvelope(raw []byte) (interface{}, error) {
 }
 
 func decodeMCPProjectList(raw []byte) (interface{}, error) {
-	var env struct {
-		Projects []*project.ProjectInfo `json:"projects"`
-		Total    int                    `json:"total"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
+	var resp project.ListProjectsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.project",
 			"failed to decode project list result")
 	}
-	if env.Projects == nil {
-		env.Projects = []*project.ProjectInfo{}
+	if resp.Projects == nil {
+		resp.Projects = []*project.ProjectInfo{}
 	}
-	return &project.ListProjectsResponse{Projects: env.Projects, Total: env.Total}, nil
+	return &resp, nil
 }
 
 func decodeMCPProjectDelete(raw []byte) (interface{}, error) {

@@ -162,15 +162,14 @@ Two server facts affect it:
 
 ## Known gaps
 
-These are live mismatches between the SDK and the server, documented so they
-are not mistaken for intended behaviour:
+Every project operation round-trips alike on REST, gRPC, Unix, MCP and the
+embedded transport (QUIC serves the REST router), pinned by
+`pkg/apimodule/module_project_parity_test.go`. One mismatch remains,
+documented so it is not mistaken for intended behaviour:
 
 | Gap | Effect |
 | --- | --- |
-| The SDK REST handler's `GetByName` sends `GET /api/v1/projects?tenant_id=…&name=…`; `HandleListProjects` ignores `name` | `GetByName` over REST and QUIC decodes the list envelope as a project and returns an empty `ProjectInfo`. gRPC, Unix and embedded serve it; MCP returns `Unimplemented` (`sdk/go/transport/mcp/project_handler.go`). |
-| The SDK REST handler decodes `Create`, `Get` and `Update` responses as a bare project; the server wraps them as `{"project": …, "timestamp": …}` | Over REST and QUIC those calls return an empty `ProjectInfo`. The CLI's default transport (Unix) is unaffected. |
-| No transport carries `workspace_managed` or `git_credential_secret_ref` | Managed workspaces are reachable only in-process through `ProjectService`. |
-| gRPC `convertProjectError` maps only not-found, already-exists and invalid | Access-denied, unresolved and invalid-role errors surface as `Internal` over gRPC and Unix, where REST returns 403/403/400. |
+| `ProjectUnresolvedError` (the authorizer could not read the project) | REST and QUIC answer `403`; gRPC, Unix, MCP and embedded answer not-found. |
 
 ## Tests
 
@@ -188,4 +187,5 @@ Unit tests run in memory: `make test-orchestration`, `make test-service`,
 | Managed workspace | `pkg/service/project_provisioner_test.go` |
 | MCP | `pkg/api/mcp/project_fleet_admin_tools_test.go`, `project_storage_tools_test.go`, `project_session_rotation_tools_test.go`, `project_account_page_test.go` |
 | SDK transports | `sdk/go/transport/{rest,grpc,mcp}/project_handler_test.go` and the `project_storage_test.go` / `project_session_rotation_test.go` siblings |
+| Cross-transport parity | `pkg/apimodule/module_project_parity_test.go` (create, get, get by name, update, list, delete), `module_sdlc_parity_test.go` (the SDLC binding, reviewer and conformance verbs) |
 | Frontend | `cmd/quicbaas/frontend/test/projectForm.test.ts` (hydrates from a verbatim `GET /api/v1/projects/{id}` body), `test/e2e/projects.spec.ts` |

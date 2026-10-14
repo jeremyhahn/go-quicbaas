@@ -167,11 +167,12 @@ func agentSessionToolRegistry(t *testing.T) *middleware.MCPToolRegistry {
 // agentSessionMiddleware wires go-qrdb's REAL mTLS authenticator and RBAC
 // authorizer over the roles the session enrollment grants, with the supplied
 // user records standing in for the store.
-func agentSessionMiddleware(users map[string]*user.User) *middleware.AuthMiddleware {
-	grant := make([]permission.Permission, 0, len(iam.AgentSessionGrant()))
+func agentSessionMiddleware(users map[string]*user.User, extra ...permission.Permission) *middleware.AuthMiddleware {
+	grant := make([]permission.Permission, 0, len(iam.AgentSessionGrant())+len(extra))
 	for _, granted := range iam.AgentSessionGrant() {
 		grant = append(grant, permission.Permission(granted))
 	}
+	grant = append(grant, extra...)
 	roles := &fakeRoleServicer{perms: map[string][]permission.Permission{
 		iam.AgentSessionRoleID(agentSessionTenant): grant,
 	}}

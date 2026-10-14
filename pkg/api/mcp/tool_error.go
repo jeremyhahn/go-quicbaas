@@ -21,6 +21,8 @@ import (
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
@@ -112,6 +114,9 @@ func toolErrorCode(err error) int {
 	if fault, ok := orchestration.ClassifyAgentCatalogError(err); ok {
 		return toolErrorCodeOf(agentCatalogClasses[fault])
 	}
+	if code, ok := domainErrorClass(err); ok {
+		return toolErrorCodeOf(code)
+	}
 	return mcptransport.JSONRPCInternalError
 }
 
@@ -126,6 +131,62 @@ var agentCatalogClasses = map[orchestration.AgentCatalogFault]qberrors.ErrorCode
 	orchestration.AgentCatalogFaultForbidden:   qberrors.ErrForbidden,
 	orchestration.AgentCatalogFaultUnavailable: qberrors.ErrUnavailable,
 	orchestration.AgentCatalogFaultExhausted:   qberrors.ErrResourceExhausted,
+}
+
+// domainSentinelClasses classes the project and SDLC sentinels a tool returns
+// the way the gRPC and REST transports do, so an MCP caller reads an unknown
+// project or binding as not-found rather than as an internal fault.
+var domainSentinelClasses = []struct {
+	sentinel error
+	code     qberrors.ErrorCode
+}{
+	{sdlc.ErrNotFound, qberrors.ErrNotFound},
+	{orchestration.ErrProjectNotFound, qberrors.ErrNotFound},
+	{orchestration.ErrTaskNotFound, qberrors.ErrNotFound},
+	{sdlc.ErrAlreadyExists, qberrors.ErrAlreadyExists},
+	{sdlc.ErrVersionConflict, qberrors.ErrAlreadyExists},
+	{sdlc.ErrWebhookRouteConflict, qberrors.ErrAlreadyExists},
+	{orchestration.ErrTaskSourceAlreadyAdopted, qberrors.ErrAlreadyExists},
+	{sdlc.ErrAdoptionRefused, qberrors.ErrPreconditionFailed},
+	{orchestration.ErrTaskInvalidState, qberrors.ErrPreconditionFailed},
+	{sdlc.ErrAdoptionIncomplete, qberrors.ErrUnavailable},
+	{sdlc.ErrUnavailable, qberrors.ErrUnavailable},
+	{sdlc.ErrInvalidInput, qberrors.ErrInvalidInput},
+	{sdlc.ErrReview, qberrors.ErrInvalidInput},
+	{orchestration.ErrWorkflowValidation, qberrors.ErrInvalidInput},
+	{orchestration.ErrInvalidInput, qberrors.ErrInvalidInput},
+}
+
+// domainErrorClass classes a project or SDLC service error, reporting false
+// for any other error.
+func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
+	var (
+		accessDenied  *service.ProjectAccessDeniedError
+		notFound      *service.ProjectNotFoundError
+		unresolved    *service.ProjectUnresolvedError
+		alreadyExists *service.ProjectAlreadyExistsError
+		invalid       *service.ProjectInvalidError
+		roleInvalid   *service.ProjectRoleInvalidError
+		forge         *sdlc.ForgeNotRegisteredError
+		strategy      *sdlc.StrategyNotRegisteredError
+	)
+	switch {
+	case stderrors.As(err, &accessDenied):
+		return qberrors.ErrForbidden, true
+	case stderrors.As(err, &notFound), stderrors.As(err, &unresolved):
+		return qberrors.ErrNotFound, true
+	case stderrors.As(err, &alreadyExists):
+		return qberrors.ErrAlreadyExists, true
+	case stderrors.As(err, &invalid), stderrors.As(err, &roleInvalid),
+		stderrors.As(err, &forge), stderrors.As(err, &strategy):
+		return qberrors.ErrInvalidInput, true
+	}
+	for _, class := range domainSentinelClasses {
+		if stderrors.Is(err, class.sentinel) {
+			return class.code, true
+		}
+	}
+	return 0, false
 }
 
 // toolErrorCodeOf returns the MCP error code for an error class.

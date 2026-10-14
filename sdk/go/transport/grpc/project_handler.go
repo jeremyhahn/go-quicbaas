@@ -272,6 +272,7 @@ func handleProjectList(ctx context.Context, conn *grpc.ClientConn, req interface
 		Projects: make([]*project.ProjectInfo, 0, len(resp.Projects)),
 		Envelope: pageEnvelopeFromProto(resp.GetTotal(), resp.GetLimit(), resp.GetOffset(), resp.GetNextOffset()),
 	}
+	out.Facets = facetsFromProto(resp.GetFacets())
 	for _, p := range resp.Projects {
 		out.Projects = append(out.Projects, projectInfoFromProto(p))
 	}

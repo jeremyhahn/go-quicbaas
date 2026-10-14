@@ -86,7 +86,20 @@ func gitConfigArgs(project *orchestration.Project, signing *SigningSession) []st
 	for _, field := range signingConfig(signing.PublicKey) {
 		args = append(args, "-c", field.Key+"="+field.Value)
 	}
+	if signing.Helper != nil {
+		args = append(args, "-c", "gpg.ssh.program="+signing.Helper.Program)
+	}
 	return args
+}
+
+// signingEnv is the environment a signing git command needs: the helper's,
+// when the session signs through it, and none when it signs through the
+// socket, whose path the container already carries.
+func signingEnv(signing *SigningSession) map[string]string {
+	if signing == nil || signing.Helper == nil {
+		return nil
+	}
+	return signing.Helper.Env
 }
 
 // gitConfigField is one git configuration key and its value.
@@ -265,7 +278,7 @@ func (p *publisher) Commit(plan publishPlan) (bool, error) {
 	}
 	args := gitConfigArgs(p.project, p.signing)
 	args = append(args, "commit", "-m", plan.Message)
-	if _, err := p.git(plan, args...); err != nil {
+	if _, err := p.gitEnv(plan, signingEnv(p.signing), args...); err != nil {
 		return false, err
 	}
 	return true, nil

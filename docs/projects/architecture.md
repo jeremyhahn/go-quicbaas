@@ -281,9 +281,8 @@ against the project before it is ready is refused with
 without a provisioner, or one that cannot clone, refuses a managed create with
 `ProjectProvisioningUnavailableError`.
 
-Managed workspaces are a service-layer capability: no transport request
-carries `workspace_managed` or `git_credential_secret_ref` (see
-[engineering.md](engineering.md#known-gaps)).
+Every transport's create request carries `workspace_managed` and
+`git_credential_secret_ref`.
 
 ## Rejected alternatives
 

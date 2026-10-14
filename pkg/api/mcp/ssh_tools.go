@@ -239,10 +239,7 @@ func (r *ToolRegistry) executeSSHTool(ctx context.Context, name string, args map
 
 // sshService builds the SSH service from the registry's composed service.
 func (r *ToolRegistry) sshService() service.SSHService {
-	if r.service == nil {
-		return service.NewSSHService(nil)
-	}
-	return service.NewSSHService(r.service.SSHClient())
+	return service.SSHServiceFor(r.service)
 }
 
 // =============================================================================

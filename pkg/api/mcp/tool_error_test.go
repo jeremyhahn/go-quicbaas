@@ -25,6 +25,8 @@ import (
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
@@ -128,10 +130,35 @@ func TestToolErrorCode(t *testing.T) {
 		// TestConvertOrchestratorError_AFleetCapacityRefusalIsResourceExhausted.
 		{"fleet capacity refused", &orchestration.FleetCapacityRefusedError{Backend: "claude"}, mcptransport.MCPResourceExhausted},
 		{"agent pool exhausted", orchestration.ErrAgentPoolExhausted, mcptransport.MCPResourceExhausted},
+		// The project and SDLC services return their own typed errors; gRPC
+		// pins the same classes in convertProjectError and convertSDLCError.
+		{"project not found", &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}, mcptransport.MCPResourceNotFound},
+		{"project already exists", &service.ProjectAlreadyExistsError{TenantID: "t", Name: "p"}, mcptransport.MCPAlreadyExists},
+		{"project access denied", &service.ProjectAccessDeniedError{}, mcptransport.MCPPermissionDenied},
+		{"binding not found", sdlc.ErrNotFound, mcptransport.MCPResourceNotFound},
+		{"binding invalid", &sdlc.InvalidInputError{Field: "binding", Message: "is required"}, mcptransport.MCPInvalidInput},
+		{"adoption refused", sdlc.ErrAdoptionRefused, mcptransport.MCPPreconditionFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, toolErrorCode(tc.err))
 		})
 	}
+}
+
+func TestDomainErrorClass_ClassesProjectAndSDLCErrors(t *testing.T) {
+	code, ok := domainErrorClass(&service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"})
+	require.True(t, ok)
+	require.Equal(t, qberrors.ErrNotFound, code)
+
+	code, ok = domainErrorClass(sdlc.ErrVersionConflict)
+	require.True(t, ok)
+	require.Equal(t, qberrors.ErrAlreadyExists, code)
+}
+
+func TestDomainErrorClass_LeavesOtherErrorsUnclassed(t *testing.T) {
+	_, ok := domainErrorClass(context.Canceled)
+	require.False(t, ok)
+	_, ok = domainErrorClass(qberrors.New(qberrors.ErrNotFound, "op", "already coded"))
+	require.False(t, ok, "a coded error is classed by its own code, not here")
 }

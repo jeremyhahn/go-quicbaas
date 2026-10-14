@@ -25,6 +25,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -44,7 +45,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	sdkembedded "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/embedded"
 	sdkgrpc "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/grpc"
@@ -61,8 +64,9 @@ import (
 // returned an empty ProjectInfo, gRPC and embedded dropped the managed
 // workspace and provisioning state, and neither REST nor MCP could look a
 // project up by name. This drives the SDK client over every transport against
-// ONE real project service and asserts each answers create, get, get-by-name
-// and update with the same populated ProjectInfo.
+// ONE real project service and asserts each answers create, get, get-by-name,
+// update and list with the same populated ProjectInfo, and reports a deleted
+// project gone alike.
 //
 // QUIC is the REST transport over HTTP/3 (sdk/go/transport/quic embeds the
 // REST transport and the server mounts the same router), so the REST row
@@ -129,13 +133,14 @@ func parityTLS(t *testing.T) (server, client *tls.Config) {
 	return server, client
 }
 
-// serveProjectGRPC serves the quicbaas.v1 ProjectService on lis until the
-// test ends.
-func serveProjectGRPC(t *testing.T, svc service.ProjectService, serverTLS *tls.Config, lis net.Listener) {
+// serveParityGRPC serves the gRPC services register registers on lis until
+// the test ends, every call bound to parityProjectTenant.
+func serveParityGRPC(t *testing.T, register func(grpclib.ServiceRegistrar), serverTLS *tls.Config, lis net.Listener) {
 	t.Helper()
 
-	srv := grpclib.NewServer(grpclib.Creds(credentials.NewTLS(serverTLS)))
-	pb.RegisterProjectServiceServer(srv, grpcapi.NewProjectServer(svc, testLogger(t)))
+	srv := grpclib.NewServer(grpclib.Creds(credentials.NewTLS(serverTLS)),
+		grpclib.UnaryInterceptor(parityTenantInterceptor))
+	register(srv)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(lis) }()
 	t.Cleanup(func() {
@@ -144,13 +149,39 @@ func serveProjectGRPC(t *testing.T, svc service.ProjectService, serverTLS *tls.C
 	})
 }
 
+// parityTenantInterceptor binds every gRPC call to parityProjectTenant, as
+// the authentication interceptor binds a caller to its own tenant.
+func parityTenantInterceptor(ctx context.Context, req any, _ *grpclib.UnaryServerInfo, handler grpclib.UnaryHandler) (any, error) {
+	return handler(tenantctx.WithTenant(ctx, parityProjectTenant), req)
+}
+
+// parityTenantHandler binds every REST call to parityProjectTenant, as the
+// authentication middleware binds a caller to its own tenant.
+func parityTenantHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(tenantctx.WithTenant(r.Context(), parityProjectTenant)))
+	})
+}
+
 // projectParityTransports builds one SDK transport per reachable transport,
-// each served by the real server-side adapter over svc.
+// each served by the real server-side Project adapter over svc.
 func projectParityTransports(t *testing.T, svc service.ProjectService) map[string]transport.Transport {
 	t.Helper()
 
 	facade := mocks.NewMockQuicBaaS()
 	facade.ProjectServiceFunc = func() service.ProjectService { return svc }
+	return parityTransports(t, facade, func(srv grpclib.ServiceRegistrar) {
+		pb.RegisterProjectServiceServer(srv, grpcapi.NewProjectServer(svc, testLogger(t)))
+	})
+}
+
+// parityTransports builds one SDK transport per reachable transport over
+// facade: the production REST router, the gRPC services registerGRPC
+// registers (over TCP and over a unix socket), the production MCP module
+// registration and the embedded transport.
+func parityTransports(t *testing.T, facade *mocks.MockQuicBaaS, registerGRPC func(grpclib.ServiceRegistrar)) map[string]transport.Transport {
+	t.Helper()
+
 	log := testLogger(t)
 	transports := map[string]transport.Transport{}
 	add := func(name string, tr transport.Transport, err error) {
@@ -163,7 +194,7 @@ func projectParityTransports(t *testing.T, svc service.ProjectService) map[strin
 	// REST (and the QUIC wire, which is the same router over HTTP/3).
 	restSrv, err := restapi.NewServer(facade, restapi.DefaultConfig(), log)
 	require.NoError(t, err)
-	restHTTP := httptest.NewServer(restSrv.GetRouter())
+	restHTTP := httptest.NewServer(parityTenantHandler(restSrv.GetRouter()))
 	t.Cleanup(restHTTP.Close)
 	restTr, err := sdkrest.New(&transport.Config{Address: restHTTP.URL, Timeout: 5 * time.Second})
 	add("rest", restTr, err)
@@ -172,7 +203,7 @@ func projectParityTransports(t *testing.T, svc service.ProjectService) map[strin
 	serverTLS, clientTLS := parityTLS(t)
 	tcpLis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	serveProjectGRPC(t, svc, serverTLS, tcpLis)
+	serveParityGRPC(t, registerGRPC, serverTLS, tcpLis)
 	grpcTr, err := sdkgrpc.New(&transport.Config{
 		Address: tcpLis.Addr().String(), Timeout: 5 * time.Second, TLSConfig: clientTLS,
 	})
@@ -186,7 +217,7 @@ func projectParityTransports(t *testing.T, svc service.ProjectService) map[strin
 	sockPath := filepath.Join(sockDir, "p.sock")
 	unixLis, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
-	serveProjectGRPC(t, svc, serverTLS, unixLis)
+	serveParityGRPC(t, registerGRPC, serverTLS, unixLis)
 	unixTr, err := sdkunix.New(&transport.Config{
 		Address: sockPath, Timeout: 5 * time.Second, TLSConfig: clientTLS,
 	})
@@ -277,13 +308,33 @@ func TestProjectTransportParity_CreateGetGetByNameUpdate(t *testing.T) {
 }
 
 // TestProjectTransportParity_EveryTransportRendersOneRecordAlike reads one
-// project through every transport and requires the same ProjectInfo. gRPC
-// carries times as unix seconds, so times are compared at that precision.
+// project through every transport and requires the same ProjectInfo.
 func TestProjectTransportParity_EveryTransportRendersOneRecordAlike(t *testing.T) {
 	svc := projectParityService(t)
 	ctx := context.Background()
+	resp := createReferenceProject(t, svc)
 
-	resp, err := svc.CreateProject(ctx, &service.CreateProjectRequest{
+	var want *project.ProjectInfo
+	var wantFrom string
+	for name, tr := range projectParityTransports(t, svc) {
+		got, err := project.NewClient(tr).Get(ctx, parityProjectTenant, resp.Project.ID)
+		require.NoError(t, err, "%s Get", name)
+		assertPopulatedProject(t, got, "reference", "one record, every transport", parityRoles)
+		got = normalizeProject(got)
+		if want == nil {
+			want, wantFrom = got, name
+			continue
+		}
+		assert.Equal(t, want, got, "%s renders the record differently from %s", name, wantFrom)
+	}
+}
+
+// createReferenceProject creates, straight through the service, the one
+// project the rendering tests read back over every transport.
+func createReferenceProject(t *testing.T, svc service.ProjectService) *service.CreateProjectResponse {
+	t.Helper()
+
+	resp, err := svc.CreateProject(context.Background(), &service.CreateProjectRequest{
 		TenantID:         parityProjectTenant,
 		Name:             "reference",
 		Description:      "one record, every transport",
@@ -292,25 +343,63 @@ func TestProjectTransportParity_EveryTransportRendersOneRecordAlike(t *testing.T
 		Metadata:         map[string]string{"team": "core"},
 	})
 	require.NoError(t, err)
+	return resp
+}
 
-	normalize := func(info *project.ProjectInfo) *project.ProjectInfo {
-		info.CreatedAt = info.CreatedAt.Truncate(time.Second).UTC()
-		info.UpdatedAt = info.UpdatedAt.Truncate(time.Second).UTC()
-		info.Provisioning.UpdatedAt = info.Provisioning.UpdatedAt.Truncate(time.Second).UTC()
-		return info
-	}
+// normalizeProject drops the precision gRPC does not carry: it sends times
+// as unix seconds, so times are compared at that precision.
+func normalizeProject(info *project.ProjectInfo) *project.ProjectInfo {
+	info.CreatedAt = info.CreatedAt.Truncate(time.Second).UTC()
+	info.UpdatedAt = info.UpdatedAt.Truncate(time.Second).UTC()
+	info.Provisioning.UpdatedAt = info.Provisioning.UpdatedAt.Truncate(time.Second).UTC()
+	return info
+}
 
-	var want *project.ProjectInfo
+// TestProjectTransportParity_EveryTransportListsOneRecordAlike lists a tenant
+// holding one project through every transport and requires the same page.
+func TestProjectTransportParity_EveryTransportListsOneRecordAlike(t *testing.T) {
+	svc := projectParityService(t)
+	ctx := context.Background()
+	resp := createReferenceProject(t, svc)
+
+	var want *project.ListProjectsResponse
 	var wantFrom string
 	for name, tr := range projectParityTransports(t, svc) {
-		got, err := project.NewClient(tr).Get(ctx, parityProjectTenant, resp.Project.ID)
-		require.NoError(t, err, "%s Get", name)
-		assertPopulatedProject(t, got, "reference", "one record, every transport", parityRoles)
-		got = normalize(got)
+		got, err := project.NewClient(tr).List(ctx, &project.ListProjectsRequest{TenantID: parityProjectTenant})
+		require.NoError(t, err, "%s List", name)
+		require.Len(t, got.Projects, 1, "%s List", name)
+		assert.Equal(t, resp.Project.ID, got.Projects[0].ID, "%s List", name)
+		assertPopulatedProject(t, got.Projects[0], "reference", "one record, every transport", parityRoles)
+		normalizeProject(got.Projects[0])
 		if want == nil {
 			want, wantFrom = got, name
 			continue
 		}
-		assert.Equal(t, want, got, "%s renders the record differently from %s", name, wantFrom)
+		assert.Equal(t, want, got, "%s lists the tenant differently from %s", name, wantFrom)
+	}
+}
+
+// TestProjectTransportParity_Delete deletes a project over every transport
+// and requires each to report it gone the same way: a later Get, and a
+// second Delete, answer not-found.
+func TestProjectTransportParity_Delete(t *testing.T) {
+	svc := projectParityService(t)
+	ctx := context.Background()
+
+	for name, tr := range projectParityTransports(t, svc) {
+		t.Run(name, func(t *testing.T) {
+			client := project.NewClient(tr)
+			created, err := client.Create(ctx, &project.CreateProjectRequest{
+				TenantID: parityProjectTenant, Name: "delete-" + name, Metadata: map[string]string{"team": "core"},
+			})
+			require.NoError(t, err, "Create")
+
+			require.NoError(t, client.Delete(ctx, parityProjectTenant, created.ID), "Delete")
+
+			_, err = client.Get(ctx, parityProjectTenant, created.ID)
+			assert.True(t, sdkerrors.IsNotFound(err), "Get after Delete: %v", err)
+			err = client.Delete(ctx, parityProjectTenant, created.ID)
+			assert.True(t, sdkerrors.IsNotFound(err), "second Delete: %v", err)
+		})
 	}
 }
