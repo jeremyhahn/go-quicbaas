@@ -133,7 +133,16 @@ plan that the surrounding documentation would otherwise support.
    not reach `Unmarshal` targets for keys never registered with `SetDefault` or
    `BindEnv` — and none are. A `QUICBAAS_*` variable outside that list is
    silently ignored. Each feature's `engineering.md` states which of its
-   settings are file-only.
+   settings are file-only. A variable that IS on the list but does not parse
+   (a port that is not an integer, a duration `time.ParseDuration` rejects, a
+   boolean other than `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`) fails
+   `Loader.Load` with `config.InvalidEnvValueError` naming the variable; it is
+   never dropped in favour of the file or default value. `quicbaasd` parses a
+   few variables itself (`QUICBAAS_SERVER_{WRITE,READ,IDLE}_TIMEOUT`,
+   `QUICBAAS_SERVER_SHARDS`, `QUICBAAS_SERVER_ENTITY_SHARD_PINS`,
+   `QUICBAAS_ENABLE_SCHEDULER`, `QUICBAAS_{TIMESERIES,VECTOR,BACKUP}_ENABLED`)
+   with the same rules: a malformed value fails daemon startup with the same
+   error.
 
 ## What "Last verified: 2026-08-19" does and does not claim on these pages
 

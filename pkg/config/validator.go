@@ -142,6 +142,7 @@ func (v *Validator) Validate(cfg *Config) error {
 	v.validateSDLC(&cfg.SDLC)
 	v.validateTrust(cfg.Trust)
 	v.validateIAM(&cfg.IAM)
+	v.validateAddressBindings(cfg)
 
 	// Return errors if any
 	if len(v.errors) > 0 {

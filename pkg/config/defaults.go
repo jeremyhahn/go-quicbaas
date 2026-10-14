@@ -50,7 +50,7 @@ func DefaultConfig() *Config {
 			},
 			REST: ServerRESTConfig{
 				Enabled: true,
-				Port:    8443,
+				Port:    DefaultRESTPort,
 			},
 			MCP: ServerMCPConfig{
 				Enabled: true,
@@ -357,7 +357,7 @@ func DefaultServerConfig() ServerConfig {
 		},
 		REST: ServerRESTConfig{
 			Enabled: true,
-			Port:    8443,
+			Port:    DefaultRESTPort,
 		},
 		MCP: ServerMCPConfig{
 			Enabled: true,

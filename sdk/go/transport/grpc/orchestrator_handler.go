@@ -658,10 +658,12 @@ func handleOrchestratorListSessions(ctx context.Context, conn *grpc.ClientConn, 
 		})
 	}
 
+	envelope := pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset())
+	envelope.Facets = facetsFromProto(protoResp.GetFacets())
 	return &orchestrator.ListSessionsResponse{
 		Sessions: sessions,
 		Count:    len(sessions),
-		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
+		Envelope: envelope,
 	}, nil
 }
 
@@ -777,10 +779,12 @@ func handleOrchestratorListTasks(ctx context.Context, conn *grpc.ClientConn, req
 		tasks = append(tasks, taskFromProto(t))
 	}
 
+	envelope := pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset())
+	envelope.Facets = facetsFromProto(protoResp.GetFacets())
 	return &orchestrator.ListTasksResponse{
 		Tasks:    tasks,
 		Count:    len(tasks),
-		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
+		Envelope: envelope,
 	}, nil
 }
 
@@ -1004,10 +1008,12 @@ func handleFleetList(ctx context.Context, conn *grpc.ClientConn, req interface{}
 		agents = append(agents, fleetNodeFromProto(a))
 	}
 
+	envelope := pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset())
+	envelope.Facets = facetsFromProto(protoResp.GetFacets())
 	return &orchestrator.ListFleetNodesResponse{
 		Nodes:    agents,
 		Count:    len(agents),
-		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
+		Envelope: envelope,
 	}, nil
 }
 
@@ -1396,9 +1402,11 @@ func handleOrchestratorListJobs(ctx context.Context, conn *grpc.ClientConn, req 
 		}
 	}
 
+	envelope := pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset())
+	envelope.Facets = facetsFromProto(protoResp.GetFacets())
 	return &orchestrator.ListJobsResponse{
 		Jobs:     jobs,
-		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
+		Envelope: envelope,
 	}, nil
 }
 
@@ -1427,10 +1435,12 @@ func handleOrchestratorListWorkflows(ctx context.Context, conn *grpc.ClientConn,
 	for _, workflow := range protoResp.GetWorkflows() {
 		workflows = append(workflows, workflowDefinitionFromProto(workflow))
 	}
+	envelope := pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset())
+	envelope.Facets = facetsFromProto(protoResp.GetFacets())
 	return &orchestrator.ListWorkflowsResponse{
 		Workflows: workflows,
 		Count:     len(workflows),
-		Envelope:  pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
+		Envelope:  envelope,
 	}, nil
 }
 

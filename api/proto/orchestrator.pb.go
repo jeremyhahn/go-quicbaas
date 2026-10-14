@@ -3654,10 +3654,13 @@ type ListSessionsResponse struct {
 	// and the search BEFORE the page was cut; limit and offset are the values
 	// the server APPLIED. next_offset is the offset of the following page and
 	// is zero on the last page.
-	Total         int32 `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
-	Limit         int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
-	NextOffset    int32 `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	Total      int32 `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	Limit      int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset     int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset int32 `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	// facets counts, per faceted field, how many of the matched records carry
+	// each value, taken before the faceted narrowings.
+	Facets        map[string]*FacetCounts `protobuf:"bytes,7,rep,name=facets,proto3" json:"facets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3732,6 +3735,13 @@ func (x *ListSessionsResponse) GetNextOffset() int32 {
 		return x.NextOffset
 	}
 	return 0
+}
+
+func (x *ListSessionsResponse) GetFacets() map[string]*FacetCounts {
+	if x != nil {
+		return x.Facets
+	}
+	return nil
 }
 
 // CreateTask
@@ -4166,10 +4176,13 @@ type ListTasksResponse struct {
 	// and the search BEFORE the page was cut; limit and offset are the values
 	// the server APPLIED. next_offset is the offset of the following page and
 	// is zero on the last page.
-	Total         int32 `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
-	Limit         int32 `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32 `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
-	NextOffset    int32 `protobuf:"varint,7,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	Total      int32 `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	Limit      int32 `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset     int32 `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset int32 `protobuf:"varint,7,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	// facets counts, per faceted field, how many of the matched records carry
+	// each value, taken before the faceted narrowings.
+	Facets        map[string]*FacetCounts `protobuf:"bytes,8,rep,name=facets,proto3" json:"facets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4251,6 +4264,13 @@ func (x *ListTasksResponse) GetNextOffset() int32 {
 		return x.NextOffset
 	}
 	return 0
+}
+
+func (x *ListTasksResponse) GetFacets() map[string]*FacetCounts {
+	if x != nil {
+		return x.Facets
+	}
+	return nil
 }
 
 // ClaimTask
@@ -6212,10 +6232,13 @@ type OrchestratorListJobsResponse struct {
 	// and the search BEFORE the page was cut; limit and offset are the values
 	// the server APPLIED. next_offset is the offset of the following page and
 	// is zero on the last page.
-	Total         int32 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
-	Limit         int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
-	NextOffset    int32 `protobuf:"varint,5,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	Total      int32 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Limit      int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset     int32 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset int32 `protobuf:"varint,5,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	// facets counts, per faceted field, how many of the matched records carry
+	// each value, taken before the faceted narrowings.
+	Facets        map[string]*FacetCounts `protobuf:"bytes,6,rep,name=facets,proto3" json:"facets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6283,6 +6306,13 @@ func (x *OrchestratorListJobsResponse) GetNextOffset() int32 {
 		return x.NextOffset
 	}
 	return 0
+}
+
+func (x *OrchestratorListJobsResponse) GetFacets() map[string]*FacetCounts {
+	if x != nil {
+		return x.Facets
+	}
+	return nil
 }
 
 // OrchestratorJobSummary provides a summary of an orchestration job.
@@ -7936,12 +7966,15 @@ func (x *OrchestratorListWorkflowsRequest) GetQ() string {
 }
 
 type OrchestratorListWorkflowsResponse struct {
-	state         protoimpl.MessageState            `protogen:"open.v1"`
-	Workflows     []*OrchestratorWorkflowDefinition `protobuf:"bytes,1,rep,name=workflows,proto3" json:"workflows,omitempty"`
-	Total         int32                             `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
-	Limit         int32                             `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32                             `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
-	NextOffset    int32                             `protobuf:"varint,5,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	state      protoimpl.MessageState            `protogen:"open.v1"`
+	Workflows  []*OrchestratorWorkflowDefinition `protobuf:"bytes,1,rep,name=workflows,proto3" json:"workflows,omitempty"`
+	Total      int32                             `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Limit      int32                             `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset     int32                             `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset int32                             `protobuf:"varint,5,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	// facets counts, per faceted field, how many of the matched records carry
+	// each value, taken before the faceted narrowings.
+	Facets        map[string]*FacetCounts `protobuf:"bytes,6,rep,name=facets,proto3" json:"facets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8009,6 +8042,13 @@ func (x *OrchestratorListWorkflowsResponse) GetNextOffset() int32 {
 		return x.NextOffset
 	}
 	return 0
+}
+
+func (x *OrchestratorListWorkflowsResponse) GetFacets() map[string]*FacetCounts {
+	if x != nil {
+		return x.Facets
+	}
+	return nil
 }
 
 // Health
@@ -8474,10 +8514,13 @@ type ListFleetNodesResponse struct {
 	// and the search BEFORE the page was cut; limit and offset are the values
 	// the server APPLIED. next_offset is the offset of the following page and
 	// is zero on the last page.
-	Total         int32 `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
-	Limit         int32 `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32 `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
-	NextOffset    int32 `protobuf:"varint,7,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	Total      int32 `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	Limit      int32 `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset     int32 `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset int32 `protobuf:"varint,7,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	// facets counts, per faceted field, how many of the matched records carry
+	// each value, taken before the faceted narrowings.
+	Facets        map[string]*FacetCounts `protobuf:"bytes,8,rep,name=facets,proto3" json:"facets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -8559,6 +8602,13 @@ func (x *ListFleetNodesResponse) GetNextOffset() int32 {
 		return x.NextOffset
 	}
 	return 0
+}
+
+func (x *ListFleetNodesResponse) GetFacets() map[string]*FacetCounts {
+	if x != nil {
+		return x.Facets
+	}
+	return nil
 }
 
 // RemoveFleetNode
@@ -12887,7 +12937,7 @@ var File_api_proto_orchestrator_proto protoreflect.FileDescriptor
 
 const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/proto/orchestrator.proto\x12\x18quicbaas.orchestrator.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\x1a\x15api/proto/spend.proto\x1a\x16api/proto/agents.proto\"\xe3\x01\n" +
+	"\x1capi/proto/orchestrator.proto\x12\x18quicbaas.orchestrator.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\x1a\x15api/proto/spend.proto\x1a\x16api/proto/agents.proto\x1a\x14api/proto/sdlc.proto\"\xe3\x01\n" +
 	"\x0fMCPServerConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12D\n" +
@@ -13242,7 +13292,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x06job_id\x18\t \x01(\tR\x05jobId\x12\x16\n" +
 	"\x06runner\x18\n" +
 	" \x01(\tR\x06runner\x12\x19\n" +
-	"\bagent_id\x18\v \x01(\tR\aagentId\"\xf8\x01\n" +
+	"\bagent_id\x18\v \x01(\tR\aagentId\"\xa6\x03\n" +
 	"\x14ListSessionsResponse\x12A\n" +
 	"\bsessions\x18\x01 \x03(\v2%.quicbaas.orchestrator.v1.SessionInfoR\bsessions\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x14\n" +
@@ -13250,7 +13300,11 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
 	"\vnext_offset\x18\x06 \x01(\x05R\n" +
-	"nextOffset\"\xc0\x05\n" +
+	"nextOffset\x12R\n" +
+	"\x06facets\x18\a \x03(\v2:.quicbaas.orchestrator.v1.ListSessionsResponse.FacetsEntryR\x06facets\x1aX\n" +
+	"\vFacetsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
+	"\x05value\x18\x02 \x01(\v2\x1d.quicbaas.sdlc.v1.FacetCountsR\x05value:\x028\x01\"\xc0\x05\n" +
 	"\x11CreateTaskRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
 	"\tteam_name\x18\x02 \x01(\tR\bteamName\x12\x18\n" +
@@ -13291,7 +13345,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x12\n" +
 	"\x04sort\x18\x05 \x01(\tR\x04sort\x12\f\n" +
-	"\x01q\x18\x06 \x01(\tR\x01q\"\x89\x02\n" +
+	"\x01q\x18\x06 \x01(\tR\x01q\"\xb4\x03\n" +
 	"\x11ListTasksResponse\x124\n" +
 	"\x05tasks\x18\x01 \x03(\v2\x1e.quicbaas.orchestrator.v1.TaskR\x05tasks\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
@@ -13301,7 +13355,11 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x05 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x06 \x01(\x05R\x06offset\x12\x1f\n" +
 	"\vnext_offset\x18\a \x01(\x05R\n" +
-	"nextOffset\"c\n" +
+	"nextOffset\x12O\n" +
+	"\x06facets\x18\b \x03(\v27.quicbaas.orchestrator.v1.ListTasksResponse.FacetsEntryR\x06facets\x1aX\n" +
+	"\vFacetsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
+	"\x05value\x18\x02 \x01(\v2\x1d.quicbaas.sdlc.v1.FacetCountsR\x05value:\x028\x01\"c\n" +
 	"\x10ClaimTaskRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x19\n" +
@@ -13466,14 +13524,18 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\bstatuses\x18\t \x03(\tR\bstatuses\x12\x17\n" +
 	"\ajob_ids\x18\n" +
 	" \x03(\tR\x06jobIds\x12\x19\n" +
-	"\bagent_id\x18\v \x01(\tR\aagentId\"\xc9\x01\n" +
+	"\bagent_id\x18\v \x01(\tR\aagentId\"\xff\x02\n" +
 	"\x1cOrchestratorListJobsResponse\x12D\n" +
 	"\x04jobs\x18\x01 \x03(\v20.quicbaas.orchestrator.v1.OrchestratorJobSummaryR\x04jobs\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x1f\n" +
 	"\vnext_offset\x18\x05 \x01(\x05R\n" +
-	"nextOffset\"\xc0\x03\n" +
+	"nextOffset\x12Z\n" +
+	"\x06facets\x18\x06 \x03(\v2B.quicbaas.orchestrator.v1.OrchestratorListJobsResponse.FacetsEntryR\x06facets\x1aX\n" +
+	"\vFacetsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
+	"\x05value\x18\x02 \x01(\v2\x1d.quicbaas.sdlc.v1.FacetCountsR\x05value:\x028\x01\"\xc0\x03\n" +
 	"\x16OrchestratorJobSummary\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x14\n" +
 	"\x05state\x18\x02 \x01(\tR\x05state\x12\x1c\n" +
@@ -13630,14 +13692,18 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x12\n" +
 	"\x04sort\x18\x06 \x01(\tR\x04sort\x12\f\n" +
-	"\x01q\x18\a \x01(\tR\x01q\"\xe0\x01\n" +
+	"\x01q\x18\a \x01(\tR\x01q\"\x9b\x03\n" +
 	"!OrchestratorListWorkflowsResponse\x12V\n" +
 	"\tworkflows\x18\x01 \x03(\v28.quicbaas.orchestrator.v1.OrchestratorWorkflowDefinitionR\tworkflows\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x1f\n" +
 	"\vnext_offset\x18\x05 \x01(\x05R\n" +
-	"nextOffset\"8\n" +
+	"nextOffset\x12_\n" +
+	"\x06facets\x18\x06 \x03(\v2G.quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse.FacetsEntryR\x06facets\x1aX\n" +
+	"\vFacetsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
+	"\x05value\x18\x02 \x01(\v2\x1d.quicbaas.sdlc.v1.FacetCountsR\x05value:\x028\x01\"8\n" +
 	"\x19OrchestratorHealthRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\"\x9b\x01\n" +
 	"\x1aOrchestratorHealthResponse\x12C\n" +
@@ -13671,7 +13737,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x12\n" +
 	"\x04sort\x18\x05 \x01(\tR\x04sort\x12\f\n" +
-	"\x01q\x18\x06 \x01(\tR\x01q\"\x88\x02\n" +
+	"\x01q\x18\x06 \x01(\tR\x01q\"\xb8\x03\n" +
 	"\x16ListFleetNodesResponse\x129\n" +
 	"\x05nodes\x18\x01 \x03(\v2#.quicbaas.orchestrator.v1.FleetNodeR\x05nodes\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\x05R\x05count\x128\n" +
@@ -13680,7 +13746,11 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x05 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x06 \x01(\x05R\x06offset\x12\x1f\n" +
 	"\vnext_offset\x18\a \x01(\x05R\n" +
-	"nextOffset\"N\n" +
+	"nextOffset\x12T\n" +
+	"\x06facets\x18\b \x03(\v2<.quicbaas.orchestrator.v1.ListFleetNodesResponse.FacetsEntryR\x06facets\x1aX\n" +
+	"\vFacetsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
+	"\x05value\x18\x02 \x01(\v2\x1d.quicbaas.sdlc.v1.FacetCountsR\x05value:\x028\x01\"N\n" +
 	"\x16RemoveFleetNodeRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\"\x86\x01\n" +
@@ -14185,7 +14255,7 @@ func file_api_proto_orchestrator_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_api_proto_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 157)
+var file_api_proto_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 162)
 var file_api_proto_orchestrator_proto_goTypes = []any{
 	(TaskStatus)(0),                                   // 0: quicbaas.orchestrator.v1.TaskStatus
 	(FleetNodeStatus)(0),                              // 1: quicbaas.orchestrator.v1.FleetNodeStatus
@@ -14339,48 +14409,54 @@ var file_api_proto_orchestrator_proto_goTypes = []any{
 	nil,                                               // 149: quicbaas.orchestrator.v1.FleetNode.MetadataEntry
 	nil,                                               // 150: quicbaas.orchestrator.v1.SpawnSessionRequest.EnvEntry
 	nil,                                               // 151: quicbaas.orchestrator.v1.SpawnSessionRequest.ExpectedPcrsEntry
-	nil,                                               // 152: quicbaas.orchestrator.v1.CreateTaskRequest.MetadataEntry
-	nil,                                               // 153: quicbaas.orchestrator.v1.JobEvent.MetadataEntry
-	nil,                                               // 154: quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.EnvEntry
-	nil,                                               // 155: quicbaas.orchestrator.v1.RegisterFleetNodeRequest.MetadataEntry
-	nil,                                               // 156: quicbaas.orchestrator.v1.InferenceRequest.MetadataEntry
-	nil,                                               // 157: quicbaas.orchestrator.v1.Artifact.MetadataEntry
-	nil,                                               // 158: quicbaas.orchestrator.v1.SessionWorkspace.SpecFilesEntry
-	nil,                                               // 159: quicbaas.orchestrator.v1.SetCostSettingsRequest.EnginePowerWattsEntry
-	nil,                                               // 160: quicbaas.orchestrator.v1.CostSettingsResponse.EnginePowerWattsEntry
-	nil,                                               // 161: quicbaas.orchestrator.v1.CostSettingsResponse.EffectiveEnginePowerWattsEntry
-	(*timestamppb.Timestamp)(nil),                     // 162: google.protobuf.Timestamp
-	(*AgentAttempt)(nil),                              // 163: quicbaas.agents.v1.AgentAttempt
-	(*AgentRef)(nil),                                  // 164: quicbaas.agents.v1.AgentRef
-	(*SpendLimits)(nil),                               // 165: quicbaas.spend.v1.SpendLimits
+	nil,                                               // 152: quicbaas.orchestrator.v1.ListSessionsResponse.FacetsEntry
+	nil,                                               // 153: quicbaas.orchestrator.v1.CreateTaskRequest.MetadataEntry
+	nil,                                               // 154: quicbaas.orchestrator.v1.ListTasksResponse.FacetsEntry
+	nil,                                               // 155: quicbaas.orchestrator.v1.OrchestratorListJobsResponse.FacetsEntry
+	nil,                                               // 156: quicbaas.orchestrator.v1.JobEvent.MetadataEntry
+	nil,                                               // 157: quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.EnvEntry
+	nil,                                               // 158: quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse.FacetsEntry
+	nil,                                               // 159: quicbaas.orchestrator.v1.RegisterFleetNodeRequest.MetadataEntry
+	nil,                                               // 160: quicbaas.orchestrator.v1.ListFleetNodesResponse.FacetsEntry
+	nil,                                               // 161: quicbaas.orchestrator.v1.InferenceRequest.MetadataEntry
+	nil,                                               // 162: quicbaas.orchestrator.v1.Artifact.MetadataEntry
+	nil,                                               // 163: quicbaas.orchestrator.v1.SessionWorkspace.SpecFilesEntry
+	nil,                                               // 164: quicbaas.orchestrator.v1.SetCostSettingsRequest.EnginePowerWattsEntry
+	nil,                                               // 165: quicbaas.orchestrator.v1.CostSettingsResponse.EnginePowerWattsEntry
+	nil,                                               // 166: quicbaas.orchestrator.v1.CostSettingsResponse.EffectiveEnginePowerWattsEntry
+	(*timestamppb.Timestamp)(nil),                     // 167: google.protobuf.Timestamp
+	(*AgentAttempt)(nil),                              // 168: quicbaas.agents.v1.AgentAttempt
+	(*AgentRef)(nil),                                  // 169: quicbaas.agents.v1.AgentRef
+	(*SpendLimits)(nil),                               // 170: quicbaas.spend.v1.SpendLimits
+	(*FacetCounts)(nil),                               // 171: quicbaas.sdlc.v1.FacetCounts
 }
 var file_api_proto_orchestrator_proto_depIdxs = []int32{
 	145, // 0: quicbaas.orchestrator.v1.MCPServerConfig.env:type_name -> quicbaas.orchestrator.v1.MCPServerConfig.EnvEntry
 	146, // 1: quicbaas.orchestrator.v1.ContainerSpec.env:type_name -> quicbaas.orchestrator.v1.ContainerSpec.EnvEntry
 	2,   // 2: quicbaas.orchestrator.v1.SessionInfo.state:type_name -> quicbaas.orchestrator.v1.SessionState
-	162, // 3: quicbaas.orchestrator.v1.SessionInfo.created_at:type_name -> google.protobuf.Timestamp
-	162, // 4: quicbaas.orchestrator.v1.SessionInfo.last_activity:type_name -> google.protobuf.Timestamp
+	167, // 3: quicbaas.orchestrator.v1.SessionInfo.created_at:type_name -> google.protobuf.Timestamp
+	167, // 4: quicbaas.orchestrator.v1.SessionInfo.last_activity:type_name -> google.protobuf.Timestamp
 	0,   // 5: quicbaas.orchestrator.v1.Task.status:type_name -> quicbaas.orchestrator.v1.TaskStatus
 	13,  // 6: quicbaas.orchestrator.v1.Task.result:type_name -> quicbaas.orchestrator.v1.TaskResult
 	147, // 7: quicbaas.orchestrator.v1.Task.metadata:type_name -> quicbaas.orchestrator.v1.Task.MetadataEntry
-	162, // 8: quicbaas.orchestrator.v1.Task.created_at:type_name -> google.protobuf.Timestamp
-	162, // 9: quicbaas.orchestrator.v1.Task.updated_at:type_name -> google.protobuf.Timestamp
-	162, // 10: quicbaas.orchestrator.v1.Task.claimed_at:type_name -> google.protobuf.Timestamp
-	162, // 11: quicbaas.orchestrator.v1.Task.completed_at:type_name -> google.protobuf.Timestamp
-	162, // 12: quicbaas.orchestrator.v1.Task.spawned_at:type_name -> google.protobuf.Timestamp
+	167, // 8: quicbaas.orchestrator.v1.Task.created_at:type_name -> google.protobuf.Timestamp
+	167, // 9: quicbaas.orchestrator.v1.Task.updated_at:type_name -> google.protobuf.Timestamp
+	167, // 10: quicbaas.orchestrator.v1.Task.claimed_at:type_name -> google.protobuf.Timestamp
+	167, // 11: quicbaas.orchestrator.v1.Task.completed_at:type_name -> google.protobuf.Timestamp
+	167, // 12: quicbaas.orchestrator.v1.Task.spawned_at:type_name -> google.protobuf.Timestamp
 	12,  // 13: quicbaas.orchestrator.v1.Task.source:type_name -> quicbaas.orchestrator.v1.TaskSource
 	11,  // 14: quicbaas.orchestrator.v1.Task.routing:type_name -> quicbaas.orchestrator.v1.TaskRouting
 	148, // 15: quicbaas.orchestrator.v1.TaskResult.metadata:type_name -> quicbaas.orchestrator.v1.TaskResult.MetadataEntry
 	0,   // 16: quicbaas.orchestrator.v1.TaskFilter.status:type_name -> quicbaas.orchestrator.v1.TaskStatus
 	0,   // 17: quicbaas.orchestrator.v1.TaskFilter.statuses:type_name -> quicbaas.orchestrator.v1.TaskStatus
 	1,   // 18: quicbaas.orchestrator.v1.FleetNode.status:type_name -> quicbaas.orchestrator.v1.FleetNodeStatus
-	162, // 19: quicbaas.orchestrator.v1.FleetNode.last_seen:type_name -> google.protobuf.Timestamp
-	162, // 20: quicbaas.orchestrator.v1.FleetNode.registered_at:type_name -> google.protobuf.Timestamp
+	167, // 19: quicbaas.orchestrator.v1.FleetNode.last_seen:type_name -> google.protobuf.Timestamp
+	167, // 20: quicbaas.orchestrator.v1.FleetNode.registered_at:type_name -> google.protobuf.Timestamp
 	149, // 21: quicbaas.orchestrator.v1.FleetNode.metadata:type_name -> quicbaas.orchestrator.v1.FleetNode.MetadataEntry
 	1,   // 22: quicbaas.orchestrator.v1.FleetNodeFilter.status:type_name -> quicbaas.orchestrator.v1.FleetNodeStatus
 	18,  // 23: quicbaas.orchestrator.v1.AgentBackendInfo.capabilities:type_name -> quicbaas.orchestrator.v1.BackendCapabilities
 	2,   // 24: quicbaas.orchestrator.v1.SessionHealthResult.state:type_name -> quicbaas.orchestrator.v1.SessionState
-	162, // 25: quicbaas.orchestrator.v1.HealthCheckReport.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 25: quicbaas.orchestrator.v1.HealthCheckReport.timestamp:type_name -> google.protobuf.Timestamp
 	20,  // 26: quicbaas.orchestrator.v1.HealthCheckReport.results:type_name -> quicbaas.orchestrator.v1.SessionHealthResult
 	5,   // 27: quicbaas.orchestrator.v1.SpawnSessionRequest.mcp_servers:type_name -> quicbaas.orchestrator.v1.MCPServerConfig
 	150, // 28: quicbaas.orchestrator.v1.SpawnSessionRequest.env:type_name -> quicbaas.orchestrator.v1.SpawnSessionRequest.EnvEntry
@@ -14392,233 +14468,243 @@ var file_api_proto_orchestrator_proto_depIdxs = []int32{
 	24,  // 34: quicbaas.orchestrator.v1.SpawnSessionRequest.storage:type_name -> quicbaas.orchestrator.v1.WorkspaceStoragePlan
 	141, // 35: quicbaas.orchestrator.v1.SpawnSessionRequest.workspace:type_name -> quicbaas.orchestrator.v1.SessionWorkspace
 	23,  // 36: quicbaas.orchestrator.v1.SpawnSessionRequest.signing_relay:type_name -> quicbaas.orchestrator.v1.SigningRelaySpec
-	162, // 37: quicbaas.orchestrator.v1.SpawnSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
-	163, // 38: quicbaas.orchestrator.v1.SpawnSessionResponse.failovers:type_name -> quicbaas.agents.v1.AgentAttempt
+	167, // 37: quicbaas.orchestrator.v1.SpawnSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
+	168, // 38: quicbaas.orchestrator.v1.SpawnSessionResponse.failovers:type_name -> quicbaas.agents.v1.AgentAttempt
 	8,   // 39: quicbaas.orchestrator.v1.PromptSessionResponse.content:type_name -> quicbaas.orchestrator.v1.ContentBlock
-	162, // 40: quicbaas.orchestrator.v1.PromptSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 40: quicbaas.orchestrator.v1.PromptSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
 	2,   // 41: quicbaas.orchestrator.v1.SessionStatusResponse.state:type_name -> quicbaas.orchestrator.v1.SessionState
-	162, // 42: quicbaas.orchestrator.v1.SessionStatusResponse.last_activity:type_name -> google.protobuf.Timestamp
-	162, // 43: quicbaas.orchestrator.v1.SessionStatusResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 44: quicbaas.orchestrator.v1.CloseSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 45: quicbaas.orchestrator.v1.RotateSessionAccountResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 42: quicbaas.orchestrator.v1.SessionStatusResponse.last_activity:type_name -> google.protobuf.Timestamp
+	167, // 43: quicbaas.orchestrator.v1.SessionStatusResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 44: quicbaas.orchestrator.v1.CloseSessionResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 45: quicbaas.orchestrator.v1.RotateSessionAccountResponse.timestamp:type_name -> google.protobuf.Timestamp
 	9,   // 46: quicbaas.orchestrator.v1.ListSessionsResponse.sessions:type_name -> quicbaas.orchestrator.v1.SessionInfo
-	162, // 47: quicbaas.orchestrator.v1.ListSessionsResponse.timestamp:type_name -> google.protobuf.Timestamp
-	152, // 48: quicbaas.orchestrator.v1.CreateTaskRequest.metadata:type_name -> quicbaas.orchestrator.v1.CreateTaskRequest.MetadataEntry
-	12,  // 49: quicbaas.orchestrator.v1.CreateTaskRequest.source:type_name -> quicbaas.orchestrator.v1.TaskSource
-	10,  // 50: quicbaas.orchestrator.v1.CreateTaskResponse.task:type_name -> quicbaas.orchestrator.v1.Task
-	162, // 51: quicbaas.orchestrator.v1.CreateTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	10,  // 52: quicbaas.orchestrator.v1.GetTaskResponse.task:type_name -> quicbaas.orchestrator.v1.Task
-	162, // 53: quicbaas.orchestrator.v1.GetTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	14,  // 54: quicbaas.orchestrator.v1.ListTasksRequest.filter:type_name -> quicbaas.orchestrator.v1.TaskFilter
-	10,  // 55: quicbaas.orchestrator.v1.ListTasksResponse.tasks:type_name -> quicbaas.orchestrator.v1.Task
-	162, // 56: quicbaas.orchestrator.v1.ListTasksResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 57: quicbaas.orchestrator.v1.ClaimTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 58: quicbaas.orchestrator.v1.BlockTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 59: quicbaas.orchestrator.v1.ReadmitTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 60: quicbaas.orchestrator.v1.DeleteTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	13,  // 61: quicbaas.orchestrator.v1.CompleteTaskRequest.result:type_name -> quicbaas.orchestrator.v1.TaskResult
-	162, // 62: quicbaas.orchestrator.v1.CompleteTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	15,  // 63: quicbaas.orchestrator.v1.DecomposeTaskResponse.work_items:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkItem
-	162, // 64: quicbaas.orchestrator.v1.DecomposeTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
-	164, // 65: quicbaas.orchestrator.v1.OrchestratorStartJobRequest.lead:type_name -> quicbaas.agents.v1.AgentRef
-	162, // 66: quicbaas.orchestrator.v1.OrchestratorStartJobResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 67: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.timestamp:type_name -> google.protobuf.Timestamp
-	63,  // 68: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.events:type_name -> quicbaas.orchestrator.v1.OrchestratorAuditEvent
-	59,  // 69: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.stages:type_name -> quicbaas.orchestrator.v1.OrchestratorJobStage
-	60,  // 70: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.attempts:type_name -> quicbaas.orchestrator.v1.OrchestratorJobAttempt
-	62,  // 71: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.delivery:type_name -> quicbaas.orchestrator.v1.OrchestratorJobDelivery
-	58,  // 72: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.verification:type_name -> quicbaas.orchestrator.v1.OrchestratorJobVerification
-	12,  // 73: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.source:type_name -> quicbaas.orchestrator.v1.TaskSource
-	61,  // 74: quicbaas.orchestrator.v1.OrchestratorJobDelivery.reviews:type_name -> quicbaas.orchestrator.v1.OrchestratorJobReviewRound
-	162, // 75: quicbaas.orchestrator.v1.OrchestratorCancelJobResponse.timestamp:type_name -> google.protobuf.Timestamp
-	68,  // 76: quicbaas.orchestrator.v1.OrchestratorListJobsResponse.jobs:type_name -> quicbaas.orchestrator.v1.OrchestratorJobSummary
-	12,  // 77: quicbaas.orchestrator.v1.OrchestratorJobSummary.source:type_name -> quicbaas.orchestrator.v1.TaskSource
-	153, // 78: quicbaas.orchestrator.v1.JobEvent.metadata:type_name -> quicbaas.orchestrator.v1.JobEvent.MetadataEntry
-	19,  // 79: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse.backends:type_name -> quicbaas.orchestrator.v1.AgentBackendInfo
-	162, // 80: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse.timestamp:type_name -> google.protobuf.Timestamp
-	73,  // 81: quicbaas.orchestrator.v1.OrchestratorJobRunner.states:type_name -> quicbaas.orchestrator.v1.OrchestratorJobStateSpec
-	74,  // 82: quicbaas.orchestrator.v1.OrchestratorListRunnersResponse.runners:type_name -> quicbaas.orchestrator.v1.OrchestratorJobRunner
-	154, // 83: quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.env:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.EnvEntry
-	79,  // 84: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.peer_messaging:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowPeerMessagingSettings
-	80,  // 85: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.file_locking:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowFileLockSettings
-	81,  // 86: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.vector_db:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowVectorDBSettings
-	78,  // 87: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.review_criteria:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowReviewCriterion
-	82,  // 88: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.cost_controls:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowCostControlSettings
-	83,  // 89: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.recovery:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowRecoverySettings
-	77,  // 90: quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition.agents:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec
-	84,  // 91: quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition.settings:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowSettings
-	85,  // 92: quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse.workflows:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition
-	21,  // 93: quicbaas.orchestrator.v1.OrchestratorHealthResponse.report:type_name -> quicbaas.orchestrator.v1.HealthCheckReport
-	162, // 94: quicbaas.orchestrator.v1.OrchestratorHealthResponse.timestamp:type_name -> google.protobuf.Timestamp
-	155, // 95: quicbaas.orchestrator.v1.RegisterFleetNodeRequest.metadata:type_name -> quicbaas.orchestrator.v1.RegisterFleetNodeRequest.MetadataEntry
-	16,  // 96: quicbaas.orchestrator.v1.RegisterFleetNodeResponse.node:type_name -> quicbaas.orchestrator.v1.FleetNode
-	162, // 97: quicbaas.orchestrator.v1.RegisterFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
-	16,  // 98: quicbaas.orchestrator.v1.GetFleetNodeResponse.node:type_name -> quicbaas.orchestrator.v1.FleetNode
-	162, // 99: quicbaas.orchestrator.v1.GetFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
-	17,  // 100: quicbaas.orchestrator.v1.ListFleetNodesRequest.filter:type_name -> quicbaas.orchestrator.v1.FleetNodeFilter
-	16,  // 101: quicbaas.orchestrator.v1.ListFleetNodesResponse.nodes:type_name -> quicbaas.orchestrator.v1.FleetNode
-	162, // 102: quicbaas.orchestrator.v1.ListFleetNodesResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 103: quicbaas.orchestrator.v1.RemoveFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
-	99,  // 104: quicbaas.orchestrator.v1.FleetNodeHeartbeatRequest.observation:type_name -> quicbaas.orchestrator.v1.FleetNodeObservation
-	101, // 105: quicbaas.orchestrator.v1.FleetNodeObservation.devices:type_name -> quicbaas.orchestrator.v1.FleetDeviceSample
-	102, // 106: quicbaas.orchestrator.v1.FleetNodeObservation.host_metrics:type_name -> quicbaas.orchestrator.v1.FleetHostMetrics
-	100, // 107: quicbaas.orchestrator.v1.FleetDeviceSample.power_watts:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 108: quicbaas.orchestrator.v1.FleetDeviceSample.utilization:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 109: quicbaas.orchestrator.v1.FleetDeviceSample.memory_used_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 110: quicbaas.orchestrator.v1.FleetDeviceSample.memory_total_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
-	162, // 111: quicbaas.orchestrator.v1.FleetHostMetrics.collected_at:type_name -> google.protobuf.Timestamp
-	100, // 112: quicbaas.orchestrator.v1.FleetHostMetrics.cpu_utilization:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 113: quicbaas.orchestrator.v1.FleetHostMetrics.cpu_count:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 114: quicbaas.orchestrator.v1.FleetHostMetrics.load1:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 115: quicbaas.orchestrator.v1.FleetHostMetrics.load5:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 116: quicbaas.orchestrator.v1.FleetHostMetrics.load15:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 117: quicbaas.orchestrator.v1.FleetHostMetrics.mem_total_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 118: quicbaas.orchestrator.v1.FleetHostMetrics.mem_available_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 119: quicbaas.orchestrator.v1.FleetHostMetrics.disk_total_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
-	100, // 120: quicbaas.orchestrator.v1.FleetHostMetrics.disk_available_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
-	162, // 121: quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 122: quicbaas.orchestrator.v1.PushEventRequest.emitted_at:type_name -> google.protobuf.Timestamp
-	162, // 123: quicbaas.orchestrator.v1.SessionEventEnvelope.timestamp:type_name -> google.protobuf.Timestamp
-	162, // 124: quicbaas.orchestrator.v1.SessionTurn.timestamp:type_name -> google.protobuf.Timestamp
-	109, // 125: quicbaas.orchestrator.v1.SessionTurn.tools:type_name -> quicbaas.orchestrator.v1.SessionToolUse
-	110, // 126: quicbaas.orchestrator.v1.GetSessionConversationResponse.turns:type_name -> quicbaas.orchestrator.v1.SessionTurn
-	162, // 127: quicbaas.orchestrator.v1.GetSpendReportRequest.from:type_name -> google.protobuf.Timestamp
-	162, // 128: quicbaas.orchestrator.v1.GetSpendReportRequest.to:type_name -> google.protobuf.Timestamp
-	162, // 129: quicbaas.orchestrator.v1.SpendWindowStatus.frees_at:type_name -> google.protobuf.Timestamp
-	162, // 130: quicbaas.orchestrator.v1.SpendBreakerVerdict.last_failure_at:type_name -> google.protobuf.Timestamp
-	162, // 131: quicbaas.orchestrator.v1.SpendBreakerVerdict.last_success_at:type_name -> google.protobuf.Timestamp
-	162, // 132: quicbaas.orchestrator.v1.SpendBreakerVerdict.open_until:type_name -> google.protobuf.Timestamp
-	115, // 133: quicbaas.orchestrator.v1.SpendAccount.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	113, // 134: quicbaas.orchestrator.v1.SpendAccount.windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
-	114, // 135: quicbaas.orchestrator.v1.SpendAccount.breaker:type_name -> quicbaas.orchestrator.v1.SpendBreakerVerdict
-	115, // 136: quicbaas.orchestrator.v1.SpendModel.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	115, // 137: quicbaas.orchestrator.v1.SpendHost.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	115, // 138: quicbaas.orchestrator.v1.SpendAgent.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	115, // 139: quicbaas.orchestrator.v1.SpendChild.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	162, // 140: quicbaas.orchestrator.v1.GetSpendReportResponse.first_at:type_name -> google.protobuf.Timestamp
-	162, // 141: quicbaas.orchestrator.v1.GetSpendReportResponse.last_at:type_name -> google.protobuf.Timestamp
-	116, // 142: quicbaas.orchestrator.v1.GetSpendReportResponse.accounts:type_name -> quicbaas.orchestrator.v1.SpendAccount
-	117, // 143: quicbaas.orchestrator.v1.GetSpendReportResponse.models:type_name -> quicbaas.orchestrator.v1.SpendModel
-	120, // 144: quicbaas.orchestrator.v1.GetSpendReportResponse.children:type_name -> quicbaas.orchestrator.v1.SpendChild
-	115, // 145: quicbaas.orchestrator.v1.GetSpendReportResponse.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
-	162, // 146: quicbaas.orchestrator.v1.GetSpendReportResponse.from:type_name -> google.protobuf.Timestamp
-	162, // 147: quicbaas.orchestrator.v1.GetSpendReportResponse.to:type_name -> google.protobuf.Timestamp
-	113, // 148: quicbaas.orchestrator.v1.GetSpendReportResponse.scope_windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
-	118, // 149: quicbaas.orchestrator.v1.GetSpendReportResponse.hosts:type_name -> quicbaas.orchestrator.v1.SpendHost
-	119, // 150: quicbaas.orchestrator.v1.GetSpendReportResponse.agents:type_name -> quicbaas.orchestrator.v1.SpendAgent
-	113, // 151: quicbaas.orchestrator.v1.GetSpendReportResponse.agent_windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
-	165, // 152: quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest.limits:type_name -> quicbaas.spend.v1.SpendLimits
-	165, // 153: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.limits:type_name -> quicbaas.spend.v1.SpendLimits
-	162, // 154: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.updated_at:type_name -> google.protobuf.Timestamp
-	113, // 155: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
-	156, // 156: quicbaas.orchestrator.v1.InferenceRequest.metadata:type_name -> quicbaas.orchestrator.v1.InferenceRequest.MetadataEntry
-	8,   // 157: quicbaas.orchestrator.v1.InferenceResponse.content:type_name -> quicbaas.orchestrator.v1.ContentBlock
-	8,   // 158: quicbaas.orchestrator.v1.InferenceChunk.delta:type_name -> quicbaas.orchestrator.v1.ContentBlock
-	128, // 159: quicbaas.orchestrator.v1.SpawnChildJobRequest.tasks:type_name -> quicbaas.orchestrator.v1.TaskSpec
-	131, // 160: quicbaas.orchestrator.v1.Artifact.ref:type_name -> quicbaas.orchestrator.v1.ArtifactRef
-	157, // 161: quicbaas.orchestrator.v1.Artifact.metadata:type_name -> quicbaas.orchestrator.v1.Artifact.MetadataEntry
-	132, // 162: quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest.artifacts:type_name -> quicbaas.orchestrator.v1.Artifact
-	162, // 163: quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse.timestamp:type_name -> google.protobuf.Timestamp
-	132, // 164: quicbaas.orchestrator.v1.ListTaskArtifactsResponse.artifacts:type_name -> quicbaas.orchestrator.v1.Artifact
-	162, // 165: quicbaas.orchestrator.v1.ListTaskArtifactsResponse.timestamp:type_name -> google.protobuf.Timestamp
-	132, // 166: quicbaas.orchestrator.v1.GetTaskArtifactResponse.artifact:type_name -> quicbaas.orchestrator.v1.Artifact
-	162, // 167: quicbaas.orchestrator.v1.GetTaskArtifactResponse.timestamp:type_name -> google.protobuf.Timestamp
-	158, // 168: quicbaas.orchestrator.v1.SessionWorkspace.spec_files:type_name -> quicbaas.orchestrator.v1.SessionWorkspace.SpecFilesEntry
-	159, // 169: quicbaas.orchestrator.v1.SetCostSettingsRequest.engine_power_watts:type_name -> quicbaas.orchestrator.v1.SetCostSettingsRequest.EnginePowerWattsEntry
-	160, // 170: quicbaas.orchestrator.v1.CostSettingsResponse.engine_power_watts:type_name -> quicbaas.orchestrator.v1.CostSettingsResponse.EnginePowerWattsEntry
-	162, // 171: quicbaas.orchestrator.v1.CostSettingsResponse.updated_at:type_name -> google.protobuf.Timestamp
-	161, // 172: quicbaas.orchestrator.v1.CostSettingsResponse.effective_engine_power_watts:type_name -> quicbaas.orchestrator.v1.CostSettingsResponse.EffectiveEnginePowerWattsEntry
-	22,  // 173: quicbaas.orchestrator.v1.OrchestratorService.SpawnSession:input_type -> quicbaas.orchestrator.v1.SpawnSessionRequest
-	26,  // 174: quicbaas.orchestrator.v1.OrchestratorService.PromptSession:input_type -> quicbaas.orchestrator.v1.PromptSessionRequest
-	28,  // 175: quicbaas.orchestrator.v1.OrchestratorService.SessionStatus:input_type -> quicbaas.orchestrator.v1.SessionStatusRequest
-	30,  // 176: quicbaas.orchestrator.v1.OrchestratorService.CloseSession:input_type -> quicbaas.orchestrator.v1.CloseSessionRequest
-	34,  // 177: quicbaas.orchestrator.v1.OrchestratorService.ListSessions:input_type -> quicbaas.orchestrator.v1.ListSessionsRequest
-	32,  // 178: quicbaas.orchestrator.v1.OrchestratorService.RotateSessionAccount:input_type -> quicbaas.orchestrator.v1.RotateSessionAccountRequest
-	36,  // 179: quicbaas.orchestrator.v1.OrchestratorService.CreateTask:input_type -> quicbaas.orchestrator.v1.CreateTaskRequest
-	38,  // 180: quicbaas.orchestrator.v1.OrchestratorService.GetTask:input_type -> quicbaas.orchestrator.v1.GetTaskRequest
-	40,  // 181: quicbaas.orchestrator.v1.OrchestratorService.ListTasks:input_type -> quicbaas.orchestrator.v1.ListTasksRequest
-	42,  // 182: quicbaas.orchestrator.v1.OrchestratorService.ClaimTask:input_type -> quicbaas.orchestrator.v1.ClaimTaskRequest
-	50,  // 183: quicbaas.orchestrator.v1.OrchestratorService.CompleteTask:input_type -> quicbaas.orchestrator.v1.CompleteTaskRequest
-	44,  // 184: quicbaas.orchestrator.v1.OrchestratorService.BlockTask:input_type -> quicbaas.orchestrator.v1.BlockTaskRequest
-	46,  // 185: quicbaas.orchestrator.v1.OrchestratorService.ReadmitTask:input_type -> quicbaas.orchestrator.v1.ReadmitTaskRequest
-	48,  // 186: quicbaas.orchestrator.v1.OrchestratorService.DeleteTask:input_type -> quicbaas.orchestrator.v1.DeleteTaskRequest
-	52,  // 187: quicbaas.orchestrator.v1.OrchestratorService.DecomposeTask:input_type -> quicbaas.orchestrator.v1.DecomposeTaskRequest
-	54,  // 188: quicbaas.orchestrator.v1.OrchestratorService.StartJob:input_type -> quicbaas.orchestrator.v1.OrchestratorStartJobRequest
-	56,  // 189: quicbaas.orchestrator.v1.OrchestratorService.GetJobStatus:input_type -> quicbaas.orchestrator.v1.OrchestratorGetJobStatusRequest
-	64,  // 190: quicbaas.orchestrator.v1.OrchestratorService.CancelJob:input_type -> quicbaas.orchestrator.v1.OrchestratorCancelJobRequest
-	66,  // 191: quicbaas.orchestrator.v1.OrchestratorService.ListJobs:input_type -> quicbaas.orchestrator.v1.OrchestratorListJobsRequest
-	69,  // 192: quicbaas.orchestrator.v1.OrchestratorService.SubscribeJobEvents:input_type -> quicbaas.orchestrator.v1.SubscribeJobEventsRequest
-	71,  // 193: quicbaas.orchestrator.v1.OrchestratorService.ListBackends:input_type -> quicbaas.orchestrator.v1.OrchestratorListBackendsRequest
-	75,  // 194: quicbaas.orchestrator.v1.OrchestratorService.ListRunners:input_type -> quicbaas.orchestrator.v1.OrchestratorListRunnersRequest
-	86,  // 195: quicbaas.orchestrator.v1.OrchestratorService.ListWorkflows:input_type -> quicbaas.orchestrator.v1.OrchestratorListWorkflowsRequest
-	88,  // 196: quicbaas.orchestrator.v1.OrchestratorService.Health:input_type -> quicbaas.orchestrator.v1.OrchestratorHealthRequest
-	90,  // 197: quicbaas.orchestrator.v1.OrchestratorService.RegisterFleetNode:input_type -> quicbaas.orchestrator.v1.RegisterFleetNodeRequest
-	92,  // 198: quicbaas.orchestrator.v1.OrchestratorService.GetFleetNode:input_type -> quicbaas.orchestrator.v1.GetFleetNodeRequest
-	94,  // 199: quicbaas.orchestrator.v1.OrchestratorService.ListFleetNodes:input_type -> quicbaas.orchestrator.v1.ListFleetNodesRequest
-	96,  // 200: quicbaas.orchestrator.v1.OrchestratorService.RemoveFleetNode:input_type -> quicbaas.orchestrator.v1.RemoveFleetNodeRequest
-	98,  // 201: quicbaas.orchestrator.v1.OrchestratorService.FleetNodeHeartbeat:input_type -> quicbaas.orchestrator.v1.FleetNodeHeartbeatRequest
-	104, // 202: quicbaas.orchestrator.v1.OrchestratorService.PushEvents:input_type -> quicbaas.orchestrator.v1.PushEventRequest
-	106, // 203: quicbaas.orchestrator.v1.OrchestratorService.SubscribeSessionEvents:input_type -> quicbaas.orchestrator.v1.SubscribeSessionRequest
-	108, // 204: quicbaas.orchestrator.v1.OrchestratorService.GetSessionConversation:input_type -> quicbaas.orchestrator.v1.GetSessionConversationRequest
-	112, // 205: quicbaas.orchestrator.v1.OrchestratorService.GetSpendReport:input_type -> quicbaas.orchestrator.v1.GetSpendReportRequest
-	122, // 206: quicbaas.orchestrator.v1.OrchestratorService.GetTenantSpendPolicy:input_type -> quicbaas.orchestrator.v1.GetTenantSpendPolicyRequest
-	123, // 207: quicbaas.orchestrator.v1.OrchestratorService.SetTenantSpendPolicy:input_type -> quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest
-	125, // 208: quicbaas.orchestrator.v1.OrchestratorService.Inference:input_type -> quicbaas.orchestrator.v1.InferenceRequest
-	125, // 209: quicbaas.orchestrator.v1.OrchestratorService.InferenceStream:input_type -> quicbaas.orchestrator.v1.InferenceRequest
-	129, // 210: quicbaas.orchestrator.v1.OrchestratorService.SpawnChildJob:input_type -> quicbaas.orchestrator.v1.SpawnChildJobRequest
-	133, // 211: quicbaas.orchestrator.v1.OrchestratorService.SubmitTaskArtifacts:input_type -> quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest
-	135, // 212: quicbaas.orchestrator.v1.OrchestratorService.ListTaskArtifacts:input_type -> quicbaas.orchestrator.v1.ListTaskArtifactsRequest
-	137, // 213: quicbaas.orchestrator.v1.OrchestratorService.GetTaskArtifact:input_type -> quicbaas.orchestrator.v1.GetTaskArtifactRequest
-	142, // 214: quicbaas.orchestrator.v1.OrchestratorService.GetCostSettings:input_type -> quicbaas.orchestrator.v1.GetCostSettingsRequest
-	143, // 215: quicbaas.orchestrator.v1.OrchestratorService.SetCostSettings:input_type -> quicbaas.orchestrator.v1.SetCostSettingsRequest
-	25,  // 216: quicbaas.orchestrator.v1.OrchestratorService.SpawnSession:output_type -> quicbaas.orchestrator.v1.SpawnSessionResponse
-	27,  // 217: quicbaas.orchestrator.v1.OrchestratorService.PromptSession:output_type -> quicbaas.orchestrator.v1.PromptSessionResponse
-	29,  // 218: quicbaas.orchestrator.v1.OrchestratorService.SessionStatus:output_type -> quicbaas.orchestrator.v1.SessionStatusResponse
-	31,  // 219: quicbaas.orchestrator.v1.OrchestratorService.CloseSession:output_type -> quicbaas.orchestrator.v1.CloseSessionResponse
-	35,  // 220: quicbaas.orchestrator.v1.OrchestratorService.ListSessions:output_type -> quicbaas.orchestrator.v1.ListSessionsResponse
-	33,  // 221: quicbaas.orchestrator.v1.OrchestratorService.RotateSessionAccount:output_type -> quicbaas.orchestrator.v1.RotateSessionAccountResponse
-	37,  // 222: quicbaas.orchestrator.v1.OrchestratorService.CreateTask:output_type -> quicbaas.orchestrator.v1.CreateTaskResponse
-	39,  // 223: quicbaas.orchestrator.v1.OrchestratorService.GetTask:output_type -> quicbaas.orchestrator.v1.GetTaskResponse
-	41,  // 224: quicbaas.orchestrator.v1.OrchestratorService.ListTasks:output_type -> quicbaas.orchestrator.v1.ListTasksResponse
-	43,  // 225: quicbaas.orchestrator.v1.OrchestratorService.ClaimTask:output_type -> quicbaas.orchestrator.v1.ClaimTaskResponse
-	51,  // 226: quicbaas.orchestrator.v1.OrchestratorService.CompleteTask:output_type -> quicbaas.orchestrator.v1.CompleteTaskResponse
-	45,  // 227: quicbaas.orchestrator.v1.OrchestratorService.BlockTask:output_type -> quicbaas.orchestrator.v1.BlockTaskResponse
-	47,  // 228: quicbaas.orchestrator.v1.OrchestratorService.ReadmitTask:output_type -> quicbaas.orchestrator.v1.ReadmitTaskResponse
-	49,  // 229: quicbaas.orchestrator.v1.OrchestratorService.DeleteTask:output_type -> quicbaas.orchestrator.v1.DeleteTaskResponse
-	53,  // 230: quicbaas.orchestrator.v1.OrchestratorService.DecomposeTask:output_type -> quicbaas.orchestrator.v1.DecomposeTaskResponse
-	55,  // 231: quicbaas.orchestrator.v1.OrchestratorService.StartJob:output_type -> quicbaas.orchestrator.v1.OrchestratorStartJobResponse
-	57,  // 232: quicbaas.orchestrator.v1.OrchestratorService.GetJobStatus:output_type -> quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse
-	65,  // 233: quicbaas.orchestrator.v1.OrchestratorService.CancelJob:output_type -> quicbaas.orchestrator.v1.OrchestratorCancelJobResponse
-	67,  // 234: quicbaas.orchestrator.v1.OrchestratorService.ListJobs:output_type -> quicbaas.orchestrator.v1.OrchestratorListJobsResponse
-	70,  // 235: quicbaas.orchestrator.v1.OrchestratorService.SubscribeJobEvents:output_type -> quicbaas.orchestrator.v1.JobEvent
-	72,  // 236: quicbaas.orchestrator.v1.OrchestratorService.ListBackends:output_type -> quicbaas.orchestrator.v1.OrchestratorListBackendsResponse
-	76,  // 237: quicbaas.orchestrator.v1.OrchestratorService.ListRunners:output_type -> quicbaas.orchestrator.v1.OrchestratorListRunnersResponse
-	87,  // 238: quicbaas.orchestrator.v1.OrchestratorService.ListWorkflows:output_type -> quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse
-	89,  // 239: quicbaas.orchestrator.v1.OrchestratorService.Health:output_type -> quicbaas.orchestrator.v1.OrchestratorHealthResponse
-	91,  // 240: quicbaas.orchestrator.v1.OrchestratorService.RegisterFleetNode:output_type -> quicbaas.orchestrator.v1.RegisterFleetNodeResponse
-	93,  // 241: quicbaas.orchestrator.v1.OrchestratorService.GetFleetNode:output_type -> quicbaas.orchestrator.v1.GetFleetNodeResponse
-	95,  // 242: quicbaas.orchestrator.v1.OrchestratorService.ListFleetNodes:output_type -> quicbaas.orchestrator.v1.ListFleetNodesResponse
-	97,  // 243: quicbaas.orchestrator.v1.OrchestratorService.RemoveFleetNode:output_type -> quicbaas.orchestrator.v1.RemoveFleetNodeResponse
-	103, // 244: quicbaas.orchestrator.v1.OrchestratorService.FleetNodeHeartbeat:output_type -> quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse
-	105, // 245: quicbaas.orchestrator.v1.OrchestratorService.PushEvents:output_type -> quicbaas.orchestrator.v1.PushEventAck
-	107, // 246: quicbaas.orchestrator.v1.OrchestratorService.SubscribeSessionEvents:output_type -> quicbaas.orchestrator.v1.SessionEventEnvelope
-	111, // 247: quicbaas.orchestrator.v1.OrchestratorService.GetSessionConversation:output_type -> quicbaas.orchestrator.v1.GetSessionConversationResponse
-	121, // 248: quicbaas.orchestrator.v1.OrchestratorService.GetSpendReport:output_type -> quicbaas.orchestrator.v1.GetSpendReportResponse
-	124, // 249: quicbaas.orchestrator.v1.OrchestratorService.GetTenantSpendPolicy:output_type -> quicbaas.orchestrator.v1.TenantSpendPolicyResponse
-	124, // 250: quicbaas.orchestrator.v1.OrchestratorService.SetTenantSpendPolicy:output_type -> quicbaas.orchestrator.v1.TenantSpendPolicyResponse
-	126, // 251: quicbaas.orchestrator.v1.OrchestratorService.Inference:output_type -> quicbaas.orchestrator.v1.InferenceResponse
-	127, // 252: quicbaas.orchestrator.v1.OrchestratorService.InferenceStream:output_type -> quicbaas.orchestrator.v1.InferenceChunk
-	130, // 253: quicbaas.orchestrator.v1.OrchestratorService.SpawnChildJob:output_type -> quicbaas.orchestrator.v1.SpawnChildJobResponse
-	134, // 254: quicbaas.orchestrator.v1.OrchestratorService.SubmitTaskArtifacts:output_type -> quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse
-	136, // 255: quicbaas.orchestrator.v1.OrchestratorService.ListTaskArtifacts:output_type -> quicbaas.orchestrator.v1.ListTaskArtifactsResponse
-	138, // 256: quicbaas.orchestrator.v1.OrchestratorService.GetTaskArtifact:output_type -> quicbaas.orchestrator.v1.GetTaskArtifactResponse
-	144, // 257: quicbaas.orchestrator.v1.OrchestratorService.GetCostSettings:output_type -> quicbaas.orchestrator.v1.CostSettingsResponse
-	144, // 258: quicbaas.orchestrator.v1.OrchestratorService.SetCostSettings:output_type -> quicbaas.orchestrator.v1.CostSettingsResponse
-	216, // [216:259] is the sub-list for method output_type
-	173, // [173:216] is the sub-list for method input_type
-	173, // [173:173] is the sub-list for extension type_name
-	173, // [173:173] is the sub-list for extension extendee
-	0,   // [0:173] is the sub-list for field type_name
+	167, // 47: quicbaas.orchestrator.v1.ListSessionsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	152, // 48: quicbaas.orchestrator.v1.ListSessionsResponse.facets:type_name -> quicbaas.orchestrator.v1.ListSessionsResponse.FacetsEntry
+	153, // 49: quicbaas.orchestrator.v1.CreateTaskRequest.metadata:type_name -> quicbaas.orchestrator.v1.CreateTaskRequest.MetadataEntry
+	12,  // 50: quicbaas.orchestrator.v1.CreateTaskRequest.source:type_name -> quicbaas.orchestrator.v1.TaskSource
+	10,  // 51: quicbaas.orchestrator.v1.CreateTaskResponse.task:type_name -> quicbaas.orchestrator.v1.Task
+	167, // 52: quicbaas.orchestrator.v1.CreateTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	10,  // 53: quicbaas.orchestrator.v1.GetTaskResponse.task:type_name -> quicbaas.orchestrator.v1.Task
+	167, // 54: quicbaas.orchestrator.v1.GetTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	14,  // 55: quicbaas.orchestrator.v1.ListTasksRequest.filter:type_name -> quicbaas.orchestrator.v1.TaskFilter
+	10,  // 56: quicbaas.orchestrator.v1.ListTasksResponse.tasks:type_name -> quicbaas.orchestrator.v1.Task
+	167, // 57: quicbaas.orchestrator.v1.ListTasksResponse.timestamp:type_name -> google.protobuf.Timestamp
+	154, // 58: quicbaas.orchestrator.v1.ListTasksResponse.facets:type_name -> quicbaas.orchestrator.v1.ListTasksResponse.FacetsEntry
+	167, // 59: quicbaas.orchestrator.v1.ClaimTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 60: quicbaas.orchestrator.v1.BlockTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 61: quicbaas.orchestrator.v1.ReadmitTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 62: quicbaas.orchestrator.v1.DeleteTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	13,  // 63: quicbaas.orchestrator.v1.CompleteTaskRequest.result:type_name -> quicbaas.orchestrator.v1.TaskResult
+	167, // 64: quicbaas.orchestrator.v1.CompleteTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	15,  // 65: quicbaas.orchestrator.v1.DecomposeTaskResponse.work_items:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkItem
+	167, // 66: quicbaas.orchestrator.v1.DecomposeTaskResponse.timestamp:type_name -> google.protobuf.Timestamp
+	169, // 67: quicbaas.orchestrator.v1.OrchestratorStartJobRequest.lead:type_name -> quicbaas.agents.v1.AgentRef
+	167, // 68: quicbaas.orchestrator.v1.OrchestratorStartJobResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 69: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.timestamp:type_name -> google.protobuf.Timestamp
+	63,  // 70: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.events:type_name -> quicbaas.orchestrator.v1.OrchestratorAuditEvent
+	59,  // 71: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.stages:type_name -> quicbaas.orchestrator.v1.OrchestratorJobStage
+	60,  // 72: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.attempts:type_name -> quicbaas.orchestrator.v1.OrchestratorJobAttempt
+	62,  // 73: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.delivery:type_name -> quicbaas.orchestrator.v1.OrchestratorJobDelivery
+	58,  // 74: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.verification:type_name -> quicbaas.orchestrator.v1.OrchestratorJobVerification
+	12,  // 75: quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse.source:type_name -> quicbaas.orchestrator.v1.TaskSource
+	61,  // 76: quicbaas.orchestrator.v1.OrchestratorJobDelivery.reviews:type_name -> quicbaas.orchestrator.v1.OrchestratorJobReviewRound
+	167, // 77: quicbaas.orchestrator.v1.OrchestratorCancelJobResponse.timestamp:type_name -> google.protobuf.Timestamp
+	68,  // 78: quicbaas.orchestrator.v1.OrchestratorListJobsResponse.jobs:type_name -> quicbaas.orchestrator.v1.OrchestratorJobSummary
+	155, // 79: quicbaas.orchestrator.v1.OrchestratorListJobsResponse.facets:type_name -> quicbaas.orchestrator.v1.OrchestratorListJobsResponse.FacetsEntry
+	12,  // 80: quicbaas.orchestrator.v1.OrchestratorJobSummary.source:type_name -> quicbaas.orchestrator.v1.TaskSource
+	156, // 81: quicbaas.orchestrator.v1.JobEvent.metadata:type_name -> quicbaas.orchestrator.v1.JobEvent.MetadataEntry
+	19,  // 82: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse.backends:type_name -> quicbaas.orchestrator.v1.AgentBackendInfo
+	167, // 83: quicbaas.orchestrator.v1.OrchestratorListBackendsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	73,  // 84: quicbaas.orchestrator.v1.OrchestratorJobRunner.states:type_name -> quicbaas.orchestrator.v1.OrchestratorJobStateSpec
+	74,  // 85: quicbaas.orchestrator.v1.OrchestratorListRunnersResponse.runners:type_name -> quicbaas.orchestrator.v1.OrchestratorJobRunner
+	157, // 86: quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.env:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.EnvEntry
+	79,  // 87: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.peer_messaging:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowPeerMessagingSettings
+	80,  // 88: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.file_locking:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowFileLockSettings
+	81,  // 89: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.vector_db:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowVectorDBSettings
+	78,  // 90: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.review_criteria:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowReviewCriterion
+	82,  // 91: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.cost_controls:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowCostControlSettings
+	83,  // 92: quicbaas.orchestrator.v1.OrchestratorWorkflowSettings.recovery:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowRecoverySettings
+	77,  // 93: quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition.agents:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec
+	84,  // 94: quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition.settings:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowSettings
+	85,  // 95: quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse.workflows:type_name -> quicbaas.orchestrator.v1.OrchestratorWorkflowDefinition
+	158, // 96: quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse.facets:type_name -> quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse.FacetsEntry
+	21,  // 97: quicbaas.orchestrator.v1.OrchestratorHealthResponse.report:type_name -> quicbaas.orchestrator.v1.HealthCheckReport
+	167, // 98: quicbaas.orchestrator.v1.OrchestratorHealthResponse.timestamp:type_name -> google.protobuf.Timestamp
+	159, // 99: quicbaas.orchestrator.v1.RegisterFleetNodeRequest.metadata:type_name -> quicbaas.orchestrator.v1.RegisterFleetNodeRequest.MetadataEntry
+	16,  // 100: quicbaas.orchestrator.v1.RegisterFleetNodeResponse.node:type_name -> quicbaas.orchestrator.v1.FleetNode
+	167, // 101: quicbaas.orchestrator.v1.RegisterFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
+	16,  // 102: quicbaas.orchestrator.v1.GetFleetNodeResponse.node:type_name -> quicbaas.orchestrator.v1.FleetNode
+	167, // 103: quicbaas.orchestrator.v1.GetFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
+	17,  // 104: quicbaas.orchestrator.v1.ListFleetNodesRequest.filter:type_name -> quicbaas.orchestrator.v1.FleetNodeFilter
+	16,  // 105: quicbaas.orchestrator.v1.ListFleetNodesResponse.nodes:type_name -> quicbaas.orchestrator.v1.FleetNode
+	167, // 106: quicbaas.orchestrator.v1.ListFleetNodesResponse.timestamp:type_name -> google.protobuf.Timestamp
+	160, // 107: quicbaas.orchestrator.v1.ListFleetNodesResponse.facets:type_name -> quicbaas.orchestrator.v1.ListFleetNodesResponse.FacetsEntry
+	167, // 108: quicbaas.orchestrator.v1.RemoveFleetNodeResponse.timestamp:type_name -> google.protobuf.Timestamp
+	99,  // 109: quicbaas.orchestrator.v1.FleetNodeHeartbeatRequest.observation:type_name -> quicbaas.orchestrator.v1.FleetNodeObservation
+	101, // 110: quicbaas.orchestrator.v1.FleetNodeObservation.devices:type_name -> quicbaas.orchestrator.v1.FleetDeviceSample
+	102, // 111: quicbaas.orchestrator.v1.FleetNodeObservation.host_metrics:type_name -> quicbaas.orchestrator.v1.FleetHostMetrics
+	100, // 112: quicbaas.orchestrator.v1.FleetDeviceSample.power_watts:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 113: quicbaas.orchestrator.v1.FleetDeviceSample.utilization:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 114: quicbaas.orchestrator.v1.FleetDeviceSample.memory_used_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 115: quicbaas.orchestrator.v1.FleetDeviceSample.memory_total_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
+	167, // 116: quicbaas.orchestrator.v1.FleetHostMetrics.collected_at:type_name -> google.protobuf.Timestamp
+	100, // 117: quicbaas.orchestrator.v1.FleetHostMetrics.cpu_utilization:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 118: quicbaas.orchestrator.v1.FleetHostMetrics.cpu_count:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 119: quicbaas.orchestrator.v1.FleetHostMetrics.load1:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 120: quicbaas.orchestrator.v1.FleetHostMetrics.load5:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 121: quicbaas.orchestrator.v1.FleetHostMetrics.load15:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 122: quicbaas.orchestrator.v1.FleetHostMetrics.mem_total_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 123: quicbaas.orchestrator.v1.FleetHostMetrics.mem_available_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 124: quicbaas.orchestrator.v1.FleetHostMetrics.disk_total_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
+	100, // 125: quicbaas.orchestrator.v1.FleetHostMetrics.disk_available_bytes:type_name -> quicbaas.orchestrator.v1.FleetReading
+	167, // 126: quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 127: quicbaas.orchestrator.v1.PushEventRequest.emitted_at:type_name -> google.protobuf.Timestamp
+	167, // 128: quicbaas.orchestrator.v1.SessionEventEnvelope.timestamp:type_name -> google.protobuf.Timestamp
+	167, // 129: quicbaas.orchestrator.v1.SessionTurn.timestamp:type_name -> google.protobuf.Timestamp
+	109, // 130: quicbaas.orchestrator.v1.SessionTurn.tools:type_name -> quicbaas.orchestrator.v1.SessionToolUse
+	110, // 131: quicbaas.orchestrator.v1.GetSessionConversationResponse.turns:type_name -> quicbaas.orchestrator.v1.SessionTurn
+	167, // 132: quicbaas.orchestrator.v1.GetSpendReportRequest.from:type_name -> google.protobuf.Timestamp
+	167, // 133: quicbaas.orchestrator.v1.GetSpendReportRequest.to:type_name -> google.protobuf.Timestamp
+	167, // 134: quicbaas.orchestrator.v1.SpendWindowStatus.frees_at:type_name -> google.protobuf.Timestamp
+	167, // 135: quicbaas.orchestrator.v1.SpendBreakerVerdict.last_failure_at:type_name -> google.protobuf.Timestamp
+	167, // 136: quicbaas.orchestrator.v1.SpendBreakerVerdict.last_success_at:type_name -> google.protobuf.Timestamp
+	167, // 137: quicbaas.orchestrator.v1.SpendBreakerVerdict.open_until:type_name -> google.protobuf.Timestamp
+	115, // 138: quicbaas.orchestrator.v1.SpendAccount.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	113, // 139: quicbaas.orchestrator.v1.SpendAccount.windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
+	114, // 140: quicbaas.orchestrator.v1.SpendAccount.breaker:type_name -> quicbaas.orchestrator.v1.SpendBreakerVerdict
+	115, // 141: quicbaas.orchestrator.v1.SpendModel.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	115, // 142: quicbaas.orchestrator.v1.SpendHost.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	115, // 143: quicbaas.orchestrator.v1.SpendAgent.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	115, // 144: quicbaas.orchestrator.v1.SpendChild.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	167, // 145: quicbaas.orchestrator.v1.GetSpendReportResponse.first_at:type_name -> google.protobuf.Timestamp
+	167, // 146: quicbaas.orchestrator.v1.GetSpendReportResponse.last_at:type_name -> google.protobuf.Timestamp
+	116, // 147: quicbaas.orchestrator.v1.GetSpendReportResponse.accounts:type_name -> quicbaas.orchestrator.v1.SpendAccount
+	117, // 148: quicbaas.orchestrator.v1.GetSpendReportResponse.models:type_name -> quicbaas.orchestrator.v1.SpendModel
+	120, // 149: quicbaas.orchestrator.v1.GetSpendReportResponse.children:type_name -> quicbaas.orchestrator.v1.SpendChild
+	115, // 150: quicbaas.orchestrator.v1.GetSpendReportResponse.totals:type_name -> quicbaas.orchestrator.v1.SpendTotals
+	167, // 151: quicbaas.orchestrator.v1.GetSpendReportResponse.from:type_name -> google.protobuf.Timestamp
+	167, // 152: quicbaas.orchestrator.v1.GetSpendReportResponse.to:type_name -> google.protobuf.Timestamp
+	113, // 153: quicbaas.orchestrator.v1.GetSpendReportResponse.scope_windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
+	118, // 154: quicbaas.orchestrator.v1.GetSpendReportResponse.hosts:type_name -> quicbaas.orchestrator.v1.SpendHost
+	119, // 155: quicbaas.orchestrator.v1.GetSpendReportResponse.agents:type_name -> quicbaas.orchestrator.v1.SpendAgent
+	113, // 156: quicbaas.orchestrator.v1.GetSpendReportResponse.agent_windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
+	170, // 157: quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest.limits:type_name -> quicbaas.spend.v1.SpendLimits
+	170, // 158: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.limits:type_name -> quicbaas.spend.v1.SpendLimits
+	167, // 159: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.updated_at:type_name -> google.protobuf.Timestamp
+	113, // 160: quicbaas.orchestrator.v1.TenantSpendPolicyResponse.windows:type_name -> quicbaas.orchestrator.v1.SpendWindowStatus
+	161, // 161: quicbaas.orchestrator.v1.InferenceRequest.metadata:type_name -> quicbaas.orchestrator.v1.InferenceRequest.MetadataEntry
+	8,   // 162: quicbaas.orchestrator.v1.InferenceResponse.content:type_name -> quicbaas.orchestrator.v1.ContentBlock
+	8,   // 163: quicbaas.orchestrator.v1.InferenceChunk.delta:type_name -> quicbaas.orchestrator.v1.ContentBlock
+	128, // 164: quicbaas.orchestrator.v1.SpawnChildJobRequest.tasks:type_name -> quicbaas.orchestrator.v1.TaskSpec
+	131, // 165: quicbaas.orchestrator.v1.Artifact.ref:type_name -> quicbaas.orchestrator.v1.ArtifactRef
+	162, // 166: quicbaas.orchestrator.v1.Artifact.metadata:type_name -> quicbaas.orchestrator.v1.Artifact.MetadataEntry
+	132, // 167: quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest.artifacts:type_name -> quicbaas.orchestrator.v1.Artifact
+	167, // 168: quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	132, // 169: quicbaas.orchestrator.v1.ListTaskArtifactsResponse.artifacts:type_name -> quicbaas.orchestrator.v1.Artifact
+	167, // 170: quicbaas.orchestrator.v1.ListTaskArtifactsResponse.timestamp:type_name -> google.protobuf.Timestamp
+	132, // 171: quicbaas.orchestrator.v1.GetTaskArtifactResponse.artifact:type_name -> quicbaas.orchestrator.v1.Artifact
+	167, // 172: quicbaas.orchestrator.v1.GetTaskArtifactResponse.timestamp:type_name -> google.protobuf.Timestamp
+	163, // 173: quicbaas.orchestrator.v1.SessionWorkspace.spec_files:type_name -> quicbaas.orchestrator.v1.SessionWorkspace.SpecFilesEntry
+	164, // 174: quicbaas.orchestrator.v1.SetCostSettingsRequest.engine_power_watts:type_name -> quicbaas.orchestrator.v1.SetCostSettingsRequest.EnginePowerWattsEntry
+	165, // 175: quicbaas.orchestrator.v1.CostSettingsResponse.engine_power_watts:type_name -> quicbaas.orchestrator.v1.CostSettingsResponse.EnginePowerWattsEntry
+	167, // 176: quicbaas.orchestrator.v1.CostSettingsResponse.updated_at:type_name -> google.protobuf.Timestamp
+	166, // 177: quicbaas.orchestrator.v1.CostSettingsResponse.effective_engine_power_watts:type_name -> quicbaas.orchestrator.v1.CostSettingsResponse.EffectiveEnginePowerWattsEntry
+	171, // 178: quicbaas.orchestrator.v1.ListSessionsResponse.FacetsEntry.value:type_name -> quicbaas.sdlc.v1.FacetCounts
+	171, // 179: quicbaas.orchestrator.v1.ListTasksResponse.FacetsEntry.value:type_name -> quicbaas.sdlc.v1.FacetCounts
+	171, // 180: quicbaas.orchestrator.v1.OrchestratorListJobsResponse.FacetsEntry.value:type_name -> quicbaas.sdlc.v1.FacetCounts
+	171, // 181: quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse.FacetsEntry.value:type_name -> quicbaas.sdlc.v1.FacetCounts
+	171, // 182: quicbaas.orchestrator.v1.ListFleetNodesResponse.FacetsEntry.value:type_name -> quicbaas.sdlc.v1.FacetCounts
+	22,  // 183: quicbaas.orchestrator.v1.OrchestratorService.SpawnSession:input_type -> quicbaas.orchestrator.v1.SpawnSessionRequest
+	26,  // 184: quicbaas.orchestrator.v1.OrchestratorService.PromptSession:input_type -> quicbaas.orchestrator.v1.PromptSessionRequest
+	28,  // 185: quicbaas.orchestrator.v1.OrchestratorService.SessionStatus:input_type -> quicbaas.orchestrator.v1.SessionStatusRequest
+	30,  // 186: quicbaas.orchestrator.v1.OrchestratorService.CloseSession:input_type -> quicbaas.orchestrator.v1.CloseSessionRequest
+	34,  // 187: quicbaas.orchestrator.v1.OrchestratorService.ListSessions:input_type -> quicbaas.orchestrator.v1.ListSessionsRequest
+	32,  // 188: quicbaas.orchestrator.v1.OrchestratorService.RotateSessionAccount:input_type -> quicbaas.orchestrator.v1.RotateSessionAccountRequest
+	36,  // 189: quicbaas.orchestrator.v1.OrchestratorService.CreateTask:input_type -> quicbaas.orchestrator.v1.CreateTaskRequest
+	38,  // 190: quicbaas.orchestrator.v1.OrchestratorService.GetTask:input_type -> quicbaas.orchestrator.v1.GetTaskRequest
+	40,  // 191: quicbaas.orchestrator.v1.OrchestratorService.ListTasks:input_type -> quicbaas.orchestrator.v1.ListTasksRequest
+	42,  // 192: quicbaas.orchestrator.v1.OrchestratorService.ClaimTask:input_type -> quicbaas.orchestrator.v1.ClaimTaskRequest
+	50,  // 193: quicbaas.orchestrator.v1.OrchestratorService.CompleteTask:input_type -> quicbaas.orchestrator.v1.CompleteTaskRequest
+	44,  // 194: quicbaas.orchestrator.v1.OrchestratorService.BlockTask:input_type -> quicbaas.orchestrator.v1.BlockTaskRequest
+	46,  // 195: quicbaas.orchestrator.v1.OrchestratorService.ReadmitTask:input_type -> quicbaas.orchestrator.v1.ReadmitTaskRequest
+	48,  // 196: quicbaas.orchestrator.v1.OrchestratorService.DeleteTask:input_type -> quicbaas.orchestrator.v1.DeleteTaskRequest
+	52,  // 197: quicbaas.orchestrator.v1.OrchestratorService.DecomposeTask:input_type -> quicbaas.orchestrator.v1.DecomposeTaskRequest
+	54,  // 198: quicbaas.orchestrator.v1.OrchestratorService.StartJob:input_type -> quicbaas.orchestrator.v1.OrchestratorStartJobRequest
+	56,  // 199: quicbaas.orchestrator.v1.OrchestratorService.GetJobStatus:input_type -> quicbaas.orchestrator.v1.OrchestratorGetJobStatusRequest
+	64,  // 200: quicbaas.orchestrator.v1.OrchestratorService.CancelJob:input_type -> quicbaas.orchestrator.v1.OrchestratorCancelJobRequest
+	66,  // 201: quicbaas.orchestrator.v1.OrchestratorService.ListJobs:input_type -> quicbaas.orchestrator.v1.OrchestratorListJobsRequest
+	69,  // 202: quicbaas.orchestrator.v1.OrchestratorService.SubscribeJobEvents:input_type -> quicbaas.orchestrator.v1.SubscribeJobEventsRequest
+	71,  // 203: quicbaas.orchestrator.v1.OrchestratorService.ListBackends:input_type -> quicbaas.orchestrator.v1.OrchestratorListBackendsRequest
+	75,  // 204: quicbaas.orchestrator.v1.OrchestratorService.ListRunners:input_type -> quicbaas.orchestrator.v1.OrchestratorListRunnersRequest
+	86,  // 205: quicbaas.orchestrator.v1.OrchestratorService.ListWorkflows:input_type -> quicbaas.orchestrator.v1.OrchestratorListWorkflowsRequest
+	88,  // 206: quicbaas.orchestrator.v1.OrchestratorService.Health:input_type -> quicbaas.orchestrator.v1.OrchestratorHealthRequest
+	90,  // 207: quicbaas.orchestrator.v1.OrchestratorService.RegisterFleetNode:input_type -> quicbaas.orchestrator.v1.RegisterFleetNodeRequest
+	92,  // 208: quicbaas.orchestrator.v1.OrchestratorService.GetFleetNode:input_type -> quicbaas.orchestrator.v1.GetFleetNodeRequest
+	94,  // 209: quicbaas.orchestrator.v1.OrchestratorService.ListFleetNodes:input_type -> quicbaas.orchestrator.v1.ListFleetNodesRequest
+	96,  // 210: quicbaas.orchestrator.v1.OrchestratorService.RemoveFleetNode:input_type -> quicbaas.orchestrator.v1.RemoveFleetNodeRequest
+	98,  // 211: quicbaas.orchestrator.v1.OrchestratorService.FleetNodeHeartbeat:input_type -> quicbaas.orchestrator.v1.FleetNodeHeartbeatRequest
+	104, // 212: quicbaas.orchestrator.v1.OrchestratorService.PushEvents:input_type -> quicbaas.orchestrator.v1.PushEventRequest
+	106, // 213: quicbaas.orchestrator.v1.OrchestratorService.SubscribeSessionEvents:input_type -> quicbaas.orchestrator.v1.SubscribeSessionRequest
+	108, // 214: quicbaas.orchestrator.v1.OrchestratorService.GetSessionConversation:input_type -> quicbaas.orchestrator.v1.GetSessionConversationRequest
+	112, // 215: quicbaas.orchestrator.v1.OrchestratorService.GetSpendReport:input_type -> quicbaas.orchestrator.v1.GetSpendReportRequest
+	122, // 216: quicbaas.orchestrator.v1.OrchestratorService.GetTenantSpendPolicy:input_type -> quicbaas.orchestrator.v1.GetTenantSpendPolicyRequest
+	123, // 217: quicbaas.orchestrator.v1.OrchestratorService.SetTenantSpendPolicy:input_type -> quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest
+	125, // 218: quicbaas.orchestrator.v1.OrchestratorService.Inference:input_type -> quicbaas.orchestrator.v1.InferenceRequest
+	125, // 219: quicbaas.orchestrator.v1.OrchestratorService.InferenceStream:input_type -> quicbaas.orchestrator.v1.InferenceRequest
+	129, // 220: quicbaas.orchestrator.v1.OrchestratorService.SpawnChildJob:input_type -> quicbaas.orchestrator.v1.SpawnChildJobRequest
+	133, // 221: quicbaas.orchestrator.v1.OrchestratorService.SubmitTaskArtifacts:input_type -> quicbaas.orchestrator.v1.SubmitTaskArtifactsRequest
+	135, // 222: quicbaas.orchestrator.v1.OrchestratorService.ListTaskArtifacts:input_type -> quicbaas.orchestrator.v1.ListTaskArtifactsRequest
+	137, // 223: quicbaas.orchestrator.v1.OrchestratorService.GetTaskArtifact:input_type -> quicbaas.orchestrator.v1.GetTaskArtifactRequest
+	142, // 224: quicbaas.orchestrator.v1.OrchestratorService.GetCostSettings:input_type -> quicbaas.orchestrator.v1.GetCostSettingsRequest
+	143, // 225: quicbaas.orchestrator.v1.OrchestratorService.SetCostSettings:input_type -> quicbaas.orchestrator.v1.SetCostSettingsRequest
+	25,  // 226: quicbaas.orchestrator.v1.OrchestratorService.SpawnSession:output_type -> quicbaas.orchestrator.v1.SpawnSessionResponse
+	27,  // 227: quicbaas.orchestrator.v1.OrchestratorService.PromptSession:output_type -> quicbaas.orchestrator.v1.PromptSessionResponse
+	29,  // 228: quicbaas.orchestrator.v1.OrchestratorService.SessionStatus:output_type -> quicbaas.orchestrator.v1.SessionStatusResponse
+	31,  // 229: quicbaas.orchestrator.v1.OrchestratorService.CloseSession:output_type -> quicbaas.orchestrator.v1.CloseSessionResponse
+	35,  // 230: quicbaas.orchestrator.v1.OrchestratorService.ListSessions:output_type -> quicbaas.orchestrator.v1.ListSessionsResponse
+	33,  // 231: quicbaas.orchestrator.v1.OrchestratorService.RotateSessionAccount:output_type -> quicbaas.orchestrator.v1.RotateSessionAccountResponse
+	37,  // 232: quicbaas.orchestrator.v1.OrchestratorService.CreateTask:output_type -> quicbaas.orchestrator.v1.CreateTaskResponse
+	39,  // 233: quicbaas.orchestrator.v1.OrchestratorService.GetTask:output_type -> quicbaas.orchestrator.v1.GetTaskResponse
+	41,  // 234: quicbaas.orchestrator.v1.OrchestratorService.ListTasks:output_type -> quicbaas.orchestrator.v1.ListTasksResponse
+	43,  // 235: quicbaas.orchestrator.v1.OrchestratorService.ClaimTask:output_type -> quicbaas.orchestrator.v1.ClaimTaskResponse
+	51,  // 236: quicbaas.orchestrator.v1.OrchestratorService.CompleteTask:output_type -> quicbaas.orchestrator.v1.CompleteTaskResponse
+	45,  // 237: quicbaas.orchestrator.v1.OrchestratorService.BlockTask:output_type -> quicbaas.orchestrator.v1.BlockTaskResponse
+	47,  // 238: quicbaas.orchestrator.v1.OrchestratorService.ReadmitTask:output_type -> quicbaas.orchestrator.v1.ReadmitTaskResponse
+	49,  // 239: quicbaas.orchestrator.v1.OrchestratorService.DeleteTask:output_type -> quicbaas.orchestrator.v1.DeleteTaskResponse
+	53,  // 240: quicbaas.orchestrator.v1.OrchestratorService.DecomposeTask:output_type -> quicbaas.orchestrator.v1.DecomposeTaskResponse
+	55,  // 241: quicbaas.orchestrator.v1.OrchestratorService.StartJob:output_type -> quicbaas.orchestrator.v1.OrchestratorStartJobResponse
+	57,  // 242: quicbaas.orchestrator.v1.OrchestratorService.GetJobStatus:output_type -> quicbaas.orchestrator.v1.OrchestratorGetJobStatusResponse
+	65,  // 243: quicbaas.orchestrator.v1.OrchestratorService.CancelJob:output_type -> quicbaas.orchestrator.v1.OrchestratorCancelJobResponse
+	67,  // 244: quicbaas.orchestrator.v1.OrchestratorService.ListJobs:output_type -> quicbaas.orchestrator.v1.OrchestratorListJobsResponse
+	70,  // 245: quicbaas.orchestrator.v1.OrchestratorService.SubscribeJobEvents:output_type -> quicbaas.orchestrator.v1.JobEvent
+	72,  // 246: quicbaas.orchestrator.v1.OrchestratorService.ListBackends:output_type -> quicbaas.orchestrator.v1.OrchestratorListBackendsResponse
+	76,  // 247: quicbaas.orchestrator.v1.OrchestratorService.ListRunners:output_type -> quicbaas.orchestrator.v1.OrchestratorListRunnersResponse
+	87,  // 248: quicbaas.orchestrator.v1.OrchestratorService.ListWorkflows:output_type -> quicbaas.orchestrator.v1.OrchestratorListWorkflowsResponse
+	89,  // 249: quicbaas.orchestrator.v1.OrchestratorService.Health:output_type -> quicbaas.orchestrator.v1.OrchestratorHealthResponse
+	91,  // 250: quicbaas.orchestrator.v1.OrchestratorService.RegisterFleetNode:output_type -> quicbaas.orchestrator.v1.RegisterFleetNodeResponse
+	93,  // 251: quicbaas.orchestrator.v1.OrchestratorService.GetFleetNode:output_type -> quicbaas.orchestrator.v1.GetFleetNodeResponse
+	95,  // 252: quicbaas.orchestrator.v1.OrchestratorService.ListFleetNodes:output_type -> quicbaas.orchestrator.v1.ListFleetNodesResponse
+	97,  // 253: quicbaas.orchestrator.v1.OrchestratorService.RemoveFleetNode:output_type -> quicbaas.orchestrator.v1.RemoveFleetNodeResponse
+	103, // 254: quicbaas.orchestrator.v1.OrchestratorService.FleetNodeHeartbeat:output_type -> quicbaas.orchestrator.v1.FleetNodeHeartbeatResponse
+	105, // 255: quicbaas.orchestrator.v1.OrchestratorService.PushEvents:output_type -> quicbaas.orchestrator.v1.PushEventAck
+	107, // 256: quicbaas.orchestrator.v1.OrchestratorService.SubscribeSessionEvents:output_type -> quicbaas.orchestrator.v1.SessionEventEnvelope
+	111, // 257: quicbaas.orchestrator.v1.OrchestratorService.GetSessionConversation:output_type -> quicbaas.orchestrator.v1.GetSessionConversationResponse
+	121, // 258: quicbaas.orchestrator.v1.OrchestratorService.GetSpendReport:output_type -> quicbaas.orchestrator.v1.GetSpendReportResponse
+	124, // 259: quicbaas.orchestrator.v1.OrchestratorService.GetTenantSpendPolicy:output_type -> quicbaas.orchestrator.v1.TenantSpendPolicyResponse
+	124, // 260: quicbaas.orchestrator.v1.OrchestratorService.SetTenantSpendPolicy:output_type -> quicbaas.orchestrator.v1.TenantSpendPolicyResponse
+	126, // 261: quicbaas.orchestrator.v1.OrchestratorService.Inference:output_type -> quicbaas.orchestrator.v1.InferenceResponse
+	127, // 262: quicbaas.orchestrator.v1.OrchestratorService.InferenceStream:output_type -> quicbaas.orchestrator.v1.InferenceChunk
+	130, // 263: quicbaas.orchestrator.v1.OrchestratorService.SpawnChildJob:output_type -> quicbaas.orchestrator.v1.SpawnChildJobResponse
+	134, // 264: quicbaas.orchestrator.v1.OrchestratorService.SubmitTaskArtifacts:output_type -> quicbaas.orchestrator.v1.SubmitTaskArtifactsResponse
+	136, // 265: quicbaas.orchestrator.v1.OrchestratorService.ListTaskArtifacts:output_type -> quicbaas.orchestrator.v1.ListTaskArtifactsResponse
+	138, // 266: quicbaas.orchestrator.v1.OrchestratorService.GetTaskArtifact:output_type -> quicbaas.orchestrator.v1.GetTaskArtifactResponse
+	144, // 267: quicbaas.orchestrator.v1.OrchestratorService.GetCostSettings:output_type -> quicbaas.orchestrator.v1.CostSettingsResponse
+	144, // 268: quicbaas.orchestrator.v1.OrchestratorService.SetCostSettings:output_type -> quicbaas.orchestrator.v1.CostSettingsResponse
+	226, // [226:269] is the sub-list for method output_type
+	183, // [183:226] is the sub-list for method input_type
+	183, // [183:183] is the sub-list for extension type_name
+	183, // [183:183] is the sub-list for extension extendee
+	0,   // [0:183] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_orchestrator_proto_init() }
@@ -14628,6 +14714,7 @@ func file_api_proto_orchestrator_proto_init() {
 	}
 	file_api_proto_spend_proto_init()
 	file_api_proto_agents_proto_init()
+	file_api_proto_sdlc_proto_init()
 	file_api_proto_orchestrator_proto_msgTypes[9].OneofWrappers = []any{}
 	file_api_proto_orchestrator_proto_msgTypes[94].OneofWrappers = []any{}
 	file_api_proto_orchestrator_proto_msgTypes[95].OneofWrappers = []any{}
@@ -14641,7 +14728,7 @@ func file_api_proto_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_orchestrator_proto_rawDesc), len(file_api_proto_orchestrator_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   157,
+			NumMessages:   162,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -126,31 +126,7 @@ For more information, visit: https://github.com/jeremyhahn/go-quicbaas`,
 			}
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Skip init for version command
-			if cmd.Name() == "version" {
-				return nil
-			}
-
-			// Initialize configuration
-			if err := initConfig(); err != nil {
-				return err
-			}
-
-			// Initialize logger
-			if err := initLogger(); err != nil {
-				return err
-			}
-
-			// Initialize tracing (optional)
-			shutdown, err := initTracing()
-			if err != nil {
-				return api.NewOperationFailedError("init tracing", err)
-			}
-			// On process exit, shutdown tracer provider
-			cmd.Context().Done()
-			_ = shutdown
-
-			return nil
+			return initCLI(cmd)
 		},
 	}
 )
@@ -162,7 +138,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "log file path (default: stderr; appends to the file when set)")
 	rootCmd.PersistentFlags().BoolVar(&fipsMode, "fips", false, "enable FIPS 140-3 mode")
 	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "./data", "data directory path")
-	rootCmd.PersistentFlags().StringVar(&address, "address", config.DefaultUnixSocket, "QuicBaaS server address (Unix socket path or host:port)")
+	addServerAddressFlag(rootCmd.PersistentFlags())
 	rootCmd.PersistentFlags().StringVar(&transport, "transport", "unix", "Transport protocol (grpc, rest, quic, unix, mcp, embedded)")
 	rootCmd.PersistentFlags().DurationVar(&globalTimeout, "timeout", 30*time.Second, "Command timeout duration (e.g., 10s, 1m)")
 	rootCmd.PersistentFlags().BoolVar(&tlsEnabled, "tls", false, "Enable TLS")
@@ -170,6 +146,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&tlsCert, "tls-cert", "", "TLS client certificate file (for mTLS)")
 	rootCmd.PersistentFlags().StringVar(&tlsKey, "tls-key", "", "TLS client key file (for mTLS)")
 	rootCmd.PersistentFlags().StringVar(&globalTenantID, "tenant", qrdbsdk.SystemTenantID, "Tenant ID for multi-tenant operations")
+	cobra.CheckErr(bindTracingFlags(viper.GetViper(), rootCmd.PersistentFlags()))
 
 	// Bind flags to viper
 	viper.BindPFlag("logging.level", rootCmd.PersistentFlags().Lookup("log-level"))
@@ -181,7 +158,9 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(newDataCommands())
 	rootCmd.AddCommand(newClusterCommands())
-	rootCmd.AddCommand(newTransactionCommand())
+	txnCmd := newTransactionCommand()
+	rootCmd.AddCommand(txnCmd)
+	cobra.CheckErr(bindServerAddressFlags(viper.GetViper(), rootCmd.PersistentFlags(), txnCmd.PersistentFlags()))
 	rootCmd.AddCommand(newBackupCommands())
 	rootCmd.AddCommand(newMigrateCommands())
 	rootCmd.AddCommand(newRebalanceCommands())
@@ -256,7 +235,40 @@ func init() {
 }
 
 // initConfig reads in config file and ENV variables.
-func initConfig() error {
+// initCLI loads configuration, the logger and tracing before a command runs.
+// It is the root command's pre-run hook; a subcommand that declares its own
+// hook must call it, because cobra runs only the nearest one.
+func initCLI(cmd *cobra.Command) error {
+	// Skip init for version command
+	if cmd.Name() == "version" {
+		return nil
+	}
+
+	// Initialize configuration
+	if err := initConfig(cmd); err != nil {
+		return err
+	}
+
+	// Initialize logger
+	if err := initLogger(); err != nil {
+		return err
+	}
+
+	// Initialize tracing (optional)
+	shutdown, err := initTracing(tracingSettingsFrom(viper.GetViper()))
+	if err != nil {
+		return api.NewOperationFailedError("init tracing", err)
+	}
+	// On process exit, shutdown tracer provider
+	cmd.Context().Done()
+	_ = shutdown
+
+	return nil
+}
+
+// initConfig loads the configuration and resolves the server addresses,
+// naming any flag of cmd that set one.
+func initConfig(cmd *cobra.Command) error {
 	// Set default configuration
 	cfg = config.Default()
 
@@ -342,7 +354,7 @@ func initConfig() error {
 		return api.NewConfigurationError("cli", "unmarshal config", err)
 	}
 
-	return nil
+	return resolveServerAddresses(viper.GetViper(), cmd.Flags())
 }
 
 // buildLoggerConfig constructs a logger.LogConfig from the current global

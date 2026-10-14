@@ -1242,7 +1242,7 @@ func TestLoaderBindsInsecureDevMode(t *testing.T) {
 		t.Setenv("QUICBAAS_SECURITY_INSECURE_DEV_MODE", "true")
 		cfg := Default()
 		cfg.Security.InsecureDevMode = false
-		NewLoader().applyEnvironmentOverrides(cfg)
+		require.NoError(t, NewLoader().applyEnvironmentOverrides(cfg))
 		assert.True(t, cfg.Security.InsecureDevMode)
 	})
 
@@ -1250,7 +1250,7 @@ func TestLoaderBindsInsecureDevMode(t *testing.T) {
 		t.Setenv("QUICBAAS_SECURITY_INSECURE_DEV_MODE", "false")
 		cfg := Default()
 		cfg.Security.InsecureDevMode = true
-		NewLoader().applyEnvironmentOverrides(cfg)
+		require.NoError(t, NewLoader().applyEnvironmentOverrides(cfg))
 		assert.False(t, cfg.Security.InsecureDevMode)
 	})
 

@@ -354,7 +354,7 @@ func TestParseSpecialEnvVars_InvalidShardID(t *testing.T) {
 	// Expect exit code 1 and error message about invalid shard ID
 	if e, ok := err.(*exec.ExitError); ok {
 		assert.False(t, e.Success())
-		assert.Contains(t, string(output), "Invalid shard ID")
+		assert.Contains(t, string(output), config.ErrInvalidEnvValue.Error())
 	}
 }
 
@@ -375,7 +375,7 @@ func TestParseSpecialEnvVars_InvalidEntityPinFormat(t *testing.T) {
 	// Expect exit code 1 and error message about invalid format
 	if e, ok := err.(*exec.ExitError); ok {
 		assert.False(t, e.Success())
-		assert.Contains(t, string(output), "Invalid entity shard pin")
+		assert.Contains(t, string(output), config.ErrInvalidEnvValue.Error())
 	}
 }
 
@@ -396,7 +396,7 @@ func TestParseSpecialEnvVars_InvalidEntityPinShardID(t *testing.T) {
 	// Expect exit code 1 and error message about invalid shard ID
 	if e, ok := err.(*exec.ExitError); ok {
 		assert.False(t, e.Success())
-		assert.Contains(t, string(output), "Invalid shard ID")
+		assert.Contains(t, string(output), config.ErrInvalidEnvValue.Error())
 	}
 }
 
@@ -686,7 +686,7 @@ func TestInitConfig_NoConfigFileFoundPath(t *testing.T) {
 func TestParseSpecialEnvVars_VectorOn(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_VECTOR_ENABLED", "on")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.True(t, cfg.Vector.Enabled)
 }
 
@@ -694,7 +694,7 @@ func TestParseSpecialEnvVars_VectorOn(t *testing.T) {
 func TestParseSpecialEnvVars_SchedulerOne(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "1")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.True(t, cfg.Scheduler.Enabled)
 }
 
@@ -920,7 +920,7 @@ func TestPrepareDaemon_AllLoggingPathsCombined(t *testing.T) {
 func TestParseSpecialEnvVars_EntityPinsWithSpaces(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", " user : 100 , group : 200 ")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	assert.Equal(t, uint64(100), cfg.Server.EntityShardPins["user"])
 	assert.Equal(t, uint64(200), cfg.Server.EntityShardPins["group"])
@@ -931,7 +931,7 @@ func TestParseSpecialEnvVars_EntityPinsWithSpaces(t *testing.T) {
 func TestParseSpecialEnvVars_ShardsEmptyAfterTrim(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_SERVER_SHARDS", "  ,  ,  ")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	// All empty after trim, so no shards should be added
 	assert.Empty(t, cfg.Server.Shards)
@@ -1147,28 +1147,28 @@ func TestParseSpecialEnvVarsSchedulerAndVector(t *testing.T) {
 	t.Run("scheduler off values", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "off")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.False(t, cfg.Scheduler.Enabled)
 	})
 
 	t.Run("vector off values", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_VECTOR_ENABLED", "off")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.False(t, cfg.Vector.Enabled)
 	})
 
 	t.Run("scheduler with uppercase TRUE", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "TRUE")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.True(t, cfg.Scheduler.Enabled)
 	})
 
 	t.Run("vector with uppercase YES", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_VECTOR_ENABLED", "YES")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.True(t, cfg.Vector.Enabled)
 	})
 }
@@ -1300,7 +1300,7 @@ func TestParseSpecialEnvVars_EntityShardPins_Valid(t *testing.T) {
 	cfg = config.Default()
 
 	t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:1,group:2,role:3")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	if len(cfg.Server.EntityShardPins) != 3 {
 		t.Fatalf("expected 3 entity shard pins, got %d", len(cfg.Server.EntityShardPins))
@@ -1321,7 +1321,7 @@ func TestParseSpecialEnvVars_EntityShardPins_EmptyPairs(t *testing.T) {
 
 	// Trailing comma creates empty pair that should be skipped
 	t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:1,,")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	if len(cfg.Server.EntityShardPins) != 1 {
 		t.Fatalf("expected 1 entity shard pin, got %d", len(cfg.Server.EntityShardPins))
@@ -1332,7 +1332,7 @@ func TestParseSpecialEnvVars_Shards_WithSpaces(t *testing.T) {
 	cfg = config.Default()
 
 	t.Setenv("QUICBAAS_SERVER_SHARDS", " 1 , 2 , 3 , ")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	if len(cfg.Server.Shards) != 3 {
 		t.Fatalf("expected 3 shards, got %d", len(cfg.Server.Shards))
@@ -1343,7 +1343,7 @@ func TestParseSpecialEnvVars_SchedulerEnabled(t *testing.T) {
 	cfg = config.Default()
 
 	t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "yes")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	if !cfg.Scheduler.Enabled {
 		t.Fatal("expected scheduler to be enabled with 'yes'")
@@ -1354,7 +1354,7 @@ func TestParseSpecialEnvVars_SchedulerOn(t *testing.T) {
 	cfg = config.Default()
 
 	t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "on")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	if !cfg.Scheduler.Enabled {
 		t.Fatal("expected scheduler to be enabled with 'on'")
@@ -1365,7 +1365,7 @@ func TestParseSpecialEnvVars_VectorEnabled(t *testing.T) {
 	cfg = config.Default()
 
 	t.Setenv("QUICBAAS_VECTOR_ENABLED", "1")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	if !cfg.Vector.Enabled {
 		t.Fatal("expected vector to be enabled with '1'")
@@ -1376,7 +1376,7 @@ func TestParseSpecialEnvVars_VectorEnabledYes(t *testing.T) {
 	cfg = config.Default()
 
 	t.Setenv("QUICBAAS_VECTOR_ENABLED", "yes")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	if !cfg.Vector.Enabled {
 		t.Fatal("expected vector to be enabled with 'yes'")
@@ -1914,14 +1914,14 @@ func TestParseSpecialEnvVars(t *testing.T) {
 	t.Run("parses QUICBAAS_SERVER_SHARDS", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_SERVER_SHARDS", "100,200,300")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.Equal(t, []uint64{100, 200, 300}, cfg.Server.Shards)
 	})
 
 	t.Run("ignores empty shard parts", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_SERVER_SHARDS", "100,,200, ,300")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.Equal(t, []uint64{100, 200, 300}, cfg.Server.Shards)
 	})
 
@@ -1929,14 +1929,14 @@ func TestParseSpecialEnvVars(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_SERVER_SHARDS", "")
 		originalShards := cfg.Server.Shards
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.Equal(t, originalShards, cfg.Server.Shards)
 	})
 
 	t.Run("parses QUICBAAS_SERVER_ENTITY_SHARD_PINS", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:100,session:200")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.Equal(t, uint64(100), cfg.Server.EntityShardPins["user"])
 		assert.Equal(t, uint64(200), cfg.Server.EntityShardPins["session"])
 	})
@@ -1944,7 +1944,7 @@ func TestParseSpecialEnvVars(t *testing.T) {
 	t.Run("ignores empty pin pairs", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:100,,session:200, ")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.Equal(t, uint64(100), cfg.Server.EntityShardPins["user"])
 		assert.Equal(t, uint64(200), cfg.Server.EntityShardPins["session"])
 	})
@@ -1952,14 +1952,14 @@ func TestParseSpecialEnvVars(t *testing.T) {
 	t.Run("empty QUICBAAS_SERVER_ENTITY_SHARD_PINS is no-op", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS", "")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 	})
 
 	t.Run("parses QUICBAAS_ENABLE_SCHEDULER true variants", func(t *testing.T) {
 		for _, val := range []string{"true", "1", "yes", "on"} {
 			cfg = config.Default()
 			t.Setenv("QUICBAAS_ENABLE_SCHEDULER", val)
-			parseSpecialEnvVars()
+			require.NoError(t, parseSpecialEnvVars())
 			assert.True(t, cfg.Scheduler.Enabled, "expected enabled for %q", val)
 		}
 	})
@@ -1967,21 +1967,21 @@ func TestParseSpecialEnvVars(t *testing.T) {
 	t.Run("QUICBAAS_ENABLE_SCHEDULER false", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "false")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.False(t, cfg.Scheduler.Enabled)
 	})
 
 	t.Run("empty QUICBAAS_ENABLE_SCHEDULER is no-op", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 	})
 
 	t.Run("parses QUICBAAS_VECTOR_ENABLED true variants", func(t *testing.T) {
 		for _, val := range []string{"true", "1", "yes", "on"} {
 			cfg = config.Default()
 			t.Setenv("QUICBAAS_VECTOR_ENABLED", val)
-			parseSpecialEnvVars()
+			require.NoError(t, parseSpecialEnvVars())
 			assert.True(t, cfg.Vector.Enabled, "expected enabled for %q", val)
 		}
 	})
@@ -1989,14 +1989,14 @@ func TestParseSpecialEnvVars(t *testing.T) {
 	t.Run("QUICBAAS_VECTOR_ENABLED false", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_VECTOR_ENABLED", "false")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 		assert.False(t, cfg.Vector.Enabled)
 	})
 
 	t.Run("empty QUICBAAS_VECTOR_ENABLED is no-op", func(t *testing.T) {
 		cfg = config.Default()
 		t.Setenv("QUICBAAS_VECTOR_ENABLED", "")
-		parseSpecialEnvVars()
+		require.NoError(t, parseSpecialEnvVars())
 	})
 }
 
@@ -2534,7 +2534,7 @@ func TestGetSocketDir_TrailingSlash(t *testing.T) {
 func TestParseSpecialEnvVars_SchedulerDisabled(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_ENABLE_SCHEDULER", "false")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.False(t, cfg.Scheduler.Enabled)
 }
 
@@ -2542,7 +2542,7 @@ func TestParseSpecialEnvVars_SchedulerDisabled(t *testing.T) {
 func TestParseSpecialEnvVars_VectorDisabled(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_VECTOR_ENABLED", "no")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.False(t, cfg.Vector.Enabled)
 }
 
@@ -2857,7 +2857,7 @@ func TestRunDaemon_ServerNewServerError(t *testing.T) {
 func TestParseSpecialEnvVars_TimeSeriesEnabled(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_TIMESERIES_ENABLED", "true")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.True(t, cfg.TimeSeries.Enabled)
 }
 
@@ -2865,7 +2865,7 @@ func TestParseSpecialEnvVars_TimeSeriesEnabled(t *testing.T) {
 func TestParseSpecialEnvVars_TimeSeriesEnabledOne(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_TIMESERIES_ENABLED", "1")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.True(t, cfg.TimeSeries.Enabled)
 }
 
@@ -2874,7 +2874,7 @@ func TestParseSpecialEnvVars_TimeSeriesEnabledOne(t *testing.T) {
 func TestParseSpecialEnvVars_TimeSeriesDisabled(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_TIMESERIES_ENABLED", "false")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.False(t, cfg.TimeSeries.Enabled)
 }
 
@@ -2883,7 +2883,7 @@ func TestParseSpecialEnvVars_TimeSeriesDisabled(t *testing.T) {
 func TestParseSpecialEnvVars_BackupEnabled(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_BACKUP_ENABLED", "true")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.True(t, cfg.Backup.Enabled)
 }
 
@@ -2891,7 +2891,7 @@ func TestParseSpecialEnvVars_BackupEnabled(t *testing.T) {
 func TestParseSpecialEnvVars_BackupEnabledYes(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_BACKUP_ENABLED", "yes")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.True(t, cfg.Backup.Enabled)
 }
 
@@ -2900,7 +2900,7 @@ func TestParseSpecialEnvVars_BackupEnabledYes(t *testing.T) {
 func TestParseSpecialEnvVars_BackupDisabled(t *testing.T) {
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_BACKUP_ENABLED", "no")
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 	assert.False(t, cfg.Backup.Enabled)
 }
 

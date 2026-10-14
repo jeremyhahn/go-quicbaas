@@ -20,6 +20,6 @@ import (
 )
 
 // initTracing is a no-op when OTEL is not enabled.
-func initTracing() (func(context.Context) error, error) {
+func initTracing(tracingSettings) (func(context.Context) error, error) {
 	return func(ctx context.Context) error { return nil }, nil
 }

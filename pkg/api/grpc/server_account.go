@@ -157,6 +157,7 @@ func (s *AccountServer) ListAccounts(ctx context.Context, req *pb.ListAccountsRe
 		Limit:      pageInt32(resp.Limit),
 		Offset:     pageInt32(resp.Offset),
 		NextOffset: pageInt32(resp.NextOffset),
+		Facets:     facetsToProto(resp.Facets),
 	}, nil
 }
 

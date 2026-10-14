@@ -27,9 +27,24 @@ quicbaas --log-level debug iam user list
 quicbaasd start --log-level debug --log-file /var/log/quicbaas/quicbaasd.log
 ```
 
-Tracing is not a flag. It is selected at build time; a binary without the
-OpenTelemetry build tag compiles `cmd/quicbaas/tracing_no_otel.go`, a no-op.
-See `architecture.md`.
+## Root persistent flags that control tracing
+
+Tracing needs the `otel` build tag; a binary without it compiles
+`cmd/quicbaas/tracing_no_otel.go`, a no-op that ignores these settings. Each
+setting is read through viper, so a flag beats its environment variable, which
+beats the config-file key, which beats the default:
+
+| Flag | Environment | Config key | Default |
+|---|---|---|---|
+| `--tracing-enabled` | `QUICBAAS_TRACING_ENABLED` | `tracing.enabled` | `false` |
+| `--tracing-exporter` | `QUICBAAS_TRACING_EXPORTER` | `tracing.exporter` | `stdout` (or `otlpgrpc`) |
+| `--otlp-endpoint` | `QUICBAAS_OTLP_ENDPOINT` | `tracing.otlp_endpoint` | `localhost:4317` |
+| `--tracing-service-name` | `QUICBAAS_TRACING_SERVICE_NAME` | `tracing.service_name` | `quicbaas` |
+
+```bash
+quicbaas --tracing-enabled --tracing-exporter otlpgrpc \
+  --otlp-endpoint collector.example.com:4317 iam user list
+```
 
 ## Reading health from the command line
 

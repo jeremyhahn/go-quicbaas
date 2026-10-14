@@ -184,6 +184,7 @@ func handleAccountList(ctx context.Context, conn *grpc.ClientConn, req interface
 		Accounts: make([]*account.AccountInfo, 0, len(resp.Accounts)),
 		Envelope: pageEnvelopeFromProto(resp.GetTotal(), resp.GetLimit(), resp.GetOffset(), resp.GetNextOffset()),
 	}
+	out.Facets = facetsFromProto(resp.GetFacets())
 	for _, a := range resp.Accounts {
 		out.Accounts = append(out.Accounts, accountFromProto(a))
 	}

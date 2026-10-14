@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 // TestNewTransactionCommand tests the transaction command group.
@@ -60,7 +61,8 @@ func TestTransactionCommandFlags(t *testing.T) {
 
 	restFlag := flags.Lookup("rest")
 	require.NotNil(t, restFlag)
-	assert.Equal(t, "http://localhost:8080", restFlag.DefValue)
+	assert.Equal(t, fmt.Sprintf("https://localhost:%d", config.Default().Server.REST.Port), restFlag.DefValue,
+		"--rest must default to the daemon's defaults-layer REST port")
 
 	// --timeout is the root's persistent flag, inherited here (#246).
 	assert.Nil(t, flags.Lookup("timeout"),

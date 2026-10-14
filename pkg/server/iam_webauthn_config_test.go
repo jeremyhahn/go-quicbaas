@@ -15,6 +15,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -254,6 +255,20 @@ func TestIssuerURLFromConfig_PreservesExplicitHost(t *testing.T) {
 	cfg.Server.REST.Port = 443
 	if got := issuerURLFromConfig(cfg); got != "https://auth.example.com:443" {
 		t.Fatalf("explicit host not preserved: %q", got)
+	}
+}
+
+// TestIssuerURLFromConfig_UnsetPortUsesDefaultsLayer proves an unset REST
+// port falls back to the daemon's defaults-layer REST port, so the WebAuthn
+// origin cannot drift from the port the REST listener actually binds.
+func TestIssuerURLFromConfig_UnsetPortUsesDefaultsLayer(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Security.TLSEnabled = true
+	cfg.Server.Host = "auth.example.com"
+
+	want := fmt.Sprintf("https://auth.example.com:%d", config.Default().Server.REST.Port)
+	if got := issuerURLFromConfig(cfg); got != want {
+		t.Fatalf("unset REST port: expected issuer %q, got %q", want, got)
 	}
 }
 

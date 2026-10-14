@@ -18,6 +18,8 @@ package devcluster
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,6 +69,9 @@ type NodeInstance struct {
 	RaftPort   int
 	UnixSocket string
 
+	// RaftAddress is the node's advertised Raft address (host:port).
+	RaftAddress string
+
 	// State tracking using atomic operations for thread safety.
 	running atomic.Bool
 	ready   atomic.Bool
@@ -94,6 +99,13 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 
 	if cfg.DevCluster == nil {
 		cfg.DevCluster = config.DefaultDevClusterConfig()
+	}
+
+	// Copied so filling in the defaults-layer host never mutates the caller's
+	// configuration.
+	devCluster := *cfg.DevCluster
+	if devCluster.Host == "" {
+		devCluster.Host = config.DefaultDevClusterHost
 	}
 
 	if cfg.BaseConfig == nil {
@@ -126,9 +138,9 @@ func NewManager(cfg *ManagerConfig) (*Manager, error) {
 	}
 
 	return &Manager{
-		cfg:        cfg.DevCluster,
+		cfg:        &devCluster,
 		baseConfig: cfg.BaseConfig,
-		nodes:      make([]*NodeInstance, 0, cfg.DevCluster.NodeCount),
+		nodes:      make([]*NodeInstance, 0, devCluster.NodeCount),
 		logger:     log.WithField("component", "devcluster-manager"),
 	}, nil
 }
@@ -164,16 +176,17 @@ func (m *Manager) Start(ctx context.Context) error {
 	for i := 0; i < m.cfg.NodeCount; i++ {
 		nodeConfig := m.generateNodeConfig(i)
 		node := &NodeInstance{
-			NodeID:     nodeConfig.Raft.NodeID,
-			Config:     nodeConfig,
-			DataDir:    nodeConfig.Storage.DataDir,
-			GRPCPort:   nodeConfig.Server.GRPC.Port,
-			RESTPort:   nodeConfig.Server.REST.Port,
-			MCPPort:    nodeConfig.Server.MCP.Port,
-			RaftPort:   m.parseRaftPort(nodeConfig.Raft.RaftAddress),
-			UnixSocket: nodeConfig.Server.Unix.Socket,
-			errChan:    make(chan error, 1),
-			stopCh:     make(chan struct{}),
+			NodeID:      nodeConfig.Raft.NodeID,
+			Config:      nodeConfig,
+			DataDir:     nodeConfig.Storage.DataDir,
+			GRPCPort:    nodeConfig.Server.GRPC.Port,
+			RESTPort:    nodeConfig.Server.REST.Port,
+			MCPPort:     nodeConfig.Server.MCP.Port,
+			RaftPort:    m.parseRaftPort(nodeConfig.Raft.RaftAddress),
+			UnixSocket:  nodeConfig.Server.Unix.Socket,
+			RaftAddress: nodeConfig.Raft.RaftAddress,
+			errChan:     make(chan error, 1),
+			stopCh:      make(chan struct{}),
 		}
 		m.nodes = append(m.nodes, node)
 
@@ -202,7 +215,7 @@ func (m *Manager) generateNodeConfig(nodeIndex int) *config.Config {
 	// Set node-specific Raft values.
 	// #nosec G115 - nodeNum is always positive and small (bounded by NodeCount config).
 	cfg.Raft.NodeID = uint64(nodeNum)
-	cfg.Raft.RaftAddress = fmt.Sprintf("localhost:%d", m.cfg.BasePorts.Raft+nodeIndex)
+	cfg.Raft.RaftAddress = m.raftAddress(nodeIndex)
 	cfg.Raft.ListenAddress = cfg.Raft.RaftAddress
 
 	// Data directory per node.
@@ -242,7 +255,7 @@ func (m *Manager) generateNodeConfig(nodeIndex int) *config.Config {
 	// missing the local node describes a cluster it is not a member of.
 	joinAddrs := make([]string, 0, m.cfg.NodeCount)
 	for j := 0; j < m.cfg.NodeCount; j++ {
-		joinAddrs = append(joinAddrs, fmt.Sprintf("%d=localhost:%d", j+1, m.cfg.BasePorts.Raft+j))
+		joinAddrs = append(joinAddrs, fmt.Sprintf("%d=%s", j+1, m.raftAddress(j)))
 	}
 	cfg.Raft.JoinAddresses = joinAddrs
 
@@ -255,14 +268,22 @@ func (m *Manager) generateNodeConfig(nodeIndex int) *config.Config {
 
 // parseRaftPort extracts the port number from a raft address.
 func (m *Manager) parseRaftPort(addr string) int {
-	parts := strings.Split(addr, ":")
-	if len(parts) == 2 {
-		var port int
-		if _, err := fmt.Sscanf(parts[1], "%d", &port); err == nil {
-			return port
-		}
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
 	}
-	return 0
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
+}
+
+// raftAddress is the Raft address of the node at nodeIndex: the configured
+// devcluster host paired with the node's auto-incremented Raft port. It is
+// the single place a devcluster Raft address is built.
+func (m *Manager) raftAddress(nodeIndex int) string {
+	return net.JoinHostPort(m.cfg.Host, strconv.Itoa(m.cfg.BasePorts.Raft+nodeIndex))
 }
 
 // Stop gracefully stops all node instances.

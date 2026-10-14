@@ -14,6 +14,7 @@ import "google/protobuf/timestamp.proto";
 import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 import "api/proto/spend.proto";
 import "api/proto/agents.proto";
+import "api/proto/sdlc.proto";
 
 // =============================================================================
 // Orchestrator Service
@@ -970,6 +971,10 @@ message ListSessionsResponse {
     int32 limit = 4;
     int32 offset = 5;
     int32 next_offset = 6;
+
+    // facets counts, per faceted field, how many of the matched records carry
+    // each value, taken before the faceted narrowings.
+    map<string, quicbaas.sdlc.v1.FacetCounts> facets = 7;
 }
 
 // =============================================================================
@@ -1045,6 +1050,10 @@ message ListTasksResponse {
     int32 limit = 5;
     int32 offset = 6;
     int32 next_offset = 7;
+
+    // facets counts, per faceted field, how many of the matched records carry
+    // each value, taken before the faceted narrowings.
+    map<string, quicbaas.sdlc.v1.FacetCounts> facets = 8;
 }
 
 // ClaimTask
@@ -1314,6 +1323,10 @@ message OrchestratorListJobsResponse {
     int32 limit = 3;
     int32 offset = 4;
     int32 next_offset = 5;
+
+    // facets counts, per faceted field, how many of the matched records carry
+    // each value, taken before the faceted narrowings.
+    map<string, quicbaas.sdlc.v1.FacetCounts> facets = 6;
 }
 
 // OrchestratorJobSummary provides a summary of an orchestration job.
@@ -1535,6 +1548,10 @@ message OrchestratorListWorkflowsResponse {
     int32 limit = 3;
     int32 offset = 4;
     int32 next_offset = 5;
+
+    // facets counts, per faceted field, how many of the matched records carry
+    // each value, taken before the faceted narrowings.
+    map<string, quicbaas.sdlc.v1.FacetCounts> facets = 6;
 }
 
 // =============================================================================
@@ -1614,6 +1631,10 @@ message ListFleetNodesResponse {
     int32 limit = 5;
     int32 offset = 6;
     int32 next_offset = 7;
+
+    // facets counts, per faceted field, how many of the matched records carry
+    // each value, taken before the faceted narrowings.
+    map<string, quicbaas.sdlc.v1.FacetCounts> facets = 8;
 }
 
 // RemoveFleetNode

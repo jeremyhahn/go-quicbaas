@@ -1709,6 +1709,7 @@ server:
 
 devcluster:
   node_count: 3
+  host: localhost  # env QUICBAAS_DEVCLUSTER_HOST; every Raft address uses it
   data_dir: ./dev-data
   base_ports:
     grpc: 9090  # Nodes: 9090, 9091, 9092

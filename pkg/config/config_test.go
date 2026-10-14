@@ -555,16 +555,22 @@ func TestEnvironmentVariableOverrides(t *testing.T) {
 			{"0", false},
 			{"no", false},
 			{"off", false},
-			{"anything_else", false},
+			{"OFF", false},
 		}
 
 		for _, tc := range testCases {
-			os.Setenv("QUICBAAS_SERVER_GRPC_ENABLED", tc.value)
+			t.Setenv("QUICBAAS_SERVER_GRPC_ENABLED", tc.value)
 			cfg, err := Load("")
 			require.NoError(t, err)
 			assert.Equal(t, tc.expected, cfg.Server.GRPC.Enabled, "value %q should parse to %v", tc.value, tc.expected)
-			os.Unsetenv("QUICBAAS_SERVER_GRPC_ENABLED")
 		}
+	})
+
+	t.Run("unrecognised boolean fails the load", func(t *testing.T) {
+		t.Setenv("QUICBAAS_SERVER_GRPC_ENABLED", "anything_else")
+		cfg, err := Load("")
+		require.ErrorIs(t, err, ErrInvalidEnvValue)
+		assert.Nil(t, cfg)
 	})
 }
 

@@ -632,7 +632,9 @@ func TestDevClusterConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	returnedCfg := mgr.DevClusterConfig()
-	assert.Equal(t, devClusterCfg, returnedCfg)
+	assert.Equal(t, config.DefaultDevClusterHost, returnedCfg.Host,
+		"an unset host takes the defaults-layer value")
+	assert.Empty(t, devClusterCfg.Host, "the caller's configuration is not mutated")
 	assert.Equal(t, 5, returnedCfg.NodeCount)
 	assert.Equal(t, "/custom/path", returnedCfg.DataDir)
 }
@@ -691,4 +693,67 @@ func TestGenerateNodeConfig_NodesFormOneCluster(t *testing.T) {
 	}
 	assert.NotZero(t, deployments[0],
 		"a zero DeploymentID makes each node derive its own from NodeID — the isolation this test exists to prevent")
+}
+
+// TestDevClusterHost_DrivesEveryRaftAddress proves every devcluster Raft
+// address, in the node configs, the generated YAML and the cluster summaries,
+// comes from the configured host: reintroducing a host literal anywhere fails.
+func TestDevClusterHost_DrivesEveryRaftAddress(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		wantAddr string
+	}{
+		{name: "hostname", host: "node.devcluster.test", wantAddr: "node.devcluster.test:63001"},
+		{name: "IPv6 literal is bracketed", host: "::1", wantAddr: "[::1]:63001"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			devCluster := config.DefaultDevClusterConfig()
+			devCluster.Host = tt.host
+			devCluster.DataDir = t.TempDir()
+			mgr, err := NewManager(&ManagerConfig{
+				DevCluster: devCluster,
+				BaseConfig: createTestBaseConfig(),
+				Logger:     createTestLogger(t),
+			})
+			require.NoError(t, err)
+			require.NoError(t, mgr.Start(context.Background()))
+
+			nodes := mgr.Nodes()
+			require.Len(t, nodes, devCluster.NodeCount)
+			first := nodes[0]
+			assert.Equal(t, tt.wantAddr, first.RaftAddress)
+			assert.Equal(t, tt.wantAddr, first.Config.Raft.RaftAddress)
+			assert.Equal(t, tt.wantAddr, first.Config.Raft.ListenAddress)
+			assert.Equal(t, devCluster.BasePorts.Raft, first.RaftPort)
+			assert.Contains(t, first.Config.Raft.JoinAddresses, "1="+tt.wantAddr)
+
+			gen := NewConfigGenerator(mgr)
+			assert.Equal(t, tt.wantAddr, gen.ClusterAddresses()[first.NodeID])
+			assert.Contains(t, gen.ClusterInfo(), "Raft: "+tt.wantAddr)
+			yaml := gen.generateYAMLContent(first)
+			assert.Contains(t, yaml, "raft_address: "+tt.wantAddr)
+			assert.Contains(t, yaml, "listen_address: "+tt.wantAddr)
+
+			for _, node := range nodes {
+				for _, addr := range node.Config.Raft.JoinAddresses {
+					assert.NotContains(t, addr, config.DefaultDevClusterHost,
+						"roster entry %q ignores the configured host", addr)
+				}
+			}
+			assert.NotContains(t, gen.ClusterInfo(), config.DefaultDevClusterHost)
+			assert.NotContains(t, yaml, config.DefaultDevClusterHost)
+		})
+	}
+}
+
+// TestParseRaftPort covers the port extraction for hostname, IPv6 and
+// malformed addresses.
+func TestParseRaftPort(t *testing.T) {
+	mgr := &Manager{}
+	assert.Equal(t, 63001, mgr.parseRaftPort("node.devcluster.test:63001"))
+	assert.Equal(t, 63002, mgr.parseRaftPort("[::1]:63002"))
+	assert.Zero(t, mgr.parseRaftPort("no-port"))
+	assert.Zero(t, mgr.parseRaftPort("host:not-a-port"))
 }

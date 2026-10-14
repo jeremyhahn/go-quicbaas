@@ -14,8 +14,19 @@
 // Package config provides configuration structures for QuicBaaS.
 package config
 
+import "github.com/spf13/viper"
+
+// DefaultDevClusterHost is the defaults-layer host every devcluster node
+// listens on and advertises for Raft. Override it with devcluster.host in
+// the config file or QUICBAAS_DEVCLUSTER_HOST in the environment.
+const DefaultDevClusterHost = "localhost"
+
 // DevClusterConfig configures local multi-node development clusters.
 type DevClusterConfig struct {
+	// Host is the host each node's Raft address is built from, paired with
+	// its auto-incremented Raft port (default: DefaultDevClusterHost).
+	Host string `mapstructure:"host"`
+
 	// NodeCount is the number of local nodes to start (default: 3)
 	NodeCount int `mapstructure:"node_count"`
 
@@ -41,6 +52,7 @@ type DevClusterPorts struct {
 // DefaultDevClusterConfig returns sensible defaults for DevCluster.
 func DefaultDevClusterConfig() *DevClusterConfig {
 	return &DevClusterConfig{
+		Host:      DefaultDevClusterHost,
 		NodeCount: 3,
 		DataDir:   "./dev-data",
 		BasePorts: DevClusterPorts{
@@ -61,4 +73,13 @@ func DefaultDevClusterPorts() DevClusterPorts {
 		MCP:  11443,
 		Raft: 63001,
 	}
+}
+
+// BindDevClusterHost registers devcluster.host with v: its defaults-layer
+// value and its QUICBAAS_DEVCLUSTER_HOST environment binding. Without the
+// explicit binding viper's Unmarshal never consults the environment for a
+// key absent from the config file.
+func BindDevClusterHost(v *viper.Viper) {
+	v.SetDefault("devcluster.host", DefaultDevClusterHost)
+	_ = v.BindEnv("devcluster.host", "QUICBAAS_DEVCLUSTER_HOST")
 }

@@ -20,6 +20,7 @@ package main
 
 import (
 	"encoding/pem"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -44,7 +45,9 @@ func TestParseSpecialEnvVars_DurationTimeouts(t *testing.T) {
 	t.Setenv("QUICBAAS_SERVER_READ_TIMEOUT", "30s")
 	t.Setenv("QUICBAAS_SERVER_IDLE_TIMEOUT", "120s")
 
-	parseSpecialEnvVars()
+	if err := parseSpecialEnvVars(); err != nil {
+		t.Fatalf("parseSpecialEnvVars: %v", err)
+	}
 
 	if cfg.Server.WriteTimeout != 45*time.Second {
 		t.Errorf("WriteTimeout = %v, want 45s", cfg.Server.WriteTimeout)
@@ -57,20 +60,84 @@ func TestParseSpecialEnvVars_DurationTimeouts(t *testing.T) {
 	}
 }
 
-// TestParseSpecialEnvVars_InvalidDurationIsIgnored verifies an unparseable
-// duration leaves the existing config value untouched (the err != nil branch
-// of time.ParseDuration takes no action).
-func TestParseSpecialEnvVars_InvalidDurationIsIgnored(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = config.Default()
-	before := cfg.Server.WriteTimeout
+// TestParseSpecialEnvVars_ValidValuesApply verifies each variable the daemon
+// parses itself applies a well-formed value to the config.
+func TestParseSpecialEnvVars_ValidValuesApply(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		check func(c *config.Config) bool
+	}{
+		{"QUICBAAS_SERVER_WRITE_TIMEOUT", "45s", func(c *config.Config) bool { return c.Server.WriteTimeout == 45*time.Second }},
+		{"QUICBAAS_SERVER_READ_TIMEOUT", "2m", func(c *config.Config) bool { return c.Server.ReadTimeout == 2*time.Minute }},
+		{"QUICBAAS_SERVER_IDLE_TIMEOUT", "90s", func(c *config.Config) bool { return c.Server.IdleTimeout == 90*time.Second }},
+		{"QUICBAAS_SERVER_SHARDS", "7, 9", func(c *config.Config) bool {
+			return len(c.Server.Shards) == 2 && c.Server.Shards[0] == 7 && c.Server.Shards[1] == 9
+		}},
+		{"QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:7", func(c *config.Config) bool {
+			return len(c.Server.EntityShardPins) == 1 && c.Server.EntityShardPins["user"] == 7
+		}},
+		{"QUICBAAS_ENABLE_SCHEDULER", "ON", func(c *config.Config) bool { return c.Scheduler.Enabled }},
+		{"QUICBAAS_TIMESERIES_ENABLED", "yes", func(c *config.Config) bool { return c.TimeSeries.Enabled }},
+		{"QUICBAAS_VECTOR_ENABLED", "1", func(c *config.Config) bool { return c.Vector.Enabled }},
+		{"QUICBAAS_BACKUP_ENABLED", "true", func(c *config.Config) bool { return c.Backup.Enabled }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origCfg := cfg
+			defer func() { cfg = origCfg }()
+			cfg = config.Default()
 
-	t.Setenv("QUICBAAS_SERVER_WRITE_TIMEOUT", "not-a-duration")
-	parseSpecialEnvVars()
+			t.Setenv(tt.name, tt.value)
+			if err := parseSpecialEnvVars(); err != nil {
+				t.Fatalf("parseSpecialEnvVars: %v", err)
+			}
+			if !tt.check(cfg) {
+				t.Errorf("%s=%q was not applied", tt.name, tt.value)
+			}
+		})
+	}
+}
 
-	if cfg.Server.WriteTimeout != before {
-		t.Errorf("WriteTimeout changed to %v on invalid input, want %v", cfg.Server.WriteTimeout, before)
+// TestParseSpecialEnvVars_MalformedValueFails verifies a malformed value
+// returns an InvalidEnvValueError naming the variable and its value instead
+// of being dropped.
+func TestParseSpecialEnvVars_MalformedValueFails(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"QUICBAAS_SERVER_WRITE_TIMEOUT", "not-a-duration"},
+		{"QUICBAAS_SERVER_READ_TIMEOUT", "30"},
+		{"QUICBAAS_SERVER_IDLE_TIMEOUT", "forever"},
+		{"QUICBAAS_SERVER_SHARDS", "1,two"},
+		{"QUICBAAS_SERVER_SHARDS", "-1"},
+		{"QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user"},
+		{"QUICBAAS_SERVER_ENTITY_SHARD_PINS", "user:x"},
+		{"QUICBAAS_ENABLE_SCHEDULER", "enabled"},
+		{"QUICBAAS_TIMESERIES_ENABLED", "y"},
+		{"QUICBAAS_VECTOR_ENABLED", "2"},
+		{"QUICBAAS_BACKUP_ENABLED", "nope"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name+"="+tt.value, func(t *testing.T) {
+			origCfg := cfg
+			defer func() { cfg = origCfg }()
+			cfg = config.Default()
+
+			t.Setenv(tt.name, tt.value)
+			err := parseSpecialEnvVars()
+			if !errors.Is(err, config.ErrInvalidEnvValue) {
+				t.Fatalf("parseSpecialEnvVars() error = %v, want ErrInvalidEnvValue", err)
+			}
+			var envErr *config.InvalidEnvValueError
+			if !errors.As(err, &envErr) {
+				t.Fatalf("error %v is not an *InvalidEnvValueError", err)
+			}
+			if envErr.Name != tt.name || envErr.Value != tt.value {
+				t.Errorf("error names %s=%q, want %s=%q", envErr.Name, envErr.Value, tt.name, tt.value)
+			}
+		})
 	}
 }
 
@@ -82,7 +149,9 @@ func TestParseSpecialEnvVars_RaftJoinAddresses(t *testing.T) {
 	cfg = config.Default()
 
 	t.Setenv("QUICBAAS_RAFT_JOIN_ADDRESSES", " 1=host-a:7000 , , 2=host-b:7000 ")
-	parseSpecialEnvVars()
+	if err := parseSpecialEnvVars(); err != nil {
+		t.Fatalf("parseSpecialEnvVars: %v", err)
+	}
 
 	got := cfg.Raft.JoinAddresses
 	if len(got) != 2 {
@@ -102,7 +171,9 @@ func TestParseSpecialEnvVars_RaftJoinAddressesAllBlank(t *testing.T) {
 	before := cfg.Raft.JoinAddresses
 
 	t.Setenv("QUICBAAS_RAFT_JOIN_ADDRESSES", " , , ")
-	parseSpecialEnvVars()
+	if err := parseSpecialEnvVars(); err != nil {
+		t.Fatalf("parseSpecialEnvVars: %v", err)
+	}
 
 	if len(cfg.Raft.JoinAddresses) != len(before) {
 		t.Errorf("JoinAddresses unexpectedly changed to %v", cfg.Raft.JoinAddresses)
@@ -117,7 +188,9 @@ func TestParseSpecialEnvVars_RaftMemberIdentities(t *testing.T) {
 	cfg = config.Default()
 
 	t.Setenv("QUICBAAS_RAFT_MEMBER_IDENTITIES", " 2=spki:aa , , 3=spki:bb ")
-	parseSpecialEnvVars()
+	if err := parseSpecialEnvVars(); err != nil {
+		t.Fatalf("parseSpecialEnvVars: %v", err)
+	}
 
 	got := cfg.Raft.MemberIdentities
 	if len(got) != 2 || got[0] != "2=spki:aa" || got[1] != "3=spki:bb" {
@@ -134,7 +207,9 @@ func TestParseSpecialEnvVars_RaftMemberIdentitiesAllBlank(t *testing.T) {
 	cfg.Raft.MemberIdentities = []string{"2=spki:aa"}
 
 	t.Setenv("QUICBAAS_RAFT_MEMBER_IDENTITIES", " , , ")
-	parseSpecialEnvVars()
+	if err := parseSpecialEnvVars(); err != nil {
+		t.Fatalf("parseSpecialEnvVars: %v", err)
+	}
 
 	if len(cfg.Raft.MemberIdentities) != 1 {
 		t.Errorf("MemberIdentities unexpectedly changed to %v", cfg.Raft.MemberIdentities)

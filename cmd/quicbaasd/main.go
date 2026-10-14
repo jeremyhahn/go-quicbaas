@@ -16,13 +16,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -201,6 +201,7 @@ func init() {
 	addServerFlags(startCmd)
 	addServerFlags(nodeCmd)
 	addServerFlags(clusterCmd)
+	addAddressFlags(startCmd, nodeCmd, clusterCmd)
 
 	// Raft-specific flags for node and cluster commands.
 	addRaftFlags(nodeCmd)
@@ -310,6 +311,10 @@ func initConfig() {
 
 	// Bind environment variables to config keys.
 	bindEnvVars()
+	if err := bindAddressKeys(viper.GetViper()); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
+		os.Exit(1)
+	}
 
 	// REMOVED sdlc: KEYS REFUSE THE BOOT HERE TOO.
 	//
@@ -338,7 +343,10 @@ func initConfig() {
 	config.DeriveWALDir(viper.GetViper(), cfg)
 
 	// Parse special environment variables that viper doesn't handle automatically.
-	parseSpecialEnvVars()
+	if err := parseSpecialEnvVars(); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Initialize logger.
 	logConfig := logger.LogConfig{
@@ -382,8 +390,8 @@ func bindEnvVars() {
 	config.BindSDLCWorkerImageEnv(viper.GetViper())
 	config.BindIAMSelfServiceRegistrationEnv(viper.GetViper())
 
-	// Server configuration - nested protocol configs.
-	_ = viper.BindEnv("server.host")
+	// Server configuration - nested protocol configs. server.host and the
+	// other address keys are bound by bindAddressKeys.
 	_ = viper.BindEnv("server.mode")
 	_ = viper.BindEnv("server.grpc.enabled")
 	_ = viper.BindEnv("server.grpc.port")
@@ -496,10 +504,6 @@ func bindEnvVars() {
 	_ = viper.BindEnv("ollama.default_chat_model")
 	_ = viper.BindEnv("ollama.default_embedding_model")
 
-	// RAG embedding upstream. Empty resolves to the provider's defaults-layer
-	// endpoint (config.DefaultEmbeddingAPIURL).
-	_ = viper.BindEnv("rag.embedding.api_url")
-
 	// Embedded agent configuration.
 	_ = viper.BindEnv("server.embedded_fleet_node.enabled")
 	_ = viper.BindEnv("server.embedded_fleet_node.backends")
@@ -527,26 +531,7 @@ func splitEnvList(name string) []string {
 
 // parseSpecialEnvVars parses environment variables that viper doesn't handle automatically.
 // Viper doesn't convert comma-separated strings to []uint64 or key:value format to maps.
-func parseSpecialEnvVars() {
-	// Parse QUICBAAS_SERVER_WRITE_TIMEOUT (duration string, e.g. "45s").
-	// Viper does not automatically parse duration strings from env vars
-	// without an explicit decode hook, so we do it here.
-	if val := os.Getenv("QUICBAAS_SERVER_WRITE_TIMEOUT"); val != "" {
-		if d, err := time.ParseDuration(val); err == nil {
-			cfg.Server.WriteTimeout = d
-		}
-	}
-	if val := os.Getenv("QUICBAAS_SERVER_READ_TIMEOUT"); val != "" {
-		if d, err := time.ParseDuration(val); err == nil {
-			cfg.Server.ReadTimeout = d
-		}
-	}
-	if val := os.Getenv("QUICBAAS_SERVER_IDLE_TIMEOUT"); val != "" {
-		if d, err := time.ParseDuration(val); err == nil {
-			cfg.Server.IdleTimeout = d
-		}
-	}
-
+func parseSpecialEnvVars() error {
 	// Parse QUICBAAS_RAFT_JOIN_ADDRESSES (comma-separated list of peer addresses).
 	// Viper does not automatically split a comma-separated string into a []string
 	// slice during Unmarshal, so we do it here. Entries may be plain "host:port"
@@ -561,74 +546,71 @@ func parseSpecialEnvVars() {
 		cfg.Raft.MemberIdentities = ids
 	}
 
-	// Parse QUICBAAS_SERVER_SHARDS (comma-separated list of shard IDs).
-	if shardsEnv := os.Getenv("QUICBAAS_SERVER_SHARDS"); shardsEnv != "" {
-		parts := strings.Split(shardsEnv, ",")
-		shards := make([]uint64, 0, len(parts))
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			id, err := strconv.ParseUint(p, 10, 64)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Invalid shard ID %q in QUICBAAS_SERVER_SHARDS: %v\n", p, err)
-				os.Exit(1)
-			}
-			shards = append(shards, id)
+	// Viper does not parse duration strings from env vars without an explicit
+	// decode hook, and the shard lists are not in a form it can decode, so
+	// these are parsed here. A malformed value fails startup with a typed
+	// error naming the variable rather than being silently dropped.
+	return errors.Join(
+		config.EnvDuration("QUICBAAS_SERVER_WRITE_TIMEOUT", &cfg.Server.WriteTimeout),
+		config.EnvDuration("QUICBAAS_SERVER_READ_TIMEOUT", &cfg.Server.ReadTimeout),
+		config.EnvDuration("QUICBAAS_SERVER_IDLE_TIMEOUT", &cfg.Server.IdleTimeout),
+		envShards("QUICBAAS_SERVER_SHARDS", &cfg.Server.Shards),
+		envEntityShardPins("QUICBAAS_SERVER_ENTITY_SHARD_PINS", &cfg.Server.EntityShardPins),
+		config.EnvBool("QUICBAAS_ENABLE_SCHEDULER", &cfg.Scheduler.Enabled),
+		config.EnvBool("QUICBAAS_TIMESERIES_ENABLED", &cfg.TimeSeries.Enabled),
+		config.EnvBool("QUICBAAS_VECTOR_ENABLED", &cfg.Vector.Enabled),
+		config.EnvBool("QUICBAAS_BACKUP_ENABLED", &cfg.Backup.Enabled),
+	)
+}
+
+// envShards sets *dst from the named variable, a comma-separated list of
+// shard IDs. Blank entries are skipped.
+func envShards(name string, dst *[]uint64) error {
+	val := os.Getenv(name)
+	if val == "" {
+		return nil
+	}
+	shards := make([]uint64, 0, strings.Count(val, ",")+1)
+	for _, p := range strings.Split(val, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
 		}
-		cfg.Server.Shards = shards
-	}
-
-	// Parse QUICBAAS_SERVER_ENTITY_SHARD_PINS (comma-separated key:value pairs).
-	if pinsEnv := os.Getenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS"); pinsEnv != "" {
-		pins := make(map[string]uint64)
-		pairs := strings.Split(pinsEnv, ",")
-		for _, pair := range pairs {
-			pair = strings.TrimSpace(pair)
-			if pair == "" {
-				continue
-			}
-			parts := strings.SplitN(pair, ":", 2)
-			if len(parts) != 2 {
-				fmt.Fprintf(os.Stderr, "Invalid entity shard pin %q (expected format: entityType:shardID)\n", pair)
-				os.Exit(1)
-			}
-			entityType := strings.TrimSpace(parts[0])
-			shardIDStr := strings.TrimSpace(parts[1])
-			shardID, err := strconv.ParseUint(shardIDStr, 10, 64)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Invalid shard ID %q in entity shard pin %q: %v\n", shardIDStr, pair, err)
-				os.Exit(1)
-			}
-			pins[entityType] = shardID
+		id, err := strconv.ParseUint(p, 10, 64)
+		if err != nil {
+			return &config.InvalidEnvValueError{Name: name, Value: val, Kind: "shard ID list"}
 		}
-		cfg.Server.EntityShardPins = pins
+		shards = append(shards, id)
 	}
+	*dst = shards
+	return nil
+}
 
-	// Parse QUICBAAS_ENABLE_SCHEDULER (boolean for scheduler service).
-	if val := os.Getenv("QUICBAAS_ENABLE_SCHEDULER"); val != "" {
-		lower := strings.ToLower(val)
-		cfg.Scheduler.Enabled = lower == "true" || lower == "1" || lower == "yes" || lower == "on"
+// envEntityShardPins sets *dst from the named variable, a comma-separated
+// list of entityType:shardID pairs. Blank entries are skipped.
+func envEntityShardPins(name string, dst *map[string]uint64) error {
+	val := os.Getenv(name)
+	if val == "" {
+		return nil
 	}
-
-	// Parse QUICBAAS_TIMESERIES_ENABLED (boolean for timeseries service).
-	if val := os.Getenv("QUICBAAS_TIMESERIES_ENABLED"); val != "" {
-		lower := strings.ToLower(val)
-		cfg.TimeSeries.Enabled = lower == "true" || lower == "1" || lower == "yes" || lower == "on"
+	pins := make(map[string]uint64)
+	for _, pair := range strings.Split(val, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		entityType, shardIDStr, ok := strings.Cut(pair, ":")
+		if !ok {
+			return &config.InvalidEnvValueError{Name: name, Value: val, Kind: "entity shard pin list (entityType:shardID)"}
+		}
+		shardID, err := strconv.ParseUint(strings.TrimSpace(shardIDStr), 10, 64)
+		if err != nil {
+			return &config.InvalidEnvValueError{Name: name, Value: val, Kind: "entity shard pin list (entityType:shardID)"}
+		}
+		pins[strings.TrimSpace(entityType)] = shardID
 	}
-
-	// Parse QUICBAAS_VECTOR_ENABLED (boolean for vector service).
-	if val := os.Getenv("QUICBAAS_VECTOR_ENABLED"); val != "" {
-		lower := strings.ToLower(val)
-		cfg.Vector.Enabled = lower == "true" || lower == "1" || lower == "yes" || lower == "on"
-	}
-
-	// Parse QUICBAAS_BACKUP_ENABLED (boolean for backup service).
-	if val := os.Getenv("QUICBAAS_BACKUP_ENABLED"); val != "" {
-		lower := strings.ToLower(val)
-		cfg.Backup.Enabled = lower == "true" || lower == "1" || lower == "yes" || lower == "on"
-	}
+	*dst = pins
+	return nil
 }
 
 // runStart handles the 'start' command - local PebbleDB mode.

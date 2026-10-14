@@ -465,6 +465,9 @@ export OTEL_SERVICE_NAME=quicbaas
 
 **Configuration Options:**
 
+The `quicbaas` CLI also accepts each `QUICBAAS_*` setting below as a flag and a
+config-file key; see `cli.md` for the names and precedence.
+
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
 | `QUICBAAS_TRACING_ENABLED` | Enable/disable tracing | `0` (disabled) |

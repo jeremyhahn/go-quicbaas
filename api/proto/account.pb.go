@@ -922,9 +922,12 @@ type ListAccountsResponse struct {
 	// and the search BEFORE the page was cut; limit and offset are the values
 	// the server APPLIED. next_offset is the offset of the following page and
 	// is zero on the last page.
-	Limit         int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
-	NextOffset    int32 `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	Limit      int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset     int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset int32 `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	// facets counts, per faceted field, how many of the matched records carry
+	// each value, taken before the faceted narrowings.
+	Facets        map[string]*FacetCounts `protobuf:"bytes,7,rep,name=facets,proto3" json:"facets,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -999,6 +1002,13 @@ func (x *ListAccountsResponse) GetNextOffset() int32 {
 		return x.NextOffset
 	}
 	return 0
+}
+
+func (x *ListAccountsResponse) GetFacets() map[string]*FacetCounts {
+	if x != nil {
+		return x.Facets
+	}
+	return nil
 }
 
 type UpdateAccountRequest struct {
@@ -2339,7 +2349,7 @@ var File_api_proto_account_proto protoreflect.FileDescriptor
 
 const file_api_proto_account_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/account.proto\x12\x13quicbaas.account.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\x1a\x15api/proto/spend.proto\"\xaa\a\n" +
+	"\x17api/proto/account.proto\x12\x13quicbaas.account.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\x1a\x15api/proto/spend.proto\x1a\x14api/proto/sdlc.proto\"\xaa\a\n" +
 	"\aAccount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x1d\n" +
@@ -2432,7 +2442,7 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x12\n" +
 	"\x04sort\x18\x06 \x01(\tR\x04sort\x12\f\n" +
-	"\x01q\x18\a \x01(\tR\x01q\"\xd3\x01\n" +
+	"\x01q\x18\a \x01(\tR\x01q\"\xfc\x02\n" +
 	"\x14ListAccountsResponse\x128\n" +
 	"\baccounts\x18\x01 \x03(\v2\x1c.quicbaas.account.v1.AccountR\baccounts\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x1c\n" +
@@ -2440,7 +2450,11 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
 	"\vnext_offset\x18\x06 \x01(\x05R\n" +
-	"nextOffset\"\xa4\x04\n" +
+	"nextOffset\x12M\n" +
+	"\x06facets\x18\a \x03(\v25.quicbaas.account.v1.ListAccountsResponse.FacetsEntryR\x06facets\x1aX\n" +
+	"\vFacetsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
+	"\x05value\x18\x02 \x01(\v2\x1d.quicbaas.sdlc.v1.FacetCountsR\x05value:\x028\x01\"\xa4\x04\n" +
 	"\x14UpdateAccountRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
@@ -2594,7 +2608,7 @@ func file_api_proto_account_proto_rawDescGZIP() []byte {
 	return file_api_proto_account_proto_rawDescData
 }
 
-var file_api_proto_account_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_api_proto_account_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_api_proto_account_proto_goTypes = []any{
 	(*Account)(nil),                              // 0: quicbaas.account.v1.Account
 	(*AccountBilling)(nil),                       // 1: quicbaas.account.v1.AccountBilling
@@ -2628,62 +2642,66 @@ var file_api_proto_account_proto_goTypes = []any{
 	nil,                                          // 29: quicbaas.account.v1.AccountCredential.EnvEntry
 	nil,                                          // 30: quicbaas.account.v1.AccountCredential.FilesEntry
 	nil,                                          // 31: quicbaas.account.v1.AccountUsage.ByAgentEntry
-	nil,                                          // 32: quicbaas.account.v1.MaterializedAccountCredential.EnvEntry
-	nil,                                          // 33: quicbaas.account.v1.MaterializedAccountCredential.FilesEntry
-	(*AccountSpendPolicy)(nil),                   // 34: quicbaas.spend.v1.AccountSpendPolicy
-	(*SpendHeadroom)(nil),                        // 35: quicbaas.spend.v1.SpendHeadroom
+	nil,                                          // 32: quicbaas.account.v1.ListAccountsResponse.FacetsEntry
+	nil,                                          // 33: quicbaas.account.v1.MaterializedAccountCredential.EnvEntry
+	nil,                                          // 34: quicbaas.account.v1.MaterializedAccountCredential.FilesEntry
+	(*AccountSpendPolicy)(nil),                   // 35: quicbaas.spend.v1.AccountSpendPolicy
+	(*SpendHeadroom)(nil),                        // 36: quicbaas.spend.v1.SpendHeadroom
+	(*FacetCounts)(nil),                          // 37: quicbaas.sdlc.v1.FacetCounts
 }
 var file_api_proto_account_proto_depIdxs = []int32{
 	1,  // 0: quicbaas.account.v1.Account.billing:type_name -> quicbaas.account.v1.AccountBilling
-	34, // 1: quicbaas.account.v1.Account.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
+	35, // 1: quicbaas.account.v1.Account.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
 	29, // 2: quicbaas.account.v1.AccountCredential.env:type_name -> quicbaas.account.v1.AccountCredential.EnvEntry
 	30, // 3: quicbaas.account.v1.AccountCredential.files:type_name -> quicbaas.account.v1.AccountCredential.FilesEntry
 	31, // 4: quicbaas.account.v1.AccountUsage.by_agent:type_name -> quicbaas.account.v1.AccountUsage.ByAgentEntry
 	2,  // 5: quicbaas.account.v1.CreateAccountRequest.credential:type_name -> quicbaas.account.v1.AccountCredential
 	1,  // 6: quicbaas.account.v1.CreateAccountRequest.billing:type_name -> quicbaas.account.v1.AccountBilling
-	34, // 7: quicbaas.account.v1.CreateAccountRequest.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
+	35, // 7: quicbaas.account.v1.CreateAccountRequest.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
 	0,  // 8: quicbaas.account.v1.CreateAccountResponse.account:type_name -> quicbaas.account.v1.Account
 	0,  // 9: quicbaas.account.v1.GetAccountResponse.account:type_name -> quicbaas.account.v1.Account
 	0,  // 10: quicbaas.account.v1.ListAccountsResponse.accounts:type_name -> quicbaas.account.v1.Account
-	1,  // 11: quicbaas.account.v1.UpdateAccountRequest.billing:type_name -> quicbaas.account.v1.AccountBilling
-	34, // 12: quicbaas.account.v1.UpdateAccountRequest.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
-	0,  // 13: quicbaas.account.v1.UpdateAccountResponse.account:type_name -> quicbaas.account.v1.Account
-	2,  // 14: quicbaas.account.v1.RotateAccountCredentialRequest.credential:type_name -> quicbaas.account.v1.AccountCredential
-	0,  // 15: quicbaas.account.v1.RevokeAccountResponse.account:type_name -> quicbaas.account.v1.Account
-	3,  // 16: quicbaas.account.v1.GetAccountUsageResponse.usage:type_name -> quicbaas.account.v1.AccountUsage
-	35, // 17: quicbaas.account.v1.GetAccountUsageResponse.spend:type_name -> quicbaas.spend.v1.SpendHeadroom
-	32, // 18: quicbaas.account.v1.MaterializedAccountCredential.env:type_name -> quicbaas.account.v1.MaterializedAccountCredential.EnvEntry
-	33, // 19: quicbaas.account.v1.MaterializedAccountCredential.files:type_name -> quicbaas.account.v1.MaterializedAccountCredential.FilesEntry
-	22, // 20: quicbaas.account.v1.MaterializeAccountCredentialResponse.credential:type_name -> quicbaas.account.v1.MaterializedAccountCredential
-	4,  // 21: quicbaas.account.v1.AccountService.CreateAccount:input_type -> quicbaas.account.v1.CreateAccountRequest
-	6,  // 22: quicbaas.account.v1.AccountService.GetAccount:input_type -> quicbaas.account.v1.GetAccountRequest
-	8,  // 23: quicbaas.account.v1.AccountService.ListAccounts:input_type -> quicbaas.account.v1.ListAccountsRequest
-	10, // 24: quicbaas.account.v1.AccountService.UpdateAccount:input_type -> quicbaas.account.v1.UpdateAccountRequest
-	12, // 25: quicbaas.account.v1.AccountService.DeleteAccount:input_type -> quicbaas.account.v1.DeleteAccountRequest
-	14, // 26: quicbaas.account.v1.AccountService.RotateAccountCredential:input_type -> quicbaas.account.v1.RotateAccountCredentialRequest
-	16, // 27: quicbaas.account.v1.AccountService.RevokeAccount:input_type -> quicbaas.account.v1.RevokeAccountRequest
-	18, // 28: quicbaas.account.v1.AccountService.SetDefaultAccount:input_type -> quicbaas.account.v1.SetDefaultAccountRequest
-	20, // 29: quicbaas.account.v1.AccountService.GetAccountUsage:input_type -> quicbaas.account.v1.GetAccountUsageRequest
-	23, // 30: quicbaas.account.v1.AccountService.MaterializeAccountCredential:input_type -> quicbaas.account.v1.MaterializeAccountCredentialRequest
-	25, // 31: quicbaas.account.v1.AccountService.ReserveAccountSession:input_type -> quicbaas.account.v1.ReserveAccountSessionRequest
-	27, // 32: quicbaas.account.v1.AccountService.ReleaseAccountSession:input_type -> quicbaas.account.v1.ReleaseAccountSessionRequest
-	5,  // 33: quicbaas.account.v1.AccountService.CreateAccount:output_type -> quicbaas.account.v1.CreateAccountResponse
-	7,  // 34: quicbaas.account.v1.AccountService.GetAccount:output_type -> quicbaas.account.v1.GetAccountResponse
-	9,  // 35: quicbaas.account.v1.AccountService.ListAccounts:output_type -> quicbaas.account.v1.ListAccountsResponse
-	11, // 36: quicbaas.account.v1.AccountService.UpdateAccount:output_type -> quicbaas.account.v1.UpdateAccountResponse
-	13, // 37: quicbaas.account.v1.AccountService.DeleteAccount:output_type -> quicbaas.account.v1.DeleteAccountResponse
-	15, // 38: quicbaas.account.v1.AccountService.RotateAccountCredential:output_type -> quicbaas.account.v1.RotateAccountCredentialResponse
-	17, // 39: quicbaas.account.v1.AccountService.RevokeAccount:output_type -> quicbaas.account.v1.RevokeAccountResponse
-	19, // 40: quicbaas.account.v1.AccountService.SetDefaultAccount:output_type -> quicbaas.account.v1.SetDefaultAccountResponse
-	21, // 41: quicbaas.account.v1.AccountService.GetAccountUsage:output_type -> quicbaas.account.v1.GetAccountUsageResponse
-	24, // 42: quicbaas.account.v1.AccountService.MaterializeAccountCredential:output_type -> quicbaas.account.v1.MaterializeAccountCredentialResponse
-	26, // 43: quicbaas.account.v1.AccountService.ReserveAccountSession:output_type -> quicbaas.account.v1.ReserveAccountSessionResponse
-	28, // 44: quicbaas.account.v1.AccountService.ReleaseAccountSession:output_type -> quicbaas.account.v1.ReleaseAccountSessionResponse
-	33, // [33:45] is the sub-list for method output_type
-	21, // [21:33] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	32, // 11: quicbaas.account.v1.ListAccountsResponse.facets:type_name -> quicbaas.account.v1.ListAccountsResponse.FacetsEntry
+	1,  // 12: quicbaas.account.v1.UpdateAccountRequest.billing:type_name -> quicbaas.account.v1.AccountBilling
+	35, // 13: quicbaas.account.v1.UpdateAccountRequest.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
+	0,  // 14: quicbaas.account.v1.UpdateAccountResponse.account:type_name -> quicbaas.account.v1.Account
+	2,  // 15: quicbaas.account.v1.RotateAccountCredentialRequest.credential:type_name -> quicbaas.account.v1.AccountCredential
+	0,  // 16: quicbaas.account.v1.RevokeAccountResponse.account:type_name -> quicbaas.account.v1.Account
+	3,  // 17: quicbaas.account.v1.GetAccountUsageResponse.usage:type_name -> quicbaas.account.v1.AccountUsage
+	36, // 18: quicbaas.account.v1.GetAccountUsageResponse.spend:type_name -> quicbaas.spend.v1.SpendHeadroom
+	33, // 19: quicbaas.account.v1.MaterializedAccountCredential.env:type_name -> quicbaas.account.v1.MaterializedAccountCredential.EnvEntry
+	34, // 20: quicbaas.account.v1.MaterializedAccountCredential.files:type_name -> quicbaas.account.v1.MaterializedAccountCredential.FilesEntry
+	22, // 21: quicbaas.account.v1.MaterializeAccountCredentialResponse.credential:type_name -> quicbaas.account.v1.MaterializedAccountCredential
+	37, // 22: quicbaas.account.v1.ListAccountsResponse.FacetsEntry.value:type_name -> quicbaas.sdlc.v1.FacetCounts
+	4,  // 23: quicbaas.account.v1.AccountService.CreateAccount:input_type -> quicbaas.account.v1.CreateAccountRequest
+	6,  // 24: quicbaas.account.v1.AccountService.GetAccount:input_type -> quicbaas.account.v1.GetAccountRequest
+	8,  // 25: quicbaas.account.v1.AccountService.ListAccounts:input_type -> quicbaas.account.v1.ListAccountsRequest
+	10, // 26: quicbaas.account.v1.AccountService.UpdateAccount:input_type -> quicbaas.account.v1.UpdateAccountRequest
+	12, // 27: quicbaas.account.v1.AccountService.DeleteAccount:input_type -> quicbaas.account.v1.DeleteAccountRequest
+	14, // 28: quicbaas.account.v1.AccountService.RotateAccountCredential:input_type -> quicbaas.account.v1.RotateAccountCredentialRequest
+	16, // 29: quicbaas.account.v1.AccountService.RevokeAccount:input_type -> quicbaas.account.v1.RevokeAccountRequest
+	18, // 30: quicbaas.account.v1.AccountService.SetDefaultAccount:input_type -> quicbaas.account.v1.SetDefaultAccountRequest
+	20, // 31: quicbaas.account.v1.AccountService.GetAccountUsage:input_type -> quicbaas.account.v1.GetAccountUsageRequest
+	23, // 32: quicbaas.account.v1.AccountService.MaterializeAccountCredential:input_type -> quicbaas.account.v1.MaterializeAccountCredentialRequest
+	25, // 33: quicbaas.account.v1.AccountService.ReserveAccountSession:input_type -> quicbaas.account.v1.ReserveAccountSessionRequest
+	27, // 34: quicbaas.account.v1.AccountService.ReleaseAccountSession:input_type -> quicbaas.account.v1.ReleaseAccountSessionRequest
+	5,  // 35: quicbaas.account.v1.AccountService.CreateAccount:output_type -> quicbaas.account.v1.CreateAccountResponse
+	7,  // 36: quicbaas.account.v1.AccountService.GetAccount:output_type -> quicbaas.account.v1.GetAccountResponse
+	9,  // 37: quicbaas.account.v1.AccountService.ListAccounts:output_type -> quicbaas.account.v1.ListAccountsResponse
+	11, // 38: quicbaas.account.v1.AccountService.UpdateAccount:output_type -> quicbaas.account.v1.UpdateAccountResponse
+	13, // 39: quicbaas.account.v1.AccountService.DeleteAccount:output_type -> quicbaas.account.v1.DeleteAccountResponse
+	15, // 40: quicbaas.account.v1.AccountService.RotateAccountCredential:output_type -> quicbaas.account.v1.RotateAccountCredentialResponse
+	17, // 41: quicbaas.account.v1.AccountService.RevokeAccount:output_type -> quicbaas.account.v1.RevokeAccountResponse
+	19, // 42: quicbaas.account.v1.AccountService.SetDefaultAccount:output_type -> quicbaas.account.v1.SetDefaultAccountResponse
+	21, // 43: quicbaas.account.v1.AccountService.GetAccountUsage:output_type -> quicbaas.account.v1.GetAccountUsageResponse
+	24, // 44: quicbaas.account.v1.AccountService.MaterializeAccountCredential:output_type -> quicbaas.account.v1.MaterializeAccountCredentialResponse
+	26, // 45: quicbaas.account.v1.AccountService.ReserveAccountSession:output_type -> quicbaas.account.v1.ReserveAccountSessionResponse
+	28, // 46: quicbaas.account.v1.AccountService.ReleaseAccountSession:output_type -> quicbaas.account.v1.ReleaseAccountSessionResponse
+	35, // [35:47] is the sub-list for method output_type
+	23, // [23:35] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_account_proto_init() }
@@ -2692,6 +2710,7 @@ func file_api_proto_account_proto_init() {
 		return
 	}
 	file_api_proto_spend_proto_init()
+	file_api_proto_sdlc_proto_init()
 	file_api_proto_account_proto_msgTypes[10].OneofWrappers = []any{}
 	file_api_proto_account_proto_msgTypes[25].OneofWrappers = []any{}
 	type x struct{}
@@ -2700,7 +2719,7 @@ func file_api_proto_account_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_account_proto_rawDesc), len(file_api_proto_account_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   34,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

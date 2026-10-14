@@ -214,7 +214,7 @@ func runUpgradeStart(cmd *cobra.Command, args []string) error {
 		serverAddr = address
 	}
 	if serverAddr == "" {
-		serverAddr = "localhost:50051"
+		return api.NewNotConfiguredError("cli.upgrade", "server address (--server or --address)")
 	}
 
 	// Map the upgrade command's own transport flags onto the global SDK

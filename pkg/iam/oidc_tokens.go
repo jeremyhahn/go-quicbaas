@@ -653,11 +653,20 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 	}
 
 	// MFA assurance is DERIVED from the same evidence, never asserted by the
-	// caller. Proven hardware establishes possession of a key that cannot be
-	// copied off the authenticator, which is the second factor this login
-	// ceremony rests on. An unattested credential — the certificate an operator
-	// admits through iam.piv_login.allow_unattested — establishes possession of
-	// an ordinary software key and nothing else, so it proves ONE factor.
+	// caller. The rule, ratified on go-quicbaas#416 (option 1): a credential
+	// whose attestation proves hardware satisfies mfa_verified; anything less
+	// does not. Hardware attestation proves where the key lives — on an
+	// authenticator it cannot be copied off — and that possession is accepted
+	// as the second factor this login ceremony rests on. An unattested
+	// credential — the certificate an operator admits through
+	// iam.piv_login.allow_unattested — establishes possession of an ordinary
+	// software key and nothing else, so it proves ONE factor.
+	//
+	// The rule does not yet look at evidence of a knowledge or inherence factor
+	// (the WebAuthn user-verification flag, the PIV PIN policy):
+	// AttestationResult does not carry it. Recording that evidence is the
+	// follow-up on go-quicbaas#416.
+	// TestIssueHardwareTokens_ProvenHardwareSatisfiesMFA pins the rule.
 	//
 	// This used to be the literal true, on every path. A software-held TLS key
 	// produced an ID token asserting mfa_verified, and the same literal was

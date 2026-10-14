@@ -394,6 +394,9 @@ Creates an upgrade job for `<version>` and prints its operation ID.
 Refusals:
 
 - Anything other than exactly one positional `<version>` is a usage error.
+- If both `--server` and `--address` are empty, the command fails with a
+  configuration error (`NotConfiguredError`) before it contacts any server.
+  It never falls back to a built-in address.
 - An `--output` other than `table` or `json` is refused, but only after the
   job has been created.
 - `--follow` stops at the global `--timeout` (default `30s`) with a deadline

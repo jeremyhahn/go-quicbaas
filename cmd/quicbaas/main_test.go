@@ -34,6 +34,21 @@ func TestRootCommand(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// resetViper clears the global viper and restores the flag bindings init()
+// made, which initConfig needs to resolve the tracing and address settings.
+// It restores cfgFile when the test ends, so a later command does not read
+// a config file that was removed with its test's temp dir.
+func resetViper(tb testing.TB) {
+	tb.Helper()
+	savedCfgFile := cfgFile
+	tb.Cleanup(func() { cfgFile = savedCfgFile })
+	viper.Reset()
+	require.NoError(tb, bindFlagKeys(viper.GetViper(), rootCmd.PersistentFlags(), tracingBindings...))
+	txn, _, err := rootCmd.Find([]string{"txn"})
+	require.NoError(tb, err)
+	require.NoError(tb, bindServerAddressFlags(viper.GetViper(), rootCmd.PersistentFlags(), txn.PersistentFlags()))
+}
+
 func TestInitConfig(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -44,7 +59,7 @@ func TestInitConfig(t *testing.T) {
 			name: "default config without file",
 			setupFunc: func(t *testing.T) string {
 				cfgFile = ""
-				viper.Reset()
+				resetViper(t)
 				return ""
 			},
 			expectError: false,
@@ -73,7 +88,7 @@ storage:
 				require.NoError(t, err)
 
 				cfgFile = configPath
-				viper.Reset()
+				resetViper(t)
 				return tmpDir
 			},
 			expectError: false,
@@ -89,7 +104,7 @@ storage:
 				require.NoError(t, err)
 
 				cfgFile = configPath
-				viper.Reset()
+				resetViper(t)
 				return tmpDir
 			},
 			expectError: true,
@@ -104,7 +119,7 @@ storage:
 			}
 
 			// Initialize configuration
-			err := initConfig()
+			err := initConfig(rootCmd)
 
 			// Verify result
 			if tt.expectError {
@@ -115,7 +130,7 @@ storage:
 			}
 
 			// Cleanup
-			viper.Reset()
+			resetViper(t)
 		})
 	}
 }
@@ -137,7 +152,7 @@ logging:
 	require.NoError(t, err)
 
 	// Reset viper
-	viper.Reset()
+	resetViper(t)
 	cfgFile = configPath
 
 	// Set environment variable (should override config file)
@@ -145,7 +160,7 @@ logging:
 	defer os.Unsetenv("QUICBAAS_SERVER_REST_PORT")
 
 	// Initialize config
-	err = initConfig()
+	err = initConfig(rootCmd)
 	require.NoError(t, err)
 
 	// Environment variable should take precedence over config file
@@ -155,7 +170,7 @@ logging:
 	assert.Equal(t, "warn", cfg.Logging.Level)
 
 	// Cleanup
-	viper.Reset()
+	resetViper(t)
 }
 
 func TestInitConfigEnvironmentVariables(t *testing.T) {
@@ -205,7 +220,7 @@ func TestInitConfigEnvironmentVariables(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset
-			viper.Reset()
+			resetViper(t)
 			cfgFile = ""
 
 			// Set environment variables
@@ -215,14 +230,14 @@ func TestInitConfigEnvironmentVariables(t *testing.T) {
 			}
 
 			// Initialize config
-			err := initConfig()
+			err := initConfig(rootCmd)
 			require.NoError(t, err)
 
 			// Validate
 			tt.validate(t, cfg)
 
 			// Cleanup
-			viper.Reset()
+			resetViper(t)
 		})
 	}
 }
@@ -407,10 +422,10 @@ server:
 			err := os.WriteFile(configPath, []byte(tt.content), 0o644)
 			require.NoError(t, err)
 
-			viper.Reset()
+			resetViper(t)
 			cfgFile = configPath
 
-			err = initConfig()
+			err = initConfig(rootCmd)
 
 			if tt.shouldWork {
 				assert.NoError(t, err)
@@ -419,7 +434,7 @@ server:
 				assert.Error(t, err)
 			}
 
-			viper.Reset()
+			resetViper(t)
 		})
 	}
 }
@@ -429,8 +444,8 @@ func BenchmarkInitConfig(b *testing.B) {
 	cfgFile = ""
 
 	for i := 0; i < b.N; i++ {
-		viper.Reset()
-		_ = initConfig()
+		resetViper(b)
+		_ = initConfig(rootCmd)
 	}
 }
 

@@ -21,6 +21,7 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 import "api/proto/spend.proto";
+import "api/proto/sdlc.proto";
 
 // =============================================================================
 // AccountService — pooled provider account lifecycle
@@ -240,6 +241,10 @@ message ListAccountsResponse {
     int32 limit = 4;
     int32 offset = 5;
     int32 next_offset = 6;
+
+    // facets counts, per faceted field, how many of the matched records carry
+    // each value, taken before the faceted narrowings.
+    map<string, quicbaas.sdlc.v1.FacetCounts> facets = 7;
 }
 
 message UpdateAccountRequest {

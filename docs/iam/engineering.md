@@ -1985,6 +1985,8 @@ credential admitted through `allow_unattested` proves one factor and leaves
 `mfa_verified` false. No separate second-factor evidence (a PIN or user
 verification result, a TOTP code) is recorded or required yet; carrying that
 evidence into the claim is the follow-up tracked on go-quicbaas#416.
+`TestIssueHardwareTokens_ProvenHardwareSatisfiesMFA` in `pkg/iam` pins the rule
+for every attestation level and both hardware ceremonies (WebAuthn and PIV).
 
 The same rule applies one layer down, on **every** surface that writes an auth
 factor without running a ceremony: the SDK's `Add` and `Rotate`, and the qrdb

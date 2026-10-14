@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	operationsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 )
 
@@ -130,6 +131,24 @@ func TestRunUpgradeStart_PropagatesSDKError(t *testing.T) {
 	err := runUpgradeStart(cmd, []string{"v2.0.0"})
 	require.Error(t, err)
 	assert.Equal(t, 1, fake.upgradeCalled)
+}
+
+// TestRunUpgradeStart_NoAddressIsTypedError proves the command invents no
+// last-resort address: with neither --server nor --address set it refuses
+// with a typed error before touching the SDK.
+func TestRunUpgradeStart_NoAddressIsTypedError(t *testing.T) {
+	withUpgradeStartGlobals(t)
+	origAddress := address
+	t.Cleanup(func() { address = origAddress })
+	address = ""
+	fake := &fakeOperationsClient{}
+	withOperationsFactory(t, fake)
+
+	err := runUpgradeStart(newUpgradeStartCommand(), []string{"v2.0.0"})
+
+	var notConfigured *api.NotConfiguredError
+	require.ErrorAs(t, err, &notConfigured)
+	assert.Zero(t, fake.upgradeCalled, "no address must mean no upgrade call")
 }
 
 func TestRunUpgradeStatus_RoutesThroughSDKOperations(t *testing.T) {

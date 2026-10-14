@@ -14,6 +14,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -116,5 +118,43 @@ func TestDevClusterPorts_ZeroValue(t *testing.T) {
 		assert.Equal(t, 0, ports.REST)
 		assert.Equal(t, 0, ports.MCP)
 		assert.Equal(t, 0, ports.Raft)
+	})
+}
+
+// TestLoader_DevClusterHost proves devcluster.host is settable by every path
+// the daemon loader wires (defaults, config file, environment) and that the
+// environment wins over the file.
+func TestLoader_DevClusterHost(t *testing.T) {
+	writeConfig := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "quicbaas.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		return path
+	}
+
+	t.Run("defaults layer", func(t *testing.T) {
+		cfg, err := NewLoader().Load(writeConfig(t, "server:\n  mode: devcluster\n"))
+		require.NoError(t, err)
+		assert.Equal(t, DefaultDevClusterHost, cfg.DevCluster.Host)
+	})
+
+	t.Run("config file", func(t *testing.T) {
+		cfg, err := NewLoader().Load(writeConfig(t, "devcluster:\n  host: file.devcluster.test\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "file.devcluster.test", cfg.DevCluster.Host)
+	})
+
+	t.Run("environment without a file", func(t *testing.T) {
+		t.Setenv("QUICBAAS_DEVCLUSTER_HOST", "env.devcluster.test")
+		cfg, err := NewLoader().Load(filepath.Join(t.TempDir(), "missing.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, "env.devcluster.test", cfg.DevCluster.Host)
+	})
+
+	t.Run("environment beats config file", func(t *testing.T) {
+		t.Setenv("QUICBAAS_DEVCLUSTER_HOST", "env.devcluster.test")
+		cfg, err := NewLoader().Load(writeConfig(t, "devcluster:\n  host: file.devcluster.test\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "env.devcluster.test", cfg.DevCluster.Host)
 	})
 }

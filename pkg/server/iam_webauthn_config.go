@@ -43,7 +43,7 @@ func issuerURLFromConfig(cfg *config.Config) string {
 
 	port := cfg.Server.REST.Port
 	if port == 0 {
-		port = 8443
+		port = config.DefaultRESTPort
 	}
 
 	return fmt.Sprintf("%s://%s:%d", scheme, host, port)

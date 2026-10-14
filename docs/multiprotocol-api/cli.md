@@ -118,24 +118,30 @@ quicbaas data delete user john --yes
 
 ## Global Flags
 
-All commands support these flags:
+These are the root command's persistent flags, so every command accepts
+them. Flags such as `--output`, `--consistency`, `--max-retries` and
+`--retry-backoff` belong to individual command groups; see each command's
+`--help`.
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--address` | Server address (URL form for REST/QUIC/gRPC, path for Unix socket) | `/home/$USER/quicbaas.sock` |
-| `--transport` | Protocol (`rest`, `grpc`, `quic`, `unix`, `mcp`, `embedded`) | auto-detected from `--address` scheme |
-| `--tenant` | Tenant ID for multi-tenant operations | `default` |
-| `--timeout` | Request timeout | `30s` |
-| `--output` | Format (json, yaml, table, raw) | `table` |
-| `--consistency` | Consistency level | `linearizable` |
+| `--address` | Server address (Unix socket path, URL or `host:port`); see [Configuration](#configuration) | `$HOME/quicbaas.sock` |
+| `--transport` | Protocol (`grpc`, `rest`, `quic`, `unix`, `mcp`, `embedded`) | `unix` |
+| `--tenant` | Tenant ID for multi-tenant operations | `system` |
+| `--timeout` | Command timeout | `30s` |
 | `--tls` | Enable TLS | `false` |
-| `--tls-cert` | TLS client certificate (mTLS) | - |
-| `--tls-key` | TLS client key (mTLS) | - |
-| `--tls-ca` | TLS CA certificate | auto-detected from `--data-dir/certs/ca-chain.crt` |
-| `--tls-skip-verify` | Skip TLS cert verification (operator opt-in only) | `false` |
-| `--max-retries` | Maximum retry attempts | `3` |
-| `--retry-backoff` | Initial retry backoff | `100ms` |
+| `--tls-ca` | TLS CA certificate file | auto-detected from `--data-dir` |
+| `--tls-cert` | TLS client certificate file (mTLS) | - |
+| `--tls-key` | TLS client key file (mTLS) | - |
+| `--config` | Config file | `$HOME/.quicbaas.yaml` |
+| `--data-dir` | Data directory path | `./data` |
+| `--log-level` | Log level (`trace`, `debug`, `info`, `warn`, `error`, `fatal`, `panic`) | `info` |
+| `--log-file` | Log file path, appended to when set | stderr |
 | `--fips` | Enable FIPS 140-3 mode | `false` |
+| `--tracing-enabled` | Enable OpenTelemetry tracing | `false` |
+| `--tracing-exporter` | Tracing exporter (`stdout`, `otlpgrpc`) | `stdout` |
+| `--otlp-endpoint` | OTLP gRPC collector endpoint (`host:port`) | `localhost:4317` |
+| `--tracing-service-name` | Service name reported in traces | `quicbaas` |
 
 ### Transport selection
 
@@ -155,36 +161,40 @@ and the integration tests under `test/integration/cli/`.
 
 ## Configuration
 
-Create `.quicbaas.yaml` in your home directory:
+The CLI reads `.quicbaas.yaml` from your home directory, the current
+directory or `/etc/quicbaas/` (or the file named by `--config`). These
+settings resolve with the precedence flag > environment variable > config
+file > default:
+
+| Flag | Config key | Environment variable | Default |
+|------|------------|----------------------|---------|
+| `--address` | `client.address` | `QUICBAAS_CLIENT_ADDRESS` | `$HOME/quicbaas.sock` |
+| `txn --rest` | `client.transaction_rest` | `QUICBAAS_CLIENT_TRANSACTION_REST` | `https://localhost:<server.rest.port default>` |
+| `--tracing-enabled` | `tracing.enabled` | `QUICBAAS_TRACING_ENABLED` | `false` |
+| `--tracing-exporter` | `tracing.exporter` | `QUICBAAS_TRACING_EXPORTER` | `stdout` |
+| `--otlp-endpoint` | `tracing.otlp_endpoint` | `QUICBAAS_OTLP_ENDPOINT` | `localhost:4317` |
+| `--tracing-service-name` | `tracing.service_name` | `QUICBAAS_TRACING_SERVICE_NAME` | `quicbaas` |
 
 ```yaml
-server:
-  address: localhost:50051
-  timeout: 30s
-
-output:
-  format: table
-  color: true
-
-consistency:
-  default: linearizable
-
-tls:
-  enabled: false
-  cert: /path/to/client.crt
-  key: /path/to/client.key
-  ca: /path/to/ca.crt
+client:
+  address: quicbaas.example.com:9090
+  transaction_rest: https://quicbaas.example.com:8443
 ```
 
-Environment variables:
 ```bash
-export QUICBAAS_ADDRESS=localhost:50051
-export QUICBAAS_TIMEOUT=30s
-export QUICBAAS_OUTPUT=json
-export QUICBAAS_TLS_ENABLED=true
+export QUICBAAS_CLIENT_ADDRESS=quicbaas.example.com:9090
 ```
 
-Priority: Command-line flags > Environment variables > Config file > Defaults
+`client.address` must be a Unix socket path (starts with `/` or ends in
+`.sock`), a URL with a host, or `host:port`. `client.transaction_rest` must
+be an `http`/`https` URL with a host, or `host:port`. Any other value fails
+the command with `ErrMalformedServerAddress`; the CLI never falls back to
+the default. An empty value is refused the same way, whether it comes from
+the flag, the environment variable (set but empty) or the config file, and
+the error names the key and its source, for example
+`client.address from QUICBAAS_CLIENT_ADDRESS "": address is empty`. A flag
+overrides an empty environment variable. `upgrade --server` overrides
+`--address` for the upgrade verbs only.
 
 ## Shell Completion
 
@@ -232,6 +242,23 @@ All three modes:
 - `--http-address string`: REST bind address (default from config, or `127.0.0.1`)
 - `--grpc-port int`: gRPC TCP port (default `0`, Unix socket only)
 - `--embedded-fleet-node` and its `--embedded-fleet-node-*` options
+
+Address keys, all three modes. Each is also settable in the config file and
+the environment; precedence is flag > env > file > defaults.
+
+| Flag | Config key | Environment |
+|------|------------|-------------|
+| `--host` | `server.host` | `QUICBAAS_SERVER_HOST` |
+| `--raft-enrollment-acme-challenge-port` | `raft.raft_enrollment.acme.challenge_port` | `QUICBAAS_RAFT_RAFT_ENROLLMENT_ACME_CHALLENGE_PORT` |
+| `--raft-enrollment-advertise-noise-port` | `raft.raft_enrollment.advertise_noise_port` | `QUICBAAS_RAFT_RAFT_ENROLLMENT_ADVERTISE_NOISE_PORT` |
+| `--rag-embedding-api-url` | `rag.embedding.api_url` | `QUICBAAS_RAG_EMBEDDING_API_URL` |
+| `--cache-l2-redis-addr` | `cache.l2_redis_addr` | `QUICBAAS_CACHE_L2_REDIS_ADDR` |
+| `--discovery-multicast-group` | `discovery.multicast.group` | `QUICBAAS_DISCOVERY_MULTICAST_GROUP` |
+
+A challenge port that is not a number from 1 to 65535, an advertise noise
+port outside 0 to 65535, or a multicast group that is not a multicast IP
+fails validation and the daemon refuses to start. `--http-address`, applied
+after the other layers, still overrides `--host`.
 
 `cluster` and `node` only:
 - `--raft-port int`: Raft port (default `63000`)

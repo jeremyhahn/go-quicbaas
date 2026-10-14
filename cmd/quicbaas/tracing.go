@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -29,23 +28,23 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
-// initTracing initializes a basic stdout tracer when QUICBAAS_TRACING_ENABLED=1.
-func initTracing() (func(context.Context) error, error) {
-	if os.Getenv("QUICBAAS_TRACING_ENABLED") != "1" {
+// tracingExporterOTLPGRPC selects the OTLP gRPC exporter; any other exporter
+// value selects stdout.
+const tracingExporterOTLPGRPC = "otlpgrpc"
+
+// initTracing installs a tracer provider when settings.Enabled is set.
+func initTracing(settings tracingSettings) (func(context.Context) error, error) {
+	if !settings.Enabled {
 		return func(ctx context.Context) error { return nil }, nil
 	}
 	var (
 		exp sdktrace.SpanExporter
 		err error
 	)
-	switch os.Getenv("QUICBAAS_TRACING_EXPORTER") {
-	case "otlpgrpc":
-		endpoint := os.Getenv("QUICBAAS_OTLP_ENDPOINT")
-		if endpoint == "" {
-			endpoint = "localhost:4317"
-		}
+	switch settings.Exporter {
+	case tracingExporterOTLPGRPC:
 		exp, err = otlptracegrpc.New(context.Background(),
-			otlptracegrpc.WithEndpoint(endpoint),
+			otlptracegrpc.WithEndpoint(settings.OTLPEndpoint),
 			otlptracegrpc.WithInsecure(),
 		)
 	default:
@@ -54,13 +53,9 @@ func initTracing() (func(context.Context) error, error) {
 	if err != nil {
 		return nil, err
 	}
-	svc := os.Getenv("QUICBAAS_TRACING_SERVICE_NAME")
-	if svc == "" {
-		svc = "quicbaas"
-	}
 	res, err := sdkresource.New(context.Background(),
 		sdkresource.WithAttributes(
-			semconv.ServiceNameKey.String(svc),
+			semconv.ServiceNameKey.String(settings.ServiceName),
 		),
 	)
 	if err != nil {

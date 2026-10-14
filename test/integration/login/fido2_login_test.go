@@ -117,7 +117,10 @@ func registerPasskey(
 		return "", fmt.Errorf("registration/begin returned no %s header", xkmsSessionHeader)
 	}
 
-	attestation, err := adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{OptionsJSON: optionsJSON})
+	attestation, err := adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{
+		OptionsJSON: optionsJSON,
+		Origin:      adminFactorOrigin,
+	})
 	if err != nil {
 		return "", fmt.Errorf("software authenticator MakeCredential: %w", err)
 	}
@@ -171,6 +174,7 @@ func assertWithSoftwareAuthenticator(
 	}
 	assertion, err = adapter.GetAssertion(ctx, &webauthnclient.CeremonyOptions{
 		OptionsJSON: []byte(begin.ChallengeMetadata["options"]),
+		Origin:      adminFactorOrigin,
 	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("software authenticator GetAssertion: %w", err)

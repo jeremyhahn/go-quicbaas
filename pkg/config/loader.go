@@ -14,11 +14,10 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -57,6 +56,8 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	BindSDLCWorkerImageEnv(l.v)
 	BindIAMSelfServiceRegistrationEnv(l.v)
 	BindStorageDirEnv(l.v)
+	BindDevClusterHost(l.v)
+	BindAddressEnv(l.v)
 
 	// Handle empty path - return defaults
 	if configFile == "" {
@@ -93,7 +94,9 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 			// Same defence in depth as the loaded path: no decoding route may
 			// turn TLS off.
 			cfg.Security.TLSEnabled = true
-			l.applyEnvironmentOverrides(cfg)
+			if err := l.applyEnvironmentOverrides(cfg); err != nil {
+				return nil, err
+			}
 			DeriveWALDir(l.v, cfg)
 			return cfg, nil
 		}
@@ -123,7 +126,9 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	// Apply environment variable overrides for fields that may not be in the config file
 	// but have environment variables set. Viper's AutomaticEnv only works during Get()
 	// calls, not during Unmarshal for keys not in the config file.
-	l.applyEnvironmentOverrides(cfg)
+	if err := l.applyEnvironmentOverrides(cfg); err != nil {
+		return nil, err
+	}
 	DeriveWALDir(l.v, cfg)
 
 	return cfg, nil
@@ -158,210 +163,80 @@ func DeriveWALDir(v *viper.Viper, cfg *Config) {
 
 // applyEnvironmentOverrides applies environment variable overrides for config fields
 // that may not be present in the config file. Viper's AutomaticEnv() only works
-// when calling Get() directly, not during Unmarshal for missing keys.
-func (l *Loader) applyEnvironmentOverrides(cfg *Config) {
-	// Storage backend override
-	if val := os.Getenv("QUICBAAS_STORAGE_BACKEND"); val != "" {
-		cfg.Storage.Backend = val
-	}
+// when calling Get() directly, not during Unmarshal for missing keys. A value
+// that does not parse as its field's type is an *InvalidEnvValueError naming
+// the variable; every such value is reported, joined.
+func (l *Loader) applyEnvironmentOverrides(cfg *Config) error {
+	// String values cannot be malformed.
+	envString("QUICBAAS_STORAGE_BACKEND", &cfg.Storage.Backend)
+	envString("QUICBAAS_SERVER_MODE", &cfg.Server.Mode)
+	// Sealed-window bind host (pre-unseal ceremony/unseal listeners)
+	envString("QUICBAAS_SERVER_SEALED_BIND_HOST", &cfg.Server.SealedBindHost)
+	envString("QUICBAAS_SERVER_UNIX_SOCKET", &cfg.Server.Unix.Socket)
+	envString("QUICBAAS_SECURITY_AUTHZ_MODE", &cfg.Security.AuthzMode)
+	envString("QUICBAAS_RAFT_TLS_CERT_FILE", &cfg.Raft.TLSCertFile)
+	envString("QUICBAAS_RAFT_TLS_KEY_FILE", &cfg.Raft.TLSKeyFile)
+	envString("QUICBAAS_RAFT_TLS_CA_FILE", &cfg.Raft.TLSCAFile)
+	envString("QUICBAAS_ORCHESTRATION_LEAD_AGENT_AGENT_ID", &cfg.Orchestration.LeadAgent.AgentID)
+	envString("QUICBAAS_ORCHESTRATION_LEAD_AGENT_POOL_ID", &cfg.Orchestration.LeadAgent.PoolID)
+	envString("QUICBAAS_BACKUP_STORAGE_BACKEND", &cfg.Backup.StorageBackend)
+	envString("QUICBAAS_BACKUP_WORK_DIR", &cfg.Backup.WorkDir)
+	envString("QUICBAAS_BACKUP_DEFAULT_COMPRESSION", &cfg.Backup.DefaultCompression)
+	envString("QUICBAAS_BACKUP_DEFAULT_ENCRYPTION", &cfg.Backup.DefaultEncryption)
+	envString("QUICBAAS_OLLAMA_BASE_URL", &cfg.Ollama.BaseURL)
+	envString("QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL", &cfg.Ollama.DefaultEmbeddingModel)
 
-	// Server mode override
-	if val := os.Getenv("QUICBAAS_SERVER_MODE"); val != "" {
-		cfg.Server.Mode = val
-	}
+	// Every malformed parsed value is collected, so the operator sees all of
+	// them in one failed start instead of fixing one per restart.
+	return errors.Join(
+		// Server listeners
+		EnvBool("QUICBAAS_SERVER_GRPC_ENABLED", &cfg.Server.GRPC.Enabled),
+		envInt("QUICBAAS_SERVER_GRPC_PORT", &cfg.Server.GRPC.Port),
+		EnvBool("QUICBAAS_SERVER_REST_ENABLED", &cfg.Server.REST.Enabled),
+		envInt("QUICBAAS_SERVER_REST_PORT", &cfg.Server.REST.Port),
+		EnvBool("QUICBAAS_SERVER_MCP_ENABLED", &cfg.Server.MCP.Enabled),
+		envInt("QUICBAAS_SERVER_MCP_PORT", &cfg.Server.MCP.Port),
+		EnvBool("QUICBAAS_SERVER_UNIX_ENABLED", &cfg.Server.Unix.Enabled),
 
-	// Sealed-window bind host override (pre-unseal ceremony/unseal listeners)
-	if val := os.Getenv("QUICBAAS_SERVER_SEALED_BIND_HOST"); val != "" {
-		cfg.Server.SealedBindHost = val
-	}
+		// Security. There is deliberately NO override for
+		// security.tls_enabled: TLS is required for everything and cannot be
+		// disabled through configuration.
+		EnvBool("QUICBAAS_SECURITY_TLS_CLIENT_AUTH", &cfg.Security.TLSClientAuth),
+		EnvBool("QUICBAAS_SECURITY_REQUIRE_AUTHZ", &cfg.Security.RequireAuthz),
+		EnvBool("QUICBAAS_SECURITY_INSECURE_DEV_MODE", &cfg.Security.InsecureDevMode),
+		EnvDuration("QUICBAAS_SECURITY_LIVENESS_CACHE_TTL", &cfg.Security.LivenessCacheTTL),
 
-	// Server GRPC configuration
-	if val := os.Getenv("QUICBAAS_SERVER_GRPC_ENABLED"); val != "" {
-		cfg.Server.GRPC.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SERVER_GRPC_PORT"); val != "" {
-		if port, err := strconv.Atoi(val); err == nil {
-			cfg.Server.GRPC.Port = port
-		}
-	}
+		// Raft
+		EnvBool("QUICBAAS_RAFT_MUTUAL_TLS", &cfg.Raft.MutualTLS),
 
-	// Server REST configuration
-	if val := os.Getenv("QUICBAAS_SERVER_REST_ENABLED"); val != "" {
-		cfg.Server.REST.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SERVER_REST_PORT"); val != "" {
-		if port, err := strconv.Atoi(val); err == nil {
-			cfg.Server.REST.Port = port
-		}
-	}
+		// Scheduler
+		EnvBool("QUICBAAS_ENABLE_SCHEDULER", &cfg.Scheduler.Enabled),
+		EnvDuration("QUICBAAS_SCHEDULER_TICK_INTERVAL", &cfg.Scheduler.TickInterval),
+		envInt("QUICBAAS_SCHEDULER_MAX_CONCURRENT_JOBS", &cfg.Scheduler.MaxConcurrentJobs),
 
-	// Server MCP configuration
-	if val := os.Getenv("QUICBAAS_SERVER_MCP_ENABLED"); val != "" {
-		cfg.Server.MCP.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SERVER_MCP_PORT"); val != "" {
-		if port, err := strconv.Atoi(val); err == nil {
-			cfg.Server.MCP.Port = port
-		}
-	}
+		// Messaging
+		EnvBool("QUICBAAS_MESSAGING_ENABLED", &cfg.Messaging.Enabled),
+		envInt("QUICBAAS_MESSAGING_BUFFER_SIZE", &cfg.Messaging.BufferSize),
+		EnvBool("QUICBAAS_MESSAGING_DEDUP_ENABLED", &cfg.Messaging.DedupEnabled),
+		EnvDuration("QUICBAAS_MESSAGING_DEDUP_WINDOW", &cfg.Messaging.DedupWindow),
+		EnvBool("QUICBAAS_MESSAGING_WATCH_BRIDGE_ENABLED", &cfg.Messaging.WatchBridge.Enabled),
 
-	// Server Unix socket configuration
-	if val := os.Getenv("QUICBAAS_SERVER_UNIX_ENABLED"); val != "" {
-		cfg.Server.Unix.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SERVER_UNIX_SOCKET"); val != "" {
-		cfg.Server.Unix.Socket = val
-	}
+		// Orchestration
+		EnvBool("QUICBAAS_ORCHESTRATION_ENABLED", &cfg.Orchestration.Enabled),
+		EnvDuration("QUICBAAS_ORCHESTRATION_HEARTBEAT_TIMEOUT", &cfg.Orchestration.HeartbeatTimeout),
 
-	// Security configuration. There is deliberately NO override for
-	// security.tls_enabled: TLS is required for everything and cannot be
-	// disabled through configuration.
-	if val := os.Getenv("QUICBAAS_SECURITY_TLS_CLIENT_AUTH"); val != "" {
-		cfg.Security.TLSClientAuth = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SECURITY_REQUIRE_AUTHZ"); val != "" {
-		cfg.Security.RequireAuthz = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SECURITY_INSECURE_DEV_MODE"); val != "" {
-		cfg.Security.InsecureDevMode = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SECURITY_AUTHZ_MODE"); val != "" {
-		cfg.Security.AuthzMode = val
-	}
-	if val := os.Getenv("QUICBAAS_SECURITY_LIVENESS_CACHE_TTL"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			cfg.Security.LivenessCacheTTL = duration
-		}
-	}
+		// Object storage and backup
+		EnvBool("QUICBAAS_OBJECTSTORAGE_ENABLED", &cfg.ObjectStorage.Enabled),
+		EnvBool("QUICBAAS_BACKUP_ENABLED", &cfg.Backup.Enabled),
+		EnvDuration("QUICBAAS_BACKUP_TIMEOUT", &cfg.Backup.Timeout),
 
-	// Raft configuration
-	if val := os.Getenv("QUICBAAS_RAFT_MUTUAL_TLS"); val != "" {
-		cfg.Raft.MutualTLS = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_RAFT_TLS_CERT_FILE"); val != "" {
-		cfg.Raft.TLSCertFile = val
-	}
-	if val := os.Getenv("QUICBAAS_RAFT_TLS_KEY_FILE"); val != "" {
-		cfg.Raft.TLSKeyFile = val
-	}
-	if val := os.Getenv("QUICBAAS_RAFT_TLS_CA_FILE"); val != "" {
-		cfg.Raft.TLSCAFile = val
-	}
-
-	// Scheduler configuration
-	if val := os.Getenv("QUICBAAS_ENABLE_SCHEDULER"); val != "" {
-		cfg.Scheduler.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_SCHEDULER_TICK_INTERVAL"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			cfg.Scheduler.TickInterval = duration
-		}
-	}
-	if val := os.Getenv("QUICBAAS_SCHEDULER_MAX_CONCURRENT_JOBS"); val != "" {
-		if maxJobs, err := strconv.Atoi(val); err == nil {
-			cfg.Scheduler.MaxConcurrentJobs = maxJobs
-		}
-	}
-
-	// Messaging configuration
-	if val := os.Getenv("QUICBAAS_MESSAGING_ENABLED"); val != "" {
-		cfg.Messaging.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_MESSAGING_BUFFER_SIZE"); val != "" {
-		if size, err := strconv.Atoi(val); err == nil {
-			cfg.Messaging.BufferSize = size
-		}
-	}
-	if val := os.Getenv("QUICBAAS_MESSAGING_DEDUP_ENABLED"); val != "" {
-		cfg.Messaging.DedupEnabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_MESSAGING_DEDUP_WINDOW"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			cfg.Messaging.DedupWindow = duration
-		}
-	}
-	if val := os.Getenv("QUICBAAS_MESSAGING_WATCH_BRIDGE_ENABLED"); val != "" {
-		cfg.Messaging.WatchBridge.Enabled = parseBool(val)
-	}
-
-	// Orchestration configuration
-	if val := os.Getenv("QUICBAAS_ORCHESTRATION_ENABLED"); val != "" {
-		cfg.Orchestration.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_ORCHESTRATION_LEAD_AGENT_AGENT_ID"); val != "" {
-		cfg.Orchestration.LeadAgent.AgentID = val
-	}
-	if val := os.Getenv("QUICBAAS_ORCHESTRATION_LEAD_AGENT_POOL_ID"); val != "" {
-		cfg.Orchestration.LeadAgent.PoolID = val
-	}
-	if val := os.Getenv("QUICBAAS_ORCHESTRATION_HEARTBEAT_TIMEOUT"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			cfg.Orchestration.HeartbeatTimeout = duration
-		}
-	}
-	// Object Storage configuration
-	if val := os.Getenv("QUICBAAS_OBJECTSTORAGE_ENABLED"); val != "" {
-		cfg.ObjectStorage.Enabled = parseBool(val)
-	}
-
-	// Backup configuration
-	if val := os.Getenv("QUICBAAS_BACKUP_ENABLED"); val != "" {
-		cfg.Backup.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_BACKUP_STORAGE_BACKEND"); val != "" {
-		cfg.Backup.StorageBackend = val
-	}
-	if val := os.Getenv("QUICBAAS_BACKUP_WORK_DIR"); val != "" {
-		cfg.Backup.WorkDir = val
-	}
-	if val := os.Getenv("QUICBAAS_BACKUP_DEFAULT_COMPRESSION"); val != "" {
-		cfg.Backup.DefaultCompression = val
-	}
-	if val := os.Getenv("QUICBAAS_BACKUP_DEFAULT_ENCRYPTION"); val != "" {
-		cfg.Backup.DefaultEncryption = val
-	}
-	if val := os.Getenv("QUICBAAS_BACKUP_TIMEOUT"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			cfg.Backup.Timeout = duration
-		}
-	}
-
-	// Ollama configuration
-	if val := os.Getenv("QUICBAAS_OLLAMA_ENABLED"); val != "" {
-		cfg.Ollama.Enabled = parseBool(val)
-	}
-	if val := os.Getenv("QUICBAAS_OLLAMA_BASE_URL"); val != "" {
-		cfg.Ollama.BaseURL = val
-	}
-	if val := os.Getenv("QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL"); val != "" {
-		cfg.Ollama.DefaultEmbeddingModel = val
-	}
-	if val := os.Getenv("QUICBAAS_OLLAMA_TIMEOUT"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			cfg.Ollama.Timeout = duration
-		}
-	}
-	if val := os.Getenv("QUICBAAS_OLLAMA_MAX_RETRIES"); val != "" {
-		if retries, err := strconv.Atoi(val); err == nil {
-			cfg.Ollama.MaxRetries = retries
-		}
-	}
-	if val := os.Getenv("QUICBAAS_OLLAMA_RETRY_BACKOFF"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			cfg.Ollama.RetryBackoff = duration
-		}
-	}
-	if val := os.Getenv("QUICBAAS_OLLAMA_HEALTH_CHECK_INTERVAL"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			cfg.Ollama.HealthCheckInterval = duration
-		}
-	}
-}
-
-// parseBool parses a string to boolean, supporting common boolean representations.
-func parseBool(val string) bool {
-	lower := strings.ToLower(val)
-	return lower == "true" || lower == "1" || lower == "yes" || lower == "on"
+		// Ollama
+		EnvBool("QUICBAAS_OLLAMA_ENABLED", &cfg.Ollama.Enabled),
+		EnvDuration("QUICBAAS_OLLAMA_TIMEOUT", &cfg.Ollama.Timeout),
+		envInt("QUICBAAS_OLLAMA_MAX_RETRIES", &cfg.Ollama.MaxRetries),
+		EnvDuration("QUICBAAS_OLLAMA_RETRY_BACKOFF", &cfg.Ollama.RetryBackoff),
+		EnvDuration("QUICBAAS_OLLAMA_HEALTH_CHECK_INTERVAL", &cfg.Ollama.HealthCheckInterval),
+	)
 }
 
 // LoadWithDefaults loads configuration with default values only.

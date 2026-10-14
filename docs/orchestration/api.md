@@ -230,7 +230,7 @@ the envelope under their existing `projects`/`accounts` key: a call without
 arguments returns the newest 25, not the tenant's whole registry.
 
 **gRPC** carries the PAGING half of the contract (go-quicbaas#973). The
-`ListJobs`, `ListTasks`, `ListSessions` and `ListFleetNodes` requests
+`ListJobs`, `ListTasks`, `ListSessions`, `ListWorkflows` and `ListFleetNodes` requests
 (`api/proto/orchestrator.proto`), `ListProjects` (`project.proto`) and
 `ListAccounts` (`account.proto`) take `limit`, `offset`, `sort` and `q` as
 request fields, read by the same `orchestration.ParsePage` and checked against
@@ -243,12 +243,16 @@ default page of 25, as a REST request with no `?limit=` does. The existing
 counts keep their meanings: `ListTasksResponse.total_count` equals `total`
 (the matched count), and `ListFleetNodesResponse.count` is the size of the page.
 The Go SDK gRPC transport — and the Unix transport, which delegates to it —
-sends `page.Params` and fills `page.Envelope`. gRPC does NOT yet carry the
-listings' newer narrowings (`agent_id`, `runner`, `statuses`, `job_ids`, …) or
-the `facets` block; the proto has no workflows listing RPC. The Go SDK routes no
-`ListWorkflows` verb on any transport, so the workflows narrowings are
-reachable over REST, MCP and the TypeScript SDK but not through
-`sdk/go/client/orchestrator`.
+sends `page.Params` and fills `page.Envelope`. The same seven responses carry
+`facets` (`map<string, quicbaas.sdlc.v1.FacetCounts>`), the counts REST
+serves in its `facets` block; the SDK reads them into `page.Envelope.Facets`,
+nil when the service counted none, as over REST. The requests also carry the
+listings' narrowings, and the SDK gRPC transport sends them: `ListTasks`
+through `TaskFilter` (`project_id`, `statuses`, `agent_id`, `job_id`,
+`auto_spawn`, `source_kind`/`source_ref`), `ListJobs` (`task_id`, `runner`,
+`project_id`, `statuses`, `job_ids`, `agent_id`), `ListSessions` (`status`,
+`project_id`, `job_id`, `runner`, `agent_id`) and `ListWorkflows`
+(`project_id`, `mode`).
 
 ### TypeScript SDK
 

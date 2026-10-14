@@ -43,6 +43,12 @@ import (
 // with; Enroll derives the WebAuthn origin https://localhost from it.
 const adminFactorRPID = "localhost"
 
+// adminFactorOrigin is the WebAuthn origin the software authenticator signs
+// into its client data. The integration server lists it in
+// iam.webauthn.rp_origins, and go-xkms's SoftwareAdapter refuses a ceremony
+// without one.
+const adminFactorOrigin = "https://" + adminFactorRPID
+
 // SoftwarePasskeyError reports a software authenticator ceremony failure.
 type SoftwarePasskeyError struct {
 	Op    string
@@ -120,7 +126,7 @@ func passkeyLogin(ctx context.Context, c quicbaas.Client, adapter *webauthnclien
 	}
 	assertion, err := adapter.GetAssertion(ctx, &webauthnclient.CeremonyOptions{
 		OptionsJSON: []byte(begin.ChallengeMetadata["options"]),
-		Origin:      "https://" + adminFactorRPID,
+		Origin:      adminFactorOrigin,
 	})
 	if err != nil {
 		return nil, &SoftwarePasskeyError{Op: "get assertion", Cause: err}

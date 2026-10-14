@@ -368,6 +368,7 @@ func (s *OrchestratorServer) ListSessions(ctx context.Context, req *pb.ListSessi
 		Limit:      pageInt32(resp.Limit),
 		Offset:     pageInt32(resp.Offset),
 		NextOffset: pageInt32(resp.NextOffset),
+		Facets:     facetsToProto(resp.Facets),
 	}, nil
 }
 
@@ -495,6 +496,7 @@ func (s *OrchestratorServer) ListTasks(ctx context.Context, req *pb.ListTasksReq
 		Limit:      pageInt32(result.Limit),
 		Offset:     pageInt32(result.Offset),
 		NextOffset: pageInt32(result.NextOffset),
+		Facets:     facetsToProto(result.Facets),
 	}, nil
 }
 
@@ -972,6 +974,7 @@ func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorL
 		Limit:      pageInt32(result.Limit),
 		Offset:     pageInt32(result.Offset),
 		NextOffset: pageInt32(result.NextOffset),
+		Facets:     facetsToProto(result.Facets),
 	}, nil
 }
 
@@ -1167,6 +1170,7 @@ func (s *OrchestratorServer) ListWorkflows(ctx context.Context, req *pb.Orchestr
 		Limit:      pageInt32(result.Limit),
 		Offset:     pageInt32(result.Offset),
 		NextOffset: pageInt32(result.NextOffset),
+		Facets:     facetsToProto(result.Facets),
 	}, nil
 }
 
@@ -1405,6 +1409,7 @@ func (s *OrchestratorServer) ListFleetNodes(ctx context.Context, req *pb.ListFle
 		Limit:      pageInt32(result.Limit),
 		Offset:     pageInt32(result.Offset),
 		NextOffset: pageInt32(result.NextOffset),
+		Facets:     facetsToProto(result.Facets),
 	}, nil
 }
 

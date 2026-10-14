@@ -38,7 +38,7 @@ func TestParseSpecialEnvVars_VectorEnabledProducesValidatableConfig(t *testing.T
 	cfg = config.Default()
 	t.Setenv("QUICBAAS_VECTOR_ENABLED", "true")
 
-	parseSpecialEnvVars()
+	require.NoError(t, parseSpecialEnvVars())
 
 	require.True(t, cfg.Vector.Enabled, "QUICBAAS_VECTOR_ENABLED=true must enable vector")
 

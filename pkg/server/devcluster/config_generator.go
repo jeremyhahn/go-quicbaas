@@ -161,8 +161,10 @@ func (g *ConfigGenerator) generateYAMLContent(node *NodeInstance) string {
 	// Raft section.
 	sb.WriteString("raft:\n")
 	sb.WriteString(fmt.Sprintf("  node_id: %d\n", node.NodeID))
-	sb.WriteString(fmt.Sprintf("  raft_address: localhost:%d\n", node.RaftPort))
-	sb.WriteString(fmt.Sprintf("  listen_address: localhost:%d\n", node.RaftPort))
+	sb.WriteString(fmt.Sprintf("  raft_address: %s\n", node.RaftAddress))
+	if node.Config != nil {
+		sb.WriteString(fmt.Sprintf("  listen_address: %s\n", node.Config.Raft.ListenAddress))
+	}
 	if node.Config != nil && len(node.Config.Raft.JoinAddresses) > 0 {
 		sb.WriteString("  join_addresses:\n")
 		for _, addr := range node.Config.Raft.JoinAddresses {
@@ -212,7 +214,7 @@ func (g *ConfigGenerator) ClusterInfo() string {
 		sb.WriteString(fmt.Sprintf("  Node %d%s:\n", node.NodeID, bootstrapMarker))
 		sb.WriteString(fmt.Sprintf("    gRPC: %d, REST: %d, MCP: %d\n",
 			node.GRPCPort, node.RESTPort, node.MCPPort))
-		sb.WriteString(fmt.Sprintf("    Raft: localhost:%d\n", node.RaftPort))
+		sb.WriteString(fmt.Sprintf("    Raft: %s\n", node.RaftAddress))
 		sb.WriteString(fmt.Sprintf("    Data: %s\n", node.DataDir))
 		if node.UnixSocket != "" {
 			sb.WriteString(fmt.Sprintf("    Unix: %s\n", node.UnixSocket))
@@ -232,7 +234,7 @@ func (g *ConfigGenerator) ClusterAddresses() map[uint64]string {
 	result := make(map[uint64]string, len(nodes))
 
 	for _, node := range nodes {
-		result[node.NodeID] = fmt.Sprintf("localhost:%d", node.RaftPort)
+		result[node.NodeID] = node.RaftAddress
 	}
 
 	return result

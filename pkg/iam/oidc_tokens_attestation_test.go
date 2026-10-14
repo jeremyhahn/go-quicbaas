@@ -309,8 +309,11 @@ func TestIssueHardwareTokens_AccessTokenOmitsAnAbsentAttestation(t *testing.T) {
 	}
 }
 
-// TestIssueHardwareTokens_MFAVerifiedFollowsTheEvidence is the assurance
-// counterpart of the attestation controls above.
+// TestIssueHardwareTokens_ProvenHardwareSatisfiesMFA pins the rule ratified on
+// go-quicbaas#416 (option 1): a credential whose attestation proves hardware
+// satisfies mfa_verified, whichever ceremony proved it, and every result that
+// does not prove hardware leaves it false. It is the assurance counterpart of
+// the attestation controls above.
 //
 // mfa_verified used to be the literal true on every path through this
 // function. An operator who opted into iam.piv_login.allow_unattested therefore
@@ -320,8 +323,10 @@ func TestIssueHardwareTokens_AccessTokenOmitsAnAbsentAttestation(t *testing.T) {
 // endpoint can issue.
 //
 // The claim now says what the ceremony proved, on BOTH the ID token that
-// describes the login and the bearer that authorizes with it.
-func TestIssueHardwareTokens_MFAVerifiedFollowsTheEvidence(t *testing.T) {
+// describes the login and the bearer that authorizes with it. Second-factor
+// evidence (the WebAuthn UV flag, the PIV PIN policy) is not part of the rule
+// yet; when it is, this table gains the rows that need it.
+func TestIssueHardwareTokens_ProvenHardwareSatisfiesMFA(t *testing.T) {
 	service, privateKey := createTestTokenService(t)
 	ctx := context.Background()
 
@@ -333,10 +338,17 @@ func TestIssueHardwareTokens_MFAVerifiedFollowsTheEvidence(t *testing.T) {
 		wantMFA     bool
 	}{
 		{
-			name:        "proven hardware is multi-factor",
-			amr:         []string{"smartcard", "mfa"},
+			name:        "hardware proven by webauthn attestation is multi-factor",
+			amr:         []string{"hwk", "mfa"},
 			acr:         ACRHardwareAttested,
 			attestation: testHardwareAttestation("cb69481e8ff7403993ec0a2729a154a8"),
+			wantMFA:     true,
+		},
+		{
+			name:        "hardware proven by PIV slot attestation is multi-factor",
+			amr:         []string{"smartcard", "mfa"},
+			acr:         ACRHardwareAttested,
+			attestation: &AttestationResult{level: AttestLevelHardware, format: "piv", method: AttestMethodPIV},
 			wantMFA:     true,
 		},
 		{
@@ -349,6 +361,12 @@ func TestIssueHardwareTokens_MFAVerifiedFollowsTheEvidence(t *testing.T) {
 			name:        "self-attested webauthn proves one software factor",
 			amr:         []string{"webauthn"},
 			attestation: &AttestationResult{level: AttestLevelSoftware, format: "basic_surrogate", method: AttestMethodWebAuthn},
+			wantMFA:     false,
+		},
+		{
+			name:        "attestation level none proves one factor",
+			amr:         []string{"webauthn"},
+			attestation: &AttestationResult{level: AttestLevelNone, format: "none", method: AttestMethodWebAuthn},
 			wantMFA:     false,
 		},
 		{

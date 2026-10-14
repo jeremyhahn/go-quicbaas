@@ -26,7 +26,7 @@ import (
 // TestInitTracingNoOtel tests tracing initialization when OTEL is disabled.
 func TestInitTracingNoOtel(t *testing.T) {
 	t.Run("ReturnsNoOpFunction", func(t *testing.T) {
-		shutdownFunc, err := initTracing()
+		shutdownFunc, err := initTracing(tracingSettings{Enabled: true})
 		require.NoError(t, err)
 		require.NotNil(t, shutdownFunc)
 
@@ -38,11 +38,11 @@ func TestInitTracingNoOtel(t *testing.T) {
 
 	t.Run("MultipleCallsSucceed", func(t *testing.T) {
 		// Should be safe to call multiple times
-		shutdownFunc1, err := initTracing()
+		shutdownFunc1, err := initTracing(tracingSettings{Enabled: true})
 		require.NoError(t, err)
 		require.NotNil(t, shutdownFunc1)
 
-		shutdownFunc2, err := initTracing()
+		shutdownFunc2, err := initTracing(tracingSettings{Enabled: true})
 		require.NoError(t, err)
 		require.NotNil(t, shutdownFunc2)
 

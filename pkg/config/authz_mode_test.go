@@ -161,15 +161,12 @@ func TestAuthzModeEnvOverrides(t *testing.T) {
 		assert.Equal(t, 30*time.Second, cfg.Security.LivenessCacheTTL)
 	})
 
-	t.Run("invalid TTL string is ignored (keeps default)", func(t *testing.T) {
-		os.Setenv("QUICBAAS_SECURITY_LIVENESS_CACHE_TTL", "not-a-duration")
-		defer os.Unsetenv("QUICBAAS_SECURITY_LIVENESS_CACHE_TTL")
+	t.Run("invalid TTL string fails the load", func(t *testing.T) {
+		t.Setenv("QUICBAAS_SECURITY_LIVENESS_CACHE_TTL", "not-a-duration")
 
 		loader := NewLoader()
 		cfg, err := loader.Load("")
-		require.NoError(t, err)
-		require.NotNil(t, cfg)
-		// Malformed duration is dropped; the default remains in effect.
-		assert.Equal(t, 15*time.Second, cfg.Security.LivenessCacheTTL)
+		require.ErrorIs(t, err, ErrInvalidEnvValue)
+		assert.Nil(t, cfg)
 	})
 }

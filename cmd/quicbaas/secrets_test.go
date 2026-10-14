@@ -3329,7 +3329,7 @@ func TestInitConfig_DefaultNoConfigFile(t *testing.T) {
 	}()
 
 	cfgFile = ""
-	err := initConfig()
+	err := initConfig(rootCmd)
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 }
@@ -3344,7 +3344,7 @@ func TestInitConfig_WithConfigFile(t *testing.T) {
 	}()
 
 	cfgFile = "/nonexistent/config.yaml"
-	err := initConfig()
+	err := initConfig(rootCmd)
 	// Will error because the file does not exist and is not ConfigFileNotFoundError
 	assert.Error(t, err)
 }

@@ -28,8 +28,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
+
+// defaultTransactionRESTAddress is the --rest default: the daemon's
+// defaults-layer REST port on the local host. The daemon serves REST over
+// TLS only, so the scheme is https.
+var defaultTransactionRESTAddress = "https://localhost:" + strconv.Itoa(config.DefaultRESTPort)
 
 var (
 	// Transaction builder state (persists across subcommands).
@@ -71,16 +77,22 @@ Examples:
   quicbaas txn success get user 123
   quicbaas txn success put user 123 '{"name":"Modified","updated_at":"2025-10-12"}'
   quicbaas txn execute`,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// This hook replaces the root's, so run the root initialisation
+			// that resolves --rest from flag, env and config file.
+			if err := initCLI(cmd); err != nil {
+				return err
+			}
 			// Reset transaction state on each top-level invocation
 			if cmd.Parent() == nil || cmd.Parent().Name() == "quicbaas" {
 				resetTransaction()
 			}
+			return nil
 		},
 	}
 
 	// Add persistent flags
-	cmd.PersistentFlags().StringVar(&restAddress, "rest", "http://localhost:8080", "REST API address")
+	cmd.PersistentFlags().StringVar(&restAddress, "rest", defaultTransactionRESTAddress, "REST API address (URL or host:port)")
 	cmd.PersistentFlags().BoolVar(&restTLS, "tls", false, "Use HTTPS")
 
 	// Add subcommands
