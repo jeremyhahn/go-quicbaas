@@ -1100,7 +1100,8 @@ one with `openssl rand -base64 32`.
 
 **Verify audit log integrity:** the CLI has no audit verifier. Check each
 event's `signature` in Go with `AuditLogger.VerifySignature(event)` from
-`pkg/security`. To read the IAM audit trail, use
+`pkg/security`; with `sign_logs` on, an event with no signature reports
+unverified. To read the IAM audit trail, use
 `quicbaas iam audit query --start-time 2025-01-07T00:00:00Z --outcome failure`.
 
 ---

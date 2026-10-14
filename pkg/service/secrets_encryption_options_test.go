@@ -33,6 +33,13 @@ type mockSecretsManagerWithOptions struct {
 
 // StoreWithOptions implements the new interface method.
 func (m *mockSecretsManagerWithOptions) StoreWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *interfaces.StoreOptions) error {
+	_, err := m.StoreVersionWithOptions(ctx, path, data, metadata, opts)
+	return err
+}
+
+// StoreVersionWithOptions records the options, stores them in the metadata
+// for verification, and reports the version the write was assigned.
+func (m *mockSecretsManagerWithOptions) StoreVersionWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *interfaces.StoreOptions) (int, error) {
 	m.lastStoreOptions = opts
 	// Also store the options in metadata for verification
 	if opts != nil {
@@ -49,7 +56,7 @@ func (m *mockSecretsManagerWithOptions) StoreWithOptions(ctx context.Context, pa
 			metadata["encryption_algorithm"] = opts.Algorithm
 		}
 	}
-	return m.Store(ctx, path, data, metadata)
+	return m.StoreVersion(ctx, path, data, metadata)
 }
 
 // TestStoreSecretWithTenantID verifies secrets can be stored with tenant-specific encryption.

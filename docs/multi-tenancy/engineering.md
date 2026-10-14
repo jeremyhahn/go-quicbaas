@@ -93,10 +93,29 @@ a tenant namespace named "system". `qrdbsdk.IsSystemTenant(tenantID)`
 predicate for this question — every tenant-scoping call site in quicbaas uses
 it directly instead of re-deriving `tenantID == ""` (single-tenant mode) or
 `tenantID == "system"` locally; quicbaas keeps no local copy of the
-comparison. A caller whose identity carries either value is exempt from
-per-tenant key scoping and cross-tenant access checks; an ordinary tenant ID
+comparison for storage scoping. A storage scope carrying either value is
+exempt from per-tenant key scoping; an authenticated caller is a different
+question (see below). An ordinary tenant ID
 (including one that merely resembles "system", e.g. `"System"` or
 `"system-2"`) is still fully isolated.
+
+### An empty caller tenant is not the system tenant
+
+`IsSystemTenant("")` is true because an unbound *storage* scope resolves to
+the system namespace. That does not make an *authenticated caller* with an
+empty tenant the system tenant. Only a principal whose tenant is the system
+tenant id itself acts as system; `auth.IsSystemSubject(subject)` is the
+predicate for that question. An authenticated principal with an empty tenant
+is bound to no tenant and is refused:
+
+| Site | Empty-tenant caller gets |
+|------|--------------------------|
+| Per-tenant barrier read and mutate gates (`pkg/service`) | `ErrForbidden` |
+| Embedded IAM admin and account-reservation scoping | `PermissionDeniedError` |
+| REST `requireTenantSubject` | `400 tenant ID is required` |
+
+On the embedded transport, an **unbound** context (the host process, no
+subject at all) is the grant and keeps its access.
 
 ### Asking the question from outside quicbaas
 

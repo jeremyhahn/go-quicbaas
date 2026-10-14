@@ -55,6 +55,19 @@ var ErrEnsureSecretUnsupported = stderrors.New("secrets: EnsureSecret is not sup
 
 // secretsService is the concrete implementation of SecretsService.
 // It orchestrates secret storage, versioning, and rotation through the SecretsManager.
+// secretsVersionedStorer is the write half of the secrets manager's version
+// contract, kept by secrets.Manager: a store reports the version the backend
+// assigned to it. The service tells a writer that version and never predicts
+// one — a count of the history is wrong once a version is pruned, and two
+// concurrent writers predict the same number (go-quicbaas#179).
+type secretsVersionedStorer interface {
+	StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error)
+	StoreVersionWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *interfaces.StoreOptions) (int, error)
+}
+
+// secretVersionKey is the metadata key a read reports its version under.
+const secretVersionKey = "version"
+
 type secretsService struct {
 	secretsManager interfaces.SecretsManager
 	logger         interfaces.Logger
@@ -199,17 +212,6 @@ func (s *secretsService) StoreSecret(ctx context.Context, req *StoreSecretReques
 	}
 	scopedPath := secretsTenantScopedID(tenantID, path)
 
-	// Determine the next version by checking existing versions
-	var nextVersion uint64 = 1
-	existingVersions, listErr := s.secretsManager.ListVersions(ctx, scopedPath)
-	if listErr == nil && len(existingVersions) > 0 {
-		// Find the highest version number
-		nextVersion = uint64(len(existingVersions)) + 1
-	}
-
-	// Store the version in metadata
-	metadata["version"] = fmt.Sprintf("%d", nextVersion)
-
 	// Build StoreOptions if encryption options are specified
 	var opts *interfaces.StoreOptions
 	if req.TenantID != "" || req.KeyID != "" || req.Algorithm != "" {
@@ -231,13 +233,8 @@ func (s *secretsService) StoreSecret(ctx context.Context, req *StoreSecretReques
 		}
 	}
 
-	// Store secret through secrets manager with options
-	if opts != nil {
-		err = s.secretsManager.StoreWithOptions(ctx, scopedPath, secretData, metadata, opts)
-	} else {
-		err = s.secretsManager.Store(ctx, scopedPath, secretData, metadata)
-	}
-
+	// Store the secret; the backend assigns its version.
+	version, err := s.storeSecretVersion(ctx, path, scopedPath, secretData, metadata, opts)
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("store", "store_failed").Inc()
@@ -270,7 +267,7 @@ func (s *secretsService) StoreSecret(ctx context.Context, req *StoreSecretReques
 	// Return the original (unscoped) path to callers
 	return &StoreSecretResponse{
 		SecretID:  path,
-		Version:   nextVersion,
+		Version:   version,
 		Timestamp: time.Now(),
 	}, nil
 }
@@ -397,14 +394,6 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 		}
 	}
 
-	// Parse creation time from metadata if available
-	createdAt := time.Now()
-	if createdAtStr, ok := metadata["created_at"]; ok {
-		if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
-			createdAt = t
-		}
-	}
-
 	// Extract encryption info from metadata
 	algorithm := metadata["encryption_algorithm"]
 	keyIdentifier := metadata["encryption_key_id"]
@@ -412,11 +401,37 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 		keyIdentifier = metadata["encryption_tenant_id"]
 	}
 
-	// Parse version from metadata (backend populates this)
-	version := req.Version
-	if versionStr, ok := metadata["version"]; ok {
-		if v, err := strconv.ParseUint(versionStr, 10, 64); err == nil {
-			version = v
+	// Every backend reports the version it returned, so the write-time
+	// lookup below names the returned data's version even when a write
+	// lands after the read (go-quicbaas#179).
+	version, err := reportedSecretVersion(req.SecretID, metadata)
+	if err != nil {
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "secrets.GetSecret", Err: err}
+	}
+
+	// created_at is when the returned version was written, as the store
+	// recorded it — never the time of this read (go-quicbaas#179).
+	times, err := s.loadSecretWriteTimes(ctx, scopedID)
+	if err != nil {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("get", "write_times").Inc()
+		}
+		return nil, &errors.QBError{
+			Code: secretLookupCode(err),
+			Op:   "secrets.GetSecret",
+			Err:  &api.OperationFailedError{Operation: "read secret write times", Cause: err},
+		}
+	}
+	backendVersion, err := secretVersionArg("secrets.GetSecret", version)
+	if err != nil {
+		return nil, err
+	}
+	createdAt, ok := times.byVersion[backendVersion]
+	if !ok {
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "secrets.GetSecret",
+			Err:  &api.NotFoundError{Resource: "secret version write time", ID: req.SecretID},
 		}
 	}
 
@@ -493,6 +508,18 @@ func (s *secretsService) ListSecrets(ctx context.Context, req *ListSecretsReques
 			continue // Skip secrets we can't read
 		}
 
+		// The stored write times, never the time of this listing
+		// (go-quicbaas#179). A secret whose history cannot be read is
+		// skipped like one whose data cannot be read.
+		times, err := s.loadSecretWriteTimes(ctx, path)
+		if err != nil {
+			continue
+		}
+		currentVersion, err := backendSecretVersion("secrets.ListSecrets", times.latest)
+		if err != nil {
+			continue
+		}
+
 		// Strip tenant prefix for the response
 		strippedPath := secretsTenantStripID(tenantID, path)
 
@@ -500,9 +527,9 @@ func (s *secretsService) ListSecrets(ctx context.Context, req *ListSecretsReques
 			SecretID:       strippedPath,
 			Name:           strippedPath,
 			Description:    metadata["description"],
-			CurrentVersion: 1,
-			CreatedAt:      time.Now(),
-			UpdatedAt:      time.Now(),
+			CurrentVersion: currentVersion,
+			CreatedAt:      times.created,
+			UpdatedAt:      times.updated,
 		}
 
 		// Parse tags from metadata
@@ -738,6 +765,43 @@ func (s *secretsService) secretVersionCreatedBy(ctx context.Context, scopedID st
 	return "", nil
 }
 
+// secretWriteTimes is what the store records about when each version of a
+// secret was written.
+type secretWriteTimes struct {
+	// created is the earliest recorded version write: the secret's creation.
+	created time.Time
+	// updated is when the latest version was written: the last write.
+	updated time.Time
+	// latest is the highest recorded version number.
+	latest int
+	// byVersion maps each recorded version to its write time.
+	byVersion map[int]time.Time
+}
+
+// loadSecretWriteTimes reads the per-version write times the store keeps
+// for scopedID. Destroyed versions still count: their write time is history.
+func (s *secretsService) loadSecretWriteTimes(ctx context.Context, scopedID string) (*secretWriteTimes, error) {
+	versions, err := s.secretsManager.ListVersions(ctx, scopedID)
+	if err != nil {
+		return nil, err
+	}
+	times := &secretWriteTimes{byVersion: make(map[int]time.Time, len(versions))}
+	for _, vm := range versions {
+		if vm == nil {
+			continue
+		}
+		times.byVersion[vm.Version] = vm.CreatedAt
+		if times.created.IsZero() || vm.CreatedAt.Before(times.created) {
+			times.created = vm.CreatedAt
+		}
+		if vm.Version > times.latest {
+			times.latest = vm.Version
+			times.updated = vm.CreatedAt
+		}
+	}
+	return times, nil
+}
+
 // secretVersionArg converts a requested secret version to the int the
 // secrets manager takes. A version beyond int is invalid input.
 func secretVersionArg(op string, version uint64) (int, error) {
@@ -757,6 +821,43 @@ func backendSecretVersion(op string, version int) (uint64, error) {
 		return 0, &errors.QBError{Code: errors.ErrInternal, Op: op, Err: err}
 	}
 	return v, nil
+}
+
+// storeSecretVersion writes a new version of the secret at scopedID and
+// returns the version the backend assigned to this write. The version key is
+// dropped from metadata first: a read reports it, so a value carried over
+// from an earlier read, or supplied by a caller, would name another version.
+func (s *secretsService) storeSecretVersion(ctx context.Context, secretID, scopedID string, data map[string][]byte, metadata map[string]string, opts *interfaces.StoreOptions) (uint64, error) {
+	storer, ok := s.secretsManager.(secretsVersionedStorer)
+	if !ok {
+		return 0, &SecretVersionNotReportedError{Operation: "write", SecretID: secretID}
+	}
+	delete(metadata, secretVersionKey)
+
+	var version int
+	var err error
+	if opts != nil {
+		version, err = storer.StoreVersionWithOptions(ctx, scopedID, data, metadata, opts)
+	} else {
+		version, err = storer.StoreVersion(ctx, scopedID, data, metadata)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if version <= 0 {
+		return 0, &SecretVersionNotReportedError{Operation: "write", SecretID: secretID}
+	}
+	return uint64(version), nil
+}
+
+// reportedSecretVersion is the version a read's metadata names. Every
+// backend reports it, so a read without one breaks the manager's contract.
+func reportedSecretVersion(secretID string, metadata map[string]string) (uint64, error) {
+	version, err := strconv.ParseUint(metadata[secretVersionKey], 10, 64)
+	if err != nil || version == 0 {
+		return 0, &SecretVersionNotReportedError{Operation: "read", SecretID: secretID}
+	}
+	return version, nil
 }
 
 // ListSecretVersions returns all versions of a secret.
@@ -965,14 +1066,11 @@ func (s *secretsService) RotateSecret(ctx context.Context, req *RotateSecretRequ
 		}
 	}
 
-	// Determine the old version from metadata
-	var oldVersion uint64 = 1
-	if versionStr, ok := metadata["version"]; ok {
-		if v, parseErr := strconv.ParseUint(versionStr, 10, 64); parseErr == nil {
-			oldVersion = v
-		}
+	// The version being replaced is the one the read reported.
+	oldVersion, err := reportedSecretVersion(req.SecretID, metadata)
+	if err != nil {
+		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "secrets.RotateSecret", Err: err}
 	}
-	newVersion := oldVersion + 1
 
 	// Store new version
 	secretData := map[string][]byte{
@@ -987,10 +1085,10 @@ func (s *secretsService) RotateSecret(ctx context.Context, req *RotateSecretRequ
 	for k, v := range req.Metadata {
 		newMetadata[k] = v
 	}
-	// Update the version in metadata
-	newMetadata["version"] = fmt.Sprintf("%d", newVersion)
 
-	if err := s.secretsManager.Store(ctx, scopedID, secretData, newMetadata); err != nil {
+	// The backend assigns the new version.
+	newVersion, err := s.storeSecretVersion(ctx, req.SecretID, scopedID, secretData, newMetadata, nil)
+	if err != nil {
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("rotate", "store_failed").Inc()
 		}
@@ -1095,7 +1193,7 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 			Err:  &api.OperationFailedError{Operation: "retrieve secret data", Cause: err},
 		}
 	}
-	if err := s.secretsManager.Store(ctx, scopedID, data, metadata); err != nil {
+	if _, err := s.storeSecretVersion(ctx, req.SecretID, scopedID, data, metadata, nil); err != nil {
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("set_rotation_policy", "update_failed").Inc()
 		}
@@ -1257,7 +1355,7 @@ func (s *secretsService) UpdateSecretStatus(ctx context.Context, req *UpdateSecr
 	metadata["status_updated_at"] = time.Now().Format(time.RFC3339)
 
 	// Store updated metadata using tenant-scoped ID
-	if err := s.secretsManager.Store(ctx, scopedID, data, metadata); err != nil {
+	if _, err := s.storeSecretVersion(ctx, req.SecretID, scopedID, data, metadata, nil); err != nil {
 		if s.metrics != nil {
 			s.metrics.operationErrors.With("update_status", "update_failed").Inc()
 		}

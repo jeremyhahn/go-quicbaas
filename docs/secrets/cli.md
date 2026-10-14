@@ -1009,7 +1009,8 @@ quicbaas secrets rollback database/prod --version 2
 
 - Every update creates a new version
 - Old versions are retained for audit and rollback
-- Versions are numbered sequentially (1, 2, 3, ...)
+- Versions are numbered sequentially (1, 2, 3, ...) by the storage backend;
+  a number is never reused, so a removed version leaves a gap
 - Deleted versions can be recovered (soft delete)
 - Destroyed secrets cannot be recovered
 

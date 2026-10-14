@@ -110,28 +110,8 @@ const ensureLockTTL = 10 * time.Second
 
 // Store saves a secret at the specified path.
 func (m *Manager) Store(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) error {
-	if path == "" {
-		return &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "Manager.Store",
-			Err:  ErrInvalidPath,
-		}
-	}
-
-	if len(data) == 0 {
-		return &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "Manager.Store",
-			Err:  ErrEmptyData,
-		}
-	}
-
-	if ctx.Err() != nil {
-		return &errors.QBError{
-			Code: errors.ErrTimeout,
-			Op:   "Manager.Store",
-			Err:  ctx.Err(),
-		}
+	if err := validateStoreArgs(ctx, "Manager.Store", path, data); err != nil {
+		return err
 	}
 
 	if err := m.backend.Store(ctx, path, data, metadata); err != nil {
@@ -157,28 +137,8 @@ type BackendWithOptions interface {
 // StoreWithOptions saves a secret with custom encryption options.
 // If opts.TenantID is empty, it will be auto-populated from the context.
 func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *interfaces.StoreOptions) error {
-	if path == "" {
-		return &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "Manager.StoreWithOptions",
-			Err:  ErrInvalidPath,
-		}
-	}
-
-	if len(data) == 0 {
-		return &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "Manager.StoreWithOptions",
-			Err:  ErrEmptyData,
-		}
-	}
-
-	if ctx.Err() != nil {
-		return &errors.QBError{
-			Code: errors.ErrTimeout,
-			Op:   "Manager.StoreWithOptions",
-			Err:  ctx.Err(),
-		}
+	if err := validateStoreArgs(ctx, "Manager.StoreWithOptions", path, data); err != nil {
+		return err
 	}
 
 	// Auto-populate TenantID from context if not explicitly set
@@ -234,6 +194,88 @@ func (m *Manager) StoreWithOptions(ctx context.Context, path string, data map[st
 		m.logger.WithField("path", path).Info("Secret stored (options not supported by backend)")
 	}
 
+	return nil
+}
+
+// StoreVersion saves a secret as Store does and returns the version the
+// backend assigned to this write. A backend that is not a VersionedBackend
+// fails with ErrVersionNotReported: the version a writer is told must come
+// from its own write (go-quicbaas#179).
+func (m *Manager) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
+	if err := validateStoreArgs(ctx, "Manager.StoreVersion", path, data); err != nil {
+		return 0, err
+	}
+
+	backend, ok := m.backend.(VersionedBackend)
+	if !ok {
+		return 0, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "Manager.StoreVersion",
+			Err:  ErrVersionNotReported,
+		}
+	}
+	version, err := backend.StoreVersion(ctx, path, data, metadata)
+	if err != nil {
+		return 0, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "Manager.StoreVersion",
+			Err:  err,
+		}
+	}
+
+	if m.logger != nil {
+		m.logger.WithFields(map[string]interface{}{
+			"path":    path,
+			"version": version,
+		}).Info("Secret stored")
+	}
+
+	return version, nil
+}
+
+// StoreVersionWithOptions saves a secret as StoreWithOptions does and
+// returns the version the backend assigned to this write. A backend that
+// applies options (BackendWithOptions) cannot report that version, so it
+// fails with ErrVersionNotReported rather than storing a write it cannot
+// name; every other backend ignores the options, as StoreWithOptions'
+// fallback does.
+func (m *Manager) StoreVersionWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, _ *interfaces.StoreOptions) (int, error) {
+	if _, ok := m.backend.(BackendWithOptions); ok {
+		return 0, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "Manager.StoreVersionWithOptions",
+			Err:  ErrVersionNotReported,
+		}
+	}
+	return m.StoreVersion(ctx, path, data, metadata)
+}
+
+// validateStoreArgs refuses a write the backend must never see: an empty
+// path, no data, or a context already done.
+func validateStoreArgs(ctx context.Context, op, path string, data map[string][]byte) error {
+	if path == "" {
+		return &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   op,
+			Err:  ErrInvalidPath,
+		}
+	}
+
+	if len(data) == 0 {
+		return &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   op,
+			Err:  ErrEmptyData,
+		}
+	}
+
+	if ctx.Err() != nil {
+		return &errors.QBError{
+			Code: errors.ErrTimeout,
+			Op:   op,
+			Err:  ctx.Err(),
+		}
+	}
 	return nil
 }
 

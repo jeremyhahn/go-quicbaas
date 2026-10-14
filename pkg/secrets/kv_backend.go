@@ -186,11 +186,18 @@ func NewKVBackend(store KVStoreWriter) *KVBackend {
 
 // Store saves a secret at the specified path, creating a new version.
 func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) error {
+	_, err := b.StoreVersion(ctx, path, data, metadata)
+	return err
+}
+
+// StoreVersion saves a secret as Store does and returns the version it
+// allocated and published.
+func (b *KVBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
 	if path == "" {
-		return ErrInvalidPath
+		return 0, ErrInvalidPath
 	}
 	if len(data) == 0 {
-		return ErrEmptyData
+		return 0, ErrEmptyData
 	}
 
 	lock := lockKVPath(path)
@@ -199,7 +206,7 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 
 	cur, observedRaw, err := b.loadCurrentRaw(ctx, path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	now := time.Now()
@@ -216,7 +223,7 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 		}
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Update the current pointer — and UNRESERVE ON FAILURE (review 995):
@@ -230,12 +237,12 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 	cur.DeletedAt = nil
 	if err := b.writeCurrent(ctx, path, cur, observedRaw); err != nil {
 		if delErr := b.store.Delete(ctx, versionKey(path, nextVer)); delErr != nil && !qberrors.IsNotFound(delErr) {
-			return errors.Join(err, &SecretsCauseError{
+			return 0, errors.Join(err, &SecretsCauseError{
 				Message: "unreserve version " + strconv.Itoa(nextVer) + " after failed publication", Cause: delErr})
 		}
-		return err
+		return 0, err
 	}
-	return nil
+	return nextVer, nil
 }
 
 // allocateAndReserve allocates the next version number and reserves its key,
@@ -701,5 +708,13 @@ func (b *KVBackend) getVersion(ctx context.Context, path string, version int) (m
 	if entry.Destroyed {
 		return nil, nil, ErrVersionDestroyed
 	}
-	return entry.Data, entry.Metadata, nil
+	// Report the version read, as the memory and encrypted backends do, on a
+	// copy: the version names this read, not the stored record
+	// (go-quicbaas#179).
+	metadata := make(map[string]string, len(entry.Metadata)+1)
+	for k, v := range entry.Metadata {
+		metadata[k] = v
+	}
+	metadata["version"] = strconv.Itoa(version)
+	return entry.Data, metadata, nil
 }

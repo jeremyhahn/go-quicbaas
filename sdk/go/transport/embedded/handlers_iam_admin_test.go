@@ -1247,7 +1247,7 @@ func TestHandleIAMAdminListAssignments_SystemScopeSeesEveryTenant(t *testing.T) 
 // Pinning it to its own "tenant" would make cross-tenant platform
 // administration impossible — the capability the system tenant exists for.
 func TestAdminHandlers_SystemScopeIsNotTenantPinned(t *testing.T) {
-	for _, systemTenant := range []string{"", qrdbsdk.SystemTenantID} {
+	for _, systemTenant := range []string{qrdbsdk.SystemTenantID} {
 		t.Run("tenant="+systemTenant, func(t *testing.T) {
 			svc := newAuthorizedAdminTestService(t)
 			ctx := auth.SubjectIntoContext(context.Background(),
@@ -1280,6 +1280,73 @@ func TestAdminHandlers_SystemScopeIsNotTenantPinned(t *testing.T) {
 				t.Errorf("a system-scope subject must be able to inspect another tenant: %v", err)
 			}
 		})
+	}
+}
+
+// TestAdminHandlers_EmptyTenantSubjectIsRefused pins #348: a bound subject
+// with an empty tenant is not the system scope. It must not keep the tenant it
+// asked for, grant across tenants, or touch another admin's impersonations;
+// every scoped verb refuses it, and nothing it asked for happens.
+func TestAdminHandlers_EmptyTenantSubjectIsRefused(t *testing.T) {
+	svc := newAuthorizedAdminTestService(t)
+	session := startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
+	ctx := auth.SubjectIntoContext(context.Background(),
+		interfaces.Subject{ID: "admin-1", TenantID: "", Authenticated: true})
+
+	calls := map[string]func() (interface{}, error){
+		"CreateAssignment": func() (interface{}, error) {
+			return handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
+				CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
+					AdminID: "admin-2", TenantID: "t-1", RoleID: string(iam.AdminRoleTenantAdmin),
+				},
+			})
+		},
+		"ListAssignments": func() (interface{}, error) {
+			return handleIAMAdminListAssignments(ctx, svc, &embeddedListAssignmentsEnvelope{
+				Filter: &iamsdk.ListAdminAssignmentsRequest{TenantID: "t-1"},
+			})
+		},
+		"CheckPermission": func() (interface{}, error) {
+			return handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
+				Check: &iamsdk.AdminCheckRequest{
+					AdminID: "admin-1", TenantID: "t-1", Permission: string(iam.PermUserRead),
+				},
+			})
+		},
+		"EndImpersonation": func() (interface{}, error) {
+			return handleIAMAdminEndImpersonation(ctx, svc, &embeddedImpersonationSessionEnvelope{SessionID: session.ID})
+		},
+		"ListActiveImpersonations": func() (interface{}, error) {
+			return handleIAMAdminListActiveImpersonations(ctx, svc, &embeddedListImpersonationsEnvelope{})
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			_, err := call()
+			if _, ok := err.(*PermissionDeniedError); !ok {
+				t.Fatalf("expected *PermissionDeniedError for an empty-tenant subject, got %T: %v", err, err)
+			}
+		})
+	}
+
+	// Neither the refused grant nor the refused end took effect.
+	out, err := handleIAMAdminListAssignments(context.Background(), svc, &embeddedListAssignmentsEnvelope{
+		Filter: &iamsdk.ListAdminAssignmentsRequest{TenantID: "t-1"},
+	})
+	if err != nil {
+		t.Fatalf("an unbound host listing must succeed: %v", err)
+	}
+	for _, a := range out.(*iamsdk.ListAdminAssignmentsResponse).Assignments {
+		if a.AdminID == "admin-2" {
+			t.Errorf("the refused grant was stored: %+v", a)
+		}
+	}
+	still, err := svc.admin.GetActiveImpersonations(context.Background(), "admin-1")
+	if err != nil {
+		t.Fatalf("GetActiveImpersonations failed: %v", err)
+	}
+	if len(still) != 1 {
+		t.Errorf("the session was ended despite the refusal: %d remain", len(still))
 	}
 }
 

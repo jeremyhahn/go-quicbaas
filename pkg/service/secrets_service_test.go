@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	stderrors "errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -72,42 +73,70 @@ func newMockSecretsManager() *mockSecretsManager {
 }
 
 func (m *mockSecretsManager) Store(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) error {
+	_, err := m.StoreVersion(ctx, path, data, metadata)
+	return err
+}
+
+// StoreVersion records the write and reports the version it assigned, as
+// every production manager does.
+func (m *mockSecretsManager) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
 	if m.storeErr != nil {
-		return m.storeErr
+		return 0, m.storeErr
 	}
 	if m.storeFn != nil {
-		return m.storeFn(ctx, path, data, metadata)
-	}
-	// Default behavior: store secret with version tracking
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if existing, ok := m.secrets[path]; ok {
-		// Append new version
-		newVersion := len(existing.versions) + 1
-		existing.versions = append(existing.versions, mockSecretVersion{
-			version:  newVersion,
-			data:     data,
-			metadata: metadata,
-		})
-		existing.data = data
-		existing.metadata = metadata
-	} else {
-		// Create new secret
-		m.secrets[path] = &mockSecretData{
-			path:     path,
-			data:     data,
-			metadata: metadata,
-			versions: []mockSecretVersion{
-				{version: 1, data: data, metadata: metadata},
-			},
+		if err := m.storeFn(ctx, path, data, metadata); err != nil {
+			return 0, err
 		}
 	}
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.secrets[path]
+	if !ok {
+		existing = &mockSecretData{path: path}
+		m.secrets[path] = existing
+	} else if len(existing.versions) == 0 {
+		// A fixture seeded without history reads as version 1.
+		existing.versions = []mockSecretVersion{{version: 1, data: existing.data, metadata: existing.metadata}}
+	}
+	newVersion := len(existing.versions) + 1
+	stored := withMockVersion(metadata, newVersion)
+	existing.versions = append(existing.versions, mockSecretVersion{
+		version:  newVersion,
+		data:     data,
+		metadata: stored,
+	})
+	existing.data = data
+	existing.metadata = stored
+	return newVersion, nil
 }
 
 func (m *mockSecretsManager) StoreWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *interfaces.StoreOptions) error {
 	// Delegate to Store - options are not needed for tests
 	return m.Store(ctx, path, data, metadata)
+}
+
+func (m *mockSecretsManager) StoreVersionWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, _ *interfaces.StoreOptions) (int, error) {
+	return m.StoreVersion(ctx, path, data, metadata)
+}
+
+// withMockVersion copies metadata and records the version in it, the way the
+// production backends report a version on read.
+func withMockVersion(metadata map[string]string, version int) map[string]string {
+	stored := make(map[string]string, len(metadata)+1)
+	for k, v := range metadata {
+		stored[k] = v
+	}
+	stored[secretVersionKey] = strconv.Itoa(version)
+	return stored
+}
+
+// reportedMockVersion is the metadata a read reports: a fixture seeded
+// straight into the mock, without a version, reads as the given version.
+func reportedMockVersion(metadata map[string]string, version int) map[string]string {
+	if _, ok := metadata[secretVersionKey]; ok {
+		return metadata
+	}
+	return withMockVersion(metadata, version)
 }
 
 func (m *mockSecretsManager) Get(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
@@ -121,7 +150,7 @@ func (m *mockSecretsManager) Get(ctx context.Context, path string) (map[string][
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if secret, ok := m.secrets[path]; ok {
-		return secret.data, secret.metadata, nil
+		return secret.data, reportedMockVersion(secret.metadata, max(len(secret.versions), 1)), nil
 	}
 	return nil, nil, secrets.ErrSecretNotFound
 }
@@ -136,7 +165,7 @@ func (m *mockSecretsManager) GetVersion(ctx context.Context, path string, versio
 	if secret, ok := m.secrets[path]; ok {
 		if version > 0 && version <= len(secret.versions) {
 			v := secret.versions[version-1]
-			return v.data, v.metadata, nil
+			return v.data, reportedMockVersion(v.metadata, v.version), nil
 		}
 	}
 	return nil, nil, secrets.ErrVersionNotFound
@@ -191,6 +220,12 @@ func (m *mockSecretsManager) ListVersions(ctx context.Context, path string) ([]*
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if secret, ok := m.secrets[path]; ok {
+		// A secret seeded straight into the map without a versions slice
+		// stands for one written once: every stored secret has at least its
+		// first version. A non-nil empty slice is an explicit empty history.
+		if secret.versions == nil {
+			return []*interfaces.SecretVersionMetadata{{Version: 1, CreatedAt: time.Now()}}, nil
+		}
 		result := make([]*interfaces.SecretVersionMetadata, len(secret.versions))
 		for i := range secret.versions {
 			result[i] = &interfaces.SecretVersionMetadata{
@@ -1508,6 +1543,12 @@ func TestSecretsService_GetSecret_WithMetadataParsing(t *testing.T) {
 			"description": "Test secret",
 		},
 	}
+	// The store's recorded write time wins over a caller-supplied
+	// "created_at" metadata entry (go-quicbaas#179).
+	storedAt := createdAt.Add(-24 * time.Hour)
+	mockManager.listVersionsFn = func(context.Context, string) ([]*interfaces.SecretVersionMetadata, error) {
+		return []*interfaces.SecretVersionMetadata{{Version: 1, CreatedAt: storedAt}}, nil
+	}
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
@@ -1519,7 +1560,7 @@ func TestSecretsService_GetSecret_WithMetadataParsing(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-	assert.WithinDuration(t, createdAt, resp.CreatedAt, time.Second)
+	assert.True(t, storedAt.Equal(resp.CreatedAt), "want stored %s, got %s", storedAt, resp.CreatedAt)
 	// Metadata should contain custom_key but not description or tags
 	assert.Contains(t, resp.Metadata, "custom_key")
 }
@@ -1980,7 +2021,7 @@ func TestSecretsService_GetSecret_WithInvalidCreatedAt(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-	// Should still work, just uses current time
+	// The metadata entry is ignored: created_at is the stored write time
 	assert.False(t, resp.CreatedAt.IsZero())
 }
 

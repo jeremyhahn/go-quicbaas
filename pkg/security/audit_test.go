@@ -1907,7 +1907,7 @@ func TestAuditLogger_VerifySignatureVariants(t *testing.T) {
 			signLogs:    true,
 			signKey:     "test-key-112bits!",
 			eventSig:    "",
-			expectValid: true,
+			expectValid: false,
 		},
 		{
 			name:        "signing enabled with invalid signature",
@@ -2611,8 +2611,8 @@ func TestVerifySignature_EmptySignature(t *testing.T) {
 		Signature: "",
 	}
 
-	// Empty signature with signing enabled should return true (per the code)
-	assert.True(t, al.VerifySignature(event))
+	// Empty signature with signing enabled fails closed
+	assert.False(t, al.VerifySignature(event))
 }
 
 func TestVerifySignature_ValidSignature(t *testing.T) {
@@ -4778,8 +4778,9 @@ func TestAuditLogger_VerifySignature_EdgeCases(t *testing.T) {
 			Signature: "", // Empty signature
 		}
 
-		// Should return true for empty signature (legacy events)
-		assert.True(t, al.VerifySignature(event))
+		// Unsigned events, including ones written before signing was
+		// enabled, report unverified while signing is on
+		assert.False(t, al.VerifySignature(event))
 	})
 }
 
@@ -5698,8 +5699,48 @@ func TestAuditLogger_VerifySignature_WithEmptySignature(t *testing.T) {
 		Signature: "", // Empty signature
 	}
 
-	// Should return true when signature is empty
-	assert.True(t, al.VerifySignature(event))
+	// Signing is on, so an unsigned event fails closed
+	assert.False(t, al.VerifySignature(event))
+}
+
+// TestAuditLogger_VerifySignature_StrippedSignatureFailsClosed is the #22
+// regression: with signing on, removing the signature from a signed event
+// must not make it verify, and a tampered field must still fail.
+func TestAuditLogger_VerifySignature_StrippedSignatureFailsClosed(t *testing.T) {
+	var buf bytes.Buffer
+	al, err := NewAuditLogger(&AuditConfig{
+		Enabled:  true,
+		SignLogs: true,
+		SignKey:  "test-key-112bits!",
+	}, createTestLogger(t))
+	require.NoError(t, err)
+	defer al.Close()
+	al.writer = &buf
+
+	require.NoError(t, al.Log(context.Background(), &AuditEvent{
+		Username:  "alice",
+		Action:    ActionDelete,
+		Resource:  "keys/root",
+		Result:    ResultSuccess,
+		IPAddress: "10.0.0.1",
+	}))
+
+	var signed AuditEvent
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &signed))
+	require.NotEmpty(t, signed.Signature)
+	require.True(t, al.VerifySignature(&signed))
+
+	stripped := signed
+	stripped.Signature = ""
+	assert.False(t, al.VerifySignature(&stripped), "stripped signature must not verify")
+
+	tampered := signed
+	tampered.Result = ResultFailure
+	assert.False(t, al.VerifySignature(&tampered), "tampered field must not verify")
+
+	strippedAndTampered := tampered
+	strippedAndTampered.Signature = ""
+	assert.False(t, al.VerifySignature(&strippedAndTampered), "stripping must not hide tampering")
 }
 
 // Tests for NewAuditLogger with syslog enabled

@@ -1974,10 +1974,18 @@ func (al *AuditLogger) signEvent(event *AuditEvent) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// VerifySignature verifies the HMAC signature of an audit event.
+// VerifySignature verifies the HMAC signature of an audit event. When
+// signing is off every event verifies. When signing is on it fails closed:
+// an event with no signature, including one written before signing was
+// enabled, reports false.
 func (al *AuditLogger) VerifySignature(event *AuditEvent) bool {
-	if !al.config.SignLogs || event.Signature == "" {
+	if !al.config.SignLogs {
 		return true // Not signing logs
+	}
+
+	// Signing is on: an unsigned event is unverified, never trusted.
+	if event.Signature == "" {
+		return false
 	}
 
 	expectedSig, err := al.signEvent(event)

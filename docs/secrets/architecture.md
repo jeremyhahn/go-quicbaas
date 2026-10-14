@@ -115,6 +115,14 @@ secrets/app/config
     └── max_version: 3
 ```
 
+The backend assigns the version number of every write, and the secrets
+service reports that number. The service never computes one from the size
+of the history: a number is never reused, so once a version is removed the
+history can have gaps and the next write is still past every version the
+backend ever assigned. Concurrent writers to one secret each get their own
+version. A manager that cannot report the version of a write, or a read
+that carries none, is an internal error.
+
 ### Concurrent Writers
 
 The internal KV backend (`pkg/secrets/kv_backend.go`) keeps each version

@@ -19,8 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -73,21 +71,33 @@ const (
 // a system-tenant principal: the system scope is the platform itself, not a
 // tenant named "system", so pinning it to its own "tenant" would make
 // cross-tenant platform administration impossible — the very capability the
-// system tenant exists to carry. qrdbsdk.IsSystemTenant is the canonical
-// predicate and covers the empty tenant id too.
-func tenantScopedSubject(ctx context.Context) (interfaces.Subject, bool) {
+// system tenant exists to carry. Only a subject bound to the system tenant id
+// itself is system (auth.IsSystemSubject): a bound subject with an empty
+// tenant belongs to no tenant and is refused with a permission-denied error
+// naming service and method (#348).
+func tenantScopedSubject(ctx context.Context, service, method string) (interfaces.Subject, bool, error) {
 	subject, bound := auth.SubjectFromContext(ctx)
-	if !bound || qrdbsdk.IsSystemTenant(subject.TenantID) {
-		return interfaces.Subject{}, false
+	if !bound {
+		return interfaces.Subject{}, false, nil
 	}
-	return subject, true
+	if subject.TenantID == "" {
+		return interfaces.Subject{}, false, NewPermissionDeniedError(service, method,
+			"the authenticated subject carries no tenant binding")
+	}
+	if auth.IsSystemSubject(subject) {
+		return interfaces.Subject{}, false, nil
+	}
+	return subject, true, nil
 }
 
 // requireSubjectTenant resolves the tenant a tenant-scoped subject may act in.
 // An omitted tenant is filled from the subject; naming a different one is
 // refused. A system-scope or unbound caller keeps whatever it asked for.
 func requireSubjectTenant(ctx context.Context, method, requested string) (string, error) {
-	subject, scoped := tenantScopedSubject(ctx)
+	subject, scoped, err := tenantScopedSubject(ctx, "quicbaas.IAM.Admin", method)
+	if err != nil {
+		return "", err
+	}
 	if !scoped {
 		return requested, nil
 	}
@@ -192,7 +202,11 @@ func handleIAMAdminCreateAssignment(ctx context.Context, svc service.QuicBaaS, r
 	// broadest escalation available on this surface — so it is filled from the
 	// subject rather than passed through. A system-scope caller keeps the
 	// cross-tenant and global forms.
-	if subject, scoped := tenantScopedSubject(ctx); scoped {
+	subject, scoped, err := tenantScopedSubject(ctx, "quicbaas.IAM.Admin", "CreateAssignment")
+	if err != nil {
+		return nil, err
+	}
+	if scoped {
 		switch {
 		case len(tenantIDs) == 0:
 			tenantIDs = []string{subject.TenantID}
@@ -510,7 +524,11 @@ func handleIAMAdminEndImpersonation(ctx context.Context, svc service.QuicBaaS, r
 	// that it belongs to the caller. users:update is a generic grant, so
 	// without this a tenant-scoped admin who obtained a session id could end
 	// another admin's — or another tenant's — live impersonation.
-	if subject, scoped := tenantScopedSubject(ctx); scoped {
+	subject, scoped, err := tenantScopedSubject(ctx, "quicbaas.IAM.Admin", "EndImpersonation")
+	if err != nil {
+		return nil, err
+	}
+	if scoped {
 		session, getErr := mgr.GetImpersonationSession(ctx, id)
 		if getErr != nil {
 			return nil, getErr
@@ -555,7 +573,10 @@ func handleIAMAdminListActiveImpersonations(ctx context.Context, svc service.Qui
 	// so a subject-bound caller is pinned to its own admin id and its results
 	// are narrowed to its own tenant. Otherwise users:read would let a caller
 	// enumerate other admins' — and other tenants' — impersonation metadata.
-	subject, scoped := tenantScopedSubject(ctx)
+	subject, scoped, err := tenantScopedSubject(ctx, "quicbaas.IAM.Admin", "ListActiveImpersonations")
+	if err != nil {
+		return nil, err
+	}
 	if scoped {
 		if adminUserID != "" && adminUserID != subject.ID {
 			return nil, NewPermissionDeniedError("quicbaas.IAM.Admin", "ListActiveImpersonations",

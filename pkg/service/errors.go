@@ -692,3 +692,20 @@ func WithTimeoutContext(err error, timeoutMs uint32, elapsedMs int64) error {
 		},
 	}
 }
+
+// SecretVersionNotReportedError is returned when the secrets manager names
+// no version for a secret: a write that does not report the version the
+// backend assigned, or a read whose metadata carries none. Either breaks the
+// manager's version contract, and the service never predicts a version in
+// its place (go-quicbaas#179), so it surfaces as an internal error.
+type SecretVersionNotReportedError struct {
+	// Operation is "write" or "read".
+	Operation string
+	// SecretID is the caller's (unscoped) secret identifier.
+	SecretID string
+}
+
+// Error returns a human-readable description.
+func (e *SecretVersionNotReportedError) Error() string {
+	return fmt.Sprintf("service: secrets manager reported no version for the %s of secret %q", e.Operation, e.SecretID)
+}

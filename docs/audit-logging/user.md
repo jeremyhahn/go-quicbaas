@@ -95,7 +95,7 @@ quicbaas iam audit get <event-id> --output json
 | Results stop at exactly 100 | `--limit` defaults to 100. That is a per-call cap, not the number of matching events. Page with `--offset`. |
 | A time filter returns nothing | `--start-time` and `--end-time` require RFC 3339 (`2026-08-18T00:00:00Z`). A bare date is rejected, and the error names the flag, not the format. |
 | `permission denied` | Audit read is its own permission. Holding read on the underlying resource does not grant it. |
-| Signature verification passes on a record with no signature | Known defect: verification is fail-open when `sign_logs` is enabled but the stored signature is empty. Treat an unsigned record in a signed trail as suspect, not as verified. |
+| A record reports unverified though nobody changed it | With `sign_logs` enabled, a record with no signature reports unverified. Records written before signing was turned on have no signature, so they report unverified too. The record is still readable. |
 | Events appear after a delay | `RecordAsync` exists alongside `Record`. An asynchronously recorded event is not readable the instant the action returns. |
 
 ## What this feature does not do

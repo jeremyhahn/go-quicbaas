@@ -418,6 +418,18 @@ if logger.VerifySignature(event) {
 }
 ```
 
+Verification fails closed. With `sign_logs` off, every event verifies:
+there is nothing to check. With `sign_logs` on, an event verifies only when
+its `signature` is present and equals the HMAC-SHA256 of its canonical fields
+(timestamp, username, action, resource, result, IP address), compared in
+constant time. An event with an empty signature reports unverified, so
+stripping the signature cannot hide a tampered field.
+
+Records written before `sign_logs` was enabled carry no signature, so they
+also report unverified once signing is on. Treat them as unverified, not as
+an error: they are still readable, and the query path does not filter on
+verification.
+
 ## Best Practices
 
 ### Log Retention

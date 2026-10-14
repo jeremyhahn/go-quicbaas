@@ -91,6 +91,36 @@ func TestAccountHandlers_ReservationsAreBoundToTheSubject(t *testing.T) {
 	}
 }
 
+// TestAccountHandlers_EmptyTenantSubjectIsRefused pins #348: a bound subject
+// with an empty tenant is not the system scope, so it cannot reserve or
+// release in whatever tenant it names.
+func TestAccountHandlers_EmptyTenantSubjectIsRefused(t *testing.T) {
+	reached := false
+	tr := newAccountTransport(t, &mocks.MockAccountService{
+		ReserveAccountSessionFunc: func(_ context.Context, _ *service.ReserveAccountSessionRequest) (*service.ReserveAccountSessionResponse, error) {
+			reached = true
+			return &service.ReserveAccountSessionResponse{ReservationID: "r1"}, nil
+		},
+		ReleaseAccountSessionFunc: func(_ context.Context, _ *service.ReleaseAccountSessionRequest) (*service.ReleaseAccountSessionResponse, error) {
+			reached = true
+			return &service.ReleaseAccountSessionResponse{}, nil
+		},
+	})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "agent", Authenticated: true})
+
+	if _, err := tr.Request(ctx, accountServiceName, "ReserveSession",
+		&accountSDK.ReserveSessionRequest{TenantID: "tenant-2", AccountID: "b"}); err == nil {
+		t.Fatal("empty-tenant reserve succeeded, want a refusal")
+	}
+	if _, err := tr.Request(ctx, accountServiceName, "ReleaseSession",
+		&accountSDK.ReleaseSessionRequest{TenantID: "tenant-2", AccountID: "b", ReservationID: "r"}); err == nil {
+		t.Fatal("empty-tenant release succeeded, want a refusal")
+	}
+	if reached {
+		t.Fatal("the account service was reached despite the refusal")
+	}
+}
+
 func TestAccountHandlers_ReservationRejectsTheWrongRequestType(t *testing.T) {
 	tr := newAccountTransport(t, &mocks.MockAccountService{})
 	for _, method := range []string{"ReserveSession", "ReleaseSession"} {

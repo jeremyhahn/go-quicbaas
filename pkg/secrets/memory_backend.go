@@ -47,15 +47,22 @@ func NewMemoryBackend() *MemoryBackend {
 
 // Store saves a secret at the specified path.
 func (mb *MemoryBackend) Store(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) error {
+	_, err := mb.StoreVersion(ctx, path, data, metadata)
+	return err
+}
+
+// StoreVersion saves a secret as Store does and returns the version it
+// assigned.
+func (mb *MemoryBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
 
 	if path == "" {
-		return ErrInvalidPath
+		return 0, ErrInvalidPath
 	}
 	if len(data) == 0 {
-		return ErrEmptyData
+		return 0, ErrEmptyData
 	}
 
 	mb.mu.Lock()
@@ -103,7 +110,7 @@ func (mb *MemoryBackend) Store(ctx context.Context, path string, data map[string
 	store.versions = append(store.versions, entry)
 	store.deleted = false
 
-	return nil
+	return newVersion, nil
 }
 
 // Get retrieves a secret from the specified path (current version).

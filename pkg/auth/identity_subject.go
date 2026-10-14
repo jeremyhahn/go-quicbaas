@@ -90,3 +90,12 @@ func SubjectFromIdentity(identity *qrdbsdk.Identity) interfaces.Subject {
 	}
 	return subject
 }
+
+// IsSystemSubject reports whether an authenticated subject acts as the system
+// tenant. Only a subject bound to qrdbsdk.SystemTenantID itself is system. An
+// empty TenantID is a caller with no tenant binding, never the platform scope,
+// even though qrdbsdk.IsSystemTenant("") is true for storage routing: an
+// authenticated principal with an empty tenant never acts as system (#348).
+func IsSystemSubject(subject interfaces.Subject) bool {
+	return subject.TenantID == qrdbsdk.SystemTenantID
+}

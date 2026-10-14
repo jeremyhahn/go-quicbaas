@@ -245,14 +245,27 @@ func (eb *EncryptedBackend) StoreWithAlgorithm(ctx context.Context, path string,
 // If opts is nil or opts.KeyIdentifier is empty, uses the default key identifier.
 // If opts.TenantID is set and KeyIdentifier is empty, uses "dek:tenant:{tenantID}".
 func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *StoreOptions) error {
+	_, err := eb.storeVersion(ctx, path, data, metadata, opts)
+	return err
+}
+
+// StoreVersion saves a secret as Store does and returns the version it
+// assigned.
+func (eb *EncryptedBackend) StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error) {
+	return eb.storeVersion(ctx, path, data, metadata, nil)
+}
+
+// storeVersion encrypts and saves a secret under opts and returns the
+// version it assigned.
+func (eb *EncryptedBackend) storeVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string, opts *StoreOptions) (int, error) {
 	if path == "" {
-		return ErrInvalidPath
+		return 0, ErrInvalidPath
 	}
 	if len(data) == 0 {
-		return ErrEmptyData
+		return 0, ErrEmptyData
 	}
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return 0, ctx.Err()
 	}
 
 	eb.mu.Lock()
@@ -270,7 +283,7 @@ func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, d
 			// Build tenant-specific DEKID
 			keyIdentifier = string(NewTenantDEKID(opts.TenantID))
 			if keyIdentifier == "" {
-				return ErrInvalidTenantID
+				return 0, ErrInvalidTenantID
 			}
 		}
 
@@ -282,13 +295,13 @@ func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, d
 
 	// Validate algorithm
 	if !isValidAlgorithm(algorithm) {
-		return ErrUnsupportedAlgorithm
+		return 0, ErrUnsupportedAlgorithm
 	}
 
 	// Serialize the secret data for encryption
 	plaintext, err := json.Marshal(data)
 	if err != nil {
-		return ErrSerializationFailed
+		return 0, ErrSerializationFailed
 	}
 
 	// Encrypt using SecretsEncryptor
@@ -298,13 +311,13 @@ func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, d
 	}
 	blob, err := eb.encryptor.Encrypt(ctx, keyIdentifier, plaintext, encryptOpts)
 	if err != nil {
-		return &SecretsSentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
+		return 0, &SecretsSentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
 	}
 
 	// Load existing versions or create new
 	versions, err := eb.loadVersions(ctx, path)
 	if err != nil && !errors.Is(err, ErrSecretNotFound) {
-		return &SecretsCauseError{Message: "failed to load existing versions", Cause: err}
+		return 0, &SecretsCauseError{Message: "failed to load existing versions", Cause: err}
 	}
 	if versions == nil {
 		versions = &secretVersions{
@@ -336,7 +349,7 @@ func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, d
 
 	// Save to storage
 	if err := eb.saveVersions(ctx, path, versions); err != nil {
-		return &SecretsCauseError{Message: "failed to save secret", Cause: err}
+		return 0, &SecretsCauseError{Message: "failed to save secret", Cause: err}
 	}
 
 	if eb.logger != nil {
@@ -348,7 +361,7 @@ func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, d
 		}).Info("Secret stored with SecretsEncryptor")
 	}
 
-	return nil
+	return newVersion, nil
 }
 
 // Get retrieves a secret from the specified path.

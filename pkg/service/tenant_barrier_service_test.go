@@ -390,7 +390,7 @@ func TestTenantBarrierService_SystemTenantWritesDenied(t *testing.T) {
 // (control-plane observability) while every mutation stays denied. Both
 // canonical system-tenant representations are admitted.
 func TestTenantBarrierService_SystemTenantStatusAllowed(t *testing.T) {
-	for _, tenantID := range []string{"", qrdbsdk.SystemTenantID} {
+	for _, tenantID := range []string{qrdbsdk.SystemTenantID} {
 		t.Run("subject_tenant="+tenantID, func(t *testing.T) {
 			mock := &mockTenantClient{
 				statusResp: &qrdbtransport.TenantBarrierStatusResponse{
@@ -408,6 +408,38 @@ func TestTenantBarrierService_SystemTenantStatusAllowed(t *testing.T) {
 			}
 			if st == nil || st.TenantID != "acme" || !st.Sealed || !st.Initialized {
 				t.Fatalf("unexpected status response: %+v", st)
+			}
+		})
+	}
+}
+
+// TestTenantBarrierService_EmptyTenantCallerDenied pins #348: an authenticated
+// subject with an empty tenant is bound to no tenant and is not the system
+// tenant, so it may neither read any tenant's barrier status nor mutate a
+// barrier — including a request whose target tenant is also empty.
+func TestTenantBarrierService_EmptyTenantCallerDenied(t *testing.T) {
+	for _, target := range []string{"acme", ""} {
+		t.Run("target="+target, func(t *testing.T) {
+			mock := &mockTenantClient{
+				statusResp: &qrdbtransport.TenantBarrierStatusResponse{TenantID: target},
+			}
+			svc := NewTenantBarrierService(mock)
+			ctx := tenantCtx("")
+
+			if _, err := svc.TenantBarrierStatus(ctx, target); !isForbidden(err) {
+				t.Errorf("Status: expected ErrForbidden for empty-tenant caller, got %v", err)
+			}
+			if _, err := svc.TenantBarrierInit(ctx, target, nil, 1, 1, "none"); !isForbidden(err) {
+				t.Errorf("Init: expected ErrForbidden for empty-tenant caller, got %v", err)
+			}
+			if err := svc.TenantBarrierUnseal(ctx, target, []byte("k")); !isForbidden(err) {
+				t.Errorf("Unseal: expected ErrForbidden for empty-tenant caller, got %v", err)
+			}
+			if err := svc.TenantBarrierSeal(ctx, target); !isForbidden(err) {
+				t.Errorf("Seal: expected ErrForbidden for empty-tenant caller, got %v", err)
+			}
+			if mock.statusReq != nil || mock.initReq != nil || mock.unsealReq != nil || mock.sealReq != nil {
+				t.Error("mock received a request despite the empty-tenant denial")
 			}
 		})
 	}

@@ -191,13 +191,17 @@ GET /api/v1/secrets/{path}
 | Field | Type | Description |
 |-------|------|-------------|
 | `secret_id` | string | Secret identifier/path |
-| `version` | uint64 | Version number |
+| `version` | uint64 | The version whose data is returned, as the backend read it. A write that lands during the read does not move it. |
 | `data` | string | Decrypted secret data |
 | `metadata` | object | Version metadata |
-| `created_at` | string | Creation timestamp (RFC3339) |
-| `timestamp` | string | Response timestamp |
+| `created_at` | string | When the returned version was written, as the store recorded it (RFC3339). Stable across reads; a new version has its own time. |
+| `timestamp` | string | When this request was processed |
 | `algorithm` | string | Encryption algorithm used |
 | `key_identifier` | string | DEKID or KeyID used |
+
+`version` and `created_at` always describe the same version as `data`. If
+the store cannot say when that version was written, the read fails with
+`500 internal` rather than reporting a substitute time.
 
 #### Errors
 
@@ -251,6 +255,17 @@ GET /api/v1/secrets
   "timestamp": "2024-01-15T10:40:00Z"
 }
 ```
+
+| Field | Description |
+|-------|-------------|
+| `current_version` | The latest recorded version |
+| `created_at` | When the earliest recorded version was written: the secret's creation |
+| `updated_at` | When the latest version was written; moves only when a write mints a new version |
+| `timestamp` | When this request was processed |
+
+All times come from the store's per-version records and do not change
+between reads. A secret whose version history cannot be read is left out
+of the list.
 
 ---
 

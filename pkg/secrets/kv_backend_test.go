@@ -161,7 +161,7 @@ func TestKVBackend_StoreAndGet(t *testing.T) {
 	gotData, gotMeta, err := b.Get(ctx, "myapp/db-password")
 	require.NoError(t, err)
 	assert.Equal(t, data, gotData)
-	assert.Equal(t, meta, gotMeta)
+	assert.Equal(t, map[string]string{"env": "test", "version": "1"}, gotMeta)
 }
 
 func TestKVBackend_StoreVersioning(t *testing.T) {
@@ -183,6 +183,98 @@ func TestKVBackend_StoreVersioning(t *testing.T) {
 	old, _, err := b.GetVersion(ctx, "secret/pass", 1)
 	require.NoError(t, err)
 	assert.Equal(t, v1, old)
+}
+
+// TestKVBackend_ReportsTheVersionItReturned pins the contract the memory and
+// encrypted backends already keep: Get and GetVersion carry metadata["version"]
+// naming the version whose data they returned, without writing it back into
+// the stored entry (go-quicbaas#179).
+func TestKVBackend_ReportsTheVersionItReturned(t *testing.T) {
+	kv := newInMemKV()
+	b := NewKVBackend(kv)
+	ctx := context.Background()
+
+	stored := map[string]string{"owner": "ops"}
+	require.NoError(t, b.Store(ctx, "secret/pass", map[string][]byte{"pass": []byte("v1")}, stored))
+	require.NoError(t, b.Store(ctx, "secret/pass", map[string][]byte{"pass": []byte("v2")}, stored))
+
+	data, meta, err := b.Get(ctx, "secret/pass")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v2"), data["pass"])
+	assert.Equal(t, "2", meta["version"])
+	assert.Equal(t, "ops", meta["owner"])
+
+	data, meta, err = b.GetVersion(ctx, "secret/pass", 1)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v1"), data["pass"])
+	assert.Equal(t, "1", meta["version"])
+
+	// The reported version is a property of the read, not of the record: a
+	// caller mutating the returned map, or the stored metadata the caller
+	// passed in, leaves the stored entry without a version key.
+	meta["version"] = "99"
+	_, meta, err = b.GetVersion(ctx, "secret/pass", 1)
+	require.NoError(t, err)
+	assert.Equal(t, "1", meta["version"])
+	assert.NotContains(t, stored, "version")
+	var entry kvEntry
+	require.NoError(t, json.Unmarshal(mustRawGet(t, kv, versionKey("secret/pass", 1)), &entry))
+	assert.Equal(t, map[string]string{"owner": "ops"}, entry.Metadata)
+}
+
+// TestKVBackend_ReportsTheVersionWithoutStoredMetadata covers an entry stored
+// with nil metadata: the read still names its version.
+func TestKVBackend_ReportsTheVersionWithoutStoredMetadata(t *testing.T) {
+	b := NewKVBackend(newInMemKV())
+	ctx := context.Background()
+
+	require.NoError(t, b.Store(ctx, "secret/pass", map[string][]byte{"pass": []byte("v1")}, nil))
+
+	_, meta, err := b.Get(ctx, "secret/pass")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"version": "1"}, meta)
+
+	_, meta, err = b.GetVersion(ctx, "secret/pass", 2)
+	require.ErrorIs(t, err, ErrVersionNotFound)
+	assert.Nil(t, meta)
+}
+
+// TestBackends_ReportTheVersionTheyReturned holds every backend to one
+// contract: the secrets service takes the version it reports, and so the
+// created_at it looks up, from metadata["version"] (go-quicbaas#179).
+func TestBackends_ReportTheVersionTheyReturned(t *testing.T) {
+	backends := map[string]func(t *testing.T) Backend{
+		"memory":    func(*testing.T) Backend { return NewMemoryBackend() },
+		"kv":        func(*testing.T) Backend { return NewKVBackend(newInMemKV()) },
+		"encrypted": func(t *testing.T) Backend { return createTestEncryptedBackend(t) },
+	}
+	for name, newBackend := range backends {
+		t.Run(name, func(t *testing.T) {
+			b := newBackend(t)
+			ctx := context.Background()
+			for _, value := range []string{"v1", "v2", "v3"} {
+				require.NoError(t, b.Store(ctx, "secret/pass", map[string][]byte{"pass": []byte(value)}, nil))
+			}
+
+			data, meta, err := b.Get(ctx, "secret/pass")
+			require.NoError(t, err)
+			assert.Equal(t, []byte("v3"), data["pass"])
+			assert.Equal(t, "3", meta["version"])
+
+			data, meta, err = b.GetVersion(ctx, "secret/pass", 2)
+			require.NoError(t, err)
+			assert.Equal(t, []byte("v2"), data["pass"])
+			assert.Equal(t, "2", meta["version"])
+
+			// After a rollback the current version is a new one carrying
+			// old data; the read names the new version.
+			require.NoError(t, b.Rollback(ctx, "secret/pass", 1))
+			data, meta, err = b.Get(ctx, "secret/pass")
+			require.NoError(t, err)
+			assert.Equal(t, []byte("v1"), data["pass"])
+			assert.Equal(t, "4", meta["version"])
+		})
+	}
 }
 
 func TestKVBackend_Delete(t *testing.T) {

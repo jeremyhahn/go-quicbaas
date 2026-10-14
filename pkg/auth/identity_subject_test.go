@@ -107,3 +107,26 @@ func TestSubjectIDKindOf(t *testing.T) {
 		}
 	}
 }
+
+// TestIsSystemSubject_OnlySystemTenantID pins #348: only a subject bound to
+// the system tenant id is system; an empty tenant is not, although
+// qrdbsdk.IsSystemTenant("") is true.
+func TestIsSystemSubject_OnlySystemTenantID(t *testing.T) {
+	system := interfaces.Subject{ID: "root", TenantID: qrdbsdk.SystemTenantID, Authenticated: true}
+	if !IsSystemSubject(system) {
+		t.Fatal("IsSystemSubject(system tenant subject) = false, want true")
+	}
+}
+
+func TestIsSystemSubject_EmptyAndTenantAreNotSystem(t *testing.T) {
+	cases := map[string]string{
+		"empty tenant": "",
+		"tenant":       "acme",
+	}
+	for name, tenantID := range cases {
+		subject := interfaces.Subject{ID: "alice", TenantID: tenantID, Authenticated: true}
+		if IsSystemSubject(subject) {
+			t.Fatalf("%s: IsSystemSubject(TenantID=%q) = true, want false", name, tenantID)
+		}
+	}
+}

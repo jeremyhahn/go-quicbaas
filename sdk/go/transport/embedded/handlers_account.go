@@ -433,7 +433,10 @@ func handleAccountMaterialize(ctx context.Context, svc service.QuicBaaS, req int
 // is the process holding the pool and names its tenant on the request, as for
 // every other embedded account verb.
 func reservationTenant(ctx context.Context, requested, method string) (string, error) {
-	subject, scoped := tenantScopedSubject(ctx)
+	subject, scoped, err := tenantScopedSubject(ctx, accountServiceName, method)
+	if err != nil {
+		return "", err
+	}
 	if !scoped {
 		return requested, nil
 	}

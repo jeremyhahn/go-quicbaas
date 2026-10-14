@@ -225,6 +225,7 @@ func TestStoreSecret(t *testing.T) {
 func TestGetSecret(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "debug", Format: "json", Output: "stdout"})
 	now := time.Now()
+	storedAt := now.Add(-72 * time.Hour)
 
 	tests := []struct {
 		name        string
@@ -245,7 +246,7 @@ func TestGetSecret(t *testing.T) {
 					Version:   req.Version,
 					Data:      []byte("secret-data"),
 					Metadata:  map[string]string{"env": "production"},
-					CreatedAt: now,
+					CreatedAt: storedAt,
 					Timestamp: now,
 				}, nil
 			},
@@ -290,6 +291,9 @@ func TestGetSecret(t *testing.T) {
 				require.NotNil(t, resp)
 				assert.Equal(t, "secret-12345", resp.SecretId)
 				assert.NotEmpty(t, resp.Data)
+				// created_at is the service's stored write time, carried
+				// through unchanged, not the time of the read (#179).
+				assert.Equal(t, storedAt.Unix(), resp.CreatedAt)
 			}
 		})
 	}

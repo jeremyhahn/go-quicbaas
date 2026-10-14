@@ -60,6 +60,18 @@ type Backend interface {
 	Close() error
 }
 
+// VersionedBackend is a Backend whose write reports the version it
+// assigned. The writer is told the version of its own write: a version read
+// back after the write can already belong to a concurrent writer, and a
+// count of the history is wrong once a version is gone (go-quicbaas#179).
+type VersionedBackend interface {
+	Backend
+
+	// StoreVersion saves a secret as Store does and returns the version
+	// the backend assigned to this write.
+	StoreVersion(ctx context.Context, path string, data map[string][]byte, metadata map[string]string) (int, error)
+}
+
 // SecretEntry represents a secret with its data and metadata.
 type SecretEntry struct {
 	// Path is the unique path/key for the secret.
@@ -117,6 +129,10 @@ var (
 
 	// ErrSecretDeleted indicates the secret has been deleted.
 	ErrSecretDeleted = errors.New("secrets: secret has been deleted")
+
+	// ErrVersionNotReported indicates the backend cannot report the
+	// version it assigned to a write (see VersionedBackend).
+	ErrVersionNotReported = errors.New("secrets: backend does not report the version it assigned")
 
 	// ErrVersionNotFound indicates the requested version does not exist.
 	ErrVersionNotFound = errors.New("secrets: version not found")
