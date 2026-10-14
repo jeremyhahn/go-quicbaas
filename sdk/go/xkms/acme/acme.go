@@ -55,6 +55,8 @@ type (
 	ACMERestServicer              = xkmsacme.ACMERestServicer
 	ACMEStorageFactory            = xkmsacme.ACMEStorageFactory
 	ACMETCGEnrollmentData         = xkmsacme.ACMETCGEnrollmentData
+	ACMETPMModule                 = xkmsacme.ACMETPMModule
+	ACMEXKMSTPMAdapter            = xkmsacme.ACMEXKMSTPMAdapter
 	ACMEOrderPreSignHook          = xkmsacme.ACMEOrderPreSignHook
 	ACMEOrderPreSignHookContext   = xkmsacme.ACMEOrderPreSignHookContext
 	ACMEOrderPreSignHookRegistry  = xkmsacme.ACMEOrderPreSignHookRegistry

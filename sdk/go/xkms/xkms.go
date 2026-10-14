@@ -204,6 +204,9 @@ const (
 	SymmetricXChaCha20Poly1305 = xkmssdk.SymmetricXChaCha20Poly1305
 	TPMHTPersistent            = xkmssdk.TPMHTPersistent
 	TPMRHOwner                 = xkmssdk.TPMRHOwner
+
+	// TPMPolicyPlatform names the built-in TPM policy every scope has.
+	TPMPolicyPlatform = xkmssdk.TPMPolicyPlatform
 )
 
 // ---------------------------------------------------------

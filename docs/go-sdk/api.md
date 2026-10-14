@@ -2687,6 +2687,32 @@ if errors.As(err, &unsupported) {
 }
 ```
 
+## Tenant context re-exports (`sdk/go/tenantctx`)
+
+`sdk/go/tenantctx` serves a host that may import only the quicbaas SDK. It
+adds no behavior, and its test asserts each alias is the upstream symbol.
+
+| Package | Re-exports | Upstream |
+|---|---|---|
+| `sdk/go/tenantctx` | `WithTenant`, `FromContext`, `Target` | go-quicbaas `pkg/tenantctx` |
+
+It binds and reads the tenant exactly as the server's own services do.
+`FromContext` refuses a context with no tenant rather than reading it as the
+system tenant. `Target` refuses a request naming any tenant other than the
+caller's, the system tenant included. Both refusals carry `ErrForbidden`, so
+every transport maps them to 403 / PermissionDenied.
+
+## Secret value re-exports (`sdk/go/secret`)
+
+`sdk/go/secret` aliases go-qrdb's `sdk/go/secret`: the resolver, config
+processor and error types, and the protected value a resolution produces.
+
+| Name | Purpose |
+|---|---|
+| `SecretValue` | Resolved plaintext sealed in an enclave, with `Raw` (the reference), `Strategy` and `ExpiresAt`; call `Clear()` when done |
+| `NewSecretValue(raw, value, strategy)` | Seals a copy of `value`; the caller's slice is left intact, and an empty value yields a value whose accessors report empty |
+| `ResolvedStrategy` | How a value was produced: `StrategyLiteral`, `StrategyCredential`, `StrategyLocalKMS`, `StrategyRemoteKMS`, `StrategyAutoGen` |
+
 ## go-xkms re-exports (`sdk/go/xkms/...`)
 
 `sdk/go/xkms` and its sub-packages give a consumer that must not import go-xkms
@@ -2698,8 +2724,8 @@ never a wrapper, so a value crosses the boundary without conversion and
 
 | Package | Re-exports |
 |---|---|
-| `sdk/go/xkms` | The general go-xkms SDK surface (TPM, key attributes, sealing, PIV, peer attestation, DICE, TPM lifecycle and EK credential challenge, TPM policies) |
-| `sdk/go/xkms/acme` | ACME entities, client and server types, challenge verifiers, and the External Account Binding vocabulary: `EABPurposeAccountBinding`, `EABPurposeEndorse01`, `EABPurposeEnroll01`, `EABStatusActive`, `EABStatusUsed`, `EABStatusRevoked`, `EABStatusExpired`, `EABDeviceInfo` |
+| `sdk/go/xkms` | The general go-xkms SDK surface (TPM, key attributes, sealing, PIV, peer attestation, DICE, TPM lifecycle and EK credential challenge, TPM policies and `TPMPolicyPlatform`, the built-in policy every scope has) |
+| `sdk/go/xkms/acme` | ACME entities, client and server types, challenge verifiers, the TPM enrollment adapter (`ACMETPMModule`, `ACMEXKMSTPMAdapter`, `NewACMEXKMSTPMAdapter`), and the External Account Binding vocabulary: `EABPurposeAccountBinding`, `EABPurposeEndorse01`, `EABPurposeEnroll01`, `EABStatusActive`, `EABStatusUsed`, `EABStatusRevoked`, `EABStatusExpired`, `EABDeviceInfo` |
 | `sdk/go/xkms/acme/http01` | The client-side ACME http-01 challenge responder (go-quicbaas#560): `Responder`, `ResponderConfig`, `NewResponder`, the typed errors `ResponderConfigError`, `ResponderBindError`, `ResponderShutdownError`, and the `Default*Timeout` constants. `NewResponder` binds before returning, so a held or privileged port surfaces as `ResponderBindError` at challenge setup |
 | `sdk/go/xkms/ca` | TrustedCA types and certificate-profile selection: `ProfileName*` (including `ProfileNameIPsecVTEP` and `ProfileNameX509SVID`), `NewIPsecVTEPProfile`, `NewX509SVIDProfile`, `ProfileProvider`, `ProfileRegistry`, `NewDefaultProfileRegistry`, `NameConstraints`, `SubordinateCARequest`, `SubordinateIssuer`, `DefaultSubordinateLifetime`, `CallerSANProfile`, `LifetimeBoundedProfile`, `TemplateValidator`, `OIDIPsecIKE`, `AttestationEvidence`, `OIDAttestationEvidence`, `CreateAttestationEvidenceExtension`, `ParseAttestationEvidenceExtension`, `ErrCA*` |
 | `sdk/go/xkms/evidence` | RFC 9334 evidence primitives: `ParseQuote`, `VerifyQuote`, `ComparePCRs`, AK/EK certificate checks, `ParseEventLog`, `VerifyEventLog`, `VerifyCertify*`, `VerifyIAK`, `VerifyIDevID`, and signed reference values (`VerifySignedCoRIM`, `CoRIMVerifyOptions`, `ReferenceManifest`, `ReferenceValue`, `ErrCoRIM*`). Appraisal is the Verifier's job, not this package's |

@@ -14,6 +14,8 @@
 package xkms_test
 
 import (
+	"testing"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms"
@@ -37,3 +39,15 @@ var (
 	_ xkmssdk.TenantTPMModeResponse      = xkms.TenantTPMModeResponse{}
 	_ xkmssdk.TenantVTPMStatusResponse   = xkms.TenantVTPMStatusResponse{}
 )
+
+// TestTPMPolicyPlatformIsUpstream proves the re-exported built-in policy name
+// is go-xkms's, so a consumer naming the platform policy through the SDK
+// addresses the same policy the xkms server seeds in every scope.
+func TestTPMPolicyPlatformIsUpstream(t *testing.T) {
+	if xkms.TPMPolicyPlatform != xkmssdk.TPMPolicyPlatform {
+		t.Fatalf("TPMPolicyPlatform = %q, want go-xkms %q", xkms.TPMPolicyPlatform, xkmssdk.TPMPolicyPlatform)
+	}
+	if xkms.TPMPolicyPlatform == "" {
+		t.Fatal("TPMPolicyPlatform is empty")
+	}
+}
