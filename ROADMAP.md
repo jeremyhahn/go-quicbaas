@@ -43,6 +43,7 @@ Shipped features, each with the release that carries it ([CHANGELOG.md](CHANGELO
 RC is the [Release candidate](../../milestone/15), M32 is [Deployed on raft-1/2/3](../../milestone/32), M33 is [Local Software Factory on QuicBaaS](../../milestone/33), which is not in the release candidate. A removal held for the owner's word has no issue yet; it is listed in [#1321](../../pulls/1321).
 
 - **accounts** — sessions roll with account rotation; the spend cap is checked per turn — M33: [#997](../../issues/997), [#782](../../issues/782) — open
+- **acme** — re-export the go-xkms ACME service; the own `/api/v1/acme/*` verbs are removed, after [#1171](../../issues/1171) — RC: [#1327](../../issues/1327) — open
 - **agent-fleet** — agent images published to the registry — M32: [#756](../../issues/756) — open
 - **agent-fleet** — fleet listings are tenant-scoped and rendered by one served-backends renderer — [#680](../../issues/680), [#700](../../issues/700) — done
 - **attestation** — unattended unlock across updates, step 3: reference values (signed CoRIM, `attestation:provision`) are the registry of approved images, fetched by go-trusted-platform through the SDK — [#1321](../../pulls/1321) — blocked: waits on the go-xkms step-2 tag
@@ -52,7 +53,7 @@ RC is the [Release candidate](../../milestone/15), M32 is [Deployed on raft-1/2/
 - **barrier** — passphrases, shares, recovery keys and PINs off argv and out of plain strings — M32: [#237](../../issues/237) — open
 - **barrier** — the barrier passphrase is read from stdin or `QUICBAAS_BARRIER_PASSPHRASE`, never argv; the own seal service removed on the owner's word (re-export of the lower service) — [#180](../../issues/180) — done
 - **bootstrap** — SPIFFE trust domain settable through the SDK; first-boot re-entry delivers the admin credential; the own ceremony facade removed on the owner's word (re-export of the lower service) — M32: [#125](../../issues/125), [#64](../../issues/64) — open
-- **certificate-authority** — re-export the go-xkms CA and ACME, with device identity issued by the go-xkms CA; the own certificate service, SPIFFE SAN and device-identity logic, `/api/v1/acme/*` verbs and the second datastore are removed, after [#1171](../../issues/1171) — RC: [#1327](../../issues/1327) — open
+- **certificate-authority** — re-export the go-xkms CA, with device identity issued by the go-xkms CA; the own certificate service, SPIFFE SAN and device-identity logic and the second datastore are removed, after [#1171](../../issues/1171) — RC: [#1327](../../issues/1327) — open
 - **cluster** — no hardcoded bind, advertise or upstream addresses; the own cluster service and client removed on the owner's word (re-export of the lower service) — M32: [#185](../../issues/185) — open
 - **codec** — the unused own codec package is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **composition** — module route registration is order-independent; pin the released go-qrdb and go-xkms tags — M32: [#1141](../../issues/1141) — open
