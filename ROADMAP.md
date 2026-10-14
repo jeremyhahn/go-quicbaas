@@ -94,6 +94,7 @@ RC is the [Release candidate](../../milestone/15), M32 is [Deployed on raft-1/2/
 - **security-hardening** — the scoped FIPS gate runs on push again; server certificate SANs honoured and unique — M32: [#177](../../issues/177) — open
 - **security-hardening** — the security-hardening release-candidate item — RC: [#769](../../issues/769) — blocked: see issue
 - **software-factory** — triage, task workers, review and merge run on the QuicBaaS deployment and the old host is drained; company agents as standing MCP principals; MCP signing replaces the signing socket — M33: [milestone 33](../../milestone/33), [#1126](../../issues/1126), [#1136](../../issues/1136), [#903](../../issues/903) — open
+- **software-factory** — requirements contract for automating every deterministic step of the manual factory — M33: [milestone 33](../../milestone/33) — open
 - **ssh** — re-export the go-xkms SSH service; the own facade and key store are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **timeseries** — re-export go-qrdb's time-series service; the own service is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **vector** — re-export go-qrdb's vector service; the own service and local index are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
