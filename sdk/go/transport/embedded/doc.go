@@ -51,4 +51,12 @@
 //
 // Streaming operations (Watch, List, Query) are supported through the stream
 // wrapper that bridges between Go channels and the transport.Stream interface.
+//
+// # Authorization
+//
+// The embedded transport performs no authorization and is not a trust
+// boundary. Linking the SDK into a process and constructing the transport over
+// a service.QuicBaaS is the grant: code in that process already holds the
+// service and could call it directly. Network transports, gRPC included,
+// remain authorization boundaries (go-quicbaas#329, go-quicbaas#301).
 package embedded

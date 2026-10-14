@@ -50,6 +50,11 @@ When built without `iam`, ABAC features are not available and the system falls b
 | Complex business rules | ABAC |
 | Gradual RBAC-to-ABAC migration | Hybrid |
 
+### Where Authorization Is Enforced
+
+Network transports, gRPC included, are authorization boundaries; the in-process embedded transport is not, because linking the SDK
+into a process is the grant (go-quicbaas#329, go-quicbaas#301).
+
 ## Architecture
 
 ```

@@ -479,6 +479,16 @@ it, so that copy is inherent to enrolling a shared secret.
 Each enclave is destroyed when the authenticator built from it is done, so the
 protection is released rather than held for the process lifetime.
 
+#### Accepted boundary: the KV read and MFA storage
+
+The two unprotected segments above are an **accepted boundary**
+(go-quicbaas#402). Today a TOTP secret is protected at rest by
+the tenant barrier and during code derivation by the go-enclave seed; between
+the two it is ordinary heap memory — the `KVStore.Get` bytes and the
+`MFASecret.Secret` string. QuicBaaS does not work around this in the MFA
+manager: closing it needs a KV read that returns protected bytes, which is
+go-qrdb's to provide, and the MFA store moves to it once it exists.
+
 ---
 
 ## Authorization Hardening

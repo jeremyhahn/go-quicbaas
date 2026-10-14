@@ -1932,6 +1932,16 @@ A deployment whose cards cannot produce a slot attestation is not silently
 downgraded — it is refused, and the operator chooses honestly with
 `allow_unattested`.
 
+**The attestation reaches the server in the TLS handshake only**
+(go-quicbaas#422, option 1). The slot attestation certificate and the F9
+intermediate are sent as extra certificates in the client's TLS certificate
+chain, after the login certificate, and the handler reads them from the
+handshake's peer certificates. There is no out-of-band upload. This is
+**browser-incompatible**: a browser presents the client certificate chain its
+certificate store builds and offers no way to append an attestation
+certificate, so attested PIV login needs a TLS client that controls the
+certificate chain it sends.
+
 `trusted_issuers` is a Subject-DN **name** comparison and is not evidence of
 anything — any certificate can assert any issuer name. Hardware is established
 by `attestation_ca_file` alone.
@@ -1966,6 +1976,15 @@ carries an `*iam.AttestationResult` whose fields are unexported, so the only way
 to obtain one reporting `hardware` is to have run a verifier that checked a
 certificate chain. `IssueHardwareTokens` refuses `ACRHardwareAttested` unless
 the attestation actually proves hardware.
+
+**What satisfies `mfa_verified`.** For the release candidate, verified hardware
+attestation alone satisfies `mfa_verified` (go-quicbaas#416, option 1).
+`IssueHardwareTokens` sets it to `Attestation.IsHardware()`: a key proven to be
+held on an authenticator counts as the second factor, and an unattested
+credential admitted through `allow_unattested` proves one factor and leaves
+`mfa_verified` false. No separate second-factor evidence (a PIN or user
+verification result, a TOTP code) is recorded or required yet; carrying that
+evidence into the claim is the follow-up tracked on go-quicbaas#416.
 
 The same rule applies one layer down, on **every** surface that writes an auth
 factor without running a ceremony: the SDK's `Add` and `Rotate`, and the qrdb
