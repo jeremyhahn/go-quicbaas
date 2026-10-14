@@ -52,7 +52,7 @@ type failingCreateInviteStore struct {
 	err error
 }
 
-func (f *failingCreateInviteStore) Create(context.Context, string, string, time.Duration) (string, *iam.InviteRecord, error) {
+func (f *failingCreateInviteStore) Create(context.Context, string, uint64, time.Duration) (string, *iam.InviteRecord, error) {
 	return "", nil, f.err
 }
 
@@ -62,7 +62,7 @@ type recordingInviteStore struct {
 	last string
 }
 
-func (r *recordingInviteStore) Create(ctx context.Context, tenantID, userID string, ttl time.Duration) (string, *iam.InviteRecord, error) {
+func (r *recordingInviteStore) Create(ctx context.Context, tenantID string, userID uint64, ttl time.Duration) (string, *iam.InviteRecord, error) {
 	token, rec, err := r.InviteStore.Create(ctx, tenantID, userID, ttl)
 	r.last = token
 	return token, rec, err
@@ -83,7 +83,7 @@ type undeletableStorage struct {
 	markErr error
 }
 
-func (u *undeletableStorage) MarkUserDeleting(context.Context, string, string) error {
+func (u *undeletableStorage) MarkUserDeleting(context.Context, string, uint64) error {
 	return u.markErr
 }
 
@@ -191,7 +191,7 @@ type cancellingInviteStore struct {
 	err    error
 }
 
-func (c *cancellingInviteStore) Create(context.Context, string, string, time.Duration) (string, *iam.InviteRecord, error) {
+func (c *cancellingInviteStore) Create(context.Context, string, uint64, time.Duration) (string, *iam.InviteRecord, error) {
 	c.cancel()
 	return "", nil, c.err
 }
@@ -216,16 +216,16 @@ func TestCreateInvitedUser_FailedRollbackIsTyped(t *testing.T) {
 }
 
 // userReaderFunc adapts a function to UserReader.
-type userReaderFunc func(ctx context.Context, tenantID, userID string) (*iam.User, error)
+type userReaderFunc func(ctx context.Context, tenantID string, userID uint64) (*iam.User, error)
 
-func (f userReaderFunc) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+func (f userReaderFunc) GetUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
 	return f(ctx, tenantID, userID)
 }
 
 func TestRereadUserAfterFailedWrite_DetachesFromCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	reader := userReaderFunc(func(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+	reader := userReaderFunc(func(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -235,22 +235,22 @@ func TestRereadUserAfterFailedWrite_DetachesFromCancellation(t *testing.T) {
 		return &iam.User{ID: userID, TenantID: tenantID, Lifecycle: iam.LifecycleActive}, nil
 	})
 
-	user, err := iam.RereadUserAfterFailedWrite(ctx, reader, "t1", "u1")
+	user, err := iam.RereadUserAfterFailedWrite(ctx, reader, "t1", 30001)
 	if err != nil {
 		t.Fatalf("RereadUserAfterFailedWrite = %v, want the read to outlive the canceled request", err)
 	}
-	if user.ID != "u1" || user.Lifecycle != iam.LifecycleActive {
+	if user.ID != 30001 || user.Lifecycle != iam.LifecycleActive {
 		t.Fatalf("user = %+v, want the persisted user", user)
 	}
 }
 
 func TestRereadUserAfterFailedWrite_ReturnsReadError(t *testing.T) {
 	readErr := errors.New("read failed")
-	reader := userReaderFunc(func(context.Context, string, string) (*iam.User, error) {
+	reader := userReaderFunc(func(context.Context, string, uint64) (*iam.User, error) {
 		return nil, readErr
 	})
 
-	if _, err := iam.RereadUserAfterFailedWrite(context.Background(), reader, "t1", "u1"); !errors.Is(err, readErr) {
+	if _, err := iam.RereadUserAfterFailedWrite(context.Background(), reader, "t1", 30001); !errors.Is(err, readErr) {
 		t.Fatalf("RereadUserAfterFailedWrite = %v, want the read error", err)
 	}
 }

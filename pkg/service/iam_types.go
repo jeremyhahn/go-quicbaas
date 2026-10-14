@@ -233,7 +233,7 @@ type IAMGetUserRequest struct {
 	TenantID string `json:"tenant_id"`
 
 	// UserID is the user identifier
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 }
 
 // IAMGetUserResponse returns a user.
@@ -251,7 +251,7 @@ type IAMUpdateUserRequest struct {
 	TenantID string `json:"tenant_id"`
 
 	// UserID is the user identifier
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// Email is the user's email address (optional)
 	Email *string `json:"email,omitempty"`
@@ -297,7 +297,7 @@ func (req *IAMUpdateUserRequest) Validate() error {
 	if req.TenantID == "" {
 		return &api.RequiredFieldError{Field: "tenant_id"}
 	}
-	if req.UserID == "" {
+	if req.UserID == 0 {
 		return &api.RequiredFieldError{Field: "user_id"}
 	}
 	// Validate email if provided
@@ -335,7 +335,7 @@ type IAMDeleteUserRequest struct {
 	TenantID string `json:"tenant_id"`
 
 	// UserID is the user identifier
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 }
 
 // IAMDeleteUserResponse confirms user deletion.
@@ -661,8 +661,8 @@ type IAMProvisionTenantResponse struct {
 	// TenantID is the provisioned tenant
 	TenantID string `json:"tenant_id"`
 
-	// AdminUserID is the tenant admin's user id (decimal)
-	AdminUserID string `json:"admin_user_id"`
+	// AdminUserID is the tenant admin's user id
+	AdminUserID uint64 `json:"admin_user_id,string"`
 
 	// AdminUsername is the tenant admin's login name
 	AdminUsername string `json:"admin_username"`
@@ -695,7 +695,7 @@ type IAMAssignRoleRequest struct {
 	TenantID string `json:"tenant_id"`
 
 	// UserID is the user identifier
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// RoleID is the role identifier
 	RoleID string `json:"role_id"`
@@ -716,7 +716,7 @@ type IAMRevokeRoleRequest struct {
 	TenantID string `json:"tenant_id"`
 
 	// UserID is the user identifier
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// RoleID is the role identifier
 	RoleID string `json:"role_id"`
@@ -1248,7 +1248,7 @@ type ListActiveImpersonationsResponse struct {
 // GrantConsentRequest contains the request to grant consent.
 type GrantConsentRequest struct {
 	TenantID  string
-	UserID    string
+	UserID    uint64
 	Purpose   iam.ConsentPurpose
 	Version   string
 	IPAddress string
@@ -1265,7 +1265,7 @@ type GrantConsentResponse struct {
 // WithdrawConsentRequest contains the request to withdraw consent.
 type WithdrawConsentRequest struct {
 	TenantID  string
-	UserID    string
+	UserID    uint64
 	Purpose   iam.ConsentPurpose
 	IPAddress string
 	UserAgent string
@@ -1279,7 +1279,7 @@ type WithdrawConsentResponse struct {
 // GetConsentRequest contains the request to get a consent.
 type GetConsentRequest struct {
 	TenantID string
-	UserID   string
+	UserID   uint64
 	Purpose  iam.ConsentPurpose
 }
 
@@ -1291,7 +1291,7 @@ type GetConsentResponse struct {
 // ListUserConsentsRequest contains the request to list user consents.
 type ListUserConsentsRequest struct {
 	TenantID string
-	UserID   string
+	UserID   uint64
 }
 
 // ListUserConsentsResponse contains the response from listing user consents.
@@ -1302,7 +1302,7 @@ type ListUserConsentsResponse struct {
 // RequestExportRequest contains the request to request a data export.
 type RequestExportRequest struct {
 	TenantID          string
-	UserID            string
+	UserID            uint64
 	RequestedBy       string
 	Format            iam.DataExportFormat
 	IncludeCategories []string
@@ -1342,7 +1342,7 @@ type GenerateExportResponse struct {
 // RequestDeletionRequest contains the request to request data deletion.
 type RequestDeletionRequest struct {
 	TenantID           string
-	UserID             string
+	UserID             uint64
 	RequestedBy        string
 	Reason             string
 	GracePeriodDays    int

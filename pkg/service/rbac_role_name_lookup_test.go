@@ -152,14 +152,14 @@ func TestRoleStore_DeleteRole_PastFirstPage(t *testing.T) {
 func TestRoleStore_AssignRevokeRole_PastFirstPage(t *testing.T) {
 	svc, ctx, storage := newPagedRoleStoreService(t, "tenant-paged", 150)
 	require.NoError(t, storage.CreateUser(ctx, &iam.User{
-		ID: "1", TenantID: "tenant-paged", Username: "alice", Name: "Alice", Email: "alice@paged.test",
+		ID: 1, TenantID: "tenant-paged", Username: "alice", Name: "Alice", Email: "alice@paged.test",
 	}))
 
 	assignResp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "alice", RoleName: roleName(140)})
 	require.NoError(t, err)
 	require.NotNil(t, assignResp)
 
-	bound, err := storage.GetUser(ctx, "tenant-paged", "1")
+	bound, err := storage.GetUser(ctx, "tenant-paged", 1)
 	require.NoError(t, err)
 	assert.Contains(t, bound.Roles, roleName(140))
 
@@ -167,7 +167,7 @@ func TestRoleStore_AssignRevokeRole_PastFirstPage(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, revokeResp)
 
-	unbound, err := storage.GetUser(ctx, "tenant-paged", "1")
+	unbound, err := storage.GetUser(ctx, "tenant-paged", 1)
 	require.NoError(t, err)
 	assert.NotContains(t, unbound.Roles, roleName(140), "a revocation that cannot find the role leaves the grant standing")
 }
@@ -263,7 +263,7 @@ func TestRoleStore_AssignRole_LookupOutageIsNotAnAbsentRole(t *testing.T) {
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-outage", is)
 	require.NoError(t, storage.CreateUser(ctx, &iam.User{
-		ID: "1", TenantID: "tenant-outage", Username: "alice", Name: "Alice", Email: "alice@outage.test",
+		ID: 1, TenantID: "tenant-outage", Username: "alice", Name: "Alice", Email: "alice@outage.test",
 	}))
 
 	resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "alice", RoleName: "editor"})

@@ -15,6 +15,7 @@ package embedded
 
 import (
 	stderrors "errors"
+	"strconv"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
@@ -81,6 +82,38 @@ func NewInvalidRequestTypeError(service, method, expected, actual string) *Inval
 		ExpectedType: expected,
 		ActualType:   actual,
 	}
+}
+
+// InvalidUserIDError indicates a request user id that is not a non-zero
+// decimal uint64, the form of the iam user id. Err is the strconv failure, or
+// nil when the value parsed to zero.
+type InvalidUserIDError struct {
+	Service string
+	Method  string
+	Value   string
+	Err     error
+}
+
+// Error implements the error interface.
+func (e *InvalidUserIDError) Error() string {
+	msg := "INVALID_INPUT: embedded: " + e.Service + "/" + e.Method + ": user id " +
+		strconv.Quote(e.Value) + " is not a non-zero decimal uint64"
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the underlying strconv error, if any.
+func (e *InvalidUserIDError) Unwrap() error { return e.Err }
+
+// parseIAMUserID converts a request's string user id into the iam uint64 id.
+func parseIAMUserID(service, method, value string) (uint64, error) {
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || id == 0 {
+		return 0, &InvalidUserIDError{Service: service, Method: method, Value: value, Err: err}
+	}
+	return id, nil
 }
 
 // ServiceNotConfiguredError indicates a sub-service is not configured.

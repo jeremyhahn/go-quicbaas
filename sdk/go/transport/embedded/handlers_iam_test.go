@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -86,8 +87,8 @@ func TestHandleIAMUserCreate_ReturnsTheInvite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the returned token does not redeem: %v", err)
 	}
-	if record.UserID != user.ID {
-		t.Errorf("invite is for %q, want %q", record.UserID, user.ID)
+	if strconv.FormatUint(record.UserID, 10) != user.ID {
+		t.Errorf("invite is for %d, want %q", record.UserID, user.ID)
 	}
 }
 

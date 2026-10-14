@@ -97,9 +97,9 @@ func findRoleIDByName(ctx context.Context, is *iam.IdentityStore, tenantID, name
 // within the request tenant, returning the user ID and role ID. It fails closed
 // with typed errors when either the username or the role name does not resolve.
 // This is the shared body of AssignRole/RevokeRole.
-func (r *rbacService) resolveUserAndRole(ctx context.Context, username, roleName, op string) (is *iam.IdentityStore, tenantID, userID, roleID string, err error) {
+func (r *rbacService) resolveUserAndRole(ctx context.Context, username, roleName, op string) (is *iam.IdentityStore, tenantID string, userID uint64, roleID string, err error) {
 	if username == "" || roleName == "" {
-		return nil, "", "", "", &errors.QBError{
+		return nil, "", 0, "", &errors.QBError{
 			Code: errors.ErrInvalidInput,
 			Op:   op,
 			Err:  &api.InvalidInputError{Message: "username and role name are required"},
@@ -107,11 +107,11 @@ func (r *rbacService) resolveUserAndRole(ctx context.Context, username, roleName
 	}
 	is, tenantID, err = r.roleStore(ctx, op)
 	if err != nil {
-		return nil, "", "", "", err
+		return nil, "", 0, "", err
 	}
 	user, err := is.GetUserByUsername(ctx, tenantID, username)
 	if err != nil {
-		return nil, "", "", "", &errors.QBError{
+		return nil, "", 0, "", &errors.QBError{
 			Code: errors.ErrNotFound,
 			Op:   op,
 			Err:  &api.NotFoundError{Resource: "user", ID: username},
@@ -119,7 +119,7 @@ func (r *rbacService) resolveUserAndRole(ctx context.Context, username, roleName
 	}
 	roleID, err = findRoleIDByName(ctx, is, tenantID, roleName, op)
 	if err != nil {
-		return nil, "", "", "", err
+		return nil, "", 0, "", err
 	}
 	return is, tenantID, user.ID, roleID, nil
 }

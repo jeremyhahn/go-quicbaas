@@ -581,7 +581,7 @@ func TestCreateSessionWithDeviceInfo(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"token_hash": "abc123",
@@ -615,7 +615,7 @@ func TestCreateSessionWithDeviceInfo(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"token_hash": "abc123",
@@ -639,7 +639,7 @@ func TestCreateSessionWithDeviceInfo(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"id": "custom-session-id",
@@ -661,7 +661,7 @@ func TestCreateSessionWithDeviceInfo(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"token_hash": "abc123",
@@ -713,7 +713,7 @@ func TestIAMMiddlewareContextValues(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -730,7 +730,7 @@ func TestIAMMiddlewareContextValues(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
@@ -748,7 +748,7 @@ func TestRevokeOtherSessionsBodyParsing(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "tenant-123")
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -764,7 +764,7 @@ func TestRevokeOtherSessionsBodyParsing(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "tenant-123")
 		body := `{invalid json}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(body))
 		req = req.WithContext(ctx)
@@ -782,7 +782,7 @@ func TestRevokeOtherSessionsBodyParsing(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "tenant-123")
 		body := `{"keep_session_id": "session-456"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(body))
 		req = req.WithContext(ctx)

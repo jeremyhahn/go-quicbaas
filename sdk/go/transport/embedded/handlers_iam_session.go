@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	"reflect"
+	"strconv"
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 
@@ -69,7 +70,7 @@ func sessionManagerFor(ctx context.Context, svc service.QuicBaaS) (service.Sessi
 // denied rather than served, so a caller cannot read or revoke a session by
 // guessing its id.
 func requireSessionOwner(subject interfaces.Subject, s *iam.SessionExt, method string) error {
-	if s == nil || s.UserID != subject.ID || s.TenantID != subject.TenantID {
+	if s == nil || strconv.FormatUint(s.UserID, 10) != subject.ID || s.TenantID != subject.TenantID {
 		return NewPermissionDeniedError("quicbaas.IAM.Session", method, "access denied")
 	}
 	return nil
@@ -136,7 +137,13 @@ func handleIAMSessionList(ctx context.Context, svc service.QuicBaaS, req interfa
 	// result here any more than it can over REST or gRPC. Honoring it would
 	// require a manager operation that does not exist, and pretending to
 	// honor it would be worse than leaving the shared behavior identical.
-	sessions, err := mgr.List(ctx, userID, tenantID)
+	var id uint64
+	if userID != "" {
+		if id, err = parseIAMUserID("quicbaas.IAM.Session", "List", userID); err != nil {
+			return nil, err
+		}
+	}
+	sessions, err := mgr.List(ctx, id, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +228,13 @@ func handleIAMSessionRevokeAll(ctx context.Context, svc service.QuicBaaS, req in
 		}
 		userID, tenantID = subject.ID, subject.TenantID
 	}
-	if err := mgr.RevokeAllForUser(ctx, userID, tenantID); err != nil {
+	var id uint64
+	if userID != "" {
+		if id, err = parseIAMUserID("quicbaas.IAM.Session", "RevokeAll", userID); err != nil {
+			return nil, err
+		}
+	}
+	if err := mgr.RevokeAllForUser(ctx, id, tenantID); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -267,7 +280,7 @@ func sessionToSDK(s *iam.SessionExt) *iamsdk.Session {
 	}
 	out := &iamsdk.Session{
 		ID:          s.ID,
-		UserID:      s.UserID,
+		UserID:      strconv.FormatUint(s.UserID, 10),
 		TenantID:    s.TenantID,
 		CreatedAt:   s.Created,
 		Created:     s.Created,

@@ -16,6 +16,8 @@ package iam
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -24,14 +26,14 @@ import (
 // decimal, so it can only be a number — the constant name carries the lifecycle
 // the fixture stands for.
 const (
-	liveUserID       = "61"
-	unsetStateUserID = "62"
-	suspUserID       = "63"
-	lockUserID       = "64"
-	disUserID        = "65"
-	revUserID        = "66"
-	introspectSuspID = "67"
-	introspectLiveID = "68"
+	liveUserID       = 61
+	unsetStateUserID = 62
+	suspUserID       = 63
+	lockUserID       = 64
+	disUserID        = 65
+	revUserID        = 66
+	introspectSuspID = 67
+	introspectLiveID = 68
 )
 
 // errLivenessStore is a sentinel store failure used to assert TokenLiveness is
@@ -54,25 +56,25 @@ type erroringUserStorage struct {
 	*MemoryStorage
 }
 
-func (e *erroringUserStorage) GetUser(_ context.Context, _, _ string) (*User, error) {
+func (e *erroringUserStorage) GetUser(_ context.Context, _ string, _ uint64) (*User, error) {
 	return nil, errLivenessStore
 }
 
 // seedLivenessUser creates a user in the provider's identity store in the given
 // lifecycle state so TokenLiveness can be evaluated against it.
-func seedLivenessUser(t *testing.T, provider *OIDCProvider, tenantID, userID string, state Lifecycle) {
+func seedLivenessUser(t *testing.T, provider *OIDCProvider, tenantID string, userID uint64, state Lifecycle) {
 	t.Helper()
 	user := &User{
 		ID:        userID,
 		TenantID:  tenantID,
-		Email:     userID + "@" + tenantID + ".example.com",
-		Name:      "Liveness " + userID,
+		Email:     fmt.Sprintf("%d@%s.example.com", userID, tenantID),
+		Name:      fmt.Sprintf("Liveness %d", userID),
 		Lifecycle: state,
 		Created:   time.Now().UTC(),
 		Updated:   time.Now().UTC(),
 	}
 	if err := provider.identityStore.userStorage.CreateUser(context.Background(), user); err != nil {
-		t.Fatalf("seed user %q: %v", userID, err)
+		t.Fatalf("seed user %d: %v", userID, err)
 	}
 }
 
@@ -169,7 +171,7 @@ func TestTokenLiveness_DisabledState(t *testing.T) {
 func TestTokenLiveness_ServiceTokenIsLive(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 
-	live, err := provider.TokenLiveness(context.Background(), "tenant-a", "app_default_runtime", "", PrincipalTypeService, "jti-svc")
+	live, err := provider.TokenLiveness(context.Background(), "tenant-a", "app_default_runtime", 0, PrincipalTypeService, "jti-svc")
 	if err != nil {
 		t.Fatalf("TokenLiveness() error = %v", err)
 	}
@@ -185,7 +187,7 @@ func TestTokenLiveness_Revoked(t *testing.T) {
 
 	ctx := context.Background()
 	// Mint and revoke a token so its jti is revoked in the store.
-	token, jti := mintIntrospectToken(t, provider, "tenant-a", revUserID, revUserID, time.Hour)
+	token, jti := mintIntrospectToken(t, provider, "tenant-a", strconv.FormatUint(revUserID, 10), revUserID, time.Hour)
 	if err := provider.tokenService.RevokeToken(ctx, token); err != nil {
 		t.Fatalf("RevokeToken() error = %v", err)
 	}
@@ -206,7 +208,7 @@ func TestTokenLiveness_RevocationStoreError(t *testing.T) {
 	// Swap in a token storage whose IsTokenRevoked always errors.
 	provider.tokenService.storage = &erroringTokenStorage{mockTokenStorage: newMockTokenStorage()}
 
-	live, err := provider.TokenLiveness(context.Background(), "tenant-a", "", "any-user", "", "jti-x")
+	live, err := provider.TokenLiveness(context.Background(), "tenant-a", "", 40060, "", "jti-x")
 	if !errors.Is(err, errLivenessStore) {
 		t.Fatalf("error = %v, want errLivenessStore", err)
 	}
@@ -226,7 +228,7 @@ func TestTokenLiveness_GetUserError(t *testing.T) {
 		RoleStorage: NewMemoryStorage(),
 	})
 
-	live, gerr := provider.TokenLiveness(context.Background(), "tenant-a", "", "user-x", "", "jti-y")
+	live, gerr := provider.TokenLiveness(context.Background(), "tenant-a", "", 40060, "", "jti-y")
 	if !errors.Is(gerr, errLivenessStore) {
 		t.Fatalf("error = %v, want errLivenessStore", gerr)
 	}
@@ -242,7 +244,7 @@ func TestOIDCIntrospect_DisabledUser(t *testing.T) {
 	seedLivenessUser(t, provider, "tenant-a", introspectSuspID, LifecycleSuspended)
 	ctx := context.Background()
 
-	token, _ := mintIntrospectToken(t, provider, "tenant-a", introspectSuspID, introspectSuspID, time.Hour)
+	token, _ := mintIntrospectToken(t, provider, "tenant-a", strconv.FormatUint(introspectSuspID, 10), introspectSuspID, time.Hour)
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
 	if err != nil {
 		t.Fatalf("Introspect() error = %v", err)
@@ -262,7 +264,7 @@ func TestOIDCIntrospect_EnabledUser(t *testing.T) {
 	seedLivenessUser(t, provider, "tenant-a", introspectLiveID, LifecycleActive)
 	ctx := context.Background()
 
-	token, jti := mintIntrospectToken(t, provider, "tenant-a", introspectLiveID, introspectLiveID, time.Hour)
+	token, jti := mintIntrospectToken(t, provider, "tenant-a", strconv.FormatUint(introspectLiveID, 10), introspectLiveID, time.Hour)
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
 	if err != nil {
 		t.Fatalf("Introspect() error = %v", err)
@@ -270,8 +272,8 @@ func TestOIDCIntrospect_EnabledUser(t *testing.T) {
 	if !resp.Active {
 		t.Fatalf("enabled user token must be active")
 	}
-	if resp.Subject != introspectLiveID {
-		t.Errorf("sub = %q, want %q", resp.Subject, introspectLiveID)
+	if want := strconv.FormatUint(introspectLiveID, 10); resp.Subject != want {
+		t.Errorf("sub = %q, want %q", resp.Subject, want)
 	}
 	if resp.JTI != jti {
 		t.Errorf("jti = %q, want %q", resp.JTI, jti)
@@ -284,7 +286,7 @@ func TestOIDCIntrospect_ServiceToken(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
-	token, _ := mintIntrospectToken(t, provider, "tenant-a", "app_default_svc", "", time.Hour)
+	token, _ := mintIntrospectToken(t, provider, "tenant-a", "app_default_svc", 0, time.Hour)
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
 	if err != nil {
 		t.Fatalf("Introspect() error = %v", err)
@@ -305,7 +307,7 @@ func TestOIDCIntrospect_RevocationStoreErrorFailClosed(t *testing.T) {
 	ctx := context.Background()
 
 	// Mint a valid token while the store still works.
-	token, _ := mintIntrospectToken(t, provider, "tenant-a", "fc-user", "", time.Hour)
+	token, _ := mintIntrospectToken(t, provider, "tenant-a", "fc-user", 0, time.Hour)
 
 	// Now swap in an erroring revocation store.
 	provider.tokenService.storage = &erroringTokenStorage{mockTokenStorage: newMockTokenStorage()}

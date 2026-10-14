@@ -124,24 +124,24 @@ type WebAuthnManager interface {
 // MFAManager interface defines MFA (Multi-Factor Authentication) operations.
 type MFAManager interface {
 	// Enrollment operations
-	BeginEnrollment(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
+	BeginEnrollment(ctx context.Context, userID uint64, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
 	CompleteEnrollment(ctx context.Context, enrollmentID, code string) error
 	CancelEnrollment(ctx context.Context, enrollmentID string) error
 
 	// Challenge/verification operations
-	BeginChallenge(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error)
+	BeginChallenge(ctx context.Context, userID uint64, tenantID, sessionToken string) (*iam.MFAChallenge, error)
 	VerifyChallenge(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error)
-	VerifyCode(ctx context.Context, userID, tenantID, code string) error
+	VerifyCode(ctx context.Context, userID uint64, tenantID, code string) error
 
 	// Status operations
-	GetMFAStatus(ctx context.Context, userID, tenantID string) (*iam.MFAStatus, error)
-	IsMFARequired(ctx context.Context, userID, tenantID string) (bool, error)
-	DisableMFA(ctx context.Context, userID, tenantID string) error
+	GetMFAStatus(ctx context.Context, userID uint64, tenantID string) (*iam.MFAStatus, error)
+	IsMFARequired(ctx context.Context, userID uint64, tenantID string) (bool, error)
+	DisableMFA(ctx context.Context, userID uint64, tenantID string) error
 
 	// Backup code operations
-	GenerateBackupCodes(ctx context.Context, userID, tenantID string) ([]string, error)
-	VerifyBackupCode(ctx context.Context, userID, tenantID, code string) error
-	GetBackupCodeStatus(ctx context.Context, userID, tenantID string) (*iam.BackupCodeStatus, error)
+	GenerateBackupCodes(ctx context.Context, userID uint64, tenantID string) ([]string, error)
+	VerifyBackupCode(ctx context.Context, userID uint64, tenantID, code string) error
+	GetBackupCodeStatus(ctx context.Context, userID uint64, tenantID string) (*iam.BackupCodeStatus, error)
 }
 
 // SessionManager interface for session management operations.
@@ -150,15 +150,15 @@ type SessionManager interface {
 	// Create creates a new session
 	Create(ctx context.Context, session *iam.SessionExt) error
 	// List lists all sessions for a user in a tenant
-	List(ctx context.Context, userID, tenantID string) ([]*iam.SessionExt, error)
+	List(ctx context.Context, userID uint64, tenantID string) ([]*iam.SessionExt, error)
 	// Get retrieves a session by ID
 	Get(ctx context.Context, sessionID string) (*iam.SessionExt, error)
 	// Revoke revokes a specific session
 	Revoke(ctx context.Context, sessionID string) error
 	// RevokeAllForUser revokes all sessions for a user
-	RevokeAllForUser(ctx context.Context, userID, tenantID string) error
+	RevokeAllForUser(ctx context.Context, userID uint64, tenantID string) error
 	// RevokeAllExcept revokes all sessions for a user except the specified one
-	RevokeAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error
+	RevokeAllExcept(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error
 }
 
 // TenantProvisioner creates a tenant, seeds its built-in roles and enrolls

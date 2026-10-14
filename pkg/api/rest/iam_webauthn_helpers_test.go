@@ -104,7 +104,7 @@ func setupWebAuthnHandler(t *testing.T) *IAMHandler {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	mockSvc := &webAuthnService{
 		MockQuicBaaS: testutil.NewMockQuicBaaS(),
-		mgr:          &fakeWebAuthnManager{user: &iam.User{ID: "u1", TenantID: "tenant1", Email: "u1@example.com"}},
+		mgr:          &fakeWebAuthnManager{user: &iam.User{ID: 30001, TenantID: "tenant1", Email: "u1@example.com"}},
 		provider:     provider,
 		audit:        &captureAuditLogger{},
 	}

@@ -52,7 +52,7 @@ func handleSDLCBind(ctx context.Context, svc service.QuicBaaS, req interface{}) 
 	if binding.ProjectID == "" {
 		binding.ProjectID = r.ProjectID
 	}
-	bound, err := sdlcSvc.Bind(ctx, r.TenantID, sdlcBindingToDomain(&binding))
+	bound, err := sdlcSvc.Bind(ctx, r.TenantID, sdlcBindingToDomain(&binding), service.BindOptions{LeavePaused: r.Paused})
 	if err != nil {
 		return nil, err
 	}

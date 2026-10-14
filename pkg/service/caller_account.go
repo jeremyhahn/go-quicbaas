@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"strconv"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -30,6 +31,47 @@ type identityStoreGetter interface {
 }
 
 var _ identityStoreGetter = (*quicBaaS)(nil)
+
+const opResolveCallerAccount = "Service.ResolveCallerAccount"
+
+// CallerAccountRefusedError reports that the authenticated caller's own
+// account could not be derived from its identity: there is no authenticated
+// principal, or the principal does not name a qrdb user in its tenant.
+type CallerAccountRefusedError struct {
+	Reason string
+}
+
+// Error implements the error interface.
+func (e *CallerAccountRefusedError) Error() string { return e.Reason }
+
+// IsCallerAccountRefused reports whether err is (or wraps) a refusal to
+// derive the caller's account from its identity.
+func IsCallerAccountRefused(err error) bool {
+	var target *CallerAccountRefusedError
+	return stderrors.As(err, &target)
+}
+
+// CallerAccountResolver resolves an authenticated subject to the qrdb user
+// account it is. Transports that serve a caller's own resources (its
+// sessions, its passkeys) reach it instead of reading an account id out of
+// the subject themselves. *quicBaaS satisfies it.
+type CallerAccountResolver interface {
+	ResolveCallerAccount(ctx context.Context, subject interfaces.Subject) (uint64, error)
+}
+
+var _ CallerAccountResolver = (*quicBaaS)(nil)
+
+// ResolveCallerAccount returns the qrdb user id of the authenticated subject,
+// in the subject's own tenant. See resolveCallerAccount for how the subject's
+// fields are read; a subject that names no account is refused with
+// CallerAccountRefusedError under errors.ErrForbidden.
+func (s *quicBaaS) ResolveCallerAccount(ctx context.Context, subject interfaces.Subject) (uint64, error) {
+	store, err := s.GetIdentityStore(ctx)
+	if err != nil {
+		return 0, &errors.QBError{Code: errors.ErrConfiguration, Op: opResolveCallerAccount, Err: err}
+	}
+	return resolveCallerAccount(ctx, store, subject, opResolveCallerAccount)
+}
 
 // resolveCallerAccount finds the qrdb user the authenticated subject is, in
 // the subject's own tenant, and returns that user's qrdb ID. Every path that
@@ -56,7 +98,7 @@ var _ identityStoreGetter = (*quicBaaS)(nil)
 // chosen by IDKind alone, never by what ID looks like: a username may be all
 // digits, and reading "12345" as user ID 12345 would hand the caller another
 // user's account. A subject whose kind is unknown, or that no user in its
-// tenant matches, is refused with FIDO2CallerRefusedError.
+// tenant matches, is refused with CallerAccountRefusedError.
 func resolveCallerAccount(ctx context.Context, store *iam.IdentityStore, subject interfaces.Subject, op string) (uint64, error) {
 	if store == nil {
 		return 0, &errors.QBError{
@@ -79,10 +121,11 @@ func resolveCallerAccount(ctx context.Context, store *iam.IdentityStore, subject
 	)
 	switch kind {
 	case interfaces.SubjectIDUserID:
-		if _, parseErr := iam.ParseUserID(key); parseErr != nil {
+		userID, parseErr := strconv.ParseUint(key, 10, 64)
+		if parseErr != nil || userID == 0 {
 			return 0, callerRefused(op, "the authenticated caller does not name a user account")
 		}
-		user, err = store.GetUser(ctx, subject.TenantID, key)
+		user, err = store.GetUser(ctx, subject.TenantID, userID)
 	case interfaces.SubjectIDUsername:
 		user, err = store.GetUserByUsername(ctx, subject.TenantID, key)
 	case interfaces.SubjectIDEmail:
@@ -101,12 +144,7 @@ func resolveCallerAccount(ctx context.Context, store *iam.IdentityStore, subject
 	if user.TenantID != subject.TenantID {
 		return 0, callerRefused(op, "no user account in the caller's tenant matches the authenticated caller")
 	}
-
-	userID, err := user.QRDBID()
-	if err != nil {
-		return 0, &errors.QBError{Code: errors.ErrInternal, Op: op, Err: err}
-	}
-	return userID, nil
+	return user.ID, nil
 }
 
 // callerRefused is the Forbidden error for a caller whose account cannot be
@@ -115,6 +153,6 @@ func callerRefused(op, reason string) error {
 	return &errors.QBError{
 		Code: errors.ErrForbidden,
 		Op:   op,
-		Err:  &FIDO2CallerRefusedError{Reason: reason},
+		Err:  &CallerAccountRefusedError{Reason: reason},
 	}
 }

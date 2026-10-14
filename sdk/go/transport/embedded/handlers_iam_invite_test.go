@@ -94,7 +94,7 @@ func TestEmbeddedInviteDispatchRegistered(t *testing.T) {
 func TestEmbeddedInviteGet(t *testing.T) {
 	expires := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
 	stub := &stubInviteActivation{meta: &service.InviteMetadata{
-		UserID: "u1", Email: "a@example.com", AuthMethods: []string{"fido2"}, ExpiresAt: expires,
+		UserID: 9007199254740993, Email: "a@example.com", AuthMethods: []string{"fido2"}, ExpiresAt: expires,
 	}}
 	svc := &mockQuicBaaSForInvite{activation: stub}
 
@@ -109,13 +109,13 @@ func TestEmbeddedInviteGet(t *testing.T) {
 	if !ok {
 		t.Fatalf("response type = %T, want map", resp)
 	}
-	if out["user_id"] != "u1" || out["email"] != "a@example.com" || out["expires_at"] != expires {
+	if out["user_id"] != "9007199254740993" || out["email"] != "a@example.com" || out["expires_at"] != expires {
 		t.Errorf("response = %#v, want the stub's metadata", out)
 	}
 }
 
 func TestEmbeddedInviteFIDO2(t *testing.T) {
-	stub := &stubInviteActivation{activation: &service.InviteActivation{UserID: "u1", Warning: "w"}}
+	stub := &stubInviteActivation{activation: &service.InviteActivation{UserID: 9007199254740993, Warning: "w"}}
 	svc := &mockQuicBaaSForInvite{activation: stub}
 	ctx := context.Background()
 
@@ -137,13 +137,13 @@ func TestEmbeddedInviteFIDO2(t *testing.T) {
 		t.Errorf("credential = %#v, want the request's", stub.gotCredential)
 	}
 	out := resp.(map[string]interface{})
-	if out["user_id"] != "u1" || out["message"] != "activation successful" || out["warning"] != "w" {
+	if out["user_id"] != "9007199254740993" || out["message"] != "activation successful" || out["warning"] != "w" {
 		t.Errorf("finish = %#v, want the activation result", out)
 	}
 }
 
 func TestEmbeddedInvitePIV(t *testing.T) {
-	stub := &stubInviteActivation{activation: &service.InviteActivation{UserID: "u1"}}
+	stub := &stubInviteActivation{activation: &service.InviteActivation{UserID: 9007199254740993}}
 	svc := &mockQuicBaaSForInvite{activation: stub}
 
 	resp, err := handleIAMInvitePIV(context.Background(), svc,

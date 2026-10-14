@@ -129,7 +129,7 @@ func (p *tenantProvisioner) Provision(ctx context.Context, req *service.IAMProvi
 	// must not be able to carry a key even if that ever changes.
 	resp := &service.IAMProvisionTenantResponse{
 		TenantID:            res.TenantID,
-		AdminUserID:         iam.FormatUserID(res.AdminUserID),
+		AdminUserID:         res.AdminUserID,
 		AdminUsername:       res.AdminUsername,
 		AdminRoleID:         res.AdminRoleID,
 		AdminPending:        res.AdminPending,
@@ -159,7 +159,7 @@ func (p *tenantProvisioner) Provision(ctx context.Context, req *service.IAMProvi
 
 // enrollAdminCert enrolls the certificate qrdb issued for the tenant admin as
 // that admin's mtls login factor, the same enrollment first-boot performs.
-func (p *tenantProvisioner) enrollAdminCert(ctx context.Context, tenantID, adminUserID string, certPEM []byte) error {
+func (p *tenantProvisioner) enrollAdminCert(ctx context.Context, tenantID string, adminUserID uint64, certPEM []byte) error {
 	cert, err := parseCertLoginPEM(certPEM)
 	if err != nil {
 		return err
@@ -197,7 +197,7 @@ func (p *tenantProvisioner) finishCertEnrollment(ctx context.Context, certPEM []
 // It runs detached from the request's cancellation, bounded by
 // provisionRollbackTimeout: a request canceled mid-provision would otherwise
 // fail its own cleanup and strand an admin no re-run can log in as.
-func (p *tenantProvisioner) rollback(ctx context.Context, tenantID, adminUserID string) error {
+func (p *tenantProvisioner) rollback(ctx context.Context, tenantID string, adminUserID uint64) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), provisionRollbackTimeout)
 	defer cancel()
 	return p.identity.DeleteUser(cleanupCtx, tenantID, adminUserID)
@@ -225,15 +225,11 @@ func (p *tenantProvisioner) confirmExistingAdmin(ctx context.Context, resp *serv
 		}
 	}
 
-	qrdbUserID, err := iam.ParseUserID(admin.ID)
-	if err != nil {
-		return &TenantProvisionError{TenantID: resp.TenantID, Cause: err}
-	}
 	checker, ok := p.factors().(qrdbsdk.ActiveFactorChecker)
 	if !ok {
 		return provisionSeamUnavailable("fail-closed auth-factor checker")
 	}
-	active, err := checker.HasActiveFactor(qrdbsdk.ContextWithTenant(ctx, resp.TenantID), qrdbUserID)
+	active, err := checker.HasActiveFactor(qrdbsdk.ContextWithTenant(ctx, resp.TenantID), admin.ID)
 	if err != nil {
 		return &TenantProvisionError{TenantID: resp.TenantID, Cause: err}
 	}

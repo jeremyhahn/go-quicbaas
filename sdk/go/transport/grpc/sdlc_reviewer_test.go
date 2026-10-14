@@ -34,6 +34,7 @@ type bindingStoreServer struct {
 	pb.UnimplementedSDLCServiceServer
 	mu        sync.Mutex
 	held      *pb.ProjectBinding
+	lastBind  *pb.BindProjectRequest
 	lastSet   *pb.SetReviewerOverrideRequest
 	lastClear *pb.ClearReviewerOverrideRequest
 }
@@ -41,6 +42,7 @@ type bindingStoreServer struct {
 func (s *bindingStoreServer) BindProject(_ context.Context, req *pb.BindProjectRequest) (*pb.BindProjectResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lastBind = req
 	s.held = req.GetBinding()
 	return &pb.BindProjectResponse{Binding: s.held}, nil
 }

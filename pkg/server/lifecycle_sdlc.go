@@ -667,18 +667,13 @@ func (s *Server) startSDLC() error {
 	if err := triageAgents.Default.Validate("sdlc.triage_agent"); err != nil {
 		return &SDLCInitError{Component: "default triage agent", Cause: err}
 	}
-	triage, err := sdlc.NewTriageRunner(sdlc.TriageRunnerConfig{
+	triage, triageJobs, err := newSDLCTriage(sdlc.TriageRunnerConfig{
 		Bindings: sdlcService, Forges: sdlcService, Tokens: sdlcService, Signing: signing, Guard: guard,
 		CheckoutRoot: cfg.CheckoutRoot, SocketsRoot: socketsRoot, IssueLimit: cfg.IssuePageLimit,
 		TriageAgents: triageAgents,
-		Clusters:     store,
-	})
+	}, agents, store)
 	if err != nil {
-		return &SDLCInitError{Component: "triage runner", Cause: err}
-	}
-	triageJobs, err := sdlc.NewTriageScheduler(sdlc.TriageSchedulerConfig{Bindings: sdlcService, Jobs: agents, TriageAgents: triageAgents})
-	if err != nil {
-		return &SDLCInitError{Component: "triage scheduler", Cause: err}
+		return err
 	}
 	// The train builds in a container through the same forge access seam,
 	// at the delivery scope: its merge commits are signed as a worker's are.
@@ -785,6 +780,28 @@ func (s *Server) startSDLC() error {
 
 // stopSDLC detaches the module: the registered seams answer unavailable
 // from here on, and the facade stops serving the binding service.
+// newSDLCTriage builds the triage runner and the scheduler that nudges it.
+//
+// BOTH HOLD THE ONE STORE THE RERUN MARKS LIVE IN (go-quicbaas#894). A nudge
+// that loses the project's lease leaves its mark there, and the run in flight
+// takes it there and lists the issues again; a scheduler marking one store
+// and a runner reading another would drop the nudge exactly as before. The
+// store is set here, over whatever cfg carries, so no caller can split them.
+func newSDLCTriage(cfg sdlc.TriageRunnerConfig, jobs sdlc.TriageJobStarter, store *sdlc.Store) (*sdlc.TriageRunner, *sdlc.TriageScheduler, error) {
+	cfg.Clusters, cfg.Reruns = store, store
+	runner, err := sdlc.NewTriageRunner(cfg)
+	if err != nil {
+		return nil, nil, &SDLCInitError{Component: "triage runner", Cause: err}
+	}
+	scheduler, err := sdlc.NewTriageScheduler(sdlc.TriageSchedulerConfig{
+		Bindings: cfg.Bindings, Jobs: jobs, TriageAgents: cfg.TriageAgents, Reruns: store,
+	})
+	if err != nil {
+		return nil, nil, &SDLCInitError{Component: "triage scheduler", Cause: err}
+	}
+	return runner, scheduler, nil
+}
+
 func (s *Server) stopSDLC() {
 	if s.sdlc == nil {
 		return

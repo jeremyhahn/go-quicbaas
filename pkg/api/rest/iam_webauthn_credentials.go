@@ -146,25 +146,23 @@ func (h *IAMHandler) DeleteUserWebAuthnCredentials(w http.ResponseWriter, r *htt
 func (h *IAMHandler) resolveWebAuthnCredentialSubject(
 	w http.ResponseWriter,
 	r *http.Request,
-) (string, string, service.WebAuthnCredentialService, bool) {
+) (string, uint64, service.WebAuthnCredentialService, bool) {
 	tenantID := chi.URLParam(r, "tenant_id")
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
-		return "", "", nil, false
+		return "", 0, nil, false
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
-		return "", "", nil, false
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
+		return "", 0, nil, false
 	}
 
 	if h.server == nil || h.server.service == nil {
 		RespondIAMError(w, r, http.StatusServiceUnavailable,
 			NewIAMAPIError(ErrInternalError, "WebAuthn is not available on this node"))
-		return "", "", nil, false
+		return "", 0, nil, false
 	}
 	provider, ok := h.server.service.(interface {
 		WebAuthnCredentials() service.WebAuthnCredentialService
@@ -172,13 +170,13 @@ func (h *IAMHandler) resolveWebAuthnCredentialSubject(
 	if !ok {
 		RespondIAMError(w, r, http.StatusServiceUnavailable,
 			NewIAMAPIError(ErrInternalError, "WebAuthn is not available on this node"))
-		return "", "", nil, false
+		return "", 0, nil, false
 	}
 	svc := provider.WebAuthnCredentials()
 	if svc == nil {
 		RespondIAMError(w, r, http.StatusServiceUnavailable,
 			NewIAMAPIError(ErrInternalError, "WebAuthn is not available on this node"))
-		return "", "", nil, false
+		return "", 0, nil, false
 	}
 
 	return tenantID, userID, svc, true

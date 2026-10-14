@@ -65,6 +65,13 @@ Tenancy is the caller's own; `?tenant_id=` may only name the bound tenant
 the path. Every `forge:` field is described in [the project binding](engineering.md#the-project-binding);
 `ssh_host_key` is required when the project's repository URL is an ssh one.
 
+A bind switches the project's autonomy on. `?paused=true` binds without doing
+so, and never switches it off; the flag belongs to the request and is not
+stored on the binding. It parses as a boolean, and any other value is a `400`
+that binds nothing. gRPC carries it as `BindProjectRequest.paused` (field 3),
+MCP as the `sdlc_bind` boolean argument `paused`, and the SDKs as
+`BindRequest.Paused` (Go) and `bind(..., paused?)` (TypeScript).
+
 ```json
 {
   "forge": {

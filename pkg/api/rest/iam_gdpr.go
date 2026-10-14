@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -40,10 +41,8 @@ func (h *IAMHandler) GrantConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -135,10 +134,8 @@ func (h *IAMHandler) ListUserConsents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -185,10 +182,8 @@ func (h *IAMHandler) GetConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -241,10 +236,8 @@ func (h *IAMHandler) WithdrawConsent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -321,10 +314,8 @@ func (h *IAMHandler) RequestDataExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -357,7 +348,7 @@ func (h *IAMHandler) RequestDataExport(w http.ResponseWriter, r *http.Request) {
 
 	// Default requested_by to user if not specified
 	if req.RequestedBy == "" {
-		req.RequestedBy = userID
+		req.RequestedBy = strconv.FormatUint(userID, 10)
 	}
 
 	// Get GDPR manager
@@ -402,10 +393,8 @@ func (h *IAMHandler) GetExportStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -467,10 +456,8 @@ func (h *IAMHandler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -575,10 +562,8 @@ func (h *IAMHandler) RequestDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -607,7 +592,7 @@ func (h *IAMHandler) RequestDeletion(w http.ResponseWriter, r *http.Request) {
 
 	// Default requested_by to user if not specified
 	if req.RequestedBy == "" {
-		req.RequestedBy = userID
+		req.RequestedBy = strconv.FormatUint(userID, 10)
 	}
 
 	// Get GDPR manager
@@ -652,10 +637,8 @@ func (h *IAMHandler) GetDeletionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -715,10 +698,8 @@ func (h *IAMHandler) CancelDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -732,7 +713,7 @@ func (h *IAMHandler) CancelDeletion(w http.ResponseWriter, r *http.Request) {
 	// Get cancelled_by from query parameter or default to user
 	cancelledBy := r.URL.Query().Get("cancelled_by")
 	if cancelledBy == "" {
-		cancelledBy = userID
+		cancelledBy = strconv.FormatUint(userID, 10)
 	}
 
 	// Get GDPR manager

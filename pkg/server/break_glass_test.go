@@ -132,15 +132,15 @@ func (unreachableFederationManager) HandleCallback(context.Context, string, stri
 	return nil, &idpUnreachableError{}
 }
 
-func (unreachableFederationManager) LinkAccount(context.Context, string, string, string, string) error {
+func (unreachableFederationManager) LinkAccount(context.Context, uint64, string, string, string) error {
 	return &idpUnreachableError{}
 }
 
-func (unreachableFederationManager) UnlinkAccount(context.Context, string, string, string) error {
+func (unreachableFederationManager) UnlinkAccount(context.Context, uint64, string, string) error {
 	return &idpUnreachableError{}
 }
 
-func (unreachableFederationManager) GetUserLinks(context.Context, string, string) ([]*iam.FederatedIdentity, error) {
+func (unreachableFederationManager) GetUserLinks(context.Context, uint64, string) ([]*iam.FederatedIdentity, error) {
 	return nil, &idpUnreachableError{}
 }
 

@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -48,7 +49,7 @@ type ConsentStorage interface {
 	CreateConsent(ctx context.Context, opts CreateConsentOptions) (*Consent, error)
 
 	// GetConsent retrieves a consent by user, tenant, and purpose.
-	GetConsent(ctx context.Context, tenantID, userID string, purpose ConsentPurpose) (*Consent, error)
+	GetConsent(ctx context.Context, tenantID string, userID uint64, purpose ConsentPurpose) (*Consent, error)
 
 	// UpdateConsent updates an existing consent record.
 	UpdateConsent(ctx context.Context, id string, opts UpdateConsentOptions) (*Consent, error)
@@ -60,7 +61,7 @@ type ConsentStorage interface {
 	ListConsents(ctx context.Context, opts ListConsentsOptions) ([]*Consent, error)
 
 	// GetUserConsents retrieves all consents for a user.
-	GetUserConsents(ctx context.Context, tenantID, userID string) ([]*Consent, error)
+	GetUserConsents(ctx context.Context, tenantID string, userID uint64) ([]*Consent, error)
 }
 
 // DataExportStorage defines the interface for data export request persistence.
@@ -152,7 +153,7 @@ func NewGDPRManager(deps GDPRManagerDependencies) (*GDPRManager, error) {
 
 // GrantConsent records user consent for a specific purpose.
 // If consent already exists for the given purpose, it will be updated with the new version.
-func (m *GDPRManager) GrantConsent(ctx context.Context, tenantID, userID string, purpose ConsentPurpose, version string, expiresAt *time.Time, ipAddress, userAgent string) (*Consent, error) {
+func (m *GDPRManager) GrantConsent(ctx context.Context, tenantID string, userID uint64, purpose ConsentPurpose, version string, expiresAt *time.Time, ipAddress, userAgent string) (*Consent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -178,7 +179,7 @@ func (m *GDPRManager) GrantConsent(ctx context.Context, tenantID, userID string,
 
 		// Audit log (optional)
 		if m.deps.AuditLogger != nil {
-			_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, userID, "consent.updated", map[string]interface{}{
+			_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, strconv.FormatUint(userID, 10), "consent.updated", map[string]interface{}{
 				"purpose":    string(purpose),
 				"version":    version,
 				"consent_id": consent.ID,
@@ -206,7 +207,7 @@ func (m *GDPRManager) GrantConsent(ctx context.Context, tenantID, userID string,
 
 	// Audit log (optional)
 	if m.deps.AuditLogger != nil {
-		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, userID, "consent.granted", map[string]interface{}{
+		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, strconv.FormatUint(userID, 10), "consent.granted", map[string]interface{}{
 			"purpose":    string(purpose),
 			"version":    version,
 			"consent_id": consent.ID,
@@ -217,7 +218,7 @@ func (m *GDPRManager) GrantConsent(ctx context.Context, tenantID, userID string,
 }
 
 // WithdrawConsent withdraws previously granted consent.
-func (m *GDPRManager) WithdrawConsent(ctx context.Context, tenantID, userID string, purpose ConsentPurpose, ipAddress, userAgent string) error {
+func (m *GDPRManager) WithdrawConsent(ctx context.Context, tenantID string, userID uint64, purpose ConsentPurpose, ipAddress, userAgent string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -239,7 +240,7 @@ func (m *GDPRManager) WithdrawConsent(ctx context.Context, tenantID, userID stri
 
 	// Audit log (optional)
 	if m.deps.AuditLogger != nil {
-		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, userID, "consent.withdrawn", map[string]interface{}{
+		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, strconv.FormatUint(userID, 10), "consent.withdrawn", map[string]interface{}{
 			"purpose":    string(purpose),
 			"consent_id": consent.ID,
 		})
@@ -249,7 +250,7 @@ func (m *GDPRManager) WithdrawConsent(ctx context.Context, tenantID, userID stri
 }
 
 // GetConsent retrieves a specific consent record.
-func (m *GDPRManager) GetConsent(ctx context.Context, tenantID, userID string, purpose ConsentPurpose) (*Consent, error) {
+func (m *GDPRManager) GetConsent(ctx context.Context, tenantID string, userID uint64, purpose ConsentPurpose) (*Consent, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -257,7 +258,7 @@ func (m *GDPRManager) GetConsent(ctx context.Context, tenantID, userID string, p
 }
 
 // ListUserConsents retrieves all consents for a user.
-func (m *GDPRManager) ListUserConsents(ctx context.Context, tenantID, userID string) ([]*Consent, error) {
+func (m *GDPRManager) ListUserConsents(ctx context.Context, tenantID string, userID uint64) ([]*Consent, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -268,7 +269,7 @@ func (m *GDPRManager) ListUserConsents(ctx context.Context, tenantID, userID str
 
 // RequestExport creates a new data export request and starts background processing.
 // The export will be processed asynchronously and its status can be checked via GetExportStatus.
-func (m *GDPRManager) RequestExport(ctx context.Context, tenantID, userID, requestedBy string, format DataExportFormat, includeCategories, excludeCategories []string) (*DataExportRequest, error) {
+func (m *GDPRManager) RequestExport(ctx context.Context, tenantID string, userID uint64, requestedBy string, format DataExportFormat, includeCategories, excludeCategories []string) (*DataExportRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -330,7 +331,7 @@ func (m *GDPRManager) RequestExport(ctx context.Context, tenantID, userID, reque
 	if m.deps.AuditLogger != nil {
 		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, requestedBy, "data_export.requested", map[string]interface{}{
 			"export_id":          request.ID,
-			"subject_user_id":    userID,
+			"subject_user_id":    strconv.FormatUint(userID, 10),
 			"format":             string(format),
 			"include_categories": includeCategories,
 			"exclude_categories": excludeCategories,
@@ -449,7 +450,7 @@ func (m *GDPRManager) GenerateExport(ctx context.Context, exportID string) (*Use
 	request.Status = DataExportStatusCompleted
 	request.CompletedAt = &completedAt
 	request.ExpiresAt = &expiresAt
-	request.DownloadURL = fmt.Sprintf("/api/v1/tenants/%s/users/%s/gdpr/export/%s/download",
+	request.DownloadURL = fmt.Sprintf("/api/v1/tenants/%s/users/%d/gdpr/export/%s/download",
 		request.TenantID, request.UserID, exportID)
 
 	if err := m.deps.DataExportStorage.UpdateExportRequest(ctx, request); err != nil {
@@ -460,7 +461,7 @@ func (m *GDPRManager) GenerateExport(ctx context.Context, exportID string) (*Use
 	if m.deps.AuditLogger != nil {
 		_ = m.deps.AuditLogger.LogGDPREvent(ctx, request.TenantID, request.RequestedBy, "data_export.completed", map[string]interface{}{
 			"export_id":       exportID,
-			"subject_user_id": request.UserID,
+			"subject_user_id": strconv.FormatUint(request.UserID, 10),
 		})
 	}
 
@@ -610,7 +611,7 @@ func (m *GDPRManager) determineCategories(request *DataExportRequest) []string {
 // RequestDeletion creates a new data deletion request with grace period.
 // A gracePeriodDays of 0 means immediate deletion (no grace period).
 // A gracePeriodDays < 0 (e.g., -1) means use the default grace period.
-func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID, userID, requestedBy, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*DataDeletionRequest, error) {
+func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID string, userID uint64, requestedBy, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*DataDeletionRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -670,7 +671,7 @@ func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID, userID, req
 	if m.deps.AuditLogger != nil {
 		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, requestedBy, "data_deletion.requested", map[string]interface{}{
 			"deletion_id":         request.ID,
-			"subject_user_id":     userID,
+			"subject_user_id":     strconv.FormatUint(userID, 10),
 			"grace_period_days":   gracePeriodDays,
 			"delete_categories":   deleteCategories,
 			"preserve_categories": preserveCategories,
@@ -763,7 +764,7 @@ func (m *GDPRManager) CancelDeletion(ctx context.Context, deletionID, cancelledB
 	if m.deps.AuditLogger != nil {
 		_ = m.deps.AuditLogger.LogGDPREvent(ctx, request.TenantID, cancelledBy, "data_deletion.cancelled", map[string]interface{}{
 			"deletion_id":     deletionID,
-			"subject_user_id": request.UserID,
+			"subject_user_id": strconv.FormatUint(request.UserID, 10),
 		})
 	}
 
@@ -823,7 +824,7 @@ func (m *GDPRManager) ProcessDeletion(ctx context.Context, deletionID string) (*
 	if m.deps.AuditLogger != nil {
 		_ = m.deps.AuditLogger.LogGDPREvent(ctx, request.TenantID, request.RequestedBy, "data_deletion.completed", map[string]interface{}{
 			"deletion_id":     deletionID,
-			"subject_user_id": request.UserID,
+			"subject_user_id": strconv.FormatUint(request.UserID, 10),
 			"summary":         summary,
 		})
 	}

@@ -229,7 +229,7 @@ func TestMemoryStorageAnswersIdentityLookupsWithSentinels(t *testing.T) {
 	m := NewMemoryStorage()
 	ctx := context.Background()
 
-	_, err := m.GetUser(ctx, "acme", "404")
+	_, err := m.GetUser(ctx, "acme", 404)
 	assert.True(t, IsUserNotFound(err), "GetUser: %v", err)
 
 	_, err = m.GetUserByEmail(ctx, "acme", "nobody@acme.com")

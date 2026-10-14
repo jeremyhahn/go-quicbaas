@@ -295,6 +295,9 @@ type fakeForge struct {
 	// branchSHA is the tip GetBranch reports; empty takes fakeForgeHeadSHA.
 	// A test moves it to model a merge landing on the default branch.
 	branchSHA string
+	// getBranchErr, when set, fails every GetBranch: the default branch's
+	// head cannot be read.
+	getBranchErr error
 
 	issues        map[int]*ForgeIssue
 	comments      map[int][]ForgeComment
@@ -420,6 +423,7 @@ type fakeForge struct {
 	listOpenPRsErr  error
 	listChecksErr   error
 	listIssuesErr   error
+	issueListings   int
 	getIssueErr     error
 	getIssueNil     bool
 	listCommentsErr error
@@ -579,6 +583,7 @@ func (f *fakeForge) Capabilities() ForgeCapabilities { return f.caps }
 func (f *fakeForge) ListIssues(_ context.Context, _ RepoRef, filter IssueFilter) ([]ForgeIssue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.issueListings++
 	if f.listIssuesErr != nil {
 		return nil, f.listIssuesErr
 	}
@@ -819,6 +824,9 @@ const fakeForgeHeadSHA = "f00dcafe00000000000000000000000000000000"
 func (f *fakeForge) GetBranch(_ context.Context, _ RepoRef, name string) (*ForgeBranch, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getBranchErr != nil {
+		return nil, f.getBranchErr
+	}
 	if cut, ok := f.branches[name]; ok {
 		return &ForgeBranch{Name: name, SHA: cut}, nil
 	}

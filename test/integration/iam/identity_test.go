@@ -106,7 +106,7 @@ func TestUserCRUD(t *testing.T) {
 		}
 
 		var updated iam.User
-		err = cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, userID), updateReq, &updated)
+		err = cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Updated User Name", updated.Name)
@@ -123,11 +123,11 @@ func TestUserCRUD(t *testing.T) {
 		require.NotEmpty(t, resp.Users)
 
 		userID := resp.Users[0].ID
-		err = cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, userID))
+		err = cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID))
 		require.NoError(t, err)
 
 		// Verify deletion - use expectNotFound which handles eventual consistency
-		err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, userID))
+		err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID))
 		assert.NoError(t, err, "Deleted user should not be found")
 	})
 }
@@ -195,7 +195,7 @@ func TestUserRoleAssignment(t *testing.T) {
 			"roles": []string{"developer"},
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, user.ID), assignReq, &updated)
+		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), assignReq, &updated)
 		require.NoError(t, err)
 
 		assert.Contains(t, updated.Roles, "developer")
@@ -207,7 +207,7 @@ func TestUserRoleAssignment(t *testing.T) {
 			"roles": []string{},
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, user.ID), assignReq, &updated)
+		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), assignReq, &updated)
 		require.NoError(t, err)
 
 		assert.Empty(t, updated.Roles)
@@ -323,7 +323,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 			"roles": roles,
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, user.ID), updateReq, &updated)
+		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Len(t, updated.Roles, 3)
@@ -338,7 +338,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 			"roles": []string{"viewer", "editor"},
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, user.ID), updateReq, &updated)
+		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Len(t, updated.Roles, 2)
@@ -351,7 +351,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 			"roles": []string{},
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, user.ID), updateReq, &updated)
+		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Empty(t, updated.Roles)

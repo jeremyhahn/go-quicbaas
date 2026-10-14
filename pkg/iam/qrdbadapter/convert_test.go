@@ -32,45 +32,6 @@ func assertTimeEq(t *testing.T, what string, got, want time.Time) {
 }
 
 // -----------------------------------------------------------------------------
-// Identifier conversion — what replaced the IDMap
-// -----------------------------------------------------------------------------
-
-// TestUserIDConversionIsTotalAndReversible is the property the deleted IDMap
-// could not offer: the external id and the store's id are one value, so the
-// conversion cannot report "id correlation not found" for a user that exists.
-func TestUserIDConversionIsTotalAndReversible(t *testing.T) {
-	for _, id := range []uint64{1, 1001, 1 << 62} {
-		external := FormatUserID(id)
-		got, err := ParseUserID(external)
-		if err != nil {
-			t.Fatalf("ParseUserID(%q): %v", external, err)
-		}
-		if got != id {
-			t.Fatalf("round trip: got %d, want %d", got, id)
-		}
-	}
-	// Zero is the store's invalid sentinel and has no external form.
-	if got := FormatUserID(0); got != "" {
-		t.Fatalf("FormatUserID(0) = %q, want empty", got)
-	}
-}
-
-func TestParseUserID_RefusesWhatNeverNamedAUser(t *testing.T) {
-	for _, in := range []string{
-		"",
-		"0",
-		"not-a-number",
-		"9f1c2c4e-0000-4000-8000-000000000000", // the UUID shape the idmap used to correlate
-		"-1",
-		"1001x",
-	} {
-		if _, err := ParseUserID(in); !errors.Is(err, iam.ErrInvalidUserID) {
-			t.Errorf("ParseUserID(%q) err = %v, want iam.ErrInvalidUserID", in, err)
-		}
-	}
-}
-
-// -----------------------------------------------------------------------------
 // User projection
 // -----------------------------------------------------------------------------
 
@@ -80,7 +41,7 @@ func TestUserRoundTrip_FullFidelity(t *testing.T) {
 	lastAuth := time.Now().Add(-30 * time.Minute).UTC()
 
 	orig := &iam.User{
-		ID:          "1001",
+		ID:          1001,
 		Email:       "alice@acme.test",
 		Name:        "Alice",
 		TenantID:    "acme",
@@ -142,12 +103,9 @@ func TestFromIAMUser_AcceptsAnUncreatedRecord(t *testing.T) {
 	}
 }
 
-func TestFromIAMUser_RefusesNilAndMalformedIDs(t *testing.T) {
+func TestFromIAMUser_RefusesNil(t *testing.T) {
 	if _, err := FromIAMUser(nil); !errors.Is(err, iam.ErrInvalidUserID) {
 		t.Fatalf("err = %v, want iam.ErrInvalidUserID for a nil user", err)
-	}
-	if _, err := FromIAMUser(&iam.User{ID: "abc", TenantID: "acme"}); !errors.Is(err, iam.ErrInvalidUserID) {
-		t.Fatalf("err = %v, want iam.ErrInvalidUserID for a non-Snowflake id", err)
 	}
 }
 
@@ -203,7 +161,7 @@ func TestCoreUsername_IsTheHandleNotTheDisplayName(t *testing.T) {
 // handle the caller created the account with.
 func TestUserRoundTrip_PreservesTheHandleAndTheDisplayNameSeparately(t *testing.T) {
 	in := &iam.User{
-		ID:       "1001",
+		ID:       1001,
 		TenantID: "acme",
 		Email:    "alice@acme.test",
 		Username: "alice",
@@ -245,7 +203,7 @@ func TestToIAMUser_DisplayNameFallsBackToUsername(t *testing.T) {
 }
 
 func TestUserRoundTrip_EmptyCollectionsStayNil(t *testing.T) {
-	core, err := FromIAMUser(&iam.User{ID: "1001", TenantID: "acme", Email: "min@acme.test"})
+	core, err := FromIAMUser(&iam.User{ID: 1001, TenantID: "acme", Email: "min@acme.test"})
 	if err != nil {
 		t.Fatalf("FromIAMUser: %v", err)
 	}
@@ -261,7 +219,7 @@ func TestUserRoundTrip_EmptyCollectionsStayNil(t *testing.T) {
 // silently edit the other.
 func TestUserProjection_DoesNotAliasBackingStorage(t *testing.T) {
 	orig := &iam.User{
-		ID: "1001", TenantID: "acme", Email: "alice@acme.test",
+		ID: 1001, TenantID: "acme", Email: "alice@acme.test",
 		Roles:      []string{"role-admin"},
 		Attributes: map[string]string{"dept": "eng"},
 		CertBindings: []qrdbsdk.CertBinding{
@@ -284,7 +242,7 @@ func TestUserProjection_DoesNotAliasBackingStorage(t *testing.T) {
 
 func TestUserRoundTrip_MultipleCertBindings(t *testing.T) {
 	orig := &iam.User{
-		ID: "1001", TenantID: "acme", Email: "piv@acme.test",
+		ID: 1001, TenantID: "acme", Email: "piv@acme.test",
 		CertBindings: []qrdbsdk.CertBinding{
 			{Thumbprint: "spki-old", Kind: qrdbsdk.CertBindingSPKIThumbprint},
 			{Thumbprint: "spki-new", Kind: qrdbsdk.CertBindingSPKIThumbprint},

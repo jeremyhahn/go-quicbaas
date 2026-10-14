@@ -64,8 +64,8 @@ func TestImportAll(t *testing.T) {
 				{ID: "role2", Name: "User", Description: "User role", Permissions: []string{"read"}},
 			},
 			Users: []*UserImport{
-				{ID: "user1", Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
-				{ID: "user2", Email: "user2@example.com", Username: "user2", Name: "User Two", Enabled: boolPtr(true)},
+				{ID: 20001, Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
+				{ID: 20002, Email: "user2@example.com", Username: "user2", Name: "User Two", Enabled: boolPtr(true)},
 			},
 			Policies: []*PolicyImport{
 				{
@@ -115,7 +115,7 @@ func TestImportAll(t *testing.T) {
 		req := &BatchImportRequest{
 			TenantID: "test-tenant",
 			Users: []*UserImport{
-				{ID: "user1", Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
+				{ID: 20001, Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
 			},
 			Roles: []*RoleImport{
 				{ID: "role1", Name: "Admin"},
@@ -151,9 +151,9 @@ func TestImportAll(t *testing.T) {
 		req := &BatchImportRequest{
 			TenantID: "test-tenant",
 			Users: []*UserImport{
-				{ID: "user1", Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
-				{ID: "user2", Email: "", Username: "user2", Name: "Invalid User", Enabled: boolPtr(true)}, // Invalid - no email
-				{ID: "user3", Email: "user3@example.com", Username: "user3", Name: "User Three", Enabled: boolPtr(true)},
+				{ID: 20001, Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
+				{ID: 20002, Email: "", Username: "user2", Name: "Invalid User", Enabled: boolPtr(true)}, // Invalid - no email
+				{ID: 20003, Email: "user3@example.com", Username: "user3", Name: "User Three", Enabled: boolPtr(true)},
 			},
 			Options: BatchImportOptions{
 				ContinueOnError: true,
@@ -233,7 +233,7 @@ func TestImportAll(t *testing.T) {
 		req := &BatchImportRequest{
 			TenantID: "test-tenant",
 			Users: []*UserImport{
-				{ID: "user1", Email: "user1@example.com", Username: "user1"},
+				{ID: 20001, Email: "user1@example.com", Username: "user1"},
 			},
 			Options: BatchImportOptions{
 				Timeout: 5 * time.Minute,
@@ -260,8 +260,8 @@ func TestImportAll(t *testing.T) {
 		req := &BatchImportRequest{
 			TenantID: "test-tenant",
 			Users: []*UserImport{
-				{ID: "user1", Email: "user1@example.com", Username: "user1"},
-				{ID: "user2", Email: "user2@example.com", Username: "user2"},
+				{ID: 20001, Email: "user1@example.com", Username: "user1"},
+				{ID: 20002, Email: "user2@example.com", Username: "user2"},
 			},
 			Options: BatchImportOptions{
 				ProgressFunc: func(p BatchImportProgress) {
@@ -326,7 +326,7 @@ func TestImportAll(t *testing.T) {
 				{ID: "role1", Name: "Admin"},
 			},
 			Users: []*UserImport{
-				{ID: "user1", Email: "user1@example.com", Username: "user1"},
+				{ID: 20001, Email: "user1@example.com", Username: "user1"},
 			},
 			Policies: []*PolicyImport{
 				{Name: "", Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}}}}, // Invalid - missing name
@@ -448,9 +448,9 @@ func TestImportUsers(t *testing.T) {
 		ctx := context.Background()
 
 		users := []*UserImport{
-			{ID: "1", Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
-			{ID: "2", Email: "user2@example.com", Username: "user2", Name: "User Two", Enabled: boolPtr(true)},
-			{ID: "3", Email: "user3@example.com", Username: "user3", Name: "User Three", Enabled: boolPtr(true)},
+			{ID: 1, Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
+			{ID: 2, Email: "user2@example.com", Username: "user2", Name: "User Two", Enabled: boolPtr(true)},
+			{ID: 3, Email: "user3@example.com", Username: "user3", Name: "User Three", Enabled: boolPtr(true)},
 		}
 
 		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{})
@@ -481,7 +481,7 @@ func TestImportUsers(t *testing.T) {
 
 		users := []*UserImport{
 			{
-				ID:       "1",
+				ID:       1,
 				Email:    "user1@example.com",
 				Username: "user1",
 				Name:     "User One",
@@ -517,7 +517,7 @@ func TestImportUsers(t *testing.T) {
 
 		// Pre-create a user
 		existingUser := &User{
-			ID:       "1",
+			ID:       1,
 			Email:    "user1@example.com",
 			TenantID: "test-tenant",
 			Name:     "Old Name",
@@ -527,7 +527,7 @@ func TestImportUsers(t *testing.T) {
 		}
 
 		users := []*UserImport{
-			{ID: "1", Email: "user1@example.com", Username: "user1", Name: "New Name", Enabled: boolPtr(true)},
+			{ID: 1, Email: "user1@example.com", Username: "user1", Name: "New Name", Enabled: boolPtr(true)},
 		}
 
 		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{UpdateExisting: true})
@@ -540,7 +540,7 @@ func TestImportUsers(t *testing.T) {
 		}
 
 		// Verify name was updated
-		user, err := memStorage.GetUser(ctx, "test-tenant", "1")
+		user, err := memStorage.GetUser(ctx, "test-tenant", 1)
 		if err != nil {
 			t.Fatalf("failed to get user: %v", err)
 		}
@@ -555,7 +555,7 @@ func TestImportUsers(t *testing.T) {
 
 		// Pre-create a user
 		existingUser := &User{
-			ID:       "1",
+			ID:       1,
 			Email:    "user1@example.com",
 			TenantID: "test-tenant",
 			Name:     "Existing User",
@@ -565,7 +565,7 @@ func TestImportUsers(t *testing.T) {
 		}
 
 		users := []*UserImport{
-			{ID: "1", Email: "user1@example.com", Username: "user1", Name: "New Name"},
+			{ID: 1, Email: "user1@example.com", Username: "user1", Name: "New Name"},
 		}
 
 		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{UpdateExisting: false})
@@ -583,8 +583,8 @@ func TestImportUsers(t *testing.T) {
 		ctx := context.Background()
 
 		users := []*UserImport{
-			{ID: "1", Email: "", Username: "user1"},             // Missing email
-			{ID: "2", Email: "user2@example.com", Username: ""}, // Missing username
+			{ID: 1, Email: "", Username: "user1"},             // Missing email
+			{ID: 2, Email: "user2@example.com", Username: ""}, // Missing username
 		}
 
 		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{ContinueOnError: true})
@@ -646,11 +646,11 @@ func TestImportUsers(t *testing.T) {
 
 		// Create a few users to verify batch processing works
 		users := []*UserImport{
-			{ID: "1", Email: "user1@example.com", Username: "user1", Enabled: boolPtr(true)},
-			{ID: "2", Email: "user2@example.com", Username: "user2", Enabled: boolPtr(true)},
-			{ID: "3", Email: "user3@example.com", Username: "user3", Enabled: boolPtr(true)},
-			{ID: "u4", Email: "user4@example.com", Username: "user4", Enabled: boolPtr(true)},
-			{ID: "u5", Email: "user5@example.com", Username: "user5", Enabled: boolPtr(true)},
+			{ID: 1, Email: "user1@example.com", Username: "user1", Enabled: boolPtr(true)},
+			{ID: 2, Email: "user2@example.com", Username: "user2", Enabled: boolPtr(true)},
+			{ID: 3, Email: "user3@example.com", Username: "user3", Enabled: boolPtr(true)},
+			{ID: 30004, Email: "user4@example.com", Username: "user4", Enabled: boolPtr(true)},
+			{ID: 30005, Email: "user5@example.com", Username: "user5", Enabled: boolPtr(true)},
 		}
 
 		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{})
@@ -674,7 +674,7 @@ func TestImportUser(t *testing.T) {
 		ctx := context.Background()
 
 		user := &UserImport{
-			ID:         "1",
+			ID:         1,
 			Email:      "user1@example.com",
 			Username:   "user1",
 			Name:       "User One",
@@ -705,7 +705,7 @@ func TestImportUser(t *testing.T) {
 		ctx := context.Background()
 
 		user := &UserImport{
-			ID:       "1",
+			ID:       1,
 			Email:    "user1@example.com",
 			Username: "user1",
 		}
@@ -716,7 +716,7 @@ func TestImportUser(t *testing.T) {
 		}
 
 		// Verify user was NOT created
-		_, err = memStorage.GetUser(ctx, "test-tenant", "1")
+		_, err = memStorage.GetUser(ctx, "test-tenant", 1)
 		if err == nil {
 			t.Error("expected user not to be created in dry run")
 		}
@@ -727,7 +727,7 @@ func TestImportUser(t *testing.T) {
 		ctx := context.Background()
 
 		user := &UserImport{
-			ID:       "1",
+			ID:       1,
 			Username: "user1",
 		}
 
@@ -747,7 +747,7 @@ func TestImportUser(t *testing.T) {
 		ctx := context.Background()
 
 		user := &UserImport{
-			ID:    "1",
+			ID:    1,
 			Email: "user1@example.com",
 		}
 
@@ -769,7 +769,7 @@ func TestImportUser(t *testing.T) {
 
 		// Create existing user
 		existingUser := &User{
-			ID:       "1",
+			ID:       1,
 			Email:    "user1@example.com",
 			TenantID: "test-tenant",
 			Name:     "Old Name",
@@ -779,7 +779,7 @@ func TestImportUser(t *testing.T) {
 		}
 
 		user := &UserImport{
-			ID:         "1",
+			ID:         1,
 			Email:      "user1@example.com",
 			Username:   "user1",
 			Name:       "New Name",
@@ -794,7 +794,7 @@ func TestImportUser(t *testing.T) {
 		}
 
 		// Verify updates
-		updated, err := memStorage.GetUser(ctx, "test-tenant", "1")
+		updated, err := memStorage.GetUser(ctx, "test-tenant", 1)
 		if err != nil {
 			t.Fatalf("failed to get user: %v", err)
 		}
@@ -809,7 +809,7 @@ func TestImportUser(t *testing.T) {
 
 		// Create existing user
 		existingUser := &User{
-			ID:       "1",
+			ID:       1,
 			Email:    "user1@example.com",
 			TenantID: "test-tenant",
 			Name:     "Existing User",
@@ -819,7 +819,7 @@ func TestImportUser(t *testing.T) {
 		}
 
 		user := &UserImport{
-			ID:       "2",
+			ID:       2,
 			Email:    "user1@example.com", // Same email
 			Username: "user2",
 		}
@@ -835,7 +835,7 @@ func TestImportUser(t *testing.T) {
 		ctx := context.Background()
 
 		user := &UserImport{
-			ID:       "1",
+			ID:       1,
 			Email:    "user1@example.com",
 			Username: "user1",
 			Roles:    []string{"nonexistent-role"},
@@ -876,7 +876,7 @@ func TestImportUser(t *testing.T) {
 		}
 
 		user := &UserImport{
-			ID:       "1",
+			ID:       1,
 			Email:    "user1@example.com",
 			Username: "user1",
 			Roles:    []string{"role1", "role2", "role3"},
@@ -1900,7 +1900,7 @@ func TestImportAllErrorPropagation(t *testing.T) {
 				{ID: "role1", Name: "Admin"},
 			},
 			Users: []*UserImport{
-				{ID: "user1", Email: "user1@example.com", Username: "user1"},
+				{ID: 20001, Email: "user1@example.com", Username: "user1"},
 			},
 			Policies: []*PolicyImport{
 				{Name: "", Rules: []Rule{}}, // Invalid - will fail
@@ -1928,7 +1928,7 @@ func TestWorkerPoolSubmissionFailure(t *testing.T) {
 		users := make([]*UserImport, 10)
 		for i := 0; i < 10; i++ {
 			users[i] = &UserImport{
-				ID:       fmt.Sprintf("user-%d", i),
+				ID:       uint64(i) + 1,
 				Email:    fmt.Sprintf("user%d@example.com", i),
 				Username: fmt.Sprintf("user%d", i),
 			}
@@ -1951,7 +1951,7 @@ func TestErrAlreadyExistsHandling(t *testing.T) {
 
 		// Create existing user
 		existingUser := &User{
-			ID:       "1",
+			ID:       1,
 			Email:    "user1@example.com",
 			TenantID: "test-tenant",
 		}
@@ -1960,7 +1960,7 @@ func TestErrAlreadyExistsHandling(t *testing.T) {
 		}
 
 		users := []*UserImport{
-			{ID: "1", Email: "user1@example.com", Username: "user1"},
+			{ID: 1, Email: "user1@example.com", Username: "user1"},
 		}
 
 		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{
@@ -2079,7 +2079,7 @@ func TestBatchManager_ImportAll_ContextCancellation(t *testing.T) {
 	_, err := bm.ImportAll(ctx, &BatchImportRequest{
 		TenantID: tenantID,
 		Users: []*UserImport{
-			{ID: "user-1", Email: "user1@test.com", Name: "User One"},
+			{ID: 10001, Email: "user1@test.com", Name: "User One"},
 		},
 	})
 	if err == nil {
@@ -2155,7 +2155,7 @@ func TestBatchManager_ExportAll_WithAllOptions(t *testing.T) {
 	}
 
 	// Create test data
-	user := &User{ID: "35", TenantID: tenantID, Email: "exp@test.com", Name: "Export User", Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 35, TenantID: tenantID, Email: "exp@test.com", Name: "Export User", Created: time.Now(), Updated: time.Now()}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -2404,7 +2404,7 @@ func TestMemoryStorage_CreateUser_Duplicate(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	user := &User{ID: "36", TenantID: tenantID, Email: "dup@test.com", Name: "Dup User", Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 36, TenantID: tenantID, Email: "dup@test.com", Name: "Dup User", Created: time.Now(), Updated: time.Now()}
 
 	// Create first user
 	if err := storage.CreateUser(ctx, user); err != nil {
@@ -2480,7 +2480,7 @@ func TestBatchManager_ImportAll_WithTimeout(t *testing.T) {
 	result, err := bm.ImportAll(ctx, &BatchImportRequest{
 		TenantID: tenantID,
 		Users: []*UserImport{
-			{ID: "user-1", Email: "user1@test.com", Name: "User One"},
+			{ID: 10001, Email: "user1@test.com", Name: "User One"},
 		},
 		Options: BatchImportOptions{
 			Timeout: 5 * time.Second,
@@ -2633,7 +2633,7 @@ func TestMemoryConsentStorage_SaveAndGetConsent(t *testing.T) {
 	// Create consent with all required fields
 	opts := CreateConsentOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		Purpose:  ConsentPurposeMarketing,
 		Status:   ConsentStatusGranted,
 		Version:  "1.0",
@@ -2647,12 +2647,12 @@ func TestMemoryConsentStorage_SaveAndGetConsent(t *testing.T) {
 	}
 
 	// Get consent
-	retrieved, err := storage.GetConsent(ctx, "tenant-1", "user-1", ConsentPurposeMarketing)
+	retrieved, err := storage.GetConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing)
 	if err != nil {
 		t.Fatalf("GetConsent failed: %v", err)
 	}
-	if retrieved.UserID != "user-1" {
-		t.Errorf("expected user-1, got %s", retrieved.UserID)
+	if retrieved.UserID != 10001 {
+		t.Errorf("expected 10001, got %d", retrieved.UserID)
 	}
 }
 

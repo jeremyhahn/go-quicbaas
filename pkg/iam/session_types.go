@@ -23,7 +23,7 @@ type SessionExt struct {
 	ID string `json:"id"`
 
 	// UserID is the authenticated user
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// TenantID is the session tenant
 	TenantID string `json:"tenant_id"`
@@ -126,7 +126,7 @@ func (s *SessionExt) Validate() error {
 	if s.ID == "" {
 		return NewIAMError(ErrSessionInvalid, "iam.session.validate", "session ID is required", nil)
 	}
-	if s.UserID == "" {
+	if s.UserID == 0 {
 		return NewIAMError(ErrSessionInvalid, "iam.session.validate", "user ID is required", nil)
 	}
 	if s.TenantID == "" {

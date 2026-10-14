@@ -46,7 +46,7 @@ func TestExecuteIAMGDPRExportRequest_WithCategories(t *testing.T) {
 
 	result, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
 		"tenant_id":          "t1",
-		"user_id":            "u1",
+		"user_id":            "30001",
 		"requested_by":       "admin",
 		"format":             "csv",
 		"include_categories": []interface{}{"profile", "sessions"},
@@ -64,7 +64,7 @@ func TestExecuteIAMGDPRExportRequest_DefaultFormat(t *testing.T) {
 	// When format is empty, defaults to "json"
 	result, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
 		"tenant_id":    "t1",
-		"user_id":      "u1",
+		"user_id":      "30001",
 		"requested_by": "admin",
 	})
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestExecuteIAMGDPRExportStatus_Success(t *testing.T) {
 	// First create an export request to get an ID
 	exportResult, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
 		"tenant_id":    "t1",
-		"user_id":      "u1",
+		"user_id":      "30001",
 		"requested_by": "admin",
 	})
 	require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestExecuteIAMGDPRExportGenerate_Success(t *testing.T) {
 	// Create manager with a pre-populated user
 	userStore := newMockUserStorage()
 	createErr := userStore.CreateUser(context.Background(), &iam.User{
-		ID: "u1", TenantID: "t1", Email: "user@test.com",
+		ID: 30001, TenantID: "t1", Email: "user@test.com",
 	})
 	require.NoError(t, createErr)
 
@@ -119,7 +119,7 @@ func TestExecuteIAMGDPRExportGenerate_Success(t *testing.T) {
 	// Create export request
 	exportResult, exportErr := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
 		"tenant_id":    "t1",
-		"user_id":      "u1",
+		"user_id":      "30001",
 		"requested_by": "admin",
 	})
 	require.NoError(t, exportErr)
@@ -148,7 +148,7 @@ func TestExecuteIAMGDPRDeletionRequest_WithCategories(t *testing.T) {
 
 	result, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
 		"tenant_id":           "t1",
-		"user_id":             "u1",
+		"user_id":             "30001",
 		"requested_by":        "admin",
 		"reason":              "GDPR request",
 		"grace_period_days":   float64(14),
@@ -167,7 +167,7 @@ func TestExecuteIAMGDPRDeletionCancel_Success(t *testing.T) {
 	// Create deletion request
 	delResult, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
 		"tenant_id":    "t1",
-		"user_id":      "u1",
+		"user_id":      "30001",
 		"requested_by": "admin",
 	})
 	require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestExecuteIAMGDPRDeletionProcess_GracePeriodActive(t *testing.T) {
 	// Create a deletion request (default 30-day grace period)
 	delResult, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
 		"tenant_id":    "t1",
-		"user_id":      "u1",
+		"user_id":      "30001",
 		"requested_by": "admin",
 	})
 	require.NoError(t, err)
@@ -224,7 +224,7 @@ func TestExecuteIAMGDPRDeletionStatus_Success(t *testing.T) {
 	// Create deletion request
 	delResult, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
 		"tenant_id":    "t1",
-		"user_id":      "u1",
+		"user_id":      "30001",
 		"requested_by": "admin",
 	})
 	require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestExecuteIAMGDPRConsentGrant_WithExpiration(t *testing.T) {
 
 	result, err := reg.executeIAMGDPRConsentGrant(context.Background(), map[string]interface{}{
 		"tenant_id":  "t1",
-		"user_id":    "u1",
+		"user_id":    "30001",
 		"purpose":    "analytics",
 		"version":    "2.0",
 		"expires_at": "2030-12-31T23:59:59Z",
@@ -272,7 +272,7 @@ func TestExecuteIAMGDPRConsentWithdraw_NotFound(t *testing.T) {
 	// Withdraw consent that was never granted
 	_, err := reg.executeIAMGDPRConsentWithdraw(context.Background(), map[string]interface{}{
 		"tenant_id":  "t1",
-		"user_id":    "u1",
+		"user_id":    "30001",
 		"purpose":    "marketing",
 		"ip_address": "10.0.0.1",
 	})

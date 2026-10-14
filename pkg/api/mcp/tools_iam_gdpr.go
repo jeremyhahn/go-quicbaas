@@ -378,9 +378,13 @@ func (r *ToolRegistry) executeIAMGDPRConsentGrant(ctx context.Context, args map[
 		expiresAt = &t
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	consent, err := gdprMgr.GrantConsent(ctx,
 		getString(args, "tenant_id"),
-		getString(args, "user_id"),
+		userID,
 		iam.ConsentPurpose(getString(args, "purpose")),
 		getString(args, "version"),
 		expiresAt,
@@ -399,9 +403,13 @@ func (r *ToolRegistry) executeIAMGDPRConsentWithdraw(ctx context.Context, args m
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	err = gdprMgr.WithdrawConsent(ctx,
 		getString(args, "tenant_id"),
-		getString(args, "user_id"),
+		userID,
 		iam.ConsentPurpose(getString(args, "purpose")),
 		getString(args, "ip_address"),
 		getString(args, "user_agent"),
@@ -421,9 +429,13 @@ func (r *ToolRegistry) executeIAMGDPRConsentGet(ctx context.Context, args map[st
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	consent, err := gdprMgr.GetConsent(ctx,
 		getString(args, "tenant_id"),
-		getString(args, "user_id"),
+		userID,
 		iam.ConsentPurpose(getString(args, "purpose")),
 	)
 	if err != nil {
@@ -438,9 +450,13 @@ func (r *ToolRegistry) executeIAMGDPRConsentList(ctx context.Context, args map[s
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	consents, err := gdprMgr.ListUserConsents(ctx,
 		getString(args, "tenant_id"),
-		getString(args, "user_id"),
+		userID,
 	)
 	if err != nil {
 		return nil, err
@@ -488,9 +504,13 @@ func (r *ToolRegistry) executeIAMGDPRExportRequest(ctx context.Context, args map
 		}
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	exportReq, err := gdprMgr.RequestExport(ctx,
 		getString(args, "tenant_id"),
-		getString(args, "user_id"),
+		userID,
 		getString(args, "requested_by"),
 		iam.DataExportFormat(format),
 		includeCategories,
@@ -566,9 +586,13 @@ func (r *ToolRegistry) executeIAMGDPRDeletionRequest(ctx context.Context, args m
 		}
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	deletionReq, err := gdprMgr.RequestDeletion(ctx,
 		getString(args, "tenant_id"),
-		getString(args, "user_id"),
+		userID,
 		getString(args, "requested_by"),
 		getString(args, "reason"),
 		deleteCategories,

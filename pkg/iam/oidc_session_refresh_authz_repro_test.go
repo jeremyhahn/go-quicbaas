@@ -67,7 +67,7 @@ func TestUIRefreshFlow_RenewedTokenAuthorizesTheSameEndpointTheLoginTokenDid(t *
 		t.Fatalf("seed role: %v", err)
 	}
 	if err := storage.CreateUser(context.Background(), &User{
-		ID:        "71",
+		ID:        71,
 		TenantID:  tenantID,
 		Username:  "owner",
 		Name:      "Burn-in Owner",

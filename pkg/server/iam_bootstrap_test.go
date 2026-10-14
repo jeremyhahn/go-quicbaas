@@ -27,6 +27,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -538,7 +539,7 @@ func TestFirstBootBootstrap_ExistingAdmin_Skipped(t *testing.T) {
 
 	// Pre-seed the admin assignment a completed prior boot would have written.
 	_, err = c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    admin.ID,
+		UserID:    strconv.FormatUint(admin.ID, 10),
 		AdminRole: iam.AdminRoleSuperAdmin,
 		GrantedBy: "system:first-boot",
 	})
@@ -774,7 +775,8 @@ type recordingInviteStore struct {
 // Create records the call and delegates to the wrapped store.
 func (s *recordingInviteStore) Create(
 	ctx context.Context,
-	tenantID, userID string,
+	tenantID string,
+	userID uint64,
 	ttl time.Duration,
 ) (string, *iam.InviteRecord, error) {
 	s.creates++

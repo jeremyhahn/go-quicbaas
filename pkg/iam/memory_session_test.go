@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestSession(id, userID string, expires time.Time) *Session {
+func newTestSession(id string, userID uint64, expires time.Time) *Session {
 	return &Session{
 		ID:           id,
 		UserID:       userID,
@@ -37,19 +37,19 @@ func TestMemorySessionStorage_CreateGet(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
-	sess := newTestSession("s1", "u1", time.Now().Add(time.Hour))
+	sess := newTestSession("s1", 30001, time.Now().Add(time.Hour))
 	require.NoError(t, store.CreateSession(ctx, sess))
 
 	got, err := store.GetSession(ctx, "s1")
 	require.NoError(t, err)
-	assert.Equal(t, "u1", got.UserID)
+	assert.Equal(t, uint64(30001), got.UserID)
 }
 
 func TestMemorySessionStorage_Create_Duplicate(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
-	sess := newTestSession("s1", "u1", time.Now().Add(time.Hour))
+	sess := newTestSession("s1", 30001, time.Now().Add(time.Hour))
 	require.NoError(t, store.CreateSession(ctx, sess))
 	if err := store.CreateSession(ctx, sess); err == nil {
 		t.Fatal("expected duplicate error")
@@ -68,7 +68,7 @@ func TestMemorySessionStorage_Update(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
-	sess := newTestSession("s1", "u1", time.Now().Add(time.Hour))
+	sess := newTestSession("s1", 30001, time.Now().Add(time.Hour))
 	require.NoError(t, store.CreateSession(ctx, sess))
 
 	sess.AuthMethod = "webauthn"
@@ -83,7 +83,7 @@ func TestMemorySessionStorage_Update_NotFound(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
-	err := store.UpdateSession(ctx, newTestSession("missing", "u1", time.Now().Add(time.Hour)))
+	err := store.UpdateSession(ctx, newTestSession("missing", 30001, time.Now().Add(time.Hour)))
 	require.Error(t, err)
 }
 
@@ -91,8 +91,8 @@ func TestMemorySessionStorage_DeleteExpiredSessions(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
-	require.NoError(t, store.CreateSession(ctx, newTestSession("keep", "u1", time.Now().Add(time.Hour))))
-	require.NoError(t, store.CreateSession(ctx, newTestSession("expired", "u1", time.Now().Add(-time.Hour))))
+	require.NoError(t, store.CreateSession(ctx, newTestSession("keep", 30001, time.Now().Add(time.Hour))))
+	require.NoError(t, store.CreateSession(ctx, newTestSession("expired", 30001, time.Now().Add(-time.Hour))))
 
 	count, err := store.DeleteExpiredSessions(ctx)
 	require.NoError(t, err)
@@ -108,7 +108,7 @@ func TestMemorySessionStorage_DeleteExpiredSessions_None(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStorage()
 
-	require.NoError(t, store.CreateSession(ctx, newTestSession("keep", "u1", time.Now().Add(time.Hour))))
+	require.NoError(t, store.CreateSession(ctx, newTestSession("keep", 30001, time.Now().Add(time.Hour))))
 
 	count, err := store.DeleteExpiredSessions(ctx)
 	require.NoError(t, err)

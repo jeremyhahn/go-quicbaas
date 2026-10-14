@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
 
@@ -163,8 +164,8 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 	// The principal-identity claims are emitted only when set, so a token never
 	// carries an empty uid or ptyp that a verifier could mistake for a present
 	// one. Their absence is what marks a token as pre-dating this contract.
-	if claims.UserID != "" {
-		jwtClaims["uid"] = claims.UserID
+	if claims.UserID != 0 {
+		jwtClaims["uid"] = strconv.FormatUint(claims.UserID, 10)
 	}
 	if claims.PrincipalType != "" {
 		jwtClaims["ptyp"] = claims.PrincipalType
@@ -395,7 +396,7 @@ func (s *TokenService) GenerateRefreshToken(ctx context.Context, opts SessionRef
 }
 
 // GenerateAuthCode generates a new authorization code.
-func (s *TokenService) GenerateAuthCode(ctx context.Context, req *AuthorizeRequest, userID string) (string, error) {
+func (s *TokenService) GenerateAuthCode(ctx context.Context, req *AuthorizeRequest, userID uint64) (string, error) {
 	// Generate secure random code
 	codeBytes, err := xkms.Rand(32)
 	if err != nil {
@@ -679,7 +680,7 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 
 	accessClaims := &Claims{
 		Issuer:    issuer,
-		Subject:   opts.User.ID,
+		Subject:   strconv.FormatUint(opts.User.ID, 10),
 		Audience:  []string{issuer},
 		ExpiresAt: UnixTime{Time: now.Add(s.config.AccessTokenTTL)},
 		IssuedAt:  UnixTime{Time: now},
@@ -714,7 +715,7 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 
 	idClaims := &IDTokenClaims{
 		Issuer:        issuer,
-		Subject:       opts.User.ID,
+		Subject:       strconv.FormatUint(opts.User.ID, 10),
 		Audience:      []string{issuer},
 		ExpiresAt:     UnixTime{Time: now.Add(s.config.IDTokenTTL)},
 		IssuedAt:      UnixTime{Time: now},
@@ -755,7 +756,7 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 	// what TestHardwareSessionDoesNotOutliveADeletedUser guards; the guessing
 	// path is gone and refusal is what a uid-less renewal gets now (#278).
 	refreshToken, err := s.GenerateRefreshToken(ctx, SessionRefreshOptions{
-		Subject:  opts.User.ID,
+		Subject:  strconv.FormatUint(opts.User.ID, 10),
 		TenantID: opts.User.TenantID,
 		ClientID: opts.ClientID,
 		Scopes:   parseScopes(scope),

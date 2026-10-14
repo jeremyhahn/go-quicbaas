@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -627,7 +628,7 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 // was read as a service token, and reported live forever, so disabling an
 // account did not end its session; and even after resolving usernames, renaming
 // the account made the subject miss again and restored the bypass.
-func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject, userID, principalType, jti string) (bool, error) {
+func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject string, userID uint64, principalType, jti string) (bool, error) {
 	if tenantID != "" {
 		ctx = tenantctx.WithTenant(ctx, tenantID)
 	}
@@ -645,11 +646,11 @@ func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject, use
 
 // principalLive reports whether the principal a token names may still hold a
 // live session. See TokenLiveness for the decision order.
-func (p *OIDCProvider) principalLive(ctx context.Context, tenantID, subject, userID, principalType string) (bool, error) {
+func (p *OIDCProvider) principalLive(ctx context.Context, tenantID, subject string, userID uint64, principalType string) (bool, error) {
 	// A user token carries an immutable handle on its account. Renaming the
 	// account cannot detach the session from it, and deleting the account ends
 	// the session rather than promoting it to a service principal.
-	if userID != "" {
+	if userID != 0 {
 		user, err := p.identityStore.GetUser(ctx, tenantID, userID)
 		if err != nil {
 			// IsUserNotFound names the one condition that means "the account
@@ -713,7 +714,7 @@ func (p *OIDCProvider) principalLive(ctx context.Context, tenantID, subject, use
 // policy does not carry — or a service principal, which has no user profile by
 // construction. Both answer "no user", which is what this now returns.
 func (p *OIDCProvider) userInfoSubject(ctx context.Context, claims *Claims) (*User, error) {
-	if claims.UserID == "" {
+	if claims.UserID == 0 {
 		return nil, ErrUserNotFound
 	}
 	return p.identityStore.GetUser(ctx, claims.TenantID, claims.UserID)
@@ -1209,8 +1210,13 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "client_id mismatch")
 	}
 
-	// Get user
-	user, err := p.identityStore.GetUser(ctx, token.TenantID, token.Subject)
+	// Get user. The refresh token's subject is the user id in decimal; a
+	// subject that is not one names no user this grant can renew.
+	userID, err := strconv.ParseUint(token.Subject, 10, 64)
+	if err != nil || userID == 0 {
+		return nil, NewOAuthError(ErrOAuthInvalidGrant, "invalid refresh token")
+	}
+	user, err := p.identityStore.GetUser(ctx, token.TenantID, userID)
 	if err != nil {
 		return nil, NewOAuthError(ErrOAuthServerError, "failed to get user")
 	}
@@ -1363,7 +1369,7 @@ func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user
 
 	accessClaims := &Claims{
 		Issuer:       p.config.Issuer,
-		Subject:      user.ID,
+		Subject:      strconv.FormatUint(user.ID, 10),
 		Audience:     audience,
 		ExpiresAt:    NewUnixTime(now.Add(p.config.AccessTokenTTL)),
 		IssuedAt:     NewUnixTime(now),
@@ -1422,7 +1428,7 @@ func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user
 		refreshSession.Jkt = cnf.Jkt
 	}
 	refreshToken, err := p.tokenService.GenerateRefreshToken(ctx, SessionRefreshOptions{
-		Subject:  user.ID,
+		Subject:  strconv.FormatUint(user.ID, 10),
 		TenantID: user.TenantID,
 		ClientID: clientID,
 		Scopes:   scopes,
@@ -1444,7 +1450,7 @@ func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user
 	if contains(scopes, "openid") {
 		idTokenClaims := &IDTokenClaims{
 			Issuer:        p.config.Issuer,
-			Subject:       user.ID,
+			Subject:       strconv.FormatUint(user.ID, 10),
 			Audience:      []string{clientID},
 			ExpiresAt:     NewUnixTime(now.Add(p.config.IDTokenTTL)),
 			IssuedAt:      NewUnixTime(now),

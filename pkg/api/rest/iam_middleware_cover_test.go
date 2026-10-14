@@ -61,7 +61,7 @@ func TestImpersonationMiddleware_ValidSession(t *testing.T) {
 	session, err := mockSvc.adminManager.StartImpersonation(
 		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "target_user",
+			TargetUserID: "50001",
 			TenantID:     "tenant_1",
 			Reason:       "support",
 			Duration:     time.Hour,
@@ -103,7 +103,7 @@ func TestImpersonationAuditMiddleware_Records(t *testing.T) {
 	session, err := mockSvc.adminManager.StartImpersonation(
 		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "target", TenantID: "tenant_1",
+			TargetUserID: "50002", TenantID: "tenant_1",
 			Reason: "support", Duration: time.Hour,
 		})
 	require.NoError(t, err)

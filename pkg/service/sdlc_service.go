@@ -281,9 +281,20 @@ func (s *SDLCService) NudgeProject(ctx context.Context, tenantID, projectID stri
 // Bind / Unbind / Binding / Delivery
 // =============================================================================
 
+// BindOptions carries the intent of one Bind request. It is not stored on
+// the binding: it describes the request, not the binding.
+type BindOptions struct {
+	// LeavePaused binds without switching the project's autonomy on, so the
+	// project can be staged before the poller adopts its issues. It never
+	// turns autonomy off: an already-autonomous project stays autonomous,
+	// the same rule Unbind follows.
+	LeavePaused bool
+}
+
 // Bind attaches the forge binding to the project, replacing any earlier
 // binding, after checking everything the delivery pipeline will rely on.
-func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding) (*sdlc.ProjectBinding, error) {
+// It switches the project's autonomy on unless opts.LeavePaused is set.
+func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding, opts BindOptions) (*sdlc.ProjectBinding, error) {
 	if tenantID == "" {
 		return nil, &sdlc.InvalidInputError{Field: "tenant_id", Message: "bindings are tenant-scoped"}
 	}
@@ -323,8 +334,10 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if err := s.retirePriorDelivery(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}
-	if err := s.enableAutonomy(ctx, project); err != nil {
-		return nil, err
+	if !opts.LeavePaused {
+		if err := s.enableAutonomy(ctx, project); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.routes.Record(ctx, binding.ProjectID, tenantID); err != nil {
 		return nil, err

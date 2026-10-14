@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -39,20 +40,22 @@ const (
 )
 
 func consentRecKey(id string) string { return keyPrefixConsentRec + id }
-func consentUserIdxKey(userID, id string) string {
-	return keyPrefixConsentUserIdx + userID + "/" + id
+func consentUserIdxKey(userID uint64, id string) string {
+	return consentUserIdxPrefix(userID) + id
 }
-func consentUserIdxPrefix(userID string) string { return keyPrefixConsentUserIdx + userID + "/" }
-func consentPurposeKey(userID, purpose string) string {
-	return keyPrefixConsentPurpose + userID + "/" + purpose
+func consentUserIdxPrefix(userID uint64) string {
+	return keyPrefixConsentUserIdx + strconv.FormatUint(userID, 10) + "/"
+}
+func consentPurposeKey(userID uint64, purpose string) string {
+	return keyPrefixConsentPurpose + strconv.FormatUint(userID, 10) + "/" + purpose
 }
 func exportRecKey(id string) string { return keyPrefixExportRec + id }
-func exportUserIdxKey(userID, id string) string {
-	return keyPrefixExportUserIdx + userID + "/" + id
+func exportUserIdxKey(userID uint64, id string) string {
+	return keyPrefixExportUserIdx + strconv.FormatUint(userID, 10) + "/" + id
 }
 func deletionRecKey(id string) string { return keyPrefixDeletionRec + id }
-func deletionUserIdxKey(userID, id string) string {
-	return keyPrefixDeletionUserIdx + userID + "/" + id
+func deletionUserIdxKey(userID uint64, id string) string {
+	return keyPrefixDeletionUserIdx + strconv.FormatUint(userID, 10) + "/" + id
 }
 
 // listTenantIDs returns the tenants a List verb must visit when its filter
@@ -87,7 +90,7 @@ var _ ConsentStorage = (*BackendConsentStorage)(nil)
 // CreateConsent routes by opts.TenantID, mints a tenant-encoded consent id, and
 // writes the record plus the per-user and per-purpose indexes.
 func (s *BackendConsentStorage) CreateConsent(ctx context.Context, opts CreateConsentOptions) (*Consent, error) {
-	if opts.UserID == "" {
+	if opts.UserID == 0 {
 		return nil, NewIAMError(ErrConsentInvalid, "iam.consent.create", "user_id is required", nil)
 	}
 	if opts.TenantID == "" {
@@ -161,7 +164,7 @@ func (s *BackendConsentStorage) CreateConsent(ctx context.Context, opts CreateCo
 }
 
 // GetConsent routes by tenantID and resolves the per-purpose index.
-func (s *BackendConsentStorage) GetConsent(ctx context.Context, tenantID, userID string, purpose ConsentPurpose) (*Consent, error) {
+func (s *BackendConsentStorage) GetConsent(ctx context.Context, tenantID string, userID uint64, purpose ConsentPurpose) (*Consent, error) {
 	ctx = withTenant(ctx, tenantID)
 	idData, err := s.kv.Get(ctx, consentPurposeKey(userID, string(purpose)))
 	if err != nil {
@@ -280,7 +283,7 @@ func (s *BackendConsentStorage) ListConsents(ctx context.Context, opts ListConse
 
 // GetUserConsents routes by tenantID and returns every consent in the user
 // index.
-func (s *BackendConsentStorage) GetUserConsents(ctx context.Context, tenantID, userID string) ([]*Consent, error) {
+func (s *BackendConsentStorage) GetUserConsents(ctx context.Context, tenantID string, userID uint64) ([]*Consent, error) {
 	ctx = withTenant(ctx, tenantID)
 	var ids []string
 	if err := s.kv.Scan(ctx, consentUserIdxPrefix(userID), func(_ string, value []byte) error {
@@ -305,7 +308,7 @@ func (s *BackendConsentStorage) GetUserConsents(ctx context.Context, tenantID, u
 }
 
 func matchesConsentFilter(consent *Consent, opts ListConsentsOptions) bool {
-	if opts.UserID != "" && consent.UserID != opts.UserID {
+	if opts.UserID != 0 && consent.UserID != opts.UserID {
 		return false
 	}
 	if opts.TenantID != "" && consent.TenantID != opts.TenantID {
@@ -353,7 +356,7 @@ var _ DataExportStorage = (*BackendDataExportStorage)(nil)
 // CreateExportRequest routes by opts.TenantID, mints a tenant-encoded id, and
 // writes the record plus the per-user index.
 func (s *BackendDataExportStorage) CreateExportRequest(ctx context.Context, opts CreateDataExportOptions) (*DataExportRequest, error) {
-	if opts.UserID == "" {
+	if opts.UserID == 0 {
 		return nil, NewIAMError(ErrDataExportInvalid, "iam.export.create", "user_id is required", nil)
 	}
 	if opts.TenantID == "" {
@@ -464,7 +467,7 @@ func (s *BackendDataExportStorage) ListExportRequests(ctx context.Context, opts 
 }
 
 func matchesExportFilter(request *DataExportRequest, opts ListExportRequestsOptions) bool {
-	if opts.UserID != "" && request.UserID != opts.UserID {
+	if opts.UserID != 0 && request.UserID != opts.UserID {
 		return false
 	}
 	if opts.TenantID != "" && request.TenantID != opts.TenantID {
@@ -509,7 +512,7 @@ var _ DeletionStorage = (*BackendDeletionStorage)(nil)
 // CreateDeletionRequest routes by opts.TenantID, mints a tenant-encoded id, and
 // writes the record plus the per-user index.
 func (s *BackendDeletionStorage) CreateDeletionRequest(ctx context.Context, opts CreateDeletionRequestOptions) (*DataDeletionRequest, error) {
-	if opts.UserID == "" {
+	if opts.UserID == 0 {
 		return nil, NewIAMError(ErrDeletionInvalid, "iam.deletion.create", "user_id is required", nil)
 	}
 	if opts.TenantID == "" {
@@ -624,7 +627,7 @@ func (s *BackendDeletionStorage) ListDeletionRequests(ctx context.Context, opts 
 }
 
 func matchesDeletionFilter(request *DataDeletionRequest, opts ListDeletionRequestsOptions) bool {
-	if opts.UserID != "" && request.UserID != opts.UserID {
+	if opts.UserID != 0 && request.UserID != opts.UserID {
 		return false
 	}
 	if opts.TenantID != "" && request.TenantID != opts.TenantID {

@@ -171,7 +171,7 @@ func (m *mockFederationManager) HandleCallback(ctx context.Context, stateToken, 
 	}
 	return &iam.FederationResult{
 		User: &iam.User{
-			ID:    "user_federated123",
+			ID:    10123,
 			Email: "user@example.com",
 			Name:  "Federated User",
 		},
@@ -182,21 +182,21 @@ func (m *mockFederationManager) HandleCallback(ctx context.Context, stateToken, 
 	}, nil
 }
 
-func (m *mockFederationManager) LinkAccount(ctx context.Context, userID, tenantID, providerID, externalToken string) error {
+func (m *mockFederationManager) LinkAccount(ctx context.Context, userID uint64, tenantID, providerID, externalToken string) error {
 	if m.linkAccountErr != nil {
 		return m.linkAccountErr
 	}
 	return nil
 }
 
-func (m *mockFederationManager) UnlinkAccount(ctx context.Context, userID, tenantID, providerID string) error {
+func (m *mockFederationManager) UnlinkAccount(ctx context.Context, userID uint64, tenantID, providerID string) error {
 	if m.unlinkAccountErr != nil {
 		return m.unlinkAccountErr
 	}
 	return nil
 }
 
-func (m *mockFederationManager) GetUserLinks(ctx context.Context, userID, tenantID string) ([]*iam.FederatedIdentity, error) {
+func (m *mockFederationManager) GetUserLinks(ctx context.Context, userID uint64, tenantID string) ([]*iam.FederatedIdentity, error) {
 	if m.getUserLinksErr != nil {
 		return nil, m.getUserLinksErr
 	}
@@ -949,7 +949,7 @@ func TestHandleFederatedCallback_Success(t *testing.T) {
 	fedMgr := newMockFederationManager()
 	fedMgr.callbackResult = &iam.FederationResult{
 		User: &iam.User{
-			ID:       "user123",
+			ID:       10123,
 			Email:    "user@example.com",
 			Name:     "Test User",
 			TenantID: "tenant123",
@@ -1079,7 +1079,7 @@ func TestLinkAccount_Success(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1090,7 +1090,7 @@ func TestLinkAccount_Success(t *testing.T) {
 	var resp AccountLink
 	err := json.Unmarshal(rec.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, "user123", resp.UserID)
+	assert.Equal(t, "10123", resp.UserID)
 	assert.Equal(t, "prov_google", resp.ProviderID)
 	assert.Equal(t, "google_user_123", resp.ExternalID)
 }
@@ -1110,7 +1110,7 @@ func TestLinkAccount_MissingTenantID(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1153,7 +1153,7 @@ func TestLinkAccount_InvalidJSON(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1177,7 +1177,7 @@ func TestLinkAccount_MissingProviderID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1206,7 +1206,7 @@ func TestLinkAccount_MissingExternalID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1229,7 +1229,7 @@ func TestUnlinkAccount_Success(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
@@ -1248,7 +1248,7 @@ func TestUnlinkAccount_MissingTenantID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user123/links/prov_google", nil)
 
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
@@ -1285,7 +1285,7 @@ func TestUnlinkAccount_MissingProviderID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1303,7 +1303,7 @@ func TestGetUserLinks_Success(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1328,7 +1328,7 @@ func TestGetUserLinks_WithPagination(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1351,7 +1351,7 @@ func TestGetUserLinks_MissingTenantID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user123/links", nil)
 
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1568,7 +1568,7 @@ func TestAccountLinkJSONSerialization(t *testing.T) {
 func TestFederatedAuthResultJSONSerialization(t *testing.T) {
 	result := &iam.FederationResult{
 		User: &iam.User{
-			ID:       "user123",
+			ID:       10123,
 			Email:    "user@example.com",
 			Name:     "Test User",
 			TenantID: "tenant123",
@@ -1774,7 +1774,7 @@ func TestLinkAccount_ServiceError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -1793,7 +1793,7 @@ func TestUnlinkAccount_ServiceError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
@@ -1813,7 +1813,7 @@ func TestGetUserLinks_ServiceError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -2072,7 +2072,7 @@ func TestLinkAccount_WithAccessToken(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -2150,7 +2150,7 @@ func TestLinkAccount_BodyReadError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -2333,7 +2333,7 @@ func TestLinkAccount_FederationManagerError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -2357,7 +2357,7 @@ func TestUnlinkAccount_FederationManagerError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
@@ -2382,7 +2382,7 @@ func TestGetUserLinks_FederationManagerError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -2532,7 +2532,7 @@ func TestLinkAccount_FederationManagerNotAvailable(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -2552,7 +2552,7 @@ func TestUnlinkAccount_FederationManagerNotAvailable(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
@@ -2573,7 +2573,7 @@ func TestGetUserLinks_FederationManagerNotAvailable(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "user123")
+	rctx.URLParams.Add("user_id", "10123")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
@@ -2637,7 +2637,7 @@ func TestGetUserLinks_InvalidPagination(t *testing.T) {
 
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("tenant_id", "tenant123")
-			rctx.URLParams.Add("user_id", "user123")
+			rctx.URLParams.Add("user_id", "10123")
 			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 			rec := httptest.NewRecorder()

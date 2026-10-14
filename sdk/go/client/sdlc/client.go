@@ -516,6 +516,9 @@ type BindRequest struct {
 	TenantID  string         `json:"tenant_id,omitempty"`
 	ProjectID string         `json:"project_id"`
 	Binding   ProjectBinding `json:"binding"`
+	// Paused binds without switching the project's autonomy on, so it can be
+	// staged before the poller adopts its issues. It never turns autonomy off.
+	Paused bool `json:"paused,omitempty"`
 }
 
 // UnbindRequest detaches a project's binding.

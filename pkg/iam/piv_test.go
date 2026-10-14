@@ -210,7 +210,7 @@ func setupPIVTest(t *testing.T) (activator *PIVActivator, token string, userStor
 
 	// Create a pending user.
 	user := &User{
-		ID:        "101",
+		ID:        101,
 		TenantID:  "tenant-1",
 		Email:     "piv@example.com",
 		Lifecycle: LifecyclePending,
@@ -224,7 +224,7 @@ func setupPIVTest(t *testing.T) (activator *PIVActivator, token string, userStor
 	// Issue the invite through the store; the token is minted by the store,
 	// never by the caller.
 	var genErr error
-	token, _, genErr = inviteStore.Create(context.Background(), "tenant-1", "101", time.Hour)
+	token, _, genErr = inviteStore.Create(context.Background(), "tenant-1", 101, time.Hour)
 	if genErr != nil {
 		t.Fatalf("create invite: %v", genErr)
 	}
@@ -260,7 +260,7 @@ func TestPIVActivator_Valid(t *testing.T) {
 	inviteStore := newFakeInviteStore()
 
 	user := &User{
-		ID:        "1",
+		ID:        1,
 		TenantID:  "t1",
 		Email:     "piv@example.com",
 		Lifecycle: LifecyclePending,
@@ -269,7 +269,7 @@ func TestPIVActivator_Valid(t *testing.T) {
 	}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _, _ := inviteStore.Create(ctx, "t1", "1", time.Hour)
+	token, _, _ := inviteStore.Create(ctx, "t1", 1, time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -292,7 +292,7 @@ func TestPIVActivator_Valid(t *testing.T) {
 		t.Fatalf("Activate: %v", err)
 	}
 
-	updated, err := userStorage.GetUser(ctx, "t1", "1")
+	updated, err := userStorage.GetUser(ctx, "t1", 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -311,11 +311,11 @@ func newPIVLoginFactorTest(t *testing.T, enroller *CertLoginFactorEnroller) (*PI
 	ctx := context.Background()
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
-	user := &User{ID: "1", TenantID: "t1", Email: "piv@example.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 1, TenantID: "t1", Email: "piv@example.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	if err := userStorage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	token, _, err := inviteStore.Create(ctx, "t1", "1", time.Hour)
+	token, _, err := inviteStore.Create(ctx, "t1", 1, time.Hour)
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestPIVActivator_ForeignCertificateKeepsActivationRetryable(t *testing.T) {
 	ctx := context.Background()
 	rt := newPIVRollbackTest(t, newMockUserStorage(), nil)
 	foreign, foreignPEM := rt.leaf(t)
-	if _, err := rt.act.enrollLoginFactor(ctx, "t1", "2", foreign); err != nil {
+	if _, err := rt.act.enrollLoginFactor(ctx, "t1", 2, foreign); err != nil {
 		t.Fatalf("enroll the certificate for user 2: %v", err)
 	}
 
@@ -432,7 +432,7 @@ func TestPIVActivator_TenantlessActivateKeepsPreexistingFactor(t *testing.T) {
 	if ids := rt.factors.activeFactorIDs(); len(ids) != 1 || ids[0] != pre {
 		t.Fatalf("active factors = %v, want only the pre-existing %q", ids, pre)
 	}
-	activated, err := rt.users.GetUser(ctx, "t1", "1")
+	activated, err := rt.users.GetUser(ctx, "t1", 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -458,12 +458,12 @@ type pivRollbackTest struct {
 func newPIVRollbackTest(t *testing.T, users UserStorage, wrapInvites func(InviteStore) InviteStore) *pivRollbackTest {
 	t.Helper()
 	ctx := context.Background()
-	user := &User{ID: "1", TenantID: "t1", Email: "piv@example.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 1, TenantID: "t1", Email: "piv@example.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	if err := users.CreateUser(ctx, user); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 	invites := newFakeInviteStore()
-	token, _, err := invites.Create(ctx, "t1", "1", time.Hour)
+	token, _, err := invites.Create(ctx, "t1", 1, time.Hour)
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
@@ -498,7 +498,7 @@ func (rt *pivRollbackTest) leaf(t *testing.T) (*x509.Certificate, []byte) {
 // returns the factor id.
 func (rt *pivRollbackTest) preEnroll(t *testing.T, leaf *x509.Certificate) string {
 	t.Helper()
-	result, err := rt.act.enrollLoginFactor(qrdbsdk.ContextWithTenant(context.Background(), "t1"), "t1", "1", leaf)
+	result, err := rt.act.enrollLoginFactor(qrdbsdk.ContextWithTenant(context.Background(), "t1"), "t1", 1, leaf)
 	if err != nil || !result.Created {
 		t.Fatalf("pre-enroll = %+v, %v; want a created factor", result, err)
 	}
@@ -508,7 +508,7 @@ func (rt *pivRollbackTest) preEnroll(t *testing.T, leaf *x509.Certificate) strin
 // assertNotActivated fails unless user 1 is still pending with no cert binding.
 func (rt *pivRollbackTest) assertNotActivated(t *testing.T) {
 	t.Helper()
-	user, err := rt.users.GetUser(context.Background(), "t1", "1")
+	user, err := rt.users.GetUser(context.Background(), "t1", 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestPIVActivator_UpdateLostResponseKeepsFactor(t *testing.T) {
 	if _, err := rt.factors.LookupByCredentialKey(qrdbsdk.ContextWithTenant(ctx, "t1"), qrdbsdk.AuthFactorMTLS, MTLSCredentialKey(leaf)); err != nil {
 		t.Fatalf("login lookup = %v, want the factor usable", err)
 	}
-	user, err := users.GetUser(ctx, "t1", "1")
+	user, err := users.GetUser(ctx, "t1", 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -629,7 +629,7 @@ func TestPIVActivator_ConcurrentActivationsHaveOneWinner(t *testing.T) {
 	if _, err := rt.factors.LookupByCredentialKey(tctx, qrdbsdk.AuthFactorMTLS, MTLSCredentialKey(leaves[loser])); !errors.Is(err, errPIVTestFactorNotFound) {
 		t.Fatalf("loser login lookup = %v, want no factor", err)
 	}
-	user, err := rt.users.GetUser(ctx, "t1", "1")
+	user, err := rt.users.GetUser(ctx, "t1", 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -656,7 +656,7 @@ func TestPIVActivator_SameCertificateRaceKeepsTheFactor(t *testing.T) {
 	if err != nil || factor.UserID != 1 || len(ids) != 1 || ids[0] != factor.ID {
 		t.Fatalf("login lookup = %+v, %v with active factors %v; want the shared factor active", factor, err, ids)
 	}
-	user, err := rt.users.GetUser(ctx, "t1", "1")
+	user, err := rt.users.GetUser(ctx, "t1", 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -673,7 +673,7 @@ func TestPIVActivator_SameCertificateRaceKeepsTheFactor(t *testing.T) {
 func TestPIVActivator_TwoTokensForOneUserHaveOneWinner(t *testing.T) {
 	ctx := context.Background()
 	rt := newPIVRaceTest(t, 2)
-	second, _, err := rt.invites.Create(ctx, "t1", "1", time.Hour)
+	second, _, err := rt.invites.Create(ctx, "t1", 1, time.Hour)
 	if err != nil {
 		t.Fatalf("create second invite: %v", err)
 	}
@@ -697,7 +697,7 @@ func TestPIVActivator_TwoTokensForOneUserHaveOneWinner(t *testing.T) {
 	if _, err := rt.factors.LookupByCredentialKey(tctx, qrdbsdk.AuthFactorMTLS, MTLSCredentialKey(leaves[loser])); !errors.Is(err, errPIVTestFactorNotFound) {
 		t.Fatalf("loser login lookup = %v, want no factor", err)
 	}
-	user, err := rt.users.GetUser(ctx, "t1", "1")
+	user, err := rt.users.GetUser(ctx, "t1", 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -717,7 +717,7 @@ func TestPIVActivator_ResetToPendingCanActivateAgain(t *testing.T) {
 		t.Fatalf("first Activate: %v", err)
 	}
 
-	user, err := rt.users.GetUser(ctx, "t1", "1")
+	user, err := rt.users.GetUser(ctx, "t1", 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -726,7 +726,7 @@ func TestPIVActivator_ResetToPendingCanActivateAgain(t *testing.T) {
 	if err := rt.users.UpdateUser(ctx, user); err != nil {
 		t.Fatalf("reset to pending: %v", err)
 	}
-	token, _, err := rt.invites.Create(ctx, "t1", "1", time.Hour)
+	token, _, err := rt.invites.Create(ctx, "t1", 1, time.Hour)
 	if err != nil {
 		t.Fatalf("create invite: %v", err)
 	}
@@ -953,7 +953,7 @@ type flakyUpdateUserStorage struct {
 	updated      bool
 }
 
-func (s *flakyUpdateUserStorage) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+func (s *flakyUpdateUserStorage) GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error) {
 	if s.failReread && s.updated {
 		return nil, errPIVTestReread
 	}
@@ -990,10 +990,10 @@ func TestPIVActivator_ExpiredInvite(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "2", TenantID: "t1", Email: "e@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 2, TenantID: "t1", Email: "e@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _, _ := inviteStore.Create(ctx, "t1", "2", -time.Minute) // already expired
+	token, _, _ := inviteStore.Create(ctx, "t1", 2, -time.Minute) // already expired
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -1022,10 +1022,10 @@ func TestPIVActivator_UntrustedCert(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "3", TenantID: "t1", Email: "f@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 3, TenantID: "t1", Email: "f@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _, _ := inviteStore.Create(ctx, "t1", "3", time.Hour)
+	token, _, _ := inviteStore.Create(ctx, "t1", 3, time.Hour)
 
 	// Trust only ca2, but present a cert signed by ca1.
 	ca1, ca1Key := pivTestCA(t)
@@ -1058,10 +1058,10 @@ func TestPIVActivate_RejectsUntrustedIssuer(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "5", TenantID: "t1", Email: "h@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 5, TenantID: "t1", Email: "h@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _, _ := inviteStore.Create(ctx, "t1", "5", time.Hour)
+	token, _, _ := inviteStore.Create(ctx, "t1", 5, time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -1102,10 +1102,10 @@ func TestPIVActivate_AcceptsTrustedIssuer(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "6", TenantID: "t1", Email: "i@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 6, TenantID: "t1", Email: "i@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _, _ := inviteStore.Create(ctx, "t1", "6", time.Hour)
+	token, _, _ := inviteStore.Create(ctx, "t1", 6, time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -1138,10 +1138,10 @@ func TestPIVActivate_EmptyTrustedIssuers(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "7", TenantID: "t1", Email: "j@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 7, TenantID: "t1", Email: "j@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _, _ := inviteStore.Create(ctx, "t1", "7", time.Hour)
+	token, _, _ := inviteStore.Create(ctx, "t1", 7, time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -1208,8 +1208,8 @@ func TestPIVActivator_AuditOnSuccess(t *testing.T) {
 	inviteStore := newFakeInviteStore()
 	audit := &mockAuditLogger{}
 
-	_ = userStorage.CreateUser(ctx, &User{ID: "10", TenantID: "t1", Email: "a@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()})
-	token, _, _ := inviteStore.Create(ctx, "t1", "10", time.Hour)
+	_ = userStorage.CreateUser(ctx, &User{ID: 10, TenantID: "t1", Email: "a@x.com", Lifecycle: LifecyclePending, Created: time.Now(), Updated: time.Now()})
+	token, _, _ := inviteStore.Create(ctx, "t1", 10, time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()
@@ -1245,10 +1245,10 @@ func TestPIVActivator_UserNotPending(t *testing.T) {
 	userStorage := newMockUserStorage()
 	inviteStore := newFakeInviteStore()
 
-	user := &User{ID: "4", TenantID: "t1", Email: "g@x.com", Lifecycle: LifecycleActive, Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 4, TenantID: "t1", Email: "g@x.com", Lifecycle: LifecycleActive, Created: time.Now(), Updated: time.Now()}
 	_ = userStorage.CreateUser(ctx, user)
 
-	token, _, _ := inviteStore.Create(ctx, "t1", "4", time.Hour)
+	token, _, _ := inviteStore.Create(ctx, "t1", 4, time.Hour)
 
 	ca, caKey := pivTestCA(t)
 	roots := x509.NewCertPool()

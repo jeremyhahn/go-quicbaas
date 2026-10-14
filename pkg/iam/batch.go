@@ -195,7 +195,7 @@ type BatchError struct {
 
 // UserImport represents user data for batch import.
 type UserImport struct {
-	ID         string
+	ID         uint64
 	Email      string
 	Username   string
 	Name       string
@@ -256,7 +256,7 @@ type BatchExportRequest struct {
 
 // ExportFilter defines filtering options for exports.
 type ExportFilter struct {
-	UserIDs       []string
+	UserIDs       []uint64
 	RoleIDs       []string
 	PolicyNames   []string
 	CreatedAfter  *time.Time

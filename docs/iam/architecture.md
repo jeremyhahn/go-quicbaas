@@ -1,6 +1,6 @@
 # IAM — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-13
 > Design, component boundaries and data flow. Feature folder: `docs/iam/`.
 
 ## Delegation to go-qrdb (locked)
@@ -9,7 +9,7 @@ QuicBaaS **composes** go-qrdb and go-xkms through the qrdb SDK (`go-qrdb/sdk/go`
 
 | Capability | Owner | quicbaas consumes via |
 |------------|-------|------------------------|
-| User/identity model (`User`, RoleBindings, ABAC, factors) | go-qrdb `pkg/user` | `sdk.User` / `sdk/go/types_user.go` |
+| User/identity model (`User`, RoleBindings, ABAC, factors); `iam.User.ID` is qrdb's uint64 Snowflake as assigned, zero meaning "not created yet", JSON-encoded as a decimal string | go-qrdb `pkg/user` | `sdk.User` / `sdk/go/types_user.go` |
 | mTLS cert-binding identifier (SPKI SHA-256 thumbprint) | go-qrdb | `sdk.ComputeSPKIThumbprint` |
 | First-boot + admin-mTLS enrollment | go-qrdb `pkg/firstboot` | `sdk.FirstBootInitialize` |
 | Barrier (none/passphrase/shamir; system + per-tenant) | go-qrdb `pkg/seal` | `Security().Barrier()` |

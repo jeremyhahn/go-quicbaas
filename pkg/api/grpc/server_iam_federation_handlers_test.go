@@ -89,15 +89,15 @@ func (m *mockFederationManager) HandleCallback(ctx context.Context, stateToken, 
 	return args.Get(0).(*iam.FederationResult), args.Error(1)
 }
 
-func (m *mockFederationManager) LinkAccount(ctx context.Context, userID, tenantID, providerID, externalToken string) error {
+func (m *mockFederationManager) LinkAccount(ctx context.Context, userID uint64, tenantID, providerID, externalToken string) error {
 	return m.Called(ctx, userID, tenantID, providerID, externalToken).Error(0)
 }
 
-func (m *mockFederationManager) UnlinkAccount(ctx context.Context, userID, tenantID, providerID string) error {
+func (m *mockFederationManager) UnlinkAccount(ctx context.Context, userID uint64, tenantID, providerID string) error {
 	return m.Called(ctx, userID, tenantID, providerID).Error(0)
 }
 
-func (m *mockFederationManager) GetUserLinks(ctx context.Context, userID, tenantID string) ([]*iam.FederatedIdentity, error) {
+func (m *mockFederationManager) GetUserLinks(ctx context.Context, userID uint64, tenantID string) ([]*iam.FederatedIdentity, error) {
 	args := m.Called(ctx, userID, tenantID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -329,7 +329,7 @@ func TestFederationServer_HandleFederatedCallback_Success(t *testing.T) {
 
 	mgr.On("HandleCallback", mock.Anything, "state-123", "auth-code-456").
 		Return(&iam.FederationResult{
-			User:              &iam.User{ID: "u1", Email: "user@example.com"},
+			User:              &iam.User{ID: 30001, Email: "user@example.com"},
 			FederatedIdentity: &iam.FederatedIdentity{ID: "fi1", ExternalID: "ext-123"},
 			AccessToken:       "access-token",
 			RefreshToken:      "refresh-token",
@@ -344,7 +344,7 @@ func TestFederationServer_HandleFederatedCallback_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp.User)
-	assert.Equal(t, "u1", resp.User.Id)
+	assert.Equal(t, "30001", resp.User.Id)
 	assert.Equal(t, "access-token", resp.AccessToken)
 	assert.True(t, resp.Provisioned)
 	mgr.AssertExpectations(t)
@@ -367,10 +367,10 @@ func TestFederationServer_HandleFederatedCallback_MissingFields(t *testing.T) {
 func TestFederationServer_LinkAccount_Success(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
 
-	mgr.On("LinkAccount", mock.Anything, "u1", "t1", "p1", "ext-token").Return(nil)
+	mgr.On("LinkAccount", mock.Anything, uint64(30001), "t1", "p1", "ext-token").Return(nil)
 
 	resp, err := srv.LinkAccount(context.Background(), &iampb.LinkAccountRequest{
-		UserId: "u1", TenantId: "t1", ProviderId: "p1", ExternalToken: "ext-token",
+		UserId: "30001", TenantId: "t1", ProviderId: "p1", ExternalToken: "ext-token",
 	})
 
 	require.NoError(t, err)
@@ -385,23 +385,23 @@ func TestFederationServer_LinkAccount_MissingFields(t *testing.T) {
 	_, err := srv.LinkAccount(ctx, &iampb.LinkAccountRequest{TenantId: "t1", ProviderId: "p1", ExternalToken: "x"})
 	require.Error(t, err)
 
-	_, err = srv.LinkAccount(ctx, &iampb.LinkAccountRequest{UserId: "u1", ProviderId: "p1", ExternalToken: "x"})
+	_, err = srv.LinkAccount(ctx, &iampb.LinkAccountRequest{UserId: "30001", ProviderId: "p1", ExternalToken: "x"})
 	require.Error(t, err)
 
-	_, err = srv.LinkAccount(ctx, &iampb.LinkAccountRequest{UserId: "u1", TenantId: "t1", ExternalToken: "x"})
+	_, err = srv.LinkAccount(ctx, &iampb.LinkAccountRequest{UserId: "30001", TenantId: "t1", ExternalToken: "x"})
 	require.Error(t, err)
 
-	_, err = srv.LinkAccount(ctx, &iampb.LinkAccountRequest{UserId: "u1", TenantId: "t1", ProviderId: "p1"})
+	_, err = srv.LinkAccount(ctx, &iampb.LinkAccountRequest{UserId: "30001", TenantId: "t1", ProviderId: "p1"})
 	require.Error(t, err)
 }
 
 func TestFederationServer_UnlinkAccount_Success(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
 
-	mgr.On("UnlinkAccount", mock.Anything, "u1", "t1", "p1").Return(nil)
+	mgr.On("UnlinkAccount", mock.Anything, uint64(30001), "t1", "p1").Return(nil)
 
 	resp, err := srv.UnlinkAccount(context.Background(), &iampb.UnlinkAccountRequest{
-		UserId: "u1", TenantId: "t1", ProviderId: "p1",
+		UserId: "30001", TenantId: "t1", ProviderId: "p1",
 	})
 
 	require.NoError(t, err)
@@ -416,22 +416,22 @@ func TestFederationServer_UnlinkAccount_MissingFields(t *testing.T) {
 	_, err := srv.UnlinkAccount(ctx, &iampb.UnlinkAccountRequest{TenantId: "t1", ProviderId: "p1"})
 	require.Error(t, err)
 
-	_, err = srv.UnlinkAccount(ctx, &iampb.UnlinkAccountRequest{UserId: "u1", ProviderId: "p1"})
+	_, err = srv.UnlinkAccount(ctx, &iampb.UnlinkAccountRequest{UserId: "30001", ProviderId: "p1"})
 	require.Error(t, err)
 
-	_, err = srv.UnlinkAccount(ctx, &iampb.UnlinkAccountRequest{UserId: "u1", TenantId: "t1"})
+	_, err = srv.UnlinkAccount(ctx, &iampb.UnlinkAccountRequest{UserId: "30001", TenantId: "t1"})
 	require.Error(t, err)
 }
 
 func TestFederationServer_GetUserLinks_Success(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
 
-	mgr.On("GetUserLinks", mock.Anything, "u1", "t1").
+	mgr.On("GetUserLinks", mock.Anything, uint64(30001), "t1").
 		Return([]*iam.FederatedIdentity{
-			{ID: "fi1", UserID: "u1", ProviderID: "p1", ExternalID: "ext-1", Claims: map[string]interface{}{"email": "user@example.com"}},
+			{ID: "fi1", UserID: 30001, ProviderID: "p1", ExternalID: "ext-1", Claims: map[string]interface{}{"email": "user@example.com"}},
 		}, nil)
 
-	resp, err := srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{UserId: "u1", TenantId: "t1"})
+	resp, err := srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{UserId: "30001", TenantId: "t1"})
 
 	require.NoError(t, err)
 	assert.Len(t, resp.Identities, 1)
@@ -445,7 +445,7 @@ func TestFederationServer_GetUserLinks_MissingFields(t *testing.T) {
 	_, err := srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{TenantId: "t1"})
 	require.Error(t, err)
 
-	_, err = srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{UserId: "u1"})
+	_, err = srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{UserId: "30001"})
 	require.Error(t, err)
 }
 

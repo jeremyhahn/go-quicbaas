@@ -97,7 +97,7 @@ type failingInviteStore struct {
 
 var errInviteMint = errors.New("invite store unavailable")
 
-func (s *failingInviteStore) Create(ctx context.Context, tenantID, userID string, ttl time.Duration) (string, *iam.InviteRecord, error) {
+func (s *failingInviteStore) Create(ctx context.Context, tenantID string, userID uint64, ttl time.Duration) (string, *iam.InviteRecord, error) {
 	if s.fail {
 		return "", nil, errInviteMint
 	}
@@ -220,8 +220,7 @@ func TestTenantProvisioner_CertModeEnrollsTheAdminCertificateAsALoginFactor(t *t
 	f := newProvisionFixture(t)
 	resp, cert := provisionCertTenant(t, f, provisionTenantID)
 
-	adminID, err := iam.ParseUserID(resp.AdminUserID)
-	require.NoError(t, err)
+	adminID := resp.AdminUserID
 	for name, key := range map[string][]byte{
 		"certificate digest": iam.MTLSCredentialKey(cert),
 		"SPKI digest":        iam.MTLSSPKICredentialKey(cert),
@@ -240,7 +239,7 @@ func TestTenantProvisioner_CertModeLoginFactorIsTenantScoped(t *testing.T) {
 	globex, _ := provisionCertTenant(t, f, "globex")
 
 	factor := lookupMTLSFactor(t, f, iam.MTLSCredentialKey(acmeCert))
-	owner := iam.FormatUserID(factor.UserID)
+	owner := factor.UserID
 	assert.Equal(t, acme.AdminUserID, owner)
 	assert.NotEqual(t, globex.AdminUserID, owner, "one tenant's admin certificate never resolves to another tenant's admin")
 
@@ -282,7 +281,7 @@ func TestTenantProvisioner_CertModeLoginFactorFailureRollsBackAndARetryRecovers(
 	f.p.certLoginFactors = enroller
 	retried, cert := provisionCertTenant(t, f, provisionTenantID)
 	factor := lookupMTLSFactor(t, f, iam.MTLSCredentialKey(cert))
-	assert.Equal(t, retried.AdminUserID, iam.FormatUserID(factor.UserID), "the retry issues a certificate that logs in")
+	assert.Equal(t, retried.AdminUserID, factor.UserID, "the retry issues a certificate that logs in")
 }
 
 func TestTenantProvisioner_CertModeRollbackKeepsAPreexistingTenant(t *testing.T) {
@@ -411,7 +410,7 @@ func TestTenantProvisioner_CertModeSignerFailureRollsBackAndARetryRecovers(t *te
 	retried, cert := provisionCertTenant(t, f, provisionTenantID)
 	assert.NotEmpty(t, retried.AdminCertPEM, "the retry issues the admin certificate")
 	factor := lookupMTLSFactor(t, f, iam.MTLSCredentialKey(cert))
-	assert.Equal(t, retried.AdminUserID, iam.FormatUserID(factor.UserID))
+	assert.Equal(t, retried.AdminUserID, factor.UserID)
 }
 
 func TestTenantProvisioner_CertModeSignerFailureKeepsAPreexistingTenant(t *testing.T) {
@@ -556,7 +555,7 @@ type contextBoundUserStorage struct {
 	deleteBounded bool
 }
 
-func (s *contextBoundUserStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
+func (s *contextBoundUserStorage) DeleteUser(ctx context.Context, tenantID string, userID uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -644,7 +643,7 @@ type undeletableUserStorage struct {
 	*iam.MemoryStorage
 }
 
-func (undeletableUserStorage) DeleteUser(context.Context, string, string) error {
+func (undeletableUserStorage) DeleteUser(context.Context, string, uint64) error {
 	return errUserDelete
 }
 
@@ -822,7 +821,7 @@ func TestTenantProvisioner_InvitedAdminActivatesWithPIV(t *testing.T) {
 	require.NotNil(t, leafBlock)
 	leaf, err := x509.ParseCertificate(leafBlock.Bytes)
 	require.NoError(t, err)
-	assert.Equal(t, resp.AdminUserID, iam.FormatUserID(lookupMTLSFactor(t, f, iam.MTLSCredentialKey(leaf)).UserID),
+	assert.Equal(t, resp.AdminUserID, lookupMTLSFactor(t, f, iam.MTLSCredentialKey(leaf)).UserID,
 		"the activated PIV certificate is login-ready")
 
 	admin, err := f.c.identityStore.GetUser(ctx, provisionTenantID, resp.AdminUserID)

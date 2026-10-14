@@ -116,7 +116,7 @@ func TestListActiveImpersonations_Success(t *testing.T) {
 	handler, _ := newTestIAMHandler(t)
 
 	w := httptest.NewRecorder()
-	r := withChiParams(httptest.NewRequest(http.MethodGet, "/x", nil), map[string]string{"user_id": "u1"})
+	r := withChiParams(httptest.NewRequest(http.MethodGet, "/x", nil), map[string]string{"user_id": "30001"})
 	handler.ListActiveImpersonations(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)
 }

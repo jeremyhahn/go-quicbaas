@@ -105,7 +105,7 @@ func TestPIVLogin_OIDCGetterUnavailable(t *testing.T) {
 		Tenants:     &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
-	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}
+	pivUser := &iam.User{ID: 78, TenantID: "tenant-piv", Email: "piv@example.com"}
 	pivUser.SetPIVThumbprint(hex.EncodeToString(thumb[:]))
 	require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
 
@@ -161,7 +161,7 @@ func TestPIVLogin_TokenIssuanceFailure(t *testing.T) {
 		Tenants:     &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
-	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}
+	pivUser := &iam.User{ID: 78, TenantID: "tenant-piv", Email: "piv@example.com"}
 	pivUser.SetPIVThumbprint(hex.EncodeToString(thumb[:]))
 	require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
 

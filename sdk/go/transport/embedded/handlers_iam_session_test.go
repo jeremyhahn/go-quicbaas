@@ -66,7 +66,7 @@ func newSessionTestService(t *testing.T) (*mockQuicBaaSWithSessions, service.Ses
 	return &mockQuicBaaSWithSessions{sessions: mgr}, mgr
 }
 
-func seedSession(t *testing.T, mgr service.SessionManager, id, userID, tenantID string) *iam.SessionExt {
+func seedSession(t *testing.T, mgr service.SessionManager, id string, userID uint64, tenantID string) *iam.SessionExt {
 	t.Helper()
 	s := &iam.SessionExt{
 		ID:         id,
@@ -106,7 +106,7 @@ func TestIAMSessionDispatchRegistered(t *testing.T) {
 func TestHandleIAMSessionGet(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
 	ctx := context.Background()
-	seedSession(t, mgr, "sess-1", "user-1", "t-1")
+	seedSession(t, mgr, "sess-1", 10001, "t-1")
 
 	out, err := handleIAMSessionGet(ctx, svc, &embeddedSessionIDEnvelope{SessionID: "sess-1"})
 	if err != nil {
@@ -116,7 +116,7 @@ func TestHandleIAMSessionGet(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *iam.Session, got %T", out)
 	}
-	if got.ID != "sess-1" || got.UserID != "user-1" || got.TenantID != "t-1" {
+	if got.ID != "sess-1" || got.UserID != "10001" || got.TenantID != "t-1" {
 		t.Errorf("unexpected session identity: %+v", got)
 	}
 	// The domain models device info as a struct and auth method as metadata;
@@ -132,7 +132,7 @@ func TestHandleIAMSessionGet(t *testing.T) {
 func TestHandleIAMSessionGet_Errors(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
 	ctx := context.Background()
-	seedSession(t, mgr, "sess-1", "user-1", "t-1")
+	seedSession(t, mgr, "sess-1", 10001, "t-1")
 
 	tests := []struct {
 		name string
@@ -156,11 +156,11 @@ func TestHandleIAMSessionList_Paginates(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
 	ctx := context.Background()
 	for _, id := range []string{"s1", "s2", "s3"} {
-		seedSession(t, mgr, id, "user-1", "t-1")
+		seedSession(t, mgr, id, 10001, "t-1")
 	}
 
 	out, err := handleIAMSessionList(ctx, svc, &embeddedListSessionsEnvelope{
-		Request: &iamsdk.ListSessionsRequest{TenantID: "t-1", UserID: "user-1", Limit: 2},
+		Request: &iamsdk.ListSessionsRequest{TenantID: "t-1", UserID: "10001", Limit: 2},
 	})
 	if err != nil {
 		t.Fatalf("handleIAMSessionList failed: %v", err)
@@ -181,7 +181,7 @@ func TestHandleIAMSessionList_Paginates(t *testing.T) {
 
 	// An offset past the end is a normal outcome of a shrinking list.
 	out, err = handleIAMSessionList(ctx, svc, &embeddedListSessionsEnvelope{
-		Request: &iamsdk.ListSessionsRequest{TenantID: "t-1", UserID: "user-1", Offset: 99},
+		Request: &iamsdk.ListSessionsRequest{TenantID: "t-1", UserID: "10001", Offset: 99},
 	})
 	if err != nil {
 		t.Fatalf("handleIAMSessionList with a large offset failed: %v", err)
@@ -216,12 +216,12 @@ func TestHandleIAMSessionList_Errors(t *testing.T) {
 func TestHandleIAMSessionRevoke(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
 	ctx := context.Background()
-	seedSession(t, mgr, "sess-1", "user-1", "t-1")
+	seedSession(t, mgr, "sess-1", 10001, "t-1")
 
 	if _, err := handleIAMSessionRevoke(ctx, svc, &embeddedSessionIDEnvelope{SessionID: "sess-1"}); err != nil {
 		t.Fatalf("handleIAMSessionRevoke failed: %v", err)
 	}
-	sessions, err := mgr.List(ctx, "user-1", "t-1")
+	sessions, err := mgr.List(ctx, 10001, "t-1")
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
@@ -240,15 +240,15 @@ func TestHandleIAMSessionRevoke_BadRequest(t *testing.T) {
 func TestHandleIAMSessionRevokeAll(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
 	ctx := context.Background()
-	seedSession(t, mgr, "s1", "user-1", "t-1")
-	seedSession(t, mgr, "s2", "user-1", "t-1")
-	seedSession(t, mgr, "other", "user-2", "t-1")
+	seedSession(t, mgr, "s1", 10001, "t-1")
+	seedSession(t, mgr, "s2", 10001, "t-1")
+	seedSession(t, mgr, "other", 10002, "t-1")
 
-	if _, err := handleIAMSessionRevokeAll(ctx, svc, &embeddedRevokeAllEnvelope{TenantID: "t-1", UserID: "user-1"}); err != nil {
+	if _, err := handleIAMSessionRevokeAll(ctx, svc, &embeddedRevokeAllEnvelope{TenantID: "t-1", UserID: "10001"}); err != nil {
 		t.Fatalf("handleIAMSessionRevokeAll failed: %v", err)
 	}
 
-	revoked, err := mgr.List(ctx, "user-1", "t-1")
+	revoked, err := mgr.List(ctx, 10001, "t-1")
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestHandleIAMSessionRevokeAll(t *testing.T) {
 
 	// Another user's sessions are untouched — the blast radius is the named
 	// user, not the tenant.
-	survivors, err := mgr.List(ctx, "user-2", "t-1")
+	survivors, err := mgr.List(ctx, 10002, "t-1")
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
@@ -279,15 +279,15 @@ func TestHandleIAMSessionRevokeAll_BadRequest(t *testing.T) {
 func TestHandleIAMSessionRevokeOthers(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
 	ctx := context.Background()
-	seedSession(t, mgr, "keep", "user-1", "t-1")
-	seedSession(t, mgr, "drop-1", "user-1", "t-1")
-	seedSession(t, mgr, "drop-2", "user-1", "t-1")
+	seedSession(t, mgr, "keep", 10001, "t-1")
+	seedSession(t, mgr, "drop-1", 10001, "t-1")
+	seedSession(t, mgr, "drop-2", 10001, "t-1")
 
 	if _, err := handleIAMSessionRevokeOthers(ctx, svc, &embeddedRevokeOthersEnvelope{KeepSessionID: "keep"}); err != nil {
 		t.Fatalf("handleIAMSessionRevokeOthers failed: %v", err)
 	}
 
-	remaining, err := mgr.List(ctx, "user-1", "t-1")
+	remaining, err := mgr.List(ctx, 10001, "t-1")
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
@@ -350,9 +350,9 @@ func subjectCtx(userID, tenantID string) context.Context {
 
 func TestHandleIAMSessionGet_DeniesAnotherSubjectsSession(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
-	seedSession(t, mgr, "victim-session", "user-2", "t-1")
+	seedSession(t, mgr, "victim-session", 10002, "t-1")
 
-	ctx := subjectCtx("user-1", "t-1")
+	ctx := subjectCtx("10001", "t-1")
 	_, err := handleIAMSessionGet(ctx, svc, &embeddedSessionIDEnvelope{SessionID: "victim-session"})
 	if err == nil {
 		t.Fatal("expected reading another subject's session to be denied")
@@ -362,7 +362,7 @@ func TestHandleIAMSessionGet_DeniesAnotherSubjectsSession(t *testing.T) {
 	}
 
 	// The subject's own session is still readable.
-	seedSession(t, mgr, "own-session", "user-1", "t-1")
+	seedSession(t, mgr, "own-session", 10001, "t-1")
 	if _, err := handleIAMSessionGet(ctx, svc, &embeddedSessionIDEnvelope{SessionID: "own-session"}); err != nil {
 		t.Fatalf("reading the subject's own session failed: %v", err)
 	}
@@ -372,9 +372,9 @@ func TestHandleIAMSessionGet_DeniesAnotherSubjectsSession(t *testing.T) {
 // to see, so ownership is checked before the revoke.
 func TestHandleIAMSessionRevoke_DeniesAnotherSubjectsSession(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
-	seedSession(t, mgr, "victim-session", "user-2", "t-1")
+	seedSession(t, mgr, "victim-session", 10002, "t-1")
 
-	ctx := subjectCtx("user-1", "t-1")
+	ctx := subjectCtx("10001", "t-1")
 	_, err := handleIAMSessionRevoke(ctx, svc, &embeddedSessionIDEnvelope{SessionID: "victim-session"})
 	if err == nil {
 		t.Fatal("expected revoking another subject's session to be denied")
@@ -383,7 +383,7 @@ func TestHandleIAMSessionRevoke_DeniesAnotherSubjectsSession(t *testing.T) {
 		t.Errorf("expected *PermissionDeniedError, got %T: %v", err, err)
 	}
 
-	survivors, listErr := mgr.List(context.Background(), "user-2", "t-1")
+	survivors, listErr := mgr.List(context.Background(), 10002, "t-1")
 	if listErr != nil {
 		t.Fatalf("List failed: %v", listErr)
 	}
@@ -396,17 +396,17 @@ func TestHandleIAMSessionRevoke_DeniesAnotherSubjectsSession(t *testing.T) {
 // answer a different question than the one asked, so the mismatch is refused.
 func TestHandleIAMSessionList_DeniesMismatchedIdentity(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
-	seedSession(t, mgr, "own", "user-1", "t-1")
-	ctx := subjectCtx("user-1", "t-1")
+	seedSession(t, mgr, "own", 10001, "t-1")
+	ctx := subjectCtx("10001", "t-1")
 
 	tests := []struct {
 		name    string
 		req     *iamsdk.ListSessionsRequest
 		wantErr bool
 	}{
-		{name: "another user", req: &iamsdk.ListSessionsRequest{UserID: "user-2", TenantID: "t-1"}, wantErr: true},
-		{name: "another tenant", req: &iamsdk.ListSessionsRequest{UserID: "user-1", TenantID: "t-2"}, wantErr: true},
-		{name: "own identity", req: &iamsdk.ListSessionsRequest{UserID: "user-1", TenantID: "t-1"}},
+		{name: "another user", req: &iamsdk.ListSessionsRequest{UserID: "10002", TenantID: "t-1"}, wantErr: true},
+		{name: "another tenant", req: &iamsdk.ListSessionsRequest{UserID: "10001", TenantID: "t-2"}, wantErr: true},
+		{name: "own identity", req: &iamsdk.ListSessionsRequest{UserID: "10001", TenantID: "t-1"}},
 		{name: "identity omitted, filled from the subject", req: &iamsdk.ListSessionsRequest{}},
 	}
 
@@ -434,10 +434,10 @@ func TestHandleIAMSessionList_DeniesMismatchedIdentity(t *testing.T) {
 
 func TestHandleIAMSessionRevokeAll_DeniesMismatchedIdentity(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
-	seedSession(t, mgr, "victim", "user-2", "t-1")
-	ctx := subjectCtx("user-1", "t-1")
+	seedSession(t, mgr, "victim", 10002, "t-1")
+	ctx := subjectCtx("10001", "t-1")
 
-	_, err := handleIAMSessionRevokeAll(ctx, svc, &embeddedRevokeAllEnvelope{TenantID: "t-1", UserID: "user-2"})
+	_, err := handleIAMSessionRevokeAll(ctx, svc, &embeddedRevokeAllEnvelope{TenantID: "t-1", UserID: "10002"})
 	if err == nil {
 		t.Fatal("expected revoking another user's sessions to be denied")
 	}
@@ -445,7 +445,7 @@ func TestHandleIAMSessionRevokeAll_DeniesMismatchedIdentity(t *testing.T) {
 		t.Errorf("expected *PermissionDeniedError, got %T: %v", err, err)
 	}
 
-	survivors, listErr := mgr.List(context.Background(), "user-2", "t-1")
+	survivors, listErr := mgr.List(context.Background(), 10002, "t-1")
 	if listErr != nil {
 		t.Fatalf("List failed: %v", listErr)
 	}
@@ -456,9 +456,9 @@ func TestHandleIAMSessionRevokeAll_DeniesMismatchedIdentity(t *testing.T) {
 
 func TestHandleIAMSessionRevokeOthers_DeniesAnotherSubjectsSession(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
-	seedSession(t, mgr, "victim-keep", "user-2", "t-1")
-	seedSession(t, mgr, "victim-drop", "user-2", "t-1")
-	ctx := subjectCtx("user-1", "t-1")
+	seedSession(t, mgr, "victim-keep", 10002, "t-1")
+	seedSession(t, mgr, "victim-drop", 10002, "t-1")
+	ctx := subjectCtx("10001", "t-1")
 
 	_, err := handleIAMSessionRevokeOthers(ctx, svc, &embeddedRevokeOthersEnvelope{KeepSessionID: "victim-keep"})
 	if err == nil {
@@ -468,7 +468,7 @@ func TestHandleIAMSessionRevokeOthers_DeniesAnotherSubjectsSession(t *testing.T)
 		t.Errorf("expected *PermissionDeniedError, got %T: %v", err, err)
 	}
 
-	survivors, listErr := mgr.List(context.Background(), "user-2", "t-1")
+	survivors, listErr := mgr.List(context.Background(), 10002, "t-1")
 	if listErr != nil {
 		t.Fatalf("List failed: %v", listErr)
 	}
@@ -482,7 +482,7 @@ func TestHandleIAMSessionRevokeOthers_DeniesAnotherSubjectsSession(t *testing.T)
 // handler — so it stays unrestricted.
 func TestSessionHandlers_UnboundContextIsUnrestricted(t *testing.T) {
 	svc, mgr := newSessionTestService(t)
-	seedSession(t, mgr, "any-session", "user-2", "t-1")
+	seedSession(t, mgr, "any-session", 10002, "t-1")
 
 	if _, err := handleIAMSessionGet(context.Background(), svc, &embeddedSessionIDEnvelope{SessionID: "any-session"}); err != nil {
 		t.Fatalf("an unbound host call must not be restricted: %v", err)

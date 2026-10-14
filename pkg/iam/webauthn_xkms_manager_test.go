@@ -583,7 +583,7 @@ func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testi
 	const tenant = "system"
 	const email = "admin@example.com"
 	canonical := &User{
-		ID:       "1234567890123456789", // canonical decimal-string subject
+		ID:       1234567890123456789, // canonical decimal-string subject
 		Email:    email,
 		Name:     "Admin",
 		TenantID: tenant,
@@ -603,14 +603,8 @@ func TestXKMSWebAuthnManager_ResolveAuthenticatedUser_CanonicalIdentity(t *testi
 	if resolver.lastTenant != tenant {
 		t.Errorf("resolver queried in tenant %q, want the verified tenant %q", resolver.lastTenant, tenant)
 	}
-	if user.ID != "1234567890123456789" {
-		t.Errorf("subject id = %q, want canonical decimal string", user.ID)
-	}
-	// The subject must be a clean printable string, never raw bytes.
-	for _, c := range user.ID {
-		if c < '0' || c > '9' {
-			t.Fatalf("subject id %q contains a non-decimal rune; raw-bytes regression", user.ID)
-		}
+	if user.ID != 1234567890123456789 {
+		t.Errorf("subject id = %d, want 1234567890123456789", user.ID)
 	}
 	if len(user.Roles) != 1 || user.Roles[0] != "admin" {
 		t.Errorf("roles = %v, want [admin]", user.Roles)

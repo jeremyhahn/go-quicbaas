@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,14 +55,14 @@ var ErrInviteStoreUnavailable = &dberrors.QBError{
 // asked about, and what decides the status a transport reports.
 type UserRollbackError struct {
 	TenantID string
-	UserID   string
+	UserID   uint64
 	Cause    error
 	Rollback error
 }
 
 // Error implements the error interface.
 func (e *UserRollbackError) Error() string {
-	return e.Cause.Error() + "; rollback of user " + e.UserID + " failed: " + e.Rollback.Error()
+	return e.Cause.Error() + "; rollback of user " + strconv.FormatUint(e.UserID, 10) + " failed: " + e.Rollback.Error()
 }
 
 // Unwrap returns the error that failed the create.
@@ -166,7 +167,7 @@ func (s *IdentityStore) CreateInvitedUser(ctx context.Context, tenantID string, 
 // The rollback runs detached from ctx's cancellation. Whatever failed the
 // create can also have cancelled the request, and a cancelled rollback would
 // leave exactly the stranded user it exists to prevent.
-func (s *IdentityStore) rollbackInvitedUser(ctx context.Context, tenantID, userID string,
+func (s *IdentityStore) rollbackInvitedUser(ctx context.Context, tenantID string, userID uint64,
 	invites InviteStore, token string, cause error) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteRollbackTimeout)
 	defer cancel()
@@ -187,7 +188,7 @@ func (s *IdentityStore) rollbackInvitedUser(ctx context.Context, tenantID, userI
 
 // UserReader reads one user. UserStorage and IdentityStore both satisfy it.
 type UserReader interface {
-	GetUser(ctx context.Context, tenantID, userID string) (*User, error)
+	GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error)
 }
 
 // RereadUserAfterFailedWrite reads the persisted user after a write that
@@ -196,7 +197,7 @@ type UserReader interface {
 // failure on a user that changed. The read is detached from the request's
 // cancellation, which may be the very reason the write failed, and bounded
 // so a wedged store cannot hold the caller.
-func RereadUserAfterFailedWrite(ctx context.Context, users UserReader, tenantID, userID string) (*User, error) {
+func RereadUserAfterFailedWrite(ctx context.Context, users UserReader, tenantID string, userID uint64) (*User, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteRollbackTimeout)
 	defer cancel()
 	return users.GetUser(ctx, tenantID, userID)

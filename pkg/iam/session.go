@@ -32,7 +32,7 @@ type SessionManager interface {
 	GetByToken(ctx context.Context, tokenHash string) (*SessionExt, error)
 
 	// List lists all sessions for a user in a tenant
-	List(ctx context.Context, userID, tenantID string) ([]*SessionExt, error)
+	List(ctx context.Context, userID uint64, tenantID string) ([]*SessionExt, error)
 
 	// UpdateActivity updates the last activity timestamp for a session
 	UpdateActivity(ctx context.Context, sessionID string) error
@@ -41,10 +41,10 @@ type SessionManager interface {
 	Revoke(ctx context.Context, sessionID string) error
 
 	// RevokeAllForUser revokes all sessions for a user
-	RevokeAllForUser(ctx context.Context, userID, tenantID string) error
+	RevokeAllForUser(ctx context.Context, userID uint64, tenantID string) error
 
 	// RevokeAllExcept revokes all sessions for a user except the specified one
-	RevokeAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error
+	RevokeAllExcept(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error
 
 	// CleanupExpired removes expired sessions and returns count of cleaned sessions
 	CleanupExpired(ctx context.Context) (int, error)
@@ -53,7 +53,7 @@ type SessionManager interface {
 	ValidateSession(ctx context.Context, sessionID string) error
 
 	// EnforcePolicy enforces session policy limits for a user
-	EnforcePolicy(ctx context.Context, userID, tenantID string, policy *SessionPolicy) error
+	EnforcePolicy(ctx context.Context, userID uint64, tenantID string, policy *SessionPolicy) error
 }
 
 // DefaultSessionManager implements SessionManager.
@@ -203,12 +203,12 @@ func (m *DefaultSessionManager) GetByToken(ctx context.Context, tokenHash string
 }
 
 // List lists all active sessions for a user.
-func (m *DefaultSessionManager) List(ctx context.Context, userID, tenantID string) ([]*SessionExt, error) {
+func (m *DefaultSessionManager) List(ctx context.Context, userID uint64, tenantID string) ([]*SessionExt, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
-	if userID == "" {
+	if userID == 0 {
 		return nil, NewIAMError(ErrSessionInvalid, "iam.session.list", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -276,12 +276,12 @@ func (m *DefaultSessionManager) Revoke(ctx context.Context, sessionID string) er
 }
 
 // RevokeAllForUser revokes all sessions for a user.
-func (m *DefaultSessionManager) RevokeAllForUser(ctx context.Context, userID, tenantID string) error {
+func (m *DefaultSessionManager) RevokeAllForUser(ctx context.Context, userID uint64, tenantID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
-	if userID == "" {
+	if userID == 0 {
 		return NewIAMError(ErrSessionInvalid, "iam.session.revoke_all", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -292,12 +292,12 @@ func (m *DefaultSessionManager) RevokeAllForUser(ctx context.Context, userID, te
 }
 
 // RevokeAllExcept revokes all sessions for a user except the specified one.
-func (m *DefaultSessionManager) RevokeAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error {
+func (m *DefaultSessionManager) RevokeAllExcept(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
-	if userID == "" {
+	if userID == 0 {
 		return NewIAMError(ErrSessionInvalid, "iam.session.revoke_all_except", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -346,7 +346,7 @@ func (m *DefaultSessionManager) ValidateSession(ctx context.Context, sessionID s
 }
 
 // EnforcePolicy enforces session policy limits for a user.
-func (m *DefaultSessionManager) EnforcePolicy(ctx context.Context, userID, tenantID string, policy *SessionPolicy) error {
+func (m *DefaultSessionManager) EnforcePolicy(ctx context.Context, userID uint64, tenantID string, policy *SessionPolicy) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

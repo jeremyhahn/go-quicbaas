@@ -36,17 +36,6 @@ import (
 // qrdb's TenantInviteStore. Mirroring either onto the identity record is what
 // this change removes.
 
-// ParseUserID and FormatUserID are the canonical id conversions, owned by
-// pkg/iam because the rendering is a property of iam.User rather than of this
-// adapter. They are aliased here so the projection reads in one place.
-var (
-	// ParseUserID converts the external decimal user id into qrdb's uint64.
-	ParseUserID = iam.ParseUserID
-
-	// FormatUserID renders a qrdb Snowflake as the external user id.
-	FormatUserID = iam.FormatUserID
-)
-
 // ErrInvalidUserID reports a user id that is not a qrdb Snowflake.
 var ErrInvalidUserID = iam.ErrInvalidUserID
 
@@ -55,7 +44,7 @@ var ErrInvalidUserID = iam.ErrInvalidUserID
 // "the side-record was missing" case.
 func ToIAMUser(core qrdbsdk.User) *iam.User {
 	return &iam.User{
-		ID:    FormatUserID(core.ID),
+		ID:    core.ID,
 		Email: core.Email,
 		// qrdb's Username has a home on iam.User now, so the projection is
 		// round-trip faithful: it used to be read only as a display-name
@@ -83,14 +72,6 @@ func FromIAMUser(u *iam.User) (qrdbsdk.User, error) {
 	if u == nil {
 		return qrdbsdk.User{}, ErrInvalidUserID
 	}
-	var id uint64
-	if u.ID != "" {
-		parsed, err := ParseUserID(u.ID)
-		if err != nil {
-			return qrdbsdk.User{}, err
-		}
-		id = parsed
-	}
 	// Normalization is qrdb's, not a local copy of it: a consumer that
 	// de-duplicates or case-folds the set differently would disagree with the
 	// store about what the user may present.
@@ -99,7 +80,7 @@ func FromIAMUser(u *iam.User) (qrdbsdk.User, error) {
 		return qrdbsdk.User{}, err
 	}
 	return qrdbsdk.User{
-		ID:           id,
+		ID:           u.ID,
 		Username:     CoreUsername(u),
 		Email:        qrdbsdk.NormalizeEmail(u.Email),
 		Name:         u.Name,

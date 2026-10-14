@@ -334,7 +334,7 @@ func (g webAuthnManagerGetter) GetIdentityStore(context.Context) (*pkgiam.Identi
 // newCallerIdentities returns an identity store holding the one account an
 // add-credential caller resolves to. The account keeps the qrdb user ID the
 // test directory knows it by.
-func newCallerIdentities(t *testing.T, tenantID, id, username, email string) *pkgiam.IdentityStore {
+func newCallerIdentities(t *testing.T, tenantID string, id uint64, username, email string) *pkgiam.IdentityStore {
 	t.Helper()
 	mem := pkgiam.NewMemoryStorage()
 	if err := mem.CreateUser(context.Background(), &pkgiam.User{
@@ -550,7 +550,7 @@ func newPasskeyServer(t *testing.T) *passkeyServer {
 		factory: factory,
 		fido2: pkgservice.NewFIDO2Service(webAuthnManagerGetter{
 			mgr:        mgr,
-			identities: newCallerIdentities(t, passkeyTenant, "9", "root", passkeyEmail),
+			identities: newCallerIdentities(t, passkeyTenant, 9, "root", passkeyEmail),
 		}),
 		authenticator: authenticator,
 	}

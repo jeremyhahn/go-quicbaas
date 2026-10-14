@@ -25,7 +25,7 @@ import (
 // attestationTestUser is the principal used across these tests.
 func attestationTestUser() *User {
 	return &User{
-		ID:       "user-1",
+		ID:       10001,
 		TenantID: "tenant-1",
 		Email:    "admin@example.com",
 		Name:     "Admin",

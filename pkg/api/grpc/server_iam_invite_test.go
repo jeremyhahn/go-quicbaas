@@ -72,7 +72,7 @@ func newInviteIAMServer(t *testing.T, activation service.InviteActivationService
 func TestIAMServer_GetInvite(t *testing.T) {
 	expires := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
 	stub := &stubInviteActivation{meta: &service.InviteMetadata{
-		UserID: "u1", Email: "a@example.com", AuthMethods: []string{"fido2", "piv"}, ExpiresAt: expires,
+		UserID: 30001, Email: "a@example.com", AuthMethods: []string{"fido2", "piv"}, ExpiresAt: expires,
 	}}
 
 	resp, err := newInviteIAMServer(t, stub).GetInvite(context.Background(),
@@ -80,13 +80,13 @@ func TestIAMServer_GetInvite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "t1", stub.gotTenant)
 	assert.Equal(t, "tok", stub.gotToken)
-	assert.Equal(t, "u1", resp.UserId)
+	assert.Equal(t, "30001", resp.UserId)
 	assert.Equal(t, []string{"fido2", "piv"}, resp.AuthMethods)
 	assert.True(t, resp.ExpiresAt.AsTime().Equal(expires))
 }
 
 func TestIAMServer_ActivateFIDO2(t *testing.T) {
-	stub := &stubInviteActivation{activation: &service.InviteActivation{UserID: "u1", Warning: "w"}}
+	stub := &stubInviteActivation{activation: &service.InviteActivation{UserID: 30001, Warning: "w"}}
 	srv := newInviteIAMServer(t, stub)
 	ctx := context.Background()
 
@@ -99,7 +99,7 @@ func TestIAMServer_ActivateFIDO2(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "cred", stub.gotCredential["id"])
-	assert.Equal(t, "u1", finish.UserId)
+	assert.Equal(t, "30001", finish.UserId)
 	assert.Equal(t, "activation successful", finish.Message)
 	assert.Equal(t, "w", finish.Warning)
 }
@@ -124,7 +124,7 @@ func TestIAMServer_ActivateFIDO2Finish_Credential(t *testing.T) {
 }
 
 func TestIAMServer_ActivatePIV(t *testing.T) {
-	stub := &stubInviteActivation{activation: &service.InviteActivation{UserID: "u1"}}
+	stub := &stubInviteActivation{activation: &service.InviteActivation{UserID: 30001}}
 
 	resp, err := newInviteIAMServer(t, stub).ActivatePIV(context.Background(),
 		&iampb.ActivatePIVRequest{TenantId: "t1", Token: "tok", CertPem: "PEM"})

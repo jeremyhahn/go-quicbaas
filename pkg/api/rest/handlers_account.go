@@ -962,7 +962,7 @@ func (s *Server) HandleMaterializeAccountCredential(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	if !queryIdentityMatches(w, r, subject) {
+	if !queryIdentityMatches(w, r, subject, s.lazyCallerAccount(w, r, subject)) {
 		return
 	}
 

@@ -32,7 +32,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "valid secret with 6 digits",
 			secret: &MFASecret{
 				ID:          "secret-1",
-				UserID:      "user-1",
+				UserID:      10001,
 				TenantID:    "tenant-1",
 				Secret:      testTOTPSecret,
 				Algorithm:   MFAAlgorithmSHA1,
@@ -49,7 +49,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "valid secret with 7 digits",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   7,
@@ -61,7 +61,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "valid secret with 8 digits",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   8,
@@ -73,7 +73,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "valid secret with minimum period (15 seconds)",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   6,
@@ -85,7 +85,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "valid secret with maximum period (120 seconds)",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   6,
@@ -97,7 +97,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "missing ID",
 			secret: &MFASecret{
 				ID:       "",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   6,
@@ -110,7 +110,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "missing UserID",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "",
+				UserID:   0,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   6,
@@ -123,7 +123,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "missing TenantID",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "",
 				Secret:   testTOTPSecret,
 				Digits:   6,
@@ -136,7 +136,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "missing Secret",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   "",
 				Digits:   6,
@@ -149,7 +149,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "digits below minimum (5)",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   5,
@@ -162,7 +162,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "digits above maximum (9)",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   9,
@@ -175,7 +175,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "digits zero value",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   0,
@@ -188,7 +188,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "period below minimum (14 seconds)",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   6,
@@ -201,7 +201,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "period above maximum (121 seconds)",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   6,
@@ -214,7 +214,7 @@ func TestMFASecretValidate(t *testing.T) {
 			name: "period zero value",
 			secret: &MFASecret{
 				ID:       "secret-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 				Digits:   6,
@@ -265,7 +265,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 			name: "valid enrollment",
 			enrollment: &MFAEnrollment{
 				ID:          "enrollment-1",
-				UserID:      "user-1",
+				UserID:      10001,
 				TenantID:    "tenant-1",
 				Method:      MFAMethodTOTP,
 				Secret:      testTOTPSecret,
@@ -281,7 +281,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 			name: "valid enrollment with WebAuthn",
 			enrollment: &MFAEnrollment{
 				ID:        "enrollment-1",
-				UserID:    "user-1",
+				UserID:    10001,
 				TenantID:  "tenant-1",
 				Method:    MFAMethodWebAuthn,
 				Secret:    "webauthn-secret",
@@ -294,7 +294,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 			name: "missing ID",
 			enrollment: &MFAEnrollment{
 				ID:       "",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 			},
@@ -305,7 +305,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 			name: "missing UserID",
 			enrollment: &MFAEnrollment{
 				ID:       "enrollment-1",
-				UserID:   "",
+				UserID:   0,
 				TenantID: "tenant-1",
 				Secret:   testTOTPSecret,
 			},
@@ -316,7 +316,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 			name: "missing TenantID",
 			enrollment: &MFAEnrollment{
 				ID:       "enrollment-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "",
 				Secret:   testTOTPSecret,
 			},
@@ -327,7 +327,7 @@ func TestMFAEnrollmentValidate(t *testing.T) {
 			name: "missing Secret",
 			enrollment: &MFAEnrollment{
 				ID:       "enrollment-1",
-				UserID:   "user-1",
+				UserID:   10001,
 				TenantID: "tenant-1",
 				Secret:   "",
 			},
@@ -423,7 +423,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 			name: "valid challenge",
 			challenge: &MFAChallenge{
 				ID:           "challenge-1",
-				UserID:       "user-1",
+				UserID:       10001,
 				TenantID:     "tenant-1",
 				SessionToken: "session-token-123",
 				Method:       MFAMethodTOTP,
@@ -440,7 +440,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 			name: "valid challenge without optional fields",
 			challenge: &MFAChallenge{
 				ID:           "challenge-1",
-				UserID:       "user-1",
+				UserID:       10001,
 				TenantID:     "tenant-1",
 				SessionToken: "session-token-123",
 				Method:       MFAMethodWebAuthn,
@@ -453,7 +453,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 			name: "missing ID",
 			challenge: &MFAChallenge{
 				ID:           "",
-				UserID:       "user-1",
+				UserID:       10001,
 				TenantID:     "tenant-1",
 				SessionToken: "session-token-123",
 			},
@@ -464,7 +464,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 			name: "missing UserID",
 			challenge: &MFAChallenge{
 				ID:           "challenge-1",
-				UserID:       "",
+				UserID:       0,
 				TenantID:     "tenant-1",
 				SessionToken: "session-token-123",
 			},
@@ -475,7 +475,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 			name: "missing TenantID",
 			challenge: &MFAChallenge{
 				ID:           "challenge-1",
-				UserID:       "user-1",
+				UserID:       10001,
 				TenantID:     "",
 				SessionToken: "session-token-123",
 			},
@@ -486,7 +486,7 @@ func TestMFAChallengeValidate(t *testing.T) {
 			name: "missing SessionToken",
 			challenge: &MFAChallenge{
 				ID:           "challenge-1",
-				UserID:       "user-1",
+				UserID:       10001,
 				TenantID:     "tenant-1",
 				SessionToken: "",
 			},

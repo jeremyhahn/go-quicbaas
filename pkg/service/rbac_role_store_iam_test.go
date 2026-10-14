@@ -304,7 +304,7 @@ func TestRoleStore_AssignRevokeRole_RoundTrip(t *testing.T) {
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-bind", is)
 
 	// Seed a user (Name is the login username) and a role.
-	user := &iam.User{ID: "1", TenantID: "tenant-bind", Username: "alice", Name: "Alice", Email: "alice@bind.test"}
+	user := &iam.User{ID: 1, TenantID: "tenant-bind", Username: "alice", Name: "Alice", Email: "alice@bind.test"}
 	require.NoError(t, storage.CreateUser(ctx, user))
 	role := &iam.Role{ID: "r-1", TenantID: "tenant-bind", Name: "editor"}
 	require.NoError(t, storage.CreateRole(ctx, role))
@@ -314,7 +314,7 @@ func TestRoleStore_AssignRevokeRole_RoundTrip(t *testing.T) {
 	require.NotNil(t, assignResp)
 	assert.True(t, assignResp.Success)
 
-	got, err := storage.GetUser(ctx, "tenant-bind", "1")
+	got, err := storage.GetUser(ctx, "tenant-bind", 1)
 	require.NoError(t, err)
 	assert.Contains(t, got.Roles, "r-1")
 
@@ -323,7 +323,7 @@ func TestRoleStore_AssignRevokeRole_RoundTrip(t *testing.T) {
 	require.NotNil(t, revokeResp)
 	assert.True(t, revokeResp.Success)
 
-	got, err = storage.GetUser(ctx, "tenant-bind", "1")
+	got, err = storage.GetUser(ctx, "tenant-bind", 1)
 	require.NoError(t, err)
 	assert.NotContains(t, got.Roles, "r-1")
 }
@@ -357,7 +357,7 @@ func TestRoleStore_AssignRole_UnknownRole(t *testing.T) {
 		RoleStorage: storage,
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-bind", is)
-	require.NoError(t, storage.CreateUser(ctx, &iam.User{ID: "1", TenantID: "tenant-bind", Username: "alice", Name: "Alice", Email: "alice@bind.test"}))
+	require.NoError(t, storage.CreateUser(ctx, &iam.User{ID: 1, TenantID: "tenant-bind", Username: "alice", Name: "Alice", Email: "alice@bind.test"}))
 
 	resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "alice", RoleName: "ghost"})
 	assert.Nil(t, resp)
@@ -449,7 +449,7 @@ func TestRoleStore_AssignRole_RoleNotFound(t *testing.T) {
 		RoleStorage: storage,
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-nf-role", is)
-	require.NoError(t, storage.CreateUser(ctx, &iam.User{ID: "1", TenantID: "tenant-nf-role", Username: "alice", Name: "Alice", Email: "alice@nf.test"}))
+	require.NoError(t, storage.CreateUser(ctx, &iam.User{ID: 1, TenantID: "tenant-nf-role", Username: "alice", Name: "Alice", Email: "alice@nf.test"}))
 
 	resp, err := svc.AssignRole(ctx, &AuthAssignRoleRequest{Username: "alice", RoleName: "ghost"})
 	assert.Nil(t, resp)

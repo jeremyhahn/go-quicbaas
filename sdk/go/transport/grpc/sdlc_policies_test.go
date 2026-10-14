@@ -56,3 +56,23 @@ func TestSDLCGRPC_ARebindKeepsTheTrainAndClustering(t *testing.T) {
 		t.Fatalf("the server holds train %+v after the rebind", held)
 	}
 }
+
+// TestSDLCGRPC_BindCarriesPaused: BindRequest.Paused reaches the wire as
+// BindProjectRequest.paused, and an unpaused bind sends false.
+func TestSDLCGRPC_BindCarriesPaused(t *testing.T) {
+	fake := &bindingStoreServer{}
+	conn := newHandlerServer(t, func(s *grpc.Server) { pb.RegisterSDLCServiceServer(s, fake) }).dial(t)
+	ctx := context.Background()
+	for _, paused := range []bool{true, false} {
+		req := &sdlc.BindRequest{TenantID: "t", ProjectID: "p1", Binding: sdlc.ProjectBinding{ProjectID: "p1"}, Paused: paused}
+		if _, err := handleSDLCBind(ctx, conn, req); err != nil {
+			t.Fatalf("Bind: %v", err)
+		}
+		fake.mu.Lock()
+		got := fake.lastBind.GetPaused()
+		fake.mu.Unlock()
+		if got != paused {
+			t.Fatalf("server saw paused=%v, want %v", got, paused)
+		}
+	}
+}

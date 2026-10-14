@@ -51,7 +51,7 @@ type failingInviteStore struct {
 	err error
 }
 
-func (f *failingInviteStore) Create(context.Context, string, string, time.Duration) (string, *iam.InviteRecord, error) {
+func (f *failingInviteStore) Create(context.Context, string, uint64, time.Duration) (string, *iam.InviteRecord, error) {
 	return "", nil, f.err
 }
 
@@ -188,7 +188,7 @@ type tokenRecordingInviteStore struct {
 	last string
 }
 
-func (t *tokenRecordingInviteStore) Create(ctx context.Context, tenantID, userID string, ttl time.Duration) (string, *iam.InviteRecord, error) {
+func (t *tokenRecordingInviteStore) Create(ctx context.Context, tenantID string, userID uint64, ttl time.Duration) (string, *iam.InviteRecord, error) {
 	token, rec, err := t.InviteStore.Create(ctx, tenantID, userID, ttl)
 	if err == nil {
 		t.last = token
@@ -206,7 +206,7 @@ type ctxAwareUserStorage struct {
 	iam.UserStorage
 }
 
-func (c *ctxAwareUserStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
+func (c *ctxAwareUserStorage) DeleteUser(ctx context.Context, tenantID string, userID uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ type cancelOnInviteStore struct {
 	err    error
 }
 
-func (c *cancelOnInviteStore) Create(context.Context, string, string, time.Duration) (string, *iam.InviteRecord, error) {
+func (c *cancelOnInviteStore) Create(context.Context, string, uint64, time.Duration) (string, *iam.InviteRecord, error) {
 	c.cancel()
 	return "", nil, c.err
 }

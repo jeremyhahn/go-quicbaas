@@ -130,7 +130,7 @@ type AuthorizeRequest struct {
 	Resource string `json:"resource" form:"resource"`
 
 	// UserID is the authenticated user (set internally after authentication)
-	UserID string `json:"-"`
+	UserID uint64 `json:"-"`
 
 	// TenantID is the tenant context (set internally)
 	TenantID string `json:"-"`
@@ -376,7 +376,7 @@ type Claims struct {
 	// (UpdateUser rewrites User.Name), after which the subject resolves to
 	// nobody. Liveness resolves a user session by THIS claim, so renaming an
 	// account cannot detach its live sessions from it.
-	UserID string `json:"uid,omitempty"`
+	UserID uint64 `json:"uid,string,omitempty"`
 
 	// PrincipalType positively identifies a non-user principal. It is the
 	// answer to "is this a service token?" — asked of the token itself rather
@@ -558,7 +558,7 @@ type AuthCodeData struct {
 	Code string
 
 	// UserID is the authenticated user
-	UserID string
+	UserID uint64
 
 	// TenantID is the tenant context
 	TenantID string

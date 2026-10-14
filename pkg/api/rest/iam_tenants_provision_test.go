@@ -67,7 +67,7 @@ func provisionRequest(t *testing.T, iamSvc service.IAMService, tenantID, body st
 
 func TestProvisionTenant_InviteModeReturnsTheToken(t *testing.T) {
 	svc := &provisionIAMService{resp: &service.IAMProvisionTenantResponse{
-		TenantID: "acme", AdminUserID: "7", AdminRoleID: "role-1", AdminPending: true, InviteToken: "tok",
+		TenantID: "acme", AdminUserID: 7, AdminRoleID: "role-1", AdminPending: true, InviteToken: "tok",
 	}}
 
 	w := provisionRequest(t, svc, "acme", `{"name":"Acme","admin_enrollment":"invite","invite_expiry_hours":12}`)
@@ -81,7 +81,7 @@ func TestProvisionTenant_InviteModeReturnsTheToken(t *testing.T) {
 	var resp service.IAMProvisionTenantResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "tok", resp.InviteToken)
-	assert.Equal(t, "7", resp.AdminUserID)
+	assert.Equal(t, uint64(7), resp.AdminUserID)
 	assert.True(t, resp.AdminPending)
 }
 
@@ -91,7 +91,7 @@ func TestProvisionTenant_InviteModeReturnsTheToken(t *testing.T) {
 func TestProvisionTenant_InviteModeWithoutExpiryReturnsTheDefault(t *testing.T) {
 	expiresAt := time.Now().Add(iam.DefaultInviteTTL).UTC()
 	svc := &provisionIAMService{resp: &service.IAMProvisionTenantResponse{
-		TenantID: "acme", AdminUserID: "7", AdminRoleID: "role-1", AdminPending: true,
+		TenantID: "acme", AdminUserID: 7, AdminRoleID: "role-1", AdminPending: true,
 		InviteToken: "tok", InviteExpiresAt: &expiresAt,
 	}}
 

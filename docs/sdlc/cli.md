@@ -46,6 +46,7 @@ repairs it.
 |------|-------|------|---------|-------------|
 | `--output` | group | string | `table` | `json`, `yaml` or `table` |
 | `--file`, `-f` | `bind` | string | — | The project binding as YAML or JSON (**required** for `bind`) |
+| `--paused` | `bind` | bool | `false` | Bind without switching the project's autonomy on; never switches it off |
 | `--title` | `issue create` | string | — | Issue title, one line (**required**) |
 | `--body` | `issue create` | string | — | Issue body |
 | `--body-file` | `issue create` | string | — | Read the issue body from a file; exclusive with `--body` |
@@ -58,6 +59,7 @@ repairs it.
 
 ```bash
 quicbaas sdlc bind go-truststrap --file go-truststrap-binding.yaml
+quicbaas sdlc bind go-truststrap --file go-truststrap-binding.yaml --paused
 quicbaas sdlc binding go-truststrap --output json
 quicbaas sdlc conformance go-truststrap
 quicbaas sdlc onboard go-truststrap

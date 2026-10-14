@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -218,7 +219,7 @@ func (h *IAMHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, &InviteMetadataResponse{
-		UserID:      meta.UserID,
+		UserID:      strconv.FormatUint(meta.UserID, 10),
 		Email:       meta.Email,
 		Name:        meta.Name,
 		AuthMethods: meta.AuthMethods,
@@ -269,7 +270,7 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 	}
 
 	RespondJSON(w, r, http.StatusOK, &ActivationResponse{
-		UserID:  activation.UserID,
+		UserID:  strconv.FormatUint(activation.UserID, 10),
 		Message: "activation successful",
 		Warning: activation.Warning,
 	})
@@ -303,7 +304,7 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, &ActivationResponse{
-		UserID:  activation.UserID,
+		UserID:  strconv.FormatUint(activation.UserID, 10),
 		Message: "PIV activation successful",
 	})
 }

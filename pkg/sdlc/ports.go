@@ -67,6 +67,19 @@ type ProjectNudger interface {
 	NudgeProject(ctx context.Context, tenantID, projectID string) error
 }
 
+// TriageRerunMarks records that a project wants triaging again while a triage
+// run already holds its lease. A nudge that loses the lease marks; the run in
+// flight takes the mark before it lists the issues and again once it has
+// cleaned up, and lists again when it took one. The Store implements it.
+type TriageRerunMarks interface {
+	// MarkTriageRerun records that a re-run is wanted. A mark that is
+	// already there is success: two nudges want the same re-run.
+	MarkTriageRerun(ctx context.Context, tenantID, projectID string) error
+
+	// TakeTriageRerun removes the mark and reports whether there was one.
+	TakeTriageRerun(ctx context.Context, tenantID, projectID string) (bool, error)
+}
+
 // ForgeTokenReader resolves the forge API token a binding names, as bytes.
 //
 // The runner needs the VALUE, not an adapter holding it: the token is written

@@ -28,7 +28,7 @@ func TestIdentityStore_GetUserByUsername(t *testing.T) {
 	ctx := context.Background()
 	store := newMockUserStorage()
 	if err := store.CreateUser(ctx, &User{
-		ID:       "1",
+		ID:       1,
 		TenantID: "t1",
 		Username: "alice",
 		Name:     "Alice",
@@ -46,8 +46,8 @@ func TestIdentityStore_GetUserByUsername(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByUsername: %v", err)
 	}
-	if got.ID != "1" {
-		t.Fatalf("resolved user = %q, want u1", got.ID)
+	if got.ID != 1 {
+		t.Fatalf("resolved user = %d, want 1", got.ID)
 	}
 
 	// Not found: a username that exists in no tenant propagates ErrUserNotFound.
@@ -90,7 +90,7 @@ func TestMemoryStorage_GetUserByUsername(t *testing.T) {
 		t.Fatalf("CreateTenant t2: %v", err)
 	}
 
-	if err := storage.CreateUser(ctx, &User{ID: "1", TenantID: "t1", Username: "erin", Name: "Erin", Email: "erin@example.com"}); err != nil {
+	if err := storage.CreateUser(ctx, &User{ID: 1, TenantID: "t1", Username: "erin", Name: "Erin", Email: "erin@example.com"}); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
@@ -99,8 +99,8 @@ func TestMemoryStorage_GetUserByUsername(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByUsername: %v", err)
 	}
-	if got.ID != "1" {
-		t.Fatalf("resolved user = %q, want u1", got.ID)
+	if got.ID != 1 {
+		t.Fatalf("resolved user = %d, want 1", got.ID)
 	}
 
 	// Miss: an unknown username returns ErrUserNotFound.
@@ -154,7 +154,7 @@ func TestCreateUser_KeepsTheHandleAndTheDisplayNameApart(t *testing.T) {
 		t.Fatalf("GetUserByUsername(alice): %v", err)
 	}
 	if got.ID != alice.ID {
-		t.Fatalf("resolved %q, want %q", got.ID, alice.ID)
+		t.Fatalf("resolved %d, want %d", got.ID, alice.ID)
 	}
 
 	// The display name is not a handle and resolves nobody: it carries no
@@ -182,7 +182,7 @@ func TestCreateUser_KeepsTheHandleAndTheDisplayNameApart(t *testing.T) {
 		t.Fatalf("GetUserByUsername(asmith): %v", err)
 	}
 	if resolved.ID != other.ID {
-		t.Fatalf("resolved %q, want the second account %q", resolved.ID, other.ID)
+		t.Fatalf("resolved %d, want the second account %d", resolved.ID, other.ID)
 	}
 }
 

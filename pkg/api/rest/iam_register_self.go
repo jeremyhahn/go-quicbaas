@@ -23,11 +23,11 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -618,7 +618,7 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 			Status:   "pending",
 			TenantID: sess.tenantID,
-			UserID:   createdUser.ID,
+			UserID:   strconv.FormatUint(createdUser.ID, 10),
 			Message:  "Your account is awaiting admin approval.",
 		})
 		return
@@ -633,7 +633,7 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 			Status:   "verification_required",
 			TenantID: sess.tenantID,
-			UserID:   createdUser.ID,
+			UserID:   strconv.FormatUint(createdUser.ID, 10),
 			Message:  "Please check your email to verify your account before signing in.",
 		})
 		return
@@ -689,7 +689,7 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 	RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 		Status:       "active",
 		TenantID:     sess.tenantID,
-		UserID:       createdUser.ID,
+		UserID:       strconv.FormatUint(createdUser.ID, 10),
 		AccessToken:  tokens.AccessToken,
 		RefreshToken: tokens.RefreshToken,
 	})
@@ -704,10 +704,8 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 func (h *IAMHandler) ApproveUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user_id is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 	tenantID := r.URL.Query().Get("tenant_id")
@@ -735,7 +733,7 @@ func (h *IAMHandler) ApproveUser(w http.ResponseWriter, r *http.Request) {
 
 	RespondJSON(w, r, http.StatusOK, map[string]string{
 		"status":  "approved",
-		"user_id": userID,
+		"user_id": strconv.FormatUint(userID, 10),
 	})
 }
 
@@ -744,10 +742,8 @@ func (h *IAMHandler) ApproveUser(w http.ResponseWriter, r *http.Request) {
 func (h *IAMHandler) RejectUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user_id is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 	tenantID := r.URL.Query().Get("tenant_id")
@@ -783,7 +779,7 @@ func (h *IAMHandler) RejectUser(w http.ResponseWriter, r *http.Request) {
 
 	RespondJSON(w, r, http.StatusOK, map[string]string{
 		"status":  "rejected",
-		"user_id": userID,
+		"user_id": strconv.FormatUint(userID, 10),
 	})
 }
 
@@ -824,7 +820,9 @@ func builtInRoleName(configured string) string {
 func grantSelfRegistrationRoles(
 	ctx context.Context,
 	store *iam.IdentityStore,
-	tenantID, userID, defaultRole string,
+	tenantID string,
+	userID uint64,
+	defaultRole string,
 ) error {
 	if defaultRole == "" {
 		defaultRole = "User"
@@ -849,7 +847,9 @@ func grantSelfRegistrationRoles(
 func grantBuiltInRole(
 	ctx context.Context,
 	store *iam.IdentityStore,
-	tenantID, userID, roleName string,
+	tenantID string,
+	userID uint64,
+	roleName string,
 ) error {
 	role, err := store.GetRoleByName(ctx, tenantID, roleName)
 	if err != nil {

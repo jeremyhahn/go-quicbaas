@@ -36,8 +36,8 @@ import (
 )
 
 const (
-	activationUserID = "73"
-	absentToken      = "0000000000000000000000000000000000000000000000000000000000000000"
+	activationUserID uint64 = 73
+	absentToken             = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
 // errUserStoreUnavailable is the failure the activation write reports when the

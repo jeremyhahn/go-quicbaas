@@ -362,7 +362,7 @@ func TestEffectiveUserPermissions(t *testing.T) {
 
 	// Create user with editor role
 	user := &User{
-		ID:       "11",
+		ID:       11,
 		Email:    "user1@test.com",
 		Name:     "User 1",
 		TenantID: tenantID,
@@ -373,7 +373,7 @@ func TestEffectiveUserPermissions(t *testing.T) {
 	require.NoError(t, storage.CreateUser(ctx, user))
 
 	// Get effective permissions
-	effective, err := manager.GetEffectiveUserPermissions(ctx, tenantID, "11")
+	effective, err := manager.GetEffectiveUserPermissions(ctx, tenantID, 11)
 	assert.NoError(t, err)
 
 	// User should have both read and write permissions
@@ -583,7 +583,7 @@ func TestGetEffectiveUserPermissionsNonexistentUser(t *testing.T) {
 	tenantID := "test-tenant"
 
 	// Try to get permissions for nonexistent user
-	_, err := manager.GetEffectiveUserPermissions(ctx, tenantID, "nonexistent")
+	_, err := manager.GetEffectiveUserPermissions(ctx, tenantID, 99999)
 	assert.Error(t, err)
 }
 
@@ -729,7 +729,7 @@ func TestSessionExtValidate_MissingUserID(t *testing.T) {
 func TestSessionExtValidate_MissingTokenHash(t *testing.T) {
 	session := &SessionExt{
 		ID:       "session-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		TenantID: "tenant-1",
 		// Missing TokenHash
 	}
@@ -743,7 +743,7 @@ func TestSessionExtValidate_MissingTokenHash(t *testing.T) {
 func TestSessionExtValidate_MissingSessionID(t *testing.T) {
 	session := &SessionExt{
 		// Missing ID
-		UserID:    "user-1",
+		UserID:    10001,
 		TenantID:  "tenant-1",
 		TokenHash: "hash123",
 	}
@@ -757,7 +757,7 @@ func TestSessionExtValidate_MissingSessionID(t *testing.T) {
 func TestSessionExtValidate_Valid(t *testing.T) {
 	session := &SessionExt{
 		ID:        "session-1",
-		UserID:    "user-1",
+		UserID:    10001,
 		TenantID:  "tenant-1",
 		TokenHash: "hash123",
 	}
@@ -785,8 +785,8 @@ func TestMemoryStorage_DeleteTenant_WithCascade(t *testing.T) {
 	}
 
 	// Create users with emails
-	user1 := &User{ID: "21", TenantID: tenantID, Email: "user1@test.com", Name: "User 1"}
-	user2 := &User{ID: "22", TenantID: tenantID, Email: "user2@test.com", Name: "User 2"}
+	user1 := &User{ID: 21, TenantID: tenantID, Email: "user1@test.com", Name: "User 1"}
+	user2 := &User{ID: 22, TenantID: tenantID, Email: "user2@test.com", Name: "User 2"}
 	if err := storage.CreateUser(ctx, user1); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -818,7 +818,7 @@ func TestMemoryStorage_DeleteTenant_WithCascade(t *testing.T) {
 	}
 
 	// Verify cascade deletion
-	_, err = storage.GetUser(ctx, tenantID, "21")
+	_, err = storage.GetUser(ctx, tenantID, 21)
 	if err == nil {
 		t.Error("user should be deleted after tenant deletion")
 	}
@@ -861,7 +861,7 @@ func TestMemoryConsentStorage_ListConsents_FilterByStatus(t *testing.T) {
 	// Create consents with different statuses using CreateConsent
 	_, err := storage.CreateConsent(ctx, CreateConsentOptions{
 		TenantID:  "tenant-1",
-		UserID:    "user-1",
+		UserID:    10001,
 		Purpose:   "marketing",
 		Status:    ConsentStatusGranted,
 		Version:   "1.0",
@@ -873,7 +873,7 @@ func TestMemoryConsentStorage_ListConsents_FilterByStatus(t *testing.T) {
 
 	_, err = storage.CreateConsent(ctx, CreateConsentOptions{
 		TenantID:  "tenant-1",
-		UserID:    "user-2",
+		UserID:    10002,
 		Purpose:   "analytics",
 		Status:    ConsentStatusWithdrawn,
 		Version:   "1.0",
@@ -905,7 +905,7 @@ func TestMemoryConsentStorage_ListConsents_FilterByPurpose(t *testing.T) {
 
 	_, err := storage.CreateConsent(ctx, CreateConsentOptions{
 		TenantID:  "tenant-1",
-		UserID:    "user-1",
+		UserID:    10001,
 		Purpose:   "marketing",
 		Status:    ConsentStatusGranted,
 		Version:   "1.0",
@@ -917,7 +917,7 @@ func TestMemoryConsentStorage_ListConsents_FilterByPurpose(t *testing.T) {
 
 	_, err = storage.CreateConsent(ctx, CreateConsentOptions{
 		TenantID:  "tenant-1",
-		UserID:    "user-2",
+		UserID:    10002,
 		Purpose:   "analytics",
 		Status:    ConsentStatusGranted,
 		Version:   "1.0",
@@ -953,7 +953,7 @@ func TestMemoryConsentStorage_UpdateConsent_Success(t *testing.T) {
 
 	consent, err := storage.CreateConsent(ctx, CreateConsentOptions{
 		TenantID:  "tenant-1",
-		UserID:    "user-1",
+		UserID:    10001,
 		Purpose:   "marketing",
 		Status:    ConsentStatusGranted,
 		Version:   "1.0",
@@ -1007,7 +1007,7 @@ func TestMemoryConsentStorage_UpdateConsent_ToGranted(t *testing.T) {
 	// Create a withdrawn consent
 	consent, err := storage.CreateConsent(ctx, CreateConsentOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		Purpose:  "marketing",
 		Status:   ConsentStatusWithdrawn,
 		Version:  "1.0",
@@ -1373,7 +1373,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByStatus(t *testing.T)
 	// Create export requests with different statuses
 	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 		Format:      DataExportFormatJSON,
 	})
@@ -1402,7 +1402,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
 	// Create export requests for different users
 	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 		Format:      DataExportFormatJSON,
 	})
@@ -1412,7 +1412,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
 
 	_, err = storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-2",
+		UserID:      10002,
 		RequestedBy: "user-2",
 		Format:      DataExportFormatJSON,
 	})
@@ -1423,7 +1423,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
 	// List with user filter
 	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 	})
 	if err != nil {
 		t.Fatalf("ListExportRequests failed: %v", err)
@@ -1445,7 +1445,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByStatus(t *testing.T)
 	// Create deletion requests
 	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 	})
 	if err != nil {
@@ -1473,7 +1473,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByUser(t *testing.T) {
 	// Create deletion requests for different users
 	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 	})
 	if err != nil {
@@ -1482,7 +1482,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByUser(t *testing.T) {
 
 	_, err = storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-2",
+		UserID:      10002,
 		RequestedBy: "user-2",
 	})
 	if err != nil {
@@ -1492,7 +1492,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByUser(t *testing.T) {
 	// List with user filter
 	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 	})
 	if err != nil {
 		t.Fatalf("ListDeletionRequests failed: %v", err)

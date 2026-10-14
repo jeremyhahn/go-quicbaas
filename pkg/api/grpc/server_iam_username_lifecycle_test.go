@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -160,7 +161,9 @@ func TestGRPC_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 	})
 	require.Error(t, err, "an ordinary update was allowed to claim the deleting state")
 
-	after, err := mem.GetUser(ctx, "acme", created.Id)
+	createdID, err := strconv.ParseUint(created.Id, 10, 64)
+	require.NoError(t, err)
+	after, err := mem.GetUser(ctx, "acme", createdID)
 	require.NoError(t, err)
 	assert.Equal(t, iam.LifecycleActive, after.Lifecycle,
 		"the refused update changed the account state anyway")
@@ -172,7 +175,7 @@ func TestGRPC_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 		Lifecycle: string(iam.LifecycleSuspended),
 	})
 	require.NoError(t, err)
-	after, err = mem.GetUser(ctx, "acme", created.Id)
+	after, err = mem.GetUser(ctx, "acme", createdID)
 	require.NoError(t, err)
 	assert.Equal(t, iam.LifecycleSuspended, after.Lifecycle)
 }

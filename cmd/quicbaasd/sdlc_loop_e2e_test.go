@@ -1268,7 +1268,7 @@ func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentB
 		Review: sdlc.ReviewPolicy{RequiredApprovals: 1, RequireIndependentReviewer: true, RequireGreenChecks: true,
 			Reviewers: map[string]string{"codex": sdlc.ModelFamilyOpenAI}},
 		MaxReviewRounds: 3,
-	})
+	}, service.BindOptions{})
 	require.NoError(t, bindErr, "binding the project")
 	return projectID
 }
@@ -1413,7 +1413,7 @@ func TestSDLCRunner_TrunkBasedCarveOutLandsWithoutAPullRequest(t *testing.T) {
 	binding, err := rig.srv.SDLCService().Binding(ctx, loopE2ETenant, rig.projectID)
 	require.NoError(t, err)
 	binding.Strategy = sdlc.TrunkBasedName
-	_, err = rig.srv.SDLCService().Bind(ctx, loopE2ETenant, binding)
+	_, err = rig.srv.SDLCService().Bind(ctx, loopE2ETenant, binding, service.BindOptions{})
 	require.NoError(t, err)
 
 	job := awaitJob(t, rig.srv, orchestration.JobStateCompleted)
@@ -1457,7 +1457,7 @@ func TestSDLCRunner_GitflowFeatureAndHotfixTakeDifferentRefs(t *testing.T) {
 	binding, err := rig.srv.SDLCService().Binding(ctx, loopE2ETenant, rig.projectID)
 	require.NoError(t, err)
 	binding.Strategy = sdlc.GitFlowName
-	_, err = rig.srv.SDLCService().Bind(ctx, loopE2ETenant, binding)
+	_, err = rig.srv.SDLCService().Bind(ctx, loopE2ETenant, binding, service.BindOptions{})
 	require.NoError(t, err)
 	loopForge.setVerdictOnOpen("APPROVED")
 

@@ -28,11 +28,11 @@ func TestBackendConsentStorage_CreateValidation(t *testing.T) {
 
 	base := func() CreateConsentOptions {
 		return CreateConsentOptions{
-			UserID: "u1", TenantID: "acme", Purpose: ConsentPurposeMarketing, Version: "v1",
+			UserID: 30001, TenantID: "acme", Purpose: ConsentPurposeMarketing, Version: "v1",
 		}
 	}
 	cases := map[string]func(o *CreateConsentOptions){
-		"no-user":    func(o *CreateConsentOptions) { o.UserID = "" },
+		"no-user":    func(o *CreateConsentOptions) { o.UserID = 0 },
 		"no-tenant":  func(o *CreateConsentOptions) { o.TenantID = "" },
 		"no-purpose": func(o *CreateConsentOptions) { o.Purpose = "" },
 		"no-version": func(o *CreateConsentOptions) { o.Version = "" },
@@ -64,7 +64,7 @@ func TestBackendConsentStorage_OptionalFields(t *testing.T) {
 
 	expiry := time.Now().Add(48 * time.Hour)
 	consent, err := store.CreateConsent(ctx, CreateConsentOptions{
-		UserID: "u1", TenantID: "acme", Purpose: ConsentPurposeMarketing,
+		UserID: 30001, TenantID: "acme", Purpose: ConsentPurposeMarketing,
 		Status: ConsentStatusWithdrawn, Version: "v1",
 		IPAddress: "1.2.3.4", UserAgent: "agent", ExpiresAt: &expiry,
 		Metadata: map[string]string{"src": "test"},
@@ -117,16 +117,16 @@ func TestBackendConsentStorage_ListAcrossTenants(t *testing.T) {
 	store := NewBackendConsentStorage(kv, staticTenantLister{ids: []string{"acme", "globex"}})
 	ctx := context.Background()
 
-	mk := func(tenant, user string, purpose ConsentPurpose, status ConsentStatus) {
+	mk := func(tenant string, user uint64, purpose ConsentPurpose, status ConsentStatus) {
 		if _, err := store.CreateConsent(ctx, CreateConsentOptions{
 			UserID: user, TenantID: tenant, Purpose: purpose, Status: status, Version: "v1",
 		}); err != nil {
-			t.Fatalf("CreateConsent(%s/%s): %v", tenant, user, err)
+			t.Fatalf("CreateConsent(%s/%d): %v", tenant, user, err)
 		}
 	}
-	mk("acme", "u1", ConsentPurposeMarketing, ConsentStatusGranted)
-	mk("acme", "u2", ConsentPurposeAnalytics, ConsentStatusWithdrawn)
-	mk("globex", "u3", ConsentPurposeMarketing, ConsentStatusGranted)
+	mk("acme", 30001, ConsentPurposeMarketing, ConsentStatusGranted)
+	mk("acme", 30002, ConsentPurposeAnalytics, ConsentStatusWithdrawn)
+	mk("globex", 30003, ConsentPurposeMarketing, ConsentStatusGranted)
 
 	// No filter: every tenant's records.
 	all, err := store.ListConsents(ctx, ListConsentsOptions{})
@@ -143,13 +143,13 @@ func TestBackendConsentStorage_ListAcrossTenants(t *testing.T) {
 	}
 
 	// User filter narrows to one.
-	byUser, err := store.ListConsents(ctx, ListConsentsOptions{UserID: "u2"})
+	byUser, err := store.ListConsents(ctx, ListConsentsOptions{UserID: 30002})
 	if err != nil || len(byUser) != 1 {
 		t.Fatalf("ListConsents(u2) = %d, %v; want 1, nil", len(byUser), err)
 	}
 
 	// GetUserConsents with a missing index entry returns empty without error.
-	empty, err := store.GetUserConsents(ctx, "acme", "no-such-user")
+	empty, err := store.GetUserConsents(ctx, "acme", 99998)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("GetUserConsents(missing) = %d, %v; want 0, nil", len(empty), err)
 	}
@@ -167,8 +167,8 @@ func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
 	// Validation.
 	for name, opts := range map[string]CreateDeletionRequestOptions{
 		"no-user":   {TenantID: "acme", RequestedBy: "admin"},
-		"no-tenant": {UserID: "u1", RequestedBy: "admin"},
-		"no-by":     {UserID: "u1", TenantID: "acme"},
+		"no-tenant": {UserID: 30001, RequestedBy: "admin"},
+		"no-by":     {UserID: 30001, TenantID: "acme"},
 	} {
 		if _, err := store.CreateDeletionRequest(ctx, opts); err == nil {
 			t.Fatalf("CreateDeletionRequest(%s) want error", name)
@@ -176,7 +176,7 @@ func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
 	}
 
 	req, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: "u1", TenantID: "acme", RequestedBy: "admin",
+		UserID: 30001, TenantID: "acme", RequestedBy: "admin",
 		Reason:             "gdpr",
 		GracePeriodDays:    7,
 		DeleteCategories:   []string{"profile"},
@@ -194,7 +194,7 @@ func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
 	}
 
 	if _, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: "u2", TenantID: "globex", RequestedBy: "admin",
+		UserID: 30002, TenantID: "globex", RequestedBy: "admin",
 	}); err != nil {
 		t.Fatalf("CreateDeletionRequest(globex): %v", err)
 	}
@@ -204,7 +204,7 @@ func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
 	if err != nil || len(all) != 2 {
 		t.Fatalf("ListDeletionRequests(all) = %d, %v; want 2, nil", len(all), err)
 	}
-	byUser, err := store.ListDeletionRequests(ctx, ListDeletionRequestsOptions{UserID: "u1"})
+	byUser, err := store.ListDeletionRequests(ctx, ListDeletionRequestsOptions{UserID: 30001})
 	if err != nil || len(byUser) != 1 {
 		t.Fatalf("ListDeletionRequests(u1) = %d, %v; want 1, nil", len(byUser), err)
 	}
@@ -219,13 +219,13 @@ func TestBackendDataExportStorage_ListAcrossTenants(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := store.CreateExportRequest(ctx, CreateDataExportOptions{
-		UserID: "u1", TenantID: "acme", RequestedBy: "admin",
+		UserID: 30001, TenantID: "acme", RequestedBy: "admin",
 		Metadata: map[string]string{"k": "v"}, IncludeCategories: []string{"profile"},
 	}); err != nil {
 		t.Fatalf("CreateExportRequest(acme): %v", err)
 	}
 	if _, err := store.CreateExportRequest(ctx, CreateDataExportOptions{
-		UserID: "u2", TenantID: "globex", RequestedBy: "admin",
+		UserID: 30002, TenantID: "globex", RequestedBy: "admin",
 	}); err != nil {
 		t.Fatalf("CreateExportRequest(globex): %v", err)
 	}
@@ -238,8 +238,8 @@ func TestBackendDataExportStorage_ListAcrossTenants(t *testing.T) {
 	// Validation errors.
 	for name, opts := range map[string]CreateDataExportOptions{
 		"no-user":   {TenantID: "acme", RequestedBy: "admin"},
-		"no-tenant": {UserID: "u1", RequestedBy: "admin"},
-		"no-by":     {UserID: "u1", TenantID: "acme"},
+		"no-tenant": {UserID: 30001, RequestedBy: "admin"},
+		"no-by":     {UserID: 30001, TenantID: "acme"},
 	} {
 		if _, err := store.CreateExportRequest(ctx, opts); err == nil {
 			t.Fatalf("CreateExportRequest(%s) want error", name)

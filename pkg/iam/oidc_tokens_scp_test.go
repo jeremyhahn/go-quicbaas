@@ -332,7 +332,10 @@ func rolesFromToken(t *testing.T, token string, key *rsa.PrivateKey) []string {
 //
 // and the SAME canonical subject is threaded to the qrdb PDP for resolution.
 func TestIssueHardwareTokens_AdminCarriesRolesAndCanonicalSubject(t *testing.T) {
-	const adminSubject = "1234567890123456789" // canonical decimal-string user id
+	const (
+		adminUserID  = 1234567890123456789
+		adminSubject = "1234567890123456789" // canonical decimal-string user id
+	)
 	rbac := &fakeRBACClient{permsByRole: map[string][]string{
 		"admin": {"orchestrator:*", "keys:*", "scheduler:*"},
 	}}
@@ -340,7 +343,7 @@ func TestIssueHardwareTokens_AdminCarriesRolesAndCanonicalSubject(t *testing.T) 
 
 	set, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
 		User: &User{
-			ID:       adminSubject,
+			ID:       adminUserID,
 			TenantID: "system",
 			Email:    "admin@example.com",
 			Name:     "Admin",
@@ -394,7 +397,7 @@ func TestIssueHardwareTokens_NoRolesFallsBackToScope(t *testing.T) {
 
 	set, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
 		User: &User{
-			ID:       "987654321",
+			ID:       987654321,
 			TenantID: "system",
 			Email:    "nobody@example.com",
 			Name:     "Nobody",

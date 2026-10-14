@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -110,7 +111,7 @@ type AdminManagerOptions struct {
 // target really is a user of the target tenant before minting a session
 // (*IdentityStore implements it via GetUser).
 type ImpersonationTargetResolver interface {
-	GetUser(ctx context.Context, tenantID, userID string) (*User, error)
+	GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error)
 }
 
 // NewAdminManager creates a new admin manager with the provided storage backends.
@@ -603,7 +604,13 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 	if m.targetResolver == nil {
 		return nil, ErrImpersonationTargetResolverRequired
 	}
-	if _, err := m.targetResolver.GetUser(ctx, opts.TenantID, opts.TargetUserID); err != nil {
+	// TargetUserID is still the string form of the uint64 user id; a value
+	// that does not parse cannot name a user, so it is not found.
+	targetUserID, err := strconv.ParseUint(opts.TargetUserID, 10, 64)
+	if err != nil || targetUserID == 0 {
+		return nil, ErrImpersonationTargetNotFound
+	}
+	if _, err := m.targetResolver.GetUser(ctx, opts.TenantID, targetUserID); err != nil {
 		if dberrors.IsNotFound(err) {
 			return nil, ErrImpersonationTargetNotFound
 		}

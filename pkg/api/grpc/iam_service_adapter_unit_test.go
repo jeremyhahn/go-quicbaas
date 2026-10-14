@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -643,11 +644,11 @@ func (m *adapter91MockImpersonationStorage) DeleteExpiredSessions(ctx context.Co
 
 type adapter91MockConsentStorage struct {
 	createConsentFunc   func(ctx context.Context, opts iam.CreateConsentOptions) (*iam.Consent, error)
-	getConsentFunc      func(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose) (*iam.Consent, error)
+	getConsentFunc      func(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose) (*iam.Consent, error)
 	updateConsentFunc   func(ctx context.Context, id string, opts iam.UpdateConsentOptions) (*iam.Consent, error)
 	deleteConsentFunc   func(ctx context.Context, id string) error
 	listConsentsFunc    func(ctx context.Context, opts iam.ListConsentsOptions) ([]*iam.Consent, error)
-	getUserConsentsFunc func(ctx context.Context, tenantID, userID string) ([]*iam.Consent, error)
+	getUserConsentsFunc func(ctx context.Context, tenantID string, userID uint64) ([]*iam.Consent, error)
 }
 
 func (m *adapter91MockConsentStorage) CreateConsent(ctx context.Context, opts iam.CreateConsentOptions) (*iam.Consent, error) {
@@ -657,7 +658,7 @@ func (m *adapter91MockConsentStorage) CreateConsent(ctx context.Context, opts ia
 	return &iam.Consent{ID: "consent-1"}, nil
 }
 
-func (m *adapter91MockConsentStorage) GetConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose) (*iam.Consent, error) {
+func (m *adapter91MockConsentStorage) GetConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose) (*iam.Consent, error) {
 	if m.getConsentFunc != nil {
 		return m.getConsentFunc(ctx, tenantID, userID, purpose)
 	}
@@ -685,7 +686,7 @@ func (m *adapter91MockConsentStorage) ListConsents(ctx context.Context, opts iam
 	return []*iam.Consent{}, nil
 }
 
-func (m *adapter91MockConsentStorage) GetUserConsents(ctx context.Context, tenantID, userID string) ([]*iam.Consent, error) {
+func (m *adapter91MockConsentStorage) GetUserConsents(ctx context.Context, tenantID string, userID uint64) ([]*iam.Consent, error) {
 	if m.getUserConsentsFunc != nil {
 		return m.getUserConsentsFunc(ctx, tenantID, userID)
 	}
@@ -797,7 +798,7 @@ func (m *adapter91MockSessionStorage) GetSession(ctx context.Context, sessionID 
 	return s, nil
 }
 
-func (m *adapter91MockSessionStorage) GetSessionsByUser(ctx context.Context, tenantID, userID string) ([]*iam.Session, error) {
+func (m *adapter91MockSessionStorage) GetSessionsByUser(ctx context.Context, tenantID string, userID uint64) ([]*iam.Session, error) {
 	var result []*iam.Session
 	for _, s := range m.sessions {
 		if s.TenantID == tenantID && s.UserID == userID {
@@ -1079,7 +1080,7 @@ func TestAdapter91_GetUser_ByID(t *testing.T) {
 	created, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
-	result, err := adapter.GetUser(ctx, "tenant-1", created.ID)
+	result, err := adapter.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, result.ID)
 }
@@ -1154,7 +1155,7 @@ func TestAdapter91_UpdateUser_WithRoles(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 
-	stored, err := adapter.GetUser(ctx, "tenant-1", created.ID)
+	stored, err := adapter.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
 	require.NoError(t, err)
 	assert.Contains(t, stored.Roles, role.ID)
 }
@@ -1175,7 +1176,7 @@ func TestAdapter91_UpdateUser_UnknownRole(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 
-	stored, err := adapter.GetUser(ctx, "tenant-1", created.ID)
+	stored, err := adapter.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
 	require.NoError(t, err)
 	assert.NotContains(t, stored.Roles, "no-such-role")
 }
@@ -1189,7 +1190,7 @@ func TestAdapter91_DeleteUser_ByID(t *testing.T) {
 	created, _, _, err := adapter.CreateUser(ctx, user, 0)
 	require.NoError(t, err)
 
-	assert.NoError(t, adapter.DeleteUser(ctx, "tenant-1", created.ID))
+	assert.NoError(t, adapter.DeleteUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10)))
 }
 
 func TestAdapter91_DeleteUser_ByEmail(t *testing.T) {
@@ -1347,7 +1348,7 @@ func TestAdapter91_AssignRole_Success(t *testing.T) {
 	require.NoError(t, err)
 	createdRole, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "assignable"})
 	require.NoError(t, err)
-	assert.NoError(t, adapter.AssignRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
+	assert.NoError(t, adapter.AssignRole(ctx, "tenant-1", strconv.FormatUint(createdUser.ID, 10), createdRole.ID))
 }
 
 func TestAdapter91_AssignRole_Error(t *testing.T) {
@@ -1366,8 +1367,8 @@ func TestAdapter91_RevokeRole_Success(t *testing.T) {
 	require.NoError(t, err)
 	createdRole, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "revocable"})
 	require.NoError(t, err)
-	require.NoError(t, adapter.AssignRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
-	assert.NoError(t, adapter.RevokeRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
+	require.NoError(t, adapter.AssignRole(ctx, "tenant-1", strconv.FormatUint(createdUser.ID, 10), createdRole.ID))
+	assert.NoError(t, adapter.RevokeRole(ctx, "tenant-1", strconv.FormatUint(createdUser.ID, 10), createdRole.ID))
 }
 
 func TestAdapter91_RevokeRole_Error(t *testing.T) {
@@ -1996,7 +1997,7 @@ func TestAdapter91_GrantConsent_Success(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	expires := time.Now().Add(365 * 24 * time.Hour)
-	result, err := adapter.GrantConsent(ctx, "tenant-1", "user-1",
+	result, err := adapter.GrantConsent(ctx, "tenant-1", "10001",
 		iam.ConsentPurposeMarketing, "1.0", &expires, "127.0.0.1", "TestAgent")
 	require.NoError(t, err)
 	assert.NotNil(t, result)
@@ -2007,7 +2008,7 @@ func TestAdapter91_GrantConsent_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.GrantConsent(ctx, "t1", "u1", iam.ConsentPurposeMarketing, "1.0", nil, "127.0.0.1", "agent")
+	result, err := adapter.GrantConsent(ctx, "t1", "30001", iam.ConsentPurposeMarketing, "1.0", nil, "127.0.0.1", "agent")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2016,7 +2017,7 @@ func TestAdapter91_WithdrawConsent_NilManager(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	assert.Error(t, adapter.WithdrawConsent(ctx, "t1", "u1", iam.ConsentPurposeMarketing, "127.0.0.1", "agent"))
+	assert.Error(t, adapter.WithdrawConsent(ctx, "t1", "30001", iam.ConsentPurposeMarketing, "127.0.0.1", "agent"))
 }
 
 func TestAdapter91_WithdrawConsent_Success(t *testing.T) {
@@ -2024,7 +2025,7 @@ func TestAdapter91_WithdrawConsent_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 	// May or may not error depending on state; we ensure no panic
-	_ = adapter.WithdrawConsent(ctx, "tenant-1", "user-1", iam.ConsentPurposeMarketing, "127.0.0.1", "TestAgent")
+	_ = adapter.WithdrawConsent(ctx, "tenant-1", "10001", iam.ConsentPurposeMarketing, "127.0.0.1", "TestAgent")
 }
 
 func TestAdapter91_GetConsent_NilManager(t *testing.T) {
@@ -2032,7 +2033,7 @@ func TestAdapter91_GetConsent_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.GetConsent(ctx, "t1", "u1", iam.ConsentPurposeMarketing)
+	result, err := adapter.GetConsent(ctx, "t1", "30001", iam.ConsentPurposeMarketing)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2041,7 +2042,7 @@ func TestAdapter91_GetConsent_Success(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
-	_, _ = adapter.GetConsent(ctx, "tenant-1", "user-1", iam.ConsentPurposeMarketing)
+	_, _ = adapter.GetConsent(ctx, "tenant-1", "10001", iam.ConsentPurposeMarketing)
 }
 
 func TestAdapter91_ListUserConsents_Success(t *testing.T) {
@@ -2049,7 +2050,7 @@ func TestAdapter91_ListUserConsents_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.ListUserConsents(ctx, "tenant-1", "user-1")
+	result, err := adapter.ListUserConsents(ctx, "tenant-1", "10001")
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -2059,7 +2060,7 @@ func TestAdapter91_ListUserConsents_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.ListUserConsents(ctx, "t1", "u1")
+	result, err := adapter.ListUserConsents(ctx, "t1", "30001")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2073,7 +2074,7 @@ func TestAdapter91_RequestExport_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.RequestExport(ctx, "tenant-1", "user-1", "admin-1", iam.DataExportFormatJSON, nil, nil)
+	result, err := adapter.RequestExport(ctx, "tenant-1", "10001", "admin-1", iam.DataExportFormatJSON, nil, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -2083,7 +2084,7 @@ func TestAdapter91_RequestExport_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.RequestExport(ctx, "t1", "u1", "a1", iam.DataExportFormatJSON, nil, nil)
+	result, err := adapter.RequestExport(ctx, "t1", "30001", "a1", iam.DataExportFormatJSON, nil, nil)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2131,7 +2132,7 @@ func TestAdapter91_RequestDeletion_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.RequestDeletion(ctx, "tenant-1", "user-1", "admin-1", "GDPR request", nil, nil, 30)
+	result, err := adapter.RequestDeletion(ctx, "tenant-1", "10001", "admin-1", "GDPR request", nil, nil, 30)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -2141,7 +2142,7 @@ func TestAdapter91_RequestDeletion_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.RequestDeletion(ctx, "t1", "u1", "a1", "reason", nil, nil, 30)
+	result, err := adapter.RequestDeletion(ctx, "t1", "30001", "a1", "reason", nil, nil, 30)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2234,13 +2235,13 @@ func (m *mockSessionStorage) GetSession(ctx context.Context, sessionID string) (
 	return s, nil
 }
 
-func (m *mockSessionStorage) GetSessionsByUser(ctx context.Context, tenantID, userID string) ([]*iam.Session, error) {
+func (m *mockSessionStorage) GetSessionsByUser(ctx context.Context, tenantID string, userID uint64) ([]*iam.Session, error) {
 	if m.errList != nil {
 		return nil, m.errList
 	}
 	var result []*iam.Session
 	for _, s := range m.sessions {
-		if s.TenantID == tenantID && (userID == "" || s.UserID == userID) {
+		if s.TenantID == tenantID && (userID == 0 || s.UserID == userID) {
 			result = append(result, s)
 		}
 	}
@@ -2270,12 +2271,12 @@ func (m *mockSessionStorage) DeleteExpiredSessions(ctx context.Context) (int, er
 
 func TestSessionServiceAdapter_ListSessions_Success(t *testing.T) {
 	storage := newMockSessionStorage()
-	storage.sessions["s1"] = &iam.Session{ID: "s1", UserID: "u1", TenantID: "t1", Created: time.Now(), Expires: time.Now().Add(time.Hour)}
-	storage.sessions["s2"] = &iam.Session{ID: "s2", UserID: "u1", TenantID: "t1", Created: time.Now(), Expires: time.Now().Add(time.Hour)}
-	storage.sessions["s3"] = &iam.Session{ID: "s3", UserID: "u2", TenantID: "t1", Created: time.Now(), Expires: time.Now().Add(time.Hour)}
+	storage.sessions["s1"] = &iam.Session{ID: "s1", UserID: 30001, TenantID: "t1", Created: time.Now(), Expires: time.Now().Add(time.Hour)}
+	storage.sessions["s2"] = &iam.Session{ID: "s2", UserID: 30001, TenantID: "t1", Created: time.Now(), Expires: time.Now().Add(time.Hour)}
+	storage.sessions["s3"] = &iam.Session{ID: "s3", UserID: 30002, TenantID: "t1", Created: time.Now(), Expires: time.Now().Add(time.Hour)}
 
 	adapter := NewSessionServiceAdapter(storage)
-	sessions, total, err := adapter.ListSessions(context.Background(), "t1", "u1", 0, 0)
+	sessions, total, err := adapter.ListSessions(context.Background(), "t1", 30001, 0, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
 	assert.Len(t, sessions, 2)
@@ -2285,19 +2286,19 @@ func TestSessionServiceAdapter_ListSessions_WithPagination(t *testing.T) {
 	storage := newMockSessionStorage()
 	for i := 0; i < 5; i++ {
 		id := "s" + string(rune('a'+i))
-		storage.sessions[id] = &iam.Session{ID: id, UserID: "u1", TenantID: "t1", Created: time.Now(), Expires: time.Now().Add(time.Hour)}
+		storage.sessions[id] = &iam.Session{ID: id, UserID: 30001, TenantID: "t1", Created: time.Now(), Expires: time.Now().Add(time.Hour)}
 	}
 
 	adapter := NewSessionServiceAdapter(storage)
 
 	// With limit
-	sessions, total, err := adapter.ListSessions(context.Background(), "t1", "u1", 2, 0)
+	sessions, total, err := adapter.ListSessions(context.Background(), "t1", 30001, 2, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 5, total)
 	assert.Len(t, sessions, 2)
 
 	// With offset past end
-	sessions, total, err = adapter.ListSessions(context.Background(), "t1", "u1", 0, 100)
+	sessions, total, err = adapter.ListSessions(context.Background(), "t1", 30001, 0, 100)
 	require.NoError(t, err)
 	assert.Equal(t, 5, total)
 	assert.Empty(t, sessions)
@@ -2308,14 +2309,14 @@ func TestSessionServiceAdapter_ListSessions_StorageError(t *testing.T) {
 	storage.errList = errors.New("storage failure")
 	adapter := NewSessionServiceAdapter(storage)
 
-	_, _, err := adapter.ListSessions(context.Background(), "t1", "u1", 0, 0)
+	_, _, err := adapter.ListSessions(context.Background(), "t1", 30001, 0, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "storage failure")
 }
 
 func TestSessionServiceAdapter_GetSession_Success(t *testing.T) {
 	storage := newMockSessionStorage()
-	storage.sessions["s1"] = &iam.Session{ID: "s1", UserID: "u1", TenantID: "t1"}
+	storage.sessions["s1"] = &iam.Session{ID: "s1", UserID: 30001, TenantID: "t1"}
 
 	adapter := NewSessionServiceAdapter(storage)
 	sess, err := adapter.GetSession(context.Background(), "s1")
@@ -2333,7 +2334,7 @@ func TestSessionServiceAdapter_GetSession_NotFound(t *testing.T) {
 
 func TestSessionServiceAdapter_RevokeSession_Success(t *testing.T) {
 	storage := newMockSessionStorage()
-	storage.sessions["s1"] = &iam.Session{ID: "s1", UserID: "u1", TenantID: "t1"}
+	storage.sessions["s1"] = &iam.Session{ID: "s1", UserID: 30001, TenantID: "t1"}
 
 	adapter := NewSessionServiceAdapter(storage)
 	err := adapter.RevokeSession(context.Background(), "s1")
@@ -2345,12 +2346,12 @@ func TestSessionServiceAdapter_RevokeSession_Success(t *testing.T) {
 
 func TestSessionServiceAdapter_RevokeAllSessions_Success(t *testing.T) {
 	storage := newMockSessionStorage()
-	storage.sessions["s1"] = &iam.Session{ID: "s1", UserID: "u1", TenantID: "t1"}
-	storage.sessions["s2"] = &iam.Session{ID: "s2", UserID: "u1", TenantID: "t1"}
-	storage.sessions["s3"] = &iam.Session{ID: "s3", UserID: "u2", TenantID: "t1"}
+	storage.sessions["s1"] = &iam.Session{ID: "s1", UserID: 30001, TenantID: "t1"}
+	storage.sessions["s2"] = &iam.Session{ID: "s2", UserID: 30001, TenantID: "t1"}
+	storage.sessions["s3"] = &iam.Session{ID: "s3", UserID: 30002, TenantID: "t1"}
 
 	adapter := NewSessionServiceAdapter(storage)
-	count, err := adapter.RevokeAllSessions(context.Background(), "t1", "u1")
+	count, err := adapter.RevokeAllSessions(context.Background(), "t1", 30001)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 }
@@ -2360,15 +2361,15 @@ func TestSessionServiceAdapter_RevokeAllSessions_StorageError(t *testing.T) {
 	storage.errList = errors.New("storage failure")
 
 	adapter := NewSessionServiceAdapter(storage)
-	_, err := adapter.RevokeAllSessions(context.Background(), "t1", "u1")
+	_, err := adapter.RevokeAllSessions(context.Background(), "t1", 30001)
 	require.Error(t, err)
 }
 
 func TestSessionServiceAdapter_RevokeOtherSessions_Success(t *testing.T) {
 	storage := newMockSessionStorage()
-	storage.sessions["keep"] = &iam.Session{ID: "keep", UserID: "u1", TenantID: "t1"}
-	storage.sessions["other1"] = &iam.Session{ID: "other1", UserID: "u1", TenantID: "t1"}
-	storage.sessions["other2"] = &iam.Session{ID: "other2", UserID: "u1", TenantID: "t1"}
+	storage.sessions["keep"] = &iam.Session{ID: "keep", UserID: 30001, TenantID: "t1"}
+	storage.sessions["other1"] = &iam.Session{ID: "other1", UserID: 30001, TenantID: "t1"}
+	storage.sessions["other2"] = &iam.Session{ID: "other2", UserID: 30001, TenantID: "t1"}
 
 	adapter := NewSessionServiceAdapter(storage)
 	count, err := adapter.RevokeOtherSessions(context.Background(), "t1", "keep")
@@ -2390,7 +2391,7 @@ func TestSessionServiceAdapter_RevokeOtherSessions_KeepNotFound(t *testing.T) {
 
 func TestSessionServiceAdapter_RevokeOtherSessions_ListError(t *testing.T) {
 	storage := newMockSessionStorage()
-	storage.sessions["keep"] = &iam.Session{ID: "keep", UserID: "u1", TenantID: "t1"}
+	storage.sessions["keep"] = &iam.Session{ID: "keep", UserID: 30001, TenantID: "t1"}
 	storage.errList = errors.New("list failure")
 
 	adapter := NewSessionServiceAdapter(storage)

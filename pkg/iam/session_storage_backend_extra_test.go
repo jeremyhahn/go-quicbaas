@@ -28,13 +28,13 @@ func TestBackendSessionStorage_UpdateDelete(t *testing.T) {
 	store := NewBackendSessionStorage(kv, nil)
 	ctx := context.Background()
 
-	sess := basicSession("acme", "u1", "s1")
+	sess := basicSession("acme", 30001, "s1")
 	if err := store.CreateSession(ctx, sess); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
 	// Update an existing session.
-	sess.UserID = "u1-renamed"
+	sess.UserID = 30011
 	if err := store.UpdateSession(ctx, sess); err != nil {
 		t.Fatalf("UpdateSession: %v", err)
 	}
@@ -42,8 +42,8 @@ func TestBackendSessionStorage_UpdateDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if got.UserID != "u1-renamed" {
-		t.Fatalf("UpdateSession userID = %q, want u1-renamed", got.UserID)
+	if got.UserID != 30011 {
+		t.Fatalf("UpdateSession userID = %d, want 30011", got.UserID)
 	}
 
 	// Update with empty ID is invalid input.
@@ -52,7 +52,7 @@ func TestBackendSessionStorage_UpdateDelete(t *testing.T) {
 	}
 
 	// Update a missing session is not found.
-	missing := basicSession("acme", "u1", "does-not-exist")
+	missing := basicSession("acme", 30001, "does-not-exist")
 	missing.ID = ensureTenantEncoded("acme", "does-not-exist")
 	if err := store.UpdateSession(ctx, missing); err == nil {
 		t.Fatal("UpdateSession(missing) want not-found error")
@@ -79,7 +79,7 @@ func TestBackendSessionExtStorage_UpdateDelete(t *testing.T) {
 	store := NewBackendSessionExtStorage(kv, nil)
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
-	sess := extSession("acme", "u1", "s1", "th-old")
+	sess := extSession("acme", 30001, "s1", "th-old")
 	sess.RefreshHash = "rh-old"
 	if err := store.Create(ctx, sess); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -103,7 +103,7 @@ func TestBackendSessionExtStorage_UpdateDelete(t *testing.T) {
 	}
 
 	// Update a missing session errors.
-	missing := extSession("acme", "u1", "missing", "th-x")
+	missing := extSession("acme", 30001, "missing", "th-x")
 	missing.ID = ensureTenantEncoded("acme", "missing")
 	if err := store.Update(ctx, missing); err == nil {
 		t.Fatal("Update(missing) want error")
@@ -135,8 +135,8 @@ func TestBackendSessionExtStorage_ActiveDeleteByUserCleanup(t *testing.T) {
 	store := NewBackendSessionExtStorage(kv, staticTenantLister{ids: []string{"acme"}})
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
-	active := extSession("acme", "u1", "active", "th-active")
-	expired := extSession("acme", "u1", "expired", "th-expired")
+	active := extSession("acme", 30001, "active", "th-active")
+	expired := extSession("acme", 30001, "expired", "th-expired")
 	expired.ExpiresAt = time.Now().Add(-time.Hour)
 	if err := store.Create(ctx, active); err != nil {
 		t.Fatalf("Create(active): %v", err)
@@ -145,7 +145,7 @@ func TestBackendSessionExtStorage_ActiveDeleteByUserCleanup(t *testing.T) {
 		t.Fatalf("Create(expired): %v", err)
 	}
 
-	activeList, err := store.ListByUserActive(ctx, "u1", "acme")
+	activeList, err := store.ListByUserActive(ctx, 30001, "acme")
 	if err != nil || len(activeList) != 1 {
 		t.Fatalf("ListByUserActive = %d, %v; want 1, nil", len(activeList), err)
 	}
@@ -163,10 +163,10 @@ func TestBackendSessionExtStorage_ActiveDeleteByUserCleanup(t *testing.T) {
 	}
 
 	// DeleteByUser clears the remaining session.
-	if err := store.DeleteByUser(ctx, "u1", "acme"); err != nil {
+	if err := store.DeleteByUser(ctx, 30001, "acme"); err != nil {
 		t.Fatalf("DeleteByUser: %v", err)
 	}
-	remaining, err := store.ListByUser(ctx, "u1", "acme")
+	remaining, err := store.ListByUser(ctx, 30001, "acme")
 	if err != nil || len(remaining) != 0 {
 		t.Fatalf("after DeleteByUser ListByUser = %d, %v; want 0, nil", len(remaining), err)
 	}

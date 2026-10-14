@@ -80,7 +80,7 @@ type embeddedListImpersonationsEnvelope struct {
 // is pinned in pkg/iam's tenant-scope suite (#357).
 type embeddedAllowAllTargetResolver struct{}
 
-func (embeddedAllowAllTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+func (embeddedAllowAllTargetResolver) GetUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
 	return &iam.User{ID: userID, TenantID: tenantID}, nil
 }
 
@@ -519,8 +519,8 @@ func TestHandleIAMAdminImpersonationLifecycle(t *testing.T) {
 	// The acting admin is resolved from the authenticated subject
 	// (go-quicbaas#383); startImpersonationAs seeds admin-1's grant and binds
 	// it as the caller before opening the session.
-	session := startImpersonationAs(t, svc, "admin-1", "t-1", "user-9")
-	if session.AdminID != "admin-1" || session.TargetUserID != "user-9" {
+	session := startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
+	if session.AdminID != "admin-1" || session.TargetUserID != "10009" {
 		t.Errorf("unexpected session principals: %+v", session)
 	}
 	if !session.Active {
@@ -563,13 +563,13 @@ func TestHandleIAMAdminStartImpersonation_Errors(t *testing.T) {
 		{
 			name: "admin without the impersonate permission",
 			req: &embeddedStartImpersonationEnvelope{Impersonation: &iamsdk.ImpersonationRequest{
-				TargetUserID: "user-9", TenantID: "t-1", Reason: "curiosity", Duration: time.Minute,
+				TargetUserID: "10009", TenantID: "t-1", Reason: "curiosity", Duration: time.Minute,
 			}},
 		},
 		{
 			name: "missing reason",
 			req: &embeddedStartImpersonationEnvelope{Impersonation: &iamsdk.ImpersonationRequest{
-				TargetUserID: "user-9", TenantID: "t-1", Duration: time.Minute,
+				TargetUserID: "10009", TenantID: "t-1", Duration: time.Minute,
 			}},
 		},
 	}
@@ -813,7 +813,7 @@ func TestAdminHandlers_ManagerRulesApplyOnUnboundContext(t *testing.T) {
 	// in-process call is not a free pass.
 	_, err := handleIAMAdminStartImpersonation(context.Background(), svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
-			TargetUserID: "user-9",
+			TargetUserID: "10009",
 			TenantID:     "t-1",
 			Reason:       "curiosity",
 			Duration:     time.Minute,
@@ -887,7 +887,7 @@ func TestAdminHandlers_SubjectBoundCallsRequireRoutePermission(t *testing.T) {
 			call: func() (interface{}, error) {
 				return handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 					Impersonation: &iamsdk.ImpersonationRequest{
-						TargetUserID: "user-9", TenantID: "t-1",
+						TargetUserID: "10009", TenantID: "t-1",
 						Reason: "support", Duration: time.Minute,
 					},
 				})
@@ -988,7 +988,7 @@ func startImpersonationAs(t *testing.T, svc service.QuicBaaS, adminID, tenantID,
 // that this particular impersonation session is theirs to end.
 func TestHandleIAMAdminEndImpersonation_DeniesAnotherAdminsSession(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	victim := startImpersonationAs(t, svc, "admin-victim", "t-1", "user-9")
+	victim := startImpersonationAs(t, svc, "admin-victim", "t-1", "10009")
 
 	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-other", TenantID: "t-1"})
 	_, err := handleIAMAdminEndImpersonation(ctx, svc, &embeddedImpersonationSessionEnvelope{SessionID: victim.ID})
@@ -1013,7 +1013,7 @@ func TestHandleIAMAdminEndImpersonation_DeniesAnotherAdminsSession(t *testing.T)
 // matches, which is why both halves of the ownership check exist.
 func TestHandleIAMAdminEndImpersonation_DeniesAcrossTenants(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	session := startImpersonationAs(t, svc, "admin-1", "t-1", "user-9")
+	session := startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
 
 	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-2"})
 	if _, err := handleIAMAdminEndImpersonation(ctx, svc, &embeddedImpersonationSessionEnvelope{SessionID: session.ID}); err == nil {
@@ -1024,7 +1024,7 @@ func TestHandleIAMAdminEndImpersonation_DeniesAcrossTenants(t *testing.T) {
 // The owning admin can still end its own session.
 func TestHandleIAMAdminEndImpersonation_OwnerSucceeds(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	session := startImpersonationAs(t, svc, "admin-1", "t-1", "user-9")
+	session := startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
 
 	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1"})
 	if _, err := handleIAMAdminEndImpersonation(ctx, svc, &embeddedImpersonationSessionEnvelope{SessionID: session.ID}); err != nil {
@@ -1044,7 +1044,7 @@ func TestHandleIAMAdminEndImpersonation_OwnerSucceeds(t *testing.T) {
 // pinned to its own id and its results narrowed to its own tenant.
 func TestHandleIAMAdminListActiveImpersonations_BoundToSubject(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	startImpersonationAs(t, svc, "admin-1", "t-1", "user-9")
+	startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
 
 	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-other", TenantID: "t-1"})
 	_, err := handleIAMAdminListActiveImpersonations(ctx, svc, &embeddedListImpersonationsEnvelope{AdminUserID: "admin-1"})
@@ -1122,7 +1122,7 @@ func TestHandleIAMAdminStartImpersonation_BindsTenantToSubject(t *testing.T) {
 
 	_, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
-			TargetUserID: "user-9", TenantID: "t-2",
+			TargetUserID: "10009", TenantID: "t-2",
 			Reason: "support", Duration: time.Minute,
 		},
 	})
@@ -1150,7 +1150,7 @@ func TestHandleIAMAdminStartImpersonation_FillsIdentityFromSubject(t *testing.T)
 	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1", Authenticated: true})
 	out, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
-			TargetUserID: "user-9", Reason: "support", Duration: time.Minute,
+			TargetUserID: "10009", Reason: "support", Duration: time.Minute,
 		},
 	})
 	if err != nil {
@@ -1300,7 +1300,7 @@ func TestHandleIAMAdminStartImpersonation_SystemScopeMayCrossTenants(t *testing.
 
 	out, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
-			TargetUserID: "user-9", TenantID: "t-1", Reason: "support", Duration: time.Minute,
+			TargetUserID: "10009", TenantID: "t-1", Reason: "support", Duration: time.Minute,
 		},
 	})
 	if err != nil {

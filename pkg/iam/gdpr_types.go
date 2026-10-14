@@ -120,7 +120,7 @@ type Consent struct {
 	ID string `json:"id" yaml:"id"`
 
 	// UserID is the user who gave or denied consent.
-	UserID string `json:"user_id" yaml:"user_id"`
+	UserID uint64 `json:"user_id,string" yaml:"user_id"`
 
 	// TenantID is the tenant context.
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
@@ -165,7 +165,7 @@ type DataExportRequest struct {
 	ID string `json:"id" yaml:"id"`
 
 	// UserID is the user whose data is being exported.
-	UserID string `json:"user_id" yaml:"user_id"`
+	UserID uint64 `json:"user_id,string" yaml:"user_id"`
 
 	// TenantID is the tenant context.
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
@@ -217,7 +217,7 @@ type DataDeletionRequest struct {
 	ID string `json:"id" yaml:"id"`
 
 	// UserID is the user whose data is being deleted.
-	UserID string `json:"user_id" yaml:"user_id"`
+	UserID uint64 `json:"user_id,string" yaml:"user_id"`
 
 	// TenantID is the tenant context.
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
@@ -327,7 +327,7 @@ type ExportMetadata struct {
 	ExportID string `json:"export_id" yaml:"export_id"`
 
 	// UserID is the user whose data was exported.
-	UserID string `json:"user_id" yaml:"user_id"`
+	UserID uint64 `json:"user_id,string" yaml:"user_id"`
 
 	// TenantID is the tenant context.
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
@@ -347,7 +347,7 @@ type ExportMetadata struct {
 
 // UserProfileExport contains exportable profile data.
 type UserProfileExport struct {
-	ID         string            `json:"id" yaml:"id"`
+	ID         uint64            `json:"id,string" yaml:"id"`
 	Email      string            `json:"email" yaml:"email"`
 	Name       string            `json:"name" yaml:"name"`
 	Attributes map[string]string `json:"attributes,omitempty" yaml:"attributes,omitempty"`
@@ -414,7 +414,7 @@ type MFAInfoExport struct {
 
 // CreateConsentOptions contains options for creating a consent record.
 type CreateConsentOptions struct {
-	UserID    string            `json:"user_id"`
+	UserID    uint64            `json:"user_id,string"`
 	TenantID  string            `json:"tenant_id"`
 	Purpose   ConsentPurpose    `json:"purpose"`
 	Status    ConsentStatus     `json:"status"`
@@ -437,7 +437,7 @@ type UpdateConsentOptions struct {
 
 // CreateDataExportOptions contains options for creating a data export request.
 type CreateDataExportOptions struct {
-	UserID            string            `json:"user_id"`
+	UserID            uint64            `json:"user_id,string"`
 	TenantID          string            `json:"tenant_id"`
 	RequestedBy       string            `json:"requested_by"`
 	Format            DataExportFormat  `json:"format"`
@@ -448,7 +448,7 @@ type CreateDataExportOptions struct {
 
 // CreateDeletionRequestOptions contains options for creating a deletion request.
 type CreateDeletionRequestOptions struct {
-	UserID             string            `json:"user_id"`
+	UserID             uint64            `json:"user_id,string"`
 	TenantID           string            `json:"tenant_id"`
 	RequestedBy        string            `json:"requested_by"`
 	Reason             string            `json:"reason,omitempty"`
@@ -460,7 +460,7 @@ type CreateDeletionRequestOptions struct {
 
 // ListConsentsOptions contains options for listing consent records.
 type ListConsentsOptions struct {
-	UserID   string         `json:"user_id,omitempty"`
+	UserID   uint64         `json:"user_id,string,omitempty"`
 	TenantID string         `json:"tenant_id,omitempty"`
 	Purpose  ConsentPurpose `json:"purpose,omitempty"`
 	Status   ConsentStatus  `json:"status,omitempty"`
@@ -470,7 +470,7 @@ type ListConsentsOptions struct {
 
 // ListExportRequestsOptions contains options for listing export requests.
 type ListExportRequestsOptions struct {
-	UserID   string           `json:"user_id,omitempty"`
+	UserID   uint64           `json:"user_id,string,omitempty"`
 	TenantID string           `json:"tenant_id,omitempty"`
 	Status   DataExportStatus `json:"status,omitempty"`
 	Limit    int              `json:"limit,omitempty"`
@@ -479,7 +479,7 @@ type ListExportRequestsOptions struct {
 
 // ListDeletionRequestsOptions contains options for listing deletion requests.
 type ListDeletionRequestsOptions struct {
-	UserID   string         `json:"user_id,omitempty"`
+	UserID   uint64         `json:"user_id,string,omitempty"`
 	TenantID string         `json:"tenant_id,omitempty"`
 	Status   DeletionStatus `json:"status,omitempty"`
 	Limit    int            `json:"limit,omitempty"`
@@ -488,7 +488,7 @@ type ListDeletionRequestsOptions struct {
 
 // Validate validates a consent record.
 func (c *Consent) Validate() error {
-	if c.UserID == "" {
+	if c.UserID == 0 {
 		return NewIAMError(ErrConsentInvalid, "iam.consent.validate", "user_id is required", nil)
 	}
 	if c.TenantID == "" {

@@ -77,7 +77,7 @@ type fixedInviteStore struct {
 	redeemErr error
 }
 
-func (s *fixedInviteStore) Create(context.Context, string, string, time.Duration) (string, *iam.InviteRecord, error) {
+func (s *fixedInviteStore) Create(context.Context, string, uint64, time.Duration) (string, *iam.InviteRecord, error) {
 	return "", nil, nil
 }
 
@@ -97,7 +97,7 @@ type inviteFixture struct {
 	source  *inviteTestSource
 	manager *recordingWebAuthnManager
 	invites *iamtest.MemoryInviteStore
-	userID  string
+	userID  uint64
 	token   string
 }
 
@@ -185,7 +185,7 @@ func TestInviteActivationServiceGetInvite(t *testing.T) {
 		t.Fatalf("GetInvite: %v", err)
 	}
 	if meta.UserID != f.userID || meta.Email != "alice@example.com" {
-		t.Errorf("meta = %+v, want user %s with alice@example.com", meta, f.userID)
+		t.Errorf("meta = %+v, want user %d with alice@example.com", meta, f.userID)
 	}
 	if len(meta.AuthMethods) != 1 || meta.AuthMethods[0] != "webauthn" {
 		t.Errorf("AuthMethods = %v, want [webauthn]", meta.AuthMethods)
@@ -207,8 +207,8 @@ func TestInviteActivationServiceTenantIsolation(t *testing.T) {
 // expired record a store hands back exactly like one the store refused.
 func TestInviteActivationServiceRefusesReturnedUnusableRecord(t *testing.T) {
 	records := map[string]iam.InviteRecord{
-		"spent":   {TenantID: "t1", UserID: "u1", Used: true, ExpiresAt: time.Now().Add(time.Hour)},
-		"expired": {TenantID: "t1", UserID: "u1", ExpiresAt: time.Now().Add(-time.Hour)},
+		"spent":   {TenantID: "t1", UserID: 10001, Used: true, ExpiresAt: time.Now().Add(time.Hour)},
+		"expired": {TenantID: "t1", UserID: 10001, ExpiresAt: time.Now().Add(-time.Hour)},
 	}
 	for name, record := range records {
 		f := newInviteFixture(t)
@@ -264,7 +264,7 @@ func TestInviteActivationServiceFIDO2Finish(t *testing.T) {
 		t.Fatalf("ActivateFIDO2Finish: %v", err)
 	}
 	if activation.UserID != f.userID || activation.Warning != "" {
-		t.Errorf("activation = %+v, want user %s without a warning", activation, f.userID)
+		t.Errorf("activation = %+v, want user %d without a warning", activation, f.userID)
 	}
 	if f.manager.finishEmail != "alice@example.com" {
 		t.Errorf("ceremony email = %q, want alice@example.com", f.manager.finishEmail)

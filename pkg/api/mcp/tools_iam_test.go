@@ -693,14 +693,14 @@ func (m *mockIAMService) ProvisionTenant(ctx context.Context, req *service.IAMPr
 	if m.provisionFunc != nil {
 		return m.provisionFunc(ctx, req)
 	}
-	return &service.IAMProvisionTenantResponse{TenantID: req.TenantID, AdminUserID: "1", Timestamp: time.Now()}, nil
+	return &service.IAMProvisionTenantResponse{TenantID: req.TenantID, AdminUserID: 1, Timestamp: time.Now()}, nil
 }
 
 func (m *mockIAMService) CreateUser(ctx context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
 	if m.createUserFunc != nil {
 		return m.createUserFunc(ctx, req)
 	}
-	return &service.IAMCreateUserResponse{User: &iam.User{ID: "u1", Email: req.Email, Name: req.Name}, Timestamp: time.Now()}, nil
+	return &service.IAMCreateUserResponse{User: &iam.User{ID: 30001, Email: req.Email, Name: req.Name}, Timestamp: time.Now()}, nil
 }
 
 func (m *mockIAMService) GetUser(ctx context.Context, req *service.IAMGetUserRequest) (*service.IAMGetUserResponse, error) {
@@ -728,7 +728,7 @@ func (m *mockIAMService) ListUsers(ctx context.Context, req *service.IAMListUser
 	if m.listUsersFunc != nil {
 		return m.listUsersFunc(ctx, req)
 	}
-	return &service.IAMListUsersResponse{Users: []*iam.User{{ID: "u1"}}, TotalCount: 1, Timestamp: time.Now()}, nil
+	return &service.IAMListUsersResponse{Users: []*iam.User{{ID: 30001}}, TotalCount: 1, Timestamp: time.Now()}, nil
 }
 
 func (m *mockIAMService) AssignRole(ctx context.Context, req *service.AssignRoleRequest) (*service.AssignRoleResponse, error) {
@@ -975,12 +975,12 @@ func TestExecuteIAMTool_RoutesToUserOps(t *testing.T) {
 		args     map[string]interface{}
 	}{
 		{"user_create", "quicbaas_iam_user_create", map[string]interface{}{"tenant_id": "t1", "email": "u@ex.com", "name": "User"}},
-		{"user_get", "quicbaas_iam_user_get", map[string]interface{}{"tenant_id": "t1", "user_id": "u1"}},
-		{"user_update", "quicbaas_iam_user_update", map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "email": "new@ex.com", "name": "Updated", "suspended": true, "locked": false}},
-		{"user_delete", "quicbaas_iam_user_delete", map[string]interface{}{"tenant_id": "t1", "user_id": "u1"}},
+		{"user_get", "quicbaas_iam_user_get", map[string]interface{}{"tenant_id": "t1", "user_id": "30001"}},
+		{"user_update", "quicbaas_iam_user_update", map[string]interface{}{"tenant_id": "t1", "user_id": "30001", "email": "new@ex.com", "name": "Updated", "suspended": true, "locked": false}},
+		{"user_delete", "quicbaas_iam_user_delete", map[string]interface{}{"tenant_id": "t1", "user_id": "30001"}},
 		{"user_list", "quicbaas_iam_user_list", map[string]interface{}{"tenant_id": "t1"}},
-		{"user_assign_role", "quicbaas_iam_user_assign_role", map[string]interface{}{"user_id": "u1", "role_id": "r1"}},
-		{"user_revoke_role", "quicbaas_iam_user_revoke_role", map[string]interface{}{"user_id": "u1", "role_id": "r1"}},
+		{"user_assign_role", "quicbaas_iam_user_assign_role", map[string]interface{}{"user_id": "30001", "role_id": "r1"}},
+		{"user_revoke_role", "quicbaas_iam_user_revoke_role", map[string]interface{}{"user_id": "30001", "role_id": "r1"}},
 	}
 
 	for _, tt := range tests {
@@ -1204,7 +1204,7 @@ func TestExecuteIAMUserUpdate_WithAllOptionalFields(t *testing.T) {
 
 	args := map[string]interface{}{
 		"tenant_id":  "t1",
-		"user_id":    "u1",
+		"user_id":    "30001",
 		"email":      "new@example.com",
 		"name":       "New Name",
 		"roles":      []interface{}{"admin"},
@@ -1297,21 +1297,21 @@ func TestExecuteIAMPolicyTest_SimulateMode(t *testing.T) {
 // =============================================================================
 
 type mockMFAManager struct {
-	beginEnrollFunc   func(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
+	beginEnrollFunc   func(ctx context.Context, userID uint64, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error)
 	completeFunc      func(ctx context.Context, enrollmentID, code string) error
 	cancelFunc        func(ctx context.Context, enrollmentID string) error
-	beginChallengeF   func(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error)
+	beginChallengeF   func(ctx context.Context, userID uint64, tenantID, sessionToken string) (*iam.MFAChallenge, error)
 	verifyChallengeF  func(ctx context.Context, challengeID, code string) (*iam.MFAVerifyResponse, error)
-	verifyCodeF       func(ctx context.Context, userID, tenantID, code string) error
-	getStatusF        func(ctx context.Context, userID, tenantID string) (*iam.MFAStatus, error)
-	isMFARequiredF    func(ctx context.Context, userID, tenantID string) (bool, error)
-	disableF          func(ctx context.Context, userID, tenantID string) error
-	generateBackupF   func(ctx context.Context, userID, tenantID string) ([]string, error)
-	verifyBackupF     func(ctx context.Context, userID, tenantID, code string) error
-	backupCodeStatusF func(ctx context.Context, userID, tenantID string) (*iam.BackupCodeStatus, error)
+	verifyCodeF       func(ctx context.Context, userID uint64, tenantID, code string) error
+	getStatusF        func(ctx context.Context, userID uint64, tenantID string) (*iam.MFAStatus, error)
+	isMFARequiredF    func(ctx context.Context, userID uint64, tenantID string) (bool, error)
+	disableF          func(ctx context.Context, userID uint64, tenantID string) error
+	generateBackupF   func(ctx context.Context, userID uint64, tenantID string) ([]string, error)
+	verifyBackupF     func(ctx context.Context, userID uint64, tenantID, code string) error
+	backupCodeStatusF func(ctx context.Context, userID uint64, tenantID string) (*iam.BackupCodeStatus, error)
 }
 
-func (m *mockMFAManager) BeginEnrollment(ctx context.Context, userID, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
+func (m *mockMFAManager) BeginEnrollment(ctx context.Context, userID uint64, tenantID string, method iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 	if m.beginEnrollFunc != nil {
 		return m.beginEnrollFunc(ctx, userID, tenantID, method)
 	}
@@ -1332,7 +1332,7 @@ func (m *mockMFAManager) CancelEnrollment(ctx context.Context, enrollmentID stri
 	return nil
 }
 
-func (m *mockMFAManager) BeginChallenge(ctx context.Context, userID, tenantID, sessionToken string) (*iam.MFAChallenge, error) {
+func (m *mockMFAManager) BeginChallenge(ctx context.Context, userID uint64, tenantID, sessionToken string) (*iam.MFAChallenge, error) {
 	if m.beginChallengeF != nil {
 		return m.beginChallengeF(ctx, userID, tenantID, sessionToken)
 	}
@@ -1346,49 +1346,49 @@ func (m *mockMFAManager) VerifyChallenge(ctx context.Context, challengeID, code 
 	return &iam.MFAVerifyResponse{Success: true}, nil
 }
 
-func (m *mockMFAManager) VerifyCode(ctx context.Context, userID, tenantID, code string) error {
+func (m *mockMFAManager) VerifyCode(ctx context.Context, userID uint64, tenantID, code string) error {
 	if m.verifyCodeF != nil {
 		return m.verifyCodeF(ctx, userID, tenantID, code)
 	}
 	return nil
 }
 
-func (m *mockMFAManager) GetMFAStatus(ctx context.Context, userID, tenantID string) (*iam.MFAStatus, error) {
+func (m *mockMFAManager) GetMFAStatus(ctx context.Context, userID uint64, tenantID string) (*iam.MFAStatus, error) {
 	if m.getStatusF != nil {
 		return m.getStatusF(ctx, userID, tenantID)
 	}
 	return &iam.MFAStatus{Enabled: true, Method: iam.MFAMethodTOTP}, nil
 }
 
-func (m *mockMFAManager) IsMFARequired(ctx context.Context, userID, tenantID string) (bool, error) {
+func (m *mockMFAManager) IsMFARequired(ctx context.Context, userID uint64, tenantID string) (bool, error) {
 	if m.isMFARequiredF != nil {
 		return m.isMFARequiredF(ctx, userID, tenantID)
 	}
 	return true, nil
 }
 
-func (m *mockMFAManager) DisableMFA(ctx context.Context, userID, tenantID string) error {
+func (m *mockMFAManager) DisableMFA(ctx context.Context, userID uint64, tenantID string) error {
 	if m.disableF != nil {
 		return m.disableF(ctx, userID, tenantID)
 	}
 	return nil
 }
 
-func (m *mockMFAManager) GenerateBackupCodes(ctx context.Context, userID, tenantID string) ([]string, error) {
+func (m *mockMFAManager) GenerateBackupCodes(ctx context.Context, userID uint64, tenantID string) ([]string, error) {
 	if m.generateBackupF != nil {
 		return m.generateBackupF(ctx, userID, tenantID)
 	}
 	return []string{"code1", "code2", "code3"}, nil
 }
 
-func (m *mockMFAManager) VerifyBackupCode(ctx context.Context, userID, tenantID, code string) error {
+func (m *mockMFAManager) VerifyBackupCode(ctx context.Context, userID uint64, tenantID, code string) error {
 	if m.verifyBackupF != nil {
 		return m.verifyBackupF(ctx, userID, tenantID, code)
 	}
 	return nil
 }
 
-func (m *mockMFAManager) GetBackupCodeStatus(ctx context.Context, userID, tenantID string) (*iam.BackupCodeStatus, error) {
+func (m *mockMFAManager) GetBackupCodeStatus(ctx context.Context, userID uint64, tenantID string) (*iam.BackupCodeStatus, error) {
 	if m.backupCodeStatusF != nil {
 		return m.backupCodeStatusF(ctx, userID, tenantID)
 	}
@@ -1517,7 +1517,7 @@ func TestExecuteMFABeginEnroll_Success(t *testing.T) {
 	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
-		"user_id":   "u1",
+		"user_id":   "30001",
 		"tenant_id": "t1",
 		"method":    "totp",
 	}
@@ -1532,7 +1532,7 @@ func TestExecuteMFABeginEnroll_DefaultMethod(t *testing.T) {
 	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	args := map[string]interface{}{
-		"user_id":   "u1",
+		"user_id":   "30001",
 		"tenant_id": "t1",
 	}
 
@@ -1554,7 +1554,7 @@ func TestExecuteMFABeginEnroll_MissingUserID(t *testing.T) {
 
 func TestExecuteMFABeginEnroll_MissingTenantID(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "u1"}
+	args := map[string]interface{}{"user_id": "30001"}
 
 	_, err := reg.executeMFABeginEnroll(context.Background(), args)
 	require.Error(t, err)
@@ -1619,7 +1619,7 @@ func TestExecuteMFACancelEnroll_MissingEnrollmentID(t *testing.T) {
 
 func TestExecuteMFAGetStatus_Success(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
 
 	result, err := reg.executeMFAGetStatus(context.Background(), args)
 	require.NoError(t, err)
@@ -1636,7 +1636,7 @@ func TestExecuteMFAGetStatus_MissingUserID(t *testing.T) {
 
 func TestExecuteMFAGetStatus_MissingTenantID(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "u1"}
+	args := map[string]interface{}{"user_id": "30001"}
 
 	_, err := reg.executeMFAGetStatus(context.Background(), args)
 	require.Error(t, err)
@@ -1644,7 +1644,7 @@ func TestExecuteMFAGetStatus_MissingTenantID(t *testing.T) {
 
 func TestExecuteMFADisable_Success(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
 
 	result, err := reg.executeMFADisable(context.Background(), args)
 	require.NoError(t, err)
@@ -1659,7 +1659,7 @@ func TestExecuteMFADisable_MissingFields(t *testing.T) {
 		require.Error(t, err)
 	})
 	t.Run("missing_tenant_id", func(t *testing.T) {
-		_, err := reg.executeMFADisable(context.Background(), map[string]interface{}{"user_id": "u1"})
+		_, err := reg.executeMFADisable(context.Background(), map[string]interface{}{"user_id": "30001"})
 		require.Error(t, err)
 	})
 }
@@ -1670,7 +1670,7 @@ func TestExecuteMFADisable_MissingFields(t *testing.T) {
 
 func TestExecuteMFABeginChallenge_Success(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1", "session_token": "tok"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "session_token": "tok"}
 
 	result, err := reg.executeMFABeginChallenge(context.Background(), args)
 	require.NoError(t, err)
@@ -1686,8 +1686,8 @@ func TestExecuteMFABeginChallenge_MissingFields(t *testing.T) {
 		field string
 	}{
 		{"missing_user_id", map[string]interface{}{"tenant_id": "t1", "session_token": "tok"}, "user_id"},
-		{"missing_tenant_id", map[string]interface{}{"user_id": "u1", "session_token": "tok"}, "tenant_id"},
-		{"missing_session_token", map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}, "session_token"},
+		{"missing_tenant_id", map[string]interface{}{"user_id": "30001", "session_token": "tok"}, "tenant_id"},
+		{"missing_session_token", map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}, "session_token"},
 	}
 
 	for _, tt := range tests {
@@ -1729,7 +1729,7 @@ func TestExecuteMFAVerifyChallenge_MissingFields(t *testing.T) {
 
 func TestExecuteMFAGenerateBackupCodes_Success(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
 
 	result, err := reg.executeMFAGenerateBackupCodes(context.Background(), args)
 	require.NoError(t, err)
@@ -1744,14 +1744,14 @@ func TestExecuteMFAGenerateBackupCodes_MissingFields(t *testing.T) {
 		require.Error(t, err)
 	})
 	t.Run("missing_tenant_id", func(t *testing.T) {
-		_, err := reg.executeMFAGenerateBackupCodes(context.Background(), map[string]interface{}{"user_id": "u1"})
+		_, err := reg.executeMFAGenerateBackupCodes(context.Background(), map[string]interface{}{"user_id": "30001"})
 		require.Error(t, err)
 	})
 }
 
 func TestExecuteMFAVerifyBackupCode_Success(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1", "code": "backup-code-1"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "code": "backup-code-1"}
 
 	result, err := reg.executeMFAVerifyBackupCode(context.Background(), args)
 	require.NoError(t, err)
@@ -1767,8 +1767,8 @@ func TestExecuteMFAVerifyBackupCode_MissingFields(t *testing.T) {
 		field string
 	}{
 		{"missing_user_id", map[string]interface{}{"tenant_id": "t1", "code": "c"}, "user_id"},
-		{"missing_tenant_id", map[string]interface{}{"user_id": "u1", "code": "c"}, "tenant_id"},
-		{"missing_code", map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}, "code"},
+		{"missing_tenant_id", map[string]interface{}{"user_id": "30001", "code": "c"}, "tenant_id"},
+		{"missing_code", map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}, "code"},
 	}
 
 	for _, tt := range tests {
@@ -1784,7 +1784,7 @@ func TestExecuteMFAVerifyBackupCode_MissingFields(t *testing.T) {
 
 func TestExecuteMFAGetBackupCodeStatus_Success(t *testing.T) {
 	reg := newMFATestRegistry(&mockMFAManager{})
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
 
 	result, err := reg.executeMFAGetBackupCodeStatus(context.Background(), args)
 	require.NoError(t, err)
@@ -1799,7 +1799,7 @@ func TestExecuteMFAGetBackupCodeStatus_MissingFields(t *testing.T) {
 		require.Error(t, err)
 	})
 	t.Run("missing_tenant_id", func(t *testing.T) {
-		_, err := reg.executeMFAGetBackupCodeStatus(context.Background(), map[string]interface{}{"user_id": "u1"})
+		_, err := reg.executeMFAGetBackupCodeStatus(context.Background(), map[string]interface{}{"user_id": "30001"})
 		require.Error(t, err)
 	})
 }
@@ -1883,12 +1883,12 @@ func TestExecutePEPCheckBatch_MissingChecksArray(t *testing.T) {
 func TestExecuteMFABeginEnroll_ServiceError(t *testing.T) {
 	testErr := errors.New("enrollment failed")
 	mfaMgr := &mockMFAManager{
-		beginEnrollFunc: func(_ context.Context, _, _ string, _ iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
+		beginEnrollFunc: func(_ context.Context, _ uint64, _ string, _ iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 			return nil, testErr
 		},
 	}
 	reg := newMFATestRegistry(mfaMgr)
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
 
 	_, err := reg.executeMFABeginEnroll(context.Background(), args)
 	require.Error(t, err)
@@ -1928,12 +1928,12 @@ func TestExecuteMFACancelEnroll_ServiceError(t *testing.T) {
 func TestExecuteMFAGetStatus_ServiceError(t *testing.T) {
 	testErr := errors.New("status retrieval failed")
 	mfaMgr := &mockMFAManager{
-		getStatusF: func(_ context.Context, _, _ string) (*iam.MFAStatus, error) {
+		getStatusF: func(_ context.Context, _ uint64, _ string) (*iam.MFAStatus, error) {
 			return nil, testErr
 		},
 	}
 	reg := newMFATestRegistry(mfaMgr)
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
 
 	_, err := reg.executeMFAGetStatus(context.Background(), args)
 	require.Error(t, err)
@@ -1943,12 +1943,12 @@ func TestExecuteMFAGetStatus_ServiceError(t *testing.T) {
 func TestExecuteMFADisable_ServiceError(t *testing.T) {
 	testErr := errors.New("disable failed")
 	mfaMgr := &mockMFAManager{
-		disableF: func(_ context.Context, _, _ string) error {
+		disableF: func(_ context.Context, _ uint64, _ string) error {
 			return testErr
 		},
 	}
 	reg := newMFATestRegistry(mfaMgr)
-	args := map[string]interface{}{"user_id": "u1", "tenant_id": "t1"}
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
 
 	_, err := reg.executeMFADisable(context.Background(), args)
 	require.Error(t, err)
@@ -2072,9 +2072,9 @@ func TestIAMCoverage91_ServiceErrorPaths(t *testing.T) {
 
 		// User operations
 		{"user_create_error", "quicbaas_iam_user_create", map[string]interface{}{"tenant_id": "t", "email": "e", "name": "n"}},
-		{"user_get_error", "quicbaas_iam_user_get", map[string]interface{}{"tenant_id": "t", "user_id": "u"}},
-		{"user_update_error", "quicbaas_iam_user_update", map[string]interface{}{"tenant_id": "t", "user_id": "u"}},
-		{"user_delete_error", "quicbaas_iam_user_delete", map[string]interface{}{"tenant_id": "t", "user_id": "u"}},
+		{"user_get_error", "quicbaas_iam_user_get", map[string]interface{}{"tenant_id": "t", "user_id": "1"}},
+		{"user_update_error", "quicbaas_iam_user_update", map[string]interface{}{"tenant_id": "t", "user_id": "1"}},
+		{"user_delete_error", "quicbaas_iam_user_delete", map[string]interface{}{"tenant_id": "t", "user_id": "1"}},
 		{"user_list_error", "quicbaas_iam_user_list", map[string]interface{}{"tenant_id": "t"}},
 		{"user_assign_role_error", "quicbaas_iam_user_assign_role", map[string]interface{}{"user_id": "u", "role_id": "r"}},
 		{"user_revoke_role_error", "quicbaas_iam_user_revoke_role", map[string]interface{}{"user_id": "u", "role_id": "r"}},
@@ -2191,16 +2191,16 @@ func TestIAMCoverage91_ExecToolRouting_MFA(t *testing.T) {
 		toolName string
 		args     map[string]interface{}
 	}{
-		{"mfa_enroll_begin", "quicbaas_mfa_enroll_begin", map[string]interface{}{"user_id": "u1", "method": "totp"}},
-		{"mfa_enroll_complete", "quicbaas_mfa_enroll_complete", map[string]interface{}{"user_id": "u1", "code": "123456"}},
-		{"mfa_enroll_cancel", "quicbaas_mfa_enroll_cancel", map[string]interface{}{"user_id": "u1"}},
-		{"mfa_status", "quicbaas_mfa_status", map[string]interface{}{"user_id": "u1"}},
-		{"mfa_disable", "quicbaas_mfa_disable", map[string]interface{}{"user_id": "u1"}},
-		{"mfa_challenge_begin", "quicbaas_mfa_challenge_begin", map[string]interface{}{"user_id": "u1"}},
-		{"mfa_challenge_verify", "quicbaas_mfa_challenge_verify", map[string]interface{}{"user_id": "u1", "code": "123456"}},
-		{"mfa_backup_codes_generate", "quicbaas_mfa_backup_codes_generate", map[string]interface{}{"user_id": "u1"}},
-		{"mfa_backup_codes_verify", "quicbaas_mfa_backup_codes_verify", map[string]interface{}{"user_id": "u1", "code": "backup"}},
-		{"mfa_backup_codes_status", "quicbaas_mfa_backup_codes_status", map[string]interface{}{"user_id": "u1"}},
+		{"mfa_enroll_begin", "quicbaas_mfa_enroll_begin", map[string]interface{}{"user_id": "30001", "method": "totp"}},
+		{"mfa_enroll_complete", "quicbaas_mfa_enroll_complete", map[string]interface{}{"user_id": "30001", "code": "123456"}},
+		{"mfa_enroll_cancel", "quicbaas_mfa_enroll_cancel", map[string]interface{}{"user_id": "30001"}},
+		{"mfa_status", "quicbaas_mfa_status", map[string]interface{}{"user_id": "30001"}},
+		{"mfa_disable", "quicbaas_mfa_disable", map[string]interface{}{"user_id": "30001"}},
+		{"mfa_challenge_begin", "quicbaas_mfa_challenge_begin", map[string]interface{}{"user_id": "30001"}},
+		{"mfa_challenge_verify", "quicbaas_mfa_challenge_verify", map[string]interface{}{"user_id": "30001", "code": "123456"}},
+		{"mfa_backup_codes_generate", "quicbaas_mfa_backup_codes_generate", map[string]interface{}{"user_id": "30001"}},
+		{"mfa_backup_codes_verify", "quicbaas_mfa_backup_codes_verify", map[string]interface{}{"user_id": "30001", "code": "backup"}},
+		{"mfa_backup_codes_status", "quicbaas_mfa_backup_codes_status", map[string]interface{}{"user_id": "30001"}},
 	}
 
 	for _, tt := range mfaTools {
@@ -2278,7 +2278,7 @@ func TestIAMCoverage91_ExecToolRouting_Impersonation(t *testing.T) {
 		toolName string
 		args     map[string]interface{}
 	}{
-		{"impersonation_start", "quicbaas_iam_impersonation_start", map[string]interface{}{"target_user_id": "u1", "reason": "debug"}},
+		{"impersonation_start", "quicbaas_iam_impersonation_start", map[string]interface{}{"target_user_id": "30001", "reason": "debug"}},
 		{"impersonation_end", "quicbaas_iam_impersonation_end", map[string]interface{}{"session_id": "s1"}},
 		{"impersonation_list", "quicbaas_iam_impersonation_list", map[string]interface{}{}},
 	}
@@ -2303,18 +2303,18 @@ func TestIAMCoverage91_ExecToolRouting_GDPR(t *testing.T) {
 		args     map[string]interface{}
 	}{
 		// GDPR Consent
-		{"gdpr_consent_grant", "quicbaas_iam_gdpr_consent_grant", map[string]interface{}{"user_id": "u1", "purpose": "analytics"}},
-		{"gdpr_consent_withdraw", "quicbaas_iam_gdpr_consent_withdraw", map[string]interface{}{"user_id": "u1", "purpose": "analytics"}},
-		{"gdpr_consent_get", "quicbaas_iam_gdpr_consent_get", map[string]interface{}{"user_id": "u1", "purpose": "analytics"}},
-		{"gdpr_consent_list", "quicbaas_iam_gdpr_consent_list", map[string]interface{}{"user_id": "u1"}},
+		{"gdpr_consent_grant", "quicbaas_iam_gdpr_consent_grant", map[string]interface{}{"user_id": "30001", "purpose": "analytics"}},
+		{"gdpr_consent_withdraw", "quicbaas_iam_gdpr_consent_withdraw", map[string]interface{}{"user_id": "30001", "purpose": "analytics"}},
+		{"gdpr_consent_get", "quicbaas_iam_gdpr_consent_get", map[string]interface{}{"user_id": "30001", "purpose": "analytics"}},
+		{"gdpr_consent_list", "quicbaas_iam_gdpr_consent_list", map[string]interface{}{"user_id": "30001"}},
 
 		// GDPR Export
-		{"gdpr_export_request", "quicbaas_iam_gdpr_export_request", map[string]interface{}{"user_id": "u1"}},
+		{"gdpr_export_request", "quicbaas_iam_gdpr_export_request", map[string]interface{}{"user_id": "30001"}},
 		{"gdpr_export_status", "quicbaas_iam_gdpr_export_status", map[string]interface{}{"export_id": "e1"}},
-		{"gdpr_export_generate", "quicbaas_iam_gdpr_export_generate", map[string]interface{}{"user_id": "u1", "format": "json"}},
+		{"gdpr_export_generate", "quicbaas_iam_gdpr_export_generate", map[string]interface{}{"user_id": "30001", "format": "json"}},
 
 		// GDPR Deletion
-		{"gdpr_deletion_request", "quicbaas_iam_gdpr_deletion_request", map[string]interface{}{"user_id": "u1", "reason": "request"}},
+		{"gdpr_deletion_request", "quicbaas_iam_gdpr_deletion_request", map[string]interface{}{"user_id": "30001", "reason": "request"}},
 		{"gdpr_deletion_cancel", "quicbaas_iam_gdpr_deletion_cancel", map[string]interface{}{"deletion_id": "d1"}},
 		{"gdpr_deletion_process", "quicbaas_iam_gdpr_deletion_process", map[string]interface{}{"deletion_id": "d1"}},
 		{"gdpr_deletion_status", "quicbaas_iam_gdpr_deletion_status", map[string]interface{}{"deletion_id": "d1"}},
@@ -2341,7 +2341,7 @@ func TestExecuteIAMUserCreate_RolesForwarded(t *testing.T) {
 		createUserFunc: func(_ context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
 			captured = req
 			return &service.IAMCreateUserResponse{
-				User:      &iam.User{ID: "u1", TenantID: req.TenantID, Email: req.Email, Name: req.Name, Roles: req.Roles},
+				User:      &iam.User{ID: 30001, TenantID: req.TenantID, Email: req.Email, Name: req.Name, Roles: req.Roles},
 				Timestamp: time.Now(),
 			}, nil
 		},
@@ -2394,7 +2394,7 @@ func TestExecuteIAMUserCreate_AttributesForwarded(t *testing.T) {
 		createUserFunc: func(_ context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
 			captured = req
 			return &service.IAMCreateUserResponse{
-				User:      &iam.User{ID: "u1", TenantID: req.TenantID, Email: req.Email, Name: req.Name},
+				User:      &iam.User{ID: 30001, TenantID: req.TenantID, Email: req.Email, Name: req.Name},
 				Timestamp: time.Now(),
 			}, nil
 		},
@@ -2425,7 +2425,7 @@ func TestExecuteIAMUserCreate_CarriesTheInvite(t *testing.T) {
 		createUserFunc: func(_ context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
 			captured = req
 			return &service.IAMCreateUserResponse{
-				User:            &iam.User{ID: "u1", TenantID: req.TenantID, Email: req.Email},
+				User:            &iam.User{ID: 30001, TenantID: req.TenantID, Email: req.Email},
 				InviteToken:     "tok",
 				InviteExpiresAt: &expires,
 				Timestamp:       time.Now(),

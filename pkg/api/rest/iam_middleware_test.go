@@ -548,7 +548,7 @@ func TestCreateSessionDeviceInfoVariationsFinal(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"token_hash": "abc123",
@@ -575,7 +575,7 @@ func TestCreateSessionDeviceInfoVariationsFinal(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"token_hash": "abc123",
@@ -608,7 +608,7 @@ func TestCreateSessionDeviceInfoVariationsFinal(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"token_hash": "abc123",
@@ -632,7 +632,7 @@ func TestCreateSessionDeviceInfoVariationsFinal(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"id": "custom-session-id",
@@ -655,7 +655,7 @@ func TestCreateSessionDeviceInfoVariationsFinal(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"token_hash": "abc123",
@@ -680,7 +680,7 @@ func TestCreateSessionDeviceInfoVariationsFinal(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{
 			"token_hash": "abc123",
@@ -708,7 +708,7 @@ func TestRevokeOtherSessionsEmptyBodyFinal(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "tenant-123")
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -726,7 +726,7 @@ func TestRevokeOtherSessionsEmptyBodyFinal(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "tenant-123")
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader("{invalid"))
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -743,7 +743,7 @@ func TestRevokeOtherSessionsEmptyBodyFinal(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "tenant-123")
 		body := `{"keep_session_id": ""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(body))
 		req = req.WithContext(ctx)
@@ -832,7 +832,7 @@ func TestSessionsEmptyStringContextFinal(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "")
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -870,7 +870,7 @@ func TestSessionsEmptyStringContextFinal(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
@@ -910,7 +910,7 @@ func TestSessionsEmptyStringContextFinal(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
@@ -942,7 +942,7 @@ func TestSessionsEmptyStringContextFinal(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "")
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -972,7 +972,7 @@ func TestSessionsEmptyStringContextFinal(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "")
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
@@ -987,7 +987,7 @@ func TestSessionsEmptyStringContextFinal(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(context.Background(), "10123", "tenant-123")
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()

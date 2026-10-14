@@ -59,7 +59,7 @@ func TestFIDO2Service_BeginAddCredential_RefusesUnauthenticatedCaller(t *testing
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := svc.BeginAddCredential(ctx, "tenant-a")
-			if !IsFIDO2CallerRefused(err) {
+			if !IsCallerAccountRefused(err) {
 				t.Fatalf("BeginAddCredential = %v, want a caller refusal", err)
 			}
 			if !stderrors.Is(err, &errors.QBError{Code: errors.ErrUnauthorized}) {
@@ -100,7 +100,7 @@ func TestFIDO2Service_BeginAddCredential_RefusesCallerWithoutAccount(t *testing.
 	}
 	for _, subject := range []string{"svc-account", "bob"} {
 		_, err := svc.BeginAddCredential(addCredentialCaller(subject, "tenant-a"), "")
-		if !IsFIDO2CallerRefused(err) || !stderrors.Is(err, &errors.QBError{Code: errors.ErrForbidden}) {
+		if !IsCallerAccountRefused(err) || !stderrors.Is(err, &errors.QBError{Code: errors.ErrForbidden}) {
 			t.Errorf("subject %q = %v, want a forbidden caller refusal", subject, err)
 		}
 	}
@@ -117,7 +117,7 @@ func TestFIDO2Service_BeginAddCredential_ResolvesMTLSAdmin(t *testing.T) {
 	})
 
 	_, err := svc.BeginAddCredential(addCredentialCaller("admin", "tenant-a"), "tenant-a")
-	if IsFIDO2CallerRefused(err) {
+	if IsCallerAccountRefused(err) {
 		t.Fatalf("mTLS admin refused: %v", err)
 	}
 	if !IsFIDO2ServiceUnavailable(err) {

@@ -45,6 +45,7 @@ package qrdbadapter
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -421,8 +422,7 @@ func WrapUser(store *iam.IdentityStore) *UserAdapter { return &UserAdapter{store
 // re-run path triggers.
 //
 // Identifier: qrdb's User.ID is the server-assigned Snowflake id, and
-// iam.User.ID is that same id in canonical decimal (iam.FormatUserID). The
-// returned qrdbsdk.User carries it, together with the record's cert bindings:
+// iam.User.ID is that same uint64. The returned qrdbsdk.User carries it, together with the record's cert bindings:
 // qrdb's deferred tenant provisioning refuses an admin with no persisted id or
 // with a bound certificate, and attaches the invitation to that id.
 // BindAdminCert still addresses the admin through the record remembered here.
@@ -495,12 +495,12 @@ func (a *UserAdapter) GetUserByUsername(ctx context.Context, tenantID, username 
 }
 
 // storedUser projects a user the store has persisted into qrdb's shape. A
-// persisted user always carries its canonical id, so an empty or
-// non-canonical one is refused rather than projected as id 0: qrdb's
+// persisted user always carries its non-zero id, so a zero one is refused
+// rather than projected: qrdb's
 // bootstrap reads the id as the identity a certificate binds to and an
 // invitation attaches to, and id 0 names nobody.
 func storedUser(u *iam.User) (*qrdbsdk.User, error) {
-	if u == nil || u.ID == "" {
+	if u == nil || u.ID == 0 {
 		return nil, ErrInvalidUserID
 	}
 	projected, err := FromIAMUser(u)
@@ -580,14 +580,14 @@ func (e *AdminBindTargetError) Error() string {
 type AdminBindThumbprintError struct {
 	// TenantID owns the admin user.
 	TenantID string
-	// UserID is the quicbaas string id of the admin user.
-	UserID string
+	// UserID is the id of the admin user.
+	UserID uint64
 }
 
 // Error implements the error interface.
 func (e *AdminBindThumbprintError) Error() string {
 	return "qrdbadapter: refusing to bind an empty SPKI thumbprint to admin user " +
-		e.UserID + " in tenant " + e.TenantID
+		strconv.FormatUint(e.UserID, 10) + " in tenant " + e.TenantID
 }
 
 // NilDependencyError reports that a required adapter dependency (the wrapped

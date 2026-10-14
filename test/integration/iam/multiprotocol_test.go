@@ -19,6 +19,7 @@ package iam_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -430,7 +431,7 @@ func (c *GRPCClient) CreateUser(ctx context.Context, tenantID, email, name strin
 		return nil, err
 	}
 
-	return convertProtoToUser(resp), nil
+	return convertProtoToUser(resp)
 }
 
 func (c *GRPCClient) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
@@ -444,7 +445,7 @@ func (c *GRPCClient) GetUser(ctx context.Context, tenantID, userID string) (*iam
 		return nil, err
 	}
 
-	return convertProtoToUser(resp), nil
+	return convertProtoToUser(resp)
 }
 
 func (c *GRPCClient) UpdateUser(ctx context.Context, tenantID, userID, name string) (*iam.User, error) {
@@ -459,7 +460,7 @@ func (c *GRPCClient) UpdateUser(ctx context.Context, tenantID, userID, name stri
 		return nil, err
 	}
 
-	return convertProtoToUser(resp), nil
+	return convertProtoToUser(resp)
 }
 
 func (c *GRPCClient) DeleteUser(ctx context.Context, tenantID, userID string) error {
@@ -484,7 +485,11 @@ func (c *GRPCClient) ListUsers(ctx context.Context, tenantID string) ([]iam.User
 
 	users := make([]iam.User, len(resp.Users))
 	for i, u := range resp.Users {
-		users[i] = *convertProtoToUser(u)
+		user, err := convertProtoToUser(u)
+		if err != nil {
+			return nil, err
+		}
+		users[i] = *user
 	}
 
 	return users, nil
@@ -721,9 +726,13 @@ func convertProtoToTenant(pb *iampb.Tenant) *iam.Tenant {
 	return t
 }
 
-func convertProtoToUser(pb *iampb.User) *iam.User {
+func convertProtoToUser(pb *iampb.User) (*iam.User, error) {
+	id, err := strconv.ParseUint(pb.Id, 10, 64)
+	if err != nil {
+		return nil, err
+	}
 	u := &iam.User{
-		ID:       pb.Id,
+		ID:       id,
 		TenantID: pb.TenantId,
 		Email:    pb.Email,
 		Name:     pb.Name,
@@ -741,7 +750,7 @@ func convertProtoToUser(pb *iampb.User) *iam.User {
 		u.LastAuth = &t
 	}
 
-	return u
+	return u, nil
 }
 
 func convertProtoToRole(pb *iampb.Role) *iam.Role {
@@ -1374,7 +1383,11 @@ func mapToUser(data map[string]interface{}) (*iam.User, error) {
 
 	user := &iam.User{}
 	if id, ok := data["id"].(string); ok {
-		user.ID = id
+		parsed, err := strconv.ParseUint(id, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		user.ID = parsed
 	}
 	if tenantID, ok := data["tenant_id"].(string); ok {
 		user.TenantID = tenantID
@@ -1809,15 +1822,15 @@ func TestUserCRUD_AllProtocols(t *testing.T) {
 				require.NoError(t, err, "Failed to create user via %s", protocol)
 				assert.Equal(t, email, user.Email)
 				assert.Equal(t, "Test User", user.Name)
-				assert.NotEmpty(t, user.ID)
-				userID = user.ID
+				assert.NotZero(t, user.ID)
+				userID = strconv.FormatUint(user.ID, 10)
 			})
 
 			// Get
 			t.Run("Get", func(t *testing.T) {
 				user, err := client.GetUser(ctx, tenantID, userID)
 				require.NoError(t, err, "Failed to get user via %s", protocol)
-				assert.Equal(t, userID, user.ID)
+				assert.Equal(t, userID, strconv.FormatUint(user.ID, 10))
 				assert.Equal(t, email, user.Email)
 			})
 
@@ -1828,7 +1841,7 @@ func TestUserCRUD_AllProtocols(t *testing.T) {
 
 				found := false
 				for _, user := range users {
-					if user.ID == userID {
+					if strconv.FormatUint(user.ID, 10) == userID {
 						found = true
 						break
 					}
@@ -2013,7 +2026,7 @@ func TestMFAOperations_AllProtocols(t *testing.T) {
 
 			user, err := client.CreateUser(ctx, tenantID, email, "MFA Test User")
 			require.NoError(t, err)
-			userID := user.ID
+			userID := strconv.FormatUint(user.ID, 10)
 
 			// Get MFA Status (not enrolled)
 			t.Run("StatusNotEnrolled", func(t *testing.T) {

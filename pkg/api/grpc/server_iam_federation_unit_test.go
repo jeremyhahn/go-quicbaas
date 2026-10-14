@@ -376,7 +376,7 @@ func TestConvertFederatedIdentityToProto(t *testing.T) {
 		now := time.Now()
 		fi := &iam.FederatedIdentity{
 			ID:            "fed-id-1",
-			UserID:        "user-1",
+			UserID:        10001,
 			TenantID:      "tenant-1",
 			ProviderID:    "provider-1",
 			ExternalID:    "ext-id-1",
@@ -391,7 +391,7 @@ func TestConvertFederatedIdentityToProto(t *testing.T) {
 
 		assert.NotNil(t, result)
 		assert.Equal(t, "fed-id-1", result.Id)
-		assert.Equal(t, "user-1", result.UserId)
+		assert.Equal(t, "10001", result.UserId)
 		assert.Equal(t, "tenant-1", result.TenantId)
 		assert.Equal(t, "provider-1", result.ProviderId)
 		assert.Equal(t, "ext-id-1", result.ExternalId)
@@ -405,7 +405,7 @@ func TestConvertFederatedIdentityToProto(t *testing.T) {
 	t.Run("conversion with string claims", func(t *testing.T) {
 		fi := &iam.FederatedIdentity{
 			ID:     "fed-id-claims",
-			UserID: "user-claims",
+			UserID: 10002,
 			Claims: map[string]interface{}{
 				"string_claim": "value1",
 				"int_claim":    123,  // Non-string should be skipped
@@ -428,7 +428,7 @@ func TestConvertFederatedIdentityToProto(t *testing.T) {
 	t.Run("conversion with empty claims", func(t *testing.T) {
 		fi := &iam.FederatedIdentity{
 			ID:     "fed-id-empty-claims",
-			UserID: "user-empty-claims",
+			UserID: 10003,
 			Claims: map[string]interface{}{},
 		}
 

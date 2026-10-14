@@ -209,17 +209,19 @@ type TenantQuotas struct {
 // back from, qrdb's canonical user record: this package keeps no side-record and
 // no second identifier space.
 //
-// The identity is qrdb's Snowflake. ID carries it in decimal — the same
-// rendering qrdb's own transport type uses (`ID uint64 \`json:"id,string"\“) —
-// so the value an API client sees and the value the store holds are one value,
-// converted by strconv and never correlated through a table. The uuid<->uint64
-// IDMap that used to make that correlation is gone, along with the "id
+// The identity is qrdb's Snowflake, held as the same uint64 the store assigns
+// and addresses the record by, so there is nothing to convert between the
+// broker and the store. Its JSON encoding is the decimal string qrdb's own
+// transport type uses, because a JSON number above 2^53 would lose precision in
+// a JavaScript client. YAML has no string option, so YAML carries the plain
+// integer. The uuid<->uint64
+// IDMap that used to correlate two identifier spaces is gone, along with the "id
 // correlation not found" failure that could sever a verified login from its
 // record.
 type User struct {
-	// ID is the qrdb Snowflake user id in decimal. Empty on a user that has not
-	// been created yet; qrdb assigns the id server-side.
-	ID string `json:"id" yaml:"id"`
+	// ID is the qrdb Snowflake user id. Zero on a user that has not been created
+	// yet; qrdb assigns the id server-side.
+	ID uint64 `json:"id,string" yaml:"id"`
 
 	// Email is the CANONICAL tenant-unique login key — what a login ceremony
 	// resolves a verified factor to, and what every layer above keys a user by.
@@ -462,8 +464,8 @@ type Session struct {
 	// ID is the unique session identifier
 	ID string `json:"id" yaml:"id"`
 
-	// UserID is the authenticated user
-	UserID string `json:"user_id" yaml:"user_id"`
+	// UserID is the authenticated user's qrdb Snowflake id
+	UserID uint64 `json:"user_id,string" yaml:"user_id"`
 
 	// TenantID is the session tenant
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
@@ -560,7 +562,7 @@ type TokenSessionContext struct {
 	// UserID is the IMMUTABLE IAM user id of the principal, frozen at login so
 	// a renewal identifies the same account even if the login's subject
 	// (a mutable username on the ceremony path) has since been renamed.
-	UserID string `json:"user_id,omitempty" yaml:"user_id,omitempty"`
+	UserID uint64 `json:"user_id,string,omitempty" yaml:"user_id,omitempty"`
 
 	// PrincipalType carries the session's positive principal marker (see
 	// Claims.PrincipalType) onto every renewed access token, so a renewal is
@@ -913,8 +915,8 @@ type Credential struct {
 	// ID is the credential identifier
 	ID string `json:"id" yaml:"id"`
 
-	// UserID is the owning user
-	UserID string `json:"user_id" yaml:"user_id"`
+	// UserID is the owning user's qrdb Snowflake id
+	UserID uint64 `json:"user_id,string" yaml:"user_id"`
 
 	// TenantID is the credential tenant
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
@@ -951,7 +953,7 @@ func (t *Tenant) Validate() error {
 
 // Validate validates a User for correctness.
 func (u *User) Validate() error {
-	if u.ID == "" {
+	if u.ID == 0 {
 		return NewIAMError(ErrUserInvalid, "iam.user.validate", "user ID is required", nil)
 	}
 	if u.Email == "" {

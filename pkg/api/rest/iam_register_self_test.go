@@ -389,7 +389,7 @@ func TestApproveUser_MissingTenantID(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/users/user-1/approve", nil)
-	req = withChiParams(req, map[string]string{"user_id": "user-1"})
+	req = withChiParams(req, map[string]string{"user_id": "10001"})
 	w := httptest.NewRecorder()
 	handler.ApproveUser(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -428,7 +428,7 @@ func TestRejectUser_MissingTenantID(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/users/user-1/reject", nil)
-	req = withChiParams(req, map[string]string{"user_id": "user-1"})
+	req = withChiParams(req, map[string]string{"user_id": "10001"})
 	w := httptest.NewRecorder()
 	handler.RejectUser(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)

@@ -67,7 +67,7 @@ type credentialStoreDouble struct {
 
 // ListCredentials implements service.WebAuthnCredentialService.
 func (d *credentialStoreDouble) ListCredentials(
-	_ context.Context, _, _ string,
+	_ context.Context, _ string, _ uint64,
 ) ([]iam.WebAuthnCredentialSummary, error) {
 	if d.listErr != nil {
 		return nil, d.listErr
@@ -84,7 +84,7 @@ func (d *credentialStoreDouble) ListCredentials(
 
 // DeleteCredential implements service.WebAuthnCredentialService.
 func (d *credentialStoreDouble) DeleteCredential(
-	_ context.Context, _, _, credentialID string,
+	_ context.Context, _ string, _ uint64, credentialID string,
 ) error {
 	d.deleteArgs = append(d.deleteArgs, credentialID)
 	raw, err := base64.RawURLEncoding.DecodeString(credentialID)
@@ -113,7 +113,7 @@ func (d *credentialStoreDouble) DeleteCredential(
 }
 
 // DeleteCredentials implements service.WebAuthnCredentialService.
-func (d *credentialStoreDouble) DeleteCredentials(_ context.Context, _, _ string) (int, error) {
+func (d *credentialStoreDouble) DeleteCredentials(_ context.Context, _ string, _ uint64) (int, error) {
 	n := len(d.credentials)
 	d.credentials = nil
 	return n, nil

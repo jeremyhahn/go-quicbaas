@@ -414,9 +414,11 @@ export interface SdlcClient {
 
   /**
    * bind attaches a forge binding to a project, replacing any earlier one.
-   * PUT /api/v1/sdlc/projects/:projectId/binding?tenant_id=...
+   * A bind switches the project's autonomy on unless paused is set; a paused
+   * bind never switches it off.
+   * PUT /api/v1/sdlc/projects/:projectId/binding?tenant_id=...[&paused=true]
    */
-  bind(tenantId: string, projectId: string, binding: ProjectBinding): Promise<ProjectBinding>;
+  bind(tenantId: string, projectId: string, binding: ProjectBinding, paused?: boolean): Promise<ProjectBinding>;
 
   /**
    * unbind detaches the project's binding.

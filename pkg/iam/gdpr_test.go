@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -82,14 +83,14 @@ func createTestGDPRManager(t *testing.T) (*GDPRManager, *MockGDPRAuditLogger) {
 	return manager, auditLogger
 }
 
-func createTestUser(t *testing.T, userStorage UserStorage, tenantID, userID string) *User {
+func createTestUser(t *testing.T, userStorage UserStorage, tenantID string, userID uint64) *User {
 	t.Helper()
 
 	user := &User{
 		ID:         userID,
 		TenantID:   tenantID,
-		Email:      fmt.Sprintf("%s@example.com", userID),
-		Name:       fmt.Sprintf("Test User %s", userID),
+		Email:      fmt.Sprintf("%d@example.com", userID),
+		Name:       fmt.Sprintf("Test User %d", userID),
 		Attributes: map[string]string{"test": "value"},
 		Created:    time.Now(),
 		Updated:    time.Now(),
@@ -101,11 +102,11 @@ func createTestUser(t *testing.T, userStorage UserStorage, tenantID, userID stri
 	return user
 }
 
-func createTestSession(t *testing.T, sessionStorage SessionStorage, tenantID, userID string) *Session {
+func createTestSession(t *testing.T, sessionStorage SessionStorage, tenantID string, userID uint64) *Session {
 	t.Helper()
 
 	session := &Session{
-		ID:           fmt.Sprintf("session_%s", userID),
+		ID:           fmt.Sprintf("session_%d", userID),
 		TenantID:     tenantID,
 		UserID:       userID,
 		Created:      time.Now(),
@@ -198,7 +199,7 @@ func TestGDPRManager_GrantConsent_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 	purpose := ConsentPurposeMarketing
 	version := "1.0"
 	expiresAt := time.Now().Add(365 * 24 * time.Hour)
@@ -225,14 +226,14 @@ func TestGDPRManager_GrantConsent_Success(t *testing.T) {
 	require.Len(t, events, 1)
 	assert.Equal(t, "consent.granted", events[0].Action)
 	assert.Equal(t, tenantID, events[0].TenantID)
-	assert.Equal(t, userID, events[0].UserID)
+	assert.Equal(t, strconv.FormatUint(userID, 10), events[0].UserID)
 }
 
 func TestGDPRManager_GrantConsent_InvalidPurpose(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
-	consent, err := manager.GrantConsent(ctx, "tenant1", "11", "invalid_purpose", "1.0", nil, "", "")
+	consent, err := manager.GrantConsent(ctx, "tenant1", 11, "invalid_purpose", "1.0", nil, "", "")
 	require.Error(t, err)
 	assert.Nil(t, consent)
 
@@ -255,7 +256,7 @@ func TestGDPRManager_GrantConsent_AllPurposes(t *testing.T) {
 	}
 
 	for _, purpose := range purposes {
-		consent, err := manager.GrantConsent(ctx, "tenant1", "11", purpose, "1.0", nil, "", "")
+		consent, err := manager.GrantConsent(ctx, "tenant1", 11, purpose, "1.0", nil, "", "")
 		require.NoError(t, err, "Failed for purpose: %s", purpose)
 		assert.Equal(t, purpose, consent.Purpose)
 	}
@@ -266,7 +267,7 @@ func TestGDPRManager_WithdrawConsent_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 	purpose := ConsentPurposeMarketing
 
 	// Grant consent first
@@ -297,7 +298,7 @@ func TestGDPRManager_WithdrawConsent_NotFound(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
-	err := manager.WithdrawConsent(ctx, "tenant1", "11", ConsentPurposeMarketing, "", "")
+	err := manager.WithdrawConsent(ctx, "tenant1", 11, ConsentPurposeMarketing, "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not_found")
 }
@@ -307,7 +308,7 @@ func TestGDPRManager_GetConsent_Found(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 	purpose := ConsentPurposeAnalytics
 
 	// Grant consent
@@ -325,7 +326,7 @@ func TestGDPRManager_GetConsent_NotFound(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
-	consent, err := manager.GetConsent(ctx, "tenant1", "11", ConsentPurposeMarketing)
+	consent, err := manager.GetConsent(ctx, "tenant1", 11, ConsentPurposeMarketing)
 	require.Error(t, err)
 	assert.Nil(t, consent)
 
@@ -339,7 +340,7 @@ func TestGDPRManager_ListUserConsents(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Grant multiple consents
 	purposes := []ConsentPurpose{
@@ -372,7 +373,7 @@ func TestGDPRManager_ListUserConsents_Empty(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
-	consents, err := manager.ListUserConsents(ctx, "tenant1", "11")
+	consents, err := manager.ListUserConsents(ctx, "tenant1", 11)
 	require.NoError(t, err)
 	assert.Empty(t, consents)
 }
@@ -384,7 +385,7 @@ func TestGDPRManager_RequestExport_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 	requestedBy := "11"
 
 	request, err := manager.RequestExport(ctx, tenantID, userID, requestedBy, DataExportFormatJSON,
@@ -411,7 +412,7 @@ func TestGDPRManager_RequestExport_InvalidCategory(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
-	request, err := manager.RequestExport(ctx, "tenant1", "11", "11", DataExportFormatJSON,
+	request, err := manager.RequestExport(ctx, "tenant1", 11, "11", DataExportFormatJSON,
 		[]string{"invalid_category"}, nil)
 	require.Error(t, err)
 	assert.Nil(t, request)
@@ -423,14 +424,14 @@ func TestGDPRManager_RequestExport_PendingExists(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create first export request
-	_, err := manager.RequestExport(ctx, tenantID, userID, userID, DataExportFormatJSON, nil, nil)
+	_, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), DataExportFormatJSON, nil, nil)
 	require.NoError(t, err)
 
 	// Try to create another while first is pending
-	request, err := manager.RequestExport(ctx, tenantID, userID, userID, DataExportFormatJSON, nil, nil)
+	request, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), DataExportFormatJSON, nil, nil)
 	require.Error(t, err)
 	assert.Nil(t, request)
 	assert.ErrorIs(t, err, ErrDataExportPending)
@@ -447,8 +448,8 @@ func TestGDPRManager_RequestExport_AllFormats(t *testing.T) {
 	}
 
 	for i, format := range formats {
-		userID := FormatUserID(uint64(i) + 10)
-		request, err := manager.RequestExport(ctx, "tenant1", userID, userID, format, nil, nil)
+		userID := uint64(i) + 10
+		request, err := manager.RequestExport(ctx, "tenant1", userID, strconv.FormatUint(userID, 10), format, nil, nil)
 		require.NoError(t, err, "Failed for format: %s", format)
 		assert.Equal(t, format, request.Format)
 	}
@@ -459,7 +460,7 @@ func TestGDPRManager_GetExportStatus(t *testing.T) {
 	ctx := context.Background()
 
 	// Create export request
-	original, err := manager.RequestExport(ctx, "tenant1", "11", "11", DataExportFormatJSON, nil, nil)
+	original, err := manager.RequestExport(ctx, "tenant1", 11, "11", DataExportFormatJSON, nil, nil)
 	require.NoError(t, err)
 
 	// Get status
@@ -483,13 +484,13 @@ func TestGDPRManager_GenerateExport_ProfileOnly(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create user
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
 	// Request export
-	request, err := manager.RequestExport(ctx, tenantID, userID, userID, DataExportFormatJSON,
+	request, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), DataExportFormatJSON,
 		[]string{"profile"}, nil)
 	require.NoError(t, err)
 
@@ -520,7 +521,7 @@ func TestGDPRManager_GenerateExport_AllCategories(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create test data
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
@@ -529,7 +530,7 @@ func TestGDPRManager_GenerateExport_AllCategories(t *testing.T) {
 	require.NoError(t, err)
 
 	// Request export with all categories
-	request, err := manager.RequestExport(ctx, tenantID, userID, userID, DataExportFormatJSON, nil, nil)
+	request, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), DataExportFormatJSON, nil, nil)
 	require.NoError(t, err)
 
 	// Generate export
@@ -551,14 +552,14 @@ func TestGDPRManager_GenerateExport_WithExclusions(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create test data
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 	createTestSession(t, manager.deps.SessionStorage, tenantID, userID)
 
 	// Request export excluding sessions
-	request, err := manager.RequestExport(ctx, tenantID, userID, userID, DataExportFormatJSON,
+	request, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), DataExportFormatJSON,
 		nil, []string{"sessions"})
 	require.NoError(t, err)
 
@@ -575,7 +576,7 @@ func TestGDPRManager_GenerateExport_UserNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	// Request export for non-existent user
-	request, err := manager.RequestExport(ctx, "tenant1", "nonexistent", "admin", DataExportFormatJSON,
+	request, err := manager.RequestExport(ctx, "tenant1", 99999, "admin", DataExportFormatJSON,
 		[]string{"profile"}, nil)
 	require.NoError(t, err)
 
@@ -598,10 +599,10 @@ func TestGDPRManager_RequestDeletion_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 	reason := "User requested account deletion"
 
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, reason,
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), reason,
 		[]string{"profile", "sessions"}, []string{"audit_logs"}, 7)
 	require.NoError(t, err)
 	require.NotNil(t, request)
@@ -630,7 +631,7 @@ func TestGDPRManager_RequestDeletion_DefaultGracePeriod(t *testing.T) {
 	ctx := context.Background()
 
 	// Pass -1 to use default grace period
-	request, err := manager.RequestDeletion(ctx, "tenant1", "11", "11", "", nil, nil, -1)
+	request, err := manager.RequestDeletion(ctx, "tenant1", 11, "11", "", nil, nil, -1)
 	require.NoError(t, err)
 	require.NotNil(t, request.GracePeriodEndsAt)
 
@@ -643,7 +644,7 @@ func TestGDPRManager_RequestDeletion_ImmediateDeletion(t *testing.T) {
 	ctx := context.Background()
 
 	// Pass 0 for immediate deletion (no grace period)
-	request, err := manager.RequestDeletion(ctx, "tenant1", "user2", "user2", "", nil, nil, 0)
+	request, err := manager.RequestDeletion(ctx, "tenant1", 20002, "user2", "", nil, nil, 0)
 	require.NoError(t, err)
 
 	// For immediate deletion (0 days), GracePeriodEndsAt should be nil
@@ -654,7 +655,7 @@ func TestGDPRManager_RequestDeletion_InvalidCategory(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
-	request, err := manager.RequestDeletion(ctx, "tenant1", "11", "11", "",
+	request, err := manager.RequestDeletion(ctx, "tenant1", 11, "11", "",
 		[]string{"invalid_category"}, nil, 7)
 	require.Error(t, err)
 	assert.Nil(t, request)
@@ -665,7 +666,7 @@ func TestGDPRManager_RequestDeletion_InvalidPreserveCategory(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
-	request, err := manager.RequestDeletion(ctx, "tenant1", "11", "11", "",
+	request, err := manager.RequestDeletion(ctx, "tenant1", 11, "11", "",
 		nil, []string{"invalid_category"}, 7)
 	require.Error(t, err)
 	assert.Nil(t, request)
@@ -677,14 +678,14 @@ func TestGDPRManager_RequestDeletion_PendingExists(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create first deletion request
-	_, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 7)
+	_, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "", nil, nil, 7)
 	require.NoError(t, err)
 
 	// Try to create another while first is pending
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 7)
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "", nil, nil, 7)
 	require.Error(t, err)
 	assert.Nil(t, request)
 	assert.ErrorIs(t, err, ErrDeletionPending)
@@ -695,16 +696,16 @@ func TestGDPRManager_CancelDeletion_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create deletion request
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 7)
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "", nil, nil, 7)
 	require.NoError(t, err)
 
 	auditLogger.Clear()
 
 	// Cancel deletion
-	err = manager.CancelDeletion(ctx, request.ID, userID)
+	err = manager.CancelDeletion(ctx, request.ID, strconv.FormatUint(userID, 10))
 	require.NoError(t, err)
 
 	// Verify cancellation
@@ -712,7 +713,7 @@ func TestGDPRManager_CancelDeletion_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, DeletionStatusCancelled, cancelled.Status)
 	assert.NotNil(t, cancelled.CancelledAt)
-	assert.Equal(t, userID, cancelled.CancelledBy)
+	assert.Equal(t, strconv.FormatUint(userID, 10), cancelled.CancelledBy)
 
 	// Verify audit log
 	events := auditLogger.GetEvents()
@@ -734,7 +735,7 @@ func TestGDPRManager_CancelDeletion_AlreadyProcessing(t *testing.T) {
 	ctx := context.Background()
 
 	// Create deletion request
-	request, err := manager.RequestDeletion(ctx, "tenant1", "11", "11", "", nil, nil, 7)
+	request, err := manager.RequestDeletion(ctx, "tenant1", 11, "11", "", nil, nil, 7)
 	require.NoError(t, err)
 
 	// Manually set to processing status
@@ -753,13 +754,13 @@ func TestGDPRManager_ProcessDeletion_GracePeriodActive(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create user
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
 	// Create deletion request with future grace period
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 7)
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "", nil, nil, 7)
 	require.NoError(t, err)
 
 	// Try to process during grace period
@@ -774,7 +775,7 @@ func TestGDPRManager_ProcessDeletion_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create test data
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
@@ -783,7 +784,7 @@ func TestGDPRManager_ProcessDeletion_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create deletion request with immediate deletion (0 days grace period)
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 0)
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "", nil, nil, 0)
 	require.NoError(t, err)
 
 	auditLogger.Clear()
@@ -819,14 +820,14 @@ func TestGDPRManager_ProcessDeletion_PartialDeletion(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create test data
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 	createTestSession(t, manager.deps.SessionStorage, tenantID, userID)
 
 	// Request deletion of sessions only, preserve profile
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "",
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "",
 		[]string{"sessions"}, []string{"profile"}, 0)
 	require.NoError(t, err)
 
@@ -848,14 +849,14 @@ func TestGDPRManager_ProcessDeletion_DeleteAll(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create test data
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 	createTestSession(t, manager.deps.SessionStorage, tenantID, userID)
 
 	// Request complete deletion (empty delete list means delete all)
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 0)
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "", nil, nil, 0)
 	require.NoError(t, err)
 
 	// Process deletion
@@ -872,7 +873,7 @@ func TestGDPRManager_GetDeletionStatus(t *testing.T) {
 	ctx := context.Background()
 
 	// Create deletion request
-	original, err := manager.RequestDeletion(ctx, "tenant1", "11", "11", "", nil, nil, 7)
+	original, err := manager.RequestDeletion(ctx, "tenant1", 11, "11", "", nil, nil, 7)
 	require.NoError(t, err)
 
 	// Get status
@@ -958,7 +959,7 @@ func TestIsValidDataCategory(t *testing.T) {
 
 func TestConsent_Validate_Success(t *testing.T) {
 	consent := &Consent{
-		UserID:   "11",
+		UserID:   11,
 		TenantID: "tenant1",
 		Purpose:  ConsentPurposeMarketing,
 		Version:  "1.0",
@@ -982,7 +983,7 @@ func TestConsent_Validate_MissingUserID(t *testing.T) {
 
 func TestConsent_Validate_MissingTenantID(t *testing.T) {
 	consent := &Consent{
-		UserID:  "11",
+		UserID:  11,
 		Purpose: ConsentPurposeMarketing,
 		Version: "1.0",
 	}
@@ -994,7 +995,7 @@ func TestConsent_Validate_MissingTenantID(t *testing.T) {
 
 func TestConsent_Validate_MissingPurpose(t *testing.T) {
 	consent := &Consent{
-		UserID:   "11",
+		UserID:   11,
 		TenantID: "tenant1",
 		Version:  "1.0",
 	}
@@ -1006,7 +1007,7 @@ func TestConsent_Validate_MissingPurpose(t *testing.T) {
 
 func TestConsent_Validate_MissingVersion(t *testing.T) {
 	consent := &Consent{
-		UserID:   "11",
+		UserID:   11,
 		TenantID: "tenant1",
 		Purpose:  ConsentPurposeMarketing,
 	}
@@ -1023,7 +1024,7 @@ func TestMemoryConsentStorage_CreateConsent_Success(t *testing.T) {
 	ctx := context.Background()
 
 	opts := CreateConsentOptions{
-		UserID:    "11",
+		UserID:    11,
 		TenantID:  "tenant1",
 		Purpose:   ConsentPurposeMarketing,
 		Status:    ConsentStatusGranted,
@@ -1047,7 +1048,7 @@ func TestMemoryConsentStorage_CreateConsent_DuplicatePurpose(t *testing.T) {
 	ctx := context.Background()
 
 	opts := CreateConsentOptions{
-		UserID:   "11",
+		UserID:   11,
 		TenantID: "tenant1",
 		Purpose:  ConsentPurposeMarketing,
 		Status:   ConsentStatusGranted,
@@ -1088,7 +1089,7 @@ func TestMemoryConsentStorage_CreateConsent_ValidationErrors(t *testing.T) {
 		{
 			name: "missing tenant_id",
 			opts: CreateConsentOptions{
-				UserID:  "11",
+				UserID:  11,
 				Purpose: ConsentPurposeMarketing,
 				Version: "1.0",
 			},
@@ -1097,7 +1098,7 @@ func TestMemoryConsentStorage_CreateConsent_ValidationErrors(t *testing.T) {
 		{
 			name: "missing purpose",
 			opts: CreateConsentOptions{
-				UserID:   "11",
+				UserID:   11,
 				TenantID: "tenant1",
 				Version:  "1.0",
 			},
@@ -1106,7 +1107,7 @@ func TestMemoryConsentStorage_CreateConsent_ValidationErrors(t *testing.T) {
 		{
 			name: "missing version",
 			opts: CreateConsentOptions{
-				UserID:   "11",
+				UserID:   11,
 				TenantID: "tenant1",
 				Purpose:  ConsentPurposeMarketing,
 			},
@@ -1128,7 +1129,7 @@ func TestMemoryConsentStorage_GetUserConsents(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create multiple consents
 	purposes := []ConsentPurpose{ConsentPurposeMarketing, ConsentPurposeAnalytics}
@@ -1157,7 +1158,7 @@ func TestMemoryConsentStorage_ListConsents_WithFilters(t *testing.T) {
 	// Create test consents
 	for i := 0; i < 5; i++ {
 		opts := CreateConsentOptions{
-			UserID:   FormatUserID(uint64(i) + 10),
+			UserID:   uint64(i) + 10,
 			TenantID: "tenant1",
 			Purpose:  ConsentPurposeMarketing,
 			Status:   ConsentStatusGranted,
@@ -1168,7 +1169,7 @@ func TestMemoryConsentStorage_ListConsents_WithFilters(t *testing.T) {
 	}
 
 	// Test user filter
-	consents, err := storage.ListConsents(ctx, ListConsentsOptions{UserID: "11"})
+	consents, err := storage.ListConsents(ctx, ListConsentsOptions{UserID: 11})
 	require.NoError(t, err)
 	assert.Len(t, consents, 1)
 
@@ -1195,7 +1196,7 @@ func TestMemoryConsentStorage_ListConsents_Pagination(t *testing.T) {
 	// Create test consents
 	for i := 0; i < 10; i++ {
 		opts := CreateConsentOptions{
-			UserID:   FormatUserID(uint64(i) + 10),
+			UserID:   uint64(i) + 10,
 			TenantID: "tenant1",
 			Purpose:  ConsentPurposeMarketing,
 			Status:   ConsentStatusGranted,
@@ -1226,7 +1227,7 @@ func TestMemoryConsentStorage_DeleteConsent(t *testing.T) {
 	ctx := context.Background()
 
 	opts := CreateConsentOptions{
-		UserID:   "11",
+		UserID:   11,
 		TenantID: "tenant1",
 		Purpose:  ConsentPurposeMarketing,
 		Status:   ConsentStatusGranted,
@@ -1241,7 +1242,7 @@ func TestMemoryConsentStorage_DeleteConsent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify deletion
-	_, err = storage.GetConsent(ctx, "tenant1", "11", ConsentPurposeMarketing)
+	_, err = storage.GetConsent(ctx, "tenant1", 11, ConsentPurposeMarketing)
 	require.Error(t, err)
 }
 
@@ -1252,7 +1253,7 @@ func TestMemoryDataExportStorage_CreateExportRequest_Success(t *testing.T) {
 	ctx := context.Background()
 
 	opts := CreateDataExportOptions{
-		UserID:            "11",
+		UserID:            11,
 		TenantID:          "tenant1",
 		RequestedBy:       "admin",
 		Format:            DataExportFormatJSON,
@@ -1289,7 +1290,7 @@ func TestMemoryDataExportStorage_CreateExportRequest_ValidationErrors(t *testing
 		{
 			name: "missing tenant_id",
 			opts: CreateDataExportOptions{
-				UserID:      "11",
+				UserID:      11,
 				RequestedBy: "admin",
 			},
 			err: "tenant_id is required",
@@ -1297,7 +1298,7 @@ func TestMemoryDataExportStorage_CreateExportRequest_ValidationErrors(t *testing
 		{
 			name: "missing requested_by",
 			opts: CreateDataExportOptions{
-				UserID:   "11",
+				UserID:   11,
 				TenantID: "tenant1",
 			},
 			err: "requested_by is required",
@@ -1320,7 +1321,7 @@ func TestMemoryDataExportStorage_ListExportRequests_WithFilters(t *testing.T) {
 	// Create test requests
 	for i := 0; i < 5; i++ {
 		opts := CreateDataExportOptions{
-			UserID:      FormatUserID(uint64(i) + 10),
+			UserID:      uint64(i) + 10,
 			TenantID:    "tenant1",
 			RequestedBy: "admin",
 			Format:      DataExportFormatJSON,
@@ -1330,7 +1331,7 @@ func TestMemoryDataExportStorage_ListExportRequests_WithFilters(t *testing.T) {
 	}
 
 	// Test user filter
-	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{UserID: "11"})
+	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{UserID: 11})
 	require.NoError(t, err)
 	assert.Len(t, requests, 1)
 
@@ -1347,7 +1348,7 @@ func TestMemoryDeletionStorage_CreateDeletionRequest_Success(t *testing.T) {
 	ctx := context.Background()
 
 	opts := CreateDeletionRequestOptions{
-		UserID:             "11",
+		UserID:             11,
 		TenantID:           "tenant1",
 		RequestedBy:        "11",
 		Reason:             "Account closure",
@@ -1386,7 +1387,7 @@ func TestMemoryDeletionStorage_CreateDeletionRequest_ValidationErrors(t *testing
 		{
 			name: "missing tenant_id",
 			opts: CreateDeletionRequestOptions{
-				UserID:      "11",
+				UserID:      11,
 				RequestedBy: "admin",
 			},
 			err: "tenant_id is required",
@@ -1394,7 +1395,7 @@ func TestMemoryDeletionStorage_CreateDeletionRequest_ValidationErrors(t *testing
 		{
 			name: "missing requested_by",
 			opts: CreateDeletionRequestOptions{
-				UserID:   "11",
+				UserID:   11,
 				TenantID: "tenant1",
 			},
 			err: "requested_by is required",
@@ -1417,7 +1418,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_WithFilters(t *testing.T) {
 	// Create test requests
 	for i := 0; i < 5; i++ {
 		opts := CreateDeletionRequestOptions{
-			UserID:      FormatUserID(uint64(i) + 10),
+			UserID:      uint64(i) + 10,
 			TenantID:    "tenant1",
 			RequestedBy: "admin",
 		}
@@ -1426,7 +1427,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_WithFilters(t *testing.T) {
 	}
 
 	// Test user filter
-	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{UserID: "11"})
+	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{UserID: 11})
 	require.NoError(t, err)
 	assert.Len(t, requests, 1)
 
@@ -1448,7 +1449,7 @@ func TestGDPRManager_ConcurrentConsentGrants(t *testing.T) {
 
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
-			_, err := manager.GrantConsent(ctx, "tenant1", FormatUserID(uint64(id)+10),
+			_, err := manager.GrantConsent(ctx, "tenant1", uint64(id)+10,
 				ConsentPurposeMarketing, "1.0", nil, "", "")
 			if err != nil {
 				errors <- err
@@ -1470,7 +1471,7 @@ func TestGDPRManager_ConcurrentConsentGrants(t *testing.T) {
 
 	// Verify all consents created
 	for i := 0; i < numGoroutines; i++ {
-		consent, err := manager.GetConsent(ctx, "tenant1", FormatUserID(uint64(i)+10), ConsentPurposeMarketing)
+		consent, err := manager.GetConsent(ctx, "tenant1", uint64(i)+10, ConsentPurposeMarketing)
 		require.NoError(t, err)
 		assert.NotNil(t, consent)
 	}
@@ -1491,12 +1492,12 @@ func TestGDPRManager_ExportWithNoOptionalDeps(t *testing.T) {
 
 	ctx := context.Background()
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
 	// Request and generate export
-	request, err := manager.RequestExport(ctx, tenantID, userID, userID, DataExportFormatJSON, nil, nil)
+	request, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), DataExportFormatJSON, nil, nil)
 	require.NoError(t, err)
 
 	export, err := manager.GenerateExport(ctx, request.ID)
@@ -1523,13 +1524,13 @@ func TestGDPRManager_ProcessDeletion_NotPending(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create user
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
 	// Create deletion request
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 0)
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "", nil, nil, 0)
 	require.NoError(t, err)
 
 	// Manually set to completed status
@@ -1549,13 +1550,13 @@ func TestGDPRManager_ProcessDeletion_AlreadyProcessing(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create user
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
 	// Create deletion request
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 0)
+	request, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "", nil, nil, 0)
 	require.NoError(t, err)
 
 	// Manually set to processing status
@@ -1575,13 +1576,13 @@ func TestGDPRManager_determineCategories(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant1"
-	userID := "11"
+	userID := uint64(11)
 
 	// Create user
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
 	// Request export with specific categories
-	request, err := manager.RequestExport(ctx, tenantID, userID, userID, DataExportFormatJSON,
+	request, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), DataExportFormatJSON,
 		[]string{"profile"}, []string{"sessions"})
 	require.NoError(t, err)
 	require.NotNil(t, request)
@@ -1593,11 +1594,11 @@ func TestGDPRManager_determineCategories(t *testing.T) {
 	assert.Nil(t, export.Sessions) // Excluded
 
 	// Request export with exclude only
-	request2, err := manager.RequestExport(ctx, tenantID, userID+"2", userID+"2", DataExportFormatJSON,
+	request2, err := manager.RequestExport(ctx, tenantID, userID+1, strconv.FormatUint(userID+1, 10), DataExportFormatJSON,
 		nil, []string{"sessions", "credentials"})
 	require.NoError(t, err)
 
-	createTestUser(t, manager.deps.UserStorage, tenantID, userID+"2")
+	createTestUser(t, manager.deps.UserStorage, tenantID, userID+1)
 
 	export2, err := manager.GenerateExport(ctx, request2.ID)
 	require.NoError(t, err)

@@ -156,10 +156,10 @@ func validateTenantID(tenantID string) error {
 	return nil
 }
 
-// validateUserID checks if a user ID is valid and not empty.
-func validateUserID(userID string) error {
-	if userID == "" {
-		return fieldValidationError("user_id", "user ID cannot be empty")
+// validateUserID checks that a user ID is set: zero names no stored user.
+func validateUserID(userID uint64) error {
+	if userID == 0 {
+		return fieldValidationError("user_id", "user ID cannot be zero")
 	}
 	return nil
 }
@@ -486,7 +486,7 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 }
 
 // GetUser retrieves a user by ID within a tenant.
-func (s *IdentityStore) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+func (s *IdentityStore) GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error) {
 	if err := validateTenantID(tenantID); err != nil {
 		return nil, err
 	}
@@ -567,7 +567,7 @@ func (s *IdentityStore) GetUserByUsername(ctx context.Context, tenantID, usernam
 // working passkeys to prevent an orphan that could not occur — go-quicbaas#582,
 // measured on the burn-in node when a rename took the tenant user's only
 // passkey with it and returned 200.
-func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string, opts UpdateUserOptions) (*User, error) {
+func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID string, userID uint64, opts UpdateUserOptions) (*User, error) {
 	if err := validateTenantID(tenantID); err != nil {
 		return nil, err
 	}
@@ -799,7 +799,7 @@ func (s *IdentityStore) countWebAuthnCredentials(ctx context.Context, tenantID, 
 // misrepresent a completed write as a rejected one.
 func (s *IdentityStore) logEmailChangeCredentialCarry(
 	ctx context.Context,
-	tenantID, userID, previousEmail, newEmail string,
+	tenantID string, userID uint64, previousEmail, newEmail string,
 	before webAuthnCredentialCount,
 ) {
 	after := s.countWebAuthnCredentials(ctx, tenantID, newEmail)
@@ -835,7 +835,7 @@ func (s *IdentityStore) logEmailChangeCredentialCarry(
 // the user's email while the record still exists, which is why it must run
 // before the delete and why an unreachable credential store aborts the deletion
 // rather than producing that residue.
-func (s *IdentityStore) DeleteUser(ctx context.Context, tenantID, userID string) error {
+func (s *IdentityStore) DeleteUser(ctx context.Context, tenantID string, userID uint64) error {
 	if err := validateTenantID(tenantID); err != nil {
 		return err
 	}
@@ -1104,7 +1104,7 @@ func (s *IdentityStore) DeleteRole(ctx context.Context, tenantID, roleID string)
 	// anchor is not where it was, the listing shifted under the scan, so it
 	// restarts from the top: users already stripped no longer hold the role
 	// and are passed over without a write.
-	offset, anchor := 0, ""
+	offset, anchor := 0, uint64(0)
 	for {
 		users, err := s.userStorage.ListUsers(ctx, tenantID, ListOptions{
 			Limit:  deleteRoleCascadePage,
@@ -1113,8 +1113,8 @@ func (s *IdentityStore) DeleteRole(ctx context.Context, tenantID, roleID string)
 		if err != nil {
 			return api.NewOperationFailedError("list users at offset "+strconv.Itoa(offset), err)
 		}
-		if anchor != "" && (len(users) == 0 || users[0].ID != anchor) {
-			offset, anchor = 0, ""
+		if anchor != 0 && (len(users) == 0 || users[0].ID != anchor) {
+			offset, anchor = 0, 0
 			continue
 		}
 		if err := s.stripRoleFromUsers(ctx, users, roleID); err != nil {
@@ -1150,7 +1150,7 @@ func (s *IdentityStore) stripRoleFromUsers(ctx context.Context, users []*User, r
 		user.Roles = newRoleIDs
 		user.Updated = time.Now().UTC()
 		if err := s.userStorage.UpdateUser(ctx, user); err != nil {
-			return api.NewOperationFailedError("update user "+user.ID, err)
+			return api.NewOperationFailedError("update user "+strconv.FormatUint(user.ID, 10), err)
 		}
 	}
 	return nil
@@ -1209,7 +1209,7 @@ func (s *IdentityStore) ReconcileBuiltInRoles(ctx context.Context, tenantID stri
 }
 
 // AssignRole assigns a role to a user.
-func (s *IdentityStore) AssignRole(ctx context.Context, tenantID, userID, roleID string) error {
+func (s *IdentityStore) AssignRole(ctx context.Context, tenantID string, userID uint64, roleID string) error {
 	if err := validateTenantID(tenantID); err != nil {
 		return err
 	}
@@ -1249,7 +1249,7 @@ func (s *IdentityStore) AssignRole(ctx context.Context, tenantID, userID, roleID
 }
 
 // RevokeRole revokes a role from a user.
-func (s *IdentityStore) RevokeRole(ctx context.Context, tenantID, userID, roleID string) error {
+func (s *IdentityStore) RevokeRole(ctx context.Context, tenantID string, userID uint64, roleID string) error {
 	if err := validateTenantID(tenantID); err != nil {
 		return err
 	}
@@ -1292,7 +1292,7 @@ func (s *IdentityStore) RevokeRole(ctx context.Context, tenantID, userID, roleID
 }
 
 // GetUserRoles retrieves all roles assigned to a user.
-func (s *IdentityStore) GetUserRoles(ctx context.Context, tenantID, userID string) ([]*Role, error) {
+func (s *IdentityStore) GetUserRoles(ctx context.Context, tenantID string, userID uint64) ([]*Role, error) {
 	if err := validateTenantID(tenantID); err != nil {
 		return nil, err
 	}

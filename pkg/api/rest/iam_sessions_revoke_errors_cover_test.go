@@ -37,7 +37,7 @@ func TestRevokeSession_GetError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "30001", "t1")
 	req := withChiParams(
 		httptest.NewRequest(http.MethodDelete, "/x", nil).WithContext(ctx),
 		map[string]string{"id": "sess-1"},
@@ -52,14 +52,14 @@ func TestRevokeSession_GetError(t *testing.T) {
 // successful ownership check.
 func TestRevokeSession_RevokeError(t *testing.T) {
 	mgr := &mockSessionManager{
-		sessions:  []*iam.SessionExt{{ID: "sess-1", UserID: "u1", TenantID: "t1"}},
+		sessions:  []*iam.SessionExt{{ID: "sess-1", UserID: 30001, TenantID: "t1"}},
 		revokeErr: stderrors.New("revoke failed"),
 	}
 	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "30001", "t1")
 	req := withChiParams(
 		httptest.NewRequest(http.MethodDelete, "/x", nil).WithContext(ctx),
 		map[string]string{"id": "sess-1"},
@@ -78,7 +78,7 @@ func TestRevokeAllSessions_RevokeAllForUserError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "30001", "t1")
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 
@@ -90,14 +90,14 @@ func TestRevokeAllSessions_RevokeAllForUserError(t *testing.T) {
 // RevokeAllExcept returns an error after the ownership check passes.
 func TestRevokeAllSessions_RevokeAllExceptError(t *testing.T) {
 	mgr := &mockSessionManager{
-		sessions:  []*iam.SessionExt{{ID: "keep", UserID: "u1", TenantID: "t1"}},
+		sessions:  []*iam.SessionExt{{ID: "keep", UserID: 30001, TenantID: "t1"}},
 		revokeErr: stderrors.New("revoke except failed"),
 	}
 	svc := &mockServiceWithSessions{QuicBaaS: testutil.NewMockQuicBaaS(), mgr: mgr}
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "30001", "t1")
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions?except=keep", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 
@@ -113,7 +113,7 @@ func TestRevokeOtherSessions_GetError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	ctx := ctxWithTestSubject(context.Background(), "u1", "t1")
+	ctx := ctxWithTestSubject(context.Background(), "30001", "t1")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
 		strings.NewReader(`{"keep_session_id":"current"}`)).WithContext(ctx)
 	w := httptest.NewRecorder()

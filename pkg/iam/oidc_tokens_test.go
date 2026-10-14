@@ -339,11 +339,11 @@ func TestTokenService_GenerateAuthCode(t *testing.T) {
 		CodeChallenge:       "challenge-123",
 		CodeChallengeMethod: CodeChallengeMethodS256,
 		Nonce:               "nonce-123",
-		UserID:              "user-123",
+		UserID:              1000123,
 		TenantID:            "tenant-1",
 	}
 
-	code, err := service.GenerateAuthCode(ctx, req, "user-123")
+	code, err := service.GenerateAuthCode(ctx, req, 1000123)
 	if err != nil {
 		t.Fatalf("GenerateAuthCode() error = %v", err)
 	}
@@ -358,7 +358,7 @@ func TestTokenService_GenerateAuthCode(t *testing.T) {
 		t.Fatalf("GetAuthCode() error = %v", err)
 	}
 
-	if authCode.UserID != "user-123" {
+	if authCode.UserID != 1000123 {
 		t.Errorf("UserID = %v, want user-123", authCode.UserID)
 	}
 	if authCode.ClientID != "client-123" {
@@ -379,11 +379,11 @@ func TestTokenService_ValidateAuthCode(t *testing.T) {
 		RedirectURI:  "https://app.example.com/callback",
 		ResponseType: ResponseTypeCode,
 		Scope:        []string{"openid"},
-		UserID:       "user-123",
+		UserID:       1000123,
 		TenantID:     "tenant-1",
 	}
 
-	code, err := service.GenerateAuthCode(ctx, req, "user-123")
+	code, err := service.GenerateAuthCode(ctx, req, 1000123)
 	if err != nil {
 		t.Fatalf("GenerateAuthCode() error = %v", err)
 	}
@@ -394,7 +394,7 @@ func TestTokenService_ValidateAuthCode(t *testing.T) {
 		t.Fatalf("ValidateAuthCode() error = %v", err)
 	}
 
-	if authCode.UserID != "user-123" {
+	if authCode.UserID != 1000123 {
 		t.Errorf("UserID = %v, want user-123", authCode.UserID)
 	}
 
@@ -413,7 +413,7 @@ func TestTokenService_ValidateAuthCode_Expired(t *testing.T) {
 	now := time.Now()
 	authCode := &AuthCodeData{
 		Code:        "expired-code",
-		UserID:      "user-123",
+		UserID:      1000123,
 		ClientID:    "client-123",
 		RedirectURI: "https://app.example.com/callback",
 		ExpiresAt:   now.Add(-10 * time.Minute), // Expired 10 minutes ago

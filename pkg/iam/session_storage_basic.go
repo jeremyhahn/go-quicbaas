@@ -39,7 +39,7 @@ type SessionStorage interface {
 
 	// GetSessionsByUser retrieves all active sessions for a user.
 	// Returns an empty slice if the user has no active sessions.
-	GetSessionsByUser(ctx context.Context, tenantID, userID string) ([]*Session, error)
+	GetSessionsByUser(ctx context.Context, tenantID string, userID uint64) ([]*Session, error)
 
 	// UpdateSession updates an existing session (primarily for last activity).
 	// Returns ErrNotFound if the session does not exist.

@@ -34,7 +34,7 @@ func seedGroupsClaimUser(t *testing.T, storage *MemoryStorage) *User {
 		}
 	}
 	user := &User{
-		ID:        "7001",
+		ID:        7001,
 		TenantID:  "acme",
 		Username:  "alice",
 		Name:      "Alice",
@@ -121,7 +121,7 @@ func TestGroupsClaim_UnresolvableRolesRefuseIssuance(t *testing.T) {
 
 	// No tenant: the role lookup fails validation, which is the shape of any
 	// store failure other than not-found.
-	user := &User{ID: "7002", Roles: []string{"role-dev"}, Lifecycle: LifecycleActive}
+	user := &User{ID: 7002, Roles: []string{"role-dev"}, Lifecycle: LifecycleActive}
 
 	if _, err := provider.generateTokenResponse(ctx, user, "app_groups_client", []string{"openid"}, "", "", nil); err == nil {
 		t.Fatal("generateTokenResponse must refuse when the bound roles cannot be read")

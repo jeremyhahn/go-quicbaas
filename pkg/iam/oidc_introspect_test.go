@@ -35,12 +35,12 @@ import (
 // and nothing else — a token carrying neither predates the contract and is
 // denied (#390). These fixtures used to carry neither and passed only because
 // an unresolvable subject was inferred to be a service principal.
-func mintIntrospectToken(t *testing.T, provider *OIDCProvider, tenant, subject, userID string, ttl time.Duration) (string, string) {
+func mintIntrospectToken(t *testing.T, provider *OIDCProvider, tenant, subject string, userID uint64, ttl time.Duration) (string, string) {
 	t.Helper()
 	now := time.Now()
 	jti := "introspect-jti-" + subject + "-" + tenant
 	principalType := ""
-	if userID == "" {
+	if userID == 0 {
 		principalType = PrincipalTypeService
 	}
 	claims := &Claims{
@@ -73,7 +73,7 @@ func TestOIDCIntrospect_ActiveToken(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
-	token, jti := mintIntrospectToken(t, provider, "tenant-a", "user-1", "", time.Hour)
+	token, jti := mintIntrospectToken(t, provider, "tenant-a", "user-1", 0, time.Hour)
 
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
 	if err != nil {
@@ -136,7 +136,7 @@ func TestOIDCIntrospect_ExpiredToken(t *testing.T) {
 	ctx := context.Background()
 
 	// Negative TTL -> already expired.
-	token, _ := mintIntrospectToken(t, provider, "tenant-a", "user-exp", "", -time.Minute)
+	token, _ := mintIntrospectToken(t, provider, "tenant-a", "user-exp", 0, -time.Minute)
 
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
 	if err != nil {
@@ -156,7 +156,7 @@ func TestOIDCIntrospect_RevokedToken(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
 
-	token, _ := mintIntrospectToken(t, provider, "tenant-a", "user-rev", "", time.Hour)
+	token, _ := mintIntrospectToken(t, provider, "tenant-a", "user-rev", 0, time.Hour)
 
 	// Confirm active before revocation.
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
@@ -184,7 +184,7 @@ func TestOIDCIntrospect_RevokedToken(t *testing.T) {
 func TestOIDCIntrospect_TenantFromClaim(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 
-	token, _ := mintIntrospectToken(t, provider, "tenant-b", "user-2", "", time.Hour)
+	token, _ := mintIntrospectToken(t, provider, "tenant-b", "user-2", 0, time.Hour)
 
 	// Context tenant deliberately differs from the token's tenant claim.
 	ctx := tenantctx.WithTenant(context.Background(), "tenant-wrong")

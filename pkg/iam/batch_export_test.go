@@ -118,8 +118,8 @@ func populateTestData(t *testing.T, storage *MemoryStorage, tenantID string) {
 // generateTestUserID renders the canonical qrdb user id for fixture i. A user
 // id is the decimal rendering of a Snowflake, so the fixtures are numbered from
 // 1 — zero is the store's invalid sentinel and names no user.
-func generateTestUserID(i int) string {
-	return FormatUserID(uint64(i) + 1)
+func generateTestUserID(i int) uint64 {
+	return uint64(i) + 1
 }
 
 func generateTestEmail(i int) string {
@@ -346,7 +346,7 @@ func TestExportAll(t *testing.T) {
 			IncludeRoles:    true,
 			IncludePolicies: true,
 			Filter: ExportFilter{
-				UserIDs:     []string{"1"},
+				UserIDs:     []uint64{1},
 				RoleIDs:     []string{"role-a"},
 				PolicyNames: []string{"policy-a"},
 			},
@@ -394,7 +394,7 @@ func TestExportUsersWithFilters(t *testing.T) {
 
 		ctx := context.Background()
 		filter := ExportFilter{
-			UserIDs: []string{"1", "3"},
+			UserIDs: []uint64{1, 3},
 		}
 
 		users, err := bm.ExportUsers(ctx, tenantID, filter)
@@ -446,7 +446,7 @@ func TestExportUsersWithFilters(t *testing.T) {
 		// Only users created before 2 hours ago should be returned
 		for _, user := range users {
 			if user.Created.After(twoHoursAgo) {
-				t.Errorf("user %s was created after the filter time", user.ID)
+				t.Errorf("user %d was created after the filter time", user.ID)
 			}
 		}
 	})
@@ -469,7 +469,7 @@ func TestExportUsersWithFilters(t *testing.T) {
 		// Only recently updated users should be returned
 		for _, user := range users {
 			if user.Updated.Before(twoMinutesAgo) {
-				t.Errorf("user %s was updated before the filter time", user.ID)
+				t.Errorf("user %d was updated before the filter time", user.ID)
 			}
 		}
 	})
@@ -492,7 +492,7 @@ func TestExportUsersWithFilters(t *testing.T) {
 		// Only users updated before one minute ago should be returned
 		for _, user := range users {
 			if user.Updated.After(oneMinuteAgo) {
-				t.Errorf("user %s was updated after the filter time", user.ID)
+				t.Errorf("user %d was updated after the filter time", user.ID)
 			}
 		}
 	})
@@ -503,7 +503,7 @@ func TestExportUsersWithFilters(t *testing.T) {
 
 		ctx := context.Background()
 		filter := ExportFilter{
-			UserIDs: []string{"nonexistent-user"},
+			UserIDs: []uint64{99999},
 		}
 
 		users, err := bm.ExportUsers(ctx, tenantID, filter)
@@ -786,14 +786,14 @@ func TestFilterMatchFunctions(t *testing.T) {
 
 	t.Run("userMatchesFilter with combined filters", func(t *testing.T) {
 		user := &User{
-			ID:      "user-1",
+			ID:      10001,
 			Created: now,
 			Updated: now,
 		}
 
 		// Should match - ID in list and within time range
 		filter := ExportFilter{
-			UserIDs:       []string{"user-1", "user-2"},
+			UserIDs:       []uint64{10001, 10002},
 			CreatedAfter:  &yesterday,
 			CreatedBefore: &tomorrow,
 			UpdatedAfter:  &yesterday,
@@ -805,7 +805,7 @@ func TestFilterMatchFunctions(t *testing.T) {
 
 		// Should not match - ID not in list
 		filter = ExportFilter{
-			UserIDs: []string{"user-2", "user-3"},
+			UserIDs: []uint64{10002, 10003},
 		}
 		if bm.userMatchesFilter(user, filter) {
 			t.Error("user should not match filter with wrong ID")
@@ -1000,7 +1000,7 @@ func TestConvertToImportRequest(t *testing.T) {
 			TenantID: "source-tenant",
 			Users: []*User{
 				{
-					ID:         "u1",
+					ID:         30001,
 					Email:      "user1@example.com",
 					Name:       "User One",
 					TenantID:   "source-tenant",
@@ -1011,7 +1011,7 @@ func TestConvertToImportRequest(t *testing.T) {
 					Updated:    now,
 				},
 				{
-					ID:        "u2",
+					ID:        30002,
 					Email:     "user2@example.com",
 					Name:      "User Two",
 					TenantID:  "source-tenant",
@@ -1075,8 +1075,8 @@ func TestConvertToImportRequest(t *testing.T) {
 		if len(importReq.Users) != 2 {
 			t.Errorf("expected 2 users, got %d", len(importReq.Users))
 		}
-		if importReq.Users[0].ID != "u1" {
-			t.Errorf("expected user ID u1, got %s", importReq.Users[0].ID)
+		if importReq.Users[0].ID != 30001 {
+			t.Errorf("expected user ID 30001, got %d", importReq.Users[0].ID)
 		}
 		if importReq.Users[0].Email != "user1@example.com" {
 			t.Errorf("expected email user1@example.com, got %s", importReq.Users[0].Email)
@@ -1130,7 +1130,7 @@ func TestConvertToImportRequest(t *testing.T) {
 			TenantID: "source-tenant",
 			Users: []*User{
 				{
-					ID:        "u1",
+					ID:        30001,
 					Email:     "locked@example.com",
 					Name:      "Locked User",
 					TenantID:  "source-tenant",
@@ -1155,7 +1155,7 @@ func TestConvertToImportRequest(t *testing.T) {
 			TenantID: "source-tenant",
 			Users: []*User{
 				{
-					ID:         "u1",
+					ID:         30001,
 					Email:      "user@example.com",
 					Name:       "User",
 					TenantID:   "source-tenant",
@@ -1302,7 +1302,7 @@ func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
 	}
 
 	// Create some data
-	user := &User{ID: "21", TenantID: tenantID, Email: "user1@test.com", Name: "User One", Created: time.Now(), Updated: time.Now()}
+	user := &User{ID: 21, TenantID: tenantID, Email: "user1@test.com", Name: "User One", Created: time.Now(), Updated: time.Now()}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -1399,7 +1399,7 @@ func TestBatchManager_ImportAll_ValidationError(t *testing.T) {
 	_, err := bm.ImportAll(ctx, &BatchImportRequest{
 		TenantID: "", // Missing tenant ID
 		Users: []*UserImport{
-			{ID: "user-1", Email: "user1@test.com", Name: "User One"},
+			{ID: 10001, Email: "user1@test.com", Name: "User One"},
 		},
 	})
 	if err == nil {

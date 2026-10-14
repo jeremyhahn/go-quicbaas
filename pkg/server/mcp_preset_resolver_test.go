@@ -374,7 +374,7 @@ func TestAgentMCPPresetResolver_Resolve_AttributesTheSessionNotTheDaemon(t *test
 		t.Fatalf("session two was not enrolled: %v", err)
 	}
 	if one.Username == two.Username || one.ID == two.ID {
-		t.Fatalf("two sessions share a principal: %q/%s and %q/%s",
+		t.Fatalf("two sessions share a principal: %q/%d and %q/%d",
 			one.Username, one.ID, two.Username, two.ID)
 	}
 	if one.Username == daemonCN || two.Username == daemonCN {

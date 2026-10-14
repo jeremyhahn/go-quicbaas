@@ -19,6 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // Sentinel errors for the IAM REST API.
@@ -256,4 +259,55 @@ func (e *PolicyParseError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *PolicyParseError) Unwrap() error {
 	return ErrPolicyParse
+}
+
+// UserIDParamError reports a user_id path or body value that is not a
+// non-zero decimal uint64 user id.
+type UserIDParamError struct {
+	Value string
+	Err   error
+}
+
+// Error implements the error interface.
+func (e *UserIDParamError) Error() string {
+	if e.Err != nil {
+		return "iam.user_id: invalid user id " + strconv.Quote(e.Value) + ": " + e.Err.Error()
+	}
+	return "iam.user_id: invalid user id " + strconv.Quote(e.Value)
+}
+
+// Unwrap returns the underlying parse error, if any.
+func (e *UserIDParamError) Unwrap() error {
+	return e.Err
+}
+
+// parseUserIDParam parses a user id from its decimal wire form. Zero is
+// refused because it means "not created yet".
+func parseUserIDParam(value string) (uint64, error) {
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, &UserIDParamError{Value: value, Err: err}
+	}
+	if id == 0 {
+		return 0, &UserIDParamError{Value: value}
+	}
+	return id, nil
+}
+
+// requireUserIDParam reads the user_id URL parameter and parses it. On a
+// missing or invalid value it writes a 400 response and returns false.
+func requireUserIDParam(w http.ResponseWriter, r *http.Request) (uint64, bool) {
+	value := chi.URLParam(r, "user_id")
+	if value == "" {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+		return 0, false
+	}
+	id, err := parseUserIDParam(value)
+	if err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, err.Error()))
+		return 0, false
+	}
+	return id, true
 }

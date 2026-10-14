@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	"reflect"
+	"strconv"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -78,7 +79,7 @@ func handleIAMInviteGet(ctx context.Context, svc service.QuicBaaS, req interface
 	// The SDK client decodes the REST InviteMetadataResponse shape; return
 	// the same json names so both transports share one wire contract.
 	return map[string]interface{}{
-		"user_id":      meta.UserID,
+		"user_id":      strconv.FormatUint(meta.UserID, 10),
 		"email":        meta.Email,
 		"name":         meta.Name,
 		"auth_methods": meta.AuthMethods,
@@ -130,7 +131,7 @@ func handleIAMInvitePIV(ctx context.Context, svc service.QuicBaaS, req interface
 // shape the SDK client decodes.
 func activationResponse(a *service.InviteActivation, message string) map[string]interface{} {
 	out := map[string]interface{}{
-		"user_id": a.UserID,
+		"user_id": strconv.FormatUint(a.UserID, 10),
 		"message": message,
 	}
 	if a.Warning != "" {

@@ -59,14 +59,10 @@ func TestCreateUser_StampsTheStoreAssignedIdentity(t *testing.T) {
 	if err := store.CreateUser(ctx, u); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	if u.ID == "" {
+	if u.ID == 0 {
 		t.Fatal("CreateUser must stamp the store-assigned id onto the record")
 	}
-	id, err := iam.ParseUserID(u.ID)
-	if err != nil {
-		t.Fatalf("the stamped id must be a qrdb snowflake: %v", err)
-	}
-	stored, err := svc.GetUser(ctx, id)
+	stored, err := svc.GetUser(ctx, u.ID)
 	if err != nil {
 		t.Fatalf("the stamped id must address the record qrdb wrote: %v", err)
 	}
@@ -99,8 +95,7 @@ func TestCreateUser_SendsEmailOrDeclaresItsAbsence(t *testing.T) {
 	if err := store.CreateUser(ctx, u); err != nil {
 		t.Fatalf("a user with no email must be created with the omission declared: %v", err)
 	}
-	id, _ := iam.ParseUserID(u.ID)
-	stored, err := svc.GetUser(ctx, id)
+	stored, err := svc.GetUser(ctx, u.ID)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
@@ -134,15 +129,6 @@ func TestCreateUser_DuplicateEmailMapsToAlreadyExists(t *testing.T) {
 	err := store.CreateUser(ctx, newTestUser())
 	if !errors.Is(err, iam.ErrAlreadyExists) {
 		t.Fatalf("err = %v, want iam.ErrAlreadyExists for a duplicate login key", err)
-	}
-}
-
-func TestCreateUser_MalformedIDIsRefused(t *testing.T) {
-	store := newTestUserStorage(t, newFakeUserServicer())
-	u := newTestUser()
-	u.ID = "not-a-snowflake"
-	if err := store.CreateUser(context.Background(), u); !errors.Is(err, iam.ErrInvalidUserID) {
-		t.Fatalf("err = %v, want iam.ErrInvalidUserID", err)
 	}
 }
 
@@ -189,10 +175,15 @@ func TestGetUser_RoundTripsEveryProjectedField(t *testing.T) {
 	}
 }
 
-func TestGetUser_MalformedIDIsNotFound(t *testing.T) {
+func TestGetUser_ZeroAndUnknownIDs(t *testing.T) {
 	store := newTestUserStorage(t, newFakeUserServicer())
-	if _, err := store.GetUser(context.Background(), testTenant, "nonsense"); !errors.Is(err, iam.ErrUserNotFound) {
-		t.Fatalf("err = %v, want iam.ErrUserNotFound", err)
+	ctx := context.Background()
+
+	if _, err := store.GetUser(ctx, testTenant, 0); !errors.Is(err, iam.ErrInvalidUserID) {
+		t.Fatalf("err = %v, want iam.ErrInvalidUserID for the zero id", err)
+	}
+	if _, err := store.GetUser(ctx, testTenant, 424242); !errors.Is(err, iam.ErrUserNotFound) {
+		t.Fatalf("err = %v, want iam.ErrUserNotFound for an id nothing is stored under", err)
 	}
 }
 
@@ -336,20 +327,16 @@ func TestUpdateUser_SendsLifecycleAsATransition(t *testing.T) {
 	}
 }
 
-func TestUpdateUser_UnknownAndMalformedIDs(t *testing.T) {
+func TestUpdateUser_ZeroAndUnknownIDs(t *testing.T) {
 	store := newTestUserStorage(t, newFakeUserServicer())
 	ctx := context.Background()
 
 	u := newTestUser()
-	u.ID = ""
+	u.ID = 0
 	if err := store.UpdateUser(ctx, u); !errors.Is(err, iam.ErrUserNotFound) {
 		t.Fatalf("err = %v, want iam.ErrUserNotFound for a record with no id", err)
 	}
-	u.ID = "not-a-snowflake"
-	if err := store.UpdateUser(ctx, u); !errors.Is(err, iam.ErrInvalidUserID) {
-		t.Fatalf("err = %v, want iam.ErrInvalidUserID", err)
-	}
-	u.ID = "999999"
+	u.ID = 999999
 	if err := store.UpdateUser(ctx, u); !errors.Is(err, iam.ErrUserNotFound) {
 		t.Fatalf("err = %v, want iam.ErrUserNotFound for an id nothing is stored under", err)
 	}
@@ -402,14 +389,14 @@ func TestMarkUserDeleting_SendsTheLifecycleAndNothingElse(t *testing.T) {
 	}
 }
 
-func TestMarkUserDeleting_UnknownAndMalformedIDs(t *testing.T) {
+func TestMarkUserDeleting_ZeroAndUnknownIDs(t *testing.T) {
 	store := newTestUserStorage(t, newFakeUserServicer())
 	ctx := context.Background()
 
-	if err := store.MarkUserDeleting(ctx, testTenant, "nonsense"); !errors.Is(err, iam.ErrUserNotFound) {
-		t.Fatalf("err = %v, want iam.ErrUserNotFound", err)
+	if err := store.MarkUserDeleting(ctx, testTenant, 0); !errors.Is(err, iam.ErrInvalidUserID) {
+		t.Fatalf("err = %v, want iam.ErrInvalidUserID", err)
 	}
-	if err := store.MarkUserDeleting(ctx, testTenant, "424242"); !errors.Is(err, iam.ErrUserNotFound) {
+	if err := store.MarkUserDeleting(ctx, testTenant, 424242); !errors.Is(err, iam.ErrUserNotFound) {
 		t.Fatalf("err = %v, want iam.ErrUserNotFound", err)
 	}
 }
@@ -454,14 +441,14 @@ func TestDeleteUser_SurvivesAMarkedRecord(t *testing.T) {
 	}
 }
 
-func TestDeleteUser_UnknownAndMalformedIDs(t *testing.T) {
+func TestDeleteUser_ZeroAndUnknownIDs(t *testing.T) {
 	store := newTestUserStorage(t, newFakeUserServicer())
 	ctx := context.Background()
 
-	if err := store.DeleteUser(ctx, testTenant, "nonsense"); !errors.Is(err, iam.ErrUserNotFound) {
-		t.Fatalf("err = %v, want iam.ErrUserNotFound", err)
+	if err := store.DeleteUser(ctx, testTenant, 0); !errors.Is(err, iam.ErrInvalidUserID) {
+		t.Fatalf("err = %v, want iam.ErrInvalidUserID", err)
 	}
-	if err := store.DeleteUser(ctx, testTenant, "424242"); !errors.Is(err, iam.ErrUserNotFound) {
+	if err := store.DeleteUser(ctx, testTenant, 424242); !errors.Is(err, iam.ErrUserNotFound) {
 		t.Fatalf("err = %v, want iam.ErrUserNotFound", err)
 	}
 }
@@ -684,7 +671,7 @@ func TestGetUserByPIVThumbprint_ResolvesOnlyWhatTheRecordCarries(t *testing.T) {
 		t.Fatalf("err = %v, want a binding the record does not carry to resolve nobody", err)
 	}
 	if got, err := store.GetUserByPIVThumbprint(ctx, winner); err != nil || got.ID != u.ID {
-		t.Fatalf("winner resolved (%v, %v), want %q", got, err, u.ID)
+		t.Fatalf("winner resolved (%v, %v), want %d", got, err, u.ID)
 	}
 }
 
@@ -739,17 +726,17 @@ func TestQRDBUserStorage_FailsClosedWithoutAServicer(t *testing.T) {
 	ctx := context.Background()
 
 	nilResolver := NewQRDBUserStorage(nil)
-	if _, err := nilResolver.GetUser(ctx, testTenant, "1001"); err == nil {
+	if _, err := nilResolver.GetUser(ctx, testTenant, 1001); err == nil {
 		t.Fatal("a storage with no resolver must fail closed rather than panic")
 	}
 
 	nilServicer := NewQRDBUserStorage(&fakeResolver{svc: nil})
-	if _, err := nilServicer.GetUser(ctx, testTenant, "1001"); err == nil {
+	if _, err := nilServicer.GetUser(ctx, testTenant, 1001); err == nil {
 		t.Fatal("a resolver that yields no servicer must fail closed")
 	}
 
 	errResolver := NewQRDBUserStorage(&fakeResolver{err: errInjected})
-	if _, err := errResolver.GetUser(ctx, testTenant, "1001"); !errors.Is(err, errInjected) {
+	if _, err := errResolver.GetUser(ctx, testTenant, 1001); !errors.Is(err, errInjected) {
 		t.Fatalf("err = %v, want the resolver failure surfaced", err)
 	}
 }
@@ -848,7 +835,7 @@ func TestCoreUsername_MatchesTheStoresUsernameIndex(t *testing.T) {
 		t.Fatalf("the name the projection wrote must be the name the index resolves: %v", err)
 	}
 	if got.ID != u.ID {
-		t.Fatalf("ID = %q, want %q", got.ID, u.ID)
+		t.Fatalf("ID = %d, want %d", got.ID, u.ID)
 	}
 }
 
@@ -906,8 +893,8 @@ func TestCreateUser_CompensatesAFailedFollowUp(t *testing.T) {
 	if !errors.Is(err, errInjected) {
 		t.Fatalf("err = %v, want the follow-up failure surfaced", err)
 	}
-	if u.ID != "" {
-		t.Errorf("ID = %q, want it cleared: the create did not stand", u.ID)
+	if u.ID != 0 {
+		t.Errorf("ID = %d, want it cleared: the create did not stand", u.ID)
 	}
 	if len(fake.users) != 0 {
 		t.Fatalf("a failed create left %d record(s) behind", len(fake.users))

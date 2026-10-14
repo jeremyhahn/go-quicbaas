@@ -40,7 +40,7 @@ func TestBackendMFAStorage_ValidationAndNotFound(t *testing.T) {
 		t.Fatal("SaveChallenge(invalid) want error")
 	}
 
-	if _, err := store.GetSecret(ctx, "nobody", "acme"); !errors.Is(err, ErrMFANotEnrolled) {
+	if _, err := store.GetSecret(ctx, 99997, "acme"); !errors.Is(err, ErrMFANotEnrolled) {
 		t.Fatalf("GetSecret(missing) err = %v, want ErrMFANotEnrolled", err)
 	}
 	if _, err := store.GetEnrollment(ctx, encodeTenantID("acme", "nope")); !errors.Is(err, ErrMFAEnrollmentNotFound) {
@@ -49,7 +49,7 @@ func TestBackendMFAStorage_ValidationAndNotFound(t *testing.T) {
 	if _, err := store.GetChallenge(ctx, encodeTenantID("acme", "nope")); !errors.Is(err, ErrMFAChallengeNotFound) {
 		t.Fatalf("GetChallenge(missing) err = %v, want ErrMFAChallengeNotFound", err)
 	}
-	if _, err := store.GetBackupCodes(ctx, "nobody", "acme"); !errors.Is(err, ErrMFANotEnrolled) {
+	if _, err := store.GetBackupCodes(ctx, 99997, "acme"); !errors.Is(err, ErrMFANotEnrolled) {
 		t.Fatalf("GetBackupCodes(missing) err = %v, want ErrMFANotEnrolled", err)
 	}
 }
@@ -61,12 +61,12 @@ func TestBackendMFAStorage_CleanupExpiredChallenges(t *testing.T) {
 	store := NewBackendMFAStorage(kv, staticTenantLister{ids: []string{"acme"}})
 	ctx := context.Background()
 
-	chal := validChallenge("acme", "u1")
+	chal := validChallenge("acme", 30001)
 	chal.ExpiresAt = time.Now().Add(-time.Hour)
 	if err := store.SaveChallenge(ctx, chal); err != nil {
 		t.Fatalf("SaveChallenge: %v", err)
 	}
-	enr := validEnrollment("acme", "u1")
+	enr := validEnrollment("acme", 30001)
 	enr.ExpiresAt = time.Now().Add(-time.Hour)
 	if err := store.SaveEnrollment(ctx, enr); err != nil {
 		t.Fatalf("SaveEnrollment: %v", err)
@@ -98,7 +98,7 @@ func TestBackendSessionStorage_ValidationAndNotFound(t *testing.T) {
 		t.Fatal("CreateSession(no id) want error")
 	}
 
-	sess := basicSession("acme", "u1", "s1")
+	sess := basicSession("acme", 30001, "s1")
 	if err := store.CreateSession(ctx, sess); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestBackendSessionExtStorage_ValidationAndNotFound(t *testing.T) {
 		t.Fatal("Create(invalid) want error")
 	}
 
-	sess := extSession("acme", "u1", "s1", "th")
+	sess := extSession("acme", 30001, "s1", "th")
 	if err := store.Create(ctx, sess); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -187,12 +187,12 @@ func TestBackendFederationStorage_CreateValidationAndDuplicate(t *testing.T) {
 		t.Fatal("CreateLink(invalid) want error")
 	}
 
-	link := testLink("acme", "u1", "l1", "p1", "ext-1")
+	link := testLink("acme", 30001, "l1", "p1", "ext-1")
 	if err := store.CreateLink(ctx, link); err != nil {
 		t.Fatalf("CreateLink: %v", err)
 	}
 	// Duplicate external id under a fresh link id.
-	dup := testLink("acme", "u2", "l2", "p1", "ext-1")
+	dup := testLink("acme", 30002, "l2", "p1", "ext-1")
 	if err := store.CreateLink(ctx, dup); err == nil {
 		t.Fatal("CreateLink(duplicate external) want error")
 	}

@@ -385,7 +385,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
 				ResponseType:        ResponseTypeCode,
-				UserID:              "123",
+				UserID:              123,
 				TenantID:            "tenant-1",
 				State:               "state-abc",
 				CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
@@ -399,7 +399,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:     "test-client",
 				RedirectURI:  "https://example.com/callback",
 				ResponseType: ResponseTypeCode,
-				UserID:       "123",
+				UserID:       123,
 				TenantID:     "tenant-1",
 				State:        "state-abc",
 			},
@@ -432,7 +432,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
 				ResponseType:        ResponseTypeCode,
-				UserID:              "123",
+				UserID:              123,
 				TenantID:            "tenant-1",
 				CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 				CodeChallengeMethod: CodeChallengeMethodS256,
@@ -445,7 +445,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
 				ResponseType:        ResponseTypeCode,
-				UserID:              "123",
+				UserID:              123,
 				TenantID:            "tenant-1",
 				CodeChallenge:       "some-plain-challenge",
 				CodeChallengeMethod: CodeChallengeMethodPlain,
@@ -459,7 +459,7 @@ func TestOIDCAuthorize(t *testing.T) {
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
 				ResponseType:        ResponseTypeCode,
-				UserID:              "123",
+				UserID:              123,
 				TenantID:            "tenant-1",
 				CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 				CodeChallengeMethod: "", // Should default to S256
@@ -523,7 +523,7 @@ func TestOIDCTokenAuthorizationCode(t *testing.T) {
 	appStorage.CreateApp(ctx, app)
 
 	user := &User{
-		ID:        "123",
+		ID:        123,
 		TenantID:  "tenant-1",
 		Email:     "test@example.com",
 		Lifecycle: LifecycleActive,
@@ -535,7 +535,7 @@ func TestOIDCTokenAuthorizationCode(t *testing.T) {
 	// Create authorization code
 	authCode := &AuthCodeData{
 		Code:        "test-code",
-		UserID:      "123",
+		UserID:      123,
 		TenantID:    "tenant-1",
 		ClientID:    "test-client",
 		RedirectURI: "https://example.com/callback",
@@ -629,7 +629,7 @@ func TestOIDCRefresh(t *testing.T) {
 	appStorage.CreateApp(ctx, app)
 
 	user := &User{
-		ID:        "123",
+		ID:        123,
 		TenantID:  "tenant-1",
 		Email:     "test@example.com",
 		Lifecycle: LifecycleActive,
@@ -827,7 +827,7 @@ func TestOIDCUserInfo(t *testing.T) {
 
 	// Setup test user
 	user := &User{
-		ID:         "123",
+		ID:         123,
 		TenantID:   "tenant-1",
 		Email:      "test@example.com",
 		Lifecycle:  LifecycleActive,
@@ -853,7 +853,7 @@ func TestOIDCUserInfo(t *testing.T) {
 		// subject-string fallback it used to fall back to resolved a non-email
 		// subject by id and then by USERNAME, which let a service token's client
 		// id match a user who had taken that string as their handle.
-		UserID:   "123",
+		UserID:   123,
 		Roles:    []string{"admin", "user"},
 		Groups:   []string{"developers", "team-a"},
 		ClientID: "test-client",
@@ -1307,7 +1307,7 @@ func TestOIDCAuthorizeWithResourceIndicator(t *testing.T) {
 		ClientID:            "test-client",
 		RedirectURI:         "https://example.com/callback",
 		ResponseType:        ResponseTypeCode,
-		UserID:              "123",
+		UserID:              123,
 		TenantID:            "tenant-1",
 		CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 		CodeChallengeMethod: CodeChallengeMethodS256,
@@ -1354,7 +1354,7 @@ func TestOIDCTokenWithResourceIndicator(t *testing.T) {
 	appStorage.CreateApp(ctx, app)
 
 	user := &User{
-		ID:        "123",
+		ID:        123,
 		TenantID:  "tenant-1",
 		Email:     "test@example.com",
 		Lifecycle: LifecycleActive,
@@ -1412,7 +1412,7 @@ func TestOIDCTokenWithResourceIndicator(t *testing.T) {
 			// Create authorization code with resource
 			authCode := &AuthCodeData{
 				Code:        "test-code-" + tt.name,
-				UserID:      "123",
+				UserID:      123,
 				TenantID:    "tenant-1",
 				ClientID:    "test-client",
 				RedirectURI: "https://example.com/callback",
@@ -1601,7 +1601,7 @@ func TestOIDCUserInfo_CeremonyBearerWithoutUIDResolvesNobody(t *testing.T) {
 
 	now := time.Now()
 	user := &User{
-		ID:        "999",
+		ID:        999,
 		TenantID:  "system",
 		Email:     "admin@example.com",
 		Username:  "admin",

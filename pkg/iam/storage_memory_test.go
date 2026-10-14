@@ -161,7 +161,7 @@ func TestMemoryStorage_UserOperations(t *testing.T) {
 	storage.CreateTenant(ctx, tenant)
 
 	user := &User{
-		ID:       "11",
+		ID:       11,
 		TenantID: tenant.ID,
 		Email:    "user1@example.com",
 		Name:     "User One",
@@ -197,7 +197,7 @@ func TestMemoryStorage_UserOperations(t *testing.T) {
 		t.Fatalf("GetUserByEmail failed: %v", err)
 	}
 	if retrieved.ID != user.ID {
-		t.Errorf("Expected user ID %s, got %s", user.ID, retrieved.ID)
+		t.Errorf("Expected user ID %d, got %d", user.ID, retrieved.ID)
 	}
 
 	// Test UpdateUser
@@ -498,7 +498,7 @@ func TestMemoryStorage_Concurrency(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(id int) {
 			user := &User{
-				ID:       FormatUserID(uint64(id) + 1),
+				ID:       uint64(id) + 1,
 				TenantID: tenant.ID,
 				Email:    fmt.Sprintf("user%d@example.com", id),
 				Name:     fmt.Sprintf("User %d", id),
@@ -591,7 +591,7 @@ func TestMemoryStorage_StoreAuthCode(t *testing.T) {
 
 	authCode := &AuthCodeData{
 		Code:                "code123",
-		UserID:              "user1",
+		UserID:              20001,
 		TenantID:            "tenant1",
 		ClientID:            "client1",
 		RedirectURI:         "https://example.com/callback",
@@ -618,7 +618,7 @@ func TestMemoryStorage_StoreAuthCode(t *testing.T) {
 		t.Errorf("Expected code %s, got %s", authCode.Code, retrieved.Code)
 	}
 	if retrieved.UserID != authCode.UserID {
-		t.Errorf("Expected userID %s, got %s", authCode.UserID, retrieved.UserID)
+		t.Errorf("Expected userID %d, got %d", authCode.UserID, retrieved.UserID)
 	}
 	if retrieved.ClientID != authCode.ClientID {
 		t.Errorf("Expected clientID %s, got %s", authCode.ClientID, retrieved.ClientID)
@@ -632,7 +632,7 @@ func TestMemoryStorage_GetAuthCode(t *testing.T) {
 
 	authCode := &AuthCodeData{
 		Code:      "code456",
-		UserID:    "user2",
+		UserID:    20002,
 		TenantID:  "tenant2",
 		ClientID:  "client2",
 		ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -667,7 +667,7 @@ func TestMemoryStorage_DeleteAuthCode(t *testing.T) {
 
 	authCode := &AuthCodeData{
 		Code:      "code789",
-		UserID:    "user3",
+		UserID:    20003,
 		TenantID:  "tenant3",
 		ClientID:  "client3",
 		ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -937,7 +937,7 @@ func TestMemoryStorage_AuthCodeExpiration(t *testing.T) {
 	// Create an expired auth code
 	expiredAuthCode := &AuthCodeData{
 		Code:      "expired-code",
-		UserID:    "user1",
+		UserID:    20001,
 		TenantID:  "tenant1",
 		ClientID:  "client1",
 		ExpiresAt: time.Now().Add(-5 * time.Minute), // Expired 5 minutes ago
@@ -948,7 +948,7 @@ func TestMemoryStorage_AuthCodeExpiration(t *testing.T) {
 	// Create a valid auth code
 	validAuthCode := &AuthCodeData{
 		Code:      "valid-code",
-		UserID:    "user2",
+		UserID:    20002,
 		TenantID:  "tenant2",
 		ClientID:  "client2",
 		ExpiresAt: time.Now().Add(10 * time.Minute),
@@ -1163,7 +1163,7 @@ func TestMemoryStorage_UpdateUser_NotFound(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 
-	err := storage.UpdateUser(ctx, &User{ID: "none", TenantID: "t1", Email: "a@b.com"})
+	err := storage.UpdateUser(ctx, &User{ID: 99995, TenantID: "t1", Email: "a@b.com"})
 	if err == nil {
 		t.Fatal("expected error updating nonexistent user")
 	}
@@ -1177,7 +1177,7 @@ func TestMemoryStorage_UpdateUser_EmailChange(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	user := &User{ID: "1", TenantID: "t1", Email: "old@test.com", Name: "Test User"}
+	user := &User{ID: 1, TenantID: "t1", Email: "old@test.com", Name: "Test User"}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -1209,7 +1209,7 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	user := &User{ID: "1", TenantID: "t1", Email: "admin@test.com", Name: "Admin"}
+	user := &User{ID: 1, TenantID: "t1", Email: "admin@test.com", Name: "Admin"}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
@@ -1223,8 +1223,8 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByPIVThumbprint after bind failed: %v", err)
 	}
-	if found.ID != "1" {
-		t.Fatalf("expected user 1, got %s", found.ID)
+	if found.ID != 1 {
+		t.Fatalf("expected user 1, got %d", found.ID)
 	}
 
 	// Rotate thumbprint; the old binding must be removed.
@@ -1239,8 +1239,8 @@ func TestMemoryStorage_UpdateUser_PIVThumbprintIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByPIVThumbprint after rotate failed: %v", err)
 	}
-	if found.ID != "1" {
-		t.Fatalf("expected user 1 after rotate, got %s", found.ID)
+	if found.ID != 1 {
+		t.Fatalf("expected user 1 after rotate, got %d", found.ID)
 	}
 
 	// Clear the thumbprint; lookup must fail.
@@ -1262,12 +1262,12 @@ func TestMemoryStorage_DeleteUser_PIVThumbprintCleanup(t *testing.T) {
 	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
-	user := &User{ID: "1", TenantID: "t1", Email: "a@test.com"}
+	user := &User{ID: 1, TenantID: "t1", Email: "a@test.com"}
 	user.SetPIVThumbprint("thumb-1")
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
-	if err := storage.DeleteUser(ctx, "t1", "1"); err != nil {
+	if err := storage.DeleteUser(ctx, "t1", 1); err != nil {
 		t.Fatalf("DeleteUser failed: %v", err)
 	}
 	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-1"); err == nil {
@@ -1646,7 +1646,7 @@ func TestMemorySessionExtStorage_GetByToken_IndexInconsistency(t *testing.T) {
 	// Create a valid session first
 	session := &SessionExt{
 		ID:        "session-1",
-		UserID:    "user-1",
+		UserID:    10001,
 		TenantID:  "tenant-1",
 		TokenHash: "token-hash-123",
 	}
@@ -1739,7 +1739,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByAllCriteria(t *testi
 	// Create multiple export requests
 	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 		Format:      DataExportFormatJSON,
 	})
@@ -1749,7 +1749,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByAllCriteria(t *testi
 
 	_, err = storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-2",
-		UserID:      "user-2",
+		UserID:      10002,
 		RequestedBy: "user-2",
 		Format:      DataExportFormatJSON,
 	})
@@ -1760,7 +1760,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByAllCriteria(t *testi
 	// Filter by all criteria: tenant, user, and status
 	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		Status:   DataExportStatusPending,
 	})
 	if err != nil {
@@ -1778,7 +1778,7 @@ func TestMemoryDataExportStorage_ListExportRequests_NoMatchingStatus(t *testing.
 
 	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 		Format:      DataExportFormatJSON,
 	})
@@ -1806,7 +1806,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByAllCriteria(t *testi
 
 	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 	})
 	if err != nil {
@@ -1815,7 +1815,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByAllCriteria(t *testi
 
 	_, err = storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-2",
-		UserID:      "user-2",
+		UserID:      10002,
 		RequestedBy: "user-2",
 	})
 	if err != nil {
@@ -1825,7 +1825,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByAllCriteria(t *testi
 	// Filter by all criteria
 	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		Status:   DeletionStatusPending,
 	})
 	if err != nil {
@@ -1843,7 +1843,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_NoMatchingTenant(t *testing.
 
 	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 	})
 	if err != nil {
@@ -1975,62 +1975,9 @@ func TestDefaultTenantManager_ListTenants_Success(t *testing.T) {
 	}
 }
 
-// TestMemoryStorage_CreateUser_RejectsAMalformedSeededID pins the fix for a
-// silent-corruption defect: CreateUser used to try ParseUserID on a
-// caller-supplied id and, when it failed, IGNORE the error and store the record
-// under the string it was handed.
-//
-// A user id is a qrdb Snowflake in decimal, and everything downstream of the
-// record assumes it — QRDBID, the auth-factor binding, the session join. So the
-// create reported success and produced an account that every one of those
-// operations then refused, with no error naming the create that caused it. It
-// must fail at the write instead, and leave nothing behind: a partially stored
-// user would be reachable by email or PIV thumbprint while its id named nobody.
-func TestMemoryStorage_CreateUser_RejectsAMalformedSeededID(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	if err := storage.CreateTenant(ctx, &Tenant{ID: "t1", Name: "Test"}); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	for _, id := range []string{
-		"user-1",               // not a number at all
-		"007",                  // a leading zero: one user, two spellings
-		"0",                    // the store's invalid sentinel
-		"-1",                   // negative
-		"1 ",                   // trailing space
-		"0x10",                 // not decimal
-		"18446744073709551616", // one past the top of uint64
-	} {
-		t.Run(id, func(t *testing.T) {
-			user := &User{ID: id, TenantID: "t1", Email: "seed@test.com", Name: "Seeded"}
-			user.SetPIVThumbprint("thumb-seed")
-
-			err := storage.CreateUser(ctx, user)
-			if !errors.Is(err, ErrInvalidUserID) {
-				t.Fatalf("CreateUser(%q) error = %v, want ErrInvalidUserID", id, err)
-			}
-
-			// Nothing stored: not under the id, not in either index.
-			if _, err := storage.GetUser(ctx, "t1", id); err == nil {
-				t.Fatalf("GetUser(%q) resolved a user the create refused", id)
-			}
-			if _, err := storage.GetUserByEmail(ctx, "t1", "seed@test.com"); err == nil {
-				t.Fatal("the refused user is still reachable by email")
-			}
-			if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-seed"); err == nil {
-				t.Fatal("the refused user is still reachable by PIV thumbprint")
-			}
-		})
-	}
-}
-
-// TestMemoryStorage_CreateUser_MintsWhenNoIDIsSupplied is the other half of the
-// rule above: an absent id is not an error, it is the normal path. The store
-// assigns the Snowflake, and the assigned id must itself be canonical — the
-// same value ParseUserID accepts — or the record would be as unusable as the
-// malformed one the create refuses.
+// TestMemoryStorage_CreateUser_MintsWhenNoIDIsSupplied pins the normal path:
+// an absent id (zero) is not an error. The store assigns a non-zero Snowflake
+// and the record is reachable under it.
 func TestMemoryStorage_CreateUser_MintsWhenNoIDIsSupplied(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryStorage()
@@ -2043,8 +1990,8 @@ func TestMemoryStorage_CreateUser_MintsWhenNoIDIsSupplied(t *testing.T) {
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
-	if _, err := ParseUserID(user.ID); err != nil {
-		t.Fatalf("minted id %q is not canonical: %v", user.ID, err)
+	if user.ID == 0 {
+		t.Fatal("CreateUser did not assign an id")
 	}
 	if _, err := storage.GetUser(ctx, "t1", user.ID); err != nil {
 		t.Fatalf("GetUser on the minted id failed: %v", err)

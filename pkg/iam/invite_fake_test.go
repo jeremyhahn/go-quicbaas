@@ -54,7 +54,8 @@ func newFakeInviteStore() *fakeInviteStore {
 // Create issues an invitation and returns the plaintext token exactly once.
 func (s *fakeInviteStore) Create(
 	_ context.Context,
-	tenantID, userID string,
+	tenantID string,
+	userID uint64,
 	ttl time.Duration,
 ) (string, *InviteRecord, error) {
 	buf := make([]byte, 32)

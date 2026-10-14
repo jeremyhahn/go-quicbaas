@@ -2762,9 +2762,10 @@ export class RestSdlcClient implements SdlcClient {
     return resp.forges ?? [];
   }
 
-  // bind maps to PUT /api/v1/sdlc/projects/:projectId/binding?tenant_id=...
-  async bind(tenantId: string, projectId: string, binding: ProjectBinding): Promise<ProjectBinding> {
-    return this.fetchJSON<ProjectBinding>(this.bindingPath(tenantId, projectId), {
+  // bind maps to PUT /api/v1/sdlc/projects/:projectId/binding?tenant_id=...[&paused=true]
+  async bind(tenantId: string, projectId: string, binding: ProjectBinding, paused?: boolean): Promise<ProjectBinding> {
+    const path = this.bindingPath(tenantId, projectId) + (paused ? '&paused=true' : '');
+    return this.fetchJSON<ProjectBinding>(path, {
       method: 'PUT',
       body: JSON.stringify({ ...binding, project_id: binding.project_id || projectId }),
     });

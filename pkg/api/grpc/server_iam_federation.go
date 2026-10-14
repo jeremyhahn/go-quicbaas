@@ -273,7 +273,11 @@ func (s *FederationServer) LinkAccount(ctx context.Context, req *iampb.LinkAccou
 		return nil, status.Error(codes.InvalidArgument, "external_token is required")
 	}
 
-	if err := s.federationManager.LinkAccount(ctx, req.UserId, req.TenantId, req.ProviderId, req.ExternalToken); err != nil {
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.federationManager.LinkAccount(ctx, userID, req.TenantId, req.ProviderId, req.ExternalToken); err != nil {
 		return nil, convertFederationError(err)
 	}
 
@@ -298,7 +302,11 @@ func (s *FederationServer) UnlinkAccount(ctx context.Context, req *iampb.UnlinkA
 		return nil, status.Error(codes.InvalidArgument, "provider_id is required")
 	}
 
-	if err := s.federationManager.UnlinkAccount(ctx, req.UserId, req.TenantId, req.ProviderId); err != nil {
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.federationManager.UnlinkAccount(ctx, userID, req.TenantId, req.ProviderId); err != nil {
 		return nil, convertFederationError(err)
 	}
 
@@ -319,7 +327,11 @@ func (s *FederationServer) GetUserLinks(ctx context.Context, req *iampb.GetUserL
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	links, err := s.federationManager.GetUserLinks(ctx, req.UserId, req.TenantId)
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	links, err := s.federationManager.GetUserLinks(ctx, userID, req.TenantId)
 	if err != nil {
 		return nil, convertFederationError(err)
 	}
@@ -488,7 +500,7 @@ func convertFederatedIdentityToProto(fi *iam.FederatedIdentity) *iampb.Federated
 
 	pb := &iampb.FederatedIdentity{
 		Id:            fi.ID,
-		UserId:        fi.UserID,
+		UserId:        formatUserID(fi.UserID),
 		TenantId:      fi.TenantID,
 		ProviderId:    fi.ProviderID,
 		ExternalId:    fi.ExternalID,

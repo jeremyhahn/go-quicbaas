@@ -1392,9 +1392,12 @@ func (x *Delivery) GetSupersededRuns() []*SupersessionRecord {
 }
 
 type BindProjectRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Binding       *ProjectBinding        `protobuf:"bytes,2,opt,name=binding,proto3" json:"binding,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TenantId string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Binding  *ProjectBinding        `protobuf:"bytes,2,opt,name=binding,proto3" json:"binding,omitempty"`
+	// paused binds without switching the project's autonomy on. It never
+	// turns autonomy off on an already-autonomous project.
+	Paused        bool `protobuf:"varint,3,opt,name=paused,proto3" json:"paused,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1441,6 +1444,13 @@ func (x *BindProjectRequest) GetBinding() *ProjectBinding {
 		return x.Binding
 	}
 	return nil
+}
+
+func (x *BindProjectRequest) GetPaused() bool {
+	if x != nil {
+		return x.Paused
+	}
+	return false
 }
 
 type BindProjectResponse struct {
@@ -5005,10 +5015,11 @@ const file_api_proto_sdlc_proto_rawDesc = "" +
 	"\x06target\x18\x0e \x01(\tR\x06target\x122\n" +
 	"\x15requires_pull_request\x18\x0f \x01(\bR\x13requiresPullRequest\x12,\n" +
 	"\x12delete_after_merge\x18\x10 \x01(\bR\x10deleteAfterMerge\x12M\n" +
-	"\x0fsuperseded_runs\x18\x11 \x03(\v2$.quicbaas.sdlc.v1.SupersessionRecordR\x0esupersededRuns\"m\n" +
+	"\x0fsuperseded_runs\x18\x11 \x03(\v2$.quicbaas.sdlc.v1.SupersessionRecordR\x0esupersededRuns\"\x85\x01\n" +
 	"\x12BindProjectRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12:\n" +
-	"\abinding\x18\x02 \x01(\v2 .quicbaas.sdlc.v1.ProjectBindingR\abinding\"Q\n" +
+	"\abinding\x18\x02 \x01(\v2 .quicbaas.sdlc.v1.ProjectBindingR\abinding\x12\x16\n" +
+	"\x06paused\x18\x03 \x01(\bR\x06paused\"Q\n" +
 	"\x13BindProjectResponse\x12:\n" +
 	"\abinding\x18\x01 \x01(\v2 .quicbaas.sdlc.v1.ProjectBindingR\abinding\"R\n" +
 	"\x14UnbindProjectRequest\x12\x1b\n" +

@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -29,12 +30,12 @@ type SessionExtStorage interface {
 	Delete(ctx context.Context, sessionID string) error
 
 	// Query operations
-	ListByUser(ctx context.Context, userID, tenantID string) ([]*SessionExt, error)
-	ListByUserActive(ctx context.Context, userID, tenantID string) ([]*SessionExt, error)
+	ListByUser(ctx context.Context, userID uint64, tenantID string) ([]*SessionExt, error)
+	ListByUserActive(ctx context.Context, userID uint64, tenantID string) ([]*SessionExt, error)
 
 	// Batch operations
-	DeleteByUser(ctx context.Context, userID, tenantID string) error
-	DeleteAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error
+	DeleteByUser(ctx context.Context, userID uint64, tenantID string) error
+	DeleteAllExcept(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error
 
 	// Maintenance
 	CleanupExpired(ctx context.Context) (int, error)
@@ -59,8 +60,8 @@ func NewMemorySessionExtStorage() *MemorySessionExtStorage {
 	}
 }
 
-func (m *MemorySessionExtStorage) userKey(userID, tenantID string) string {
-	return tenantID + ":" + userID
+func (m *MemorySessionExtStorage) userKey(userID uint64, tenantID string) string {
+	return tenantID + ":" + strconv.FormatUint(userID, 10)
 }
 
 // Create stores a new session.
@@ -213,7 +214,7 @@ func (m *MemorySessionExtStorage) Delete(ctx context.Context, sessionID string) 
 }
 
 // ListByUser lists all sessions for a user.
-func (m *MemorySessionExtStorage) ListByUser(ctx context.Context, userID, tenantID string) ([]*SessionExt, error) {
+func (m *MemorySessionExtStorage) ListByUser(ctx context.Context, userID uint64, tenantID string) ([]*SessionExt, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -238,7 +239,7 @@ func (m *MemorySessionExtStorage) ListByUser(ctx context.Context, userID, tenant
 }
 
 // ListByUserActive lists all active (non-expired) sessions for a user.
-func (m *MemorySessionExtStorage) ListByUserActive(ctx context.Context, userID, tenantID string) ([]*SessionExt, error) {
+func (m *MemorySessionExtStorage) ListByUserActive(ctx context.Context, userID uint64, tenantID string) ([]*SessionExt, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -266,7 +267,7 @@ func (m *MemorySessionExtStorage) ListByUserActive(ctx context.Context, userID, 
 }
 
 // DeleteByUser removes all sessions for a user.
-func (m *MemorySessionExtStorage) DeleteByUser(ctx context.Context, userID, tenantID string) error {
+func (m *MemorySessionExtStorage) DeleteByUser(ctx context.Context, userID uint64, tenantID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -297,7 +298,7 @@ func (m *MemorySessionExtStorage) DeleteByUser(ctx context.Context, userID, tena
 }
 
 // DeleteAllExcept removes all sessions for a user except the specified one.
-func (m *MemorySessionExtStorage) DeleteAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error {
+func (m *MemorySessionExtStorage) DeleteAllExcept(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

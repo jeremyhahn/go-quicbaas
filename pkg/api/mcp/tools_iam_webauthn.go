@@ -86,14 +86,17 @@ func (r *ToolRegistry) getWebAuthnCredentials() (service.WebAuthnCredentialServi
 
 // webAuthnCredentialScope pulls and validates the tenant/user scope every
 // credential tool takes.
-func webAuthnCredentialScope(args map[string]interface{}) (string, string, error) {
+func webAuthnCredentialScope(args map[string]interface{}) (string, uint64, error) {
 	tenantID := getString(args, "tenant_id")
 	if tenantID == "" {
-		return "", "", &WebAuthnCredentialInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
+		return "", 0, &WebAuthnCredentialInvalidInputError{Field: "tenant_id", Message: "tenant_id is required"}
 	}
-	userID := getString(args, "user_id")
-	if userID == "" {
-		return "", "", &WebAuthnCredentialInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	if getString(args, "user_id") == "" {
+		return "", 0, &WebAuthnCredentialInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return "", 0, err
 	}
 	return tenantID, userID, nil
 }

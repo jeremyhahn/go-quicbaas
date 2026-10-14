@@ -145,7 +145,7 @@ func TestGrantBuiltInRole(t *testing.T) {
 	})
 
 	t.Run("an unknown user is a typed error", func(t *testing.T) {
-		err := grantBuiltInRole(ctx, svc.store, tenantID, "no-such-user", qrdbsdk.RoleNameAdmin)
+		err := grantBuiltInRole(ctx, svc.store, tenantID, 999999, qrdbsdk.RoleNameAdmin)
 
 		var grantErr *SelfRegistrationRoleGrantError
 		require.True(t, errors.As(err, &grantErr), "got %v", err)

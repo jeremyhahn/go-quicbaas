@@ -79,7 +79,11 @@ func (s *IAMServer) ListWebAuthnCredentials(ctx context.Context, req *iampb.List
 	if err != nil {
 		return nil, err
 	}
-	credentials, err := svc.ListCredentials(ctx, req.TenantId, req.UserId)
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	credentials, err := svc.ListCredentials(ctx, req.TenantId, userID)
 	if err != nil {
 		return nil, convertWebAuthnCredentialError(err)
 	}
@@ -110,7 +114,11 @@ func (s *IAMServer) DeleteWebAuthnCredential(ctx context.Context, req *iampb.Del
 	if err != nil {
 		return nil, err
 	}
-	if dErr := svc.DeleteCredential(ctx, req.TenantId, req.UserId, req.CredentialId); dErr != nil {
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	if dErr := svc.DeleteCredential(ctx, req.TenantId, userID, req.CredentialId); dErr != nil {
 		return nil, convertWebAuthnCredentialError(dErr)
 	}
 	return &iampb.DeleteWebAuthnCredentialResponse{Success: true}, nil
@@ -129,7 +137,11 @@ func (s *IAMServer) DeleteWebAuthnCredentials(ctx context.Context, req *iampb.De
 	if err != nil {
 		return nil, err
 	}
-	deleted, err := svc.DeleteCredentials(ctx, req.TenantId, req.UserId)
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	deleted, err := svc.DeleteCredentials(ctx, req.TenantId, userID)
 	if err != nil {
 		return nil, convertWebAuthnCredentialError(err)
 	}

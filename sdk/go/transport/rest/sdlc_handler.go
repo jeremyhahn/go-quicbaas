@@ -124,7 +124,17 @@ func (h *sdlcRESTHandler) handleBind(ctx context.Context, req interface{}) (inte
 		return nil, errors.NewInvalidInput("sdlc.Bind", "invalid request type")
 	}
 	var resp sdlc.ProjectBinding
-	path := sdlcBindingPath(sdkReq.ProjectID) + tenantQuery(sdkReq.TenantID)
+	query := url.Values{}
+	if sdkReq.TenantID != "" {
+		query.Set("tenant_id", sdkReq.TenantID)
+	}
+	if sdkReq.Paused {
+		query.Set("paused", "true")
+	}
+	path := sdlcBindingPath(sdkReq.ProjectID)
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
 	if err := h.transport.doJSONRequest(ctx, http.MethodPut, path, &sdkReq.Binding, &resp); err != nil {
 		return nil, err
 	}

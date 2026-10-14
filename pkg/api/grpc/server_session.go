@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -35,10 +36,10 @@ type SessionServer struct {
 
 // SessionService defines the interface for session operations.
 type SessionService interface {
-	ListSessions(ctx context.Context, tenantID, userID string, limit, offset int) ([]*iam.Session, int, error)
+	ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error)
 	GetSession(ctx context.Context, sessionID string) (*iam.Session, error)
 	RevokeSession(ctx context.Context, sessionID string) error
-	RevokeAllSessions(ctx context.Context, tenantID, userID string) (int, error)
+	RevokeAllSessions(ctx context.Context, tenantID string, userID uint64) (int, error)
 	RevokeOtherSessions(ctx context.Context, tenantID, keepSessionID string) (int, error)
 }
 
@@ -56,7 +57,12 @@ func (s *SessionServer) ListSessions(ctx context.Context, req *iampb.ListSession
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	sessions, total, err := s.sessionService.ListSessions(ctx, req.TenantId, req.UserId, int(req.Limit), int(req.Offset))
+	userID, err := parseOptionalUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+
+	sessions, total, err := s.sessionService.ListSessions(ctx, req.TenantId, userID, int(req.Limit), int(req.Offset))
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to list sessions")
 		return nil, status.Errorf(codes.Internal, "failed to list sessions: %v", err)
@@ -109,7 +115,12 @@ func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.Revoke
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	count, err := s.sessionService.RevokeAllSessions(ctx, req.TenantId, req.UserId)
+	userID, err := parseOptionalUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+
+	count, err := s.sessionService.RevokeAllSessions(ctx, req.TenantId, userID)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to revoke all sessions")
 		return nil, status.Errorf(codes.Internal, "failed to revoke all sessions: %v", err)
@@ -144,7 +155,7 @@ func sessionToProto(s *iam.Session) *iampb.Session {
 
 	return &iampb.Session{
 		Id:          s.ID,
-		UserId:      s.UserID,
+		UserId:      formatUserID(s.UserID),
 		TenantId:    s.TenantID,
 		CreatedAt:   timestamppb.New(s.Created),
 		LastActive:  timestamppb.New(s.LastActivity),
@@ -169,7 +180,7 @@ func NewSessionServiceAdapter(sessionStorage iam.SessionStorage) *SessionService
 }
 
 // ListSessions lists sessions for a tenant/user.
-func (a *SessionServiceAdapter) ListSessions(ctx context.Context, tenantID, userID string, limit, offset int) ([]*iam.Session, int, error) {
+func (a *SessionServiceAdapter) ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error) {
 	sessions, err := a.sessionStorage.GetSessionsByUser(ctx, tenantID, userID)
 	if err != nil {
 		return nil, 0, err
@@ -199,7 +210,7 @@ func (a *SessionServiceAdapter) RevokeSession(ctx context.Context, sessionID str
 }
 
 // RevokeAllSessions revokes all sessions for a user/tenant.
-func (a *SessionServiceAdapter) RevokeAllSessions(ctx context.Context, tenantID, userID string) (int, error) {
+func (a *SessionServiceAdapter) RevokeAllSessions(ctx context.Context, tenantID string, userID uint64) (int, error) {
 	sessions, err := a.sessionStorage.GetSessionsByUser(ctx, tenantID, userID)
 	if err != nil {
 		return 0, err
@@ -256,10 +267,10 @@ func NewMemorySessionService() *MemorySessionService {
 }
 
 // ListSessions lists all sessions.
-func (m *MemorySessionService) ListSessions(ctx context.Context, tenantID, userID string, limit, offset int) ([]*iam.Session, int, error) {
+func (m *MemorySessionService) ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error) {
 	var result []*iam.Session
 	for _, s := range m.sessions {
-		if (tenantID == "" || s.TenantID == tenantID) && (userID == "" || s.UserID == userID) {
+		if (tenantID == "" || s.TenantID == tenantID) && (userID == 0 || s.UserID == userID) {
 			result = append(result, s)
 		}
 	}
@@ -292,10 +303,10 @@ func (m *MemorySessionService) RevokeSession(ctx context.Context, sessionID stri
 }
 
 // RevokeAllSessions revokes all sessions for a tenant/user.
-func (m *MemorySessionService) RevokeAllSessions(ctx context.Context, tenantID, userID string) (int, error) {
+func (m *MemorySessionService) RevokeAllSessions(ctx context.Context, tenantID string, userID uint64) (int, error) {
 	count := 0
 	for id, s := range m.sessions {
-		if (tenantID == "" || s.TenantID == tenantID) && (userID == "" || s.UserID == userID) {
+		if (tenantID == "" || s.TenantID == tenantID) && (userID == 0 || s.UserID == userID) {
 			delete(m.sessions, id)
 			count++
 		}
@@ -321,10 +332,10 @@ func (m *MemorySessionService) AddSession(s *iam.Session) {
 }
 
 // CreateTestSession creates a test session.
-func (m *MemorySessionService) CreateTestSession(tenantID, userID string) *iam.Session {
+func (m *MemorySessionService) CreateTestSession(tenantID string, userID uint64) *iam.Session {
 	now := time.Now()
 	s := &iam.Session{
-		ID:           "sess-" + tenantID + "-" + userID,
+		ID:           "sess-" + tenantID + "-" + strconv.FormatUint(userID, 10),
 		UserID:       userID,
 		TenantID:     tenantID,
 		Created:      now,

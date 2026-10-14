@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	stderrors "errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ type failingInviteStore struct {
 	err error
 }
 
-func (f *failingInviteStore) Create(context.Context, string, string, time.Duration) (string, *iam.InviteRecord, error) {
+func (f *failingInviteStore) Create(context.Context, string, uint64, time.Duration) (string, *iam.InviteRecord, error) {
 	return "", nil, f.err
 }
 
@@ -75,7 +76,7 @@ func TestGRPC_CreateUserReturnsARedeemableInvite(t *testing.T) {
 
 	record, err := invites.Redeem(ctx, "acme", created.InviteToken)
 	require.NoError(t, err, "the returned token does not redeem")
-	assert.Equal(t, created.Id, record.UserID)
+	assert.Equal(t, created.Id, strconv.FormatUint(record.UserID, 10))
 }
 
 // TestGRPC_CreateActiveUserCarriesNoInvite proves an account with nothing to

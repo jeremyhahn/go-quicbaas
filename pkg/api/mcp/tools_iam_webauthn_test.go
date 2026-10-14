@@ -29,7 +29,7 @@ import (
 // stubWebAuthnCredentials records the scope each tool was invoked with.
 type stubWebAuthnCredentials struct {
 	gotTenant string
-	gotUser   string
+	gotUser   uint64
 	gotCredID string
 
 	list    []iam.WebAuthnCredentialSummary
@@ -37,17 +37,17 @@ type stubWebAuthnCredentials struct {
 	err     error
 }
 
-func (s *stubWebAuthnCredentials) ListCredentials(_ context.Context, tenantID, userID string) ([]iam.WebAuthnCredentialSummary, error) {
+func (s *stubWebAuthnCredentials) ListCredentials(_ context.Context, tenantID string, userID uint64) ([]iam.WebAuthnCredentialSummary, error) {
 	s.gotTenant, s.gotUser = tenantID, userID
 	return s.list, s.err
 }
 
-func (s *stubWebAuthnCredentials) DeleteCredential(_ context.Context, tenantID, userID, credentialID string) error {
+func (s *stubWebAuthnCredentials) DeleteCredential(_ context.Context, tenantID string, userID uint64, credentialID string) error {
 	s.gotTenant, s.gotUser, s.gotCredID = tenantID, userID, credentialID
 	return s.err
 }
 
-func (s *stubWebAuthnCredentials) DeleteCredentials(_ context.Context, tenantID, userID string) (int, error) {
+func (s *stubWebAuthnCredentials) DeleteCredentials(_ context.Context, tenantID string, userID uint64) (int, error) {
 	s.gotTenant, s.gotUser = tenantID, userID
 	return s.deleted, s.err
 }
@@ -99,15 +99,15 @@ func TestWebAuthnToolsExecute(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := reg.executeIAMWebAuthnCredentialsList(ctx,
-		map[string]interface{}{"tenant_id": "t1", "user_id": "u1"}); err != nil {
+		map[string]interface{}{"tenant_id": "t1", "user_id": "30001"}); err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if stub.gotTenant != "t1" || stub.gotUser != "u1" {
-		t.Errorf("list called with %s/%s, want t1/u1", stub.gotTenant, stub.gotUser)
+	if stub.gotTenant != "t1" || stub.gotUser != 30001 {
+		t.Errorf("list called with %s/%d, want t1/30001", stub.gotTenant, stub.gotUser)
 	}
 
 	if _, err := reg.executeIAMWebAuthnCredentialDelete(ctx,
-		map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "credential_id": "AbCd01"}); err != nil {
+		map[string]interface{}{"tenant_id": "t1", "user_id": "30001", "credential_id": "AbCd01"}); err != nil {
 		t.Fatalf("delete one: %v", err)
 	}
 	if stub.gotCredID != "AbCd01" {
@@ -115,7 +115,7 @@ func TestWebAuthnToolsExecute(t *testing.T) {
 	}
 
 	if _, err := reg.executeIAMWebAuthnCredentialsDeleteAll(ctx,
-		map[string]interface{}{"tenant_id": "t1", "user_id": "u1"}); err != nil {
+		map[string]interface{}{"tenant_id": "t1", "user_id": "30001"}); err != nil {
 		t.Fatalf("delete all: %v", err)
 	}
 }
@@ -127,7 +127,7 @@ func TestWebAuthnToolsValidateScope(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := reg.executeIAMWebAuthnCredentialsList(ctx,
-		map[string]interface{}{"user_id": "u1"}); err == nil {
+		map[string]interface{}{"user_id": "30001"}); err == nil {
 		t.Error("expected an error when tenant_id is missing")
 	}
 	if _, err := reg.executeIAMWebAuthnCredentialsList(ctx,
@@ -135,7 +135,7 @@ func TestWebAuthnToolsValidateScope(t *testing.T) {
 		t.Error("expected an error when user_id is missing")
 	}
 	if _, err := reg.executeIAMWebAuthnCredentialDelete(ctx,
-		map[string]interface{}{"tenant_id": "t1", "user_id": "u1"}); err == nil {
+		map[string]interface{}{"tenant_id": "t1", "user_id": "30001"}); err == nil {
 		t.Error("expected an error when credential_id is missing")
 	}
 }
@@ -147,7 +147,7 @@ func TestWebAuthnToolsUnconfigured(t *testing.T) {
 	reg := newWebAuthnTestRegistry(nil)
 
 	_, err := reg.executeIAMWebAuthnCredentialsList(context.Background(),
-		map[string]interface{}{"tenant_id": "t1", "user_id": "u1"})
+		map[string]interface{}{"tenant_id": "t1", "user_id": "30001"})
 	var unavailable *WebAuthnCredentialUnavailableError
 	if !errors.As(err, &unavailable) {
 		t.Errorf("error = %v, want *WebAuthnCredentialUnavailableError", err)

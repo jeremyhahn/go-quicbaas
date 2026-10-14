@@ -224,7 +224,7 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &rollbackErr) {
 			h.logAuditEvent(ctx, tenantID, iam.AuditEventUserManagement,
 				iam.AuditCategorySecurity, "create.rollback", iam.AuditOutcomeFailure,
-				&iam.AuditResource{Type: "user", ID: rollbackErr.UserID},
+				&iam.AuditResource{Type: "user", ID: strconv.FormatUint(rollbackErr.UserID, 10)},
 				map[string]interface{}{"error": rollbackErr.Rollback.Error()})
 		}
 		h.server.handleServiceError(w, r, err)
@@ -239,7 +239,7 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 			iam.AuditCategoryAdministration,
 			"create",
 			iam.AuditOutcomeSuccess,
-			&iam.AuditResource{Type: "user", ID: user.ID, Name: user.Email},
+			&iam.AuditResource{Type: "user", ID: strconv.FormatUint(user.ID, 10), Name: user.Email},
 			map[string]interface{}{"email": user.Email, "lifecycle": string(user.Lifecycle)},
 		)
 		RespondJSON(w, r, http.StatusCreated, user)
@@ -268,7 +268,7 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		iam.AuditCategoryAdministration,
 		"create",
 		iam.AuditOutcomeSuccess,
-		&iam.AuditResource{Type: "user", ID: user.ID, Name: user.Email},
+		&iam.AuditResource{Type: "user", ID: strconv.FormatUint(user.ID, 10), Name: user.Email},
 		// The STORED methods, not the requested ones: an audit line that
 		// reports the request cannot be used to answer what the account may
 		// actually present.
@@ -302,10 +302,8 @@ func (h *IAMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -351,10 +349,8 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -445,10 +441,8 @@ func (h *IAMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -493,10 +487,8 @@ func (h *IAMHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -567,10 +559,8 @@ func (h *IAMHandler) RevokeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 

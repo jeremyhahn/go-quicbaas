@@ -271,20 +271,17 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User, invi
 // to look up the user by email first. If that fails or if it's not an email,
 // it will fall back to looking up by user ID.
 func (a *IAMServiceAdapter) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
-	// Check if userID looks like an email address
+	// An identifier containing "@" is an email address. The lookup is
+	// tenant-scoped, so a record in another tenant is never read.
 	if strings.Contains(userID, "@") {
-		// Try to look up by email first. The lookup is tenant-scoped, so a
-		// record in another tenant is never read — there is no cross-tenant hit
-		// left to detect and discard.
-		user, err := a.identityStore.GetUserByEmail(ctx, tenantID, userID)
-		if err == nil {
-			return user, nil
-		}
-		// Email lookup failed, fall through to ID lookup
+		return a.identityStore.GetUserByEmail(ctx, tenantID, userID)
 	}
 
-	// Look up by user ID
-	return a.identityStore.GetUser(ctx, tenantID, userID)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.identityStore.GetUser(ctx, tenantID, id)
 }
 
 // UpdateUser updates an existing user.
@@ -366,18 +363,21 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 // If the userID looks like an email address (contains @), it will attempt
 // to resolve the email to a user ID first.
 func (a *IAMServiceAdapter) DeleteUser(ctx context.Context, tenantID, userID string) error {
-	// Check if userID looks like an email address
+	// An identifier containing "@" is an email address; resolve it to the
+	// user's id first.
 	if strings.Contains(userID, "@") {
-		// Try to look up by email first to get the actual user ID
 		user, err := a.identityStore.GetUserByEmail(ctx, tenantID, userID)
-		if err == nil {
-			// Use the actual user ID for deletion
-			userID = user.ID
+		if err != nil {
+			return err
 		}
-		// If email lookup fails, fall through to try deletion by ID
+		return a.identityStore.DeleteUser(ctx, tenantID, user.ID)
 	}
 
-	return a.identityStore.DeleteUser(ctx, tenantID, userID)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.identityStore.DeleteUser(ctx, tenantID, id)
 }
 
 // ListUsers lists users with pagination and optional filters.
@@ -466,12 +466,20 @@ func (a *IAMServiceAdapter) ListRoles(ctx context.Context, tenantID string, limi
 
 // AssignRole assigns a role to a user.
 func (a *IAMServiceAdapter) AssignRole(ctx context.Context, tenantID, userID, role string) error {
-	return a.identityStore.AssignRole(ctx, tenantID, userID, role)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.identityStore.AssignRole(ctx, tenantID, id, role)
 }
 
 // RevokeRole revokes a role from a user.
 func (a *IAMServiceAdapter) RevokeRole(ctx context.Context, tenantID, userID, role string) error {
-	return a.identityStore.RevokeRole(ctx, tenantID, userID, role)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.identityStore.RevokeRole(ctx, tenantID, id, role)
 }
 
 // ReconcileBuiltInRoles converges a tenant's stored built-in roles onto the
@@ -739,7 +747,11 @@ func (a *IAMServiceAdapter) GrantConsent(ctx context.Context, tenantID, userID s
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	return a.gdprManager.GrantConsent(ctx, tenantID, userID, purpose, version, expiresAt, ipAddress, userAgent)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.gdprManager.GrantConsent(ctx, tenantID, id, purpose, version, expiresAt, ipAddress, userAgent)
 }
 
 // WithdrawConsent withdraws a previously granted consent.
@@ -747,7 +759,11 @@ func (a *IAMServiceAdapter) WithdrawConsent(ctx context.Context, tenantID, userI
 	if a.gdprManager == nil {
 		return api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	return a.gdprManager.WithdrawConsent(ctx, tenantID, userID, purpose, ipAddress, userAgent)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return err
+	}
+	return a.gdprManager.WithdrawConsent(ctx, tenantID, id, purpose, ipAddress, userAgent)
 }
 
 // GetConsent retrieves a specific consent.
@@ -755,7 +771,11 @@ func (a *IAMServiceAdapter) GetConsent(ctx context.Context, tenantID, userID str
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	return a.gdprManager.GetConsent(ctx, tenantID, userID, purpose)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.gdprManager.GetConsent(ctx, tenantID, id, purpose)
 }
 
 // ListUserConsents lists all consents for a user.
@@ -763,7 +783,11 @@ func (a *IAMServiceAdapter) ListUserConsents(ctx context.Context, tenantID, user
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	return a.gdprManager.ListUserConsents(ctx, tenantID, userID)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.gdprManager.ListUserConsents(ctx, tenantID, id)
 }
 
 // =============================================================================
@@ -775,7 +799,11 @@ func (a *IAMServiceAdapter) RequestExport(ctx context.Context, tenantID, userID,
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	return a.gdprManager.RequestExport(ctx, tenantID, userID, requestedBy, format, includeCategories, excludeCategories)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.gdprManager.RequestExport(ctx, tenantID, id, requestedBy, format, includeCategories, excludeCategories)
 }
 
 // GetExportStatus retrieves the status of an export request.
@@ -803,7 +831,11 @@ func (a *IAMServiceAdapter) RequestDeletion(ctx context.Context, tenantID, userI
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	return a.gdprManager.RequestDeletion(ctx, tenantID, userID, requestedBy, reason, deleteCategories, preserveCategories, gracePeriodDays)
+	id, err := parseUserID("user_id", userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.gdprManager.RequestDeletion(ctx, tenantID, id, requestedBy, reason, deleteCategories, preserveCategories, gracePeriodDays)
 }
 
 // CancelDeletion cancels a pending deletion request.

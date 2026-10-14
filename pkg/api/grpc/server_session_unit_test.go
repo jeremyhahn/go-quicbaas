@@ -17,6 +17,7 @@ package grpc
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -70,8 +71,8 @@ func TestSessionServer_ListSessions(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success with sessions", func(t *testing.T) {
-		memService.CreateTestSession("tenant1", "user1")
-		memService.CreateTestSession("tenant1", "user2")
+		memService.CreateTestSession("tenant1", 20001)
+		memService.CreateTestSession("tenant1", 20002)
 
 		resp, err := srv.ListSessions(ctx, &iampb.ListSessionsRequest{
 			TenantId: "tenant1",
@@ -85,7 +86,7 @@ func TestSessionServer_ListSessions(t *testing.T) {
 	t.Run("success with user filter", func(t *testing.T) {
 		resp, err := srv.ListSessions(ctx, &iampb.ListSessionsRequest{
 			TenantId: "tenant1",
-			UserId:   "user1",
+			UserId:   "20001",
 		})
 
 		require.NoError(t, err)
@@ -120,7 +121,7 @@ func TestSessionServer_GetSession(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		session := memService.CreateTestSession("tenant1", "user1")
+		session := memService.CreateTestSession("tenant1", 20001)
 
 		resp, err := srv.GetSession(ctx, &iampb.GetSessionRequest{
 			SessionId: session.ID,
@@ -129,7 +130,7 @@ func TestSessionServer_GetSession(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
 		assert.Equal(t, session.ID, resp.Id)
-		assert.Equal(t, session.UserID, resp.UserId)
+		assert.Equal(t, strconv.FormatUint(session.UserID, 10), resp.UserId)
 		assert.Equal(t, session.TenantID, resp.TenantId)
 	})
 
@@ -159,7 +160,7 @@ func TestSessionServer_RevokeSession(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		session := memService.CreateTestSession("tenant1", "user-revoke")
+		session := memService.CreateTestSession("tenant1", 50001)
 
 		resp, err := srv.RevokeSession(ctx, &iampb.RevokeSessionRequest{
 			SessionId: session.ID,
@@ -190,8 +191,8 @@ func TestSessionServer_RevokeAllSessions(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		memService.CreateTestSession("tenant-all", "user-all-1")
-		memService.CreateTestSession("tenant-all", "user-all-2")
+		memService.CreateTestSession("tenant-all", 50002)
+		memService.CreateTestSession("tenant-all", 50003)
 
 		resp, err := srv.RevokeAllSessions(ctx, &iampb.RevokeAllSessionsRequest{
 			TenantId: "tenant-all",
@@ -203,12 +204,12 @@ func TestSessionServer_RevokeAllSessions(t *testing.T) {
 	})
 
 	t.Run("success with user filter", func(t *testing.T) {
-		memService.CreateTestSession("tenant-filter", "user-filter-1")
-		memService.CreateTestSession("tenant-filter", "user-filter-2")
+		memService.CreateTestSession("tenant-filter", 50004)
+		memService.CreateTestSession("tenant-filter", 50005)
 
 		resp, err := srv.RevokeAllSessions(ctx, &iampb.RevokeAllSessionsRequest{
 			TenantId: "tenant-filter",
-			UserId:   "user-filter-1",
+			UserId:   "50004",
 		})
 
 		require.NoError(t, err)
@@ -231,10 +232,10 @@ func TestSessionServer_RevokeOtherSessions(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		session1 := memService.CreateTestSession("tenant-other", "user-other")
+		session1 := memService.CreateTestSession("tenant-other", 50006)
 		memService.AddSession(&iam.Session{
 			ID:           "sess-other-2",
-			UserID:       "user-other",
+			UserID:       50006,
 			TenantID:     "tenant-other",
 			Created:      time.Now(),
 			LastActivity: time.Now(),
@@ -287,7 +288,7 @@ func TestSessionToProto(t *testing.T) {
 		expires := now.Add(24 * time.Hour)
 		session := &iam.Session{
 			ID:           "test-sess-id",
-			UserID:       "test-user-id",
+			UserID:       50007,
 			TenantID:     "test-tenant-id",
 			Created:      now,
 			LastActivity: now,
@@ -302,7 +303,7 @@ func TestSessionToProto(t *testing.T) {
 
 		assert.NotNil(t, result)
 		assert.Equal(t, session.ID, result.Id)
-		assert.Equal(t, session.UserID, result.UserId)
+		assert.Equal(t, strconv.FormatUint(session.UserID, 10), result.UserId)
 		assert.Equal(t, session.TenantID, result.TenantId)
 		assert.True(t, result.MfaVerified)
 		assert.Equal(t, session.IPAddress, result.IpAddress)
@@ -323,7 +324,7 @@ func TestMemorySessionService(t *testing.T) {
 		svc := NewMemorySessionService()
 		session := &iam.Session{
 			ID:       "add-test",
-			UserID:   "user1",
+			UserID:   20001,
 			TenantID: "tenant1",
 		}
 		svc.AddSession(session)
@@ -335,28 +336,28 @@ func TestMemorySessionService(t *testing.T) {
 
 	t.Run("CreateTestSession", func(t *testing.T) {
 		svc := NewMemorySessionService()
-		session := svc.CreateTestSession("tenant1", "user1")
+		session := svc.CreateTestSession("tenant1", 20001)
 
 		assert.NotEmpty(t, session.ID)
-		assert.Equal(t, "user1", session.UserID)
+		assert.Equal(t, uint64(20001), session.UserID)
 		assert.Equal(t, "tenant1", session.TenantID)
 		assert.False(t, session.Created.IsZero())
 	})
 
 	t.Run("ListSessions with filtering", func(t *testing.T) {
 		svc := NewMemorySessionService()
-		svc.CreateTestSession("t1", "u1")
-		svc.CreateTestSession("t1", "u2")
-		svc.CreateTestSession("t2", "u1")
+		svc.CreateTestSession("t1", 30001)
+		svc.CreateTestSession("t1", 30002)
+		svc.CreateTestSession("t2", 30001)
 
 		// Filter by tenant
-		sessions, total, err := svc.ListSessions(ctx, "t1", "", 10, 0)
+		sessions, total, err := svc.ListSessions(ctx, "t1", 0, 10, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 2, total)
 		assert.Len(t, sessions, 2)
 
 		// Filter by tenant and user
-		sessions, total, err = svc.ListSessions(ctx, "t1", "u1", 10, 0)
+		sessions, total, err = svc.ListSessions(ctx, "t1", 30001, 10, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 1, total)
 		assert.Len(t, sessions, 1)
@@ -368,17 +369,17 @@ func TestMemorySessionService(t *testing.T) {
 			svc.AddSession(&iam.Session{
 				ID:       "pag-" + string(rune('a'+i)),
 				TenantID: "pag-tenant",
-				UserID:   "pag-user",
+				UserID:   50008,
 			})
 		}
 
 		// Test limit
-		sessions, _, err := svc.ListSessions(ctx, "pag-tenant", "", 2, 0)
+		sessions, _, err := svc.ListSessions(ctx, "pag-tenant", 0, 2, 0)
 		require.NoError(t, err)
 		assert.Len(t, sessions, 2)
 
 		// Test offset beyond range
-		sessions, total, err := svc.ListSessions(ctx, "pag-tenant", "", 10, 100)
+		sessions, total, err := svc.ListSessions(ctx, "pag-tenant", 0, 10, 100)
 		require.NoError(t, err)
 		assert.Len(t, sessions, 0)
 		assert.Equal(t, 5, total)
@@ -386,7 +387,7 @@ func TestMemorySessionService(t *testing.T) {
 
 	t.Run("RevokeSession", func(t *testing.T) {
 		svc := NewMemorySessionService()
-		session := svc.CreateTestSession("rev-tenant", "rev-user")
+		session := svc.CreateTestSession("rev-tenant", 50009)
 
 		err := svc.RevokeSession(ctx, session.ID)
 		require.NoError(t, err)
@@ -397,24 +398,24 @@ func TestMemorySessionService(t *testing.T) {
 
 	t.Run("RevokeAllSessions", func(t *testing.T) {
 		svc := NewMemorySessionService()
-		svc.CreateTestSession("all-tenant", "all-user1")
-		svc.CreateTestSession("all-tenant", "all-user2")
-		svc.CreateTestSession("other-tenant", "other-user")
+		svc.CreateTestSession("all-tenant", 50010)
+		svc.CreateTestSession("all-tenant", 50011)
+		svc.CreateTestSession("other-tenant", 50012)
 
-		count, err := svc.RevokeAllSessions(ctx, "all-tenant", "")
+		count, err := svc.RevokeAllSessions(ctx, "all-tenant", 0)
 		require.NoError(t, err)
 		assert.Equal(t, 2, count)
 
 		// Verify other tenant's session still exists
-		sessions, _, _ := svc.ListSessions(ctx, "other-tenant", "", 10, 0)
+		sessions, _, _ := svc.ListSessions(ctx, "other-tenant", 0, 10, 0)
 		assert.Len(t, sessions, 1)
 	})
 
 	t.Run("RevokeOtherSessions", func(t *testing.T) {
 		svc := NewMemorySessionService()
-		keep := &iam.Session{ID: "keep-me", TenantID: "ro-tenant", UserID: "ro-user"}
-		other1 := &iam.Session{ID: "revoke-1", TenantID: "ro-tenant", UserID: "ro-user"}
-		other2 := &iam.Session{ID: "revoke-2", TenantID: "ro-tenant", UserID: "ro-user"}
+		keep := &iam.Session{ID: "keep-me", TenantID: "ro-tenant", UserID: 50013}
+		other1 := &iam.Session{ID: "revoke-1", TenantID: "ro-tenant", UserID: 50013}
+		other2 := &iam.Session{ID: "revoke-2", TenantID: "ro-tenant", UserID: 50013}
 
 		svc.AddSession(keep)
 		svc.AddSession(other1)
@@ -458,8 +459,8 @@ func TestSessionServer_NewSessionServer(t *testing.T) {
 
 func TestSessionServer_ListSessions_Success(t *testing.T) {
 	srv, svc := newTestSessionServer(t)
-	svc.CreateTestSession("tenant-1", "user-1")
-	svc.CreateTestSession("tenant-1", "user-2")
+	svc.CreateTestSession("tenant-1", 10001)
+	svc.CreateTestSession("tenant-1", 10002)
 
 	resp, err := srv.ListSessions(context.Background(), &iampb.ListSessionsRequest{
 		TenantId: "tenant-1",
@@ -480,12 +481,12 @@ func TestSessionServer_ListSessions_EmptyTenantID(t *testing.T) {
 
 func TestSessionServer_ListSessions_FilterByUser(t *testing.T) {
 	srv, svc := newTestSessionServer(t)
-	svc.CreateTestSession("tenant-1", "user-1")
-	svc.CreateTestSession("tenant-1", "user-2")
+	svc.CreateTestSession("tenant-1", 10001)
+	svc.CreateTestSession("tenant-1", 10002)
 
 	resp, err := srv.ListSessions(context.Background(), &iampb.ListSessionsRequest{
 		TenantId: "tenant-1",
-		UserId:   "user-1",
+		UserId:   "10001",
 	})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -494,7 +495,7 @@ func TestSessionServer_ListSessions_FilterByUser(t *testing.T) {
 
 func TestSessionServer_GetSession_Success(t *testing.T) {
 	srv, svc := newTestSessionServer(t)
-	sess := svc.CreateTestSession("tenant-1", "user-1")
+	sess := svc.CreateTestSession("tenant-1", 10001)
 
 	resp, err := srv.GetSession(context.Background(), &iampb.GetSessionRequest{
 		SessionId: sess.ID,
@@ -502,7 +503,7 @@ func TestSessionServer_GetSession_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 	assert.Equal(t, sess.ID, resp.Id)
-	assert.Equal(t, "user-1", resp.UserId)
+	assert.Equal(t, "10001", resp.UserId)
 	assert.Equal(t, "tenant-1", resp.TenantId)
 }
 
@@ -526,7 +527,7 @@ func TestSessionServer_GetSession_NotFound(t *testing.T) {
 
 func TestSessionServer_RevokeSession_Success(t *testing.T) {
 	srv, svc := newTestSessionServer(t)
-	sess := svc.CreateTestSession("tenant-1", "user-1")
+	sess := svc.CreateTestSession("tenant-1", 10001)
 
 	resp, err := srv.RevokeSession(context.Background(), &iampb.RevokeSessionRequest{
 		SessionId: sess.ID,
@@ -552,12 +553,12 @@ func TestSessionServer_RevokeSession_EmptyID(t *testing.T) {
 
 func TestSessionServer_RevokeAllSessions_Success(t *testing.T) {
 	srv, svc := newTestSessionServer(t)
-	svc.CreateTestSession("tenant-1", "user-1")
+	svc.CreateTestSession("tenant-1", 10001)
 
 	// Add a second session for the same user manually
 	svc.AddSession(&iam.Session{
 		ID:       "sess-extra",
-		UserID:   "user-1",
+		UserID:   10001,
 		TenantID: "tenant-1",
 		Created:  time.Now(),
 		Expires:  time.Now().Add(24 * time.Hour),
@@ -565,7 +566,7 @@ func TestSessionServer_RevokeAllSessions_Success(t *testing.T) {
 
 	resp, err := srv.RevokeAllSessions(context.Background(), &iampb.RevokeAllSessionsRequest{
 		TenantId: "tenant-1",
-		UserId:   "user-1",
+		UserId:   "10001",
 	})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, resp.RevokedCount, int32(1))
@@ -582,10 +583,10 @@ func TestSessionServer_RevokeAllSessions_EmptyTenantID(t *testing.T) {
 
 func TestSessionServer_RevokeOtherSessions_Success(t *testing.T) {
 	srv, svc := newTestSessionServer(t)
-	keepSess := svc.CreateTestSession("tenant-1", "user-1")
+	keepSess := svc.CreateTestSession("tenant-1", 10001)
 	svc.AddSession(&iam.Session{
 		ID:       "sess-other-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		TenantID: "tenant-1",
 		Created:  time.Now(),
 		Expires:  time.Now().Add(24 * time.Hour),
@@ -639,7 +640,7 @@ func TestSessionToProto_FullSession(t *testing.T) {
 	now := time.Now()
 	sess := &iam.Session{
 		ID:           "sess-123",
-		UserID:       "user-1",
+		UserID:       10001,
 		TenantID:     "tenant-1",
 		Created:      now,
 		LastActivity: now.Add(5 * time.Minute),
@@ -653,7 +654,7 @@ func TestSessionToProto_FullSession(t *testing.T) {
 	result := sessionToProto(sess)
 	assert.NotNil(t, result)
 	assert.Equal(t, "sess-123", result.Id)
-	assert.Equal(t, "user-1", result.UserId)
+	assert.Equal(t, "10001", result.UserId)
 	assert.Equal(t, "tenant-1", result.TenantId)
 	assert.True(t, result.MfaVerified)
 	assert.Equal(t, "192.168.1.1", result.IpAddress)
@@ -681,9 +682,9 @@ func TestMemorySessionService_CreateAndGet(t *testing.T) {
 	svc := NewMemorySessionService()
 	assert.NotNil(t, svc)
 
-	sess := svc.CreateTestSession("tenant-1", "user-1")
+	sess := svc.CreateTestSession("tenant-1", 10001)
 	assert.NotNil(t, sess)
-	assert.Equal(t, "user-1", sess.UserID)
+	assert.Equal(t, uint64(10001), sess.UserID)
 	assert.Equal(t, "tenant-1", sess.TenantID)
 
 	got, err := svc.GetSession(context.Background(), sess.ID)
@@ -699,16 +700,16 @@ func TestMemorySessionService_GetSession_NotFound(t *testing.T) {
 
 func TestMemorySessionService_ListSessions_AllForTenant(t *testing.T) {
 	svc := NewMemorySessionService()
-	svc.CreateTestSession("tenant-1", "user-1")
+	svc.CreateTestSession("tenant-1", 10001)
 	svc.AddSession(&iam.Session{
 		ID:       "sess-extra",
-		UserID:   "user-2",
+		UserID:   10002,
 		TenantID: "tenant-1",
 		Created:  time.Now(),
 		Expires:  time.Now().Add(time.Hour),
 	})
 
-	sessions, total, err := svc.ListSessions(context.Background(), "tenant-1", "", 0, 0)
+	sessions, total, err := svc.ListSessions(context.Background(), "tenant-1", 0, 0, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, total)
 	assert.Len(t, sessions, 2)
@@ -719,7 +720,7 @@ func TestMemorySessionService_ListSessions_WithPagination(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		svc.AddSession(&iam.Session{
 			ID:       "sess-" + string(rune('a'+i)),
-			UserID:   "user-1",
+			UserID:   10001,
 			TenantID: "tenant-1",
 			Created:  time.Now(),
 			Expires:  time.Now().Add(time.Hour),
@@ -727,13 +728,13 @@ func TestMemorySessionService_ListSessions_WithPagination(t *testing.T) {
 	}
 
 	// With limit
-	sessions, total, err := svc.ListSessions(context.Background(), "tenant-1", "user-1", 2, 0)
+	sessions, total, err := svc.ListSessions(context.Background(), "tenant-1", 10001, 2, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 5, total)
 	assert.Len(t, sessions, 2)
 
 	// With offset past end
-	sessions, total, err = svc.ListSessions(context.Background(), "tenant-1", "user-1", 0, 100)
+	sessions, total, err = svc.ListSessions(context.Background(), "tenant-1", 10001, 0, 100)
 	require.NoError(t, err)
 	assert.Equal(t, 5, total)
 	assert.Empty(t, sessions)
@@ -741,7 +742,7 @@ func TestMemorySessionService_ListSessions_WithPagination(t *testing.T) {
 
 func TestMemorySessionService_RevokeSession(t *testing.T) {
 	svc := NewMemorySessionService()
-	sess := svc.CreateTestSession("tenant-1", "user-1")
+	sess := svc.CreateTestSession("tenant-1", 10001)
 
 	err := svc.RevokeSession(context.Background(), sess.ID)
 	require.NoError(t, err)
@@ -752,33 +753,33 @@ func TestMemorySessionService_RevokeSession(t *testing.T) {
 
 func TestMemorySessionService_RevokeAllSessions(t *testing.T) {
 	svc := NewMemorySessionService()
-	svc.CreateTestSession("tenant-1", "user-1")
+	svc.CreateTestSession("tenant-1", 10001)
 	svc.AddSession(&iam.Session{
-		ID: "extra-sess", UserID: "user-1", TenantID: "tenant-1",
+		ID: "extra-sess", UserID: 10001, TenantID: "tenant-1",
 		Created: time.Now(), Expires: time.Now().Add(time.Hour),
 	})
 	// Different tenant session should not be revoked
-	svc.CreateTestSession("tenant-2", "user-1")
+	svc.CreateTestSession("tenant-2", 10001)
 
-	count, err := svc.RevokeAllSessions(context.Background(), "tenant-1", "user-1")
+	count, err := svc.RevokeAllSessions(context.Background(), "tenant-1", 10001)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 
 	// Verify tenant-2 session remains
-	sessions, _, err := svc.ListSessions(context.Background(), "tenant-2", "", 0, 0)
+	sessions, _, err := svc.ListSessions(context.Background(), "tenant-2", 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, sessions, 1)
 }
 
 func TestMemorySessionService_RevokeOtherSessions(t *testing.T) {
 	svc := NewMemorySessionService()
-	keepSess := svc.CreateTestSession("tenant-1", "user-1")
+	keepSess := svc.CreateTestSession("tenant-1", 10001)
 	svc.AddSession(&iam.Session{
-		ID: "other-1", UserID: "user-1", TenantID: "tenant-1",
+		ID: "other-1", UserID: 10001, TenantID: "tenant-1",
 		Created: time.Now(), Expires: time.Now().Add(time.Hour),
 	})
 	svc.AddSession(&iam.Session{
-		ID: "other-2", UserID: "user-1", TenantID: "tenant-1",
+		ID: "other-2", UserID: 10001, TenantID: "tenant-1",
 		Created: time.Now(), Expires: time.Now().Add(time.Hour),
 	})
 
@@ -796,7 +797,7 @@ func TestMemorySessionService_AddSession(t *testing.T) {
 	svc := NewMemorySessionService()
 	sess := &iam.Session{
 		ID:       "manual-sess",
-		UserID:   "user-1",
+		UserID:   10001,
 		TenantID: "tenant-1",
 		Created:  time.Now(),
 		Expires:  time.Now().Add(time.Hour),

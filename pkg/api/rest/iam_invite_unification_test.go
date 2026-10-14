@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -49,7 +50,8 @@ func (s *markUsedFailingInviteStore) Lookup(ctx context.Context, tenantID, token
 
 func (s *markUsedFailingInviteStore) Create(
 	ctx context.Context,
-	tenantID, userID string,
+	tenantID string,
+	userID uint64,
 	ttl time.Duration,
 ) (string, *iam.InviteRecord, error) {
 	return s.inner.Create(ctx, tenantID, userID, ttl)
@@ -89,11 +91,11 @@ func (s *unificationInviteService) GetIdentityStore(_ context.Context) (*iam.Ide
 // newUnificationInviteHandler builds an IAMHandler whose service exposes the
 // supplied invite store. It returns the handler and a pending user seeded in the
 // identity store (so email lookups during activation succeed).
-func newUnificationInviteHandler(t *testing.T, inviteStore iam.InviteStore) (*IAMHandler, string, string) {
+func newUnificationInviteHandler(t *testing.T, inviteStore iam.InviteStore) (*IAMHandler, string, uint64) {
 	t.Helper()
 
 	const tenantID = "tenant-unify"
-	const userID = "74"
+	const userID uint64 = 74
 	const email = "unify@example.com"
 
 	memStorage := iam.NewMemoryStorage()
@@ -150,7 +152,7 @@ func TestInvite_FirstBootStyleInviteIsRetrievableThroughREST(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "banner token must resolve, not 404; body: %s", w.Body.String())
 	var resp InviteMetadataResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, userID, resp.UserID)
+	assert.Equal(t, strconv.FormatUint(userID, 10), resp.UserID)
 	assert.NotEmpty(t, resp.AuthMethods)
 }
 

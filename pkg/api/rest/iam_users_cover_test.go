@@ -35,7 +35,7 @@ func TestUpdateUser_Success(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "T"}))
 	require.NoError(t, memStorage.CreateUser(ctx, &iam.User{
-		ID: "11", TenantID: "tenant1", Email: "user1@example.com", Name: "User 1",
+		ID: 11, TenantID: "tenant1", Email: "user1@example.com", Name: "User 1",
 	}))
 
 	body := `{"name":"Renamed","enabled":true}`
@@ -82,7 +82,7 @@ func TestListUsers_Success(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "T"}))
-	require.NoError(t, memStorage.CreateUser(ctx, &iam.User{ID: "1", TenantID: "tenant1", Email: "u1@example.com"}))
+	require.NoError(t, memStorage.CreateUser(ctx, &iam.User{ID: 1, TenantID: "tenant1", Email: "u1@example.com"}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/users?limit=10&offset=0", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
@@ -107,7 +107,7 @@ func TestUpdateUser_RefusesTheTerminalDeletingState(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "T"}))
 	require.NoError(t, memStorage.CreateUser(ctx, &iam.User{
-		ID: "11", TenantID: "tenant1", Email: "user1@example.com",
+		ID: 11, TenantID: "tenant1", Email: "user1@example.com",
 		Username: "user1", Name: "User 1", Lifecycle: iam.LifecycleActive,
 	}))
 
@@ -120,7 +120,7 @@ func TestUpdateUser_RefusesTheTerminalDeletingState(t *testing.T) {
 		"a deletion claim was accepted as an ordinary update: %s", w.Body.String())
 
 	// Refused means the account is untouched, not "refused after writing".
-	stored, err := memStorage.GetUser(ctx, "tenant1", "11")
+	stored, err := memStorage.GetUser(ctx, "tenant1", 11)
 	require.NoError(t, err)
 	assert.Equal(t, iam.LifecycleActive, stored.Lifecycle,
 		"the account was stranded in a terminal state by a refused update")
@@ -152,7 +152,7 @@ func TestUpdateUser_StillAcceptsTheReversibleStates(t *testing.T) {
 			ctx := context.Background()
 			require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "T"}))
 			require.NoError(t, memStorage.CreateUser(ctx, &iam.User{
-				ID: "11", TenantID: "tenant1", Email: "user1@example.com",
+				ID: 11, TenantID: "tenant1", Email: "user1@example.com",
 				Username: "user1", Name: "User 1", Lifecycle: iam.LifecycleActive,
 			}))
 
@@ -163,7 +163,7 @@ func TestUpdateUser_StillAcceptsTheReversibleStates(t *testing.T) {
 			handler.UpdateUser(w, req)
 			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
-			stored, err := memStorage.GetUser(ctx, "tenant1", "11")
+			stored, err := memStorage.GetUser(ctx, "tenant1", 11)
 			require.NoError(t, err)
 			assert.Equal(t, state, stored.Lifecycle)
 		})
@@ -182,7 +182,7 @@ func TestUpdateUser_PendingIsRefusedByTheTransitionTableNotTheGuard(t *testing.T
 	ctx := context.Background()
 	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "T"}))
 	require.NoError(t, memStorage.CreateUser(ctx, &iam.User{
-		ID: "11", TenantID: "tenant1", Email: "user1@example.com",
+		ID: 11, TenantID: "tenant1", Email: "user1@example.com",
 		Username: "user1", Name: "User 1", Lifecycle: iam.LifecycleActive,
 	}))
 
@@ -195,7 +195,7 @@ func TestUpdateUser_PendingIsRefusedByTheTransitionTableNotTheGuard(t *testing.T
 	assert.Contains(t, w.Body.String(), "illegal lifecycle transition",
 		"pending must be refused as an illegal MOVE, not as an unnameable state")
 
-	stored, err := memStorage.GetUser(ctx, "tenant1", "11")
+	stored, err := memStorage.GetUser(ctx, "tenant1", 11)
 	require.NoError(t, err)
 	assert.Equal(t, iam.LifecycleActive, stored.Lifecycle)
 }

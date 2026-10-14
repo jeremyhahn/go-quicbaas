@@ -75,6 +75,12 @@ type TriageSchedulerConfig struct {
 	// TriageAgents decides the Agent or pool a project triages with, which
 	// the job declares as its lead. See TriageAgentPolicy.
 	TriageAgents TriageAgentPolicy
+
+	// Reruns records a nudge that found the project already being triaged,
+	// so the run in flight lists again (see triage_rerun.go). Nil keeps the
+	// behaviour from before go-quicbaas#894: such a nudge is dropped, and the
+	// issue it was about waits for the next nudge or the periodic sweep.
+	Reruns TriageRerunMarks
 }
 
 // TriageScheduler turns a nudge into a triage job.
@@ -82,6 +88,7 @@ type TriageScheduler struct {
 	bindings     BindingReader
 	jobs         TriageJobStarter
 	triageAgents TriageAgentPolicy
+	reruns       TriageRerunMarks
 
 	// failures are the per-tenant and per-project failures a sweep deferred,
 	// drained by SweepFailures. Only the sweep goroutine touches them, and
@@ -100,7 +107,7 @@ func NewTriageScheduler(cfg TriageSchedulerConfig) (*TriageScheduler, error) {
 	case cfg.Jobs == nil:
 		return nil, &InvalidInputError{Field: "jobs", Message: "a nudge that starts no job changes nothing"}
 	}
-	return &TriageScheduler{bindings: cfg.Bindings, jobs: cfg.Jobs, triageAgents: cfg.TriageAgents}, nil
+	return &TriageScheduler{bindings: cfg.Bindings, jobs: cfg.Jobs, triageAgents: cfg.TriageAgents, reruns: cfg.Reruns}, nil
 }
 
 // NudgeProject implements ProjectNudger: a verified delivery asks for the
@@ -152,9 +159,18 @@ func (s *TriageScheduler) TriageProject(ctx context.Context, tenantID, projectID
 	}
 	if jobAlreadyRunning(err) {
 		// The project is already being triaged. That is the per-project
-		// bound doing its job, not a failure: the run in flight will see
-		// whatever this delivery was about, because it lists the issues
-		// when it starts.
+		// bound doing its job, not a failure — but the run in flight may
+		// have listed the issues before this delivery's issue existed, so
+		// the nudge leaves a mark that sends that run round again (see
+		// triage_rerun.go). A mark that cannot be written is returned: the
+		// nudge was neither run nor recorded, and only the sweep would
+		// catch it.
+		if s.reruns == nil {
+			return nil
+		}
+		if err := s.reruns.MarkTriageRerun(ctx, tenantID, projectID); err != nil {
+			return &TriageRerunUnrecordedError{ProjectID: projectID, Cause: err}
+		}
 		return nil
 	}
 	if errors.Is(err, orchestration.ErrProjectParked) {

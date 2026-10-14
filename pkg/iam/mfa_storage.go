@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -22,29 +23,29 @@ import (
 // MFAStorage defines the storage interface for MFA data.
 type MFAStorage interface {
 	// Secret operations
-	GetSecret(ctx context.Context, userID, tenantID string) (*MFASecret, error)
+	GetSecret(ctx context.Context, userID uint64, tenantID string) (*MFASecret, error)
 	SaveSecret(ctx context.Context, secret *MFASecret) error
-	DeleteSecret(ctx context.Context, userID, tenantID string) error
+	DeleteSecret(ctx context.Context, userID uint64, tenantID string) error
 
 	// Enrollment operations
 	GetEnrollment(ctx context.Context, enrollmentID string) (*MFAEnrollment, error)
 	SaveEnrollment(ctx context.Context, enrollment *MFAEnrollment) error
 	DeleteEnrollment(ctx context.Context, enrollmentID string) error
-	DeleteEnrollmentsByUser(ctx context.Context, userID, tenantID string) error
+	DeleteEnrollmentsByUser(ctx context.Context, userID uint64, tenantID string) error
 
 	// HasActiveEnrollment checks whether the user has a non-expired enrollment.
-	HasActiveEnrollment(ctx context.Context, userID, tenantID string) (bool, error)
+	HasActiveEnrollment(ctx context.Context, userID uint64, tenantID string) (bool, error)
 
 	// Challenge operations
 	GetChallenge(ctx context.Context, challengeID string) (*MFAChallenge, error)
 	SaveChallenge(ctx context.Context, challenge *MFAChallenge) error
 	DeleteChallenge(ctx context.Context, challengeID string) error
-	DeleteChallengesByUser(ctx context.Context, userID, tenantID string) error
+	DeleteChallengesByUser(ctx context.Context, userID uint64, tenantID string) error
 
 	// Backup code operations
-	GetBackupCodes(ctx context.Context, userID, tenantID string) (*BackupCodeSet, error)
+	GetBackupCodes(ctx context.Context, userID uint64, tenantID string) (*BackupCodeSet, error)
 	SaveBackupCodes(ctx context.Context, codes *BackupCodeSet) error
-	DeleteBackupCodes(ctx context.Context, userID, tenantID string) error
+	DeleteBackupCodes(ctx context.Context, userID uint64, tenantID string) error
 
 	// Cleanup
 	CleanupExpired(ctx context.Context) (int, error)
@@ -69,12 +70,12 @@ func NewMemoryMFAStorage() *MemoryMFAStorage {
 	}
 }
 
-func (m *MemoryMFAStorage) secretKey(userID, tenantID string) string {
-	return tenantID + ":" + userID
+func (m *MemoryMFAStorage) secretKey(userID uint64, tenantID string) string {
+	return tenantID + ":" + strconv.FormatUint(userID, 10)
 }
 
 // GetSecret retrieves an MFA secret for a user.
-func (m *MemoryMFAStorage) GetSecret(ctx context.Context, userID, tenantID string) (*MFASecret, error) {
+func (m *MemoryMFAStorage) GetSecret(ctx context.Context, userID uint64, tenantID string) (*MFASecret, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -111,7 +112,7 @@ func (m *MemoryMFAStorage) SaveSecret(ctx context.Context, secret *MFASecret) er
 }
 
 // DeleteSecret removes an MFA secret.
-func (m *MemoryMFAStorage) DeleteSecret(ctx context.Context, userID, tenantID string) error {
+func (m *MemoryMFAStorage) DeleteSecret(ctx context.Context, userID uint64, tenantID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -174,7 +175,7 @@ func (m *MemoryMFAStorage) DeleteEnrollment(ctx context.Context, enrollmentID st
 }
 
 // DeleteEnrollmentsByUser removes all enrollments for a user.
-func (m *MemoryMFAStorage) DeleteEnrollmentsByUser(ctx context.Context, userID, tenantID string) error {
+func (m *MemoryMFAStorage) DeleteEnrollmentsByUser(ctx context.Context, userID uint64, tenantID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -191,7 +192,7 @@ func (m *MemoryMFAStorage) DeleteEnrollmentsByUser(ctx context.Context, userID, 
 }
 
 // HasActiveEnrollment checks whether the user has a non-expired enrollment.
-func (m *MemoryMFAStorage) HasActiveEnrollment(ctx context.Context, userID, tenantID string) (bool, error) {
+func (m *MemoryMFAStorage) HasActiveEnrollment(ctx context.Context, userID uint64, tenantID string) (bool, error) {
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
@@ -259,7 +260,7 @@ func (m *MemoryMFAStorage) DeleteChallenge(ctx context.Context, challengeID stri
 }
 
 // DeleteChallengesByUser removes all challenges for a user.
-func (m *MemoryMFAStorage) DeleteChallengesByUser(ctx context.Context, userID, tenantID string) error {
+func (m *MemoryMFAStorage) DeleteChallengesByUser(ctx context.Context, userID uint64, tenantID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -276,7 +277,7 @@ func (m *MemoryMFAStorage) DeleteChallengesByUser(ctx context.Context, userID, t
 }
 
 // GetBackupCodes retrieves backup codes for a user.
-func (m *MemoryMFAStorage) GetBackupCodes(ctx context.Context, userID, tenantID string) (*BackupCodeSet, error) {
+func (m *MemoryMFAStorage) GetBackupCodes(ctx context.Context, userID uint64, tenantID string) (*BackupCodeSet, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -310,7 +311,7 @@ func (m *MemoryMFAStorage) SaveBackupCodes(ctx context.Context, codes *BackupCod
 	if codes.ID == "" {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.backup", "backup code set ID is required", nil)
 	}
-	if codes.UserID == "" {
+	if codes.UserID == 0 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.backup", "user ID is required", nil)
 	}
 	if codes.TenantID == "" {
@@ -335,7 +336,7 @@ func (m *MemoryMFAStorage) SaveBackupCodes(ctx context.Context, codes *BackupCod
 }
 
 // DeleteBackupCodes removes backup codes for a user.
-func (m *MemoryMFAStorage) DeleteBackupCodes(ctx context.Context, userID, tenantID string) error {
+func (m *MemoryMFAStorage) DeleteBackupCodes(ctx context.Context, userID uint64, tenantID string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

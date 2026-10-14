@@ -93,13 +93,13 @@ func TestBackendFederationStorage_UpdateDeleteLink(t *testing.T) {
 	store := NewBackendFederationStorage(kv)
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
-	link := testLink("acme", "u1", "l1", "p1", "ext-123")
+	link := testLink("acme", 30001, "l1", "p1", "ext-123")
 	if err := store.CreateLink(ctx, link); err != nil {
 		t.Fatalf("CreateLink: %v", err)
 	}
 
 	// Change external id and owner; both indexes must follow.
-	updated := testLink("acme", "u2", link.ID, "p1", "ext-456")
+	updated := testLink("acme", 30002, link.ID, "p1", "ext-456")
 	if err := store.UpdateLink(ctx, updated); err != nil {
 		t.Fatalf("UpdateLink: %v", err)
 	}
@@ -107,16 +107,16 @@ func TestBackendFederationStorage_UpdateDeleteLink(t *testing.T) {
 		t.Fatalf("old external index still resolves: %v", err)
 	}
 	byExt, err := store.GetLinkByExternal(ctx, "p1", "ext-456")
-	if err != nil || byExt.UserID != "u2" {
+	if err != nil || byExt.UserID != 30002 {
 		t.Fatalf("GetLinkByExternal(new) = %v, %v", byExt, err)
 	}
-	byUser, err := store.GetLinksByUser(ctx, "u2")
+	byUser, err := store.GetLinksByUser(ctx, 30002)
 	if err != nil || len(byUser) != 1 {
 		t.Fatalf("GetLinksByUser(u2) = %d, %v; want 1, nil", len(byUser), err)
 	}
 
 	// Updating a missing link errors.
-	missing := testLink("acme", "u9", "missing", "p1", "ext-x")
+	missing := testLink("acme", 30009, "missing", "p1", "ext-x")
 	if err := store.UpdateLink(ctx, missing); !errors.Is(err, ErrLinkNotFound) {
 		t.Fatalf("UpdateLink(missing) err = %v, want ErrLinkNotFound", err)
 	}

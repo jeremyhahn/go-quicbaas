@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -138,7 +139,9 @@ func TestREST_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code,
 		"an ordinary update was allowed to claim the deleting state: %s", w.Body.String())
 
-	after, err := mem.GetUser(context.Background(), "acme", userID)
+	storedID, err := strconv.ParseUint(userID, 10, 64)
+	require.NoError(t, err, "the user id must be a decimal uint64")
+	after, err := mem.GetUser(context.Background(), "acme", storedID)
 	require.NoError(t, err)
 	assert.Equal(t, iam.LifecycleActive, after.Lifecycle,
 		"the refused update changed the account state anyway")
@@ -163,7 +166,9 @@ func TestREST_UpdateUserStillAcceptsALegitimateLifecycle(t *testing.T) {
 	w = putUser(t, handler, "acme", userID, `{"lifecycle":"suspended"}`)
 	require.Equal(t, http.StatusOK, w.Code, "UpdateUser failed: %s", w.Body.String())
 
-	after, err := mem.GetUser(context.Background(), "acme", userID)
+	storedID, err := strconv.ParseUint(userID, 10, 64)
+	require.NoError(t, err, "the user id must be a decimal uint64")
+	after, err := mem.GetUser(context.Background(), "acme", storedID)
 	require.NoError(t, err)
 	assert.Equal(t, iam.LifecycleSuspended, after.Lifecycle)
 }

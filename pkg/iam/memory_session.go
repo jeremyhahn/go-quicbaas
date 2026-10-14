@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"strconv"
 	"sync"
 )
 
@@ -75,7 +76,7 @@ func (s *MemorySessionStorage) GetSession(ctx context.Context, sessionID string)
 }
 
 // GetSessionsByUser retrieves all active sessions for a user.
-func (s *MemorySessionStorage) GetSessionsByUser(ctx context.Context, tenantID, userID string) ([]*Session, error) {
+func (s *MemorySessionStorage) GetSessionsByUser(ctx context.Context, tenantID string, userID uint64) ([]*Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -182,8 +183,8 @@ func (s *MemorySessionStorage) DeleteExpiredSessions(ctx context.Context) (int, 
 }
 
 // userKey generates a storage key for user sessions index.
-func (s *MemorySessionStorage) userKey(tenantID, userID string) string {
-	return tenantID + ":" + userID
+func (s *MemorySessionStorage) userKey(tenantID string, userID uint64) string {
+	return tenantID + ":" + strconv.FormatUint(userID, 10)
 }
 
 // Compile-time interface assertion.

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -33,8 +34,10 @@ import (
 // approval/rejection handlers can transition its lifecycle state.
 func seedPendingUser(t *testing.T, storage *iam.MemoryStorage, tenantID, userID, email string) {
 	t.Helper()
-	err := storage.CreateUser(context.Background(), &iam.User{
-		ID:        userID,
+	id, err := strconv.ParseUint(userID, 10, 64)
+	require.NoError(t, err)
+	err = storage.CreateUser(context.Background(), &iam.User{
+		ID:        id,
 		TenantID:  tenantID,
 		Email:     email,
 		Name:      "Pending User",

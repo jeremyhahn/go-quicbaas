@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -171,7 +172,7 @@ func (e *errorFederationStorage) GetLinkByExternal(ctx context.Context, provider
 	return nil, ErrLinkNotFound
 }
 
-func (e *errorFederationStorage) GetLinksByUser(ctx context.Context, userID string) ([]*FederatedIdentity, error) {
+func (e *errorFederationStorage) GetLinksByUser(ctx context.Context, userID uint64) ([]*FederatedIdentity, error) {
 	if e.getByUserErr != nil {
 		return nil, e.getByUserErr
 	}
@@ -189,7 +190,7 @@ func (e *errorFederationStorage) DeleteLink(ctx context.Context, linkID string) 
 	return e.deleteErr
 }
 
-func (e *errorFederationStorage) DeleteUserLinks(ctx context.Context, userID string) error {
+func (e *errorFederationStorage) DeleteUserLinks(ctx context.Context, userID uint64) error {
 	return e.deleteUserErr
 }
 
@@ -1108,18 +1109,18 @@ func TestHandleCallback(t *testing.T) {
 func TestLinkAccount(t *testing.T) {
 	testCases := []struct {
 		name          string
-		userID        string
+		userID        uint64
 		tenantID      string
 		providerID    string
 		externalToken string
-		setup         func(*DefaultFederationManager, *MemoryProviderStorage, *MemoryFederationStorage, *IdentityStore) (*httptest.Server, string, string)
+		setup         func(*DefaultFederationManager, *MemoryProviderStorage, *MemoryFederationStorage, *IdentityStore) (*httptest.Server, uint64, string)
 		cleanup       func(*httptest.Server)
 		wantErr       bool
 		errContains   string
 	}{
 		{
 			name:          "error empty user ID",
-			userID:        "",
+			userID:        0,
 			tenantID:      "tenant1",
 			providerID:    "provider-123",
 			externalToken: "token",
@@ -1128,7 +1129,7 @@ func TestLinkAccount(t *testing.T) {
 		},
 		{
 			name:          "error empty tenant ID",
-			userID:        "user-123",
+			userID:        1000123,
 			tenantID:      "",
 			providerID:    "provider-123",
 			externalToken: "token",
@@ -1137,7 +1138,7 @@ func TestLinkAccount(t *testing.T) {
 		},
 		{
 			name:          "error empty provider ID",
-			userID:        "user-123",
+			userID:        1000123,
 			tenantID:      "tenant1",
 			providerID:    "",
 			externalToken: "token",
@@ -1146,7 +1147,7 @@ func TestLinkAccount(t *testing.T) {
 		},
 		{
 			name:          "error empty external token",
-			userID:        "user-123",
+			userID:        1000123,
 			tenantID:      "tenant1",
 			providerID:    "provider-123",
 			externalToken: "",
@@ -1155,26 +1156,26 @@ func TestLinkAccount(t *testing.T) {
 		},
 		{
 			name:          "error user not found",
-			userID:        "nonexistent-user",
+			userID:        99999,
 			tenantID:      "tenant1",
 			providerID:    "provider-123",
 			externalToken: "token",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (*httptest.Server, string, string) {
+			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (*httptest.Server, uint64, string) {
 				provider := createTestProvider("tenant1", "okta")
 				provider.ID = "provider-123"
 				ctx := context.Background()
 				_ = ps.CreateProvider(ctx, provider)
-				return nil, "nonexistent-user", "provider-123"
+				return nil, 99999, "provider-123"
 			},
 			wantErr: true,
 		},
 		{
 			name:          "error provider not found",
-			userID:        "user-123",
+			userID:        1000123,
 			tenantID:      "tenant1",
 			providerID:    "nonexistent",
 			externalToken: "token",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (*httptest.Server, string, string) {
+			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (*httptest.Server, uint64, string) {
 				ctx := context.Background()
 				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
 					ID:       "user-123",
@@ -1187,11 +1188,11 @@ func TestLinkAccount(t *testing.T) {
 		},
 		{
 			name:          "error account linking disabled",
-			userID:        "user-123",
+			userID:        1000123,
 			tenantID:      "tenant1",
 			providerID:    "provider-123",
 			externalToken: "token",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (*httptest.Server, string, string) {
+			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (*httptest.Server, uint64, string) {
 				ctx := context.Background()
 				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
 					ID:       "user-123",
@@ -1247,19 +1248,19 @@ func TestLinkAccount(t *testing.T) {
 func TestUnlinkAccount(t *testing.T) {
 	testCases := []struct {
 		name        string
-		userID      string
+		userID      uint64
 		tenantID    string
 		providerID  string
-		setup       func(*DefaultFederationManager, *MemoryProviderStorage, *MemoryFederationStorage, *IdentityStore) (string, string)
+		setup       func(*DefaultFederationManager, *MemoryProviderStorage, *MemoryFederationStorage, *IdentityStore) (uint64, string)
 		wantErr     bool
 		errContains string
 	}{
 		{
 			name:       "success",
-			userID:     "",
+			userID:     0,
 			tenantID:   "tenant1",
 			providerID: "",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (string, string) {
+			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (uint64, string) {
 				ctx := context.Background()
 				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
 					ID:       "user-123",
@@ -1286,7 +1287,7 @@ func TestUnlinkAccount(t *testing.T) {
 		},
 		{
 			name:        "error empty user ID",
-			userID:      "",
+			userID:      0,
 			tenantID:    "tenant1",
 			providerID:  "provider-123",
 			wantErr:     true,
@@ -1294,7 +1295,7 @@ func TestUnlinkAccount(t *testing.T) {
 		},
 		{
 			name:        "error empty tenant ID",
-			userID:      "user-123",
+			userID:      1000123,
 			tenantID:    "",
 			providerID:  "provider-123",
 			wantErr:     true,
@@ -1302,7 +1303,7 @@ func TestUnlinkAccount(t *testing.T) {
 		},
 		{
 			name:        "error empty provider ID",
-			userID:      "user-123",
+			userID:      1000123,
 			tenantID:    "tenant1",
 			providerID:  "",
 			wantErr:     true,
@@ -1310,17 +1311,17 @@ func TestUnlinkAccount(t *testing.T) {
 		},
 		{
 			name:       "error user not found",
-			userID:     "nonexistent",
+			userID:     99999,
 			tenantID:   "tenant1",
 			providerID: "provider-123",
 			wantErr:    true,
 		},
 		{
 			name:       "error link not found",
-			userID:     "",
+			userID:     0,
 			tenantID:   "tenant1",
 			providerID: "other-provider",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (string, string) {
+			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) (uint64, string) {
 				ctx := context.Background()
 				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
 					ID:       "user-123",
@@ -1374,18 +1375,18 @@ func TestUnlinkAccount(t *testing.T) {
 func TestGetUserLinks(t *testing.T) {
 	testCases := []struct {
 		name          string
-		userID        string
+		userID        uint64
 		tenantID      string
-		setup         func(*DefaultFederationManager, *MemoryProviderStorage, *MemoryFederationStorage, *IdentityStore) string
+		setup         func(*DefaultFederationManager, *MemoryProviderStorage, *MemoryFederationStorage, *IdentityStore) uint64
 		expectedCount int
 		wantErr       bool
 		errContains   string
 	}{
 		{
 			name:     "success empty links",
-			userID:   "",
+			userID:   0,
 			tenantID: "tenant1",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) string {
+			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) uint64 {
 				ctx := context.Background()
 				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
 					ID:       "user-123",
@@ -1399,9 +1400,9 @@ func TestGetUserLinks(t *testing.T) {
 		},
 		{
 			name:     "success with links",
-			userID:   "",
+			userID:   0,
 			tenantID: "tenant1",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) string {
+			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) uint64 {
 				ctx := context.Background()
 				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
 					ID:       "user-123",
@@ -1427,9 +1428,9 @@ func TestGetUserLinks(t *testing.T) {
 		},
 		{
 			name:     "success filters by tenant",
-			userID:   "",
+			userID:   0,
 			tenantID: "tenant1",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) string {
+			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) uint64 {
 				ctx := context.Background()
 				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
 					ID:       "user-123",
@@ -1463,14 +1464,14 @@ func TestGetUserLinks(t *testing.T) {
 		},
 		{
 			name:        "error empty user ID",
-			userID:      "",
+			userID:      0,
 			tenantID:    "tenant1",
 			wantErr:     true,
 			errContains: "user ID and tenant ID are required",
 		},
 		{
 			name:        "error empty tenant ID",
-			userID:      "user-123",
+			userID:      1000123,
 			tenantID:    "",
 			wantErr:     true,
 			errContains: "user ID and tenant ID are required",
@@ -2064,7 +2065,7 @@ func TestFederationManagerWithErrorStorage(t *testing.T) {
 		)
 
 		ctx := context.Background()
-		_, err := manager.GetUserLinks(ctx, "user-123", "tenant1")
+		_, err := manager.GetUserLinks(ctx, 1000123, "tenant1")
 		if err == nil {
 			t.Fatal("expected error from link storage")
 		}
@@ -2308,7 +2309,7 @@ func TestFederatedIdentityValidation(t *testing.T) {
 			name: "valid identity",
 			identity: &FederatedIdentity{
 				ID:         "link-123",
-				UserID:     "user-123",
+				UserID:     1000123,
 				TenantID:   "tenant1",
 				ProviderID: "provider-123",
 				ExternalID: "external-123",
@@ -2318,7 +2319,7 @@ func TestFederatedIdentityValidation(t *testing.T) {
 		{
 			name: "error missing ID",
 			identity: &FederatedIdentity{
-				UserID:     "user-123",
+				UserID:     1000123,
 				TenantID:   "tenant1",
 				ProviderID: "provider-123",
 				ExternalID: "external-123",
@@ -2341,7 +2342,7 @@ func TestFederatedIdentityValidation(t *testing.T) {
 			name: "error missing tenant ID",
 			identity: &FederatedIdentity{
 				ID:         "link-123",
-				UserID:     "user-123",
+				UserID:     1000123,
 				ProviderID: "provider-123",
 				ExternalID: "external-123",
 			},
@@ -2352,7 +2353,7 @@ func TestFederatedIdentityValidation(t *testing.T) {
 			name: "error missing provider ID",
 			identity: &FederatedIdentity{
 				ID:         "link-123",
-				UserID:     "user-123",
+				UserID:     1000123,
 				TenantID:   "tenant1",
 				ExternalID: "external-123",
 			},
@@ -2363,7 +2364,7 @@ func TestFederatedIdentityValidation(t *testing.T) {
 			name: "error missing external ID",
 			identity: &FederatedIdentity{
 				ID:         "link-123",
-				UserID:     "user-123",
+				UserID:     1000123,
 				TenantID:   "tenant1",
 				ProviderID: "provider-123",
 			},
@@ -2999,7 +3000,7 @@ func TestLogAuthEvent_Success(t *testing.T) {
 	manager, _, _, _, _, auditLogger := setupTestFederationManager(t)
 	ctx := context.Background()
 
-	user := &User{ID: "user-1", Name: "Test User", Email: "test@example.com"}
+	user := &User{ID: 10001, Name: "Test User", Email: "test@example.com"}
 	provider := createTestProvider("tenant1", "okta")
 	provider.ApplyDefaults()
 	provider.ID = "provider-1"
@@ -3051,11 +3052,11 @@ func TestMarkExportFailed_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant-mark-export"
-	userID := "41"
+	userID := uint64(41)
 
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
-	exportReq, err := manager.RequestExport(ctx, tenantID, userID, userID, "json", nil, nil)
+	exportReq, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "json", nil, nil)
 	require.NoError(t, err)
 
 	manager.markExportFailed(exportReq.ID, "test failure reason")
@@ -3083,11 +3084,11 @@ func TestMarkDeletionFailed_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tenantID := "tenant-mark-deletion"
-	userID := "42"
+	userID := uint64(42)
 
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
-	delReq, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "test reason", nil, nil, 30)
+	delReq, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "test reason", nil, nil, 30)
 	require.NoError(t, err)
 
 	manager.markDeletionFailed(delReq.ID, "test deletion failure")

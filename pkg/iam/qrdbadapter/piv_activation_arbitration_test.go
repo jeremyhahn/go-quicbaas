@@ -154,14 +154,10 @@ func (p *pivArbitration) pendingUser(t *testing.T, invites int) (*iam.User, []st
 
 // requireOneLoginPath fails unless the user holds exactly one factor, active,
 // and is bound to want's certificate alone.
-func (p *pivArbitration) requireOneLoginPath(t *testing.T, userID string, want, other *x509.Certificate) {
+func (p *pivArbitration) requireOneLoginPath(t *testing.T, userID uint64, want, other *x509.Certificate) {
 	t.Helper()
 	ctx := tenantContext(testTenant)
-	numericID, err := strconv.ParseUint(userID, 10, 64)
-	if err != nil {
-		t.Fatalf("user id %q: %v", userID, err)
-	}
-	factors, err := p.factors.List(ctx, numericID)
+	factors, err := p.factors.List(ctx, userID)
 	if err != nil {
 		t.Fatalf("List factors: %v", err)
 	}

@@ -140,7 +140,8 @@ func TestIAMUserSurvivesDaemonRestart(t *testing.T) {
 	tenantID := "durability-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	email := "restart-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "@example.com"
 
-	var userID, roleID string
+	var userID uint64
+	var roleID string
 
 	// ---- boot 1: write ----
 	srv := bootServer(t, dataDir)
@@ -171,7 +172,7 @@ func TestIAMUserSurvivesDaemonRestart(t *testing.T) {
 	require.NoError(t, err, "create user")
 	require.NotNil(t, createResp.User)
 	userID = createResp.User.ID
-	require.NotEmpty(t, userID)
+	require.NotZero(t, userID)
 	assert.Equal(t, []string{roleID}, createResp.User.Roles, "roles must round-trip on create")
 
 	// Read back within the same process: proves the write is visible, which

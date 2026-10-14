@@ -190,7 +190,7 @@ func TestHandleXKMSFIDO2BeginAddCredential_RefusalStatus(t *testing.T) {
 		want int
 	}{
 		"unauthenticated": {
-			err:  &dberrors.QBError{Code: dberrors.ErrUnauthorized, Err: &service.FIDO2CallerRefusedError{Reason: "no caller"}},
+			err:  &dberrors.QBError{Code: dberrors.ErrUnauthorized, Err: &service.CallerAccountRefusedError{Reason: "no caller"}},
 			want: http.StatusUnauthorized,
 		},
 		"cross-tenant": {

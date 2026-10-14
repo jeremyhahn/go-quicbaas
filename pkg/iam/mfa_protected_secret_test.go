@@ -217,7 +217,7 @@ func TestVerifyCodeRejectsStoredSecretWithTruncatedBase32Tail(t *testing.T) {
 			m := newProtectedSecretTestManager(t)
 			stored := &MFASecret{
 				ID:          uuid.New().String(),
-				UserID:      "user-truncated",
+				UserID:      40050,
 				TenantID:    "tenant-truncated",
 				Secret:      testTOTPSecret + tc.tail,
 				Algorithm:   MFAAlgorithmSHA1,
@@ -254,7 +254,7 @@ func storeCorruptSecretWithChallenge(t *testing.T, m *DefaultMFAManager, stored 
 
 	require.NoError(t, m.storage.SaveSecret(ctx, &MFASecret{
 		ID:          uuid.New().String(),
-		UserID:      "user-corrupt",
+		UserID:      40003,
 		TenantID:    "tenant-corrupt",
 		Secret:      stored,
 		Algorithm:   MFAAlgorithmSHA1,
@@ -266,7 +266,7 @@ func storeCorruptSecretWithChallenge(t *testing.T, m *DefaultMFAManager, stored 
 		Created:     time.Now(),
 	}))
 
-	challenge, err := m.BeginChallenge(ctx, "user-corrupt", "tenant-corrupt", "session-token")
+	challenge, err := m.BeginChallenge(ctx, 40003, "tenant-corrupt", "session-token")
 	require.NoError(t, err)
 	return challenge
 }
@@ -339,11 +339,11 @@ func TestVerifyChallengeDoesNotHideCorruptSecretBehindBackupCode(t *testing.T) {
 	// Enroll with a WELL-FORMED secret so backup codes can be issued, then
 	// corrupt the stored secret underneath them.
 	require.NoError(t, m.storage.SaveSecret(ctx, &MFASecret{
-		ID: uuid.New().String(), UserID: "user-corrupt", TenantID: "tenant-corrupt",
+		ID: uuid.New().String(), UserID: 40003, TenantID: "tenant-corrupt",
 		Secret: testTOTPSecret, Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30,
 		Issuer: "QuicBaaS", AccountName: "corrupt@example.com", Verified: true, Created: time.Now(),
 	}))
-	codes, err := m.GenerateBackupCodes(ctx, "user-corrupt", "tenant-corrupt")
+	codes, err := m.GenerateBackupCodes(ctx, 40003, "tenant-corrupt")
 	require.NoError(t, err)
 	require.NotEmpty(t, codes)
 
@@ -377,15 +377,15 @@ func TestVerifyChallengeKeepsBackupRecoveryForDisallowedAlgorithm(t *testing.T) 
 	m := newProtectedSecretTestManager(t)
 
 	require.NoError(t, m.storage.SaveSecret(ctx, &MFASecret{
-		ID: uuid.New().String(), UserID: "user-sha1", TenantID: "tenant-sha1",
+		ID: uuid.New().String(), UserID: 40004, TenantID: "tenant-sha1",
 		Secret: testTOTPSecret, Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30,
 		Issuer: "QuicBaaS", AccountName: "sha1@example.com", Verified: true, Created: time.Now(),
 	}))
-	codes, err := m.GenerateBackupCodes(ctx, "user-sha1", "tenant-sha1")
+	codes, err := m.GenerateBackupCodes(ctx, 40004, "tenant-sha1")
 	require.NoError(t, err)
 	require.NotEmpty(t, codes)
 
-	challenge, err := m.BeginChallenge(ctx, "user-sha1", "tenant-sha1", "session-token")
+	challenge, err := m.BeginChallenge(ctx, 40004, "tenant-sha1", "session-token")
 	require.NoError(t, err)
 
 	// The policy turns against the enrolled algorithm only now, with the
@@ -410,7 +410,7 @@ func TestVerifyChallengeKeepsBackupRecoveryForDisallowedAlgorithm(t *testing.T) 
 	// the algorithm before it ever compares a code, so a step boundary between
 	// deriving and submitting cannot affect this assertion.
 	var notApproved *MFAAlgorithmNotApprovedError
-	require.ErrorAs(t, m.VerifyCode(ctx, "user-sha1", "tenant-sha1", totpCode), &notApproved,
+	require.ErrorAs(t, m.VerifyCode(ctx, 40004, "tenant-sha1", totpCode), &notApproved,
 		"the policy must actually be refusing this enrollment's algorithm, "+
 			"or the backup-code recovery below is not testing the case it names")
 
@@ -496,7 +496,7 @@ func TestVerifyCodeAcceptsSecretEnrolledBeforeProtectedMemory(t *testing.T) {
 
 	stored := &MFASecret{
 		ID:          uuid.New().String(),
-		UserID:      "user-legacy",
+		UserID:      40002,
 		TenantID:    "tenant-legacy",
 		Secret:      testTOTPSecret,
 		Algorithm:   MFAAlgorithmSHA1,
@@ -542,7 +542,7 @@ func TestCompleteEnrollmentAcceptsCodeFromProvisionedSecret(t *testing.T) {
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
 
-	resp, err := m.BeginEnrollment(ctx, "user-enroll", "tenant-enroll", MFAMethodTOTP)
+	resp, err := m.BeginEnrollment(ctx, 99997, "tenant-enroll", MFAMethodTOTP)
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.Secret)
 
@@ -556,7 +556,7 @@ func TestCompleteEnrollmentAcceptsCodeFromProvisionedSecret(t *testing.T) {
 
 	// The completed enrollment verifies through the separate VerifyCode path.
 	verifyCode := generateValidTOTPCode(t, resp.Secret, m.config)
-	require.NoError(t, m.VerifyCode(ctx, "user-enroll", "tenant-enroll", verifyCode))
+	require.NoError(t, m.VerifyCode(ctx, 99997, "tenant-enroll", verifyCode))
 }
 
 // TestCompleteEnrollmentRejectsCodeFromAnotherSecret is the enrollment call
@@ -567,7 +567,7 @@ func TestCompleteEnrollmentRejectsCodeFromAnotherSecret(t *testing.T) {
 	ctx := context.Background()
 	m := newProtectedSecretTestManager(t)
 
-	resp, err := m.BeginEnrollment(ctx, "user-wrong", "tenant-wrong", MFAMethodTOTP)
+	resp, err := m.BeginEnrollment(ctx, 40060, "tenant-wrong", MFAMethodTOTP)
 	require.NoError(t, err)
 	require.NotEqual(t, testTOTPSecret, resp.Secret)
 
@@ -589,7 +589,7 @@ func TestVerifyCodeRejectsCorruptStoredSecret(t *testing.T) {
 
 	stored := &MFASecret{
 		ID:        uuid.New().String(),
-		UserID:    "user-corrupt",
+		UserID:    40003,
 		TenantID:  "tenant-corrupt",
 		Secret:    "not a base32 secret!!",
 		Algorithm: MFAAlgorithmSHA1,

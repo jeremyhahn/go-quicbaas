@@ -420,13 +420,13 @@ func (e *TenantProvisionError) Unwrap() error { return e.Cause }
 // pending admin and mints a fresh invite.
 type TenantProvisionInviteError struct {
 	TenantID    string
-	AdminUserID string
+	AdminUserID uint64
 	Cause       error
 }
 
 // Error implements the error interface.
 func (e *TenantProvisionInviteError) Error() string {
-	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUserID +
+	return "tenant provisioning: tenant " + e.TenantID + " admin " + strconv.FormatUint(e.AdminUserID, 10) +
 		" is provisioned but its invite was not minted (re-run to retry): " + e.Cause.Error()
 }
 
@@ -440,13 +440,13 @@ func (e *TenantProvisionInviteError) Unwrap() error { return e.Cause }
 // re-running provisioning starts over and issues a certificate that logs in.
 type TenantProvisionLoginFactorError struct {
 	TenantID    string
-	AdminUserID string
+	AdminUserID uint64
 	Cause       error
 }
 
 // Error implements the error interface.
 func (e *TenantProvisionLoginFactorError) Error() string {
-	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUserID +
+	return "tenant provisioning: tenant " + e.TenantID + " admin " + strconv.FormatUint(e.AdminUserID, 10) +
 		" certificate was not enrolled as a login factor and was rolled back (re-run to retry): " + e.Cause.Error()
 }
 
@@ -461,7 +461,7 @@ func (e *TenantProvisionLoginFactorError) Unwrap() error { return e.Cause }
 // when the admin could not even be looked up.
 type TenantProvisionRollbackError struct {
 	TenantID    string
-	AdminUserID string
+	AdminUserID uint64
 	// Cause is the provisioning failure.
 	Cause error
 	// RollbackErr is the failure to delete what the call created.
@@ -470,7 +470,7 @@ type TenantProvisionRollbackError struct {
 
 // Error implements the error interface.
 func (e *TenantProvisionRollbackError) Error() string {
-	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUserID +
+	return "tenant provisioning: tenant " + e.TenantID + " admin " + strconv.FormatUint(e.AdminUserID, 10) +
 		" was not given a login credential (" + e.Cause.Error() +
 		") and the rollback failed: " + e.RollbackErr.Error()
 }
@@ -485,13 +485,13 @@ func (e *TenantProvisionRollbackError) Unwrap() []error { return []error{e.Cause
 // re-runs provisioning.
 type TenantAdminLoginCredentialMissingError struct {
 	TenantID      string
-	AdminUserID   string
+	AdminUserID   uint64
 	AdminUsername string
 }
 
 // Error implements the error interface.
 func (e *TenantAdminLoginCredentialMissingError) Error() string {
-	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUsername + " (" + e.AdminUserID +
+	return "tenant provisioning: tenant " + e.TenantID + " admin " + e.AdminUsername + " (" + strconv.FormatUint(e.AdminUserID, 10) +
 		") exists without a login credential; delete the admin user or the tenant and re-run provisioning"
 }
 
@@ -502,7 +502,7 @@ func (e *TenantAdminLoginCredentialMissingError) Error() string {
 // fixes the account and re-runs provisioning.
 type TenantAdminAccountMismatchError struct {
 	TenantID      string
-	AdminUserID   string
+	AdminUserID   uint64
 	AdminUsername string
 	// Lifecycle is the account's lifecycle state.
 	Lifecycle string
@@ -512,7 +512,7 @@ type TenantAdminAccountMismatchError struct {
 
 // Error implements the error interface.
 func (e *TenantAdminAccountMismatchError) Error() string {
-	return "tenant provisioning: tenant " + e.TenantID + " account " + e.AdminUsername + " (" + e.AdminUserID +
+	return "tenant provisioning: tenant " + e.TenantID + " account " + e.AdminUsername + " (" + strconv.FormatUint(e.AdminUserID, 10) +
 		") is not an active tenant administrator (lifecycle " + strconv.Quote(e.Lifecycle) +
 		", admin role " + strconv.FormatBool(e.HasAdminRole) + "); delete or fix the account and re-run provisioning"
 }

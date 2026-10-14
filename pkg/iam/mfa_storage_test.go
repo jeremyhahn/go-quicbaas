@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -25,9 +26,9 @@ import (
 
 // Test helper functions
 
-func createTestSecret(userID, tenantID string) *MFASecret {
+func createTestSecret(userID uint64, tenantID string) *MFASecret {
 	return &MFASecret{
-		ID:          "secret-" + userID,
+		ID:          fmt.Sprintf("secret-%d", userID),
 		UserID:      userID,
 		TenantID:    tenantID,
 		Secret:      testTOTPSecret,
@@ -35,13 +36,13 @@ func createTestSecret(userID, tenantID string) *MFASecret {
 		Digits:      6,
 		Period:      30,
 		Issuer:      "QuicBaaS",
-		AccountName: userID + "@quicbaas.io",
+		AccountName: fmt.Sprintf("%d@quicbaas.io", userID),
 		Verified:    false,
 		Created:     time.Now(),
 	}
 }
 
-func createTestEnrollment(id, userID, tenantID string, expired bool) *MFAEnrollment {
+func createTestEnrollment(id string, userID uint64, tenantID string, expired bool) *MFAEnrollment {
 	expiresAt := time.Now().Add(10 * time.Minute)
 	if expired {
 		expiresAt = time.Now().Add(-1 * time.Minute)
@@ -60,7 +61,7 @@ func createTestEnrollment(id, userID, tenantID string, expired bool) *MFAEnrollm
 	}
 }
 
-func createTestChallenge(id, userID, tenantID string, expired bool) *MFAChallenge {
+func createTestChallenge(id string, userID uint64, tenantID string, expired bool) *MFAChallenge {
 	expiresAt := time.Now().Add(5 * time.Minute)
 	if expired {
 		expiresAt = time.Now().Add(-1 * time.Minute)
@@ -80,9 +81,9 @@ func createTestChallenge(id, userID, tenantID string, expired bool) *MFAChalleng
 	}
 }
 
-func createTestBackupCodes(userID, tenantID string) *BackupCodeSet {
+func createTestBackupCodes(userID uint64, tenantID string) *BackupCodeSet {
 	return &BackupCodeSet{
-		ID:       "backup-" + userID,
+		ID:       fmt.Sprintf("backup-%d", userID),
 		UserID:   userID,
 		TenantID: tenantID,
 		Codes: []BackupCode{
@@ -113,14 +114,14 @@ func TestMemoryMFAStorage_SecretOperations(t *testing.T) {
 	t.Run("save and get secret successfully", func(t *testing.T) {
 		storage := NewMemoryMFAStorage()
 		ctx := context.Background()
-		secret := createTestSecret("user1", "tenant1")
+		secret := createTestSecret(20001, "tenant1")
 
 		// Test SaveSecret
 		err := storage.SaveSecret(ctx, secret)
 		require.NoError(t, err)
 
 		// Test GetSecret
-		retrieved, err := storage.GetSecret(ctx, "user1", "tenant1")
+		retrieved, err := storage.GetSecret(ctx, 20001, "tenant1")
 		require.NoError(t, err)
 		assert.Equal(t, secret.ID, retrieved.ID)
 		assert.Equal(t, secret.UserID, retrieved.UserID)
@@ -129,7 +130,7 @@ func TestMemoryMFAStorage_SecretOperations(t *testing.T) {
 
 		// Verify it's a copy (mutation shouldn't affect stored version)
 		retrieved.Secret = "MODIFIED"
-		retrieved2, err := storage.GetSecret(ctx, "user1", "tenant1")
+		retrieved2, err := storage.GetSecret(ctx, 20001, "tenant1")
 		require.NoError(t, err)
 		assert.NotEqual(t, "MODIFIED", retrieved2.Secret)
 	})
@@ -139,7 +140,7 @@ func TestMemoryMFAStorage_SecretOperations(t *testing.T) {
 		ctx := context.Background()
 
 		// Test GetSecret for non-existent secret
-		_, err := storage.GetSecret(ctx, "nonexistent", "tenant1")
+		_, err := storage.GetSecret(ctx, 99999, "tenant1")
 		assert.ErrorIs(t, err, ErrMFANotEnrolled)
 	})
 
@@ -148,7 +149,7 @@ func TestMemoryMFAStorage_SecretOperations(t *testing.T) {
 		ctx := context.Background()
 
 		// Create initial secret
-		secret := createTestSecret("user2", "tenant1")
+		secret := createTestSecret(20002, "tenant1")
 		err := storage.SaveSecret(ctx, secret)
 		require.NoError(t, err)
 
@@ -158,7 +159,7 @@ func TestMemoryMFAStorage_SecretOperations(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify update
-		retrieved, err := storage.GetSecret(ctx, "user2", "tenant1")
+		retrieved, err := storage.GetSecret(ctx, 20002, "tenant1")
 		require.NoError(t, err)
 		assert.True(t, retrieved.Verified)
 	})
@@ -166,18 +167,18 @@ func TestMemoryMFAStorage_SecretOperations(t *testing.T) {
 	t.Run("delete secret", func(t *testing.T) {
 		storage := NewMemoryMFAStorage()
 		ctx := context.Background()
-		secret := createTestSecret("user3", "tenant1")
+		secret := createTestSecret(20003, "tenant1")
 
 		// Save secret
 		err := storage.SaveSecret(ctx, secret)
 		require.NoError(t, err)
 
 		// Delete secret
-		err = storage.DeleteSecret(ctx, "user3", "tenant1")
+		err = storage.DeleteSecret(ctx, 20003, "tenant1")
 		require.NoError(t, err)
 
 		// Verify deletion
-		_, err = storage.GetSecret(ctx, "user3", "tenant1")
+		_, err = storage.GetSecret(ctx, 20003, "tenant1")
 		assert.ErrorIs(t, err, ErrMFANotEnrolled)
 	})
 
@@ -186,7 +187,7 @@ func TestMemoryMFAStorage_SecretOperations(t *testing.T) {
 		ctx := context.Background()
 
 		// Delete non-existent secret should not error
-		err := storage.DeleteSecret(ctx, "nonexistent", "tenant1")
+		err := storage.DeleteSecret(ctx, 99999, "tenant1")
 		assert.NoError(t, err)
 	})
 }
@@ -200,13 +201,13 @@ func TestMemoryMFAStorage_SaveSecret_Validation(t *testing.T) {
 	}{
 		{
 			name:    "valid secret",
-			secret:  createTestSecret("user1", "tenant1"),
+			secret:  createTestSecret(20001, "tenant1"),
 			wantErr: false,
 		},
 		{
 			name: "missing ID",
 			secret: &MFASecret{
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 				Secret:   "secret",
 				Digits:   6,
@@ -229,7 +230,7 @@ func TestMemoryMFAStorage_SaveSecret_Validation(t *testing.T) {
 			name: "missing TenantID",
 			secret: &MFASecret{
 				ID:     "secret1",
-				UserID: "user1",
+				UserID: 20001,
 				Secret: "secret",
 				Digits: 6,
 				Period: 30,
@@ -240,7 +241,7 @@ func TestMemoryMFAStorage_SaveSecret_Validation(t *testing.T) {
 			name: "missing Secret",
 			secret: &MFASecret{
 				ID:       "secret1",
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 				Digits:   6,
 				Period:   30,
@@ -251,7 +252,7 @@ func TestMemoryMFAStorage_SaveSecret_Validation(t *testing.T) {
 			name: "invalid Digits too low",
 			secret: &MFASecret{
 				ID:       "secret1",
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 				Secret:   "secret",
 				Digits:   5,
@@ -263,7 +264,7 @@ func TestMemoryMFAStorage_SaveSecret_Validation(t *testing.T) {
 			name: "invalid Digits too high",
 			secret: &MFASecret{
 				ID:       "secret1",
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 				Secret:   "secret",
 				Digits:   9,
@@ -275,7 +276,7 @@ func TestMemoryMFAStorage_SaveSecret_Validation(t *testing.T) {
 			name: "invalid Period too low",
 			secret: &MFASecret{
 				ID:       "secret1",
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 				Secret:   "secret",
 				Digits:   6,
@@ -287,7 +288,7 @@ func TestMemoryMFAStorage_SaveSecret_Validation(t *testing.T) {
 			name: "invalid Period too high",
 			secret: &MFASecret{
 				ID:       "secret1",
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 				Secret:   "secret",
 				Digits:   6,
@@ -315,7 +316,7 @@ func TestMemoryMFAStorage_EnrollmentOperations(t *testing.T) {
 	storage := NewMemoryMFAStorage()
 	ctx := context.Background()
 
-	enrollment := createTestEnrollment("enroll1", "user1", "tenant1", false)
+	enrollment := createTestEnrollment("enroll1", 20001, "tenant1", false)
 
 	// Test SaveEnrollment
 	err := storage.SaveEnrollment(ctx, enrollment)
@@ -359,13 +360,13 @@ func TestMemoryMFAStorage_SaveEnrollment_Validation(t *testing.T) {
 	}{
 		{
 			name:       "valid enrollment",
-			enrollment: createTestEnrollment("enroll1", "user1", "tenant1", false),
+			enrollment: createTestEnrollment("enroll1", 20001, "tenant1", false),
 			wantErr:    false,
 		},
 		{
 			name: "missing ID",
 			enrollment: &MFAEnrollment{
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 				Secret:   "secret",
 			},
@@ -384,7 +385,7 @@ func TestMemoryMFAStorage_SaveEnrollment_Validation(t *testing.T) {
 			name: "missing TenantID",
 			enrollment: &MFAEnrollment{
 				ID:     "enroll1",
-				UserID: "user1",
+				UserID: 20001,
 				Secret: "secret",
 			},
 			wantErr: true,
@@ -393,7 +394,7 @@ func TestMemoryMFAStorage_SaveEnrollment_Validation(t *testing.T) {
 			name: "missing Secret",
 			enrollment: &MFAEnrollment{
 				ID:       "enroll1",
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 			},
 			wantErr: true,
@@ -419,10 +420,10 @@ func TestMemoryMFAStorage_DeleteEnrollmentsByUser(t *testing.T) {
 	ctx := context.Background()
 
 	// Create enrollments for different users
-	enroll1 := createTestEnrollment("enroll1", "user1", "tenant1", false)
-	enroll2 := createTestEnrollment("enroll2", "user1", "tenant1", false)
-	enroll3 := createTestEnrollment("enroll3", "user2", "tenant1", false)
-	enroll4 := createTestEnrollment("enroll4", "user1", "tenant2", false)
+	enroll1 := createTestEnrollment("enroll1", 20001, "tenant1", false)
+	enroll2 := createTestEnrollment("enroll2", 20001, "tenant1", false)
+	enroll3 := createTestEnrollment("enroll3", 20002, "tenant1", false)
+	enroll4 := createTestEnrollment("enroll4", 20001, "tenant2", false)
 
 	require.NoError(t, storage.SaveEnrollment(ctx, enroll1))
 	require.NoError(t, storage.SaveEnrollment(ctx, enroll2))
@@ -430,7 +431,7 @@ func TestMemoryMFAStorage_DeleteEnrollmentsByUser(t *testing.T) {
 	require.NoError(t, storage.SaveEnrollment(ctx, enroll4))
 
 	// Delete enrollments for user1 in tenant1
-	err := storage.DeleteEnrollmentsByUser(ctx, "user1", "tenant1")
+	err := storage.DeleteEnrollmentsByUser(ctx, 20001, "tenant1")
 	require.NoError(t, err)
 
 	// Verify user1 tenant1 enrollments are deleted
@@ -451,7 +452,7 @@ func TestMemoryMFAStorage_ChallengeOperations(t *testing.T) {
 	storage := NewMemoryMFAStorage()
 	ctx := context.Background()
 
-	challenge := createTestChallenge("chal1", "user1", "tenant1", false)
+	challenge := createTestChallenge("chal1", 20001, "tenant1", false)
 
 	// Test SaveChallenge
 	err := storage.SaveChallenge(ctx, challenge)
@@ -495,13 +496,13 @@ func TestMemoryMFAStorage_SaveChallenge_Validation(t *testing.T) {
 	}{
 		{
 			name:      "valid challenge",
-			challenge: createTestChallenge("chal1", "user1", "tenant1", false),
+			challenge: createTestChallenge("chal1", 20001, "tenant1", false),
 			wantErr:   false,
 		},
 		{
 			name: "missing ID",
 			challenge: &MFAChallenge{
-				UserID:       "user1",
+				UserID:       20001,
 				TenantID:     "tenant1",
 				SessionToken: "token",
 			},
@@ -520,7 +521,7 @@ func TestMemoryMFAStorage_SaveChallenge_Validation(t *testing.T) {
 			name: "missing TenantID",
 			challenge: &MFAChallenge{
 				ID:           "chal1",
-				UserID:       "user1",
+				UserID:       20001,
 				SessionToken: "token",
 			},
 			wantErr: true,
@@ -529,7 +530,7 @@ func TestMemoryMFAStorage_SaveChallenge_Validation(t *testing.T) {
 			name: "missing SessionToken",
 			challenge: &MFAChallenge{
 				ID:       "chal1",
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 			},
 			wantErr: true,
@@ -555,10 +556,10 @@ func TestMemoryMFAStorage_DeleteChallengesByUser(t *testing.T) {
 	ctx := context.Background()
 
 	// Create challenges for different users
-	chal1 := createTestChallenge("chal1", "user1", "tenant1", false)
-	chal2 := createTestChallenge("chal2", "user1", "tenant1", false)
-	chal3 := createTestChallenge("chal3", "user2", "tenant1", false)
-	chal4 := createTestChallenge("chal4", "user1", "tenant2", false)
+	chal1 := createTestChallenge("chal1", 20001, "tenant1", false)
+	chal2 := createTestChallenge("chal2", 20001, "tenant1", false)
+	chal3 := createTestChallenge("chal3", 20002, "tenant1", false)
+	chal4 := createTestChallenge("chal4", 20001, "tenant2", false)
 
 	require.NoError(t, storage.SaveChallenge(ctx, chal1))
 	require.NoError(t, storage.SaveChallenge(ctx, chal2))
@@ -566,7 +567,7 @@ func TestMemoryMFAStorage_DeleteChallengesByUser(t *testing.T) {
 	require.NoError(t, storage.SaveChallenge(ctx, chal4))
 
 	// Delete challenges for user1 in tenant1
-	err := storage.DeleteChallengesByUser(ctx, "user1", "tenant1")
+	err := storage.DeleteChallengesByUser(ctx, 20001, "tenant1")
 	require.NoError(t, err)
 
 	// Verify user1 tenant1 challenges are deleted
@@ -587,14 +588,14 @@ func TestMemoryMFAStorage_BackupCodesOperations(t *testing.T) {
 	storage := NewMemoryMFAStorage()
 	ctx := context.Background()
 
-	codes := createTestBackupCodes("user1", "tenant1")
+	codes := createTestBackupCodes(20001, "tenant1")
 
 	// Test SaveBackupCodes
 	err := storage.SaveBackupCodes(ctx, codes)
 	require.NoError(t, err)
 
 	// Test GetBackupCodes
-	retrieved, err := storage.GetBackupCodes(ctx, "user1", "tenant1")
+	retrieved, err := storage.GetBackupCodes(ctx, 20001, "tenant1")
 	require.NoError(t, err)
 	assert.Equal(t, codes.ID, retrieved.ID)
 	assert.Equal(t, codes.UserID, retrieved.UserID)
@@ -602,23 +603,23 @@ func TestMemoryMFAStorage_BackupCodesOperations(t *testing.T) {
 
 	// Verify deep copy (mutation shouldn't affect stored version)
 	retrieved.Codes[0].Code = "MODIFIED"
-	retrieved2, err := storage.GetBackupCodes(ctx, "user1", "tenant1")
+	retrieved2, err := storage.GetBackupCodes(ctx, 20001, "tenant1")
 	require.NoError(t, err)
 	assert.NotEqual(t, "MODIFIED", retrieved2.Codes[0].Code)
 
 	// Test DeleteBackupCodes
-	err = storage.DeleteBackupCodes(ctx, "user1", "tenant1")
+	err = storage.DeleteBackupCodes(ctx, 20001, "tenant1")
 	require.NoError(t, err)
 
 	// Verify deletion
-	_, err = storage.GetBackupCodes(ctx, "user1", "tenant1")
+	_, err = storage.GetBackupCodes(ctx, 20001, "tenant1")
 	assert.ErrorIs(t, err, ErrMFANotEnrolled)
 }
 
 // TestMemoryMFAStorage_GetBackupCodes_NotFound tests getting non-existent backup codes.
 func TestMemoryMFAStorage_GetBackupCodes_NotFound(t *testing.T) {
 	storage := NewMemoryMFAStorage()
-	_, err := storage.GetBackupCodes(context.Background(), "nonexistent", "tenant1")
+	_, err := storage.GetBackupCodes(context.Background(), 99999, "tenant1")
 	assert.ErrorIs(t, err, ErrMFANotEnrolled)
 }
 
@@ -631,13 +632,13 @@ func TestMemoryMFAStorage_SaveBackupCodes_Validation(t *testing.T) {
 	}{
 		{
 			name:    "valid backup codes",
-			codes:   createTestBackupCodes("user1", "tenant1"),
+			codes:   createTestBackupCodes(20001, "tenant1"),
 			wantErr: false,
 		},
 		{
 			name: "missing ID",
 			codes: &BackupCodeSet{
-				UserID:   "user1",
+				UserID:   20001,
 				TenantID: "tenant1",
 				Codes:    []BackupCode{{Code: "code1"}},
 			},
@@ -656,7 +657,7 @@ func TestMemoryMFAStorage_SaveBackupCodes_Validation(t *testing.T) {
 			name: "missing TenantID",
 			codes: &BackupCodeSet{
 				ID:     "backup1",
-				UserID: "user1",
+				UserID: 20001,
 				Codes:  []BackupCode{{Code: "code1"}},
 			},
 			wantErr: true,
@@ -682,11 +683,11 @@ func TestMemoryMFAStorage_CleanupExpired(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a mix of expired and valid items
-	validEnroll := createTestEnrollment("valid-enroll", "user1", "tenant1", false)
-	expiredEnroll := createTestEnrollment("expired-enroll", "user2", "tenant1", true)
+	validEnroll := createTestEnrollment("valid-enroll", 20001, "tenant1", false)
+	expiredEnroll := createTestEnrollment("expired-enroll", 20002, "tenant1", true)
 
-	validChallenge := createTestChallenge("valid-chal", "user1", "tenant1", false)
-	expiredChallenge := createTestChallenge("expired-chal", "user2", "tenant1", true)
+	validChallenge := createTestChallenge("valid-chal", 20001, "tenant1", false)
+	expiredChallenge := createTestChallenge("expired-chal", 20002, "tenant1", true)
 
 	require.NoError(t, storage.SaveEnrollment(ctx, validEnroll))
 	require.NoError(t, storage.SaveEnrollment(ctx, expiredEnroll))
@@ -717,8 +718,8 @@ func TestMemoryMFAStorage_CleanupExpired_Empty(t *testing.T) {
 	ctx := context.Background()
 
 	// Create only valid items
-	validEnroll := createTestEnrollment("valid-enroll", "user1", "tenant1", false)
-	validChallenge := createTestChallenge("valid-chal", "user1", "tenant1", false)
+	validEnroll := createTestEnrollment("valid-enroll", 20001, "tenant1", false)
+	validChallenge := createTestChallenge("valid-chal", 20001, "tenant1", false)
 
 	require.NoError(t, storage.SaveEnrollment(ctx, validEnroll))
 	require.NoError(t, storage.SaveChallenge(ctx, validChallenge))
@@ -741,14 +742,14 @@ func TestMemoryMFAStorage_ContextCancellation(t *testing.T) {
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	secret := createTestSecret("user1", "tenant1")
-	enrollment := createTestEnrollment("enroll1", "user1", "tenant1", false)
-	challenge := createTestChallenge("chal1", "user1", "tenant1", false)
-	codes := createTestBackupCodes("user1", "tenant1")
+	secret := createTestSecret(20001, "tenant1")
+	enrollment := createTestEnrollment("enroll1", 20001, "tenant1", false)
+	challenge := createTestChallenge("chal1", 20001, "tenant1", false)
+	codes := createTestBackupCodes(20001, "tenant1")
 
 	// Test all operations with canceled context
 	t.Run("GetSecret", func(t *testing.T) {
-		_, err := storage.GetSecret(canceledCtx, "user1", "tenant1")
+		_, err := storage.GetSecret(canceledCtx, 20001, "tenant1")
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -760,7 +761,7 @@ func TestMemoryMFAStorage_ContextCancellation(t *testing.T) {
 	})
 
 	t.Run("DeleteSecret", func(t *testing.T) {
-		err := storage.DeleteSecret(canceledCtx, "user1", "tenant1")
+		err := storage.DeleteSecret(canceledCtx, 20001, "tenant1")
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -784,7 +785,7 @@ func TestMemoryMFAStorage_ContextCancellation(t *testing.T) {
 	})
 
 	t.Run("DeleteEnrollmentsByUser", func(t *testing.T) {
-		err := storage.DeleteEnrollmentsByUser(canceledCtx, "user1", "tenant1")
+		err := storage.DeleteEnrollmentsByUser(canceledCtx, 20001, "tenant1")
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -808,13 +809,13 @@ func TestMemoryMFAStorage_ContextCancellation(t *testing.T) {
 	})
 
 	t.Run("DeleteChallengesByUser", func(t *testing.T) {
-		err := storage.DeleteChallengesByUser(canceledCtx, "user1", "tenant1")
+		err := storage.DeleteChallengesByUser(canceledCtx, 20001, "tenant1")
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("GetBackupCodes", func(t *testing.T) {
-		_, err := storage.GetBackupCodes(canceledCtx, "user1", "tenant1")
+		_, err := storage.GetBackupCodes(canceledCtx, 20001, "tenant1")
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -826,7 +827,7 @@ func TestMemoryMFAStorage_ContextCancellation(t *testing.T) {
 	})
 
 	t.Run("DeleteBackupCodes", func(t *testing.T) {
-		err := storage.DeleteBackupCodes(canceledCtx, "user1", "tenant1")
+		err := storage.DeleteBackupCodes(canceledCtx, 20001, "tenant1")
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -853,7 +854,7 @@ func TestMemoryMFAStorage_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
 			defer wg.Done()
-			userID := "user-" + string(rune(id%10))
+			userID := uint64(10000 + id%10)
 			tenantID := "tenant1"
 
 			for j := 0; j < numOperations; j++ {
@@ -873,7 +874,7 @@ func TestMemoryMFAStorage_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < numOperations; j++ {
 				enrollID := "enroll-" + string(rune(id)) + "-" + string(rune(j))
-				enroll := createTestEnrollment(enrollID, "user1", "tenant1", false)
+				enroll := createTestEnrollment(enrollID, 20001, "tenant1", false)
 				_ = storage.SaveEnrollment(ctx, enroll)
 				_, _ = storage.GetEnrollment(ctx, enrollID)
 				if j%10 == 0 {
@@ -889,7 +890,7 @@ func TestMemoryMFAStorage_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < numOperations; j++ {
 				chalID := "chal-" + string(rune(id)) + "-" + string(rune(j))
-				chal := createTestChallenge(chalID, "user1", "tenant1", false)
+				chal := createTestChallenge(chalID, 20001, "tenant1", false)
 				_ = storage.SaveChallenge(ctx, chal)
 				_, _ = storage.GetChallenge(ctx, chalID)
 				if j%10 == 0 {
@@ -903,7 +904,7 @@ func TestMemoryMFAStorage_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
 			defer wg.Done()
-			userID := "user-" + string(rune(id%10))
+			userID := uint64(10000 + id%10)
 			tenantID := "tenant1"
 
 			for j := 0; j < numOperations; j++ {
@@ -932,8 +933,8 @@ func TestMemoryMFAStorage_ConcurrentDeleteByUser(t *testing.T) {
 
 	// Setup: Create multiple enrollments and challenges
 	for i := 0; i < 100; i++ {
-		enroll := createTestEnrollment("enroll-"+string(rune(i)), "user1", "tenant1", false)
-		chal := createTestChallenge("chal-"+string(rune(i)), "user1", "tenant1", false)
+		enroll := createTestEnrollment("enroll-"+string(rune(i)), 20001, "tenant1", false)
+		chal := createTestChallenge("chal-"+string(rune(i)), 20001, "tenant1", false)
 		require.NoError(t, storage.SaveEnrollment(ctx, enroll))
 		require.NoError(t, storage.SaveChallenge(ctx, chal))
 	}
@@ -944,12 +945,12 @@ func TestMemoryMFAStorage_ConcurrentDeleteByUser(t *testing.T) {
 	// Concurrent delete operations
 	go func() {
 		defer wg.Done()
-		_ = storage.DeleteEnrollmentsByUser(ctx, "user1", "tenant1")
+		_ = storage.DeleteEnrollmentsByUser(ctx, 20001, "tenant1")
 	}()
 
 	go func() {
 		defer wg.Done()
-		_ = storage.DeleteChallengesByUser(ctx, "user1", "tenant1")
+		_ = storage.DeleteChallengesByUser(ctx, 20001, "tenant1")
 	}()
 
 	wg.Wait()
@@ -959,12 +960,12 @@ func TestMemoryMFAStorage_ConcurrentDeleteByUser(t *testing.T) {
 	enrollCount := 0
 	chalCount := 0
 	for _, e := range storage.enrollments {
-		if e.UserID == "user1" && e.TenantID == "tenant1" {
+		if e.UserID == 20001 && e.TenantID == "tenant1" {
 			enrollCount++
 		}
 	}
 	for _, c := range storage.challenges {
-		if c.UserID == "user1" && c.TenantID == "tenant1" {
+		if c.UserID == 20001 && c.TenantID == "tenant1" {
 			chalCount++
 		}
 	}
@@ -980,33 +981,33 @@ func TestMemoryMFAStorage_SecretKey(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		userID   string
+		userID   uint64
 		tenantID string
 		expected string
 	}{
 		{
 			name:     "basic case",
-			userID:   "user1",
+			userID:   20001,
 			tenantID: "tenant1",
-			expected: "tenant1:user1",
+			expected: "tenant1:20001",
 		},
 		{
-			name:     "empty userID",
-			userID:   "",
+			name:     "zero userID",
+			userID:   0,
 			tenantID: "tenant1",
-			expected: "tenant1:",
+			expected: "tenant1:0",
 		},
 		{
 			name:     "empty tenantID",
-			userID:   "user1",
+			userID:   20001,
 			tenantID: "",
-			expected: ":user1",
+			expected: ":20001",
 		},
 		{
 			name:     "both empty",
-			userID:   "",
+			userID:   0,
 			tenantID: "",
-			expected: ":",
+			expected: ":0",
 		},
 	}
 
@@ -1029,30 +1030,30 @@ func TestMemoryMFAStorage_MultiTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// Create secrets for different tenants
-	secret1 := createTestSecret("user1", "tenant1")
-	secret2 := createTestSecret("user1", "tenant2")
+	secret1 := createTestSecret(20001, "tenant1")
+	secret2 := createTestSecret(20001, "tenant2")
 
 	require.NoError(t, storage.SaveSecret(ctx, secret1))
 	require.NoError(t, storage.SaveSecret(ctx, secret2))
 
 	// Verify tenant isolation
-	retrieved1, err := storage.GetSecret(ctx, "user1", "tenant1")
+	retrieved1, err := storage.GetSecret(ctx, 20001, "tenant1")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant1", retrieved1.TenantID)
 
-	retrieved2, err := storage.GetSecret(ctx, "user1", "tenant2")
+	retrieved2, err := storage.GetSecret(ctx, 20001, "tenant2")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant2", retrieved2.TenantID)
 
 	// Delete one tenant's data
-	err = storage.DeleteSecret(ctx, "user1", "tenant1")
+	err = storage.DeleteSecret(ctx, 20001, "tenant1")
 	require.NoError(t, err)
 
 	// Verify only that tenant's data is deleted
-	_, err = storage.GetSecret(ctx, "user1", "tenant1")
+	_, err = storage.GetSecret(ctx, 20001, "tenant1")
 	assert.ErrorIs(t, err, ErrMFANotEnrolled)
 
-	_, err = storage.GetSecret(ctx, "user1", "tenant2")
+	_, err = storage.GetSecret(ctx, 20001, "tenant2")
 	assert.NoError(t, err)
 }
 
@@ -1065,7 +1066,7 @@ func TestMemoryMFAStorage_CleanupExpired_BoundaryConditions(t *testing.T) {
 	now := time.Now()
 	enrollment := &MFAEnrollment{
 		ID:        "boundary-enroll",
-		UserID:    "user1",
+		UserID:    20001,
 		TenantID:  "tenant1",
 		Secret:    "secret",
 		ExpiresAt: now,

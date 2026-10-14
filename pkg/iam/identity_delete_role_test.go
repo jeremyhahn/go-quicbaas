@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ const cascadeTenant = "tenant1"
 type cascadeFaultUserStorage struct {
 	*mockUserStorage
 	failListPastFirstPage bool
-	failUpdateID          string
+	failUpdateID          uint64
 	// beforeListPastFirstPage, when set, runs once before the first list
 	// call with a non-zero offset, to interleave a concurrent change
 	// between cascade pages.
@@ -36,7 +37,7 @@ func (f *cascadeFaultUserStorage) ListUsers(ctx context.Context, tenantID string
 }
 
 func (f *cascadeFaultUserStorage) UpdateUser(ctx context.Context, user *User) error {
-	if f.failUpdateID != "" && user.ID == f.failUpdateID {
+	if f.failUpdateID != 0 && user.ID == f.failUpdateID {
 		return &dberrors.MessageError{Message: "simulated update failure"}
 	}
 	return f.mockUserStorage.UpdateUser(ctx, user)
@@ -86,15 +87,15 @@ func grantRole(t *testing.T, users UserStorage, holders []*User, roleID string) 
 	for _, u := range holders {
 		u.Roles = append(u.Roles, roleID)
 		if err := users.UpdateUser(context.Background(), u); err != nil {
-			t.Fatalf("UpdateUser %s: %v", u.ID, err)
+			t.Fatalf("UpdateUser %d: %v", u.ID, err)
 		}
 	}
 }
 
 // holderIDs returns the ids of every listed user that carries roleID.
-func holderIDs(t *testing.T, users UserStorage, roleID string) []string {
+func holderIDs(t *testing.T, users UserStorage, roleID string) []uint64 {
 	t.Helper()
-	var ids []string
+	var ids []uint64
 	for _, u := range listAllUsers(t, users) {
 		if slices.Contains(u.Roles, roleID) {
 			ids = append(ids, u.ID)
@@ -103,8 +104,8 @@ func holderIDs(t *testing.T, users UserStorage, roleID string) []string {
 	return ids
 }
 
-func userIDs(users []*User) []string {
-	ids := make([]string, len(users))
+func userIDs(users []*User) []uint64 {
+	ids := make([]uint64, len(users))
 	for i, u := range users {
 		ids[i] = u.ID
 	}
@@ -138,7 +139,7 @@ func TestDeleteRole_StripsHoldersAcrossPages(t *testing.T) {
 	}
 
 	if ids := holderIDs(t, users, role.ID); len(ids) != 0 {
-		t.Errorf("%d users still hold the deleted role, first %s", len(ids), ids[0])
+		t.Errorf("%d users still hold the deleted role, first %d", len(ids), ids[0])
 	}
 	if got, want := holderIDs(t, users, other.ID), userIDs(all[holders:]); !slices.Equal(got, want) {
 		t.Errorf("non-holders changed: hold other role = %v, want %v", got, want)
@@ -252,15 +253,15 @@ func TestDeleteRole_UpdateFailureOnSecondPageKeepsRoleForRetry(t *testing.T) {
 	if err == nil {
 		t.Fatal("DeleteRole succeeded, want update failure")
 	}
-	if !strings.Contains(err.Error(), failing.ID) {
-		t.Errorf("error %q does not name the failing user %s", err, failing.ID)
+	if !strings.Contains(err.Error(), strconv.FormatUint(failing.ID, 10)) {
+		t.Errorf("error %q does not name the failing user %d", err, failing.ID)
 	}
 	assertRoleExists(t, store, role.ID, true)
 	if got, want := holderIDs(t, users, role.ID), userIDs(all[deleteRoleCascadePage:]); !slices.Equal(got, want) {
 		t.Errorf("after failure, holders = %d users, want only the %d from the failing user on", len(got), len(want))
 	}
 
-	users.failUpdateID = ""
+	users.failUpdateID = 0
 	if err := store.DeleteRole(ctx, cascadeTenant, role.ID); err != nil {
 		t.Fatalf("retry DeleteRole: %v", err)
 	}
@@ -297,7 +298,7 @@ func TestMemoryStorage_ListUsers_StableOffsetPages(t *testing.T) {
 	}
 
 	const limit = 4
-	var paged []string
+	var paged []uint64
 	for offset := 0; offset < n; offset += limit {
 		page, err := storage.ListUsers(ctx, cascadeTenant, ListOptions{Limit: limit, Offset: offset})
 		if err != nil {

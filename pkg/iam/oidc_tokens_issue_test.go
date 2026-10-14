@@ -32,7 +32,7 @@ func TestTokenService_IssueHardwareTokens(t *testing.T) {
 
 	set, err := service.IssueHardwareTokens(ctx, HardwareTokenOptions{
 		User: &User{
-			ID:       "user-1",
+			ID:       10001,
 			TenantID: "tenant-1",
 			Email:    "u@example.com",
 			Name:     "U",

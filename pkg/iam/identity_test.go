@@ -1,11 +1,11 @@
 package iam
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,16 +15,22 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
+// mockUserKey addresses one user record within one tenant.
+type mockUserKey struct {
+	tenantID string
+	userID   uint64
+}
+
 type mockUserStorage struct {
 	mu     sync.RWMutex
-	users  map[string]*User // key: tenantID:userID
+	users  map[mockUserKey]*User
 	emails map[string]*User // key: tenantID:email
 	nextID uint64
 }
 
 func newMockUserStorage() *mockUserStorage {
 	return &mockUserStorage{
-		users:  make(map[string]*User),
+		users:  make(map[mockUserKey]*User),
 		emails: make(map[string]*User),
 	}
 }
@@ -35,12 +41,12 @@ func (m *mockUserStorage) CreateUser(ctx context.Context, user *User) error {
 
 	// The store assigns the identity, exactly as MemoryStorage and the
 	// qrdb-backed storage do.
-	if user.ID == "" {
+	if user.ID == 0 {
 		m.nextID++
-		user.ID = FormatUserID(m.nextID)
+		user.ID = m.nextID
 	}
 
-	key := user.TenantID + ":" + user.ID
+	key := mockUserKey{user.TenantID, user.ID}
 	if _, exists := m.users[key]; exists {
 		return ErrUserAlreadyExists
 	}
@@ -53,11 +59,11 @@ func (m *mockUserStorage) CreateUser(ctx context.Context, user *User) error {
 	return nil
 }
 
-func (m *mockUserStorage) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+func (m *mockUserStorage) GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	key := tenantID + ":" + userID
+	key := mockUserKey{tenantID, userID}
 	user, exists := m.users[key]
 	if !exists {
 		return nil, ErrUserNotFound
@@ -66,11 +72,11 @@ func (m *mockUserStorage) GetUser(ctx context.Context, tenantID, userID string) 
 }
 
 // MarkUserDeleting claims the record for deletion, mirroring the real stores.
-func (m *mockUserStorage) MarkUserDeleting(ctx context.Context, tenantID, userID string) error {
+func (m *mockUserStorage) MarkUserDeleting(ctx context.Context, tenantID string, userID uint64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	user, exists := m.users[tenantID+":"+userID]
+	user, exists := m.users[mockUserKey{tenantID, userID}]
 	if !exists {
 		return ErrUserNotFound
 	}
@@ -93,7 +99,7 @@ func (m *mockUserStorage) UpdateUser(ctx context.Context, user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := user.TenantID + ":" + user.ID
+	key := mockUserKey{user.TenantID, user.ID}
 	if _, exists := m.users[key]; !exists {
 		return ErrUserNotFound
 	}
@@ -109,11 +115,11 @@ func (m *mockUserStorage) UpdateUser(ctx context.Context, user *User) error {
 	return nil
 }
 
-func (m *mockUserStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
+func (m *mockUserStorage) DeleteUser(ctx context.Context, tenantID string, userID uint64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := tenantID + ":" + userID
+	key := mockUserKey{tenantID, userID}
 	user, exists := m.users[key]
 	if !exists {
 		return ErrUserNotFound
@@ -166,7 +172,7 @@ func (m *mockUserStorage) ListUsers(ctx context.Context, tenantID string, opts L
 			users = append(users, &u)
 		}
 	}
-	slices.SortFunc(users, func(a, b *User) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(users, func(a, b *User) int { return cmp.Compare(a.ID, b.ID) })
 
 	if opts.Offset >= len(users) {
 		return []*User{}, nil
@@ -328,7 +334,7 @@ func TestCreateUser_Success(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
-	if user.ID == "" {
+	if user.ID == 0 {
 		t.Error("Expected user ID to be generated")
 	}
 	if user.Email != "test@example.com" {
@@ -446,7 +452,7 @@ func TestGetUser_Success(t *testing.T) {
 	}
 
 	if user.ID != created.ID {
-		t.Errorf("Expected ID %s, got %s", created.ID, user.ID)
+		t.Errorf("Expected ID %d, got %d", created.ID, user.ID)
 	}
 }
 
@@ -454,7 +460,7 @@ func TestGetUser_NotFound(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	_, err := store.GetUser(ctx, "tenant1", "nonexistent")
+	_, err := store.GetUser(ctx, "tenant1", 99999)
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("Expected ErrUserNotFound, got %v", err)
 	}
@@ -479,7 +485,7 @@ func TestGetUserByEmail_Success(t *testing.T) {
 	}
 
 	if user.ID != created.ID {
-		t.Errorf("Expected ID %s, got %s", created.ID, user.ID)
+		t.Errorf("Expected ID %d, got %d", created.ID, user.ID)
 	}
 }
 
@@ -1094,16 +1100,16 @@ func TestValidateTenantID_Invalid(t *testing.T) {
 }
 
 func TestValidateUserID_Valid(t *testing.T) {
-	err := validateUserID("user123")
+	err := validateUserID(20123)
 	if err != nil {
 		t.Errorf("Expected valid user ID, got error: %v", err)
 	}
 }
 
 func TestValidateUserID_Invalid(t *testing.T) {
-	err := validateUserID("")
+	err := validateUserID(0)
 	if err == nil {
-		t.Error("Expected error for empty user ID")
+		t.Error("Expected error for zero user ID")
 	}
 
 	var valErr *ValidationError
@@ -1189,7 +1195,7 @@ func TestGetUserRoles_InvalidTenantID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	_, err := store.GetUserRoles(ctx, "", "user-id")
+	_, err := store.GetUserRoles(ctx, "", 40001)
 	if err == nil {
 		t.Error("Expected error for empty tenant ID")
 	}
@@ -1204,7 +1210,7 @@ func TestGetUserRoles_InvalidUserID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	_, err := store.GetUserRoles(ctx, "tenant1", "")
+	_, err := store.GetUserRoles(ctx, "tenant1", 0)
 	if err == nil {
 		t.Error("Expected error for empty user ID")
 	}
@@ -1219,7 +1225,7 @@ func TestGetUserRoles_UserNotFound(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	_, err := store.GetUserRoles(ctx, "tenant1", "nonexistent")
+	_, err := store.GetUserRoles(ctx, "tenant1", 99999)
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("Expected ErrUserNotFound, got %v", err)
 	}
@@ -1320,7 +1326,7 @@ func TestGetUser_InvalidTenantID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	_, err := store.GetUser(ctx, "", "user-id")
+	_, err := store.GetUser(ctx, "", 40001)
 	if err == nil {
 		t.Error("Expected error for empty tenant ID")
 	}
@@ -1335,7 +1341,7 @@ func TestGetUser_InvalidUserID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	_, err := store.GetUser(ctx, "tenant1", "")
+	_, err := store.GetUser(ctx, "tenant1", 0)
 	if err == nil {
 		t.Error("Expected error for empty user ID")
 	}
@@ -1350,7 +1356,7 @@ func TestDeleteUser_InvalidTenantID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.DeleteUser(ctx, "", "user-id")
+	err := store.DeleteUser(ctx, "", 40001)
 	if err == nil {
 		t.Error("Expected error for empty tenant ID")
 	}
@@ -1365,7 +1371,7 @@ func TestDeleteUser_InvalidUserID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.DeleteUser(ctx, "tenant1", "")
+	err := store.DeleteUser(ctx, "tenant1", 0)
 	if err == nil {
 		t.Error("Expected error for empty user ID")
 	}
@@ -1586,7 +1592,7 @@ func TestUpdateUser_InvalidTenantID(t *testing.T) {
 	ctx := context.Background()
 
 	newEmail := "test@example.com"
-	_, err := store.UpdateUser(ctx, "", "user-id", UpdateUserOptions{
+	_, err := store.UpdateUser(ctx, "", 40001, UpdateUserOptions{
 		Email: &newEmail,
 	})
 	if err == nil {
@@ -1604,7 +1610,7 @@ func TestUpdateUser_InvalidUserID(t *testing.T) {
 	ctx := context.Background()
 
 	newEmail := "test@example.com"
-	_, err := store.UpdateUser(ctx, "tenant1", "", UpdateUserOptions{
+	_, err := store.UpdateUser(ctx, "tenant1", 0, UpdateUserOptions{
 		Email: &newEmail,
 	})
 	if err == nil {
@@ -1622,7 +1628,7 @@ func TestUpdateUser_UserNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	newEmail := "test@example.com"
-	_, err := store.UpdateUser(ctx, "tenant1", "nonexistent", UpdateUserOptions{
+	_, err := store.UpdateUser(ctx, "tenant1", 99999, UpdateUserOptions{
 		Email: &newEmail,
 	})
 	if !errors.Is(err, ErrUserNotFound) {
@@ -1706,7 +1712,7 @@ func TestDeleteUser_NotFound(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.DeleteUser(ctx, "tenant1", "nonexistent")
+	err := store.DeleteUser(ctx, "tenant1", 99999)
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("Expected ErrUserNotFound, got %v", err)
 	}
@@ -2082,7 +2088,7 @@ func TestAssignRole_InvalidTenantID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.AssignRole(ctx, "", "user-id", "role-id")
+	err := store.AssignRole(ctx, "", 40001, "role-id")
 	if err == nil {
 		t.Error("Expected error for empty tenant ID")
 	}
@@ -2097,7 +2103,7 @@ func TestAssignRole_InvalidUserID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.AssignRole(ctx, "tenant1", "", "role-id")
+	err := store.AssignRole(ctx, "tenant1", 0, "role-id")
 	if err == nil {
 		t.Error("Expected error for empty user ID")
 	}
@@ -2112,7 +2118,7 @@ func TestAssignRole_InvalidRoleID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.AssignRole(ctx, "tenant1", "user-id", "")
+	err := store.AssignRole(ctx, "tenant1", 40001, "")
 	if err == nil {
 		t.Error("Expected error for empty role ID")
 	}
@@ -2131,7 +2137,7 @@ func TestAssignRole_UserNotFound(t *testing.T) {
 		Name: "Test Role",
 	})
 
-	err := store.AssignRole(ctx, "tenant1", "nonexistent", role.ID)
+	err := store.AssignRole(ctx, "tenant1", 99999, role.ID)
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("Expected ErrUserNotFound, got %v", err)
 	}
@@ -2191,7 +2197,7 @@ func TestRevokeRole_InvalidTenantID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.RevokeRole(ctx, "", "user-id", "role-id")
+	err := store.RevokeRole(ctx, "", 40001, "role-id")
 	if err == nil {
 		t.Error("Expected error for empty tenant ID")
 	}
@@ -2206,7 +2212,7 @@ func TestRevokeRole_InvalidUserID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.RevokeRole(ctx, "tenant1", "", "role-id")
+	err := store.RevokeRole(ctx, "tenant1", 0, "role-id")
 	if err == nil {
 		t.Error("Expected error for empty user ID")
 	}
@@ -2221,7 +2227,7 @@ func TestRevokeRole_InvalidRoleID(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.RevokeRole(ctx, "tenant1", "user-id", "")
+	err := store.RevokeRole(ctx, "tenant1", 40001, "")
 	if err == nil {
 		t.Error("Expected error for empty role ID")
 	}
@@ -2236,7 +2242,7 @@ func TestRevokeRole_UserNotFound(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	err := store.RevokeRole(ctx, "tenant1", "nonexistent", "role-id")
+	err := store.RevokeRole(ctx, "tenant1", 99999, "role-id")
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("Expected ErrUserNotFound, got %v", err)
 	}
@@ -2301,7 +2307,7 @@ func (m *mockUserStorageWithFailure) UpdateUser(ctx context.Context, user *User)
 	return m.mockUserStorage.UpdateUser(ctx, user)
 }
 
-func (m *mockUserStorageWithFailure) DeleteUser(ctx context.Context, tenantID, userID string) error {
+func (m *mockUserStorageWithFailure) DeleteUser(ctx context.Context, tenantID string, userID uint64) error {
 	if m.failOnDelete {
 		return &dberrors.MessageError{Message: "simulated delete failure"}
 	}

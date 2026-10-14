@@ -17,12 +17,14 @@ package testutil
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/stretchr/testify/mock"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
@@ -98,6 +100,27 @@ var _ service.QuicBaaS = (*MockQuicBaaS)(nil)
 // NewMockQuicBaaS creates a new MockQuicBaaS with testify mock infrastructure.
 func NewMockQuicBaaS() *MockQuicBaaS {
 	return &MockQuicBaaS{}
+}
+
+// ResolveCallerAccount satisfies service.CallerAccountResolver without an
+// identity store. It honours the subject the way the real resolver orders
+// it: a verified UserID names the account, then an ID the transport marked
+// as a user id; anything else, a username above all, is refused, because
+// there is no store here to look a username up in.
+func (m *MockQuicBaaS) ResolveCallerAccount(_ context.Context, subject interfaces.Subject) (uint64, error) {
+	key := subject.UserID
+	if key == "" && subject.IDKind == interfaces.SubjectIDUserID {
+		key = subject.ID
+	}
+	userID, err := strconv.ParseUint(key, 10, 64)
+	if err != nil || userID == 0 {
+		return 0, &dberrors.QBError{
+			Code: dberrors.ErrForbidden,
+			Op:   "MockQuicBaaS.ResolveCallerAccount",
+			Err:  &service.CallerAccountRefusedError{Reason: "the subject names no user account"},
+		}
+	}
+	return userID, nil
 }
 
 // GetInviteStore returns the configured invite store override. It satisfies the

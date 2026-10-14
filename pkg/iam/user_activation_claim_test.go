@@ -103,14 +103,14 @@ func TestUserActivationClaims_SecondClaimLoses(t *testing.T) {
 	ctx := context.Background()
 	pendingSince := time.Now().UTC()
 
-	if _, err := claims.Claim(ctx, claimTestTenant, "user-1", pendingSince); err != nil {
+	if _, err := claims.Claim(ctx, claimTestTenant, 10001, pendingSince); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	_, err := claims.Claim(ctx, claimTestTenant, "user-1", pendingSince)
+	_, err := claims.Claim(ctx, claimTestTenant, 10001, pendingSince)
 	requireActivationInProgress(t, err)
 
 	// The claim is per user: another user of the tenant is unaffected.
-	if _, err := claims.Claim(ctx, claimTestTenant, "user-2", pendingSince); err != nil {
+	if _, err := claims.Claim(ctx, claimTestTenant, 10002, pendingSince); err != nil {
 		t.Fatalf("claim for a different user: %v", err)
 	}
 }
@@ -120,14 +120,14 @@ func TestUserActivationClaims_ReleaseAllowsReclaim(t *testing.T) {
 	ctx := context.Background()
 	pendingSince := time.Now().UTC()
 
-	claim, err := claims.Claim(ctx, claimTestTenant, "user-1", pendingSince)
+	claim, err := claims.Claim(ctx, claimTestTenant, 10001, pendingSince)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 	if err := claim.Release(ctx); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	if _, err := claims.Claim(ctx, claimTestTenant, "user-1", pendingSince); err != nil {
+	if _, err := claims.Claim(ctx, claimTestTenant, 10001, pendingSince); err != nil {
 		t.Fatalf("claim after release: %v", err)
 	}
 }
@@ -138,7 +138,7 @@ func TestUserActivationClaims_CompletedClaimYieldsOnlyToLaterReset(t *testing.T)
 	pendingSince := time.Now().UTC()
 	activatedAt := pendingSince.Add(time.Second)
 
-	claim, err := claims.Claim(ctx, claimTestTenant, "user-1", pendingSince)
+	claim, err := claims.Claim(ctx, claimTestTenant, 10001, pendingSince)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -148,13 +148,13 @@ func TestUserActivationClaims_CompletedClaimYieldsOnlyToLaterReset(t *testing.T)
 
 	// A record read before the activation, e.g. from a lagging replica, must
 	// not reopen the user.
-	_, err = claims.Claim(ctx, claimTestTenant, "user-1", pendingSince)
+	_, err = claims.Claim(ctx, claimTestTenant, 10001, pendingSince)
 	requireActivationInProgress(t, err)
-	_, err = claims.Claim(ctx, claimTestTenant, "user-1", activatedAt)
+	_, err = claims.Claim(ctx, claimTestTenant, 10001, activatedAt)
 	requireActivationInProgress(t, err)
 
 	// An administrator resetting the user to pending writes a later record.
-	if _, err := claims.Claim(ctx, claimTestTenant, "user-1", activatedAt.Add(time.Second)); err != nil {
+	if _, err := claims.Claim(ctx, claimTestTenant, 10001, activatedAt.Add(time.Second)); err != nil {
 		t.Fatalf("claim after reset to pending: %v", err)
 	}
 }
@@ -168,7 +168,7 @@ func TestUserActivationClaims_ExpiredLeaseIsTakenOver(t *testing.T) {
 	ctx := context.Background()
 	pendingSince := time.Now().UTC()
 
-	stale, err := claims.Claim(ctx, claimTestTenant, "user-1", pendingSince)
+	stale, err := claims.Claim(ctx, claimTestTenant, 10001, pendingSince)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestUserActivationClaims_ExpiredLeaseIsTakenOver(t *testing.T) {
 	}
 	stale.value = expired
 
-	if _, err := claims.Claim(ctx, claimTestTenant, "user-1", pendingSince); err != nil {
+	if _, err := claims.Claim(ctx, claimTestTenant, 10001, pendingSince); err != nil {
 		t.Fatalf("take over expired claim: %v", err)
 	}
 
@@ -194,7 +194,7 @@ func TestUserActivationClaims_ExpiredLeaseIsTakenOver(t *testing.T) {
 	if err := stale.Complete(ctx, time.Now()); !errors.As(err, &lost) {
 		t.Fatalf("complete by the old holder: want *UserActivationClaimLostError, got %v", err)
 	}
-	_, err = claims.Claim(ctx, claimTestTenant, "user-1", pendingSince)
+	_, err = claims.Claim(ctx, claimTestTenant, 10001, pendingSince)
 	requireActivationInProgress(t, err)
 }
 
@@ -206,7 +206,7 @@ func TestUserActivationClaims_UnsupportedStoreFailsClosed(t *testing.T) {
 		t.Fatalf("NewUserActivationClaims: %v", err)
 	}
 
-	_, err = claims.Claim(context.Background(), claimTestTenant, "user-1", time.Now())
+	_, err = claims.Claim(context.Background(), claimTestTenant, 10001, time.Now())
 	var unsupported *UserActivationClaimUnsupportedError
 	if !errors.As(err, &unsupported) {
 		t.Fatalf("want *UserActivationClaimUnsupportedError, got %v", err)
@@ -221,7 +221,7 @@ func TestUserActivationClaims_ResolveErrorPropagates(t *testing.T) {
 		t.Fatalf("NewUserActivationClaims: %v", err)
 	}
 
-	_, err = claims.Claim(context.Background(), claimTestTenant, "user-1", time.Now())
+	_, err = claims.Claim(context.Background(), claimTestTenant, 10001, time.Now())
 	var claimErr *UserActivationClaimError
 	if !errors.As(err, &claimErr) {
 		t.Fatalf("want *UserActivationClaimError, got %v", err)
@@ -242,11 +242,11 @@ func TestUserActivationClaims_CorruptRecordRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if err := store.Put(ctx, userActivationClaimPrefix+"user-1", []byte("not json")); err != nil {
+	if err := store.Put(ctx, userActivationClaimPrefix+"10001", []byte("not json")); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	_, err = claims.Claim(ctx, claimTestTenant, "user-1", time.Now())
+	_, err = claims.Claim(ctx, claimTestTenant, 10001, time.Now())
 	requireActivationInProgress(t, err)
 }
 

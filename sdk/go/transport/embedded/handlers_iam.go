@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"time"
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
@@ -287,7 +288,7 @@ func handleIAMTenantProvision(ctx context.Context, svc service.QuicBaaS, req int
 	}
 	return &iamsdk.ProvisionTenantResponse{
 		TenantID:            res.TenantID,
-		AdminUserID:         res.AdminUserID,
+		AdminUserID:         strconv.FormatUint(res.AdminUserID, 10),
 		AdminUsername:       res.AdminUsername,
 		AdminRoleID:         res.AdminRoleID,
 		AdminPending:        res.AdminPending,
@@ -406,7 +407,11 @@ func handleIAMUserGet(ctx context.Context, svc service.QuicBaaS, req interface{}
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.User", "Get",
 			"struct with TenantID + UserID/ID fields", reflect.TypeOf(req).String())
 	}
-	u, err := store.GetUser(ctx, tenantID, userID)
+	id, err := parseIAMUserID("quicbaas.IAM.User", "Get", userID)
+	if err != nil {
+		return nil, err
+	}
+	u, err := store.GetUser(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +428,11 @@ func handleIAMUserDelete(ctx context.Context, svc service.QuicBaaS, req interfac
 	if userID == "" {
 		userID, _ = iamRequestField(req, "ID")
 	}
-	if err := store.DeleteUser(ctx, tenantID, userID); err != nil {
+	id, err := parseIAMUserID("quicbaas.IAM.User", "Delete", userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.DeleteUser(ctx, tenantID, id); err != nil {
 		return nil, err
 	}
 	// SDK isUserSuccessResponse accepts map[string]bool with success=true
@@ -458,7 +467,7 @@ func userToSDK(u *iam.User) *iamsdk.User {
 		return nil
 	}
 	return &iamsdk.User{
-		ID:          u.ID,
+		ID:          strconv.FormatUint(u.ID, 10),
 		TenantID:    u.TenantID,
 		Email:       u.Email,
 		Username:    u.Username,
@@ -512,7 +521,11 @@ func handleIAMUserUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 			opts.Lifecycle = &state
 		}
 	}
-	u, err := store.UpdateUser(ctx, tenantID, userID, opts)
+	id, err := parseIAMUserID("quicbaas.IAM.User", "Update", userID)
+	if err != nil {
+		return nil, err
+	}
+	u, err := store.UpdateUser(ctx, tenantID, id, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -1134,7 +1147,11 @@ func handleIAMWebAuthnCredentialsList(ctx context.Context, svc service.QuicBaaS,
 	}
 	tenantID, _ := iamRequestField(req, "TenantID")
 	userID, _ := iamRequestField(req, "UserID")
-	list, err := creds.ListCredentials(ctx, tenantID, userID)
+	id, err := parseIAMUserID("quicbaas.IAM.WebAuthn", "ListCredentials", userID)
+	if err != nil {
+		return nil, err
+	}
+	list, err := creds.ListCredentials(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1155,7 +1172,11 @@ func handleIAMWebAuthnCredentialDelete(ctx context.Context, svc service.QuicBaaS
 	tenantID, _ := iamRequestField(req, "TenantID")
 	userID, _ := iamRequestField(req, "UserID")
 	credentialID, _ := iamRequestField(req, "CredentialID")
-	if err := creds.DeleteCredential(ctx, tenantID, userID, credentialID); err != nil {
+	id, err := parseIAMUserID("quicbaas.IAM.WebAuthn", "DeleteCredential", userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := creds.DeleteCredential(ctx, tenantID, id, credentialID); err != nil {
 		return nil, err
 	}
 	return map[string]bool{"success": true}, nil
@@ -1168,7 +1189,11 @@ func handleIAMWebAuthnCredentialsDeleteAll(ctx context.Context, svc service.Quic
 	}
 	tenantID, _ := iamRequestField(req, "TenantID")
 	userID, _ := iamRequestField(req, "UserID")
-	deleted, err := creds.DeleteCredentials(ctx, tenantID, userID)
+	id, err := parseIAMUserID("quicbaas.IAM.WebAuthn", "DeleteCredentials", userID)
+	if err != nil {
+		return nil, err
+	}
+	deleted, err := creds.DeleteCredentials(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}

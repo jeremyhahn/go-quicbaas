@@ -28,7 +28,7 @@ import (
 type BatchResourceManager interface {
 	// User operations
 	CreateUser(ctx context.Context, user *User) error
-	GetUser(ctx context.Context, tenantID, userID string) (*User, error)
+	GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error)
 	GetUserByEmail(ctx context.Context, tenantID, email string) (*User, error)
 	UpdateUser(ctx context.Context, user *User) error
 

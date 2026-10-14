@@ -3,6 +3,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -19,8 +20,8 @@ func issueIntrospectionTestToken(t *testing.T, provider *OIDCProvider, opts Hard
 	opts.User = &User{
 		ID:       liveUserID,
 		TenantID: "tenant-a",
-		Email:    liveUserID + "@tenant-a.example.com",
-		Name:     "Liveness " + liveUserID,
+		Email:    fmt.Sprintf("%d@tenant-a.example.com", liveUserID),
+		Name:     fmt.Sprintf("Liveness %d", liveUserID),
 	}
 	set, err := provider.IssueHardwareTokens(context.Background(), opts)
 	if err != nil {

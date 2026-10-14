@@ -587,7 +587,7 @@ func TestIAMServer_CreateUser_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("CreateUser", mock.Anything, mock.AnythingOfType("*iam.User")).
-		Return(&iam.User{ID: "u1", TenantID: "t1", Email: "user@test.com"}, nil)
+		Return(&iam.User{ID: 30001, TenantID: "t1", Email: "user@test.com"}, nil)
 
 	resp, err := srv.CreateUser(context.Background(), &iampb.CreateUserRequest{
 		TenantId:   "t1",
@@ -598,7 +598,7 @@ func TestIAMServer_CreateUser_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "u1", resp.Id)
+	assert.Equal(t, "30001", resp.Id)
 	svc.AssertExpectations(t)
 }
 
@@ -625,20 +625,20 @@ func TestIAMServer_CreateUser_MissingEmail(t *testing.T) {
 func TestIAMServer_GetUser_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("GetUser", mock.Anything, "t1", "u1").
-		Return(&iam.User{ID: "u1", TenantID: "t1", Email: "user@test.com"}, nil)
+	svc.On("GetUser", mock.Anything, "t1", "30001").
+		Return(&iam.User{ID: 30001, TenantID: "t1", Email: "user@test.com"}, nil)
 
-	resp, err := srv.GetUser(context.Background(), &iampb.GetUserRequest{TenantId: "t1", UserId: "u1"})
+	resp, err := srv.GetUser(context.Background(), &iampb.GetUserRequest{TenantId: "t1", UserId: "30001"})
 
 	require.NoError(t, err)
-	assert.Equal(t, "u1", resp.Id)
+	assert.Equal(t, "30001", resp.Id)
 	svc.AssertExpectations(t)
 }
 
 func TestIAMServer_GetUser_MissingTenantID(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 
-	_, err := srv.GetUser(context.Background(), &iampb.GetUserRequest{UserId: "u1"})
+	_, err := srv.GetUser(context.Background(), &iampb.GetUserRequest{UserId: "30001"})
 
 	st, ok := status.FromError(err)
 	require.True(t, ok)
@@ -659,11 +659,11 @@ func TestIAMServer_UpdateUser_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("UpdateUser", mock.Anything, mock.AnythingOfType("*iam.User")).
-		Return(&iam.User{ID: "u1", TenantID: "t1", Email: "updated@test.com"}, nil)
+		Return(&iam.User{ID: 30001, TenantID: "t1", Email: "updated@test.com"}, nil)
 
 	resp, err := srv.UpdateUser(context.Background(), &iampb.UpdateUserRequest{
 		TenantId:   "t1",
-		UserId:     "u1",
+		UserId:     "30001",
 		Email:      "updated@test.com",
 		Name:       "Updated",
 		Roles:      []string{"viewer"},
@@ -671,14 +671,14 @@ func TestIAMServer_UpdateUser_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "u1", resp.Id)
+	assert.Equal(t, "30001", resp.Id)
 	svc.AssertExpectations(t)
 }
 
 func TestIAMServer_UpdateUser_MissingTenantID(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 
-	_, err := srv.UpdateUser(context.Background(), &iampb.UpdateUserRequest{UserId: "u1"})
+	_, err := srv.UpdateUser(context.Background(), &iampb.UpdateUserRequest{UserId: "30001"})
 
 	st, ok := status.FromError(err)
 	require.True(t, ok)
@@ -698,9 +698,9 @@ func TestIAMServer_UpdateUser_MissingUserID(t *testing.T) {
 func TestIAMServer_DeleteUser_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("DeleteUser", mock.Anything, "t1", "u1").Return(nil)
+	svc.On("DeleteUser", mock.Anything, "t1", "30001").Return(nil)
 
-	resp, err := srv.DeleteUser(context.Background(), &iampb.DeleteUserRequest{TenantId: "t1", UserId: "u1"})
+	resp, err := srv.DeleteUser(context.Background(), &iampb.DeleteUserRequest{TenantId: "t1", UserId: "30001"})
 
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
@@ -710,7 +710,7 @@ func TestIAMServer_DeleteUser_Success(t *testing.T) {
 func TestIAMServer_DeleteUser_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 
-	_, err := srv.DeleteUser(context.Background(), &iampb.DeleteUserRequest{UserId: "u1"})
+	_, err := srv.DeleteUser(context.Background(), &iampb.DeleteUserRequest{UserId: "30001"})
 	require.Error(t, err)
 
 	_, err = srv.DeleteUser(context.Background(), &iampb.DeleteUserRequest{TenantId: "t1"})
@@ -724,7 +724,7 @@ func TestIAMServer_ListUsers_Success(t *testing.T) {
 	// filter, because quicbaas keeps no groups.
 	wantFilters := map[string]string{"email": "a@test.com", "role": "admin"}
 	svc.On("ListUsers", mock.Anything, "t1", 100, 0, wantFilters).
-		Return([]*iam.User{{ID: "u1", TenantID: "t1", Email: "a@test.com"}}, 1, nil)
+		Return([]*iam.User{{ID: 30001, TenantID: "t1", Email: "a@test.com"}}, 1, nil)
 
 	resp, err := srv.ListUsers(context.Background(), &iampb.ListUsersRequest{
 		TenantId: "t1",
@@ -874,10 +874,10 @@ func TestIAMServer_ListRoles_MissingTenantID(t *testing.T) {
 func TestIAMServer_AssignRole_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("AssignRole", mock.Anything, "t1", "u1", "admin").Return(nil)
+	svc.On("AssignRole", mock.Anything, "t1", "30001", "admin").Return(nil)
 
 	resp, err := srv.AssignRole(context.Background(), &iampb.AssignRoleRequest{
-		TenantId: "t1", UserId: "u1", Role: "admin",
+		TenantId: "t1", UserId: "30001", Role: "admin",
 	})
 
 	require.NoError(t, err)
@@ -889,23 +889,23 @@ func TestIAMServer_AssignRole_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 	ctx := context.Background()
 
-	_, err := srv.AssignRole(ctx, &iampb.AssignRoleRequest{UserId: "u1", Role: "admin"})
+	_, err := srv.AssignRole(ctx, &iampb.AssignRoleRequest{UserId: "30001", Role: "admin"})
 	require.Error(t, err)
 
 	_, err = srv.AssignRole(ctx, &iampb.AssignRoleRequest{TenantId: "t1", Role: "admin"})
 	require.Error(t, err)
 
-	_, err = srv.AssignRole(ctx, &iampb.AssignRoleRequest{TenantId: "t1", UserId: "u1"})
+	_, err = srv.AssignRole(ctx, &iampb.AssignRoleRequest{TenantId: "t1", UserId: "30001"})
 	require.Error(t, err)
 }
 
 func TestIAMServer_RevokeRole_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("RevokeRole", mock.Anything, "t1", "u1", "admin").Return(nil)
+	svc.On("RevokeRole", mock.Anything, "t1", "30001", "admin").Return(nil)
 
 	resp, err := srv.RevokeRole(context.Background(), &iampb.RevokeRoleRequest{
-		TenantId: "t1", UserId: "u1", Role: "admin",
+		TenantId: "t1", UserId: "30001", Role: "admin",
 	})
 
 	require.NoError(t, err)
@@ -917,13 +917,13 @@ func TestIAMServer_RevokeRole_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 	ctx := context.Background()
 
-	_, err := srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{UserId: "u1", Role: "admin"})
+	_, err := srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{UserId: "30001", Role: "admin"})
 	require.Error(t, err)
 
 	_, err = srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{TenantId: "t1", Role: "admin"})
 	require.Error(t, err)
 
-	_, err = srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{TenantId: "t1", UserId: "u1"})
+	_, err = srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{TenantId: "t1", UserId: "30001"})
 	require.Error(t, err)
 }
 
@@ -1343,7 +1343,7 @@ func TestIAMServer_TestPolicy_Success(t *testing.T) {
 
 	resp, err := srv.TestPolicy(context.Background(), &iampb.TestPolicyRequest{
 		TenantId: "t1",
-		Subject:  &iampb.Subject{Id: "u1"},
+		Subject:  &iampb.Subject{Id: "30001"},
 		Action:   "read",
 		Resource: "documents",
 		Context:  map[string]string{"env": "prod"},
@@ -1380,10 +1380,10 @@ func TestIAMServer_CreateAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("CreateAdminAssignment", mock.Anything, mock.AnythingOfType("iam.CreateAdminAssignmentOptions")).
-		Return(&iam.AdminAssignment{ID: "a1", UserID: "u1", AdminRole: iam.AdminRoleSuperAdmin}, nil)
+		Return(&iam.AdminAssignment{ID: "a1", UserID: "30001", AdminRole: iam.AdminRoleSuperAdmin}, nil)
 
 	resp, err := srv.CreateAdminAssignment(context.Background(), &iampb.CreateAdminAssignmentRequest{
-		UserId:            "u1",
+		UserId:            "30001",
 		AdminRole:         iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN,
 		GrantedBy:         "admin1",
 		TenantIds:         []string{"t1"},
@@ -1409,12 +1409,12 @@ func TestIAMServer_CreateAdminAssignment_MissingFields(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = srv.CreateAdminAssignment(ctx, &iampb.CreateAdminAssignmentRequest{
-		UserId: "u1", GrantedBy: "admin1",
+		UserId: "30001", GrantedBy: "admin1",
 	})
 	require.Error(t, err)
 
 	_, err = srv.CreateAdminAssignment(ctx, &iampb.CreateAdminAssignmentRequest{
-		UserId: "u1", AdminRole: iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN,
+		UserId: "30001", AdminRole: iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN,
 	})
 	require.Error(t, err)
 }
@@ -1423,7 +1423,7 @@ func TestIAMServer_GetAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("GetAdminAssignment", mock.Anything, "a1").
-		Return(&iam.AdminAssignment{ID: "a1", UserID: "u1"}, nil)
+		Return(&iam.AdminAssignment{ID: "a1", UserID: "30001"}, nil)
 
 	resp, err := srv.GetAdminAssignment(context.Background(), &iampb.GetAdminAssignmentRequest{Id: "a1"})
 
@@ -1443,7 +1443,7 @@ func TestIAMServer_UpdateAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("UpdateAdminAssignment", mock.Anything, "a1", mock.AnythingOfType("iam.UpdateAdminAssignmentOptions")).
-		Return(&iam.AdminAssignment{ID: "a1", UserID: "u1"}, nil)
+		Return(&iam.AdminAssignment{ID: "a1", UserID: "30001"}, nil)
 
 	resp, err := srv.UpdateAdminAssignment(context.Background(), &iampb.UpdateAdminAssignmentRequest{
 		Id:                "a1",
@@ -1492,10 +1492,10 @@ func TestIAMServer_ListAdminAssignments_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("ListAdminAssignments", mock.Anything, mock.AnythingOfType("iam.ListAdminAssignmentsOptions")).
-		Return([]*iam.AdminAssignment{{ID: "a1", UserID: "u1"}}, nil)
+		Return([]*iam.AdminAssignment{{ID: "a1", UserID: "30001"}}, nil)
 
 	resp, err := srv.ListAdminAssignments(context.Background(), &iampb.ListAdminAssignmentsRequest{
-		UserId: "u1", TenantId: "t1", ActiveOnly: true,
+		UserId: "30001", TenantId: "t1", ActiveOnly: true,
 	})
 
 	require.NoError(t, err)
@@ -1510,7 +1510,7 @@ func TestIAMServer_CheckAdminPermission_Success(t *testing.T) {
 		Return(&iam.AdminCheckResponse{Allowed: true, AssignmentID: "a1", AdminRole: iam.AdminRoleSuperAdmin, Reason: "granted"}, nil)
 
 	resp, err := srv.CheckAdminPermission(context.Background(), &iampb.CheckAdminPermissionRequest{
-		UserId: "u1", Permission: "manage_users", TenantId: "t1", ResourceType: "user", ResourceId: "u2",
+		UserId: "30001", Permission: "manage_users", TenantId: "t1", ResourceType: "user", ResourceId: "30002",
 	})
 
 	require.NoError(t, err)
@@ -1524,7 +1524,7 @@ func TestIAMServer_CheckAdminPermission_MissingFields(t *testing.T) {
 	_, err := srv.CheckAdminPermission(context.Background(), &iampb.CheckAdminPermissionRequest{Permission: "x"})
 	require.Error(t, err)
 
-	_, err = srv.CheckAdminPermission(context.Background(), &iampb.CheckAdminPermissionRequest{UserId: "u1"})
+	_, err = srv.CheckAdminPermission(context.Background(), &iampb.CheckAdminPermissionRequest{UserId: "30001"})
 	require.Error(t, err)
 }
 
@@ -1536,12 +1536,12 @@ func TestIAMServer_StartImpersonation_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("StartImpersonation", mock.Anything, mock.AnythingOfType("*iam.StartImpersonationOptions")).
-		Return(&iam.ImpersonationSession{ID: "s1", AdminUserID: "admin1", TargetUserID: "u1"}, nil)
+		Return(&iam.ImpersonationSession{ID: "s1", AdminUserID: "admin1", TargetUserID: "30001"}, nil)
 
 	// The request carries no admin_user_id — the actor is the
 	// authenticated caller, resolved server-side (go-quicbaas#383).
 	resp, err := srv.StartImpersonation(context.Background(), &iampb.StartImpersonationRequest{
-		TargetUserId: "u1", TenantId: "t1", Reason: "support",
+		TargetUserId: "30001", TenantId: "t1", Reason: "support",
 	})
 
 	require.NoError(t, err)
@@ -1561,13 +1561,13 @@ func TestIAMServer_StartImpersonation_MissingFields(t *testing.T) {
 
 	// Missing tenant_id.
 	_, err = srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		TargetUserId: "u1", Reason: "x",
+		TargetUserId: "30001", Reason: "x",
 	})
 	require.Error(t, err)
 
 	// Missing reason.
 	_, err = srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		TargetUserId: "u1", TenantId: "t1",
+		TargetUserId: "30001", TenantId: "t1",
 	})
 	require.Error(t, err)
 }
@@ -1618,12 +1618,12 @@ func TestIAMServer_GetActiveImpersonations_MissingAdminUserID(t *testing.T) {
 func TestIAMServer_GrantConsent_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("GrantConsent", mock.Anything, "t1", "u1", mock.Anything, "v1", mock.Anything, "1.2.3.4", "Mozilla").
-		Return(&iam.Consent{ID: "c1", TenantID: "t1", UserID: "u1"}, nil)
+	svc.On("GrantConsent", mock.Anything, "t1", "30001", mock.Anything, "v1", mock.Anything, "1.2.3.4", "Mozilla").
+		Return(&iam.Consent{ID: "c1", TenantID: "t1", UserID: 30001}, nil)
 
 	resp, err := srv.GrantConsent(context.Background(), &iampb.GrantConsentRequest{
 		TenantId:  "t1",
-		UserId:    "u1",
+		UserId:    "30001",
 		Purpose:   iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
 		Version:   "v1",
 		ExpiresAt: timestamppb.New(time.Now().Add(365 * 24 * time.Hour)),
@@ -1641,7 +1641,7 @@ func TestIAMServer_GrantConsent_MissingFields(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := srv.GrantConsent(ctx, &iampb.GrantConsentRequest{
-		UserId: "u1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
+		UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
 	})
 	require.Error(t, err)
 
@@ -1651,7 +1651,7 @@ func TestIAMServer_GrantConsent_MissingFields(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = srv.GrantConsent(ctx, &iampb.GrantConsentRequest{
-		TenantId: "t1", UserId: "u1",
+		TenantId: "t1", UserId: "30001",
 	})
 	require.Error(t, err)
 }
@@ -1659,11 +1659,11 @@ func TestIAMServer_GrantConsent_MissingFields(t *testing.T) {
 func TestIAMServer_WithdrawConsent_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("WithdrawConsent", mock.Anything, "t1", "u1", mock.Anything, "1.2.3.4", "Mozilla").Return(nil)
+	svc.On("WithdrawConsent", mock.Anything, "t1", "30001", mock.Anything, "1.2.3.4", "Mozilla").Return(nil)
 
 	resp, err := srv.WithdrawConsent(context.Background(), &iampb.WithdrawConsentRequest{
 		TenantId:  "t1",
-		UserId:    "u1",
+		UserId:    "30001",
 		Purpose:   iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
 		IpAddress: "1.2.3.4",
 		UserAgent: "Mozilla",
@@ -1678,24 +1678,24 @@ func TestIAMServer_WithdrawConsent_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 	ctx := context.Background()
 
-	_, err := srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{UserId: "u1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
+	_, err := srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
 	require.Error(t, err)
 
 	_, err = srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{TenantId: "t1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
 	require.Error(t, err)
 
-	_, err = srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{TenantId: "t1", UserId: "u1"})
+	_, err = srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{TenantId: "t1", UserId: "30001"})
 	require.Error(t, err)
 }
 
 func TestIAMServer_GetConsent_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("GetConsent", mock.Anything, "t1", "u1", mock.Anything).
-		Return(&iam.Consent{ID: "c1", TenantID: "t1", UserID: "u1"}, nil)
+	svc.On("GetConsent", mock.Anything, "t1", "30001", mock.Anything).
+		Return(&iam.Consent{ID: "c1", TenantID: "t1", UserID: 30001}, nil)
 
 	resp, err := srv.GetConsent(context.Background(), &iampb.GetConsentRequest{
-		TenantId: "t1", UserId: "u1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
+		TenantId: "t1", UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
 	})
 
 	require.NoError(t, err)
@@ -1707,23 +1707,23 @@ func TestIAMServer_GetConsent_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 	ctx := context.Background()
 
-	_, err := srv.GetConsent(ctx, &iampb.GetConsentRequest{UserId: "u1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
+	_, err := srv.GetConsent(ctx, &iampb.GetConsentRequest{UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
 	require.Error(t, err)
 
 	_, err = srv.GetConsent(ctx, &iampb.GetConsentRequest{TenantId: "t1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
 	require.Error(t, err)
 
-	_, err = srv.GetConsent(ctx, &iampb.GetConsentRequest{TenantId: "t1", UserId: "u1"})
+	_, err = srv.GetConsent(ctx, &iampb.GetConsentRequest{TenantId: "t1", UserId: "30001"})
 	require.Error(t, err)
 }
 
 func TestIAMServer_ListUserConsents_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("ListUserConsents", mock.Anything, "t1", "u1").
-		Return([]*iam.Consent{{ID: "c1", TenantID: "t1", UserID: "u1"}}, nil)
+	svc.On("ListUserConsents", mock.Anything, "t1", "30001").
+		Return([]*iam.Consent{{ID: "c1", TenantID: "t1", UserID: 30001}}, nil)
 
-	resp, err := srv.ListUserConsents(context.Background(), &iampb.ListUserConsentsRequest{TenantId: "t1", UserId: "u1"})
+	resp, err := srv.ListUserConsents(context.Background(), &iampb.ListUserConsentsRequest{TenantId: "t1", UserId: "30001"})
 
 	require.NoError(t, err)
 	assert.Len(t, resp.Consents, 1)
@@ -1733,7 +1733,7 @@ func TestIAMServer_ListUserConsents_Success(t *testing.T) {
 func TestIAMServer_ListUserConsents_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 
-	_, err := srv.ListUserConsents(context.Background(), &iampb.ListUserConsentsRequest{UserId: "u1"})
+	_, err := srv.ListUserConsents(context.Background(), &iampb.ListUserConsentsRequest{UserId: "30001"})
 	require.Error(t, err)
 
 	_, err = srv.ListUserConsents(context.Background(), &iampb.ListUserConsentsRequest{TenantId: "t1"})
@@ -1747,12 +1747,12 @@ func TestIAMServer_ListUserConsents_MissingFields(t *testing.T) {
 func TestIAMServer_RequestExport_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("RequestExport", mock.Anything, "t1", "u1", "admin1", mock.Anything, mock.Anything, mock.Anything).
-		Return(&iam.DataExportRequest{ID: "e1", TenantID: "t1", UserID: "u1"}, nil)
+	svc.On("RequestExport", mock.Anything, "t1", "30001", "admin1", mock.Anything, mock.Anything, mock.Anything).
+		Return(&iam.DataExportRequest{ID: "e1", TenantID: "t1", UserID: 30001}, nil)
 
 	resp, err := srv.RequestExport(context.Background(), &iampb.RequestExportRequest{
 		TenantId:          "t1",
-		UserId:            "u1",
+		UserId:            "30001",
 		RequestedBy:       "admin1",
 		IncludeCategories: []string{"profile"},
 		ExcludeCategories: []string{"audit"},
@@ -1767,13 +1767,13 @@ func TestIAMServer_RequestExport_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 	ctx := context.Background()
 
-	_, err := srv.RequestExport(ctx, &iampb.RequestExportRequest{UserId: "u1", RequestedBy: "a"})
+	_, err := srv.RequestExport(ctx, &iampb.RequestExportRequest{UserId: "30001", RequestedBy: "a"})
 	require.Error(t, err)
 
 	_, err = srv.RequestExport(ctx, &iampb.RequestExportRequest{TenantId: "t1", RequestedBy: "a"})
 	require.Error(t, err)
 
-	_, err = srv.RequestExport(ctx, &iampb.RequestExportRequest{TenantId: "t1", UserId: "u1"})
+	_, err = srv.RequestExport(ctx, &iampb.RequestExportRequest{TenantId: "t1", UserId: "30001"})
 	require.Error(t, err)
 }
 
@@ -1824,12 +1824,12 @@ func TestIAMServer_GenerateExport_MissingID(t *testing.T) {
 func TestIAMServer_RequestDeletion_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("RequestDeletion", mock.Anything, "t1", "u1", "admin1", "gdpr", mock.Anything, mock.Anything, 30).
-		Return(&iam.DataDeletionRequest{ID: "d1", TenantID: "t1", UserID: "u1"}, nil)
+	svc.On("RequestDeletion", mock.Anything, "t1", "30001", "admin1", "gdpr", mock.Anything, mock.Anything, 30).
+		Return(&iam.DataDeletionRequest{ID: "d1", TenantID: "t1", UserID: 30001}, nil)
 
 	resp, err := srv.RequestDeletion(context.Background(), &iampb.RequestDeletionRequest{
 		TenantId:           "t1",
-		UserId:             "u1",
+		UserId:             "30001",
 		RequestedBy:        "admin1",
 		Reason:             "gdpr",
 		DeleteCategories:   []string{"profile"},
@@ -1846,13 +1846,13 @@ func TestIAMServer_RequestDeletion_MissingFields(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 	ctx := context.Background()
 
-	_, err := srv.RequestDeletion(ctx, &iampb.RequestDeletionRequest{UserId: "u1", RequestedBy: "a"})
+	_, err := srv.RequestDeletion(ctx, &iampb.RequestDeletionRequest{UserId: "30001", RequestedBy: "a"})
 	require.Error(t, err)
 
 	_, err = srv.RequestDeletion(ctx, &iampb.RequestDeletionRequest{TenantId: "t1", RequestedBy: "a"})
 	require.Error(t, err)
 
-	_, err = srv.RequestDeletion(ctx, &iampb.RequestDeletionRequest{TenantId: "t1", UserId: "u1"})
+	_, err = srv.RequestDeletion(ctx, &iampb.RequestDeletionRequest{TenantId: "t1", UserId: "30001"})
 	require.Error(t, err)
 }
 

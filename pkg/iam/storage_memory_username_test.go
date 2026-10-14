@@ -53,7 +53,7 @@ func TestMemoryStorage_CreateUser_RefusesADuplicateHandle(t *testing.T) {
 			t.Fatalf("GetUserByUsername: %v", err)
 		}
 		if got.ID != first.ID {
-			t.Fatalf("lookup resolved to %q, want the only holder %q — a duplicate was stored",
+			t.Fatalf("lookup resolved to %d, want the only holder %d — a duplicate was stored",
 				got.ID, first.ID)
 		}
 	}
@@ -125,7 +125,7 @@ func TestMemoryStorage_UpdateUser_RefusesTakingAnotherAccountsHandle(t *testing.
 		t.Fatalf("GetUserByUsername: %v", err)
 	}
 	if got.ID != first.ID {
-		t.Fatalf("lookup resolved to %q, want %q", got.ID, first.ID)
+		t.Fatalf("lookup resolved to %d, want %d", got.ID, first.ID)
 	}
 }
 

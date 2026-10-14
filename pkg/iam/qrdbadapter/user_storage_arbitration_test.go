@@ -171,7 +171,7 @@ func TestUpdateUser_RacingBindingUpdatesLeaveOnlyTheWinnerResolving(t *testing.T
 			t.Fatalf("round %d: the winning binding must resolve: %v", round, err)
 		}
 		if got.ID != u.ID {
-			t.Fatalf("round %d: winner resolved %q, want %q", round, got.ID, u.ID)
+			t.Fatalf("round %d: winner resolved %d, want %d", round, got.ID, u.ID)
 		}
 		for name, tp := range map[string]string{"loser": loser, "A": a} {
 			if _, err := store.GetUserByPIVThumbprint(ctx, tp); !errors.Is(err, iam.ErrUserNotFound) {
@@ -200,7 +200,7 @@ func TestGetUserByPIVThumbprint_LegacyDigestResolvesThroughQRDBAndRevokes(t *tes
 			t.Fatalf("the %s thumbprint must resolve through qrdb's index: %v", name, err)
 		}
 		if got.ID != u.ID {
-			t.Fatalf("%s resolved %q, want %q", name, got.ID, u.ID)
+			t.Fatalf("%s resolved %d, want %d", name, got.ID, u.ID)
 		}
 	}
 

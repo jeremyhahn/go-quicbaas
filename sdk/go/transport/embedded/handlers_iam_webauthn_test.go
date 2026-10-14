@@ -27,7 +27,7 @@ import (
 // response shaping are asserted without a live credential store.
 type stubWebAuthnCredentials struct {
 	gotTenant string
-	gotUser   string
+	gotUser   uint64
 	gotCredID string
 
 	list    []iam.WebAuthnCredentialSummary
@@ -35,17 +35,17 @@ type stubWebAuthnCredentials struct {
 	err     error
 }
 
-func (s *stubWebAuthnCredentials) ListCredentials(_ context.Context, tenantID, userID string) ([]iam.WebAuthnCredentialSummary, error) {
+func (s *stubWebAuthnCredentials) ListCredentials(_ context.Context, tenantID string, userID uint64) ([]iam.WebAuthnCredentialSummary, error) {
 	s.gotTenant, s.gotUser = tenantID, userID
 	return s.list, s.err
 }
 
-func (s *stubWebAuthnCredentials) DeleteCredential(_ context.Context, tenantID, userID, credentialID string) error {
+func (s *stubWebAuthnCredentials) DeleteCredential(_ context.Context, tenantID string, userID uint64, credentialID string) error {
 	s.gotTenant, s.gotUser, s.gotCredID = tenantID, userID, credentialID
 	return s.err
 }
 
-func (s *stubWebAuthnCredentials) DeleteCredentials(_ context.Context, tenantID, userID string) (int, error) {
+func (s *stubWebAuthnCredentials) DeleteCredentials(_ context.Context, tenantID string, userID uint64) (int, error) {
 	s.gotTenant, s.gotUser = tenantID, userID
 	return s.deleted, s.err
 }
@@ -102,12 +102,12 @@ func TestEmbeddedWebAuthnList(t *testing.T) {
 	svc := &mockQuicBaaSForWebAuthn{creds: stub}
 
 	resp, err := handleIAMWebAuthnCredentialsList(context.Background(), svc,
-		&webAuthnListEnvelope{TenantID: "t1", UserID: "u1"})
+		&webAuthnListEnvelope{TenantID: "t1", UserID: "30001"})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if stub.gotTenant != "t1" || stub.gotUser != "u1" {
-		t.Errorf("service called with %s/%s, want t1/u1", stub.gotTenant, stub.gotUser)
+	if stub.gotTenant != "t1" || stub.gotUser != 30001 {
+		t.Errorf("service called with %s/%d, want t1/30001", stub.gotTenant, stub.gotUser)
 	}
 
 	out, ok := resp.(map[string]interface{})
@@ -137,7 +137,7 @@ func TestEmbeddedWebAuthnDelete(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := handleIAMWebAuthnCredentialDelete(ctx, svc,
-		&webAuthnDeleteEnvelope{TenantID: "t1", UserID: "u1", CredentialID: "AbCd01"}); err != nil {
+		&webAuthnDeleteEnvelope{TenantID: "t1", UserID: "30001", CredentialID: "AbCd01"}); err != nil {
 		t.Fatalf("delete one: %v", err)
 	}
 	if stub.gotCredID != "AbCd01" {
@@ -145,7 +145,7 @@ func TestEmbeddedWebAuthnDelete(t *testing.T) {
 	}
 
 	resp, err := handleIAMWebAuthnCredentialsDeleteAll(ctx, svc,
-		&webAuthnListEnvelope{TenantID: "t1", UserID: "u1"})
+		&webAuthnListEnvelope{TenantID: "t1", UserID: "30001"})
 	if err != nil {
 		t.Fatalf("delete all: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestEmbeddedWebAuthnUnconfigured(t *testing.T) {
 	svc := &mockQuicBaaSForWebAuthn{creds: nil}
 
 	if _, err := handleIAMWebAuthnCredentialsList(context.Background(), svc,
-		&webAuthnListEnvelope{TenantID: "t1", UserID: "u1"}); err == nil {
+		&webAuthnListEnvelope{TenantID: "t1", UserID: "30001"}); err == nil {
 		t.Error("expected an error when WebAuthn is not configured")
 	}
 }
@@ -174,7 +174,7 @@ func TestEmbeddedWebAuthnPropagatesError(t *testing.T) {
 	svc := &mockQuicBaaSForWebAuthn{creds: &stubWebAuthnCredentials{err: wantErr}}
 
 	_, err := handleIAMWebAuthnCredentialsList(context.Background(), svc,
-		&webAuthnListEnvelope{TenantID: "t1", UserID: "u1"})
+		&webAuthnListEnvelope{TenantID: "t1", UserID: "30001"})
 	if !errors.Is(err, wantErr) {
 		t.Errorf("error = %v, want the store failure", err)
 	}

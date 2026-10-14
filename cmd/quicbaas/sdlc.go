@@ -47,6 +47,7 @@ import (
 var (
 	sdlcOutputFmt string
 	sdlcFile      string
+	sdlcPaused    bool
 )
 
 // SDLCClientFactory creates the SDLC client; tests substitute a fake.
@@ -125,6 +126,7 @@ Examples:
 		RunE:  runSDLCBind,
 	}
 	bind.Flags().StringVarP(&sdlcFile, "file", "f", "", "Project binding (YAML or JSON)")
+	bind.Flags().BoolVar(&sdlcPaused, "paused", false, "Bind without switching the project's autonomy on; never turns it off")
 
 	cmd.AddCommand(bind,
 		&cobra.Command{Use: "unbind <project-id>", Short: "Detach a project's forge binding", Args: cobra.ExactArgs(1), RunE: runSDLCUnbind},
@@ -209,7 +211,7 @@ func runSDLCBind(_ *cobra.Command, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
-	bound, err := client.Bind(ctx, &sdlcSDK.BindRequest{TenantID: globalTenantID, ProjectID: args[0], Binding: *binding})
+	bound, err := client.Bind(ctx, &sdlcSDK.BindRequest{TenantID: globalTenantID, ProjectID: args[0], Binding: *binding, Paused: sdlcPaused})
 	if err != nil {
 		return formatError(err)
 	}

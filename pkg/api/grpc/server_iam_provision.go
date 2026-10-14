@@ -50,7 +50,7 @@ func (s *IAMServer) ProvisionTenant(ctx context.Context, req *iampb.ProvisionTen
 
 	out := &iampb.ProvisionTenantResponse{
 		TenantId:            res.TenantID,
-		AdminUserId:         res.AdminUserID,
+		AdminUserId:         formatUserID(res.AdminUserID),
 		AdminUsername:       res.AdminUsername,
 		AdminRoleId:         res.AdminRoleID,
 		AdminPending:        res.AdminPending,

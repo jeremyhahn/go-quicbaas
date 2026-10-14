@@ -48,8 +48,8 @@ func (s *inviteActivationService) GetIdentityStore(_ context.Context) (*iam.Iden
 }
 
 const (
-	inviteTenant = "tenant-invite"
-	inviteUserID = "72"
+	inviteTenant        = "tenant-invite"
+	inviteUserID uint64 = 72
 )
 
 // setupInviteActivationHandler wires a WebAuthnManager and an identity store

@@ -341,7 +341,7 @@ func TestIAMServiceWrapper_GetUser_IdentityStoreUnavailable(t *testing.T) {
 
 	resp, err := wrapper.GetUser(context.Background(), &IAMGetUserRequest{
 		TenantID: "t-1",
-		UserID:   "u-1",
+		UserID:   10001,
 	})
 
 	require.Error(t, err)
@@ -355,7 +355,7 @@ func TestIAMServiceWrapper_UpdateUser_IdentityStoreUnavailable(t *testing.T) {
 
 	resp, err := wrapper.UpdateUser(context.Background(), &IAMUpdateUserRequest{
 		TenantID: "t-1",
-		UserID:   "u-1",
+		UserID:   10001,
 	})
 
 	require.Error(t, err)
@@ -388,7 +388,7 @@ func TestIAMServiceWrapper_UpdateUser_MalformedEmailBeatsMissingIdentityStore(t 
 
 	resp, err := wrapper.UpdateUser(context.Background(), &IAMUpdateUserRequest{
 		TenantID: "t-1",
-		UserID:   "u-1",
+		UserID:   10001,
 		Email:    &email,
 	})
 
@@ -405,7 +405,7 @@ func TestIAMServiceWrapper_DeleteUser_IdentityStoreUnavailable(t *testing.T) {
 
 	resp, err := wrapper.DeleteUser(context.Background(), &IAMDeleteUserRequest{
 		TenantID: "t-1",
-		UserID:   "u-1",
+		UserID:   10001,
 	})
 
 	require.Error(t, err)

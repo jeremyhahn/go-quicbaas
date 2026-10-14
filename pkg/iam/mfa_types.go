@@ -70,7 +70,7 @@ type MFASecret struct {
 	ID string `json:"id"`
 
 	// UserID is the owning user
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// TenantID is the tenant
 	TenantID string `json:"tenant_id"`
@@ -108,7 +108,7 @@ func (s *MFASecret) Validate() error {
 	if s.ID == "" {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_secret.validate", "secret ID is required", nil)
 	}
-	if s.UserID == "" {
+	if s.UserID == 0 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_secret.validate", "user ID is required", nil)
 	}
 	if s.TenantID == "" {
@@ -140,7 +140,7 @@ type MFAEnrollment struct {
 	ID string `json:"id"`
 
 	// UserID is the enrolling user
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// TenantID is the tenant
 	TenantID string `json:"tenant_id"`
@@ -187,7 +187,7 @@ func (e *MFAEnrollment) Validate() error {
 	if e.ID == "" {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_enrollment.validate", "enrollment ID is required", nil)
 	}
-	if e.UserID == "" {
+	if e.UserID == 0 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_enrollment.validate", "user ID is required", nil)
 	}
 	if e.TenantID == "" {
@@ -228,7 +228,7 @@ type MFAChallenge struct {
 	ID string `json:"id"`
 
 	// UserID is the authenticating user
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// TenantID is the tenant
 	TenantID string `json:"tenant_id"`
@@ -268,7 +268,7 @@ func (c *MFAChallenge) Validate() error {
 	if c.ID == "" {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_challenge.validate", "challenge ID is required", nil)
 	}
-	if c.UserID == "" {
+	if c.UserID == 0 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa_challenge.validate", "user ID is required", nil)
 	}
 	if c.TenantID == "" {
@@ -295,7 +295,7 @@ type BackupCodeSet struct {
 	ID string `json:"id"`
 
 	// UserID is the owning user
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// TenantID is the tenant
 	TenantID string `json:"tenant_id"`

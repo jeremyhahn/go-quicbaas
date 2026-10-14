@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fips"
@@ -1018,7 +1020,7 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 		if err := bindAdminPIVCert(ctx, c, adminTenantID, user.ID, path); err != nil {
 			return &FirstBootBootstrapError{Op: "bind bootstrap admin PIV cert", Cause: err}
 		}
-		s.logger.Infof("Bootstrap admin %s bound to PIV cert at %s", user.ID, path)
+		s.logger.Infof("Bootstrap admin %d bound to PIV cert at %s", user.ID, path)
 		// LAST, exactly as on the enrollment path below.
 		return s.grantFirstBootSuperAdmin(ctx, c, user.ID)
 	}
@@ -1080,9 +1082,14 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 // left the grant behind, and the next boot read it as completion and served with
 // an administrator who had no usable credential. Anything added to first-boot
 // belongs BEFORE this call, never after.
-func (s *Server) grantFirstBootSuperAdmin(ctx context.Context, c *iamComponents, userID string) error {
+func (s *Server) grantFirstBootSuperAdmin(ctx context.Context, c *iamComponents, userID uint64) error {
+	// The assignment carries the id as text, where zero would format to "0"
+	// and read as a user. Zero is the "not created yet" id, so refuse it here.
+	if userID == 0 {
+		return &FirstBootBootstrapError{Op: "create admin assignment", Cause: api.NewRequiredFieldError("user_id")}
+	}
 	if _, err := c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    userID,
+		UserID:    strconv.FormatUint(userID, 10),
 		AdminRole: iam.AdminRoleSuperAdmin,
 		TenantIDs: nil, // system-tenant scope only (#357)
 		GrantedBy: "system:first-boot",
@@ -1118,7 +1125,13 @@ func hasSystemAdministrator(ctx context.Context, c *iamComponents, assignments [
 			continue
 		}
 
-		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, a.UserID)
+		// Assignments still carry the user id as a string. One that does not
+		// parse names no user, so like an orphaned grant it confers nothing.
+		userID, err := strconv.ParseUint(a.UserID, 10, 64)
+		if err != nil || userID == 0 {
+			continue
+		}
+		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, userID)
 		if err != nil {
 			if dberrors.IsNotFound(err) {
 				// An ORPHANED grant: the assignment outlived its user. It
@@ -1156,7 +1169,12 @@ func reportUnusableAdministrators(ctx context.Context, c *iamComponents, assignm
 		if a == nil || a.AdminRole != iam.AdminRoleSuperAdmin || len(a.TenantIDs) != 0 {
 			continue
 		}
-		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, a.UserID)
+		userID, err := strconv.ParseUint(a.UserID, 10, 64)
+		if err != nil || userID == 0 {
+			log.Warnf("first-boot: super-admin grant %s names %q, which is not a user id", a.ID, a.UserID)
+			continue
+		}
+		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, userID)
 		switch {
 		case err != nil:
 			log.Warnf("first-boot: super-admin grant %s names user %s, which cannot be read: %s", a.ID, a.UserID, err.Error())
@@ -1312,7 +1330,8 @@ var ErrEmptyAdminCSR = errors.New("first-boot: configured admin CSR file is empt
 func (s *Server) enrollFirstBootAdminCert(
 	ctx context.Context,
 	c *iamComponents,
-	tenantID, userID string,
+	tenantID string,
+	userID uint64,
 	result *qrdbsdk.FirstBootResult,
 ) error {
 	if result == nil || len(result.AdminCertPEM) == 0 {
@@ -1325,7 +1344,7 @@ func (s *Server) enrollFirstBootAdminCert(
 	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceFirstBoot); err != nil {
 		return &FirstBootBootstrapError{Op: "enroll admin mtls login factor", Cause: err}
 	}
-	s.logger.Infof("Bootstrap admin %s enrolled with mTLS certificate (SPKI thumbprint %s)",
+	s.logger.Infof("Bootstrap admin %d enrolled with mTLS certificate (SPKI thumbprint %s)",
 		userID, result.AdminCertThumbprint)
 	return nil
 }
@@ -1490,7 +1509,7 @@ func parseCertLoginPEM(certPEM []byte) (*x509.Certificate, error) {
 // but `quicbaas auth login --method mtls` fails FinishLogin with
 // "factor not found", because the login ceremony resolves qrdb's UserAuthFactor
 // store rather than the user-side thumbprint index written below.
-func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID, userID, path string) error {
+func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID string, userID uint64, path string) error {
 	certPEM, err := os.ReadFile(path) //nolint:gosec // path comes from operator config
 	if err != nil {
 		return &PIVBootstrapError{Op: "read PIV cert", Path: path, Cause: err}
@@ -1576,7 +1595,8 @@ func (e *AdminCertFactorUnavailableError) Error() string {
 func enrollAdminCertLoginFactor(
 	ctx context.Context,
 	c *iamComponents,
-	tenantID, userID string,
+	tenantID string,
+	userID uint64,
 	cert *x509.Certificate,
 	source string,
 ) error {
@@ -1593,19 +1613,16 @@ func enrollAdminCertLoginFactor(
 func enrollCertLoginFactor(
 	ctx context.Context,
 	enroller *iam.CertLoginFactorEnroller,
-	tenantID, userID string,
+	tenantID string,
+	userID uint64,
 	cert *x509.Certificate,
 	source string,
 ) error {
 	if enroller == nil {
 		return &AdminCertFactorUnavailableError{Component: "certificate login factor enroller"}
 	}
-	qrdbUserID, err := iam.ParseUserID(userID)
-	if err != nil {
-		return err
-	}
-	_, err = enroller.Enroll(qrdbsdk.ContextWithTenant(ctx, tenantID), iam.CertLoginFactorEnrollment{
-		UserID:      qrdbUserID,
+	_, err := enroller.Enroll(qrdbsdk.ContextWithTenant(ctx, tenantID), iam.CertLoginFactorEnrollment{
+		UserID:      userID,
 		Certificate: cert,
 		Label:       adminCertFactorLabel(cert),
 		Metadata:    adminCertFactorMetadata(tenantID, userID, source, cert),
@@ -1627,11 +1644,11 @@ func adminCertFactorLabel(cert *x509.Certificate) string {
 // factor record: which binding path created it, the owning tenant and broker
 // user, and the certificate's subject / serial / expiry. It never carries key
 // material.
-func adminCertFactorMetadata(tenantID, userID, source string, cert *x509.Certificate) map[string]string {
+func adminCertFactorMetadata(tenantID string, userID uint64, source string, cert *x509.Certificate) map[string]string {
 	return map[string]string{
 		"binding_source": source,
 		"tenant_id":      tenantID,
-		"broker_user_id": userID,
+		"broker_user_id": strconv.FormatUint(userID, 10),
 		"cert_subject":   cert.Subject.String(),
 		"cert_serial":    cert.SerialNumber.String(),
 		"cert_not_after": cert.NotAfter.UTC().Format(time.RFC3339),

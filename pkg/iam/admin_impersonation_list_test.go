@@ -36,13 +36,13 @@ func TestAdminManager_ListImpersonations(t *testing.T) {
 	require.NoError(t, err)
 
 	s1, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "target1",
+		TargetUserID: "40011",
 		TenantID:     "tenant1",
 		Reason:       "one",
 	})
 	require.NoError(t, err)
 	s2, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "target2",
+		TargetUserID: "40012",
 		TenantID:     "tenant1",
 		Reason:       "two",
 	})
@@ -88,7 +88,7 @@ func TestAdminManager_GetImpersonationSession(t *testing.T) {
 	require.NoError(t, err)
 
 	s, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "target1",
+		TargetUserID: "40011",
 		TenantID:     "tenant1",
 		Reason:       "ok",
 	})

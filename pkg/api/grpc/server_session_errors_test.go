@@ -30,14 +30,14 @@ import (
 
 // mockSessionService implements SessionService for testing error paths.
 type mockSessionService struct {
-	listSessionsFunc  func(ctx context.Context, tenantID, userID string, limit, offset int) ([]*iam.Session, int, error)
+	listSessionsFunc  func(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error)
 	getSessionFunc    func(ctx context.Context, sessionID string) (*iam.Session, error)
 	revokeSessionFunc func(ctx context.Context, sessionID string) error
-	revokeAllFunc     func(ctx context.Context, tenantID, userID string) (int, error)
+	revokeAllFunc     func(ctx context.Context, tenantID string, userID uint64) (int, error)
 	revokeOtherFunc   func(ctx context.Context, tenantID, keepSessionID string) (int, error)
 }
 
-func (m *mockSessionService) ListSessions(ctx context.Context, tenantID, userID string, limit, offset int) ([]*iam.Session, int, error) {
+func (m *mockSessionService) ListSessions(ctx context.Context, tenantID string, userID uint64, limit, offset int) ([]*iam.Session, int, error) {
 	if m.listSessionsFunc != nil {
 		return m.listSessionsFunc(ctx, tenantID, userID, limit, offset)
 	}
@@ -58,7 +58,7 @@ func (m *mockSessionService) RevokeSession(ctx context.Context, sessionID string
 	return nil
 }
 
-func (m *mockSessionService) RevokeAllSessions(ctx context.Context, tenantID, userID string) (int, error) {
+func (m *mockSessionService) RevokeAllSessions(ctx context.Context, tenantID string, userID uint64) (int, error) {
 	if m.revokeAllFunc != nil {
 		return m.revokeAllFunc(ctx, tenantID, userID)
 	}
@@ -81,7 +81,7 @@ func newMockSessionServer(t *testing.T, svc SessionService) *SessionServer {
 
 func TestSessionServerErrors_ListSessions_ServiceError(t *testing.T) {
 	svc := &mockSessionService{
-		listSessionsFunc: func(_ context.Context, _, _ string, _, _ int) ([]*iam.Session, int, error) {
+		listSessionsFunc: func(_ context.Context, _ string, _ uint64, _, _ int) ([]*iam.Session, int, error) {
 			return nil, 0, errors.New("database unavailable")
 		},
 	}
@@ -111,7 +111,7 @@ func TestSessionServerErrors_RevokeSession_ServiceError(t *testing.T) {
 
 func TestSessionServerErrors_RevokeAllSessions_ServiceError(t *testing.T) {
 	svc := &mockSessionService{
-		revokeAllFunc: func(_ context.Context, _, _ string) (int, error) {
+		revokeAllFunc: func(_ context.Context, _ string, _ uint64) (int, error) {
 			return 0, errors.New("revoke all failed")
 		},
 	}
@@ -119,7 +119,7 @@ func TestSessionServerErrors_RevokeAllSessions_ServiceError(t *testing.T) {
 
 	_, err := srv.RevokeAllSessions(context.Background(), &iampb.RevokeAllSessionsRequest{
 		TenantId: "tenant-1",
-		UserId:   "user-1",
+		UserId:   "10001",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))

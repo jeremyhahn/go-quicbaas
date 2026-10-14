@@ -438,6 +438,29 @@ and they fail independently. A triage nudge that fails does **not** fail the
 delivery: re-verifying and re-nudging the poller to reach a pass the backstop
 will make anyway is a poor trade.
 
+**A nudge that arrives mid-run is honoured by a bounded re-run.** A run lists
+the issues once, as it starts, so a nudge that loses the lease to a run in
+flight may be about an issue that run never saw. The losing nudge therefore
+writes a **rerun mark** — one `sdlc_triage_rerun` record per project in the
+tenant's SDLC store, written only where none exists, so any number of nudges
+leave one mark. The run takes the mark twice, each time with a
+compare-and-delete so it never removes a mark set after it read:
+
+| When | A mark taken means |
+|---|---|
+| in `initialize`, before the listing | nothing more — the listing about to happen satisfies it |
+| in `cleanup`, after the session is torn down | the same job goes back to `initialize`, under the lease it already holds, and lists again in a fresh session |
+
+A job goes round at most **3** extra times (`triageRerunRounds`). Past the bound
+the mark is left in place, the job says so in its events, and the next nudge or
+sweep picks it up — a project nudged without pause cannot hold its lease for
+ever. A mark the scheduler cannot write is returned as
+`TriageRerunUnrecordedError` (`ErrTriageRerunUnrecorded`): the nudge was
+neither run nor recorded. A failed take is audited as
+`sdlc:triage_rerun_failed` and treated as no mark. One window remains: a mark
+set after cleanup's last take but before the lease is released waits for the
+next nudge or sweep.
+
 **The periodic backstop** (`TriageScheduler.Sweep`, default 15 minutes,
 `sdlc.triage_sweep_interval`) visits every bound project. It catches the
 deliveries that never arrived — an unprovisioned hook, a forge outage, a daemon

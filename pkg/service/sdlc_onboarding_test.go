@@ -40,7 +40,7 @@ const expectedWebhookURL = sdlcTestPublicURL + sdlc.WebhookPathPrefix + sdlcTest
 func TestSDLCService_BindProvisionsTheRepository(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
@@ -62,7 +62,7 @@ func TestSDLCService_BindIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 
 	for round := 1; round <= 2; round++ {
-		if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+		if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 			t.Fatalf("round %d: Bind: %v", round, err)
 		}
 	}
@@ -86,7 +86,7 @@ func TestSDLCService_BindLeavesARecoverableStateWhenTheForgeRefuses(t *testing.T
 	ctx := context.Background()
 	rig.forge.FailOnce("GET /labels")
 
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); !errors.Is(err, sdlc.ErrBackend) {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); !errors.Is(err, sdlc.ErrBackend) {
 		t.Fatalf("error = %v, want ErrBackend", err)
 	}
 
@@ -123,7 +123,7 @@ func TestSDLCService_BindLeavesARecoverableStateWhenTheForgeRefuses(t *testing.T
 func TestSDLCService_UnbindRemovesTheDelivery(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
@@ -159,7 +159,7 @@ func TestSDLCService_UnbindOfAnUnboundProjectIsNotAnError(t *testing.T) {
 func TestSDLCService_UnbindRefusesWhenTheDeliveryCannotBeRemoved(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	rig.forge.FailOnce("GET /hooks")
@@ -205,12 +205,12 @@ func rebindTarget(t *testing.T, rig *sdlcServiceRig) (*giteafake.Server, *sdlc.P
 func TestSDLCService_RebindToAnotherRepositoryRemovesTheOldDelivery(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind A: %v", err)
 	}
 	other, rebound := rebindTarget(t, rig)
 
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound, BindOptions{}); err != nil {
 		t.Fatalf("Bind B: %v", err)
 	}
 	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
@@ -227,13 +227,13 @@ func TestSDLCService_RebindToAnotherRepositoryRemovesTheOldDelivery(t *testing.T
 func TestSDLCService_RebindIsRefusedWhenTheOldDeliveryCannotBeRemoved(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind A: %v", err)
 	}
 	other, rebound := rebindTarget(t, rig)
 	rig.forge.FailOnce("GET /hooks")
 
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound); !errors.Is(err, sdlc.ErrBackend) {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound, BindOptions{}); !errors.Is(err, sdlc.ErrBackend) {
 		t.Fatalf("error = %v, want ErrBackend", err)
 	}
 	got, err := rig.svc.Binding(ctx, sdlcTestTenant, sdlcTestProject)
@@ -248,7 +248,7 @@ func TestSDLCService_RebindIsRefusedWhenTheOldDeliveryCannotBeRemoved(t *testing
 	}
 
 	// Retryable, which is the point of refusing.
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound, BindOptions{}); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
@@ -265,13 +265,13 @@ func TestSDLCService_RebindIsRefusedWhenTheOldDeliveryCannotBeRemoved(t *testing
 func TestSDLCService_RebindToPollOnlyRemovesTheDelivery(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	pollOnly := rig.binding()
 	pollOnly.Forge.WebhookSecretRef = ""
 
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, pollOnly); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, pollOnly, BindOptions{}); err != nil {
 		t.Fatalf("rebind poll-only: %v", err)
 	}
 	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
@@ -285,13 +285,13 @@ func TestSDLCService_RebindToPollOnlyRemovesTheDelivery(t *testing.T) {
 func TestSDLCService_RebindToTheSameRepositoryDoesNotOffboard(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	replacement := rig.binding()
 	replacement.Review.RequiredApprovals = 2
 
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, replacement); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, replacement, BindOptions{}); err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
 	if created := rig.forge.Calls("POST /hooks"); created != 1 {
@@ -310,7 +310,7 @@ func TestSDLCService_RebindToTheSameRepositoryDoesNotOffboard(t *testing.T) {
 func TestSDLCService_OnboardRepairsDrift(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	rig.forge.DropHooks()
@@ -391,7 +391,7 @@ func TestSDLCService_ConformanceRefusesAProjectThatDoesNotExist(t *testing.T) {
 func TestSDLCService_ConformanceChangesNothing(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	rig.forge.DropHooks()

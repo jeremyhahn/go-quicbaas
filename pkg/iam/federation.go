@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,9 +49,9 @@ type FederationManager interface {
 	HandleCallback(ctx context.Context, stateToken, authCode string) (*FederationResult, error)
 
 	// Account Linking
-	LinkAccount(ctx context.Context, userID, tenantID, providerID, externalToken string) error
-	UnlinkAccount(ctx context.Context, userID, tenantID, providerID string) error
-	GetUserLinks(ctx context.Context, userID, tenantID string) ([]*FederatedIdentity, error)
+	LinkAccount(ctx context.Context, userID uint64, tenantID, providerID, externalToken string) error
+	UnlinkAccount(ctx context.Context, userID uint64, tenantID, providerID string) error
+	GetUserLinks(ctx context.Context, userID uint64, tenantID string) ([]*FederatedIdentity, error)
 }
 
 // ProviderResolver performs home-realm provider discovery: it resolves the
@@ -693,8 +694,8 @@ func (m *DefaultFederationManager) HandleCallback(ctx context.Context, stateToke
 }
 
 // LinkAccount links an existing user account to an external provider.
-func (m *DefaultFederationManager) LinkAccount(ctx context.Context, userID, tenantID, providerID, externalToken string) error {
-	if userID == "" || tenantID == "" || providerID == "" || externalToken == "" {
+func (m *DefaultFederationManager) LinkAccount(ctx context.Context, userID uint64, tenantID, providerID, externalToken string) error {
+	if userID == 0 || tenantID == "" || providerID == "" || externalToken == "" {
 		return NewIAMError(ErrFederatedIdentityNotFound, "iam.federation.link",
 			"user ID, tenant ID, provider ID, and external token are required", nil)
 	}
@@ -785,8 +786,8 @@ func (m *DefaultFederationManager) LinkAccount(ctx context.Context, userID, tena
 }
 
 // UnlinkAccount removes the link between a user and an external provider.
-func (m *DefaultFederationManager) UnlinkAccount(ctx context.Context, userID, tenantID, providerID string) error {
-	if userID == "" || tenantID == "" || providerID == "" {
+func (m *DefaultFederationManager) UnlinkAccount(ctx context.Context, userID uint64, tenantID, providerID string) error {
+	if userID == 0 || tenantID == "" || providerID == "" {
 		return NewIAMError(ErrFederatedIdentityNotFound, "iam.federation.unlink",
 			"user ID, tenant ID, and provider ID are required", nil)
 	}
@@ -832,8 +833,8 @@ func (m *DefaultFederationManager) UnlinkAccount(ctx context.Context, userID, te
 }
 
 // GetUserLinks returns all federated identities for a user.
-func (m *DefaultFederationManager) GetUserLinks(ctx context.Context, userID, tenantID string) ([]*FederatedIdentity, error) {
-	if userID == "" || tenantID == "" {
+func (m *DefaultFederationManager) GetUserLinks(ctx context.Context, userID uint64, tenantID string) ([]*FederatedIdentity, error) {
+	if userID == 0 || tenantID == "" {
 		return nil, NewIAMError(ErrFederatedIdentityNotFound, "iam.federation.get_links",
 			"user ID and tenant ID are required", nil)
 	}
@@ -1275,7 +1276,7 @@ func (m *DefaultFederationManager) processAuthentication(ctx context.Context, pr
 // resolved roles are assigned. When the resolution used static DefaultRoles
 // (no claim->role mappings configured), existing roles are left intact and the
 // defaults are additively ensured, preserving locally-granted roles.
-func (m *DefaultFederationManager) syncUserRoles(ctx context.Context, tenantID, userID string, resolution *RoleResolution) error {
+func (m *DefaultFederationManager) syncUserRoles(ctx context.Context, tenantID string, userID uint64, resolution *RoleResolution) error {
 	if resolution == nil {
 		return nil
 	}
@@ -1520,7 +1521,7 @@ func (m *DefaultFederationManager) logAuthEvent(ctx context.Context, tenantID st
 	var actor *AuditActor
 	if user != nil {
 		actor = &AuditActor{
-			UserID:   user.ID,
+			UserID:   strconv.FormatUint(user.ID, 10),
 			Username: user.Username,
 			Email:    user.Email,
 		}
@@ -1562,7 +1563,7 @@ func (m *DefaultFederationManager) logLinkEvent(ctx context.Context, tenantID st
 	var actor *AuditActor
 	if user != nil {
 		actor = &AuditActor{
-			UserID:   user.ID,
+			UserID:   strconv.FormatUint(user.ID, 10),
 			Username: user.Username,
 			Email:    user.Email,
 		}

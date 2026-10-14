@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -110,7 +111,7 @@ func setupUserReadHandler(t *testing.T) (*IAMHandler, *iam.MemoryStorage, func()
 	// than merely absent — there is no copy on the record for a read path to
 	// serialize, whichever transport asks.
 	require.NoError(t, mem.CreateUser(context.Background(), &iam.User{
-		ID:        "77",
+		ID:        77,
 		TenantID:  "acme",
 		Email:     "alice@acme.com",
 		Name:      "alice",
@@ -244,7 +245,9 @@ func TestCreateUser_OmittedAuthMethodsAreNotWidenedByTheInviteWrite(t *testing.T
 	id, _ := got["id"].(string)
 	require.NotEmpty(t, id, "create response carried no user id: %v", got)
 
-	stored, err := mem.GetUser(context.Background(), "acme", id)
+	storedID, err := strconv.ParseUint(id, 10, 64)
+	require.NoError(t, err, "the user id must be a decimal uint64")
+	stored, err := mem.GetUser(context.Background(), "acme", storedID)
 	require.NoError(t, err)
 	require.Equal(t, iam.LifecyclePending, stored.Lifecycle,
 		"the fixture must exercise the INVITED path, which is the one that writes twice")
@@ -272,7 +275,9 @@ func TestCreateUser_SuppliedAuthMethodsSurviveTheInviteWrite(t *testing.T) {
 	id, _ := got["id"].(string)
 	require.NotEmpty(t, id)
 
-	stored, err := mem.GetUser(context.Background(), "acme", id)
+	storedID, err := strconv.ParseUint(id, 10, 64)
+	require.NoError(t, err, "the user id must be a decimal uint64")
+	stored, err := mem.GetUser(context.Background(), "acme", storedID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{iam.AuthMethodPIV}, stored.AuthMethods)
 	assert.Equal(t, []interface{}{iam.AuthMethodPIV}, got["auth_methods"])

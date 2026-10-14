@@ -127,7 +127,7 @@ func (s *QRDBUserStorage) CreateUser(ctx context.Context, u *iam.User) error {
 
 	// Stamp the assigned id BEFORE anything else can fail: the record is already
 	// persisted at this point, and the compensation below needs to name it.
-	u.ID = FormatUserID(created.ID)
+	u.ID = created.ID
 
 	// Everything past this point COMPENSATES on failure. qrdb has committed the
 	// canonical record, so returning an error without undoing it would leave a
@@ -136,7 +136,7 @@ func (s *QRDBUserStorage) CreateUser(ctx context.Context, u *iam.User) error {
 	// to be all or nothing from outside.
 	if err := s.finishCreate(ctx, svc, u, core, created.ID); err != nil {
 		s.compensateCreate(ctx, svc, tenantOf(u), created.ID)
-		u.ID = ""
+		u.ID = 0
 		return err
 	}
 	return nil
@@ -186,17 +186,16 @@ func tenantOf(u *iam.User) string {
 }
 
 // GetUser reads the qrdb user addressed by its Snowflake, routed on tenantID.
-func (s *QRDBUserStorage) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+func (s *QRDBUserStorage) GetUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
+	if userID == 0 {
+		return nil, ErrInvalidUserID
+	}
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return nil, err
 	}
-	id, err := ParseUserID(userID)
-	if err != nil {
-		return nil, iam.ErrUserNotFound
-	}
 	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
-	core, err := svc.GetUser(tctx, id)
+	core, err := svc.GetUser(tctx, userID)
 	if err != nil {
 		return nil, mapQRDBUserError("get", err)
 	}
@@ -302,18 +301,17 @@ func (s *QRDBUserStorage) UpdateUser(ctx context.Context, u *iam.User) error {
 // state it already holds, so a request carrying the rest of the user would be
 // rejected the second time it ran — and the second time is precisely a retried
 // deletion, the case the terminal state exists to make resumable.
-func (s *QRDBUserStorage) MarkUserDeleting(ctx context.Context, tenantID, userID string) error {
+func (s *QRDBUserStorage) MarkUserDeleting(ctx context.Context, tenantID string, userID uint64) error {
+	if userID == 0 {
+		return ErrInvalidUserID
+	}
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return err
 	}
-	id, err := ParseUserID(userID)
-	if err != nil {
-		return iam.ErrUserNotFound
-	}
 	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
 	if _, err := svc.UpdateUser(tctx, &qrdbsdk.UpdateUserRequest{
-		ID:        id,
+		ID:        userID,
 		Lifecycle: iam.LifecycleDeleting,
 	}); err != nil {
 		return mapQRDBUserError("mark_deleting", err)
@@ -327,17 +325,16 @@ func (s *QRDBUserStorage) MarkUserDeleting(ctx context.Context, tenantID, userID
 // record as its first act, and IdentityStore.DeleteUser has already claimed it
 // before sweeping the credentials that outlive this call. A third marker here
 // would be a redundant round trip that changes nothing.
-func (s *QRDBUserStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
+func (s *QRDBUserStorage) DeleteUser(ctx context.Context, tenantID string, userID uint64) error {
+	if userID == 0 {
+		return ErrInvalidUserID
+	}
 	svc, err := s.servicer(ctx)
 	if err != nil {
 		return err
 	}
-	id, err := ParseUserID(userID)
-	if err != nil {
-		return iam.ErrUserNotFound
-	}
 	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
-	if err := svc.DeleteUser(tctx, id); err != nil {
+	if err := svc.DeleteUser(tctx, userID); err != nil {
 		return mapQRDBUserError("delete", err)
 	}
 	return nil

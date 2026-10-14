@@ -46,7 +46,7 @@ func (a *recordingIssueAuditor) recorded() []sdlc.IssueFiledEvent {
 func boundRig(t *testing.T) *sdlcServiceRig {
 	t.Helper()
 	rig := newSDLCServiceRig(t)
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	return rig
@@ -160,7 +160,7 @@ func TestSDLCService_BindAdmitsACollaboratorAsRuler(t *testing.T) {
 	rig.forge.PutCollaborator("lead-agent")
 	binding := rig.binding()
 	binding.Rulers = []string{"lead-agent", "acme"}
-	bound, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding)
+	bound, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSDLCService_BindRefusesARulerWithoutAccess(t *testing.T) {
 	binding := rig.binding()
 	binding.Rulers = []string{"stranger"}
 	var refused *sdlc.RulerNotCollaboratorError
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding); !errors.As(err, &refused) || refused.Login != "stranger" {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{}); !errors.As(err, &refused) || refused.Login != "stranger" {
 		t.Fatalf("Bind = %v, want RulerNotCollaboratorError naming stranger", err)
 	}
 	if _, err := rig.svc.Binding(context.Background(), sdlcTestTenant, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
@@ -187,7 +187,7 @@ func TestSDLCService_BindRefusesRulersWhenTheForgeCannotSay(t *testing.T) {
 	rig.forge.ForceStatus("GET", "/collaborators", 403, "forbidden")
 	binding := rig.binding()
 	binding.Rulers = []string{"lead-agent"}
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding); err == nil {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{}); err == nil {
 		t.Fatal("Bind admitted a ruler the forge could not confirm")
 	}
 }

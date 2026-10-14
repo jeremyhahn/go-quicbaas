@@ -1551,30 +1551,32 @@ func (m *mockIAMComponentsGetterFallback) GetSessionStorage(_ context.Context) (
 // mockMFAManagerFull implements service.MFAManager for testing.
 type mockMFAManagerFull struct{}
 
-func (m *mockMFAManagerFull) BeginEnrollment(_ context.Context, _, _ string, _ iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
+func (m *mockMFAManagerFull) BeginEnrollment(_ context.Context, _ uint64, _ string, _ iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 	return nil, nil
 }
 func (m *mockMFAManagerFull) CompleteEnrollment(_ context.Context, _, _ string) error { return nil }
 func (m *mockMFAManagerFull) CancelEnrollment(_ context.Context, _ string) error      { return nil }
-func (m *mockMFAManagerFull) BeginChallenge(_ context.Context, _, _, _ string) (*iam.MFAChallenge, error) {
+func (m *mockMFAManagerFull) BeginChallenge(_ context.Context, _ uint64, _, _ string) (*iam.MFAChallenge, error) {
 	return nil, nil
 }
 func (m *mockMFAManagerFull) VerifyChallenge(_ context.Context, _, _ string) (*iam.MFAVerifyResponse, error) {
 	return nil, nil
 }
-func (m *mockMFAManagerFull) VerifyCode(_ context.Context, _, _, _ string) error { return nil }
-func (m *mockMFAManagerFull) GetMFAStatus(_ context.Context, _, _ string) (*iam.MFAStatus, error) {
+func (m *mockMFAManagerFull) VerifyCode(_ context.Context, _ uint64, _, _ string) error { return nil }
+func (m *mockMFAManagerFull) GetMFAStatus(_ context.Context, _ uint64, _ string) (*iam.MFAStatus, error) {
 	return nil, nil
 }
-func (m *mockMFAManagerFull) IsMFARequired(_ context.Context, _, _ string) (bool, error) {
+func (m *mockMFAManagerFull) IsMFARequired(_ context.Context, _ uint64, _ string) (bool, error) {
 	return false, nil
 }
-func (m *mockMFAManagerFull) DisableMFA(_ context.Context, _, _ string) error { return nil }
-func (m *mockMFAManagerFull) GenerateBackupCodes(_ context.Context, _, _ string) ([]string, error) {
+func (m *mockMFAManagerFull) DisableMFA(_ context.Context, _ uint64, _ string) error { return nil }
+func (m *mockMFAManagerFull) GenerateBackupCodes(_ context.Context, _ uint64, _ string) ([]string, error) {
 	return nil, nil
 }
-func (m *mockMFAManagerFull) VerifyBackupCode(_ context.Context, _, _, _ string) error { return nil }
-func (m *mockMFAManagerFull) GetBackupCodeStatus(_ context.Context, _, _ string) (*iam.BackupCodeStatus, error) {
+func (m *mockMFAManagerFull) VerifyBackupCode(_ context.Context, _ uint64, _, _ string) error {
+	return nil
+}
+func (m *mockMFAManagerFull) GetBackupCodeStatus(_ context.Context, _ uint64, _ string) (*iam.BackupCodeStatus, error) {
 	return nil, nil
 }
 
@@ -1627,7 +1629,7 @@ func (m *mockSessionStorageF91) CreateSession(_ context.Context, _ *iam.Session)
 func (m *mockSessionStorageF91) GetSession(_ context.Context, _ string) (*iam.Session, error) {
 	return nil, nil
 }
-func (m *mockSessionStorageF91) GetSessionsByUser(_ context.Context, _, _ string) ([]*iam.Session, error) {
+func (m *mockSessionStorageF91) GetSessionsByUser(_ context.Context, _ string, _ uint64) ([]*iam.Session, error) {
 	return nil, nil
 }
 func (m *mockSessionStorageF91) UpdateSession(_ context.Context, _ *iam.Session) error { return nil }

@@ -46,7 +46,7 @@ func (q *provisioningQuicBaaS) IAM() service.IAMService { return q.iam }
 func TestHandleIAMTenantProvision_InviteMode(t *testing.T) {
 	expires := time.Now().Add(time.Hour)
 	iamSvc := &provisioningIAMService{resp: &service.IAMProvisionTenantResponse{
-		TenantID: "acme", AdminUserID: "7", AdminPending: true,
+		TenantID: "acme", AdminUserID: 7, AdminPending: true,
 		InviteToken: "tok", InviteExpiresAt: &expires,
 	}}
 	svc := &provisioningQuicBaaS{iam: iamSvc}

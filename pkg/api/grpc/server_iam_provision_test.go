@@ -44,7 +44,7 @@ func TestIAMServer_ProvisionTenant_InviteMode(t *testing.T) {
 	svc.On("ProvisionTenant", mock.Anything, mock.MatchedBy(func(r *service.IAMProvisionTenantRequest) bool {
 		return r.TenantID == "acme" && r.AdminEnrollment == service.IAMTenantAdminEnrollInvite && r.InviteExpiryHours == 12
 	})).Return(&service.IAMProvisionTenantResponse{
-		TenantID: "acme", AdminUserID: "7", AdminPending: true,
+		TenantID: "acme", AdminUserID: 7, AdminPending: true,
 		InviteToken: "tok", InviteExpiresAt: &expires, Timestamp: time.Now(),
 	}, nil)
 	srv := newProvisionIAMServer(t, svc)

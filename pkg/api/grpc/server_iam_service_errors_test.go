@@ -87,7 +87,7 @@ func TestIAMServer_UpdateUser_ServiceError(t *testing.T) {
 	svc.On("UpdateUser", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.UpdateUser(context.Background(), &iampb.UpdateUserRequest{
-		TenantId: "t-1", UserId: "u-1", Email: "a@b.c",
+		TenantId: "t-1", UserId: "10001", Email: "a@b.c",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))

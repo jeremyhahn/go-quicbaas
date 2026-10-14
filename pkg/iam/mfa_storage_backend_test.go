@@ -16,13 +16,14 @@ package iam
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
 
-func validMFASecret(tenantID, userID string) *MFASecret {
+func validMFASecret(tenantID string, userID uint64) *MFASecret {
 	return &MFASecret{
-		ID:       "sec-" + userID,
+		ID:       fmt.Sprintf("sec-%d", userID),
 		UserID:   userID,
 		TenantID: tenantID,
 		Secret:   testTOTPSecret,
@@ -31,9 +32,9 @@ func validMFASecret(tenantID, userID string) *MFASecret {
 	}
 }
 
-func validEnrollment(tenantID, userID string) *MFAEnrollment {
+func validEnrollment(tenantID string, userID uint64) *MFAEnrollment {
 	return &MFAEnrollment{
-		ID:        "enr-" + userID,
+		ID:        fmt.Sprintf("enr-%d", userID),
 		UserID:    userID,
 		TenantID:  tenantID,
 		Method:    MFAMethodTOTP,
@@ -42,9 +43,9 @@ func validEnrollment(tenantID, userID string) *MFAEnrollment {
 	}
 }
 
-func validChallenge(tenantID, userID string) *MFAChallenge {
+func validChallenge(tenantID string, userID uint64) *MFAChallenge {
 	return &MFAChallenge{
-		ID:           "chl-" + userID,
+		ID:           fmt.Sprintf("chl-%d", userID),
 		UserID:       userID,
 		TenantID:     tenantID,
 		SessionToken: "partial-token",
@@ -61,7 +62,7 @@ func TestBackendMFAStorage_SecretIsolatedToBarrier(t *testing.T) {
 	store := NewBackendMFAStorage(kv, nil)
 	ctx := context.Background()
 
-	if err := store.SaveSecret(ctx, validMFASecret("acme", "u1")); err != nil {
+	if err := store.SaveSecret(ctx, validMFASecret("acme", 30001)); err != nil {
 		t.Fatalf("SaveSecret: %v", err)
 	}
 	if tenantStore.keyCount() == 0 {
@@ -71,7 +72,7 @@ func TestBackendMFAStorage_SecretIsolatedToBarrier(t *testing.T) {
 		t.Fatal("MFA secret leaked into the shared store")
 	}
 
-	got, err := store.GetSecret(ctx, "u1", "acme")
+	got, err := store.GetSecret(ctx, 30001, "acme")
 	if err != nil {
 		t.Fatalf("GetSecret: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestBackendMFAStorage_EnrollmentByIDRoutes(t *testing.T) {
 	store := NewBackendMFAStorage(kv, nil)
 	ctx := context.Background()
 
-	enr := validEnrollment("acme", "u1")
+	enr := validEnrollment("acme", 30001)
 	if err := store.SaveEnrollment(ctx, enr); err != nil {
 		t.Fatalf("SaveEnrollment: %v", err)
 	}
@@ -103,11 +104,11 @@ func TestBackendMFAStorage_EnrollmentByIDRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEnrollment: %v", err)
 	}
-	if got.UserID != "u1" {
-		t.Fatalf("enrollment userID = %q, want u1", got.UserID)
+	if got.UserID != 30001 {
+		t.Fatalf("enrollment userID = %d, want 30001", got.UserID)
 	}
 
-	active, err := store.HasActiveEnrollment(ctx, "u1", "acme")
+	active, err := store.HasActiveEnrollment(ctx, 30001, "acme")
 	if err != nil || !active {
 		t.Fatalf("HasActiveEnrollment = %v, %v; want true, nil", active, err)
 	}
@@ -120,7 +121,7 @@ func TestBackendMFAStorage_ChallengeByIDRoutes(t *testing.T) {
 	store := NewBackendMFAStorage(kv, nil)
 	ctx := context.Background()
 
-	chl := validChallenge("acme", "u1")
+	chl := validChallenge("acme", 30001)
 	if err := store.SaveChallenge(ctx, chl); err != nil {
 		t.Fatalf("SaveChallenge: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestBackendMFAStorage_ChallengeByIDRoutes(t *testing.T) {
 		t.Fatalf("challenge token = %q", got.SessionToken)
 	}
 
-	if err := store.DeleteChallengesByUser(ctx, "u1", "acme"); err != nil {
+	if err := store.DeleteChallengesByUser(ctx, 30001, "acme"); err != nil {
 		t.Fatalf("DeleteChallengesByUser: %v", err)
 	}
 	if _, err := store.GetChallenge(context.Background(), chl.ID); !errors.Is(err, ErrMFAChallengeNotFound) {
@@ -149,13 +150,13 @@ func TestBackendMFAStorage_SealedFailsClosed(t *testing.T) {
 	store := NewBackendMFAStorage(kv, nil)
 	ctx := context.Background()
 
-	if err := store.SaveSecret(ctx, validMFASecret("acme", "u1")); !errors.Is(err, errTenantSealedTest) {
+	if err := store.SaveSecret(ctx, validMFASecret("acme", 30001)); !errors.Is(err, errTenantSealedTest) {
 		t.Fatalf("SaveSecret(sealed) err = %v, want sealed", err)
 	}
-	if _, err := store.GetSecret(ctx, "u1", "acme"); !errors.Is(err, errTenantSealedTest) {
+	if _, err := store.GetSecret(ctx, 30001, "acme"); !errors.Is(err, errTenantSealedTest) {
 		t.Fatalf("GetSecret(sealed) err = %v, want sealed", err)
 	}
-	if err := store.SaveEnrollment(ctx, validEnrollment("acme", "u1")); !errors.Is(err, errTenantSealedTest) {
+	if err := store.SaveEnrollment(ctx, validEnrollment("acme", 30001)); !errors.Is(err, errTenantSealedTest) {
 		t.Fatalf("SaveEnrollment(sealed) err = %v, want sealed", err)
 	}
 	if kv.shared.keyCount() != 0 {
@@ -172,11 +173,11 @@ func TestBackendMFAStorage_CrossTenantIsolation(t *testing.T) {
 	store := NewBackendMFAStorage(kv, nil)
 	ctx := context.Background()
 
-	if err := store.SaveEnrollment(ctx, validEnrollment("acme", "shared-user")); err != nil {
+	if err := store.SaveEnrollment(ctx, validEnrollment("acme", 40060)); err != nil {
 		t.Fatalf("SaveEnrollment(acme): %v", err)
 	}
 	// globex must report no active enrollment for the same user id.
-	active, err := store.HasActiveEnrollment(ctx, "shared-user", "globex")
+	active, err := store.HasActiveEnrollment(ctx, 40060, "globex")
 	if err != nil {
 		t.Fatalf("HasActiveEnrollment(globex): %v", err)
 	}
@@ -194,12 +195,12 @@ func TestBackendMFAStorage_CleanupExpiredPerTenant(t *testing.T) {
 	store := NewBackendMFAStorage(kv, lister)
 	ctx := context.Background()
 
-	expired := validEnrollment("acme", "u1")
+	expired := validEnrollment("acme", 30001)
 	expired.ExpiresAt = time.Now().Add(-time.Hour)
 	if err := store.SaveEnrollment(ctx, expired); err != nil {
 		t.Fatalf("SaveEnrollment(expired): %v", err)
 	}
-	fresh := validEnrollment("globex", "u2")
+	fresh := validEnrollment("globex", 30002)
 	if err := store.SaveEnrollment(ctx, fresh); err != nil {
 		t.Fatalf("SaveEnrollment(fresh): %v", err)
 	}
@@ -212,7 +213,7 @@ func TestBackendMFAStorage_CleanupExpiredPerTenant(t *testing.T) {
 		t.Fatalf("CleanupExpired removed %d, want 1", n)
 	}
 	// Fresh enrollment in globex survives.
-	if active, _ := store.HasActiveEnrollment(ctx, "u2", "globex"); !active {
+	if active, _ := store.HasActiveEnrollment(ctx, 30002, "globex"); !active {
 		t.Fatal("CleanupExpired removed a non-expired enrollment")
 	}
 }

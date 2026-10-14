@@ -545,7 +545,7 @@ type Server struct {
 	// paths find the right user without re-querying the identity store.
 	// Empty before the first-boot path runs, or on subsequent boots where
 	// the admin already exists.
-	bootstrapAdminUserID   string
+	bootstrapAdminUserID   uint64
 	bootstrapAdminTenantID string
 
 	// Raft node - standalone no-op implementation for BaaS client mode.

@@ -129,7 +129,7 @@ func TestBeginEnrollmentRejectsSHA1UnderFIPS(t *testing.T) {
 
 	forceFIPSPolicy(t)
 
-	resp, err := m.BeginEnrollment(context.Background(), "user-123", "tenant-123", MFAMethodTOTP)
+	resp, err := m.BeginEnrollment(context.Background(), 1000123, "tenant-123", MFAMethodTOTP)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -146,17 +146,17 @@ func TestEnrollAndVerifyUsesModeAlgorithm(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	enrollment, err := m.BeginEnrollment(ctx, "user-123", "tenant-123", MFAMethodTOTP)
+	enrollment, err := m.BeginEnrollment(ctx, 1000123, "tenant-123", MFAMethodTOTP)
 	require.NoError(t, err)
 
 	code := generateValidTOTPCode(t, enrollment.Secret, m.config)
 	require.NoError(t, m.CompleteEnrollment(ctx, enrollment.EnrollmentID, code))
 
-	stored, err := m.storage.GetSecret(ctx, "user-123", "tenant-123")
+	stored, err := m.storage.GetSecret(ctx, 1000123, "tenant-123")
 	require.NoError(t, err)
 	assert.Equal(t, defaultMFAAlgorithm(), stored.Algorithm, "the algorithm must be pinned onto the stored secret")
 
-	require.NoError(t, m.VerifyCode(ctx, "user-123", "tenant-123", generateValidTOTPCode(t, stored.Secret, m.config)))
+	require.NoError(t, m.VerifyCode(ctx, 1000123, "tenant-123", generateValidTOTPCode(t, stored.Secret, m.config)))
 }
 
 // TestVerifyCodeStoredSHA1Secret covers the enrollment that already exists when
@@ -171,7 +171,7 @@ func TestVerifyCodeStoredSHA1Secret(t *testing.T) {
 	ctx := context.Background()
 	legacy := &MFASecret{
 		ID:          "secret-legacy",
-		UserID:      "user-legacy",
+		UserID:      40002,
 		TenantID:    "tenant-123",
 		Secret:      testTOTPSecret,
 		Algorithm:   MFAAlgorithmSHA1,
@@ -185,7 +185,7 @@ func TestVerifyCodeStoredSHA1Secret(t *testing.T) {
 	require.NoError(t, m.storage.SaveSecret(ctx, legacy))
 
 	if fips140.Enabled() {
-		err = m.VerifyCode(ctx, "user-legacy", "tenant-123", "000000")
+		err = m.VerifyCode(ctx, 40002, "tenant-123", "000000")
 		require.Error(t, err)
 
 		var notApproved *MFAAlgorithmNotApprovedError
@@ -200,7 +200,7 @@ func TestVerifyCodeStoredSHA1Secret(t *testing.T) {
 		Algorithm: legacy.Algorithm,
 		Skew:      m.config.Skew,
 	})
-	require.NoError(t, m.VerifyCode(ctx, "user-legacy", "tenant-123", code),
+	require.NoError(t, m.VerifyCode(ctx, 40002, "tenant-123", code),
 		"an enrollment provisioned with SHA1 must keep verifying outside FIPS mode")
 }
 
@@ -230,7 +230,7 @@ func TestConvertAlgorithmRejectsUnknown(t *testing.T) {
 func TestMFASecretValidateRejectsUnknownAlgorithm(t *testing.T) {
 	secret := func(algo MFAAlgorithm) *MFASecret {
 		return &MFASecret{
-			ID: "secret-1", UserID: "user-123", TenantID: "tenant-123",
+			ID: "secret-1", UserID: 1000123, TenantID: "tenant-123",
 			Secret: testTOTPSecret, Algorithm: algo, Digits: 6, Period: 30,
 		}
 	}
@@ -258,7 +258,7 @@ func TestCompleteEnrollmentUsesProvisionedParameters(t *testing.T) {
 	issuer, err := NewMFAManager(WithMFAStorage(storage), WithMFAConfig(provisioning))
 	require.NoError(t, err)
 
-	enrollment, err := issuer.BeginEnrollment(ctx, "user-123", "tenant-123", MFAMethodTOTP)
+	enrollment, err := issuer.BeginEnrollment(ctx, 1000123, "tenant-123", MFAMethodTOTP)
 	require.NoError(t, err)
 	code := generateValidTOTPCode(t, enrollment.Secret, provisioning)
 
@@ -271,7 +271,7 @@ func TestCompleteEnrollmentUsesProvisionedParameters(t *testing.T) {
 	require.NoError(t, completer.CompleteEnrollment(ctx, enrollment.EnrollmentID, code),
 		"the code the authenticator was provisioned to produce must be accepted")
 
-	stored, err := storage.GetSecret(ctx, "user-123", "tenant-123")
+	stored, err := storage.GetSecret(ctx, 1000123, "tenant-123")
 	require.NoError(t, err)
 	assert.Equal(t, MFAAlgorithmSHA256, stored.Algorithm)
 	assert.Equal(t, 6, stored.Digits)
@@ -294,7 +294,7 @@ func TestCompleteEnrollmentLegacyEnrollmentUsesSHA1(t *testing.T) {
 	ctx := context.Background()
 	legacy := &MFAEnrollment{
 		ID:          "enrollment-legacy",
-		UserID:      "user-123",
+		UserID:      1000123,
 		TenantID:    "tenant-123",
 		Method:      MFAMethodTOTP,
 		Secret:      testTOTPSecret,
@@ -307,7 +307,7 @@ func TestCompleteEnrollmentLegacyEnrollmentUsesSHA1(t *testing.T) {
 	code := generateValidTOTPCode(t, legacy.Secret, m.config)
 	require.NoError(t, m.CompleteEnrollment(ctx, legacy.ID, code))
 
-	stored, err := m.storage.GetSecret(ctx, "user-123", "tenant-123")
+	stored, err := m.storage.GetSecret(ctx, 1000123, "tenant-123")
 	require.NoError(t, err)
 	// Resolved explicitly, not inherited as the blank the enrollment carried:
 	// the completed secret has to record the algorithm actually used.
@@ -323,12 +323,12 @@ func TestVerifyChallengeSurfacesAlgorithmRejection(t *testing.T) {
 
 	ctx := context.Background()
 	require.NoError(t, m.storage.SaveSecret(ctx, &MFASecret{
-		ID: "secret-legacy", UserID: "user-legacy", TenantID: "tenant-123",
+		ID: "secret-legacy", UserID: 40002, TenantID: "tenant-123",
 		Secret: testTOTPSecret, Algorithm: MFAAlgorithmSHA1, Digits: 6, Period: 30,
 		Issuer: "QuicBaaS", AccountName: "legacy@quicbaas.io", Verified: true, Created: time.Now(),
 	}))
 
-	challenge, err := m.BeginChallenge(ctx, "user-legacy", "tenant-123", "session-token")
+	challenge, err := m.BeginChallenge(ctx, 40002, "tenant-123", "session-token")
 	require.NoError(t, err)
 
 	forceFIPSPolicy(t)

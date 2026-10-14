@@ -160,14 +160,14 @@ func TestExportImportRoundTrip_PreservesDisabled(t *testing.T) {
 	export := &BatchExportResult{
 		TenantID: "source",
 		Users: []*User{
-			{ID: "u1", Email: "live@example.com", Username: "live", Name: "live", Lifecycle: LifecycleActive},
+			{ID: 30001, Email: "live@example.com", Username: "live", Name: "live", Lifecycle: LifecycleActive},
 			// Pending is the case an Enabled-derived bool cannot carry: it is
 			// non-authenticating, so it exports as Enabled=false, and if that
 			// shorthand overruled the explicit state the account would come back
 			// DISABLED — an administrator's decision invented by a round trip.
-			{ID: "u4", Email: "pending@example.com", Username: "pending", Name: "pending", Lifecycle: LifecyclePending},
-			{ID: "u2", Email: "susp@example.com", Username: "susp", Name: "susp", Lifecycle: LifecycleSuspended},
-			{ID: "u3", Email: "lock@example.com", Username: "lock", Name: "lock", Lifecycle: LifecycleLocked},
+			{ID: 30004, Email: "pending@example.com", Username: "pending", Name: "pending", Lifecycle: LifecyclePending},
+			{ID: 30002, Email: "susp@example.com", Username: "susp", Name: "susp", Lifecycle: LifecycleSuspended},
+			{ID: 30003, Email: "lock@example.com", Username: "lock", Name: "lock", Lifecycle: LifecycleLocked},
 		},
 	}
 	req := export.ConvertToImportRequest("acme")

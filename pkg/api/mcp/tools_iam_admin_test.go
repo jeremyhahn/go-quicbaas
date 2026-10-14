@@ -58,7 +58,7 @@ func (m *adminMockQuicBaaS) GetAdminManager(_ context.Context) (*iam.AdminManage
 // is pinned in pkg/iam's tenant-scope suite (#357).
 type mcpAllowAllTargetResolver struct{}
 
-func (mcpAllowAllTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+func (mcpAllowAllTargetResolver) GetUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
 	return &iam.User{ID: userID, TenantID: tenantID}, nil
 }
 
@@ -163,7 +163,7 @@ func TestExecuteIAMImpersonationStart_ServiceUnavailable(t *testing.T) {
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
 	_, err := reg.executeIAMImpersonationStart(context.Background(), map[string]interface{}{
-		"admin_user_id": "admin", "target_user_id": "user-1",
+		"admin_user_id": "admin", "target_user_id": "10001",
 		"tenant_id": "t1", "reason": "support",
 	})
 	require.Error(t, err)
@@ -462,7 +462,7 @@ func TestExecuteIAMImpersonationStart_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	result, err := reg.executeIAMImpersonationStart(mcpCtxWithActor("admin-user"), map[string]interface{}{
-		"target_user_id":   "user-1",
+		"target_user_id":   "10001",
 		"tenant_id":        "t1",
 		"reason":           "support investigation",
 		"duration_minutes": float64(30),
@@ -493,7 +493,7 @@ func TestExecuteIAMImpersonationStart_DefaultDuration(t *testing.T) {
 
 	// Start without specifying duration (should default to 60 minutes)
 	result, err := reg.executeIAMImpersonationStart(mcpCtxWithActor("admin-user"), map[string]interface{}{
-		"target_user_id": "user-1",
+		"target_user_id": "10001",
 		"tenant_id":      "t1",
 		"reason":         "testing",
 	})
@@ -526,7 +526,7 @@ func TestExecuteIAMImpersonationEnd_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	startResult, err := reg.executeIAMImpersonationStart(mcpCtxWithActor("admin-user"), map[string]interface{}{
-		"target_user_id": "user-1",
+		"target_user_id": "10001",
 		"tenant_id":      "t1",
 		"reason":         "testing",
 	})

@@ -23,7 +23,7 @@ func (revocationDownStorage) IsTokenRevoked(context.Context, string) (bool, erro
 func TestValidateAccessToken_RevocationStoreErrorDeniesToken(t *testing.T) {
 	provider, _, _, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
-	token, _ := mintIntrospectToken(t, provider, "tenant-a", "fc-user", "", time.Hour)
+	token, _ := mintIntrospectToken(t, provider, "tenant-a", "fc-user", 0, time.Hour)
 
 	if _, err := provider.ValidateAccessToken(ctx, token); err != nil {
 		t.Fatalf("ValidateAccessToken with a healthy store: %v", err)

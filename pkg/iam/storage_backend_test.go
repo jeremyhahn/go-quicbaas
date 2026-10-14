@@ -250,7 +250,7 @@ func TestBackendStorage_AuthCodeOperations(t *testing.T) {
 	authCode := &AuthCodeData{
 		Code:        "auth-code-123",
 		ClientID:    "client-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RedirectURI: "https://example.com/callback",
 		Scope:       []string{"openid", "profile"},
 		ExpiresAt:   time.Now().Add(10 * time.Minute),
@@ -535,7 +535,7 @@ func TestBackendStorage_DeleteTenantCascade_NotFound(t *testing.T) {
 // C1-F (BackendStorage no longer persists users; qrdb owns the user record).
 func BenchmarkBackendStorage_JSONMarshal(b *testing.B) {
 	user := &User{
-		ID:       "user-bench",
+		ID:       40050,
 		TenantID: "tenant-1",
 		Email:    "bench@example.com",
 		Name:     "Benchmark User",
@@ -630,7 +630,7 @@ func TestMemoryConsentStorage_DeleteConsent_ByPurpose(t *testing.T) {
 	// Create multiple consents for different purposes
 	_, err := storage.CreateConsent(ctx, CreateConsentOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		Purpose:  "marketing",
 		Status:   ConsentStatusGranted,
 		Version:  "1.0",
@@ -641,7 +641,7 @@ func TestMemoryConsentStorage_DeleteConsent_ByPurpose(t *testing.T) {
 
 	consent2, err := storage.CreateConsent(ctx, CreateConsentOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		Purpose:  "analytics",
 		Status:   ConsentStatusGranted,
 		Version:  "1.0",
@@ -659,7 +659,7 @@ func TestMemoryConsentStorage_DeleteConsent_ByPurpose(t *testing.T) {
 	// Marketing consent should still exist
 	consents, err := storage.ListConsents(ctx, ListConsentsOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 	})
 	if err != nil {
 		t.Fatalf("ListConsents failed: %v", err)
@@ -684,7 +684,7 @@ func TestMemoryDataExportStorage_UpdateExportRequest_MultipleUpdates(t *testing.
 	// Create an export request
 	request, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 		Format:      DataExportFormatJSON,
 	})
@@ -727,7 +727,7 @@ func TestMemoryDeletionStorage_UpdateDeletionRequest_MultipleUpdates(t *testing.
 	// Create a deletion request
 	request, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 	})
 	if err != nil {
@@ -768,7 +768,7 @@ func TestMemoryDeletionStorage_ReturnsCopies(t *testing.T) {
 	// Create a deletion request
 	request, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RequestedBy: "user-1",
 	})
 	if err != nil {
@@ -801,7 +801,7 @@ func TestMemoryDataExportStorage_ListExportRequests_PaginatedFilter(t *testing.T
 	for i := 0; i < 5; i++ {
 		_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
 			TenantID:    "tenant-1",
-			UserID:      "user-1",
+			UserID:      10001,
 			RequestedBy: "user-1",
 			Format:      DataExportFormatJSON,
 		})
@@ -813,7 +813,7 @@ func TestMemoryDataExportStorage_ListExportRequests_PaginatedFilter(t *testing.T
 	// List with both status and user filters
 	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		Status:   DataExportStatusPending,
 	})
 	if err != nil {
@@ -833,7 +833,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_PaginatedFilter(t *testing.T
 	for i := 0; i < 5; i++ {
 		_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 			TenantID:    "tenant-1",
-			UserID:      "user-1",
+			UserID:      10001,
 			RequestedBy: "user-1",
 		})
 		if err != nil {
@@ -844,7 +844,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_PaginatedFilter(t *testing.T
 	// List with both status and user filters
 	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{
 		TenantID: "tenant-1",
-		UserID:   "user-1",
+		UserID:   10001,
 		Status:   DeletionStatusPending,
 	})
 	if err != nil {
@@ -2206,7 +2206,7 @@ func TestBackendStorage_AuthCodeOps_Boost(t *testing.T) {
 	code := &AuthCodeData{
 		Code:                "test-auth-code-boost-123",
 		ClientID:            "client-1",
-		UserID:              "user-1",
+		UserID:              10001,
 		RedirectURI:         "https://example.com/callback",
 		Scope:               []string{"openid", "profile"},
 		CodeChallenge:       "challenge",
@@ -2228,7 +2228,7 @@ func TestBackendStorage_AuthCodeOps_Boost(t *testing.T) {
 		t.Errorf("expected Code %s, got %s", code.Code, retrieved.Code)
 	}
 	if retrieved.UserID != code.UserID {
-		t.Errorf("expected UserID %s, got %s", code.UserID, retrieved.UserID)
+		t.Errorf("expected UserID %d, got %d", code.UserID, retrieved.UserID)
 	}
 }
 
@@ -2386,7 +2386,7 @@ func TestBackendStorage_DeleteAuthCode(t *testing.T) {
 	code := &AuthCodeData{
 		Code:        "delete-auth-code",
 		ClientID:    "client-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RedirectURI: "https://example.com/callback",
 		ExpiresAt:   time.Now().Add(10 * time.Minute),
 	}
@@ -3550,7 +3550,7 @@ func TestBackendStorage_AuthCode_Roundtrip(t *testing.T) {
 	code := &AuthCodeData{
 		Code:        "auth-code-roundtrip",
 		ClientID:    "client-1",
-		UserID:      "user-1",
+		UserID:      10001,
 		RedirectURI: "https://example.com/callback",
 		Scope:       []string{"openid"},
 		ExpiresAt:   time.Now().Add(10 * time.Minute),
@@ -3957,7 +3957,7 @@ func TestBackendStorage_StoreAuthCode_Roundtrip91(t *testing.T) {
 	code := &AuthCodeData{
 		Code:        "auth-code-91-new",
 		ClientID:    "client-91-new",
-		UserID:      "user-91-new",
+		UserID:      40050,
 		RedirectURI: "https://example.com/callback",
 		Scope:       []string{"openid", "profile"},
 		Nonce:       "nonce-91-new",

@@ -72,7 +72,7 @@ func newAdminAuditFixture(t *testing.T) *adminAuditFixture {
 	require.NoError(t, err)
 
 	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "target_user",
+		TargetUserID: "40001",
 		TenantID:     "tenant1",
 		Reason:       "audit id test",
 		Duration:     time.Hour,
@@ -145,7 +145,7 @@ func TestAdminManager_AuditedOperationsFailClosedWithoutAuditID(t *testing.T) {
 			name: "StartImpersonation",
 			run: func(f *adminAuditFixture) error {
 				_, err := f.manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-					TargetUserID: "other_user",
+					TargetUserID: "40004",
 					TenantID:     "tenant1",
 					Reason:       "audit id test",
 				})

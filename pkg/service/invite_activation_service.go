@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,7 +57,7 @@ type InviteActivationService interface {
 
 // InviteMetadata is the publicly visible part of a pending invite.
 type InviteMetadata struct {
-	UserID      string
+	UserID      uint64
 	Email       string
 	Name        string
 	AuthMethods []string
@@ -65,10 +66,10 @@ type InviteMetadata struct {
 
 // InviteActivation is the outcome of a successful activation.
 type InviteActivation struct {
-	// UserID is the activated user. It is empty when PIV activation
+	// UserID is the activated user. It is zero when PIV activation
 	// succeeded but the consumed invite could no longer be resolved to read
 	// it back; the activation itself committed.
-	UserID string
+	UserID uint64
 
 	// Warning records a non-fatal irregularity behind an otherwise
 	// successful activation; see InviteActivationWarningReconciled.
@@ -255,7 +256,7 @@ func (s *inviteActivationService) ActivateFIDO2Finish(ctx context.Context, tenan
 		Lifecycle: &activeState,
 	}); err != nil {
 		s.audit(ctx, record.TenantID, "invite.activate",
-			&iam.AuditResource{Type: "user", ID: record.UserID}, err)
+			&iam.AuditResource{Type: "user", ID: strconv.FormatUint(record.UserID, 10)}, err)
 
 		// An error does not prove the write did not land: a commit whose
 		// response was lost reports failure on a user that IS now active, and
@@ -272,7 +273,7 @@ func (s *inviteActivationService) ActivateFIDO2Finish(ctx context.Context, tenan
 	// a failed redeem is reported rather than treated as success.
 	if _, err := inviteStore.Redeem(ctx, tenantID, token); err != nil {
 		s.audit(ctx, record.TenantID, "invite.mark_used",
-			&iam.AuditResource{Type: "invite", ID: record.UserID}, err)
+			&iam.AuditResource{Type: "invite", ID: strconv.FormatUint(record.UserID, 10)}, err)
 		return nil, err
 	}
 	return activation, nil
@@ -409,7 +410,7 @@ func (s *inviteActivationService) audit(ctx context.Context, tenantID, action st
 
 // userIsActive re-reads the user and reports whether it is active. A failed
 // read is not active.
-func userIsActive(ctx context.Context, store *iam.IdentityStore, tenantID, userID string) bool {
+func userIsActive(ctx context.Context, store *iam.IdentityStore, tenantID string, userID uint64) bool {
 	user, err := iam.RereadUserAfterFailedWrite(ctx, store, tenantID, userID)
 	if err != nil || user == nil {
 		return false

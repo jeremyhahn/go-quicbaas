@@ -15,6 +15,7 @@ package embedded
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -88,7 +89,7 @@ func TestEmbedded_UpdateUserChangesTheUsername(t *testing.T) {
 
 	out, err := handleIAMUserUpdate(ctx, svc, &embeddedUpdateUserEnvelope{
 		TenantID: "t-1",
-		UserID:   created.ID,
+		UserID:   strconv.FormatUint(created.ID, 10),
 		Request: &iamsdk.UpdateUserRequest{
 			Username:    "lenab",
 			DisplayName: "Lena Two",
@@ -134,7 +135,7 @@ func TestEmbedded_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 
 	if _, err := handleIAMUserUpdate(ctx, svc, &embeddedUpdateUserEnvelope{
 		TenantID: "t-1",
-		UserID:   created.ID,
+		UserID:   strconv.FormatUint(created.ID, 10),
 		Request:  &iamsdk.UpdateUserRequest{Lifecycle: string(iam.LifecycleDeleting)},
 	}); err == nil {
 		t.Fatal("an ordinary update was allowed to claim the deleting state")
@@ -152,7 +153,7 @@ func TestEmbedded_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 	// rather than a transport that stopped forwarding the field.
 	if _, err := handleIAMUserUpdate(ctx, svc, &embeddedUpdateUserEnvelope{
 		TenantID: "t-1",
-		UserID:   created.ID,
+		UserID:   strconv.FormatUint(created.ID, 10),
 		Request:  &iamsdk.UpdateUserRequest{Lifecycle: string(iam.LifecycleSuspended)},
 	}); err != nil {
 		t.Fatalf("a legitimate transition must still be accepted: %v", err)

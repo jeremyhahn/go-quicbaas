@@ -76,7 +76,7 @@ func TestTokenService_ValidateAuthCode_OneTimeUse(t *testing.T) {
 		RedirectURI: "https://example.com/cb",
 		Scope:       []string{"openid"},
 	}
-	code, err := service.GenerateAuthCode(ctx, req, "user-123")
+	code, err := service.GenerateAuthCode(ctx, req, 1000123)
 	if err != nil {
 		t.Fatalf("GenerateAuthCode: %v", err)
 	}

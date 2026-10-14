@@ -82,7 +82,7 @@ type FederationStorage interface {
 	GetLinkByExternal(ctx context.Context, providerID, externalID string) (*FederatedIdentity, error)
 
 	// GetLinksByUser retrieves all links for a user.
-	GetLinksByUser(ctx context.Context, userID string) ([]*FederatedIdentity, error)
+	GetLinksByUser(ctx context.Context, userID uint64) ([]*FederatedIdentity, error)
 
 	// UpdateLink updates an existing link.
 	// Returns ErrLinkNotFound if the link does not exist.
@@ -93,7 +93,7 @@ type FederationStorage interface {
 	DeleteLink(ctx context.Context, linkID string) error
 
 	// DeleteUserLinks removes all links for a user.
-	DeleteUserLinks(ctx context.Context, userID string) error
+	DeleteUserLinks(ctx context.Context, userID uint64) error
 }
 
 // StateStorage manages OAuth callback state tokens.
@@ -290,7 +290,7 @@ type MemoryFederationStorage struct {
 	mu              sync.RWMutex
 	links           map[string]*FederatedIdentity   // key: linkID
 	linksByExternal map[string]*FederatedIdentity   // key: providerID:externalID
-	linksByUser     map[string][]*FederatedIdentity // key: userID
+	linksByUser     map[uint64][]*FederatedIdentity // key: userID
 }
 
 // NewMemoryFederationStorage creates a new in-memory federation storage.
@@ -298,7 +298,7 @@ func NewMemoryFederationStorage() *MemoryFederationStorage {
 	return &MemoryFederationStorage{
 		links:           make(map[string]*FederatedIdentity),
 		linksByExternal: make(map[string]*FederatedIdentity),
-		linksByUser:     make(map[string][]*FederatedIdentity),
+		linksByUser:     make(map[uint64][]*FederatedIdentity),
 	}
 }
 
@@ -370,7 +370,7 @@ func (m *MemoryFederationStorage) GetLinkByExternal(ctx context.Context, provide
 }
 
 // GetLinksByUser retrieves all links for a user.
-func (m *MemoryFederationStorage) GetLinksByUser(ctx context.Context, userID string) ([]*FederatedIdentity, error) {
+func (m *MemoryFederationStorage) GetLinksByUser(ctx context.Context, userID uint64) ([]*FederatedIdentity, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -466,7 +466,7 @@ func (m *MemoryFederationStorage) DeleteLink(ctx context.Context, linkID string)
 }
 
 // DeleteUserLinks removes all links for a user.
-func (m *MemoryFederationStorage) DeleteUserLinks(ctx context.Context, userID string) error {
+func (m *MemoryFederationStorage) DeleteUserLinks(ctx context.Context, userID uint64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -483,7 +483,7 @@ func (m *MemoryFederationStorage) DeleteUserLinks(ctx context.Context, userID st
 
 // removeFromUserLinks removes a link from the user's links slice.
 // Must be called with the mutex held.
-func (m *MemoryFederationStorage) removeFromUserLinks(userID, linkID string) {
+func (m *MemoryFederationStorage) removeFromUserLinks(userID uint64, linkID string) {
 	links := m.linksByUser[userID]
 	for i, link := range links {
 		if link.ID == linkID {

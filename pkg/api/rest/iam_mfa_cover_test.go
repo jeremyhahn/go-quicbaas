@@ -34,13 +34,13 @@ import (
 
 const (
 	mfaTenant = "tenant-mfa"
-	mfaUser   = "user-mfa"
+	mfaUser   = "60001"
 )
 
 // fakeMFAManager is a deterministic MFAManager for the REST handler tests.
 type fakeMFAManager struct{}
 
-func (f *fakeMFAManager) BeginEnrollment(_ context.Context, _, _ string, _ iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
+func (f *fakeMFAManager) BeginEnrollment(_ context.Context, _ uint64, _ string, _ iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 	return &iam.MFAEnrollResponse{
 		EnrollmentID: "enr-1",
 		QRCodeURI:    "otpauth://totp/x",
@@ -52,7 +52,7 @@ func (f *fakeMFAManager) BeginEnrollment(_ context.Context, _, _ string, _ iam.M
 func (f *fakeMFAManager) CompleteEnrollment(_ context.Context, _, _ string) error { return nil }
 func (f *fakeMFAManager) CancelEnrollment(_ context.Context, _ string) error      { return nil }
 
-func (f *fakeMFAManager) BeginChallenge(_ context.Context, _, _, _ string) (*iam.MFAChallenge, error) {
+func (f *fakeMFAManager) BeginChallenge(_ context.Context, _ uint64, _, _ string) (*iam.MFAChallenge, error) {
 	return &iam.MFAChallenge{ID: "chal-1", Method: iam.MFAMethodTOTP, ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 
@@ -60,26 +60,26 @@ func (f *fakeMFAManager) VerifyChallenge(_ context.Context, _, _ string) (*iam.M
 	return &iam.MFAVerifyResponse{Success: true, Token: "full-token", BackupCodesRemaining: 5}, nil
 }
 
-func (f *fakeMFAManager) VerifyCode(_ context.Context, _, _, _ string) error { return nil }
+func (f *fakeMFAManager) VerifyCode(_ context.Context, _ uint64, _, _ string) error { return nil }
 
-func (f *fakeMFAManager) GetMFAStatus(_ context.Context, _, _ string) (*iam.MFAStatus, error) {
+func (f *fakeMFAManager) GetMFAStatus(_ context.Context, _ uint64, _ string) (*iam.MFAStatus, error) {
 	now := time.Now()
 	return &iam.MFAStatus{Enabled: true, Method: iam.MFAMethodTOTP, EnrolledAt: &now, LastVerified: &now,
 		BackupCodesTotal: 10, BackupCodesRemaining: 8}, nil
 }
 
-func (f *fakeMFAManager) IsMFARequired(_ context.Context, _, _ string) (bool, error) {
+func (f *fakeMFAManager) IsMFARequired(_ context.Context, _ uint64, _ string) (bool, error) {
 	return true, nil
 }
-func (f *fakeMFAManager) DisableMFA(_ context.Context, _, _ string) error { return nil }
+func (f *fakeMFAManager) DisableMFA(_ context.Context, _ uint64, _ string) error { return nil }
 
-func (f *fakeMFAManager) GenerateBackupCodes(_ context.Context, _, _ string) ([]string, error) {
+func (f *fakeMFAManager) GenerateBackupCodes(_ context.Context, _ uint64, _ string) ([]string, error) {
 	return []string{"code1", "code2"}, nil
 }
 
-func (f *fakeMFAManager) VerifyBackupCode(_ context.Context, _, _, _ string) error { return nil }
+func (f *fakeMFAManager) VerifyBackupCode(_ context.Context, _ uint64, _, _ string) error { return nil }
 
-func (f *fakeMFAManager) GetBackupCodeStatus(_ context.Context, _, _ string) (*iam.BackupCodeStatus, error) {
+func (f *fakeMFAManager) GetBackupCodeStatus(_ context.Context, _ uint64, _ string) (*iam.BackupCodeStatus, error) {
 	return &iam.BackupCodeStatus{Total: 10, Remaining: 8, Used: 2}, nil
 }
 
@@ -217,10 +217,10 @@ func TestMFA_ManagerUnavailable(t *testing.T) {
 // errMFAManager fails operations so the handlers' error paths run.
 type errMFAManager struct{ *fakeMFAManager }
 
-func (errMFAManager) GetMFAStatus(context.Context, string, string) (*iam.MFAStatus, error) {
+func (errMFAManager) GetMFAStatus(context.Context, uint64, string) (*iam.MFAStatus, error) {
 	return nil, errFakeMFA
 }
-func (errMFAManager) GetBackupCodeStatus(context.Context, string, string) (*iam.BackupCodeStatus, error) {
+func (errMFAManager) GetBackupCodeStatus(context.Context, uint64, string) (*iam.BackupCodeStatus, error) {
 	return nil, errFakeMFA
 }
 
@@ -252,8 +252,8 @@ func TestMFA_StatusError(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
-func (errMFAManager) DisableMFA(context.Context, string, string) error { return errFakeMFA }
-func (errMFAManager) GenerateBackupCodes(context.Context, string, string) ([]string, error) {
+func (errMFAManager) DisableMFA(context.Context, uint64, string) error { return errFakeMFA }
+func (errMFAManager) GenerateBackupCodes(context.Context, uint64, string) ([]string, error) {
 	return nil, errFakeMFA
 }
 func (errMFAManager) CancelEnrollment(context.Context, string) error { return errFakeMFA }
@@ -285,10 +285,10 @@ func TestMFA_MoreErrors(t *testing.T) {
 	assert.NotEqual(t, http.StatusNoContent, w.Code)
 }
 
-func (errMFAManager) BeginEnrollment(context.Context, string, string, iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
+func (errMFAManager) BeginEnrollment(context.Context, uint64, string, iam.MFAMethod) (*iam.MFAEnrollResponse, error) {
 	return nil, errFakeMFA
 }
-func (errMFAManager) BeginChallenge(context.Context, string, string, string) (*iam.MFAChallenge, error) {
+func (errMFAManager) BeginChallenge(context.Context, uint64, string, string) (*iam.MFAChallenge, error) {
 	return nil, errFakeMFA
 }
 

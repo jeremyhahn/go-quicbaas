@@ -183,7 +183,11 @@ func (r *ToolRegistry) executeIAMSessionList(ctx context.Context, args map[strin
 		return nil, err
 	}
 
-	sessions, err := sessionMgr.List(ctx, getString(args, "user_id"), getString(args, "tenant_id"))
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
+	sessions, err := sessionMgr.List(ctx, userID, getString(args, "tenant_id"))
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +227,11 @@ func (r *ToolRegistry) executeIAMSessionRevokeAll(ctx context.Context, args map[
 		return nil, err
 	}
 
-	err = sessionMgr.RevokeAllForUser(ctx, getString(args, "user_id"), getString(args, "tenant_id"))
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
+	err = sessionMgr.RevokeAllForUser(ctx, userID, getString(args, "tenant_id"))
 	if err != nil {
 		return nil, err
 	}
@@ -239,8 +247,12 @@ func (r *ToolRegistry) executeIAMSessionRevokeOthers(ctx context.Context, args m
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	err = sessionMgr.RevokeAllExcept(ctx,
-		getString(args, "user_id"),
+		userID,
 		getString(args, "tenant_id"),
 		getString(args, "keep_session_id"),
 	)

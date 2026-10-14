@@ -70,4 +70,17 @@ describe('RestSdlcClient operator verbs', () => {
     await new RestClient('http://localhost').sdlc.bind('t1', 'p1', binding);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).rulers).toEqual(['lead']);
   });
+
+  it('asks for a paused bind only when paused is set', async () => {
+    const binding = { project_id: 'p1' } as unknown as ProjectBinding;
+    fetchMock.mockResolvedValue(makeResponse(binding));
+    const client = new RestClient('http://localhost');
+
+    await client.sdlc.bind('t1', 'p1', binding, true);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost/api/v1/sdlc/projects/p1/binding?tenant_id=t1&paused=true');
+
+    fetchMock.mockResolvedValue(makeResponse(binding));
+    await client.sdlc.bind('t1', 'p1', binding, false);
+    expect(fetchMock.mock.calls[1][0]).toBe('http://localhost/api/v1/sdlc/projects/p1/binding?tenant_id=t1');
+  });
 });

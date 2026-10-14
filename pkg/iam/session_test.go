@@ -24,7 +24,7 @@ func TestSessionManager_Create(t *testing.T) {
 		require.NoError(t, err)
 
 		session := &SessionExt{
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 			IPAddress: "192.168.1.1",
@@ -46,7 +46,7 @@ func TestSessionManager_Create(t *testing.T) {
 		sessionID := uuid.New().String()
 		session := &SessionExt{
 			ID:        sessionID,
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 		}
@@ -62,7 +62,7 @@ func TestSessionManager_Create(t *testing.T) {
 
 		// Missing required fields
 		session := &SessionExt{
-			UserID: "user-1",
+			UserID: 10001,
 		}
 
 		err = mgr.Create(ctx, session)
@@ -82,7 +82,7 @@ func TestSessionManager_Create(t *testing.T) {
 		// Create max concurrent sessions
 		for i := 0; i < 2; i++ {
 			session := &SessionExt{
-				UserID:    "user-1",
+				UserID:    10001,
 				TenantID:  "tenant-1",
 				TokenHash: hashToken("token-" + string(rune(i))),
 			}
@@ -92,7 +92,7 @@ func TestSessionManager_Create(t *testing.T) {
 
 		// Try to create one more
 		session := &SessionExt{
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("<account>"),
 		}
@@ -107,7 +107,7 @@ func TestSessionManager_Create(t *testing.T) {
 
 		trustedUntil := time.Now().Add(7 * 24 * time.Hour)
 		session := &SessionExt{
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 			DeviceInfo: &DeviceInfo{
@@ -140,7 +140,7 @@ func TestSessionManager_Get(t *testing.T) {
 		require.NoError(t, err)
 
 		session := &SessionExt{
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 		}
@@ -170,7 +170,7 @@ func TestSessionManager_Get(t *testing.T) {
 
 		session := &SessionExt{
 			ID:        uuid.New().String(),
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 			ExpiresAt: time.Now().Add(-1 * time.Hour), // Already expired
@@ -196,7 +196,7 @@ func TestSessionManager_GetByToken(t *testing.T) {
 
 		tokenHash := hashToken("token-123")
 		session := &SessionExt{
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: tokenHash,
 		}
@@ -224,7 +224,7 @@ func TestSessionManager_GetByToken(t *testing.T) {
 
 		refreshHash := hashToken("refresh-123")
 		session := &SessionExt{
-			UserID:      "user-1",
+			UserID:      10001,
 			TenantID:    "tenant-1",
 			TokenHash:   hashToken("token-123"),
 			RefreshHash: refreshHash,
@@ -249,7 +249,7 @@ func TestSessionManager_List(t *testing.T) {
 		// Create multiple sessions for the same user
 		for i := 0; i < 3; i++ {
 			session := &SessionExt{
-				UserID:    "user-1",
+				UserID:    10001,
 				TenantID:  "tenant-1",
 				TokenHash: hashToken("token-" + string(rune(i))),
 			}
@@ -259,7 +259,7 @@ func TestSessionManager_List(t *testing.T) {
 
 		// Create session for different user
 		otherSession := &SessionExt{
-			UserID:    "user-2",
+			UserID:    10002,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-other"),
 		}
@@ -267,7 +267,7 @@ func TestSessionManager_List(t *testing.T) {
 		require.NoError(t, err)
 
 		// List sessions for user-1
-		sessions, err := mgr.List(ctx, "user-1", "tenant-1")
+		sessions, err := mgr.List(ctx, 10001, "tenant-1")
 		require.NoError(t, err)
 		assert.Len(t, sessions, 3)
 	})
@@ -276,7 +276,7 @@ func TestSessionManager_List(t *testing.T) {
 		mgr, err := NewSessionManager()
 		require.NoError(t, err)
 
-		sessions, err := mgr.List(ctx, "user-1", "tenant-1")
+		sessions, err := mgr.List(ctx, 10001, "tenant-1")
 		require.NoError(t, err)
 		assert.Empty(t, sessions)
 	})
@@ -288,7 +288,7 @@ func TestSessionManager_List(t *testing.T) {
 		// Create active session
 		activeSession := &SessionExt{
 			ID:        uuid.New().String(),
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-active"),
 			ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -301,7 +301,7 @@ func TestSessionManager_List(t *testing.T) {
 		// Create expired session
 		expiredSession := &SessionExt{
 			ID:        uuid.New().String(),
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-expired"),
 			ExpiresAt: time.Now().Add(-1 * time.Hour),
@@ -311,7 +311,7 @@ func TestSessionManager_List(t *testing.T) {
 		err = mgr.storage.Create(ctx, expiredSession)
 		require.NoError(t, err)
 
-		sessions, err := mgr.List(ctx, "user-1", "tenant-1")
+		sessions, err := mgr.List(ctx, 10001, "tenant-1")
 		require.NoError(t, err)
 		assert.Len(t, sessions, 1)
 		assert.Equal(t, activeSession.ID, sessions[0].ID)
@@ -326,7 +326,7 @@ func TestSessionManager_UpdateActivity(t *testing.T) {
 		require.NoError(t, err)
 
 		session := &SessionExt{
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 		}
@@ -363,7 +363,7 @@ func TestSessionManager_Revoke(t *testing.T) {
 		require.NoError(t, err)
 
 		session := &SessionExt{
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 		}
@@ -398,7 +398,7 @@ func TestSessionManager_RevokeAllForUser(t *testing.T) {
 		// Create multiple sessions
 		for i := 0; i < 3; i++ {
 			session := &SessionExt{
-				UserID:    "user-1",
+				UserID:    10001,
 				TenantID:  "tenant-1",
 				TokenHash: hashToken("token-" + string(rune(i))),
 			}
@@ -406,10 +406,10 @@ func TestSessionManager_RevokeAllForUser(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		err = mgr.RevokeAllForUser(ctx, "user-1", "tenant-1")
+		err = mgr.RevokeAllForUser(ctx, 10001, "tenant-1")
 		require.NoError(t, err)
 
-		sessions, err := mgr.List(ctx, "user-1", "tenant-1")
+		sessions, err := mgr.List(ctx, 10001, "tenant-1")
 		require.NoError(t, err)
 		assert.Empty(t, sessions)
 	})
@@ -427,7 +427,7 @@ func TestSessionManager_RevokeAllExcept(t *testing.T) {
 		// Create multiple sessions
 		for i := 0; i < 3; i++ {
 			session := &SessionExt{
-				UserID:    "user-1",
+				UserID:    10001,
 				TenantID:  "tenant-1",
 				TokenHash: hashToken("token-" + string(rune(i))),
 			}
@@ -439,10 +439,10 @@ func TestSessionManager_RevokeAllExcept(t *testing.T) {
 			}
 		}
 
-		err = mgr.RevokeAllExcept(ctx, "user-1", "tenant-1", keepSessionID)
+		err = mgr.RevokeAllExcept(ctx, 10001, "tenant-1", keepSessionID)
 		require.NoError(t, err)
 
-		sessions, err := mgr.List(ctx, "user-1", "tenant-1")
+		sessions, err := mgr.List(ctx, 10001, "tenant-1")
 		require.NoError(t, err)
 		assert.Len(t, sessions, 1)
 		assert.Equal(t, keepSessionID, sessions[0].ID)
@@ -459,7 +459,7 @@ func TestSessionManager_CleanupExpired(t *testing.T) {
 		// Create active session
 		activeSession := &SessionExt{
 			ID:        uuid.New().String(),
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-active"),
 			ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -473,7 +473,7 @@ func TestSessionManager_CleanupExpired(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			expiredSession := &SessionExt{
 				ID:        uuid.New().String(),
-				UserID:    "user-1",
+				UserID:    10001,
 				TenantID:  "tenant-1",
 				TokenHash: hashToken("token-expired-" + string(rune(i))),
 				ExpiresAt: time.Now().Add(-1 * time.Hour),
@@ -502,7 +502,7 @@ func TestSessionManager_ValidateSession(t *testing.T) {
 		require.NoError(t, err)
 
 		session := &SessionExt{
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 		}
@@ -520,7 +520,7 @@ func TestSessionManager_ValidateSession(t *testing.T) {
 
 		session := &SessionExt{
 			ID:        uuid.New().String(),
-			UserID:    "user-1",
+			UserID:    10001,
 			TenantID:  "tenant-1",
 			TokenHash: hashToken("token-123"),
 			ExpiresAt: time.Now().Add(-1 * time.Hour),
@@ -554,7 +554,7 @@ func TestSessionManager_EnforcePolicy(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			session := &SessionExt{
 				ID:        uuid.New().String(),
-				UserID:    "user-1",
+				UserID:    10001,
 				TenantID:  "tenant-1",
 				TokenHash: hashToken("token-" + string(rune(i))),
 				ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -565,10 +565,10 @@ func TestSessionManager_EnforcePolicy(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		err = mgr.EnforcePolicy(ctx, "user-1", "tenant-1", policy)
+		err = mgr.EnforcePolicy(ctx, 10001, "tenant-1", policy)
 		require.NoError(t, err)
 
-		sessions, err := mgr.List(ctx, "user-1", "tenant-1")
+		sessions, err := mgr.List(ctx, 10001, "tenant-1")
 		require.NoError(t, err)
 		assert.LessOrEqual(t, len(sessions), policy.MaxConcurrent)
 	})
@@ -654,7 +654,7 @@ func TestSessionStorage_ConcurrentAccess(t *testing.T) {
 			for j := 0; j < numOperations; j++ {
 				session := &SessionExt{
 					ID:        uuid.New().String(),
-					UserID:    "user-1",
+					UserID:    10001,
 					TenantID:  "tenant-1",
 					TokenHash: hashToken("token-" + string(rune(id)) + "-" + string(rune(j))),
 					ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -673,7 +673,7 @@ func TestSessionStorage_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Verify sessions were created
-	sessions, err := storage.ListByUser(ctx, "user-1", "tenant-1")
+	sessions, err := storage.ListByUser(ctx, 10001, "tenant-1")
 	require.NoError(t, err)
 	assert.Equal(t, numGoroutines*numOperations, len(sessions))
 }
@@ -685,7 +685,7 @@ func TestSessionTenantIsolation(t *testing.T) {
 
 	// Create sessions in different tenants
 	session1 := &SessionExt{
-		UserID:    "user-1",
+		UserID:    10001,
 		TenantID:  "tenant-1",
 		TokenHash: hashToken("<account>"),
 	}
@@ -693,7 +693,7 @@ func TestSessionTenantIsolation(t *testing.T) {
 	require.NoError(t, err)
 
 	session2 := &SessionExt{
-		UserID:    "user-1",
+		UserID:    10001,
 		TenantID:  "tenant-2",
 		TokenHash: hashToken("<account>"),
 	}
@@ -701,12 +701,12 @@ func TestSessionTenantIsolation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify tenant isolation
-	tenant1Sessions, err := mgr.List(ctx, "user-1", "tenant-1")
+	tenant1Sessions, err := mgr.List(ctx, 10001, "tenant-1")
 	require.NoError(t, err)
 	assert.Len(t, tenant1Sessions, 1)
 	assert.Equal(t, "tenant-1", tenant1Sessions[0].TenantID)
 
-	tenant2Sessions, err := mgr.List(ctx, "user-1", "tenant-2")
+	tenant2Sessions, err := mgr.List(ctx, 10001, "tenant-2")
 	require.NoError(t, err)
 	assert.Len(t, tenant2Sessions, 1)
 	assert.Equal(t, "tenant-2", tenant2Sessions[0].TenantID)
@@ -719,7 +719,7 @@ func hashToken(token string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func makeTestSession(id, userID, tenantID, tokenHash string) *SessionExt {
+func makeTestSession(id string, userID uint64, tenantID, tokenHash string) *SessionExt {
 	now := time.Now()
 	return &SessionExt{
 		ID:         id,
@@ -738,7 +738,7 @@ func TestMemorySessionExtStorage_Update_Success(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	session := makeTestSession("s1", "user1", "t1", "hash1")
+	session := makeTestSession("s1", 20001, "t1", "hash1")
 	if err := storage.Create(ctx, session); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -770,7 +770,7 @@ func TestMemorySessionExtStorage_Update_NotFound(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	session := makeTestSession("nonexistent", "user1", "t1", "hash1")
+	session := makeTestSession("nonexistent", 20001, "t1", "hash1")
 	err := storage.Update(ctx, session)
 	if err == nil {
 		t.Fatal("expected error updating nonexistent session")
@@ -781,7 +781,7 @@ func TestMemorySessionExtStorage_Update_ChangeRefreshHash(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	session := makeTestSession("s1", "user1", "t1", "hash1")
+	session := makeTestSession("s1", 20001, "t1", "hash1")
 	session.RefreshHash = "refresh_old"
 	if err := storage.Create(ctx, session); err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -837,7 +837,7 @@ func TestMemorySessionExtStorage_Delete_WithRefreshHash(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	session := makeTestSession("s1", "user1", "t1", "hash1")
+	session := makeTestSession("s1", 20001, "t1", "hash1")
 	session.RefreshHash = "refresh1"
 	if err := storage.Create(ctx, session); err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -857,10 +857,10 @@ func TestMemorySessionExtStorage_DeleteByUser_Success(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	s1 := makeTestSession("s1", "user1", "t1", "hash1")
-	s2 := makeTestSession("s2", "user1", "t1", "hash2")
+	s1 := makeTestSession("s1", 20001, "t1", "hash1")
+	s2 := makeTestSession("s2", 20001, "t1", "hash2")
 	s2.RefreshHash = "refresh2"
-	s3 := makeTestSession("s3", "user2", "t1", "hash3")
+	s3 := makeTestSession("s3", 20002, "t1", "hash3")
 
 	for _, s := range []*SessionExt{s1, s2, s3} {
 		if err := storage.Create(ctx, s); err != nil {
@@ -868,12 +868,12 @@ func TestMemorySessionExtStorage_DeleteByUser_Success(t *testing.T) {
 		}
 	}
 
-	if err := storage.DeleteByUser(ctx, "user1", "t1"); err != nil {
+	if err := storage.DeleteByUser(ctx, 20001, "t1"); err != nil {
 		t.Fatalf("DeleteByUser failed: %v", err)
 	}
 
 	// user1 sessions should be gone
-	sessions, err := storage.ListByUser(ctx, "user1", "t1")
+	sessions, err := storage.ListByUser(ctx, 20001, "t1")
 	if err != nil {
 		t.Fatalf("ListByUser failed: %v", err)
 	}
@@ -882,7 +882,7 @@ func TestMemorySessionExtStorage_DeleteByUser_Success(t *testing.T) {
 	}
 
 	// user2 session should still exist
-	sessions2, err := storage.ListByUser(ctx, "user2", "t1")
+	sessions2, err := storage.ListByUser(ctx, 20002, "t1")
 	if err != nil {
 		t.Fatalf("ListByUser user2 failed: %v", err)
 	}
@@ -895,7 +895,7 @@ func TestMemorySessionExtStorage_DeleteByUser_NoSessions(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	err := storage.DeleteByUser(ctx, "nouser", "t1")
+	err := storage.DeleteByUser(ctx, 99997, "t1")
 	if err != nil {
 		t.Fatalf("DeleteByUser on nonexistent user should not error: %v", err)
 	}
@@ -905,9 +905,9 @@ func TestMemorySessionExtStorage_DeleteAllExcept_Success(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	s1 := makeTestSession("s1", "user1", "t1", "hash1")
-	s2 := makeTestSession("s2", "user1", "t1", "hash2")
-	s3 := makeTestSession("s3", "user1", "t1", "hash3")
+	s1 := makeTestSession("s1", 20001, "t1", "hash1")
+	s2 := makeTestSession("s2", 20001, "t1", "hash2")
+	s3 := makeTestSession("s3", 20001, "t1", "hash3")
 	s3.RefreshHash = "refresh3"
 
 	for _, s := range []*SessionExt{s1, s2, s3} {
@@ -916,12 +916,12 @@ func TestMemorySessionExtStorage_DeleteAllExcept_Success(t *testing.T) {
 		}
 	}
 
-	if err := storage.DeleteAllExcept(ctx, "user1", "t1", "s2"); err != nil {
+	if err := storage.DeleteAllExcept(ctx, 20001, "t1", "s2"); err != nil {
 		t.Fatalf("DeleteAllExcept failed: %v", err)
 	}
 
 	// Only s2 should remain
-	sessions, err := storage.ListByUser(ctx, "user1", "t1")
+	sessions, err := storage.ListByUser(ctx, 20001, "t1")
 	if err != nil {
 		t.Fatalf("ListByUser failed: %v", err)
 	}
@@ -937,7 +937,7 @@ func TestMemorySessionExtStorage_DeleteAllExcept_NoSessions(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	err := storage.DeleteAllExcept(ctx, "nouser", "t1", "s1")
+	err := storage.DeleteAllExcept(ctx, 99997, "t1", "s1")
 	if err != nil {
 		t.Fatalf("DeleteAllExcept on nonexistent user should not error: %v", err)
 	}
@@ -950,7 +950,7 @@ func TestMemorySessionExtStorage_CleanupExpired_Success(t *testing.T) {
 	now := time.Now()
 	active := &SessionExt{
 		ID:         "active",
-		UserID:     "user1",
+		UserID:     20001,
 		TenantID:   "t1",
 		TokenHash:  "hash_active",
 		Created:    now,
@@ -959,7 +959,7 @@ func TestMemorySessionExtStorage_CleanupExpired_Success(t *testing.T) {
 	}
 	expired := &SessionExt{
 		ID:          "expired",
-		UserID:      "user1",
+		UserID:      20001,
 		TenantID:    "t1",
 		TokenHash:   "hash_expired",
 		RefreshHash: "refresh_expired",
@@ -1000,7 +1000,7 @@ func TestMemorySessionExtStorage_CopySession_WithDeviceInfoAndMetadata(t *testin
 	ctx := context.Background()
 	storage := NewMemorySessionExtStorage()
 
-	session := makeTestSession("s1", "user1", "t1", "hash1")
+	session := makeTestSession("s1", 20001, "t1", "hash1")
 	session.DeviceInfo = &DeviceInfo{
 		ID:   "device1",
 		Name: "Chrome",
@@ -1040,7 +1040,7 @@ func TestMemorySessionExtStorage_CopySession_WithDeviceInfoAndMetadata(t *testin
 func TestSessionExt_Validate_MissingTenantID(t *testing.T) {
 	session := &SessionExt{
 		ID:        "s1",
-		UserID:    "user1",
+		UserID:    20001,
 		TokenHash: "hash",
 	}
 	err := session.Validate()
@@ -1079,7 +1079,7 @@ func TestSessionManager_RevokeAllForUser_SuccessFinal(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create multiple sessions for a user
-	userID := "user-revoke-123"
+	userID := uint64(40030)
 	tenantID := "tenant-revoke-1"
 
 	for i := 0; i < 3; i++ {
@@ -1113,7 +1113,7 @@ func TestSessionManager_RevokeAllForUser_EmptyUserIDFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	err = mgr.RevokeAllForUser(ctx, "", "tenant-1")
+	err = mgr.RevokeAllForUser(ctx, 0, "tenant-1")
 	assert.Error(t, err)
 }
 
@@ -1122,7 +1122,7 @@ func TestSessionManager_RevokeAllForUser_EmptyTenantIDFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	err = mgr.RevokeAllForUser(ctx, "user-1", "")
+	err = mgr.RevokeAllForUser(ctx, 10001, "")
 	assert.Error(t, err)
 }
 
@@ -1133,7 +1133,7 @@ func TestSessionManager_RevokeAllForUser_CancelledContextFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	err = mgr.RevokeAllForUser(ctx, "user-1", "tenant-1")
+	err = mgr.RevokeAllForUser(ctx, 10001, "tenant-1")
 	assert.Error(t, err)
 	assert.Equal(t, context.Canceled, err)
 }
@@ -1143,7 +1143,7 @@ func TestSessionManager_RevokeAllExcept_SuccessFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	userID := "user-except-456"
+	userID := uint64(40030)
 	tenantID := "tenant-except-2"
 	var keepSessionID string
 
@@ -1183,7 +1183,7 @@ func TestSessionManager_RevokeAllExcept_EmptyUserIDFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	err = mgr.RevokeAllExcept(ctx, "", "tenant-1", "session-1")
+	err = mgr.RevokeAllExcept(ctx, 0, "tenant-1", "session-1")
 	assert.Error(t, err)
 }
 
@@ -1192,7 +1192,7 @@ func TestSessionManager_RevokeAllExcept_EmptyTenantIDFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	err = mgr.RevokeAllExcept(ctx, "user-1", "", "session-1")
+	err = mgr.RevokeAllExcept(ctx, 10001, "", "session-1")
 	assert.Error(t, err)
 }
 
@@ -1201,7 +1201,7 @@ func TestSessionManager_RevokeAllExcept_EmptyExceptSessionIDFinal(t *testing.T) 
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	err = mgr.RevokeAllExcept(ctx, "user-1", "tenant-1", "")
+	err = mgr.RevokeAllExcept(ctx, 10001, "tenant-1", "")
 	assert.Error(t, err)
 }
 
@@ -1212,7 +1212,7 @@ func TestSessionManager_RevokeAllExcept_CancelledContextFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	err = mgr.RevokeAllExcept(ctx, "user-1", "tenant-1", "session-1")
+	err = mgr.RevokeAllExcept(ctx, 10001, "tenant-1", "session-1")
 	assert.Error(t, err)
 	assert.Equal(t, context.Canceled, err)
 }
@@ -1247,7 +1247,7 @@ func TestSessionManager_GetByToken_IdleSessionFinal(t *testing.T) {
 	tokenHash := hashTokenForTestFinal("idle-token-final-123")
 	session := &SessionExt{
 		ID:         uuid.New().String(),
-		UserID:     "user-idle",
+		UserID:     40041,
 		TenantID:   "tenant-idle",
 		TokenHash:  tokenHash,
 		Created:    time.Now().Add(-2 * time.Hour),
@@ -1272,7 +1272,7 @@ func TestSessionManager_List_CancelledContextFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	_, err = mgr.List(ctx, "user-1", "tenant-1")
+	_, err = mgr.List(ctx, 10001, "tenant-1")
 	assert.Error(t, err)
 	assert.Equal(t, context.Canceled, err)
 }
@@ -1282,7 +1282,7 @@ func TestSessionManager_List_EmptyUserIDFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	_, err = mgr.List(ctx, "", "tenant-1")
+	_, err = mgr.List(ctx, 0, "tenant-1")
 	assert.Error(t, err)
 }
 
@@ -1291,7 +1291,7 @@ func TestSessionManager_List_EmptyTenantIDFinal(t *testing.T) {
 	mgr, err := NewSessionManager()
 	require.NoError(t, err)
 
-	_, err = mgr.List(ctx, "user-1", "")
+	_, err = mgr.List(ctx, 10001, "")
 	assert.Error(t, err)
 }
 
@@ -1325,7 +1325,7 @@ func TestSessionManager_UpdateActivity_ExpiredSessionFinal(t *testing.T) {
 	// Manually create an expired session in storage
 	session := &SessionExt{
 		ID:         uuid.New().String(),
-		UserID:     "user-update-expired",
+		UserID:     40042,
 		TenantID:   "tenant-update-expired",
 		TokenHash:  hashTokenForTestFinal("expired-update-token"),
 		ExpiresAt:  time.Now().Add(-1 * time.Hour), // Expired
@@ -1399,7 +1399,7 @@ func TestSessionManager_ValidateSession_IdleSessionFinal(t *testing.T) {
 	// Create a session
 	session := &SessionExt{
 		ID:         uuid.New().String(),
-		UserID:     "user-validate",
+		UserID:     40043,
 		TenantID:   "tenant-validate",
 		TokenHash:  hashTokenForTestFinal("validate-token-final"),
 		Created:    time.Now().Add(-1 * time.Hour),
@@ -2194,7 +2194,7 @@ func TestBackendStorage_ListTokensByUserFinal(t *testing.T) {
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 
-	userID := "token-user-final-123"
+	userID := "token-user-final"
 
 	// Create tokens for user
 	for i := 0; i < 3; i++ {
@@ -2235,7 +2235,7 @@ func TestBackendStorage_RevokeUserTokensFinal(t *testing.T) {
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 
-	userID := "revoke-user-final-456"
+	userID := "token-user-final"
 
 	// Create tokens for user
 	var jtis []string
@@ -2317,7 +2317,7 @@ func TestMemorySessionExtStorage_GetByToken_SuccessFinal(t *testing.T) {
 	tokenHash := hashTokenForTestFinal("test-token-for-lookup-final")
 	session := &SessionExt{
 		ID:         uuid.New().String(),
-		UserID:     "user-storage-1",
+		UserID:     40044,
 		TenantID:   "tenant-storage-1",
 		TokenHash:  tokenHash,
 		Created:    time.Now(),
@@ -2339,7 +2339,7 @@ func TestMemorySessionExtStorage_Update_SuccessFinal(t *testing.T) {
 
 	session := &SessionExt{
 		ID:         uuid.New().String(),
-		UserID:     "user-update-1",
+		UserID:     40045,
 		TenantID:   "tenant-update-1",
 		TokenHash:  hashTokenForTestFinal("update-token-final"),
 		Created:    time.Now(),
@@ -2368,7 +2368,7 @@ func TestMemorySessionExtStorage_CleanupExpired_WithExpiredSessionsFinal(t *test
 	// Create expired session
 	expiredSession := &SessionExt{
 		ID:         uuid.New().String(),
-		UserID:     "user-cleanup-1",
+		UserID:     40046,
 		TenantID:   "tenant-cleanup-1",
 		TokenHash:  hashTokenForTestFinal("expired-cleanup-token-final"),
 		Created:    time.Now().Add(-2 * time.Hour),
@@ -2381,7 +2381,7 @@ func TestMemorySessionExtStorage_CleanupExpired_WithExpiredSessionsFinal(t *test
 	// Create valid session
 	validSession := &SessionExt{
 		ID:         uuid.New().String(),
-		UserID:     "user-cleanup-2",
+		UserID:     40047,
 		TenantID:   "tenant-cleanup-1",
 		TokenHash:  hashTokenForTestFinal("valid-cleanup-token-final"),
 		Created:    time.Now(),
@@ -2489,7 +2489,7 @@ func TestWithSessionStorageCoverage(t *testing.T) {
 	session := &SessionExt{
 		ID:        uuid.New().String(),
 		TenantID:  "tenant-1",
-		UserID:    "user-1",
+		UserID:    10001,
 		TokenHash: "test-token-hash-12345678901234567890",
 		UserAgent: "test-agent",
 		IPAddress: "127.0.0.1",
@@ -2575,7 +2575,7 @@ func TestMemorySessionExtStorage_UpdateCoverage(t *testing.T) {
 		session := &SessionExt{
 			ID:        uuid.New().String(),
 			TenantID:  "tenant-1",
-			UserID:    "user-1",
+			UserID:    10001,
 			TokenHash: "token-hash-for-update-test",
 		}
 		err := storage.Update(ctx, session)
@@ -2586,7 +2586,7 @@ func TestMemorySessionExtStorage_UpdateCoverage(t *testing.T) {
 		session := &SessionExt{
 			ID:        uuid.New().String(),
 			TenantID:  "tenant-1",
-			UserID:    "user-1",
+			UserID:    10001,
 			TokenHash: "update-token-hash-123456789",
 			UserAgent: "original-agent",
 			IPAddress: "127.0.0.1",
@@ -2614,7 +2614,7 @@ func TestSessionExtCopyBehavior(t *testing.T) {
 	original := &SessionExt{
 		ID:         uuid.New().String(),
 		TenantID:   "tenant-1",
-		UserID:     "user-1",
+		UserID:     10001,
 		TokenHash:  "token-hash-12345678901234567890",
 		Created:    time.Now(),
 		LastActive: time.Now(),

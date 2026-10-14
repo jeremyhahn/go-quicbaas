@@ -28,11 +28,11 @@ import (
 // multi-user population can be set up.
 type deleteFailUserStorage struct {
 	*MemoryStorage
-	failUserID string
+	failUserID uint64
 	failErr    error
 }
 
-func (s *deleteFailUserStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
+func (s *deleteFailUserStorage) DeleteUser(ctx context.Context, tenantID string, userID uint64) error {
 	if userID == s.failUserID {
 		return s.failErr
 	}
@@ -41,22 +41,22 @@ func (s *deleteFailUserStorage) DeleteUser(ctx context.Context, tenantID, userID
 
 // seedTenantUsers creates a tenant in the given storage plus n users in it,
 // returning the created user IDs.
-func seedTenantUsers(t *testing.T, store UserStorage, tenantID string, n int) []string {
+func seedTenantUsers(t *testing.T, store UserStorage, tenantID string, n int) []uint64 {
 	t.Helper()
 	ctx := context.Background()
-	ids := make([]string, 0, n)
+	ids := make([]uint64, 0, n)
 	for i := 0; i < n; i++ {
-		// A user id is a canonical qrdb Snowflake — the decimal rendering of a
-		// non-zero uint64 — so the fixtures are numbered from 1.
-		id := FormatUserID(uint64(i) + 1)
+		// A user id is a non-zero qrdb Snowflake, so the fixtures are
+		// numbered from 1.
+		id := uint64(i) + 1
 		u := &User{
 			ID:       id,
 			TenantID: tenantID,
-			Name:     id,
-			Email:    fmt.Sprintf("%s@%s.local", id, tenantID),
+			Name:     fmt.Sprintf("user-%d", id),
+			Email:    fmt.Sprintf("%d@%s.local", id, tenantID),
 		}
 		if err := store.CreateUser(ctx, u); err != nil {
-			t.Fatalf("CreateUser(%s) failed: %v", id, err)
+			t.Fatalf("CreateUser(%d) failed: %v", id, err)
 		}
 		ids = append(ids, id)
 	}
@@ -106,7 +106,7 @@ func TestDeleteTenant_DeprovisionsUsers(t *testing.T) {
 	// The other tenant's users must be untouched.
 	for _, id := range otherUsers {
 		if _, err := store.GetUser(ctx, otherID, id); err != nil {
-			t.Fatalf("cross-tenant user %s was wrongly removed: %v", id, err)
+			t.Fatalf("cross-tenant user %d was wrongly removed: %v", id, err)
 		}
 	}
 }
@@ -121,7 +121,7 @@ func TestDeleteTenant_UserDeprovisionFailureAborts(t *testing.T) {
 	sentinel := errors.New("simulated delete failure")
 	store := &deleteFailUserStorage{
 		MemoryStorage: mem,
-		failUserID:    "2",
+		failUserID:    2,
 		failErr:       sentinel,
 	}
 

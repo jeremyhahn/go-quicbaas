@@ -28,7 +28,7 @@ import (
 func TestSDLCService_OpenWorkReadsTheProjectsForge(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	agent := &giteafake.User{Login: giteafake.DefaultLogin}
@@ -83,7 +83,7 @@ func TestSDLCService_OpenWorkRefusesBadSubjects(t *testing.T) {
 func TestSDLCService_OpenWorkReportsAForgeFailure(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	rig.forge.ForceStatus("GET", "/issues", 403, "forbidden")

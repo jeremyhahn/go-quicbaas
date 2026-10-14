@@ -28,10 +28,10 @@ import (
 // with — the strict resolver the #357 verification tests use, in contrast
 // to admin_test.go's allowAllTargetResolver.
 type mapTargetResolver struct {
-	users map[string]map[string]bool // tenantID -> userID -> exists
+	users map[string]map[uint64]bool // tenantID -> userID -> exists
 }
 
-func (r *mapTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+func (r *mapTargetResolver) GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error) {
 	if r.users[tenantID][userID] {
 		return &User{ID: userID, TenantID: tenantID}, nil
 	}
@@ -39,16 +39,16 @@ func (r *mapTargetResolver) GetUser(ctx context.Context, tenantID, userID string
 }
 
 // newTenantScopeTestManager builds an AdminManager whose resolver knows
-// exactly: tenant-user-1 in tenant-1, and system-operator-2 in the system
+// exactly: user 50001 in tenant-1, and user 50002 in the system
 // tenant.
 func newTenantScopeTestManager(t *testing.T) *AdminManager {
 	t.Helper()
 	manager, err := NewAdminManager(AdminManagerOptions{
 		AdminStorage:         NewMemoryAdminStorage(),
 		ImpersonationStorage: NewMemoryImpersonationStorage(),
-		TargetResolver: &mapTargetResolver{users: map[string]map[string]bool{
-			"tenant-1":             {"tenant-user-1": true},
-			qrdbsdk.SystemTenantID: {"system-operator-2": true},
+		TargetResolver: &mapTargetResolver{users: map[string]map[uint64]bool{
+			"tenant-1":             {50001: true},
+			qrdbsdk.SystemTenantID: {50002: true},
 		}},
 	})
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 
 	t.Run("impersonating a tenant user is denied by default", func(t *testing.T) {
 		_, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
-			TargetUserID: "tenant-user-1",
+			TargetUserID: "50001",
 			TenantID:     "tenant-1",
 			Reason:       "operator overreach attempt",
 		})
@@ -148,7 +148,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 
 	t.Run("impersonating a verified system-tenant user still works", func(t *testing.T) {
 		session, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
-			TargetUserID: "system-operator-2",
+			TargetUserID: "50002",
 			TenantID:     qrdbsdk.SystemTenantID,
 			Reason:       "system-scope support session",
 		})
@@ -158,11 +158,11 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 	})
 
 	t.Run("a tenant user ID smuggled under a system-tenant session mints nothing", func(t *testing.T) {
-		// tenant-user-1 is not a system-tenant user, so the identity
+		// User 50001 is not a system-tenant user, so the identity
 		// resolver cannot place it there and no session comes into
 		// existence — the unverified-principal path fails closed (#357).
 		_, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
-			TargetUserID: "tenant-user-1",
+			TargetUserID: "50001",
 			TenantID:     qrdbsdk.SystemTenantID,
 			Reason:       "ID smuggling attempt",
 		})
@@ -181,7 +181,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 		require.NoError(t, err)
 
 		session, err := manager.StartImpersonation(ctxWithActor("breakglass-admin"), &StartImpersonationOptions{
-			TargetUserID: "tenant-user-1",
+			TargetUserID: "50001",
 			TenantID:     "tenant-1",
 			Reason:       "explicit audited grant",
 		})
@@ -204,7 +204,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 // the shape of a sealed or unavailable identity store.
 type failingTargetResolver struct{}
 
-func (failingTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+func (failingTargetResolver) GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error) {
 	return nil, errors.New("identity store unavailable")
 }
 
@@ -232,7 +232,7 @@ func TestAdminManager_StartImpersonation_ResolverErrorIsNotNotFound(t *testing.T
 	require.NoError(t, err)
 
 	_, err = manager.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
-		TargetUserID: "tenant-user-1",
+		TargetUserID: "50001",
 		TenantID:     "tenant-1",
 		Reason:       "resolver outage",
 	})
@@ -262,7 +262,7 @@ func TestAdminManager_StartImpersonation_ResolverRequired(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = manager.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
-		TargetUserID: "tenant-user-1",
+		TargetUserID: "50001",
 		TenantID:     "tenant-1",
 		Reason:       "no resolver wired",
 	})

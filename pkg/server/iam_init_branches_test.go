@@ -137,7 +137,7 @@ func TestPIVBootstrapError_Format(t *testing.T) {
 func TestBindAdminPIVCert_PathNotExistReturnsTypedError(t *testing.T) {
 	c := buildTestIAMComponents(t)
 
-	err := bindAdminPIVCert(context.Background(), c, "default", "admin", "/nonexistent/path/missing.pem")
+	err := bindAdminPIVCert(context.Background(), c, "default", 1, "/nonexistent/path/missing.pem")
 	require.Error(t, err)
 	var piv *PIVBootstrapError
 	require.True(t, errors.As(err, &piv), "expected PIVBootstrapError, got %T %v", err, err)
@@ -150,7 +150,7 @@ func TestBindAdminPIVCert_MalformedPEMReturnsTypedError(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "bad.pem")
 	require.NoError(t, os.WriteFile(tmp, []byte("not a pem block"), 0o600))
 
-	err := bindAdminPIVCert(context.Background(), c, "default", "admin", tmp)
+	err := bindAdminPIVCert(context.Background(), c, "default", 1, tmp)
 	require.Error(t, err)
 	var piv *PIVBootstrapError
 	require.True(t, errors.As(err, &piv))
@@ -168,7 +168,7 @@ AAAA
 `)
 	require.NoError(t, os.WriteFile(tmp, pemBytes, 0o600))
 
-	err := bindAdminPIVCert(context.Background(), c, "default", "admin", tmp)
+	err := bindAdminPIVCert(context.Background(), c, "default", 1, tmp)
 	require.Error(t, err)
 	var piv *PIVBootstrapError
 	require.True(t, errors.As(err, &piv))
@@ -234,7 +234,7 @@ func assertCertLoginFactorEnrolled(t *testing.T, factors *testutil.MemoryUserAut
 // the id the STORE assigned: a caller no longer chooses one, because the
 // identity is the store's Snowflake and nothing correlates a second id space
 // against it.
-func createBootstrapAdmin(t *testing.T, c *iamComponents) string {
+func createBootstrapAdmin(t *testing.T, c *iamComponents) uint64 {
 	t.Helper()
 	u, err := c.identityStore.CreateUser(context.Background(), "default", iam.CreateUserOptions{
 		Username: "admin-bs",
@@ -525,19 +525,17 @@ func TestBindAdminPIVCert_UpdateUserError(t *testing.T) {
 	pemFile := filepath.Join(t.TempDir(), "cert.pem")
 	require.NoError(t, os.WriteFile(pemFile, pemFromDER(der), 0o600))
 
-	// A MALFORMED id is refused before anything is enrolled. The user id is
-	// qrdb's Snowflake now, so "does-not-exist" never named a user in any
-	// tenant, and the factor enrollment that converts it is the first step to
-	// say so — which is the right place, because it runs before any write.
-	err = bindAdminPIVCert(context.Background(), c, "default", "does-not-exist", pemFile)
-	require.Error(t, err, "a malformed user id must fail")
-	var malformed *PIVBootstrapError
-	require.ErrorAs(t, err, &malformed)
-	require.Equal(t, "enroll bootstrap admin mtls login factor", malformed.Op)
+	// The zero id names no user in any tenant, and the factor enrollment is
+	// the first step to say so — before any write.
+	err = bindAdminPIVCert(context.Background(), c, "default", 0, pemFile)
+	require.Error(t, err, "the zero user id must fail")
+	var zero *PIVBootstrapError
+	require.ErrorAs(t, err, &zero)
+	require.Equal(t, "enroll bootstrap admin mtls login factor", zero.Op)
 
-	// A WELL-FORMED id that names no user gets as far as the update, which is
+	// A non-zero id that names no user gets as far as the update, which is
 	// the step that actually consults the record.
-	err = bindAdminPIVCert(context.Background(), c, "default", "999999999999999999", pemFile)
+	err = bindAdminPIVCert(context.Background(), c, "default", 999999999999999999, pemFile)
 	require.Error(t, err, "updating a nonexistent user must fail")
 	var missing *PIVBootstrapError
 	require.ErrorAs(t, err, &missing)
@@ -582,11 +580,9 @@ func TestBindAdminPIVCert_RebindingSameCertIsIdempotent(t *testing.T) {
 	require.NoError(t, bindAdminPIVCert(context.Background(), c, "default", adminID, pemFile),
 		"re-binding the same certificate must be idempotent")
 
-	// The user id IS qrdb's numeric id, so this is a conversion rather than a
-	// lookup in a correlation table that could disagree with the record.
-	qrdbUserID, err := iam.ParseUserID(adminID)
-	require.NoError(t, err)
-	list, err := certFactors.List(context.Background(), qrdbUserID)
+	// The user id IS qrdb's numeric id, so the factor list is read by it
+	// directly rather than through a correlation table.
+	list, err := certFactors.List(context.Background(), adminID)
 	require.NoError(t, err)
 	require.Len(t, list, 1, "re-binding must not enroll a duplicate factor")
 }
@@ -599,7 +595,7 @@ func TestBindAdminPIVCert_MissingEnrollerFailsClosed(t *testing.T) {
 	adminID := createBootstrapAdmin(t, c)
 	c.certLoginFactors = nil
 
-	err := bindAdminPIVCert(context.Background(), c, "default", "admin-bs", writeTestCertPEM(t))
+	err := bindAdminPIVCert(context.Background(), c, "default", adminID, writeTestCertPEM(t))
 	require.Error(t, err)
 	var unavailable *AdminCertFactorUnavailableError
 	require.ErrorAs(t, err, &unavailable)

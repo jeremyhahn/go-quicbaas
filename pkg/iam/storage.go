@@ -83,8 +83,9 @@ type UserStorage interface {
 	// against — the defect the uuid<->uint64 IDMap existed to paper over.
 	CreateUser(ctx context.Context, user *User) error
 
-	// GetUser retrieves a user by ID.
-	GetUser(ctx context.Context, tenantID, userID string) (*User, error)
+	// GetUser retrieves a user by ID. A zero id never names a stored user and
+	// is refused with ErrInvalidUserID.
+	GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error)
 
 	// GetUserByEmail retrieves a user by their canonical login key within a
 	// tenant.
@@ -122,10 +123,10 @@ type UserStorage interface {
 	// A full-record write therefore cannot mark a record twice, so a retried
 	// deletion would fail on exactly the path that exists to make deletion
 	// resumable. Marking an already-marked record is a no-op, not an error.
-	MarkUserDeleting(ctx context.Context, tenantID, userID string) error
+	MarkUserDeleting(ctx context.Context, tenantID string, userID uint64) error
 
 	// DeleteUser removes a user.
-	DeleteUser(ctx context.Context, tenantID, userID string) error
+	DeleteUser(ctx context.Context, tenantID string, userID uint64) error
 
 	// ListUsers retrieves users with pagination and filtering.
 	ListUsers(ctx context.Context, tenantID string, opts ListOptions) ([]*User, error)

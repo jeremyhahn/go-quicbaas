@@ -111,6 +111,7 @@ func newTriageRig(t *testing.T) *triageRig {
 	runner, err := NewTriageRunner(TriageRunnerConfig{
 		Bindings:     store,
 		Clusters:     store,
+		Reruns:       store,
 		Forges:       &fakeForges{forge: forge},
 		Tokens:       tokens,
 		Signing:      signing,
@@ -1197,6 +1198,7 @@ func newTriageRigOver(t *testing.T, first *triageRig) *triageRig {
 	runner, err := NewTriageRunner(TriageRunnerConfig{
 		Bindings:     first.store,
 		Clusters:     first.store,
+		Reruns:       first.store,
 		Forges:       &fakeForges{forge: first.forge},
 		Tokens:       &fakeTokens{token: []byte("t0ken")},
 		Signing:      signing,

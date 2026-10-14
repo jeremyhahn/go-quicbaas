@@ -361,8 +361,8 @@ func TestUserAdapter_CreateUser_PendingAdminSatisfiesDeferredProvisioning(t *tes
 	if err != nil {
 		t.Fatalf("store read: %v", err)
 	}
-	if stored.ID != iam.FormatUserID(got.ID) {
-		t.Fatalf("returned id %d does not name stored user %q", got.ID, stored.ID)
+	if stored.ID != got.ID {
+		t.Fatalf("returned id %d does not name stored user %d", got.ID, stored.ID)
 	}
 }
 
@@ -396,8 +396,8 @@ func TestUserAdapter_GetUserByUsername_ProjectsIDAndBindings(t *testing.T) {
 	}
 }
 
-func TestStoredUser_RefusesAMissingOrNonCanonicalID(t *testing.T) {
-	for _, u := range []*iam.User{nil, {ID: ""}, {ID: "007"}, {ID: "not-a-number"}} {
+func TestStoredUser_RefusesAMissingOrZeroID(t *testing.T) {
+	for _, u := range []*iam.User{nil, {ID: 0}} {
 		if _, err := storedUser(u); !errors.Is(err, ErrInvalidUserID) {
 			t.Fatalf("storedUser(%+v) = %v, want ErrInvalidUserID", u, err)
 		}

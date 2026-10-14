@@ -91,7 +91,7 @@ func TestIAMUpdateUserRequestValidate(t *testing.T) {
 	}{
 		{
 			name:    "missing tenant_id",
-			req:     &IAMUpdateUserRequest{UserID: "user-1"},
+			req:     &IAMUpdateUserRequest{UserID: 10001},
 			wantErr: true,
 			errMsg:  "tenant_id is required",
 		},
@@ -103,35 +103,35 @@ func TestIAMUpdateUserRequestValidate(t *testing.T) {
 		},
 		{
 			name:    "empty email",
-			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: "user-1", Email: strPtr("")},
+			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: 10001, Email: strPtr("")},
 			wantErr: true,
 			errMsg:  "email is required",
 		},
 		{
 			name:    "invalid email format",
-			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: "user-1", Email: strPtr("not-an-email")},
+			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: 10001, Email: strPtr("not-an-email")},
 			wantErr: true,
 			errMsg:  "invalid email format",
 		},
 		{
 			name:    "whitespace only name",
-			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: "user-1", Name: strPtr("   ")},
+			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: 10001, Name: strPtr("   ")},
 			wantErr: true,
 			errMsg:  "name cannot be empty or whitespace",
 		},
 		{
 			name:    "valid request with no updates",
-			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: "user-1"},
+			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: 10001},
 			wantErr: false,
 		},
 		{
 			name:    "valid request with email update",
-			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: "user-1", Email: strPtr("new@example.com")},
+			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: 10001, Email: strPtr("new@example.com")},
 			wantErr: false,
 		},
 		{
 			name:    "valid request with name update",
-			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: "user-1", Name: strPtr("New Name")},
+			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: 10001, Name: strPtr("New Name")},
 			wantErr: false,
 		},
 	}

@@ -34,8 +34,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // AdminFactorPlanError reports an invalid --admin-factor selection.
@@ -174,7 +172,8 @@ func (s *Server) PreflightAdminLoginFactors(ctx context.Context) error {
 func (s *Server) enrollAdminLoginFactors(
 	ctx context.Context,
 	c *iamComponents,
-	tenantID, userID string,
+	tenantID string,
+	userID uint64,
 	result *qrdbsdk.FirstBootResult,
 ) error {
 	plan, err := s.adminFactorPlan()
@@ -185,13 +184,9 @@ func (s *Server) enrollAdminLoginFactors(
 		return nil
 	}
 
-	// The user id IS qrdb's numeric id, rendered in decimal, so both factor
-	// kinds land on one identity by construction rather than by both consulting
-	// the same correlation table.
-	qrdbUserID, err := iam.ParseUserID(userID)
-	if err != nil {
-		return &AdminFactorEnrollError{Cause: err}
-	}
+	// The user id IS qrdb's numeric id, so both factor kinds land on one
+	// identity by construction rather than by both consulting the same
+	// correlation table.
 
 	var certPEM []byte
 	if result != nil {
@@ -199,7 +194,7 @@ func (s *Server) enrollAdminLoginFactors(
 	}
 
 	enrolled, enrollErr := xkmssdk.EnrollAdminFactors(
-		ctx, s.adminEnrollmentConfig(plan, qrdbUserID, certPEM),
+		ctx, s.adminEnrollmentConfig(plan, userID, certPEM),
 	)
 	for _, e := range enrolled {
 		s.logger.Infof("Admin login factor enrolled: %s", e.Factor.String())

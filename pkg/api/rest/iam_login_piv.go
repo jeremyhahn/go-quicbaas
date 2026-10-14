@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,7 +141,7 @@ func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// Defense-in-depth: the resolved user must belong to the derived tenant.
 	if user.TenantID != tenantID {
-		h.logPIVLoginFailureAudit(ctx, user.ID, thumbprint, ErrUnauthorized,
+		h.logPIVLoginFailureAudit(ctx, strconv.FormatUint(user.ID, 10), thumbprint, ErrUnauthorized,
 			"resolved user tenant does not match derived login tenant", r)
 		RespondIAMError(w, r, http.StatusUnauthorized,
 			NewIAMAPIError(ErrUnauthorized, "no user found for the presented certificate"))
@@ -226,7 +227,7 @@ func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Emit success audit event.
-	h.logPIVLoginAudit(ctx, user.TenantID, user.ID, user.Email, thumbprint,
+	h.logPIVLoginAudit(ctx, user.TenantID, strconv.FormatUint(user.ID, 10), user.Email, thumbprint,
 		cert.Subject.String(), cert.Issuer.String(), "smartcard",
 		string(attestation.Level()), r)
 

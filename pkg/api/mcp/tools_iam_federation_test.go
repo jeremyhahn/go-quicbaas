@@ -38,9 +38,9 @@ type mockFederationManager struct {
 	listProvidersFn    func(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.ExternalProvider, error)
 	beginLoginFn       func(ctx context.Context, tenantID, providerName, redirectURI string) (*iam.LoginRedirect, error)
 	handleCallbackFn   func(ctx context.Context, stateToken, authCode string) (*iam.FederationResult, error)
-	linkAccountFn      func(ctx context.Context, userID, tenantID, providerID, externalToken string) error
-	unlinkAccountFn    func(ctx context.Context, userID, tenantID, providerID string) error
-	getUserLinksFn     func(ctx context.Context, userID, tenantID string) ([]*iam.FederatedIdentity, error)
+	linkAccountFn      func(ctx context.Context, userID uint64, tenantID, providerID, externalToken string) error
+	unlinkAccountFn    func(ctx context.Context, userID uint64, tenantID, providerID string) error
+	getUserLinksFn     func(ctx context.Context, userID uint64, tenantID string) ([]*iam.FederatedIdentity, error)
 }
 
 func (m *mockFederationManager) RegisterProvider(ctx context.Context, provider *iam.ExternalProvider) error {
@@ -115,21 +115,21 @@ func (m *mockFederationManager) HandleCallback(ctx context.Context, stateToken, 
 	}, nil
 }
 
-func (m *mockFederationManager) LinkAccount(ctx context.Context, userID, tenantID, providerID, externalToken string) error {
+func (m *mockFederationManager) LinkAccount(ctx context.Context, userID uint64, tenantID, providerID, externalToken string) error {
 	if m.linkAccountFn != nil {
 		return m.linkAccountFn(ctx, userID, tenantID, providerID, externalToken)
 	}
 	return nil
 }
 
-func (m *mockFederationManager) UnlinkAccount(ctx context.Context, userID, tenantID, providerID string) error {
+func (m *mockFederationManager) UnlinkAccount(ctx context.Context, userID uint64, tenantID, providerID string) error {
 	if m.unlinkAccountFn != nil {
 		return m.unlinkAccountFn(ctx, userID, tenantID, providerID)
 	}
 	return nil
 }
 
-func (m *mockFederationManager) GetUserLinks(ctx context.Context, userID, tenantID string) ([]*iam.FederatedIdentity, error) {
+func (m *mockFederationManager) GetUserLinks(ctx context.Context, userID uint64, tenantID string) ([]*iam.FederatedIdentity, error) {
 	if m.getUserLinksFn != nil {
 		return m.getUserLinksFn(ctx, userID, tenantID)
 	}
@@ -492,7 +492,7 @@ func TestExecuteIAMFederationLinkAccount_Success(t *testing.T) {
 	reg := newFederationRegistry(t, fedMgr)
 
 	result, err := reg.executeIAMFederationLinkAccount(context.Background(), map[string]interface{}{
-		"user_id":        "u1",
+		"user_id":        "30001",
 		"tenant_id":      "t1",
 		"provider_id":    "google",
 		"external_token": "ext-token-123",
@@ -507,14 +507,14 @@ func TestExecuteIAMFederationLinkAccount_Success(t *testing.T) {
 
 func TestExecuteIAMFederationLinkAccount_Error(t *testing.T) {
 	fedMgr := &mockFederationManager{
-		linkAccountFn: func(_ context.Context, _, _, _, _ string) error {
+		linkAccountFn: func(_ context.Context, _ uint64, _, _, _ string) error {
 			return errors.New("link failed")
 		},
 	}
 	reg := newFederationRegistry(t, fedMgr)
 
 	_, err := reg.executeIAMFederationLinkAccount(context.Background(), map[string]interface{}{
-		"user_id": "u1", "tenant_id": "t1", "provider_id": "google", "external_token": "tok",
+		"user_id": "30001", "tenant_id": "t1", "provider_id": "google", "external_token": "tok",
 	})
 	require.Error(t, err)
 }
@@ -524,7 +524,7 @@ func TestExecuteIAMFederationUnlinkAccount_Success(t *testing.T) {
 	reg := newFederationRegistry(t, fedMgr)
 
 	result, err := reg.executeIAMFederationUnlinkAccount(context.Background(), map[string]interface{}{
-		"user_id":     "u1",
+		"user_id":     "30001",
 		"tenant_id":   "t1",
 		"provider_id": "google",
 	})
@@ -538,14 +538,14 @@ func TestExecuteIAMFederationUnlinkAccount_Success(t *testing.T) {
 
 func TestExecuteIAMFederationUnlinkAccount_Error(t *testing.T) {
 	fedMgr := &mockFederationManager{
-		unlinkAccountFn: func(_ context.Context, _, _, _ string) error {
+		unlinkAccountFn: func(_ context.Context, _ uint64, _, _ string) error {
 			return errors.New("unlink failed")
 		},
 	}
 	reg := newFederationRegistry(t, fedMgr)
 
 	_, err := reg.executeIAMFederationUnlinkAccount(context.Background(), map[string]interface{}{
-		"user_id": "u1", "tenant_id": "t1", "provider_id": "google",
+		"user_id": "30001", "tenant_id": "t1", "provider_id": "google",
 	})
 	require.Error(t, err)
 }
@@ -555,7 +555,7 @@ func TestExecuteIAMFederationGetUserLinks_Success(t *testing.T) {
 	reg := newFederationRegistry(t, fedMgr)
 
 	result, err := reg.executeIAMFederationGetUserLinks(context.Background(), map[string]interface{}{
-		"user_id":   "u1",
+		"user_id":   "30001",
 		"tenant_id": "t1",
 	})
 	require.NoError(t, err)
@@ -568,14 +568,14 @@ func TestExecuteIAMFederationGetUserLinks_Success(t *testing.T) {
 
 func TestExecuteIAMFederationGetUserLinks_Error(t *testing.T) {
 	fedMgr := &mockFederationManager{
-		getUserLinksFn: func(_ context.Context, _, _ string) ([]*iam.FederatedIdentity, error) {
+		getUserLinksFn: func(_ context.Context, _ uint64, _ string) ([]*iam.FederatedIdentity, error) {
 			return nil, errors.New("get links failed")
 		},
 	}
 	reg := newFederationRegistry(t, fedMgr)
 
 	_, err := reg.executeIAMFederationGetUserLinks(context.Background(), map[string]interface{}{
-		"user_id": "u1", "tenant_id": "t1",
+		"user_id": "30001", "tenant_id": "t1",
 	})
 	require.Error(t, err)
 }
@@ -589,7 +589,7 @@ func TestExecuteIAMIdentityLink_Success(t *testing.T) {
 	reg := newFederationRegistry(t, fedMgr)
 
 	result, err := reg.executeIAMIdentityLink(context.Background(), map[string]interface{}{
-		"user_id":        "u1",
+		"user_id":        "30001",
 		"tenant_id":      "t1",
 		"provider_id":    "google",
 		"external_token": "ext-token-123",
@@ -604,14 +604,14 @@ func TestExecuteIAMIdentityLink_Success(t *testing.T) {
 
 func TestExecuteIAMIdentityLink_Error(t *testing.T) {
 	fedMgr := &mockFederationManager{
-		linkAccountFn: func(_ context.Context, _, _, _, _ string) error {
+		linkAccountFn: func(_ context.Context, _ uint64, _, _, _ string) error {
 			return errors.New("identity link failed")
 		},
 	}
 	reg := newFederationRegistry(t, fedMgr)
 
 	_, err := reg.executeIAMIdentityLink(context.Background(), map[string]interface{}{
-		"user_id": "u1", "tenant_id": "t1", "provider_id": "google", "external_token": "tok",
+		"user_id": "30001", "tenant_id": "t1", "provider_id": "google", "external_token": "tok",
 	})
 	require.Error(t, err)
 }
@@ -621,7 +621,7 @@ func TestExecuteIAMIdentityUnlink_Success(t *testing.T) {
 	reg := newFederationRegistry(t, fedMgr)
 
 	result, err := reg.executeIAMIdentityUnlink(context.Background(), map[string]interface{}{
-		"user_id":     "u1",
+		"user_id":     "30001",
 		"tenant_id":   "t1",
 		"provider_id": "google",
 	})
@@ -635,14 +635,14 @@ func TestExecuteIAMIdentityUnlink_Success(t *testing.T) {
 
 func TestExecuteIAMIdentityUnlink_Error(t *testing.T) {
 	fedMgr := &mockFederationManager{
-		unlinkAccountFn: func(_ context.Context, _, _, _ string) error {
+		unlinkAccountFn: func(_ context.Context, _ uint64, _, _ string) error {
 			return errors.New("identity unlink failed")
 		},
 	}
 	reg := newFederationRegistry(t, fedMgr)
 
 	_, err := reg.executeIAMIdentityUnlink(context.Background(), map[string]interface{}{
-		"user_id": "u1", "tenant_id": "t1", "provider_id": "google",
+		"user_id": "30001", "tenant_id": "t1", "provider_id": "google",
 	})
 	require.Error(t, err)
 }
@@ -652,7 +652,7 @@ func TestExecuteIAMIdentityListUserIdentities_Success(t *testing.T) {
 	reg := newFederationRegistry(t, fedMgr)
 
 	result, err := reg.executeIAMIdentityListUserIdentities(context.Background(), map[string]interface{}{
-		"user_id":   "u1",
+		"user_id":   "30001",
 		"tenant_id": "t1",
 	})
 	require.NoError(t, err)
@@ -665,14 +665,14 @@ func TestExecuteIAMIdentityListUserIdentities_Success(t *testing.T) {
 
 func TestExecuteIAMIdentityListUserIdentities_Error(t *testing.T) {
 	fedMgr := &mockFederationManager{
-		getUserLinksFn: func(_ context.Context, _, _ string) ([]*iam.FederatedIdentity, error) {
+		getUserLinksFn: func(_ context.Context, _ uint64, _ string) ([]*iam.FederatedIdentity, error) {
 			return nil, errors.New("list identities failed")
 		},
 	}
 	reg := newFederationRegistry(t, fedMgr)
 
 	_, err := reg.executeIAMIdentityListUserIdentities(context.Background(), map[string]interface{}{
-		"user_id": "u1", "tenant_id": "t1",
+		"user_id": "30001", "tenant_id": "t1",
 	})
 	require.Error(t, err)
 }

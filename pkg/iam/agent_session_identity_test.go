@@ -174,7 +174,7 @@ func TestEnrollAgentSessionIdentity_ConvergesOnRepeatedEnrollment(t *testing.T) 
 		t.Fatalf("second enrollment: %v", err)
 	}
 	if first.ID != second.ID {
-		t.Fatalf("repeated enrollment minted a second record: %s then %s", first.ID, second.ID)
+		t.Fatalf("repeated enrollment minted a second record: %d then %d", first.ID, second.ID)
 	}
 
 	users, err := memory.ListUsers(ctx, "acme", iam.ListOptions{Limit: 10})
@@ -671,7 +671,7 @@ type deleteScriptedUserStorage struct {
 	err error
 }
 
-func (s *deleteScriptedUserStorage) DeleteUser(_ context.Context, _, _ string) error {
+func (s *deleteScriptedUserStorage) DeleteUser(_ context.Context, _ string, _ uint64) error {
 	return s.err
 }
 

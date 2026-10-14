@@ -342,7 +342,7 @@ func sdlcTestVerificationGuard(t *testing.T) orchestration.ExecutionGuard {
 func TestSDLCService_BindRegistersTheRoute(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	bound, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding())
+	bound, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestSDLCService_BindRegistersTheRoute(t *testing.T) {
 	// Re-binding replaces; unbinding forgets the route.
 	replacement := rig.binding()
 	replacement.Review.RequiredApprovals = 2
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, replacement); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, replacement, BindOptions{}); err != nil {
 		t.Fatalf("re-bind: %v", err)
 	}
 	if err := rig.svc.Unbind(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
@@ -439,7 +439,7 @@ func TestSDLCService_BindRefusesWhatThePipelineCannotDeliver(t *testing.T) {
 				tenant = ""
 			}
 			tc.mutate(rig, binding)
-			_, err := rig.svc.Bind(context.Background(), tenant, binding)
+			_, err := rig.svc.Bind(context.Background(), tenant, binding, BindOptions{})
 			if err == nil {
 				t.Fatal("bind accepted")
 			}
@@ -464,7 +464,7 @@ func TestSDLCService_BindAcceptsASameForgeContextRepo(t *testing.T) {
 	rig.projects.projects[sdlcTestProject].ContextRepos = []orchestration.ContextRepo{
 		{Name: "handbook", RepoURL: "https://forge.test/acme/handbook.git", Ref: "main"},
 	}
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("bind refused a same-forge https context repository: %v", err)
 	}
 }
@@ -600,7 +600,7 @@ func TestSDLCService_BindTurnsTheProjectAutonomous(t *testing.T) {
 	if project.Autonomous || project.DefaultWorkflow != "" {
 		t.Fatalf("fixture is not the case under test: %+v", project)
 	}
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	if !rig.projects.projects[sdlcTestProject].Autonomous {
@@ -610,7 +610,7 @@ func TestSDLCService_BindTurnsTheProjectAutonomous(t *testing.T) {
 		t.Fatalf("updates = %d, want the one write", rig.projects.updates)
 	}
 	// Re-binding an already autonomous project writes nothing further.
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("re-bind: %v", err)
 	}
 	if rig.projects.updates != 1 {
@@ -631,9 +631,86 @@ func TestSDLCService_BindRefusesWhenAutonomyCannotBePersisted(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
 	rig.projects.updateErr = errors.New("store sealed")
-	_, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding())
+	_, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{})
 	if err == nil || !strings.Contains(err.Error(), "store sealed") {
 		t.Fatalf("Bind = %v, want the store's refusal", err)
+	}
+	if _, err := rig.svc.Binding(ctx, sdlcTestTenant, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("a refused bind left a record: %v", err)
+	}
+	if _, err := rig.svc.Routes().Tenant(ctx, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("a refused bind left a route: %v", err)
+	}
+}
+
+// unbindOnCleanup removes the test project's route from the package's shared
+// qrdb node, so a later test's "no route" assertion starts clean.
+func unbindOnCleanup(t *testing.T, rig *sdlcServiceRig) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := rig.svc.Unbind(context.Background(), sdlcTestTenant, sdlcTestProject); err != nil {
+			t.Errorf("Unbind: %v", err)
+		}
+	})
+}
+
+// TestSDLCService_BindLeavePausedStagesTheProject pins #1041's prerequisite:
+// a project can be bound without the poller adopting its issues, because
+// LeavePaused leaves autonomy off and writes nothing to the project.
+func TestSDLCService_BindLeavePausedStagesTheProject(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if rig.projects.projects[sdlcTestProject].Autonomous {
+		t.Fatal("fixture is not the case under test: project already autonomous")
+	}
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{LeavePaused: true}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	unbindOnCleanup(t, rig)
+	if rig.projects.projects[sdlcTestProject].Autonomous {
+		t.Fatal("a paused bind turned the project autonomous")
+	}
+	if rig.projects.updates != 0 {
+		t.Fatalf("updates = %d, want no project write", rig.projects.updates)
+	}
+	if _, err := rig.svc.Binding(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
+		t.Fatalf("a paused bind stored no binding: %v", err)
+	}
+	if tenant, err := rig.svc.Routes().Tenant(ctx, sdlcTestProject); err != nil || tenant != sdlcTestTenant {
+		t.Fatalf("route = %q, %v; want %q", tenant, err, sdlcTestTenant)
+	}
+}
+
+// TestSDLCService_BindLeavePausedNeverTurnsAutonomyOff pins the documented
+// rule: paused means "do not switch it on", not "switch it off".
+func TestSDLCService_BindLeavePausedNeverTurnsAutonomyOff(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	rig.projects.projects[sdlcTestProject].Autonomous = true
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{LeavePaused: true}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	unbindOnCleanup(t, rig)
+	if !rig.projects.projects[sdlcTestProject].Autonomous {
+		t.Fatal("a paused bind turned autonomy off")
+	}
+	if rig.projects.updates != 0 {
+		t.Fatalf("updates = %d, want no project write", rig.projects.updates)
+	}
+}
+
+// TestSDLCService_BindLeavePausedRefusedWritesNothing: a refused paused bind
+// leaves no binding, no route and no project write.
+func TestSDLCService_BindLeavePausedRefusedWritesNothing(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	binding := rig.binding()
+	binding.Forge.Type = "no-such-forge"
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding, BindOptions{LeavePaused: true}); err == nil {
+		t.Fatal("Bind accepted an unregistered forge")
+	}
+	if rig.projects.updates != 0 {
+		t.Fatalf("updates = %d, want no project write", rig.projects.updates)
 	}
 	if _, err := rig.svc.Binding(ctx, sdlcTestTenant, sdlcTestProject); !errors.Is(err, sdlc.ErrNotFound) {
 		t.Fatalf("a refused bind left a record: %v", err)
@@ -702,7 +779,7 @@ func TestSDLCService_BindInSystemTenantSucceedsWithWarning(t *testing.T) {
 
 	binding := rig.binding()
 	binding.ProjectID = projectID
-	bound, err := rig.svc.Bind(ctx, qrdbsdk.SystemTenantID, binding)
+	bound, err := rig.svc.Bind(ctx, qrdbsdk.SystemTenantID, binding, BindOptions{})
 	if err != nil {
 		t.Fatalf("Bind in system tenant must succeed (parity), got: %v", err)
 	}
@@ -741,7 +818,7 @@ func TestSDLCService_BindInRegularTenantEmitsNoSystemWarning(t *testing.T) {
 
 	binding := rig.binding()
 	binding.ProjectID = projectID
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding, BindOptions{}); err != nil {
 		t.Fatalf("Bind in regular tenant: %v", err)
 	}
 	if out := logs.String(); strings.Contains(out, "SYSTEM privilege") {
@@ -770,7 +847,7 @@ func TestSDLCService_BindRefusesReviewerWithUnresolvableToken(t *testing.T) {
 		TokenSecretRef: "sdlc/reviewer/absent/token",
 	}
 
-	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding)
+	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{})
 	if err == nil {
 		t.Fatal("Bind must refuse a reviewer whose token secret cannot be resolved")
 	}
@@ -792,7 +869,7 @@ func TestSDLCService_BindRefusesReviewerWithNoTokenRef(t *testing.T) {
 	binding.ProjectID = projectID
 	binding.Reviewer = sdlc.ReviewerConfig{Agent: serviceReviewerAgent, Login: "codex"}
 
-	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding)
+	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{})
 	if err == nil {
 		t.Fatal("Bind must refuse a reviewer with no token secret ref")
 	}
@@ -816,7 +893,7 @@ func TestSDLCService_BindAcceptsNoReviewer(t *testing.T) {
 	binding.ProjectID = projectID
 	binding.Reviewer = sdlc.ReviewerConfig{}
 
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding); err != nil {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{}); err != nil {
 		t.Fatalf("a project that binds no reviewer must still bind: %v", err)
 	}
 }
@@ -839,7 +916,7 @@ func TestSDLCService_BindAcceptsReviewerWithResolvableToken(t *testing.T) {
 		TokenSecretRef: "sdlc/reviewer/go-luks2/token",
 	}
 
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding, BindOptions{}); err != nil {
 		t.Fatalf("Bind with a resolvable reviewer token: %v", err)
 	}
 	stored, err := rig.svc.Binding(ctx, sdlcTestTenant, projectID)
@@ -874,7 +951,7 @@ func TestSDLCService_UnbindSurvivesAnUnresolvableForgeToken(t *testing.T) {
 
 	binding := rig.binding()
 	binding.ProjectID = projectID
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding, BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
@@ -911,7 +988,7 @@ func TestSDLCService_UnbindStillRefusesATransientForgeFailure(t *testing.T) {
 
 	binding := rig.binding()
 	binding.ProjectID = projectID
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding, BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
@@ -949,7 +1026,7 @@ func TestSDLCService_UnbindSurvivesAForgeThatRefusesTheAccount(t *testing.T) {
 
 	binding := rig.binding()
 	binding.ProjectID = projectID
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, binding, BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
@@ -1057,7 +1134,7 @@ func TestSDLCService_AdoptIssue_RefusesBeforeTouchingAnything(t *testing.T) {
 func TestSDLCService_OnboardRefusesABindingOffTheAllowlist(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	if _, err := rig.svc.Onboard(ctx, sdlcTestTenant, sdlcTestProject); err != nil {

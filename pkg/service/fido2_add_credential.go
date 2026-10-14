@@ -28,23 +28,6 @@ import (
 
 const opFIDO2BeginAddCredential = "FIDO2Service.BeginAddCredential" //nolint:gosec // G101: an operation name, not a credential
 
-// FIDO2CallerRefusedError reports that BeginAddCredential could not derive
-// the account to add a passkey to from the caller's identity: there is no
-// authenticated principal, or the principal does not name a qrdb user.
-type FIDO2CallerRefusedError struct {
-	Reason string
-}
-
-// Error implements the error interface.
-func (e *FIDO2CallerRefusedError) Error() string { return e.Reason }
-
-// IsFIDO2CallerRefused reports whether err is (or wraps) a refusal to derive
-// the add-credential account from the caller's identity.
-func IsFIDO2CallerRefused(err error) bool {
-	var target *FIDO2CallerRefusedError
-	return stderrors.As(err, &target)
-}
-
 // BeginAddCredential starts a ceremony that adds a passkey to the account of
 // the authenticated caller. The account and its tenant come from the
 // caller's identity, never from the request: tenantID is only the tenant the
@@ -56,7 +39,7 @@ func (f *fido2Service) BeginAddCredential(ctx context.Context, tenantID string) 
 		return nil, &errors.QBError{
 			Code: errors.ErrUnauthorized,
 			Op:   opFIDO2BeginAddCredential,
-			Err:  &FIDO2CallerRefusedError{Reason: "adding a passkey requires an authenticated caller"},
+			Err:  &CallerAccountRefusedError{Reason: "adding a passkey requires an authenticated caller"},
 		}
 	}
 	owner := subject.TenantID

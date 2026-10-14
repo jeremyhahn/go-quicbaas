@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,24 +31,24 @@ import (
 // MFAManager handles MFA operations.
 type MFAManager interface {
 	// Enrollment
-	BeginEnrollment(ctx context.Context, userID, tenantID string, method MFAMethod) (*MFAEnrollResponse, error)
+	BeginEnrollment(ctx context.Context, userID uint64, tenantID string, method MFAMethod) (*MFAEnrollResponse, error)
 	CompleteEnrollment(ctx context.Context, enrollmentID, code string) error
 	CancelEnrollment(ctx context.Context, enrollmentID string) error
 
 	// Verification
-	BeginChallenge(ctx context.Context, userID, tenantID, sessionToken string) (*MFAChallenge, error)
+	BeginChallenge(ctx context.Context, userID uint64, tenantID, sessionToken string) (*MFAChallenge, error)
 	VerifyChallenge(ctx context.Context, challengeID, code string) (*MFAVerifyResponse, error)
-	VerifyCode(ctx context.Context, userID, tenantID, code string) error
+	VerifyCode(ctx context.Context, userID uint64, tenantID, code string) error
 
 	// Management
-	DisableMFA(ctx context.Context, userID, tenantID string) error
-	GetMFAStatus(ctx context.Context, userID, tenantID string) (*MFAStatus, error)
-	IsMFARequired(ctx context.Context, userID, tenantID string) (bool, error)
+	DisableMFA(ctx context.Context, userID uint64, tenantID string) error
+	GetMFAStatus(ctx context.Context, userID uint64, tenantID string) (*MFAStatus, error)
+	IsMFARequired(ctx context.Context, userID uint64, tenantID string) (bool, error)
 
 	// Backup Codes
-	GenerateBackupCodes(ctx context.Context, userID, tenantID string) ([]string, error)
-	VerifyBackupCode(ctx context.Context, userID, tenantID, code string) error
-	GetBackupCodeStatus(ctx context.Context, userID, tenantID string) (*BackupCodeStatus, error)
+	GenerateBackupCodes(ctx context.Context, userID uint64, tenantID string) ([]string, error)
+	VerifyBackupCode(ctx context.Context, userID uint64, tenantID, code string) error
+	GetBackupCodeStatus(ctx context.Context, userID uint64, tenantID string) (*BackupCodeStatus, error)
 }
 
 // DefaultMFAManager implements MFAManager.
@@ -104,8 +105,8 @@ func NewMFAManager(opts ...MFAManagerOption) (*DefaultMFAManager, error) {
 }
 
 // BeginEnrollment starts MFA enrollment for a user.
-func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantID string, method MFAMethod) (*MFAEnrollResponse, error) {
-	if userID == "" {
+func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID uint64, tenantID string, method MFAMethod) (*MFAEnrollResponse, error) {
+	if userID == 0 {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -127,7 +128,7 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID, tenantI
 	}
 
 	// Get account name (email) from user storage if available
-	accountName := userID
+	accountName := strconv.FormatUint(userID, 10)
 	if m.userStorage != nil {
 		user, err := m.userStorage.GetUser(ctx, tenantID, userID)
 		if err == nil && user != nil && user.Email != "" {
@@ -266,7 +267,7 @@ func (m *DefaultMFAManager) CompleteEnrollment(ctx context.Context, enrollmentID
 	}
 
 	// Get account name for secret storage
-	accountName := enrollment.UserID
+	accountName := strconv.FormatUint(enrollment.UserID, 10)
 	if m.userStorage != nil {
 		user, err := m.userStorage.GetUser(ctx, enrollment.TenantID, enrollment.UserID)
 		if err == nil && user != nil && user.Email != "" {
@@ -321,8 +322,8 @@ func (m *DefaultMFAManager) CancelEnrollment(ctx context.Context, enrollmentID s
 }
 
 // BeginChallenge starts an MFA challenge for authentication.
-func (m *DefaultMFAManager) BeginChallenge(ctx context.Context, userID, tenantID, sessionToken string) (*MFAChallenge, error) {
-	if userID == "" {
+func (m *DefaultMFAManager) BeginChallenge(ctx context.Context, userID uint64, tenantID, sessionToken string) (*MFAChallenge, error) {
+	if userID == 0 {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.challenge", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -498,8 +499,8 @@ func (m *DefaultMFAManager) VerifyChallenge(ctx context.Context, challengeID, co
 }
 
 // VerifyCode verifies a TOTP code for a user.
-func (m *DefaultMFAManager) VerifyCode(ctx context.Context, userID, tenantID, code string) error {
-	if userID == "" {
+func (m *DefaultMFAManager) VerifyCode(ctx context.Context, userID uint64, tenantID, code string) error {
+	if userID == 0 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.verify", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -541,8 +542,8 @@ func (m *DefaultMFAManager) VerifyCode(ctx context.Context, userID, tenantID, co
 }
 
 // DisableMFA disables MFA for a user.
-func (m *DefaultMFAManager) DisableMFA(ctx context.Context, userID, tenantID string) error {
-	if userID == "" {
+func (m *DefaultMFAManager) DisableMFA(ctx context.Context, userID uint64, tenantID string) error {
+	if userID == 0 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.disable", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -579,8 +580,8 @@ func (m *DefaultMFAManager) DisableMFA(ctx context.Context, userID, tenantID str
 }
 
 // GetMFAStatus returns the MFA status for a user.
-func (m *DefaultMFAManager) GetMFAStatus(ctx context.Context, userID, tenantID string) (*MFAStatus, error) {
-	if userID == "" {
+func (m *DefaultMFAManager) GetMFAStatus(ctx context.Context, userID uint64, tenantID string) (*MFAStatus, error) {
+	if userID == 0 {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.status", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -619,7 +620,7 @@ func (m *DefaultMFAManager) GetMFAStatus(ctx context.Context, userID, tenantID s
 }
 
 // IsMFARequired checks if MFA is required for a user.
-func (m *DefaultMFAManager) IsMFARequired(ctx context.Context, userID, tenantID string) (bool, error) {
+func (m *DefaultMFAManager) IsMFARequired(ctx context.Context, userID uint64, tenantID string) (bool, error) {
 	// Check if MFA is enrolled
 	secret, err := m.storage.GetSecret(ctx, userID, tenantID)
 	if err == nil && secret != nil && secret.Verified {
@@ -630,8 +631,8 @@ func (m *DefaultMFAManager) IsMFARequired(ctx context.Context, userID, tenantID 
 }
 
 // GenerateBackupCodes generates new backup codes for a user.
-func (m *DefaultMFAManager) GenerateBackupCodes(ctx context.Context, userID, tenantID string) ([]string, error) {
-	if userID == "" {
+func (m *DefaultMFAManager) GenerateBackupCodes(ctx context.Context, userID uint64, tenantID string) ([]string, error) {
+	if userID == 0 {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.backup", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -697,8 +698,8 @@ func (m *DefaultMFAManager) GenerateBackupCodes(ctx context.Context, userID, ten
 }
 
 // VerifyBackupCode verifies and consumes a backup code.
-func (m *DefaultMFAManager) VerifyBackupCode(ctx context.Context, userID, tenantID, code string) error {
-	if userID == "" {
+func (m *DefaultMFAManager) VerifyBackupCode(ctx context.Context, userID uint64, tenantID, code string) error {
+	if userID == 0 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.backup", "user ID is required", nil)
 	}
 	if tenantID == "" {
@@ -737,8 +738,8 @@ func (m *DefaultMFAManager) VerifyBackupCode(ctx context.Context, userID, tenant
 }
 
 // GetBackupCodeStatus returns the backup code status for a user.
-func (m *DefaultMFAManager) GetBackupCodeStatus(ctx context.Context, userID, tenantID string) (*BackupCodeStatus, error) {
-	if userID == "" {
+func (m *DefaultMFAManager) GetBackupCodeStatus(ctx context.Context, userID uint64, tenantID string) (*BackupCodeStatus, error) {
+	if userID == 0 {
 		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.backup", "user ID is required", nil)
 	}
 	if tenantID == "" {

@@ -157,13 +157,18 @@ func engineEntitlementsFromProto(pb *iampb.TenantEngineEntitlements) *qrdbsdk.En
 // =============================================================================
 
 // convertProtoToUser converts a proto User to a domain User.
-func convertProtoToUser(pb *iampb.User) *iam.User {
+func convertProtoToUser(pb *iampb.User) (*iam.User, error) {
 	if pb == nil {
-		return nil
+		return nil, nil
+	}
+
+	id, err := parseOptionalUserID("user.id", pb.Id)
+	if err != nil {
+		return nil, err
 	}
 
 	user := &iam.User{
-		ID:          pb.Id,
+		ID:          id,
 		TenantID:    pb.TenantId,
 		Email:       pb.Email,
 		Username:    pb.Username,
@@ -193,7 +198,7 @@ func convertProtoToUser(pb *iampb.User) *iam.User {
 		lastAuth := pb.LastAuth.AsTime()
 		user.LastAuth = &lastAuth
 	}
-	return user
+	return user, nil
 }
 
 // convertUserToProto converts a domain User to a proto User.
@@ -203,7 +208,7 @@ func convertUserToProto(u *iam.User) *iampb.User {
 	}
 
 	pb := &iampb.User{
-		Id:          u.ID,
+		Id:          formatUserID(u.ID),
 		TenantId:    u.TenantID,
 		Email:       u.Email,
 		Username:    u.Username,
@@ -807,7 +812,7 @@ func convertConsentToProto(c *iam.Consent) *iampb.Consent {
 
 	pb := &iampb.Consent{
 		Id:        c.ID,
-		UserId:    c.UserID,
+		UserId:    formatUserID(c.UserID),
 		TenantId:  c.TenantID,
 		Purpose:   convertConsentPurposeToProto(c.Purpose),
 		Status:    convertConsentStatusToProto(c.Status),
@@ -833,14 +838,19 @@ func convertConsentToProto(c *iam.Consent) *iampb.Consent {
 }
 
 // convertProtoToConsent converts a proto Consent to a domain Consent.
-func convertProtoToConsent(pb *iampb.Consent) *iam.Consent {
+func convertProtoToConsent(pb *iampb.Consent) (*iam.Consent, error) {
 	if pb == nil {
-		return nil
+		return nil, nil
+	}
+
+	userID, err := parseOptionalUserID("consent.user_id", pb.UserId)
+	if err != nil {
+		return nil, err
 	}
 
 	c := &iam.Consent{
 		ID:        pb.Id,
-		UserID:    pb.UserId,
+		UserID:    userID,
 		TenantID:  pb.TenantId,
 		Purpose:   convertProtoConsentPurpose(pb.Purpose),
 		Status:    convertProtoConsentStatus(pb.Status),
@@ -869,7 +879,7 @@ func convertProtoToConsent(pb *iampb.Consent) *iam.Consent {
 		c.ExpiresAt = &t
 	}
 
-	return c
+	return c, nil
 }
 
 // =============================================================================
@@ -948,7 +958,7 @@ func convertDataExportRequestToProto(r *iam.DataExportRequest) *iampb.DataExport
 
 	pb := &iampb.DataExportRequest{
 		Id:                r.ID,
-		UserId:            r.UserID,
+		UserId:            formatUserID(r.UserID),
 		TenantId:          r.TenantID,
 		RequestedBy:       r.RequestedBy,
 		Format:            convertDataExportFormatToProto(r.Format),
@@ -976,14 +986,19 @@ func convertDataExportRequestToProto(r *iam.DataExportRequest) *iampb.DataExport
 }
 
 // convertProtoToDataExportRequest converts a proto DataExportRequest to a domain DataExportRequest.
-func convertProtoToDataExportRequest(pb *iampb.DataExportRequest) *iam.DataExportRequest {
+func convertProtoToDataExportRequest(pb *iampb.DataExportRequest) (*iam.DataExportRequest, error) {
 	if pb == nil {
-		return nil
+		return nil, nil
+	}
+
+	userID, err := parseOptionalUserID("data_export_request.user_id", pb.UserId)
+	if err != nil {
+		return nil, err
 	}
 
 	r := &iam.DataExportRequest{
 		ID:                pb.Id,
-		UserID:            pb.UserId,
+		UserID:            userID,
 		TenantID:          pb.TenantId,
 		RequestedBy:       pb.RequestedBy,
 		Format:            convertProtoDataExportFormat(pb.Format),
@@ -1012,7 +1027,7 @@ func convertProtoToDataExportRequest(pb *iampb.DataExportRequest) *iam.DataExpor
 		r.ExpiresAt = &t
 	}
 
-	return r
+	return r, nil
 }
 
 // =============================================================================
@@ -1085,7 +1100,7 @@ func convertExportMetadataToProto(m *iam.ExportMetadata) *iampb.ExportMetadata {
 
 	return &iampb.ExportMetadata{
 		ExportId:      m.ExportID,
-		UserId:        m.UserID,
+		UserId:        formatUserID(m.UserID),
 		TenantId:      m.TenantID,
 		ExportedAt:    timestamppb.New(m.ExportedAt),
 		Format:        convertDataExportFormatToProto(m.Format),
@@ -1101,7 +1116,7 @@ func convertUserProfileExportToProto(p *iam.UserProfileExport) *iampb.UserProfil
 	}
 
 	pb := &iampb.UserProfileExport{
-		Id:      p.ID,
+		Id:      formatUserID(p.ID),
 		Email:   p.Email,
 		Name:    p.Name,
 		Created: timestamppb.New(p.Created),
@@ -1284,7 +1299,7 @@ func convertDataDeletionRequestToProto(r *iam.DataDeletionRequest) (*iampb.DataD
 
 	pb := &iampb.DataDeletionRequest{
 		Id:                 r.ID,
-		UserId:             r.UserID,
+		UserId:             formatUserID(r.UserID),
 		TenantId:           r.TenantID,
 		RequestedBy:        r.RequestedBy,
 		Reason:             r.Reason,
@@ -1319,14 +1334,19 @@ func convertDataDeletionRequestToProto(r *iam.DataDeletionRequest) (*iampb.DataD
 }
 
 // convertProtoToDataDeletionRequest converts a proto DataDeletionRequest to a domain DataDeletionRequest.
-func convertProtoToDataDeletionRequest(pb *iampb.DataDeletionRequest) *iam.DataDeletionRequest {
+func convertProtoToDataDeletionRequest(pb *iampb.DataDeletionRequest) (*iam.DataDeletionRequest, error) {
 	if pb == nil {
-		return nil
+		return nil, nil
+	}
+
+	userID, err := parseOptionalUserID("data_deletion_request.user_id", pb.UserId)
+	if err != nil {
+		return nil, err
 	}
 
 	r := &iam.DataDeletionRequest{
 		ID:                 pb.Id,
-		UserID:             pb.UserId,
+		UserID:             userID,
 		TenantID:           pb.TenantId,
 		RequestedBy:        pb.RequestedBy,
 		Reason:             pb.Reason,
@@ -1361,7 +1381,7 @@ func convertProtoToDataDeletionRequest(pb *iampb.DataDeletionRequest) *iam.DataD
 		r.DeletedDataSummary = convertProtoToDeletionSummary(pb.DeletedDataSummary)
 	}
 
-	return r
+	return r, nil
 }
 
 // convertDeletionSummaryToProto converts a domain DeletionSummary to a proto DeletionSummary.

@@ -151,6 +151,10 @@ func (r *ToolRegistry) registerSDLCTools() {
 				"tenant_id":  tenant,
 				"project_id": map[string]interface{}{"type": "string", "description": "The orchestration project"},
 				"binding":    sdlcBindingSchema,
+				"paused": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Bind without switching the project's autonomy on; it never turns autonomy off",
+				},
 			},
 			"required": []string{"project_id", "binding"},
 		},
@@ -410,7 +414,13 @@ func (r *ToolRegistry) executeSDLCBind(ctx context.Context, args map[string]inte
 	if binding.ProjectID == "" {
 		binding.ProjectID = getString(args, "project_id")
 	}
-	return svc.Bind(ctx, getString(args, "tenant_id"), &binding)
+	paused := false
+	if raw, present := args["paused"]; present {
+		if paused, ok = raw.(bool); !ok {
+			return nil, &sdlc.InvalidInputError{Field: "paused", Message: "must be a boolean"}
+		}
+	}
+	return svc.Bind(ctx, getString(args, "tenant_id"), &binding, service.BindOptions{LeavePaused: paused})
 }
 
 func (r *ToolRegistry) executeSDLCUnbind(ctx context.Context, args map[string]interface{}) (interface{}, error) {

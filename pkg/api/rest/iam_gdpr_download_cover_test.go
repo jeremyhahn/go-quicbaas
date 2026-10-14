@@ -55,7 +55,7 @@ func setupGDPRDownloadHandler(t *testing.T) (*IAMHandler, *iam.MemoryDataExportS
 	require.NoError(t, err)
 
 	require.NoError(t, memStorage.CreateUser(context.Background(), &iam.User{
-		ID: gdprUser, TenantID: gdprTenant, Email: "gdpr@example.com",
+		ID: 71, TenantID: gdprTenant, Email: "gdpr@example.com",
 	}))
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
@@ -149,7 +149,7 @@ func TestDownloadExport_WrongUser(t *testing.T) {
 	// Download as a different user -> 404.
 	w = httptest.NewRecorder()
 	handler.DownloadExport(w, withChiParams(httptest.NewRequest(http.MethodGet, "/x", nil),
-		map[string]string{"tenant_id": gdprTenant, "user_id": "someone-else", "export_id": exportID}))
+		map[string]string{"tenant_id": gdprTenant, "user_id": "40002", "export_id": exportID}))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 

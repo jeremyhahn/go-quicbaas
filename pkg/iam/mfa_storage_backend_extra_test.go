@@ -27,13 +27,13 @@ func TestBackendMFAStorage_DeleteSecret(t *testing.T) {
 	store := NewBackendMFAStorage(kv, nil)
 	ctx := context.Background()
 
-	if err := store.SaveSecret(ctx, validMFASecret("acme", "u1")); err != nil {
+	if err := store.SaveSecret(ctx, validMFASecret("acme", 30001)); err != nil {
 		t.Fatalf("SaveSecret: %v", err)
 	}
-	if err := store.DeleteSecret(ctx, "u1", "acme"); err != nil {
+	if err := store.DeleteSecret(ctx, 30001, "acme"); err != nil {
 		t.Fatalf("DeleteSecret: %v", err)
 	}
-	if _, err := store.GetSecret(ctx, "u1", "acme"); !errors.Is(err, ErrMFANotEnrolled) {
+	if _, err := store.GetSecret(ctx, 30001, "acme"); !errors.Is(err, ErrMFANotEnrolled) {
 		t.Fatalf("GetSecret after delete err = %v, want ErrMFANotEnrolled", err)
 	}
 }
@@ -45,7 +45,7 @@ func TestBackendMFAStorage_DeleteEnrollment(t *testing.T) {
 	store := NewBackendMFAStorage(kv, nil)
 	ctx := context.Background()
 
-	enr := validEnrollment("acme", "u1")
+	enr := validEnrollment("acme", 30001)
 	if err := store.SaveEnrollment(ctx, enr); err != nil {
 		t.Fatalf("SaveEnrollment: %v", err)
 	}
@@ -55,23 +55,23 @@ func TestBackendMFAStorage_DeleteEnrollment(t *testing.T) {
 	if _, err := store.GetEnrollment(ctx, enr.ID); !errors.Is(err, ErrMFAEnrollmentNotFound) {
 		t.Fatalf("GetEnrollment after delete err = %v, want ErrMFAEnrollmentNotFound", err)
 	}
-	active, err := store.HasActiveEnrollment(ctx, "u1", "acme")
+	active, err := store.HasActiveEnrollment(ctx, 30001, "acme")
 	if err != nil || active {
 		t.Fatalf("HasActiveEnrollment after delete = %v, %v; want false, nil", active, err)
 	}
 
 	// Bulk delete via the per-user index.
 	for _, uid := range []string{"u2", "u2-b"} {
-		e := validEnrollment("acme", "u2")
+		e := validEnrollment("acme", 30002)
 		e.ID = "enr-" + uid
 		if err := store.SaveEnrollment(ctx, e); err != nil {
 			t.Fatalf("SaveEnrollment(%s): %v", uid, err)
 		}
 	}
-	if err := store.DeleteEnrollmentsByUser(ctx, "u2", "acme"); err != nil {
+	if err := store.DeleteEnrollmentsByUser(ctx, 30002, "acme"); err != nil {
 		t.Fatalf("DeleteEnrollmentsByUser: %v", err)
 	}
-	active, err = store.HasActiveEnrollment(ctx, "u2", "acme")
+	active, err = store.HasActiveEnrollment(ctx, 30002, "acme")
 	if err != nil || active {
 		t.Fatalf("HasActiveEnrollment after bulk delete = %v, %v; want false, nil", active, err)
 	}
@@ -89,7 +89,7 @@ func TestBackendMFAStorage_DeleteChallenge(t *testing.T) {
 	store := NewBackendMFAStorage(kv, nil)
 	ctx := context.Background()
 
-	chl := validChallenge("acme", "u1")
+	chl := validChallenge("acme", 30001)
 	if err := store.SaveChallenge(ctx, chl); err != nil {
 		t.Fatalf("SaveChallenge: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestBackendMFAStorage_BackupCodes(t *testing.T) {
 
 	codes := &BackupCodeSet{
 		ID:       "bc-1",
-		UserID:   "u1",
+		UserID:   30001,
 		TenantID: "acme",
 		Codes:    []BackupCode{{Code: "hash-a"}, {Code: "hash-b"}},
 		Created:  time.Now(),
@@ -122,7 +122,7 @@ func TestBackendMFAStorage_BackupCodes(t *testing.T) {
 	if err := store.SaveBackupCodes(ctx, codes); err != nil {
 		t.Fatalf("SaveBackupCodes: %v", err)
 	}
-	got, err := store.GetBackupCodes(ctx, "u1", "acme")
+	got, err := store.GetBackupCodes(ctx, 30001, "acme")
 	if err != nil {
 		t.Fatalf("GetBackupCodes: %v", err)
 	}
@@ -130,18 +130,18 @@ func TestBackendMFAStorage_BackupCodes(t *testing.T) {
 		t.Fatalf("GetBackupCodes len = %d, want 2", len(got.Codes))
 	}
 
-	if err := store.DeleteBackupCodes(ctx, "u1", "acme"); err != nil {
+	if err := store.DeleteBackupCodes(ctx, 30001, "acme"); err != nil {
 		t.Fatalf("DeleteBackupCodes: %v", err)
 	}
-	if _, err := store.GetBackupCodes(ctx, "u1", "acme"); !errors.Is(err, ErrMFANotEnrolled) {
+	if _, err := store.GetBackupCodes(ctx, 30001, "acme"); !errors.Is(err, ErrMFANotEnrolled) {
 		t.Fatalf("GetBackupCodes after delete err = %v, want ErrMFANotEnrolled", err)
 	}
 
 	// Validation: missing ID / user / tenant each error.
 	for name, bad := range map[string]*BackupCodeSet{
-		"no-id":     {UserID: "u1", TenantID: "acme"},
+		"no-id":     {UserID: 30001, TenantID: "acme"},
 		"no-user":   {ID: "bc", TenantID: "acme"},
-		"no-tenant": {ID: "bc", UserID: "u1"},
+		"no-tenant": {ID: "bc", UserID: 30001},
 	} {
 		if err := store.SaveBackupCodes(ctx, bad); err == nil {
 			t.Fatalf("SaveBackupCodes(%s) want error", name)

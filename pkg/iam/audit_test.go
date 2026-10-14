@@ -1382,17 +1382,17 @@ func TestGDPRManager_GrantConsent_EdgeCases(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("invalid consent purpose", func(t *testing.T) {
-		_, err := manager.GrantConsent(ctx, "tenant-1", "user-1", ConsentPurpose("invalid"), "v1", nil, "", "")
+		_, err := manager.GrantConsent(ctx, "tenant-1", 10001, ConsentPurpose("invalid"), "v1", nil, "", "")
 		assert.Error(t, err)
 	})
 
 	t.Run("update existing consent", func(t *testing.T) {
 		// Grant initial consent
-		consent1, err := manager.GrantConsent(ctx, "tenant-1", "user-1", ConsentPurposeMarketing, "v1", nil, "192.168.1.1", "Mozilla/5.0")
+		consent1, err := manager.GrantConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing, "v1", nil, "192.168.1.1", "Mozilla/5.0")
 		require.NoError(t, err)
 
 		// Grant consent again with new version (should update)
-		consent2, err := manager.GrantConsent(ctx, "tenant-1", "user-1", ConsentPurposeMarketing, "v2", nil, "192.168.1.2", "Chrome/100")
+		consent2, err := manager.GrantConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing, "v2", nil, "192.168.1.2", "Chrome/100")
 		require.NoError(t, err)
 
 		// Should be the same consent record updated
@@ -1402,7 +1402,7 @@ func TestGDPRManager_GrantConsent_EdgeCases(t *testing.T) {
 
 	t.Run("consent with expiration", func(t *testing.T) {
 		expiresAt := time.Now().Add(24 * time.Hour)
-		consent, err := manager.GrantConsent(ctx, "tenant-1", "user-2", ConsentPurposeAnalytics, "v1", &expiresAt, "", "")
+		consent, err := manager.GrantConsent(ctx, "tenant-1", 10002, ConsentPurposeAnalytics, "v1", &expiresAt, "", "")
 		require.NoError(t, err)
 		assert.NotNil(t, consent.ExpiresAt)
 	})
@@ -1427,7 +1427,7 @@ func TestGDPRManager_ProcessDeletion_EdgeCases(t *testing.T) {
 	t.Run("process deletion not in pending status", func(t *testing.T) {
 		// Create a user first
 		user := &User{
-			ID:       "33",
+			ID:       33,
 			TenantID: "tenant-1",
 			Email:    "delete@example.com",
 			Name:     "Delete User",
@@ -1460,7 +1460,7 @@ func TestGDPRManager_ProcessDeletion_EdgeCases(t *testing.T) {
 	t.Run("process deletion during grace period", func(t *testing.T) {
 		// Create a user
 		user := &User{
-			ID:       "32",
+			ID:       32,
 			TenantID: "tenant-1",
 			Email:    "grace@example.com",
 			Name:     "Grace User",
@@ -1552,7 +1552,7 @@ func TestAdminManager_EndImpersonation_CoverageEdgeCases(t *testing.T) {
 
 		// Start impersonation
 		session, err := manager.StartImpersonation(ctxWithActor("admin-user-cov"), &StartImpersonationOptions{
-			TargetUserID: "target-user",
+			TargetUserID: "40005",
 			TenantID:     "tenant-1",
 			Reason:       "Testing",
 			Duration:     time.Hour,

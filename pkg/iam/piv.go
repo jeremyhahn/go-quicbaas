@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"strconv"
 	"strings"
 	"time"
 
@@ -354,35 +355,27 @@ func (a *PIVActivator) revokeCreatedFactor(ctx context.Context, invite *InviteRe
 // checkLoginFactorOwner rejects cert when it is already enrolled as another
 // user's login factor. Like enrollment, it binds the invited tenant into the
 // context the factor store routes by.
-func (a *PIVActivator) checkLoginFactorOwner(ctx context.Context, tenantID, userID string, cert *x509.Certificate) error {
-	qrdbUserID, err := ParseUserID(userID)
-	if err != nil {
-		return err
-	}
-	return a.loginFactors.CheckOwner(qrdbsdk.ContextWithTenant(ctx, tenantID), qrdbUserID, cert)
+func (a *PIVActivator) checkLoginFactorOwner(ctx context.Context, tenantID string, userID uint64, cert *x509.Certificate) error {
+	return a.loginFactors.CheckOwner(qrdbsdk.ContextWithTenant(ctx, tenantID), userID, cert)
 }
 
 // enrollLoginFactor enrolls cert as userID's mtls login factor, recording the
 // tenant and the invite activation as its provenance. The factor store routes
 // by the context tenant, and the activation runs on a pre-authentication
 // context that need not carry one, so the invited tenant is bound into it.
-func (a *PIVActivator) enrollLoginFactor(ctx context.Context, tenantID, userID string, cert *x509.Certificate) (CertLoginFactorEnrollResult, error) {
-	qrdbUserID, err := ParseUserID(userID)
-	if err != nil {
-		return CertLoginFactorEnrollResult{}, err
-	}
+func (a *PIVActivator) enrollLoginFactor(ctx context.Context, tenantID string, userID uint64, cert *x509.Certificate) (CertLoginFactorEnrollResult, error) {
 	label := "PIV certificate"
 	if cn := cert.Subject.CommonName; cn != "" {
 		label += " (" + cn + ")"
 	}
 	return a.loginFactors.Enroll(qrdbsdk.ContextWithTenant(ctx, tenantID), CertLoginFactorEnrollment{
-		UserID:      qrdbUserID,
+		UserID:      userID,
 		Certificate: cert,
 		Label:       label,
 		Metadata: map[string]string{
 			"binding_source": pivInviteBindingSource,
 			"tenant_id":      tenantID,
-			"broker_user_id": userID,
+			"broker_user_id": strconv.FormatUint(userID, 10),
 			"cert_subject":   cert.Subject.String(),
 			"cert_serial":    cert.SerialNumber.String(),
 			"cert_not_after": cert.NotAfter.UTC().Format(time.RFC3339),
@@ -409,7 +402,7 @@ func (a *PIVActivator) checkTrustedIssuer(cert *x509.Certificate) error {
 }
 
 // logAudit emits a best-effort audit event if an AuditLogger is configured.
-func (a *PIVActivator) logAudit(ctx context.Context, tenantID, userID, action, outcome string, details map[string]interface{}) {
+func (a *PIVActivator) logAudit(ctx context.Context, tenantID string, userID uint64, action, outcome string, details map[string]interface{}) {
 	if a.auditLogger == nil {
 		return
 	}
@@ -418,7 +411,7 @@ func (a *PIVActivator) logAudit(ctx context.Context, tenantID, userID, action, o
 		EventType: AuditEventUserManagement,
 		Category:  AuditCategoryAuthentication,
 		Action:    action,
-		Resource:  &AuditResource{Type: "user", ID: userID},
+		Resource:  &AuditResource{Type: "user", ID: strconv.FormatUint(userID, 10)},
 		Details:   details,
 	}
 	switch outcome {
@@ -476,13 +469,13 @@ const pivInviteBindingSource = "piv_invite_activation"
 // cannot be enrolled as the user's mtls login factor. The user stays pending
 // and the invite unspent, so the activation can be retried.
 type PIVActivationLoginFactorError struct {
-	UserID string
+	UserID uint64
 	Cause  error
 }
 
 // Error implements the error interface.
 func (e *PIVActivationLoginFactorError) Error() string {
-	return "failed to enroll the piv certificate as a login factor for user " + e.UserID + ": " + e.Cause.Error()
+	return "failed to enroll the piv certificate as a login factor for user " + strconv.FormatUint(e.UserID, 10) + ": " + e.Cause.Error()
 }
 
 // Unwrap returns the underlying cause.
@@ -495,13 +488,13 @@ func (e *PIVActivationLoginFactorError) Unwrap() error {
 // ErrInviteUsed), or the invite store failed. Nothing was committed: the user
 // is unchanged and the login factor the activation created has been revoked.
 type PIVActivationRedeemError struct {
-	UserID string
+	UserID uint64
 	Cause  error
 }
 
 // Error implements the error interface.
 func (e *PIVActivationRedeemError) Error() string {
-	return "piv activation for user " + e.UserID + " did not consume its invite: " + e.Cause.Error()
+	return "piv activation for user " + strconv.FormatUint(e.UserID, 10) + " did not consume its invite: " + e.Cause.Error()
 }
 
 // Unwrap returns the underlying cause.
@@ -514,7 +507,7 @@ func (e *PIVActivationRedeemError) Unwrap() error {
 // exist and still authenticate the certificate: FactorID names it so an
 // operator can revoke it.
 type PIVActivationFactorCleanupError struct {
-	UserID   string
+	UserID   uint64
 	FactorID string
 
 	// Cause is the revocation failure.
@@ -526,7 +519,7 @@ type PIVActivationFactorCleanupError struct {
 
 // Error implements the error interface.
 func (e *PIVActivationFactorCleanupError) Error() string {
-	return "piv activation for user " + e.UserID + " failed (" + e.Activation.Error() +
+	return "piv activation for user " + strconv.FormatUint(e.UserID, 10) + " failed (" + e.Activation.Error() +
 		") and its login factor " + e.FactorID + " could not be revoked, so a residual factor may exist: " + e.Cause.Error()
 }
 

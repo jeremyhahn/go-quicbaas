@@ -15,6 +15,8 @@ package grpc
 
 import (
 	stderrors "errors"
+	"fmt"
+	"strconv"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -95,6 +97,60 @@ func convertError(err error) error {
 		Op:   "grpc",
 		Err:  stderrors.New(s.Message()),
 	}
+}
+
+// UserIDError reports a wire user id that is not a non-zero decimal uint64.
+// Proto messages carry the iam Snowflake user id as a string; this is the
+// edge where it becomes the uint64 the identity store keys on.
+type UserIDError struct {
+	Field string
+	Value string
+	Err   error
+}
+
+func (e *UserIDError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("%s: user id %q must be non-zero", e.Field, e.Value)
+	}
+	return fmt.Sprintf("%s: user id %q is not a decimal uint64: %v", e.Field, e.Value, e.Err)
+}
+
+func (e *UserIDError) Unwrap() error { return e.Err }
+
+// GRPCStatus maps the error to InvalidArgument for gRPC callers.
+func (e *UserIDError) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
+// parseUserID converts a wire user id into the iam uint64 id. Zero is
+// refused because it means "not created yet" in the iam model.
+func parseUserID(field, value string) (uint64, error) {
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, &UserIDError{Field: field, Value: value, Err: err}
+	}
+	if id == 0 {
+		return 0, &UserIDError{Field: field, Value: value}
+	}
+	return id, nil
+}
+
+// parseOptionalUserID is parseUserID for fields where "" means unset; it
+// returns zero for "" and refuses any other non-id value.
+func parseOptionalUserID(field, value string) (uint64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	return parseUserID(field, value)
+}
+
+// formatUserID renders an iam uint64 user id for a proto string field.
+// Zero renders as "" so an unset id stays unset on the wire.
+func formatUserID(id uint64) string {
+	if id == 0 {
+		return ""
+	}
+	return strconv.FormatUint(id, 10)
 }
 
 // errorCodeToGRPCCode maps QuicBaaS error codes to gRPC status codes.

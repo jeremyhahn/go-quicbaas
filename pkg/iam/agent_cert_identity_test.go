@@ -172,7 +172,7 @@ func TestEnrollAgentCertIdentity_Idempotent(t *testing.T) {
 		t.Fatalf("second enrollment: %v", err)
 	}
 	if first.ID != second.ID {
-		t.Fatalf("re-registration minted a second identity: %q then %q", first.ID, second.ID)
+		t.Fatalf("re-registration minted a second identity: %d then %d", first.ID, second.ID)
 	}
 
 	users, err := memory.ListUsers(context.Background(), "automatethethings", iam.ListOptions{})

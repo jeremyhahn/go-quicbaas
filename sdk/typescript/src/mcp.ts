@@ -1014,11 +1014,12 @@ export class McpSdlcClient implements SdlcClient {
     return resp.forges ?? [];
   }
 
-  async bind(tenantId: string, projectId: string, binding: ProjectBinding): Promise<ProjectBinding> {
+  async bind(tenantId: string, projectId: string, binding: ProjectBinding, paused?: boolean): Promise<ProjectBinding> {
     return this.session.callTool('sdlc_bind', {
       tenant_id: tenantId,
       project_id: projectId,
       binding: { ...binding, project_id: binding.project_id || projectId },
+      ...(paused ? { paused: true } : {}),
     });
   }
 

@@ -42,7 +42,34 @@ var (
 	// ErrTriageHeld indicates a verdict was refused because the issue carries
 	// a hold only a person may clear.
 	ErrTriageHeld = errors.New("sdlc: issue is held; triage does not act on it")
+
+	// ErrTriageRerunUnrecorded indicates a nudge that lost the project's
+	// triage lease could not record that a re-run is wanted, so the nudge was
+	// neither run nor kept.
+	ErrTriageRerunUnrecorded = errors.New("sdlc: triage nudge was neither run nor recorded")
 )
+
+// TriageRerunUnrecordedError reports a nudge that found the project already
+// being triaged and could not leave the run in flight a mark to triage again.
+// The issue the nudge was about waits for the next nudge or sweep.
+type TriageRerunUnrecordedError struct {
+	ProjectID string
+	Cause     error
+}
+
+// Error implements error.
+func (e *TriageRerunUnrecordedError) Error() string {
+	msg := ErrTriageRerunUnrecorded.Error() + ": project " + e.ProjectID
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap lets errors.Is match both the sentinel and the store's own refusal.
+func (e *TriageRerunUnrecordedError) Unwrap() []error {
+	return []error{ErrTriageRerunUnrecorded, e.Cause}
+}
 
 // TriageVerdictError reports one issue the run could not conclude about.
 type TriageVerdictError struct {

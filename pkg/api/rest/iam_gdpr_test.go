@@ -34,7 +34,7 @@ func TestGrantConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/consents", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -70,7 +70,7 @@ func TestGrantConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/consents", strings.NewReader("invalid json"))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -88,7 +88,7 @@ func TestGrantConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{"purpose":"","version":"1.0"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/consents", strings.NewReader(body))
@@ -107,7 +107,7 @@ func TestGrantConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{"purpose":"marketing","version":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/consents", strings.NewReader(body))
@@ -126,7 +126,7 @@ func TestGrantConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{"purpose":"marketing","version":"1.0"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/consents", strings.NewReader(body))
@@ -148,7 +148,7 @@ func TestListUserConsents(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/consents", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -184,7 +184,7 @@ func TestListUserConsents(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/consents", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -205,7 +205,7 @@ func TestGetConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/consents/marketing", nil)
@@ -243,7 +243,7 @@ func TestGetConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("purpose", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/consents/", nil)
@@ -262,7 +262,7 @@ func TestGetConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/consents/marketing", nil)
@@ -284,7 +284,7 @@ func TestWithdrawConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/consents/marketing", nil)
@@ -322,7 +322,7 @@ func TestWithdrawConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("purpose", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/consents/", nil)
@@ -341,7 +341,7 @@ func TestWithdrawConsent(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/consents/marketing", nil)
@@ -363,7 +363,7 @@ func TestRequestDataExport(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/data-export", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -399,7 +399,7 @@ func TestRequestDataExport(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{"format":"json"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/data-export", strings.NewReader(body))
@@ -421,7 +421,7 @@ func TestGetExportStatus(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/data-export/export-123", nil)
@@ -459,7 +459,7 @@ func TestGetExportStatus(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("export_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/data-export/", nil)
@@ -478,7 +478,7 @@ func TestGetExportStatus(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/data-export/export-123", nil)
@@ -500,7 +500,7 @@ func TestRequestDeletion(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/deletion", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -536,7 +536,7 @@ func TestRequestDeletion(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{"reason":"user request"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/deletion", strings.NewReader(body))
@@ -558,7 +558,7 @@ func TestGetDeletionStatus(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/deletion/deletion-123", nil)
@@ -596,7 +596,7 @@ func TestGetDeletionStatus(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("deletion_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/deletion/", nil)
@@ -615,7 +615,7 @@ func TestGetDeletionStatus(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/deletion/deletion-123", nil)
@@ -637,7 +637,7 @@ func TestCancelDeletion(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/deletion/deletion-123", nil)
@@ -675,7 +675,7 @@ func TestCancelDeletion(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("deletion_id", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/deletion/", nil)
@@ -694,7 +694,7 @@ func TestCancelDeletion(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/deletion/deletion-123", nil)
@@ -716,7 +716,7 @@ func TestDownloadExport(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/data-export/export-123/download", nil)
@@ -754,7 +754,7 @@ func TestDownloadExport(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("export_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/data-export//download", nil)
@@ -773,7 +773,7 @@ func TestDownloadExport(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/data-export/export-123/download", nil)

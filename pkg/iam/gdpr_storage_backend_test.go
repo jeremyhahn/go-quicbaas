@@ -30,7 +30,7 @@ func TestBackendConsentStorage_BarrierAndByID(t *testing.T) {
 	ctx := context.Background()
 
 	consent, err := store.CreateConsent(ctx, CreateConsentOptions{
-		UserID:   "u1",
+		UserID:   30001,
 		TenantID: "acme",
 		Purpose:  ConsentPurposeMarketing,
 		Status:   ConsentStatusGranted,
@@ -60,7 +60,7 @@ func TestBackendConsentStorage_BarrierAndByID(t *testing.T) {
 		t.Fatalf("status = %q, want withdrawn", updated.Status)
 	}
 
-	byUser, err := store.GetUserConsents(ctx, "acme", "u1")
+	byUser, err := store.GetUserConsents(ctx, "acme", 30001)
 	if err != nil || len(byUser) != 1 {
 		t.Fatalf("GetUserConsents = %d, %v; want 1, nil", len(byUser), err)
 	}
@@ -75,7 +75,7 @@ func TestBackendConsentStorage_SealedFailsClosed(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := store.CreateConsent(ctx, CreateConsentOptions{
-		UserID: "u1", TenantID: "acme", Purpose: ConsentPurposeMarketing,
+		UserID: 30001, TenantID: "acme", Purpose: ConsentPurposeMarketing,
 		Status: ConsentStatusGranted, Version: "v1",
 	})
 	if !errors.Is(err, errTenantSealedTest) {
@@ -94,7 +94,7 @@ func TestBackendDataExportStorage_ByID(t *testing.T) {
 	ctx := context.Background()
 
 	req, err := store.CreateExportRequest(ctx, CreateDataExportOptions{
-		UserID:      "u1",
+		UserID:      30001,
 		TenantID:    "acme",
 		RequestedBy: "admin",
 	})
@@ -106,7 +106,7 @@ func TestBackendDataExportStorage_ByID(t *testing.T) {
 	}
 
 	got, err := store.GetExportRequest(context.Background(), req.ID)
-	if err != nil || got.UserID != "u1" {
+	if err != nil || got.UserID != 30001 {
 		t.Fatalf("GetExportRequest = %v, %v", got, err)
 	}
 
@@ -130,7 +130,7 @@ func TestBackendDeletionStorage_ByIDAndIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	req, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID:      "u1",
+		UserID:      30001,
 		TenantID:    "acme",
 		RequestedBy: "admin",
 	})
@@ -139,7 +139,7 @@ func TestBackendDeletionStorage_ByIDAndIsolation(t *testing.T) {
 	}
 
 	got, err := store.GetDeletionRequest(context.Background(), req.ID)
-	if err != nil || got.UserID != "u1" {
+	if err != nil || got.UserID != 30001 {
 		t.Fatalf("GetDeletionRequest = %v, %v", got, err)
 	}
 
@@ -161,7 +161,7 @@ func TestBackendDeletionStorage_SealedFailsClosed(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: "u1", TenantID: "acme", RequestedBy: "admin",
+		UserID: 30001, TenantID: "acme", RequestedBy: "admin",
 	})
 	if !errors.Is(err, errTenantSealedTest) {
 		t.Fatalf("CreateDeletionRequest(sealed) err = %v, want sealed", err)
@@ -180,13 +180,13 @@ func TestBackendConsentStorage_ListByTenantFilter(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := store.CreateConsent(ctx, CreateConsentOptions{
-		UserID: "u1", TenantID: "acme", Purpose: ConsentPurposeMarketing,
+		UserID: 30001, TenantID: "acme", Purpose: ConsentPurposeMarketing,
 		Status: ConsentStatusGranted, Version: "v1",
 	}); err != nil {
 		t.Fatalf("CreateConsent(acme): %v", err)
 	}
 	if _, err := store.CreateConsent(ctx, CreateConsentOptions{
-		UserID: "u2", TenantID: "globex", Purpose: ConsentPurposeAnalytics,
+		UserID: 30002, TenantID: "globex", Purpose: ConsentPurposeAnalytics,
 		Status: ConsentStatusGranted, Version: "v1",
 	}); err != nil {
 		t.Fatalf("CreateConsent(globex): %v", err)

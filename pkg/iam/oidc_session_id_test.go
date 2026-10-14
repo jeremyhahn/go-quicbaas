@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -119,7 +120,7 @@ func TestSessionID_TwoLoginsBySamePrincipalSameTenantDiffer(t *testing.T) {
 	// same across the two logins. If this stops holding the test below is no
 	// longer testing what it claims to.
 	if firstClaims.UserID != secondClaims.UserID || firstClaims.TenantID != secondClaims.TenantID {
-		t.Fatalf("the two logins are not the same principal in the same tenant: %s/%s vs %s/%s",
+		t.Fatalf("the two logins are not the same principal in the same tenant: %s/%d vs %s/%d",
 			firstClaims.TenantID, firstClaims.UserID, secondClaims.TenantID, secondClaims.UserID)
 	}
 
@@ -385,7 +386,7 @@ func TestRefreshTokenGrant_RenewsTheSessionItWasGiven(t *testing.T) {
 	newRefresh := func(t *testing.T, session TokenSessionContext) string {
 		t.Helper()
 		value, err := provider.tokenService.GenerateRefreshToken(ctx, SessionRefreshOptions{
-			Subject:  user.ID,
+			Subject:  strconv.FormatUint(user.ID, 10),
 			TenantID: user.TenantID,
 			ClientID: clientID,
 			Scopes:   []string{"openid"},

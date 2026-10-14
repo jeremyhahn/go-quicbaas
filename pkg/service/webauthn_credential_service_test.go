@@ -23,7 +23,7 @@ import (
 
 // newCredentialTestStore builds an identity store over the in-memory IAM
 // storage so the user-id-to-email translation runs against a real store.
-func newCredentialTestStore(t *testing.T) (*iam.IdentityStore, string) {
+func newCredentialTestStore(t *testing.T) (*iam.IdentityStore, uint64) {
 	t.Helper()
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
@@ -47,16 +47,16 @@ func TestWebAuthnCredentialServiceScopeValidation(t *testing.T) {
 	svc := NewWebAuthnCredentialServiceFor(nil, nil)
 	ctx := context.Background()
 
-	if _, err := svc.ListCredentials(ctx, "", "u1"); !errors.Is(err, ErrWebAuthnCredentialTenantRequired) {
+	if _, err := svc.ListCredentials(ctx, "", 10001); !errors.Is(err, ErrWebAuthnCredentialTenantRequired) {
 		t.Errorf("missing tenant: err = %v, want ErrWebAuthnCredentialTenantRequired", err)
 	}
-	if _, err := svc.ListCredentials(ctx, "t1", ""); !errors.Is(err, ErrWebAuthnCredentialUserRequired) {
+	if _, err := svc.ListCredentials(ctx, "t1", 0); !errors.Is(err, ErrWebAuthnCredentialUserRequired) {
 		t.Errorf("missing user: err = %v, want ErrWebAuthnCredentialUserRequired", err)
 	}
-	if err := svc.DeleteCredential(ctx, "", "u1", "id"); !errors.Is(err, ErrWebAuthnCredentialTenantRequired) {
+	if err := svc.DeleteCredential(ctx, "", 10001, "id"); !errors.Is(err, ErrWebAuthnCredentialTenantRequired) {
 		t.Errorf("delete missing tenant: err = %v", err)
 	}
-	if _, err := svc.DeleteCredentials(ctx, "t1", ""); !errors.Is(err, ErrWebAuthnCredentialUserRequired) {
+	if _, err := svc.DeleteCredentials(ctx, "t1", 0); !errors.Is(err, ErrWebAuthnCredentialUserRequired) {
 		t.Errorf("delete-all missing user: err = %v", err)
 	}
 }
@@ -79,14 +79,14 @@ func TestWebAuthnCredentialServiceUnconfigured(t *testing.T) {
 // key. This is the check that keeps every transport's verbs scoped to the same
 // subject its authorization gate ran against.
 func TestWebAuthnCredentialServiceUnknownUser(t *testing.T) {
-	store, _ := newCredentialTestStore(t)
+	store, userID := newCredentialTestStore(t)
 	svc := NewWebAuthnCredentialServiceFor(store, &stubWebAuthnManager{})
 
-	if _, err := svc.ListCredentials(context.Background(), "t1", "no-such-user"); err == nil {
+	if _, err := svc.ListCredentials(context.Background(), "t1", userID+1); err == nil {
 		t.Error("expected an error for a user that does not exist")
 	}
 	// A user that exists in another tenant must not resolve either.
-	if _, err := svc.ListCredentials(context.Background(), "t2", "no-such-user"); err == nil {
+	if _, err := svc.ListCredentials(context.Background(), "t2", userID); err == nil {
 		t.Error("expected an error for a user outside the named tenant")
 	}
 }

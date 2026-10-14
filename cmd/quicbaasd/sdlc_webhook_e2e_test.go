@@ -72,7 +72,7 @@ func bindGiteaProject(t *testing.T, srv *server.Server, repo string) string {
 		Strategy: sdlc.GitHubFlowName,
 		Worker:   orchestration.AgentRefTo(loopE2EWorkerAgent),
 		Review:   sdlc.ReviewPolicy{RequiredApprovals: 1},
-	})
+	}, service.BindOptions{})
 	require.NoError(t, err)
 
 	// Onboarding actually happened: the node provisioned its own delivery

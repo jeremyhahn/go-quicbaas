@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -185,8 +186,13 @@ func (i *oidcSessionIssuer) Resolve(ctx context.Context, bearer string) (*qrdbsd
 		identity.Metadata = map[string]string{authMethodMetadataKey: claims.AuthMethod}
 	}
 	// sub is the email or username the ceremony authenticated; the account is
-	// the verified uid claim, never sub read as an ID.
-	return auth.MarkTokenSubject(identity, claims.UserID), nil
+	// the verified uid claim, never sub read as an ID. A token without a uid
+	// marks no account, as before the claim became numeric.
+	userID := ""
+	if claims.UserID != 0 {
+		userID = strconv.FormatUint(claims.UserID, 10)
+	}
+	return auth.MarkTokenSubject(identity, userID), nil
 }
 
 // Revoke invalidates a previously issued bearer (logout).

@@ -33,10 +33,12 @@ import (
 // ctxWithTestSubject returns a context carrying an authenticated Subject
 // exactly as the production authz middleware injects it (injectPrincipal ->
 // auth.SubjectIntoContext). All REST handler tests must use this instead of
-// ad-hoc context keys.
+// ad-hoc context keys. userID is both the login name and the verified
+// account, as for a bearer token whose sub and uid agree.
 func ctxWithTestSubject(parent context.Context, userID, tenantID string) context.Context {
 	return auth.SubjectIntoContext(parent, interfaces.Subject{
 		ID:            userID,
+		UserID:        userID,
 		TenantID:      tenantID,
 		Authenticated: true,
 	})
@@ -44,12 +46,12 @@ func ctxWithTestSubject(parent context.Context, userID, tenantID string) context
 
 func TestRequireSubject_Authenticated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	req = req.WithContext(ctxWithTestSubject(req.Context(), "u1", "t1"))
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "30001", "t1"))
 	w := httptest.NewRecorder()
 
 	subject, ok := requireSubject(w, req)
 	require.True(t, ok)
-	assert.Equal(t, "u1", subject.ID)
+	assert.Equal(t, "30001", subject.ID)
 	assert.Equal(t, "t1", subject.TenantID)
 }
 
@@ -86,7 +88,7 @@ func TestRequireSubject_EmptySubjectID(t *testing.T) {
 
 func TestRequireTenantSubject_WithTenant(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	req = req.WithContext(ctxWithTestSubject(req.Context(), "u1", "t1"))
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "30001", "t1"))
 	w := httptest.NewRecorder()
 
 	subject, ok := requireTenantSubject(w, req)
@@ -96,7 +98,7 @@ func TestRequireTenantSubject_WithTenant(t *testing.T) {
 
 func TestRequireTenantSubject_MissingTenant(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	req = req.WithContext(ctxWithTestSubject(req.Context(), "u1", ""))
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "30001", ""))
 	w := httptest.NewRecorder()
 
 	_, ok := requireTenantSubject(w, req)
@@ -136,7 +138,7 @@ func TestRequireTenantSubject_SystemTenantRejected(t *testing.T) {
 // the gate normally.
 func TestRequireTenantSubject_OrdinaryTenantStillIsolated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	req = req.WithContext(ctxWithTestSubject(req.Context(), "u1", "system-2"))
+	req = req.WithContext(ctxWithTestSubject(req.Context(), "30001", "system-2"))
 	w := httptest.NewRecorder()
 
 	subject, ok := requireTenantSubject(w, req)
@@ -149,7 +151,7 @@ func TestQueryIdentityMatches_NoParams(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	assert.True(t, queryIdentityMatches(w, req,
-		interfaces.Subject{ID: "u1", TenantID: "t1", Authenticated: true}))
+		interfaces.Subject{ID: "u1", TenantID: "t1", Authenticated: true}, unusedCallerAccount(t)))
 }
 
 func TestQueryIdentityMatches_MatchingParams(t *testing.T) {
@@ -157,7 +159,7 @@ func TestQueryIdentityMatches_MatchingParams(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	assert.True(t, queryIdentityMatches(w, req,
-		interfaces.Subject{ID: "u1", TenantID: "t1", Authenticated: true}))
+		interfaces.Subject{ID: "u1", TenantID: "t1", Authenticated: true}, unusedCallerAccount(t)))
 }
 
 func TestQueryIdentityMatches_UserMismatch(t *testing.T) {
@@ -165,7 +167,7 @@ func TestQueryIdentityMatches_UserMismatch(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	assert.False(t, queryIdentityMatches(w, req,
-		interfaces.Subject{ID: "u1", TenantID: "t1", Authenticated: true}))
+		interfaces.Subject{ID: "u1", TenantID: "t1", Authenticated: true}, unusedCallerAccount(t)))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "user_id parameter does not match")
 }
@@ -175,7 +177,7 @@ func TestQueryIdentityMatches_TenantMismatch(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	assert.False(t, queryIdentityMatches(w, req,
-		interfaces.Subject{ID: "u1", TenantID: "t1", Authenticated: true}))
+		interfaces.Subject{ID: "u1", TenantID: "t1", Authenticated: true}, unusedCallerAccount(t)))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "tenant_id parameter does not match")
 }
@@ -188,7 +190,7 @@ func TestQueryIdentityMatches_UsernameRepresentation(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	assert.True(t, queryIdentityMatches(w, req,
-		interfaces.Subject{ID: "9b2f2c1e-uuid", Username: "admin", TenantID: "t1", Authenticated: true}))
+		interfaces.Subject{ID: "9b2f2c1e-uuid", Username: "admin", TenantID: "t1", Authenticated: true}, unusedCallerAccount(t)))
 }
 
 // A foreign identity is still hard-403 even when the Subject carries a
@@ -198,7 +200,7 @@ func TestQueryIdentityMatches_ForeignUserWithUsername(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	assert.False(t, queryIdentityMatches(w, req,
-		interfaces.Subject{ID: "9b2f2c1e-uuid", Username: "admin", TenantID: "t1", Authenticated: true}))
+		interfaces.Subject{ID: "9b2f2c1e-uuid", Username: "admin", TenantID: "t1", Authenticated: true}, unusedCallerAccount(t)))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Contains(t, w.Body.String(), "user_id parameter does not match")
 }
@@ -209,7 +211,7 @@ func TestQueryIdentityMatches_EmptyUsernameNoMatch(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	assert.False(t, queryIdentityMatches(w, req,
-		interfaces.Subject{ID: "9b2f2c1e-uuid", Username: "", TenantID: "t1", Authenticated: true}))
+		interfaces.Subject{ID: "9b2f2c1e-uuid", Username: "", TenantID: "t1", Authenticated: true}, unusedCallerAccount(t)))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -221,4 +223,78 @@ func TestSubjectUserMatches(t *testing.T) {
 	assert.False(t, subjectUserMatches(subject, "bob"))
 	assert.False(t, subjectUserMatches(subject, ""))
 	assert.False(t, subjectUserMatches(interfaces.Subject{ID: "uuid-1"}, "alice"))
+}
+
+// unusedCallerAccount fails the test if the user_id check resolves the
+// caller when the query alone settles the answer.
+func unusedCallerAccount(t *testing.T) callerAccountFunc {
+	t.Helper()
+	return func() (uint64, bool) {
+		t.Error("caller account resolved for a query that needs no resolution")
+		return 0, false
+	}
+}
+
+// A username login carries the name in the subject; the caller's own
+// numeric account ID must still be accepted as their user_id.
+func TestQueryIdentityMatches_OwnAccountIDUnderUsernameLogin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/x?user_id=30001", nil)
+	w := httptest.NewRecorder()
+
+	assert.True(t, queryIdentityMatches(w, req,
+		interfaces.Subject{ID: "alice", Username: "alice", TenantID: "t1", Authenticated: true},
+		resolvedCallerAccount(30001)))
+}
+
+func TestQueryIdentityMatches_ForeignAccountIDUnderUsernameLogin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/x?user_id=30002", nil)
+	w := httptest.NewRecorder()
+
+	assert.False(t, queryIdentityMatches(w, req,
+		interfaces.Subject{ID: "alice", Username: "alice", TenantID: "t1", Authenticated: true},
+		resolvedCallerAccount(30001)))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "user_id parameter does not match")
+}
+
+// A resolution failure is never a match: the resolver's own response stands.
+func TestQueryIdentityMatches_ResolverFailureIsRefused(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/x?user_id=30001", nil)
+	w := httptest.NewRecorder()
+	failing := func() (uint64, bool) {
+		RespondIAMError(w, req, http.StatusForbidden, NewIAMAPIError(ErrForbidden, "caller is not a user"))
+		return 0, false
+	}
+
+	assert.False(t, queryIdentityMatches(w, req,
+		interfaces.Subject{ID: "alice", Username: "alice", TenantID: "t1", Authenticated: true},
+		failing))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "caller is not a user")
+}
+
+// A tenant_id mismatch is still refused after the user_id matched by account.
+func TestQueryIdentityMatches_OwnAccountIDWithForeignTenant(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/x?user_id=30001&tenant_id=other", nil)
+	w := httptest.NewRecorder()
+
+	assert.False(t, queryIdentityMatches(w, req,
+		interfaces.Subject{ID: "alice", Username: "alice", TenantID: "t1", Authenticated: true},
+		resolvedCallerAccount(30001)))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "tenant_id parameter does not match")
+}
+
+func TestCallerAccountMatches(t *testing.T) {
+	matched, ok := callerAccountMatches("30001", resolvedCallerAccount(30001))
+	assert.True(t, matched)
+	assert.True(t, ok)
+
+	matched, ok = callerAccountMatches("0", unusedCallerAccount(t))
+	assert.False(t, matched)
+	assert.True(t, ok)
+
+	matched, ok = callerAccountMatches("bob", unusedCallerAccount(t))
+	assert.False(t, matched)
+	assert.True(t, ok)
 }

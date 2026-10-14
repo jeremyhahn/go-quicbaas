@@ -369,6 +369,9 @@ message Delivery {
 message BindProjectRequest {
     string         tenant_id = 1;
     ProjectBinding binding   = 2;
+    // paused binds without switching the project's autonomy on. It never
+    // turns autonomy off on an already-autonomous project.
+    bool           paused    = 3;
 }
 
 message BindProjectResponse {

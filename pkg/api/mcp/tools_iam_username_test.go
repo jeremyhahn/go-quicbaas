@@ -37,7 +37,7 @@ func TestMCP_UserCreateCarriesTheUsername(t *testing.T) {
 			captured = req
 			return &service.IAMCreateUserResponse{
 				User: &iam.User{
-					ID: "1", TenantID: req.TenantID, Email: req.Email,
+					ID: 1, TenantID: req.TenantID, Email: req.Email,
 					Username: req.Username, Name: req.Name,
 				},
 				Timestamp: time.Now(),

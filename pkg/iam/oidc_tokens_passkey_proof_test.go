@@ -43,6 +43,7 @@ func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
 	const (
 		issuer       = "https://broker.example.com"
 		kid          = "test-kid-1"
+		adminUserID  = 1234567890123456789
 		adminSubject = "1234567890123456789" // canonical decimal-string user id
 	)
 
@@ -81,7 +82,7 @@ func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
 	// webauthn login-finish path does.
 	set, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
 		User: &User{
-			ID:       adminSubject,
+			ID:       adminUserID,
 			TenantID: "system",
 			Email:    "admin@example.com",
 			Name:     "Admin",
@@ -135,7 +136,7 @@ func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
 	// Negative control: a no-role user must still be DENIED the orchestrator
 	// scope (no over-grant) when issued through the same path.
 	noRole, err := svc.IssueHardwareTokens(context.Background(), HardwareTokenOptions{
-		User: &User{ID: "55", TenantID: "system", Email: "n@x.com", Name: "N"},
+		User: &User{ID: 55, TenantID: "system", Email: "n@x.com", Name: "N"},
 	})
 	if err != nil {
 		t.Fatalf("IssueHardwareTokens(no role): %v", err)

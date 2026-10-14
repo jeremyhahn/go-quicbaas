@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -85,18 +86,26 @@ const (
 	keyPrefixMFAChalIndex   = KeyPrefixIAM + "mfa/chal_idx/"
 )
 
-func mfaSecretKey(userID string) string { return keyPrefixMFASecret + userID }
-func mfaBackupKey(userID string) string { return keyPrefixMFABackup + userID }
+func mfaSecretKey(userID uint64) string {
+	return keyPrefixMFASecret + strconv.FormatUint(userID, 10)
+}
+func mfaBackupKey(userID uint64) string {
+	return keyPrefixMFABackup + strconv.FormatUint(userID, 10)
+}
 func mfaEnrollmentKey(id string) string { return keyPrefixMFAEnrollment + id }
 func mfaChallengeKey(id string) string  { return keyPrefixMFAChallenge + id }
-func mfaEnrollIndexKey(userID, id string) string {
-	return keyPrefixMFAEnrollIndex + userID + "/" + id
+func mfaEnrollIndexKey(userID uint64, id string) string {
+	return mfaEnrollIndexPrefix(userID) + id
 }
-func mfaEnrollIndexPrefix(userID string) string { return keyPrefixMFAEnrollIndex + userID + "/" }
-func mfaChalIndexKey(userID, id string) string {
-	return keyPrefixMFAChalIndex + userID + "/" + id
+func mfaEnrollIndexPrefix(userID uint64) string {
+	return keyPrefixMFAEnrollIndex + strconv.FormatUint(userID, 10) + "/"
 }
-func mfaChalIndexPrefix(userID string) string { return keyPrefixMFAChalIndex + userID + "/" }
+func mfaChalIndexKey(userID uint64, id string) string {
+	return mfaChalIndexPrefix(userID) + id
+}
+func mfaChalIndexPrefix(userID uint64) string {
+	return keyPrefixMFAChalIndex + strconv.FormatUint(userID, 10) + "/"
+}
 
 // BackendMFAStorage implements MFAStorage over a per-tenant routing KVStore.
 // MFA secrets are security-critical: routing every operation through the tenant
@@ -128,7 +137,7 @@ func withTenant(ctx context.Context, tenantID string) context.Context {
 }
 
 // GetSecret routes by the explicit tenantID and reads the per-user secret.
-func (s *BackendMFAStorage) GetSecret(ctx context.Context, userID, tenantID string) (*MFASecret, error) {
+func (s *BackendMFAStorage) GetSecret(ctx context.Context, userID uint64, tenantID string) (*MFASecret, error) {
 	ctx = withTenant(ctx, tenantID)
 	data, err := s.kv.Get(ctx, mfaSecretKey(userID))
 	if err != nil {
@@ -158,7 +167,7 @@ func (s *BackendMFAStorage) SaveSecret(ctx context.Context, secret *MFASecret) e
 }
 
 // DeleteSecret routes by the explicit tenantID and removes the per-user secret.
-func (s *BackendMFAStorage) DeleteSecret(ctx context.Context, userID, tenantID string) error {
+func (s *BackendMFAStorage) DeleteSecret(ctx context.Context, userID uint64, tenantID string) error {
 	ctx = withTenant(ctx, tenantID)
 	return s.kv.Delete(ctx, mfaSecretKey(userID))
 }
@@ -209,7 +218,7 @@ func (s *BackendMFAStorage) DeleteEnrollment(ctx context.Context, enrollmentID s
 	// Read the record first to recover the userID for index cleanup.
 	if data, err := s.kv.Get(tctx, mfaEnrollmentKey(fullID)); err == nil {
 		var e MFAEnrollment
-		if json.Unmarshal(data, &e) == nil && e.UserID != "" {
+		if json.Unmarshal(data, &e) == nil && e.UserID != 0 {
 			_ = s.kv.Delete(tctx, mfaEnrollIndexKey(e.UserID, fullID))
 		}
 	}
@@ -218,7 +227,7 @@ func (s *BackendMFAStorage) DeleteEnrollment(ctx context.Context, enrollmentID s
 
 // DeleteEnrollmentsByUser routes by the explicit tenantID and removes every
 // enrollment listed in the per-user index.
-func (s *BackendMFAStorage) DeleteEnrollmentsByUser(ctx context.Context, userID, tenantID string) error {
+func (s *BackendMFAStorage) DeleteEnrollmentsByUser(ctx context.Context, userID uint64, tenantID string) error {
 	ctx = withTenant(ctx, tenantID)
 	ids, err := s.enrollmentIDsForUser(ctx, userID)
 	if err != nil {
@@ -235,7 +244,7 @@ func (s *BackendMFAStorage) DeleteEnrollmentsByUser(ctx context.Context, userID,
 
 // HasActiveEnrollment routes by the explicit tenantID and reports whether any
 // indexed enrollment for the user is non-expired.
-func (s *BackendMFAStorage) HasActiveEnrollment(ctx context.Context, userID, tenantID string) (bool, error) {
+func (s *BackendMFAStorage) HasActiveEnrollment(ctx context.Context, userID uint64, tenantID string) (bool, error) {
 	ctx = withTenant(ctx, tenantID)
 	ids, err := s.enrollmentIDsForUser(ctx, userID)
 	if err != nil {
@@ -263,7 +272,7 @@ func (s *BackendMFAStorage) HasActiveEnrollment(ctx context.Context, userID, ten
 
 // enrollmentIDsForUser returns the enrollment ids recorded in the per-user
 // index. The caller must have already bound the tenant into ctx.
-func (s *BackendMFAStorage) enrollmentIDsForUser(ctx context.Context, userID string) ([]string, error) {
+func (s *BackendMFAStorage) enrollmentIDsForUser(ctx context.Context, userID uint64) ([]string, error) {
 	var ids []string
 	err := s.kv.Scan(ctx, mfaEnrollIndexPrefix(userID), func(_ string, value []byte) error {
 		ids = append(ids, string(value))
@@ -317,7 +326,7 @@ func (s *BackendMFAStorage) DeleteChallenge(ctx context.Context, challengeID str
 	tctx := withTenant(ctx, tenantID)
 	if data, err := s.kv.Get(tctx, mfaChallengeKey(fullID)); err == nil {
 		var c MFAChallenge
-		if json.Unmarshal(data, &c) == nil && c.UserID != "" {
+		if json.Unmarshal(data, &c) == nil && c.UserID != 0 {
 			_ = s.kv.Delete(tctx, mfaChalIndexKey(c.UserID, fullID))
 		}
 	}
@@ -325,7 +334,7 @@ func (s *BackendMFAStorage) DeleteChallenge(ctx context.Context, challengeID str
 }
 
 // DeleteChallengesByUser routes by tenantID and removes every indexed challenge.
-func (s *BackendMFAStorage) DeleteChallengesByUser(ctx context.Context, userID, tenantID string) error {
+func (s *BackendMFAStorage) DeleteChallengesByUser(ctx context.Context, userID uint64, tenantID string) error {
 	ctx = withTenant(ctx, tenantID)
 	var ids []string
 	if err := s.kv.Scan(ctx, mfaChalIndexPrefix(userID), func(_ string, value []byte) error {
@@ -344,7 +353,7 @@ func (s *BackendMFAStorage) DeleteChallengesByUser(ctx context.Context, userID, 
 }
 
 // GetBackupCodes routes by the explicit tenantID and reads the per-user codes.
-func (s *BackendMFAStorage) GetBackupCodes(ctx context.Context, userID, tenantID string) (*BackupCodeSet, error) {
+func (s *BackendMFAStorage) GetBackupCodes(ctx context.Context, userID uint64, tenantID string) (*BackupCodeSet, error) {
 	ctx = withTenant(ctx, tenantID)
 	data, err := s.kv.Get(ctx, mfaBackupKey(userID))
 	if err != nil {
@@ -365,7 +374,7 @@ func (s *BackendMFAStorage) SaveBackupCodes(ctx context.Context, codes *BackupCo
 	if codes.ID == "" {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.backup", "backup code set ID is required", nil)
 	}
-	if codes.UserID == "" {
+	if codes.UserID == 0 {
 		return NewIAMError(ErrMFAInvalid, "iam.mfa.backup", "user ID is required", nil)
 	}
 	if codes.TenantID == "" {
@@ -380,7 +389,7 @@ func (s *BackendMFAStorage) SaveBackupCodes(ctx context.Context, codes *BackupCo
 }
 
 // DeleteBackupCodes routes by the explicit tenantID and removes the codes.
-func (s *BackendMFAStorage) DeleteBackupCodes(ctx context.Context, userID, tenantID string) error {
+func (s *BackendMFAStorage) DeleteBackupCodes(ctx context.Context, userID uint64, tenantID string) error {
 	ctx = withTenant(ctx, tenantID)
 	return s.kv.Delete(ctx, mfaBackupKey(userID))
 }
@@ -416,7 +425,7 @@ func (s *BackendMFAStorage) cleanupTenant(ctx context.Context) (int, error) {
 
 	type expired struct {
 		id     string
-		userID string
+		userID uint64
 	}
 	var staleEnroll []expired
 	if err := s.kv.Scan(ctx, keyPrefixMFAEnrollment, func(_ string, value []byte) error {

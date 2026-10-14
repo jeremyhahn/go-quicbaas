@@ -78,12 +78,12 @@ func (m *mockTenantManager) CreateUser(ctx context.Context, user *User) error {
 		return ErrUserAlreadyExists
 	}
 	m.users.Store(key, user)
-	m.users.Store(user.TenantID+":id:"+user.ID, user)
+	m.users.Store(mockUserKey{user.TenantID, user.ID}, user)
 	return nil
 }
 
-func (m *mockTenantManager) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
-	if val, ok := m.users.Load(tenantID + ":id:" + userID); ok {
+func (m *mockTenantManager) GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error) {
+	if val, ok := m.users.Load(mockUserKey{tenantID, userID}); ok {
 		return val.(*User), nil
 	}
 	return nil, ErrUserNotFound
@@ -99,7 +99,7 @@ func (m *mockTenantManager) GetUserByEmail(ctx context.Context, tenantID, email 
 func (m *mockTenantManager) UpdateUser(ctx context.Context, user *User) error {
 	key := user.TenantID + ":" + user.Email
 	m.users.Store(key, user)
-	m.users.Store(user.TenantID+":id:"+user.ID, user)
+	m.users.Store(mockUserKey{user.TenantID, user.ID}, user)
 	return nil
 }
 
@@ -649,7 +649,7 @@ func TestBatchProcessor_UpdateExisting(t *testing.T) {
 
 	// Create initial user
 	existingUser := &User{
-		ID:       "existing-id",
+		ID:       40050,
 		Email:    "existing@example.com",
 		Name:     "Original Name",
 		TenantID: tenantID,
@@ -692,7 +692,7 @@ func TestBatchProcessor_SkipDuplicates(t *testing.T) {
 
 	// Create initial user
 	existingUser := &User{
-		ID:       "skip-id",
+		ID:       40050,
 		Email:    "skip@example.com",
 		Name:     "Existing User",
 		TenantID: tenantID,
@@ -1302,7 +1302,7 @@ func TestMemoryConsentStorage_GetConsent_NotFound(t *testing.T) {
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
-	_, err := storage.GetConsent(ctx, "tenant-1", "user-1", ConsentPurposeMarketing)
+	_, err := storage.GetConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing)
 	if err == nil {
 		t.Error("expected error for non-existent consent")
 	}
@@ -1313,7 +1313,7 @@ func TestMemoryConsentStorage_GetConsent_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := storage.GetConsent(ctx, "tenant-1", "user-1", ConsentPurposeMarketing)
+	_, err := storage.GetConsent(ctx, "tenant-1", 10001, ConsentPurposeMarketing)
 	if err == nil {
 		t.Error("expected error for canceled context")
 	}
@@ -1330,7 +1330,7 @@ func TestMemorySessionExtStorage_Delete_RemovesFromUserIndex(t *testing.T) {
 	// Create session
 	session := &SessionExt{
 		ID:        "session-to-delete",
-		UserID:    "user-1",
+		UserID:    10001,
 		TenantID:  "tenant-1",
 		TokenHash: "token-123",
 	}

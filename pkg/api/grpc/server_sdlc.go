@@ -86,7 +86,7 @@ func (s *SDLCServer) BindProject(ctx context.Context, req *pb.BindProjectRequest
 	if err != nil {
 		return nil, err
 	}
-	bound, err := svc.Bind(ctx, tenantID, bindingFromProto(req.Binding))
+	bound, err := svc.Bind(ctx, tenantID, bindingFromProto(req.Binding), service.BindOptions{LeavePaused: req.Paused})
 	if err != nil {
 		return nil, convertSDLCError(err)
 	}

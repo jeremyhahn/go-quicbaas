@@ -28,14 +28,14 @@ func TestBackendConsentStorage_GetAndDelete(t *testing.T) {
 	ctx := context.Background()
 
 	consent, err := store.CreateConsent(ctx, CreateConsentOptions{
-		UserID: "u1", TenantID: "acme", Purpose: ConsentPurposeMarketing,
+		UserID: 30001, TenantID: "acme", Purpose: ConsentPurposeMarketing,
 		Status: ConsentStatusGranted, Version: "v1",
 	})
 	if err != nil {
 		t.Fatalf("CreateConsent: %v", err)
 	}
 
-	got, err := store.GetConsent(ctx, "acme", "u1", ConsentPurposeMarketing)
+	got, err := store.GetConsent(ctx, "acme", 30001, ConsentPurposeMarketing)
 	if err != nil {
 		t.Fatalf("GetConsent: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestBackendConsentStorage_GetAndDelete(t *testing.T) {
 	}
 
 	// Missing purpose returns not-found.
-	if _, err := store.GetConsent(ctx, "acme", "u1", ConsentPurposeAnalytics); !dberrors.IsNotFound(err) {
+	if _, err := store.GetConsent(ctx, "acme", 30001, ConsentPurposeAnalytics); !dberrors.IsNotFound(err) {
 		t.Fatalf("GetConsent(missing) err = %v, want NotFound", err)
 	}
 
@@ -52,7 +52,7 @@ func TestBackendConsentStorage_GetAndDelete(t *testing.T) {
 	if err := store.DeleteConsent(ctx, consent.ID); err != nil {
 		t.Fatalf("DeleteConsent: %v", err)
 	}
-	if _, err := store.GetConsent(ctx, "acme", "u1", ConsentPurposeMarketing); !dberrors.IsNotFound(err) {
+	if _, err := store.GetConsent(ctx, "acme", 30001, ConsentPurposeMarketing); !dberrors.IsNotFound(err) {
 		t.Fatalf("GetConsent after delete err = %v, want NotFound", err)
 	}
 
@@ -69,16 +69,16 @@ func TestBackendDataExportStorage_ListFilterPaginate(t *testing.T) {
 	store := NewBackendDataExportStorage(kv, nil)
 	ctx := context.Background()
 
-	for _, uid := range []string{"u1", "u2", "u3"} {
+	for _, uid := range []uint64{30001, 30002, 30003} {
 		if _, err := store.CreateExportRequest(ctx, CreateDataExportOptions{
 			UserID: uid, TenantID: "acme", RequestedBy: "admin",
 		}); err != nil {
-			t.Fatalf("CreateExportRequest(%s): %v", uid, err)
+			t.Fatalf("CreateExportRequest(%d): %v", uid, err)
 		}
 	}
 
 	// Filter to a single user.
-	byUser, err := store.ListExportRequests(ctx, ListExportRequestsOptions{TenantID: "acme", UserID: "u2"})
+	byUser, err := store.ListExportRequests(ctx, ListExportRequestsOptions{TenantID: "acme", UserID: 30002})
 	if err != nil || len(byUser) != 1 {
 		t.Fatalf("ListExportRequests(u2) = %d, %v; want 1, nil", len(byUser), err)
 	}
@@ -110,7 +110,7 @@ func TestBackendDeletionStorage_UpdateAndList(t *testing.T) {
 	ctx := context.Background()
 
 	req, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: "u1", TenantID: "acme", RequestedBy: "admin",
+		UserID: 30001, TenantID: "acme", RequestedBy: "admin",
 	})
 	if err != nil {
 		t.Fatalf("CreateDeletionRequest: %v", err)
@@ -134,7 +134,7 @@ func TestBackendDeletionStorage_UpdateAndList(t *testing.T) {
 
 	// Add a second user's request to exercise list filtering.
 	if _, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: "u2", TenantID: "acme", RequestedBy: "admin",
+		UserID: 30002, TenantID: "acme", RequestedBy: "admin",
 	}); err != nil {
 		t.Fatalf("CreateDeletionRequest(u2): %v", err)
 	}

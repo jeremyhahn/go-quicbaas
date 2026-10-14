@@ -24,6 +24,7 @@ import (
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
@@ -1430,6 +1431,45 @@ func getString(args map[string]interface{}, key string) string {
 		return v
 	}
 	return ""
+}
+
+// UserIDArgError reports a user_id tool argument that is missing or is not
+// a non-zero decimal uint64 user id.
+type UserIDArgError struct {
+	Value string
+	Err   error
+}
+
+// Error implements the error interface.
+func (e *UserIDArgError) Error() string {
+	if e.Err != nil {
+		return "mcp: invalid user_id " + strconv.Quote(e.Value) + ": " + e.Err.Error()
+	}
+	return "mcp: invalid user_id " + strconv.Quote(e.Value)
+}
+
+// Unwrap returns the underlying parse error, if any.
+func (e *UserIDArgError) Unwrap() error {
+	return e.Err
+}
+
+// ErrorCode classifies the error as invalid input.
+func (e *UserIDArgError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrInvalidInput
+}
+
+// getUserID parses the user_id argument. A missing, non-numeric,
+// overflowing or zero value returns *UserIDArgError.
+func getUserID(args map[string]interface{}) (uint64, error) {
+	value := getString(args, "user_id")
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, &UserIDArgError{Value: value, Err: err}
+	}
+	if id == 0 {
+		return 0, &UserIDArgError{Value: value}
+	}
+	return id, nil
 }
 
 // getStringAlt extracts a string argument, trying key1 first then falling back to key2.

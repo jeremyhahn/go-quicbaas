@@ -167,7 +167,7 @@ func TestIAMGetUser(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -203,7 +203,7 @@ func TestIAMGetUser(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -224,7 +224,7 @@ func TestIAMUpdateUser(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//users/user-123", strings.NewReader(`{}`))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -262,7 +262,7 @@ func TestIAMUpdateUser(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/users/user-123", strings.NewReader("{invalid"))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -281,7 +281,7 @@ func TestIAMUpdateUser(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{"name":"Updated Name"}`
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/users/user-123", strings.NewReader(body))
@@ -304,7 +304,7 @@ func TestIAMDeleteUser(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -340,7 +340,7 @@ func TestIAMDeleteUser(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -361,7 +361,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/roles", strings.NewReader(`{}`))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -399,7 +399,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader("{invalid"))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -418,7 +418,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{"role_id":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(body))
@@ -438,7 +438,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		body := `{"role_id":"role-456"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(body))
@@ -461,7 +461,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		// {} decodes successfully but role_id is zero-value — must 400.
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(`{}`))
@@ -481,7 +481,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 
 		// Pre-fix, the TS SDK sent { "role": "admin" }. Because the handler
 		// decodes into a struct with json:"role_id", "role" is silently ignored
@@ -509,7 +509,7 @@ func TestIAMAssignRole_CorrectBodySucceeds(t *testing.T) {
 
 	ctx := context.Background()
 	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "t1", Name: "Tenant 1"})
-	_ = memStorage.CreateUser(ctx, &iam.User{ID: "1", TenantID: "t1", Email: "user@example.com", Name: "User"})
+	_ = memStorage.CreateUser(ctx, &iam.User{ID: 1, TenantID: "t1", Email: "user@example.com", Name: "User"})
 	_ = memStorage.CreateRole(ctx, &iam.Role{ID: "editor", TenantID: "t1", Name: "Editor"})
 
 	body := `{"role_id":"editor"}`
@@ -531,7 +531,7 @@ func TestIAMRevokeRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("role", "role-456")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/roles/role-456", nil)
@@ -569,7 +569,7 @@ func TestIAMRevokeRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("role", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/roles/", nil)
@@ -588,7 +588,7 @@ func TestIAMRevokeRole(t *testing.T) {
 
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("tenant_id", "tenant-123")
-		rctx.URLParams.Add("user_id", "user-123")
+		rctx.URLParams.Add("user_id", "10123")
 		rctx.URLParams.Add("role", "role-456")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/roles/role-456", nil)

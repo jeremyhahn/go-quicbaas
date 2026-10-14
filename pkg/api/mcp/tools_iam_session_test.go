@@ -34,11 +34,11 @@ import (
 
 type mockSessionManager struct {
 	createFn       func(ctx context.Context, session *iam.SessionExt) error
-	listFn         func(ctx context.Context, userID, tenantID string) ([]*iam.SessionExt, error)
+	listFn         func(ctx context.Context, userID uint64, tenantID string) ([]*iam.SessionExt, error)
 	getFn          func(ctx context.Context, sessionID string) (*iam.SessionExt, error)
 	revokeFn       func(ctx context.Context, sessionID string) error
-	revokeAllFn    func(ctx context.Context, userID, tenantID string) error
-	revokeExceptFn func(ctx context.Context, userID, tenantID, exceptSessionID string) error
+	revokeAllFn    func(ctx context.Context, userID uint64, tenantID string) error
+	revokeExceptFn func(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error
 }
 
 func (m *mockSessionManager) Create(ctx context.Context, session *iam.SessionExt) error {
@@ -48,7 +48,7 @@ func (m *mockSessionManager) Create(ctx context.Context, session *iam.SessionExt
 	return nil
 }
 
-func (m *mockSessionManager) List(ctx context.Context, userID, tenantID string) ([]*iam.SessionExt, error) {
+func (m *mockSessionManager) List(ctx context.Context, userID uint64, tenantID string) ([]*iam.SessionExt, error) {
 	if m.listFn != nil {
 		return m.listFn(ctx, userID, tenantID)
 	}
@@ -63,7 +63,7 @@ func (m *mockSessionManager) Get(ctx context.Context, sessionID string) (*iam.Se
 	}
 	return &iam.SessionExt{
 		ID:         sessionID,
-		UserID:     "user-1",
+		UserID:     10001,
 		TenantID:   "tenant-1",
 		Created:    time.Now().Add(-1 * time.Hour),
 		LastActive: time.Now(),
@@ -77,14 +77,14 @@ func (m *mockSessionManager) Revoke(ctx context.Context, sessionID string) error
 	return nil
 }
 
-func (m *mockSessionManager) RevokeAllForUser(ctx context.Context, userID, tenantID string) error {
+func (m *mockSessionManager) RevokeAllForUser(ctx context.Context, userID uint64, tenantID string) error {
 	if m.revokeAllFn != nil {
 		return m.revokeAllFn(ctx, userID, tenantID)
 	}
 	return nil
 }
 
-func (m *mockSessionManager) RevokeAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error {
+func (m *mockSessionManager) RevokeAllExcept(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error {
 	if m.revokeExceptFn != nil {
 		return m.revokeExceptFn(ctx, userID, tenantID, exceptSessionID)
 	}
@@ -180,7 +180,7 @@ func TestExecuteIAMSessionList_Success(t *testing.T) {
 
 	result, err := reg.executeIAMSessionList(context.Background(), map[string]interface{}{
 		"tenant_id": "t1",
-		"user_id":   "u1",
+		"user_id":   "30001",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -192,14 +192,14 @@ func TestExecuteIAMSessionList_Success(t *testing.T) {
 
 func TestExecuteIAMSessionList_Error(t *testing.T) {
 	mgr := &mockSessionManager{
-		listFn: func(_ context.Context, _, _ string) ([]*iam.SessionExt, error) {
+		listFn: func(_ context.Context, _ uint64, _ string) ([]*iam.SessionExt, error) {
 			return nil, errors.New("list failed")
 		},
 	}
 	reg := newSessionRegistry(t, mgr)
 
 	_, err := reg.executeIAMSessionList(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "user_id": "u1",
+		"tenant_id": "t1", "user_id": "30001",
 	})
 	require.Error(t, err)
 }
@@ -261,7 +261,7 @@ func TestExecuteIAMSessionRevokeAll_Success(t *testing.T) {
 
 	result, err := reg.executeIAMSessionRevokeAll(context.Background(), map[string]interface{}{
 		"tenant_id": "t1",
-		"user_id":   "u1",
+		"user_id":   "30001",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -273,14 +273,14 @@ func TestExecuteIAMSessionRevokeAll_Success(t *testing.T) {
 
 func TestExecuteIAMSessionRevokeAll_Error(t *testing.T) {
 	mgr := &mockSessionManager{
-		revokeAllFn: func(_ context.Context, _, _ string) error {
+		revokeAllFn: func(_ context.Context, _ uint64, _ string) error {
 			return errors.New("revoke all failed")
 		},
 	}
 	reg := newSessionRegistry(t, mgr)
 
 	_, err := reg.executeIAMSessionRevokeAll(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "user_id": "u1",
+		"tenant_id": "t1", "user_id": "30001",
 	})
 	require.Error(t, err)
 }
@@ -295,7 +295,7 @@ func TestExecuteIAMSessionRevokeOthers_Success(t *testing.T) {
 
 	result, err := reg.executeIAMSessionRevokeOthers(context.Background(), map[string]interface{}{
 		"tenant_id":       "t1",
-		"user_id":         "u1",
+		"user_id":         "30001",
 		"keep_session_id": "sess-keep",
 	})
 	require.NoError(t, err)
@@ -308,14 +308,14 @@ func TestExecuteIAMSessionRevokeOthers_Success(t *testing.T) {
 
 func TestExecuteIAMSessionRevokeOthers_Error(t *testing.T) {
 	mgr := &mockSessionManager{
-		revokeExceptFn: func(_ context.Context, _, _, _ string) error {
+		revokeExceptFn: func(_ context.Context, _ uint64, _, _ string) error {
 			return errors.New("revoke others failed")
 		},
 	}
 	reg := newSessionRegistry(t, mgr)
 
 	_, err := reg.executeIAMSessionRevokeOthers(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "user_id": "u1", "keep_session_id": "sess-keep",
+		"tenant_id": "t1", "user_id": "30001", "keep_session_id": "sess-keep",
 	})
 	require.Error(t, err)
 }

@@ -57,8 +57,8 @@ func TestBackendFederationStorage_LinksByUserAndDeleteAll(t *testing.T) {
 	store := NewBackendFederationStorage(kv)
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
-	l1 := testLink("acme", "u1", "l1", "p1", "ext-1")
-	l2 := testLink("acme", "u1", "l2", "p2", "ext-2")
+	l1 := testLink("acme", 30001, "l1", "p1", "ext-1")
+	l2 := testLink("acme", 30001, "l2", "p2", "ext-2")
 	if err := store.CreateLink(ctx, l1); err != nil {
 		t.Fatalf("CreateLink(l1): %v", err)
 	}
@@ -66,7 +66,7 @@ func TestBackendFederationStorage_LinksByUserAndDeleteAll(t *testing.T) {
 		t.Fatalf("CreateLink(l2): %v", err)
 	}
 
-	links, err := store.GetLinksByUser(ctx, "u1")
+	links, err := store.GetLinksByUser(ctx, 30001)
 	if err != nil || len(links) != 2 {
 		t.Fatalf("GetLinksByUser = %d, %v; want 2, nil", len(links), err)
 	}
@@ -76,16 +76,16 @@ func TestBackendFederationStorage_LinksByUserAndDeleteAll(t *testing.T) {
 	if err := store.DeleteLink(ctx, l2.ID); err != nil {
 		t.Fatalf("DeleteLink(l2): %v", err)
 	}
-	links, err = store.GetLinksByUser(ctx, "u1")
+	links, err = store.GetLinksByUser(ctx, 30001)
 	if err != nil || len(links) != 1 {
 		t.Fatalf("GetLinksByUser after delete = %d, %v; want 1, nil", len(links), err)
 	}
 
 	// DeleteUserLinks clears the remaining link.
-	if err := store.DeleteUserLinks(ctx, "u1"); err != nil {
+	if err := store.DeleteUserLinks(ctx, 30001); err != nil {
 		t.Fatalf("DeleteUserLinks: %v", err)
 	}
-	links, err = store.GetLinksByUser(ctx, "u1")
+	links, err = store.GetLinksByUser(ctx, 30001)
 	if err != nil || len(links) != 0 {
 		t.Fatalf("GetLinksByUser after DeleteUserLinks = %d, %v; want 0, nil", len(links), err)
 	}

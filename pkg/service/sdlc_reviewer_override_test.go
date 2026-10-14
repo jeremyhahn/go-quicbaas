@@ -33,7 +33,7 @@ func profiledRig(t *testing.T) *sdlcServiceRig {
 	rig := newSDLCServiceRig(t)
 	rig.secrets.secrets["codex-tok"] = []byte("codex")
 	rig.secrets.secrets["qwen-tok"] = []byte("qwen")
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, profiledServiceBinding(rig)); err != nil {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, profiledServiceBinding(rig), BindOptions{}); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	return rig
@@ -55,7 +55,7 @@ func TestSDLCService_BindChecksEveryReviewerProfilesToken(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	rig.secrets.secrets["codex-tok"] = []byte("codex")
 	binding := profiledServiceBinding(rig)
-	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding)
+	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{})
 	if err == nil {
 		t.Fatal("Bind accepted an alternate whose token secret does not resolve")
 	}
@@ -72,20 +72,20 @@ func TestSDLCService_BindReviewerTokenReferences(t *testing.T) {
 	t.Run("alternate token missing", func(t *testing.T) {
 		rig := newSDLCServiceRig(t)
 		rig.secrets.secrets["codex-tok"] = []byte("codex")
-		_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, profiledServiceBinding(rig))
+		_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, profiledServiceBinding(rig), BindOptions{})
 		requireReferenceNotFound(t, err, "reviewers[0].token_secret_ref")
 	})
 	t.Run("default token, secrets store cannot answer", func(t *testing.T) {
 		rig := newSDLCServiceRig(t)
 		rig.secrets.secrets["qwen-tok"] = []byte("qwen")
 		rig.secrets.errFor = map[string]error{"codex-tok": errReferenceStoreSealed}
-		_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, profiledServiceBinding(rig))
+		_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, profiledServiceBinding(rig), BindOptions{})
 		requireReferenceUnavailable(t, err, "reviewer.token_secret_ref")
 	})
 	t.Run("webhook secret, secrets store cannot answer", func(t *testing.T) {
 		rig := newSDLCServiceRig(t)
 		rig.secrets.errFor = map[string]error{"wh": errReferenceStoreSealed}
-		_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding())
+		_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding(), BindOptions{})
 		requireReferenceUnavailable(t, err, "forge.webhook_secret_ref")
 	})
 }
@@ -162,7 +162,7 @@ func TestSDLCService_ReviewerOverrideRefusals(t *testing.T) {
 func TestSDLCService_ReviewerOverrideNeedsAReviewerToChooseBetween(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
-	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding(), BindOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rig.svc.SetReviewerOverride(ctx, sdlcTestTenant, sdlcTestProject, 41, sdlc.DefaultReviewerProfileName); !errors.Is(err, sdlc.ErrInvalidInput) {
@@ -198,7 +198,7 @@ func TestSDLCService_OverrideRacingAnUnbindDoesNotReachTheNextBinding(t *testing
 		if err := rig.svc.Unbind(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
 			t.Errorf("Unbind: %v", err)
 		}
-		if _, err := rig.svc.Bind(ctx, sdlcTestTenant, profiledServiceBinding(rig)); err != nil {
+		if _, err := rig.svc.Bind(ctx, sdlcTestTenant, profiledServiceBinding(rig), BindOptions{}); err != nil {
 			t.Errorf("Bind: %v", err)
 		}
 	})
@@ -373,11 +373,11 @@ func TestSDLCService_BindRefusesAnAgentTheTenantDoesNotDefine(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	binding := rig.binding()
 	binding.Worker = orchestration.AgentRefTo("ghost")
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding); !errors.Is(err, orchestration.ErrAgentUnknown) {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{}); !errors.Is(err, orchestration.ErrAgentUnknown) {
 		t.Fatalf("Bind = %v, want the unknown agent refused", err)
 	}
 	binding.Worker = orchestration.AgentRefTo(serviceReviewerAgent)
-	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding); !errors.Is(err, orchestration.ErrAgentRoleMismatch) {
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{}); !errors.Is(err, orchestration.ErrAgentRoleMismatch) {
 		t.Fatalf("Bind = %v, want a reviewer refused as the worker", err)
 	}
 }

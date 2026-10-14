@@ -25,7 +25,7 @@ func TestUserInfoSubject_PrefersTheImmutableUIDClaim(t *testing.T) {
 	ctx := context.Background()
 
 	if err := storage.CreateUser(ctx, &User{
-		ID: "2001", TenantID: burninTenant,
+		ID: 2001, TenantID: burninTenant,
 		Name: "someone", Email: "someone@automatethethings.com", Lifecycle: LifecycleActive,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -33,15 +33,15 @@ func TestUserInfoSubject_PrefersTheImmutableUIDClaim(t *testing.T) {
 
 	got, err := provider.userInfoSubject(ctx, &Claims{
 		TenantID: burninTenant,
-		UserID:   "2001",
+		UserID:   2001,
 		// A subject that would resolve to nothing on its own.
 		Subject: "stale-name-from-before-a-rename",
 	})
 	if err != nil {
 		t.Fatalf("userInfoSubject: %v", err)
 	}
-	if got.ID != "2001" {
-		t.Fatalf("resolved %q, want the uid claim's %q", got.ID, "2001")
+	if got.ID != 2001 {
+		t.Fatalf("resolved %d, want the uid claim's 2001", got.ID)
 	}
 }
 
@@ -57,7 +57,7 @@ func TestUserInfoSubject_RequiresTheUIDClaim(t *testing.T) {
 	ctx := context.Background()
 
 	if err := storage.CreateUser(ctx, &User{
-		ID: "4001", TenantID: burninTenant,
+		ID: 4001, TenantID: burninTenant,
 		Username: "someone", Name: "Someone", Email: "someone@automatethethings.com",
 		Lifecycle: LifecycleActive,
 	}); err != nil {
@@ -96,7 +96,7 @@ func TestUserInfoSubject_ServicePrincipalGetsNoUserProfile(t *testing.T) {
 
 	// A user whose username is exactly the client id.
 	if err := storage.CreateUser(ctx, &User{
-		ID: "5001", TenantID: burninTenant,
+		ID: 5001, TenantID: burninTenant,
 		Username: clientID, Name: "Collider", Email: "collider@automatethethings.com",
 		Lifecycle: LifecycleActive,
 	}); err != nil {
@@ -125,14 +125,14 @@ func TestPrincipalLive_NeitherClaimIsDenied(t *testing.T) {
 	// Seed an ENABLED account whose username is the subject: under the deleted
 	// path this token would have been read as live.
 	if err := storage.CreateUser(ctx, &User{
-		ID: "6001", TenantID: burninTenant,
+		ID: 6001, TenantID: burninTenant,
 		Username: "legacy-subject", Name: "Legacy", Email: "legacy@automatethethings.com",
 		Lifecycle: LifecycleActive,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	live, err := provider.principalLive(ctx, burninTenant, "legacy-subject", "", "")
+	live, err := provider.principalLive(ctx, burninTenant, "legacy-subject", 0, "")
 	if err != nil {
 		t.Fatalf("principalLive: %v", err)
 	}
@@ -148,14 +148,14 @@ func TestPrincipalLive_StillHonoursBothClaims(t *testing.T) {
 	ctx := context.Background()
 
 	if err := storage.CreateUser(ctx, &User{
-		ID: "6002", TenantID: burninTenant,
+		ID: 6002, TenantID: burninTenant,
 		Username: "active-user", Name: "Active", Email: "active@automatethethings.com",
 		Lifecycle: LifecycleActive,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	live, err := provider.principalLive(ctx, burninTenant, "", "6002", "")
+	live, err := provider.principalLive(ctx, burninTenant, "", 6002, "")
 	if err != nil {
 		t.Fatalf("principalLive (uid): %v", err)
 	}
@@ -163,7 +163,7 @@ func TestPrincipalLive_StillHonoursBothClaims(t *testing.T) {
 		t.Fatal("a uid naming an active account must be live")
 	}
 
-	live, err = provider.principalLive(ctx, burninTenant, "app_burnin_x", "", PrincipalTypeService)
+	live, err = provider.principalLive(ctx, burninTenant, "app_burnin_x", 0, PrincipalTypeService)
 	if err != nil {
 		t.Fatalf("principalLive (service): %v", err)
 	}
@@ -182,14 +182,14 @@ func TestUserInfo_RefusesAnAccountThatMayNotAuthenticate(t *testing.T) {
 			ctx := context.Background()
 
 			if err := storage.CreateUser(ctx, &User{
-				ID: "4001", TenantID: burninTenant,
+				ID: 4001, TenantID: burninTenant,
 				Name: "shut-out", Email: "shut-out@automatethethings.com",
 				Lifecycle: state,
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
 
-			user, err := provider.userInfoSubject(ctx, &Claims{TenantID: burninTenant, UserID: "4001"})
+			user, err := provider.userInfoSubject(ctx, &Claims{TenantID: burninTenant, UserID: 4001})
 			if err != nil {
 				t.Fatalf("userInfoSubject: %v", err)
 			}

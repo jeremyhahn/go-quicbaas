@@ -30,7 +30,7 @@ type lookupFailingUserStorage struct {
 	err error
 }
 
-func (s *lookupFailingUserStorage) GetUser(context.Context, string, string) (*User, error) {
+func (s *lookupFailingUserStorage) GetUser(context.Context, string, uint64) (*User, error) {
 	return nil, s.err
 }
 
@@ -88,7 +88,7 @@ var errForeignNotFound = &dberrors.QBError{
 func TestPrincipalLive_NeitherClaimConsultsNoStore(t *testing.T) {
 	p := livenessProvider(t, errForeignNotFound)
 
-	live, err := p.principalLive(context.Background(), "acme", "operator", "", "")
+	live, err := p.principalLive(context.Background(), "acme", "operator", 0, "")
 
 	require.NoError(t, err, "a lookup was performed for a token that names no principal")
 	assert.False(t, live, "a token carrying neither uid nor ptyp must not be live")
@@ -101,7 +101,7 @@ func TestPrincipalLive_NeitherClaimConsultsNoStore(t *testing.T) {
 func TestPrincipalLive_ServicePrincipalNeedsNoLookup(t *testing.T) {
 	p := livenessProvider(t, errForeignNotFound)
 
-	live, err := p.principalLive(context.Background(), "acme", "app_acme_x", "", PrincipalTypeService)
+	live, err := p.principalLive(context.Background(), "acme", "app_acme_x", 0, PrincipalTypeService)
 
 	require.NoError(t, err)
 	assert.True(t, live, "a service principal is live on its own claim")
@@ -114,7 +114,7 @@ func TestPrincipalLive_ServicePrincipalNeedsNoLookup(t *testing.T) {
 func TestPrincipalLive_ForeignNotFoundIsNotADeletedAccount(t *testing.T) {
 	p := livenessProvider(t, errForeignNotFound)
 
-	live, err := p.principalLive(context.Background(), "acme", "operator", "77", "")
+	live, err := p.principalLive(context.Background(), "acme", "operator", 77, "")
 
 	require.Error(t, err, "a failed identity lookup was reported as a deleted account")
 	assert.False(t, live)
@@ -124,7 +124,7 @@ func TestPrincipalLive_ForeignNotFoundIsNotADeletedAccount(t *testing.T) {
 func TestPrincipalLive_DeletedAccountStillDeniesQuietly(t *testing.T) {
 	p := livenessProvider(t, ErrUserNotFound)
 
-	live, err := p.principalLive(context.Background(), "acme", "operator", "77", "")
+	live, err := p.principalLive(context.Background(), "acme", "operator", 77, "")
 
 	require.NoError(t, err)
 	assert.False(t, live)

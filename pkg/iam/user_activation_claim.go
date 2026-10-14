@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -92,7 +93,7 @@ type UserActivationClaim struct {
 // *UserActivationInProgressError, which matches ErrUserNotPending, when
 // another activation holds the claim or has activated the user since that
 // record was written.
-func (c *UserActivationClaims) Claim(ctx context.Context, tenantID, userID string, pendingSince time.Time) (*UserActivationClaim, error) {
+func (c *UserActivationClaims) Claim(ctx context.Context, tenantID string, userID uint64, pendingSince time.Time) (*UserActivationClaim, error) {
 	if c == nil || c.resolver == nil {
 		return nil, &UserActivationClaimConfigError{Field: "TenantStoreResolver"}
 	}
@@ -116,7 +117,7 @@ func (c *UserActivationClaims) Claim(ctx context.Context, tenantID, userID strin
 	if err != nil {
 		return nil, &UserActivationClaimError{UserID: userID, Op: "encode claim", Cause: err}
 	}
-	claim := &UserActivationClaim{store: atomic, key: userActivationClaimPrefix + userID, holder: holder, value: value}
+	claim := &UserActivationClaim{store: atomic, key: userActivationClaimPrefix + strconv.FormatUint(userID, 10), holder: holder, value: value}
 
 	stored, err := atomic.PutIfAbsent(ctx, claim.key, value)
 	if err != nil {
@@ -132,7 +133,7 @@ func (c *UserActivationClaims) Claim(ctx context.Context, tenantID, userID strin
 // user has since been reset from. The swap is conditional on the exact value
 // read, so of several activations that find the same claim, exactly one takes
 // it over.
-func (h *UserActivationClaim) takeOver(ctx context.Context, userID string, pendingSince time.Time) (*UserActivationClaim, error) {
+func (h *UserActivationClaim) takeOver(ctx context.Context, userID uint64, pendingSince time.Time) (*UserActivationClaim, error) {
 	current, err := h.store.Get(ctx, h.key)
 	if err != nil {
 		// The holder may have released the claim between the create and this
@@ -231,15 +232,15 @@ func (e *UserActivationClaimUnsupportedError) Error() string {
 // UserActivationClaimError reports a store failure while taking, completing or
 // releasing a claim.
 type UserActivationClaimError struct {
-	UserID string
+	UserID uint64
 	Op     string
 	Cause  error
 }
 
 func (e *UserActivationClaimError) Error() string {
 	msg := "iam: user activation claim: " + e.Op
-	if e.UserID != "" {
-		msg += " for user " + e.UserID
+	if e.UserID != 0 {
+		msg += " for user " + strconv.FormatUint(e.UserID, 10)
 	}
 	if e.Cause != nil {
 		msg += ": " + e.Cause.Error()
@@ -263,12 +264,12 @@ func (e *UserActivationClaimLostError) Error() string {
 // user's claim or has already activated the user. It matches
 // ErrUserNotPending, so every transport answers it as the conflict it is.
 type UserActivationInProgressError struct {
-	UserID string
+	UserID uint64
 	Cause  error
 }
 
 func (e *UserActivationInProgressError) Error() string {
-	msg := "iam: user " + e.UserID + " is already being activated"
+	msg := "iam: user " + strconv.FormatUint(e.UserID, 10) + " is already being activated"
 	if e.Cause != nil {
 		msg += ": " + e.Cause.Error()
 	}

@@ -92,10 +92,10 @@ func TestFederationServer_HandleFederatedCallback_ServiceError(t *testing.T) {
 
 func TestFederationServer_LinkAccount_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("LinkAccount", mock.Anything, "u-1", "t-1", "p-1", "token").Return(&dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"})
+	mgr.On("LinkAccount", mock.Anything, uint64(10001), "t-1", "p-1", "token").Return(&dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "test"})
 
 	_, err := srv.LinkAccount(context.Background(), &iampb.LinkAccountRequest{
-		UserId: "u-1", TenantId: "t-1", ProviderId: "p-1", ExternalToken: "token",
+		UserId: "10001", TenantId: "t-1", ProviderId: "p-1", ExternalToken: "token",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
@@ -103,10 +103,10 @@ func TestFederationServer_LinkAccount_ServiceError(t *testing.T) {
 
 func TestFederationServer_UnlinkAccount_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("UnlinkAccount", mock.Anything, "u-1", "t-1", "p-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
+	mgr.On("UnlinkAccount", mock.Anything, uint64(10001), "t-1", "p-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.UnlinkAccount(context.Background(), &iampb.UnlinkAccountRequest{
-		UserId: "u-1", TenantId: "t-1", ProviderId: "p-1",
+		UserId: "10001", TenantId: "t-1", ProviderId: "p-1",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
@@ -114,10 +114,10 @@ func TestFederationServer_UnlinkAccount_ServiceError(t *testing.T) {
 
 func TestFederationServer_GetUserLinks_ServiceError(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
-	mgr.On("GetUserLinks", mock.Anything, "u-1", "t-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
+	mgr.On("GetUserLinks", mock.Anything, uint64(10001), "t-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{
-		UserId: "u-1", TenantId: "t-1",
+		UserId: "10001", TenantId: "t-1",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))

@@ -52,8 +52,10 @@ import (
 // TriageRunnerName is the name a Job selects this runner by.
 const TriageRunnerName = "triage"
 
-// TriageSessionCount is how many sessions a triage job ever holds: one, for
-// however many issues it judges.
+// TriageSessionCount is how many sessions one triage pass holds: one, for
+// however many issues it judges. A job that goes round again for a rerun
+// mark (triage_rerun.go) gives its session back first and spawns a fresh
+// one, on a fresh checkout, so it never holds two at once.
 //
 // A session per issue would pay the container start cost per issue, and the
 // checkout the session reads is the same checkout for every issue in the
@@ -176,6 +178,14 @@ type TriageRunnerConfig struct {
 	// read back to keep a clustered member out of every later pass. Required:
 	// see triage_cluster.go.
 	Clusters IssueClusterStore
+
+	// Reruns holds the marks a nudge leaves when it finds the project
+	// already being triaged (see triage_rerun.go). The run takes the mark
+	// before it lists and again after it cleans up, and lists again when it
+	// took one. Nil keeps the behaviour from before go-quicbaas#894: one
+	// listing per job, and a nudge that arrived after it waits for the next
+	// nudge or the periodic sweep.
+	Reruns TriageRerunMarks
 }
 
 // TriageRunner is the module's triage orchestration.JobRunner.
@@ -206,6 +216,10 @@ type TriageRunner struct {
 	// triageAgents decides each project's triage agent; see
 	// TriageRunnerConfig.
 	triageAgents TriageAgentPolicy
+
+	// reruns are the marks that send a job round again; nil disables them.
+	// See TriageRunnerConfig.
+	reruns TriageRerunMarks
 }
 
 var (
@@ -238,6 +252,7 @@ func NewTriageRunner(cfg TriageRunnerConfig) (*TriageRunner, error) {
 		access:       access,
 		issueLimit:   limit,
 		triageAgents: cfg.TriageAgents,
+		reruns:       cfg.Reruns,
 	}, nil
 }
 
@@ -383,6 +398,10 @@ type triageRun struct {
 
 	// teardown releases the materialized workspace spec.
 	teardown []func()
+
+	// reruns is how many times this job has gone round again for a rerun
+	// mark; triageRerunRounds bounds it.
+	reruns int
 }
 
 // drive runs the job's states to a terminal one. Map-based dispatch so a
@@ -437,6 +456,9 @@ func (s *triageRun) initialize(ctx context.Context) (orchestration.JobState, err
 	if err := s.resolve(ctx); err != nil {
 		return "", err
 	}
+	// A mark set before this listing is satisfied by it, so it is taken
+	// now; one left would send the job round again for nothing.
+	s.takeRerun(ctx)
 	if err := s.listCandidates(ctx); err != nil {
 		return "", err
 	}
@@ -1511,10 +1533,57 @@ func issueHasLabel(issue ForgeIssue, label string) bool {
 	return false
 }
 
-// cleanup gives the session back and ends the job.
+// cleanup gives the session back and ends the job — unless a nudge marked
+// the project while this pass ran, in which case the job goes round again
+// under the lease it already holds, at most triageRerunRounds times.
 func (s *triageRun) cleanup(ctx context.Context) (orchestration.JobState, error) {
 	s.teardownSession(ctx)
-	return "", nil
+	if s.runner == nil || s.runner.reruns == nil {
+		return "", nil
+	}
+	if s.reruns >= triageRerunRounds {
+		// The mark is NOT taken: it stays for the next nudge or sweep,
+		// which starts a job of its own once this one lets the lease go.
+		s.job.Emit(orchestration.JobStateCleanup, "listed the issues "+strconv.Itoa(s.reruns+1)+
+			" times; a nudge that arrived during the last pass waits for the next job")
+		return "", nil
+	}
+	if !s.takeRerun(ctx) {
+		return "", nil
+	}
+	s.nextRound()
+	s.job.Emit(orchestration.JobStateInitializing, "a nudge arrived during the pass; listing the issues again")
+	return orchestration.JobStateInitializing, nil
+}
+
+// takeRerun takes the project's rerun mark and reports whether there was one.
+//
+// A FAILED TAKE IS AUDITED, NOT FATAL. The issues were judged; failing the
+// job over the mark would throw that away. The mark, if there is one, stays,
+// and the next job takes it.
+func (s *triageRun) takeRerun(ctx context.Context) bool {
+	if s.runner == nil || s.runner.reruns == nil {
+		return false
+	}
+	taken, err := s.runner.reruns.TakeTriageRerun(ctx, s.job.TenantID, s.job.Project.ID)
+	if err != nil {
+		s.job.Audit("sdlc:triage_rerun_failed", "error="+err.Error())
+		return false
+	}
+	return taken
+}
+
+// nextRound forgets what the last pass listed and judged, so the next
+// initialize starts from the forge and not from this pass's leftovers. The
+// binding, forge and head are read again by resolve.
+func (s *triageRun) nextRound() {
+	s.reruns++
+	// The head is re-read each round: a rerun whose branch read fails must
+	// leave its verdicts unstamped, not stamp them with the previous head.
+	s.headSHA = ""
+	s.candidates, s.open, s.ready = nil, nil, nil
+	s.discussions, s.footprints = nil, nil
+	s.spec, s.containerDir, s.workspace = orchestration.WorkspaceSpec{}, "", nil
 }
 
 // triageAgent picks the Agent or pool this project triages with; see

@@ -83,7 +83,7 @@ func newSessionRefreshProvider(t *testing.T, accessTTL, refreshTTL time.Duration
 // credential.
 // refreshUserID is the id of the principal the refresh fixtures name. A user id
 // is a qrdb Snowflake in decimal, so it can only be a number.
-const refreshUserID = "71"
+const refreshUserID = 71
 
 func loginSession() SessionRefreshOptions {
 	return SessionRefreshOptions{

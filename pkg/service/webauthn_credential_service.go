@@ -36,16 +36,16 @@ type WebAuthnCredentialService interface {
 	// ListCredentials returns the authenticators registered to the user. A
 	// user who has never registered a passkey has none, which is an empty
 	// slice rather than an error.
-	ListCredentials(ctx context.Context, tenantID, userID string) ([]iam.WebAuthnCredentialSummary, error)
+	ListCredentials(ctx context.Context, tenantID string, userID uint64) ([]iam.WebAuthnCredentialSummary, error)
 
 	// DeleteCredential removes one of the user's authenticators by its
 	// base64url credential id. The credential is verified to belong to that
 	// user before anything is deleted.
-	DeleteCredential(ctx context.Context, tenantID, userID, credentialID string) error
+	DeleteCredential(ctx context.Context, tenantID string, userID uint64, credentialID string) error
 
 	// DeleteCredentials removes every authenticator registered to the user
 	// and reports how many were removed.
-	DeleteCredentials(ctx context.Context, tenantID, userID string) (int, error)
+	DeleteCredentials(ctx context.Context, tenantID string, userID uint64) (int, error)
 }
 
 // WebAuthn credential service typed errors.
@@ -142,7 +142,7 @@ func (s staticWebAuthnManager) GetWebAuthnManager(context.Context) (WebAuthnMana
 }
 
 // ListCredentials implements WebAuthnCredentialService.
-func (s *webAuthnCredentialService) ListCredentials(ctx context.Context, tenantID, userID string) ([]iam.WebAuthnCredentialSummary, error) {
+func (s *webAuthnCredentialService) ListCredentials(ctx context.Context, tenantID string, userID uint64) ([]iam.WebAuthnCredentialSummary, error) {
 	mgr, email, err := s.resolve(ctx, tenantID, userID)
 	if err != nil {
 		return nil, err
@@ -151,7 +151,7 @@ func (s *webAuthnCredentialService) ListCredentials(ctx context.Context, tenantI
 }
 
 // DeleteCredential implements WebAuthnCredentialService.
-func (s *webAuthnCredentialService) DeleteCredential(ctx context.Context, tenantID, userID, credentialID string) error {
+func (s *webAuthnCredentialService) DeleteCredential(ctx context.Context, tenantID string, userID uint64, credentialID string) error {
 	mgr, email, err := s.resolve(ctx, tenantID, userID)
 	if err != nil {
 		return err
@@ -160,7 +160,7 @@ func (s *webAuthnCredentialService) DeleteCredential(ctx context.Context, tenant
 }
 
 // DeleteCredentials implements WebAuthnCredentialService.
-func (s *webAuthnCredentialService) DeleteCredentials(ctx context.Context, tenantID, userID string) (int, error) {
+func (s *webAuthnCredentialService) DeleteCredentials(ctx context.Context, tenantID string, userID uint64) (int, error) {
 	mgr, email, err := s.resolve(ctx, tenantID, userID)
 	if err != nil {
 		return 0, err
@@ -174,11 +174,11 @@ func (s *webAuthnCredentialService) DeleteCredentials(ctx context.Context, tenan
 // The user lookup is tenant-scoped and happens before any credential access, so
 // a caller can only reach the credentials of a user that exists in the tenant
 // it named — the same subject the transport's authorization gate ran against.
-func (s *webAuthnCredentialService) resolve(ctx context.Context, tenantID, userID string) (*iam.XKMSWebAuthnManager, string, error) {
+func (s *webAuthnCredentialService) resolve(ctx context.Context, tenantID string, userID uint64) (*iam.XKMSWebAuthnManager, string, error) {
 	if tenantID == "" {
 		return nil, "", ErrWebAuthnCredentialTenantRequired
 	}
-	if userID == "" {
+	if userID == 0 {
 		return nil, "", ErrWebAuthnCredentialUserRequired
 	}
 	if s.identity == nil || s.manager == nil {

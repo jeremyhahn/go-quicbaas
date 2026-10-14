@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -184,9 +185,11 @@ func (m *InheritanceManager) GetEffectiveRolePermissions(ctx context.Context, te
 // GetEffectiveUserPermissions computes all permissions for a user: the
 // permissions of the roles assigned to the user directly, plus those each role
 // inherits through the role hierarchy.
-func (m *InheritanceManager) GetEffectiveUserPermissions(ctx context.Context, tenantID, userID string) (*EffectivePermissions, error) {
+func (m *InheritanceManager) GetEffectiveUserPermissions(ctx context.Context, tenantID string, userID uint64) (*EffectivePermissions, error) {
+	subjectID := strconv.FormatUint(userID, 10)
+
 	// Check cache first
-	cached, err := m.hierarchyStorage.GetCachedEffectivePermissions(ctx, tenantID, userID)
+	cached, err := m.hierarchyStorage.GetCachedEffectivePermissions(ctx, tenantID, subjectID)
 	if err == nil {
 		return cached, nil
 	}
@@ -195,7 +198,7 @@ func (m *InheritanceManager) GetEffectiveUserPermissions(ctx context.Context, te
 	user, err := m.userStorage.GetUser(ctx, tenantID, userID)
 	if err != nil {
 		return nil, NewIAMError(ErrUserNotFound, "iam.inheritance.user.effective_permissions",
-			fmt.Sprintf("user not found: %s", userID), err)
+			"user not found: "+subjectID, err)
 	}
 
 	inheritedPerms := make(map[string][]string)
@@ -227,7 +230,7 @@ func (m *InheritanceManager) GetEffectiveUserPermissions(ctx context.Context, te
 	}
 
 	effective := &EffectivePermissions{
-		SubjectID:            userID,
+		SubjectID:            subjectID,
 		TenantID:             tenantID,
 		DirectPermissions:    []string{}, // Users don't have direct permissions, only through roles
 		InheritedPermissions: inheritedPerms,

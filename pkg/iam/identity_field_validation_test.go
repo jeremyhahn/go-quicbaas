@@ -49,7 +49,7 @@ func TestFieldValidators_ReturnCodedFieldErrors(t *testing.T) {
 		{"malformed username", "username", func() error { return validateUsername("a b") }},
 		{"email-shaped display name", "name", func() error { return validateDisplayName("bob@example.com") }},
 		{"empty tenant ID", "tenant_id", func() error { return validateTenantID("") }},
-		{"empty user ID", "user_id", func() error { return validateUserID("") }},
+		{"zero user ID", "user_id", func() error { return validateUserID(0) }},
 		{"empty role ID", "role_id", func() error { return validateRoleID("") }},
 		{"empty role name", "name", func() error { return validateRoleName("") }},
 	}
@@ -69,7 +69,7 @@ func TestFieldValidators_AcceptValidInput(t *testing.T) {
 		{"username", func() error { return validateUsername("bob_smith") }},
 		{"display name", func() error { return validateDisplayName("Bob Smith") }},
 		{"tenant ID", func() error { return validateTenantID("acme") }},
-		{"user ID", func() error { return validateUserID("u-1") }},
+		{"user ID", func() error { return validateUserID(1) }},
 		{"role ID", func() error { return validateRoleID("r-1") }},
 		{"role name", func() error { return validateRoleName("auditor") }},
 	}
@@ -158,7 +158,7 @@ func TestIdentityStore_UpdateUserValidatesBeforeLookup(t *testing.T) {
 			mem := NewMemoryStorage()
 			store := NewIdentityStore(IdentityStoreOptions{UserStorage: mem, RoleStorage: mem})
 
-			_, err := store.UpdateUser(context.Background(), "acme", "no-such-user", tt.opts)
+			_, err := store.UpdateUser(context.Background(), "acme", 99998, tt.opts)
 			assertCodedFieldValidationError(t, err, tt.field)
 		})
 	}

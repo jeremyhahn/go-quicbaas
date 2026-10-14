@@ -190,7 +190,7 @@ func TestConvertProtoToUser(t *testing.T) {
 		{
 			name: "full_user",
 			input: &iampb.User{
-				Id:       "user-1",
+				Id:       "10001",
 				TenantId: "tenant-1",
 				Email:    "test@example.com",
 				Name:     "Test User",
@@ -204,7 +204,7 @@ func TestConvertProtoToUser(t *testing.T) {
 			},
 			validate: func(t *testing.T, result *iam.User) {
 				require.NotNil(t, result)
-				assert.Equal(t, "user-1", result.ID)
+				assert.Equal(t, uint64(10001), result.ID)
 				assert.Equal(t, "tenant-1", result.TenantID)
 				assert.Equal(t, "test@example.com", result.Email)
 				assert.Equal(t, "Test User", result.Name)
@@ -216,13 +216,13 @@ func TestConvertProtoToUser(t *testing.T) {
 		{
 			name: "user_without_optional_fields",
 			input: &iampb.User{
-				Id:       "user-2",
+				Id:       "10002",
 				TenantId: "tenant-1",
 				Email:    "minimal@example.com",
 			},
 			validate: func(t *testing.T, result *iam.User) {
 				require.NotNil(t, result)
-				assert.Equal(t, "user-2", result.ID)
+				assert.Equal(t, uint64(10002), result.ID)
 				assert.Nil(t, result.LastAuth)
 			},
 		},
@@ -230,7 +230,8 @@ func TestConvertProtoToUser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertProtoToUser(tt.input)
+			result, err := convertProtoToUser(tt.input)
+			require.NoError(t, err)
 			tt.validate(t, result)
 		})
 	}
@@ -255,7 +256,7 @@ func TestConvertUserToProto(t *testing.T) {
 		{
 			name: "full_user",
 			input: &iam.User{
-				ID:       "user-1",
+				ID:       10001,
 				TenantID: "tenant-1",
 				Email:    "test@example.com",
 				Name:     "Test User",
@@ -273,7 +274,7 @@ func TestConvertUserToProto(t *testing.T) {
 			},
 			validate: func(t *testing.T, result *iampb.User) {
 				require.NotNil(t, result)
-				assert.Equal(t, "user-1", result.Id)
+				assert.Equal(t, "10001", result.Id)
 				assert.Equal(t, "test@example.com", result.Email)
 				assert.Equal(t, "engineering", result.Attributes["department"])
 				// Nothing is skipped any more: attributes are string-valued on
@@ -286,7 +287,7 @@ func TestConvertUserToProto(t *testing.T) {
 		{
 			name: "user_without_optional_timestamps",
 			input: &iam.User{
-				ID:       "user-2",
+				ID:       10002,
 				TenantID: "tenant-1",
 				Email:    "minimal@example.com",
 				Created:  now,
@@ -884,13 +885,15 @@ func TestConvertTenantToProto_Full(t *testing.T) {
 // =============================================================================
 
 func TestConvertProtoToUser_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToUser(nil))
+	got, err := convertProtoToUser(nil)
+	require.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestConvertProtoToUser_Full(t *testing.T) {
 	now := time.Now()
 	pb := &iampb.User{
-		Id:         "user-1",
+		Id:         "10001",
 		TenantId:   "tenant-1",
 		Email:      "test@example.com",
 		Name:       "Test User",
@@ -901,8 +904,9 @@ func TestConvertProtoToUser_Full(t *testing.T) {
 		LastAuth:   timestamppb.New(now),
 	}
 
-	result := convertProtoToUser(pb)
-	assert.Equal(t, "user-1", result.ID)
+	result, err := convertProtoToUser(pb)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10001), result.ID)
 	assert.Equal(t, "test@example.com", result.Email)
 	assert.Equal(t, "value", result.Attributes["key"])
 	assert.NotNil(t, result.LastAuth)
@@ -915,7 +919,7 @@ func TestConvertUserToProto_Nil(t *testing.T) {
 func TestConvertUserToProto_Full(t *testing.T) {
 	now := time.Now()
 	user := &iam.User{
-		ID:         "user-1",
+		ID:         10001,
 		TenantID:   "tenant-1",
 		Email:      "test@example.com",
 		Name:       "Test User",
@@ -927,7 +931,7 @@ func TestConvertUserToProto_Full(t *testing.T) {
 	}
 
 	result := convertUserToProto(user)
-	assert.Equal(t, "user-1", result.Id)
+	assert.Equal(t, "10001", result.Id)
 	assert.Equal(t, "value", result.Attributes["key"])
 	assert.Equal(t, "42", result.Attributes["num"])
 	assert.NotNil(t, result.LastAuth)
@@ -1433,7 +1437,7 @@ func TestConvertConsentToProto_Full(t *testing.T) {
 	withdrawn := now.Add(time.Hour)
 	expires := now.Add(24 * time.Hour)
 	c := &iam.Consent{
-		ID: "consent-1", UserID: "u1", TenantID: "t1",
+		ID: "consent-1", UserID: 30001, TenantID: "t1",
 		Purpose: iam.ConsentPurposeMarketing, Status: iam.ConsentStatusGranted,
 		Version: "v1", IPAddress: "127.0.0.1", UserAgent: "test",
 		Metadata: map[string]string{"k": "v"},
@@ -1448,13 +1452,15 @@ func TestConvertConsentToProto_Full(t *testing.T) {
 }
 
 func TestConvertProtoToConsent_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToConsent(nil))
+	got, err := convertProtoToConsent(nil)
+	require.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestConvertProtoToConsent_Full(t *testing.T) {
 	now := time.Now()
 	pb := &iampb.Consent{
-		Id: "consent-1", UserId: "u1", TenantId: "t1",
+		Id: "consent-1", UserId: "30001", TenantId: "t1",
 		Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_MARKETING,
 		Status:  iampb.ConsentStatus_CONSENT_STATUS_GRANTED,
 		Version: "v1", IpAddress: "127.0.0.1", UserAgent: "test",
@@ -1463,7 +1469,8 @@ func TestConvertProtoToConsent_Full(t *testing.T) {
 		GrantedAt: timestamppb.New(now), WithdrawnAt: timestamppb.New(now),
 		ExpiresAt: timestamppb.New(now.Add(time.Hour)),
 	}
-	result := convertProtoToConsent(pb)
+	result, err := convertProtoToConsent(pb)
+	require.NoError(t, err)
 	assert.Equal(t, "consent-1", result.ID)
 	assert.NotNil(t, result.GrantedAt)
 	assert.NotNil(t, result.WithdrawnAt)
@@ -1556,7 +1563,7 @@ func TestConvertDataExportRequestToProto_Full(t *testing.T) {
 	completed := now.Add(time.Hour)
 	expires := now.Add(24 * time.Hour)
 	r := &iam.DataExportRequest{
-		ID: "exp-1", UserID: "u1", TenantID: "t1",
+		ID: "exp-1", UserID: 30001, TenantID: "t1",
 		RequestedBy: "admin", Format: iam.DataExportFormatJSON,
 		Status:            iam.DataExportStatusCompleted,
 		IncludeCategories: []string{"profile"}, ExcludeCategories: []string{"audit"},
@@ -1573,13 +1580,15 @@ func TestConvertDataExportRequestToProto_Full(t *testing.T) {
 }
 
 func TestConvertProtoToDataExportRequest_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToDataExportRequest(nil))
+	got, err := convertProtoToDataExportRequest(nil)
+	require.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestConvertProtoToDataExportRequest_Full(t *testing.T) {
 	now := time.Now()
 	pb := &iampb.DataExportRequest{
-		Id: "exp-1", UserId: "u1", TenantId: "t1",
+		Id: "exp-1", UserId: "30001", TenantId: "t1",
 		RequestedBy: "admin",
 		Format:      iampb.DataExportFormat_DATA_EXPORT_FORMAT_JSON,
 		Status:      iampb.DataExportStatus_DATA_EXPORT_STATUS_COMPLETED,
@@ -1587,7 +1596,8 @@ func TestConvertProtoToDataExportRequest_Full(t *testing.T) {
 		StartedAt:   timestamppb.New(now), CompletedAt: timestamppb.New(now),
 		ExpiresAt: timestamppb.New(now.Add(time.Hour)),
 	}
-	result := convertProtoToDataExportRequest(pb)
+	result, err := convertProtoToDataExportRequest(pb)
+	require.NoError(t, err)
 	assert.Equal(t, "exp-1", result.ID)
 	assert.NotNil(t, result.StartedAt)
 	assert.NotNil(t, result.CompletedAt)
@@ -1649,7 +1659,7 @@ func TestConvertDataDeletionRequestToProto_Full(t *testing.T) {
 	completed := now.Add(time.Hour)
 	cancelled := now.Add(30 * time.Minute)
 	r := &iam.DataDeletionRequest{
-		ID: "del-1", UserID: "u1", TenantID: "t1",
+		ID: "del-1", UserID: 30001, TenantID: "t1",
 		RequestedBy: "admin", Reason: "user request",
 		Status:           iam.DeletionStatusCompleted,
 		DeleteCategories: []string{"profile"}, PreserveCategories: []string{"audit"},
@@ -1674,13 +1684,15 @@ func TestConvertDataDeletionRequestToProto_Full(t *testing.T) {
 }
 
 func TestConvertProtoToDataDeletionRequest_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToDataDeletionRequest(nil))
+	got, err := convertProtoToDataDeletionRequest(nil)
+	require.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestConvertProtoToDataDeletionRequest_Full(t *testing.T) {
 	now := time.Now()
 	pb := &iampb.DataDeletionRequest{
-		Id: "del-1", UserId: "u1", TenantId: "t1",
+		Id: "del-1", UserId: "30001", TenantId: "t1",
 		RequestedBy: "admin", Reason: "test",
 		Status:             iampb.DeletionStatus_DELETION_STATUS_COMPLETED,
 		DeleteCategories:   []string{"profile"},
@@ -1695,7 +1707,8 @@ func TestConvertProtoToDataDeletionRequest_Full(t *testing.T) {
 			AdditionalData: map[string]int32{"custom": 5},
 		},
 	}
-	result := convertProtoToDataDeletionRequest(pb)
+	result, err := convertProtoToDataDeletionRequest(pb)
+	require.NoError(t, err)
 	assert.Equal(t, "del-1", result.ID)
 	assert.NotNil(t, result.GracePeriodEndsAt)
 	assert.NotNil(t, result.StartedAt)
@@ -1740,12 +1753,12 @@ func TestConvertUserDataExportToProto_Full(t *testing.T) {
 
 	export := &iam.UserDataExport{
 		ExportMetadata: iam.ExportMetadata{
-			ExportID: "exp-1", UserID: "u1", TenantID: "t1",
+			ExportID: "exp-1", UserID: 30001, TenantID: "t1",
 			ExportedAt: now, Format: iam.DataExportFormatJSON,
 			Categories: []string{"all"}, SchemaVersion: "1.0",
 		},
 		Profile: &iam.UserProfileExport{
-			ID: "u1", Email: "test@example.com", Name: "Test",
+			ID: 30001, Email: "test@example.com", Name: "Test",
 			Created: now, Updated: now, LastAuth: &lastAuth,
 			Attributes: map[string]string{"key": "val"},
 		},
@@ -2312,7 +2325,7 @@ func TestConvertConsentToProto(t *testing.T) {
 			name: "full_consent",
 			input: &iam.Consent{
 				ID:          "consent-1",
-				UserID:      "user-1",
+				UserID:      10001,
 				TenantID:    "tenant-1",
 				Purpose:     iam.ConsentPurposeMarketing,
 				Status:      iam.ConsentStatusGranted,
@@ -2329,7 +2342,7 @@ func TestConvertConsentToProto(t *testing.T) {
 			validate: func(t *testing.T, result *iampb.Consent) {
 				require.NotNil(t, result)
 				assert.Equal(t, "consent-1", result.Id)
-				assert.Equal(t, "user-1", result.UserId)
+				assert.Equal(t, "10001", result.UserId)
 				assert.Equal(t, "tenant-1", result.TenantId)
 				assert.Equal(t, iampb.ConsentPurpose_CONSENT_PURPOSE_MARKETING, result.Purpose)
 				assert.Equal(t, iampb.ConsentStatus_CONSENT_STATUS_GRANTED, result.Status)
@@ -2343,7 +2356,7 @@ func TestConvertConsentToProto(t *testing.T) {
 			name: "minimal_consent",
 			input: &iam.Consent{
 				ID:       "consent-2",
-				UserID:   "user-2",
+				UserID:   10002,
 				TenantID: "tenant-1",
 				Purpose:  iam.ConsentPurposeAnalytics,
 				Status:   iam.ConsentStatusPending,
@@ -2389,7 +2402,7 @@ func TestConvertProtoToConsent(t *testing.T) {
 			name: "full_consent",
 			input: &iampb.Consent{
 				Id:          "consent-1",
-				UserId:      "user-1",
+				UserId:      "10001",
 				TenantId:    "tenant-1",
 				Purpose:     iampb.ConsentPurpose_CONSENT_PURPOSE_MARKETING,
 				Status:      iampb.ConsentStatus_CONSENT_STATUS_GRANTED,
@@ -2406,7 +2419,7 @@ func TestConvertProtoToConsent(t *testing.T) {
 			validate: func(t *testing.T, result *iam.Consent) {
 				require.NotNil(t, result)
 				assert.Equal(t, "consent-1", result.ID)
-				assert.Equal(t, "user-1", result.UserID)
+				assert.Equal(t, uint64(10001), result.UserID)
 				assert.Equal(t, "tenant-1", result.TenantID)
 				assert.Equal(t, iam.ConsentPurposeMarketing, result.Purpose)
 				assert.Equal(t, iam.ConsentStatusGranted, result.Status)
@@ -2420,7 +2433,7 @@ func TestConvertProtoToConsent(t *testing.T) {
 			name: "minimal_consent",
 			input: &iampb.Consent{
 				Id:       "consent-2",
-				UserId:   "user-2",
+				UserId:   "10002",
 				TenantId: "tenant-1",
 				Purpose:  iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
 				Status:   iampb.ConsentStatus_CONSENT_STATUS_PENDING,
@@ -2436,7 +2449,8 @@ func TestConvertProtoToConsent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertProtoToConsent(tt.input)
+			result, err := convertProtoToConsent(tt.input)
+			require.NoError(t, err)
 			tt.validate(t, result)
 		})
 	}
@@ -3085,7 +3099,7 @@ func TestConvertDataExportRequestToProtoComplete(t *testing.T) {
 
 	req := &iam.DataExportRequest{
 		ID:                "export-1",
-		UserID:            "user-1",
+		UserID:            10001,
 		TenantID:          "tenant-1",
 		RequestedBy:       "admin",
 		Format:            iam.DataExportFormatJSON,
@@ -3106,7 +3120,7 @@ func TestConvertDataExportRequestToProtoComplete(t *testing.T) {
 
 	assert.NotNil(t, result)
 	assert.Equal(t, "export-1", result.Id)
-	assert.Equal(t, "user-1", result.UserId)
+	assert.Equal(t, "10001", result.UserId)
 	assert.Equal(t, "tenant-1", result.TenantId)
 	assert.Equal(t, iampb.DataExportFormat_DATA_EXPORT_FORMAT_JSON, result.Format)
 	assert.Equal(t, iampb.DataExportStatus_DATA_EXPORT_STATUS_COMPLETED, result.Status)
@@ -3116,7 +3130,8 @@ func TestConvertDataExportRequestToProtoComplete(t *testing.T) {
 }
 
 func TestConvertProtoToDataExportRequestNilInput(t *testing.T) {
-	result := convertProtoToDataExportRequest(nil)
+	result, err := convertProtoToDataExportRequest(nil)
+	require.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -3125,7 +3140,7 @@ func TestConvertProtoToDataExportRequestComplete(t *testing.T) {
 
 	pb := &iampb.DataExportRequest{
 		Id:                "export-1",
-		UserId:            "user-1",
+		UserId:            "10001",
 		TenantId:          "tenant-1",
 		RequestedBy:       "admin",
 		Format:            iampb.DataExportFormat_DATA_EXPORT_FORMAT_CSV,
@@ -3142,7 +3157,8 @@ func TestConvertProtoToDataExportRequestComplete(t *testing.T) {
 		Metadata:          map[string]string{"key": "value"},
 	}
 
-	result := convertProtoToDataExportRequest(pb)
+	result, err := convertProtoToDataExportRequest(pb)
+	require.NoError(t, err)
 
 	assert.NotNil(t, result)
 	assert.Equal(t, "export-1", result.ID)
@@ -3170,7 +3186,7 @@ func TestConvertUserDataExportToProtoComplete(t *testing.T) {
 	export := &iam.UserDataExport{
 		ExportMetadata: iam.ExportMetadata{
 			ExportID:      "export-1",
-			UserID:        "user-1",
+			UserID:        10001,
 			TenantID:      "tenant-1",
 			ExportedAt:    now,
 			Format:        iam.DataExportFormatJSON,
@@ -3178,7 +3194,7 @@ func TestConvertUserDataExportToProtoComplete(t *testing.T) {
 			SchemaVersion: "1.0",
 		},
 		Profile: &iam.UserProfileExport{
-			ID:       "user-1",
+			ID:       10001,
 			Email:    "test@example.com",
 			Name:     "Test User",
 			Created:  now.Add(-30 * 24 * time.Hour),
@@ -3361,7 +3377,7 @@ func TestConvertDataDeletionRequestToProtoComplete(t *testing.T) {
 
 	req := &iam.DataDeletionRequest{
 		ID:                 "deletion-1",
-		UserID:             "user-1",
+		UserID:             10001,
 		TenantID:           "tenant-1",
 		RequestedBy:        "user-1",
 		Status:             iam.DeletionStatusPending,
@@ -3391,7 +3407,8 @@ func TestConvertDataDeletionRequestToProtoComplete(t *testing.T) {
 }
 
 func TestConvertProtoToDataDeletionRequestNilInput(t *testing.T) {
-	result := convertProtoToDataDeletionRequest(nil)
+	result, err := convertProtoToDataDeletionRequest(nil)
+	require.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -3400,7 +3417,7 @@ func TestConvertProtoToDataDeletionRequestComplete(t *testing.T) {
 
 	pb := &iampb.DataDeletionRequest{
 		Id:                 "deletion-1",
-		UserId:             "user-1",
+		UserId:             "10001",
 		TenantId:           "tenant-1",
 		RequestedBy:        "user-1",
 		Status:             iampb.DeletionStatus_DELETION_STATUS_COMPLETED,
@@ -3417,7 +3434,8 @@ func TestConvertProtoToDataDeletionRequestComplete(t *testing.T) {
 		Metadata:           map[string]string{"approved_by": "admin"},
 	}
 
-	result := convertProtoToDataDeletionRequest(pb)
+	result, err := convertProtoToDataDeletionRequest(pb)
+	require.NoError(t, err)
 
 	assert.NotNil(t, result)
 	assert.Equal(t, "deletion-1", result.ID)

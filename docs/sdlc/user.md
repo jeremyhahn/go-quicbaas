@@ -100,7 +100,10 @@ steps are done in on a live node.
    pipeline could not deliver, and a binding naming a strategy or forge this
    build does not carry — each refusal names what is available. Only `gitea`
    has an adapter today (GitHub #617, GitLab #618). It registers no workflow;
-   the one thing it sets on the project is `autonomous: true`.
+   the one thing it sets on the project is `autonomous: true`. To stage a
+   project before it takes work, bind with `--paused`, which leaves autonomy
+   as it is, then turn it on with `quicbaas project update <project-id>
+   --autonomous` when ready.
 
    **Bind also onboards the repository.** It provisions, on the forge, the
    webhook that delivers to this node and the labels the binding declares —

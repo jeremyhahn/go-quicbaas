@@ -695,7 +695,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			name: "successful_create",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "user-1",
+				UserID:     10001,
 				TenantID:   "tenant-1",
 				ProviderID: "google",
 				ExternalID: "ext-123",
@@ -706,7 +706,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			name: "duplicate_id_returns_error",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "user-2",
+				UserID:     10002,
 				TenantID:   "tenant-1",
 				ProviderID: "azure",
 				ExternalID: "ext-456",
@@ -714,7 +714,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				existing := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -728,7 +728,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			name: "duplicate_external_id_returns_error",
 			link: &FederatedIdentity{
 				ID:         "link-2",
-				UserID:     "user-2",
+				UserID:     10002,
 				TenantID:   "tenant-1",
 				ProviderID: "google",
 				ExternalID: "ext-123",
@@ -736,7 +736,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				existing := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -749,7 +749,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 		{
 			name: "missing_id_validation_fails",
 			link: &FederatedIdentity{
-				UserID:     "user-1",
+				UserID:     10001,
 				TenantID:   "tenant-1",
 				ProviderID: "google",
 				ExternalID: "ext-123",
@@ -772,7 +772,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			name: "missing_tenant_id_validation_fails",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "user-1",
+				UserID:     10001,
 				ProviderID: "google",
 				ExternalID: "ext-123",
 			},
@@ -783,7 +783,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			name: "missing_provider_id_validation_fails",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "user-1",
+				UserID:     10001,
 				TenantID:   "tenant-1",
 				ExternalID: "ext-123",
 			},
@@ -794,7 +794,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			name: "missing_external_id_validation_fails",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "user-1",
+				UserID:     10001,
 				TenantID:   "tenant-1",
 				ProviderID: "google",
 			},
@@ -805,7 +805,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			name: "same_external_id_different_provider_succeeds",
 			link: &FederatedIdentity{
 				ID:         "link-2",
-				UserID:     "user-1",
+				UserID:     10001,
 				TenantID:   "tenant-1",
 				ProviderID: "azure",
 				ExternalID: "ext-123",
@@ -813,7 +813,7 @@ func TestMemoryFederationStorage_CreateLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				existing := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -877,7 +877,7 @@ func TestMemoryFederationStorage_GetLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				link := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -939,7 +939,7 @@ func TestMemoryFederationStorage_GetLinkByExternal(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				link := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -962,7 +962,7 @@ func TestMemoryFederationStorage_GetLinkByExternal(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				link := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -1006,9 +1006,9 @@ func TestMemoryFederationStorage_GetLinkByExternal(t *testing.T) {
 func TestMemoryFederationStorage_GetLinksByUser(t *testing.T) {
 	setup := func(s *MemoryFederationStorage) {
 		links := []*FederatedIdentity{
-			{ID: "link-1", UserID: "user-1", TenantID: "tenant-1", ProviderID: "google", ExternalID: "g-123"},
-			{ID: "link-2", UserID: "user-1", TenantID: "tenant-1", ProviderID: "azure", ExternalID: "a-123"},
-			{ID: "link-3", UserID: "user-2", TenantID: "tenant-1", ProviderID: "google", ExternalID: "g-456"},
+			{ID: "link-1", UserID: 10001, TenantID: "tenant-1", ProviderID: "google", ExternalID: "g-123"},
+			{ID: "link-2", UserID: 10001, TenantID: "tenant-1", ProviderID: "azure", ExternalID: "a-123"},
+			{ID: "link-3", UserID: 10002, TenantID: "tenant-1", ProviderID: "google", ExternalID: "g-456"},
 		}
 		for _, l := range links {
 			_ = s.CreateLink(context.Background(), l)
@@ -1017,22 +1017,22 @@ func TestMemoryFederationStorage_GetLinksByUser(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		userID    string
+		userID    uint64
 		wantCount int
 	}{
 		{
 			name:      "user_with_multiple_links",
-			userID:    "user-1",
+			userID:    10001,
 			wantCount: 2,
 		},
 		{
 			name:      "user_with_single_link",
-			userID:    "user-2",
+			userID:    10002,
 			wantCount: 1,
 		},
 		{
 			name:      "user_with_no_links",
-			userID:    "user-nonexistent",
+			userID:    99999,
 			wantCount: 0,
 		},
 	}
@@ -1066,7 +1066,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			name: "successful_update",
 			link: &FederatedIdentity{
 				ID:            "link-1",
-				UserID:        "user-1",
+				UserID:        10001,
 				TenantID:      "tenant-1",
 				ProviderID:    "google",
 				ExternalID:    "ext-123",
@@ -1075,7 +1075,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				existing := &FederatedIdentity{
 					ID:            "link-1",
-					UserID:        "user-1",
+					UserID:        10001,
 					TenantID:      "tenant-1",
 					ProviderID:    "google",
 					ExternalID:    "ext-123",
@@ -1089,7 +1089,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			name: "non_existent_link_returns_error",
 			link: &FederatedIdentity{
 				ID:         "non-existent",
-				UserID:     "user-1",
+				UserID:     10001,
 				TenantID:   "tenant-1",
 				ProviderID: "google",
 				ExternalID: "ext-123",
@@ -1101,7 +1101,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			name: "external_id_conflict_returns_error",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "user-1",
+				UserID:     10001,
 				TenantID:   "tenant-1",
 				ProviderID: "google",
 				ExternalID: "ext-456",
@@ -1109,7 +1109,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				link1 := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -1117,7 +1117,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 				_ = s.CreateLink(context.Background(), link1)
 				link2 := &FederatedIdentity{
 					ID:         "link-2",
-					UserID:     "user-2",
+					UserID:     10002,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-456",
@@ -1131,7 +1131,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			name: "validation_error",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "",
+				UserID:     0,
 				TenantID:   "tenant-1",
 				ProviderID: "google",
 				ExternalID: "ext-123",
@@ -1139,7 +1139,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				existing := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -1153,7 +1153,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			name: "update_user_id",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "user-2",
+				UserID:     10002,
 				TenantID:   "tenant-1",
 				ProviderID: "google",
 				ExternalID: "ext-123",
@@ -1161,7 +1161,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				existing := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -1174,7 +1174,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			name: "update_external_id_and_provider",
 			link: &FederatedIdentity{
 				ID:         "link-1",
-				UserID:     "user-1",
+				UserID:     10001,
 				TenantID:   "tenant-1",
 				ProviderID: "azure",
 				ExternalID: "azure-ext-123",
@@ -1182,7 +1182,7 @@ func TestMemoryFederationStorage_UpdateLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				existing := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -1243,7 +1243,7 @@ func TestMemoryFederationStorage_DeleteLink(t *testing.T) {
 			setup: func(s *MemoryFederationStorage) {
 				link := &FederatedIdentity{
 					ID:         "link-1",
-					UserID:     "user-1",
+					UserID:     10001,
 					TenantID:   "tenant-1",
 					ProviderID: "google",
 					ExternalID: "ext-123",
@@ -1295,9 +1295,9 @@ func TestMemoryFederationStorage_DeleteLink(t *testing.T) {
 func TestMemoryFederationStorage_DeleteUserLinks(t *testing.T) {
 	setup := func(s *MemoryFederationStorage) {
 		links := []*FederatedIdentity{
-			{ID: "link-1", UserID: "user-1", TenantID: "tenant-1", ProviderID: "google", ExternalID: "g-123"},
-			{ID: "link-2", UserID: "user-1", TenantID: "tenant-1", ProviderID: "azure", ExternalID: "a-123"},
-			{ID: "link-3", UserID: "user-2", TenantID: "tenant-1", ProviderID: "google", ExternalID: "g-456"},
+			{ID: "link-1", UserID: 10001, TenantID: "tenant-1", ProviderID: "google", ExternalID: "g-123"},
+			{ID: "link-2", UserID: 10001, TenantID: "tenant-1", ProviderID: "azure", ExternalID: "a-123"},
+			{ID: "link-3", UserID: 10002, TenantID: "tenant-1", ProviderID: "google", ExternalID: "g-456"},
 		}
 		for _, l := range links {
 			_ = s.CreateLink(context.Background(), l)
@@ -1306,20 +1306,20 @@ func TestMemoryFederationStorage_DeleteUserLinks(t *testing.T) {
 
 	tests := []struct {
 		name              string
-		userID            string
-		wantRemainingUser string
+		userID            uint64
+		wantRemainingUser uint64
 		wantRemaining     int
 	}{
 		{
 			name:              "delete_all_user_links",
-			userID:            "user-1",
-			wantRemainingUser: "user-2",
+			userID:            10001,
+			wantRemainingUser: 10002,
 			wantRemaining:     1,
 		},
 		{
 			name:              "delete_nonexistent_user_links",
-			userID:            "user-nonexistent",
-			wantRemainingUser: "user-1",
+			userID:            99999,
+			wantRemainingUser: 10001,
 			wantRemaining:     2,
 		},
 	}
@@ -1741,7 +1741,7 @@ func TestMemoryFederationStorage_ConcurrentAccess(t *testing.T) {
 	// Create initial link
 	link := &FederatedIdentity{
 		ID:         "link-1",
-		UserID:     "user-1",
+		UserID:     10001,
 		TenantID:   "tenant-1",
 		ProviderID: "google",
 		ExternalID: "ext-123",
@@ -1760,7 +1760,7 @@ func TestMemoryFederationStorage_ConcurrentAccess(t *testing.T) {
 			for j := 0; j < iterations; j++ {
 				_, _ = storage.GetLink(ctx, "link-1")
 				_, _ = storage.GetLinkByExternal(ctx, "google", "ext-123")
-				_, _ = storage.GetLinksByUser(ctx, "user-1")
+				_, _ = storage.GetLinksByUser(ctx, 10001)
 			}
 			done <- true
 		}()
@@ -1922,7 +1922,7 @@ func TestMemoryFederationStorage_TimestampHandling(t *testing.T) {
 	t.Run("auto_set_created_timestamp", func(t *testing.T) {
 		link := &FederatedIdentity{
 			ID:         "link-time-1",
-			UserID:     "user-1",
+			UserID:     10001,
 			TenantID:   "tenant-1",
 			ProviderID: "google",
 			ExternalID: "ext-time-1",
@@ -1950,7 +1950,7 @@ func TestMemoryFederationStorage_TimestampHandling(t *testing.T) {
 		presetTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		link := &FederatedIdentity{
 			ID:         "link-time-2",
-			UserID:     "user-1",
+			UserID:     10001,
 			TenantID:   "tenant-1",
 			ProviderID: "google",
 			ExternalID: "ext-time-2",
@@ -2024,7 +2024,7 @@ func TestMemoryFederationStorage_DataIsolation(t *testing.T) {
 
 	original := &FederatedIdentity{
 		ID:            "link-iso-1",
-		UserID:        "user-1",
+		UserID:        10001,
 		TenantID:      "tenant-1",
 		ProviderID:    "google",
 		ExternalID:    "ext-iso-1",

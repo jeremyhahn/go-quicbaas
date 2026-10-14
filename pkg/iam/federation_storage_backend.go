@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -45,9 +46,11 @@ func linkRecKey(id string) string           { return keyPrefixLinkRec + id }
 func linkExternalIdxKey(providerID, externalID string) string {
 	return keyPrefixLinkExternalIdx + providerID + "/" + externalID
 }
-func linkUserIdxKey(userID, id string) string { return keyPrefixLinkUserIdx + userID + "/" + id }
-func linkUserIdxPrefix(userID string) string  { return keyPrefixLinkUserIdx + userID + "/" }
-func fedStateKey(token string) string         { return keyPrefixFedState + token }
+func linkUserIdxKey(userID uint64, id string) string { return linkUserIdxPrefix(userID) + id }
+func linkUserIdxPrefix(userID uint64) string {
+	return keyPrefixLinkUserIdx + strconv.FormatUint(userID, 10) + "/"
+}
+func fedStateKey(token string) string { return keyPrefixFedState + token }
 
 // -----------------------------------------------------------------------------
 // BackendProviderStorage — ProviderStorage over a routing KVStore.
@@ -293,7 +296,7 @@ func (s *BackendFederationStorage) GetLinkByExternal(ctx context.Context, provid
 
 // GetLinksByUser routes by the request's context tenant and returns every link
 // in the user index.
-func (s *BackendFederationStorage) GetLinksByUser(ctx context.Context, userID string) ([]*FederatedIdentity, error) {
+func (s *BackendFederationStorage) GetLinksByUser(ctx context.Context, userID uint64) ([]*FederatedIdentity, error) {
 	var ids []string
 	if err := s.kv.Scan(ctx, linkUserIdxPrefix(userID), func(_ string, value []byte) error {
 		ids = append(ids, string(value))
@@ -373,7 +376,7 @@ func (s *BackendFederationStorage) DeleteLink(ctx context.Context, linkID string
 
 // DeleteUserLinks routes by the request's context tenant and removes every link
 // in the user index.
-func (s *BackendFederationStorage) DeleteUserLinks(ctx context.Context, userID string) error {
+func (s *BackendFederationStorage) DeleteUserLinks(ctx context.Context, userID uint64) error {
 	links, err := s.GetLinksByUser(ctx, userID)
 	if err != nil {
 		return err

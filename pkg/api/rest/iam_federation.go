@@ -678,7 +678,7 @@ func (h *IAMHandler) HandleFederatedCallback(w http.ResponseWriter, r *http.Requ
 		iam.AuditCategoryAuthentication,
 		"federated_login",
 		iam.AuditOutcomeSuccess,
-		&iam.AuditResource{Type: "user", ID: result.User.ID, Name: result.User.Email},
+		&iam.AuditResource{Type: "user", ID: strconv.FormatUint(result.User.ID, 10), Name: result.User.Email},
 		map[string]interface{}{
 			"provider":    providerName,
 			"is_new_user": result.Provisioned,
@@ -709,10 +709,8 @@ func (h *IAMHandler) LinkAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -764,7 +762,7 @@ func (h *IAMHandler) LinkAccount(w http.ResponseWriter, r *http.Request) {
 		iam.AuditCategoryAdministration,
 		"link_account",
 		iam.AuditOutcomeSuccess,
-		&iam.AuditResource{Type: "user", ID: userID},
+		&iam.AuditResource{Type: "user", ID: strconv.FormatUint(userID, 10)},
 		map[string]interface{}{
 			"provider_id": req.ProviderID,
 			"external_id": req.ExternalID,
@@ -773,7 +771,7 @@ func (h *IAMHandler) LinkAccount(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	link := &AccountLink{
-		UserID:     userID,
+		UserID:     strconv.FormatUint(userID, 10),
 		ProviderID: req.ProviderID,
 		ExternalID: req.ExternalID,
 		CreatedAt:  time.Now(),
@@ -794,10 +792,8 @@ func (h *IAMHandler) UnlinkAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -827,7 +823,7 @@ func (h *IAMHandler) UnlinkAccount(w http.ResponseWriter, r *http.Request) {
 		iam.AuditCategoryAdministration,
 		"unlink_account",
 		iam.AuditOutcomeSuccess,
-		&iam.AuditResource{Type: "user", ID: userID},
+		&iam.AuditResource{Type: "user", ID: strconv.FormatUint(userID, 10)},
 		map[string]interface{}{"provider_id": providerID},
 	)
 
@@ -845,10 +841,8 @@ func (h *IAMHandler) GetUserLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 

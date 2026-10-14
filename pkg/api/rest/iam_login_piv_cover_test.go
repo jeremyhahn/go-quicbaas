@@ -107,7 +107,7 @@ func setupPIVFullHandler(t *testing.T, leaf *x509.Certificate, tenant string, re
 	if registerUser {
 		thumb := sha256.Sum256(leaf.Raw)
 		pivUser := &iam.User{
-			ID:       "78",
+			ID:       78,
 			TenantID: tenant,
 			// A decoy PIV binding precedes the matching one so the lookup
 			// exercises multi-binding resolution (C1-D): the user is bound to
@@ -260,7 +260,7 @@ func setupPIVFullHandlerSPKI(t *testing.T, leaf *x509.Certificate, tenant string
 	})
 
 	pivUser := &iam.User{
-		ID:       "78",
+		ID:       78,
 		TenantID: tenant,
 		CertBindings: []qrdbsdk.CertBinding{
 			{Thumbprint: qrdbsdk.ComputeSPKIThumbprint(leaf), Kind: qrdbsdk.CertBindingPIVAttested},
@@ -422,7 +422,7 @@ func TestPIVLogin_OIDCProviderUnavailable(t *testing.T) {
 		Tenants:     &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
-	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}
+	pivUser := &iam.User{ID: 78, TenantID: "tenant-piv", Email: "piv@example.com"}
 	pivUser.SetPIVThumbprint(hex.EncodeToString(thumb[:]))
 	require.NoError(t, memStorage.CreateUser(context.Background(), pivUser))
 

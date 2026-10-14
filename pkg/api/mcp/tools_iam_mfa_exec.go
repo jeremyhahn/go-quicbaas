@@ -107,9 +107,12 @@ func (r *ToolRegistry) executeMFABeginEnroll(ctx context.Context, args map[strin
 		return nil, err
 	}
 
-	userID := getString(args, "user_id")
-	if userID == "" {
+	if getString(args, "user_id") == "" {
 		return nil, &MFAInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
 	}
 
 	tenantID := getString(args, "tenant_id")
@@ -192,9 +195,12 @@ func (r *ToolRegistry) executeMFAGetStatus(ctx context.Context, args map[string]
 		return nil, err
 	}
 
-	userID := getString(args, "user_id")
-	if userID == "" {
+	if getString(args, "user_id") == "" {
 		return nil, &MFAInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
 	}
 
 	tenantID := getString(args, "tenant_id")
@@ -217,9 +223,12 @@ func (r *ToolRegistry) executeMFADisable(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
-	userID := getString(args, "user_id")
-	if userID == "" {
+	if getString(args, "user_id") == "" {
 		return nil, &MFAInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
 	}
 
 	tenantID := getString(args, "tenant_id")
@@ -249,9 +258,12 @@ func (r *ToolRegistry) executeMFABeginChallenge(ctx context.Context, args map[st
 		return nil, err
 	}
 
-	userID := getString(args, "user_id")
-	if userID == "" {
+	if getString(args, "user_id") == "" {
 		return nil, &MFAInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
 	}
 
 	tenantID := getString(args, "tenant_id")
@@ -308,9 +320,12 @@ func (r *ToolRegistry) executeMFAGenerateBackupCodes(ctx context.Context, args m
 		return nil, err
 	}
 
-	userID := getString(args, "user_id")
-	if userID == "" {
+	if getString(args, "user_id") == "" {
 		return nil, &MFAInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
 	}
 
 	tenantID := getString(args, "tenant_id")
@@ -336,9 +351,12 @@ func (r *ToolRegistry) executeMFAVerifyBackupCode(ctx context.Context, args map[
 		return nil, err
 	}
 
-	userID := getString(args, "user_id")
-	if userID == "" {
+	if getString(args, "user_id") == "" {
 		return nil, &MFAInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
 	}
 
 	tenantID := getString(args, "tenant_id")
@@ -369,9 +387,12 @@ func (r *ToolRegistry) executeMFAGetBackupCodeStatus(ctx context.Context, args m
 		return nil, err
 	}
 
-	userID := getString(args, "user_id")
-	if userID == "" {
+	if getString(args, "user_id") == "" {
 		return nil, &MFAInvalidInputError{Field: "user_id", Message: "user_id is required"}
+	}
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
 	}
 
 	tenantID := getString(args, "tenant_id")

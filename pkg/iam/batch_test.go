@@ -495,7 +495,7 @@ func TestBatchError(t *testing.T) {
 func TestUserImport(t *testing.T) {
 	t.Run("user import fields", func(t *testing.T) {
 		user := &UserImport{
-			ID:       "u1",
+			ID:       30001,
 			Email:    "test@example.com",
 			Username: "testuser",
 			Name:     "Test User",
@@ -506,8 +506,8 @@ func TestUserImport(t *testing.T) {
 			Enabled: boolPtr(true),
 		}
 
-		if user.ID != "u1" {
-			t.Errorf("expected ID 'u1', got '%s'", user.ID)
+		if user.ID != 30001 {
+			t.Errorf("expected ID 30001, got %d", user.ID)
 		}
 		if user.Email != "test@example.com" {
 			t.Errorf("expected email 'test@example.com', got '%s'", user.Email)
@@ -580,7 +580,7 @@ func TestExportFilter(t *testing.T) {
 		yesterday := now.Add(-24 * time.Hour)
 
 		filter := ExportFilter{
-			UserIDs:       []string{"u1", "u2"},
+			UserIDs:       []uint64{30001, 30002},
 			RoleIDs:       []string{"r1", "r2", "r3"},
 			PolicyNames:   []string{"policy1"},
 			CreatedAfter:  &yesterday,
@@ -750,7 +750,7 @@ func TestBatchExportResultConvertToImportRequest(t *testing.T) {
 			TenantID: "source-tenant",
 			Users: []*User{
 				{
-					ID:       "u1",
+					ID:       30001,
 					Email:    "user1@example.com",
 					Name:     "User One",
 					TenantID: "source-tenant",
@@ -814,8 +814,8 @@ func TestBatchExportResultConvertToImportRequest(t *testing.T) {
 		}
 
 		// Verify user conversion
-		if importReq.Users[0].ID != "u1" {
-			t.Errorf("expected user ID 'u1', got '%s'", importReq.Users[0].ID)
+		if importReq.Users[0].ID != 30001 {
+			t.Errorf("expected user ID 30001, got %d", importReq.Users[0].ID)
 		}
 		if importReq.Users[0].Email != "user1@example.com" {
 			t.Errorf("expected email 'user1@example.com', got '%s'", importReq.Users[0].Email)
@@ -852,7 +852,7 @@ func TestBatchExportResultConvertToImportRequest(t *testing.T) {
 			TenantID: "source-tenant",
 			Users: []*User{
 				{
-					ID:        "u1",
+					ID:        30001,
 					Email:     "suspended@example.com",
 					Name:      "Suspended User",
 					TenantID:  "source-tenant",
@@ -871,7 +871,7 @@ func TestBatchExportResultConvertToImportRequest(t *testing.T) {
 			TenantID: "source-tenant",
 			Users: []*User{
 				{
-					ID:        "u1",
+					ID:        30001,
 					Email:     "locked@example.com",
 					Name:      "Locked User",
 					TenantID:  "source-tenant",
@@ -893,7 +893,7 @@ func TestUserMatchesFilter(t *testing.T) {
 	tomorrow := now.Add(24 * time.Hour)
 
 	user := &User{
-		ID:      "u1",
+		ID:      30001,
 		Email:   "test@example.com",
 		Name:    "Test User",
 		Created: now,
@@ -908,14 +908,14 @@ func TestUserMatchesFilter(t *testing.T) {
 	})
 
 	t.Run("matches with ID filter", func(t *testing.T) {
-		filter := ExportFilter{UserIDs: []string{"u1", "u2"}}
+		filter := ExportFilter{UserIDs: []uint64{30001, 30002}}
 		if !bm.userMatchesFilter(user, filter) {
 			t.Error("expected user to match ID filter")
 		}
 	})
 
 	t.Run("does not match wrong ID filter", func(t *testing.T) {
-		filter := ExportFilter{UserIDs: []string{"u2", "u3"}}
+		filter := ExportFilter{UserIDs: []uint64{30002, 30003}}
 		if bm.userMatchesFilter(user, filter) {
 			t.Error("expected user to not match ID filter")
 		}

@@ -31,7 +31,7 @@ func testProvider(tenantID, id, name string) *ExternalProvider {
 	}
 }
 
-func testLink(tenantID, userID, id, providerID, externalID string) *FederatedIdentity {
+func testLink(tenantID string, userID uint64, id, providerID, externalID string) *FederatedIdentity {
 	return &FederatedIdentity{
 		ID:         id,
 		UserID:     userID,
@@ -103,7 +103,7 @@ func TestBackendFederationStorage_LinkRouting(t *testing.T) {
 	store := NewBackendFederationStorage(kv)
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
-	link := testLink("acme", "u1", "l1", "p1", "ext-123")
+	link := testLink("acme", 30001, "l1", "p1", "ext-123")
 	if err := store.CreateLink(ctx, link); err != nil {
 		t.Fatalf("CreateLink: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBackendFederationStorage_LinkRouting(t *testing.T) {
 
 	// GetLink with empty context resolves via the encoded id.
 	got, err := store.GetLink(context.Background(), link.ID)
-	if err != nil || got.UserID != "u1" {
+	if err != nil || got.UserID != 30001 {
 		t.Fatalf("GetLink = %v, %v", got, err)
 	}
 
@@ -125,12 +125,12 @@ func TestBackendFederationStorage_LinkRouting(t *testing.T) {
 		t.Fatalf("GetLinkByExternal = %v, %v", byExt, err)
 	}
 
-	byUser, err := store.GetLinksByUser(ctx, "u1")
+	byUser, err := store.GetLinksByUser(ctx, 30001)
 	if err != nil || len(byUser) != 1 {
 		t.Fatalf("GetLinksByUser = %d, %v; want 1, nil", len(byUser), err)
 	}
 
-	if err := store.DeleteUserLinks(ctx, "u1"); err != nil {
+	if err := store.DeleteUserLinks(ctx, 30001); err != nil {
 		t.Fatalf("DeleteUserLinks: %v", err)
 	}
 	if _, err := store.GetLink(context.Background(), link.ID); !errors.Is(err, ErrLinkNotFound) {

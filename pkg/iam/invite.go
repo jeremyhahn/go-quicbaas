@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -26,8 +27,8 @@ import (
 // It carries no token: the plaintext exists only in the value returned by
 // Create, and only its digest is ever stored.
 type InviteRecord struct {
-	// UserID is the user this invite activates.
-	UserID string
+	// UserID is the qrdb Snowflake id of the user this invite activates.
+	UserID uint64
 
 	// TenantID is the tenant the user belongs to.
 	TenantID string
@@ -53,7 +54,7 @@ type InviteRecord struct {
 type InviteStore interface {
 	// Create issues an invitation and returns the plaintext token, which is
 	// returned exactly once and is not recoverable afterwards.
-	Create(ctx context.Context, tenantID, userID string, ttl time.Duration) (token string, record *InviteRecord, err error)
+	Create(ctx context.Context, tenantID string, userID uint64, ttl time.Duration) (token string, record *InviteRecord, err error)
 
 	// Lookup resolves a token within a tenant without consuming it.
 	Lookup(ctx context.Context, tenantID, token string) (*InviteRecord, error)
@@ -83,12 +84,19 @@ func NewQRDBInviteStore(store *qrdbsdk.TenantInviteStore) InviteStore {
 var _ InviteStore = (*qrdbInviteStore)(nil)
 
 // Create implements InviteStore.
-func (s *qrdbInviteStore) Create(ctx context.Context, tenantID, userID string, ttl time.Duration) (string, *InviteRecord, error) {
-	token, entity, err := s.store.Create(ctx, userID, tenantID, ttl)
+func (s *qrdbInviteStore) Create(ctx context.Context, tenantID string, userID uint64, ttl time.Duration) (string, *InviteRecord, error) {
+	if userID == 0 {
+		return "", nil, ErrInvalidUserID
+	}
+	token, entity, err := s.store.Create(ctx, strconv.FormatUint(userID, 10), tenantID, ttl)
 	if err != nil {
 		return "", nil, translateInviteError(err)
 	}
-	return token, projectInvite(entity), nil
+	record, err := projectInvite(entity)
+	if err != nil {
+		return "", nil, err
+	}
+	return token, record, nil
 }
 
 // Lookup implements InviteStore.
@@ -97,7 +105,7 @@ func (s *qrdbInviteStore) Lookup(ctx context.Context, tenantID, token string) (*
 	if err != nil {
 		return nil, translateInviteError(err)
 	}
-	return projectInvite(entity), nil
+	return projectInvite(entity)
 }
 
 // Redeem implements InviteStore.
@@ -106,20 +114,26 @@ func (s *qrdbInviteStore) Redeem(ctx context.Context, tenantID, token string) (*
 	if err != nil {
 		return nil, translateInviteError(err)
 	}
-	return projectInvite(entity), nil
+	return projectInvite(entity)
 }
 
 // projectInvite narrows a qrdb invitation to what this package's callers read.
-func projectInvite(entity *qrdbsdk.InviteEntity) *InviteRecord {
+func projectInvite(entity *qrdbsdk.InviteEntity) (*InviteRecord, error) {
 	if entity == nil {
-		return nil
+		return nil, nil
+	}
+	// qrdb's invite entity carries the user id as text; anything but the
+	// decimal rendering of a non-zero Snowflake never named a user.
+	userID, err := strconv.ParseUint(entity.UserID, 10, 64)
+	if err != nil || userID == 0 {
+		return nil, ErrInvalidUserID
 	}
 	return &InviteRecord{
-		UserID:    entity.UserID,
+		UserID:    userID,
 		TenantID:  entity.TenantID,
 		ExpiresAt: entity.ExpiresAt,
 		Used:      entity.Redeemed(),
-	}
+	}, nil
 }
 
 // translateInviteError maps qrdb's sentinel errors onto this package's

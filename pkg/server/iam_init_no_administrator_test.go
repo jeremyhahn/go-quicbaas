@@ -18,6 +18,7 @@ package server
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -322,7 +323,7 @@ func TestHasSystemAdministrator_ACountIsNotAnAdministrator(t *testing.T) {
 
 	adminID := seedActiveUser(t, c, "admin", bootstrapAdminEmail).ID
 
-	systemGrant := &iam.AdminAssignment{UserID: adminID, AdminRole: iam.AdminRoleSuperAdmin}
+	systemGrant := &iam.AdminAssignment{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleSuperAdmin}
 
 	cases := map[string]struct {
 		assignments []*iam.AdminAssignment
@@ -338,11 +339,11 @@ func TestHasSystemAdministrator_ACountIsNotAnAdministrator(t *testing.T) {
 			"an assignment that outlived its user confers nothing, but it is still ACTIVE and still counted by len()",
 		},
 		"tenant administrator, not a system one": {
-			[]*iam.AdminAssignment{{UserID: adminID, AdminRole: iam.AdminRoleSuperAdmin, TenantIDs: []string{"acme"}}}, false,
+			[]*iam.AdminAssignment{{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleSuperAdmin, TenantIDs: []string{"acme"}}}, false,
 			"a tenant-scoped grant cannot administer the platform, and first-boot creates the system grant with NO tenant scoping",
 		},
 		"lower-privilege role": {
-			[]*iam.AdminAssignment{{UserID: adminID, AdminRole: iam.AdminRoleTenantAdmin}}, false,
+			[]*iam.AdminAssignment{{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleTenantAdmin}}, false,
 			"a non-super-admin role is not the bootstrap administrator",
 		},
 		"a nil entry in the listing": {
@@ -387,7 +388,7 @@ func TestHasSystemAdministrator_ASuspendedAdminIsNotAnAdministrator(t *testing.T
 	require.NoError(t, err, "suspending the admin")
 
 	got, err := hasSystemAdministrator(ctx, c,
-		[]*iam.AdminAssignment{{UserID: adminID, AdminRole: iam.AdminRoleSuperAdmin}})
+		[]*iam.AdminAssignment{{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleSuperAdmin}})
 	require.NoError(t, err)
 	assert.False(t, got,
 		"a grant on an account that cannot authenticate was read as an administrator")
@@ -399,23 +400,58 @@ func TestHasSystemAdministrator_ASuspendedAdminIsNotAnAdministrator(t *testing.T
 // Reading it as absence would send an already-bootstrapped node back through
 // first-boot on a transient storage fault, and bootstrap would then fail on the
 // state it finds — a storage blip escalating into a refused boot.
+// errUserRead is unreadableUserStorage's read failure.
+var errUserRead = errors.New("user store cannot be read")
+
+// unreadableUserStorage is a user store whose reads fail.
+type unreadableUserStorage struct {
+	*iam.MemoryStorage
+}
+
+func (unreadableUserStorage) GetUser(context.Context, string, uint64) (*iam.User, error) {
+	return nil, errUserRead
+}
+
 func TestHasSystemAdministrator_AnUnreadableStoreFailsClosed(t *testing.T) {
 	c := buildTestIAMComponents(t)
+	// A store whose reads fail answers neither "found" nor "not found", which
+	// is exactly the "unreadable" class this must fail closed on.
+	c.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage: unreadableUserStorage{MemoryStorage: iam.NewMemoryStorage()},
+		RoleStorage: iam.NewMemoryStorage(),
+	})
 
-	// An empty user id is rejected by the identity store before it reaches
-	// storage: a validation error, not a not-found, which is exactly the
-	// "unreadable" class this must fail closed on.
 	got, err := hasSystemAdministrator(context.Background(), c,
-		[]*iam.AdminAssignment{{UserID: "", AdminRole: iam.AdminRoleSuperAdmin}})
+		[]*iam.AdminAssignment{{UserID: "40001", AdminRole: iam.AdminRoleSuperAdmin}})
 
 	assert.False(t, got, "no administrator may be reported when the check could not run")
 	require.Error(t, err, "an unresolved lookup must be surfaced, not swallowed as absence")
+	assert.ErrorIs(t, err, errUserRead, "the store's own failure must stay inspectable")
 	assert.ErrorIs(t, err, ErrFirstBootBootstrap,
 		"the failure must arrive as a first-boot bootstrap failure so the boot refuses")
 	var fb *FirstBootBootstrapError
 	require.True(t, errors.As(err, &fb))
 	assert.Equal(t, "verify bootstrap administrator", fb.Op,
 		"the operation must name the check that could not answer")
+}
+
+func TestHasSystemAdministrator_AnUnparseableAssignmentConfersNothing(t *testing.T) {
+	c := buildTestIAMComponents(t)
+
+	for name, userID := range map[string]string{
+		"empty":       "",
+		"non-numeric": "admin",
+		"overflowing": "18446744073709551616",
+		"zero":        "0",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := hasSystemAdministrator(context.Background(), c,
+				[]*iam.AdminAssignment{{UserID: userID, AdminRole: iam.AdminRoleSuperAdmin}})
+
+			require.NoError(t, err, "an assignment naming no user is an answer, not a failure")
+			assert.False(t, got, "an assignment naming no user makes nobody an administrator")
+		})
+	}
 }
 
 // TestHasSystemAdministrator_AnUnreadableGrantDoesNotHideARealOne keeps the
@@ -432,7 +468,7 @@ func TestHasSystemAdministrator_AnUnreadableGrantDoesNotHideARealOne(t *testing.
 
 	got, err := hasSystemAdministrator(context.Background(), c, []*iam.AdminAssignment{
 		{UserID: "", AdminRole: iam.AdminRoleSuperAdmin}, // unreadable
-		{UserID: adminID, AdminRole: iam.AdminRoleSuperAdmin},
+		{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleSuperAdmin},
 	})
 
 	require.NoError(t, err, "a confirmed administrator settles the question")
@@ -610,7 +646,7 @@ func TestGrantFirstBootSuperAdmin_RejectsAnEmptyUser(t *testing.T) {
 	srv := withTempServer(t)
 	c := buildTestIAMComponents(t)
 
-	err := srv.grantFirstBootSuperAdmin(context.Background(), c, "")
+	err := srv.grantFirstBootSuperAdmin(context.Background(), c, 0)
 	require.Error(t, err, "a grant naming no user must not be written")
 	assert.ErrorIs(t, err, ErrFirstBootBootstrap)
 	var fb *FirstBootBootstrapError

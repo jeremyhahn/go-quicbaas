@@ -57,7 +57,8 @@ func NewMemoryInviteStore() *MemoryInviteStore {
 // Create issues an invitation and returns the plaintext token exactly once.
 func (s *MemoryInviteStore) Create(
 	_ context.Context,
-	tenantID, userID string,
+	tenantID string,
+	userID uint64,
 	ttl time.Duration,
 ) (string, *iam.InviteRecord, error) {
 	buf := make([]byte, 32)

@@ -24,7 +24,7 @@ import (
 type recordingCredentials struct {
 	store       UserStorage
 	tenantID    string
-	userID      string
+	userID      uint64
 	seenAtSweep Lifecycle
 	err         error
 }
@@ -180,7 +180,7 @@ type markFailingStorage struct {
 	err error
 }
 
-func (m *markFailingStorage) MarkUserDeleting(context.Context, string, string) error { return m.err }
+func (m *markFailingStorage) MarkUserDeleting(context.Context, string, uint64) error { return m.err }
 
 // TestDeleteUser_FailsClosedWhenTheClaimCannotBeWritten.
 //
@@ -227,12 +227,12 @@ type rereadFailingStorage struct {
 	err     error
 }
 
-func (r *rereadFailingStorage) MarkUserDeleting(ctx context.Context, tenantID, userID string) error {
+func (r *rereadFailingStorage) MarkUserDeleting(ctx context.Context, tenantID string, userID uint64) error {
 	r.claimed = true
 	return r.UserStorage.MarkUserDeleting(ctx, tenantID, userID)
 }
 
-func (r *rereadFailingStorage) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+func (r *rereadFailingStorage) GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error) {
 	if r.claimed {
 		return nil, r.err
 	}

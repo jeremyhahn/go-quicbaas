@@ -1435,9 +1435,13 @@ func (r *ToolRegistry) executeIAMUserGet(ctx context.Context, args map[string]in
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	req := &service.IAMGetUserRequest{
 		TenantID: getString(args, "tenant_id"),
-		UserID:   getString(args, "user_id"),
+		UserID:   userID,
 	}
 
 	resp, err := iamSvc.GetUser(ctx, req)
@@ -1453,9 +1457,13 @@ func (r *ToolRegistry) executeIAMUserUpdate(ctx context.Context, args map[string
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	req := &service.IAMUpdateUserRequest{
 		TenantID: getString(args, "tenant_id"),
-		UserID:   getString(args, "user_id"),
+		UserID:   userID,
 	}
 
 	if email := getString(args, "email"); email != "" {
@@ -1511,9 +1519,13 @@ func (r *ToolRegistry) executeIAMUserDelete(ctx context.Context, args map[string
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	req := &service.IAMDeleteUserRequest{
 		TenantID: getString(args, "tenant_id"),
-		UserID:   getString(args, "user_id"),
+		UserID:   userID,
 	}
 
 	resp, err := iamSvc.DeleteUser(ctx, req)

@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"strconv"
 	"sync"
 	"time"
 
@@ -55,7 +56,7 @@ func (m *MemoryConsentStorage) CreateConsent(ctx context.Context, opts CreateCon
 	defer m.mu.Unlock()
 
 	// Validate required fields
-	if opts.UserID == "" {
+	if opts.UserID == 0 {
 		return nil, NewIAMError(ErrConsentInvalid, "iam.consent.create", "user_id is required", nil)
 	}
 	if opts.TenantID == "" {
@@ -69,7 +70,7 @@ func (m *MemoryConsentStorage) CreateConsent(ctx context.Context, opts CreateCon
 	}
 
 	// Check if consent already exists for this user/tenant/purpose combination
-	purposeKey := makeKey(opts.TenantID, opts.UserID, string(opts.Purpose))
+	purposeKey := makeKey(opts.TenantID, strconv.FormatUint(opts.UserID, 10), string(opts.Purpose))
 	if existingID, exists := m.consentsByPurpose[purposeKey]; exists {
 		return nil, NewIAMError(
 			&dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.consent.create"},
@@ -127,7 +128,7 @@ func (m *MemoryConsentStorage) CreateConsent(ctx context.Context, opts CreateCon
 	m.consentsByPurpose[purposeKey] = id
 
 	// Add to user's consent list
-	userKey := makeKey(opts.TenantID, opts.UserID)
+	userKey := makeKey(opts.TenantID, strconv.FormatUint(opts.UserID, 10))
 	m.consentsByUser[userKey] = append(m.consentsByUser[userKey], id)
 
 	// Return a copy
@@ -135,11 +136,11 @@ func (m *MemoryConsentStorage) CreateConsent(ctx context.Context, opts CreateCon
 }
 
 // GetConsent retrieves a consent by user, tenant, and purpose.
-func (m *MemoryConsentStorage) GetConsent(ctx context.Context, tenantID, userID string, purpose ConsentPurpose) (*Consent, error) {
+func (m *MemoryConsentStorage) GetConsent(ctx context.Context, tenantID string, userID uint64, purpose ConsentPurpose) (*Consent, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	purposeKey := makeKey(tenantID, userID, string(purpose))
+	purposeKey := makeKey(tenantID, strconv.FormatUint(userID, 10), string(purpose))
 	consentID, exists := m.consentsByPurpose[purposeKey]
 	if !exists {
 		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.consent.get"}
@@ -213,11 +214,11 @@ func (m *MemoryConsentStorage) DeleteConsent(ctx context.Context, id string) err
 	}
 
 	// Remove from purpose index
-	purposeKey := makeKey(consent.TenantID, consent.UserID, string(consent.Purpose))
+	purposeKey := makeKey(consent.TenantID, strconv.FormatUint(consent.UserID, 10), string(consent.Purpose))
 	delete(m.consentsByPurpose, purposeKey)
 
 	// Remove from user's consent list
-	userKey := makeKey(consent.TenantID, consent.UserID)
+	userKey := makeKey(consent.TenantID, strconv.FormatUint(consent.UserID, 10))
 	if consentIDs, exists := m.consentsByUser[userKey]; exists {
 		filtered := make([]string, 0, len(consentIDs))
 		for _, cid := range consentIDs {
@@ -267,11 +268,11 @@ func (m *MemoryConsentStorage) ListConsents(ctx context.Context, opts ListConsen
 }
 
 // GetUserConsents retrieves all consents for a user.
-func (m *MemoryConsentStorage) GetUserConsents(ctx context.Context, tenantID, userID string) ([]*Consent, error) {
+func (m *MemoryConsentStorage) GetUserConsents(ctx context.Context, tenantID string, userID uint64) ([]*Consent, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	userKey := makeKey(tenantID, userID)
+	userKey := makeKey(tenantID, strconv.FormatUint(userID, 10))
 	consentIDs, exists := m.consentsByUser[userKey]
 	if !exists || len(consentIDs) == 0 {
 		return []*Consent{}, nil
@@ -289,7 +290,7 @@ func (m *MemoryConsentStorage) GetUserConsents(ctx context.Context, tenantID, us
 
 // matchesConsentFilter checks if a consent matches the filter criteria.
 func (m *MemoryConsentStorage) matchesConsentFilter(consent *Consent, opts ListConsentsOptions) bool {
-	if opts.UserID != "" && consent.UserID != opts.UserID {
+	if opts.UserID != 0 && consent.UserID != opts.UserID {
 		return false
 	}
 	if opts.TenantID != "" && consent.TenantID != opts.TenantID {
@@ -331,7 +332,7 @@ func (m *MemoryDataExportStorage) CreateExportRequest(ctx context.Context, opts 
 	defer m.mu.Unlock()
 
 	// Validate required fields
-	if opts.UserID == "" {
+	if opts.UserID == 0 {
 		return nil, NewIAMError(ErrDataExportInvalid, "iam.export.create", "user_id is required", nil)
 	}
 	if opts.TenantID == "" {
@@ -376,7 +377,7 @@ func (m *MemoryDataExportStorage) CreateExportRequest(ctx context.Context, opts 
 	m.exports[id] = request
 
 	// Add to user's export list
-	userKey := makeKey(opts.TenantID, opts.UserID)
+	userKey := makeKey(opts.TenantID, strconv.FormatUint(opts.UserID, 10))
 	m.exportsByUser[userKey] = append(m.exportsByUser[userKey], id)
 
 	// Return a copy
@@ -441,7 +442,7 @@ func (m *MemoryDataExportStorage) ListExportRequests(ctx context.Context, opts L
 
 // matchesExportFilter checks if an export request matches the filter criteria.
 func (m *MemoryDataExportStorage) matchesExportFilter(request *DataExportRequest, opts ListExportRequestsOptions) bool {
-	if opts.UserID != "" && request.UserID != opts.UserID {
+	if opts.UserID != 0 && request.UserID != opts.UserID {
 		return false
 	}
 	if opts.TenantID != "" && request.TenantID != opts.TenantID {
@@ -480,7 +481,7 @@ func (m *MemoryDeletionStorage) CreateDeletionRequest(ctx context.Context, opts 
 	defer m.mu.Unlock()
 
 	// Validate required fields
-	if opts.UserID == "" {
+	if opts.UserID == 0 {
 		return nil, NewIAMError(ErrDeletionInvalid, "iam.deletion.create", "user_id is required", nil)
 	}
 	if opts.TenantID == "" {
@@ -531,7 +532,7 @@ func (m *MemoryDeletionStorage) CreateDeletionRequest(ctx context.Context, opts 
 	m.deletions[id] = request
 
 	// Add to user's deletion list
-	userKey := makeKey(opts.TenantID, opts.UserID)
+	userKey := makeKey(opts.TenantID, strconv.FormatUint(opts.UserID, 10))
 	m.deletionsByUser[userKey] = append(m.deletionsByUser[userKey], id)
 
 	// Return a copy
@@ -596,7 +597,7 @@ func (m *MemoryDeletionStorage) ListDeletionRequests(ctx context.Context, opts L
 
 // matchesDeletionFilter checks if a deletion request matches the filter criteria.
 func (m *MemoryDeletionStorage) matchesDeletionFilter(request *DataDeletionRequest, opts ListDeletionRequestsOptions) bool {
-	if opts.UserID != "" && request.UserID != opts.UserID {
+	if opts.UserID != 0 && request.UserID != opts.UserID {
 		return false
 	}
 	if opts.TenantID != "" && request.TenantID != opts.TenantID {

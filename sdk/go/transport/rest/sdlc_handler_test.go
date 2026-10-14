@@ -52,6 +52,8 @@ func TestSDLCHandler_ReachesTheServersPaths(t *testing.T) {
 		wantQuery string
 	}{
 		{"Bind", &sdlc.BindRequest{TenantID: "t1", ProjectID: "p1", Binding: binding}, http.MethodPut, "/api/v1/sdlc/projects/p1/binding", "tenant_id=t1"},
+		{"Bind", &sdlc.BindRequest{TenantID: "t1", ProjectID: "p1", Binding: binding, Paused: true}, http.MethodPut, "/api/v1/sdlc/projects/p1/binding", "paused=true&tenant_id=t1"},
+		{"Bind", &sdlc.BindRequest{ProjectID: "p1", Binding: binding, Paused: true}, http.MethodPut, "/api/v1/sdlc/projects/p1/binding", "paused=true"},
 		{"Binding", &sdlc.GetBindingRequest{TenantID: "t1", ProjectID: "p1"}, http.MethodGet, "/api/v1/sdlc/projects/p1/binding", "tenant_id=t1"},
 		{"Unbind", &sdlc.UnbindRequest{TenantID: "t1", ProjectID: "p1"}, http.MethodDelete, "/api/v1/sdlc/projects/p1/binding", "tenant_id=t1"},
 		{"Delivery", &sdlc.GetDeliveryRequest{TenantID: "t1", TaskID: "t1"}, http.MethodGet, "/api/v1/sdlc/tasks/t1/delivery", "tenant_id=t1"},

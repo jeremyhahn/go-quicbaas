@@ -117,7 +117,7 @@ const (
 func seedSessionUser(t *testing.T, storage *iam.MemoryStorage) {
 	t.Helper()
 	require.NoError(t, storage.CreateUser(context.Background(), &iam.User{
-		ID:        "2",
+		ID:        2,
 		TenantID:  sessionTenant,
 		Username:  sessionSubject,
 		Name:      sessionSubject,

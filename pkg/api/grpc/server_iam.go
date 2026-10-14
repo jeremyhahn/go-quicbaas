@@ -374,9 +374,13 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
 
 	user := &iam.User{
-		ID:        req.UserId,
+		ID:        userID,
 		TenantID:  req.TenantId,
 		Email:     req.Email,
 		Username:  req.Username,

@@ -89,7 +89,7 @@ func handleSDLCBind(ctx context.Context, conn *grpc.ClientConn, req interface{})
 		binding.ProjectID = sdkReq.ProjectID
 	}
 	resp, err := pb.NewSDLCServiceClient(conn).BindProject(ctx, &pb.BindProjectRequest{
-		TenantId: sdkReq.TenantID, Binding: sdlcBindingToProto(&binding),
+		TenantId: sdkReq.TenantID, Binding: sdlcBindingToProto(&binding), Paused: sdkReq.Paused,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)

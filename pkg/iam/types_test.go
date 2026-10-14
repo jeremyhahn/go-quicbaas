@@ -102,7 +102,7 @@ func TestUser_Validate(t *testing.T) {
 		{
 			name: "valid user",
 			user: &User{
-				ID:       "user-123",
+				ID:       1000123,
 				Email:    "user@example.com",
 				TenantID: "tenant-123",
 			},
@@ -120,7 +120,7 @@ func TestUser_Validate(t *testing.T) {
 		{
 			name: "empty ID",
 			user: &User{
-				ID:       "",
+				ID:       0,
 				Email:    "user@example.com",
 				TenantID: "tenant-123",
 			},
@@ -130,7 +130,7 @@ func TestUser_Validate(t *testing.T) {
 		{
 			name: "missing email",
 			user: &User{
-				ID:       "user-123",
+				ID:       1000123,
 				TenantID: "tenant-123",
 			},
 			wantErr: true,
@@ -139,7 +139,7 @@ func TestUser_Validate(t *testing.T) {
 		{
 			name: "empty email",
 			user: &User{
-				ID:       "user-123",
+				ID:       1000123,
 				Email:    "",
 				TenantID: "tenant-123",
 			},
@@ -149,7 +149,7 @@ func TestUser_Validate(t *testing.T) {
 		{
 			name: "missing tenant ID",
 			user: &User{
-				ID:    "user-123",
+				ID:    1000123,
 				Email: "user@example.com",
 			},
 			wantErr: true,
@@ -158,7 +158,7 @@ func TestUser_Validate(t *testing.T) {
 		{
 			name: "empty tenant ID",
 			user: &User{
-				ID:       "user-123",
+				ID:       1000123,
 				Email:    "user@example.com",
 				TenantID: "",
 			},

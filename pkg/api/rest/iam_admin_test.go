@@ -47,7 +47,7 @@ func (m *mockQuicBaaSWithAdmin) GetAdminManager(_ context.Context) (*iam.AdminMa
 // is pinned in pkg/iam's tenant-scope suite (#357).
 type restAllowAllTargetResolver struct{}
 
-func (restAllowAllTargetResolver) GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error) {
+func (restAllowAllTargetResolver) GetUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
 	return &iam.User{ID: userID, TenantID: tenantID}, nil
 }
 
@@ -291,7 +291,7 @@ func TestGetUserAssignments(t *testing.T) {
 	// Create test assignments for a specific user
 	ctx := context.Background()
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "target_user",
+		UserID:    "50001",
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1"},
 		GrantedBy: "admin",
@@ -299,7 +299,7 @@ func TestGetUserAssignments(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "target_user",
+		UserID:    "50001",
 		AdminRole: iam.AdminRoleUserAdmin,
 		TenantIDs: []string{"tenant_2"},
 		GrantedBy: "admin",
@@ -316,9 +316,9 @@ func TestGetUserAssignments(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create HTTP request
-	req := httptest.NewRequest("GET", "/api/v1/admin/users/target_user/assignments", nil)
+	req := httptest.NewRequest("GET", "/api/v1/admin/users/50001/assignments", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("user_id", "target_user")
+	rctx.URLParams.Add("user_id", "50001")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -333,7 +333,7 @@ func TestGetUserAssignments(t *testing.T) {
 	err = json.Unmarshal(rr.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, "target_user", resp["user_id"])
+	assert.Equal(t, "50001", resp["user_id"])
 	assignments := resp["assignments"].([]interface{})
 	assert.Len(t, assignments, 2)
 }
@@ -404,7 +404,7 @@ func TestStartImpersonation(t *testing.T) {
 	// Create impersonation request. The request carries no admin_user_id —
 	// the acting admin is the authenticated caller (go-quicbaas#383).
 	impReq := startImpersonationRequest{
-		TargetUserID: "target_user",
+		TargetUserID: "50001",
 		TenantID:     "tenant_1",
 		Reason:       "Support request #12345",
 		Duration:     "1h",
@@ -431,7 +431,7 @@ func TestStartImpersonation(t *testing.T) {
 
 	assert.NotEmpty(t, session.ID)
 	assert.Equal(t, "admin_user", session.AdminUserID)
-	assert.Equal(t, "target_user", session.TargetUserID)
+	assert.Equal(t, "50001", session.TargetUserID)
 	assert.Equal(t, "Support request #12345", session.Reason)
 }
 
@@ -455,7 +455,7 @@ func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
 	require.NoError(t, err)
 
 	// A non-privileged caller smuggles admin_user's id in the body.
-	body := []byte(`{"admin_user_id":"admin_user","target_user_id":"target_user","tenant_id":"tenant_1","reason":"escalation attempt","duration":"1h"}`)
+	body := []byte(`{"admin_user_id":"admin_user","target_user_id":"50001","tenant_id":"tenant_1","reason":"escalation attempt","duration":"1h"}`)
 	req := httptest.NewRequest("POST", "/api/v1/admin/impersonate", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctxWithTestSubject(req.Context(), "attacker", "tenant_1"))
@@ -503,7 +503,7 @@ func TestEndImpersonation(t *testing.T) {
 	session, err := mockSvc.adminManager.StartImpersonation(
 		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "target_user",
+			TargetUserID: "50001",
 			TenantID:     "tenant_1",
 			Reason:       "Testing",
 			Duration:     time.Hour,
@@ -546,7 +546,7 @@ func TestListActiveImpersonations(t *testing.T) {
 	_, err = mockSvc.adminManager.StartImpersonation(
 		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "user_1",
+			TargetUserID: "50011",
 			TenantID:     "tenant_1",
 			Reason:       "Support",
 			Duration:     time.Hour,
@@ -556,7 +556,7 @@ func TestListActiveImpersonations(t *testing.T) {
 	_, err = mockSvc.adminManager.StartImpersonation(
 		ctxWithTestSubject(ctx, "admin_user", "tenant_2"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "user_2",
+			TargetUserID: "50012",
 			TenantID:     "tenant_2",
 			Reason:       "Debug",
 			Duration:     time.Hour,
@@ -607,7 +607,7 @@ func TestListImpersonations(t *testing.T) {
 	_, err = mockSvc.adminManager.StartImpersonation(
 		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "user_1",
+			TargetUserID: "50011",
 			TenantID:     "tenant_1",
 			Reason:       "Support",
 			Duration:     time.Hour,
@@ -653,7 +653,7 @@ func TestListImpersonations_WithFilters(t *testing.T) {
 	_, err = mockSvc.adminManager.StartImpersonation(
 		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "user_1",
+			TargetUserID: "50011",
 			TenantID:     "tenant_1",
 			Reason:       "Support",
 			Duration:     time.Hour,

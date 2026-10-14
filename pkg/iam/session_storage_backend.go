@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -39,11 +40,11 @@ func sessionRecKey(id string) string { return keyPrefixSessionRec + id }
 func sessionTokenIdxKey(tokenHash string) string {
 	return keyPrefixSessionTokenIdx + tokenHash
 }
-func sessionUserIdxKey(tenantID, userID, id string) string {
-	return keyPrefixSessionUserIdx + tenantID + "/" + userID + "/" + id
+func sessionUserIdxKey(tenantID string, userID uint64, id string) string {
+	return sessionUserIdxPrefix(tenantID, userID) + id
 }
-func sessionUserIdxPrefix(tenantID, userID string) string {
-	return keyPrefixSessionUserIdx + tenantID + "/" + userID + "/"
+func sessionUserIdxPrefix(tenantID string, userID uint64) string {
+	return keyPrefixSessionUserIdx + tenantID + "/" + strconv.FormatUint(userID, 10) + "/"
 }
 
 // -----------------------------------------------------------------------------
@@ -107,7 +108,7 @@ func (s *BackendSessionStorage) GetSession(ctx context.Context, sessionID string
 
 // GetSessionsByUser routes by the explicit tenantID and returns the user's
 // non-expired sessions enumerated via the per-user index.
-func (s *BackendSessionStorage) GetSessionsByUser(ctx context.Context, tenantID, userID string) ([]*Session, error) {
+func (s *BackendSessionStorage) GetSessionsByUser(ctx context.Context, tenantID string, userID uint64) ([]*Session, error) {
 	ctx = withTenant(ctx, tenantID)
 	ids, err := s.sessionIDsForUser(ctx, tenantID, userID)
 	if err != nil {
@@ -165,7 +166,7 @@ func (s *BackendSessionStorage) DeleteSession(ctx context.Context, sessionID str
 		return err
 	}
 	var session Session
-	if json.Unmarshal(data, &session) == nil && session.UserID != "" {
+	if json.Unmarshal(data, &session) == nil && session.UserID != 0 {
 		_ = s.kv.Delete(ctx, sessionUserIdxKey(session.TenantID, session.UserID, fullID))
 	}
 	return s.kv.Delete(ctx, sessionRecKey(fullID))
@@ -216,7 +217,7 @@ func (s *BackendSessionStorage) cleanupTenant(ctx context.Context) (int, error) 
 	return count, nil
 }
 
-func (s *BackendSessionStorage) sessionIDsForUser(ctx context.Context, tenantID, userID string) ([]string, error) {
+func (s *BackendSessionStorage) sessionIDsForUser(ctx context.Context, tenantID string, userID uint64) ([]string, error) {
 	var ids []string
 	err := s.kv.Scan(ctx, sessionUserIdxPrefix(tenantID, userID), func(_ string, value []byte) error {
 		ids = append(ids, string(value))
@@ -399,18 +400,18 @@ func (s *BackendSessionExtStorage) deleteIndexes(ctx context.Context, session *S
 }
 
 // ListByUser routes by the explicit tenantID and returns every indexed session.
-func (s *BackendSessionExtStorage) ListByUser(ctx context.Context, userID, tenantID string) ([]*SessionExt, error) {
+func (s *BackendSessionExtStorage) ListByUser(ctx context.Context, userID uint64, tenantID string) ([]*SessionExt, error) {
 	ctx = withTenant(ctx, tenantID)
 	return s.listByUser(ctx, tenantID, userID, false)
 }
 
 // ListByUserActive routes by tenantID and returns only non-expired sessions.
-func (s *BackendSessionExtStorage) ListByUserActive(ctx context.Context, userID, tenantID string) ([]*SessionExt, error) {
+func (s *BackendSessionExtStorage) ListByUserActive(ctx context.Context, userID uint64, tenantID string) ([]*SessionExt, error) {
 	ctx = withTenant(ctx, tenantID)
 	return s.listByUser(ctx, tenantID, userID, true)
 }
 
-func (s *BackendSessionExtStorage) listByUser(ctx context.Context, tenantID, userID string, activeOnly bool) ([]*SessionExt, error) {
+func (s *BackendSessionExtStorage) listByUser(ctx context.Context, tenantID string, userID uint64, activeOnly bool) ([]*SessionExt, error) {
 	var ids []string
 	if err := s.kv.Scan(ctx, sessionUserIdxPrefix(tenantID, userID), func(_ string, value []byte) error {
 		ids = append(ids, string(value))
@@ -441,7 +442,7 @@ func (s *BackendSessionExtStorage) listByUser(ctx context.Context, tenantID, use
 }
 
 // DeleteByUser routes by tenantID and removes every indexed session.
-func (s *BackendSessionExtStorage) DeleteByUser(ctx context.Context, userID, tenantID string) error {
+func (s *BackendSessionExtStorage) DeleteByUser(ctx context.Context, userID uint64, tenantID string) error {
 	ctx = withTenant(ctx, tenantID)
 	sessions, err := s.listByUser(ctx, tenantID, userID, false)
 	if err != nil {
@@ -458,7 +459,7 @@ func (s *BackendSessionExtStorage) DeleteByUser(ctx context.Context, userID, ten
 
 // DeleteAllExcept routes by tenantID and removes every session except the one
 // identified by exceptSessionID.
-func (s *BackendSessionExtStorage) DeleteAllExcept(ctx context.Context, userID, tenantID, exceptSessionID string) error {
+func (s *BackendSessionExtStorage) DeleteAllExcept(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error {
 	ctx = withTenant(ctx, tenantID)
 	sessions, err := s.listByUser(ctx, tenantID, userID, false)
 	if err != nil {

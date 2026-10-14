@@ -259,7 +259,7 @@ func TestGenerateTokenResult_OIDCScopesOnToken(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	user := &User{ID: "user-scope-token", TenantID: "tenant1", Email: "u@example.com"}
+	user := &User{ID: 40050, TenantID: "tenant1", Email: "u@example.com"}
 	identity := &FederatedIdentity{ID: "id-1", UserID: user.ID, TenantID: "tenant1", ProviderID: "p"}
 
 	result, err := manager.generateTokenResult(ctx, user, identity, false,

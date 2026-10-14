@@ -94,6 +94,14 @@ func (mcpSDLCSecrets) GetSecret(context.Context, *service.GetSecretRequest) (*se
 // bindable project, "p1", whose forge is an in-memory Gitea.
 func newMCPSDLCRegistry(t *testing.T) (*ToolRegistry, *giteafake.Server) {
 	t.Helper()
+	registry, forge, _ := newMCPSDLCRig(t)
+	return registry, forge
+}
+
+// newMCPSDLCRig is newMCPSDLCRegistry plus the project store, for tests that
+// read back what a bind wrote to the project.
+func newMCPSDLCRig(t *testing.T) (*ToolRegistry, *giteafake.Server, *mcpSDLCProjects) {
+	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +139,7 @@ func newMCPSDLCRegistry(t *testing.T) (*ToolRegistry, *giteafake.Server) {
 	}
 	mock := testutil.NewMockQuicBaaS()
 	mock.SetSDLCService(svc)
-	return NewToolRegistry(mock, log), forge
+	return NewToolRegistry(mock, log), forge, projects
 }
 
 // profiledToolBinding is the binding argument an MCP client sends, decoded

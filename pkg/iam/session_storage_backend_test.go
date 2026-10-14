@@ -22,7 +22,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-func basicSession(tenantID, userID, id string) *Session {
+func basicSession(tenantID string, userID uint64, id string) *Session {
 	return &Session{
 		ID:       id,
 		UserID:   userID,
@@ -32,7 +32,7 @@ func basicSession(tenantID, userID, id string) *Session {
 	}
 }
 
-func extSession(tenantID, userID, id, tokenHash string) *SessionExt {
+func extSession(tenantID string, userID uint64, id, tokenHash string) *SessionExt {
 	return &SessionExt{
 		ID:        id,
 		UserID:    userID,
@@ -50,7 +50,7 @@ func TestBackendSessionStorage_BarrierIsolation(t *testing.T) {
 	store := NewBackendSessionStorage(kv, nil)
 	ctx := context.Background()
 
-	sess := basicSession("acme", "u1", "s1")
+	sess := basicSession("acme", 30001, "s1")
 	if err := store.CreateSession(ctx, sess); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -66,11 +66,11 @@ func TestBackendSessionStorage_BarrierIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if got.UserID != "u1" {
-		t.Fatalf("session userID = %q, want u1", got.UserID)
+	if got.UserID != 30001 {
+		t.Fatalf("session userID = %d, want 30001", got.UserID)
 	}
 
-	byUser, err := store.GetSessionsByUser(ctx, "acme", "u1")
+	byUser, err := store.GetSessionsByUser(ctx, "acme", 30001)
 	if err != nil || len(byUser) != 1 {
 		t.Fatalf("GetSessionsByUser = %d, %v; want 1, nil", len(byUser), err)
 	}
@@ -84,7 +84,7 @@ func TestBackendSessionStorage_SealedFailsClosed(t *testing.T) {
 	store := NewBackendSessionStorage(kv, nil)
 	ctx := context.Background()
 
-	if err := store.CreateSession(ctx, basicSession("acme", "u1", "s1")); !errors.Is(err, errTenantSealedTest) {
+	if err := store.CreateSession(ctx, basicSession("acme", 30001, "s1")); !errors.Is(err, errTenantSealedTest) {
 		t.Fatalf("CreateSession(sealed) err = %v, want sealed", err)
 	}
 	if kv.shared.keyCount() != 0 {
@@ -100,12 +100,12 @@ func TestBackendSessionStorage_DeleteExpiredPerTenant(t *testing.T) {
 	store := NewBackendSessionStorage(kv, staticTenantLister{ids: []string{"acme", "globex"}})
 	ctx := context.Background()
 
-	expired := basicSession("acme", "u1", "s1")
+	expired := basicSession("acme", 30001, "s1")
 	expired.Expires = time.Now().Add(-time.Hour)
 	if err := store.CreateSession(ctx, expired); err != nil {
 		t.Fatalf("CreateSession(expired): %v", err)
 	}
-	if err := store.CreateSession(ctx, basicSession("globex", "u2", "s2")); err != nil {
+	if err := store.CreateSession(ctx, basicSession("globex", 30002, "s2")); err != nil {
 		t.Fatalf("CreateSession(fresh): %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestBackendSessionExtStorage_TokenLookup(t *testing.T) {
 	store := NewBackendSessionExtStorage(kv, nil)
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
-	sess := extSession("acme", "u1", "s1", "tokenhash-abc")
+	sess := extSession("acme", 30001, "s1", "tokenhash-abc")
 	if err := store.Create(ctx, sess); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -141,8 +141,8 @@ func TestBackendSessionExtStorage_TokenLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetByToken: %v", err)
 	}
-	if got.UserID != "u1" {
-		t.Fatalf("token lookup userID = %q, want u1", got.UserID)
+	if got.UserID != 30001 {
+		t.Fatalf("token lookup userID = %d, want 30001", got.UserID)
 	}
 
 	// Get by encoded id with empty context still routes.
@@ -163,7 +163,7 @@ func TestBackendSessionExtStorage_SealedFailsClosed(t *testing.T) {
 	store := NewBackendSessionExtStorage(kv, nil)
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
-	if err := store.Create(ctx, extSession("acme", "u1", "s1", "th")); !errors.Is(err, errTenantSealedTest) {
+	if err := store.Create(ctx, extSession("acme", 30001, "s1", "th")); !errors.Is(err, errTenantSealedTest) {
 		t.Fatalf("Create(sealed) err = %v, want sealed", err)
 	}
 	if kv.shared.keyCount() != 0 {
@@ -178,8 +178,8 @@ func TestBackendSessionExtStorage_ListAndDeleteAllExcept(t *testing.T) {
 	store := NewBackendSessionExtStorage(kv, nil)
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
-	keep := extSession("acme", "u1", "keep", "th-keep")
-	drop := extSession("acme", "u1", "drop", "th-drop")
+	keep := extSession("acme", 30001, "keep", "th-keep")
+	drop := extSession("acme", 30001, "drop", "th-drop")
 	if err := store.Create(ctx, keep); err != nil {
 		t.Fatalf("Create(keep): %v", err)
 	}
@@ -187,15 +187,15 @@ func TestBackendSessionExtStorage_ListAndDeleteAllExcept(t *testing.T) {
 		t.Fatalf("Create(drop): %v", err)
 	}
 
-	all, err := store.ListByUser(ctx, "u1", "acme")
+	all, err := store.ListByUser(ctx, 30001, "acme")
 	if err != nil || len(all) != 2 {
 		t.Fatalf("ListByUser = %d, %v; want 2, nil", len(all), err)
 	}
 
-	if err := store.DeleteAllExcept(ctx, "u1", "acme", keep.ID); err != nil {
+	if err := store.DeleteAllExcept(ctx, 30001, "acme", keep.ID); err != nil {
 		t.Fatalf("DeleteAllExcept: %v", err)
 	}
-	remaining, err := store.ListByUser(ctx, "u1", "acme")
+	remaining, err := store.ListByUser(ctx, 30001, "acme")
 	if err != nil || len(remaining) != 1 {
 		t.Fatalf("after DeleteAllExcept ListByUser = %d, %v; want 1, nil", len(remaining), err)
 	}

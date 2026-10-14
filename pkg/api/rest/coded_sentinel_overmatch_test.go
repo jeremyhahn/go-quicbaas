@@ -176,7 +176,7 @@ type notFoundMFAManager struct {
 	err error
 }
 
-func (m notFoundMFAManager) GetBackupCodeStatus(context.Context, string, string) (*iam.BackupCodeStatus, error) {
+func (m notFoundMFAManager) GetBackupCodeStatus(context.Context, uint64, string) (*iam.BackupCodeStatus, error) {
 	return nil, m.err
 }
 

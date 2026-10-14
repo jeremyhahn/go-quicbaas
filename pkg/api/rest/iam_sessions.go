@@ -59,10 +59,8 @@ func (h *IAMHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -207,10 +205,8 @@ func (h *IAMHandler) ListUserSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -309,10 +305,8 @@ func (h *IAMHandler) RevokeAllUserSessions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -358,11 +352,11 @@ func (h *IAMHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	// listing is the admin surface: ListUserSessions. The Go SDK REST
 	// transport routes its parameterized Session/List verb there and emits
 	// no identity parameters here.
-	subject, ok := requireTenantSubject(w, r)
+	subject, callerID, ok := h.server.requireTenantUserSubject(w, r)
 	if !ok {
 		return
 	}
-	if !queryIdentityMatches(w, r, subject) {
+	if !queryIdentityMatches(w, r, subject, resolvedCallerAccount(callerID)) {
 		return
 	}
 
@@ -388,7 +382,7 @@ func (h *IAMHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// List sessions scoped to the authenticated caller.
-	sessions, err := mgr.List(ctx, subject.ID, subject.TenantID)
+	sessions, err := mgr.List(ctx, callerID, subject.TenantID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
@@ -437,7 +431,7 @@ func (h *IAMHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 
 	// Identity comes exclusively from the authenticated Subject injected by
 	// the authz middleware chain.
-	subject, ok := requireTenantSubject(w, r)
+	subject, callerID, ok := h.server.requireTenantUserSubject(w, r)
 	if !ok {
 		return
 	}
@@ -471,7 +465,7 @@ func (h *IAMHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the session belongs to the authenticated caller.
-	if session.UserID != subject.ID || session.TenantID != subject.TenantID {
+	if session.UserID != callerID || session.TenantID != subject.TenantID {
 		RespondIAMError(w, r, http.StatusForbidden,
 			NewIAMAPIError(ErrForbidden, "access denied"))
 		return
@@ -517,7 +511,7 @@ func (h *IAMHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 
 	// Identity comes exclusively from the authenticated Subject injected by
 	// the authz middleware chain.
-	subject, ok := requireTenantSubject(w, r)
+	subject, callerID, ok := h.server.requireTenantUserSubject(w, r)
 	if !ok {
 		return
 	}
@@ -550,7 +544,7 @@ func (h *IAMHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if session.UserID != subject.ID || session.TenantID != subject.TenantID {
+	if session.UserID != callerID || session.TenantID != subject.TenantID {
 		RespondIAMError(w, r, http.StatusForbidden,
 			NewIAMAPIError(ErrForbidden, "access denied"))
 		return
@@ -578,11 +572,11 @@ func (h *IAMHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	// revocation is the admin surface: RevokeAllUserSessions. The Go SDK
 	// REST transport routes its parameterized Session/RevokeAll verb there
 	// and emits no identity parameters here.
-	subject, ok := requireTenantSubject(w, r)
+	subject, callerID, ok := h.server.requireTenantUserSubject(w, r)
 	if !ok {
 		return
 	}
-	if !queryIdentityMatches(w, r, subject) {
+	if !queryIdentityMatches(w, r, subject, resolvedCallerAccount(callerID)) {
 		return
 	}
 
@@ -618,19 +612,19 @@ func (h *IAMHandler) RevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 			h.server.handleServiceError(w, r, err)
 			return
 		}
-		if session.UserID != subject.ID || session.TenantID != subject.TenantID {
+		if session.UserID != callerID || session.TenantID != subject.TenantID {
 			RespondIAMError(w, r, http.StatusForbidden,
 				NewIAMAPIError(ErrForbidden, "access denied"))
 			return
 		}
 
-		err = mgr.RevokeAllExcept(ctx, subject.ID, subject.TenantID, exceptSessionID)
+		err = mgr.RevokeAllExcept(ctx, callerID, subject.TenantID, exceptSessionID)
 		if err != nil {
 			h.server.handleServiceError(w, r, err)
 			return
 		}
 	} else {
-		err = mgr.RevokeAllForUser(ctx, subject.ID, subject.TenantID)
+		err = mgr.RevokeAllForUser(ctx, callerID, subject.TenantID)
 		if err != nil {
 			h.server.handleServiceError(w, r, err)
 			return
@@ -648,7 +642,7 @@ func (h *IAMHandler) RevokeOtherSessions(w http.ResponseWriter, r *http.Request)
 
 	// Identity comes exclusively from the authenticated Subject injected by
 	// the authz middleware chain.
-	subject, ok := requireTenantSubject(w, r)
+	subject, callerID, ok := h.server.requireTenantUserSubject(w, r)
 	if !ok {
 		return
 	}
@@ -707,14 +701,14 @@ func (h *IAMHandler) RevokeOtherSessions(w http.ResponseWriter, r *http.Request)
 		h.server.handleServiceError(w, r, err)
 		return
 	}
-	if session.UserID != subject.ID || session.TenantID != subject.TenantID {
+	if session.UserID != callerID || session.TenantID != subject.TenantID {
 		RespondIAMError(w, r, http.StatusForbidden,
 			NewIAMAPIError(ErrForbidden, "access denied"))
 		return
 	}
 
 	// Revoke all other sessions
-	err = mgr.RevokeAllExcept(ctx, subject.ID, subject.TenantID, currentSessionID)
+	err = mgr.RevokeAllExcept(ctx, callerID, subject.TenantID, currentSessionID)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return

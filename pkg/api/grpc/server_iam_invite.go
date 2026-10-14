@@ -67,7 +67,7 @@ func (s *IAMServer) GetInvite(ctx context.Context, req *iampb.GetInviteRequest) 
 		return nil, convertInviteError(err)
 	}
 	return &iampb.GetInviteResponse{
-		UserId:      meta.UserID,
+		UserId:      formatUserID(meta.UserID),
 		Email:       meta.Email,
 		Name:        meta.Name,
 		AuthMethods: meta.AuthMethods,
@@ -111,7 +111,7 @@ func (s *IAMServer) ActivateFIDO2Finish(ctx context.Context, req *iampb.Activate
 		return nil, convertInviteError(err)
 	}
 	return &iampb.ActivateInviteResponse{
-		UserId:  activation.UserID,
+		UserId:  formatUserID(activation.UserID),
 		Message: "activation successful",
 		Warning: activation.Warning,
 	}, nil
@@ -128,7 +128,7 @@ func (s *IAMServer) ActivatePIV(ctx context.Context, req *iampb.ActivatePIVReque
 		return nil, convertInviteError(err)
 	}
 	return &iampb.ActivateInviteResponse{
-		UserId:  activation.UserID,
+		UserId:  formatUserID(activation.UserID),
 		Message: "PIV activation successful",
 		Warning: activation.Warning,
 	}, nil

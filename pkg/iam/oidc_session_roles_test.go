@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -195,7 +196,7 @@ func TestIssueSessionToken_UsernameEqualToAnotherUsersIDDoesNotEscalate(t *testi
 
 	// The privileged account, whose ID the attacker will impersonate by name.
 	privileged := &User{
-		ID:        "58",
+		ID:        58,
 		TenantID:  burninTenant,
 		Username:  "admin",
 		Name:      "Admin",
@@ -210,12 +211,12 @@ func TestIssueSessionToken_UsernameEqualToAnotherUsersIDDoesNotEscalate(t *testi
 	// The attacker: an ordinary account whose USERNAME is the privileged
 	// account's ID. They hold no roles at all.
 	attacker := &User{
-		ID:       "51",
+		ID:       51,
 		TenantID: burninTenant,
 		// The attacker's HANDLE is the privileged account's id — the handle is
 		// what the join resolves through, so that is where the collision has to
 		// be for this test to mean anything.
-		Username:  privileged.ID,
+		Username:  strconv.FormatUint(privileged.ID, 10),
 		Name:      "Attacker",
 		Email:     "attacker@automatethethings.com",
 		Lifecycle: LifecycleActive,
@@ -430,7 +431,7 @@ func TestOAuthRefreshGrant_RefusesADisabledUser(t *testing.T) {
 	ctx := context.Background()
 
 	user := &User{
-		ID:        "53",
+		ID:        53,
 		TenantID:  burninTenant,
 		Name:      "oauth-user",
 		Email:     "oauth@automatethethings.com",
@@ -452,7 +453,7 @@ func TestOAuthRefreshGrant_RefusesADisabledUser(t *testing.T) {
 	}
 
 	refresh, err := provider.tokenService.GenerateRefreshToken(ctx, SessionRefreshOptions{
-		Subject:  user.ID,
+		Subject:  strconv.FormatUint(user.ID, 10),
 		TenantID: user.TenantID,
 		ClientID: clientID,
 		Scopes:   []string{"openid"},
@@ -530,7 +531,7 @@ func TestRenamingThenDisablingEndsAnIssuedCeremonySession(t *testing.T) {
 				t.Fatalf("ValidateAccessToken: %v", err)
 			}
 			if claims.UserID != user.ID {
-				t.Fatalf("bearer uid = %q, want the immutable id %q", claims.UserID, user.ID)
+				t.Fatalf("bearer uid = %d, want the immutable id %d", claims.UserID, user.ID)
 			}
 
 			// RENAME the account out from under the live session, so the
@@ -579,7 +580,7 @@ func TestTokenLiveness_DeletedUserIsNotPromotedToAServicePrincipal(t *testing.T)
 	provider, _ := newCeremonyProvider(t, nil)
 
 	live, err := provider.TokenLiveness(context.Background(), burninTenant,
-		burninOperator, "usr-deleted", "", "jti-1")
+		burninOperator, 40060, "", "jti-1")
 	if err != nil {
 		t.Fatalf("TokenLiveness: %v", err)
 	}
@@ -602,7 +603,7 @@ func TestTokenLiveness_ServiceMarkerSurvivesWithNoUserRecord(t *testing.T) {
 	// A disabled user deliberately named after the service client id. Under the
 	// subject-based rule this collision denied the service token.
 	if err := storage.CreateUser(ctx, &User{
-		ID:        "52",
+		ID:        52,
 		TenantID:  burninTenant,
 		Name:      clientID,
 		Email:     "collides@automatethethings.com",
@@ -611,7 +612,7 @@ func TestTokenLiveness_ServiceMarkerSurvivesWithNoUserRecord(t *testing.T) {
 		t.Fatalf("seed colliding user: %v", err)
 	}
 
-	live, err := provider.TokenLiveness(ctx, burninTenant, clientID, "", PrincipalTypeService, "jti-svc")
+	live, err := provider.TokenLiveness(ctx, burninTenant, clientID, 0, PrincipalTypeService, "jti-svc")
 	if err != nil {
 		t.Fatalf("TokenLiveness: %v", err)
 	}
@@ -634,7 +635,7 @@ func TestOAuthRefreshTokenRedeemedAtTheSessionEndpointKeepsTheImmutableHandle(t 
 	ctx := context.Background()
 
 	user := &User{
-		ID:        "54",
+		ID:        54,
 		TenantID:  burninTenant,
 		Name:      "oauth-session-user",
 		Email:     "oauth-session@automatethethings.com",
@@ -659,7 +660,7 @@ func TestOAuthRefreshTokenRedeemedAtTheSessionEndpointKeepsTheImmutableHandle(t 
 		t.Fatalf("ValidateAccessToken: %v", err)
 	}
 	if claims.UserID != user.ID {
-		t.Fatalf("renewed token uid = %q, want %q — a token minted today carries no immutable handle, so principalLive will deny it and the session is dead on its next liveness check", claims.UserID, user.ID)
+		t.Fatalf("renewed token uid = %d, want %d — a token minted today carries no immutable handle, so principalLive will deny it and the session is dead on its next liveness check", claims.UserID, user.ID)
 	}
 }
 
@@ -707,7 +708,7 @@ func TestTokenLiveness_DisabledUserDeniesDespiteAnEnabledIDCollision(t *testing.
 	ctx := context.Background()
 
 	enabled := &User{
-		ID:        "58",
+		ID:        58,
 		TenantID:  burninTenant,
 		Username:  "admin",
 		Name:      "Admin",
@@ -718,9 +719,9 @@ func TestTokenLiveness_DisabledUserDeniesDespiteAnEnabledIDCollision(t *testing.
 		t.Fatalf("seed enabled user: %v", err)
 	}
 	suspended := &User{
-		ID:        "56",
+		ID:        56,
 		TenantID:  burninTenant,
-		Username:  enabled.ID, // username == the enabled user's id
+		Username:  strconv.FormatUint(enabled.ID, 10), // username == the enabled user's id
 		Name:      "Suspended",
 		Email:     "suspended@automatethethings.com",
 		Lifecycle: LifecycleSuspended,
@@ -860,7 +861,7 @@ func TestCeremonyLoginResolvesASubjectKeyedByEmail(t *testing.T) {
 		t.Fatalf("ValidateAccessToken: %v", err)
 	}
 	if claims.UserID != user.ID {
-		t.Errorf("uid = %q, want the immutable id %q", claims.UserID, user.ID)
+		t.Errorf("uid = %d, want the immutable id %d", claims.UserID, user.ID)
 	}
 	if !contains(claims.Roles, operatorRoleID) || !contains(claims.Roles, adminRoleID) {
 		t.Errorf("roles = %v, want the record's %v", claims.Roles, user.Roles)
@@ -910,7 +911,7 @@ func TestCeremonyLoginResolvesTheEmailOwnerDespiteANameCollision(t *testing.T) {
 
 	// The victim, whose EMAIL is the shared string.
 	if err := storage.CreateUser(ctx, &User{
-		ID: "57", TenantID: burninTenant,
+		ID: 57, TenantID: burninTenant,
 		Name: "victim", Email: shared,
 		Roles: []string{adminRoleID}, Lifecycle: LifecycleActive,
 	}); err != nil {
@@ -918,7 +919,7 @@ func TestCeremonyLoginResolvesTheEmailOwnerDespiteANameCollision(t *testing.T) {
 	}
 	// The attacker, whose NAME is the same string.
 	if err := storage.CreateUser(ctx, &User{
-		ID: "51", TenantID: burninTenant,
+		ID: 51, TenantID: burninTenant,
 		Name: shared, Email: "attacker@automatethethings.com",
 		Lifecycle: LifecycleActive,
 	}); err != nil {
@@ -936,8 +937,8 @@ func TestCeremonyLoginResolvesTheEmailOwnerDespiteANameCollision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateAccessToken: %v", err)
 	}
-	if claims.UserID != "57" {
-		t.Fatalf("UserID = %q, want the email's owner %q", claims.UserID, "57")
+	if claims.UserID != 57 {
+		t.Fatalf("UserID = %d, want the email's owner 57", claims.UserID)
 	}
 	if !contains(claims.Roles, adminRoleID) {
 		t.Fatalf("roles = %v, want the victim's %q — the attacker must not be resolved", claims.Roles, adminRoleID)
@@ -954,7 +955,7 @@ func TestCeremonyLoginRefusesAnEmailOwnedByAnotherTenant(t *testing.T) {
 
 	const email = "elsewhere@automatethethings.com"
 	if err := storage.CreateUser(ctx, &User{
-		ID: "55", TenantID: "some-other-tenant",
+		ID: 55, TenantID: "some-other-tenant",
 		Name: "elsewhere", Email: email,
 		Roles: []string{adminRoleID}, Lifecycle: LifecycleActive,
 	}); err != nil {
@@ -1044,7 +1045,7 @@ func TestEmailShapedDisplayNameIsRefusedAtWrite(t *testing.T) {
 		t.Fatalf("ValidateAccessToken: %v", err)
 	}
 	if claims.UserID != victim.ID {
-		t.Fatalf("uid = %q, want the victim's own %q", claims.UserID, victim.ID)
+		t.Fatalf("uid = %d, want the victim's own %d", claims.UserID, victim.ID)
 	}
 	if !contains(claims.Roles, operatorRoleID) {
 		t.Fatalf("roles = %v, want the owner's %q", claims.Roles, operatorRoleID)

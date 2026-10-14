@@ -629,8 +629,12 @@ func (r *ToolRegistry) executeIAMFederationLinkAccount(ctx context.Context, args
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	if err := fedMgr.LinkAccount(ctx,
-		getString(args, "user_id"),
+		userID,
 		getString(args, "tenant_id"),
 		getString(args, "provider_id"),
 		getString(args, "external_token"),
@@ -646,8 +650,12 @@ func (r *ToolRegistry) executeIAMFederationUnlinkAccount(ctx context.Context, ar
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	if err := fedMgr.UnlinkAccount(ctx,
-		getString(args, "user_id"),
+		userID,
 		getString(args, "tenant_id"),
 		getString(args, "provider_id"),
 	); err != nil {
@@ -662,8 +670,12 @@ func (r *ToolRegistry) executeIAMFederationGetUserLinks(ctx context.Context, arg
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	links, err := fedMgr.GetUserLinks(ctx,
-		getString(args, "user_id"),
+		userID,
 		getString(args, "tenant_id"),
 	)
 	if err != nil {
@@ -685,8 +697,12 @@ func (r *ToolRegistry) executeIAMIdentityLink(ctx context.Context, args map[stri
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	if err := fedMgr.LinkAccount(ctx,
-		getString(args, "user_id"),
+		userID,
 		getString(args, "tenant_id"),
 		getString(args, "provider_id"),
 		getString(args, "external_token"),
@@ -702,8 +718,12 @@ func (r *ToolRegistry) executeIAMIdentityUnlink(ctx context.Context, args map[st
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	if err := fedMgr.UnlinkAccount(ctx,
-		getString(args, "user_id"),
+		userID,
 		getString(args, "tenant_id"),
 		getString(args, "provider_id"),
 	); err != nil {
@@ -718,8 +738,12 @@ func (r *ToolRegistry) executeIAMIdentityListUserIdentities(ctx context.Context,
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
 	links, err := fedMgr.GetUserLinks(ctx,
-		getString(args, "user_id"),
+		userID,
 		getString(args, "tenant_id"),
 	)
 	if err != nil {

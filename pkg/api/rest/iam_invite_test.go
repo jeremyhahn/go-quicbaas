@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ import (
 // pre-seeds it with one valid invite. The store is the SAME instance the
 // handler resolves through getInviteStore — exercising the unified wiring the
 // production server uses, not a disjoint per-handler memory store.
-func setupIAMHandlerWithInvite(t *testing.T) (*IAMHandler, string, string, string, iam.InviteStore, func()) {
+func setupIAMHandlerWithInvite(t *testing.T) (*IAMHandler, string, string, uint64, iam.InviteStore, func()) {
 	t.Helper()
 
 	handler, server, cleanup := setupIAMHandler(t)
@@ -51,7 +52,7 @@ func setupIAMHandlerWithInvite(t *testing.T) (*IAMHandler, string, string, strin
 	mockSvc.InviteStoreOverride = store
 
 	tenantID := inviteTenant
-	userID := "72"
+	userID := uint64(72)
 
 	// Seed the invite through the store; the token is minted there.
 	token, record, err := store.Create(context.Background(), tenantID, userID, time.Hour)
@@ -79,7 +80,7 @@ func TestGetInvite_Valid(t *testing.T) {
 
 	var resp InviteMetadataResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, userID, resp.UserID)
+	assert.Equal(t, strconv.FormatUint(userID, 10), resp.UserID)
 	assert.NotEmpty(t, resp.AuthMethods)
 }
 
@@ -113,7 +114,7 @@ func TestGetInvite_Expired(t *testing.T) {
 	// Seed in the SAME tenant the request targets, so the handler reaches its
 	// expiry path rather than the tenant-scoping one. Both now answer alike,
 	// but the test should still exercise the case it names.
-	expToken, _, err := store.Create(context.Background(), inviteTenant, "user-exp", -time.Minute)
+	expToken, _, err := store.Create(context.Background(), inviteTenant, 70, -time.Minute)
 	require.NoError(t, err)
 
 	rctx := chi.NewRouteContext()

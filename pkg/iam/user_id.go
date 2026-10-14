@@ -14,62 +14,31 @@
 package iam
 
 import (
-	"strconv"
 	"strings"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// The user identity is go-qrdb's Snowflake, and User.ID carries it in decimal —
-// the rendering qrdb's own transport type uses. These two functions are the ONLY
-// conversion between the two forms.
+// The user identity is go-qrdb's Snowflake, and User.ID carries it as the same
+// uint64 the store assigns. There is no second representation to convert to or
+// from: the JSON encoding renders it as a decimal string, the form qrdb's own
+// transport uses, because a JSON number above 2^53 loses precision in a
+// JavaScript client. YAML has no string option and carries the plain integer.
 //
-// They replace an IDMap: a persisted, tenant-scoped, bidirectional correlation
-// between a broker-minted UUID and qrdb's uint64. That table existed because the
-// two layers minted different identifiers for one person, and it could fail — a
-// verified login whose record had no correlation entry was refused with "id
-// correlation not found" while the record it named was present all along. A
-// conversion has no such failure: it is total in one direction and refuses only
-// input that never named a user in the first place.
+// This replaces an IDMap — a persisted, tenant-scoped correlation between a
+// broker-minted UUID and qrdb's uint64 — and, after it, a decimal-string id that
+// every store call parsed and every write formatted. Both existed because the
+// broker held the id in a different form from the store; holding it in the
+// store's form removes the conversion and the failures it could have.
 
-// ErrInvalidUserID reports a user id that is not a qrdb Snowflake. Anything but
-// the decimal rendering of a non-zero uint64 never named a stored user, so
+// ErrInvalidUserID reports a user id that is not a qrdb Snowflake: zero, which
+// is the "not created yet" value, or text at a string-typed edge that is not the
+// decimal rendering of a non-zero uint64. Neither named a stored user, so
 // resolving it would be a guess rather than a lookup.
 var ErrInvalidUserID = &dberrors.QBError{
 	Code: dberrors.ErrInvalidInput,
 	Op:   "iam.user.id",
 	Err:  &IAMMessageError{Message: "user id must be a qrdb snowflake in decimal"},
-}
-
-// ParseUserID converts an external user id into qrdb's numeric id — the id an
-// auth factor binds to and a login resolver resolves a principal from.
-//
-// Only the CANONICAL rendering is accepted. "00042" parses to the same integer
-// as "42", and accepting both would give one user two spellings — which matters
-// because callers verify a user exists by id and then persist the string they
-// were handed, so the two spellings become two keys for one account and slip
-// past any per-user duplicate check.
-func ParseUserID(userID string) (uint64, error) {
-	if userID == "" {
-		return 0, ErrInvalidUserID
-	}
-	id, err := strconv.ParseUint(userID, 10, 64)
-	if err != nil || id == 0 {
-		return 0, ErrInvalidUserID
-	}
-	if FormatUserID(id) != userID {
-		return 0, ErrInvalidUserID
-	}
-	return id, nil
-}
-
-// FormatUserID renders a qrdb numeric id as an external user id. A zero id is
-// the store's invalid sentinel and has no external form, so it yields "".
-func FormatUserID(id uint64) string {
-	if id == 0 {
-		return ""
-	}
-	return strconv.FormatUint(id, 10)
 }
 
 // LoginName returns the tenant-unique name this user is known by in the store's
@@ -122,13 +91,4 @@ func RequireLoginKey(u *User) error {
 		}
 	}
 	return NewPrincipalWithoutLoginKeyError(u.TenantID, u.Username)
-}
-
-// QRDBID returns the user's qrdb numeric id. It is the same value ID carries,
-// in the form the store and the auth-factor surfaces address it by.
-func (u *User) QRDBID() (uint64, error) {
-	if u == nil {
-		return 0, ErrInvalidUserID
-	}
-	return ParseUserID(u.ID)
 }

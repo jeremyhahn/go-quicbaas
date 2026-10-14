@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -165,7 +166,7 @@ func (bm *BatchManager) ImportUsers(ctx context.Context, tenantID string, users 
 			submitted := wp.submit(workerJob{
 				index:    idx,
 				itemType: "user",
-				itemID:   u.ID,
+				itemID:   strconv.FormatUint(u.ID, 10),
 				fn: func(jobCtx context.Context) error {
 					defer wg.Done()
 					return bm.importUser(jobCtx, tenantID, u, opts)
@@ -178,7 +179,7 @@ func (bm *BatchManager) ImportUsers(ctx context.Context, tenantID string, users 
 				result.Errors = append(result.Errors, BatchError{
 					Index: idx,
 					Type:  "user",
-					ID:    u.ID,
+					ID:    strconv.FormatUint(u.ID, 10),
 					Error: ctx.Err(),
 				})
 				result.FailureCount++

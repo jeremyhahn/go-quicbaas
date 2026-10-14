@@ -46,41 +46,41 @@ func TestMemorySessionService_NewMemorySessionService(t *testing.T) {
 func TestMemorySessionService_ListSessions_Filtering(t *testing.T) {
 	svc := NewMemorySessionService()
 	now := time.Now()
-	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: "u1", Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
-	svc.AddSession(&iam.Session{ID: "s2", TenantID: "t1", UserID: "u2", Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
-	svc.AddSession(&iam.Session{ID: "s3", TenantID: "t2", UserID: "u1", Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	svc.AddSession(&iam.Session{ID: "s2", TenantID: "t1", UserID: 30002, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	svc.AddSession(&iam.Session{ID: "s3", TenantID: "t2", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 
 	t.Run("filters_by_tenant", func(t *testing.T) {
-		sessions, total, err := svc.ListSessions(context.Background(), "t1", "", 0, 0)
+		sessions, total, err := svc.ListSessions(context.Background(), "t1", 0, 0, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 2, total)
 		assert.Len(t, sessions, 2)
 	})
 	t.Run("filters_by_tenant_and_user", func(t *testing.T) {
-		sessions, total, err := svc.ListSessions(context.Background(), "t1", "u1", 0, 0)
+		sessions, total, err := svc.ListSessions(context.Background(), "t1", 30001, 0, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 1, total)
 		assert.Len(t, sessions, 1)
 	})
 	t.Run("returns_all_when_no_filter", func(t *testing.T) {
-		sessions, total, err := svc.ListSessions(context.Background(), "", "", 0, 0)
+		sessions, total, err := svc.ListSessions(context.Background(), "", 0, 0, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 3, total)
 		assert.Len(t, sessions, 3)
 	})
 	t.Run("applies_pagination_with_limit", func(t *testing.T) {
-		sessions, total, err := svc.ListSessions(context.Background(), "", "", 1, 0)
+		sessions, total, err := svc.ListSessions(context.Background(), "", 0, 1, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 3, total)
 		assert.Len(t, sessions, 1)
 	})
 	t.Run("applies_pagination_with_offset", func(t *testing.T) {
-		sessions, _, err := svc.ListSessions(context.Background(), "", "", 0, 2)
+		sessions, _, err := svc.ListSessions(context.Background(), "", 0, 0, 2)
 		require.NoError(t, err)
 		assert.Len(t, sessions, 1)
 	})
 	t.Run("offset_beyond_results_returns_empty", func(t *testing.T) {
-		sessions, _, err := svc.ListSessions(context.Background(), "", "", 0, 100)
+		sessions, _, err := svc.ListSessions(context.Background(), "", 0, 0, 100)
 		require.NoError(t, err)
 		assert.Empty(t, sessions)
 	})
@@ -88,7 +88,7 @@ func TestMemorySessionService_ListSessions_Filtering(t *testing.T) {
 
 func TestMemorySessionService_GetSession_Coverage(t *testing.T) {
 	svc := NewMemorySessionService()
-	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: "u1", Created: time.Now()})
+	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: 30001, Created: time.Now()})
 
 	t.Run("returns_existing_session", func(t *testing.T) {
 		sess, err := svc.GetSession(context.Background(), "s1")
@@ -103,7 +103,7 @@ func TestMemorySessionService_GetSession_Coverage(t *testing.T) {
 
 func TestMemorySessionService_RevokeSession_Coverage(t *testing.T) {
 	svc := NewMemorySessionService()
-	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: "u1", Created: time.Now()})
+	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: 30001, Created: time.Now()})
 
 	t.Run("revokes_existing", func(t *testing.T) {
 		require.NoError(t, svc.RevokeSession(context.Background(), "s1"))
@@ -118,9 +118,9 @@ func TestMemorySessionService_RevokeSession_Coverage(t *testing.T) {
 func TestMemorySessionService_RevokeAllSessions_Coverage(t *testing.T) {
 	svc := NewMemorySessionService()
 	now := time.Now()
-	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: "u1", Created: now})
-	svc.AddSession(&iam.Session{ID: "s2", TenantID: "t1", UserID: "u1", Created: now})
-	count, err := svc.RevokeAllSessions(context.Background(), "t1", "u1")
+	svc.AddSession(&iam.Session{ID: "s1", TenantID: "t1", UserID: 30001, Created: now})
+	svc.AddSession(&iam.Session{ID: "s2", TenantID: "t1", UserID: 30001, Created: now})
+	count, err := svc.RevokeAllSessions(context.Background(), "t1", 30001)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 }
@@ -128,9 +128,9 @@ func TestMemorySessionService_RevokeAllSessions_Coverage(t *testing.T) {
 func TestMemorySessionService_RevokeOtherSessions_Coverage(t *testing.T) {
 	svc := NewMemorySessionService()
 	now := time.Now()
-	svc.AddSession(&iam.Session{ID: "keep", TenantID: "t1", UserID: "u1", Created: now})
-	svc.AddSession(&iam.Session{ID: "r1", TenantID: "t1", UserID: "u1", Created: now})
-	svc.AddSession(&iam.Session{ID: "r2", TenantID: "t1", UserID: "u1", Created: now})
+	svc.AddSession(&iam.Session{ID: "keep", TenantID: "t1", UserID: 30001, Created: now})
+	svc.AddSession(&iam.Session{ID: "r1", TenantID: "t1", UserID: 30001, Created: now})
+	svc.AddSession(&iam.Session{ID: "r2", TenantID: "t1", UserID: 30001, Created: now})
 	count, err := svc.RevokeOtherSessions(context.Background(), "t1", "keep")
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
@@ -138,7 +138,7 @@ func TestMemorySessionService_RevokeOtherSessions_Coverage(t *testing.T) {
 
 func TestMemorySessionService_CreateTestSession_Coverage(t *testing.T) {
 	svc := NewMemorySessionService()
-	sess := svc.CreateTestSession("tenant1", "user1")
+	sess := svc.CreateTestSession("tenant1", 20001)
 	require.NotNil(t, sess)
 	assert.Contains(t, sess.ID, "tenant1")
 	fetched, err := svc.GetSession(context.Background(), sess.ID)
@@ -157,13 +157,13 @@ func TestSessionToProto_Coverage(t *testing.T) {
 	t.Run("converts_full_session", func(t *testing.T) {
 		now := time.Now()
 		pb := sessionToProto(&iam.Session{
-			ID: "s1", UserID: "u1", TenantID: "t1",
+			ID: "s1", UserID: 30001, TenantID: "t1",
 			Created: now, LastActivity: now, Expires: now.Add(time.Hour),
 			MFAVerified: true, IPAddress: "10.0.0.1", UserAgent: "agent", AuthMethod: "password",
 		})
 		require.NotNil(t, pb)
 		assert.Equal(t, "s1", pb.Id)
-		assert.Equal(t, "u1", pb.UserId)
+		assert.Equal(t, "30001", pb.UserId)
 		assert.True(t, pb.MfaVerified)
 	})
 }
@@ -174,8 +174,8 @@ func TestSessionToProto_Coverage(t *testing.T) {
 
 func TestSessionServerCoverage_ListSessions_Success(t *testing.T) {
 	svc := NewMemorySessionService()
-	svc.CreateTestSession("t1", "u1")
-	svc.CreateTestSession("t1", "u2")
+	svc.CreateTestSession("t1", 30001)
+	svc.CreateTestSession("t1", 30002)
 	server := NewSessionServer(svc, newTestSessionLogger())
 
 	resp, err := server.ListSessions(context.Background(), &iampb.ListSessionsRequest{TenantId: "t1"})
@@ -185,7 +185,7 @@ func TestSessionServerCoverage_ListSessions_Success(t *testing.T) {
 
 func TestSessionServerCoverage_GetSession_Success(t *testing.T) {
 	svc := NewMemorySessionService()
-	sess := svc.CreateTestSession("t1", "u1")
+	sess := svc.CreateTestSession("t1", 30001)
 	server := NewSessionServer(svc, newTestSessionLogger())
 
 	resp, err := server.GetSession(context.Background(), &iampb.GetSessionRequest{SessionId: sess.ID})
@@ -195,7 +195,7 @@ func TestSessionServerCoverage_GetSession_Success(t *testing.T) {
 
 func TestSessionServerCoverage_RevokeSession_Success(t *testing.T) {
 	svc := NewMemorySessionService()
-	sess := svc.CreateTestSession("t1", "u1")
+	sess := svc.CreateTestSession("t1", 30001)
 	server := NewSessionServer(svc, newTestSessionLogger())
 
 	resp, err := server.RevokeSession(context.Background(), &iampb.RevokeSessionRequest{SessionId: sess.ID})
@@ -206,11 +206,11 @@ func TestSessionServerCoverage_RevokeSession_Success(t *testing.T) {
 func TestSessionServerCoverage_RevokeAllSessions_Success(t *testing.T) {
 	now := time.Now()
 	svc := NewMemorySessionService()
-	svc.AddSession(&iam.Session{ID: "a", TenantID: "t1", UserID: "u1", Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
-	svc.AddSession(&iam.Session{ID: "b", TenantID: "t1", UserID: "u1", Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	svc.AddSession(&iam.Session{ID: "a", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	svc.AddSession(&iam.Session{ID: "b", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 	server := NewSessionServer(svc, newTestSessionLogger())
 
-	resp, err := server.RevokeAllSessions(context.Background(), &iampb.RevokeAllSessionsRequest{TenantId: "t1", UserId: "u1"})
+	resp, err := server.RevokeAllSessions(context.Background(), &iampb.RevokeAllSessionsRequest{TenantId: "t1", UserId: "30001"})
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), resp.RevokedCount)
 }
@@ -218,9 +218,9 @@ func TestSessionServerCoverage_RevokeAllSessions_Success(t *testing.T) {
 func TestSessionServerCoverage_RevokeOtherSessions_Success(t *testing.T) {
 	now := time.Now()
 	svc := NewMemorySessionService()
-	keep := svc.CreateTestSession("t1", "u1")
-	svc.AddSession(&iam.Session{ID: "o1", TenantID: "t1", UserID: "u1", Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
-	svc.AddSession(&iam.Session{ID: "o2", TenantID: "t1", UserID: "u1", Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	keep := svc.CreateTestSession("t1", 30001)
+	svc.AddSession(&iam.Session{ID: "o1", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
+	svc.AddSession(&iam.Session{ID: "o2", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 	server := NewSessionServer(svc, newTestSessionLogger())
 
 	resp, err := server.RevokeOtherSessions(context.Background(), &iampb.RevokeOtherSessionsRequest{TenantId: "t1", KeepSessionId: keep.ID})

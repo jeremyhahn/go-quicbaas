@@ -129,6 +129,10 @@ type (
 	// SDLCService is the SDLC module's binding service.
 	SDLCService = pkgservice.SDLCService
 
+	// BindOptions carries the intent of one SDLCService.Bind request, such
+	// as binding a project paused.
+	BindOptions = pkgservice.BindOptions
+
 	// ProjectWriter persists a project record. Binding a project to the
 	// SDLC module turns it autonomous, and that has to be written back.
 	ProjectWriter = pkgservice.ProjectWriter

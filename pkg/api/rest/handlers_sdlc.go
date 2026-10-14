@@ -192,6 +192,17 @@ func (s *Server) HandleBindSDLCProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The body is the binding itself, so the request's intent rides in the
+	// query string.
+	opts := service.BindOptions{}
+	if raw := r.URL.Query().Get("paused"); raw != "" {
+		paused, err := strconv.ParseBool(raw)
+		if err != nil {
+			RespondBadRequest(w, r, "paused must be true or false")
+			return
+		}
+		opts.LeavePaused = paused
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		RespondBadRequest(w, r, "failed to read request body")
@@ -210,7 +221,7 @@ func (s *Server) HandleBindSDLCProject(w http.ResponseWriter, r *http.Request) {
 		RespondBadRequest(w, r, "project_id in the body must match the path")
 		return
 	}
-	bound, err := svc.Bind(r.Context(), tenantID, &binding)
+	bound, err := svc.Bind(r.Context(), tenantID, &binding, opts)
 	if err != nil {
 		respondSDLCError(w, r, err)
 		return

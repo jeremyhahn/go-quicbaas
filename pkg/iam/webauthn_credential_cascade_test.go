@@ -804,12 +804,12 @@ func newGDPRTestManagerWithReaper(t *testing.T, reaper WebAuthnCredentialReaper)
 // row and the outcome depends on which wins. Filing with a grace period takes
 // that branch out entirely, and moving GracePeriodEndsAt into the past then
 // satisfies the grace check for the manual call.
-func newDueDeletionRequest(t *testing.T, mgr *GDPRManager, tenantID, userID string,
+func newDueDeletionRequest(t *testing.T, mgr *GDPRManager, tenantID string, userID uint64,
 	deleteCategories, preserveCategories []string) *DataDeletionRequest {
 	t.Helper()
 	ctx := context.Background()
 
-	request, err := mgr.RequestDeletion(ctx, tenantID, userID, userID, "",
+	request, err := mgr.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "",
 		deleteCategories, preserveCategories, 1)
 	if err != nil {
 		t.Fatalf("RequestDeletion: %v", err)
@@ -835,7 +835,7 @@ func TestGDPRErasure_DeletesWebAuthnCredentials(t *testing.T) {
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
 
-	const tenantID, userID = "tenant1", "11"
+	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
 	request := newDueDeletionRequest(t, mgr, tenantID, userID, nil, nil)
@@ -868,7 +868,7 @@ func TestGDPRErasure_FailsClosedOnCredentialFailure(t *testing.T) {
 	mgr := newGDPRTestManagerWithReaper(t, &recordingReaper{err: errors.New("credential store unreachable")})
 	ctx := context.Background()
 
-	const tenantID, userID = "tenant1", "11"
+	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
 	request := newDueDeletionRequest(t, mgr, tenantID, userID, nil, nil)
@@ -960,7 +960,7 @@ func TestDeleteTenant_RevokesWebAuthnCredentials(t *testing.T) {
 		seen[call] = true
 	}
 	for _, id := range ids {
-		want := tenantID + "/" + id + "@" + tenantID + ".local"
+		want := fmt.Sprintf("%s/%d@%s.local", tenantID, id, tenantID)
 		if !seen[want] {
 			t.Errorf("no revocation for %q", want)
 		}
@@ -1007,10 +1007,10 @@ func TestGDPRErasure_RejectsPreserveCredentialsWithProfileDeletion(t *testing.T)
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
 
-	const tenantID, userID = "tenant1", "11"
+	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
-	_, err := mgr.RequestDeletion(ctx, tenantID, userID, userID, "",
+	_, err := mgr.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "",
 		[]string{"profile"}, []string{"credentials"}, 0)
 	if err == nil {
 		t.Fatal("deleting the profile while preserving credentials must be refused, not resolved silently")
@@ -1029,7 +1029,7 @@ func TestGDPRErasure_PreservedCredentialsSurviveWhenProfileIsKept(t *testing.T) 
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
 
-	const tenantID, userID = "tenant1", "11"
+	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
 	request := newDueDeletionRequest(t, mgr, tenantID, userID,
@@ -1059,7 +1059,7 @@ func TestGDPRErasure_OmittedCredentialsGoWithTheProfile(t *testing.T) {
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
 
-	const tenantID, userID = "tenant1", "11"
+	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
 	request := newDueDeletionRequest(t, mgr, tenantID, userID,
@@ -1086,7 +1086,7 @@ func TestGDPRErasure_StoredConflictFailsClosed(t *testing.T) {
 	mgr := newGDPRTestManagerWithReaper(t, reaper)
 	ctx := context.Background()
 
-	const tenantID, userID = "tenant1", "11"
+	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
 	// File a coherent request, then mutate the stored record into the shape
@@ -1120,10 +1120,10 @@ func TestGDPRErasure_ConflictOnlyWhereCredentialsCanExist(t *testing.T) {
 	mgr := newGDPRTestManagerWithReaper(t, nil)
 	ctx := context.Background()
 
-	const tenantID, userID = "tenant1", "11"
+	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
-	if _, err := mgr.RequestDeletion(ctx, tenantID, userID, userID, "",
+	if _, err := mgr.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "",
 		[]string{"profile"}, []string{"credentials"}, 1); err != nil {
 		t.Fatalf("without a credential store the request preserves nothing and must be accepted: %v", err)
 	}

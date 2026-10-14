@@ -59,7 +59,7 @@ func setupGDPRHandler(t *testing.T) (*IAMHandler, func()) {
 
 	// Register the subject user so export/deletion can read it.
 	require.NoError(t, memStorage.CreateUser(context.Background(), &iam.User{
-		ID: gdprUser, TenantID: gdprTenant, Email: "gdpr@example.com",
+		ID: 71, TenantID: gdprTenant, Email: "gdpr@example.com",
 	}))
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})

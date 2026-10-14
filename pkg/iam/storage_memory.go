@@ -14,10 +14,10 @@
 package iam
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,7 +39,7 @@ type MemoryStorage struct {
 	tenantQuotas   map[string]*TenantQuota
 
 	// User storage
-	users                map[string]*User // key: tenantID:userID
+	users                map[userKey]*User
 	usersByEmail         map[string]*User // key: tenantID + ":" + email
 	usersByPIVThumbprint map[string]*User // key: piv_thumbprint
 
@@ -78,7 +78,7 @@ func NewMemoryStorage(opts ...StorageOption) *MemoryStorage {
 		tenants:              make(map[string]*Tenant),
 		tenantSettings:       make(map[string]*TenantSettings),
 		tenantQuotas:         make(map[string]*TenantQuota),
-		users:                make(map[string]*User),
+		users:                make(map[userKey]*User),
 		usersByEmail:         make(map[string]*User),
 		usersByPIVThumbprint: make(map[string]*User),
 		roles:                make(map[string]*Role),
@@ -94,6 +94,13 @@ func NewMemoryStorage(opts ...StorageOption) *MemoryStorage {
 }
 
 // Helper function to create composite keys.
+// userKey addresses a user record: the id is unique per tenant, as it is in the
+// qrdb-backed store.
+type userKey struct {
+	tenantID string
+	id       uint64
+}
+
 func makeKey(parts ...string) string {
 	result := ""
 	for i, p := range parts {
@@ -172,7 +179,7 @@ func (m *MemoryStorage) DeleteTenant(ctx context.Context, id string) error {
 
 	// Cascade delete users
 	for key, user := range m.users {
-		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
+		if key.tenantID == id {
 			delete(m.users, key)
 			if user.Email != "" {
 				delete(m.usersByEmail, makeKey(user.TenantID, user.Email))
@@ -383,31 +390,18 @@ func (m *MemoryStorage) CreateUser(ctx context.Context, user *User) error {
 	// for existing data), so its id is kept — and the allocator is advanced past
 	// it, or a later mint would hand out an id the store already holds and the
 	// create would fail with ErrAlreadyExists for no reason the caller can see.
-	if user.ID == "" {
-		user.ID = FormatUserID(m.nextUserID.Add(1))
+	if user.ID == 0 {
+		user.ID = m.nextUserID.Add(1)
 	} else {
-		// A supplied id is only ever a RESTORE of an id this store already
-		// minted, so it must be a canonical qrdb Snowflake. Storing a malformed
-		// one would create an account that every canonical identity operation
-		// afterwards — QRDBID, factor binding, the session join — refuses,
-		// which is worse than refusing the create: the caller is told it
-		// succeeded and the record is unusable.
-		seeded, err := ParseUserID(user.ID)
-		if err != nil {
-			return err
-		}
-		// Advance the allocator past a restored id, or a later mint would hand
-		// out an id the store already holds and the create would fail with
-		// ErrAlreadyExists for no reason the caller can see.
 		for {
 			current := m.nextUserID.Load()
-			if current >= seeded || m.nextUserID.CompareAndSwap(current, seeded) {
+			if current >= user.ID || m.nextUserID.CompareAndSwap(current, user.ID) {
 				break
 			}
 		}
 	}
 
-	key := makeKey(user.TenantID, user.ID)
+	key := userKey{tenantID: user.TenantID, id: user.ID}
 	if _, exists := m.users[key]; exists {
 		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.user.create"}
 	}
@@ -448,12 +442,15 @@ func (m *MemoryStorage) CreateUser(ctx context.Context, user *User) error {
 	return nil
 }
 
-func (m *MemoryStorage) GetUser(ctx context.Context, tenantID, userID string) (*User, error) {
+func (m *MemoryStorage) GetUser(ctx context.Context, tenantID string, userID uint64) (*User, error) {
+	if userID == 0 {
+		return nil, ErrInvalidUserID
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	key := makeKey(tenantID, userID)
-	user, exists := m.users[key]
+	user, exists := m.users[userKey{tenantID: tenantID, id: userID}]
 	if !exists {
 		// The SENTINEL, not a bare not-found code. Callers that mean "this user
 		// is absent" match it with IsUserNotFound, which reads the sentinel's
@@ -515,7 +512,7 @@ func (m *MemoryStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint s
 //
 // The caller holds m.mu, which is what makes the check and the write that
 // follows it one operation rather than two racing ones.
-func (m *MemoryStorage) usernameTaken(tenantID, username, selfID string) error {
+func (m *MemoryStorage) usernameTaken(tenantID, username string, selfID uint64) error {
 	if username == "" {
 		return nil
 	}
@@ -552,7 +549,7 @@ func (m *MemoryStorage) UpdateUser(ctx context.Context, user *User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := makeKey(user.TenantID, user.ID)
+	key := userKey{tenantID: user.TenantID, id: user.ID}
 	oldUser, exists := m.users[key]
 	if !exists {
 		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.update"}
@@ -624,11 +621,15 @@ func (m *MemoryStorage) UpdateUser(ctx context.Context, user *User) error {
 
 // MarkUserDeleting claims the record for deletion. Marking an already-marked
 // record is a no-op, which is what makes a retried deletion resumable.
-func (m *MemoryStorage) MarkUserDeleting(ctx context.Context, tenantID, userID string) error {
+func (m *MemoryStorage) MarkUserDeleting(ctx context.Context, tenantID string, userID uint64) error {
+	if userID == 0 {
+		return ErrInvalidUserID
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	user, exists := m.users[makeKey(tenantID, userID)]
+	user, exists := m.users[userKey{tenantID: tenantID, id: userID}]
 	if !exists {
 		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.mark_deleting"}
 	}
@@ -636,11 +637,15 @@ func (m *MemoryStorage) MarkUserDeleting(ctx context.Context, tenantID, userID s
 	return nil
 }
 
-func (m *MemoryStorage) DeleteUser(ctx context.Context, tenantID, userID string) error {
+func (m *MemoryStorage) DeleteUser(ctx context.Context, tenantID string, userID uint64) error {
+	if userID == 0 {
+		return ErrInvalidUserID
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := makeKey(tenantID, userID)
+	key := userKey{tenantID: tenantID, id: userID}
 	user, exists := m.users[key]
 	if !exists {
 		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.user.delete"}
@@ -660,9 +665,8 @@ func (m *MemoryStorage) ListUsers(ctx context.Context, tenantID string, opts Lis
 	defer m.mu.RUnlock()
 
 	var result []*User
-	prefix := tenantID + ":"
 	for key, user := range m.users {
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+		if key.tenantID == tenantID {
 			u := *user
 			result = append(result, &u)
 		}
@@ -670,7 +674,7 @@ func (m *MemoryStorage) ListUsers(ctx context.Context, tenantID string, opts Lis
 
 	// Map iteration order is random; sort by ID so offset pages are stable
 	// across calls, as they are in the qrdb-backed store.
-	slices.SortFunc(result, func(a, b *User) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(result, func(a, b *User) int { return cmp.Compare(a.ID, b.ID) })
 
 	// Apply pagination
 	start := opts.Offset

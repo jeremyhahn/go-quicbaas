@@ -640,7 +640,7 @@ type FederatedIdentity struct {
 	ID string `json:"id"`
 
 	// UserID is the QuicBaaS user ID.
-	UserID string `json:"user_id"`
+	UserID uint64 `json:"user_id,string"`
 
 	// TenantID is the tenant context.
 	TenantID string `json:"tenant_id"`
@@ -675,7 +675,7 @@ func (i *FederatedIdentity) Validate() error {
 	if i.ID == "" {
 		return NewIAMError(ErrFederatedIdentityNotFound, "iam.federation.identity.validate", "identity ID is required", nil)
 	}
-	if i.UserID == "" {
+	if i.UserID == 0 {
 		return NewIAMError(ErrFederatedIdentityNotFound, "iam.federation.identity.validate", "user ID is required", nil)
 	}
 	if i.TenantID == "" {
@@ -732,7 +732,7 @@ type FederationCallbackState struct {
 	CodeVerifier string `json:"code_verifier,omitempty"`
 
 	// LinkUserID is set when linking to an existing user account.
-	LinkUserID string `json:"link_user_id,omitempty"`
+	LinkUserID uint64 `json:"link_user_id,string,omitempty"`
 }
 
 // Validate validates a FederationCallbackState for correctness.

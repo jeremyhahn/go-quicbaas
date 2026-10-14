@@ -228,7 +228,7 @@ func TestDeleteOldAuditEvents(t *testing.T) {
 
 		// Inject the authenticated principal the way the authz middleware does.
 		req := systemRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=tenant-123&before=2024-01-01T00:00:00Z", nil)
-		req = req.WithContext(ctxWithTestSubject(req.Context(), "user-123", "tenant-123"))
+		req = req.WithContext(ctxWithTestSubject(req.Context(), "10123", "tenant-123"))
 		req = req.WithContext(ctxWithCallerTenant(req.Context(), "tenant-123"))
 		w := httptest.NewRecorder()
 

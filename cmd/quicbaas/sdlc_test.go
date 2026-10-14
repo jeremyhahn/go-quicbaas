@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,14 +184,15 @@ func (m *mockSDLCClient) ListForges(_ context.Context) (*sdlcSDK.ListForgesRespo
 
 func withSDLCMock(t *testing.T, mc *mockSDLCClient) {
 	t.Helper()
-	origFactory, origTimeout, origTenant, origOutput, origFile := sdlcClientFactory, globalTimeout, globalTenantID, sdlcOutputFmt, sdlcFile
+	origFactory, origTimeout, origTenant, origOutput, origFile, origPaused := sdlcClientFactory, globalTimeout, globalTenantID, sdlcOutputFmt, sdlcFile, sdlcPaused
 	sdlcClientFactory = func() (sdlcSDK.Client, error) { return mc, nil }
 	globalTimeout = time.Second
 	globalTenantID = "tenant-a"
 	sdlcOutputFmt = "json"
 	sdlcFile = ""
+	sdlcPaused = false
 	t.Cleanup(func() {
-		sdlcClientFactory, globalTimeout, globalTenantID, sdlcOutputFmt, sdlcFile = origFactory, origTimeout, origTenant, origOutput, origFile
+		sdlcClientFactory, globalTimeout, globalTenantID, sdlcOutputFmt, sdlcFile, sdlcPaused = origFactory, origTimeout, origTenant, origOutput, origFile, origPaused
 	})
 }
 
@@ -206,6 +208,44 @@ func TestSDLCBind_ReadsTheBindingFromAFile(t *testing.T) {
 	assert.Equal(t, "tenant-a", mc.bound.TenantID)
 	assert.Equal(t, "task:ready", mc.bound.Binding.Forge.TriggerLabel)
 	assert.Equal(t, 1, mc.bound.Binding.Review.RequiredApprovals)
+}
+
+// TestSDLCBind_PausedFlag: --paused on the command line sets the request's
+// Paused, and leaving it off leaves Paused false.
+func TestSDLCBind_PausedFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "binding.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("forge:\n  type: gitea\n  owner: acme\n  repo: api\n"), 0o600))
+	for name, tc := range map[string]struct {
+		args []string
+		want bool
+	}{
+		"flag set":     {args: []string{"bind", "proj-1", "-f", path, "--paused"}, want: true},
+		"flag omitted": {args: []string{"bind", "proj-1", "-f", path}, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mc := &mockSDLCClient{}
+			withSDLCMock(t, mc)
+			cmd := newSDLCCommand()
+			cmd.SetArgs(tc.args)
+			cmd.SetOut(io.Discard)
+			require.NoError(t, cmd.Execute())
+			require.NotNil(t, mc.bound)
+			assert.Equal(t, tc.want, mc.bound.Paused)
+		})
+	}
+}
+
+// TestSDLCBind_PausedFlagRejectsAValue: --paused is a boolean switch, so a
+// value that is not a boolean is refused before any request is sent.
+func TestSDLCBind_PausedFlagRejectsAValue(t *testing.T) {
+	mc := &mockSDLCClient{}
+	withSDLCMock(t, mc)
+	cmd := newSDLCCommand()
+	cmd.SetArgs([]string{"bind", "proj-1", "-f", "binding.yaml", "--paused=nope"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	require.Error(t, cmd.Execute())
+	assert.Nil(t, mc.bound)
 }
 
 func TestSDLCBind_RefusesWithoutOrWithABadFile(t *testing.T) {

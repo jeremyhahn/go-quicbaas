@@ -63,7 +63,7 @@ func (s *Server) HandleReserveAccountSession(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if !queryIdentityMatches(w, r, subject) {
+	if !queryIdentityMatches(w, r, subject, s.lazyCallerAccount(w, r, subject)) {
 		return
 	}
 	var req ReserveAccountSessionRESTRequest
@@ -99,7 +99,7 @@ func (s *Server) HandleReleaseAccountSession(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	if !queryIdentityMatches(w, r, subject) {
+	if !queryIdentityMatches(w, r, subject, s.lazyCallerAccount(w, r, subject)) {
 		return
 	}
 	accountSvc, ok := s.accountService(w, r)

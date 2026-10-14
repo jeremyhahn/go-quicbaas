@@ -94,7 +94,7 @@ func TestIAMProvisionTenantRequest_ValidateRefusesBadRequests(t *testing.T) {
 }
 
 func TestIAMServiceWrapper_ProvisionTenant_Delegates(t *testing.T) {
-	want := &IAMProvisionTenantResponse{TenantID: "acme", AdminUserID: "42", AdminPending: true, InviteToken: "tok"}
+	want := &IAMProvisionTenantResponse{TenantID: "acme", AdminUserID: 42, AdminPending: true, InviteToken: "tok"}
 	prov := &recordingProvisioner{resp: want}
 	w := &iamServiceWrapper{provider: &mockIAMServiceProvider{provisioner: prov}}
 

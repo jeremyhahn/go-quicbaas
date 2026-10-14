@@ -226,6 +226,15 @@ describe('McpClient.sdlc — tools', () => {
     });
   });
 
+  it('carries paused to sdlc_bind when it is set', async () => {
+    answer({ project_id: 'proj-1' });
+    const client = new McpClient(endpoint);
+    const binding = { project_id: 'proj-1' } as unknown as ProjectBinding;
+
+    await client.sdlc.bind('tenant-a', 'proj-1', binding, true);
+    expect(lastCall().args?.['paused']).toBe(true);
+  });
+
   it('unbinds and resolves nothing, as REST does for its 204', async () => {
     answer({ project_id: 'proj-1', unbound: true });
     const client = new McpClient(endpoint);

@@ -7,6 +7,7 @@ package server
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -200,8 +201,9 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 		t.Fatalf("GetUserByUsername: %v", err)
 	}
 	subject := auth.SubjectFromIdentity(resolved)
-	if subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != seeded.ID {
-		t.Fatalf("resolved subject %+v, want username kind with UserID %q", subject, seeded.ID)
+	wantUserID := strconv.FormatUint(seeded.ID, 10)
+	if subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != wantUserID {
+		t.Fatalf("resolved subject %+v, want username kind with UserID %q", subject, wantUserID)
 	}
 }
 
@@ -217,11 +219,14 @@ func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByUsername(admin): %v", err)
 	}
-	seedSessionUser(t, users, "acme", admin.ID, []string{"reader"})
-	numeric, err := users.GetUserByUsername(ctx, "acme", admin.ID)
+	// A second account whose username is the first account's id in decimal.
+	adminID := strconv.FormatUint(admin.ID, 10)
+	seedSessionUser(t, users, "acme", adminID, []string{"reader"})
+	numeric, err := users.GetUserByUsername(ctx, "acme", adminID)
 	if err != nil {
-		t.Fatalf("GetUserByUsername(%s): %v", admin.ID, err)
+		t.Fatalf("GetUserByUsername(%s): %v", adminID, err)
 	}
+	numericID := strconv.FormatUint(numeric.ID, 10)
 	issuer := newOIDCSessionIssuer()
 	issuer.SetProvider(provider)
 
@@ -230,8 +235,8 @@ func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
 		wantKind interfaces.SubjectIDKind
 		wantUser string
 	}{
-		"numeric username": {sub: admin.ID, wantKind: interfaces.SubjectIDUsername, wantUser: numeric.ID},
-		"email":            {sub: "admin@example.test", wantKind: interfaces.SubjectIDEmail, wantUser: admin.ID},
+		"numeric username": {sub: adminID, wantKind: interfaces.SubjectIDUsername, wantUser: numericID},
+		"email":            {sub: "admin@example.test", wantKind: interfaces.SubjectIDEmail, wantUser: adminID},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
