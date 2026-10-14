@@ -88,7 +88,7 @@ Status is one of `shipped`, `in progress`, `planned`, `future`.
 | timeseries | in progress | Re-export of go-qrdb's time-series service (`TimeSeriesClient`) through `sdk/go`<br>QuicBaaS's own time-series service and client: a parallel implementation, removed on the owner's word<br>Write, query and retention | [timeseries/](timeseries/) |
 | vector | in progress | Re-export of go-qrdb's vector and HNSW service (`VectorClient`) through `sdk/go`<br>QuicBaaS's own vector service, local index and client: a parallel implementation, removed on the owner's word<br>Namespaces, search and indexing | [vector/](vector/) |
 | websocket | future | The WebSocket server with MQTT, AMQP and STOMP subprotocols<br>Compiles and is unit-tested; not mounted on any listener | [websocket/](websocket/) |
-| release-readiness | in progress | The published tree carries no private host, path or lab value<br>Every `docs/` folder meets the documentation rules<br>CI workflows do not mount the host Docker socket | [release/](release/) |
+| release-readiness | in progress | The published tree carries no private host, path or lab value<br>Every `docs/` folder meets the documentation rules<br>A feature re-exported from go-xkms (TPM policies, CA, ACME, KMS, auth factors) is documented once, in go-xkms: `docs/` links to that page and adds a page only for go-quicbaas's own enhancement or variation<br>CI workflows do not mount the host Docker socket | [release/](release/) |
 | declarative-placement | planned | Declarative workload placement | [scheduler/](scheduler/) |
 | orchestration-volumes | planned | go-blockstore volumes in container orchestration | none |
 | tenant-agent | future | A QuicBaaS tenant agent replaces the Company Agent | none |
