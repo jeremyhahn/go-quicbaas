@@ -7,21 +7,29 @@
 
 ## Purpose
 
-QuicBaaS is the composer and the single SDK frontage for the stack: it composes go-qrdb (KV, Raft, ceremony, PIN backend) and go-xkms (hardware crypto, WebAuthn, FIDO2, PIV, CA, ACME, trust bootstrap) into one SDK and one multi-protocol API surface, plus the application layer it alone owns.
-Its Go SDK is the canonical entry point for the whole stack.
-It is the only way downstream applications, such as go-trusted-platform, consume the stack's crypto, KV and IAM capabilities.
+QuicBaaS is layer 4 of the stack, which is one product in layers (owner ruling 2026-10-14; handbook `software/docs/02-dependency-graph.md`, §The stack). It is the application-layer framework and its integration points: the backend as a service most applications consume, with the Software Factory.
+It embeds go-qrdb as a library for the database services and composes go-xkms on top of it with the hardware crypto implementations passed in. It therefore has the aggregate capability of both, with every go-qrdb seam filled by hardware crypto.
+It inherits every go-qrdb and go-xkms service and re-exports each one through its own Go SDK, then adds the application-layer services listed below. go-trusted-platform sits on QuicBaaS only and consumes the whole stack through this SDK.
 
 ## Boundaries
 
-QuicBaaS owns:
+QuicBaaS embeds, as libraries, never as second products:
 
-- Composition: building go-xkms adapters and injecting them into go-qrdb through go-qrdb's `With*` options, and exposing every capability through the SDK on every transport.
-- The application layer: agentic orchestration and the Software Factory, messaging, scheduler, cache, RAG, embeddings, IAM and OAuth 2.1 / OIDC, authorization overlay, audit, multi-tenancy, parameter store, object storage, observability, service registry and the attestation Verifier.
+- go-qrdb, the cluster engine and database system. It owns the database and data services, clustering and Raft, the seal and the barrier (system and per-tenant), the Shamir initialization ceremony, first boot and bootstrap, tenants, the user and identity model with SPKI cert binding, the RBAC decision point and versioned named credentials.
+- go-xkms, mounted on the same node through its ServiceModule. It adds hardware crypto, auth factors (WebAuthn, FIDO2, PIV), KMS, the certificate authority, ACME, DANE and trust bootstrap, TPM policies and the attestation evidence primitives as services on go-qrdb.
+
+QuicBaaS re-exports every service of both through `sdk/go` (the `Security()` sub-services group the go-xkms ones), under the lower layer's own names and types, on all six transports: REST, gRPC, QUIC, MCP, Unix and embedded. It never wraps, filters or re-models a lower service under its own names. A capability QuicBaaS needs from a lower layer and does not yet have is a seam row in both SPECs plus a re-export here, never a parallel implementation.
+
+One cluster engine and one datastore per deployment: the embedded go-qrdb node. QuicBaaS keeps no second database, cluster or engine, and no store, service or client of its own for anything go-qrdb or go-xkms provides. System-level records of every layer live in the system tenant and tenant data in its tenant; tenants are strictly isolated, and there is no shared cross-tenant client.
+
+QuicBaaS adds, and owns:
+
+- The multi-protocol API server and the transports, plus OAuth 2.1 / OIDC on the go-qrdb user (token subjects are go-qrdb users).
+- The application services: agentic orchestration and the Software Factory (accounts, agent fleet, projects, SDLC), messaging, the scheduler and workload placement, cache, the Ollama client, the parameter store, object storage, observability, the service registry, the attestation Verifier and its reference-value registry, and the hardware-backend composition. All of them keep their records in the embedded go-qrdb node.
 
 QuicBaaS never implements:
 
-- Database, clustering and seal, the barrier (system and per-tenant), the Shamir initialization ceremony, first-boot and bootstrap, the user/identity model and SPKI cert-binding, and the RBAC decision point: go-qrdb's.
-- Hardware crypto, FIDO2, WebAuthn, PIV, ACME, DANE, TPM logic, the certificate authority, trust bootstrap and attestation evidence primitives: go-xkms's.
+- Anything listed above as go-qrdb's or go-xkms's.
 - Provisioning, SDN and node-side attestation: go-trusted-platform's.
 
 QuicBaaS has no firmware dependency. It carries only the generic DICE and attestation primitives usable with any device, and attestation verification goes through go-xkms.
@@ -30,34 +38,35 @@ QuicBaaS has no firmware dependency. It carries only the generic DICE and attest
 
 Status is one of `shipped`, `in progress`, `planned`, `future`.
 
-| feature | status | requirements | detail |
+| Feature | Status | Requirements | Detail |
 |---|---|---|---|
 | accounts | in progress | Pooled provider accounts, the spend cap, cost enforcement and job admission<br>The spend cap is checked per turn, not only at spawn<br>A worker session rolls when its pooled account rotates | [accounts/](accounts/) |
 | agent-fleet | in progress | Remote and embedded fleet nodes, mTLS enrollment, heartbeat and recovery<br>`fleet serve` and `fleet deploy`, the node sandbox and the worker image<br>Agent images published to the registry | [agent-fleet/](agent-fleet/) |
-| attestation | shipped | The attestation Verifier: endorsements, signed reference values, TPM quote appraisal<br>Statement and chain verification over go-xkms evidence primitives | [attestation/](attestation/) |
-| audit-logging | in progress | Record, query and sign the audit trail<br>Signature verification fails closed when signing is on<br>The signing key is held in protected memory | [audit-logging/](audit-logging/) |
+| attestation | in progress | The attestation Verifier: endorsements, signed reference values, TPM quote appraisal, over go-xkms evidence primitives<br>Reference values (signed CoRIM, `attestation:provision`, cluster-replicated) are the registry of approved images: the image pipeline publishes there and go-trusted-platform consumes it through the SDK | [attestation/](attestation/) |
+| audit-logging | in progress | Re-export of go-qrdb's audit service (`AuditClient`); the audit sink is go-qrdb's<br>QuicBaaS's own audit model and store: a parallel implementation, removed on the owner's word<br>Signature verification fails closed when signing is on<br>The signing key is held in protected memory | [audit-logging/](audit-logging/) |
 | authorization | in progress | RBAC through go-qrdb's PDP, plus the ABAC attribute overlay<br>REST permissions do not derive from the first path segment<br>Authorization for the embedded transport: decision pending ([#329](../../issues/329)) | [authorization/](authorization/) |
-| backup-restore | shipped | Backup to S3, Azure, GCS and MinIO<br>Restore and scheduling | [backup-restore/](backup-restore/) |
-| barrier | in progress | The system barrier: init, unseal, seal, rekey, recovery, Shamir custody<br>Shamir shares, recovery keys and PINs are not held in plain strings<br>The master passphrase is not forced into argv | [barrier/](barrier/) |
-| bootstrap | in progress | First-boot ceremony and trust bootstrap<br>First-boot re-entry delivers the admin credential<br>The embedded node's SPIFFE trust domain is settable through the SDK | [bootstrap/](bootstrap/) |
+| backup-restore | in progress | Re-export of go-qrdb's backup service (`BackupClient`) through `sdk/go`<br>QuicBaaS's own backup manager, targets and snapshot format: a parallel implementation, removed on the owner's word<br>Backup to S3, Azure, GCS and MinIO; restore and scheduling | [backup-restore/](backup-restore/) |
+| barrier | in progress | Re-export of go-qrdb's system barrier: init, unseal, seal, rekey, recovery, Shamir custody<br>QuicBaaS's own seal service: a parallel implementation, removed on the owner's word<br>Shamir shares, recovery keys and PINs are not held in plain strings<br>The master passphrase is not forced into argv | [barrier/](barrier/) |
+| bootstrap | in progress | Re-export of go-qrdb's first-boot and ceremony services and go-xkms trust bootstrap<br>QuicBaaS's own ceremony service facade: a parallel implementation, removed on the owner's word<br>First-boot re-entry delivers the admin credential<br>The embedded node's SPIFFE trust domain is settable through the SDK | [bootstrap/](bootstrap/) |
 | cache | shipped | L1 in-memory LRU with optional L2 Redis<br>Entity-aware | [cache/](cache/) |
-| certificate-authority | shipped | Certificate issuance, ACME (RFC 8555) and trust anchors | [certificate-authority/](certificate-authority/) |
-| cluster | in progress | Raft consensus, membership, discovery, rebalancing and node operations<br>No hardcoded bind, advertise or upstream addresses | [cluster/](cluster/) |
-| codec | shipped | Serialization: the encoding every other capability travels in<br>No API surface of its own | [codec/](codec/) |
+| certificate-authority | in progress | Re-export of the go-xkms CA (`CAService`, `TCGCAService`) and ACME through `sdk/go` on every transport<br>QuicBaaS's own certificate service, CA adapters and `/api/v1/certificate` and `/api/v1/acme` verbs (SPIFFE SAN, key generation, cross-sign, device identity): a parallel implementation, removed on the owner's word<br>Trust anchors | [certificate-authority/](certificate-authority/) |
+| cluster | in progress | Re-export of go-qrdb's cluster, membership and rebalance services through `sdk/go`<br>QuicBaaS's own cluster service and client: a parallel implementation, removed on the owner's word<br>No hardcoded bind, advertise or upstream addresses | [cluster/](cluster/) |
+| codec | in progress | go-qrdb's codec; no API surface of its own<br>QuicBaaS's own codec package (no importers): a parallel implementation, removed on the owner's word | [codec/](codec/) |
 | composition | in progress | Build go-xkms adapters and inject them into go-qrdb<br>Pin the released go-qrdb and go-xkms tags, no unreleased library main<br>The module route-collision guard does not depend on registration order | [composition/](composition/) |
 | credentials | shipped | Credential storage and lifecycle: go-qrdb's versioned named-credential rotation | [credentials/](credentials/) |
-| data-encryption-keys | shipped | DEK lifecycle, rotation and re-encryption<br>The safety interlock | [data-encryption-keys/](data-encryption-keys/) |
-| data-services | in progress | KV, DAO, collections, transactions, batch, sharding, storage engine<br>`storage.data_dir` derives `wal_dir` | [data-services/](data-services/) |
+| data-encryption-keys | in progress | Re-export of go-qrdb's DEK service (`DEKClient`) through `sdk/go`<br>QuicBaaS's own DEK store: a parallel implementation, removed on the owner's word<br>DEK lifecycle, rotation and re-encryption; the safety interlock | [data-encryption-keys/](data-encryption-keys/) |
+| data-services | in progress | Re-export of go-qrdb's KV, batch, transaction, MVCC, collection and index services through `sdk/go`<br>One datastore: the embedded go-qrdb node; no second store beside it<br>QuicBaaS's own data clients, storage backends, shards, leases, watch and routing: a parallel implementation, removed on the owner's word<br>`storage.data_dir` derives `wal_dir` | [data-services/](data-services/) |
 | deployment | in progress | Kubernetes deployment and a production checklist<br>Every node of the 3-node Raft cluster runs one go-quicbaas tag; formation, smoke and failover pass | [deployment/](deployment/) |
 | desktop-gui | in progress | The Wails desktop application and the embedded web UI<br>The web UI reconciles the session identity before it attaches a bearer | [desktop-gui/](desktop-gui/) |
-| embeddings | shipped | Embedding providers: Ollama, OpenAI, Voyage, LM Studio | [embeddings/](embeddings/) |
-| go-sdk | in progress | The canonical entry point for the whole stack, `Security()` sub-services included<br>An embedded-transport stream Close does not race a handler send<br>Admin FIDO2 / PIV factor enrollment published in the SDK<br>Platform bootstrap re-exports for go-trusted-platform: tenant context, signer store, TPM policy, secret value helpers and the ACME TPM adapter | [go-sdk/](go-sdk/) |
-| iam | in progress | Identity lifecycle: users, roles, groups, tenants, sessions, MFA, WebAuthn, GDPR<br>Email is the only subject login key; invite-based self-service registration<br>`IAMService` mapped under `RequireAuthz`; TOTP secrets protected beyond derivation | [iam/](iam/) |
+| embeddings | in progress | Re-export of go-qrdb's embedding service (`EmbeddingClient`) through `sdk/go`<br>QuicBaaS's own embedding service: a parallel implementation, removed on the owner's word<br>Providers: Ollama, OpenAI, Voyage, LM Studio | [embeddings/](embeddings/) |
+| go-sdk | in progress | The canonical entry point for the whole stack, `Security()` sub-services included<br>An embedded-transport stream Close does not race a handler send<br>Admin FIDO2 / PIV factor enrollment published in the SDK<br>Platform bootstrap re-exports for go-trusted-platform: tenant context, signer store, TPM policy, secret value helpers and the ACME TPM adapter<br>`Security().TPMPolicy()` returns the go-xkms TPM-policy client (`TPMPolicyService`) by alias<br>Initrd re-exports in `sdk/go/xkms` as aliases: the static policy binding resolver, the binding-record decode and `SetPolicyBindingResolver` on `TrustedPlatformModule`<br>The go-xkms TPM-policy update variant (`--branch --reference-values`) is served on all six transports through the mounted go-xkms module, tested per transport; pinned to the go-xkms tag that carries it<br>An image's reference values are fetched through `Security().Attestation()` (unattended unlock across updates, step 3) | [go-sdk/](go-sdk/) |
+| hardware-backend-composition | planned | Device backend adapters are registered in the QuicBaaS composition as the hardware crypto passed into go-xkms; go-trusted-platform and xkey never import them<br>Seam: the trusted-firmware go-xkms adapter first, then the SE052F and i.MX 95 adapters<br>Consumer: go-trusted-platform, through the QuicBaaS SDK | [composition/](composition/) |
+| iam | in progress | Re-export of go-qrdb's user, role, tenant, session and auth-factor services and the go-xkms WebAuthn / FIDO2 / PIV factors<br>Email is the only subject login key; invite-based self-service registration<br>QuicBaaS's own user, role, token, policy, MFA and session storage: a parallel implementation, removed on the owner's word<br>`IAMService` mapped under `RequireAuthz`; TOTP secrets protected beyond derivation | [iam/](iam/) |
 | identity-refactor | future | Layer the identity surface over go-qrdb's overlapping primitives<br>Authentication enforced on UI routes | [identity-refactor/](identity-refactor/) |
-| kms | shipped | Key management and cryptographic operations<br>AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault and PKCS#11 | [kms/](kms/) |
+| kms | in progress | Re-export of go-xkms KMS and its backends (AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault, PKCS#11) through `sdk/go`<br>QuicBaaS's own key store, backend router, versions and rotation: a parallel implementation, removed on the owner's word | [kms/](kms/) |
 | mcp-server | in progress | The Model Context Protocol surface, scope-filtered per principal<br>Unauthenticated `tools/list` does not return the full registry | [mcp-server/](mcp-server/) |
 | messaging | shipped | Channels, pub/sub, delta publishing<br>Deduplication | [messaging/](messaging/) |
-| multi-tenancy | in progress | Tenant lifecycle and per-tenant barriers<br>An empty caller tenant is not treated as the system tenant<br>`tenant barrier unseal-share` has a path off argv | [multi-tenancy/](multi-tenancy/) |
+| multi-tenancy | in progress | Re-export of go-qrdb's tenants and per-tenant barriers through `sdk/go`; tenants strictly isolated<br>QuicBaaS's own tenant manager and tenant storage: a parallel implementation, removed on the owner's word<br>An empty caller tenant is not treated as the system tenant<br>`tenant barrier unseal-share` has a path off argv | [multi-tenancy/](multi-tenancy/) |
 | multiprotocol-api | in progress | The unified API server and the transport model<br>go-qrdb's unified tenant and authentication chain on every transport<br>REST rate limiting on by default, with an opt-out | [multiprotocol-api/](multiprotocol-api/) |
 | oauth2-oidc | in progress | OAuth 2.1 / OIDC provider, MCP authorization, external IdP federation, DPoP<br>The xkms FIDO2 login token's `kid` is in the published JWKS<br>`acr` / `amr` emitted as their doc comments state | [oauth2-oidc/](oauth2-oidc/) |
 | object-storage | in progress | Tenanted object storage: backends, tiering, replication, catalog<br>Tenant isolation as the compliance model claims | [object-storage/](object-storage/) |
@@ -66,17 +75,17 @@ Status is one of `shipped`, `in progress`, `planned`, `future`.
 | orchestration | in progress | Agent sessions with a durable event log and attach; backends and inference<br>The job envelope and its runners, workflows, tasks, autonomy and sandboxing<br>A pending task is claimed once across nodes; no RPC goes out unauthenticated | [orchestration/](orchestration/) |
 | parameter-store | shipped | Tenanted configuration parameters | [parameter-store/](parameter-store/) |
 | projects | in progress | The tenant-scoped record tying a repository, git identity, workspace and fleet-node roles<br>Deleting a bound project is refused with a typed error naming `unbind`<br>Project-name arbitration yields one winner | [projects/](projects/) |
-| rag | shipped | Retrieval-augmented generation: chunking, ranking, context assembly | [rag/](rag/) |
+| rag | in progress | Re-export of go-qrdb's RAG service (`RAGClient`) through `sdk/go`<br>QuicBaaS's own RAG pipeline: a parallel implementation, removed on the owner's word<br>Chunking, ranking and context assembly | [rag/](rag/) |
 | scheduler | in progress | Distributed job scheduling, cron and delayed jobs, leader-elected execution<br>The workload placement engine<br>Guarded (CAS) writes for abandoned-run recovery | [scheduler/](scheduler/) |
 | sdlc | in progress | A labelled forge issue becomes a branch, a pull request, a review and a merge<br>Project bindings, onboarding, review, triage, merge train, CI-failure classification<br>SDLC surface parity across transports | [sdlc/](sdlc/) |
-| secrets | in progress | The secrets engine, dynamic secrets, secret-reference resolution<br>Rotation policies are performed, not only stored<br>Storage-level write arbitration across nodes | [secrets/](secrets/) |
+| secrets | in progress | Secret-reference resolution and dynamic secrets over go-qrdb's barrier and credentials<br>QuicBaaS's own encrypted secrets backend and DEKs: a parallel implementation, removed on the owner's word<br>Rotation policies are performed, not only stored<br>Storage-level write arbitration across nodes | [secrets/](secrets/) |
 | security-hardening | in progress | FIPS mode, TLS posture, ingress binding, the hardening baseline<br>Server certificate SANs honoured and not duplicated<br>The scoped FIPS gate runs on push | [security-hardening/](security-hardening/) |
 | service-registry | shipped | Tenant-private service discovery: lease-backed registration, resolve, ordered watch<br>Served on every transport | [service-registry/](service-registry/) |
 | signal-bridge | shipped | The go-signal bridge (build-tag gated) | [signal-bridge/](signal-bridge/) |
 | software-factory | in progress | The Software Factory built on the engine: projects, accounts and the SDLC module<br>Triage, task workers, review and merge run on the QuicBaaS deployment<br>A standing MCP principal for every company agent | [software-factory/](software-factory/) |
-| ssh | shipped | Server-held SSH keys, known hosts, authorized keys<br>Crypto through go-xkms | [ssh/](ssh/) |
-| timeseries | shipped | Time-series write and query, retention | [timeseries/](timeseries/) |
-| vector | shipped | Vector namespaces, search, indexing | [vector/](vector/) |
+| ssh | in progress | Re-export of the go-xkms SSH service through `sdk/go`<br>QuicBaaS's own SSH service facade and key store: a parallel implementation, removed on the owner's word<br>Server-held SSH keys, known hosts, authorized keys | [ssh/](ssh/) |
+| timeseries | in progress | Re-export of go-qrdb's time-series service (`TimeSeriesClient`) through `sdk/go`<br>QuicBaaS's own time-series service and client: a parallel implementation, removed on the owner's word<br>Write, query and retention | [timeseries/](timeseries/) |
+| vector | in progress | Re-export of go-qrdb's vector and HNSW service (`VectorClient`) through `sdk/go`<br>QuicBaaS's own vector service, local index and client: a parallel implementation, removed on the owner's word<br>Namespaces, search and indexing | [vector/](vector/) |
 | websocket | future | The WebSocket server with MQTT, AMQP and STOMP subprotocols<br>Compiles and is unit-tested; not mounted on any listener | [websocket/](websocket/) |
 | release-readiness | in progress | The published tree carries no private host, path or lab value<br>Every `docs/` folder meets the documentation rules<br>CI workflows do not mount the host Docker socket | [release/](release/) |
 | declarative-placement | planned | Declarative workload placement | [scheduler/](scheduler/) |
