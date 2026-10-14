@@ -248,7 +248,7 @@ func TestIAMServer_CreatePolicy_InvalidYAML(t *testing.T) {
 	srv, _ := newTestIAMServer(t)
 
 	// Pass syntactically invalid YAML to trigger the first yaml.Unmarshal error
-	_, err := srv.CreatePolicy(context.Background(), &iampb.CreatePolicyRequest{
+	_, err := srv.CreatePolicy(callerContext("t-1"), &iampb.CreatePolicyRequest{
 		TenantId: "t-1",
 		Name:     "pol",
 		SpecYaml: []byte("\t\x00invalid-yaml: ["),
@@ -266,7 +266,7 @@ func TestIAMServer_CreateAdminAssignment_ServiceError(t *testing.T) {
 	svc.On("CreateAdminAssignment", mock.Anything, mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
-	_, err := srv.CreateAdminAssignment(context.Background(), &iampb.CreateAdminAssignmentRequest{
+	_, err := srv.CreateAdminAssignment(callerContext("t-1"), &iampb.CreateAdminAssignmentRequest{
 		UserId:    "u-1",
 		AdminRole: iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN,
 		GrantedBy: "admin-1",
@@ -284,7 +284,7 @@ func TestIAMServer_UpdateAdminAssignment_ServiceError(t *testing.T) {
 	svc.On("UpdateAdminAssignment", mock.Anything, "a-1", mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
-	_, err := srv.UpdateAdminAssignment(context.Background(), &iampb.UpdateAdminAssignmentRequest{
+	_, err := srv.UpdateAdminAssignment(callerContext("t-1"), &iampb.UpdateAdminAssignmentRequest{
 		Id:     "a-1",
 		Active: true,
 	})
@@ -301,7 +301,7 @@ func TestIAMServer_StartImpersonation_WithDuration_ServiceError(t *testing.T) {
 	svc.On("StartImpersonation", mock.Anything, mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"})
 
-	_, err := srv.StartImpersonation(context.Background(), &iampb.StartImpersonationRequest{
+	_, err := srv.StartImpersonation(callerContext("t-1"), &iampb.StartImpersonationRequest{
 		TargetUserId: "user-1",
 		TenantId:     "t-1",
 		Reason:       "support request",
@@ -321,7 +321,7 @@ func TestIAMServer_GrantConsent_ServiceError(t *testing.T) {
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
-	_, err := srv.GrantConsent(context.Background(), &iampb.GrantConsentRequest{
+	_, err := srv.GrantConsent(callerContext("t-1"), &iampb.GrantConsentRequest{
 		TenantId: "t-1",
 		UserId:   "u-1",
 		Purpose:  iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
@@ -341,7 +341,7 @@ func TestIAMServer_RequestExport_ServiceError(t *testing.T) {
 		mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
-	_, err := srv.RequestExport(context.Background(), &iampb.RequestExportRequest{
+	_, err := srv.RequestExport(callerContext("t-1"), &iampb.RequestExportRequest{
 		TenantId:    "t-1",
 		UserId:      "u-1",
 		RequestedBy: "admin-1",
@@ -360,7 +360,7 @@ func TestIAMServer_RequestDeletion_ServiceError(t *testing.T) {
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
-	_, err := srv.RequestDeletion(context.Background(), &iampb.RequestDeletionRequest{
+	_, err := srv.RequestDeletion(callerContext("t-1"), &iampb.RequestDeletionRequest{
 		TenantId:    "t-1",
 		UserId:      "u-1",
 		RequestedBy: "admin-1",
@@ -381,7 +381,7 @@ func TestMFAServer_VerifyCode_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.VerifyCode(context.Background(), &iampb.VerifyMFACodeRequest{
+	_, err := srv.VerifyCode(callerContext("t-1"), &iampb.VerifyMFACodeRequest{
 		UserId: "u-1", TenantId: "t-1", Code: "wrong",
 	})
 	require.Error(t, err)
@@ -399,7 +399,7 @@ func TestMFAServer_GetStatus_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.GetStatus(context.Background(), &iampb.GetMFAStatusRequest{
+	_, err := srv.GetStatus(callerContext("t-1"), &iampb.GetMFAStatusRequest{
 		UserId: "u-1", TenantId: "t-1",
 	})
 	require.Error(t, err)
@@ -417,7 +417,7 @@ func TestMFAServer_VerifyBackupCode_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.VerifyBackupCode(context.Background(), &iampb.VerifyBackupCodeRequest{
+	_, err := srv.VerifyBackupCode(callerContext("t-1"), &iampb.VerifyBackupCodeRequest{
 		UserId: "u-1", TenantId: "t-1", Code: "bad-code",
 	})
 	require.Error(t, err)
@@ -435,7 +435,7 @@ func TestMFAServer_GetBackupCodeStatus_ServiceError(t *testing.T) {
 		},
 	}
 	srv := newTestMFAServer(svc)
-	_, err := srv.GetBackupCodeStatus(context.Background(), &iampb.GetBackupCodeStatusRequest{
+	_, err := srv.GetBackupCodeStatus(callerContext("t-1"), &iampb.GetBackupCodeStatusRequest{
 		UserId: "u-1", TenantId: "t-1",
 	})
 	require.Error(t, err)

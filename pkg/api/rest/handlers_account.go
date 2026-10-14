@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -782,6 +783,7 @@ func accountErrorStatus(err error) int {
 	var leaseRevoked *lease.LeaseRevokedError
 	var secretUnresolved *orchestration.AccountSecretRefUnresolvedError
 	var noSecretResolver *orchestration.AccountSecretResolverNotConfiguredError
+	var missingTenant *tenantctx.MissingTenantError
 
 	switch {
 	case isPageInputError(err):
@@ -831,6 +833,11 @@ func accountErrorStatus(err error) int {
 	case errors.As(err, &projectScope):
 		// 403: the account is fenced to another project and no retry, wait, or
 		// differently-shaped request by this caller will release it.
+		return http.StatusForbidden
+	case errors.Is(err, orchestration.ErrAccountTenantScope), errors.As(err, &missingTenant):
+		// 403: the request names a tenant other than the caller's own, or the
+		// caller carries no tenant at all. Neither is lifted for the system
+		// tenant (go-quicbaas#1150).
 		return http.StatusForbidden
 	case errors.As(err, &noTracker), errors.As(err, &noTokens), errors.As(err, &noReserver):
 		return http.StatusServiceUnavailable

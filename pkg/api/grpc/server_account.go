@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // AccountServer exposes the pooled provider account surface over gRPC (and,
@@ -506,6 +507,7 @@ func convertAccountError(err error) error {
 	var secretUnresolved *orchestration.AccountSecretRefUnresolvedError
 	var noSecretResolver *orchestration.AccountSecretResolverNotConfiguredError
 	var noReserver *service.AccountSessionReserverNotConfiguredError
+	var missingTenant *tenantctx.MissingTenantError
 
 	switch {
 	case stderrors.As(err, &notFound):
@@ -529,6 +531,11 @@ func convertAccountError(err error) error {
 		// tenant secret it names does not resolve.
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case stderrors.As(err, &projectScope):
+		return status.Error(codes.PermissionDenied, err.Error())
+	case stderrors.Is(err, orchestration.ErrAccountTenantScope), stderrors.As(err, &missingTenant):
+		// The request names a tenant other than the caller's own, or the
+		// caller carries no tenant at all; neither is lifted for the system
+		// tenant (go-quicbaas#1150).
 		return status.Error(codes.PermissionDenied, err.Error())
 	case stderrors.As(err, &noTracker), stderrors.As(err, &noTokens), stderrors.As(err, &noReserver), stderrors.As(err, &noSecretResolver):
 		return status.Error(codes.Unavailable, err.Error())

@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -170,10 +171,12 @@ func credentialPath(suffix string) string {
 	return "/api/v1/tenants/acme/users/89482037924204544/webauthn/credentials/" + suffix
 }
 
-// doCredentialRequest issues one request against the mounted routes.
+// doCredentialRequest issues one request against the mounted routes as a
+// caller bound to the tenant credentialPath names.
 func doCredentialRequest(h http.Handler, method, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	req := httptest.NewRequest(method, path, nil)
+	h.ServeHTTP(rec, req.WithContext(tenantctx.WithTenant(req.Context(), "acme")))
 	return rec
 }
 

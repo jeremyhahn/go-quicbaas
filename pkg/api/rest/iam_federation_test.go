@@ -295,7 +295,7 @@ func TestRegisterProvider_Success(t *testing.T) {
 	// Set up chi context with route params
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -328,7 +328,7 @@ func TestRegisterProvider_MissingTenantID(t *testing.T) {
 
 	// No tenant_id in URL params
 	rctx := chi.NewRouteContext()
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -352,7 +352,7 @@ func TestRegisterProvider_InvalidJSON(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -382,7 +382,7 @@ func TestRegisterProvider_MissingName(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -411,7 +411,7 @@ func TestRegisterProvider_MissingType(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -441,7 +441,7 @@ func TestRegisterProvider_InvalidType(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -470,7 +470,7 @@ func TestRegisterProvider_MissingClientID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -503,7 +503,7 @@ func TestRegisterProvider_FederationManagerNotAvailable(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -536,7 +536,7 @@ func TestListProviders_Success(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.ListProviders(rec, req)
@@ -560,7 +560,7 @@ func TestListProviders_WithPagination(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.ListProviders(rec, req)
@@ -595,7 +595,7 @@ func TestListProviders_WithTypeFilter(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.ListProviders(rec, req)
@@ -617,7 +617,7 @@ func TestListProviders_MissingTenantID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//providers", nil)
 
 	rctx := chi.NewRouteContext()
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.ListProviders(rec, req)
@@ -647,7 +647,7 @@ func TestGetProvider_Success(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
@@ -671,7 +671,7 @@ func TestGetProvider_MissingTenantID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
@@ -688,7 +688,7 @@ func TestGetProvider_MissingProviderID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
@@ -728,7 +728,7 @@ func TestUpdateProvider_Success(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -756,7 +756,7 @@ func TestUpdateProvider_MissingTenantID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -777,7 +777,7 @@ func TestUpdateProvider_MissingProviderID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -796,7 +796,7 @@ func TestUpdateProvider_InvalidJSON(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -820,7 +820,7 @@ func TestDeleteProvider_Success(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.DeleteProvider(rec, req)
@@ -838,7 +838,7 @@ func TestDeleteProvider_MissingTenantID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.DeleteProvider(rec, req)
@@ -855,7 +855,7 @@ func TestDeleteProvider_MissingProviderID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.DeleteProvider(rec, req)
@@ -878,7 +878,7 @@ func TestBeginFederatedLogin_Success(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.BeginFederatedLogin(rec, req)
@@ -896,7 +896,7 @@ func TestBeginFederatedLogin_MissingTenantID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.BeginFederatedLogin(rec, req)
@@ -913,7 +913,7 @@ func TestBeginFederatedLogin_MissingProviderName(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.BeginFederatedLogin(rec, req)
@@ -931,7 +931,7 @@ func TestBeginFederatedLogin_MissingRedirectURI(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.BeginFederatedLogin(rec, req)
@@ -967,7 +967,7 @@ func TestHandleFederatedCallback_Success(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.HandleFederatedCallback(rec, req)
@@ -992,7 +992,7 @@ func TestHandleFederatedCallback_MissingTenantID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.HandleFederatedCallback(rec, req)
@@ -1009,7 +1009,7 @@ func TestHandleFederatedCallback_MissingProviderName(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.HandleFederatedCallback(rec, req)
@@ -1027,7 +1027,7 @@ func TestHandleFederatedCallback_IdPError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.HandleFederatedCallback(rec, req)
@@ -1050,7 +1050,7 @@ func TestHandleFederatedCallback_MissingCode(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.HandleFederatedCallback(rec, req)
@@ -1080,7 +1080,7 @@ func TestLinkAccount_Success(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -1111,7 +1111,7 @@ func TestLinkAccount_MissingTenantID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -1135,7 +1135,7 @@ func TestLinkAccount_MissingUserID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -1154,7 +1154,7 @@ func TestLinkAccount_InvalidJSON(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -1178,7 +1178,7 @@ func TestLinkAccount_MissingProviderID(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -1207,7 +1207,7 @@ func TestLinkAccount_MissingExternalID(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -1231,7 +1231,7 @@ func TestUnlinkAccount_Success(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UnlinkAccount(rec, req)
@@ -1250,7 +1250,7 @@ func TestUnlinkAccount_MissingTenantID(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UnlinkAccount(rec, req)
@@ -1268,7 +1268,7 @@ func TestUnlinkAccount_MissingUserID(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UnlinkAccount(rec, req)
@@ -1286,7 +1286,7 @@ func TestUnlinkAccount_MissingProviderID(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UnlinkAccount(rec, req)
@@ -1304,7 +1304,7 @@ func TestGetUserLinks_Success(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetUserLinks(rec, req)
@@ -1329,7 +1329,7 @@ func TestGetUserLinks_WithPagination(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetUserLinks(rec, req)
@@ -1352,7 +1352,7 @@ func TestGetUserLinks_MissingTenantID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetUserLinks(rec, req)
@@ -1369,7 +1369,7 @@ func TestGetUserLinks_MissingUserID(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetUserLinks(rec, req)
@@ -1459,7 +1459,7 @@ func TestRegisterFederationRoutes(t *testing.T) {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
 			req := httptest.NewRequest(route.method, route.path, nil)
 			rctx := chi.NewRouteContext()
-			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req = req.WithContext(callerRouteContext(req.Context(), rctx))
 			assert.NotNil(t, router, "Router should be initialized")
 		})
 	}
@@ -1486,7 +1486,7 @@ func TestRegisterFederationAuthRoutes(t *testing.T) {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
 			req := httptest.NewRequest(route.method, route.path, nil)
 			rctx := chi.NewRouteContext()
-			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req = req.WithContext(callerRouteContext(req.Context(), rctx))
 			assert.NotNil(t, router, "Router should be initialized")
 		})
 	}
@@ -1632,7 +1632,7 @@ func TestRegisterProvider_ServiceError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -1650,7 +1650,7 @@ func TestListProviders_ServiceError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.ListProviders(rec, req)
@@ -1669,7 +1669,7 @@ func TestGetProvider_ServiceError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
@@ -1692,7 +1692,7 @@ func TestUpdateProvider_ServiceError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -1711,7 +1711,7 @@ func TestDeleteProvider_ServiceError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.DeleteProvider(rec, req)
@@ -1730,7 +1730,7 @@ func TestBeginFederatedLogin_ServiceError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.BeginFederatedLogin(rec, req)
@@ -1749,7 +1749,7 @@ func TestHandleFederatedCallback_ServiceError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.HandleFederatedCallback(rec, req)
@@ -1775,7 +1775,7 @@ func TestLinkAccount_ServiceError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -1795,7 +1795,7 @@ func TestUnlinkAccount_ServiceError(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UnlinkAccount(rec, req)
@@ -1814,7 +1814,7 @@ func TestGetUserLinks_ServiceError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetUserLinks(rec, req)
@@ -1845,7 +1845,7 @@ func TestFederationManager_GetFederationManagerError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -1880,7 +1880,7 @@ func TestRegisterProvider_AllProviderTypes(t *testing.T) {
 
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("tenant_id", "tenant123")
-			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 			rec := httptest.NewRecorder()
 			handler.RegisterProvider(rec, req)
@@ -1944,7 +1944,7 @@ func TestListProviders_InvalidPagination(t *testing.T) {
 
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("tenant_id", "tenant123")
-			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 			rec := httptest.NewRecorder()
 			handler.ListProviders(rec, req)
@@ -2011,7 +2011,7 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -2044,7 +2044,7 @@ func TestBeginFederatedLogin_WithOptionalParams(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.BeginFederatedLogin(rec, req)
@@ -2073,7 +2073,7 @@ func TestLinkAccount_WithAccessToken(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -2103,7 +2103,7 @@ func TestRegisterProvider_BodyReadError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.RegisterProvider(rec, req)
@@ -2127,7 +2127,7 @@ func TestUpdateProvider_BodyReadError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -2151,7 +2151,7 @@ func TestLinkAccount_BodyReadError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -2179,7 +2179,7 @@ func TestListProviders_FederationManagerError(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.ListProviders(rec, req)
@@ -2203,7 +2203,7 @@ func TestGetProvider_FederationManagerError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
@@ -2231,7 +2231,7 @@ func TestUpdateProvider_FederationManagerError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -2255,7 +2255,7 @@ func TestDeleteProvider_FederationManagerError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.DeleteProvider(rec, req)
@@ -2279,7 +2279,7 @@ func TestBeginFederatedLogin_FederationManagerError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.BeginFederatedLogin(rec, req)
@@ -2303,7 +2303,7 @@ func TestHandleFederatedCallback_FederationManagerError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.HandleFederatedCallback(rec, req)
@@ -2334,7 +2334,7 @@ func TestLinkAccount_FederationManagerError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -2359,7 +2359,7 @@ func TestUnlinkAccount_FederationManagerError(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UnlinkAccount(rec, req)
@@ -2383,7 +2383,7 @@ func TestGetUserLinks_FederationManagerError(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetUserLinks(rec, req)
@@ -2402,7 +2402,7 @@ func TestListProviders_FederationManagerNotAvailable(t *testing.T) {
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.ListProviders(rec, req)
@@ -2422,7 +2422,7 @@ func TestGetProvider_FederationManagerNotAvailable(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
@@ -2446,7 +2446,7 @@ func TestUpdateProvider_FederationManagerNotAvailable(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UpdateProvider(rec, req)
@@ -2466,7 +2466,7 @@ func TestDeleteProvider_FederationManagerNotAvailable(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.DeleteProvider(rec, req)
@@ -2486,7 +2486,7 @@ func TestBeginFederatedLogin_FederationManagerNotAvailable(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.BeginFederatedLogin(rec, req)
@@ -2506,7 +2506,7 @@ func TestHandleFederatedCallback_FederationManagerNotAvailable(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.HandleFederatedCallback(rec, req)
@@ -2533,7 +2533,7 @@ func TestLinkAccount_FederationManagerNotAvailable(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.LinkAccount(rec, req)
@@ -2554,7 +2554,7 @@ func TestUnlinkAccount_FederationManagerNotAvailable(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
 	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.UnlinkAccount(rec, req)
@@ -2574,7 +2574,7 @@ func TestGetUserLinks_FederationManagerNotAvailable(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "tenant123")
 	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 	rec := httptest.NewRecorder()
 	handler.GetUserLinks(rec, req)
@@ -2638,7 +2638,7 @@ func TestGetUserLinks_InvalidPagination(t *testing.T) {
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("tenant_id", "tenant123")
 			rctx.URLParams.Add("user_id", "10123")
-			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req = req.WithContext(callerRouteContext(req.Context(), rctx))
 
 			rec := httptest.NewRecorder()
 			handler.GetUserLinks(rec, req)

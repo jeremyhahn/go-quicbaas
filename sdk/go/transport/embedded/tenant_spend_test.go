@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // newTenantSpendTransport wires an in-process transport over an agent service
@@ -47,7 +48,7 @@ func TestEmbeddedTenantSpendPolicy(t *testing.T) {
 		ledger:           orchestration.NewInMemoryConsumptionLedger(),
 		tenant:           orchestration.NewInMemoryTenantSpendPolicyStore(),
 	})
-	ctx := context.Background()
+	ctx := transport.ContextWithTenant(context.Background(), "t1")
 	limits := spend.Limits{Windows: []spend.Window{{Name: "monthly", Size: 720 * time.Hour, MaxEquivalentMicros: 9}}}
 
 	set, err := tr.Request(ctx, "quicbaas.Orchestrator", "SetTenantSpendPolicy",
@@ -67,7 +68,7 @@ func TestEmbeddedTenantSpendPolicy(t *testing.T) {
 }
 
 func TestEmbeddedTenantSpendPolicyRefuses(t *testing.T) {
-	ctx := context.Background()
+	ctx := transport.ContextWithTenant(context.Background(), "t1")
 	unwired := newTenantSpendTransport(t, &ledgerFakeAgentService{fakeAgentService: &fakeAgentService{}})
 	_, err := unwired.Request(ctx, "quicbaas.Orchestrator", "GetTenantSpendPolicy",
 		&orchestratorSDK.GetTenantSpendPolicyRequest{TenantID: "t1"})

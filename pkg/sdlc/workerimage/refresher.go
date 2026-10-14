@@ -29,6 +29,7 @@ import (
 	softwarefactoryworker "github.com/jeremyhahn/go-quicbaas/deployments/agents/software-factory-worker"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // Engine is the image lifecycle a refresh drives;
@@ -419,7 +420,7 @@ func (r *Refresher) refuseStrandingRemoteNodes(ctx context.Context, staleUses []
 	}
 	slices.Sort(tenants)
 	for _, tenantID := range tenants {
-		nodes, err := r.deps.Fleet.RemoteFleetNodes(orchestration.ContextWithTenant(ctx, tenantID), tenantID)
+		nodes, err := r.deps.Fleet.RemoteFleetNodes(tenantContext(ctx, tenantID), tenantID)
 		if err != nil {
 			return err
 		}
@@ -488,6 +489,13 @@ func (r *Refresher) publishImage(ctx context.Context, image string) (string, err
 
 // tagOf is a reference's tag, or "latest" when it names none — what the
 // engine itself resolves an untagged reference to.
+// tenantContext binds the tenant a pass acts for. The tenant-scoped services
+// read go-qrdb's tenant key and refuse a context without one; orchestration
+// callees read their own key, so both are bound.
+func tenantContext(ctx context.Context, tenantID string) context.Context {
+	return orchestration.ContextWithTenant(tenantctx.WithTenant(ctx, tenantID), tenantID)
+}
+
 func tagOf(image string) string {
 	tagged := orchestration.ImageRepository(image)
 	if tag, ok := strings.CutPrefix(tagged, repositoryOf(image)+":"); ok && tag != "" {
@@ -508,7 +516,7 @@ func (r *Refresher) managedUses(ctx context.Context, report *Report) ([]imageUse
 	}
 	var uses []imageUse
 	for _, tenantID := range tenants {
-		tenantUses, err := r.tenantUses(orchestration.ContextWithTenant(ctx, tenantID), tenantID)
+		tenantUses, err := r.tenantUses(tenantContext(ctx, tenantID), tenantID)
 		if err != nil {
 			report.Skipped = append(report.Skipped, tenantID+": "+err.Error())
 			continue
@@ -822,7 +830,7 @@ func (r *Refresher) push(ctx context.Context, imageID, remote string) (string, e
 // left alone and the failure is recorded exactly like a failed write.
 func (r *Refresher) repoint(ctx context.Context, report *Report, use imageUse, reference string, cause error) {
 	promotion := Promotion{TenantID: use.TenantID, AgentID: use.AgentID, From: []string{use.Image}, To: reference}
-	tenantCtx := orchestration.ContextWithTenant(ctx, use.TenantID)
+	tenantCtx := tenantContext(ctx, use.TenantID)
 	if cause == nil {
 		_, cause = r.deps.Agents.ReplaceAgentImage(tenantCtx, use.TenantID, use.AgentID, promotion.From, reference)
 	}

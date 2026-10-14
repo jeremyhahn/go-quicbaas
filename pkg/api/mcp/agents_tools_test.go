@@ -53,7 +53,7 @@ func newCatalogRegistry(t *testing.T) *ToolRegistry {
 // callCatalog runs one catalog tool and decodes its JSON answer into out.
 func callCatalog(t *testing.T, reg *ToolRegistry, tool string, args map[string]interface{}, out interface{}) error {
 	t.Helper()
-	result, err := reg.executeAgentCatalogTool(tenantctx.WithSystem(context.Background()), tool, args)
+	result, err := reg.executeAgentCatalogTool(tenantctx.WithTenant(context.Background(), "acme"), tool, args)
 	if err != nil {
 		return err
 	}

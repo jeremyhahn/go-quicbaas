@@ -216,10 +216,12 @@ const (
 	nsProject = "go-truststrap"
 )
 
-// systemAdminContext is the shape the REST admin path hands the service: the
-// caller's tenant on pkg/iam's key, nothing on orchestration's.
-func systemAdminContext() context.Context {
-	return tenantctx.WithTenant(context.Background(), orchestration.SystemTenantID)
+// tenantAdminContext is the shape the REST admin path hands the service for
+// nsTenant's own admin: the caller's tenant on pkg/iam's key, nothing on
+// orchestration's. Since #1150 only the tenant's own caller may name it — the
+// system tenant gets no lift.
+func tenantAdminContext() context.Context {
+	return tenantctx.WithTenant(context.Background(), nsTenant)
 }
 
 // spawnContext is the shape sdlc.runtimeContext hands the resolver: the
@@ -255,18 +257,18 @@ func (f *tenantNamespaceFixture) resolveAsSpawn(t *testing.T) (*orchestration.Re
 	})
 }
 
-// TestAccountService_TenantNamespace_SystemAdminCreateIsSelectableBySpawn is
+// TestAccountService_TenantNamespace_TenantAdminCreateIsSelectableBySpawn is
 // the boundary-crossing test #535 asked for. Against the unscoped service it
-// fails with NoAccountAvailableError: the record lands in the system
+// fails with NoAccountAvailableError: the record lands in the caller's
 // namespace and the tenant's spawn path reads an empty pool.
-func TestAccountService_TenantNamespace_SystemAdminCreateIsSelectableBySpawn(t *testing.T) {
+func TestAccountService_TenantNamespace_TenantAdminCreateIsSelectableBySpawn(t *testing.T) {
 	f := newTenantNamespaceFixture(t)
 
-	account := f.createForTenant(t, systemAdminContext(), "sk-ant-oat01-test")
+	account := f.createForTenant(t, tenantAdminContext(), "sk-ant-oat01-test")
 
 	resolved, err := f.resolveAsSpawn(t)
 	if err != nil {
-		t.Fatalf("spawn-path Resolve() under tenant %q error = %v, want the account the system admin created", nsTenant, err)
+		t.Fatalf("spawn-path Resolve() under tenant %q error = %v, want the account the tenant admin created", nsTenant, err)
 	}
 	if resolved.AccountID != account.ID {
 		t.Fatalf("Resolve().AccountID = %q, want %q", resolved.AccountID, account.ID)
@@ -290,9 +292,9 @@ func TestAccountService_TenantNamespace_SystemAdminCreateIsSelectableBySpawn(t *
 // pool the spawn path selects from, not a namespace the module never reads.
 func TestAccountService_TenantNamespace_ListAndGetAgreeWithSpawn(t *testing.T) {
 	f := newTenantNamespaceFixture(t)
-	account := f.createForTenant(t, systemAdminContext(), "sk-ant-oat01-test")
+	account := f.createForTenant(t, tenantAdminContext(), "sk-ant-oat01-test")
 
-	listed, err := f.service.ListAccounts(systemAdminContext(), &ListAccountsRequest{TenantID: nsTenant})
+	listed, err := f.service.ListAccounts(tenantAdminContext(), &ListAccountsRequest{TenantID: nsTenant})
 	if err != nil {
 		t.Fatalf("ListAccounts() error = %v", err)
 	}
@@ -300,7 +302,7 @@ func TestAccountService_TenantNamespace_ListAndGetAgreeWithSpawn(t *testing.T) {
 		t.Fatalf("ListAccounts() = %+v, want exactly the created account", listed.Accounts)
 	}
 
-	got, err := f.service.GetAccount(systemAdminContext(), &GetAccountRequest{TenantID: nsTenant, AccountID: account.ID})
+	got, err := f.service.GetAccount(tenantAdminContext(), &GetAccountRequest{TenantID: nsTenant, AccountID: account.ID})
 	if err != nil {
 		t.Fatalf("GetAccount() error = %v", err)
 	}
@@ -322,9 +324,9 @@ func TestAccountService_TenantNamespace_ListAndGetAgreeWithSpawn(t *testing.T) {
 // envelope must land where the spawn path reads it.
 func TestAccountService_TenantNamespace_RotateReachesSpawn(t *testing.T) {
 	f := newTenantNamespaceFixture(t)
-	account := f.createForTenant(t, systemAdminContext(), "sk-ant-old")
+	account := f.createForTenant(t, tenantAdminContext(), "sk-ant-old")
 
-	if _, err := f.service.RotateAccountCredential(systemAdminContext(), &RotateAccountCredentialRequest{
+	if _, err := f.service.RotateAccountCredential(tenantAdminContext(), &RotateAccountCredentialRequest{
 		TenantID:  nsTenant,
 		AccountID: account.ID,
 		Credential: &orchestration.AccountCredential{
@@ -349,9 +351,9 @@ func TestAccountService_TenantNamespace_RotateReachesSpawn(t *testing.T) {
 // namespace, so the spawn path stops selecting it and nothing is orphaned.
 func TestAccountService_TenantNamespace_DeleteEmptiesTenantPool(t *testing.T) {
 	f := newTenantNamespaceFixture(t)
-	account := f.createForTenant(t, systemAdminContext(), "sk-ant-oat01-test")
+	account := f.createForTenant(t, tenantAdminContext(), "sk-ant-oat01-test")
 
-	if _, err := f.service.DeleteAccount(systemAdminContext(), &DeleteAccountRequest{TenantID: nsTenant, AccountID: account.ID}); err != nil {
+	if _, err := f.service.DeleteAccount(tenantAdminContext(), &DeleteAccountRequest{TenantID: nsTenant, AccountID: account.ID}); err != nil {
 		t.Fatalf("DeleteAccount() error = %v", err)
 	}
 
@@ -370,10 +372,10 @@ func TestAccountService_TenantNamespace_DeleteEmptiesTenantPool(t *testing.T) {
 // the metadata verbs must mutate the record the spawn path reads.
 func TestAccountService_TenantNamespace_RevokeAndSetDefaultUpdateTenantRecord(t *testing.T) {
 	f := newTenantNamespaceFixture(t)
-	first := f.createForTenant(t, systemAdminContext(), "sk-ant-first")
-	second := f.createForTenant(t, systemAdminContext(), "sk-ant-second")
+	first := f.createForTenant(t, tenantAdminContext(), "sk-ant-first")
+	second := f.createForTenant(t, tenantAdminContext(), "sk-ant-second")
 
-	if _, err := f.service.SetDefaultAccount(systemAdminContext(), &SetDefaultAccountRequest{TenantID: nsTenant, AccountID: second.ID}); err != nil {
+	if _, err := f.service.SetDefaultAccount(tenantAdminContext(), &SetDefaultAccountRequest{TenantID: nsTenant, AccountID: second.ID}); err != nil {
 		t.Fatalf("SetDefaultAccount() error = %v", err)
 	}
 	resolved, err := f.resolveAsSpawn(t)
@@ -384,7 +386,7 @@ func TestAccountService_TenantNamespace_RevokeAndSetDefaultUpdateTenantRecord(t 
 		t.Fatalf("Resolve().AccountID = %q after SetDefault, want %q", resolved.AccountID, second.ID)
 	}
 
-	if _, err := f.service.RevokeAccount(systemAdminContext(), &RevokeAccountRequest{TenantID: nsTenant, AccountID: second.ID, Reason: "rotated out"}); err != nil {
+	if _, err := f.service.RevokeAccount(tenantAdminContext(), &RevokeAccountRequest{TenantID: nsTenant, AccountID: second.ID, Reason: "rotated out"}); err != nil {
 		t.Fatalf("RevokeAccount() error = %v", err)
 	}
 	got, err := f.store.Get(spawnContext(nsTenant), nsTenant, second.ID)
@@ -395,7 +397,7 @@ func TestAccountService_TenantNamespace_RevokeAndSetDefaultUpdateTenantRecord(t 
 		t.Fatalf("tenant-context Get().Status = %s after revoke, want revoked", got.Status)
 	}
 
-	updated, err := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{TenantID: nsTenant, AccountID: first.ID, DisplayName: "renamed"})
+	updated, err := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{TenantID: nsTenant, AccountID: first.ID, DisplayName: "renamed"})
 	if err != nil {
 		t.Fatalf("UpdateAccount() error = %v", err)
 	}
@@ -407,24 +409,51 @@ func TestAccountService_TenantNamespace_RevokeAndSetDefaultUpdateTenantRecord(t 
 	}
 }
 
-// TestAccountService_TenantNamespace_RequestTenantOverridesCarriedTenant: a
-// context that already names a DIFFERENT tenant on either key is overridden by
-// the request's tenant — the request is the authority, and a caller allowed to
-// name another tenant was admitted to by RBAC before reaching the service.
-func TestAccountService_TenantNamespace_RequestTenantOverridesCarriedTenant(t *testing.T) {
+// TestAccountService_TenantNamespace_RefusesAnotherTenantsTarget is the #1150
+// no-lift proof: a caller authenticated as a DIFFERENT tenant — the system
+// tenant included — that names nsTenant is refused, and nothing reaches the
+// tenant's pool.
+func TestAccountService_TenantNamespace_RefusesAnotherTenantsTarget(t *testing.T) {
+	callers := map[string]context.Context{
+		"another tenant": orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "burnin"), "burnin"),
+		"system tenant":  orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), orchestration.SystemTenantID), orchestration.SystemTenantID),
+	}
+	for name, ctx := range callers {
+		t.Run(name, func(t *testing.T) {
+			f := newTenantNamespaceFixture(t)
+
+			_, err := f.service.CreateAccount(ctx, &CreateAccountRequest{
+				TenantID: nsTenant,
+				Provider: orchestration.AccountProviderClaude,
+				Credential: &orchestration.AccountCredential{
+					AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
+					AccessToken:       "sk-ant-oat01-test",
+				},
+			})
+			var denied *TenantTargetDeniedError
+			if !errors.As(err, &denied) || !errors.Is(err, orchestration.ErrAccountTenantScope) {
+				t.Fatalf("CreateAccount() naming %q error = %v, want TenantTargetDeniedError", nsTenant, err)
+			}
+			if denied.TargetTenant != nsTenant {
+				t.Fatalf("denied.TargetTenant = %q, want %q", denied.TargetTenant, nsTenant)
+			}
+			if _, err := f.resolveAsSpawn(t); err == nil {
+				t.Fatalf("Resolve() found an account the refused caller should not have created")
+			}
+		})
+	}
+}
+
+// TestAccountService_TenantNamespace_RefusesATenantlessCaller: a context that
+// carries no authenticated tenant on pkg/iam's key is refused rather than
+// trusted with whatever tenant the request names.
+func TestAccountService_TenantNamespace_RefusesATenantlessCaller(t *testing.T) {
 	f := newTenantNamespaceFixture(t)
 
-	carried := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "burnin"), "burnin")
-	account := f.createForTenant(t, carried, "sk-ant-oat01-test")
-
-	if keys := f.kv.keysIn(t, "burnin", account.ID); len(keys) != 0 {
-		t.Fatalf("account %s landed in the carried tenant's namespace: %v", account.ID, keys)
-	}
-	if keys := f.kv.keysIn(t, nsTenant, account.ID); len(keys) == 0 {
-		t.Fatalf("account %s not in the requested tenant's namespace", account.ID)
-	}
-	if _, err := f.resolveAsSpawn(t); err != nil {
-		t.Fatalf("Resolve() error = %v", err)
+	_, err := f.service.ListAccounts(spawnContext(nsTenant), &ListAccountsRequest{TenantID: nsTenant})
+	var missing *tenantctx.MissingTenantError
+	if !errors.As(err, &missing) {
+		t.Fatalf("ListAccounts() without a caller tenant error = %v, want MissingTenantError", err)
 	}
 }
 
@@ -434,9 +463,9 @@ func TestAccountService_TenantNamespace_RequestTenantOverridesCarriedTenant(t *t
 // missing and usage can never be reported for a tenant's pool.
 func TestAccountService_TenantNamespace_UsageProbeRunsInTenant(t *testing.T) {
 	f := newTenantNamespaceFixture(t)
-	account := f.createForTenant(t, systemAdminContext(), "sk-ant-oat01-test")
+	account := f.createForTenant(t, tenantAdminContext(), "sk-ant-oat01-test")
 
-	_, err := f.service.GetAccountUsage(systemAdminContext(), &GetAccountUsageRequest{TenantID: nsTenant, AccountID: account.ID})
+	_, err := f.service.GetAccountUsage(tenantAdminContext(), &GetAccountUsageRequest{TenantID: nsTenant, AccountID: account.ID})
 	var noTracker *AccountUsageTrackerNotConfiguredError
 	if !errors.As(err, &noTracker) {
 		t.Fatalf("GetAccountUsage() error = %v, want AccountUsageTrackerNotConfiguredError (record found, tracker absent)", err)

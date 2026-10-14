@@ -58,7 +58,7 @@ func (f *failingInviteStore) Create(context.Context, string, uint64, time.Durati
 func TestGRPC_CreateUserReturnsARedeemableInvite(t *testing.T) {
 	invites := iamtest.NewMemoryInviteStore()
 	srv, _ := newInviteGRPCStack(t, invites)
-	ctx := context.Background()
+	ctx := callerContext("acme")
 
 	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
 		TenantId:          "acme",
@@ -84,7 +84,7 @@ func TestGRPC_CreateUserReturnsARedeemableInvite(t *testing.T) {
 func TestGRPC_CreateActiveUserCarriesNoInvite(t *testing.T) {
 	srv, _ := newInviteGRPCStack(t, iamtest.NewMemoryInviteStore())
 
-	created, err := srv.CreateUser(context.Background(), &iampb.CreateUserRequest{
+	created, err := srv.CreateUser(callerContext("acme"), &iampb.CreateUserRequest{
 		TenantId:  "acme",
 		Email:     "quinn@acme.test",
 		Lifecycle: string(iam.LifecycleActive),
@@ -99,7 +99,7 @@ func TestGRPC_CreateActiveUserCarriesNoInvite(t *testing.T) {
 // cannot be issued fails and leaves no unactivatable pending user behind.
 func TestGRPC_CreateUserInviteFailureLeavesNoUser(t *testing.T) {
 	srv, mem := newInviteGRPCStack(t, &failingInviteStore{err: stderrors.New("invite store unreachable")})
-	ctx := context.Background()
+	ctx := callerContext("acme")
 
 	_, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{TenantId: "acme", Email: "rae@acme.test"})
 	require.Error(t, err)
@@ -112,7 +112,7 @@ func TestGRPC_CreateUserInviteFailureLeavesNoUser(t *testing.T) {
 // invite store refuses a pending create as Unavailable, before writing.
 func TestGRPC_CreateUserWithoutInviteStoreIsUnavailable(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
-	ctx := context.Background()
+	ctx := callerContext("acme")
 
 	_, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{TenantId: "acme", Email: "sam@acme.test"})
 	assert.Equal(t, codes.Unavailable, status.Code(err))

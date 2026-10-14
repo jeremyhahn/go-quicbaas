@@ -14,7 +14,6 @@
 package grpc
 
 import (
-	"context"
 	"strconv"
 	"testing"
 
@@ -40,7 +39,7 @@ func newRealIAMGRPCStack(t *testing.T) (*IAMServer, *iam.MemoryStorage) {
 
 	mem := iam.NewMemoryStorage()
 	tenants := iam.NewDefaultTenantManager(mem)
-	_, err = tenants.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
+	_, err = tenants.CreateTenant(callerContext("acme"), iam.CreateTenantOptions{ID: "acme", Name: "Acme"})
 	require.NoError(t, err)
 
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
@@ -61,7 +60,7 @@ func newRealIAMGRPCStack(t *testing.T) (*IAMServer, *iam.MemoryStorage) {
 // on the wire underneath it.
 func TestGRPC_CreateUserCarriesTheRequestedUsername(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
-	ctx := context.Background()
+	ctx := callerContext("acme")
 
 	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
 		TenantId: "acme",
@@ -94,7 +93,7 @@ func TestGRPC_CreateUserCarriesTheRequestedUsername(t *testing.T) {
 // making the field carryable must not make it mandatory.
 func TestGRPC_CreateUserWithoutAUsernameStillDerivesOne(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
-	ctx := context.Background()
+	ctx := callerContext("acme")
 
 	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
 		TenantId:  "acme",
@@ -112,7 +111,7 @@ func TestGRPC_CreateUserWithoutAUsernameStillDerivesOne(t *testing.T) {
 // TestGRPC_UpdateUserChangesTheUsername proves the update message carries it too.
 func TestGRPC_UpdateUserChangesTheUsername(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
-	ctx := context.Background()
+	ctx := callerContext("acme")
 
 	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
 		TenantId:  "acme",
@@ -143,7 +142,7 @@ func TestGRPC_UpdateUserChangesTheUsername(t *testing.T) {
 // assert the deletion workflow's terminal state either.
 func TestGRPC_UpdateUserRefusesTheDeletingLifecycle(t *testing.T) {
 	srv, mem := newRealIAMGRPCStack(t)
-	ctx := context.Background()
+	ctx := callerContext("acme")
 
 	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
 		TenantId:  "acme",

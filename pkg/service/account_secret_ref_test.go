@@ -131,21 +131,21 @@ func (f *secretRefFixture) spawnToken(t *testing.T) (string, error) {
 
 func (f *secretRefFixture) getAccount(t *testing.T, accountID string) *orchestration.Account {
 	t.Helper()
-	got, err := f.service.GetAccount(context.Background(), &GetAccountRequest{TenantID: nsTenant, AccountID: accountID})
+	got, err := f.service.GetAccount(tenantAdminContext(), &GetAccountRequest{TenantID: nsTenant, AccountID: accountID})
 	if err != nil {
 		t.Fatalf("GetAccount() error = %v", err)
 	}
 	return got.Account
 }
 
-// TestAccountSecretRef_SystemAdminCreatedAccountResolvesInTenant is the
-// #534/#535 boundary for references: the system admin provisions tenant T's
-// account, the secret lives in T's keyspace, and T's spawn gets T's value.
-func TestAccountSecretRef_SystemAdminCreatedAccountResolvesInTenant(t *testing.T) {
+// TestAccountSecretRef_TenantAdminCreatedAccountResolvesInTenant is the
+// #534/#535 boundary for references: tenant T's admin provisions T's account,
+// the secret lives in T's keyspace, and T's spawn gets T's value.
+func TestAccountSecretRef_TenantAdminCreatedAccountResolvesInTenant(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue+"\n")
 
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 	if account.CredentialSecretRef != refName {
 		t.Fatalf("CredentialSecretRef = %q, want %q", account.CredentialSecretRef, refName)
 	}
@@ -173,7 +173,7 @@ func TestAccountSecretRef_ResolvesOnlyInOwningTenant(t *testing.T) {
 	f.putTenantSecret(t, orchestration.SystemTenantID, refName, "sk-fake-system")
 	f.putTenantSecret(t, "another-tenant", refName, "sk-fake-other")
 
-	_, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	_, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude, CredentialSecretRef: refName,
 	})
 	var invalid *AccountInvalidError
@@ -191,7 +191,7 @@ func TestAccountSecretRef_ResolvesOnlyInOwningTenant(t *testing.T) {
 func TestAccountSecretRef_SecretWriteRotatesNextSpawn(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, "sk-fake-v1")
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 	before := f.getAccount(t, account.ID)
 
 	if token, err := f.spawnToken(t); err != nil || token != "sk-fake-v1" {
@@ -215,7 +215,7 @@ func TestAccountSecretRef_SecretWriteRotatesNextSpawn(t *testing.T) {
 func TestAccountSecretRef_MaterializeReleasesResolvedValue(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue)
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 
 	resp, err := f.service.MaterializeAccountCredential(tenantctx.WithTenant(context.Background(), nsTenant),
 		&MaterializeAccountCredentialRequest{TenantID: nsTenant, AccountID: account.ID})
@@ -233,7 +233,7 @@ func TestAccountSecretRef_MaterializeReleasesResolvedValue(t *testing.T) {
 func TestAccountSecretRef_MaterializeIsSingleUse(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue)
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 	ctx := tenantctx.WithTenant(context.Background(), nsTenant)
 
 	first, err := f.service.MaterializeAccountCredential(ctx,
@@ -263,7 +263,7 @@ func TestAccountSecretRef_MaterializeIsSingleUse(t *testing.T) {
 // account's release stays cacheable under the last_refreshed_at signal.
 func TestAccountSecretRef_InlineMaterializeIsReusable(t *testing.T) {
 	f := newSecretRefFixture(t)
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-inline"},
 	})
@@ -287,7 +287,7 @@ func TestAccountSecretRef_InlineMaterializeIsReusable(t *testing.T) {
 func TestAccountSecretRef_MissingSecretErrorsAccountAndReapplyRecovers(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue)
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 
 	if _, err := f.secrets.DeleteSecret(tenantctx.WithTenant(context.Background(), nsTenant),
 		&DeleteSecretRequest{SecretID: refName, PermanentlyDelete: true, AllVersions: true}); err != nil {
@@ -303,7 +303,7 @@ func TestAccountSecretRef_MissingSecretErrorsAccountAndReapplyRecovers(t *testin
 	}
 
 	f.putTenantSecret(t, nsTenant, refName, refValue)
-	updated, err := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+	updated, err := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 		TenantID: nsTenant, AccountID: account.ID, CredentialSecretRef: refName,
 	})
 	if err != nil {
@@ -322,7 +322,7 @@ func TestAccountSecretRef_MissingSecretErrorsAccountAndReapplyRecovers(t *testin
 // inline envelope is destroyed.
 func TestAccountSecretRef_SwitchInlineAccountToReference(t *testing.T) {
 	f := newSecretRefFixture(t)
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-inline"},
 	})
@@ -331,7 +331,7 @@ func TestAccountSecretRef_SwitchInlineAccountToReference(t *testing.T) {
 	}
 	f.putTenantSecret(t, nsTenant, refName, refValue)
 
-	if _, err := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+	if _, err := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 		TenantID: nsTenant, AccountID: created.Account.ID, CredentialSecretRef: refName,
 	}); err != nil {
 		t.Fatalf("UpdateAccount(switch) error = %v", err)
@@ -352,7 +352,7 @@ func TestAccountSecretRef_SwitchInlineAccountToReference(t *testing.T) {
 // looks like a switch, which is what used to leave the envelope behind.
 func TestAccountSecretRef_RetriedSwitchDestroysTheInlineEnvelope(t *testing.T) {
 	f := newSecretRefFixture(t)
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-inline"},
 	})
@@ -367,7 +367,7 @@ func TestAccountSecretRef_RetriedSwitchDestroysTheInlineEnvelope(t *testing.T) {
 	switchReq := &UpdateAccountRequest{TenantID: nsTenant, AccountID: created.Account.ID, CredentialSecretRef: refName}
 
 	f.kv.failDeletesContaining(envelopePath)
-	_, err = f.service.UpdateAccount(systemAdminContext(), switchReq)
+	_, err = f.service.UpdateAccount(tenantAdminContext(), switchReq)
 	var cleanup *AccountCredentialCleanupError
 	if !errors.As(err, &cleanup) {
 		t.Fatalf("UpdateAccount(switch, backend down) error = %v, want an AccountCredentialCleanupError", err)
@@ -377,7 +377,7 @@ func TestAccountSecretRef_RetriedSwitchDestroysTheInlineEnvelope(t *testing.T) {
 	}
 
 	f.kv.failDeletesContaining("")
-	if _, err := f.service.UpdateAccount(systemAdminContext(), switchReq); err != nil {
+	if _, err := f.service.UpdateAccount(tenantAdminContext(), switchReq); err != nil {
 		t.Fatalf("UpdateAccount(retry) error = %v, want success", err)
 	}
 	_, getErr := f.inline.Get(spawnContext(nsTenant), nsTenant, created.Account.ID)
@@ -422,7 +422,7 @@ func TestAccountSecretRef_ARenameOvertakenByASwitchKeepsTheReference(t *testing.
 		wrapper.AccountStore = inner
 		return wrapper
 	})
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-inline"},
 	})
@@ -433,19 +433,19 @@ func TestAccountSecretRef_ARenameOvertakenByASwitchKeepsTheReference(t *testing.
 	f.putTenantSecret(t, nsTenant, refName, refValue)
 
 	wrapper.between = func() {
-		if _, err := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+		if _, err := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 			TenantID: nsTenant, AccountID: accountID, CredentialSecretRef: refName,
 		}); err != nil {
 			t.Errorf("the overtaking switch failed: %v", err)
 		}
 	}
-	if _, err := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+	if _, err := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 		TenantID: nsTenant, AccountID: accountID, DisplayName: "renamed",
 	}); err != nil {
 		t.Fatalf("UpdateAccount(rename) error = %v", err)
 	}
 
-	got, err := f.service.GetAccount(systemAdminContext(), &GetAccountRequest{TenantID: nsTenant, AccountID: accountID})
+	got, err := f.service.GetAccount(tenantAdminContext(), &GetAccountRequest{TenantID: nsTenant, AccountID: accountID})
 	if err != nil {
 		t.Fatalf("GetAccount() error = %v", err)
 	}
@@ -465,11 +465,11 @@ func TestAccountSecretRef_ARenameOvertakenByASwitchKeepsTheReference(t *testing.
 func TestAccountStore_UpdateIfUnchangedRefusesAStaleSnapshot(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue)
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 	stale := account.UpdatedAt.Add(-time.Second)
 
 	store := orchestration.NewAccountStore(f.kv)
-	ctx := tenantctx.WithTenant(systemAdminContext(), nsTenant)
+	ctx := tenantctx.WithTenant(tenantAdminContext(), nsTenant)
 	current, err := store.Get(ctx, nsTenant, account.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
@@ -491,10 +491,10 @@ func TestAccountStore_UpdateIfUnchangedRefusesAStaleSnapshot(t *testing.T) {
 func TestAccountSecretRef_UpdateOfAReferenceAccountWithNoEnvelopeSucceeds(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue)
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 
 	for i := 0; i < 2; i++ {
-		if _, err := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+		if _, err := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 			TenantID: nsTenant, AccountID: account.ID, DisplayName: "renamed",
 		}); err != nil {
 			t.Fatalf("UpdateAccount() %d error = %v", i, err)
@@ -507,7 +507,7 @@ func TestAccountSecretRef_UpdateOfAReferenceAccountWithNoEnvelopeSucceeds(t *tes
 
 func TestAccountSecretRef_SwitchRefusesUnresolvableReference(t *testing.T) {
 	f := newSecretRefFixture(t)
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-inline"},
 	})
@@ -515,7 +515,7 @@ func TestAccountSecretRef_SwitchRefusesUnresolvableReference(t *testing.T) {
 		t.Fatalf("CreateAccount(inline) error = %v", err)
 	}
 
-	_, err = f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+	_, err = f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 		TenantID: nsTenant, AccountID: created.Account.ID, CredentialSecretRef: refName,
 	})
 	var invalid *AccountInvalidError
@@ -531,9 +531,9 @@ func TestAccountSecretRef_SwitchRefusesUnresolvableReference(t *testing.T) {
 func TestAccountSecretRef_RotateIsRefusedForReferenceAccount(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue)
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 
-	_, err := f.service.RotateAccountCredential(systemAdminContext(), &RotateAccountCredentialRequest{
+	_, err := f.service.RotateAccountCredential(tenantAdminContext(), &RotateAccountCredentialRequest{
 		TenantID: nsTenant, AccountID: account.ID,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-inline"},
 	})
@@ -546,9 +546,9 @@ func TestAccountSecretRef_RotateIsRefusedForReferenceAccount(t *testing.T) {
 func TestAccountSecretRef_UpdateRefusesOAuthModeOnReferenceAccount(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue)
-	account := f.createRefAccount(t, systemAdminContext())
+	account := f.createRefAccount(t, tenantAdminContext())
 
-	_, err := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+	_, err := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 		TenantID: nsTenant, AccountID: account.ID, RefreshPolicy: orchestration.AccountRefreshOAuth2,
 	})
 	var invalid *AccountInvalidError
@@ -559,7 +559,7 @@ func TestAccountSecretRef_UpdateRefusesOAuthModeOnReferenceAccount(t *testing.T)
 
 func TestAccountSecretRef_UpdateRefusesFileWithoutReference(t *testing.T) {
 	f := newSecretRefFixture(t)
-	_, err := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+	_, err := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 		TenantID: nsTenant, AccountID: "acct-any", CredentialSecretFile: ".codex/auth.json",
 	})
 	var invalid *AccountInvalidError
@@ -579,7 +579,7 @@ func TestAccountSecretRef_CreateRequiresExactlyOneSource(t *testing.T) {
 	}
 	for name, req := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := f.service.CreateAccount(systemAdminContext(), req)
+			_, err := f.service.CreateAccount(tenantAdminContext(), req)
 			var invalid *AccountInvalidError
 			if !errors.As(err, &invalid) {
 				t.Fatalf("CreateAccount() error = %v, want AccountInvalidError", err)
@@ -590,7 +590,7 @@ func TestAccountSecretRef_CreateRequiresExactlyOneSource(t *testing.T) {
 
 func TestAccountSecretRef_CreateWithoutResolverFailsClosed(t *testing.T) {
 	svc := NewAccountService(orchestration.NewInMemoryAccountStore(), nil)
-	_, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	_, err := svc.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude, CredentialSecretRef: refName,
 	})
 	var notConfigured *orchestration.AccountSecretResolverNotConfiguredError
@@ -636,7 +636,7 @@ func TestAccountSecretRef_RotationOvertakenByASwitchLeavesNoEnvelope(t *testing.
 		wrapper.AccountStore = inner
 		return wrapper
 	})
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-inline"},
 	})
@@ -647,7 +647,7 @@ func TestAccountSecretRef_RotationOvertakenByASwitchLeavesNoEnvelope(t *testing.
 
 	var afterSwitch *orchestration.Account
 	wrapper.after = func() {
-		switched, switchErr := f.service.UpdateAccount(systemAdminContext(), &UpdateAccountRequest{
+		switched, switchErr := f.service.UpdateAccount(tenantAdminContext(), &UpdateAccountRequest{
 			TenantID: nsTenant, AccountID: created.Account.ID, CredentialSecretRef: refName,
 		})
 		if switchErr != nil {
@@ -658,7 +658,7 @@ func TestAccountSecretRef_RotationOvertakenByASwitchLeavesNoEnvelope(t *testing.
 	}
 	wrapper.armed.Store(true)
 
-	_, err = f.service.RotateAccountCredential(systemAdminContext(), &RotateAccountCredentialRequest{
+	_, err = f.service.RotateAccountCredential(tenantAdminContext(), &RotateAccountCredentialRequest{
 		TenantID: nsTenant, AccountID: created.Account.ID,
 		Credential: &orchestration.AccountCredential{
 			AccessToken: "sk-fake-rotated", ExpiresAt: time.Now().UTC().Add(90 * 24 * time.Hour),
@@ -692,7 +692,7 @@ func TestAccountSecretRef_RotationOvertakenByASwitchLeavesNoEnvelope(t *testing.
 // switch in the way the guarded rotation lands and records the new expiry.
 func TestAccountSecretRef_InlineRotationStillSucceeds(t *testing.T) {
 	f := newSecretRefFixture(t)
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-inline"},
 	})
@@ -700,7 +700,7 @@ func TestAccountSecretRef_InlineRotationStillSucceeds(t *testing.T) {
 		t.Fatalf("CreateAccount(inline) error = %v", err)
 	}
 	expiry := time.Now().UTC().Add(90 * 24 * time.Hour).Truncate(time.Second)
-	if _, err := f.service.RotateAccountCredential(systemAdminContext(), &RotateAccountCredentialRequest{
+	if _, err := f.service.RotateAccountCredential(tenantAdminContext(), &RotateAccountCredentialRequest{
 		TenantID: nsTenant, AccountID: created.Account.ID,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-fake-rotated", ExpiresAt: expiry},
 	}); err != nil {

@@ -14,7 +14,6 @@
 package grpc
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,7 +37,7 @@ import (
 func TestGRPC_CreateUserRefusesAMalformedEmailAsInvalidArgument(t *testing.T) {
 	srv, _ := newRealIAMGRPCStack(t)
 
-	_, err := srv.CreateUser(context.Background(), &iampb.CreateUserRequest{
+	_, err := srv.CreateUser(callerContext("acme"), &iampb.CreateUserRequest{
 		TenantId: "acme",
 		Email:    "not-an-email",
 		Name:     "Bob",
@@ -50,7 +49,7 @@ func TestGRPC_CreateUserRefusesAMalformedEmailAsInvalidArgument(t *testing.T) {
 
 func TestGRPC_UpdateUserRefusesAnEmailShapedNameAsInvalidArgument(t *testing.T) {
 	srv, _ := newRealIAMGRPCStack(t)
-	ctx := context.Background()
+	ctx := callerContext("acme")
 
 	created, err := srv.CreateUser(ctx, &iampb.CreateUserRequest{
 		TenantId: "acme",
@@ -77,7 +76,7 @@ func TestGRPC_UpdateUserRefusesAnEmailShapedNameAsInvalidArgument(t *testing.T) 
 func TestGRPC_UpdateUnknownUserWithAMalformedEmailIsInvalidArgument(t *testing.T) {
 	srv, _ := newRealIAMGRPCStack(t)
 
-	_, err := srv.UpdateUser(context.Background(), &iampb.UpdateUserRequest{
+	_, err := srv.UpdateUser(callerContext("acme"), &iampb.UpdateUserRequest{
 		TenantId: "acme",
 		UserId:   "no-such-user",
 		Email:    "not-an-email",

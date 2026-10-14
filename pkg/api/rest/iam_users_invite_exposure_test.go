@@ -63,7 +63,7 @@ func TestCreateUser_StillExposesInviteTokenOnce(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
 		strings.NewReader(`{"email":"bob@acme.com","username":"bob","name":"Bob"}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -156,7 +156,7 @@ func TestGetUser_DoesNotExposeInviteToken(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "acme")
 	rctx.URLParams.Add("user_id", "77")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/users/77", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	w := httptest.NewRecorder()
 
 	handler.GetUser(w, req)
@@ -179,7 +179,7 @@ func TestListUsers_DoesNotExposeInviteTokens(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/acme/users/", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	w := httptest.NewRecorder()
 
 	handler.ListUsers(w, req)
@@ -208,7 +208,7 @@ func createPendingUser(t *testing.T, handler *IAMHandler, body string) map[strin
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 

@@ -41,18 +41,17 @@ func callerContext(tenant string) context.Context {
 	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), tenant), tenant)
 }
 
-// adminContext is a system admin's authenticated request.
-func adminContext() context.Context { return callerContext(qrdbsdk.SystemTenantID) }
-
-// TestCostSettingsAreStoredInTheTargetTenantsNamespace asserts a system admin
-// setting t1's electricity rate writes it where t1's turns are priced from —
-// t1's namespace — not the admin's.
+// TestCostSettingsAreStoredInTheTargetTenantsNamespace asserts t1's admin —
+// authenticated on pkg/iam's key only, the shape the REST path hands the
+// service — setting t1's electricity rate writes it where t1's turns are
+// priced from: t1's namespace, not the system's.
 func TestCostSettingsAreStoredInTheTargetTenantsNamespace(t *testing.T) {
 	kv := newTenantNamespacedKV()
 	source := routedCostSettings{store: orchestration.NewCostSettingsStore(kv)}
 	rate := 0.21
 
-	report, err := SetCostSettings(adminContext(), source, "t1", orchestration.CostSettings{
+	caller := tenantctx.WithTenant(context.Background(), "t1")
+	report, err := SetCostSettings(caller, source, "t1", orchestration.CostSettings{
 		ElectricityPricePerKWh: &rate, EnginePowerWatts: map[string]float64{"openvino": 12},
 	})
 	if err != nil {
@@ -62,15 +61,15 @@ func TestCostSettingsAreStoredInTheTargetTenantsNamespace(t *testing.T) {
 		t.Fatalf("rate = %+v, want t1's $0.21 from its settings", report.Electricity)
 	}
 	if keys := kv.keysIn(t, qrdbsdk.SystemTenantID, "costsettings"); len(keys) != 0 {
-		t.Fatalf("admin namespace holds %v; t1's settings must not be written there", keys)
+		t.Fatalf("system namespace holds %v; t1's settings must not be written there", keys)
 	}
 	if keys := kv.keysIn(t, "t1", "costsettings"); len(keys) != 1 {
 		t.Fatalf("t1 namespace holds %v, want t1's settings", keys)
 	}
 
-	back, err := GetCostSettings(adminContext(), source, "t1")
+	back, err := GetCostSettings(caller, source, "t1")
 	if err != nil || back.Settings.EnginePowerWatts["openvino"] != 12 {
-		t.Fatalf("admin read of t1 = %+v, %v; want t1's settings", back, err)
+		t.Fatalf("t1 read of t1 = %+v, %v; want t1's settings", back, err)
 	}
 }
 
@@ -78,8 +77,7 @@ func TestCostSettingsAreStoredInTheTargetTenantsNamespace(t *testing.T) {
 // is costed at the default electricity rate.
 func TestCostSettingsDefaultRateWithNothingSet(t *testing.T) {
 	source := routedCostSettings{store: orchestration.NewInMemoryCostSettingsStore()}
-	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
-	report, err := GetCostSettings(ctx, source, "t1")
+	report, err := GetCostSettings(callerContext("t1"), source, "t1")
 	if err != nil {
 		t.Fatalf("GetCostSettings: %v", err)
 	}
@@ -96,10 +94,10 @@ func TestCostSettingsRequireATenantAndAStore(t *testing.T) {
 	if _, err := SetCostSettings(tenantctx.WithSystem(context.Background()), source, "", orchestration.CostSettings{}); !errors.Is(err, orchestration.ErrCostSettingsInvalid) {
 		t.Fatalf("set with no tenant = %v, want ErrCostSettingsInvalid", err)
 	}
-	if _, err := GetCostSettings(adminContext(), routedCostSettings{}, "t1"); !errors.Is(err, orchestration.ErrCostSettingsStore) {
+	if _, err := GetCostSettings(callerContext("t1"), routedCostSettings{}, "t1"); !errors.Is(err, orchestration.ErrCostSettingsStore) {
 		t.Fatalf("get with no store = %v, want ErrCostSettingsStore", err)
 	}
-	if _, err := SetCostSettings(adminContext(), routedCostSettings{}, "t1", orchestration.CostSettings{}); !errors.Is(err, orchestration.ErrCostSettingsStore) {
+	if _, err := SetCostSettings(callerContext("t1"), routedCostSettings{}, "t1", orchestration.CostSettings{}); !errors.Is(err, orchestration.ErrCostSettingsStore) {
 		t.Fatalf("set with no store = %v, want ErrCostSettingsStore", err)
 	}
 }
@@ -108,33 +106,37 @@ func TestCostSettingsRequireATenantAndAStore(t *testing.T) {
 // for this API: a caller of tenant A holding the write permission may not
 // read or replace tenant B's settings. The check is made against the caller's
 // own identity BEFORE the context is switched to B, after which every scope
-// check would pass.
+// check would pass. Since #1150 the system tenant is refused the same way.
 func TestCostSettingsRefuseAnotherTenantsCaller(t *testing.T) {
 	store := orchestration.NewInMemoryCostSettingsStore()
 	source := routedCostSettings{store: store}
 	rate := 0.5
 
-	_, err := SetCostSettings(callerContext("tenant-a"), source, "tenant-b", orchestration.CostSettings{ElectricityPricePerKWh: &rate})
-	var denied *TenantTargetDeniedError
-	if !errors.As(err, &denied) || !errors.Is(err, orchestration.ErrAccountTenantScope) {
-		t.Fatalf("cross-tenant set = %v, want a TenantTargetDeniedError", err)
+	// Neither another tenant's caller nor the system tenant may name tenant-b:
+	// the system tenant gets no cross-tenant lift (#1150).
+	for _, caller := range []string{"tenant-a", qrdbsdk.SystemTenantID} {
+		_, err := SetCostSettings(callerContext(caller), source, "tenant-b", orchestration.CostSettings{ElectricityPricePerKWh: &rate})
+		var denied *TenantTargetDeniedError
+		if !errors.As(err, &denied) || !errors.Is(err, orchestration.ErrAccountTenantScope) {
+			t.Fatalf("%s set of tenant-b = %v, want a TenantTargetDeniedError", caller, err)
+		}
+		if !strings.Contains(denied.Error(), caller) {
+			t.Fatalf("error %q does not name the caller %q", denied.Error(), caller)
+		}
+		if _, err := GetCostSettings(callerContext(caller), source, "tenant-b"); !errors.As(err, &denied) {
+			t.Fatalf("%s get of tenant-b = %v, want a TenantTargetDeniedError", caller, err)
+		}
 	}
-	if _, err := GetCostSettings(callerContext("tenant-a"), source, "tenant-b"); !errors.As(err, &denied) {
-		t.Fatalf("cross-tenant get = %v, want a TenantTargetDeniedError", err)
-	}
-	saved, err := store.Get(orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "tenant-b"), "tenant-b")
+	saved, err := store.Get(callerContext("tenant-b"), "tenant-b")
 	if err != nil || !saved.Empty() {
-		t.Fatalf("tenant-b settings = %+v, %v; the refused write must not land", saved, err)
+		t.Fatalf("tenant-b settings = %+v, %v; the refused writes must not land", saved, err)
 	}
 
-	// A caller of the target tenant, and an in-process caller, are allowed.
+	// A caller of the target tenant is allowed.
 	if _, err := SetCostSettings(callerContext("tenant-b"), source, "tenant-b", orchestration.CostSettings{ElectricityPricePerKWh: &rate}); err != nil {
 		t.Fatalf("own-tenant set: %v", err)
 	}
-	if _, err := GetCostSettings(orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "tenant-b"), source, "tenant-b"); err != nil {
-		t.Fatalf("in-process get: %v", err)
-	}
-	if !strings.Contains(denied.Error(), "tenant-a") {
-		t.Fatalf("error %q does not name the caller", denied.Error())
+	if _, err := GetCostSettings(callerContext("tenant-b"), source, "tenant-b"); err != nil {
+		t.Fatalf("own-tenant get: %v", err)
 	}
 }

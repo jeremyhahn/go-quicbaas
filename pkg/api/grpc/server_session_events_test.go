@@ -203,7 +203,7 @@ func TestSubscribeSessionEvents_Validation(t *testing.T) {
 
 func TestSubscribeSessionEvents_NoLogConfigured(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	stream := &fakeSubscribeStream{ctx: context.Background()}
+	stream := &fakeSubscribeStream{ctx: callerContext("t")}
 	err := srv.SubscribeSessionEvents(
 		&pb.SubscribeSessionRequest{SessionId: "s", TenantId: "t"},
 		stream,
@@ -225,7 +225,7 @@ func TestSubscribeSessionEvents_HistoryReplay(t *testing.T) {
 	}
 
 	srv := newSessionEventsServer(t, log)
-	stream := &fakeSubscribeStream{ctx: ctx}
+	stream := &fakeSubscribeStream{ctx: callerContext("tenant-1")}
 
 	// follow=false -> returns after history drain.
 	err := srv.SubscribeSessionEvents(&pb.SubscribeSessionRequest{
@@ -241,7 +241,7 @@ func TestSubscribeSessionEvents_FollowCancelled(t *testing.T) {
 	log := orchestration.NewMemorySessionEventLog()
 	srv := newSessionEventsServer(t, log)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(callerContext("tenant-1"))
 	cancel() // already cancelled: live-tail loop returns immediately
 
 	stream := &fakeSubscribeStream{ctx: ctx}

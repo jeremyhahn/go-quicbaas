@@ -16,7 +16,6 @@
 package rest
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,7 +69,7 @@ func TestListPolicies(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//policies", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListPolicies(w, req)
@@ -87,7 +86,7 @@ func TestListPolicies(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/policies", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListPolicies(w, req)
@@ -104,7 +103,7 @@ func TestListPolicies(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/policies?limit=50&offset=10", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListPolicies(w, req)
@@ -121,7 +120,7 @@ func TestListPolicies(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/policies?limit=invalid&offset=-1", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListPolicies(w, req)
@@ -141,7 +140,7 @@ func TestCreatePolicy(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//policies", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -159,7 +158,7 @@ func TestCreatePolicy(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -179,7 +178,7 @@ func TestCreatePolicy(t *testing.T) {
 		// Empty policy should fail validation
 		body := `{"metadata":{},"spec":{}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -200,7 +199,7 @@ func TestGetPolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "test-policy")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//policies/test-policy", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetPolicy(w, req)
@@ -218,7 +217,7 @@ func TestGetPolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/policies/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetPolicy(w, req)
@@ -236,7 +235,7 @@ func TestGetPolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "test-policy")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/policies/test-policy", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetPolicy(w, req)
@@ -257,7 +256,7 @@ func TestUpdatePolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "test-policy")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//policies/test-policy", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -276,7 +275,7 @@ func TestUpdatePolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/policies/", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -295,7 +294,7 @@ func TestUpdatePolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "test-policy")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/policies/test-policy", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -316,7 +315,7 @@ func TestUpdatePolicy(t *testing.T) {
 		// Empty policy should fail validation
 		body := `{"metadata":{},"spec":{}}`
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/policies/test-policy", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -337,7 +336,7 @@ func TestDeletePolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "test-policy")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//policies/test-policy", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeletePolicy(w, req)
@@ -355,7 +354,7 @@ func TestDeletePolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/policies/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeletePolicy(w, req)
@@ -373,7 +372,7 @@ func TestDeletePolicy(t *testing.T) {
 		rctx.URLParams.Add("policy_name", "test-policy")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/policies/test-policy", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeletePolicy(w, req)
@@ -393,7 +392,7 @@ func TestValidatePolicy(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//policies/validate", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -411,7 +410,7 @@ func TestValidatePolicy(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/validate", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -430,7 +429,7 @@ func TestValidatePolicy(t *testing.T) {
 
 		body := `{"metadata":{"name":"test"},"spec":{"rules":[]}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/validate", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -451,7 +450,7 @@ func TestTestPolicy(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//policies/test", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -469,7 +468,7 @@ func TestTestPolicy(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/test", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -488,7 +487,7 @@ func TestTestPolicy(t *testing.T) {
 
 		body := `{"subject":{"id":"user1"},"action":"read","resource":"data"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/test", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -573,7 +572,7 @@ func TestSimulatePolicy(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//policies/simulate", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -591,7 +590,7 @@ func TestSimulatePolicy(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/simulate", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -610,7 +609,7 @@ func TestSimulatePolicy(t *testing.T) {
 
 		body := `{"check_request":{"subject":{"id":"user1"}}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/simulate", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -629,7 +628,7 @@ func TestSimulatePolicy(t *testing.T) {
 
 		body := `{"policy":{"metadata":{"name":"test"},"spec":{}}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/simulate", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -648,7 +647,7 @@ func TestSimulatePolicy(t *testing.T) {
 
 		body := `{"policy":{"metadata":{"name":"test"},"spec":{}},"check_request":{"subject":{"id":"user1"}}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/simulate", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -669,7 +668,7 @@ func TestGetEffectivePermissions(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//policies/effective-permissions", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -687,7 +686,7 @@ func TestGetEffectivePermissions(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/effective-permissions", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -706,7 +705,7 @@ func TestGetEffectivePermissions(t *testing.T) {
 
 		body := `{"resource_patterns":["*"]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/effective-permissions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -725,7 +724,7 @@ func TestGetEffectivePermissions(t *testing.T) {
 
 		body := `{"subject":{"id":"user1"}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/effective-permissions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -744,7 +743,7 @@ func TestGetEffectivePermissions(t *testing.T) {
 
 		body := `{"subject":{"id":"user1"},"resource_patterns":["*"]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/policies/effective-permissions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 

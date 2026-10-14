@@ -56,6 +56,9 @@ func (s *SessionServer) ListSessions(ctx context.Context, req *iampb.ListSession
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
+		return nil, err
+	}
 
 	userID, err := parseOptionalUserID("user_id", req.UserId)
 	if err != nil {
@@ -114,6 +117,9 @@ func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.Revoke
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
+		return nil, err
+	}
 
 	userID, err := parseOptionalUserID("user_id", req.UserId)
 	if err != nil {
@@ -133,6 +139,9 @@ func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.Revoke
 func (s *SessionServer) RevokeOtherSessions(ctx context.Context, req *iampb.RevokeOtherSessionsRequest) (*iampb.RevokeOtherSessionsResponse, error) {
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.KeepSessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "keep_session_id is required")

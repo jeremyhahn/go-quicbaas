@@ -106,7 +106,7 @@ func (s *SessionSmoker) Smoke(ctx context.Context, req SmokeRequest) (reply stri
 	if err != nil {
 		return "", err
 	}
-	ctx = orchestration.ContextWithTenant(ctx, req.TenantID)
+	ctx = tenantContext(ctx, req.TenantID)
 	spawn := &orchestration.SpawnSessionRequest{
 		Backend:            req.Backend,
 		Model:              req.Model,
@@ -149,7 +149,7 @@ func (s *SessionSmoker) Smoke(ctx context.Context, req SmokeRequest) (reply stri
 // workDir prepares the smoke's working directory under the project's
 // workspace root.
 func (s *SessionSmoker) workDir(ctx context.Context, req SmokeRequest) (string, error) {
-	project, err := s.projects.Get(orchestration.ContextWithTenant(ctx, req.TenantID), req.TenantID, req.ProjectID)
+	project, err := s.projects.Get(tenantContext(ctx, req.TenantID), req.TenantID, req.ProjectID)
 	if err != nil {
 		return "", &SmokeError{Backend: req.Backend, Model: req.Model, Stage: "project", Cause: err}
 	}

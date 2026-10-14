@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -40,7 +39,7 @@ func setProviderRegistry(t *testing.T, svc AccountService, registry *orchestrati
 func TestAccountService_CreateAccount_OAuthWithoutResolvableEndpoint(t *testing.T) {
 	svc := newTestAccountService(t)
 
-	_, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	_, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:      "tenant-a",
 		Provider:      orchestration.AccountProviderClaude,
 		RefreshPolicy: orchestration.AccountRefreshOAuth2,
@@ -73,7 +72,7 @@ func TestAccountService_CreateAccount_OAuthEndpointFromProviderRegistry(t *testi
 	}
 	setProviderRegistry(t, svc, registry)
 
-	resp, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	resp, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:      "tenant-a",
 		Provider:      orchestration.AccountProviderClaude,
 		RefreshPolicy: orchestration.AccountRefreshOAuth2,
@@ -92,7 +91,7 @@ func TestAccountService_CreateAccount_OAuthEndpointFromProviderRegistry(t *testi
 func TestAccountService_CreateAccount_OAuthEndpointOnTheAccount(t *testing.T) {
 	svc := newTestAccountService(t)
 
-	if _, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	if _, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:      "tenant-a",
 		Provider:      orchestration.AccountProviderClaude,
 		RefreshPolicy: orchestration.AccountRefreshOAuth2,
@@ -149,7 +148,7 @@ func TestAccountService_CreateAccount_CredentialModeRules(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := newTestAccountService(t)
-			_, err := svc.CreateAccount(context.Background(), tt.req)
+			_, err := svc.CreateAccount(callerContext("tenant-a"), tt.req)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("CreateAccount() error = %v, want %v", err, tt.wantErr)
 			}
@@ -166,7 +165,7 @@ func TestAccountService_CreateAccount_CredentialModeRules(t *testing.T) {
 func TestAccountService_CreateAccount_DefaultsToStaticMode(t *testing.T) {
 	svc := newTestAccountService(t)
 
-	resp, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	resp, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:   "tenant-a",
 		Provider:   orchestration.AccountProviderCodex,
 		Credential: &orchestration.AccountCredential{Env: map[string]string{"OPENAI_API_KEY": "sk-test"}},
@@ -182,7 +181,7 @@ func TestAccountService_CreateAccount_DefaultsToStaticMode(t *testing.T) {
 // TestAccountService_RotateAccountCredential_ValidatesAgainstAccountMode
 // proves a rotation cannot slip past the rules creation enforced.
 func TestAccountService_RotateAccountCredential_ValidatesAgainstAccountMode(t *testing.T) {
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	svc := newTestAccountService(t)
 
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
@@ -235,7 +234,7 @@ func TestAccountService_RotateAccountCredential_ValidatesAgainstAccountMode(t *t
 // An empty static credential is unusable at spawn time, so both write paths
 // refuse it rather than storing it (create) or erasing the stored one (rotate).
 func TestAccountService_RefusesAnEmptyStaticCredential(t *testing.T) {
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	svc := newTestAccountService(t)
 
 	_, createErr := svc.CreateAccount(ctx, &CreateAccountRequest{
@@ -277,7 +276,7 @@ func assertEmptyCredentialRefused(t *testing.T, op string, err error) {
 // TestAccountService_UpdateAccount_RejectsUnrecognizedMode proves the metadata
 // update path cannot write a mode nothing understands.
 func TestAccountService_UpdateAccount_RejectsUnrecognizedMode(t *testing.T) {
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	svc := newTestAccountService(t)
 
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
@@ -318,7 +317,7 @@ func TestAccountService_SetProviderRegistry_IgnoresNil(t *testing.T) {
 	svc := newTestAccountService(t)
 	setProviderRegistry(t, svc, nil)
 
-	_, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	_, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:      "tenant-a",
 		Provider:      orchestration.AccountProviderClaude,
 		RefreshPolicy: orchestration.AccountRefreshOAuth2,

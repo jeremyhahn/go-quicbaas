@@ -77,7 +77,7 @@ func TestProjectServer_SpendCrossesTheWire(t *testing.T) {
 			return &service.UpdateProjectResponse{Project: project, Timestamp: time.Now()}, nil
 		},
 	})
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := callerContext("tenant-1")
 
 	resp, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{TenantId: "tenant-1", Name: "demo", Spend: spendLimitsToProto(limits)})
 	if err != nil {
@@ -113,7 +113,7 @@ func TestTenantSpendPolicyOverGRPC(t *testing.T) {
 	srv := NewOrchestratorServer(&spendLedgerAgentService{
 		ledger: ledger, tenant: orchestration.NewInMemoryTenantSpendPolicyStore(),
 	}, createOrchestratorGRPCTestLogger())
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 	limits := orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{
 		{Name: "monthly", Size: 720 * time.Hour, MaxEquivalentMicros: 2_000_000_000},
 	}}
@@ -136,7 +136,8 @@ func TestTenantSpendPolicyOverGRPC(t *testing.T) {
 }
 
 func TestTenantSpendPolicyOverGRPCRefuses(t *testing.T) {
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+	system := tenantctx.WithSystem(context.Background())
 	wired := NewOrchestratorServer(&spendLedgerAgentService{
 		ledger: orchestration.NewInMemoryConsumptionLedger(), tenant: orchestration.NewInMemoryTenantSpendPolicyStore(),
 	}, createOrchestratorGRPCTestLogger())
@@ -157,6 +158,10 @@ func TestTenantSpendPolicyOverGRPCRefuses(t *testing.T) {
 				Limits: &pb.SpendLimits{Windows: []*pb.SpendLimitWindow{{Name: "w", SizeNanos: int64(time.Hour)}}}})
 			return err
 		}, codes.InvalidArgument},
+		{"the system tenant naming another tenant", func() error {
+			_, err := wired.SetTenantSpendPolicy(system, &pb.SetTenantSpendPolicyRequest{TenantId: "t1"})
+			return err
+		}, codes.PermissionDenied},
 		{"a service with no store wired", func() error {
 			_, err := unwired.GetTenantSpendPolicy(ctx, &pb.GetTenantSpendPolicyRequest{TenantId: "t1"})
 			return err

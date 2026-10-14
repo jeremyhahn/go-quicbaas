@@ -69,7 +69,7 @@ func TestGetSessionConversation_ReturnsTurnsWithCost(t *testing.T) {
 	const tenantID = "t1"
 	srv := newSessionEventsServer(t, seedConversationLog(t, tenantID, "s1"))
 
-	resp, err := srv.GetSessionConversation(context.Background(), &pb.GetSessionConversationRequest{
+	resp, err := srv.GetSessionConversation(callerContext(tenantID), &pb.GetSessionConversationRequest{
 		TenantId:  tenantID,
 		SessionId: "s1",
 	})
@@ -98,14 +98,14 @@ func TestGetSessionConversation_PagesWithACursor(t *testing.T) {
 	const tenantID = "t1"
 	srv := newSessionEventsServer(t, seedConversationLog(t, tenantID, "s1"))
 
-	first, err := srv.GetSessionConversation(context.Background(), &pb.GetSessionConversationRequest{
+	first, err := srv.GetSessionConversation(callerContext(tenantID), &pb.GetSessionConversationRequest{
 		TenantId: tenantID, SessionId: "s1", Limit: 1,
 	})
 	require.NoError(t, err)
 	require.Len(t, first.GetTurns(), 1)
 	require.NotZero(t, first.GetNextCursor())
 
-	second, err := srv.GetSessionConversation(context.Background(), &pb.GetSessionConversationRequest{
+	second, err := srv.GetSessionConversation(callerContext(tenantID), &pb.GetSessionConversationRequest{
 		TenantId: tenantID, SessionId: "s1", Cursor: first.GetNextCursor(),
 	})
 	require.NoError(t, err)
@@ -118,12 +118,32 @@ func TestGetSessionConversation_PagesWithACursor(t *testing.T) {
 // same session id reads nothing.
 func TestGetSessionConversation_TenantIsolation(t *testing.T) {
 	srv := newSessionEventsServer(t, seedConversationLog(t, "tenant-owner", "s1"))
+	intruder := callerContext("tenant-intruder")
 
-	resp, err := srv.GetSessionConversation(context.Background(), &pb.GetSessionConversationRequest{
+	resp, err := srv.GetSessionConversation(intruder, &pb.GetSessionConversationRequest{
 		TenantId: "tenant-intruder", SessionId: "s1",
 	})
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetTurns(), "a second tenant read another tenant's conversation")
+
+	_, err = srv.GetSessionConversation(intruder, &pb.GetSessionConversationRequest{
+		TenantId: "tenant-owner", SessionId: "s1",
+	})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err),
+		"a caller named another tenant and was not refused (go-quicbaas#1150)")
+}
+
+// TestGetSessionConversation_EmptyTenantIsTheCallersOwn pins that an omitted
+// tenant_id reads the caller's own conversation, not the system tenant's the
+// history reader would otherwise default to (go-quicbaas#1150).
+func TestGetSessionConversation_EmptyTenantIsTheCallersOwn(t *testing.T) {
+	srv := newSessionEventsServer(t, seedConversationLog(t, "tenant-owner", "s1"))
+
+	resp, err := srv.GetSessionConversation(callerContext("tenant-owner"),
+		&pb.GetSessionConversationRequest{SessionId: "s1"})
+	require.NoError(t, err)
+	assert.Equal(t, "tenant-owner", resp.GetTenantId())
+	assert.Len(t, resp.GetTurns(), 2)
 }
 
 // TestGetSessionConversation_RejectsBadInput asserts an unaddressed request
@@ -147,7 +167,7 @@ func TestGetSessionConversation_RejectsBadInput(t *testing.T) {
 
 	t.Run("no transcript configured", func(t *testing.T) {
 		srv := newSessionEventsServer(t, nil)
-		_, err := srv.GetSessionConversation(context.Background(),
+		_, err := srv.GetSessionConversation(callerContext("t1"),
 			&pb.GetSessionConversationRequest{TenantId: "t1", SessionId: "s1"})
 		require.Error(t, err)
 		assert.Equal(t, codes.Unavailable, status.Code(err))

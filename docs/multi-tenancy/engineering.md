@@ -76,6 +76,13 @@ system binding still maps to the empty, unprefixed platform scope
 (`prepareTenantContext` returns `""` for it), so storage layouts are unchanged;
 what changed is that `""` can only be reached by binding the system tenant.
 
+**Platform tokens carry a tenant.** go-qrdb folds an identity with an empty
+tenant onto the system tenant, so a validated platform token whose
+`tenant_id` is empty is refused before that can happen: on REST by
+`Server.AuthenticateHTTP` (`EmptyTenantTokenError`), and on gRPC, MCP, QUIC
+and Unix by the platform-bearer authenticator registered with
+`qrdbnode.WithAuthenticators` (`PlatformBearerTenantRequiredError`).
+
 ## The System Tenant
 
 The empty tenant ID and the literal `"system"` (`iam.SystemTenantID` /
@@ -128,7 +135,39 @@ type; collapsing the two would be a silent widening.
 | Object Storage Admin | `objectstorage_admin_tenant.go` | N/A (infra-level) | Context validation only |
 | Object Storage | `objectstorage_tenant.go` | Catalog entry tenant | Every operation resolves its tenant with `objectStorageTenant` (tenantctx.Target): the request's `X-Tenant-ID` / `tenant_id` may only repeat the caller's own tenant |
 | Dynamic Secrets | `dynamic_secrets_tenant.go` | Deferred | Interface-only, not yet implemented |
-| IAM | N/A | N/A | Platform-scoped, not tenant-scoped |
+| Account, Agent Catalog, Cost Settings, Spend Policy | `tenant_target.go` | Tenant namespace | `targetTenantContext` (tenantctx.Target): the request's `tenant_id` may only repeat the caller's own tenant |
+| IAM | N/A | N/A | Platform-scoped, not tenant-scoped; the transports confine `tenant_id` (below) |
+
+### Caller-Named Tenants
+
+Every request field that names a tenant goes through `tenantctx.Target`
+(above): the system tenant gets no lift, so to act in tenant `T` a caller
+authenticates as a principal of `T`. An embedded SDK caller names its tenant
+with `transport.ContextWithTenant`; one that names none is bound as the
+system tenant and is refused on the account, agent catalog, cost and spend
+APIs for any other tenant.
+
+On gRPC, the IAM (users, roles, policies, apps, consent, impersonation,
+WebAuthn credentials), federation, project and session servers check
+`tenant_id` with `requireCallerTenant` before the service is reached. So do
+the orchestrator's `SubscribeSessionEvents` and `GetSessionConversation`. An
+omitted `tenant_id` on `GetSessionConversation` reads the caller's own
+conversation, not the system tenant's. `PushEvents`, the fleet daemon's
+multi-tenant ingest stream, is not checked this way.
+
+On REST, the IAM handlers that take `{tenant_id}` from the path resolve it
+with `Server.urlTenant` (`pkg/api/rest/tenant_target.go`). These cover apps,
+federation provider administration and account links, GDPR consent, export
+and deletion, MFA, policies, roles, sessions, users and WebAuthn credentials.
+A path naming any tenant other than the caller's own is `403`. The object
+storage routes are confined in the service by `objectStorageTenant`.
+
+On both transports, these are outside the check:
+
+- the pre-auth flows: federated login begin and callback, invite
+  activation, self-registration;
+- tenant provisioning and administration (`/api/v1/tenants/...` and the
+  tenant barrier).
 
 ## Isolation Patterns by Service
 

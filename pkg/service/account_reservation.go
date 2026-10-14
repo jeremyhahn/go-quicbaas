@@ -96,7 +96,10 @@ func (s *accountServiceImpl) ReserveAccountSession(ctx context.Context, req *Res
 	if s.sessions == nil {
 		return nil, &AccountSessionReserverNotConfiguredError{}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	// THE CAP IS READ FROM THE STORED RECORD, never from the caller: a daemon
 	// could otherwise reserve against a cap of its own choosing.
 	account, err := s.store.Get(ctx, req.TenantID, req.AccountID)
@@ -128,7 +131,10 @@ func (s *accountServiceImpl) ReleaseAccountSession(ctx context.Context, req *Rel
 	if s.sessions == nil {
 		return nil, &AccountSessionReserverNotConfiguredError{}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.sessions.Release(ctx, req.TenantID, req.AccountID, req.ReservationID); err != nil {
 		return nil, err
 	}

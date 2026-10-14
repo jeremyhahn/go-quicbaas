@@ -68,7 +68,7 @@ func TestNewSessionServer(t *testing.T) {
 
 func TestSessionServer_ListSessions(t *testing.T) {
 	srv, memService := createTestSessionServer(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant1")
 
 	t.Run("success with sessions", func(t *testing.T) {
 		memService.CreateTestSession("tenant1", 20001)
@@ -194,7 +194,7 @@ func TestSessionServer_RevokeAllSessions(t *testing.T) {
 		memService.CreateTestSession("tenant-all", 50002)
 		memService.CreateTestSession("tenant-all", 50003)
 
-		resp, err := srv.RevokeAllSessions(ctx, &iampb.RevokeAllSessionsRequest{
+		resp, err := srv.RevokeAllSessions(callerContext("tenant-all"), &iampb.RevokeAllSessionsRequest{
 			TenantId: "tenant-all",
 		})
 
@@ -207,7 +207,7 @@ func TestSessionServer_RevokeAllSessions(t *testing.T) {
 		memService.CreateTestSession("tenant-filter", 50004)
 		memService.CreateTestSession("tenant-filter", 50005)
 
-		resp, err := srv.RevokeAllSessions(ctx, &iampb.RevokeAllSessionsRequest{
+		resp, err := srv.RevokeAllSessions(callerContext("tenant-filter"), &iampb.RevokeAllSessionsRequest{
 			TenantId: "tenant-filter",
 			UserId:   "50004",
 		})
@@ -242,7 +242,7 @@ func TestSessionServer_RevokeOtherSessions(t *testing.T) {
 			Expires:      time.Now().Add(24 * time.Hour),
 		})
 
-		resp, err := srv.RevokeOtherSessions(ctx, &iampb.RevokeOtherSessionsRequest{
+		resp, err := srv.RevokeOtherSessions(callerContext("tenant-other"), &iampb.RevokeOtherSessionsRequest{
 			TenantId:      "tenant-other",
 			KeepSessionId: session1.ID,
 		})
@@ -266,7 +266,7 @@ func TestSessionServer_RevokeOtherSessions(t *testing.T) {
 	})
 
 	t.Run("error missing keep_session_id", func(t *testing.T) {
-		resp, err := srv.RevokeOtherSessions(ctx, &iampb.RevokeOtherSessionsRequest{
+		resp, err := srv.RevokeOtherSessions(callerContext("tenant1"), &iampb.RevokeOtherSessionsRequest{
 			TenantId:      "tenant1",
 			KeepSessionId: "",
 		})
@@ -462,7 +462,7 @@ func TestSessionServer_ListSessions_Success(t *testing.T) {
 	svc.CreateTestSession("tenant-1", 10001)
 	svc.CreateTestSession("tenant-1", 10002)
 
-	resp, err := srv.ListSessions(context.Background(), &iampb.ListSessionsRequest{
+	resp, err := srv.ListSessions(callerContext("tenant-1"), &iampb.ListSessionsRequest{
 		TenantId: "tenant-1",
 	})
 	require.NoError(t, err)
@@ -472,7 +472,7 @@ func TestSessionServer_ListSessions_Success(t *testing.T) {
 
 func TestSessionServer_ListSessions_EmptyTenantID(t *testing.T) {
 	srv, _ := newTestSessionServer(t)
-	_, err := srv.ListSessions(context.Background(), &iampb.ListSessionsRequest{
+	_, err := srv.ListSessions(callerContext("tenant-1"), &iampb.ListSessionsRequest{
 		TenantId: "",
 	})
 	require.Error(t, err)
@@ -484,7 +484,7 @@ func TestSessionServer_ListSessions_FilterByUser(t *testing.T) {
 	svc.CreateTestSession("tenant-1", 10001)
 	svc.CreateTestSession("tenant-1", 10002)
 
-	resp, err := srv.ListSessions(context.Background(), &iampb.ListSessionsRequest{
+	resp, err := srv.ListSessions(callerContext("tenant-1"), &iampb.ListSessionsRequest{
 		TenantId: "tenant-1",
 		UserId:   "10001",
 	})
@@ -564,7 +564,7 @@ func TestSessionServer_RevokeAllSessions_Success(t *testing.T) {
 		Expires:  time.Now().Add(24 * time.Hour),
 	})
 
-	resp, err := srv.RevokeAllSessions(context.Background(), &iampb.RevokeAllSessionsRequest{
+	resp, err := srv.RevokeAllSessions(callerContext("tenant-1"), &iampb.RevokeAllSessionsRequest{
 		TenantId: "tenant-1",
 		UserId:   "10001",
 	})
@@ -574,7 +574,7 @@ func TestSessionServer_RevokeAllSessions_Success(t *testing.T) {
 
 func TestSessionServer_RevokeAllSessions_EmptyTenantID(t *testing.T) {
 	srv, _ := newTestSessionServer(t)
-	_, err := srv.RevokeAllSessions(context.Background(), &iampb.RevokeAllSessionsRequest{
+	_, err := srv.RevokeAllSessions(callerContext("tenant-1"), &iampb.RevokeAllSessionsRequest{
 		TenantId: "",
 	})
 	require.Error(t, err)
@@ -592,7 +592,7 @@ func TestSessionServer_RevokeOtherSessions_Success(t *testing.T) {
 		Expires:  time.Now().Add(24 * time.Hour),
 	})
 
-	resp, err := srv.RevokeOtherSessions(context.Background(), &iampb.RevokeOtherSessionsRequest{
+	resp, err := srv.RevokeOtherSessions(callerContext("tenant-1"), &iampb.RevokeOtherSessionsRequest{
 		TenantId:      "tenant-1",
 		KeepSessionId: keepSess.ID,
 	})
@@ -609,7 +609,7 @@ func TestSessionServer_RevokeOtherSessions_Success(t *testing.T) {
 
 func TestSessionServer_RevokeOtherSessions_EmptyTenantID(t *testing.T) {
 	srv, _ := newTestSessionServer(t)
-	_, err := srv.RevokeOtherSessions(context.Background(), &iampb.RevokeOtherSessionsRequest{
+	_, err := srv.RevokeOtherSessions(callerContext("tenant-1"), &iampb.RevokeOtherSessionsRequest{
 		TenantId:      "",
 		KeepSessionId: "sess-1",
 	})
@@ -619,7 +619,7 @@ func TestSessionServer_RevokeOtherSessions_EmptyTenantID(t *testing.T) {
 
 func TestSessionServer_RevokeOtherSessions_EmptyKeepSessionID(t *testing.T) {
 	srv, _ := newTestSessionServer(t)
-	_, err := srv.RevokeOtherSessions(context.Background(), &iampb.RevokeOtherSessionsRequest{
+	_, err := srv.RevokeOtherSessions(callerContext("tenant-1"), &iampb.RevokeOtherSessionsRequest{
 		TenantId:      "tenant-1",
 		KeepSessionId: "",
 	})

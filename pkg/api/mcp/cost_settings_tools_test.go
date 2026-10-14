@@ -55,7 +55,7 @@ func TestCostSettingsTools(t *testing.T) {
 	reg := newFleetRegistry(t, &costSettingsAgentService{
 		mockAgentService: &mockAgentService{}, store: orchestration.NewInMemoryCostSettingsStore(),
 	})
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	raw, err := reg.ExecuteTool(ctx, "quicbaas_orchestrator_cost_settings_get", map[string]interface{}{"tenant_id": "t1"})
 	if err != nil {
@@ -76,6 +76,12 @@ func TestCostSettingsTools(t *testing.T) {
 	if report.Electricity.PricePerKWh != 0.2 || report.EngineDraws["openvino"] != 12 {
 		t.Fatalf("report = %+v, want $0.20 and openvino 12 W", report)
 	}
+
+	// The system tenant gets no cross-tenant lift (#1150).
+	system := tenantctx.WithSystem(context.Background())
+	if _, err := reg.ExecuteTool(system, "quicbaas_orchestrator_cost_settings_get", map[string]interface{}{"tenant_id": "t1"}); err == nil {
+		t.Fatal("a system-tenant read of t1 must be refused")
+	}
 }
 
 // TestCostSettingsToolsRefuseMalformedArguments asserts a rate or draw of the
@@ -84,7 +90,7 @@ func TestCostSettingsTools(t *testing.T) {
 func TestCostSettingsToolsRefuseMalformedArguments(t *testing.T) {
 	store := orchestration.NewInMemoryCostSettingsStore()
 	reg := newFleetRegistry(t, &costSettingsAgentService{mockAgentService: &mockAgentService{}, store: store})
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 	if _, err := reg.ExecuteTool(ctx, "quicbaas_orchestrator_cost_settings_set", map[string]interface{}{
 		"tenant_id": "t1", "electricity_price_per_kwh": 0.3,
 	}); err != nil {

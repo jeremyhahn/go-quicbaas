@@ -28,3 +28,9 @@ func boundTenant(ctx context.Context) string {
 	}
 	return tenantID
 }
+
+// callerContext binds tenantID as the caller's own tenant, the binding the
+// authorization interceptor leaves for an authenticated tenant caller.
+func callerContext(tenantID string) context.Context {
+	return tenantctx.WithTenant(context.Background(), tenantID)
+}

@@ -41,7 +41,7 @@ func reservingService(t *testing.T) (*accountServiceImpl, *orchestration.Account
 
 func TestAccountService_ReserveHonoursTheStoredCap(t *testing.T) {
 	svc, account := reservingService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	first, err := svc.ReserveAccountSession(ctx, &ReserveAccountSessionRequest{TenantID: "tenant-a", AccountID: account.ID})
 	if err != nil || first.ReservationID == "" {
@@ -64,7 +64,7 @@ func TestAccountService_ReserveHonoursTheStoredCap(t *testing.T) {
 func TestAccountService_ReserveCountsUnmeteredAccountsAndHonoursTheExpectedCount(t *testing.T) {
 	svc, _ := reservingService(t)
 	unmetered := createCappedAccount(t, svc, 0)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	zero := 0
 	req := &ReserveAccountSessionRequest{TenantID: "tenant-a", AccountID: unmetered.ID, ExpectedLive: &zero}
 	if resp, err := svc.ReserveAccountSession(ctx, req); err != nil || resp.ReservationID == "" {
@@ -77,7 +77,7 @@ func TestAccountService_ReserveCountsUnmeteredAccountsAndHonoursTheExpectedCount
 
 func TestAccountService_ReservationRejectsBadInput(t *testing.T) {
 	svc, account := reservingService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	var invalid *AccountInvalidError
 	for name, call := range map[string]func() error{
 		"reserve nil": func() error { _, err := svc.ReserveAccountSession(ctx, nil); return err },
@@ -104,10 +104,10 @@ func TestAccountService_ReservationRejectsBadInput(t *testing.T) {
 func TestAccountService_ReservationWithoutATableIsUnavailable(t *testing.T) {
 	svc := newTestAccountService(t)
 	var notConfigured *AccountSessionReserverNotConfiguredError
-	if _, err := svc.ReserveAccountSession(context.Background(), &ReserveAccountSessionRequest{TenantID: "t", AccountID: "a"}); !errors.As(err, &notConfigured) {
+	if _, err := svc.ReserveAccountSession(callerContext("t"), &ReserveAccountSessionRequest{TenantID: "t", AccountID: "a"}); !errors.As(err, &notConfigured) {
 		t.Errorf("Reserve error = %v, want not configured", err)
 	}
-	if _, err := svc.ReleaseAccountSession(context.Background(), &ReleaseAccountSessionRequest{TenantID: "t", AccountID: "a", ReservationID: "r"}); !errors.As(err, &notConfigured) {
+	if _, err := svc.ReleaseAccountSession(callerContext("t"), &ReleaseAccountSessionRequest{TenantID: "t", AccountID: "a", ReservationID: "r"}); !errors.As(err, &notConfigured) {
 		t.Errorf("Release error = %v, want not configured", err)
 	}
 	if notConfigured.Error() == "" {

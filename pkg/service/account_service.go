@@ -416,25 +416,20 @@ func (e *AccountRotationIncompleteError) Error() string {
 // Unwrap returns the record update failure.
 func (e *AccountRotationIncompleteError) Unwrap() error { return e.Cause }
 
-// accountTenantContext scopes ctx to the tenant an account request names.
+// accountTenantContext scopes ctx to a tenant the caller has already been
+// authorized to act on (targetTenantContext); it makes no authorization
+// decision of its own.
 //
 // The orchestration KV routes every read and write by the tenant on the
 // CONTEXT, never by the tenant segment in the key
 // (pkg/server/tenant_kvstore.go tenantFromAnyContext), and a
 // prefix-isolation tenant's records live in that tenant's own namespace
-// (go-qrdb tenant.StoreResolver). A request that names tenant T while its
-// context carries the caller's tenant — the system admin provisioning T's
-// pooled account, the shape go-quicbaas#535 measured — would otherwise write
-// T's record into the CALLER's namespace, where T's SDLC module, which
-// resolves under T's context (sdlc.runtimeContext), can never find it.
+// (go-qrdb tenant.StoreResolver).
 //
 // Both keys the router honours are set: pkg/iam's, which the REST path stamps
 // and the secrets manager reads, and pkg/orchestration's, which the module's
 // spawn path stamps. Setting one and not the other is the silent failure
-// go-quicbaas#531 documented — a value nothing downstream reads. The request's
-// tenant overrides whatever the context carried: the request is the
-// authority, and a caller allowed to name another tenant was admitted by RBAC
-// before reaching this service.
+// go-quicbaas#531 documented — a value nothing downstream reads.
 func accountTenantContext(ctx context.Context, tenantID string) context.Context {
 	return orchestration.ContextWithTenant(tenantctx.WithTenant(ctx, tenantID), tenantID)
 }
@@ -560,7 +555,10 @@ func (s *accountServiceImpl) CreateAccount(ctx context.Context, req *CreateAccou
 	if err := s.validateCreate(req); err != nil {
 		return nil, err
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 
 	account := &orchestration.Account{
 		ID:                   uuid.New().String(),
@@ -625,7 +623,10 @@ func (s *accountServiceImpl) GetAccount(ctx context.Context, req *GetAccountRequ
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	account, err := s.store.Get(ctx, req.TenantID, req.AccountID)
 	if err != nil {
 		return nil, convertAccountStoreError(err)
@@ -638,7 +639,10 @@ func (s *accountServiceImpl) ListAccounts(ctx context.Context, req *ListAccounts
 	if req == nil || req.TenantID == "" {
 		return nil, &AccountInvalidError{Field: "tenant_id", Message: "tenant ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	// THE PROVIDER IS NOT PASSED TO THE STORE ANY MORE, and that is not an
 	// oversight: it is a COUNTED facet, and a filter bar's count has to see
 	// the records its own choice removes. The store read is a scan that
@@ -676,7 +680,10 @@ func (s *accountServiceImpl) UpdateAccount(ctx context.Context, req *UpdateAccou
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	// A mode nobody recognizes is rejected here rather than being written and
 	// silently treated as "not refreshable" by every later decision.
 	if req.RefreshPolicy != "" {
@@ -801,7 +808,10 @@ func (s *accountServiceImpl) RotateAccountCredential(ctx context.Context, req *R
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	if req.Credential == nil {
 		return nil, &AccountInvalidError{Field: "credential", Message: "credential is required"}
 	}
@@ -884,7 +894,10 @@ func (s *accountServiceImpl) RevokeAccount(ctx context.Context, req *RevokeAccou
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	existing, err := s.rewriteAccount(ctx, req.TenantID, req.AccountID, func(account *orchestration.Account) error {
 		account.Status = orchestration.AccountStatusRevoked
 		account.LastError = req.Reason
@@ -905,7 +918,10 @@ func (s *accountServiceImpl) DeleteAccount(ctx context.Context, req *DeleteAccou
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.store.Delete(ctx, req.TenantID, req.AccountID); err != nil {
 		return nil, convertAccountStoreError(err)
 	}
@@ -928,7 +944,10 @@ func (s *accountServiceImpl) SetDefaultAccount(ctx context.Context, req *SetDefa
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.store.SetDefault(ctx, req.TenantID, req.AccountID); err != nil {
 		return nil, convertAccountStoreError(err)
 	}
@@ -944,7 +963,10 @@ func (s *accountServiceImpl) GetAccountUsage(ctx context.Context, req *GetAccoun
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 	// Confirm the account exists within the tenant first so usage cannot be
 	// probed for an account ID belonging to another tenant.
 	account, err := s.store.Get(ctx, req.TenantID, req.AccountID)

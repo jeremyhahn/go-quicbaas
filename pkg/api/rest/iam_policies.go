@@ -38,6 +38,10 @@ func (h *IAMHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	// Parse query parameters
 	limit := 100
@@ -185,6 +189,10 @@ func (h *IAMHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -250,6 +258,10 @@ func (h *IAMHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	policyName := chi.URLParam(r, "policy_name")
 	if policyName == "" {
@@ -297,6 +309,10 @@ func (h *IAMHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -375,6 +391,10 @@ func (h *IAMHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	policyName := chi.URLParam(r, "policy_name")
 	if policyName == "" {
@@ -421,6 +441,10 @@ func (h *IAMHandler) ValidatePolicy(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -486,6 +510,10 @@ func (h *IAMHandler) TestPolicy(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -666,6 +694,10 @@ func (h *IAMHandler) SimulatePolicy(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -738,6 +770,10 @@ func (h *IAMHandler) GetEffectivePermissions(w http.ResponseWriter, r *http.Requ
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 

@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	stderrors "errors"
 	"strings"
 	"testing"
@@ -76,7 +75,7 @@ func TestMaterialize_IssuesADeliveryGrant(t *testing.T) {
 	f := newMaterializeFixture(t)
 	_, mgr := withDeliveryLeases(t, f)
 	accountID := f.createAccount(t, "tenant-a", "")
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	resp, err := f.svc.MaterializeAccountCredential(ctx, &MaterializeAccountCredentialRequest{
 		TenantID:  "tenant-a",
@@ -117,7 +116,7 @@ func TestMaterialize_RefusesARefreshUnderARevokedGrant(t *testing.T) {
 	f := newMaterializeFixture(t)
 	leaser, _ := withDeliveryLeases(t, f)
 	accountID := f.createAccount(t, "tenant-a", "")
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	first, err := f.svc.MaterializeAccountCredential(ctx, &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, JobID: "job-1", AgentID: "agent-1",
@@ -161,7 +160,7 @@ func TestMaterialize_RefusesARefreshUnderALapsedGrant(t *testing.T) {
 	f := newMaterializeFixture(t)
 	_, mgr := withDeliveryLeases(t, f)
 	accountID := f.createAccount(t, "tenant-a", "")
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	first, err := f.svc.MaterializeAccountCredential(ctx, &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, JobID: "job-1", AgentID: "agent-1",
@@ -188,7 +187,7 @@ func TestMaterialize_RefusesAGrantFromAnotherScope(t *testing.T) {
 	f := newMaterializeFixture(t)
 	_, _ = withDeliveryLeases(t, f)
 	accountA := f.createAccount(t, "tenant-a", "")
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	first, err := f.svc.MaterializeAccountCredential(ctx, &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountA, JobID: "job-1", AgentID: "agent-1",
@@ -220,7 +219,7 @@ func TestMaterialize_RevokingOneDeliveryDoesNotDisableTheAccount(t *testing.T) {
 	f := newMaterializeFixture(t)
 	leaser, _ := withDeliveryLeases(t, f)
 	accountID := f.createAccount(t, "tenant-a", "")
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	first, err := f.svc.MaterializeAccountCredential(ctx, &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, JobID: "job-1", AgentID: "agent-1",
@@ -250,7 +249,7 @@ func TestMaterialize_RevokingOneDeliveryDoesNotDisableTheAccount(t *testing.T) {
 func TestMaterialize_UnleasedDeploymentStillReleases(t *testing.T) {
 	f := newMaterializeFixture(t)
 	accountID := f.createAccount(t, "tenant-a", "")
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	resp, err := f.svc.MaterializeAccountCredential(ctx, &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, AgentID: "agent-1",
@@ -273,7 +272,7 @@ func TestMaterialize_AuditNamesTheGrantAndNeverTheCredential(t *testing.T) {
 	f := newMaterializeFixture(t)
 	_, _ = withDeliveryLeases(t, f)
 	accountID := f.createAccount(t, "tenant-a", "")
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	first, err := f.svc.MaterializeAccountCredential(ctx, &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, JobID: "job-1", AgentID: "agent-1",
@@ -323,7 +322,7 @@ func TestQuicBaaS_DynamicSecretsIsNilUntilWired(t *testing.T) {
 		t.Fatal("DynamicSecrets() is non-nil on an unwired facade; this test no longer pins anything")
 	}
 
-	handler, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+	handler, err := NewDynamicSecretsHandler(callerContext("tenant-a"), &DynamicSecretsConfig{
 		Store:             newDSStore(),
 		LeaseManager:      newMockDSLeaseManager(),
 		GeneratorRegistry: credentials.NewGeneratorRegistry(),

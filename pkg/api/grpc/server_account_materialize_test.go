@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -347,6 +348,20 @@ func TestConvertAccountError_ConflictIsAborted(t *testing.T) {
 func TestConvertAccountError_UnclassifiedStaysInternal(t *testing.T) {
 	if got := status.Code(convertAccountError(&orchestration.AccountStoreError{Message: "disk"})); got != codes.Internal {
 		t.Errorf("convertAccountError(store error) = %s, want Internal", got)
+	}
+}
+
+// TestConvertAccountError_TenantRefusalIsPermissionDenied pins the #1150
+// refusals: a caller naming another tenant, and a caller carrying no tenant at
+// all, are both PermissionDenied rather than Internal.
+func TestConvertAccountError_TenantRefusalIsPermissionDenied(t *testing.T) {
+	for _, err := range []error{
+		&service.TenantTargetDeniedError{CallerTenant: "system", TargetTenant: "t1"},
+		&tenantctx.MissingTenantError{Operation: "service.targetTenant"},
+	} {
+		if got := status.Code(convertAccountError(err)); got != codes.PermissionDenied {
+			t.Errorf("convertAccountError(%T) = %s, want PermissionDenied", err, got)
+		}
 	}
 }
 

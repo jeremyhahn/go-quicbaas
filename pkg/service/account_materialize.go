@@ -308,7 +308,10 @@ func (s *accountServiceImpl) MaterializeAccountCredential(
 	if req.AccountID == "" {
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
-	ctx = accountTenantContext(ctx, req.TenantID)
+	ctx, err := targetTenantContext(ctx, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := s.materialize(ctx, req)
 	s.auditRelease(ctx, req, err)

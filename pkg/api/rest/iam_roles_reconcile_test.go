@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // reconcileTenant is the tenant these tests reconcile. It is deliberately not
@@ -287,6 +288,7 @@ func TestReconcileRoles_RouteReachesHandler(t *testing.T) {
 	handler.RegisterRoutes(router)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/"+reconcileTenant+"/roles/reconcile", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), reconcileTenant))
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 

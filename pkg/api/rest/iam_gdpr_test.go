@@ -16,7 +16,6 @@
 package rest
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,7 +36,7 @@ func TestGrantConsent(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/consents", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GrantConsent(w, req)
@@ -55,7 +54,7 @@ func TestGrantConsent(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users//consents", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GrantConsent(w, req)
@@ -73,7 +72,7 @@ func TestGrantConsent(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/consents", strings.NewReader("invalid json"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GrantConsent(w, req)
@@ -92,7 +91,7 @@ func TestGrantConsent(t *testing.T) {
 
 		body := `{"purpose":"","version":"1.0"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/consents", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GrantConsent(w, req)
@@ -111,7 +110,7 @@ func TestGrantConsent(t *testing.T) {
 
 		body := `{"purpose":"marketing","version":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/consents", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GrantConsent(w, req)
@@ -130,7 +129,7 @@ func TestGrantConsent(t *testing.T) {
 
 		body := `{"purpose":"marketing","version":"1.0"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/consents", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GrantConsent(w, req)
@@ -151,7 +150,7 @@ func TestListUserConsents(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/consents", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUserConsents(w, req)
@@ -169,7 +168,7 @@ func TestListUserConsents(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users//consents", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUserConsents(w, req)
@@ -187,7 +186,7 @@ func TestListUserConsents(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/consents", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUserConsents(w, req)
@@ -209,7 +208,7 @@ func TestGetConsent(t *testing.T) {
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/consents/marketing", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetConsent(w, req)
@@ -228,7 +227,7 @@ func TestGetConsent(t *testing.T) {
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users//consents/marketing", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetConsent(w, req)
@@ -247,7 +246,7 @@ func TestGetConsent(t *testing.T) {
 		rctx.URLParams.Add("purpose", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/consents/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetConsent(w, req)
@@ -266,7 +265,7 @@ func TestGetConsent(t *testing.T) {
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/consents/marketing", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetConsent(w, req)
@@ -288,7 +287,7 @@ func TestWithdrawConsent(t *testing.T) {
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/consents/marketing", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.WithdrawConsent(w, req)
@@ -307,7 +306,7 @@ func TestWithdrawConsent(t *testing.T) {
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users//consents/marketing", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.WithdrawConsent(w, req)
@@ -326,7 +325,7 @@ func TestWithdrawConsent(t *testing.T) {
 		rctx.URLParams.Add("purpose", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/consents/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.WithdrawConsent(w, req)
@@ -345,7 +344,7 @@ func TestWithdrawConsent(t *testing.T) {
 		rctx.URLParams.Add("purpose", "marketing")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/consents/marketing", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.WithdrawConsent(w, req)
@@ -366,7 +365,7 @@ func TestRequestDataExport(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/data-export", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RequestDataExport(w, req)
@@ -384,7 +383,7 @@ func TestRequestDataExport(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users//data-export", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RequestDataExport(w, req)
@@ -403,7 +402,7 @@ func TestRequestDataExport(t *testing.T) {
 
 		body := `{"format":"json"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/data-export", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RequestDataExport(w, req)
@@ -425,7 +424,7 @@ func TestGetExportStatus(t *testing.T) {
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/data-export/export-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetExportStatus(w, req)
@@ -444,7 +443,7 @@ func TestGetExportStatus(t *testing.T) {
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users//data-export/export-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetExportStatus(w, req)
@@ -463,7 +462,7 @@ func TestGetExportStatus(t *testing.T) {
 		rctx.URLParams.Add("export_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/data-export/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetExportStatus(w, req)
@@ -482,7 +481,7 @@ func TestGetExportStatus(t *testing.T) {
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/data-export/export-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetExportStatus(w, req)
@@ -503,7 +502,7 @@ func TestRequestDeletion(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/deletion", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RequestDeletion(w, req)
@@ -521,7 +520,7 @@ func TestRequestDeletion(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users//deletion", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RequestDeletion(w, req)
@@ -540,7 +539,7 @@ func TestRequestDeletion(t *testing.T) {
 
 		body := `{"reason":"user request"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/deletion", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RequestDeletion(w, req)
@@ -562,7 +561,7 @@ func TestGetDeletionStatus(t *testing.T) {
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/deletion/deletion-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetDeletionStatus(w, req)
@@ -581,7 +580,7 @@ func TestGetDeletionStatus(t *testing.T) {
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users//deletion/deletion-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetDeletionStatus(w, req)
@@ -600,7 +599,7 @@ func TestGetDeletionStatus(t *testing.T) {
 		rctx.URLParams.Add("deletion_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/deletion/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetDeletionStatus(w, req)
@@ -619,7 +618,7 @@ func TestGetDeletionStatus(t *testing.T) {
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/deletion/deletion-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetDeletionStatus(w, req)
@@ -641,7 +640,7 @@ func TestCancelDeletion(t *testing.T) {
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/deletion/deletion-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CancelDeletion(w, req)
@@ -660,7 +659,7 @@ func TestCancelDeletion(t *testing.T) {
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users//deletion/deletion-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CancelDeletion(w, req)
@@ -679,7 +678,7 @@ func TestCancelDeletion(t *testing.T) {
 		rctx.URLParams.Add("deletion_id", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/deletion/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CancelDeletion(w, req)
@@ -698,7 +697,7 @@ func TestCancelDeletion(t *testing.T) {
 		rctx.URLParams.Add("deletion_id", "deletion-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/deletion/deletion-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CancelDeletion(w, req)
@@ -720,7 +719,7 @@ func TestDownloadExport(t *testing.T) {
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/data-export/export-123/download", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DownloadExport(w, req)
@@ -739,7 +738,7 @@ func TestDownloadExport(t *testing.T) {
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users//data-export/export-123/download", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DownloadExport(w, req)
@@ -758,7 +757,7 @@ func TestDownloadExport(t *testing.T) {
 		rctx.URLParams.Add("export_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/data-export//download", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DownloadExport(w, req)
@@ -777,7 +776,7 @@ func TestDownloadExport(t *testing.T) {
 		rctx.URLParams.Add("export_id", "export-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/data-export/export-123/download", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DownloadExport(w, req)

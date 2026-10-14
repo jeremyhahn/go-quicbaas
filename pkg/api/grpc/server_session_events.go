@@ -181,6 +181,9 @@ func (s *OrchestratorServer) SubscribeSessionEvents(req *pb.SubscribeSessionRequ
 	if req.SessionId == "" || req.TenantId == "" {
 		return status.Error(codes.InvalidArgument, "session_id and tenant_id required")
 	}
+	if err := requireCallerTenant(stream.Context(), "grpc.SubscribeSessionEvents", req.TenantId); err != nil {
+		return err
+	}
 	log := s.sessionLog()
 	if log == nil {
 		return status.Error(codes.Unavailable, "session event log not configured")
@@ -294,13 +297,19 @@ func (s *OrchestratorServer) GetSessionConversation(ctx context.Context, req *pb
 	if req == nil || req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
+	// An empty tenant_id names the caller's own tenant, never the system
+	// tenant the history reader would otherwise default to.
+	tenantID, err := targetTenant(ctx, "grpc.GetSessionConversation", req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 	log := s.sessionLog()
 	if log == nil {
 		return nil, status.Error(codes.Unavailable, "session event log not configured")
 	}
 
 	page, err := orchestration.ReadSessionHistory(ctx, log, &orchestration.SessionHistoryRequest{
-		TenantID:  req.GetTenantId(),
+		TenantID:  tenantID,
 		SessionID: req.GetSessionId(),
 		Cursor:    req.GetCursor(),
 		Limit:     int(req.GetLimit()),

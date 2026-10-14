@@ -16,7 +16,6 @@
 package rest
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,7 +41,7 @@ func TestBeginMFAEnrollment(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/mfa/enroll", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAEnrollment(w, req)
@@ -60,7 +59,7 @@ func TestBeginMFAEnrollment(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users//mfa/enroll", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAEnrollment(w, req)
@@ -80,7 +79,7 @@ func TestBeginMFAEnrollment(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/enroll", strings.NewReader("invalid json"))
 		req.Header.Set("Content-Type", "application/json")
 		req.ContentLength = 12
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAEnrollment(w, req)
@@ -101,7 +100,7 @@ func TestBeginMFAEnrollment(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/enroll", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.ContentLength = int64(len(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAEnrollment(w, req)
@@ -119,7 +118,7 @@ func TestBeginMFAEnrollment(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/enroll", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAEnrollment(w, req)
@@ -141,7 +140,7 @@ func TestCompleteMFAEnrollment(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users//mfa/verify", strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CompleteMFAEnrollment(w, req)
@@ -160,7 +159,7 @@ func TestCompleteMFAEnrollment(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/verify", strings.NewReader("invalid json"))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CompleteMFAEnrollment(w, req)
@@ -180,7 +179,7 @@ func TestCompleteMFAEnrollment(t *testing.T) {
 		body := `{"enrollment_id":"","code":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/verify", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CompleteMFAEnrollment(w, req)
@@ -200,7 +199,7 @@ func TestCompleteMFAEnrollment(t *testing.T) {
 		body := `{"enrollment_id":"enroll-123","code":"123456"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/verify", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CompleteMFAEnrollment(w, req)
@@ -222,7 +221,7 @@ func TestCancelMFAEnrollment(t *testing.T) {
 		rctx.URLParams.Add("enrollment_id", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users//mfa/enroll/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CancelMFAEnrollment(w, req)
@@ -241,7 +240,7 @@ func TestCancelMFAEnrollment(t *testing.T) {
 		rctx.URLParams.Add("enrollment_id", "enroll-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/mfa/enroll/enroll-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.CancelMFAEnrollment(w, req)
@@ -262,7 +261,7 @@ func TestGetMFAStatus(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users//mfa", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetMFAStatus(w, req)
@@ -280,7 +279,7 @@ func TestGetMFAStatus(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/mfa", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetMFAStatus(w, req)
@@ -301,7 +300,7 @@ func TestDisableMFA(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users//mfa", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DisableMFA(w, req)
@@ -319,7 +318,7 @@ func TestDisableMFA(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/mfa", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DisableMFA(w, req)
@@ -341,7 +340,7 @@ func TestBeginMFAChallenge(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users//mfa/challenge", strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAChallenge(w, req)
@@ -360,7 +359,7 @@ func TestBeginMFAChallenge(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/challenge", strings.NewReader("invalid json"))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAChallenge(w, req)
@@ -380,7 +379,7 @@ func TestBeginMFAChallenge(t *testing.T) {
 		body := `{"session_token":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/challenge", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAChallenge(w, req)
@@ -400,7 +399,7 @@ func TestBeginMFAChallenge(t *testing.T) {
 		body := `{"session_token":"session-123"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/challenge", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.BeginMFAChallenge(w, req)
@@ -422,7 +421,7 @@ func TestVerifyMFAChallenge(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users//mfa/verify-challenge", strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.VerifyMFAChallenge(w, req)
@@ -441,7 +440,7 @@ func TestVerifyMFAChallenge(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/verify-challenge", strings.NewReader("invalid json"))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.VerifyMFAChallenge(w, req)
@@ -461,7 +460,7 @@ func TestVerifyMFAChallenge(t *testing.T) {
 		body := `{"challenge_id":"","code":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/verify-challenge", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.VerifyMFAChallenge(w, req)
@@ -481,7 +480,7 @@ func TestVerifyMFAChallenge(t *testing.T) {
 		body := `{"challenge_id":"challenge-123","code":"123456"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/verify-challenge", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.VerifyMFAChallenge(w, req)
@@ -502,7 +501,7 @@ func TestGenerateBackupCodes(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users//mfa/backup-codes", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GenerateBackupCodes(w, req)
@@ -520,7 +519,7 @@ func TestGenerateBackupCodes(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/mfa/backup-codes", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GenerateBackupCodes(w, req)
@@ -541,7 +540,7 @@ func TestGetBackupCodeStatus(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users//mfa/backup-codes", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetBackupCodeStatus(w, req)
@@ -559,7 +558,7 @@ func TestGetBackupCodeStatus(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/mfa/backup-codes", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetBackupCodeStatus(w, req)

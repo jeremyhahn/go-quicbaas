@@ -35,17 +35,13 @@ func (s routedSpendSource) TenantSpendPolicies() orchestration.TenantSpendPolicy
 
 func (s routedSpendSource) ConsumptionLedger() orchestration.ConsumptionLedger { return nil }
 
-// adminCallerContext is a system admin's authenticated request: both tenant
-// keys name the admin's own tenant, as the transports' auth layer sets them.
-func adminCallerContext() context.Context {
-	return callerContext(qrdbsdk.SystemTenantID)
-}
-
 // TestTenantSpendPolicyIsStoredInTheTargetTenantsNamespace is the
-// go-quicbaas#1058 review regression: a system admin setting tenant t1's
-// limits wrote them into the ADMIN's namespace, because only the
-// orchestration tenant key was scoped and storage routes by the IAM key first.
-// t1's own admission reads t1's namespace and would never have seen them.
+// go-quicbaas#1058 review regression: limits set for tenant t1 landed in the
+// wrong namespace, because only the orchestration tenant key was scoped and
+// storage routes by the IAM key first. t1's own admission reads t1's
+// namespace and would never have seen them. The caller here is t1's admin
+// authenticated on pkg/iam's key only, the shape the REST path hands the
+// service.
 func TestTenantSpendPolicyIsStoredInTheTargetTenantsNamespace(t *testing.T) {
 	kv := newTenantNamespacedKV()
 	source := routedSpendSource{store: orchestration.NewTenantSpendPolicyStore(kv)}
@@ -53,7 +49,7 @@ func TestTenantSpendPolicyIsStoredInTheTargetTenantsNamespace(t *testing.T) {
 		{Name: "monthly", Size: 720 * time.Hour, MaxEquivalentMicros: 2_000_000_000},
 	}}
 
-	report, err := SetTenantSpendPolicy(adminCallerContext(), source, "t1", limits)
+	report, err := SetTenantSpendPolicy(tenantctx.WithTenant(context.Background(), "t1"), source, "t1", limits)
 	if err != nil {
 		t.Fatalf("SetTenantSpendPolicy: %v", err)
 	}
@@ -62,7 +58,7 @@ func TestTenantSpendPolicyIsStoredInTheTargetTenantsNamespace(t *testing.T) {
 	}
 
 	if keys := kv.keysIn(t, qrdbsdk.SystemTenantID, "spendpolicy"); len(keys) != 0 {
-		t.Fatalf("admin namespace holds %v; t1's policy must not be written there", keys)
+		t.Fatalf("system namespace holds %v; t1's policy must not be written there", keys)
 	}
 	if keys := kv.keysIn(t, "t1", "spendpolicy"); len(keys) != 1 {
 		t.Fatalf("t1 namespace holds %v, want t1's policy", keys)
@@ -76,12 +72,6 @@ func TestTenantSpendPolicyIsStoredInTheTargetTenantsNamespace(t *testing.T) {
 	}
 	if len(own.Limits.Windows) != 1 || own.Limits.Windows[0].MaxEquivalentMicros != 2_000_000_000 {
 		t.Fatalf("t1 reads %+v, want the $2,000 monthly window", own.Limits)
-	}
-
-	// And the admin reading t1 back reads t1's namespace, not its own.
-	back, err := GetTenantSpendPolicy(adminCallerContext(), source, "t1")
-	if err != nil || len(back.Limits.Windows) != 1 {
-		t.Fatalf("admin read of t1 = %+v, %v; want t1's window", back, err)
 	}
 }
 
@@ -99,11 +89,11 @@ func TestTenantSpendPolicyRequiresATenant(t *testing.T) {
 // TestTenantSpendPolicyReportsAMissingStore asserts a deployment with no store
 // fails the read rather than answering "no limits".
 func TestTenantSpendPolicyReportsAMissingStore(t *testing.T) {
-	_, err := GetTenantSpendPolicy(adminCallerContext(), routedSpendSource{}, "t1")
+	_, err := GetTenantSpendPolicy(callerContext("t1"), routedSpendSource{}, "t1")
 	if !errors.Is(err, orchestration.ErrTenantSpendPolicyStore) {
 		t.Fatalf("err = %v, want ErrTenantSpendPolicyStore", err)
 	}
-	_, err = SetTenantSpendPolicy(adminCallerContext(), routedSpendSource{}, "t1", orchestration.SpendLimits{})
+	_, err = SetTenantSpendPolicy(callerContext("t1"), routedSpendSource{}, "t1", orchestration.SpendLimits{})
 	if !errors.Is(err, orchestration.ErrTenantSpendPolicyStore) {
 		t.Fatalf("set err = %v, want ErrTenantSpendPolicyStore", err)
 	}
@@ -124,13 +114,16 @@ func TestTenantSpendPolicyRefusesAnotherTenantsCaller(t *testing.T) {
 		t.Fatalf("own-tenant set: %v", err)
 	}
 
-	var denied *TenantTargetDeniedError
-	if _, err := SetTenantSpendPolicy(callerContext("tenant-a"), source, "tenant-b", orchestration.SpendLimits{}); !errors.As(err, &denied) ||
-		!errors.Is(err, orchestration.ErrAccountTenantScope) {
-		t.Fatalf("cross-tenant set = %v, want a TenantTargetDeniedError", err)
-	}
-	if _, err := GetTenantSpendPolicy(callerContext("tenant-a"), source, "tenant-b"); !errors.As(err, &denied) {
-		t.Fatalf("cross-tenant get = %v, want a TenantTargetDeniedError", err)
+	// Neither another tenant nor the system tenant may name tenant-b (#1150).
+	for _, caller := range []string{"tenant-a", qrdbsdk.SystemTenantID} {
+		var denied *TenantTargetDeniedError
+		if _, err := SetTenantSpendPolicy(callerContext(caller), source, "tenant-b", orchestration.SpendLimits{}); !errors.As(err, &denied) ||
+			!errors.Is(err, orchestration.ErrAccountTenantScope) {
+			t.Fatalf("%s set of tenant-b = %v, want a TenantTargetDeniedError", caller, err)
+		}
+		if _, err := GetTenantSpendPolicy(callerContext(caller), source, "tenant-b"); !errors.As(err, &denied) {
+			t.Fatalf("%s get of tenant-b = %v, want a TenantTargetDeniedError", caller, err)
+		}
 	}
 	saved, err := GetTenantSpendPolicy(callerContext("tenant-b"), source, "tenant-b")
 	if err != nil || len(saved.Limits.Windows) != 1 {

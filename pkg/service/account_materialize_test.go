@@ -92,7 +92,7 @@ func newMaterializeFixture(t *testing.T) *materializeFixture {
 // createAccount provisions one static-token account and returns its ID.
 func (f *materializeFixture) createAccount(t *testing.T, tenantID, projectID string) string {
 	t.Helper()
-	resp, err := f.svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	resp, err := f.svc.CreateAccount(callerContext(tenantID), &CreateAccountRequest{
 		TenantID:      tenantID,
 		ProjectID:     projectID,
 		Provider:      orchestration.AccountProviderClaude,
@@ -115,7 +115,7 @@ func TestMaterialize_ReleasesTheEnvelopeToItsOwnTenant(t *testing.T) {
 	f := newMaterializeFixture(t)
 	accountID := f.createAccount(t, "tenant-a", "")
 
-	resp, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
+	resp, err := f.svc.MaterializeAccountCredential(callerContext("tenant-a"), &MaterializeAccountCredentialRequest{
 		TenantID:  "tenant-a",
 		AccountID: accountID,
 		AgentID:   "agent-agent-04",
@@ -150,7 +150,7 @@ func TestMaterialize_ReleasesTheEnvelopeToItsOwnTenant(t *testing.T) {
 // central's bookkeeping advances even though the spawn happens elsewhere.
 func TestMaterialize_StampsUsageOnRelease(t *testing.T) {
 	f := newMaterializeFixture(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	accountID := f.createAccount(t, "tenant-a", "")
 
 	before, err := f.store.Get(ctx, "tenant-a", accountID)
@@ -184,7 +184,7 @@ func TestMaterialize_EmitsOneAuditEventNamingAgentAndAccount(t *testing.T) {
 	f := newMaterializeFixture(t)
 	accountID := f.createAccount(t, "tenant-a", "")
 
-	if _, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
+	if _, err := f.svc.MaterializeAccountCredential(callerContext("tenant-a"), &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, AgentID: "agent-agent-04",
 	}); err != nil {
 		t.Fatalf("MaterializeAccountCredential() error = %v", err)
@@ -215,7 +215,7 @@ func TestMaterialize_EmitsOneAuditEventNamingAgentAndAccount(t *testing.T) {
 // to see.
 func TestMaterialize_AuditsARefusal(t *testing.T) {
 	f := newMaterializeFixture(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	accountID := f.createAccount(t, "tenant-a", "")
 
 	if _, err := f.svc.RevokeAccount(ctx, &RevokeAccountRequest{
@@ -247,7 +247,7 @@ func TestMaterialize_RefusesAnotherTenantsAccount(t *testing.T) {
 	f := newMaterializeFixture(t)
 	accountID := f.createAccount(t, "tenant-a", "")
 
-	_, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
+	_, err := f.svc.MaterializeAccountCredential(callerContext("tenant-b"), &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-b", AccountID: accountID, AgentID: "agent-b",
 	})
 	var notFound *AccountNotFoundError
@@ -273,7 +273,7 @@ func TestMaterialize_RefusesNonSelectableStates(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newMaterializeFixture(t)
-			ctx := context.Background()
+			ctx := callerContext("tenant-a")
 			accountID := f.createAccount(t, "tenant-a", "")
 
 			if err := f.store.Touch(ctx, "tenant-a", accountID, orchestration.TouchAccountOptions{
@@ -304,7 +304,7 @@ func TestMaterialize_RefusesNonSelectableStates(t *testing.T) {
 // Refusing it would strand a fleet behind a hold nobody has to act on.
 func TestMaterialize_ReleasesALapsedLimitHold(t *testing.T) {
 	f := newMaterializeFixture(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	accountID := f.createAccount(t, "tenant-a", "")
 
 	if err := f.store.Touch(ctx, "tenant-a", accountID, orchestration.TouchAccountOptions{
@@ -331,7 +331,7 @@ func TestMaterialize_ReleasesALapsedLimitHold(t *testing.T) {
 // released only into its own project.
 func TestMaterialize_HonoursTheProjectFence(t *testing.T) {
 	f := newMaterializeFixture(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	accountID := f.createAccount(t, "tenant-a", "project-x")
 
 	t.Run("matching project releases", func(t *testing.T) {
@@ -373,7 +373,7 @@ func TestMaterialize_TenantWideAccountReleasesIntoAnyProject(t *testing.T) {
 	f := newMaterializeFixture(t)
 	accountID := f.createAccount(t, "tenant-a", "")
 
-	resp, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
+	resp, err := f.svc.MaterializeAccountCredential(callerContext("tenant-a"), &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, ProjectID: "any-project", AgentID: "agent-1",
 	})
 	if err != nil {
@@ -401,7 +401,7 @@ func TestMaterialize_RejectsIncompleteRequests(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := f.svc.MaterializeAccountCredential(context.Background(), tc.req)
+			_, err := f.svc.MaterializeAccountCredential(callerContext("tenant-a"), tc.req)
 			var invalid *AccountInvalidError
 			if !errors.As(err, &invalid) {
 				t.Fatalf("error = %v (%T), want *AccountInvalidError", err, err)
@@ -424,7 +424,7 @@ func TestMaterialize_FailsClosedWithoutATokenManager(t *testing.T) {
 	store := orchestration.NewInMemoryAccountStore()
 	svc := NewAccountService(store, orchestration.NewAccountSecretStore(mgr))
 
-	created, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	created, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:      "tenant-a",
 		Provider:      orchestration.AccountProviderClaude,
 		RefreshPolicy: orchestration.AccountRefreshNone,
@@ -434,7 +434,7 @@ func TestMaterialize_FailsClosedWithoutATokenManager(t *testing.T) {
 		t.Fatalf("CreateAccount() error = %v", err)
 	}
 
-	_, err = svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
+	_, err = svc.MaterializeAccountCredential(callerContext("tenant-a"), &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: created.Account.ID,
 	})
 	var noTokens *AccountTokenManagerNotConfiguredError

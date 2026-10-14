@@ -50,7 +50,7 @@ func TestCreateSession(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := systemRequest(http.MethodPost, "/api/v1/tenants//users/user-123/sessions", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -69,7 +69,7 @@ func TestCreateSession(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users//sessions", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -88,7 +88,7 @@ func TestCreateSession(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -108,7 +108,7 @@ func TestCreateSession(t *testing.T) {
 
 		body := `{"token_hash":""}`
 		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -128,7 +128,7 @@ func TestCreateSession(t *testing.T) {
 
 		body := `{"token_hash":"abc123"}`
 		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -150,7 +150,7 @@ func TestListUserSessions(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := systemRequest(http.MethodGet, "/api/v1/tenants//users/user-123/sessions", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUserSessions(w, req)
@@ -168,7 +168,7 @@ func TestListUserSessions(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := systemRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users//sessions", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUserSessions(w, req)
@@ -186,7 +186,7 @@ func TestListUserSessions(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := systemRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUserSessions(w, req)
@@ -451,7 +451,7 @@ func TestGetSession(t *testing.T) {
 		rctx.URLParams.Add("id", "session-123")
 
 		req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetSession(w, req)
@@ -531,7 +531,7 @@ func TestRevokeSession(t *testing.T) {
 		rctx.URLParams.Add("id", "session-123")
 
 		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RevokeSession(w, req)
@@ -763,7 +763,7 @@ func TestCreateSessionReadBodyErrorPath(t *testing.T) {
 	rctx.URLParams.Add("user_id", "10123")
 
 	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Body = io.NopCloser(&errorReader{})
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -939,7 +939,7 @@ func TestCreateSessionWithDeviceInfoPath(t *testing.T) {
 	}`
 
 	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -964,7 +964,7 @@ func TestCreateSessionWithCustomIDPath(t *testing.T) {
 	}`
 
 	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -987,7 +987,7 @@ func TestCreateSessionWithInvalidExpiryPath(t *testing.T) {
 	}`
 
 	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 

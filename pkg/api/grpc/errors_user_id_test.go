@@ -14,7 +14,6 @@
 package grpc
 
 import (
-	"context"
 	"errors"
 	"math"
 	"strconv"
@@ -96,7 +95,7 @@ func TestFormatUserID_RendersZeroAsUnset(t *testing.T) {
 func TestIAMServer_RefusesANonNumericUserIDBeforeTheService(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	_, err := srv.UpdateUser(context.Background(), &iampb.UpdateUserRequest{
+	_, err := srv.UpdateUser(callerContext("t-1"), &iampb.UpdateUserRequest{
 		TenantId: "t-1", UserId: "18446744073709551616", Email: "a@b.c",
 	})
 

@@ -90,7 +90,7 @@ func TestAccountService_CreateAccount_RollbackFailureIsReported(t *testing.T) {
 	f := newCleanupFixture(t, kvDeleteRefusedError{})
 	f.store.createErr = &orchestration.AccountStoreError{Message: "raft not leader"}
 
-	_, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	_, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-ant-x"},
 	})
@@ -121,7 +121,7 @@ func TestAccountService_CreateAccount_RollbackSucceedsReturnsCreateError(t *test
 	f := newCleanupFixture(t, nil)
 	f.store.createErr = &orchestration.AccountInvalidError{Field: "id", Message: "duplicate"}
 
-	_, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	_, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-ant-x"},
 	})
@@ -134,7 +134,7 @@ func TestAccountService_CreateAccount_RollbackSucceedsReturnsCreateError(t *test
 	if errors.As(err, &cleanup) {
 		t.Fatalf("CreateAccount() reported a cleanup failure when the rollback succeeded: %v", err)
 	}
-	listed, listErr := f.service.ListAccounts(systemAdminContext(), &ListAccountsRequest{TenantID: nsTenant})
+	listed, listErr := f.service.ListAccounts(tenantAdminContext(), &ListAccountsRequest{TenantID: nsTenant})
 	if listErr != nil || listed.Total != 0 {
 		t.Fatalf("ListAccounts() = %+v, %v; want an empty pool after the rolled-back create", listed, listErr)
 	}
@@ -142,7 +142,7 @@ func TestAccountService_CreateAccount_RollbackSucceedsReturnsCreateError(t *test
 
 func TestAccountService_DeleteAccount_CredentialCleanupFailureIsReported(t *testing.T) {
 	f := newCleanupFixture(t, kvDeleteRefusedError{})
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-ant-x"},
 	})
@@ -152,7 +152,7 @@ func TestAccountService_DeleteAccount_CredentialCleanupFailureIsReported(t *test
 	// The store writes through the unwrapped KV, so the metadata half of the
 	// delete succeeds; only the envelope destroy (through the refusing KV
 	// beneath the secrets backend) fails.
-	_, err = f.service.DeleteAccount(systemAdminContext(), &DeleteAccountRequest{TenantID: nsTenant, AccountID: created.Account.ID})
+	_, err = f.service.DeleteAccount(tenantAdminContext(), &DeleteAccountRequest{TenantID: nsTenant, AccountID: created.Account.ID})
 
 	var cleanup *AccountCredentialCleanupError
 	if !errors.As(err, &cleanup) {
@@ -164,14 +164,14 @@ func TestAccountService_DeleteAccount_CredentialCleanupFailureIsReported(t *test
 	if !errors.Is(cleanup.Cleanup, orchestration.ErrAccountStore) || !strings.Contains(err.Error(), "kv: delete refused") {
 		t.Fatalf("cleanup failure not carried: %v", err)
 	}
-	if _, getErr := f.service.GetAccount(systemAdminContext(), &GetAccountRequest{TenantID: nsTenant, AccountID: created.Account.ID}); getErr == nil {
+	if _, getErr := f.service.GetAccount(tenantAdminContext(), &GetAccountRequest{TenantID: nsTenant, AccountID: created.Account.ID}); getErr == nil {
 		t.Fatalf("GetAccount() succeeded after DeleteAccount(); the metadata record must be gone")
 	}
 }
 
 func TestAccountService_RotateAccountCredential_RecordUpdateFailureIsReported(t *testing.T) {
 	f := newCleanupFixture(t, nil)
-	created, err := f.service.CreateAccount(systemAdminContext(), &CreateAccountRequest{
+	created, err := f.service.CreateAccount(tenantAdminContext(), &CreateAccountRequest{
 		TenantID: nsTenant, Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-ant-old"},
 	})
@@ -180,7 +180,7 @@ func TestAccountService_RotateAccountCredential_RecordUpdateFailureIsReported(t 
 	}
 	f.store.touchErr = &orchestration.AccountStoreError{Message: "raft not leader"}
 
-	_, err = f.service.RotateAccountCredential(systemAdminContext(), &RotateAccountCredentialRequest{
+	_, err = f.service.RotateAccountCredential(tenantAdminContext(), &RotateAccountCredentialRequest{
 		TenantID: nsTenant, AccountID: created.Account.ID,
 		Credential: &orchestration.AccountCredential{AccessToken: "sk-ant-new"},
 	})

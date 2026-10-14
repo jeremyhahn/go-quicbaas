@@ -153,7 +153,7 @@ func newProjectServer(t *testing.T, svc service.ProjectService) *ProjectServer {
 
 func TestProjectServer_HappyPaths(t *testing.T) {
 	srv := newProjectServer(t, &grpcMockProjectService{})
-	ctx := context.Background()
+	ctx := callerContext("tenant-1")
 
 	created, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{
 		TenantId: "tenant-1", Name: "demo",
@@ -195,7 +195,7 @@ func TestProjectServer_HappyPaths(t *testing.T) {
 
 func TestProjectServer_ValidationErrors(t *testing.T) {
 	srv := newProjectServer(t, &grpcMockProjectService{})
-	ctx := context.Background()
+	ctx := callerContext("t")
 
 	cases := []struct {
 		name string
@@ -288,7 +288,7 @@ func TestProjectServer_ValidationErrors(t *testing.T) {
 // =============================================================================
 
 func TestProjectServer_ServiceErrorMapping(t *testing.T) {
-	ctx := context.Background()
+	ctx := callerContext("t")
 
 	t.Run("not-found", func(t *testing.T) {
 		srv := newProjectServer(t, &grpcMockProjectService{
@@ -384,7 +384,7 @@ func TestProjectServer_GrantAgentRole(t *testing.T) {
 		},
 	})
 
-	resp, err := srv.GrantFleetNodeRole(context.Background(), &pb.GrantFleetNodeRoleRequest{
+	resp, err := srv.GrantFleetNodeRole(callerContext("tenant-1"), &pb.GrantFleetNodeRoleRequest{
 		TenantId: "tenant-1", ProjectId: "proj-1", NodeId: "agent-3", Role: "worker",
 	})
 	require.NoError(t, err)
@@ -420,7 +420,7 @@ func TestProjectServer_GrantAgentRole_PreservesOtherAgents(t *testing.T) {
 	}
 	srv := newProjectServer(t, mock)
 
-	_, err := srv.GrantFleetNodeRole(context.Background(), &pb.GrantFleetNodeRoleRequest{
+	_, err := srv.GrantFleetNodeRole(callerContext("tenant-1"), &pb.GrantFleetNodeRoleRequest{
 		TenantId: "tenant-1", ProjectId: "proj-1", NodeId: "agent-3", Role: "worker",
 	})
 	require.NoError(t, err)
@@ -444,7 +444,7 @@ func TestProjectServer_RevokeAgentRole(t *testing.T) {
 	}
 	srv := newProjectServer(t, mock)
 
-	resp, err := srv.RevokeFleetNodeRole(context.Background(), &pb.RevokeFleetNodeRoleRequest{
+	resp, err := srv.RevokeFleetNodeRole(callerContext("tenant-1"), &pb.RevokeFleetNodeRoleRequest{
 		TenantId: "tenant-1", ProjectId: "proj-1", NodeId: "agent-2",
 	})
 	require.NoError(t, err)
@@ -460,7 +460,7 @@ func TestProjectServer_RevokeAgentRole(t *testing.T) {
 // TestProjectServer_AgentRoleErrorMapping covers the service-error path for both
 // membership verbs.
 func TestProjectServer_AgentRoleErrorMapping(t *testing.T) {
-	ctx := context.Background()
+	ctx := callerContext("t")
 
 	t.Run("grant-not-found", func(t *testing.T) {
 		srv := newProjectServer(t, &grpcMockProjectService{
@@ -540,7 +540,7 @@ func TestProjectServer_ForwardsDefaultWorkflowAndGitIdentity(t *testing.T) {
 			return &service.UpdateProjectResponse{Project: sampleProject(), Timestamp: time.Now()}, nil
 		},
 	})
-	ctx := context.Background()
+	ctx := callerContext("tenant-1")
 
 	resp, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{
 		TenantId: "tenant-1", Name: "api",
@@ -650,7 +650,7 @@ func TestProjectServer_ForwardsAutonomyAndContextRepos(t *testing.T) {
 			return &service.GetProjectResponse{Project: stored, Timestamp: time.Now()}, nil
 		},
 	})
-	ctx := context.Background()
+	ctx := callerContext("tenant-1")
 
 	createResp, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{
 		TenantId: "tenant-1", Name: "api",
@@ -747,7 +747,7 @@ func TestProjectServer_ForwardsSessionRotation(t *testing.T) {
 			return &service.UpdateProjectResponse{Project: sampleProject(), Timestamp: time.Now()}, nil
 		},
 	})
-	ctx := context.Background()
+	ctx := callerContext("tenant-1")
 
 	resp, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{TenantId: "tenant-1", Name: "api", SessionRotation: "fresh"})
 	require.NoError(t, err)
@@ -768,7 +768,7 @@ func TestProjectServer_ForwardsSessionRotation(t *testing.T) {
 // refusal of an unknown policy is an InvalidArgument on the wire.
 func TestProjectServer_AnUnknownSessionRotationIsInvalidArgument(t *testing.T) {
 	srv := newProjectServer(t, service.NewProjectService(orchestration.NewInMemoryProjectStore()))
-	_, err := srv.CreateProject(context.Background(), &pb.CreateProjectRequest{
+	_, err := srv.CreateProject(callerContext("tenant-1"), &pb.CreateProjectRequest{
 		TenantId: "tenant-1", Name: "api", SessionRotation: "restart",
 	})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -798,7 +798,7 @@ func TestProjectServer_ForwardsParkAndResume(t *testing.T) {
 			return &service.UpdateProjectResponse{Project: stored, Timestamp: time.Now()}, nil
 		},
 	})
-	ctx := context.Background()
+	ctx := callerContext("tenant-1")
 
 	_, err := srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1", Name: "renamed"})
 	require.NoError(t, err)
@@ -835,7 +835,7 @@ func TestProjectServer_ForwardsASigningKeyRetirement(t *testing.T) {
 			return &service.UpdateProjectResponse{Project: stored, Timestamp: time.Now()}, nil
 		},
 	})
-	ctx := context.Background()
+	ctx := callerContext("tenant-1")
 
 	resp, err := srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1",
 		GitSigningRetireKeyName: "old", GitSigningRetireKeyScope: "service", GitSigningRetiredAt: "2026-09-24T22:15:00Z"})
@@ -879,7 +879,7 @@ func TestProjectServer_AuthzErrorMapping(t *testing.T) {
 					return nil, tc.err
 				},
 			})
-			ctx := context.Background()
+			ctx := callerContext("t")
 
 			_, err := srv.GetProject(ctx, &pb.GetProjectRequest{TenantId: "t", ProjectId: "p"})
 			assert.Equal(t, tc.want, status.Code(err), "GetProject")
@@ -913,7 +913,7 @@ func TestProjectServer_CarriesManagedWorkspace(t *testing.T) {
 		},
 	})
 
-	resp, err := srv.CreateProject(context.Background(), &pb.CreateProjectRequest{
+	resp, err := srv.CreateProject(callerContext("tenant-1"), &pb.CreateProjectRequest{
 		TenantId:               "tenant-1",
 		Name:                   "api",
 		GitRepoUrl:             "https://git.example.test/api.git",

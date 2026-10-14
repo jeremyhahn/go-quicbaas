@@ -42,7 +42,7 @@ func (f *fixedSessionLookup) LiveSessions(_ context.Context, _ string, ids []str
 
 func createCappedAccount(t *testing.T, svc AccountService, maxSessions int) *orchestration.Account {
 	t.Helper()
-	created, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	created, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude,
 		Credential:            &orchestration.AccountCredential{AccessToken: "x"},
 		MaxConcurrentSessions: maxSessions,
@@ -55,7 +55,7 @@ func createCappedAccount(t *testing.T, svc AccountService, maxSessions int) *orc
 
 func TestAccountService_SessionCapIsSetAtCreateAndChangedOnlyWhenAsked(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	account := createCappedAccount(t, svc, 2)
 	if account.MaxConcurrentSessions != 2 {
 		t.Fatalf("created cap = %d, want 2", account.MaxConcurrentSessions)
@@ -83,7 +83,7 @@ func TestAccountService_SessionCapIsSetAtCreateAndChangedOnlyWhenAsked(t *testin
 
 func TestAccountService_ANegativeSessionCapIsRefused(t *testing.T) {
 	svc := newTestAccountService(t)
-	if _, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	if _, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude,
 		Credential:            &orchestration.AccountCredential{AccessToken: "x"},
 		MaxConcurrentSessions: -1,
@@ -93,7 +93,7 @@ func TestAccountService_ANegativeSessionCapIsRefused(t *testing.T) {
 
 	account := createCappedAccount(t, svc, 1)
 	negative := -2
-	if _, err := svc.UpdateAccount(context.Background(), &UpdateAccountRequest{
+	if _, err := svc.UpdateAccount(callerContext("tenant-a"), &UpdateAccountRequest{
 		TenantID: "tenant-a", AccountID: account.ID, MaxConcurrentSessions: &negative,
 	}); err == nil {
 		t.Fatal("UpdateAccount() accepted a negative session cap")
@@ -124,7 +124,7 @@ func TestAccountService_GetAccountUsageReportsLiveSessions(t *testing.T) {
 	svc, account := newUsageService(t, lookup)
 	lookup.live[account.ID] = 3
 
-	resp, err := svc.GetAccountUsage(context.Background(), &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID})
+	resp, err := svc.GetAccountUsage(callerContext("tenant-a"), &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID})
 	if err != nil {
 		t.Fatalf("GetAccountUsage() error = %v", err)
 	}
@@ -135,7 +135,7 @@ func TestAccountService_GetAccountUsageReportsLiveSessions(t *testing.T) {
 
 func TestAccountService_GetAccountUsageWithNoSessionLookupReportsZero(t *testing.T) {
 	svc, account := newUsageService(t, nil)
-	resp, err := svc.GetAccountUsage(context.Background(), &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID})
+	resp, err := svc.GetAccountUsage(callerContext("tenant-a"), &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID})
 	if err != nil {
 		t.Fatalf("GetAccountUsage() error = %v", err)
 	}
@@ -147,7 +147,7 @@ func TestAccountService_GetAccountUsageWithNoSessionLookupReportsZero(t *testing
 func TestAccountService_GetAccountUsageFailsOnAnUnreadableCount(t *testing.T) {
 	boom := errors.New("session store down")
 	svc, account := newUsageService(t, &fixedSessionLookup{err: boom})
-	_, err := svc.GetAccountUsage(context.Background(), &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID})
+	_, err := svc.GetAccountUsage(callerContext("tenant-a"), &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID})
 	if !errors.Is(err, boom) {
 		t.Fatalf("GetAccountUsage() error = %v, want the count failure — a daemon balancing on a guessed zero piles onto this account", err)
 	}
@@ -171,7 +171,7 @@ func TestAccountService_GetAccountUsageCarriesTheSpendVerdict(t *testing.T) {
 	svc, account := newUsageService(t, nil)
 	req := &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID}
 
-	resp, err := svc.GetAccountUsage(context.Background(), req)
+	resp, err := svc.GetAccountUsage(callerContext("tenant-a"), req)
 	if err != nil {
 		t.Fatalf("GetAccountUsage() error = %v", err)
 	}
@@ -183,7 +183,7 @@ func TestAccountService_GetAccountUsageCarriesTheSpendVerdict(t *testing.T) {
 	svc.SetSpendAuthority(verdictSpend{err: &orchestration.AccountQuotaExhaustedError{
 		AccountID: account.ID, Window: "weekly", Axis: orchestration.QuotaAxisTokens, Used: 12, Limit: 10, RetryAt: freesAt,
 	}})
-	resp, err = svc.GetAccountUsage(context.Background(), req)
+	resp, err = svc.GetAccountUsage(callerContext("tenant-a"), req)
 	if err != nil {
 		t.Fatalf("GetAccountUsage() error = %v", err)
 	}
@@ -199,7 +199,7 @@ func TestAccountService_GetAccountUsageFailsWhenTheGateCannotAnswer(t *testing.T
 	boom := errors.New("ledger unreadable")
 	svc, account := newUsageService(t, nil)
 	svc.SetSpendAuthority(verdictSpend{err: boom})
-	if _, err := svc.GetAccountUsage(context.Background(), &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID}); !errors.Is(err, boom) {
+	if _, err := svc.GetAccountUsage(callerContext("tenant-a"), &GetAccountUsageRequest{TenantID: "tenant-a", AccountID: account.ID}); !errors.Is(err, boom) {
 		t.Fatalf("GetAccountUsage() error = %v, want the gate's failure", err)
 	}
 }

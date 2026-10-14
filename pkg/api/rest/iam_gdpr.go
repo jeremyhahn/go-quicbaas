@@ -40,6 +40,10 @@ func (h *IAMHandler) GrantConsent(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -133,6 +137,10 @@ func (h *IAMHandler) ListUserConsents(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -179,6 +187,10 @@ func (h *IAMHandler) GetConsent(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -233,6 +245,10 @@ func (h *IAMHandler) WithdrawConsent(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -311,6 +327,10 @@ func (h *IAMHandler) RequestDataExport(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -392,6 +412,10 @@ func (h *IAMHandler) GetExportStatus(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -453,6 +477,10 @@ func (h *IAMHandler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -561,6 +589,10 @@ func (h *IAMHandler) RequestDeletion(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -636,6 +668,10 @@ func (h *IAMHandler) GetDeletionStatus(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -695,6 +731,10 @@ func (h *IAMHandler) CancelDeletion(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 

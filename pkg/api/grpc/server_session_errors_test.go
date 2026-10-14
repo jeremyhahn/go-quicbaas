@@ -87,7 +87,7 @@ func TestSessionServerErrors_ListSessions_ServiceError(t *testing.T) {
 	}
 	srv := newMockSessionServer(t, svc)
 
-	_, err := srv.ListSessions(context.Background(), &iampb.ListSessionsRequest{
+	_, err := srv.ListSessions(callerContext("tenant-1"), &iampb.ListSessionsRequest{
 		TenantId: "tenant-1",
 	})
 	require.Error(t, err)
@@ -102,7 +102,7 @@ func TestSessionServerErrors_RevokeSession_ServiceError(t *testing.T) {
 	}
 	srv := newMockSessionServer(t, svc)
 
-	_, err := srv.RevokeSession(context.Background(), &iampb.RevokeSessionRequest{
+	_, err := srv.RevokeSession(callerContext("tenant-1"), &iampb.RevokeSessionRequest{
 		SessionId: "sess-1",
 	})
 	require.Error(t, err)
@@ -117,7 +117,7 @@ func TestSessionServerErrors_RevokeAllSessions_ServiceError(t *testing.T) {
 	}
 	srv := newMockSessionServer(t, svc)
 
-	_, err := srv.RevokeAllSessions(context.Background(), &iampb.RevokeAllSessionsRequest{
+	_, err := srv.RevokeAllSessions(callerContext("tenant-1"), &iampb.RevokeAllSessionsRequest{
 		TenantId: "tenant-1",
 		UserId:   "10001",
 	})
@@ -133,7 +133,7 @@ func TestSessionServerErrors_RevokeOtherSessions_ServiceError(t *testing.T) {
 	}
 	srv := newMockSessionServer(t, svc)
 
-	_, err := srv.RevokeOtherSessions(context.Background(), &iampb.RevokeOtherSessionsRequest{
+	_, err := srv.RevokeOtherSessions(callerContext("tenant-1"), &iampb.RevokeOtherSessionsRequest{
 		TenantId:      "tenant-1",
 		KeepSessionId: "sess-keep",
 	})

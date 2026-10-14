@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -184,5 +185,19 @@ func TestAccountErrorStatus_ConflictIs409(t *testing.T) {
 func TestAccountErrorStatus_UnclassifiedIs500(t *testing.T) {
 	if got := accountErrorStatus(&orchestration.AccountStoreError{Message: "disk"}); got != http.StatusInternalServerError {
 		t.Errorf("accountErrorStatus(store error) = %d, want 500", got)
+	}
+}
+
+// TestAccountErrorStatus_TenantRefusalIs403 pins the #1150 refusals: a caller
+// naming another tenant, and a caller carrying no tenant at all, are both
+// forbidden rather than reported as a server fault.
+func TestAccountErrorStatus_TenantRefusalIs403(t *testing.T) {
+	for _, err := range []error{
+		&service.TenantTargetDeniedError{CallerTenant: "system", TargetTenant: "t1"},
+		&tenantctx.MissingTenantError{Operation: "service.targetTenant"},
+	} {
+		if got := accountErrorStatus(err); got != http.StatusForbidden {
+			t.Errorf("accountErrorStatus(%T) = %d, want 403", err, got)
+		}
 	}
 }

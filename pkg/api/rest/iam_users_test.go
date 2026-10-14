@@ -38,7 +38,7 @@ func TestIAMListUsers(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUsers(w, req)
@@ -55,7 +55,7 @@ func TestIAMListUsers(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUsers(w, req)
@@ -72,7 +72,7 @@ func TestIAMListUsers(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users?limit=50&offset=10", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListUsers(w, req)
@@ -92,7 +92,7 @@ func TestIAMCreateUser(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -110,7 +110,7 @@ func TestIAMCreateUser(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -129,7 +129,7 @@ func TestIAMCreateUser(t *testing.T) {
 
 		body := `{"email":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -148,7 +148,7 @@ func TestIAMCreateUser(t *testing.T) {
 
 		body := `{"email":"user@example.com","name":"Test User"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -170,7 +170,7 @@ func TestIAMGetUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetUser(w, req)
@@ -188,7 +188,7 @@ func TestIAMGetUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetUser(w, req)
@@ -206,7 +206,7 @@ func TestIAMGetUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetUser(w, req)
@@ -227,7 +227,7 @@ func TestIAMUpdateUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//users/user-123", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -246,7 +246,7 @@ func TestIAMUpdateUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/users/", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -265,7 +265,7 @@ func TestIAMUpdateUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/users/user-123", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -285,7 +285,7 @@ func TestIAMUpdateUser(t *testing.T) {
 
 		body := `{"name":"Updated Name"}`
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/users/user-123", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -307,7 +307,7 @@ func TestIAMDeleteUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteUser(w, req)
@@ -325,7 +325,7 @@ func TestIAMDeleteUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteUser(w, req)
@@ -343,7 +343,7 @@ func TestIAMDeleteUser(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteUser(w, req)
@@ -364,7 +364,7 @@ func TestIAMAssignRole(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/roles", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -383,7 +383,7 @@ func TestIAMAssignRole(t *testing.T) {
 		rctx.URLParams.Add("user_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users//roles", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -402,7 +402,7 @@ func TestIAMAssignRole(t *testing.T) {
 		rctx.URLParams.Add("user_id", "10123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -422,7 +422,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		body := `{"role_id":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -442,7 +442,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		body := `{"role_id":"role-456"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -465,7 +465,7 @@ func TestIAMAssignRole(t *testing.T) {
 
 		// {} decodes successfully but role_id is zero-value — must 400.
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -489,7 +489,7 @@ func TestIAMAssignRole(t *testing.T) {
 		// { "role_id": "admin" } instead.
 		body := `{"role":"admin"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/roles", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -535,7 +535,7 @@ func TestIAMRevokeRole(t *testing.T) {
 		rctx.URLParams.Add("role", "role-456")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/roles/role-456", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RevokeRole(w, req)
@@ -554,7 +554,7 @@ func TestIAMRevokeRole(t *testing.T) {
 		rctx.URLParams.Add("role", "role-456")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users//roles/role-456", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RevokeRole(w, req)
@@ -573,7 +573,7 @@ func TestIAMRevokeRole(t *testing.T) {
 		rctx.URLParams.Add("role", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/roles/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RevokeRole(w, req)
@@ -592,7 +592,7 @@ func TestIAMRevokeRole(t *testing.T) {
 		rctx.URLParams.Add("role", "role-456")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/roles/role-456", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RevokeRole(w, req)

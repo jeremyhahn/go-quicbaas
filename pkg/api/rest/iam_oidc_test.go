@@ -598,7 +598,7 @@ func TestCreateSessionWithDeviceInfo(t *testing.T) {
 			"expires_at": "2025-12-31T23:59:59Z"
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -624,7 +624,7 @@ func TestCreateSessionWithDeviceInfo(t *testing.T) {
 			}
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -646,7 +646,7 @@ func TestCreateSessionWithDeviceInfo(t *testing.T) {
 			"token_hash": "abc123"
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -668,7 +668,7 @@ func TestCreateSessionWithDeviceInfo(t *testing.T) {
 			"expires_at": "invalid-date"
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 

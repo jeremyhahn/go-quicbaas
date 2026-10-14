@@ -16,7 +16,6 @@
 package rest
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,7 +35,7 @@ func TestListRoles(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//roles", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListRoles(w, req)
@@ -53,7 +52,7 @@ func TestListRoles(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles?limit=50&offset=10", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListRoles(w, req)
@@ -71,7 +70,7 @@ func TestListRoles(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles?limit=invalid", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListRoles(w, req)
@@ -89,7 +88,7 @@ func TestListRoles(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles?offset=invalid", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListRoles(w, req)
@@ -107,7 +106,7 @@ func TestListRoles(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles?limit=5000", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListRoles(w, req)
@@ -125,7 +124,7 @@ func TestListRoles(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles?offset=-5", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListRoles(w, req)
@@ -143,7 +142,7 @@ func TestListRoles(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles?limit=0", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListRoles(w, req)
@@ -161,7 +160,7 @@ func TestListRoles(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListRoles(w, req)
@@ -181,7 +180,7 @@ func TestCreateRole(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//roles", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -199,7 +198,7 @@ func TestCreateRole(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/roles", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -218,7 +217,7 @@ func TestCreateRole(t *testing.T) {
 
 		body := `{"name":""}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/roles", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -237,7 +236,7 @@ func TestCreateRole(t *testing.T) {
 
 		body := `{"name":"admin","description":"Admin role","permissions":["read","write"]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/roles", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -256,7 +255,7 @@ func TestCreateRole(t *testing.T) {
 
 		body := `{"id":"role-123","name":"admin","description":"Admin role","permissions":["read","write"],"attributes":{"level":"high"}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/roles", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -278,7 +277,7 @@ func TestGetRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "role-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//roles/role-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetRole(w, req)
@@ -296,7 +295,7 @@ func TestGetRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetRole(w, req)
@@ -314,7 +313,7 @@ func TestGetRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "role-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/roles/role-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetRole(w, req)
@@ -335,7 +334,7 @@ func TestUpdateRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "role-123")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//roles/role-123", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -354,7 +353,7 @@ func TestUpdateRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/roles/", strings.NewReader(`{}`))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -373,7 +372,7 @@ func TestUpdateRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "role-123")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/roles/role-123", strings.NewReader("{invalid"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -393,7 +392,7 @@ func TestUpdateRole(t *testing.T) {
 
 		body := `{"name":"updated-admin"}`
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/roles/role-123", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -413,7 +412,7 @@ func TestUpdateRole(t *testing.T) {
 
 		body := `{"name":"updated-admin","description":"Updated description","permissions":["read"],"attributes":{"key":"value"}}`
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/roles/role-123", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -435,7 +434,7 @@ func TestDeleteRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "role-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//roles/role-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteRole(w, req)
@@ -453,7 +452,7 @@ func TestDeleteRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/roles/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteRole(w, req)
@@ -471,7 +470,7 @@ func TestDeleteRole(t *testing.T) {
 		rctx.URLParams.Add("role_id", "role-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/roles/role-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteRole(w, req)

@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -57,7 +56,7 @@ func spendGatedFixture(t *testing.T) (*materializeFixture, orchestration.Consump
 // meterAccount attaches a token cap to an already-created account.
 func meterAccount(t *testing.T, f *materializeFixture, tenantID, accountID string, maxTokens int64) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	account, err := f.store.Get(ctx, tenantID, accountID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
@@ -75,7 +74,7 @@ func meterAccount(t *testing.T, f *materializeFixture, tenantID, accountID strin
 // spendAgainst records consumption for the account inside the live window.
 func spendAgainst(t *testing.T, ledger orchestration.ConsumptionLedger, tenantID, accountID string, tokens int64) {
 	t.Helper()
-	if err := ledger.Record(context.Background(), orchestration.ConsumptionEntry{
+	if err := ledger.Record(callerContext("tenant-a"), orchestration.ConsumptionEntry{
 		EntryID:     "e1",
 		TenantID:    tenantID,
 		AccountID:   accountID,
@@ -95,7 +94,7 @@ func TestMaterialize_ReleasesAnAccountUnderItsCap(t *testing.T) {
 	meterAccount(t, f, "tenant-a", accountID, 1000)
 	spendAgainst(t, ledger, "tenant-a", accountID, 100)
 
-	resp, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
+	resp, err := f.svc.MaterializeAccountCredential(callerContext("tenant-a"), &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, AgentID: "agent-1",
 	})
 	if err != nil {
@@ -112,7 +111,7 @@ func TestMaterialize_RefusesAnAccountOverItsCap(t *testing.T) {
 	meterAccount(t, f, "tenant-a", accountID, 1000)
 	spendAgainst(t, ledger, "tenant-a", accountID, 1500)
 
-	resp, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
+	resp, err := f.svc.MaterializeAccountCredential(callerContext("tenant-a"), &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, AgentID: "agent-1",
 	})
 	if !errors.Is(err, orchestration.ErrAccountQuotaExhausted) {
@@ -138,7 +137,7 @@ func TestMaterialize_RefusesAnAccountWhoseBreakerTripped(t *testing.T) {
 	f, ledger := spendGatedFixture(t)
 	accountID := f.createAccount(t, "tenant-a", "")
 
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	account, err := f.store.Get(ctx, "tenant-a", accountID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
@@ -183,7 +182,7 @@ func TestMaterialize_WithoutAnAuthorityIsUnmetered(t *testing.T) {
 	accountID := f.createAccount(t, "tenant-a", "")
 	meterAccount(t, f, "tenant-a", accountID, 1)
 
-	if _, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
+	if _, err := f.svc.MaterializeAccountCredential(callerContext("tenant-a"), &MaterializeAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: accountID, AgentID: "agent-1",
 	}); err != nil {
 		t.Fatalf("MaterializeAccountCredential() with no authority wired error = %v", err)

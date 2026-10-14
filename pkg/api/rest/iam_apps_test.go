@@ -16,7 +16,6 @@
 package rest
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,7 +35,7 @@ func TestListApps(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//apps", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListApps(w, req)
@@ -53,7 +52,7 @@ func TestListApps(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/apps", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListApps(w, req)
@@ -70,7 +69,7 @@ func TestListApps(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/apps?limit=50&offset=10", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.ListApps(w, req)
@@ -90,7 +89,7 @@ func TestRegisterApp(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//apps", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RegisterApp(w, req)
@@ -107,7 +106,7 @@ func TestRegisterApp(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/apps", strings.NewReader("invalid json"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RegisterApp(w, req)
@@ -125,7 +124,7 @@ func TestRegisterApp(t *testing.T) {
 
 		body := `{"name":"","redirect_uris":["https://example.com/callback"]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/apps", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RegisterApp(w, req)
@@ -143,7 +142,7 @@ func TestRegisterApp(t *testing.T) {
 
 		body := `{"name":"Test App","redirect_uris":[]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/apps", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RegisterApp(w, req)
@@ -161,7 +160,7 @@ func TestRegisterApp(t *testing.T) {
 
 		body := `{"name":"Test App","redirect_uris":["https://example.com/callback"],"pkce_required":true}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/apps", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RegisterApp(w, req)
@@ -182,7 +181,7 @@ func TestGetApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "client-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//apps/client-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetApp(w, req)
@@ -200,7 +199,7 @@ func TestGetApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/apps/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetApp(w, req)
@@ -218,7 +217,7 @@ func TestGetApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "client-123")
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/apps/client-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.GetApp(w, req)
@@ -239,7 +238,7 @@ func TestUpdateApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "client-123")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//apps/client-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.UpdateApp(w, req)
@@ -257,7 +256,7 @@ func TestUpdateApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/apps/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.UpdateApp(w, req)
@@ -275,7 +274,7 @@ func TestUpdateApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "client-123")
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/apps/client-123", strings.NewReader("invalid json"))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.UpdateApp(w, req)
@@ -294,7 +293,7 @@ func TestUpdateApp(t *testing.T) {
 
 		body := `{"name":"Updated App","redirect_uris":["https://example.com/callback"]}`
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant-123/apps/client-123", strings.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.UpdateApp(w, req)
@@ -315,7 +314,7 @@ func TestDeleteApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "client-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//apps/client-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteApp(w, req)
@@ -333,7 +332,7 @@ func TestDeleteApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/apps/", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteApp(w, req)
@@ -351,7 +350,7 @@ func TestDeleteApp(t *testing.T) {
 		rctx.URLParams.Add("client_id", "client-123")
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/apps/client-123", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.DeleteApp(w, req)
@@ -372,7 +371,7 @@ func TestRotateSecret(t *testing.T) {
 		rctx.URLParams.Add("client_id", "client-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//apps/client-123/rotate-secret", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RotateSecret(w, req)
@@ -390,7 +389,7 @@ func TestRotateSecret(t *testing.T) {
 		rctx.URLParams.Add("client_id", "")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/apps//rotate-secret", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RotateSecret(w, req)
@@ -408,7 +407,7 @@ func TestRotateSecret(t *testing.T) {
 		rctx.URLParams.Add("client_id", "client-123")
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/apps/client-123/rotate-secret", nil)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(callerRouteContext(req.Context(), rctx))
 		w := httptest.NewRecorder()
 
 		handler.RotateSecret(w, req)

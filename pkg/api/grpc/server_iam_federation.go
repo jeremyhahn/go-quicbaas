@@ -56,6 +56,9 @@ func (s *FederationServer) CreateProvider(ctx context.Context, req *iampb.Create
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Federation", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider name is required")
 	}
@@ -82,6 +85,9 @@ func (s *FederationServer) GetProvider(ctx context.Context, req *iampb.GetProvid
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Federation", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ProviderId == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider_id is required")
 	}
@@ -105,6 +111,9 @@ func (s *FederationServer) UpdateProvider(ctx context.Context, req *iampb.Update
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.Federation", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.ProviderId == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider_id is required")
@@ -141,6 +150,9 @@ func (s *FederationServer) DeleteProvider(ctx context.Context, req *iampb.Delete
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Federation", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ProviderId == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider_id is required")
 	}
@@ -158,6 +170,9 @@ func (s *FederationServer) ListProviders(ctx context.Context, req *iampb.ListPro
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.Federation", req.TenantId); err != nil {
+		return nil, err
 	}
 
 	limit := int(req.Limit)
@@ -266,6 +281,9 @@ func (s *FederationServer) LinkAccount(ctx context.Context, req *iampb.LinkAccou
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Federation", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ProviderId == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider_id is required")
 	}
@@ -298,6 +316,9 @@ func (s *FederationServer) UnlinkAccount(ctx context.Context, req *iampb.UnlinkA
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Federation", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ProviderId == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider_id is required")
 	}
@@ -325,6 +346,9 @@ func (s *FederationServer) GetUserLinks(ctx context.Context, req *iampb.GetUserL
 	}
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.Federation", req.TenantId); err != nil {
+		return nil, err
 	}
 
 	userID, err := parseUserID("user_id", req.UserId)

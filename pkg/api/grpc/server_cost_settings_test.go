@@ -44,7 +44,7 @@ func (m *costSettingsAgentService) PriceBook() *orchestration.PriceBook { return
 func TestCostSettingsOverGRPC(t *testing.T) {
 	srv := NewOrchestratorServer(&costSettingsAgentService{store: orchestration.NewInMemoryCostSettingsStore()},
 		createOrchestratorGRPCTestLogger())
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	got, err := srv.GetCostSettings(ctx, &pb.GetCostSettingsRequest{TenantId: "t1"})
 	require.NoError(t, err)
@@ -66,7 +66,8 @@ func TestCostSettingsOverGRPCRefuses(t *testing.T) {
 	wired := NewOrchestratorServer(&costSettingsAgentService{store: orchestration.NewInMemoryCostSettingsStore()},
 		createOrchestratorGRPCTestLogger())
 	bare := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := tenantctx.WithSystem(context.Background())
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+	system := tenantctx.WithSystem(context.Background())
 	tests := []struct {
 		name string
 		call func() error
@@ -78,6 +79,14 @@ func TestCostSettingsOverGRPCRefuses(t *testing.T) {
 			_, err := wired.SetCostSettings(ctx, &pb.SetCostSettingsRequest{TenantId: "t1", ElectricityPricePerKwh: proto.Float64(-1)})
 			return err
 		}, codes.InvalidArgument},
+		{"the system tenant reading another tenant", func() error {
+			_, err := wired.GetCostSettings(system, &pb.GetCostSettingsRequest{TenantId: "t1"})
+			return err
+		}, codes.PermissionDenied},
+		{"the system tenant writing another tenant", func() error {
+			_, err := wired.SetCostSettings(system, &pb.SetCostSettingsRequest{TenantId: "t1", ElectricityPricePerKwh: proto.Float64(0.2)})
+			return err
+		}, codes.PermissionDenied},
 		{"an unwired get", func() error {
 			_, err := bare.GetCostSettings(ctx, &pb.GetCostSettingsRequest{TenantId: "t1"})
 			return err

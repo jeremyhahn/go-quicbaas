@@ -14,7 +14,6 @@
 package grpc
 
 import (
-	"context"
 	"math"
 	"testing"
 
@@ -31,7 +30,7 @@ import (
 // integer.
 func TestIAMHandlers_ResponseOutOfRange(t *testing.T) {
 	const tooBig = math.MaxInt32 + 1
-	ctx := context.Background()
+	ctx := callerContext("t1")
 	hugeTenant := &iam.Tenant{ID: "t1", Settings: iam.TenantSettings{MaxUsers: tooBig}}
 	hugePolicy := &iam.Policy{Metadata: iam.PolicyMetadata{Name: "p1", Priority: tooBig}}
 	hugeDeletion := &iam.DataDeletionRequest{

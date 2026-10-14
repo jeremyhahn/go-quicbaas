@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -54,7 +53,7 @@ func newTestAccountService(t *testing.T) AccountService {
 
 func TestAccountService_CreateAccount_HappyPath(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	resp, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID:    "tenant-a",
@@ -75,7 +74,7 @@ func TestAccountService_CreateAccount_HappyPath(t *testing.T) {
 
 func TestAccountService_CreateAccount_MissingCredential(t *testing.T) {
 	svc := newTestAccountService(t)
-	_, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	_, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID: "tenant-a",
 		Provider: orchestration.AccountProviderClaude,
 	})
@@ -87,7 +86,7 @@ func TestAccountService_CreateAccount_MissingCredential(t *testing.T) {
 
 func TestAccountService_CreateAccount_MissingTenantID(t *testing.T) {
 	svc := newTestAccountService(t)
-	_, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	_, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		Provider:   orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
@@ -98,7 +97,7 @@ func TestAccountService_CreateAccount_MissingTenantID(t *testing.T) {
 
 func TestAccountService_GetAccount_HappyPath(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderCodex, Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
@@ -117,7 +116,7 @@ func TestAccountService_GetAccount_HappyPath(t *testing.T) {
 
 func TestAccountService_GetAccount_NotFound(t *testing.T) {
 	svc := newTestAccountService(t)
-	_, err := svc.GetAccount(context.Background(), &GetAccountRequest{TenantID: "tenant-a", AccountID: "missing"})
+	_, err := svc.GetAccount(callerContext("tenant-a"), &GetAccountRequest{TenantID: "tenant-a", AccountID: "missing"})
 	var notFound *AccountNotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("GetAccount() error = %v (%T), want *AccountNotFoundError", err, err)
@@ -128,7 +127,7 @@ func TestAccountService_GetAccount_NotFound(t *testing.T) {
 // tenant A's account metadata even by guessing its ID.
 func TestAccountService_GetAccount_TenantIsolation(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
@@ -137,14 +136,20 @@ func TestAccountService_GetAccount_TenantIsolation(t *testing.T) {
 	}
 
 	_, err = svc.GetAccount(ctx, &GetAccountRequest{TenantID: "tenant-b", AccountID: created.Account.ID})
+	var denied *TenantTargetDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("GetAccount() naming another tenant error = %v, want TenantTargetDeniedError", err)
+	}
+
+	_, err = svc.GetAccount(callerContext("tenant-b"), &GetAccountRequest{TenantID: "tenant-b", AccountID: created.Account.ID})
 	if err == nil {
-		t.Fatalf("GetAccount() across tenants succeeded — tenant isolation broken")
+		t.Fatalf("GetAccount() by tenant-b found tenant-a's account — tenant isolation broken")
 	}
 }
 
 func TestAccountService_ListAccounts_FiltersByProvider(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	for _, provider := range []orchestration.AccountProvider{orchestration.AccountProviderClaude, orchestration.AccountProviderClaude, orchestration.AccountProviderCodex} {
 		if _, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 			TenantID: "tenant-a", Provider: provider, Credential: &orchestration.AccountCredential{AccessToken: "x"},
@@ -164,7 +169,7 @@ func TestAccountService_ListAccounts_FiltersByProvider(t *testing.T) {
 
 func TestAccountService_UpdateAccount_DisplayName(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, DisplayName: "old",
 		Credential: &orchestration.AccountCredential{AccessToken: "x"},
@@ -184,7 +189,7 @@ func TestAccountService_UpdateAccount_DisplayName(t *testing.T) {
 
 func TestAccountService_RotateAccountCredential(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude,
 		Credential: &orchestration.AccountCredential{AccessToken: "old-token"},
@@ -212,7 +217,7 @@ func TestAccountService_RotateAccountCredential(t *testing.T) {
 
 func TestAccountService_RotateAccountCredential_UnknownAccount(t *testing.T) {
 	svc := newTestAccountService(t)
-	_, err := svc.RotateAccountCredential(context.Background(), &RotateAccountCredentialRequest{
+	_, err := svc.RotateAccountCredential(callerContext("tenant-a"), &RotateAccountCredentialRequest{
 		TenantID: "tenant-a", AccountID: "missing", Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
 	if err == nil {
@@ -222,7 +227,7 @@ func TestAccountService_RotateAccountCredential_UnknownAccount(t *testing.T) {
 
 func TestAccountService_RevokeAccount(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
@@ -241,7 +246,7 @@ func TestAccountService_RevokeAccount(t *testing.T) {
 
 func TestAccountService_DeleteAccount_RemovesMetadataAndCredential(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
@@ -259,7 +264,7 @@ func TestAccountService_DeleteAccount_RemovesMetadataAndCredential(t *testing.T)
 
 func TestAccountService_DeleteAccount_NotFound(t *testing.T) {
 	svc := newTestAccountService(t)
-	_, err := svc.DeleteAccount(context.Background(), &DeleteAccountRequest{TenantID: "tenant-a", AccountID: "missing"})
+	_, err := svc.DeleteAccount(callerContext("tenant-a"), &DeleteAccountRequest{TenantID: "tenant-a", AccountID: "missing"})
 	if err == nil {
 		t.Fatalf("DeleteAccount() error = nil, want AccountNotFoundError")
 	}
@@ -267,7 +272,7 @@ func TestAccountService_DeleteAccount_NotFound(t *testing.T) {
 
 func TestAccountService_SetDefaultAccount(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
@@ -289,7 +294,7 @@ func TestAccountService_SetDefaultAccount(t *testing.T) {
 
 func TestAccountService_GetAccountUsage_NotConfigured(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
@@ -316,7 +321,7 @@ func TestAccountService_GetAccountUsage_WithTracker(t *testing.T) {
 	tracker := orchestration.NewCostTracker(kvstore.NewMemory(), noopLogger{})
 	svc.SetUsageTracker(tracker)
 
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, Credential: &orchestration.AccountCredential{AccessToken: "x"},
 	})
@@ -347,7 +352,7 @@ func TestAccountService_GetAccountUsage_WithTracker(t *testing.T) {
 // honouring while the pool still described it as current (go-quicbaas#997).
 func TestAccountService_EveryCredentialWriteAdvancesTheGeneration(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude,

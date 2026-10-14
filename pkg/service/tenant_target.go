@@ -15,6 +15,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -43,20 +44,24 @@ func (e *TenantTargetDeniedError) Unwrap() error { return orchestration.ErrAccou
 // THE AUTHORIZATION COMES FIRST, AGAINST THE ORIGINAL IDENTITY. Once both keys
 // name the target, every store's scope check passes by construction, so a
 // check made after the switch checks nothing (go-quicbaas#1058 review). The
-// caller's tenant is the one bound to the request (tenantctx.FromContext):
+// decision is tenantctx.Target's, the one rule every transport applies to a
+// caller-supplied tenant:
 //
 //   - a caller of the target tenant acts on its own records;
-//   - a caller of the system tenant administers every tenant;
 //   - a context with no tenant bound is refused: an unknown caller is not the
 //     system (go-quicbaas#1150);
-//   - anyone else is refused with TenantTargetDeniedError.
+//   - anyone else, the system tenant included, is refused with
+//     TenantTargetDeniedError. A request field is not an authorization, so the
+//     system tenant gets no cross-tenant lift through it (go-quicbaas#1150,
+//     the 2026-10-02 no-lift ruling).
 func targetTenantContext(ctx context.Context, target string) (context.Context, error) {
-	caller, err := tenantctx.FromContext(ctx, "service.targetTenant")
+	tenantID, err := tenantctx.Target(ctx, "service.targetTenant", target)
 	if err != nil {
+		var cross *tenantctx.CrossTenantError
+		if errors.As(err, &cross) {
+			return ctx, &TenantTargetDeniedError{CallerTenant: cross.CallerTenant, TargetTenant: cross.TargetTenant}
+		}
 		return ctx, err
 	}
-	if caller != target && !tenantctx.IsSystem(caller) {
-		return ctx, &TenantTargetDeniedError{CallerTenant: caller, TargetTenant: target}
-	}
-	return accountTenantContext(ctx, target), nil
+	return accountTenantContext(ctx, tenantID), nil
 }

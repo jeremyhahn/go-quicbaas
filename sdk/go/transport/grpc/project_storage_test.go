@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -42,9 +43,15 @@ func newRealProjectHandler(t *testing.T) *projectHandler {
 		t.Fatalf("logger: %v", err)
 	}
 	svc := service.NewProjectService(orchestration.NewInMemoryProjectStore())
+	// The project server honours tenant_id only for the caller's own tenant
+	// (#1150), so the server binds the tenant the tests name, as the daemon's
+	// auth interceptor does.
+	bindTenant := func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		return handler(tenantctx.WithTenant(ctx, "t1"), req)
+	}
 	srv := newHandlerServer(t, func(s *grpc.Server) {
 		pb.RegisterProjectServiceServer(s, apigrpc.NewProjectServer(svc, log))
-	})
+	}, grpc.UnaryInterceptor(bindTenant))
 	return newProjectHandler(srv.dial(t))
 }
 

@@ -49,6 +49,9 @@ func (s *ProjectServer) CreateProject(ctx context.Context, req *pb.CreateProject
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Project", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
@@ -116,6 +119,9 @@ func (s *ProjectServer) GetProject(ctx context.Context, req *pb.GetProjectReques
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Project", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
@@ -141,6 +147,9 @@ func (s *ProjectServer) GetProjectByName(ctx context.Context, req *pb.GetProject
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Project", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
@@ -165,6 +174,9 @@ func (s *ProjectServer) UpdateProject(ctx context.Context, req *pb.UpdateProject
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.Project", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
@@ -242,6 +254,9 @@ func (s *ProjectServer) DeleteProject(ctx context.Context, req *pb.DeleteProject
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Project", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
@@ -267,6 +282,9 @@ func (s *ProjectServer) ListProjects(ctx context.Context, req *pb.ListProjectsRe
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.Project", req.TenantId); err != nil {
+		return nil, err
 	}
 
 	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
@@ -309,6 +327,9 @@ func (s *ProjectServer) GrantFleetNodeRole(ctx context.Context, req *pb.GrantFle
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.Project", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
@@ -346,6 +367,9 @@ func (s *ProjectServer) RevokeFleetNodeRole(ctx context.Context, req *pb.RevokeF
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.Project", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")

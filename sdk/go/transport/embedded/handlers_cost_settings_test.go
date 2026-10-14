@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
 // costSettingsFakeAgentService exposes a cost settings store.
@@ -49,7 +50,7 @@ func newCostSettingsTransport(t *testing.T, wired bool) *Transport {
 // TestEmbeddedCostSettings sets and reads a tenant's cost settings in process.
 func TestEmbeddedCostSettings(t *testing.T) {
 	tr := newCostSettingsTransport(t, true)
-	ctx := context.Background()
+	ctx := transport.ContextWithTenant(context.Background(), "t1")
 
 	resp, err := tr.Request(ctx, "quicbaas.Orchestrator", "GetCostSettings", &orchestratorSDK.GetCostSettingsRequest{TenantID: "t1"})
 	require.NoError(t, err)
@@ -68,7 +69,7 @@ func TestEmbeddedCostSettings(t *testing.T) {
 }
 
 func TestEmbeddedCostSettingsRefuses(t *testing.T) {
-	ctx := context.Background()
+	ctx := transport.ContextWithTenant(context.Background(), "t1")
 	bare := newCostSettingsTransport(t, false)
 	_, err := bare.Request(ctx, "quicbaas.Orchestrator", "GetCostSettings", &orchestratorSDK.GetCostSettingsRequest{TenantID: "t1"})
 	assert.Error(t, err, "a deployment with no cost settings refuses")
@@ -83,4 +84,9 @@ func TestEmbeddedCostSettingsRefuses(t *testing.T) {
 	rate := -1.0
 	_, err = wired.Request(ctx, "quicbaas.Orchestrator", "SetCostSettings", &orchestratorSDK.SetCostSettingsRequest{TenantID: "t1", ElectricityPricePerKWh: &rate})
 	assert.ErrorIs(t, err, orchestration.ErrCostSettingsInvalid)
+
+	// A caller that names no tenant runs as the system tenant, which gets no
+	// lift into t1 (#1150).
+	_, err = wired.Request(context.Background(), "quicbaas.Orchestrator", "GetCostSettings", &orchestratorSDK.GetCostSettingsRequest{TenantID: "t1"})
+	assert.ErrorIs(t, err, orchestration.ErrAccountTenantScope)
 }

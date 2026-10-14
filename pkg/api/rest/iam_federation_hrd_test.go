@@ -38,7 +38,7 @@ func beginLoginRequest(t *testing.T, tenant, provider string) (*http.Request, *h
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", tenant)
 	rctx.URLParams.Add("provider_name", provider)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	return req, httptest.NewRecorder()
 }
 

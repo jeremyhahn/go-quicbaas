@@ -37,6 +37,10 @@ func (h *IAMHandler) ListRoles(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	// Parse query parameters
 	limit := 100
@@ -112,6 +116,10 @@ func (h *IAMHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -205,6 +213,10 @@ func (h *IAMHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	roleID := chi.URLParam(r, "role_id")
 	if roleID == "" {
@@ -252,6 +264,10 @@ func (h *IAMHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -333,6 +349,10 @@ func (h *IAMHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	roleID := chi.URLParam(r, "role_id")
 	if roleID == "" {
@@ -397,6 +417,10 @@ func (h *IAMHandler) ReconcileRoles(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 

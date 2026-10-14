@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -36,7 +35,7 @@ import (
 func createAccountForDefaultTest(t *testing.T, svc AccountService, tenantID string,
 	provider orchestration.AccountProvider, displayName, token string) *orchestration.Account {
 	t.Helper()
-	resp, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	resp, err := svc.CreateAccount(callerContext(tenantID), &CreateAccountRequest{
 		TenantID:      tenantID,
 		Provider:      provider,
 		DisplayName:   displayName,
@@ -55,7 +54,7 @@ func createAccountForDefaultTest(t *testing.T, svc AccountService, tenantID stri
 // listedDefaults returns the IDs ListAccounts reports as default.
 func listedDefaults(t *testing.T, svc AccountService, tenantID string, provider orchestration.AccountProvider) []string {
 	t.Helper()
-	resp, err := svc.ListAccounts(context.Background(), &ListAccountsRequest{TenantID: tenantID, Provider: provider})
+	resp, err := svc.ListAccounts(callerContext(tenantID), &ListAccountsRequest{TenantID: tenantID, Provider: provider})
 	if err != nil {
 		t.Fatalf("ListAccounts() error = %v", err)
 	}
@@ -77,7 +76,7 @@ func TestAccountService_CreateAccount_FirstBecomesDefault(t *testing.T) {
 	}
 
 	// The response is not just optimistic: a fresh read agrees.
-	got, err := svc.GetAccount(context.Background(), &GetAccountRequest{TenantID: "tenant-a", AccountID: first.ID})
+	got, err := svc.GetAccount(callerContext("tenant-a"), &GetAccountRequest{TenantID: "tenant-a", AccountID: first.ID})
 	if err != nil {
 		t.Fatalf("GetAccount() error = %v", err)
 	}
@@ -105,7 +104,7 @@ func TestAccountService_CreateAccount_SecondDoesNotBecomeDefault(t *testing.T) {
 // reports two defaults and never reports none.
 func TestAccountService_SetDefaultAccount_SwitchIsAtomic(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	first := createAccountForDefaultTest(t, svc, "tenant-a", orchestration.AccountProviderClaude, "anthropic-1", "sk-1")
 	second := createAccountForDefaultTest(t, svc, "tenant-a", orchestration.AccountProviderClaude, "anthropic-2", "sk-2")
@@ -124,7 +123,7 @@ func TestAccountService_SetDefaultAccount_SwitchIsAtomic(t *testing.T) {
 // delete decision at the boundary an operator sees.
 func TestAccountService_DeleteAccount_DefaultLeavesScopeVacant(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	first := createAccountForDefaultTest(t, svc, "tenant-a", orchestration.AccountProviderClaude, "anthropic-1", "sk-1")
 	createAccountForDefaultTest(t, svc, "tenant-a", orchestration.AccountProviderClaude, "anthropic-2", "sk-2")
@@ -163,7 +162,7 @@ func TestAccountService_CreateAccount_ConcurrentFirstImports_OneDefault(t *testi
 		go func(i int) {
 			defer done.Done()
 			start.Wait()
-			resp, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+			resp, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 				TenantID:      "tenant-a",
 				Provider:      orchestration.AccountProviderClaude,
 				RefreshPolicy: orchestration.AccountRefreshNone,
@@ -204,7 +203,7 @@ func TestAccountService_CreateAccount_ConcurrentFirstImports_OneDefault(t *testi
 func TestAccountService_CreateAccount_OAuthRefreshWithOperatorEndpoint(t *testing.T) {
 	svc := newTestAccountService(t)
 
-	resp, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	resp, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:      "tenant-a",
 		Provider:      orchestration.AccountProviderClaude,
 		DisplayName:   "anthropic-oauth",

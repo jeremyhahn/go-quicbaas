@@ -71,6 +71,9 @@ func (s *IAMServer) ListWebAuthnCredentials(ctx context.Context, req *iampb.List
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -103,6 +106,9 @@ func (s *IAMServer) DeleteWebAuthnCredential(ctx context.Context, req *iampb.Del
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -128,6 +134,9 @@ func (s *IAMServer) DeleteWebAuthnCredential(ctx context.Context, req *iampb.Del
 func (s *IAMServer) DeleteWebAuthnCredentials(ctx context.Context, req *iampb.DeleteWebAuthnCredentialsRequest) (*iampb.DeleteWebAuthnCredentialsResponse, error) {
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")

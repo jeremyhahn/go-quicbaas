@@ -93,7 +93,7 @@ func TestCreateUser_InviteFailureRollsBackTheUser(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
 		strings.NewReader(`{"email":"bob@acme.com","username":"bob","name":"Bob"}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -156,7 +156,7 @@ func TestCreateUser_AttachFailureRollsBackTheUser(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
 		strings.NewReader(`{"email":"carol@acme.com","username":"carol","name":"Carol"}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -271,7 +271,7 @@ func TestCreateUser_RollbackSurvivesRequestCancellation(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "acme")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/acme/users/",
 		strings.NewReader(`{"email":"dave@acme.com","username":"dave","name":"Dave"}`))
-	req = req.WithContext(context.WithValue(reqCtx, chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(reqCtx, rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 

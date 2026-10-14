@@ -37,6 +37,10 @@ func (h *IAMHandler) ListApps(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	// Parse query parameters
 	limit := 100
@@ -105,6 +109,10 @@ func (h *IAMHandler) RegisterApp(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -196,6 +204,9 @@ func (h *IAMHandler) GetApp(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+		return
+	}
 
 	clientID := chi.URLParam(r, "client_id")
 	if clientID == "" {
@@ -243,6 +254,9 @@ func (h *IAMHandler) UpdateApp(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
 		return
 	}
 
@@ -328,6 +342,9 @@ func (h *IAMHandler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
+		return
+	}
 
 	clientID := chi.URLParam(r, "client_id")
 	if clientID == "" {
@@ -374,6 +391,9 @@ func (h *IAMHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	if _, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id"); !ok {
 		return
 	}
 

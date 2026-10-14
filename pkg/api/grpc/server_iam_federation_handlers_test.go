@@ -123,7 +123,7 @@ func TestFederationServer_CreateProvider_Success(t *testing.T) {
 
 	mgr.On("RegisterProvider", mock.Anything, mock.AnythingOfType("*iam.ExternalProvider")).Return(nil)
 
-	resp, err := srv.CreateProvider(context.Background(), &iampb.CreateProviderRequest{
+	resp, err := srv.CreateProvider(callerContext("t1"), &iampb.CreateProviderRequest{
 		TenantId:      "t1",
 		Name:          "google",
 		ClientId:      "client-123",
@@ -155,7 +155,7 @@ func TestFederationServer_CreateProvider_Success(t *testing.T) {
 
 func TestFederationServer_CreateProvider_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
-	ctx := context.Background()
+	ctx := callerContext("t1")
 
 	_, err := srv.CreateProvider(ctx, &iampb.CreateProviderRequest{Name: "test", ClientId: "c"})
 	require.Error(t, err)
@@ -175,7 +175,7 @@ func TestFederationServer_CreateProvider_ServiceError(t *testing.T) {
 	mgr.On("RegisterProvider", mock.Anything, mock.Anything).
 		Return(&errors.QBError{Code: errors.ErrAlreadyExists, Op: "RegisterProvider", Err: stderrors.New("exists")})
 
-	_, err := srv.CreateProvider(context.Background(), &iampb.CreateProviderRequest{
+	_, err := srv.CreateProvider(callerContext("t1"), &iampb.CreateProviderRequest{
 		TenantId: "t1", Name: "google", ClientId: "c1",
 	})
 
@@ -190,7 +190,7 @@ func TestFederationServer_GetProvider_Success(t *testing.T) {
 	mgr.On("GetProvider", mock.Anything, "t1", "p1").
 		Return(&iam.ExternalProvider{ID: "p1", TenantID: "t1", Name: "google"}, nil)
 
-	resp, err := srv.GetProvider(context.Background(), &iampb.GetProviderRequest{TenantId: "t1", ProviderId: "p1"})
+	resp, err := srv.GetProvider(callerContext("t1"), &iampb.GetProviderRequest{TenantId: "t1", ProviderId: "p1"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "p1", resp.Id)
@@ -200,10 +200,10 @@ func TestFederationServer_GetProvider_Success(t *testing.T) {
 func TestFederationServer_GetProvider_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
 
-	_, err := srv.GetProvider(context.Background(), &iampb.GetProviderRequest{ProviderId: "p1"})
+	_, err := srv.GetProvider(callerContext("t1"), &iampb.GetProviderRequest{ProviderId: "p1"})
 	require.Error(t, err)
 
-	_, err = srv.GetProvider(context.Background(), &iampb.GetProviderRequest{TenantId: "t1"})
+	_, err = srv.GetProvider(callerContext("t1"), &iampb.GetProviderRequest{TenantId: "t1"})
 	require.Error(t, err)
 }
 
@@ -214,7 +214,7 @@ func TestFederationServer_UpdateProvider_Success(t *testing.T) {
 	mgr.On("GetProvider", mock.Anything, "t1", "p1").
 		Return(&iam.ExternalProvider{ID: "p1", TenantID: "t1", Name: "updated", Type: iam.ProviderTypeOIDC, ClientID: "existing-client", IssuerURL: "https://issuer.example.com"}, nil)
 
-	resp, err := srv.UpdateProvider(context.Background(), &iampb.UpdateProviderRequest{
+	resp, err := srv.UpdateProvider(callerContext("t1"), &iampb.UpdateProviderRequest{
 		TenantId:   "t1",
 		ProviderId: "p1",
 		Name:       "updated",
@@ -234,10 +234,10 @@ func TestFederationServer_UpdateProvider_Success(t *testing.T) {
 func TestFederationServer_UpdateProvider_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
 
-	_, err := srv.UpdateProvider(context.Background(), &iampb.UpdateProviderRequest{ProviderId: "p1"})
+	_, err := srv.UpdateProvider(callerContext("t1"), &iampb.UpdateProviderRequest{ProviderId: "p1"})
 	require.Error(t, err)
 
-	_, err = srv.UpdateProvider(context.Background(), &iampb.UpdateProviderRequest{TenantId: "t1"})
+	_, err = srv.UpdateProvider(callerContext("t1"), &iampb.UpdateProviderRequest{TenantId: "t1"})
 	require.Error(t, err)
 }
 
@@ -246,7 +246,7 @@ func TestFederationServer_DeleteProvider_Success(t *testing.T) {
 
 	mgr.On("DeleteProvider", mock.Anything, "t1", "p1").Return(nil)
 
-	resp, err := srv.DeleteProvider(context.Background(), &iampb.DeleteProviderRequest{TenantId: "t1", ProviderId: "p1"})
+	resp, err := srv.DeleteProvider(callerContext("t1"), &iampb.DeleteProviderRequest{TenantId: "t1", ProviderId: "p1"})
 
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
@@ -256,10 +256,10 @@ func TestFederationServer_DeleteProvider_Success(t *testing.T) {
 func TestFederationServer_DeleteProvider_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
 
-	_, err := srv.DeleteProvider(context.Background(), &iampb.DeleteProviderRequest{ProviderId: "p1"})
+	_, err := srv.DeleteProvider(callerContext("t1"), &iampb.DeleteProviderRequest{ProviderId: "p1"})
 	require.Error(t, err)
 
-	_, err = srv.DeleteProvider(context.Background(), &iampb.DeleteProviderRequest{TenantId: "t1"})
+	_, err = srv.DeleteProvider(callerContext("t1"), &iampb.DeleteProviderRequest{TenantId: "t1"})
 	require.Error(t, err)
 }
 
@@ -272,7 +272,7 @@ func TestFederationServer_ListProviders_Success(t *testing.T) {
 			{ID: "p2", TenantID: "t1", Name: "github"},
 		}, nil)
 
-	resp, err := srv.ListProviders(context.Background(), &iampb.ListProvidersRequest{TenantId: "t1"})
+	resp, err := srv.ListProviders(callerContext("t1"), &iampb.ListProvidersRequest{TenantId: "t1"})
 
 	require.NoError(t, err)
 	assert.Len(t, resp.Providers, 2)
@@ -283,7 +283,7 @@ func TestFederationServer_ListProviders_Success(t *testing.T) {
 func TestFederationServer_ListProviders_MissingTenantID(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
 
-	_, err := srv.ListProviders(context.Background(), &iampb.ListProvidersRequest{})
+	_, err := srv.ListProviders(callerContext("t1"), &iampb.ListProvidersRequest{})
 	require.Error(t, err)
 }
 
@@ -301,7 +301,7 @@ func TestFederationServer_BeginFederatedLogin_Success(t *testing.T) {
 			ExpiresAt: time.Now().Add(10 * time.Minute),
 		}, nil)
 
-	resp, err := srv.BeginFederatedLogin(context.Background(), &iampb.BeginFederatedLoginRequest{
+	resp, err := srv.BeginFederatedLogin(callerContext("t1"), &iampb.BeginFederatedLoginRequest{
 		TenantId:     "t1",
 		ProviderName: "google",
 		RedirectUri:  "http://localhost/callback",
@@ -317,10 +317,10 @@ func TestFederationServer_BeginFederatedLogin_Success(t *testing.T) {
 func TestFederationServer_BeginFederatedLogin_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
 
-	_, err := srv.BeginFederatedLogin(context.Background(), &iampb.BeginFederatedLoginRequest{ProviderName: "google"})
+	_, err := srv.BeginFederatedLogin(callerContext("t1"), &iampb.BeginFederatedLoginRequest{ProviderName: "google"})
 	require.Error(t, err)
 
-	_, err = srv.BeginFederatedLogin(context.Background(), &iampb.BeginFederatedLoginRequest{TenantId: "t1"})
+	_, err = srv.BeginFederatedLogin(callerContext("t1"), &iampb.BeginFederatedLoginRequest{TenantId: "t1"})
 	require.Error(t, err)
 }
 
@@ -337,7 +337,7 @@ func TestFederationServer_HandleFederatedCallback_Success(t *testing.T) {
 			Provisioned:       true,
 		}, nil)
 
-	resp, err := srv.HandleFederatedCallback(context.Background(), &iampb.HandleFederatedCallbackRequest{
+	resp, err := srv.HandleFederatedCallback(callerContext("t1"), &iampb.HandleFederatedCallbackRequest{
 		State: "state-123",
 		Code:  "auth-code-456",
 	})
@@ -353,10 +353,10 @@ func TestFederationServer_HandleFederatedCallback_Success(t *testing.T) {
 func TestFederationServer_HandleFederatedCallback_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
 
-	_, err := srv.HandleFederatedCallback(context.Background(), &iampb.HandleFederatedCallbackRequest{Code: "code"})
+	_, err := srv.HandleFederatedCallback(callerContext("t1"), &iampb.HandleFederatedCallbackRequest{Code: "code"})
 	require.Error(t, err)
 
-	_, err = srv.HandleFederatedCallback(context.Background(), &iampb.HandleFederatedCallbackRequest{State: "state"})
+	_, err = srv.HandleFederatedCallback(callerContext("t1"), &iampb.HandleFederatedCallbackRequest{State: "state"})
 	require.Error(t, err)
 }
 
@@ -369,7 +369,7 @@ func TestFederationServer_LinkAccount_Success(t *testing.T) {
 
 	mgr.On("LinkAccount", mock.Anything, uint64(30001), "t1", "p1", "ext-token").Return(nil)
 
-	resp, err := srv.LinkAccount(context.Background(), &iampb.LinkAccountRequest{
+	resp, err := srv.LinkAccount(callerContext("t1"), &iampb.LinkAccountRequest{
 		UserId: "30001", TenantId: "t1", ProviderId: "p1", ExternalToken: "ext-token",
 	})
 
@@ -380,7 +380,7 @@ func TestFederationServer_LinkAccount_Success(t *testing.T) {
 
 func TestFederationServer_LinkAccount_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
-	ctx := context.Background()
+	ctx := callerContext("t1")
 
 	_, err := srv.LinkAccount(ctx, &iampb.LinkAccountRequest{TenantId: "t1", ProviderId: "p1", ExternalToken: "x"})
 	require.Error(t, err)
@@ -400,7 +400,7 @@ func TestFederationServer_UnlinkAccount_Success(t *testing.T) {
 
 	mgr.On("UnlinkAccount", mock.Anything, uint64(30001), "t1", "p1").Return(nil)
 
-	resp, err := srv.UnlinkAccount(context.Background(), &iampb.UnlinkAccountRequest{
+	resp, err := srv.UnlinkAccount(callerContext("t1"), &iampb.UnlinkAccountRequest{
 		UserId: "30001", TenantId: "t1", ProviderId: "p1",
 	})
 
@@ -411,7 +411,7 @@ func TestFederationServer_UnlinkAccount_Success(t *testing.T) {
 
 func TestFederationServer_UnlinkAccount_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
-	ctx := context.Background()
+	ctx := callerContext("t1")
 
 	_, err := srv.UnlinkAccount(ctx, &iampb.UnlinkAccountRequest{TenantId: "t1", ProviderId: "p1"})
 	require.Error(t, err)
@@ -431,7 +431,7 @@ func TestFederationServer_GetUserLinks_Success(t *testing.T) {
 			{ID: "fi1", UserID: 30001, ProviderID: "p1", ExternalID: "ext-1", Claims: map[string]interface{}{"email": "user@example.com"}},
 		}, nil)
 
-	resp, err := srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{UserId: "30001", TenantId: "t1"})
+	resp, err := srv.GetUserLinks(callerContext("t1"), &iampb.GetUserLinksRequest{UserId: "30001", TenantId: "t1"})
 
 	require.NoError(t, err)
 	assert.Len(t, resp.Identities, 1)
@@ -442,10 +442,10 @@ func TestFederationServer_GetUserLinks_Success(t *testing.T) {
 func TestFederationServer_GetUserLinks_MissingFields(t *testing.T) {
 	srv, _ := newTestFederationServer(t)
 
-	_, err := srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{TenantId: "t1"})
+	_, err := srv.GetUserLinks(callerContext("t1"), &iampb.GetUserLinksRequest{TenantId: "t1"})
 	require.Error(t, err)
 
-	_, err = srv.GetUserLinks(context.Background(), &iampb.GetUserLinksRequest{UserId: "30001"})
+	_, err = srv.GetUserLinks(callerContext("t1"), &iampb.GetUserLinksRequest{UserId: "30001"})
 	require.Error(t, err)
 }
 

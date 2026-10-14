@@ -23,12 +23,14 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // fakeSessions is the orchestrator a smoke drives.
 type fakeSessions struct {
 	spawned     *orchestration.SpawnSessionRequest
 	spawnTenant string
+	boundTenant string
 	strict      bool
 	containerID string
 	reply       string
@@ -40,6 +42,7 @@ type fakeSessions struct {
 func (f *fakeSessions) SpawnSession(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
 	f.spawned = req
 	f.spawnTenant = orchestration.TenantFromContext(ctx)
+	f.boundTenant, _ = tenantctx.Lookup(ctx)
 	f.strict = orchestration.HostAffinityStrictFromContext(ctx)
 	if f.spawnErr != nil {
 		return nil, f.spawnErr
@@ -100,6 +103,9 @@ func TestSessionSmoker_SpawnsTheWorkerShapeInTheCandidate(t *testing.T) {
 	}
 	if spawned.Model != "claude-opus-5-5" || spawned.ProjectID != "p1" || sessions.spawnTenant != "acme" {
 		t.Fatalf("spawn = %+v tenant = %q", spawned, sessions.spawnTenant)
+	}
+	if sessions.boundTenant != "acme" {
+		t.Fatalf("the spawn must bind the tenant the session services read, got %q", sessions.boundTenant)
 	}
 	if spawned.HostAffinity != "agent-04" || !sessions.strict {
 		t.Fatal("the smoke must be pinned, strictly, to the host holding the candidate")

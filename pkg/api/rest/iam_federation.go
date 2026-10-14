@@ -229,6 +229,10 @@ func (h *IAMHandler) RegisterProvider(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	// Read request body
 	body, err := io.ReadAll(r.Body)
@@ -323,6 +327,10 @@ func (h *IAMHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	// Parse query parameters
 	limit := 100
@@ -384,6 +392,10 @@ func (h *IAMHandler) GetProvider(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	providerID := chi.URLParam(r, "provider_id")
 	if providerID == "" {
@@ -417,6 +429,10 @@ func (h *IAMHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -515,6 +531,10 @@ func (h *IAMHandler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 
@@ -708,6 +728,10 @@ func (h *IAMHandler) LinkAccount(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -791,6 +815,10 @@ func (h *IAMHandler) UnlinkAccount(w http.ResponseWriter, r *http.Request) {
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {
@@ -838,6 +866,10 @@ func (h *IAMHandler) GetUserLinks(w http.ResponseWriter, r *http.Request) {
 	if tenantID == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
+		return
+	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
 		return
 	}
 

@@ -42,7 +42,7 @@ func postUser(t *testing.T, handler *IAMHandler, tenantID, body string) *httptes
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("tenant_id", tenantID)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/"+tenantID+"/users/", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	handler.CreateUser(w, req)
@@ -57,7 +57,7 @@ func putUser(t *testing.T, handler *IAMHandler, tenantID, userID, body string) *
 	rctx.URLParams.Add("user_id", userID)
 	req := httptest.NewRequest(http.MethodPut,
 		"/api/v1/tenants/"+tenantID+"/users/"+userID, strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(callerRouteContext(req.Context(), rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	handler.UpdateUser(w, req)

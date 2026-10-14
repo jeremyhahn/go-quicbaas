@@ -207,7 +207,7 @@ func withChiParams(r *http.Request, params map[string]string) *http.Request {
 	for k, v := range params {
 		rctx.URLParams.Add(k, v)
 	}
-	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+	return r.WithContext(callerRouteContext(r.Context(), rctx))
 }
 
 // =============================================================================

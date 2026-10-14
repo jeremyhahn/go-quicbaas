@@ -299,6 +299,9 @@ func (s *IAMServer) CreateUser(ctx context.Context, req *iampb.CreateUserRequest
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.Email == "" {
 		return nil, status.Error(codes.InvalidArgument, "email is required")
 	}
@@ -349,6 +352,9 @@ func (s *IAMServer) GetUser(ctx context.Context, req *iampb.GetUserRequest) (*ia
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -370,6 +376,9 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -424,6 +433,9 @@ func (s *IAMServer) DeleteUser(ctx context.Context, req *iampb.DeleteUserRequest
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -442,6 +454,9 @@ func (s *IAMServer) ListUsers(ctx context.Context, req *iampb.ListUsersRequest) 
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 
 	limit := int(req.Limit)
@@ -493,6 +508,9 @@ func (s *IAMServer) CreateRole(ctx context.Context, req *iampb.CreateRoleRequest
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.Id == "" {
 		return nil, status.Error(codes.InvalidArgument, "role id is required")
 	}
@@ -526,6 +544,9 @@ func (s *IAMServer) GetRole(ctx context.Context, req *iampb.GetRoleRequest) (*ia
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.RoleId == "" {
 		return nil, status.Error(codes.InvalidArgument, "role_id is required")
 	}
@@ -547,6 +568,9 @@ func (s *IAMServer) UpdateRole(ctx context.Context, req *iampb.UpdateRoleRequest
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.RoleId == "" {
 		return nil, status.Error(codes.InvalidArgument, "role_id is required")
@@ -578,6 +602,9 @@ func (s *IAMServer) DeleteRole(ctx context.Context, req *iampb.DeleteRoleRequest
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.RoleId == "" {
 		return nil, status.Error(codes.InvalidArgument, "role_id is required")
 	}
@@ -596,6 +623,9 @@ func (s *IAMServer) ListRoles(ctx context.Context, req *iampb.ListRolesRequest) 
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 
 	limit := int(req.Limit)
@@ -636,6 +666,9 @@ func (s *IAMServer) AssignRole(ctx context.Context, req *iampb.AssignRoleRequest
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -661,6 +694,9 @@ func (s *IAMServer) RevokeRole(ctx context.Context, req *iampb.RevokeRoleRequest
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -689,6 +725,9 @@ func (s *IAMServer) ReconcileRoles(ctx context.Context, req *iampb.ReconcileRole
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 
 	report, err := s.iamService.ReconcileBuiltInRoles(ctx, req.TenantId)
 	if err != nil {
@@ -711,6 +750,9 @@ func (s *IAMServer) RegisterApp(ctx context.Context, req *iampb.RegisterAppReque
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "app name is required")
@@ -743,6 +785,9 @@ func (s *IAMServer) GetApp(ctx context.Context, req *iampb.GetAppRequest) (*iamp
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ClientId == "" {
 		return nil, status.Error(codes.InvalidArgument, "client_id is required")
 	}
@@ -768,6 +813,9 @@ func (s *IAMServer) UpdateApp(ctx context.Context, req *iampb.UpdateAppRequest) 
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.ClientId == "" {
 		return nil, status.Error(codes.InvalidArgument, "client_id is required")
@@ -805,6 +853,9 @@ func (s *IAMServer) DeleteApp(ctx context.Context, req *iampb.DeleteAppRequest) 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ClientId == "" {
 		return nil, status.Error(codes.InvalidArgument, "client_id is required")
 	}
@@ -823,6 +874,9 @@ func (s *IAMServer) ListApps(ctx context.Context, req *iampb.ListAppsRequest) (*
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 
 	limit := int(req.Limit)
@@ -865,6 +919,9 @@ func (s *IAMServer) RotateAppSecret(ctx context.Context, req *iampb.RotateAppSec
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.ClientId == "" {
 		return nil, status.Error(codes.InvalidArgument, "client_id is required")
 	}
@@ -891,6 +948,9 @@ func (s *IAMServer) CreatePolicy(ctx context.Context, req *iampb.CreatePolicyReq
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "policy name is required")
@@ -970,6 +1030,9 @@ func (s *IAMServer) GetPolicy(ctx context.Context, req *iampb.GetPolicyRequest) 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.PolicyName == "" {
 		return nil, status.Error(codes.InvalidArgument, "policy_name is required")
 	}
@@ -991,6 +1054,9 @@ func (s *IAMServer) UpdatePolicy(ctx context.Context, req *iampb.UpdatePolicyReq
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.PolicyName == "" {
 		return nil, status.Error(codes.InvalidArgument, "policy_name is required")
@@ -1035,6 +1101,9 @@ func (s *IAMServer) DeletePolicy(ctx context.Context, req *iampb.DeletePolicyReq
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.PolicyName == "" {
 		return nil, status.Error(codes.InvalidArgument, "policy_name is required")
 	}
@@ -1053,6 +1122,9 @@ func (s *IAMServer) ListPolicies(ctx context.Context, req *iampb.ListPoliciesReq
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 
 	limit := int(req.Limit)
@@ -1093,6 +1165,9 @@ func (s *IAMServer) ValidatePolicy(ctx context.Context, req *iampb.ValidatePolic
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if len(req.SpecYaml) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "spec_yaml is required")
 	}
@@ -1114,6 +1189,9 @@ func (s *IAMServer) TestPolicy(ctx context.Context, req *iampb.TestPolicyRequest
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.Subject == nil {
 		return nil, status.Error(codes.InvalidArgument, "subject is required")
@@ -1405,6 +1483,9 @@ func (s *IAMServer) StartImpersonation(ctx context.Context, req *iampb.StartImpe
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.Reason == "" {
 		return nil, status.Error(codes.InvalidArgument, "reason is required")
 	}
@@ -1481,6 +1562,9 @@ func (s *IAMServer) GrantConsent(ctx context.Context, req *iampb.GrantConsentReq
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -1522,6 +1606,9 @@ func (s *IAMServer) WithdrawConsent(ctx context.Context, req *iampb.WithdrawCons
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -1555,6 +1642,9 @@ func (s *IAMServer) GetConsent(ctx context.Context, req *iampb.GetConsentRequest
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
@@ -1579,6 +1669,9 @@ func (s *IAMServer) ListUserConsents(ctx context.Context, req *iampb.ListUserCon
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -1618,6 +1711,9 @@ func (s *IAMServer) RequestExport(ctx context.Context, req *iampb.RequestExportR
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
@@ -1687,6 +1783,9 @@ func (s *IAMServer) RequestDeletion(ctx context.Context, req *iampb.RequestDelet
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
 	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")

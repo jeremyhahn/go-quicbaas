@@ -153,6 +153,10 @@ func (h *IAMHandler) resolveWebAuthnCredentialSubject(
 			NewIAMAPIError(ErrBadRequest, "tenant ID is required"))
 		return "", 0, nil, false
 	}
+	tenantID, ok := h.server.urlTenant(w, r, "rest.IAM", "tenant_id")
+	if !ok {
+		return "", 0, nil, false
+	}
 
 	userID, ok := requireUserIDParam(w, r)
 	if !ok {

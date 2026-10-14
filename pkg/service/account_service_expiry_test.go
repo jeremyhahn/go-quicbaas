@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -37,7 +36,7 @@ func TestAccountService_CreateAccount_MirrorsDeclaredExpiry(t *testing.T) {
 	svc := newTestAccountService(t)
 	expiry := time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second)
 
-	resp, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	resp, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:      "tenant-a",
 		Provider:      orchestration.AccountProviderClaude,
 		RefreshPolicy: orchestration.AccountRefreshNone,
@@ -57,7 +56,7 @@ func TestAccountService_CreateAccount_MirrorsDeclaredExpiry(t *testing.T) {
 		t.Fatalf("CredentialHealth() = %q, want valid", got)
 	}
 
-	stored, err := svc.GetAccount(context.Background(), &GetAccountRequest{TenantID: "tenant-a", AccountID: resp.Account.ID})
+	stored, err := svc.GetAccount(callerContext("tenant-a"), &GetAccountRequest{TenantID: "tenant-a", AccountID: resp.Account.ID})
 	if err != nil {
 		t.Fatalf("GetAccount() error = %v", err)
 	}
@@ -71,7 +70,7 @@ func TestAccountService_CreateAccount_MirrorsDeclaredExpiry(t *testing.T) {
 func TestAccountService_CreateAccount_UndeclaredExpiryStaysUnknown(t *testing.T) {
 	svc := newTestAccountService(t)
 
-	resp, err := svc.CreateAccount(context.Background(), &CreateAccountRequest{
+	resp, err := svc.CreateAccount(callerContext("tenant-a"), &CreateAccountRequest{
 		TenantID:      "tenant-a",
 		Provider:      orchestration.AccountProviderClaude,
 		RefreshPolicy: orchestration.AccountRefreshNone,
@@ -93,7 +92,7 @@ func TestAccountService_CreateAccount_UndeclaredExpiryStaysUnknown(t *testing.T)
 // the mirror rather than leaving the retired credential's expiry behind.
 func TestAccountService_RotateAccountCredential_ReplacesExpiry(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	nearlyGone := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{

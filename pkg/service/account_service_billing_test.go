@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -28,7 +27,7 @@ import (
 // alone.
 func TestAccountService_Billing_SetOnCreateAndChangedOnUpdate(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	subscription := orchestration.AccountBilling{Mode: orchestration.BillingSubscription, MonthlyFeeMicros: 200_000_000}
 
 	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
@@ -74,7 +73,7 @@ func TestAccountService_Billing_SetOnCreateAndChangedOnUpdate(t *testing.T) {
 // operator wrote.
 func TestAccountService_Billing_RefusedWithTheFieldNamed(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 
 	_, err := svc.CreateAccount(ctx, &CreateAccountRequest{
 		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude,
@@ -105,7 +104,7 @@ func TestAccountService_Billing_RefusedWithTheFieldNamed(t *testing.T) {
 // every transport calls, and an update without one leaves it alone.
 func TestAccountService_SpendPolicy_SetOnCreateAndChangedOnUpdate(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	policy := orchestration.AccountSpendPolicy{
 		Quota:   orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 2_000_000}}},
 		Breaker: &orchestration.BreakerPolicy{Window: time.Hour, FailureThreshold: 3, Cooldown: 30 * time.Minute},
@@ -136,7 +135,7 @@ func TestAccountService_SpendPolicy_SetOnCreateAndChangedOnUpdate(t *testing.T) 
 // window or breaker is refused at the write with the operator's field named.
 func TestAccountService_SpendPolicy_RefusedWithTheFieldNamed(t *testing.T) {
 	svc := newTestAccountService(t)
-	ctx := context.Background()
+	ctx := callerContext("tenant-a")
 	tests := []struct {
 		name   string
 		policy orchestration.AccountSpendPolicy
