@@ -542,7 +542,7 @@ func (c *restBatchClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
+	c.httpClient = helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	// Probe to verify batch operations are available
 	// REST API supports /batch/put and /batch/delete but not /batch/get
@@ -830,6 +830,7 @@ func (c *grpcBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	}
 	conn, err := grpc.DialContext(dialCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.DataPlaneGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -982,6 +983,7 @@ func (c *unixSocketBatchClient) Setup(t *testing.T, ctx context.Context) error {
 	conn, err := grpc.DialContext(dialCtx,
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.DataPlaneGRPCCredentials(t)),
 		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 10*time.Second)

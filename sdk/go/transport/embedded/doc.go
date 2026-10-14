@@ -19,6 +19,25 @@
 //   - Embedded deployments: Include QuicBaaS as a library in your application
 //   - Performance: Eliminate serialization and network latency for co-located clients
 //
+// # Authorization
+//
+// The embedded transport is NOT an authorization boundary. Linking the SDK is
+// the grant: code that can construct this transport around a service.QuicBaaS
+// already runs inside the process that owns that service, its storage and its
+// keys, so a per-call check here could not keep it out of anything. A call
+// with no subject bound to its context runs with the host's full authority.
+//
+// The host application authorizes its own callers before it calls an SDK
+// verb. When the host binds an authenticated subject to the context (see
+// pkg/auth), the IAM administration handlers also evaluate that subject's
+// permission and fail closed. That is the host narrowing its own callers,
+// not a boundary this transport enforces.
+//
+// gRPC stays a boundary. A call that crosses the network is authenticated and
+// authorized by the server's interceptors before it reaches the service
+// layer, and nothing about the embedded transport relaxes that.
+// (go-quicbaas#329, ruled with #301.)
+//
 // # Usage
 //
 // Create an embedded transport by providing a service.QuicBaaS instance:

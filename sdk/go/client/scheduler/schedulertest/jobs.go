@@ -24,6 +24,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
+// NextCursor is the cursor ListJobs answers with.
+const NextCursor = "page-2"
+
 // Jobs is an in-memory service.SchedulerService that records requests and
 // answers with a fixed job. Err, when set, is returned by every method.
 type Jobs struct {
@@ -52,6 +55,8 @@ func New() *Jobs {
 			OwnerID:   "acme",
 			Schedule:  "0 2 * * *",
 			Handler:   "noop",
+			Priority:  5,
+			LastError: "handler timed out",
 			Labels:    map[string]string{"team": "ops"},
 			NextRun:   now.Add(time.Hour),
 			RunCount:  3,
@@ -116,7 +121,7 @@ func (j *Jobs) ListJobs(_ context.Context, req *service.ListSchedulerJobsRequest
 	if err := j.record("ListJobs", req); err != nil {
 		return nil, err
 	}
-	return &service.ListSchedulerJobsResponse{Jobs: []*service.SchedulerJob{j.Job}, TotalCount: 1, Timestamp: j.stamp()}, nil
+	return &service.ListSchedulerJobsResponse{Jobs: []*service.SchedulerJob{j.Job}, NextCursor: NextCursor, HasMore: true, TotalCount: 1, Timestamp: j.stamp()}, nil
 }
 
 // TriggerJob records the request.

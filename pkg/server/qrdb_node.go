@@ -100,6 +100,12 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	// legible at the embedding site.
 	qcfg.Auth.Enabled = qrdbsdk.BoolPtr(cfg.Security.RequireAuthz)
 
+	// The node's mTLS authenticator pins the same SPIFFE trust domain the
+	// first-boot admin certificate is issued under (iam.spiffe_trust_domain),
+	// and the node's built-in CA stamps it on the client certificates it
+	// mints. Left empty, the node keeps qrdb's default: no SPIFFE pin.
+	qcfg.Auth.SPIFFETrustDomain = cfg.IAM.SPIFFETrustDomain
+
 	// ------------------------------------------------------------------ //
 	// Data directory: quicbaas uses Storage.DataDir; qrdb uses Raft.DataDir
 	// (the Node builder reads DataDir from cfg.Raft.DataDir for the pebble

@@ -126,6 +126,31 @@ func TestBuildQRDBConfig_DataDirFallbackToBarrierDir(t *testing.T) {
 	assert.Equal(t, "/tmp/barrier/barrier.db", qcfg.Raft.DataDir)
 }
 
+// TestBuildQRDBConfig_SPIFFETrustDomainReachesNode covers #125: the trust
+// domain an SDK consumer sets on iam.spiffe_trust_domain must reach the
+// embedded node's auth.spiffe_trust_domain in both modes, so the node's mTLS
+// authenticator pins the same domain the first-boot admin certificate carries.
+func TestBuildQRDBConfig_SPIFFETrustDomainReachesNode(t *testing.T) {
+	for _, clusterMode := range []bool{false, true} {
+		cfg := &config.Config{}
+		cfg.IAM.SPIFFETrustDomain = testTrustDomain
+
+		qcfg := mustBuildQRDBConfig(t, cfg, clusterMode)
+
+		assert.Equal(t, testTrustDomain, qcfg.Auth.SPIFFETrustDomain,
+			"clusterMode=%v: the node must pin the configured trust domain", clusterMode)
+	}
+}
+
+// TestBuildQRDBConfig_SPIFFETrustDomainUnsetLeavesNodeUnpinned covers the
+// unset half: no trust domain is invented for the node, which then keeps
+// qrdb's own default (no SPIFFE pin).
+func TestBuildQRDBConfig_SPIFFETrustDomainUnsetLeavesNodeUnpinned(t *testing.T) {
+	qcfg := mustBuildQRDBConfig(t, &config.Config{}, false)
+
+	assert.Empty(t, qcfg.Auth.SPIFFETrustDomain)
+}
+
 // ---------------------------------------------------------------------------
 // buildXKMSCryptoOptions
 // ---------------------------------------------------------------------------

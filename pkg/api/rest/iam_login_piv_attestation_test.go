@@ -254,6 +254,73 @@ func TestPIVLogin_AttestedCertificateIssuesAHardwareToken(t *testing.T) {
 	assert.Equal(t, []interface{}{"smartcard", "mfa"}, claims["amr"])
 }
 
+// pivRequestWithAttestationOutsideTheHandshake builds a PIV login whose TLS
+// handshake carries only the login certificate, while a genuine slot
+// attestation travels in the request instead: PEM in the JSON body and in a
+// header. This is how a browser would have to send it, because a browser's
+// client-certificate prompt presents the leaf and nothing the card attested.
+func pivRequestWithAttestationOutsideTheHandshake(t *testing.T, leaf, attestation *x509.Certificate) *http.Request {
+	t.Helper()
+	attestationPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: attestation.Raw}))
+	body, err := json.Marshal(map[string]string{"attestation_certificate": attestationPEM})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/piv", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-PIV-Attestation", base64.StdEncoding.EncodeToString(attestation.Raw))
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
+	return req
+}
+
+// Slot attestation is conveyed in the TLS handshake ONLY (go-quicbaas#422).
+// A genuine attestation over the right key, signed by the trusted vendor root,
+// proves nothing when it arrives in the request body or a header: the
+// handshake is where the client proved possession of the key, and evidence
+// accepted from anywhere else is not bound to that proof. The login is refused
+// exactly as if no attestation had been sent. This is deliberate, and it makes
+// attested PIV login browser-incompatible.
+func TestPIVLogin_AttestationOutsideTheHandshakeIsRefused(t *testing.T) {
+	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
+	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	vendorCA, vendorKey := pivLoginTestCA(t, "Yubico PIV Attestation Root")
+	attestation := pivSlotAttestationFor(t, leaf, vendorCA, vendorKey)
+	handler, _, cleanup := setupPIVFullHandler(t, leaf, "tenant-piv", true)
+	defer cleanup()
+	trustPIVAttestationCA(t, handler, vendorCA)
+
+	w := httptest.NewRecorder()
+	handler.PIVLogin(w, pivRequestWithAttestationOutsideTheHandshake(t, leaf, attestation))
+
+	require.Equal(t, http.StatusUnauthorized, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, ErrPIVCertIssuerRejected, pivErrorCode(t, w.Body.String()))
+}
+
+// Under allow_unattested the same request logs in, but as what the handshake
+// proved: a software key. An attestation outside the handshake never upgrades
+// the token to hardware or to mfa_verified.
+func TestPIVLogin_AttestationOutsideTheHandshakeNeverUpgradesTheToken(t *testing.T) {
+	ca, caKey := pivLoginTestCA(t, "PIV Root CA")
+	leaf := pivSpiffeLeaf(t, ca, caKey, "tenant-piv")
+	vendorCA, vendorKey := pivLoginTestCA(t, "Yubico PIV Attestation Root")
+	attestation := pivSlotAttestationFor(t, leaf, vendorCA, vendorKey)
+	handler, _, cleanup := setupPIVFullHandler(t, leaf, "tenant-piv", true)
+	defer cleanup()
+	trustPIVAttestationCA(t, handler, vendorCA)
+	allowUnattestedPIV(handler)
+
+	w := httptest.NewRecorder()
+	handler.PIVLogin(w, pivRequestWithAttestationOutsideTheHandshake(t, leaf, attestation))
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	claims := unverifiedJWTClaims(t, resp["id_token"].(string))
+	assert.Equal(t, "software", claims["attest_level"])
+	assert.NotEqual(t, "urn:quicbaas:auth:hardware-attested", claims["acr"])
+	assert.Equal(t, false, claims["mfa_verified"])
+}
+
 // TestPIVLoginAudit_RecordsTheProvenLevel proves the audit trail can tell a
 // verified smartcard login from one an operator opted into accepting
 // unattested. The record used to carry only attest_method ("smartcard"), which

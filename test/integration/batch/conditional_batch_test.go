@@ -1039,6 +1039,7 @@ func setupGRPCConnection(t *testing.T, ctx context.Context) *grpc.ClientConn {
 	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.DataPlaneGRPCCredentials(t)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	require.NoError(t, err, "Failed to dial gRPC server at %s", endpoint)

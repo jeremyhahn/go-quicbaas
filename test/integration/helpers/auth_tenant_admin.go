@@ -100,23 +100,10 @@ func authTenantAdmin(ctx context.Context, baseURL, tenantID, adminBearer string)
 	}
 	tenantAdminAuthCache.Unlock()
 
-	// Step 1: have the fixture CA issue an ephemeral tenant-scoped client cert.
-	certPEM, keyPEM, err := IssueTenantClientCert(ctx, tenantID)
+	// Steps 1-3: issue a tenant-scoped cert and enroll a PIV user bound to it.
+	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, adminBearer)
 	if err != nil {
-		return "", &TenantAdminCertError{TenantID: tenantID, Cause: err}
-	}
-
-	// Step 2: create user under the tenant (as system admin). The response
-	// contains the one-time invite_token.
-	email := fmt.Sprintf("tenant-admin-%s@integration.test", sanitizeTenantID(tenantID))
-	userID, inviteToken, err := createTenantAdminUser(ctx, baseURL, tenantID, email, adminBearer)
-	if err != nil {
-		return "", fmt.Errorf("authTenantAdmin: create user for %q: %w", tenantID, err)
-	}
-
-	// Step 3: activate the user via the PIV invite flow, binding the cert.
-	if err := ActivateInvitePIV(ctx, baseURL, tenantID, inviteToken, certPEM); err != nil {
-		return "", fmt.Errorf("authTenantAdmin: activate user %q in tenant %q: %w", userID, tenantID, err)
+		return "", fmt.Errorf("authTenantAdmin: %w", err)
 	}
 
 	// Step 4: grant tenant_admin role scoped to tenantID.
@@ -130,15 +117,34 @@ func authTenantAdmin(ctx context.Context, baseURL, tenantID, adminBearer string)
 		return "", fmt.Errorf("authTenantAdmin: PIV login for tenant %q: %w", tenantID, err)
 	}
 
-	expiry := time.Now().Add(15 * time.Minute)
-	if expiresIn > 60 {
-		expiry = time.Now().Add(time.Duration(expiresIn-60) * time.Second)
-	}
 	tenantAdminAuthCache.Lock()
-	tenantAdminAuthCache.tokens[cacheKey] = pivCachedToken{Bearer: bearer, ExpiresAt: expiry}
+	tenantAdminAuthCache.tokens[cacheKey] = pivCachedToken{Bearer: bearer, ExpiresAt: bearerExpiry(expiresIn)}
 	tenantAdminAuthCache.Unlock()
 
 	return bearer, nil
+}
+
+// enrollTenantPIVUser has the fixture CA issue an ephemeral tenant-scoped
+// client cert, creates a PIV user in tenantID (as the system admin) and
+// activates it through the invite flow, binding the cert. The user holds no
+// role: the caller grants whatever the principal is for.
+func enrollTenantPIVUser(ctx context.Context, baseURL, tenantID, adminBearer string) (userID string, certPEM, keyPEM []byte, err error) {
+	certPEM, keyPEM, err = IssueTenantClientCert(ctx, tenantID)
+	if err != nil {
+		return "", nil, nil, &TenantAdminCertError{TenantID: tenantID, Cause: err}
+	}
+
+	// The create-user response carries the one-time invite_token.
+	email := fmt.Sprintf("tenant-admin-%s@integration.test", sanitizeTenantID(tenantID))
+	userID, inviteToken, err := createTenantAdminUser(ctx, baseURL, tenantID, email, adminBearer)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("create user for %q: %w", tenantID, err)
+	}
+
+	if err := ActivateInvitePIV(ctx, baseURL, tenantID, inviteToken, certPEM); err != nil {
+		return "", nil, nil, fmt.Errorf("activate user %q in tenant %q: %w", userID, tenantID, err)
+	}
+	return userID, certPEM, keyPEM, nil
 }
 
 // TenantAdminCertError reports a failure obtaining the tenant-admin client

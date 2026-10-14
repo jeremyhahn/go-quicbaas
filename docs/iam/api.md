@@ -484,8 +484,10 @@ embedded transport all redeem through the same service
 | `ActivatePIV(ctx, tenantID, token, certPEM)` | `POST …/invites/{token}/activate/piv` | `ActivatePIV` |
 
 The four gRPC methods are in the public method set and carry no permission
-option. QUIC carries the REST rows. There are no MCP invite tools yet; they
-wait on a decision about public (pre-auth) MCP tools.
+option. QUIC carries the REST rows over HTTP/3 and Unix carries the gRPC
+column; `sdk/go/transport/{quic,unix}/*invite*_test.go` pin both, including the
+refusal of a request without the tenant the routes require. There are no MCP
+invite tools yet; they wait on a decision about public (pre-auth) MCP tools.
 
 `GetInvite` returns the invite's public metadata:
 

@@ -476,6 +476,16 @@ the store — and the KV read below it — to return protected memory. Enrollmen
 additionally renders the base32 form deliberately: the user has to scan or type
 it, so that copy is inherent to enrolling a shared secret.
 
+**Accepted known limitation (go-quicbaas#402).** The two unprotected segments
+are accepted as the boundary for now; QuicBaaS does not work around them. The
+KV read belongs to go-qrdb: `interfaces.KVStore.Get` returns `[]byte` from the
+qrdb read beneath it, so only a qrdb read that returns protected memory can
+close the first segment. A local shim would copy the plaintext into an enclave
+after it had already reached the heap, which removes nothing. Once go-qrdb
+adopts go-enclave, a protected-bytes KV read is to be filed on go-qrdb.
+QuicBaaS then moves the MFA store and `MFASecret.Secret` /
+`MFAEnrollment.Secret` onto that read, which closes both segments.
+
 Each enclave is destroyed when the authenticator built from it is done, so the
 protection is released rather than held for the process lifetime.
 

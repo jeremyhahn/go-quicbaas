@@ -1114,6 +1114,7 @@ func setupStreamingConnection(t *testing.T, ctx context.Context) *grpc.ClientCon
 	require.NoError(t, err, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.DataPlaneGRPCCredentials(t)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(64*1024*1024)), // 64MB max message
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(64*1024*1024)), // 64MB max message

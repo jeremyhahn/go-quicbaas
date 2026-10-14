@@ -40,6 +40,7 @@ func RunJobConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 		Timeout:      30 * time.Second,
 		Tags:         map[string]string{"team": "ops"},
 		NodeAffinity: "node-a",
+		Priority:     7,
 	})
 	if err != nil {
 		t.Fatalf("CreateJob: %v", err)
@@ -53,7 +54,7 @@ func RunJobConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 	}
 	if got.Name != "nightly" || got.Type != service.SchedulerJobTypeRecurring || got.Handler != "noop" ||
 		got.Schedule != "0 2 * * *" || got.OwnerType != service.SchedulerOwnerTypeTenant || got.MaxRetries != 3 ||
-		got.Timeout != 30*time.Second || got.Labels["team"] != "ops" || got.NodeAffinity != "node-a" {
+		got.Timeout != 30*time.Second || got.Labels["team"] != "ops" || got.NodeAffinity != "node-a" || got.Priority != 7 {
 		t.Errorf("server received CreateJob %+v", got)
 	}
 
@@ -65,7 +66,8 @@ func RunJobConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 		t.Errorf("server received GetJob %+v", jobs.Received("GetJob"))
 	}
 	if info.JobID != 42 || info.Name != "nightly" || info.JobType != scheduler.JobTypeRecurring ||
-		info.Status != scheduler.JobStatusPending || info.Tags["team"] != "ops" || info.ExecutionCount != 3 {
+		info.Status != scheduler.JobStatusPending || info.Tags["team"] != "ops" || info.ExecutionCount != 3 ||
+		info.Handler != "noop" || info.Priority != 5 || info.LastError != "handler timed out" {
 		t.Errorf("GetJob decoded %+v", info)
 	}
 
@@ -77,33 +79,68 @@ func RunJobConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 	}
 
 	status := scheduler.JobStatusPending
-	list, err := client.ListJobs(ctx, &scheduler.ListJobsOptions{Status: &status, Limit: 10})
+	list, err := client.ListJobs(ctx, &scheduler.ListJobsOptions{Status: &status, Limit: 10, Handler: "noop", Cursor: "page-1"})
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
-	if len(list.Jobs) != 1 || list.Jobs[0].JobID != 42 {
+	if len(list.Jobs) != 1 || list.Jobs[0].JobID != 42 || list.Jobs[0].Handler != "noop" ||
+		list.NextCursor != NextCursor || !list.HasMore {
 		t.Errorf("ListJobs decoded %+v", list)
 	}
-	if r, _ := jobs.Received("ListJobs").(*service.ListSchedulerJobsRequest); r == nil || r.Status != service.SchedulerJobStatusPending || r.Limit != 10 {
+	if r, _ := jobs.Received("ListJobs").(*service.ListSchedulerJobsRequest); r == nil || r.Status != service.SchedulerJobStatusPending || r.Limit != 10 ||
+		r.Handler != "noop" || r.Cursor != "page-1" {
 		t.Errorf("server received ListJobs %+v", jobs.Received("ListJobs"))
 	}
 
-	type idCall struct {
-		method string
-		call   func() error
+	trigger, err := client.TriggerJob(ctx, 42)
+	if err != nil {
+		t.Fatalf("TriggerJob: %v", err)
 	}
-	for _, c := range []idCall{
-		{"TriggerJob", func() error { _, err := client.TriggerJob(ctx, 42); return err }},
-		{"PauseJob", func() error { _, err := client.PauseJob(ctx, 42); return err }},
-		{"ResumeJob", func() error { _, err := client.ResumeJob(ctx, 42); return err }},
-		{"DeleteJob", func() error { return client.DeleteJob(ctx, 42) }},
-	} {
-		if err := c.call(); err != nil {
-			t.Fatalf("%s: %v", c.method, err)
-		}
-		if jobs.Received(c.method) == nil {
-			t.Errorf("%s never reached the server", c.method)
-		}
+	if r, _ := jobs.Received("TriggerJob").(*service.TriggerSchedulerJobRequest); r == nil || r.JobID != 42 {
+		t.Errorf("server received TriggerJob %+v", jobs.Received("TriggerJob"))
+	}
+	if trigger.JobID != 42 || trigger.Status != scheduler.JobStatusRunning {
+		t.Errorf("TriggerJob decoded %+v", trigger)
+	}
+
+	pause, err := client.PauseJob(ctx, 42)
+	if err != nil {
+		t.Fatalf("PauseJob: %v", err)
+	}
+	if r, _ := jobs.Received("PauseJob").(*service.PauseSchedulerJobRequest); r == nil || r.JobID != 42 {
+		t.Errorf("server received PauseJob %+v", jobs.Received("PauseJob"))
+	}
+	if pause.JobID != 42 || pause.OldStatus != scheduler.JobStatusPending || pause.NewStatus != scheduler.JobStatusPaused {
+		t.Errorf("PauseJob decoded %+v", pause)
+	}
+
+	resume, err := client.ResumeJob(ctx, 42)
+	if err != nil {
+		t.Fatalf("ResumeJob: %v", err)
+	}
+	if r, _ := jobs.Received("ResumeJob").(*service.ResumeSchedulerJobRequest); r == nil || r.JobID != 42 {
+		t.Errorf("server received ResumeJob %+v", jobs.Received("ResumeJob"))
+	}
+	if resume.JobID != 42 || resume.OldStatus != scheduler.JobStatusPaused || resume.NewStatus != scheduler.JobStatusPending {
+		t.Errorf("ResumeJob decoded %+v", resume)
+	}
+
+	if err := client.DeleteJob(ctx, 42); err != nil {
+		t.Fatalf("DeleteJob: %v", err)
+	}
+	if r, _ := jobs.Received("DeleteJob").(*service.DeleteSchedulerJobRequest); r == nil || r.JobID != 42 || r.Force {
+		t.Errorf("server received DeleteJob %+v", jobs.Received("DeleteJob"))
+	}
+
+	deleted, err := client.DeleteJobWithOptions(ctx, &scheduler.DeleteJobRequest{JobID: 42, Force: true})
+	if err != nil {
+		t.Fatalf("DeleteJobWithOptions: %v", err)
+	}
+	if r, _ := jobs.Received("DeleteJob").(*service.DeleteSchedulerJobRequest); r == nil || r.JobID != 42 || !r.Force {
+		t.Errorf("server received forced DeleteJob %+v", jobs.Received("DeleteJob"))
+	}
+	if deleted.JobID != 42 || !deleted.Deleted {
+		t.Errorf("DeleteJobWithOptions decoded %+v", deleted)
 	}
 
 	cancel, err := client.CancelJob(ctx, 42, "maintenance")
@@ -113,7 +150,8 @@ func RunJobConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 	if r, _ := jobs.Received("CancelJob").(*service.CancelSchedulerJobRequest); r == nil || r.JobID != 42 || r.Reason != "maintenance" {
 		t.Errorf("server received CancelJob %+v", jobs.Received("CancelJob"))
 	}
-	if cancel.JobID != 42 || cancel.Reason != "maintenance" {
+	if cancel.JobID != 42 || cancel.Reason != "maintenance" ||
+		cancel.OldStatus != scheduler.JobStatusPending || cancel.NewStatus != scheduler.JobStatusCanceled {
 		t.Errorf("CancelJob decoded %+v", cancel)
 	}
 

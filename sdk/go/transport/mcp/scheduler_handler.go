@@ -115,6 +115,9 @@ func (h *schedulerHandler) transformCreateJobRequest(req interface{}) (map[strin
 	if sdkReq.Timeout > 0 {
 		args["timeout"] = sdkReq.Timeout.String()
 	}
+	if sdkReq.Priority != 0 {
+		args["priority"] = sdkReq.Priority
+	}
 	if len(sdkReq.Tags) > 0 {
 		tagsJSON, _ := json.Marshal(sdkReq.Tags)
 		args["labels"] = string(tagsJSON)
@@ -201,8 +204,7 @@ func (h *schedulerHandler) transformResponse(method string, resp interface{}) (i
 	case "UpdateJob":
 		return h.transformUpdateJobResponse(resp)
 	case "DeleteJob":
-		// DeleteJob returns nil on success
-		return nil, nil
+		return h.transformDeleteJobResponse(resp)
 	case "ListJobs":
 		return h.transformListJobsResponse(resp)
 	case "TriggerJob":
@@ -342,6 +344,7 @@ func (h *schedulerHandler) transformListJobsResponse(resp interface{}) (*schedul
 	result := &scheduler.ListJobsResponse{
 		TotalCount: int(getInt64FromMap(data, "total_count")),
 		HasMore:    getBoolFromMap(data, "has_more"),
+		NextCursor: getStringFromMap(data, "next_cursor"),
 	}
 
 	// Parse jobs array
@@ -378,6 +381,31 @@ func (h *schedulerHandler) transformTriggerJobResponse(resp interface{}) (*sched
 		JobID:       getUint64FromMap(data, "job_id"),
 		ExecutionID: getUint64FromMap(data, "execution_id"),
 		StartedAt:   parseTimeFromMap(data, "started_at"),
+		Status:      parseJobStatus(getStringFromMap(data, "status")),
+	}, nil
+}
+
+// transformDeleteJobResponse converts MCP response to SDK DeleteJobResponse.
+func (h *schedulerHandler) transformDeleteJobResponse(resp interface{}) (*scheduler.DeleteJobResponse, error) {
+	if resp == nil {
+		return &scheduler.DeleteJobResponse{}, nil
+	}
+
+	data, ok := resp.(map[string]interface{})
+	if !ok {
+		jsonBytes, err := json.Marshal(resp)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(jsonBytes, &data); err != nil {
+			return nil, err
+		}
+	}
+
+	return &scheduler.DeleteJobResponse{
+		JobID:     getUint64FromMap(data, "job_id"),
+		Deleted:   getBoolFromMap(data, "deleted"),
+		DeletedAt: parseTimeFromMap(data, "timestamp"),
 	}, nil
 }
 
@@ -399,8 +427,10 @@ func (h *schedulerHandler) transformPauseJobResponse(resp interface{}) (*schedul
 	}
 
 	return &scheduler.PauseJobResponse{
-		JobID:    getUint64FromMap(data, "job_id"),
-		PausedAt: parseTimeFromMap(data, "paused_at"),
+		JobID:     getUint64FromMap(data, "job_id"),
+		PausedAt:  parseTimeFromMap(data, "paused_at"),
+		OldStatus: parseJobStatus(getStringFromMap(data, "old_status")),
+		NewStatus: parseJobStatus(getStringFromMap(data, "new_status")),
 	}, nil
 }
 
@@ -425,6 +455,8 @@ func (h *schedulerHandler) transformResumeJobResponse(resp interface{}) (*schedu
 		JobID:     getUint64FromMap(data, "job_id"),
 		ResumedAt: parseTimeFromMap(data, "resumed_at"),
 		NextRunAt: parseTimeFromMap(data, "next_run_at"),
+		OldStatus: parseJobStatus(getStringFromMap(data, "old_status")),
+		NewStatus: parseJobStatus(getStringFromMap(data, "new_status")),
 	}, nil
 }
 
@@ -449,6 +481,8 @@ func (h *schedulerHandler) transformCancelJobResponse(resp interface{}) (*schedu
 		JobID:      getUint64FromMap(data, "job_id"),
 		CanceledAt: parseTimeFromMap(data, "canceled_at"),
 		Reason:     getStringFromMap(data, "reason"),
+		OldStatus:  parseJobStatus(getStringFromMap(data, "old_status")),
+		NewStatus:  parseJobStatus(getStringFromMap(data, "new_status")),
 	}, nil
 }
 
@@ -563,6 +597,9 @@ func (h *schedulerHandler) parseJobInfo(resp interface{}) (*scheduler.JobInfo, e
 		Payload:        getBytesFromMap(data, "payload"),
 		OwnerType:      parseOwnerType(getStringFromMap(data, "owner_type")),
 		OwnerID:        getStringFromMap(data, "owner_id"),
+		Handler:        getStringFromMap(data, "handler"),
+		Priority:       int(getInt64FromMap(data, "priority")),
+		LastError:      getStringFromMap(data, "last_error"),
 		MaxRetries:     int(getInt64FromMap(data, "max_retries")),
 		Timeout:        time.Duration(getInt64FromMap(data, "timeout")),
 		ExecutionCount: getUint64FromMap(data, "execution_count"),

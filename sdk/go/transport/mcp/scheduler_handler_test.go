@@ -56,6 +56,9 @@ func TestSchedulerCreateJobEndToEnd(t *testing.T) {
 			if args["labels"] != `{"env":"prod"}` {
 				t.Errorf("labels = %v", args["labels"])
 			}
+			if args["priority"] != float64(7) {
+				t.Errorf("priority = %v, want 7", args["priority"])
+			}
 		},
 		result: map[string]interface{}{
 			"job": map[string]interface{}{
@@ -78,6 +81,7 @@ func TestSchedulerCreateJobEndToEnd(t *testing.T) {
 		Delay:      5 * time.Second,
 		OwnerID:    "tenant-1",
 		Tags:       map[string]string{"env": "prod"},
+		Priority:   7,
 	})
 	if err != nil {
 		t.Fatalf("CreateJob: %v", err)
@@ -161,40 +165,88 @@ func TestSchedulerUpdateJobEndToEnd(t *testing.T) {
 }
 
 func TestSchedulerDeleteJobEndToEnd(t *testing.T) {
-	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
-		wantTool: "quicbaas_scheduler_delete_job",
-		result:   map[string]interface{}{"deleted": true},
-	})
-	defer cleanup()
+	ts := time.Now().UTC().Truncate(time.Second)
 
-	if err := scheduler.NewClient(tr).DeleteJob(context.Background(), 9); err != nil {
-		t.Fatalf("DeleteJob: %v", err)
-	}
+	t.Run("delete", func(t *testing.T) {
+		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+			wantTool: "quicbaas_scheduler_delete_job",
+			result:   map[string]interface{}{"deleted": true},
+		})
+		defer cleanup()
+
+		if err := scheduler.NewClient(tr).DeleteJob(context.Background(), 9); err != nil {
+			t.Fatalf("DeleteJob: %v", err)
+		}
+	})
+
+	t.Run("force", func(t *testing.T) {
+		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+			wantTool: "quicbaas_scheduler_delete_job",
+			assertArgs: func(t *testing.T, args map[string]interface{}) {
+				if args["job_id"] != float64(9) {
+					t.Errorf("job_id = %v, want 9", args["job_id"])
+				}
+				if args["force"] != true {
+					t.Errorf("force = %v, want true", args["force"])
+				}
+			},
+			result: map[string]interface{}{
+				"job_id": float64(9), "deleted": true, "timestamp": ts.Format(time.RFC3339Nano),
+			},
+		})
+		defer cleanup()
+
+		resp, err := scheduler.NewClient(tr).DeleteJobWithOptions(context.Background(),
+			&scheduler.DeleteJobRequest{JobID: 9, Force: true})
+		if err != nil {
+			t.Fatalf("DeleteJobWithOptions: %v", err)
+		}
+		if resp.JobID != 9 || !resp.Deleted || !resp.DeletedAt.Equal(ts) {
+			t.Errorf("delete mismatch: %+v", resp)
+		}
+	})
 }
 
 func TestSchedulerListJobsEndToEnd(t *testing.T) {
 	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
 		wantTool: "quicbaas_scheduler_list_jobs",
+		assertArgs: func(t *testing.T, args map[string]interface{}) {
+			if args["handler"] != "backup" {
+				t.Errorf("handler = %v, want backup", args["handler"])
+			}
+			if args["cursor"] != "page-1" {
+				t.Errorf("cursor = %v, want page-1", args["cursor"])
+			}
+		},
 		result: map[string]interface{}{
 			"jobs": []interface{}{
 				map[string]interface{}{"id": float64(1), "name": "a", "status": "pending"},
-				map[string]interface{}{"id": float64(2), "name": "b", "status": "completed"},
+				map[string]interface{}{
+					"id": float64(2), "name": "b", "status": "completed",
+					"handler": "backup", "priority": float64(5), "last_error": "disk full",
+				},
 			},
 			"total_count": float64(2),
 			"has_more":    true,
+			"next_cursor": "page-2",
 		},
 	})
 	defer cleanup()
 
-	resp, err := scheduler.NewClient(tr).ListJobs(context.Background(), &scheduler.ListJobsOptions{Limit: 10})
+	resp, err := scheduler.NewClient(tr).ListJobs(context.Background(),
+		&scheduler.ListJobsOptions{Limit: 10, Handler: "backup", Cursor: "page-1"})
 	if err != nil {
 		t.Fatalf("ListJobs: %v", err)
 	}
-	if len(resp.Jobs) != 2 || resp.TotalCount != 2 || !resp.HasMore {
+	if len(resp.Jobs) != 2 || resp.TotalCount != 2 || !resp.HasMore || resp.NextCursor != "page-2" {
 		t.Errorf("decoded list mismatch: %+v", resp)
 	}
-	if resp.Jobs[1].Name != "b" || resp.Jobs[1].Status != scheduler.JobStatusCompleted {
-		t.Errorf("job summary mismatch: %+v", resp.Jobs[1])
+	job := resp.Jobs[1]
+	if job.Name != "b" || job.Status != scheduler.JobStatusCompleted {
+		t.Errorf("job summary mismatch: %+v", job)
+	}
+	if job.Handler != "backup" || job.Priority != 5 || job.LastError != "disk full" {
+		t.Errorf("job fields mismatch: %+v", job)
 	}
 }
 
@@ -206,6 +258,7 @@ func TestSchedulerTriggerPauseResumeCancel(t *testing.T) {
 			wantTool: "quicbaas_scheduler_trigger_job",
 			result: map[string]interface{}{
 				"job_id": float64(3), "execution_id": float64(99), "started_at": ts.Format(time.RFC3339),
+				"status": "running",
 			},
 		})
 		defer cleanup()
@@ -213,7 +266,7 @@ func TestSchedulerTriggerPauseResumeCancel(t *testing.T) {
 		if err != nil {
 			t.Fatalf("TriggerJob: %v", err)
 		}
-		if resp.JobID != 3 || resp.ExecutionID != 99 {
+		if resp.JobID != 3 || resp.ExecutionID != 99 || resp.Status != scheduler.JobStatusRunning {
 			t.Errorf("trigger mismatch: %+v", resp)
 		}
 	})
@@ -221,7 +274,10 @@ func TestSchedulerTriggerPauseResumeCancel(t *testing.T) {
 	t.Run("pause", func(t *testing.T) {
 		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
 			wantTool: "quicbaas_scheduler_pause_job",
-			result:   map[string]interface{}{"job_id": float64(3), "paused_at": ts.Format(time.RFC3339)},
+			result: map[string]interface{}{
+				"job_id": float64(3), "paused_at": ts.Format(time.RFC3339),
+				"old_status": "pending", "new_status": "paused",
+			},
 		})
 		defer cleanup()
 		resp, err := scheduler.NewClient(tr).PauseJob(context.Background(), 3)
@@ -231,6 +287,9 @@ func TestSchedulerTriggerPauseResumeCancel(t *testing.T) {
 		if resp.JobID != 3 || !resp.PausedAt.Equal(ts) {
 			t.Errorf("pause mismatch: %+v", resp)
 		}
+		if resp.OldStatus != scheduler.JobStatusPending || resp.NewStatus != scheduler.JobStatusPaused {
+			t.Errorf("pause mismatch: %+v", resp)
+		}
 	})
 
 	t.Run("resume", func(t *testing.T) {
@@ -238,6 +297,7 @@ func TestSchedulerTriggerPauseResumeCancel(t *testing.T) {
 			wantTool: "quicbaas_scheduler_resume_job",
 			result: map[string]interface{}{
 				"job_id": float64(3), "resumed_at": ts.Format(time.RFC3339), "next_run_at": ts.Format(time.RFC3339),
+				"old_status": "paused", "new_status": "pending",
 			},
 		})
 		defer cleanup()
@@ -245,7 +305,7 @@ func TestSchedulerTriggerPauseResumeCancel(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResumeJob: %v", err)
 		}
-		if resp.JobID != 3 {
+		if resp.JobID != 3 || resp.OldStatus != scheduler.JobStatusPaused || resp.NewStatus != scheduler.JobStatusPending {
 			t.Errorf("resume mismatch: %+v", resp)
 		}
 	})
@@ -260,6 +320,7 @@ func TestSchedulerTriggerPauseResumeCancel(t *testing.T) {
 			},
 			result: map[string]interface{}{
 				"job_id": float64(3), "canceled_at": ts.Format(time.RFC3339), "reason": "obsolete",
+				"old_status": "running", "new_status": "canceled",
 			},
 		})
 		defer cleanup()
@@ -268,6 +329,9 @@ func TestSchedulerTriggerPauseResumeCancel(t *testing.T) {
 			t.Fatalf("CancelJob: %v", err)
 		}
 		if resp.JobID != 3 || resp.Reason != "obsolete" {
+			t.Errorf("cancel mismatch: %+v", resp)
+		}
+		if resp.OldStatus != scheduler.JobStatusRunning || resp.NewStatus != scheduler.JobStatusCanceled {
 			t.Errorf("cancel mismatch: %+v", resp)
 		}
 	})
@@ -457,6 +521,9 @@ func TestSchedulerNilResponses(t *testing.T) {
 	if r, err := h.transformListJobsResponse(nil); err != nil || r == nil {
 		t.Errorf("transformListJobsResponse(nil) = %v, %v", r, err)
 	}
+	if r, err := h.transformDeleteJobResponse(nil); err != nil || r == nil {
+		t.Errorf("transformDeleteJobResponse(nil) = %v, %v", r, err)
+	}
 	if r, err := h.transformGetStatusResponse(nil); err != nil || r == nil {
 		t.Errorf("transformGetStatusResponse(nil) = %v, %v", r, err)
 	}
@@ -622,6 +689,9 @@ func TestSchedulerResponseStructFallback(t *testing.T) {
 	if r, err := h.transformTriggerJobResponse(schedJobJSON{JobID: 2, ExecutionID: 9, StartedAt: ts}); err != nil || r.ExecutionID != 9 {
 		t.Errorf("trigger fallback = %+v, %v", r, err)
 	}
+	if r, err := h.transformDeleteJobResponse(schedJobJSON{JobID: 5}); err != nil || r.JobID != 5 {
+		t.Errorf("delete fallback = %+v, %v", r, err)
+	}
 	if r, err := h.transformPauseJobResponse(schedJobJSON{JobID: 3, PausedAt: ts}); err != nil || r.JobID != 3 {
 		t.Errorf("pause fallback = %+v, %v", r, err)
 	}
@@ -664,5 +734,8 @@ func TestSchedulerResponseMarshalError(t *testing.T) {
 	}
 	if _, err := h.parseJobInfo(bad); err == nil {
 		t.Error("parseJobInfo should fail to marshal channel")
+	}
+	if _, err := h.transformDeleteJobResponse(bad); err == nil {
+		t.Error("delete should fail to marshal channel")
 	}
 }

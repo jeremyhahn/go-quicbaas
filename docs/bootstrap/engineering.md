@@ -215,6 +215,26 @@ administrator never re-enters first-boot.
 synthesized value would be baked into every issued certificate and would
 invalidate all of them the moment a real trust domain was configured.
 
+### Setting It from an SDK Consumer
+
+A program that embeds quicbaas sets the same key, `iam.spiffe_trust_domain`, on
+the `sdk.ServerFullConfig` it passes to `sdk.NewServer`; no extra option is
+needed:
+
+```go
+cfg := sdk.EmbeddedServerConfig()
+cfg.IAM.SPIFFETrustDomain = "quicbaas.example.test"
+srv, err := sdk.NewServer(cfg)
+```
+
+The value reaches both halves of the stack: first-boot issues the admin
+certificate under it, and the embedded qrdb node receives it as its own
+`auth.spiffe_trust_domain`, so the node's mTLS authenticator pins the same
+domain and its built-in CA stamps it on the client certificates it mints. Left
+unset, the node keeps qrdb's default (no SPIFFE pin), and first-boot behaves as
+described above: it fails closed when a CA is available, and warns and creates
+the admin without a certificate when none is.
+
 ## Mutual Exclusion with Password Auth
 
 The first-boot certificate path only runs when **both** of the following are

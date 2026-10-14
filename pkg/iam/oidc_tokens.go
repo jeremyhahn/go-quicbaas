@@ -673,6 +673,14 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 	// frozen into the refresh session, so every renewal for the whole refresh
 	// window repeated the assertion. A relying party enforcing an MFA policy
 	// admitted the weakest login this endpoint can issue.
+	//
+	// Proven hardware alone satisfying mfa_verified is the accepted rule for
+	// the release candidate (go-quicbaas#416). It counts what the credential
+	// IS, not what the holder proved at login: no knowledge or inherence
+	// factor is checked here. The planned follow-up makes second-factor
+	// evidence part of the derivation: the WebAuthn user-verification (UV)
+	// flag for FIDO2, and the slot's PIN policy for PIV. Pinned by
+	// TestIssueHardwareTokens_ProvenHardwareSatisfiesMFA.
 	mfaVerified := opts.Attestation.IsHardware()
 
 	now := time.Now()

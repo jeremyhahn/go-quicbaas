@@ -45,6 +45,16 @@ the routes below. Until go-quicbaas#1143 the job methods were served over MCP
 only; gRPC, Unix and embedded fell through to an untyped call and REST never
 substituted `{id}`.
 
+The SDK job types carry what the service returns: `JobInfo.Handler`,
+`Priority` and `LastError`; `CreateJobRequest.Priority`;
+`ListJobsOptions.Handler` and `Cursor`, with `ListJobsResponse.NextCursor`;
+`TriggerJobResponse.Status`; and `OldStatus`/`NewStatus` on pause, resume and
+cancel. `DeleteJobWithOptions` sends `Force` and returns `Deleted`; it rides
+the `DeleteJob` method above. `pkg/apimodule/module_scheduler_parity_test.go`
+round-trips these fields over every transport. Over MCP the SDK handler still
+reads older key names for labels, retries, timeout, cancel reason, history and
+status (go-quicbaas#185).
+
 MCP tools: `quicbaas_scheduler_cancel_job`, `quicbaas_scheduler_cordon_node`, `quicbaas_scheduler_create_job`, `quicbaas_scheduler_delete_job`, `quicbaas_scheduler_deregister_node`, `quicbaas_scheduler_drain_node`, `quicbaas_scheduler_get_job`, `quicbaas_scheduler_get_node`, `quicbaas_scheduler_get_placement`, `quicbaas_scheduler_job_history`, `quicbaas_scheduler_list_jobs`, `quicbaas_scheduler_list_nodes`, `quicbaas_scheduler_list_placements`, `quicbaas_scheduler_pause_job`, `quicbaas_scheduler_place`, `quicbaas_scheduler_register_node`, `quicbaas_scheduler_release`, `quicbaas_scheduler_renew_node`, `quicbaas_scheduler_resume_job`, `quicbaas_scheduler_status`, `quicbaas_scheduler_trigger_job`, `quicbaas_scheduler_uncordon_node`, `quicbaas_scheduler_update_job`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |

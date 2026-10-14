@@ -39,6 +39,11 @@ type Client interface {
 	// DeleteJob removes a scheduled job.
 	DeleteJob(ctx context.Context, jobID uint64) error
 
+	// DeleteJobWithOptions removes a scheduled job, forcing the removal of
+	// a running job when req.Force is set, and reports whether it was
+	// deleted.
+	DeleteJobWithOptions(ctx context.Context, req *DeleteJobRequest) (*DeleteJobResponse, error)
+
 	// ListJobs returns jobs matching the query criteria.
 	ListJobs(ctx context.Context, opts *ListJobsOptions) (*ListJobsResponse, error)
 
@@ -217,6 +222,13 @@ type JobInfo struct {
 	ExecutionCount uint64
 	FailureCount   uint64
 	Tags           map[string]string
+
+	// Handler is the registered handler the job runs.
+	Handler string
+	// Priority orders jobs that are due at the same time; higher runs first.
+	Priority int
+	// LastError is the error message of the job's most recent failed run.
+	LastError string
 }
 
 // CreateJobRequest is a request to create a scheduled job.
@@ -245,6 +257,9 @@ type CreateJobRequest struct {
 	// on node-local state (e.g., certs whose private keys live only
 	// on the local node).
 	NodeAffinity string `json:"node_affinity,omitempty"`
+
+	// Priority orders jobs that are due at the same time; higher runs first.
+	Priority int `json:"priority,omitempty"`
 }
 
 // CreateJobResponse is the response from job creation.
@@ -275,6 +290,11 @@ type ListJobsOptions struct {
 	Tags      map[string]string `json:"tags,omitempty"`
 	Limit     int               `json:"limit,omitempty"`
 	Offset    int               `json:"offset,omitempty"`
+
+	// Handler restricts the list to jobs that run this handler.
+	Handler string `json:"handler,omitempty"`
+	// Cursor resumes a listing from a previous ListJobsResponse.NextCursor.
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // ListJobsResponse is the response from listing jobs.
@@ -282,6 +302,8 @@ type ListJobsResponse struct {
 	Jobs       []JobInfo
 	TotalCount int
 	HasMore    bool
+	// NextCursor is passed as ListJobsOptions.Cursor to fetch the next page.
+	NextCursor string
 }
 
 // TriggerJobResponse is the response from triggering a job.
@@ -289,12 +311,16 @@ type TriggerJobResponse struct {
 	JobID       uint64
 	ExecutionID uint64
 	StartedAt   time.Time
+	// Status is the job's status after the trigger.
+	Status JobStatus
 }
 
 // PauseJobResponse is the response from pausing a job.
 type PauseJobResponse struct {
-	JobID    uint64
-	PausedAt time.Time
+	JobID     uint64
+	PausedAt  time.Time
+	OldStatus JobStatus
+	NewStatus JobStatus
 }
 
 // ResumeJobResponse is the response from resuming a job.
@@ -302,6 +328,8 @@ type ResumeJobResponse struct {
 	JobID     uint64
 	ResumedAt time.Time
 	NextRunAt time.Time
+	OldStatus JobStatus
+	NewStatus JobStatus
 }
 
 // CancelJobResponse is the response from canceling a job.
@@ -309,6 +337,8 @@ type CancelJobResponse struct {
 	JobID      uint64
 	CanceledAt time.Time
 	Reason     string
+	OldStatus  JobStatus
+	NewStatus  JobStatus
 }
 
 // HistoryOptions specifies options for retrieving job history.
@@ -376,10 +406,16 @@ type GetJobRequest struct {
 type DeleteJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
+	// Force deletes the job even while it is running.
+	Force bool `json:"force,omitempty"`
 }
 
 // DeleteJobResponse is the transport response of DeleteJob.
-type DeleteJobResponse struct{}
+type DeleteJobResponse struct {
+	JobID     uint64
+	Deleted   bool
+	DeletedAt time.Time
+}
 
 // TriggerJobRequest is the transport request of TriggerJob.
 type TriggerJobRequest struct {
@@ -514,29 +550,50 @@ func (c *client) UpdateJob(ctx context.Context, req *UpdateJobRequest) (*JobInfo
 
 // DeleteJob removes a scheduled job.
 func (c *client) DeleteJob(ctx context.Context, jobID uint64) error {
-	if jobID == 0 {
-		return errors.NewInvalidInput("scheduler.DeleteJob", "job ID is required")
+	_, err := c.deleteJob(ctx, "scheduler.DeleteJob", &DeleteJobRequest{JobID: jobID}, true)
+	return err
+}
+
+// DeleteJobWithOptions removes a scheduled job and reports whether it was
+// deleted.
+func (c *client) DeleteJobWithOptions(ctx context.Context, req *DeleteJobRequest) (*DeleteJobResponse, error) {
+	const op = "scheduler.DeleteJobWithOptions"
+	if req == nil {
+		return nil, errors.NewInvalidInput(op, "request is required")
+	}
+	return c.deleteJob(ctx, op, req, false)
+}
+
+// deleteJob sends a DeleteJob request. A transport that answers without a
+// body is accepted only when allowEmpty is set; DeleteJob reports no result,
+// so it does not need one.
+func (c *client) deleteJob(ctx context.Context, op string, req *DeleteJobRequest, allowEmpty bool) (*DeleteJobResponse, error) {
+	if req.JobID == 0 {
+		return nil, errors.NewInvalidInput(op, "job ID is required")
 	}
 
 	if ctx == nil {
-		return errors.NewInvalidInput("scheduler.DeleteJob", "context is required")
+		return nil, errors.NewInvalidInput(op, "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "DeleteJob", &DeleteJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "DeleteJob", req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Accept nil response or valid response
 	if resp == nil {
-		return nil
+		if allowEmpty {
+			return &DeleteJobResponse{JobID: req.JobID}, nil
+		}
+		return nil, errors.NewInternal(op, "nil response from server")
 	}
 
-	if _, ok := resp.(*DeleteJobResponse); !ok {
-		return errors.NewInternal("scheduler.DeleteJob", "invalid response type")
+	deleteResp, ok := resp.(*DeleteJobResponse)
+	if !ok {
+		return nil, errors.NewInternal(op, "invalid response type")
 	}
 
-	return nil
+	return deleteResp, nil
 }
 
 // ListJobs returns jobs matching the query criteria.

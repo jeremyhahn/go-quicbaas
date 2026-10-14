@@ -594,6 +594,113 @@ func TestClient_DeleteJob(t *testing.T) {
 	}
 }
 
+func TestClient_DeleteJobWithOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		ctx       context.Context
+		req       *DeleteJobRequest
+		transport *mockTransport
+		wantErr   bool
+		errCode   errors.ErrorCode
+	}{
+		{
+			name: "force delete returns the result",
+			ctx:  context.Background(),
+			req:  &DeleteJobRequest{JobID: 123, Force: true},
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					if method != "DeleteJob" {
+						t.Errorf("expected method %q, got %q", "DeleteJob", method)
+					}
+					if r, ok := req.(*DeleteJobRequest); !ok || !r.Force {
+						t.Errorf("expected a forced *DeleteJobRequest, got %+v", req)
+					}
+					return &DeleteJobResponse{JobID: 123, Deleted: true}, nil
+				},
+			},
+		},
+		{
+			name:      "nil request",
+			ctx:       context.Background(),
+			req:       nil,
+			transport: &mockTransport{},
+			wantErr:   true,
+			errCode:   errors.CodeInvalidInput,
+		},
+		{
+			name:      "zero job ID",
+			ctx:       context.Background(),
+			req:       &DeleteJobRequest{},
+			transport: &mockTransport{},
+			wantErr:   true,
+			errCode:   errors.CodeInvalidInput,
+		},
+		{
+			name:      "nil context",
+			ctx:       nil,
+			req:       &DeleteJobRequest{JobID: 123},
+			transport: &mockTransport{},
+			wantErr:   true,
+			errCode:   errors.CodeInvalidInput,
+		},
+		{
+			name: "nil response",
+			ctx:  context.Background(),
+			req:  &DeleteJobRequest{JobID: 123},
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
+		},
+		{
+			name: "invalid response type",
+			ctx:  context.Background(),
+			req:  &DeleteJobRequest{JobID: 123},
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return 123, nil
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeInternal,
+		},
+		{
+			name: "job not found",
+			ctx:  context.Background(),
+			req:  &DeleteJobRequest{JobID: 999},
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return nil, errors.NewNotFound("test", "job not found")
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := NewClient(tt.transport)
+			resp, err := client.DeleteJobWithOptions(tt.ctx, tt.req)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("DeleteJobWithOptions() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				if errors.Code(err) != tt.errCode {
+					t.Errorf("expected error code %v, got %v", tt.errCode, errors.Code(err))
+				}
+				return
+			}
+			if resp.JobID != 123 || !resp.Deleted {
+				t.Errorf("unexpected response %+v", resp)
+			}
+		})
+	}
+}
+
 func TestClient_ListJobs_Validation(t *testing.T) {
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {

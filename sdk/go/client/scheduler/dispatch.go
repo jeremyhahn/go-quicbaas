@@ -161,10 +161,11 @@ func dispatchDeleteJob(ctx context.Context, b Backends, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := jobs.DeleteJob(ctx, &service.DeleteSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID}); err != nil {
+	resp, err := jobs.DeleteJob(ctx, &service.DeleteSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Force: r.Force})
+	if err != nil {
 		return nil, err
 	}
-	return &DeleteJobResponse{}, nil
+	return DeleteJobResponseFromService(resp), nil
 }
 
 func dispatchListJobs(ctx context.Context, b Backends, req any) (any, error) {

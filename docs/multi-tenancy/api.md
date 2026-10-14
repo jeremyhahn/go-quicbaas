@@ -53,8 +53,10 @@ Request and response fields:
 
 A pending user, including an `invite`-mode tenant admin, activates with its
 one-time token. These verbs are pre-auth: the token is the credential, so they
-carry no permission and the gRPC methods are in the public method set. There
-are no MCP invite tools yet; they wait on a decision about public MCP tools.
+carry no permission and the gRPC methods are in the public method set. QUIC
+carries the REST column over HTTP/3 and Unix the gRPC column; the `*invite*`
+tests under `sdk/go/transport/{quic,unix}` pin both. There are no MCP invite
+tools yet; they wait on a decision about public MCP tools.
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|

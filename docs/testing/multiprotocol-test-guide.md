@@ -18,6 +18,36 @@ QuicBaaS supports 6 protocols that must be tested consistently:
 | **Unix Socket** | gRPC over UDS | Local IPC, container sidecars |
 | **MCP** | JSON-RPC 2.0 | AI/LLM tool integration |
 
+## Authenticating Data-Plane Calls
+
+`helpers.IntegrationTLSConfig()` gives you server trust only. It sends no client
+certificate and no bearer. Every entity and batch RPC or route is
+permission-gated, so a call made over it alone is refused as `Unauthenticated`
+(gRPC) or `401` (REST) before any handler runs. Only public methods such as
+Health succeed.
+
+Suites that read or write entities act as the **data-plane principal**:
+
+- `helpers.DataPlaneGRPCCredentials(t)`: pass it to the dial as
+  `grpc.WithPerRPCCredentials(...)`.
+- `helpers.NewDataPlaneHTTPClient(t, timeout)`: the `NewHTTPClient` client
+  with the bearer set on every request.
+- `helpers.AuthDataPlane(t, baseURL)`: the raw bearer.
+
+On first use in a test process, the system admin creates three things on the
+first REST endpoint's cluster:
+
+1. a tenant named `itest-dp-<unixnano>`;
+2. a role `integration-data-plane` holding exactly `dataplane.Permissions`
+   (`kv:get`, `kv:put`, `kv:delete`, `kv:list`, `kv:range`, `batch:execute`);
+3. a PIV user bound to that role.
+
+The bearer is cached and renewed by PIV login when it expires. The principal
+is neither anonymous nor the system admin, so a test still fails if a route
+starts requiring a permission outside that set.
+`pkg/api/grpc`'s `TestAuthorizationInterceptor_IntegrationDataPlaneRole` pins
+`dataplane.Permissions` to the server's authorization mapping in the unit tier.
+
 ## Protocol Adapter Template
 
 ### File Structure

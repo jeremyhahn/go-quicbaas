@@ -386,6 +386,17 @@ YELLOW := $(shell tput setaf 3 2>/dev/null || echo "")
 BLUE := $(shell tput setaf 4 2>/dev/null || echo "")
 NC := $(shell tput sgr0 2>/dev/null || echo "")
 
+# go_packages is a recipe fragment for $(call go_packages,LIST ARGS,PATTERN):
+# it runs `go list LIST ARGS` in the recipe's directory, drops the packages
+# matching the grep pattern PATTERN, and leaves the rest in the shell variable
+# pkgs for `go test ... $$pkgs`. It exits 1, naming the target, when go list
+# fails or nothing is left: `go test` with no package arguments tests only the
+# current directory's package and can pass, so a broken go.mod or an
+# over-wide filter would otherwise report green on red.
+go_packages = pkgs=$$(go list $(1)) || { echo "$(RED)$@: go list failed, so there is nothing to test$(NC)"; exit 1; }; \
+	pkgs=$$(printf '%s\n' "$$pkgs" | grep -v -e '$(2)'); \
+	if [ -z "$$pkgs" ]; then echo "$(RED)$@: go list found no packages outside '$(2)'$(NC)"; exit 1; fi
+
 ##@ General
 
 .PHONY: help
@@ -3273,7 +3284,8 @@ lint: vet-integration verify-naming secure-analyzer secure-analyzer-self-test ##
 coverage: ## Generate coverage report (unit only; excludes generated code)
 	@printf "$(BLUE)Generating coverage report...$(NC)\n"
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -p 2 -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$(go list -tags '$(TEST_TAGS)' ./pkg/... ./cmd/... | grep -v '/proto$$')
+	@$(call go_packages,-tags '$(TEST_TAGS)' ./pkg/... ./cmd/...,/proto$$); \
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -p 2 -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$pkgs
 	@printf "$(BLUE)Filtering out non-production code (generated, mocks, stubs, test helpers)...$(NC)\n"
 	@head -1 $(COVERAGE_DIR)/coverage-raw.out > $(COVERAGE_DIR)/coverage.out
 	@grep -v '\.pb\.go:' $(COVERAGE_DIR)/coverage-raw.out | \
@@ -4879,13 +4891,15 @@ bench-kvstore: ## Run kvstore package benchmarks
 .PHONY: test-sdk-go
 test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"
-	@cd sdk/go && go test -v -race -count=1 $$(go list ./... | grep -v '/test/')
+	@cd sdk/go || exit 1; $(call go_packages,./...,/test/); \
+	go test -v -race -count=1 $$pkgs
 	@echo "$(GREEN)✓ Go SDK unit tests passed$(NC)"
 
 .PHONY: test-sdk-go-coverage
 test-sdk-go-coverage: ## Run Go SDK tests with coverage report (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK tests with coverage...$(NC)"
-	@cd sdk/go && go test -coverprofile=coverage.out -covermode=atomic $$(go list ./... | grep -v '/test/')
+	@cd sdk/go || exit 1; $(call go_packages,./...,/test/); \
+	go test -coverprofile=coverage.out -covermode=atomic $$pkgs
 	@echo ""
 	@echo "$(GREEN)Coverage Summary:$(NC)"
 	@cd sdk/go && go tool cover -func=coverage.out | grep -E "^(github|total)"

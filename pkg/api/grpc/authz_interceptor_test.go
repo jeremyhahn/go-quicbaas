@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/dataplane"
 )
 
 // fakeValidatorAuthorizer is a test double for the central platform-token
@@ -373,6 +374,90 @@ func TestStreamAuthorizationInterceptor_AllowAndDeny(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 	assert.False(t, served)
+}
+
+// scopeSetAuthorizer grants a token exactly the permissions in its scp set,
+// as the offline platform validator's exact-match scope check does.
+type scopeSetAuthorizer struct {
+	token string
+	scp   map[string]bool
+}
+
+func (a *scopeSetAuthorizer) Authorize(_ context.Context, token, requiredPerm, _, _, _ string) (*platformtoken.AuthorizedContext, error) {
+	if token != a.token {
+		return nil, &platformtoken.InvalidTokenError{Detail: "signature did not verify"}
+	}
+	if !a.scp[requiredPerm] {
+		return nil, &platformtoken.ScopeDeniedError{Required: requiredPerm}
+	}
+	return &platformtoken.AuthorizedContext{Subject: "u1", TenantID: "t1"}, nil
+}
+
+// TestAuthorizationInterceptor_IntegrationDataPlaneRole pins the integration
+// suites' data-plane role (test/integration/dataplane) to this server's
+// authorization mapping. Without a bearer every data-plane RPC the suites call
+// is refused as unauthenticated before a handler runs, which is how they
+// failed in 0-30 ms (#1317); with a bearer whose scp is exactly the role's
+// permissions every one of them is admitted. A remapped data-plane RPC fails
+// here, in the unit tier, rather than as an opaque integration refusal.
+func TestAuthorizationInterceptor_IntegrationDataPlaneRole(t *testing.T) {
+	scp := make(map[string]bool, len(dataplane.Permissions))
+	for _, perm := range dataplane.Permissions {
+		scp[perm] = true
+	}
+	authorizer := &scopeSetAuthorizer{token: "data-plane", scp: scp}
+	unary := UnaryAuthorizationInterceptor(authorizer)
+	stream := StreamAuthorizationInterceptor(authorizer)
+
+	unaryMethods := []string{
+		"/quicbaas.v1.QuicBaaS/Get",
+		"/quicbaas.v1.QuicBaaS/Put",
+		"/quicbaas.v1.QuicBaaS/Delete",
+		"/quicbaas.v1.QuicBaaS/BatchGet",
+		"/quicbaas.v1.QuicBaaS/BatchPut",
+		"/quicbaas.v1.QuicBaaS/BatchDelete",
+	}
+	streamMethods := []string{
+		"/quicbaas.v1.QuicBaaS/List",
+		"/quicbaas.v1.QuicBaaS/Query",
+		"/quicbaas.v1.QuicBaaS/StreamBatchPut",
+	}
+
+	for _, method := range unaryMethods {
+		t.Run(method, func(t *testing.T) {
+			info := &grpc.UnaryServerInfo{FullMethod: method}
+			handler := func(context.Context, interface{}) (interface{}, error) { return "served", nil }
+
+			_, err := unary(context.Background(), nil, info, handler)
+			assert.Equal(t, codes.Unauthenticated, status.Code(err), "a bearer-less call must be refused")
+
+			resp, err := unary(ctxWithBearer("data-plane"), nil, info, handler)
+			require.NoError(t, err, "the data-plane role must authorize %s", method)
+			assert.Equal(t, "served", resp)
+		})
+	}
+
+	for _, method := range streamMethods {
+		t.Run(method, func(t *testing.T) {
+			info := &grpc.StreamServerInfo{FullMethod: method}
+			served := false
+			handler := func(interface{}, grpc.ServerStream) error { served = true; return nil }
+
+			err := stream(nil, &dummyStream{ctx: context.Background()}, info, handler)
+			assert.Equal(t, codes.Unauthenticated, status.Code(err), "a bearer-less stream must be refused")
+			assert.False(t, served)
+
+			err = stream(nil, &dummyStream{ctx: ctxWithBearer("data-plane")}, info, handler)
+			require.NoError(t, err, "the data-plane role must authorize %s", method)
+			assert.True(t, served)
+		})
+	}
+
+	// The role is the whole grant: it must not reach the control plane.
+	_, err := unary(ctxWithBearer("data-plane"), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/CreateRole"},
+		func(context.Context, interface{}) (interface{}, error) { return nil, nil })
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 // TestGRPCPermissions_EveryMethodMapped is a descriptor-exhaustive guard that

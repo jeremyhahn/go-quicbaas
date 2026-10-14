@@ -40,6 +40,18 @@ import (
 // Gate: the endpoint returns 501 when PIV login is not enabled in configuration.
 // To enable, set IAM.PIVClientCert.Enabled = true and configure the TLS listener
 // with ClientAuth: tls.RequestClientCert.
+//
+// Slot attestation is conveyed in the TLS handshake ONLY (go-quicbaas#422):
+// the client presents the slot attestation certificate, and the device's F9
+// intermediate, after its login certificate in the handshake's certificate
+// list. Nothing in the request body or headers is read as evidence, so an
+// attestation sent there is not accepted, because it is not bound to the
+// handshake in which the client proved possession of the key. This is
+// deliberate, and it makes attested PIV login browser-incompatible: a
+// browser's client-certificate prompt presents the login certificate and its
+// issuer chain, never the card's attestation. A browser can log in only where
+// the operator set iam.piv_login.allow_unattested, and then as a software
+// credential.
 func (h *IAMHandler) PIVLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

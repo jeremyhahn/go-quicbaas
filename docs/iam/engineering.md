@@ -269,7 +269,10 @@ iam:
 `iam.self_service_registration.enabled` defaults to `false`: tenants are
 created by an administrator and users join by invite. Setting it to `true`
 lets anyone who can reach the server create a tenant and become its Admin.
-Turn it on only when public sign-up is intended.
+Turn it on only when public sign-up is intended. While it is off,
+`POST /api/v1/auth/register/begin` and `/finish` answer `403` with the code
+`self_registration_disabled`; `test/integration/iam/iam_register_self_test.go`
+asserts this against the integration daemon, which runs with the default.
 
 `require_admin_approval` defaults to `true`: a self-registered account stays
 pending until a platform admin approves it. Set it to `false` only if
@@ -1957,6 +1960,20 @@ visible, never silent.
 `attestation_ca_file` that is named but cannot be read or parsed is refused
 either way, because silently downgrading there would turn a typo into a
 fleet-wide loss of hardware assurance.
+
+**The attestation travels in the TLS handshake only, so attested PIV login does
+not work from a browser.** The client presents the slot attestation certificate
+and the device's F9 intermediate after its login certificate, in the
+handshake's certificate list. The login handler reads nothing in the request
+body or headers as evidence. An attestation sent there is not accepted,
+because it is not bound to the handshake in which the client proved possession
+of the key. A browser's client-certificate prompt presents the login
+certificate and its issuer chain, never the card's attestation, so a browser
+can log in only under `allow_unattested`, and then as `attest_level: software`.
+Attested login needs a native client that controls the handshake. This is a deliberate choice (go-quicbaas#422), pinned by
+`TestPIVLogin_AttestationOutsideTheHandshakeIsRefused` and
+`TestPIVLogin_AttestationOutsideTheHandshakeNeverUpgradesTheToken`
+(`pkg/api/rest/iam_login_piv_attestation_test.go`).
 
 **There is one PIV login path, not two.** go-xkms's composed module serves its
 own PIV login at `/api/v1/auth/login/piv`, and it cannot verify a smartcard

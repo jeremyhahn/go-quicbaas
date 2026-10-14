@@ -85,7 +85,7 @@ func newTLSHTTPClient(timeout time.Duration) *http.Client {
 // TestRESTBatchPutSuccess tests successful atomic batch put via REST API
 func TestRESTBatchPutSuccess(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	timestamp := time.Now().UnixNano()
 
@@ -156,7 +156,7 @@ func TestRESTBatchPutSuccess(t *testing.T) {
 // TestRESTBatchDeleteSuccess tests successful atomic batch delete via REST API
 func TestRESTBatchDeleteSuccess(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	timestamp := time.Now().UnixNano()
 
@@ -224,7 +224,7 @@ func TestRESTBatchDeleteSuccess(t *testing.T) {
 // TestRESTBatchPutLargeSet tests batch put with larger dataset via REST
 func TestRESTBatchPutLargeSet(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(60 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 60*time.Second)
 
 	batchSize := 50
 	baseTimestamp := time.Now().UnixNano()
@@ -270,7 +270,7 @@ func TestRESTBatchPutLargeSet(t *testing.T) {
 // TestRESTBatchPutUnrelatedEntities tests batch operations on unrelated types
 func TestRESTBatchPutUnrelatedEntities(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	timestamp := time.Now().UnixNano()
 
@@ -325,7 +325,7 @@ func TestRESTBatchPutUnrelatedEntities(t *testing.T) {
 // TestRESTBatchEmptyRequest tests error handling for empty batches
 func TestRESTBatchEmptyRequest(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	// Try empty batch put
 	emptyPutReq := BatchPutRequest{Operations: []PutOperation{}}
@@ -361,7 +361,7 @@ func TestRESTBatchEmptyRequest(t *testing.T) {
 // TestRESTBatchInvalidJSON tests error handling for malformed requests
 func TestRESTBatchInvalidJSON(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	invalidJSON := []byte(`{"operations": [{"entity_type": "test", "id": "not_a_number"}]}`)
 
@@ -381,7 +381,7 @@ func TestRESTBatchInvalidJSON(t *testing.T) {
 // TestRESTBatchPutUpdate tests updating existing entities via batch
 func TestRESTBatchPutUpdate(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	timestamp := time.Now().UnixNano()
 
@@ -450,7 +450,7 @@ func TestRESTBatchPutUpdate(t *testing.T) {
 // TestRESTBatchSequentialOperations tests sequential batch operations via REST
 func TestRESTBatchSequentialOperations(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 
 	timestamp := time.Now().UnixNano()
 

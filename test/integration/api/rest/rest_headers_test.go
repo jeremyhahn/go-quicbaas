@@ -36,7 +36,7 @@ func TestREST_ShardHeaderPresent(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client := helpers.NewDataPlaneHTTPClient(t, 30*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST error: %v", err)

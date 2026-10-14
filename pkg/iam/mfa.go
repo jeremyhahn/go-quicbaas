@@ -794,9 +794,6 @@ func (m *DefaultMFAManager) GetBackupCodeStatus(ctx context.Context, userID uint
 	}, nil
 }
 
-// protectedSharedSecret decodes a stored base32 TOTP shared secret into
-// protected memory, tagging a failure with the operation that asked for it.
-//
 // MFASecretMalformedError is returned when a stored shared secret cannot be a
 // key at all, as opposed to a code failing to match. It is the enrollment that
 // is broken, not the authentication attempt, and the two are kept apart so a
@@ -835,7 +832,11 @@ func (e *MFASecretMalformedError) Unwrap() error { return e.Cause }
 // stay resident until the collector reclaims them, so this narrows an existing
 // exposure rather than removing it. Closing them means the store handing back
 // protected memory instead of a string, which is a change to the storage
-// interface and to the KV read below it.
+// interface and to the KV read below it. That read is go-qrdb's, so the gap is
+// an accepted known limitation until go-qrdb offers a protected-bytes read
+// (go-quicbaas#402; docs/security-hardening/engineering.md).
+//
+// A failure is tagged with op, the operation that asked for the key.
 //
 // The caller owns the key until it hands it to otp.NewAuthenticator, which
 // takes ownership and destroys it in Close.

@@ -89,6 +89,7 @@ func CreateJobRequestToService(req *CreateJobRequest) *service.CreateSchedulerJo
 		Delay:        req.Delay,
 		Handler:      req.Handler,
 		Payload:      req.Payload,
+		Priority:     int32(req.Priority),
 		Timeout:      req.Timeout,
 		MaxRetries:   int32(req.MaxRetries),
 		Labels:       req.Tags,
@@ -112,8 +113,8 @@ func UpdateJobRequestToService(req *UpdateJobRequest) *service.UpdateSchedulerJo
 }
 
 // ListJobsOptionsToService converts list options. The service filters by
-// owner, status and labels and pages by limit; JobType and Offset have no
-// server-side counterpart and are not sent.
+// owner, status, handler and labels and pages by limit and cursor; JobType
+// and Offset have no server-side counterpart and are not sent.
 func ListJobsOptionsToService(opts *ListJobsOptions) *service.ListSchedulerJobsRequest {
 	out := &service.ListSchedulerJobsRequest{}
 	if opts == nil {
@@ -122,6 +123,8 @@ func ListJobsOptionsToService(opts *ListJobsOptions) *service.ListSchedulerJobsR
 	out.OwnerID = opts.OwnerID
 	out.Labels = opts.Tags
 	out.Limit = opts.Limit
+	out.Handler = opts.Handler
+	out.Cursor = opts.Cursor
 	if opts.OwnerType != nil {
 		out.OwnerType = ownerTypeToService[*opts.OwnerType]
 	}
@@ -164,6 +167,9 @@ func JobInfoFromService(job *service.SchedulerJob) *JobInfo {
 		ExecutionCount: job.RunCount,
 		FailureCount:   job.FailCount,
 		Tags:           job.Labels,
+		Handler:        job.Handler,
+		Priority:       int(job.Priority),
+		LastError:      job.LastError,
 	}
 }
 
@@ -189,6 +195,7 @@ func ListJobsResponseFromService(resp *service.ListSchedulerJobsResponse) *ListJ
 		}
 	}
 	out.HasMore = resp.HasMore
+	out.NextCursor = resp.NextCursor
 	out.TotalCount = resp.TotalCount
 	if out.TotalCount == 0 {
 		out.TotalCount = len(out.Jobs)
@@ -198,23 +205,47 @@ func ListJobsResponseFromService(resp *service.ListSchedulerJobsResponse) *ListJ
 
 // TriggerJobResponseFromService converts a TriggerJob response.
 func TriggerJobResponseFromService(resp *service.TriggerSchedulerJobResponse) *TriggerJobResponse {
-	return &TriggerJobResponse{JobID: resp.JobID, StartedAt: resp.Timestamp}
+	return &TriggerJobResponse{JobID: resp.JobID, StartedAt: resp.Timestamp, Status: statusFromService[resp.Status]}
 }
 
 // PauseJobResponseFromService converts a PauseJob response.
 func PauseJobResponseFromService(resp *service.PauseSchedulerJobResponse) *PauseJobResponse {
-	return &PauseJobResponse{JobID: resp.JobID, PausedAt: resp.Timestamp}
+	return &PauseJobResponse{
+		JobID:     resp.JobID,
+		PausedAt:  resp.Timestamp,
+		OldStatus: statusFromService[resp.OldStatus],
+		NewStatus: statusFromService[resp.NewStatus],
+	}
 }
 
 // ResumeJobResponseFromService converts a ResumeJob response.
 func ResumeJobResponseFromService(resp *service.ResumeSchedulerJobResponse) *ResumeJobResponse {
-	return &ResumeJobResponse{JobID: resp.JobID, ResumedAt: resp.Timestamp}
+	return &ResumeJobResponse{
+		JobID:     resp.JobID,
+		ResumedAt: resp.Timestamp,
+		OldStatus: statusFromService[resp.OldStatus],
+		NewStatus: statusFromService[resp.NewStatus],
+	}
 }
 
 // CancelJobResponseFromService converts a CancelJob response; the reason is
 // the one the caller sent, which the service does not echo.
 func CancelJobResponseFromService(resp *service.CancelSchedulerJobResponse, reason string) *CancelJobResponse {
-	return &CancelJobResponse{JobID: resp.JobID, CanceledAt: resp.Timestamp, Reason: reason}
+	return &CancelJobResponse{
+		JobID:      resp.JobID,
+		CanceledAt: resp.Timestamp,
+		Reason:     reason,
+		OldStatus:  statusFromService[resp.OldStatus],
+		NewStatus:  statusFromService[resp.NewStatus],
+	}
+}
+
+// DeleteJobResponseFromService converts a DeleteJob response.
+func DeleteJobResponseFromService(resp *service.DeleteSchedulerJobResponse) *DeleteJobResponse {
+	if resp == nil {
+		return &DeleteJobResponse{}
+	}
+	return &DeleteJobResponse{JobID: resp.JobID, Deleted: resp.Deleted, DeletedAt: resp.Timestamp}
 }
 
 // JobHistoryResponseFromService converts a GetJobHistory response.
