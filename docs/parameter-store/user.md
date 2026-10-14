@@ -30,7 +30,7 @@ The Parameter Store integrates with QuicBaaS's IAM system, providing fine-graine
 
 ## Quick Start
 
-The parameter store has no CLI ([cli.md](cli.md)); use the SDK, REST or MCP.
+The parameter store has no CLI; use the SDK, REST or MCP.
 
 ### Store a Parameter (REST API)
 

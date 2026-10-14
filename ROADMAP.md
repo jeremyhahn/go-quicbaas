@@ -2,7 +2,7 @@
 
 > **Status: REFERENCE** · Last verified: 2026-10-12
 > Per handbook `software/conventions/roadmap.md`: the Software Department refreshes it; the project agent proposes changes by PR.
-> This is the only roadmap. [docs/archive/ROADMAP-2026-08.md](docs/archive/ROADMAP-2026-08.md) is ARCHIVE, not a plan.
+> This is the only roadmap.
 
 ## Mission
 

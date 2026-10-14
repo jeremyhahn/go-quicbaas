@@ -462,13 +462,13 @@ filtered out of `tools/list` under the default-deny authorization gate, leaving
 
 ## Documentation
 
-Every feature has a folder under [`docs/`](docs/) holding five documents —
-architecture, engineering, CLI, API and user guide. Start at
+Features are listed in [docs/SPEC.md](docs/SPEC.md), with detail in folders
+under [`docs/`](docs/). Start at
 **[docs/README.md](docs/README.md)**, which is the index and the migration
 record.
 
 ### Start here
-- [Documentation index](docs/README.md) — all 38 feature folders
+- [Documentation index](docs/README.md) — every feature folder
 - [Multiprotocol API](docs/multiprotocol-api/) — the transport model: how any capability reaches REST, gRPC, QUIC, MCP, Unix or embedded
 - [Go SDK](docs/go-sdk/) — the canonical entry point
 - [Composition](docs/composition/) — how the stack is assembled at startup

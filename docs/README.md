@@ -4,25 +4,15 @@
 > The index of feature documentation and the record of this repository's
 > migration state. Conflicts with this document are defects.
 
-Every implemented feature has a folder here holding five documents:
-
-```
-docs/<feature>/
-    architecture.md   design, component boundaries, data flow, rejected alternatives
-    engineering.md    exported surface, invariants, errors, configuration, tests
-    cli.md            every verb and flag, with runnable examples
-    api.md            the capability on every transport, with permissions
-    user.md           task-oriented usage, in the order tasks are done
-```
-
-**All five files exist in every folder.** Where a feature has no CLI or no API
-of its own, the file says so and says why — an absent file is
-indistinguishable from an unwritten one.
+Every feature in [SPEC.md](SPEC.md) that needs more than its SPEC row has a
+folder here. Which files a folder holds is set by the handbook's
+`software/conventions/feature-docs.md`: each file exists only when it has
+content, and a placeholder is deleted.
 
 ## Migration state
 
-**Complete.** 44 feature folders, 266 files, migrated 2026-08-19; last
-recounted 2026-10-12. Counting is derived, not maintained:
+**Complete.** 44 feature folders, 257 files, migrated 2026-08-19; last
+recounted 2026-10-14. Counting is derived, not maintained:
 `ls docs/*/architecture.md | wc -l` and `find docs -name '*.md' | wc -l`.
 
 | Date | Change |
@@ -32,6 +22,7 @@ recounted 2026-10-12. Counting is derived, not maintained:
 | 2026-10-11 | The orchestration engine moved out of [software-factory/](software-factory/) into its own folder, [orchestration/](orchestration/) (#1231): the five canonical files' engine content, and the supplements `job-runners.md`, `autonomy-and-dispatch.md`, `job-admission.md`, `sandbox.md` and `fleet.md`. software-factory/ keeps projects, accounts, the SDLC module and prompt sets, and points at the engine. The content was brought up to date with agent sessions, inference backends, attach, job amendments and the list contract, and the CLI verbs and API routes were re-checked against the code. The counts above are recounted. |
 | 2026-10-11 | The SDLC module moved out of `software-factory/` into its own folder, [sdlc/](sdlc/): `software-factory/sdlc.md` became `sdlc/architecture.md`, the supplements `review.md`, `triage.md`, `merge-train.md` and `ci-failure-classification.md` moved with it, and the SDLC sections of `software-factory/{engineering,cli,api,user}.md` became the new folder's four other canonical files. `software-factory/projects.md` became [projects/](projects/), and `accounts.md`, `cost-enforcement.md` and `job-admission.md` became [accounts/](accounts/); `orchestration/job-admission.md` is a pointer into accounts/. Each old path keeps a one-paragraph pointer page so existing links resolve. |
 | 2026-10-12 | The fleet content left [orchestration/](orchestration/) and [software-factory/](software-factory/) for its own folder, [agent-fleet/](agent-fleet/): enrollment, heartbeat and recovery, `fleet serve` and `fleet deploy`, the embedded node, and the worker image. `orchestration/fleet.md` became `agent-fleet/user.md` and keeps a pointer page; `software-factory/worker-image.md` became `agent-fleet/worker-image.md`; the fleet sections of the five canonical files moved to their agent-fleet counterparts. The counts above are recounted. |
+| 2026-10-14 | Placeholders and stale copies were deleted under the handbook's feature-docs rule: the pointer pages `orchestration/fleet.md`, `orchestration/job-admission.md` and `software-factory/{ci-failure-classification,merge-train,review,triage,cost-enforcement}.md`, which no link reached; `parameter-store/cli.md` and `signal-bridge/user.md`, which had no content; and `archive/`. The pointer pages `software-factory/sdlc.md` and `software-factory/projects.md` stay while source comments link to them. The counts above are recounted. |
 
 **This file is the migration record.** New features get a folder from day one;
 do not add a flat `.md` at the `docs/` root, and do not recreate the old
@@ -45,7 +36,7 @@ folders) into the folders below. Content was **moved and absorbed, not
 rewritten**; where a document contradicted the code, the document was corrected
 and the correction noted in place.
 
-Six directories are deliberately **not** feature folders and keep their
+Five directories are deliberately **not** feature folders and keep their
 existing shape:
 
 | Directory | Why it is not a feature folder |
@@ -54,14 +45,10 @@ existing shape:
 | `design/` | Working design documents and roadmaps for work that is planned, not built. A feature folder describes what exists. |
 | `identity-refactor/` | A cross-repo migration plan, still awaiting sign-off. |
 | `testing/` | Contributor guides for running the suites. |
-| `archive/` | Superseded documents kept as a record, e.g. the 2026-08 roadmap. Not a plan. |
 | `release/` | What must be true of the tree before it is published, and the gates that enforce it. |
 
-There is one roadmap: [`ROADMAP.md`](../ROADMAP.md) at the repository root, which
-states what is complete and what remains to the release candidate. The August
-2026 architecture plan that used to sit here is kept as
-[archive/ROADMAP-2026-08.md](archive/ROADMAP-2026-08.md), stamped **ARCHIVE**: it
-predates the unified-API-server model and is a record of decisions, not a plan.
+There is one roadmap, [`ROADMAP.md`](../ROADMAP.md) at the repository root, and
+one specification, [SPEC.md](SPEC.md), which lists every feature.
 
 ## Features
 
