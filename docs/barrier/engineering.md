@@ -85,7 +85,7 @@ TPM2, PKCS#11, or cloud KMS).
 |-------|-------|-----------|----------|
 | `POST /api/v1/barrier/enable-encryption` | System barrier | `seal:enable_encryption` | Encrypt the shared cluster barrier (all tenants) |
 | `POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption` | Per-tenant barrier | `tenant_barrier:enable_encryption` | Encrypt a specific tenant's isolation barrier |
-| `POST /v1/barrier/enable-encryption` (go-qrdb wire) | Body `tenant_id`; empty = system | Per selected scope: `seal:enable_encryption`, or `tenant_barrier:enable_encryption` against that tenant | What go-qrdb's SDK and the CLI verb call |
+| `POST /v1/barrier/enable-encryption` (go-qrdb wire) | Body `tenant_id`; empty = system | Per selected scope: `seal:enable_encryption`, or `tenant_barrier:enable_encryption` against that tenant | What go-qrdb's SDK, the CLI verb and the TS SDK's `barrier.enableEncryption()` call |
 
 The wire mount is registered identity-gated because its scope is in its body.
 `HandleBarrierWireEnableEncryption` decides the scope itself, binding the target

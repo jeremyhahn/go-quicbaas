@@ -2813,6 +2813,39 @@ export interface BarrierShamirDeleteShareRequest {
   index: number;
 }
 
+/**
+ * BarrierEnableEncryptionRequest migrates a previously unencrypted barrier to a
+ * keyed strategy. Mirrors go-qrdb transport.BarrierEnableEncryptionRequest.
+ */
+export interface BarrierEnableEncryptionRequest {
+  /** Tenant whose dedicated barrier to migrate. Omit for the system barrier. */
+  tenant_id?: string;
+  /** Keyed strategy to migrate to ("passphrase" or "shamir"). Required. */
+  strategy: string;
+  /** Re-encryption approach ("swap" or "inplace"). The server defaults to "swap". */
+  mechanism?: string;
+  /** Write availability during migration ("online" or "quiesced"). The server defaults to "online". */
+  availability?: string;
+  /** New passphrase for a passphrase target. The REST client base64-encodes it. */
+  passphrase?: Uint8Array;
+  /** Shamir threshold (M) for a Shamir target. */
+  shamir_threshold?: number;
+  /** Shamir share count (N) for a Shamir target. */
+  shamir_total?: number;
+}
+
+/**
+ * BarrierEnableEncryptionResponse acknowledges that the migration has started.
+ * Poll status() to observe completion. Mirrors go-qrdb
+ * transport.BarrierEnableEncryptionResponse.
+ */
+export interface BarrierEnableEncryptionResponse {
+  /** Migration state; "migration_started" when accepted. */
+  status: string;
+  /** Barrier the migration runs on: "system" or "tenant". */
+  scope: string;
+}
+
 // =============================================================================
 // Ceremony Types
 // Mirrors /api/v1/init REST routes and go-qrdb transport/ceremony_types.go.

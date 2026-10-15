@@ -42,6 +42,8 @@ import type {
   JobRunnerInfo,
   BarrierGenerateRecoveryKeysRequest,
   BarrierGenerateRootTokenRequest,
+  BarrierEnableEncryptionRequest,
+  BarrierEnableEncryptionResponse,
   BarrierHasRecoveryKeysResponse,
   BarrierInitRequest,
   BarrierRecoverWithKeysRequest,
@@ -331,6 +333,7 @@ export class QuicBarrierClient implements BarrierClient {
   async deleteRecoveryKeys(): Promise<void> { return frameOnly('barrier', 'deleteRecoveryKeys'); }
   async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return frameOnly('barrier', 'recoveryStatus'); }
   async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return frameOnly('barrier', 'generateRootToken'); }
+  async enableEncryption(_req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> { return frameOnly('barrier', 'enableEncryption'); }
 }
 
 // QuicCeremonyClient refuses every verb: go-qrdb serves ceremony.* on the QUIC

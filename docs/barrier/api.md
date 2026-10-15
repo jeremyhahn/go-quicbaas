@@ -171,6 +171,16 @@ scope: `seal:enable_encryption` for the system barrier, or
 with no identity, `403` on denial, and `503` when no scope authorizer is
 available.
 
+The TypeScript SDK calls this mount: `client.barrier.enableEncryption(req)`
+sends `BarrierEnableEncryptionRequest` (base64-encoding `passphrase`; set
+`tenant_id` for a tenant barrier) and resolves to
+`BarrierEnableEncryptionResponse`. A refusal rejects with `APIError`. The
+gRPC-Web, MCP and QUIC TS transports refuse the verb.
+
+The TS `seal()` takes no request. go-qrdb's `BarrierSealRequest` carries an
+optional `so_pin`, but neither REST seal handler reads a body, so the TS SDK
+does not offer a field the server would drop (go-quicbaas#946).
+
 #### Who owns the mount on a composed node
 
 `server.rest` no longer binds a listener of its own: `startRESTServer`

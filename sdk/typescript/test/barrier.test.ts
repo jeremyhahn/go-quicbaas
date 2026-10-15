@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
 import { APIError } from '../src/errors';
+import { createBarrierClient } from '../src/factory';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -140,6 +141,67 @@ describe('RestBarrierClient passphrase strategy', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/seal');
     expect(init.method).toBe('POST');
+  });
+});
+
+// =============================================================================
+// enableEncryption — go-qrdb wire mount POST /v1/barrier/enable-encryption
+// =============================================================================
+
+describe('RestBarrierClient.enableEncryption', () => {
+  it('posts the canonical request and returns the migration acknowledgement', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ status: 'migration_started', scope: 'tenant' }));
+
+    const client = new RestClient('http://localhost');
+    const resp = await client.barrier.enableEncryption({
+      tenant_id: 't1',
+      strategy: 'passphrase',
+      mechanism: 'inplace',
+      availability: 'quiesced',
+      passphrase: new TextEncoder().encode('topsecret'),
+    });
+
+    expect(resp).toEqual({ status: 'migration_started', scope: 'tenant' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/v1/barrier/enable-encryption');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      tenant_id: 't1',
+      strategy: 'passphrase',
+      mechanism: 'inplace',
+      availability: 'quiesced',
+      passphrase: 'dG9wc2VjcmV0',
+    });
+  });
+
+  it('sends no passphrase for a Shamir target', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ status: 'migration_started', scope: 'system' }));
+
+    const client = new RestClient('http://localhost');
+    await client.barrier.enableEncryption({ strategy: 'shamir', shamir_threshold: 2, shamir_total: 3 });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      strategy: 'shamir',
+      shamir_threshold: 2,
+      shamir_total: 3,
+    });
+  });
+
+  it('throws APIError when the server refuses the migration', async () => {
+    fetchMock.mockResolvedValue(errorResponse(400, 'strategy is required'));
+
+    const client = new RestClient('http://localhost');
+    await expect(client.barrier.enableEncryption({ strategy: '' })).rejects.toBeInstanceOf(APIError);
+  });
+
+  it.each([
+    ['grpc-web', { baseURL: 'http://localhost' }],
+    ['mcp', { mcp: { endpoint: '' } }],
+  ] as const)('is refused by the %s stub transport', async (transport, config) => {
+    const barrier = await createBarrierClient(transport, config);
+    await expect(barrier.enableEncryption({ strategy: 'shamir' })).rejects.toThrow(`${transport} transport`);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

@@ -36,6 +36,8 @@ import type {
   JobRunnerInfo,
   BarrierGenerateRecoveryKeysRequest,
   BarrierGenerateRootTokenRequest,
+  BarrierEnableEncryptionRequest,
+  BarrierEnableEncryptionResponse,
   BarrierHasRecoveryKeysResponse,
   BarrierInitRequest,
   BarrierRecoverWithKeysRequest,
@@ -866,6 +868,7 @@ export class McpBarrierClient implements BarrierClient {
   async deleteRecoveryKeys(): Promise<void> { return notImpl('barrier.deleteRecoveryKeys'); }
   async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return notImpl('barrier.recoveryStatus'); }
   async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return notImpl('barrier.generateRootToken'); }
+  async enableEncryption(_req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> { return notImpl('barrier.enableEncryption'); }
 }
 
 // McpCeremonyClient is a stub CeremonyClient that throws

@@ -66,7 +66,6 @@ type Metrics struct {
 	OrchPeerInboxSize        *prometheus.GaugeVec
 	OrchFileLocksActive      *prometheus.GaugeVec
 	OrchFileLockWaitDuration *prometheus.HistogramVec
-	OrchJobBudgetUtilization *prometheus.GaugeVec
 	OrchAgentRestarts        *prometheus.CounterVec
 
 	// FactoryTokensTotal counts the tokens every recorded turn consumed, by
@@ -321,14 +320,6 @@ func InitMetrics() *Metrics {
 				[]string{"tenant", "project", "axis"},
 			),
 
-			OrchJobBudgetUtilization: promauto.With(Registry).NewGaugeVec(
-				prometheus.GaugeOpts{
-					Name: "quicbaas_orch_job_budget_utilization",
-					Help: "Ratio of budget consumed by a job (0-1)",
-				},
-				[]string{"job_id", "tenant"},
-			),
-
 			OrchAgentRestarts: promauto.With(Registry).NewCounterVec(
 				prometheus.CounterOpts{
 					Name: "quicbaas_orch_agent_restarts_total",
@@ -569,11 +560,6 @@ func (m *Metrics) RecordFactoryCostMicros(labels FactoryTurnLabels, basis string
 // RecordFactorySpendDeferral counts one admission deferral for spend.
 func (m *Metrics) RecordFactorySpendDeferral(tenant, project, axis string) {
 	m.FactorySpendDeferrals.WithLabelValues(tenant, project, axis).Inc()
-}
-
-// SetOrchJobBudgetUtilization sets the budget utilization ratio for a job.
-func (m *Metrics) SetOrchJobBudgetUtilization(jobID, tenant string, ratio float64) {
-	m.OrchJobBudgetUtilization.WithLabelValues(jobID, tenant).Set(ratio)
 }
 
 // RecordOrchAccountPoolExhausted counts one resolution that found a provider's

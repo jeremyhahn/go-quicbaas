@@ -116,13 +116,13 @@ func TestRunFailsOnAGoTypeWithNoTypeScriptCounterpart(t *testing.T) {
 func TestRunHonoursTheTrackedExemptions(t *testing.T) {
 	// knownUnmirrored is the tracking mechanism for drift that a product
 	// decision owns (go-quicbaas#946), not a way to make the gate unable to
-	// fail: the entry must be exact, and a neighbouring name still fails.
+	// fail: the entry must be exact, a neighbouring name still fails, and a
+	// name whose drift was closed fails again when the TS mirror goes missing.
 	qrdb := writeQRDB(t,
 		"type BarrierStatusResponse struct{}\n"+
 			"type BarrierSealRequest struct{}\n"+
 			"type BarrierEnableEncryptionRequest struct{}\n"+
-			"type BarrierEnableEncryptionResponse struct{}\n"+
-			"type BarrierEnableEncryptionProgress struct{}\n",
+			"type BarrierEnableEncryptionResponse struct{}\n",
 		"type CeremonyStatusResponse struct{}\n")
 	ts := writeTS(t,
 		"export interface BarrierStatusResponse {}\n"+
@@ -134,13 +134,13 @@ func TestRunHonoursTheTrackedExemptions(t *testing.T) {
 		t.Fatalf("run exited %d, want %d\nstdout: %s", status, gate.ExitFindings, stdout.String())
 	}
 	report := stdout.String()
-	if !strings.Contains(report, "BarrierEnableEncryptionProgress") {
-		t.Fatalf("a name not on the list must still fail: %s", report)
-	}
-	for _, exempt := range []string{"BarrierSealRequest", "BarrierEnableEncryptionRequest", "BarrierEnableEncryptionResponse"} {
-		if strings.Contains(report, exempt+"\n") {
-			t.Fatalf("%s is on the exemption list and must not be reported: %s", exempt, report)
+	for _, closed := range []string{"BarrierEnableEncryptionRequest", "BarrierEnableEncryptionResponse"} {
+		if !strings.Contains(report, closed) {
+			t.Fatalf("%s is mirrored in TS and no longer exempt, so it must be reported: %s", closed, report)
 		}
+	}
+	if strings.Contains(report, "BarrierSealRequest\n") {
+		t.Fatalf("BarrierSealRequest is on the exemption list and must not be reported: %s", report)
 	}
 }
 

@@ -1427,5 +1427,4 @@ These are Prometheus metrics, not MCP tools. They are registered in
 | `quicbaas_factory_tokens_total` | Counter | Tokens of every recorded turn, by `tenant`, `project`, `kind`, `provider`, `backend`, `model`, `direction` (bounded labels; see [../accounts/engineering.md](../accounts/engineering.md#metrics)) |
 | `quicbaas_factory_cost_micros_total` | Counter | Cost of priced turns in micro-dollars, same labels with `basis` = `equivalent` or `billed` |
 | `quicbaas_factory_spend_deferrals_total` | Counter | Admission deferrals for a spent project or tenant, by `tenant`, `project`, `axis` |
-| `quicbaas_orch_job_budget_utilization` | Gauge | Budget utilization percentage per job |
 | `quicbaas_orch_agent_restarts_total` | Counter | Total agent restarts |

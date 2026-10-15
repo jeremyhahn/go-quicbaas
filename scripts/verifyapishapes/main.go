@@ -95,21 +95,19 @@ var goPrefixRewrites = []struct {
 // EVERY ENTRY IS A NAME NOBODY IS CHECKING, so every entry carries a reason.
 // The first group are upstream concepts the TS SDK represents inline through
 // BarrierStatusResponse and CeremonyStatusResponse, or forms left over from
-// normalization. The second group is real drift: go-quicbaas#946 owns the
-// product decision for each, and deleting these three entries is part of closing
-// it. They are listed rather than removed from the comparison because the
-// alternative was to keep shipping a gate that compared nothing at all.
+// normalization. BarrierSealRequest is real drift, tracked by go-quicbaas#946:
+// no REST seal handler reads its so_pin, so a TS field would be dropped
+// unread. Delete the entry when the server verifies the SO PIN on seal and the
+// TS seal() sends it.
 var knownUnmirrored = map[string]string{
-	"CeremonyOfficer":                 "represented inline in CeremonyStatusResponse",
-	"EnrollExternalOfficer":           "prefixed form is what the TS SDK exports",
-	"BarrierShamir":                   "normalization residue of BarrierInitializeShamir",
-	"BarrierShamirRequest":            "normalization residue of BarrierInitializeShamirRequest",
-	"BarrierShamirResponse":           "normalization residue of BarrierInitializeShamirResponse",
-	"BarrierInitialize":               "TS SDK spells the verb BarrierInit",
-	"BarrierInitializeRequest":        "TS SDK exports it as BarrierInitRequest",
-	"BarrierSealRequest":              "go-quicbaas#946 — TS BarrierClient.seal() takes no argument",
-	"BarrierEnableEncryptionRequest":  "go-quicbaas#946 — the TS SDK has no enable-encryption verb",
-	"BarrierEnableEncryptionResponse": "go-quicbaas#946 — the TS SDK has no enable-encryption verb",
+	"CeremonyOfficer":          "represented inline in CeremonyStatusResponse",
+	"EnrollExternalOfficer":    "prefixed form is what the TS SDK exports",
+	"BarrierShamir":            "normalization residue of BarrierInitializeShamir",
+	"BarrierShamirRequest":     "normalization residue of BarrierInitializeShamirRequest",
+	"BarrierShamirResponse":    "normalization residue of BarrierInitializeShamirResponse",
+	"BarrierInitialize":        "TS SDK spells the verb BarrierInit",
+	"BarrierInitializeRequest": "TS SDK exports it as BarrierInitRequest",
+	"BarrierSealRequest":       "go-quicbaas#946 — the REST seal handlers do not read so_pin",
 }
 
 func main() {

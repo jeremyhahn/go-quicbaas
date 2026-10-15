@@ -326,6 +326,8 @@ import type {
   BarrierRecoverWithKeysRequest,
   BarrierHasRecoveryKeysResponse,
   BarrierGenerateRootTokenRequest,
+  BarrierEnableEncryptionRequest,
+  BarrierEnableEncryptionResponse,
   BarrierRootTokenResponse,
   TenantBarrierInitRequest,
   TenantBarrierInitResponse,
@@ -4585,6 +4587,21 @@ export class RestBarrierClient implements BarrierClient {
     return this.http.fetchJSON<BarrierRootTokenResponse>('/api/v1/barrier/root-token', {
       method: 'POST',
       body: JSON.stringify(req),
+    });
+  }
+
+  // enableEncryption posts to the go-qrdb wire mount, whose body is the
+  // canonical transport.BarrierEnableEncryptionRequest: tenant_id there
+  // selects the tenant barrier, and the reply acknowledges the started
+  // migration.
+  async enableEncryption(
+    req: BarrierEnableEncryptionRequest,
+  ): Promise<BarrierEnableEncryptionResponse> {
+    const { passphrase, ...rest } = req;
+    const body = passphrase === undefined ? rest : { ...rest, passphrase: bytesToBase64(passphrase) };
+    return this.http.fetchJSON<BarrierEnableEncryptionResponse>('/v1/barrier/enable-encryption', {
+      method: 'POST',
+      body: JSON.stringify(body),
     });
   }
 }

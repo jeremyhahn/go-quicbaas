@@ -157,6 +157,8 @@ import type {
   BarrierRecoverWithKeysRequest,
   BarrierHasRecoveryKeysResponse,
   BarrierGenerateRootTokenRequest,
+  BarrierEnableEncryptionRequest,
+  BarrierEnableEncryptionResponse,
   BarrierRootTokenResponse,
   TenantBarrierInitRequest,
   TenantBarrierInitResponse,
@@ -1080,6 +1082,12 @@ export interface BarrierClient {
   // master key through Shamir shares.
   // Maps to POST /api/v1/barrier/root-token.
   generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse>;
+
+  // enableEncryption starts migrating an unencrypted barrier to a keyed
+  // strategy. req.tenant_id selects a tenant's barrier; omitted, the system
+  // barrier. The migration is asynchronous: poll status() for completion.
+  // Maps to POST /v1/barrier/enable-encryption.
+  enableEncryption(req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse>;
 }
 
 // ---------------------------------------------------------------------------

@@ -220,43 +220,6 @@ func TestRecordOrchFileLockWaitDuration_Accumulates(t *testing.T) {
 	assert.InDelta(t, 0.5, sum, 1e-9, "sum should accumulate observed durations")
 }
 
-func TestSetOrchJobBudgetUtilization(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	tests := []struct {
-		name   string
-		jobID  string
-		tenant string
-		ratio  float64
-	}{
-		{name: "half consumed", jobID: "job-1", tenant: "tenant-1", ratio: 0.5},
-		{name: "fully consumed", jobID: "job-2", tenant: "tenant-2", ratio: 1.0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m.SetOrchJobBudgetUtilization(tt.jobID, tt.tenant, tt.ratio)
-
-			labels := prometheus.Labels{"job_id": tt.jobID, "tenant": tt.tenant}
-			value := testutil.ToFloat64(m.OrchJobBudgetUtilization.With(labels))
-			assert.Equal(t, tt.ratio, value, "OrchJobBudgetUtilization should match")
-		})
-	}
-}
-
-func TestSetOrchJobBudgetUtilization_Update(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	labels := prometheus.Labels{"job_id": "job-1", "tenant": "tenant-1"}
-	m.SetOrchJobBudgetUtilization("job-1", "tenant-1", 0.25)
-	m.SetOrchJobBudgetUtilization("job-1", "tenant-1", 0.9)
-
-	value := testutil.ToFloat64(m.OrchJobBudgetUtilization.With(labels))
-	assert.Equal(t, 0.9, value, "utilization gauge must reflect latest ratio")
-}
-
 func TestRecordOrchAgentRestart(t *testing.T) {
 	Reset()
 	m := InitMetrics()
