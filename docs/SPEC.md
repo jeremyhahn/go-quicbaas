@@ -1,13 +1,13 @@
 # QuicBaaS Specification
 
-> **Status: NORMATIVE**
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > What QuicBaaS is and every feature it carries, with requirements and status.
 > [ROADMAP.md](../ROADMAP.md) states what is complete and what remains; the two agree.
 > A feature listed here, in any status, is never deleted (not its docs, code or issues); removing or re-scoping one needs the owner's change to this file.
 
 ## Purpose
 
-QuicBaaS is layer 4 of the stack, which is one product in layers (owner ruling 2026-10-14; handbook `software/docs/02-dependency-graph.md`, §The stack). It is the application-layer framework and its integration points: the backend as a service most applications consume, with the Software Factory.
+QuicBaaS is layer 4 of the stack, which is one product in layers (handbook `software/docs/02-dependency-graph.md`, §The stack). It is the application-layer framework and its integration points: the backend as a service most applications consume, with the Software Factory.
 It embeds go-qrdb as a library for the database services and composes go-xkms on top of it with the hardware crypto implementations passed in. It therefore has the aggregate capability of both, with every go-qrdb seam filled by hardware crypto.
 It inherits every go-qrdb and go-xkms service and re-exports each one through its own Go SDK, then adds the application-layer services listed below. go-trusted-platform sits on QuicBaaS only and consumes the whole stack through this SDK.
 
@@ -94,14 +94,14 @@ Status is one of `shipped`, `in progress`, `planned`, `future`.
 | orchestration-volumes | planned | go-blockstore volumes in container orchestration, over the VolumeProvider surface (create, grow-only resize, attach to a device path, promote/demote); services declare volumes in their manifest and the node agent attaches them at launch<br>The NBD volume store behind it: go-blockstore volumes exported over NBD by the boot node, which go-quicbaas hosts as a broker-class service; diskless nodes take their root and data volumes from it<br>Seams: go-blockstore supplies the volumes and adds no NBD code; go-trusted-platform's NBD export consumes them through `sdk/go` | none |
 | container-runtime | planned | One container runtime, runc `libcontainer` in-process in `pkg/containerruntime`: no runtime binaries, no sockets; image pull and layer unpack in-process<br>Moved in from go-trusted-platform `pkg/compute/podman` with its history and tests; the exec core is the one rewrite, run against the named contract tests; `ExecContainerRuntime` and the docker/podman selector removed after<br>The runtime lives in the fleet node agent, built with cgo for its init step; quicbaasd stays `CGO_ENABLED=0`; the Go-native FIPS module is unaffected<br>The agent runs on the same host as quicbaasd whenever jobs run there, a single-node deployment included, enrolled against the local server; two runtimes never share a work dir<br>Seams: go-trusted-platform removes its copy and adopts `pkg/containerruntime` | [design/](design/trusted-service-plane.md) |
 | services | planned | A service is a signed manifest in go-qrdb; the lifecycle verbs deploy, undeploy, redeploy, start, stop, resume and restart are served on every transport and in `sdk/go`; deploy grants a workload identity, a certificate, a registered name, RBAC from a built-in role, and secrets<br>One `Release` object for service redeploys and node upgrades; A/B slots per service; one leader-elected rollout controller over one `Strategy` interface, the A/B switch first, blue/green and canary later<br>Moved in from go-trusted-platform: its bootstrap deployer, with no docker default; its boot node and NBD hosted here as broker-class services, delivered as a signed `Release`<br>Seams: go-trusted-platform (the `Release` object, the deployer move, the boot node and NBD as services); go-xkms (workload identity and ACME, re-exported) | [design/](design/trusted-service-plane.md) |
-| oci-registry | planned | The OCI distribution registry at `/v2/`, re-homed from go-trusted-platform with its history and tests to `pkg/ociregistry`; blobs in go-objstore, metadata in go-qrdb, the referrers API<br>Authentication by mTLS workload identity and by TPM attestation through go-xkms's peergate, re-exported; attestation required by default<br>Seams: go-trusted-platform removes its copy and publishes registry names to DNS; go-xkms supplies peergate | [design/](design/trusted-service-plane.md) |
+| oci-registry | planned | The OCI distribution registry at `/v2/`, re-homed from go-trusted-platform with its history and tests to `pkg/ociregistry`, with the referrers API; blobs and metadata go through go-qrdb's storage API, with the objstore backend selected by configuration; no direct go-objstore import<br>Authentication by mTLS workload identity and by TPM attestation through go-xkms's peergate, re-exported; attestation required by default<br>Seams: go-trusted-platform removes its copy and publishes registry names to DNS; go-xkms supplies peergate | [design/](design/trusted-service-plane.md) |
 | measured-launch | planned | Each container launch is measured (image digest, config hash, policy hash) into the node measurement log and the application PCR; a signed cluster manifest; provenance from the software factory as a signed DSSE referrer; default deny, with an audited allow-unsigned policy recorded in the measurement log<br>Moved in from go-trusted-platform: the container measurement log and attestor, its golden values into the reference-values store, its attestation store into the attestation results; launch-time PCR checks use the Verifier's `AppraiseQuote`, not a per-spec PCR list<br>Seams: go-trusted-platform implements `HostTPM` (re-exported in `sdk/go`) and go-quicbaas records and extends through it; go-xkms supplies evidence checks and image signing and verification | [design/](design/trusted-service-plane.md) |
 | service-policy | planned | Policy is signed data with one engine: the Go-coded admission, sandbox, mount, network, trust, communication, role, lifecycle and spend policies move into one engine dispatched by kind; documents are signed through go-xkms, stored in go-qrdb and verified on load<br>IAM authorization stays go-qrdb's; there is no second engine for the same decision<br>Seams: go-xkms signs and verifies policy documents; go-trusted-platform's rego rules map onto the existing kinds | [design/](design/trusted-service-plane.md) |
 | tenant-agent | future | A QuicBaaS tenant agent replaces the Company Agent | none |
 
-## Authorization clean-up
+### Authorization clean-up
 
-Every place go-quicbaas keeps its own roles, permissions or authorization checks instead of go-qrdb's, from the IAM/RBAC audit of 2026-10-15. Each row names the go-qrdb `sdk/go` re-export (pinned tag) that replaces the departure; the row is removed when the departure is. A row marked *seam* needs a re-export go-qrdb does not yet carry, and waits for the CA's confirmation.
+Every place go-quicbaas keeps its own roles, permissions or authorization checks instead of go-qrdb's. Each row names the go-qrdb `sdk/go` re-export (pinned tag) that replaces the departure; the row is removed when the departure is. A row marked *seam* needs a re-export go-qrdb does not yet carry, and waits for the CA's confirmation.
 
 Device onboarding and OTA activate / confirm are permissions in go-qrdb's vocabulary (`RegisterPermissions`), carried by the default roles (`RegisterPermissionRoleGrant`), never roles of their own.
 
@@ -132,7 +132,7 @@ Kept, as go-qrdb's extension points used as intended: `pkg/permission` registers
 - Unix: [`sdk/go/transport/unix`](../sdk/go/transport/unix/), gRPC over `AF_UNIX`.
 - Embedded: [`sdk/go/transport/embedded`](../sdk/go/transport/embedded/).
 
-## Dev complete criteria
+## Release criteria
 
 Milestone 15, Dev complete, closes when every SPEC row here has shipped, every seam row go-trusted-platform's SPEC names on go-quicbaas has shipped, and the API is stable. The open issues below are this repository's part; go-trusted-platform's seam rows arrive as issues once its coordinator lists them. Until the milestone closes, tags are `-alpha` only, and an `-rc.N` is cut only if something needs one.
 
