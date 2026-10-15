@@ -1196,7 +1196,7 @@ func loopbackTrustedClient(caCertPath string) (*http.Client, error) {
 	if caCertPath == "" {
 		return nil, &ServerMessageError{Message: "loopbackTrustedClient: caCertPath is required (QuicBaaS bans insecure TLS)"}
 	}
-	caPEM, err := os.ReadFile(caCertPath) //nolint:gosec // caCertPath comes from server config
+	caPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
 		return nil, &ServerCauseError{Message: fmt.Sprintf("read ca-chain %s", caCertPath), Cause: err}
 	}

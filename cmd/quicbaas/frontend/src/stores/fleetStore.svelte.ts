@@ -70,16 +70,64 @@ onSessionScopeChange(() => {
 // Public store
 // ---------------------------------------------------------------------------
 
+/**
+ * How long a node may go without heartbeating and still count as online, in
+ * milliseconds. It mirrors the server's DefaultFleetHeartbeatTimeout (90s,
+ * pkg/orchestration/session_reconcile.go), the age past which the server's
+ * own sweep treats an agent as gone (go-quicbaas#851).
+ */
+export const FLEET_HEARTBEAT_TIMEOUT_MS = 90_000;
+
+/** Nanoseconds per millisecond: the fleet API sends `last_seen` as Go UnixNano. */
+const NANOS_PER_MILLI = 1_000_000;
+
+/** Statuses of a node whose agent has started and is serving. */
+const STARTED_STATUSES: ReadonlySet<string> = new Set(['running', 'idle']);
+
+/** Statuses of a node a session may be spawned on, started or not. */
+const SPAWNABLE_STATUSES: ReadonlySet<string> = new Set(['running', 'idle', 'registered']);
+
+/**
+ * Whether a node is online at `nowMs`: its agent has started, and its last
+ * heartbeat is within FLEET_HEARTBEAT_TIMEOUT_MS. A node registered but never
+ * started is not online, and neither is one whose `last_seen` is missing or
+ * not a positive number.
+ */
+export function isFleetNodeOnline(node: FleetNode, nowMs: number): boolean {
+  if (!STARTED_STATUSES.has(node.status)) return false;
+  const lastSeen = node.last_seen;
+  if (typeof lastSeen !== 'number' || !Number.isFinite(lastSeen) || lastSeen <= 0) return false;
+  return nowMs - lastSeen / NANOS_PER_MILLI <= FLEET_HEARTBEAT_TIMEOUT_MS;
+}
+
+/** The nodes online at `nowMs`; see isFleetNodeOnline. */
+export function onlineFleetNodes(list: FleetNode[], nowMs: number): FleetNode[] {
+  return list.filter((node) => isFleetNodeOnline(node, nowMs));
+}
+
+/** The nodes a session may be spawned on, including registered ones not yet heard from. */
+export function spawnableFleetNodes(list: FleetNode[]): FleetNode[] {
+  return list.filter((node) => SPAWNABLE_STATUSES.has(node.status));
+}
+
+/** The cached nodes when they are in scope, otherwise none. */
+function scopedNodes(): FleetNode[] {
+  const current = inScope() ? nodes : NO_NODES;
+  return Array.isArray(current) ? current : NO_NODES;
+}
+
 export const fleetStore = {
   get nodes() { return inScope() ? nodes : NO_NODES; },
   get nodesLoading() { return nodesLoading; },
 
-  /** Derived: only nodes currently online. */
+  /** Derived: nodes started and heartbeating now; the dashboard's "N online". */
   get onlineNodes() {
-    const current = inScope() ? nodes : NO_NODES;
-    return (Array.isArray(current) ? current : []).filter(
-      (a) => a.status === 'running' || a.status === 'idle' || a.status === 'registered',
-    );
+    return onlineFleetNodes(scopedNodes(), Date.now());
+  },
+
+  /** Derived: nodes a session may target, including registered ones. */
+  get spawnableNodes() {
+    return spawnableFleetNodes(scopedNodes());
   },
 };
 

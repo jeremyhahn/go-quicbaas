@@ -988,17 +988,6 @@ func (s *Server) initDataPlaneEncryptor() error {
 	return nil
 }
 
-// fileExists returns true if the file at path exists and is a regular file.
-//
-//nolint:unused // used by tagged tests
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}
-
 // startStorage initializes the storage layer based on the configured
 // backend. For persistent backends (pebble, file), creates the data
 // directory. For memory backend, no initialization is needed.

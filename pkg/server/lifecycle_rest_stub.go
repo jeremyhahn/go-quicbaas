@@ -32,8 +32,6 @@ var ErrRESTNotCompiled = errors.New("rest support not compiled - build with -tag
 // These use the same variable names and function signatures as the real
 // REST build so that shared test helpers (e.g., saveAndRestoreSeams)
 // compile regardless of build tags.
-//
-//nolint:unused // newREST is used in rest-tagged builds and tests
 var newREST = func(_ service.QuicBaaS, _ *restapi.Config, _ *logger.Logger) (*restapi.Server, error) {
 	return nil, ErrRESTNotCompiled
 }

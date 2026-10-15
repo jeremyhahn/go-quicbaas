@@ -89,6 +89,7 @@ Examples:
 	cmd.AddCommand(newIAMAuditCommand())
 	cmd.AddCommand(newIAMAdminCommand())
 	cmd.AddCommand(newIAMGDPRCommand())
+	cmd.AddCommand(newIAMInviteCommand())
 
 	// Federation commands
 	cmd.AddCommand(newIAMProviderCommand())

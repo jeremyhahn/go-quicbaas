@@ -130,7 +130,9 @@ func (sc *ShardedClient) ForShard(shardID uint64) (*qrdbsdk.Client, error) {
 
 	// Check for a cached client first.
 	if existing, ok := sc.clients.Load(shardID); ok {
-		return existing.(*qrdbsdk.Client), nil //nolint:errcheck // type guaranteed by map contract
+		if cached, isClient := existing.(*qrdbsdk.Client); isClient {
+			return cached, nil
+		}
 	}
 
 	// Create a network client via the transport factory.
@@ -142,10 +144,10 @@ func (sc *ShardedClient) ForShard(shardID uint64) (*qrdbsdk.Client, error) {
 	// Store the client for future use. If another goroutine stored one
 	// first, use theirs and close ours.
 	actual, loaded := sc.clients.LoadOrStore(shardID, client)
-	if loaded {
+	if winner, isClient := actual.(*qrdbsdk.Client); loaded && isClient {
 		// Another goroutine created a client for this shard first.
 		_ = client.Close()
-		return actual.(*qrdbsdk.Client), nil //nolint:errcheck // type guaranteed by map contract
+		return winner, nil
 	}
 
 	return client, nil
@@ -167,8 +169,9 @@ func (sc *ShardedClient) Close() error {
 
 	// Close SDK clients (they reference the transports).
 	sc.clients.Range(func(key, value any) bool {
-		client := value.(*qrdbsdk.Client) //nolint:errcheck // type guaranteed by map contract
-		_ = client.Close()
+		if client, ok := value.(*qrdbsdk.Client); ok {
+			_ = client.Close()
+		}
 		sc.clients.Delete(key)
 		return true
 	})

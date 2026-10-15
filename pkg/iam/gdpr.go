@@ -369,12 +369,17 @@ func (m *GDPRManager) processExportAsync(exportID string) {
 		return
 	}
 
-	// GenerateExport handles all processing, status updates, and error marking internally
-	m.GenerateExport(ctx, exportID) //nolint:errcheck,gosec // Error handling is internal to GenerateExport
+	// GenerateExport records a failure to collect the data itself. A failed
+	// status write is the one error it cannot record, and it leaves the
+	// request pending or processing, where nothing picks it up again.
+	if _, err := m.GenerateExport(ctx, exportID); err != nil {
+		m.markExportFailed(exportID, err.Error())
+	}
 }
 
 // markExportFailed marks an export as failed with an error message.
-// This is used for panic recovery in async processing.
+// It is used by async processing after a panic or an unrecorded error. A
+// request that already reached a final status keeps it, and its message.
 func (m *GDPRManager) markExportFailed(exportID, errMsg string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -384,6 +389,9 @@ func (m *GDPRManager) markExportFailed(exportID, errMsg string) {
 
 	request, err := m.deps.DataExportStorage.GetExportRequest(ctx, exportID)
 	if err != nil {
+		return
+	}
+	if request.Status != DataExportStatusPending && request.Status != DataExportStatusProcessing {
 		return
 	}
 
@@ -712,12 +720,17 @@ func (m *GDPRManager) processDeletionAsync(deletionID string) {
 		return
 	}
 
-	// ProcessDeletion handles all processing, status updates, and error marking internally
-	m.ProcessDeletion(ctx, deletionID) //nolint:errcheck,gosec // Error handling is internal to ProcessDeletion
+	// ProcessDeletion records a failure to delete the data itself. A failed
+	// status write is the one error it cannot record, and it leaves the
+	// request pending or processing, where nothing picks it up again.
+	if _, err := m.ProcessDeletion(ctx, deletionID); err != nil {
+		m.markDeletionFailed(deletionID, err.Error())
+	}
 }
 
 // markDeletionFailed marks a deletion as failed with an error message.
-// This is used for panic recovery in async processing.
+// It is used by async processing after a panic or an unrecorded error. A
+// request that already reached a final status, cancelled included, keeps it.
 func (m *GDPRManager) markDeletionFailed(deletionID, errMsg string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -727,6 +740,9 @@ func (m *GDPRManager) markDeletionFailed(deletionID, errMsg string) {
 
 	request, err := m.deps.DeletionStorage.GetDeletionRequest(ctx, deletionID)
 	if err != nil {
+		return
+	}
+	if request.Status != DeletionStatusPending && request.Status != DeletionStatusProcessing {
 		return
 	}
 

@@ -395,7 +395,7 @@ func (h *iamHandler) handleProvisionTenant(ctx context.Context, client iampb.IAM
 		AdminUsername:     adminUsername,
 		AdminEnrollment:   adminEnrollment,
 		AdminCsrPem:       adminCSRPEM,
-		InviteExpiryHours: int32(inviteExpiryHours), //nolint:gosec // G115: hours, bounded by the server
+		InviteExpiryHours: int32(inviteExpiryHours),
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, "handleProvisionTenant")

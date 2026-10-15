@@ -32,8 +32,8 @@ var stagedComposeFiles = []string{
 	"test/e2e/docker-compose.e2e.yml",
 }
 
-// secretMount is the Dockerfile instruction that reads the secret.
-const secretMount = "--mount=type=secret,id=gomodauth" //nolint:gosec // G101: a Dockerfile instruction naming a secret, not a credential
+// gomodauthMount is the Dockerfile instruction that reads the secret.
+const gomodauthMount = "--mount=type=secret,id=gomodauth"
 
 // ComposeFileError reports that a compose file the gate must read could not be
 // read or parsed.
@@ -103,8 +103,8 @@ func checkWiring(root string) ([]string, error) {
 			if err != nil {
 				return nil, &ComposeFileError{Path: dfPath, Err: err}
 			}
-			if !strings.Contains(string(content), secretMount) {
-				findings = append(findings, where+": "+dockerfile+" never reads the gomodauth secret ("+secretMount+")")
+			if !strings.Contains(string(content), gomodauthMount) {
+				findings = append(findings, where+": "+dockerfile+" never reads the gomodauth secret ("+gomodauthMount+")")
 			}
 		}
 	}

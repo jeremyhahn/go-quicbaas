@@ -6,8 +6,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 
@@ -725,23 +723,6 @@ func TestCloneTLSConfig(t *testing.T) {
 // ---------------------------------------------------------------------------
 // fileExists tests
 // ---------------------------------------------------------------------------
-
-func TestFileExists(t *testing.T) {
-	t.Run("returns true for existing file", func(t *testing.T) {
-		tmpFile := filepath.Join(t.TempDir(), "test.txt")
-		require.NoError(t, os.WriteFile(tmpFile, []byte("hi"), 0600))
-		assert.True(t, fileExists(tmpFile))
-	})
-
-	t.Run("returns false for nonexistent file", func(t *testing.T) {
-		assert.False(t, fileExists("/nonexistent/path/to/file"))
-	})
-
-	t.Run("returns false for directory", func(t *testing.T) {
-		dir := t.TempDir()
-		assert.False(t, fileExists(dir))
-	})
-}
 
 // ---------------------------------------------------------------------------
 // setupSignalHandlers test

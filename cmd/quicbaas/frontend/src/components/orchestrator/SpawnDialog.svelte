@@ -390,7 +390,7 @@
           aria-label="Host affinity"
         >
           <option value="">Any daemon</option>
-          {#each fleetStore.onlineNodes as agent (agent.id)}
+          {#each fleetStore.spawnableNodes as agent (agent.id)}
             <option value={agent.host}>{agent.name} ({agent.host})</option>
           {/each}
         </select>

@@ -143,7 +143,7 @@ func Write(ctx context.Context, dir string, topo *Topology) error {
 	if err := topo.Validate(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // a fixture directory read by other containers
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: a fixture directory read by other containers, so world-readable on purpose
 		return &FileError{Op: "create directory", Path: dir, Cause: err}
 	}
 

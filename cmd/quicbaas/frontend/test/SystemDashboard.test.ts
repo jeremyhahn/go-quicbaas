@@ -71,7 +71,7 @@ const { fleetStoreMock } = vi.hoisted(() => ({
     nodes: [] as Array<{ id: string; status: string }>,
     get onlineNodes() {
       return (Array.isArray(this.nodes) ? this.nodes : []).filter(
-        (a) => a.status === 'running' || a.status === 'idle' || a.status === 'registered',
+        (a) => a.status === 'running' || a.status === 'idle',
       );
     },
     nodesLoading: false,

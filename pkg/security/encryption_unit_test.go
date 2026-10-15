@@ -17,45 +17,11 @@ package security
 
 import (
 	"context"
-	"crypto/rand"
-	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestGenerateNonceSuccess(t *testing.T) {
-	// Test successful nonce generation
-	nonce, err := generateNonce()
-	require.NoError(t, err)
-	assert.Len(t, nonce, NonceSize)
-
-	// Verify nonce is random (two calls should produce different results)
-	nonce2, err := generateNonce()
-	require.NoError(t, err)
-	assert.NotEqual(t, nonce, nonce2)
-}
-
-func TestGenerateNonceReadError(t *testing.T) {
-	// Save original rand.Reader
-	originalReader := rand.Reader
-	defer func() { rand.Reader = originalReader }()
-
-	// Replace with failing reader
-	rand.Reader = &failingReader{}
-
-	nonce, err := generateNonce()
-	assert.Error(t, err)
-	assert.Nil(t, nonce)
-}
-
-// failingReader always returns an error.
-type failingReader struct{}
-
-func (f *failingReader) Read(p []byte) (n int, err error) {
-	return 0, io.ErrUnexpectedEOF
-}
 
 func TestKeyring_AlgorithmToSymmetricAllVariants(t *testing.T) {
 	tests := []struct {
@@ -89,43 +55,6 @@ func TestKeyring_AlgorithmToSymmetricAllVariants(t *testing.T) {
 			// Just verify it doesn't panic and returns a value
 			result := kr.algorithmToSymmetric()
 			assert.NotNil(t, result)
-		})
-	}
-}
-
-func TestKeyring_AlgorithmToKeySizeAllSizes(t *testing.T) {
-	tests := []struct {
-		name      string
-		algorithm string
-		expected  int
-	}{
-		{name: "AES-256-GCM", algorithm: AlgorithmAES256GCM, expected: 256},
-		{name: "aes256-gcm", algorithm: "aes256-gcm", expected: 256},
-		{name: "AES256-GCM", algorithm: "AES256-GCM", expected: 256},
-		{name: "AES-192-GCM", algorithm: "AES-192-GCM", expected: 192},
-		{name: "aes192-gcm", algorithm: "aes192-gcm", expected: 192},
-		{name: "AES-128-GCM", algorithm: "AES-128-GCM", expected: 128},
-		{name: "aes128-gcm", algorithm: "aes128-gcm", expected: 128},
-		{name: "default fallback", algorithm: "unknown", expected: 256},
-		{name: "empty string", algorithm: "", expected: 256},
-	}
-
-	log := createTestLogger(t)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &EncryptionConfig{
-				Algorithm:   tt.algorithm,
-				KeyProvider: "local",
-			}
-
-			kr := &Keyring{
-				config: cfg,
-				logger: log,
-			}
-
-			result := kr.algorithmToKeySize()
-			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

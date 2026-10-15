@@ -135,14 +135,6 @@ func TestServer_InitBarrier_DisabledReturnsNil(t *testing.T) {
 // lifecycle.go — fileExists helper
 // =============================================================================
 
-func TestFileExists_NonExistentReturnsFalse(t *testing.T) {
-	assert.False(t, fileExists("/nonexistent/file.txt"))
-}
-
-func TestFileExists_DirectoryReturnsFalse(t *testing.T) {
-	assert.False(t, fileExists(t.TempDir()))
-}
-
 // =============================================================================
 // server.go — Start in embedded mode returns without blocking
 // =============================================================================

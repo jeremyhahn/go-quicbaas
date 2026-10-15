@@ -32,7 +32,7 @@ vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
 }));
 
 vi.mock('../src/stores/fleetStore.svelte.ts', () => ({
-  fleetStore: { onlineNodes: [] },
+  fleetStore: { spawnableNodes: [] },
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({

@@ -117,7 +117,10 @@ func (c *PolicyCache) Get(tenantID, name string) (*Policy, bool) {
 		return nil, false
 	}
 
-	entry := value.(*cacheEntry) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+	entry, ok := value.(*cacheEntry)
+	if !ok {
+		return nil, false
+	}
 
 	// Check if entry is expired
 	if time.Now().After(entry.expiresAt) {
@@ -157,7 +160,7 @@ func (c *PolicyCache) InvalidateAll(tenantID string) {
 	prefix := tenantID + ":"
 
 	c.policies.Range(func(key, value interface{}) bool {
-		if strings.HasPrefix(key.(string), prefix) { //nolint:errcheck // type assertion guaranteed by sync.Map contract
+		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
 			c.policies.Delete(key)
 		}
 		return true
@@ -178,12 +181,11 @@ func (c *PolicyCache) GetAll(tenantID string) []*Policy {
 	var policies []*Policy
 
 	c.policies.Range(func(key, value interface{}) bool {
-		if strings.HasPrefix(key.(string), prefix) { //nolint:errcheck // type assertion guaranteed by sync.Map contract
-			entry := value.(*cacheEntry) //nolint:errcheck // type assertion guaranteed by sync.Map contract
-			// Skip expired entries
-			if time.Now().Before(entry.expiresAt) {
-				policies = append(policies, entry.policy)
-			}
+		k, isKey := key.(string)
+		entry, isEntry := value.(*cacheEntry)
+		// Skip expired entries
+		if isKey && isEntry && strings.HasPrefix(k, prefix) && time.Now().Before(entry.expiresAt) {
+			policies = append(policies, entry.policy)
 		}
 		return true
 	})
@@ -233,8 +235,7 @@ func (c *PolicyCache) EvictExpired() int {
 	count := 0
 
 	c.policies.Range(func(key, value interface{}) bool {
-		entry := value.(*cacheEntry) //nolint:errcheck // type assertion guaranteed by sync.Map contract
-		if now.After(entry.expiresAt) {
+		if entry, ok := value.(*cacheEntry); ok && now.After(entry.expiresAt) {
 			c.policies.Delete(key)
 			count++
 		}
@@ -255,7 +256,10 @@ func (c *PolicyCache) EvictOldest() bool {
 	var oldestTime time.Time
 
 	c.policies.Range(func(key, value interface{}) bool {
-		entry := value.(*cacheEntry) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+		entry, ok := value.(*cacheEntry)
+		if !ok {
+			return true
+		}
 		if oldestKey == nil || entry.cachedAt.Before(oldestTime) {
 			oldestKey = key
 			oldestTime = entry.cachedAt

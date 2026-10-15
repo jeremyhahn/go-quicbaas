@@ -42,7 +42,7 @@ func TestNewIAMCommand(t *testing.T) {
 
 	// Verify subcommands are registered
 	subcommands := cmd.Commands()
-	expectedSubcommands := []string{"tenant", "user", "role", "app", "policy", "mfa", "webauthn", "session", "pep", "audit", "admin", "gdpr", "provider", "identity"}
+	expectedSubcommands := []string{"tenant", "user", "role", "app", "policy", "mfa", "webauthn", "session", "pep", "audit", "admin", "gdpr", "invite", "provider", "identity"}
 
 	assert.Len(t, subcommands, len(expectedSubcommands))
 

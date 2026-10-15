@@ -287,7 +287,7 @@ func (h *HTTPTransport) OpenInbound(ctx context.Context, account SignalAccount) 
 	}
 	// websocket.Dial closes the handshake response body itself; the caller
 	// only owns the returned connection.
-	conn, _, err := websocket.Dial(ctx, wsURL.String(), opts) //nolint:bodyclose // the handshake response body is owned and closed by websocket.Dial
+	conn, _, err := websocket.Dial(ctx, wsURL.String(), opts) //nolint:bodyclose // websocket.Dial closes the handshake body itself and returns it nil on success
 	if err != nil {
 		return nil, nil, wrapError(op, ErrKindTransport, err, "dial websocket")
 	}

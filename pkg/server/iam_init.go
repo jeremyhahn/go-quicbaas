@@ -1289,7 +1289,7 @@ func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDepe
 	}
 
 	if path := s.config.Auth.BootstrapAdminCSRPath; path != "" {
-		csrPEM, err := os.ReadFile(path) //nolint:gosec // path comes from operator config
+		csrPEM, err := os.ReadFile(path)
 		if err != nil {
 			return nil, nil, &FirstBootBootstrapError{Op: "read admin CSR " + path, Cause: err}
 		}
@@ -1510,7 +1510,7 @@ func parseCertLoginPEM(certPEM []byte) (*x509.Certificate, error) {
 // "factor not found", because the login ceremony resolves qrdb's UserAuthFactor
 // store rather than the user-side thumbprint index written below.
 func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID string, userID uint64, path string) error {
-	certPEM, err := os.ReadFile(path) //nolint:gosec // path comes from operator config
+	certPEM, err := os.ReadFile(path)
 	if err != nil {
 		return &PIVBootstrapError{Op: "read PIV cert", Path: path, Cause: err}
 	}
@@ -2129,7 +2129,7 @@ func (e *PIVActivationRootsError) Unwrap() error {
 // operator's iam.piv_login.ca_file -- the same trust anchor the PIV login
 // endpoint verifies against.
 func loadPIVActivationRoots(path string) (*x509.CertPool, error) {
-	pemData, err := os.ReadFile(path) //nolint:gosec // operator-configured CA path
+	pemData, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &PIVActivationRootsError{Path: path, Reason: "read failed", Cause: err}
 	}

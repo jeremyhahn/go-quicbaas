@@ -20,7 +20,6 @@ package devcluster
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -51,13 +50,6 @@ type NodeInstance struct {
 	MCPPort    int
 	RaftPort   int
 	UnixSocket string
-
-	// State tracking using atomic operations for thread safety.
-	// These fields are part of the interface contract with the raft implementation.
-	//nolint:unused // Required for interface compatibility with raft build
-	running atomic.Bool
-	//nolint:unused // Required for interface compatibility with raft build
-	ready atomic.Bool
 }
 
 // ManagerConfig configures the devcluster manager.

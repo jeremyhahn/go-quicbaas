@@ -1778,37 +1778,6 @@ func TestKeyring_AlgorithmToSymmetric(t *testing.T) {
 }
 
 // TestKeyring_AlgorithmToKeySize tests key size conversion.
-func TestKeyring_AlgorithmToKeySize(t *testing.T) {
-	log := createTestLogger(t)
-
-	tests := []struct {
-		algorithm string
-		expected  int
-	}{
-		{AlgorithmAES256GCM, 256},
-		{"aes256-gcm", 256},
-		{"AES256-GCM", 256},
-		{"AES-192-GCM", 192},
-		{"aes192-gcm", 192},
-		{"AES-128-GCM", 128},
-		{"aes128-gcm", 128},
-		{"unknown", 256}, // defaults to 256
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.algorithm, func(t *testing.T) {
-			kr := &Keyring{
-				config: &EncryptionConfig{
-					Algorithm: tt.algorithm,
-				},
-				logger: log,
-			}
-			result := kr.algorithmToKeySize()
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 // TestKeyring_IsValidAlgorithm tests algorithm validation.
 func TestKeyring_IsValidAlgorithm(t *testing.T) {
 	log := createTestLogger(t)
@@ -2553,28 +2522,6 @@ func TestInitializeWithAWSKMS_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "awskms backend requires explicit initialization")
 }
 
-func TestKeyring_AlgorithmToKeySizeMapping(t *testing.T) {
-	tests := []struct {
-		name      string
-		algorithm string
-		want      int
-	}{
-		{name: "AES-256-GCM", algorithm: AlgorithmAES256GCM, want: 256},
-		{name: "aes256-gcm", algorithm: "aes256-gcm", want: 256},
-		{name: "AES-192-GCM", algorithm: "AES-192-GCM", want: 192},
-		{name: "AES-128-GCM", algorithm: "AES-128-GCM", want: 128},
-		{name: "default", algorithm: "unknown-algo", want: 256},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			kr := &Keyring{config: &EncryptionConfig{Algorithm: tc.algorithm}}
-			got := kr.algorithmToKeySize()
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
 func TestKeyring_AlgorithmToSymmetricMapping(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -2610,16 +2557,6 @@ func TestKeyring_ReturnsKeyMetadata(t *testing.T) {
 	require.Len(t, meta, 1)
 	assert.Equal(t, byte(1), meta[0].Version)
 	assert.True(t, meta[0].Active)
-}
-
-func TestGenerateNonce_UniquePair(t *testing.T) {
-	nonce, err := generateNonce()
-	require.NoError(t, err)
-	assert.Len(t, nonce, NonceSize)
-
-	nonce2, err := generateNonce()
-	require.NoError(t, err)
-	assert.NotEqual(t, nonce, nonce2)
 }
 
 func TestKeyring_AutoRotateIncrementsVersion(t *testing.T) {

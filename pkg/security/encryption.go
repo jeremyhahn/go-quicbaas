@@ -15,9 +15,7 @@ package security
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 
@@ -497,23 +495,6 @@ func (kr *Keyring) isValidAlgorithm() bool {
 	}
 }
 
-// algorithmToKeySize returns the AES key size in bits for the configured algorithm.
-// Used for key validation and testing.
-//
-//nolint:unused // Used in tests for key size validation
-func (kr *Keyring) algorithmToKeySize() int {
-	switch kr.config.Algorithm {
-	case AlgorithmAES256GCM, "aes256-gcm", "AES256-GCM":
-		return 256
-	case "AES-192-GCM", "aes192-gcm":
-		return 192
-	case "AES-128-GCM", "aes128-gcm":
-		return 128
-	default:
-		return 256 // Default to AES-256
-	}
-}
-
 // Encrypt encrypts plaintext using the current key via go-xkms.
 func (kr *Keyring) Encrypt(plaintext []byte) (*xkmssdk.EncryptedData, error) {
 	kr.mu.RLock()
@@ -697,16 +678,4 @@ func (kr *Keyring) GetKeyMetadata() []*EncryptionKey {
 	}
 
 	return keys
-}
-
-// generateNonce generates a cryptographically secure random nonce.
-// Used for nonce generation in encryption operations.
-//
-//nolint:unused // Used in tests for nonce generation validation
-func generateNonce() ([]byte, error) {
-	nonce := make([]byte, NonceSize)
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-	return nonce, nil
 }

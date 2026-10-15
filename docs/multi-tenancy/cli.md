@@ -78,7 +78,38 @@ quicbaas iam tenant provision acme-corp --isolation-type prefix --admin-enrollme
 In `invite` mode the admin is created pending and the command prints a
 single-use invite token once; deliver it over a secure channel. Flag
 conflicts are refused locally before any call; the server's validation stays
-authoritative.
+authoritative. Redeem the token with [`quicbaas iam invite`](#quicbaas-iam-invite).
+
+## `quicbaas iam invite`
+
+Inspect and redeem the one-time invite that onboards a pending user, such as
+the admin of a tenant provisioned in `invite` mode
+(`cmd/quicbaas/iam_invite.go`). Both verbs call the SDK's `InviteClient`.
+
+| Verb | Purpose |
+|---|---|
+| `show` | Print the invite's user, permitted auth methods and expiry; does not consume it |
+| `activate-piv` | Bind a PIV certificate to the pending user and activate them; consumes the invite |
+
+| Flag | Verbs | Description |
+|---|---|---|
+| `--tenant` | both | Root flag; the tenant the invite belongs to |
+| `--token` | both | The invite token (required) |
+| `--cert` | `activate-piv` | PEM X.509 certificate file (required) |
+| `--output` | both | `table` or `json` |
+
+```bash
+quicbaas iam invite show --tenant acme-corp --token "$TOKEN"
+quicbaas iam invite activate-piv --tenant acme-corp --token "$TOKEN" --cert piv.crt
+```
+
+`activate-piv` refuses a file that is not a PEM certificate before any call.
+The certificate must chain to a root the server trusts, and the server's
+validation is authoritative. FIDO2 activation is not on the CLI.
+
+**Known gap:** MCP serves no invite tools while an owner ruling is pending, so
+on `--transport mcp` both verbs fail with the SDK's error. Use any other
+transport.
 
 ## `quicbaas iam tenant barrier`
 

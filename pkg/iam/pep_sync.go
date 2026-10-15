@@ -345,7 +345,9 @@ func (t *CacheVersionTracker) IncrementVersion() int64 {
 // GetTenantVersion returns the version for a specific tenant.
 func (t *CacheVersionTracker) GetTenantVersion(tenantID string) int64 {
 	if v, ok := t.tenantVersions.Load(tenantID); ok {
-		return v.(int64) //nolint:errcheck // type assertion guaranteed by sync.Map contract
+		if version, isVersion := v.(int64); isVersion {
+			return version
+		}
 	}
 	return 0
 }

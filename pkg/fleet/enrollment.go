@@ -66,14 +66,14 @@ import (
 // handshake; the body carries the daemon's self-declared capabilities.
 const defaultRegisterPath = "/api/v1/fleet/enroll"
 
-// defaultTokenPath mirrors pkg/iam/oidc.go's TokenEndpoint so a daemon can
+// defaultOAuth2Endpoint mirrors pkg/iam/oidc.go's TokenEndpoint so a daemon can
 // reach the same OIDC provider that signed its registration.
-const defaultTokenPath = "/oauth2/token" //nolint:gosec // G101: a URL path, not a credential
+const defaultOAuth2Endpoint = "/oauth2/token"
 
-// defaultTokenMTLSPath is the mTLS token endpoint (RFC 8705). The agent posts
+// defaultOAuth2MTLSEndpoint is the mTLS token endpoint (RFC 8705). The agent posts
 // here when it has an mtls_client_id and presents its agent.crt on the TLS
 // handshake instead of sending a client_secret.
-const defaultTokenMTLSPath = "/oauth2/token-mtls" //nolint:gosec // G101: a URL path, not a credential
+const defaultOAuth2MTLSEndpoint = "/oauth2/token-mtls"
 
 // credentialsFileName is the on-disk filename for persisted OAuth2 client
 // credentials inside cfg.WorkDir. 0600 permissions are enforced.
@@ -143,10 +143,10 @@ type ProductionEnrollerDeps struct {
 	// RegisterPath overrides defaultRegisterPath. Leave empty in production.
 	RegisterPath string
 
-	// TokenPath overrides defaultTokenPath. Leave empty in production.
+	// TokenPath overrides defaultOAuth2Endpoint. Leave empty in production.
 	TokenPath string
 
-	// TokenMTLSPath overrides defaultTokenMTLSPath. Leave empty in production.
+	// TokenMTLSPath overrides defaultOAuth2MTLSEndpoint. Leave empty in production.
 	TokenMTLSPath string
 
 	// ServedBackends reports the backend names the daemon actually serves,
@@ -218,11 +218,11 @@ func NewProductionEnroller(deps ProductionEnrollerDeps) *ProductionEnroller {
 	}
 	tokenPath := deps.TokenPath
 	if tokenPath == "" {
-		tokenPath = defaultTokenPath
+		tokenPath = defaultOAuth2Endpoint
 	}
 	tokenMTLSPath := deps.TokenMTLSPath
 	if tokenMTLSPath == "" {
-		tokenMTLSPath = defaultTokenMTLSPath
+		tokenMTLSPath = defaultOAuth2MTLSEndpoint
 	}
 	return &ProductionEnroller{
 		httpClient:     deps.HTTPClient, // may be nil — built lazily per-call

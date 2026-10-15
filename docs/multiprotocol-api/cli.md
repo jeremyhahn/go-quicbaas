@@ -719,6 +719,19 @@ records what has been exercised, not what ought to work.
 | `iam tenant delete` | Y | Y | Y | - | Y | B | Complete |
 | `iam tenant list` | Y | Y | Y | - | Y | B | Complete |
 
+#### IAM Invite
+
+| Command | gRPC | REST | QUIC | Unix | MCP | Tests | Status |
+|---------|------|------|------|------|-----|-------|--------|
+| `iam invite show` | Y | Y | Y | Y | - | U | Complete |
+| `iam invite activate-piv` | Y | Y | Y | Y | - | U | Complete |
+
+MCP serves no invite tools pending an owner ruling, so on `--transport mcp`
+both verbs fail with the SDK's error. This is a known gap, not an oversight
+(go-quicbaas#358). The CLI integration rows
+(`test/integration/cli/iam_invite_test.go`) skip MCP and the transports the
+IAM suite already skips.
+
 #### IAM User
 
 | Command | gRPC | REST | QUIC | Unix | MCP | Tests | Status |
