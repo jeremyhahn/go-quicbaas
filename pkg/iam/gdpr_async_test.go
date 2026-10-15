@@ -73,7 +73,7 @@ func TestProcessExportAsync_UnrecordedErrorMarksExportFailed(t *testing.T) {
 	createTestUser(t, manager.deps.UserStorage, "tenant-async-export", 51)
 
 	request, err := manager.deps.DataExportStorage.CreateExportRequest(ctx, CreateDataExportOptions{
-		UserID: 51, TenantID: "tenant-async-export", RequestedBy: "51", Format: DataExportFormatJSON,
+		UserID: 51, TenantID: "tenant-async-export", RequestedBy: 51, Format: DataExportFormatJSON,
 	})
 	require.NoError(t, err)
 
@@ -91,7 +91,7 @@ func TestMarkExportFailed_KeepsFinalStatus(t *testing.T) {
 	ctx := context.Background()
 
 	request, err := manager.deps.DataExportStorage.CreateExportRequest(ctx, CreateDataExportOptions{
-		UserID: 52, TenantID: "tenant-final-export", RequestedBy: "52", Format: DataExportFormatJSON,
+		UserID: 52, TenantID: "tenant-final-export", RequestedBy: 52, Format: DataExportFormatJSON,
 	})
 	require.NoError(t, err)
 	request.Status = DataExportStatusCompleted
@@ -111,7 +111,7 @@ func TestProcessDeletionAsync_UnrecordedErrorMarksDeletionFailed(t *testing.T) {
 	createTestUser(t, manager.deps.UserStorage, "tenant-async-deletion", 53)
 
 	request, err := manager.deps.DeletionStorage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: 53, TenantID: "tenant-async-deletion", RequestedBy: "53",
+		UserID: 53, TenantID: "tenant-async-deletion", RequestedBy: 53,
 	})
 	require.NoError(t, err)
 
@@ -129,7 +129,7 @@ func TestMarkDeletionFailed_KeepsCancelledStatus(t *testing.T) {
 	ctx := context.Background()
 
 	request, err := manager.deps.DeletionStorage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: 54, TenantID: "tenant-cancelled-deletion", RequestedBy: "54",
+		UserID: 54, TenantID: "tenant-cancelled-deletion", RequestedBy: 54,
 	})
 	require.NoError(t, err)
 	request.Status = DeletionStatusCancelled
