@@ -60,28 +60,29 @@ vm.dirty_background_ratio = 10
 
 **Required Ports:**
 
+`quicbaasd`'s built-in defaults are 8443 (REST), 9443 (gRPC) and 11443 (MCP), bound to 127.0.0.1. A clustered deployment such as `configs/raft-3-node/` overrides them to the ports below on 0.0.0.0. Open the ports your deployed config names.
+
 | Port | Protocol | Purpose | Exposure |
 |------|----------|---------|----------|
-| 8080 | TCP | REST API | External/Load Balancer |
-| 9090 | TCP | gRPC API | External/Load Balancer |
-| 63000 | TCP | Raft consensus | Internal only |
-| 2379 | TCP | etcd-compatible API | External/Load Balancer |
-| 2380 | TCP | etcd peer communication | Internal only |
+| 8081 | TCP and UDP | REST API: also the web UI, `/metrics`, `/health`, OIDC, WebAuthn, the ACME directory, the SDLC webhook and WebSocket/MQTT. UDP carries HTTP/3 on the same port. | Application networks and Prometheus |
+| 9091 | TCP | gRPC API | Application networks |
+| 11081 | TCP | MCP | Application networks |
+| 63000 | UDP | Raft consensus (QUIC) | The other cluster members only |
+
+There is no separate metrics, pprof or etcd port. Raft and MCP bind only after unseal. Before unseal, REST (TCP only), gRPC and the Unix socket bind to `server.sealed_bind_host` (127.0.0.1 by default), so run the unseal ceremony on the node or through a tunnel. `quicbaas fleet serve` also defaults to 9091: do not run a fleet daemon on a cluster node unless you move it off that port.
 
 **Firewall Rules Checklist:**
 
-- [ ] Allow port 8080 (REST API) from application networks
-- [ ] Allow port 9090 (gRPC API) from application networks
-- [ ] Allow port 63000 (Raft) between cluster nodes only
-- [ ] Allow port 2379 (etcd API) from application networks if using etcd compatibility
-- [ ] Allow port 2380 (etcd peer) between cluster nodes only
+- [ ] Allow port 8081 TCP and UDP (REST API, HTTP/3) from application networks and the metrics scraper
+- [ ] Allow port 9091 TCP (gRPC API) from application networks
+- [ ] Allow port 11081 TCP (MCP) from application networks
+- [ ] Allow port 63000 UDP (Raft) between cluster nodes only
 - [ ] Block all other inbound traffic
 - [ ] Configure outbound rules for object storage backends (if used)
 
 ```bash
-# Example iptables rules for node-to-node communication
-iptables -A INPUT -p tcp --dport 63000 -s <node-cidr> -j ACCEPT
-iptables -A INPUT -p tcp --dport 2380 -s <node-cidr> -j ACCEPT
+# Example iptables rule for node-to-node Raft traffic
+iptables -A INPUT -p udp --dport 63000 -s <node-cidr> -j ACCEPT
 ```
 
 - [ ] DNS resolution working for all node hostnames
