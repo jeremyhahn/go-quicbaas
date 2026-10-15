@@ -368,6 +368,11 @@ type Server struct {
 	// control plane cannot resolve and dial. Nil registers it unprobed.
 	fleetAddressProber FleetAddressProber
 
+	// fleetClustered is true when this control plane is one node of a
+	// cluster: enrollment then refuses a loopback fleet node address, which
+	// the other nodes cannot dial.
+	fleetClustered bool
+
 	// eventIngestURL is the gRPC URL the agent register handler hands
 	// back to a daemon on enrollment so the daemon dials the gRPC
 	// listener (h2 ALPN) for PushEvents instead of the REST listener

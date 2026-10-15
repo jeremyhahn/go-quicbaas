@@ -31,7 +31,7 @@ quicbaas fleet deploy \
   --ssh user@target-host.example.com \
   --ssh-key-name fleet-deploy \
   --server https://quicbaas.example.com:18080 \
-  --binary bin/quicbaas-static \
+  --binary bin/quicbaas-agent \
   --wait-online 2m
 ```
 

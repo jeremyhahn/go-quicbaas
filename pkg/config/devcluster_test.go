@@ -14,8 +14,10 @@
 package config
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,7 +47,7 @@ func TestDefaultDevClusterConfig(t *testing.T) {
 
 	t.Run("has correct default base ports", func(t *testing.T) {
 		cfg := DefaultDevClusterConfig()
-		assert.Equal(t, 9090, cfg.BasePorts.GRPC, "default GRPC base port should be 9090")
+		assert.Equal(t, 9290, cfg.BasePorts.GRPC, "default GRPC base port should be 9290")
 		assert.Equal(t, 8080, cfg.BasePorts.REST, "default REST base port should be 8080")
 		assert.Equal(t, 11443, cfg.BasePorts.MCP, "default MCP base port should be 11443")
 		assert.Equal(t, 63001, cfg.BasePorts.Raft, "default Raft base port should be 63001")
@@ -55,7 +57,7 @@ func TestDefaultDevClusterConfig(t *testing.T) {
 func TestDefaultDevClusterPorts(t *testing.T) {
 	t.Run("returns correct default ports", func(t *testing.T) {
 		ports := DefaultDevClusterPorts()
-		assert.Equal(t, 9090, ports.GRPC)
+		assert.Equal(t, 9290, ports.GRPC)
 		assert.Equal(t, 8080, ports.REST)
 		assert.Equal(t, 11443, ports.MCP)
 		assert.Equal(t, 63001, ports.Raft)
@@ -71,6 +73,32 @@ func TestDefaultDevClusterPorts(t *testing.T) {
 		}
 		// If there were duplicates, the map would have fewer entries
 		assert.Equal(t, 4, len(portSet), "all default ports should be unique")
+	})
+
+	// A fleet node agent co-located with a dev cluster node listens on 9091
+	// (pkg/fleet, `fleet serve --bind`), so no node may take it, and the gRPC
+	// ports of three nodes stay clear of every other default this repo binds.
+	t.Run("three nodes stay off the agent port and the server defaults", func(t *testing.T) {
+		const agentPort = 9091
+		const nodes = 3
+		ports := DefaultDevClusterPorts()
+		_, raftPort, err := net.SplitHostPort(DefaultRaftAddress)
+		require.NoError(t, err)
+		server := DefaultServerConfig()
+		reserved := map[string]bool{
+			strconv.Itoa(agentPort):        true,
+			raftPort:                       true,
+			strconv.Itoa(server.GRPC.Port): true,
+			strconv.Itoa(server.REST.Port): true,
+			strconv.Itoa(server.MCP.Port):  true,
+		}
+		for n := 0; n < nodes; n++ {
+			grpc := ports.GRPC + n
+			assert.False(t, reserved[strconv.Itoa(grpc)], "node %d gRPC port %d collides with a default", n+1, grpc)
+			for _, port := range []int{grpc, ports.REST + n, ports.MCP + n, ports.Raft + n} {
+				assert.NotEqual(t, agentPort, port, "node %d takes the agent's port", n+1)
+			}
+		}
 	})
 }
 

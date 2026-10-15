@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -164,4 +165,44 @@ func TestAgentAddressProber_RefusesWhatItCannotReach(t *testing.T) {
 	requireUnreachable(t, prober.Probe(ctx, "0.0.0.0:9091"), "0.0.0.0:9091", "parse")
 	requireUnreachable(t, prober.Probe(ctx, ":9091"), ":9091", "parse")
 	requireUnreachable(t, prober.Probe(ctx, "agent-09"), "agent-09", "parse")
+}
+
+// TestRefuseLoopbackInCluster: a loopback host passes the probe on the node
+// that hosts the agent, yet no other node of a cluster can dial it, so a
+// clustered control plane refuses it before probing.
+func TestRefuseLoopbackInCluster(t *testing.T) {
+	t.Parallel()
+	for _, address := range []string{
+		"127.0.0.1:9091", "127.8.0.1:9091", "[::1]:9091",
+		"localhost:9091", "LocalHost.:9091", "agent01.localhost:9091",
+	} {
+		err := RefuseLoopbackInCluster(address)
+		var loopback *AgentAddressLoopbackInClusterError
+		if !errors.As(err, &loopback) || !errors.Is(err, ErrAgentAddressLoopbackInCluster) {
+			t.Fatalf("%s: err = %v, want an AgentAddressLoopbackInClusterError", address, err)
+		}
+		if loopback.Address != address {
+			t.Fatalf("%s: error names %q", address, loopback.Address)
+		}
+		for _, fix := range []string{"--advertise", "advertise_addr", "QUICBAAS_ADVERTISE_ADDR"} {
+			if !strings.Contains(err.Error(), fix) {
+				t.Fatalf("%s: error %q does not name %s", address, err, fix)
+			}
+		}
+	}
+}
+
+// TestRefuseLoopbackInCluster_LeavesOtherAddressesToTheProbe: a routable
+// host, a name and an address that does not parse are not this check's to
+// refuse; the probe decides them.
+func TestRefuseLoopbackInCluster_LeavesOtherAddressesToTheProbe(t *testing.T) {
+	t.Parallel()
+	for _, address := range []string{
+		"192.0.2.10:9091", "[2001:db8::9]:9091", "agent01.example.test:9091",
+		"notlocalhost:9091", "0.0.0.0:9091", "agent-09",
+	} {
+		if err := RefuseLoopbackInCluster(address); err != nil {
+			t.Fatalf("%s: err = %v, want nil", address, err)
+		}
+	}
 }

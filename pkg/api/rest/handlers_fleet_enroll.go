@@ -205,7 +205,11 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 	// call routed to it would fail far from here (go-quicbaas#795).
 	dialHost, reachability, err := s.fleetNodeDialAddress(ctx, &req, peer)
 	if err != nil {
-		respondFleetEnrollError(w, r, http.StatusUnprocessableEntity, "agent_address_unreachable", err.Error())
+		code := "agent_address_unreachable"
+		if errors.Is(err, orchestration.ErrAgentAddressLoopbackInCluster) {
+			code = "agent_address_loopback_in_cluster"
+		}
+		respondFleetEnrollError(w, r, http.StatusUnprocessableEntity, code, err.Error())
 		return
 	}
 
@@ -362,6 +366,13 @@ func (s *Server) fleetNodeDialAddress(ctx context.Context, req *fleetEnrollReque
 	address := strings.TrimSpace(req.AdvertiseAddr)
 	if address == "" {
 		address = dialableFleetNodeHost(req.BindAddr, req.Hostname, peer)
+	}
+	// A loopback address passes the probe on the node hosting the agent, but
+	// no other node of a cluster can dial it.
+	if s.fleetControlPlaneClustered() {
+		if err := orchestration.RefuseLoopbackInCluster(address); err != nil {
+			return "", "", err
+		}
 	}
 	prober := s.fleetAddressProberOrNil()
 	if prober == nil {

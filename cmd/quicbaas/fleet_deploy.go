@@ -236,7 +236,7 @@ Examples:
 
   quicbaas fleet deploy --ssh alice@node01 --ssh-key-name alice-laptop \
     --server https://quicbaas.example.com:8443 --tenant acme \
-    --backend acp --binary bin/quicbaas-static --max-concurrent-jobs 4`,
+    --backend acp --binary bin/quicbaas-agent --max-concurrent-jobs 4`,
 		PreRunE: relaxRequiredFlagsForSpecFile("ssh", "server"),
 		RunE:    runFleetDeploy,
 	}
@@ -245,7 +245,7 @@ Examples:
 	cmd.Flags().StringVar(&deployServer, "server", "", "QuicBaaS server address the agent will dial (required)")
 	cmd.Flags().StringVar(&deployBindAddr, "bind", "0.0.0.0:9091", "Local bind address the agent exposes on the remote host")
 	cmd.Flags().StringSliceVar(&deployBackends, "backend", []string{"acp"}, "Backend the node serves, by name (claude, codex, opencode, openvino, ollama-agent, vllm, ollama) or the \"acp\" group; repeat for multiple")
-	cmd.Flags().StringVar(&deployBinary, "binary", "bin/quicbaas-static", "Local path to the static CLI binary")
+	cmd.Flags().StringVar(&deployBinary, "binary", "bin/quicbaas-agent", "Local path to the linux agent binary (make build-agent; cgo, statically linked)")
 	registerWaitOnlineFlag(cmd)
 	cmd.Flags().StringVar(&deploySystemdFlag, "systemd", "auto", "Daemon supervisor: auto | yes | no")
 	cmd.Flags().IntVar(&deployMaxJobs, "max-concurrent-jobs", 0, "Jobs this node can run at once (the spec's agent.max_concurrent_jobs). Required unless the spec declares it: a node with no declared capacity leaves the fleet's capacity undeclared.")

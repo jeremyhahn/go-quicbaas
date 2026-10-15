@@ -42,8 +42,8 @@ node_bind: 0.0.0.0:9091
 # work names only its local ones, e.g. [opencode, openvino, ollama].
 backends: [acp]
 
-# The static CLI binary to upload (make build-static-cli).
-binary: bin/quicbaas-static
+# The linux agent binary to upload (make build-agent).
+binary: bin/quicbaas-agent
 
 # Relative paths are under the SSH user's home directory.
 # install_dir: .quicbaas/bin     # binary, agent.yaml, start script

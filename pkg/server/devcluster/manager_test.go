@@ -244,7 +244,7 @@ func TestNodeConfigGeneration(t *testing.T) {
 			NodeCount: 3,
 			DataDir:   "./dev-data",
 			BasePorts: config.DevClusterPorts{
-				GRPC: 9090,
+				GRPC: 9290,
 				REST: 8080,
 				MCP:  11443,
 				Raft: 63001,
@@ -268,7 +268,7 @@ func TestNodeConfigGeneration(t *testing.T) {
 
 		// Verify node 1 (bootstrap node).
 		assert.Equal(t, uint64(1), nodes[0].NodeID)
-		assert.Equal(t, 9090, nodes[0].GRPCPort)
+		assert.Equal(t, 9290, nodes[0].GRPCPort)
 		assert.Equal(t, 8080, nodes[0].RESTPort)
 		assert.Equal(t, 11443, nodes[0].MCPPort)
 		assert.Equal(t, 63001, nodes[0].RaftPort)
@@ -283,7 +283,7 @@ func TestNodeConfigGeneration(t *testing.T) {
 
 		// Verify node 2.
 		assert.Equal(t, uint64(2), nodes[1].NodeID)
-		assert.Equal(t, 9091, nodes[1].GRPCPort)
+		assert.Equal(t, 9291, nodes[1].GRPCPort)
 		assert.Equal(t, 8081, nodes[1].RESTPort)
 		assert.Equal(t, 11444, nodes[1].MCPPort)
 		assert.Equal(t, 63002, nodes[1].RaftPort)
@@ -293,7 +293,7 @@ func TestNodeConfigGeneration(t *testing.T) {
 
 		// Verify node 3.
 		assert.Equal(t, uint64(3), nodes[2].NodeID)
-		assert.Equal(t, 9092, nodes[2].GRPCPort)
+		assert.Equal(t, 9292, nodes[2].GRPCPort)
 		assert.Equal(t, 8082, nodes[2].RESTPort)
 		assert.Equal(t, 11445, nodes[2].MCPPort)
 		assert.Equal(t, 63003, nodes[2].RaftPort)
@@ -310,7 +310,7 @@ func TestNodeConfigGeneration(t *testing.T) {
 			NodeCount: 3,
 			DataDir:   "./dev-data",
 			BasePorts: config.DevClusterPorts{
-				GRPC: 9090,
+				GRPC: 9290,
 				REST: 8080,
 				MCP:  11443,
 				Raft: 63001,

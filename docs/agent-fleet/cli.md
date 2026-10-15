@@ -87,7 +87,7 @@ the global `--tenant` or the spec's `tenant`.
 | `--server` | | Control plane URL the node dials. |
 | `--bind` | `0.0.0.0:9091` | Node runtime bind address. A fixed numeric port is required when `--wait-online` is non-zero. |
 | `--backend` | | Backend to serve; repeatable. |
-| `--binary` | `bin/quicbaas-static` | Binary to upload. |
+| `--binary` | `bin/quicbaas-agent` | Binary to upload. |
 | `--systemd` | `auto` | `auto`, `yes` or `no` (nohup launcher). |
 | `--max-concurrent-jobs` | | Capacity. |
 | `--preflight` | | Run the checks only. |
@@ -103,7 +103,9 @@ the node `running`, `idle` or `ready` **and** the runtime port accepts a
 connection (polled every 2s). The preflight checks and their typed errors are
 in [user.md](user.md#preflight).
 
-`--binary` is the static CLI from `make build-static-cli`. The unit is
+`--binary` is the linux agent from `make build-agent` (cgo, statically
+linked; `make build-agent-fips` for FIPS; see
+[architecture.md](architecture.md#the-agent-binary)). The unit is
 `~/.config/systemd/user/quicbaas-agent.service`; the nohup launcher is
 `<install-dir>/start-quicbaas-agent.sh` and gets no linger check (it relies on
 logind's default `KillUserProcesses=no`). The result prints the agent

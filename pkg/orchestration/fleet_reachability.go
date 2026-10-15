@@ -81,6 +81,53 @@ func (e *AgentAddressUnreachableError) Unwrap() []error {
 	return []error{ErrAgentAddressUnreachable, e.Cause}
 }
 
+// ErrAgentAddressLoopbackInCluster is the sentinel every
+// AgentAddressLoopbackInClusterError wraps.
+var ErrAgentAddressLoopbackInCluster = errors.New("fleet node: a loopback address is unreachable from the other nodes of a clustered control plane")
+
+// AgentAddressLoopbackInClusterError reports a fleet node address whose host is
+// loopback, registered with a clustered control plane. The node that hosts the
+// agent dials it, so the probe passes there, but no other node of the cluster
+// can: every call routed to the agent from another node would fail.
+type AgentAddressLoopbackInClusterError struct {
+	// Address is the host:port that was refused.
+	Address string
+}
+
+func (e *AgentAddressLoopbackInClusterError) Error() string {
+	return "fleet node address " + strconv.Quote(e.Address) + " is loopback, which the other nodes of a clustered" +
+		" control plane cannot dial: set the agent's --advertise (advertise_addr, QUICBAAS_ADVERTISE_ADDR)" +
+		" to a host every node can dial"
+}
+
+// Unwrap returns ErrAgentAddressLoopbackInCluster and ErrAgentAddressUnreachable:
+// the address is unreachable from the cluster, though not from this node.
+func (e *AgentAddressLoopbackInClusterError) Unwrap() []error {
+	return []error{ErrAgentAddressLoopbackInCluster, ErrAgentAddressUnreachable}
+}
+
+// RefuseLoopbackInCluster returns an AgentAddressLoopbackInClusterError when
+// address names a loopback host: an IP loopback literal, localhost, or a name
+// under the RFC 6761 ".localhost" domain. A clustered control plane calls it
+// before the probe; a single-node one does not, as its only dialer is local.
+// Any other address, including one that does not parse, is left to the probe.
+func RefuseLoopbackInCluster(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err == nil && isLoopbackHost(host) {
+		return &AgentAddressLoopbackInClusterError{Address: address}
+	}
+	return nil
+}
+
+// isLoopbackHost reports whether host names this machine's loopback interface.
+func isLoopbackHost(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	name := strings.ToLower(strings.TrimSuffix(host, "."))
+	return name == "localhost" || strings.HasSuffix(name, ".localhost")
+}
+
 // HostResolver resolves a host name to addresses. *net.Resolver satisfies it.
 type HostResolver interface {
 	LookupHost(ctx context.Context, host string) ([]string, error)

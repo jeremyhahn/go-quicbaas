@@ -47,6 +47,22 @@ func (s *Server) SetFleetAddressProber(prober FleetAddressProber) {
 	s.fleetAddressProber = prober
 }
 
+// SetFleetClusteredControlPlane records whether this control plane is one node
+// of a cluster. A clustered control plane refuses, at enrollment, a fleet node
+// address whose host is loopback: only this node's server could dial it.
+func (s *Server) SetFleetClusteredControlPlane(clustered bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fleetClustered = clustered
+}
+
+// fleetControlPlaneClustered reports what SetFleetClusteredControlPlane set.
+func (s *Server) fleetControlPlaneClustered() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fleetClustered
+}
+
 // fleetAddressProberOrNil returns the wired prober, or nil.
 func (s *Server) fleetAddressProberOrNil() FleetAddressProber {
 	s.mu.RLock()

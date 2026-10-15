@@ -49,7 +49,7 @@ host key, and to the control plane with the CLI's own connection.
    ```sh
    quicbaas fleet deploy --ssh user@target-host --ssh-key-name fleet-deploy \
      --ssh-key-scope user --server https://<server-lan-ip>:18080 \
-     --backend ollama --binary bin/quicbaas-static --wait-online 2m
+     --backend ollama --binary bin/quicbaas-agent --wait-online 2m
    ```
 
    The CA signs a client certificate for the node (`OU=agents`,
@@ -163,6 +163,23 @@ address that does not resolve or does not accept a connection is refused
 with `422 agent_address_unreachable` (`AgentAddressUnreachableError`, naming
 the address and whether parsing, resolution or the dial failed), and nothing
 is registered.
+
+**Co-location in a cluster needs a routable advertise.** An agent on the same
+host as quicbaasd can enroll with a loopback address (`127.0.0.1`, `::1`,
+`localhost`) when the control plane is a single node: that node is the only
+one that dials it. On a clustered control plane the other nodes cannot dial
+another host's loopback, so registration refuses it before the probe with
+`422 agent_address_loopback_in_cluster` (`AgentAddressLoopbackInClusterError`,
+naming the address). This applies to a derived address too, such as one from
+`--bind 127.0.0.1:9091`. Set `--advertise`, `QUICBAAS_ADVERTISE_ADDR` or
+`advertise_addr` to a host every node can dial; that address then goes
+through the reachability probe like any other.
+
+```
+fleet node address "127.0.0.1:9091" is loopback, which the other nodes of a
+clustered control plane cannot dial: set the agent's --advertise
+(advertise_addr, QUICBAAS_ADVERTISE_ADDR) to a host every node can dial
+```
 
 The fleet node record carries what registration learned:
 

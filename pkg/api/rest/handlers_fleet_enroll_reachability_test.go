@@ -166,3 +166,100 @@ func TestHandleFleetEnroll_UnprobedAddressIsUnverified(t *testing.T) {
 	assert.Equal(t, string(orchestration.FleetNodeReachabilityUnverified), reg.req.Reachability)
 	assert.False(t, strings.Contains(w.Body.String(), "agent_address_unreachable"))
 }
+
+// TestHandleFleetEnroll_ClusterRefusesALoopbackAdvertise: on a clustered
+// control plane a loopback advertise is refused with a 422 naming the fix,
+// even though the node hosting the agent could dial it: no other node can.
+func TestHandleFleetEnroll_ClusterRefusesALoopbackAdvertise(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+	_, port, err := net.SplitHostPort(l.Addr().String())
+	require.NoError(t, err)
+
+	for _, host := range []string{"127.0.0.1", "::1", "localhost"} {
+		t.Run(host, func(t *testing.T) {
+			srv := newFleetEnrollTestServer(t, "")
+			reg := &fakeFleetRegistrar{}
+			srv.SetFleetRegistrar(reg)
+			srv.SetFleetAddressProber(orchestration.NewAgentAddressProber(nil, nil, 0))
+			srv.SetFleetClusteredControlPlane(true)
+
+			w := enrollAdvertising(t, srv, net.JoinHostPort(host, port))
+
+			require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), "agent_address_loopback_in_cluster")
+			assert.Contains(t, w.Body.String(), "--advertise")
+			assert.False(t, reg.called, "a loopback node must not be registered on a cluster")
+		})
+	}
+}
+
+// TestHandleFleetEnroll_ClusterRefusesADerivedLoopbackAddress: with no
+// advertise, an address derived from a loopback bind is refused the same way.
+func TestHandleFleetEnroll_ClusterRefusesADerivedLoopbackAddress(t *testing.T) {
+	srv := newFleetEnrollTestServer(t, "")
+	reg := &fakeFleetRegistrar{}
+	srv.SetFleetRegistrar(reg)
+	srv.SetFleetClusteredControlPlane(true)
+
+	body := `{"tenant_id":"acme","bind_addr":"127.0.0.1:9091","hostname":"agent01"}`
+	w := httptest.NewRecorder()
+	srv.HandleFleetEnroll(w, agentRegisterReq(t, body, agentRegisterTestPeerCert(t, "acme", "agent01")))
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "agent_address_loopback_in_cluster")
+	assert.False(t, reg.called)
+}
+
+// TestHandleFleetEnroll_SingleNodeAcceptsALoopbackAdvertise: a single-node
+// control plane is the agent's only dialer, so loopback stays valid.
+func TestHandleFleetEnroll_SingleNodeAcceptsALoopbackAdvertise(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+
+	srv := newFleetEnrollTestServer(t, "")
+	reg := &fakeFleetRegistrar{}
+	srv.SetFleetRegistrar(reg)
+	srv.SetFleetAddressProber(orchestration.NewAgentAddressProber(nil, nil, 0))
+	srv.SetFleetClusteredControlPlane(false)
+
+	w := enrollAdvertising(t, srv, l.Addr().String())
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	require.True(t, reg.called)
+	assert.Equal(t, string(orchestration.FleetNodeReachable), reg.req.Reachability)
+}
+
+// TestHandleFleetEnroll_ClusterProbesARoutableAdvertise: on a cluster a
+// routable advertise goes to the reachability probe as before: one that
+// answers is registered reachable, one that does not is refused unreachable.
+func TestHandleFleetEnroll_ClusterProbesARoutableAdvertise(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+	_, port, err := net.SplitHostPort(l.Addr().String())
+	require.NoError(t, err)
+
+	srv := newFleetEnrollTestServer(t, "")
+	reg := &fakeFleetRegistrar{}
+	srv.SetFleetRegistrar(reg)
+	probe := firstAddressRefused{}
+	srv.SetFleetAddressProber(orchestration.NewAgentAddressProber(probe, probe, 0))
+	srv.SetFleetClusteredControlPlane(true)
+
+	address := net.JoinHostPort("agent01.example.test", port)
+	w := enrollAdvertising(t, srv, address)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	assert.Equal(t, address, reg.req.Host)
+	assert.Equal(t, string(orchestration.FleetNodeReachable), reg.req.Reachability)
+
+	unreachable := newFleetEnrollTestServer(t, "")
+	unreachable.SetFleetRegistrar(&fakeFleetRegistrar{})
+	unreachable.SetFleetAddressProber(orchestration.NewAgentAddressProber(nil, nil, 0))
+	unreachable.SetFleetClusteredControlPlane(true)
+	w = enrollAdvertising(t, unreachable, "agent01.invalid:9091")
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "agent_address_unreachable")
+}

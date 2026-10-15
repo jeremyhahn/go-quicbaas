@@ -839,6 +839,43 @@ build-static-fips-cli: ## Build static FIPS CLI
 	CGO_ENABLED=0 GOFIPS140=latest $(GOBUILD) $(FIPS_BUILD_TAGS_ARG) -ldflags "$(STATIC_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-fips-static ./$(CMD_DIR)
 	@echo "$(GREEN)Static FIPS build successful: $(BIN_DIR)/$(APP_NAME)-fips-static$(NC)"
 
+# The fleet node agent (quicbaas fleet serve) is the only cgo build: runc
+# libcontainer runs in-process and its nsenter init is C. quicbaasd is never
+# cgo. The agent links statically through the external linker so it runs on a
+# host without matching shared libraries; netgo and osusergo keep name
+# resolution and user lookup in pure Go, so the static glibc never needs NSS.
+AGENT_LDFLAGS := $(LDFLAGS) -s -w -linkmode external -extldflags '-static'
+
+.PHONY: build-agent
+build-agent: ## Build the linux fleet node agent (quicbaas, cgo, static)
+	@echo "$(BLUE)Building $(APP_NAME)-agent (CGO_ENABLED=1, static)...$(NC)"
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux CGO_ENABLED=1 $(GOBUILD) -tags '$(BUILD_TAGS) netgo osusergo' -ldflags "$(AGENT_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-agent ./$(CMD_DIR)
+	@echo "$(GREEN)Agent build successful: $(BIN_DIR)/$(APP_NAME)-agent$(NC)"
+
+.PHONY: build-agent-fips
+build-agent-fips: ## Build the linux fleet node agent with FIPS 140-3 mode (cgo, static)
+	@echo "$(BLUE)Building $(APP_NAME)-agent-fips (CGO_ENABLED=1, static, GOFIPS140=latest)...$(NC)"
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux CGO_ENABLED=1 GOFIPS140=latest $(GOBUILD) -tags '$(FIPS_BUILD_TAGS) netgo osusergo' -ldflags "$(AGENT_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-agent-fips ./$(CMD_DIR)
+	@echo "$(GREEN)FIPS agent build successful: $(BIN_DIR)/$(APP_NAME)-agent-fips$(NC)"
+
+.PHONY: check-agent-build
+check-agent-build: build-agent build-agent-fips build-daemon ## Fail unless the agent builds are cgo, the FIPS twin is FIPS, and quicbaasd is not cgo
+	@$(GOCMD) version -m $(BIN_DIR)/$(APP_NAME)-agent | grep -qE '^[[:space:]]+build[[:space:]]+CGO_ENABLED=1$$' \
+		|| { echo "$(RED)$(BIN_DIR)/$(APP_NAME)-agent is not CGO_ENABLED=1$(NC)"; exit 1; }
+	@echo "$(GREEN)$(BIN_DIR)/$(APP_NAME)-agent: CGO_ENABLED=1$(NC)"
+	@$(GOCMD) version -m $(BIN_DIR)/$(APP_NAME)-agent-fips | grep -qE '^[[:space:]]+build[[:space:]]+CGO_ENABLED=1$$' \
+		|| { echo "$(RED)$(BIN_DIR)/$(APP_NAME)-agent-fips is not CGO_ENABLED=1$(NC)"; exit 1; }
+	@$(GOCMD) version -m $(BIN_DIR)/$(APP_NAME)-agent-fips | grep -qE '^[[:space:]]+build[[:space:]]+GOFIPS140=' \
+		|| { echo "$(RED)$(BIN_DIR)/$(APP_NAME)-agent-fips was not built with GOFIPS140$(NC)"; exit 1; }
+	@$(GOCMD) version -m $(BIN_DIR)/$(APP_NAME)-agent-fips | grep -qE '^[[:space:]]+build[[:space:]]+DefaultGODEBUG=(.*,)?fips140=on(,|$$)' \
+		|| { echo "$(RED)$(BIN_DIR)/$(APP_NAME)-agent-fips does not default to fips140=on$(NC)"; exit 1; }
+	@echo "$(GREEN)$(BIN_DIR)/$(APP_NAME)-agent-fips: CGO_ENABLED=1, GOFIPS140 set, fips140=on by default$(NC)"
+	@$(GOCMD) version -m $(BIN_DIR)/$(APP_NAME)d | grep -qE '^[[:space:]]+build[[:space:]]+CGO_ENABLED=0$$' \
+		|| { echo "$(RED)$(BIN_DIR)/$(APP_NAME)d is not CGO_ENABLED=0$(NC)"; exit 1; }
+	@echo "$(GREEN)$(BIN_DIR)/$(APP_NAME)d: CGO_ENABLED=0$(NC)"
+
 .PHONY: build-all
 build-all: build build-static build-fips build-static-fips ## Build all variants (standard, static, FIPS, static-FIPS)
 

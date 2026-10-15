@@ -24,6 +24,21 @@ folder owns the node side and the registry.
 | Embedded node | `pkg/server/embedded_fleet_node.go` | The same daemon, in the `quicbaasd` process |
 | Worker image refresh | `pkg/sdlc/workerimage` | The image sandboxed sessions run; see [worker-image.md](worker-image.md) |
 
+### The agent binary
+
+A remote node runs `bin/quicbaas-agent` (`make build-agent`), the default
+`fleet deploy --binary`. It is the `quicbaas` CLI built for linux with
+`CGO_ENABLED=1`, because the node runs runc `libcontainer` in-process and
+libcontainer's `nsenter` init is C. It links statically (`-linkmode external
+-extldflags -static`, tags `netgo osusergo` so name and user lookup stay in Go
+and never load glibc NSS), so it runs on a host without matching shared
+libraries. `make build-agent-fips` is the `GOFIPS140=latest` twin
+(`bin/quicbaas-agent-fips`); cgo does not touch the Go FIPS module.
+`make check-agent-build` builds both and checks their build info.
+
+`quicbaasd` is never cgo: `build-daemon` and every daemon variant stay
+`CGO_ENABLED=0`, and the check fails if that changes.
+
 The registry stores records through the injected KV store, at
 `orch/agent/{tenantID}/{nodeID}`. Durability is the store's property: the
 server's qrdb-backed store makes the registry durable, replicated and
@@ -127,6 +142,26 @@ Recovery is layered so that each failure heals at the lowest layer that can:
    so the supervisor restarts it.
 3. **Enrollment retry.** A daemon whose control plane is not answering waits,
    with capped exponential backoff, rather than exiting.
+
+## Container runtime
+
+`pkg/containerruntime` is the stack's one container runtime: the
+`PodmanManager` lifecycle model, attestor hooks, exec, attach and pty, and
+per-container metrics, with their tests. It was moved from go-trusted-platform
+`pkg/compute/podman` with its history (go-quicbaas#1349; design:
+[trusted service plane §1](../design/trusted-service-plane.md)).
+
+- **It runs only in the fleet node agent**, the `quicbaas fleet serve`
+  daemon, never in `quicbaasd`. `quicbaasd` stays `CGO_ENABLED=0`, and
+  `TestDaemonNeverLinksContainerRuntime` fails if the daemon links the
+  package.
+- **It is not wired yet.** Nothing imports it; the node daemon and the
+  embedded node still launch containers through `ExecContainerRuntime` in
+  `pkg/orchestration`, which is removed once the agent uses this package.
+- **The exec core is replaced later.** The moved core still calls `crun`,
+  `podman` and `skopeo`. A later change replaces it with runc `libcontainer`
+  running in-process in the agent, with `containers/image` and
+  `containers/storage`: no external runtime binaries and no sockets.
 
 ## Design decisions and rejected alternatives
 

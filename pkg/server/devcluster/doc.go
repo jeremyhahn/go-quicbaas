@@ -35,7 +35,8 @@
 //
 // The manager generates unique configurations for each node, including:
 //   - Separate data directories (./dev-data/node-1, node-2, etc.)
-//   - Auto-incremented ports (gRPC: 9090, 9091, 9092, etc.)
+//   - Auto-incremented ports (gRPC: 9290, 9291, 9292, etc.; clear of the
+//     fleet node agent's 9091, so an agent can run beside a node)
 //   - Automatic Raft cluster formation with proper initial members
 //
 // Note: DevCluster is for development only. Use cluster mode for production.

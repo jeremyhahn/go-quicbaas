@@ -23,6 +23,7 @@ import (
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -233,6 +234,10 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		// Refuse at enrollment an address this control plane cannot reach,
 		// rather than registering a node every routed call then fails on.
 		restServer.SetFleetAddressProber(orchestration.NewAgentAddressProber(nil, nil, 0))
+		// A clustered control plane also refuses a loopback address: it
+		// passes the probe on the node hosting the agent, and no other node
+		// can dial it. The predicate is the one the qrdb node choice uses.
+		restServer.SetFleetClusteredControlPlane(config.IsClusterLikeMode(s.getEffectiveMode()))
 
 		// Wire the heartbeat self-healing recoverer. When the central
 		// daemon restarts and loses its in-memory agent registry, an

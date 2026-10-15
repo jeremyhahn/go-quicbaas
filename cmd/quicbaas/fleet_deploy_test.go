@@ -75,7 +75,7 @@ func resetDeployFlags(t *testing.T) {
 	deployServer = ""
 	deployBindAddr = "0.0.0.0:9091"
 	deployBackends = []string{"acp"}
-	deployBinary = "bin/quicbaas-static"
+	deployBinary = "bin/quicbaas-agent"
 	deployInstallDir = ""
 	deployDataDir = ""
 	deployWaitOnline = 2 * time.Minute
@@ -345,6 +345,18 @@ func TestAgentDeployCommand_FlagBinding(t *testing.T) {
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
+	}
+}
+
+// The node agent runs runc libcontainer in-process, so deploy must ship the
+// cgo agent build (make build-agent), not the CGO_ENABLED=0 static CLI.
+func TestAgentDeployCommand_BinaryDefaultsToTheAgentBuild(t *testing.T) {
+	flag := newFleetDeployCommand().Flags().Lookup("binary")
+	if flag == nil {
+		t.Fatal("fleet deploy has no --binary flag")
+	}
+	if flag.DefValue != "bin/quicbaas-agent" {
+		t.Errorf("--binary default = %q, want bin/quicbaas-agent", flag.DefValue)
 	}
 }
 

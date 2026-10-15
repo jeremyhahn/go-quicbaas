@@ -1712,7 +1712,7 @@ devcluster:
   host: localhost  # env QUICBAAS_DEVCLUSTER_HOST; every Raft address uses it
   data_dir: ./dev-data
   base_ports:
-    grpc: 9090  # Nodes: 9090, 9091, 9092
+    grpc: 9290  # Nodes: 9290, 9291, 9292 (clear of the fleet agent's 9091)
     rest: 8080  # Nodes: 8080, 8081, 8082
     quic: 10443
     mcp: 11443
@@ -1721,9 +1721,12 @@ devcluster:
 ```
 
 DevCluster automatically generates per-node configurations:
-- Node 1: gRPC=9090, REST=8080, Raft=63001, Data=./dev-data/node-1
-- Node 2: gRPC=9091, REST=8081, Raft=63002, Data=./dev-data/node-2
-- Node 3: gRPC=9092, REST=8082, Raft=63003, Data=./dev-data/node-3
+- Node 1: gRPC=9290, REST=8080, Raft=63001, Data=./dev-data/node-1
+- Node 2: gRPC=9291, REST=8081, Raft=63002, Data=./dev-data/node-2
+- Node 3: gRPC=9292, REST=8082, Raft=63003, Data=./dev-data/node-3
+
+The gRPC base sits off 9090 so no node takes 9091, the fleet node agent's
+default port: an agent can run on the same host as a dev cluster node.
 
 ### Embedding QuicBaaS
 

@@ -43,7 +43,7 @@ type DevClusterConfig struct {
 
 // DevClusterPorts defines base ports for DevCluster auto-increment.
 type DevClusterPorts struct {
-	GRPC int `mapstructure:"grpc"` // Default: 9090 (nodes: 9090, 9091, 9092)
+	GRPC int `mapstructure:"grpc"` // Default: 9290 (nodes: 9290, 9291, 9292; clear of the fleet agent's 9091)
 	REST int `mapstructure:"rest"` // Default: 8080 (nodes: 8080, 8081, 8082)
 	MCP  int `mapstructure:"mcp"`  // Default: 11443 (nodes: 11443, 11444, 11445)
 	Raft int `mapstructure:"raft"` // Default: 63001 (nodes: 63001, 63002, 63003)
@@ -52,15 +52,10 @@ type DevClusterPorts struct {
 // DefaultDevClusterConfig returns sensible defaults for DevCluster.
 func DefaultDevClusterConfig() *DevClusterConfig {
 	return &DevClusterConfig{
-		Host:      DefaultDevClusterHost,
-		NodeCount: 3,
-		DataDir:   "./dev-data",
-		BasePorts: DevClusterPorts{
-			GRPC: 9090,
-			REST: 8080,
-			MCP:  11443,
-			Raft: 63001,
-		},
+		Host:              DefaultDevClusterHost,
+		NodeCount:         3,
+		DataDir:           "./dev-data",
+		BasePorts:         DefaultDevClusterPorts(),
 		UnixSocketPattern: "/tmp/quicbaas-node-{n}.sock",
 	}
 }
@@ -68,7 +63,7 @@ func DefaultDevClusterConfig() *DevClusterConfig {
 // DefaultDevClusterPorts returns the default base ports for DevCluster.
 func DefaultDevClusterPorts() DevClusterPorts {
 	return DevClusterPorts{
-		GRPC: 9090,
+		GRPC: 9290,
 		REST: 8080,
 		MCP:  11443,
 		Raft: 63001,
