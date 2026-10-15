@@ -22,7 +22,10 @@ trains are a paid tier. Everything the train does is branches, pull requests,
 check runs, commit statuses and a merge call — verbs every forge adapter
 already has — so it behaves the same on every platform.
 `ForgeCapabilities.NativeMergeQueue` records which platforms could queue on
-their own (false for Gitea); nothing reads it yet.
+their own (false for Gitea, and for GitHub, whose REST API has no merge-queue
+route — its queue is driven only through GraphQL and branch rulesets; true
+for GitLab, whose merge-train route exists on the tiers that carry it);
+nothing reads it yet.
 
 ## When a project is trained
 

@@ -1,0 +1,5 @@
+[
+  {"id": 9001, "state": "success", "context": "factory/review", "description": "approved", "target_url": "https://ci.example/review/1", "created_at": "2026-10-04T09:10:00Z", "updated_at": "2026-10-04T09:10:00Z"},
+  {"id": 9002, "state": "error", "context": "legacy-ci", "description": "the runner crashed", "target_url": "", "created_at": "2026-10-04T09:11:00Z", "updated_at": "2026-10-04T09:11:00Z"},
+  {"id": 9003, "state": "pending", "context": "slow-ci", "description": "", "target_url": "", "created_at": "2026-10-04T09:12:00Z", "updated_at": "2026-10-04T09:12:00Z"}
+]

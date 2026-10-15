@@ -233,6 +233,17 @@ func (f *e2eForge) ListIssueComments(_ context.Context, _ sdlc.RepoRef, number i
 	return append([]sdlc.ForgeComment(nil), f.comments[number]...), nil
 }
 
+// CommentOnPullRequest shares the issue discussion: the scripted forge, like
+// Gitea, keeps one discussion per number.
+func (f *e2eForge) CommentOnPullRequest(ctx context.Context, repo sdlc.RepoRef, number int, body string) (*sdlc.ForgeComment, error) {
+	return f.CommentOnIssue(ctx, repo, number, body)
+}
+
+// ListPullRequestComments reads the discussion CommentOnPullRequest writes.
+func (f *e2eForge) ListPullRequestComments(ctx context.Context, repo sdlc.RepoRef, number int) ([]sdlc.ForgeComment, error) {
+	return f.ListIssueComments(ctx, repo, number)
+}
+
 func (f *e2eForge) SetIssueLabels(_ context.Context, _ sdlc.RepoRef, number int, labels []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -249,6 +260,17 @@ func (f *e2eForge) AddIssueLabels(_ context.Context, _ sdlc.RepoRef, number int,
 		issue.Labels = append(issue.Labels, labels...)
 	}
 	return nil
+}
+
+// AddPullRequestLabels shares the issue labels, for the reason
+// CommentOnPullRequest gives.
+func (f *e2eForge) AddPullRequestLabels(ctx context.Context, repo sdlc.RepoRef, number int, labels []string) error {
+	return f.AddIssueLabels(ctx, repo, number, labels)
+}
+
+// RemovePullRequestLabel removes what AddPullRequestLabels adds.
+func (f *e2eForge) RemovePullRequestLabel(ctx context.Context, repo sdlc.RepoRef, number int, label string) error {
+	return f.RemoveIssueLabel(ctx, repo, number, label)
 }
 
 func (f *e2eForge) RemoveIssueLabel(_ context.Context, _ sdlc.RepoRef, number int, label string) error {

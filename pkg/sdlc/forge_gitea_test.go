@@ -2375,3 +2375,19 @@ func TestGiteaBackend_PullRequestsCarryTheirAuthor(t *testing.T) {
 		t.Fatalf("pulls = %+v, want the first authored by agent-go-luks2 and the second by nobody", pulls)
 	}
 }
+
+// TestGiteaBackend_PullRequestsCarryTheirLabels proves a pull request reads
+// back with its label names and that a pull request without labels has none.
+func TestGiteaBackend_PullRequestsCarryTheirLabels(t *testing.T) {
+	backend, fixture := newGiteaFixture(t)
+	pull := giteaPull{Number: 7, State: "open", Labels: []giteaLabel{{Name: "Factory:Parked"}}}
+	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/pulls", http.StatusOK, []giteaPull{pull, {Number: 8, State: "open"}})
+
+	pulls, err := backend.ListOpenPullRequests(context.Background(), testRepo)
+	if err != nil {
+		t.Fatalf("ListOpenPullRequests: %v", err)
+	}
+	if len(pulls) != 2 || len(pulls[0].Labels) != 1 || pulls[0].Labels[0] != "Factory:Parked" || len(pulls[1].Labels) != 0 {
+		t.Fatalf("pulls = %+v, want the first parked and the second unlabelled", pulls)
+	}
+}

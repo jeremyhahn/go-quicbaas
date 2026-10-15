@@ -36,18 +36,10 @@ type OIDCConfig struct {
 	// SigningAlgorithm is the JWT signing algorithm (RS256, RS384, RS512)
 	SigningAlgorithm string
 
-	// SigningKey is the private key for signing tokens.
-	//
-	// Deprecated for production use: prefer SigningKeyManager, which is
-	// xkms/HSM/TPM-backed and supports kid derivation, rotation overlap, and
-	// a multi-kid JWKS. SigningKey is retained for back-compatibility and
-	// tests; when SigningKeyManager is non-nil it is authoritative.
-	SigningKey crypto.Signer
-
-	// SigningKeyManager is the authoritative source of OIDC signing keys when
-	// set. It derives kids from the public key, publishes a multi-kid JWKS,
-	// and keeps previous keys valid across a rotation overlap window. When
-	// non-nil it overrides SigningAlgorithm/SigningKey for signing and JWKS.
+	// SigningKeyManager is the only source of OIDC signing keys and is
+	// required. It derives kids from the public key, publishes a multi-kid
+	// JWKS, and keeps previous keys valid across a rotation overlap window.
+	// Its algorithm overrides SigningAlgorithm.
 	SigningKeyManager *SigningKeyManager
 
 	// TenantSigningKeys, when set, selects the signing key by the token's
@@ -58,9 +50,6 @@ type OIDCConfig struct {
 	// single-anchor validator verifies any of them by kid. When nil all tokens
 	// use SigningKeyManager (single-key behavior).
 	TenantSigningKeys *TenantSigningKeyResolver
-
-	// SigningKeyFile is the path to the signing key file (alternative to SigningKey)
-	SigningKeyFile string
 
 	// AccessTokenTTL is the access token time-to-live
 	AccessTokenTTL time.Duration
@@ -87,7 +76,6 @@ type OIDCProvider struct {
 	identityStore *IdentityStore
 	appStorage    AppStorage
 	tokenService  *TokenService
-	jwks          *jose.JSONWebKeySet
 	// dpopReplay tracks DPoP proof jti values presented at the token endpoint
 	// so a captured proof cannot be replayed to mint multiple bound tokens.
 	dpopReplay dpop.ReplayCache
@@ -107,54 +95,30 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 	if deps.TokenStorage == nil {
 		return nil, &OIDCConfigRequiredError{Field: "token storage"}
 	}
-	if config.SigningKeyManager == nil && config.SigningKey == nil {
-		return nil, &OIDCConfigRequiredError{Field: "signing key"}
+	if config.SigningKeyManager == nil {
+		return nil, &OIDCConfigRequiredError{Field: "signing key manager"}
 	}
 
-	// When a SigningKeyManager is configured it is authoritative: the token
-	// service signs with the manager's current key (and its derived kid) and
-	// the published JWKS is the manager's multi-kid set. Otherwise fall back
-	// to the legacy single SigningKey path (used by tests and callers that
-	// inject a raw crypto.Signer).
-	signingKey := config.SigningKey
-	signingAlg := config.SigningAlgorithm
-	currentKID := ""
-
-	if config.SigningKeyManager != nil {
-		kid, mgrSigner, mgrAlg := config.SigningKeyManager.Current()
-		if mgrSigner == nil {
-			return nil, &SigningKeyUnavailableError{}
-		}
-		signingKey = mgrSigner
-		signingAlg = mgrAlg
-		currentKID = kid
-		// Keep config.SigningAlgorithm consistent so discovery metadata and
-		// validation advertise the manager's algorithm.
-		config.SigningAlgorithm = mgrAlg
+	// The SigningKeyManager is the only signing source: the token service
+	// signs with the manager's current key and stamps its derived kid, and
+	// the published JWKS is the manager's multi-kid set.
+	kid, signer, alg := config.SigningKeyManager.Current()
+	if signer == nil {
+		return nil, &SigningKeyUnavailableError{}
 	}
+	// Keep config.SigningAlgorithm consistent so discovery metadata and
+	// validation advertise the manager's algorithm.
+	config.SigningAlgorithm = alg
 
-	// Create token service
 	tokenService := &TokenService{
 		storage:      deps.TokenStorage,
-		signingKey:   signingKey,
-		signingAlg:   signingAlg,
-		currentKID:   currentKID,
+		signingKey:   signer,
+		signingAlg:   alg,
+		currentKID:   kid,
 		keyManager:   config.SigningKeyManager,
 		tenantKeys:   config.TenantSigningKeys,
 		config:       config,
 		permResolver: deps.PermissionResolver,
-	}
-
-	// Build the published JWKS.
-	var jwks *jose.JSONWebKeySet
-	if config.SigningKeyManager != nil {
-		jwks = config.SigningKeyManager.JWKS()
-	} else {
-		var err error
-		jwks, err = generateJWKS(config.SigningKey, signingAlg)
-		if err != nil {
-			return nil, &JWKSGenerationError{Cause: err}
-		}
 	}
 
 	return &OIDCProvider{
@@ -162,7 +126,6 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 		identityStore: deps.IdentityStore,
 		appStorage:    deps.AppStorage,
 		tokenService:  tokenService,
-		jwks:          jwks,
 		dpopReplay:    dpop.NewMemoryReplayCache(nil),
 	}, nil
 }
@@ -206,15 +169,12 @@ func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 // signing-key resolver is configured the set aggregates the global key and every
 // active dedicated tenant key (each addressable by its derived kid) so the
 // single-anchor validator can verify any tenant's token; otherwise it is the
-// single signing key manager's (or legacy single key's) JWKS.
+// signing key manager's JWKS.
 func (p *OIDCProvider) GetJWKS() *jose.JSONWebKeySet {
 	if p.config.TenantSigningKeys != nil {
 		return p.config.TenantSigningKeys.JWKS(context.Background())
 	}
-	if p.config.SigningKeyManager != nil {
-		return p.config.SigningKeyManager.JWKS()
-	}
-	return p.jwks
+	return p.config.SigningKeyManager.JWKS()
 }
 
 // Issuer returns the configured OIDC issuer URL (the iss this provider stamps on
@@ -953,12 +913,11 @@ func (p *OIDCProvider) ValidateIDToken(ctx context.Context, tokenString string) 
 	return &claims, nil
 }
 
-// resolveVerificationKey selects the public key used to verify a token. When a
-// SigningKeyManager is configured, the token's "kid" header picks the matching
-// public key (current key or a previous key still inside the rotation overlap),
-// which keeps tokens minted by a superseded key valid until they expire. When
-// no kid is present, or no manager is configured, it falls back to the legacy
-// single SigningKey.
+// resolveVerificationKey selects the public key used to verify a token. The
+// token's "kid" header picks the matching public key from the
+// SigningKeyManager (current key or a previous key still inside the rotation
+// overlap), which keeps tokens minted by a superseded key valid until they
+// expire. When no kid is present it is the manager's current key.
 func (p *OIDCProvider) resolveVerificationKey(tokenString string) (crypto.PublicKey, error) {
 	// When a per-tenant resolver is configured the kid in the token header
 	// selects the matching public key from the aggregated JWKS (global or any
@@ -977,25 +936,20 @@ func (p *OIDCProvider) resolveVerificationKey(tokenString string) (crypto.Public
 			return signer.Public(), nil
 		}
 	}
-	if p.config.SigningKeyManager != nil {
-		kid, _ := xkms.JWTExtractKID(tokenString)
-		if kid != "" {
-			pub, err := p.config.SigningKeyManager.PublicForKID(kid)
-			if err != nil {
-				return nil, err
-			}
-			return pub, nil
-		}
-		// No kid header: verify against the manager's current key.
-		_, signer, _ := p.config.SigningKeyManager.Current()
-		if signer != nil {
-			return signer.Public(), nil
-		}
-	}
-	if p.config.SigningKey == nil {
+	km := p.config.SigningKeyManager
+	if km == nil {
 		return nil, &SigningKeyUnavailableError{}
 	}
-	return p.config.SigningKey.Public(), nil
+	kid, _ := xkms.JWTExtractKID(tokenString)
+	if kid != "" {
+		return km.PublicForKID(kid)
+	}
+	// No kid header: verify against the manager's current key.
+	_, signer, _ := km.Current()
+	if signer == nil {
+		return nil, &SigningKeyUnavailableError{}
+	}
+	return signer.Public(), nil
 }
 
 // publicForKIDInJWKS extracts the public key for kid from a JWKS, returning nil
@@ -1497,30 +1451,6 @@ func (p *OIDCProvider) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 }
 
 // Helper functions
-
-// generateJWKS builds a single-key JWKS for the legacy (non-manager) signing
-// path. The kid is derived from the key's public SPKI so it is stable across
-// restarts and matches the kid stamped onto tokens, rather than a hardcoded
-// "default".
-func generateJWKS(key crypto.Signer, algorithm string) (*jose.JSONWebKeySet, error) {
-	kid, err := computeKID(key.Public())
-	if err != nil {
-		return nil, err
-	}
-	if algorithm == "" {
-		algorithm = string(jose.RS256)
-	}
-	jwk := jose.JSONWebKey{
-		Key:       key.Public(),
-		KeyID:     kid,
-		Algorithm: algorithm,
-		Use:       "sig",
-	}
-
-	return &jose.JSONWebKeySet{
-		Keys: []jose.JSONWebKey{jwk},
-	}, nil
-}
 
 func contains(slice []string, item string) bool {
 	for _, s := range slice {

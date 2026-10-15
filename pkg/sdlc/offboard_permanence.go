@@ -62,7 +62,7 @@ func ForgeRefusalIsPermanent(err error) bool {
 	if errors.Is(err, ErrNotFound) {
 		return true
 	}
-	var apiErr *GiteaAPIError
+	var apiErr *ForgeAPIError
 	if errors.As(err, &apiErr) {
 		return apiErr.Status >= 400 && apiErr.Status < 500 &&
 			apiErr.Status != http.StatusTooManyRequests &&

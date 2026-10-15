@@ -67,7 +67,6 @@ func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
 	config := &OIDCConfig{
 		Issuer:           issuer,
 		SigningAlgorithm: "ES256",
-		SigningKey:       priv,
 		AccessTokenTTL:   time.Hour,
 		RefreshTokenTTL:  24 * time.Hour,
 		IDTokenTTL:       time.Hour,

@@ -1,0 +1,8 @@
+{
+  "object_kind": "build",
+  "build_id": 101,
+  "build_name": "test",
+  "build_status": "success",
+  "sha": "1111111111111111111111111111111111111111",
+  "project": {"id": 42, "path_with_namespace": "acme/widgets"}
+}

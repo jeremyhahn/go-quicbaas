@@ -54,13 +54,13 @@ func newCeremonyProvider(t *testing.T, resolver PermissionResolver) (*OIDCProvid
 	}
 	storage := NewMemoryStorage()
 	provider, err := NewOIDCProvider(&OIDCConfig{
-		Issuer:           "https://ceremony.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       key,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  7 * 24 * time.Hour,
-		IDTokenTTL:       time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://ceremony.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, key, "RS256"),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   7 * 24 * time.Hour,
+		IDTokenTTL:        time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}, OIDCDependencies{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{
 			UserStorage: storage,
@@ -299,13 +299,13 @@ func TestRevokeSessionToken_WorksForABarrierTenantCeremonyBearer(t *testing.T) {
 	}
 	users := NewMemoryStorage()
 	provider, err := NewOIDCProvider(&OIDCConfig{
-		Issuer:           "https://ceremony.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       key,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  7 * 24 * time.Hour,
-		IDTokenTTL:       time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://ceremony.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, key, "RS256"),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   7 * 24 * time.Hour,
+		IDTokenTTL:        time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}, OIDCDependencies{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{
 			UserStorage: users, RoleStorage: users,

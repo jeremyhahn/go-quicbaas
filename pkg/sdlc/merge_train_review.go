@@ -344,7 +344,7 @@ func (s *trainRun) noteRefusal(ctx context.Context, t *MergeTrain, trainPR *Forg
 // commentOnce posts body on a pull request unless a comment carrying marker
 // is already there.
 func (s *trainRun) commentOnce(ctx context.Context, number int, marker, body string) error {
-	comments, err := s.forge.ListIssueComments(ctx, s.repo, number)
+	comments, err := s.forge.ListPullRequestComments(ctx, s.repo, number)
 	if err != nil {
 		return err
 	}
@@ -353,7 +353,7 @@ func (s *trainRun) commentOnce(ctx context.Context, number int, marker, body str
 			return nil
 		}
 	}
-	_, err = s.forge.CommentOnIssue(ctx, s.repo, number, body)
+	_, err = s.forge.CommentOnPullRequest(ctx, s.repo, number, body)
 	return err
 }
 

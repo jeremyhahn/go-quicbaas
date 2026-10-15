@@ -73,13 +73,13 @@ func setupSelfRegHandler(t *testing.T, cfg config.IAMSelfServiceRegistrationConf
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	require.NoError(t, err)
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
-		Issuer:           "https://broker.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       15 * time.Minute,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://broker.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testOIDCKeyManager(t, privateKey),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        15 * time.Minute,
+		AuthCodeTTL:       10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: store,
 		AppStorage:    iam.NewBackendStorage(newIntrospectMemKV()),

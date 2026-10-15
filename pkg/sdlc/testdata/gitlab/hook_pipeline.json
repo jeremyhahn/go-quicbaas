@@ -1,0 +1,6 @@
+{
+  "object_kind": "pipeline",
+  "project": {"id": 42, "path_with_namespace": "acme/widgets"},
+  "object_attributes": {"id": 9, "status": "success", "sha": "1111111111111111111111111111111111111111"},
+  "merge_request": {"id": 1005, "iid": 5}
+}

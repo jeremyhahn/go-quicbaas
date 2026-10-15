@@ -66,7 +66,7 @@ func (g *GiteaBackend) ListClosingPullRequests(ctx context.Context, repo RepoRef
 		query.Set("page", strconv.Itoa(page))
 
 		var raw []giteaTimelineEntry
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodGet,
 			path:      repoPath(repo) + "/issues/" + strconv.Itoa(issue) + "/timeline",
 			query:     query,

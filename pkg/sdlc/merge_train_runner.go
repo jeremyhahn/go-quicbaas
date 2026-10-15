@@ -1290,7 +1290,7 @@ func (s *trainRun) requeue(ctx context.Context, t *MergeTrain, car TrainCar) err
 // which only happens while the entry still says riding.
 func (s *trainRun) eject(ctx context.Context, t *MergeTrain, car TrainCar, ejection TrainEjection) error {
 	marker := trainEjectedMarker + " train=" + strconv.Itoa(t.Number)
-	comments, err := s.forge.ListIssueComments(ctx, s.repo, car.PullRequest)
+	comments, err := s.forge.ListPullRequestComments(ctx, s.repo, car.PullRequest)
 	if err != nil {
 		return err
 	}
@@ -1303,12 +1303,12 @@ func (s *trainRun) eject(ctx context.Context, t *MergeTrain, car TrainCar, eject
 	}
 	if !posted {
 		body := trainEjectedComment(ejection) + "<!-- " + marker + " -->\n"
-		if _, err := s.forge.CommentOnIssue(ctx, s.repo, car.PullRequest, body); err != nil {
+		if _, err := s.forge.CommentOnPullRequest(ctx, s.repo, car.PullRequest, body); err != nil {
 			return err
 		}
 	}
 	if label := s.binding.Forge.Label(LabelTrainEjected); label != "" {
-		if err := s.forge.AddIssueLabels(ctx, s.repo, car.PullRequest, []string{label}); err != nil {
+		if err := s.forge.AddPullRequestLabels(ctx, s.repo, car.PullRequest, []string{label}); err != nil {
 			return err
 		}
 	}

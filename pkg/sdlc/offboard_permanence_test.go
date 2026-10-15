@@ -31,7 +31,8 @@ func TestForgeRefusalIsPermanent_TheTwoRealFailures(t *testing.T) {
 		t.Fatal("a binding whose token secret is gone can never be offboarded")
 	}
 
-	notAdmin := &GiteaAPIError{
+	notAdmin := &ForgeAPIError{
+		Type:      ForgeGitea,
 		Status:    403,
 		Operation: "ListWebhooks",
 		Message:   "user should be an owner or a collaborator with admin write of a repository",
@@ -57,10 +58,10 @@ func TestForgeRefusalIsPermanent_UnknownAndTransientRefuse(t *testing.T) {
 		err  error
 	}{
 		{"nil", nil},
-		{"server error", &GiteaAPIError{Status: 500, Operation: "ListWebhooks"}},
-		{"bad gateway", &GiteaAPIError{Status: 502, Operation: "ListWebhooks"}},
-		{"rate limited", &GiteaAPIError{Status: 429, Operation: "ListWebhooks"}},
-		{"request timeout", &GiteaAPIError{Status: 408, Operation: "ListWebhooks"}},
+		{"server error", &ForgeAPIError{Type: ForgeGitea, Status: 500, Operation: "ListWebhooks"}},
+		{"bad gateway", &ForgeAPIError{Type: ForgeGitea, Status: 502, Operation: "ListWebhooks"}},
+		{"rate limited", &ForgeAPIError{Type: ForgeGitea, Status: 429, Operation: "ListWebhooks"}},
+		{"request timeout", &ForgeAPIError{Type: ForgeGitea, Status: 408, Operation: "ListWebhooks"}},
 		{"transport failure", errors.New("dial tcp: connection refused")},
 	}
 	for _, c := range cases {

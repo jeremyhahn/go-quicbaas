@@ -1,0 +1,4 @@
+[
+  {"name": "bug", "color": "#D73A4A", "description": "Something is broken"},
+  {"name": "Factory:Queued", "color": "#0E8A16", "description": "Waiting for a lane"}
+]

@@ -1,0 +1,7 @@
+{
+  "object_kind": "issue",
+  "event_type": "issue",
+  "project": {"id": 42, "path_with_namespace": "acme/widgets"},
+  "object_attributes": {"iid": 7, "action": "update"},
+  "changes": {"labels": {"previous": [], "current": [{"title": "Factory:Queued"}]}}
+}

@@ -136,6 +136,9 @@ func TestTrainedDelivery_AnApprovedHeadIsQueuedAndClosedWhereItLanded(t *testing
 		!strings.Contains(comments[0].Body, shortSHA("train-merge-sha")) {
 		t.Fatalf("pull request comments = %+v, want one naming the landing", comments)
 	}
+	if !rig.forge.discussedOnlyAsPullRequest(delivery.PullRequest.Number) {
+		t.Fatal("the landing comment went through the issue discussion, which on GitLab is another object")
+	}
 	if _, err := rig.store.GetTrainEntry(context.Background(), testTenant, testProject, testTask); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("the landed entry outlived its delivery: %v", err)
 	}

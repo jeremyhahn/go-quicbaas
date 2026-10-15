@@ -51,7 +51,7 @@ func (g *GiteaBackend) listLabels(ctx context.Context, repo RepoRef) ([]giteaLab
 		query.Set("page", strconv.Itoa(page))
 
 		var defined []giteaLabel
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodGet,
 			path:      repoPath(repo) + "/labels",
 			query:     query,
@@ -122,7 +122,7 @@ func (g *GiteaBackend) EnsureLabels(ctx context.Context, repo RepoRef, specs []L
 	}
 
 	for _, spec := range missing {
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method: http.MethodPost,
 			path:   repoPath(repo) + "/labels",
 			body: map[string]any{
@@ -189,7 +189,7 @@ func (g *GiteaBackend) Webhooks(ctx context.Context, repo RepoRef) ([]ForgeWebho
 // listHooks reads the repository's configured deliveries.
 func (g *GiteaBackend) listHooks(ctx context.Context, repo RepoRef) ([]giteaHook, error) {
 	var hooks []giteaHook
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/hooks",
 		out:       &hooks,
@@ -228,7 +228,7 @@ func (g *GiteaBackend) DeleteWebhook(ctx context.Context, repo RepoRef, hookURL 
 		if hook.Config["url"] != hookURL {
 			continue
 		}
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodDelete,
 			path:      repoPath(repo) + "/hooks/" + strconv.FormatInt(hook.ID, 10),
 			operation: "DeleteWebhook",
@@ -288,7 +288,7 @@ func (g *GiteaBackend) RepoFiles(ctx context.Context, repo RepoRef, ref, dir str
 	}
 
 	var body json.RawMessage
-	err := g.do(ctx, giteaRequest{
+	err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/contents/" + giteaContentsPath(dir),
 		query:     query,
@@ -366,7 +366,7 @@ func (g *GiteaBackend) BranchProtection(ctx context.Context, repo RepoRef, branc
 		return nil, &InvalidInputError{Field: "branch", Message: "a protection rule protects a named branch"}
 	}
 	var rule giteaBranchProtection
-	err := g.do(ctx, giteaRequest{
+	err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/branch_protections/" + url.PathEscape(branch),
 		out:       &rule,

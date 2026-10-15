@@ -57,8 +57,8 @@ type TokenService struct {
 	// the key manager (ES256) when present, otherwise from config.
 	signingAlg string
 	// currentKID is the kid stamped onto the "kid" JWT header so verifiers can
-	// select the matching public key from a multi-kid JWKS. Empty when no key
-	// manager is configured (legacy single-key path).
+	// select the matching public key from a multi-kid JWKS. Empty only for a
+	// service built by NewTokenService, which has no key manager.
 	currentKID string
 	// keyManager, when set, is the authoritative xkms-backed source of signing
 	// keys; the token service re-reads the current key/kid per sign so rotation
@@ -94,7 +94,7 @@ func NewTokenService(storage TokenStorage, signingKey crypto.Signer, config *OID
 // dedicated tenant's key (own kid) or the global key for a non-dedicated
 // tenant; a dedicated tenant whose key cannot be built FAILS CLOSED (the error
 // is returned rather than downgrading to the global key). When no resolver is
-// configured the static keyManager (or legacy SigningKey) is used.
+// configured the static keyManager is used.
 //
 // A key manager is consulted live so a rotation is picked up immediately.
 func (s *TokenService) signingMaterial(ctx context.Context, tenantID string) (crypto.Signer, string, string, error) {

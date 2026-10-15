@@ -18,6 +18,7 @@ package rest
 import (
 	"bytes"
 	"context"
+	"crypto"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -79,18 +80,27 @@ func (s *webAuthnService) GetAuditLogger(_ context.Context) (iam.AuditLogger, er
 	return s.audit, nil
 }
 
+// testOIDCKeyManager builds an RS256 OIDC signing key manager from an
+// in-memory test key, so the provider's tokens carry a kid in its JWKS.
+func testOIDCKeyManager(t testing.TB, signer crypto.Signer) *iam.SigningKeyManager {
+	t.Helper()
+	mgr, err := iam.NewSigningKeyManagerFromSigner(signer, "RS256")
+	require.NoError(t, err)
+	return mgr
+}
+
 func setupWebAuthnHandler(t *testing.T) *IAMHandler {
 	t.Helper()
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	require.NoError(t, err)
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
-		Issuer:           "https://broker.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       15 * time.Minute,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://broker.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testOIDCKeyManager(t, privateKey),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        15 * time.Minute,
+		AuthCodeTTL:       10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: iam.NewIdentityStore(iam.IdentityStoreOptions{
 			UserStorage: iam.NewMemoryStorage(),

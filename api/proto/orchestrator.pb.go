@@ -14755,7 +14755,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x10TRUST_LEVEL_NONE\x10\x01\x12\x16\n" +
 	"\x12TRUST_LEVEL_PINNED\x10\x02\x12\x18\n" +
 	"\x14TRUST_LEVEL_ATTESTED\x10\x03\x12\x18\n" +
-	"\x14TRUST_LEVEL_MEASURED\x10\x042\x8f8\n" +
+	"\x14TRUST_LEVEL_MEASURED\x10\x042\x8d8\n" +
 	"\x13OrchestratorService\x12\x85\x01\n" +
 	"\fSpawnSession\x12-.quicbaas.orchestrator.v1.SpawnSessionRequest\x1a..quicbaas.orchestrator.v1.SpawnSessionResponse\"\x16\xc2\xf3\x18\x12orchestrator:spawn\x12\x89\x01\n" +
 	"\rPromptSession\x12..quicbaas.orchestrator.v1.PromptSessionRequest\x1a/.quicbaas.orchestrator.v1.PromptSessionResponse\"\x17\xc2\xf3\x18\x13orchestrator:prompt\x12\x89\x01\n" +
@@ -14796,8 +14796,8 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\n" +
 	"PushEvents\x12*.quicbaas.orchestrator.v1.PushEventRequest\x1a&.quicbaas.orchestrator.v1.PushEventAck\"\x15\xc2\xf3\x18\x11orchestrator:hook(\x010\x01\x12\x96\x01\n" +
 	"\x16SubscribeSessionEvents\x121.quicbaas.orchestrator.v1.SubscribeSessionRequest\x1a..quicbaas.orchestrator.v1.SessionEventEnvelope\"\x17\xc2\xf3\x18\x13orchestrator:status0\x01\x12\xa4\x01\n" +
-	"\x16GetSessionConversation\x127.quicbaas.orchestrator.v1.GetSessionConversationRequest\x1a8.quicbaas.orchestrator.v1.GetSessionConversationResponse\"\x17\xc2\xf3\x18\x13orchestrator:status\x12\x8c\x01\n" +
-	"\x0eGetSpendReport\x12/.quicbaas.orchestrator.v1.GetSpendReportRequest\x1a0.quicbaas.orchestrator.v1.GetSpendReportResponse\"\x17\xc2\xf3\x18\x13orchestrator:status\x12\x9b\x01\n" +
+	"\x16GetSessionConversation\x127.quicbaas.orchestrator.v1.GetSessionConversationRequest\x1a8.quicbaas.orchestrator.v1.GetSessionConversationResponse\"\x17\xc2\xf3\x18\x13orchestrator:status\x12\x8a\x01\n" +
+	"\x0eGetSpendReport\x12/.quicbaas.orchestrator.v1.GetSpendReportRequest\x1a0.quicbaas.orchestrator.v1.GetSpendReportResponse\"\x15\xc2\xf3\x18\x11spend_report:read\x12\x9b\x01\n" +
 	"\x14GetTenantSpendPolicy\x125.quicbaas.orchestrator.v1.GetTenantSpendPolicyRequest\x1a3.quicbaas.orchestrator.v1.TenantSpendPolicyResponse\"\x17\xc2\xf3\x18\x13orchestrator:status\x12\x9a\x01\n" +
 	"\x14SetTenantSpendPolicy\x125.quicbaas.orchestrator.v1.SetTenantSpendPolicyRequest\x1a3.quicbaas.orchestrator.v1.TenantSpendPolicyResponse\"\x16\xc2\xf3\x18\x12spend_policy:write\x12\x80\x01\n" +
 	"\tInference\x12*.quicbaas.orchestrator.v1.InferenceRequest\x1a+.quicbaas.orchestrator.v1.InferenceResponse\"\x1a\xc2\xf3\x18\x16orchestrator:inference\x12\x85\x01\n" +

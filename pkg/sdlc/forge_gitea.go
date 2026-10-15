@@ -22,11 +22,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -154,17 +152,8 @@ type GiteaConfig struct {
 
 // GiteaBackend talks to one Gitea instance.
 type GiteaBackend struct {
-	// bodySeam, when non-nil (tests only), observes each response body
-	// buffer AFTER do's deferred wipe — the seam that makes the wipe
-	// assertable. Production leaves it nil.
-	bodySeam func(body []byte)
-
-	baseURL   string
-	token     string
-	custody   CustodyCredential
-	client    *http.Client
-	transport ForgeTransport
-	waiter    RetryWaiter
+	forgeHTTP
+	sharedNumbering
 }
 
 // CustodyCredential is the password-equivalent the provisioning plane holds so
@@ -190,40 +179,16 @@ type CustodyCredential struct {
 // An adapter without a base URL or a token cannot do anything except fail on
 // first use, and failing at construction says so where an operator is looking.
 func NewGiteaBackend(cfg GiteaConfig) (*GiteaBackend, error) {
-	base := strings.TrimRight(cfg.BaseURL, "/")
-	if base == "" {
-		return nil, &InvalidInputError{Field: "base_url", Message: "must not be empty"}
-	}
-	if _, err := url.Parse(base); err != nil {
-		return nil, &InvalidInputError{Field: "base_url", Message: "is not a valid URL"}
-	}
-	if cfg.Token == "" {
-		return nil, &InvalidInputError{
-			Field:   "token",
-			Message: "must not be empty; an unauthenticated adapter can only fail on first use",
-		}
-	}
-
-	if err := cfg.Transport.Validate(); err != nil {
+	core, err := newForgeHTTP(ForgeGitea, giteaDialect, forgeHTTPConfig{
+		baseURL: cfg.BaseURL, token: cfg.Token, custody: cfg.Custody,
+		client: cfg.HTTPClient, transport: cfg.Transport, waiter: cfg.Waiter,
+	})
+	if err != nil {
 		return nil, err
 	}
-	transport := cfg.Transport.Resolved()
-
-	// NO CLIENT-WIDE TIMEOUT: each call carries its own deadline (see do),
-	// because a single bound is too long for a listing and too short for a
-	// squash merge of a large repository.
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{}
-	}
-	waiter := cfg.Waiter
-	if waiter == nil {
-		waiter = backoffWaiter{base: transport.RetryBackoff}
-	}
-	return &GiteaBackend{
-		baseURL: base, token: cfg.Token, custody: cfg.Custody, client: client,
-		transport: transport, waiter: waiter,
-	}, nil
+	backend := &GiteaBackend{forgeHTTP: core}
+	backend.sharedNumbering = sharedNumbering{issues: backend}
+	return backend, nil
 }
 
 // Compile-time proof the adapter is complete. It fails to build if a method is
@@ -299,370 +264,35 @@ func (g *GiteaBackend) Capabilities() ForgeCapabilities {
 // Transport
 // =============================================================================
 
-// scrubCredentials removes any credential this call could have sent from
-// bytes that are about to become an error message. BYTE-WISE (review 991):
-// the old string round-trips minted unwipeable copies of secret-bearing
-// regions; this one allocates only []byte generations and LOOP-ZEROES every
-// intermediate it creates — the needle copies of the adapter credentials and
-// each partially-scrubbed generation — before returning. The input body is
-// NOT wiped here (the caller owns it and wipes it on every exit); the
-// returned slice contains no secrets and is safe to outlive the call.
-func (g *GiteaBackend) scrubCredentials(body []byte, subjectToken []byte) []byte {
-	redacted := []byte("[redacted]")
-	scrubbed := body
-	scrub := func(secret []byte) {
-		if len(secret) == 0 {
-			return
-		}
-		next := bytes.ReplaceAll(scrubbed, secret, redacted)
-		// bytes.ReplaceAll always returns a fresh slice, so a superseded
-		// generation this function allocated is wiped the moment it is
-		// replaced. The original body (generation zero) is the caller's.
-		if len(scrubbed) != 0 && &scrubbed[0] != &body[0] {
-			for i := range scrubbed {
-				scrubbed[i] = 0
-			}
-		}
-		scrubbed = next
-	}
-	for _, cred := range []string{g.token, g.custody.Password} {
-		if cred == "" {
-			continue
-		}
-		needle := []byte(cred)
-		scrub(needle)
-		for i := range needle {
-			needle[i] = 0
-		}
-	}
-	scrub(subjectToken)
-	if len(scrubbed) != 0 && &scrubbed[0] == &body[0] {
-		// No replacement ever happened: hand back a copy so the caller's
-		// wipe of body cannot reach into the error message.
-		out := make([]byte, len(scrubbed))
-		copy(out, scrubbed)
-		return out
-	}
-	return scrubbed
+// giteaDialect is Gitea's wire scheme over the shared forge HTTP core.
+var giteaDialect = forgeDialect{
+	tokenScheme: "token ",
+	headers:     map[string]string{"Accept": "application/json"},
+	refusal:     giteaRefusal,
+
+	duplicatePullStatus: http.StatusConflict,
 }
 
-// giteaRequest describes one API call.
-type giteaRequest struct {
-	method string
-	path   string
-	query  url.Values
-
-	// body is marshalled as JSON when non-nil.
-	body any
-
-	// out receives the decoded response when non-nil.
-	out any
-
-	// raw receives the response body when non-nil, for the routes that answer
-	// in something other than JSON. It is a SCRUBBED COPY — the adapter's own
-	// buffer is zeroed on the way out, and a body that outlives the call must
-	// carry no credential (see do).
-	raw *[]byte
-
-	// maxBody bounds what a response may cost in memory and what the caller
-	// receives, keeping the LAST maxBody bytes of a longer one. Zero — every
-	// existing call — reads the body whole, exactly as before.
-	//
-	// The tail rather than a prefix because the only route that sets this is
-	// the job log, and a CI log's answer is at its end. do reads slightly past
-	// the bound so the scrub cannot meet a half credential; the caller still
-	// gets at most maxBody.
-	maxBody int
-
-	// operation names the call for error attribution.
-	operation string
-
-	// auth selects the credential. The zero value is the adapter's own token,
-	// so every workflow call is unchanged by the custody plane existing.
-	auth giteaAuth
-
-	// subjectToken is the token to authenticate AS when auth is
-	// authSubjectToken. Never logged, never placed in an error. A borrowed
-	// byte view under the caller's no-retain contract: giteaRequest is
-	// per-call and never stored, and do converts it to the string the HTTP
-	// header requires only transiently (go-quicbaas#97 custody debt).
-	subjectToken []byte
-}
-
-// giteaAuth selects which credential authenticates a request.
-type giteaAuth int
-
-const (
-	// authAdapterToken uses the adapter's own token. The default.
-	authAdapterToken giteaAuth = iota
-
-	// authCustody uses the provisioning-held basic credential.
-	//
-	// Required for minting and revoking: Gitea's token endpoints are not
-	// reachable with the token being replaced, so rotation runs on a
-	// password-equivalent held by the provisioning plane.
-	authCustody
-
-	// authSubjectToken authenticates as a token supplied per call.
-	//
-	// This exists for verification and nothing else. Proving a replacement
-	// works means using IT — checking with the credential that minted it would
-	// prove only that minting succeeded.
-	authSubjectToken
-)
-
-// send performs one attempt at an API call, bounded by deadline, and decodes
-// its response. do decides whether an unanswered attempt is sent again.
-//
-// Status handling is explicit rather than "2xx is fine": Gitea distinguishes
-// absent (404) from forbidden (403) from broken (5xx), and each means something
-// different to a caller — a missing issue is ordinary, a forbidden one is a
-// token problem an operator must fix, and a gateway's 502/503/504 is no answer
-// from Gitea at all.
-//
-// THE DEADLINE COVERS THE BODY TOO: the response is read inside the attempt's
-// context, so a forge that sends headers and then stalls is bounded exactly as
-// one that never answers.
-func (g *GiteaBackend) send(ctx context.Context, req giteaRequest, deadline time.Duration) error {
-	attemptCtx, cancel := context.WithTimeout(ctx, deadline)
-	defer cancel()
-
-	endpoint := g.baseURL + req.path
-	if len(req.query) > 0 {
-		endpoint += "?" + req.query.Encode()
-	}
-
-	var payload io.Reader
-	if req.body != nil {
-		encoded, err := json.Marshal(req.body)
-		if err != nil {
-			return backendError(req.operation+".encode", err)
-		}
-		payload = bytes.NewReader(encoded)
-	}
-
-	httpReq, err := http.NewRequestWithContext(attemptCtx, req.method, endpoint, payload)
-	if err != nil {
-		return backendError(req.operation+".request", err)
-	}
-	// Gitea's own scheme. No credential is ever logged or reaches an error.
-	switch req.auth {
-	case authCustody:
-		httpReq.SetBasicAuth(g.custody.Username, g.custody.Password)
-	case authSubjectToken:
-		// THE NET/HTTP BOUNDARY, request side: header values are strings by
-		// API — there is no []byte path — so this conversion is constructed
-		// at the last possible moment, inside the one call that sends it,
-		// and nothing retains it beyond the request's round-trip. It is the
-		// same floor already stated on the response side (do's body wipe
-		// comment): what net/http holds — this header string included — is
-		// memory this code never owns. Replacing it means an HTTP client
-		// abstraction over secure buffers: tracked on go-quicbaas#97.
-		httpReq.Header.Set("Authorization", "token "+string(req.subjectToken))
-	case authAdapterToken:
-		fallthrough
-	default:
-		// The default is deliberate rather than incidental: an unrecognised
-		// mode must still authenticate as somebody, and the adapter's own
-		// token is the least-surprising choice. Sending nothing would turn a
-		// programming slip into an anonymous request the forge might accept.
-		httpReq.Header.Set("Authorization", "token "+g.token)
-	}
-	httpReq.Header.Set("Accept", "application/json")
-	if req.body != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := g.client.Do(httpReq)
-	if err != nil {
-		return unanswered(ctx, req.operation, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Read the body before branching: an error response carries Gitea's own
-	// message, and discarding it leaves an operator with a bare status code.
-	//
-	// READ PAST THE BOUND BY ONE CREDENTIAL'S WIDTH. The scrub below matches
-	// whole credentials, so a token that straddles the cut would lose its head
-	// to the tail read and its remainder would survive the scrub as an
-	// unrecognisable suffix — a partial secret in a body that outlives the
-	// call. Reading the margin and trimming AFTER the scrub means every
-	// credential that touches the retained region is retained whole, and so
-	// redacted whole.
-	readBound := req.maxBody
-	if readBound > 0 {
-		readBound += g.credentialWidth(req.subjectToken)
-	}
-	rawBody, readErr := readBodyTail(resp.Body, readBound)
-	if readErr != nil {
-		return unanswered(ctx, req.operation, readErr)
-	}
-	// THE RAW BODY IS ADAPTER-OWNED, SECRET-BEARING MEMORY (review 991): a
-	// mint response carries the token, and any response may echo a
-	// credential back. It is LOOP-ZEROED on every exit — success, error,
-	// panic — after the success decode or the scrub has copied out what
-	// outlives the call. With this wipe the adapter's documented residue
-	// shrinks to what net/http's internals transiently held while reading
-	// the response — memory this code never owns, the genuine #97
-	// secure-transport floor. bodySeam (tests only) observes the buffer
-	// AFTER the wipe.
-	defer func() {
-		for i := range rawBody {
-			rawBody[i] = 0
-		}
-		if g.bodySeam != nil {
-			g.bodySeam(rawBody)
-		}
-	}()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return &NotFoundError{Entity: "gitea " + req.operation, ID: req.path}
-	}
-	// SCRUB THE CREDENTIALS OUT OF THE BODY before it can reach a typed
-	// error. Gitea's message is relayed to operators and stored, and a
-	// server or a proxy in front of it may echo the Authorization header or
-	// the token back in its response. Redacting by VALUE is possible
-	// precisely here, because this is the one place that holds all three
-	// credentials — anywhere further out would be guessing at what a secret
-	// looks like. Computed only on the error paths: the scrubbed copy is
-	// secret-free and may outlive the call inside an error; the raw body
-	// above never leaves it.
-	var body []byte
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body = g.scrubCredentials(rawBody, req.subjectToken)
-	}
-
-	switch {
-	case giteaGatewayStatuses[resp.StatusCode]:
-		return &ForgeUnansweredError{
-			Type:      ForgeGitea,
-			Operation: req.operation,
-			Cause: &GiteaAPIError{
-				Status:    resp.StatusCode,
-				Operation: req.operation,
-				Message:   giteaMessage(body),
-			},
-		}
-	case resp.StatusCode == http.StatusMethodNotAllowed && giteaIsNotReady(body):
-		// Gitea computes a pull request's mergeability asynchronously and
-		// answers 405 "Please try again later" until it has. Measured against
-		// 1.27.1: a merge issued immediately after creating a pull request, or
-		// after its head moves, hits this routinely.
-		//
-		// Reported as RETRYABLE rather than as a failure, because the merge was
-		// neither performed nor refused and the same call succeeds moments
-		// later. Folding it into a backend failure would make the module
-		// abandon merges that were about to become possible.
-		return &ForgeNotReadyError{
-			Type:      ForgeGitea,
-			Operation: req.operation,
-			Subject:   req.path,
-			Detail:    giteaMessage(body),
-		}
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return backendError(req.operation, &GiteaAPIError{
-			Status:    resp.StatusCode,
-			Operation: req.operation,
-			Message:   giteaMessage(body),
-		})
-	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		return backendError(req.operation, &GiteaAPIError{
-			Status:    resp.StatusCode,
-			Operation: req.operation,
-			Message:   giteaMessage(body),
-		})
-	}
-
-	if req.raw != nil {
-		// SCRUBBED, NOT MERELY COPIED, and by the rule this file already
-		// states for the error path: a body that OUTLIVES the call must be
-		// secret-free, because nothing further out holds all three credentials
-		// to redact by value. It matters more here than there — a job log is
-		// quoted into a review record and into a worker prompt, which is
-		// further than an error message ever travels — and scrubCredentials
-		// returns adapter-owned memory either way, so the deferred wipe of
-		// rawBody cannot reach it.
-		scrubbed := g.scrubCredentials(rawBody, req.subjectToken)
-		if req.maxBody > 0 && len(scrubbed) > req.maxBody {
-			// Now the caller's bound, applied to a body with nothing left in
-			// it to cut in half. Redaction only ever shortens, so this is the
-			// margin coming back off.
-			scrubbed = scrubbed[len(scrubbed)-req.maxBody:]
-		}
-		*req.raw = scrubbed
-	}
-	if req.out == nil || len(rawBody) == 0 {
+// giteaRefusal gives Gitea's own answers their meaning.
+func giteaRefusal(req forgeRequest, status int, body []byte) error {
+	if status != http.StatusMethodNotAllowed || !giteaIsNotReady(body) {
 		return nil
 	}
-	if err := json.Unmarshal(rawBody, req.out); err != nil {
-		return backendError(req.operation+".decode", err)
+	// Gitea computes a pull request's mergeability asynchronously and
+	// answers 405 "Please try again later" until it has. Measured against
+	// 1.27.1: a merge issued immediately after creating a pull request, or
+	// after its head moves, hits this routinely.
+	//
+	// Reported as RETRYABLE rather than as a failure, because the merge was
+	// neither performed nor refused and the same call succeeds moments
+	// later. Folding it into a backend failure would make the module
+	// abandon merges that were about to become possible.
+	return &ForgeNotReadyError{
+		Type:      ForgeGitea,
+		Operation: req.operation,
+		Subject:   req.path,
+		Detail:    forgeMessage(body),
 	}
-	return nil
-}
-
-// credentialWidth is the longest credential this call could have sent.
-//
-// The margin a bounded read has to overshoot by so no secret can be cut in
-// half by the bound; see do. A LENGTH is all this computes — no copy of any
-// credential is made, and none can be inferred from the number beyond what the
-// scheme already fixes.
-func (g *GiteaBackend) credentialWidth(subjectToken []byte) int {
-	widest := len(subjectToken)
-	for _, cred := range []string{g.token, g.custody.Password} {
-		if len(cred) > widest {
-			widest = len(cred)
-		}
-	}
-	return widest
-}
-
-// readBodyTail reads a response body, keeping at most max bytes of its END.
-//
-// max <= 0 reads the whole body — the behaviour every caller but the job log
-// has always had. Above zero it streams through a fixed pair of buffers and
-// never holds more than 2*max, so a hundred-megabyte CI log costs the sweep
-// the bound and not the log.
-func readBodyTail(body io.Reader, max int) ([]byte, error) {
-	if max <= 0 {
-		return io.ReadAll(body)
-	}
-	// Two buffers, filled alternately: when the newer one is full the older
-	// is discarded, so the pair always spans the last max..2*max bytes read
-	// and the tail is a suffix of their concatenation.
-	older := make([]byte, 0, max)
-	newer := make([]byte, 0, max)
-	chunk := make([]byte, 32*1024)
-	for {
-		n, err := body.Read(chunk)
-		if n > 0 {
-			for read := chunk[:n]; len(read) > 0; {
-				room := max - len(newer)
-				if room == 0 {
-					older, newer = newer, older[:0]
-					continue
-				}
-				if room > len(read) {
-					room = len(read)
-				}
-				newer = append(newer, read[:room]...)
-				read = read[room:]
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(newer) >= max || len(older) == 0 {
-		return newer, nil
-	}
-	// The newer buffer alone is short of the bound; take the rest from the
-	// end of the older one.
-	tail := make([]byte, 0, max)
-	tail = append(tail, older[len(older)-(max-len(newer)):]...)
-	return append(tail, newer...), nil
 }
 
 // giteaIsNotReady reports whether a 405 is Gitea's "still computing" answer
@@ -670,46 +300,7 @@ func readBodyTail(body io.Reader, max int) ([]byte, error) {
 //
 // The status alone is ambiguous, so the message is what distinguishes them.
 func giteaIsNotReady(body []byte) bool {
-	return strings.Contains(strings.ToLower(giteaMessage(body)), "try again later")
-}
-
-// giteaMessage extracts Gitea's error message, falling back to the raw body.
-//
-// Bounded: an error body is remote input, and an unbounded one would put an
-// arbitrary amount of someone else's text into a log line.
-func giteaMessage(body []byte) string {
-	var envelope struct {
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(body, &envelope); err == nil && envelope.Message != "" {
-		return truncate(envelope.Message, 200)
-	}
-	return truncate(strings.TrimSpace(string(body)), 200)
-}
-
-// truncate bounds s to n bytes, marking it when it was cut.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
-
-// GiteaAPIError reports a Gitea response the adapter could not use. It is
-// reported as the cause inside a BackendError.
-type GiteaAPIError struct {
-	Status    int
-	Operation string
-	Message   string
-}
-
-// Error implements the error interface.
-func (e *GiteaAPIError) Error() string {
-	msg := "gitea " + e.Operation + ": HTTP " + strconv.Itoa(e.Status)
-	if e.Message != "" {
-		msg += ": " + e.Message
-	}
-	return msg
+	return strings.Contains(strings.ToLower(forgeMessage(body)), "try again later")
 }
 
 // repoPath renders the API path prefix for one repository.
@@ -824,7 +415,7 @@ func (g *GiteaBackend) ListIssues(ctx context.Context, repo RepoRef, filter Issu
 		query.Set("page", strconv.Itoa(page))
 
 		var raw []giteaIssue
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodGet,
 			path:      repoPath(repo) + "/issues",
 			query:     query,
@@ -862,7 +453,7 @@ func (g *GiteaBackend) ListIssues(ctx context.Context, repo RepoRef, filter Issu
 	// was added to close.
 	query.Set("page", strconv.Itoa(pages+1))
 	var beyond []giteaIssue
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/issues",
 		query:     query,
@@ -881,7 +472,7 @@ func (g *GiteaBackend) ListIssues(ctx context.Context, repo RepoRef, filter Issu
 // GetIssue returns one issue.
 func (g *GiteaBackend) GetIssue(ctx context.Context, repo RepoRef, number int) (*ForgeIssue, error) {
 	var raw giteaIssue
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/issues/" + strconv.Itoa(number),
 		out:       &raw,
@@ -903,7 +494,7 @@ func (g *GiteaBackend) CommentOnIssue(ctx context.Context, repo RepoRef, number 
 	}
 
 	var raw giteaComment
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPost,
 		path:      repoPath(repo) + "/issues/" + strconv.Itoa(number) + "/comments",
 		body:      map[string]string{"body": body},
@@ -933,7 +524,7 @@ func (g *GiteaBackend) CommentOnIssue(ctx context.Context, repo RepoRef, number 
 // CloseIssue closes an issue, verified by read-back.
 func (g *GiteaBackend) CloseIssue(ctx context.Context, repo RepoRef, number int) error {
 	var raw giteaIssue
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPatch,
 		path:      repoPath(repo) + "/issues/" + strconv.Itoa(number),
 		body:      map[string]string{"state": "closed"},
@@ -1002,7 +593,7 @@ func (g *GiteaBackend) ListIssueComments(ctx context.Context, repo RepoRef, numb
 		}
 
 		var raw []giteaComment
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodGet,
 			path:      repoPath(repo) + "/issues/" + strconv.Itoa(number) + "/comments",
 			query:     query,
@@ -1074,7 +665,7 @@ func (g *GiteaBackend) SetIssueLabels(ctx context.Context, repo RepoRef, number 
 		return err
 	}
 
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPut,
 		path:      repoPath(repo) + "/issues/" + strconv.Itoa(number) + "/labels",
 		body:      map[string][]int64{"labels": ids},
@@ -1088,17 +679,7 @@ func (g *GiteaBackend) SetIssueLabels(ctx context.Context, repo RepoRef, number 
 	if err != nil {
 		return err
 	}
-	want, got := normalizedLabels(labels), normalizedLabels(issue.Labels)
-	if want != got {
-		return &ForgeWriteNotAppliedError{
-			Type:      ForgeGitea,
-			Operation: "SetIssueLabels",
-			Subject:   fmt.Sprintf("%s#%d", repo, number),
-			Want:      want,
-			Got:       got,
-		}
-	}
-	return nil
+	return verifyLabelsSet(ForgeGitea, repo, number, labels, issue.Labels)
 }
 
 // AddIssueLabels adds labels to an issue and verifies the result by reading the
@@ -1125,7 +706,7 @@ func (g *GiteaBackend) AddIssueLabels(ctx context.Context, repo RepoRef, number 
 		return err
 	}
 
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPost,
 		path:      repoPath(repo) + "/issues/" + strconv.Itoa(number) + "/labels",
 		body:      map[string][]int64{"labels": ids},
@@ -1138,26 +719,7 @@ func (g *GiteaBackend) AddIssueLabels(ctx context.Context, repo RepoRef, number 
 	if err != nil {
 		return err
 	}
-	present := make(map[string]bool, len(issue.Labels))
-	for _, label := range issue.Labels {
-		present[strings.ToLower(strings.TrimSpace(label))] = true
-	}
-	var missing []string
-	for _, label := range labels {
-		if !present[strings.ToLower(strings.TrimSpace(label))] {
-			missing = append(missing, label)
-		}
-	}
-	if len(missing) > 0 {
-		return &ForgeWriteNotAppliedError{
-			Type:      ForgeGitea,
-			Operation: "AddIssueLabels",
-			Subject:   fmt.Sprintf("%s#%d", repo, number),
-			Want:      normalizedLabels(labels),
-			Got:       normalizedLabels(issue.Labels) + " (missing " + normalizedLabels(missing) + ")",
-		}
-	}
-	return nil
+	return verifyLabelsAdded(ForgeGitea, repo, number, labels, issue.Labels)
 }
 
 // RemoveIssueLabel removes one label from an issue and verifies the result by
@@ -1178,7 +740,7 @@ func (g *GiteaBackend) RemoveIssueLabel(ctx context.Context, repo RepoRef, numbe
 		return err
 	}
 
-	err = g.do(ctx, giteaRequest{
+	err = g.do(ctx, forgeRequest{
 		method: http.MethodDelete,
 		path: repoPath(repo) + "/issues/" + strconv.Itoa(number) +
 			"/labels/" + strconv.FormatInt(ids[0], 10),
@@ -1195,19 +757,7 @@ func (g *GiteaBackend) RemoveIssueLabel(ctx context.Context, repo RepoRef, numbe
 	if err != nil {
 		return err
 	}
-	wanted := strings.ToLower(strings.TrimSpace(label))
-	for _, held := range issue.Labels {
-		if strings.ToLower(strings.TrimSpace(held)) == wanted {
-			return &ForgeWriteNotAppliedError{
-				Type:      ForgeGitea,
-				Operation: "RemoveIssueLabel",
-				Subject:   fmt.Sprintf("%s#%d", repo, number),
-				Want:      "without " + wanted,
-				Got:       normalizedLabels(issue.Labels),
-			}
-		}
-	}
-	return nil
+	return verifyLabelRemoved(ForgeGitea, repo, number, label, issue.Labels)
 }
 
 // resolveLabelIDs maps label names onto the repository's label IDs.
@@ -1327,24 +877,6 @@ func missingEvents(requested, configured []string) []string {
 	return missing
 }
 
-// normalizedLabels renders a label set in a comparable form.
-//
-// Sorted and lowercased because neither order nor case carries meaning: Gitea
-// returns labels in its own order, and comparing raw slices would report a
-// difference where there is none — a read-back that cries wolf gets ignored,
-// which costs more than having no read-back at all.
-func normalizedLabels(labels []string) string {
-	if len(labels) == 0 {
-		return "[]"
-	}
-	normalized := make([]string, 0, len(labels))
-	for _, label := range labels {
-		normalized = append(normalized, strings.ToLower(strings.TrimSpace(label)))
-	}
-	sort.Strings(normalized)
-	return "[" + strings.Join(normalized, " ") + "]"
-}
-
 // =============================================================================
 // Branches
 // =============================================================================
@@ -1380,7 +912,7 @@ func (g *GiteaBackend) GetTag(ctx context.Context, repo RepoRef, tag string) (*F
 		return nil, &InvalidInputError{Field: "tag", Message: "a tag read names the tag"}
 	}
 	var raw giteaTag
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/tags/" + url.PathEscape(tag),
 		out:       &raw,
@@ -1404,7 +936,7 @@ func (g *GiteaBackend) CreateBranch(ctx context.Context, repo RepoRef, name, fro
 		return nil, &InvalidInputError{Field: "from_ref", Message: "a branch must be cut from somewhere"}
 	}
 
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method: http.MethodPost,
 		path:   repoPath(repo) + "/branches",
 		body: map[string]string{
@@ -1438,7 +970,7 @@ func (g *GiteaBackend) CreateBranch(ctx context.Context, repo RepoRef, name, fro
 // GetBranch returns one branch.
 func (g *GiteaBackend) GetBranch(ctx context.Context, repo RepoRef, name string) (*ForgeBranch, error) {
 	var raw giteaBranch
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/branches/" + url.PathEscape(name),
 		out:       &raw,
@@ -1455,7 +987,7 @@ func (g *GiteaBackend) GetBranch(ctx context.Context, repo RepoRef, name string)
 // that may itself have deleted it, and a reconciler that failed on "already
 // gone" would report a problem where the desired state holds.
 func (g *GiteaBackend) DeleteBranch(ctx context.Context, repo RepoRef, name string) error {
-	err := g.do(ctx, giteaRequest{
+	err := g.do(ctx, forgeRequest{
 		method:    http.MethodDelete,
 		path:      repoPath(repo) + "/branches/" + url.PathEscape(name),
 		operation: "DeleteBranch",
@@ -1499,14 +1031,15 @@ type giteaPull struct {
 	Base struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
-	User      *giteaUser `json:"user"`
-	Draft     bool       `json:"draft"`
-	Merged    bool       `json:"merged"`
-	MergeSHA  string     `json:"merge_commit_sha"`
-	Mergeable bool       `json:"mergeable"`
-	HTMLURL   string     `json:"html_url"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	User      *giteaUser   `json:"user"`
+	Draft     bool         `json:"draft"`
+	Merged    bool         `json:"merged"`
+	MergeSHA  string       `json:"merge_commit_sha"`
+	Mergeable bool         `json:"mergeable"`
+	HTMLURL   string       `json:"html_url"`
+	CreatedAt time.Time    `json:"created_at"`
+	UpdatedAt time.Time    `json:"updated_at"`
+	Labels    []giteaLabel `json:"labels"`
 }
 
 // toForgePullRequest converts Gitea's shape to the module's.
@@ -1519,7 +1052,7 @@ func (p *giteaPull) toForgePullRequest() *ForgePullRequest {
 	if p.User != nil {
 		author = p.User.Login
 	}
-	return &ForgePullRequest{
+	pull := &ForgePullRequest{
 		HeadRepo:  headRepo,
 		Author:    author,
 		Number:    p.Number,
@@ -1537,6 +1070,10 @@ func (p *giteaPull) toForgePullRequest() *ForgePullRequest {
 		Created:   p.CreatedAt,
 		Updated:   p.UpdatedAt,
 	}
+	for _, label := range p.Labels {
+		pull.Labels = append(pull.Labels, label.Name)
+	}
+	return pull
 }
 
 // errOpenPullPagesExhausted reports an open-pull-request listing that never
@@ -1561,7 +1098,7 @@ func (g *GiteaBackend) ListOpenPullRequests(ctx context.Context, repo RepoRef) (
 		query.Set("page", strconv.Itoa(page))
 
 		var raw []giteaPull
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodGet,
 			path:      repoPath(repo) + "/pulls",
 			query:     query,
@@ -1615,7 +1152,9 @@ func (g *GiteaBackend) CreatePullRequest(ctx context.Context, repo RepoRef, spec
 	if spec.Draft {
 		title = giteaDraftPrefix + " " + title
 	}
-	number, err := g.openPullRequest(ctx, repo, spec, title)
+	number, err := g.openPullRequest(ctx, g, repo, spec, func(ctx context.Context) (int, error) {
+		return g.postPullRequest(ctx, repo, spec, title)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1658,10 +1197,39 @@ func (g *GiteaBackend) CreatePullRequest(ctx context.Context, repo RepoRef, spec
 	return pull, nil
 }
 
+// postPullRequest sends one create and returns the number the forge assigned.
+func (g *GiteaBackend) postPullRequest(ctx context.Context, repo RepoRef, spec PullRequestSpec, title string) (int, error) {
+	var created giteaPull
+	if err := g.do(ctx, forgeRequest{
+		method: http.MethodPost,
+		path:   repoPath(repo) + "/pulls",
+		body: map[string]any{
+			"title": title,
+			"body":  spec.Body,
+			"head":  spec.HeadRef,
+			"base":  spec.BaseRef,
+		},
+		out:       &created,
+		operation: "CreatePullRequest",
+	}); err != nil {
+		return 0, err
+	}
+	if created.Number == 0 {
+		return 0, &ForgeWriteNotAppliedError{
+			Type:      ForgeGitea,
+			Operation: "CreatePullRequest",
+			Subject:   repo.String() + " " + spec.HeadRef + " -> " + spec.BaseRef,
+			Want:      "a pull request number",
+			Got:       "none",
+		}
+	}
+	return created.Number, nil
+}
+
 // GetPullRequest returns one pull request.
 func (g *GiteaBackend) GetPullRequest(ctx context.Context, repo RepoRef, number int) (*ForgePullRequest, error) {
 	var raw giteaPull
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/pulls/" + strconv.Itoa(number),
 		out:       &raw,
@@ -1723,7 +1291,7 @@ func (g *GiteaBackend) ListPullRequestFiles(ctx context.Context, repo RepoRef, n
 		query.Set("page", strconv.Itoa(page))
 
 		var raw []giteaChangedFile
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodGet,
 			path:      repoPath(repo) + "/pulls/" + strconv.Itoa(number) + "/files",
 			query:     query,
@@ -1765,7 +1333,7 @@ func (g *GiteaBackend) ClosePullRequest(ctx context.Context, repo RepoRef, numbe
 	if pullRequestStateFor(current) != PullRequestOpen {
 		return nil
 	}
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPatch,
 		path:      repoPath(repo) + "/pulls/" + strconv.Itoa(number),
 		body:      map[string]string{"state": "closed"},
@@ -1847,14 +1415,14 @@ func (g *GiteaBackend) MergePullRequest(ctx context.Context, repo RepoRef, numbe
 		// module runs against.
 		"head_commit_id": expectedHead,
 	}
-	err = g.do(ctx, giteaRequest{
+	err = g.do(ctx, forgeRequest{
 		method:    http.MethodPost,
 		path:      repoPath(repo) + "/pulls/" + strconv.Itoa(number) + "/merge",
 		body:      body,
 		operation: "MergePullRequest",
 	})
-	if errors.Is(err, ErrForgeUnanswered) || giteaInternalError(err) {
-		return g.reconcileMerge(ctx, repo, number, err)
+	if errors.Is(err, ErrForgeUnanswered) || forgeInternalError(err) {
+		return g.reconcileMerge(ctx, g, repo, number, err)
 	}
 	if err != nil {
 		return err
@@ -1911,7 +1479,7 @@ func (g *GiteaBackend) ListReviews(ctx context.Context, repo RepoRef, number int
 		query.Set("page", strconv.Itoa(page))
 
 		var raw []giteaReview
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodGet,
 			path:      repoPath(repo) + "/pulls/" + strconv.Itoa(number) + "/reviews",
 			query:     query,
@@ -1993,7 +1561,7 @@ func (g *GiteaBackend) SubmitReview(ctx context.Context, repo RepoRef, number in
 	}
 
 	var raw giteaReview
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method: http.MethodPost,
 		path:   repoPath(repo) + "/pulls/" + strconv.Itoa(number) + "/reviews",
 		body: map[string]string{
@@ -2062,7 +1630,7 @@ func (g *GiteaBackend) ListCheckRuns(ctx context.Context, repo RepoRef, sha stri
 	}
 
 	var raw []giteaStatus
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/commits/" + url.PathEscape(sha) + "/statuses",
 		out:       &raw,
@@ -2239,7 +1807,7 @@ func (g *GiteaBackend) CheckRunLogs(ctx context.Context, repo RepoRef, run Forge
 	}
 
 	var body []byte
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/actions/jobs/" + jobID + "/logs",
 		raw:       &body,
@@ -2340,7 +1908,7 @@ func (g *GiteaBackend) SetCommitStatus(ctx context.Context, repo RepoRef, sha st
 		body["target_url"] = status.TargetURL
 	}
 	var raw giteaStatus
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPost,
 		path:      repoPath(repo) + "/statuses/" + url.PathEscape(sha),
 		body:      body,
@@ -2426,7 +1994,7 @@ func (g *GiteaBackend) RerunCheckRun(ctx context.Context, repo RepoRef, run Forg
 		return err
 	}
 
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPost,
 		path:      repoPath(repo) + "/actions/runs/" + runID + "/rerun-failed-jobs",
 		operation: "RerunCheckRun",
@@ -2471,7 +2039,7 @@ func (g *GiteaBackend) actionsJob(ctx context.Context, repo RepoRef, runID, jobI
 	var listing struct {
 		Jobs []giteaActionsJob `json:"jobs"`
 	}
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/actions/runs/" + runID + "/jobs",
 		out:       &listing,
@@ -2687,7 +2255,7 @@ func (g *GiteaBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec Web
 	}
 
 	var existing []giteaHook
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/hooks",
 		out:       &existing,
@@ -2711,7 +2279,7 @@ func (g *GiteaBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec Web
 	}
 
 	if current == nil {
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method: http.MethodPost,
 			path:   repoPath(repo) + "/hooks",
 			body: map[string]any{
@@ -2725,7 +2293,7 @@ func (g *GiteaBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec Web
 			return err
 		}
 	} else {
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method: http.MethodPatch,
 			path:   repoPath(repo) + "/hooks/" + strconv.FormatInt(current.ID, 10),
 			body: map[string]any{
@@ -2741,7 +2309,7 @@ func (g *GiteaBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec Web
 
 	// Read-back: the delivery must now exist, be active, and carry the events
 	// asked for. The secret is not compared; see the doc comment.
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      repoPath(repo) + "/hooks",
 		out:       &existing,
@@ -2891,7 +2459,7 @@ func (g *GiteaBackend) MintToken(ctx context.Context, spec TokenSpec) (*MintedTo
 	}
 
 	var out giteaToken
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPost,
 		path:      giteaTokenPath(spec.Username),
 		body:      body,
@@ -2943,7 +2511,7 @@ func (g *GiteaBackend) MintToken(ctx context.Context, spec TokenSpec) (*MintedTo
 //
 // token is borrowed under ForgeTokenLifecycle's no-retain contract: this
 // adapter holds it only for the duration of the request it authenticates —
-// the per-call giteaRequest is not retained — and keeps no copy afterwards.
+// the per-call forgeRequest is not retained — and keeps no copy afterwards.
 // The one representation it cannot avoid is the transient string the HTTP
 // Authorization header requires (see do), recorded as go-quicbaas#97
 // secure-buffer custody debt.
@@ -2953,7 +2521,7 @@ func (g *GiteaBackend) VerifyToken(ctx context.Context, token []byte) (*TokenIde
 	}
 
 	var out giteaUser
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:       http.MethodGet,
 		path:         "/user",
 		out:          &out,
@@ -2979,7 +2547,7 @@ func (g *GiteaBackend) VerifyToken(ctx context.Context, token []byte) (*TokenIde
 // token authenticates as.
 func (g *GiteaBackend) AuthenticatedUser(ctx context.Context) (*TokenIdentity, error) {
 	var out giteaUser
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      "/user",
 		out:       &out,
@@ -3014,7 +2582,7 @@ func (g *GiteaBackend) RevokeToken(ctx context.Context, username, nameOrID strin
 		return &InvalidInputError{Field: "name_or_id", Message: "must not be empty"}
 	}
 
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodDelete,
 		path:      giteaTokenPath(username) + "/" + url.PathEscape(nameOrID),
 		operation: "gitea.RevokeToken",
@@ -3024,7 +2592,7 @@ func (g *GiteaBackend) RevokeToken(ctx context.Context, username, nameOrID strin
 	}
 
 	var remaining []giteaToken
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodGet,
 		path:      giteaTokenPath(username),
 		out:       &remaining,

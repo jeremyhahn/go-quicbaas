@@ -157,6 +157,9 @@ func TestRunner_AnExhaustedReviewLabelsThePullRequestAndTheIssue(t *testing.T) {
 	if len(labels) != 1 {
 		t.Fatalf("pull request labels = %v, want exactly the park label added", labels)
 	}
+	if !rig.forge.labelledOnlyAsPullRequest(prs[0].Number) {
+		t.Fatal("the park label reached the pull request's number through an issue operation")
+	}
 }
 
 // TestRunner_ARepeatedParkOnThePullRequestAddsNothing: the escalation is the

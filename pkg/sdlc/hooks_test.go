@@ -321,6 +321,9 @@ func TestHooks_ReviewableTakesTheParkLabelsOffAResumedPullRequest(t *testing.T) 
 	if labels := rig.forge.pullRequestLabels(100); strings.Join(labels, ",") != "kind:docs" {
 		t.Fatalf("pull request labels = %v, want only [kind:docs]", labels)
 	}
+	if !rig.forge.labelledOnlyAsPullRequest(100) {
+		t.Fatal("the park labels came off the pull request's number through an issue operation")
+	}
 }
 
 // TestHooks_ReviewableReportsAParkLabelThatWontComeOff is the error half: a

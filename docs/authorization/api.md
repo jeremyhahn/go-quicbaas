@@ -363,6 +363,7 @@ Currently contributed:
 | `prompts:read` | read | `admin`, `operator` | Read a tenant's or project's prompt records and the effective body a job would resolve. Tenant-scoped, outside the Security Officer's duties ([prompt-sets](../software-factory/prompt-sets.md#permissions)). |
 | `prompts:write` | write | `admin`, `operator` | Edit, roll back or reset a tenant's or project's prompt. The store refuses a body that drops a marker the engine parses; no verb writes the system set. |
 | `prompts:history` | read | `admin`, `operator`, `auditor` | Read a prompt's revision log — who changed it, when, at which version. Oversight evidence, hence the `auditor`. |
+| `spend_report:read` | read | `admin`, `operator` | Read the tenant's spend report: every project, task, job and session charged, and the display name and allowance policy of every pooled account that paid. Granted like the account roster read (`agent_accounts:list`); `orchestrator:status` alone does not reach it (go-quicbaas#885). |
 
 Both take qrdb's default `ScopeSelf` (the permission acts on the identity's own
 tenant; the system-tenant rule lifts it across tenants for a system-tenant

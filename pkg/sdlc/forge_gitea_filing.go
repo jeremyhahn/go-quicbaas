@@ -57,7 +57,7 @@ func (g *GiteaBackend) CreateIssue(ctx context.Context, repo RepoRef, spec Issue
 	}
 
 	var raw giteaIssue
-	if err := g.do(ctx, giteaRequest{
+	if err := g.do(ctx, forgeRequest{
 		method:    http.MethodPost,
 		path:      repoPath(repo) + "/issues",
 		body:      giteaCreateIssueBody{Title: spec.Title, Body: spec.Body, Labels: ids},
@@ -108,7 +108,7 @@ func (g *GiteaBackend) ListCollaborators(ctx context.Context, repo RepoRef) ([]F
 		query.Set("page", strconv.Itoa(page))
 
 		var listed []giteaCollaborator
-		if err := g.do(ctx, giteaRequest{
+		if err := g.do(ctx, forgeRequest{
 			method:    http.MethodGet,
 			path:      repoPath(repo) + "/collaborators",
 			query:     query,

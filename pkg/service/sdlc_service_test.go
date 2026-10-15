@@ -404,7 +404,7 @@ func TestSDLCService_BindRefusesWhatThePipelineCannotDeliver(t *testing.T) {
 	}{
 		"no tenant":       {func(_ *sdlcServiceRig, b *sdlc.ProjectBinding) {}, sdlc.ErrInvalidInput, "tenant"},
 		"invalid binding": {func(_ *sdlcServiceRig, b *sdlc.ProjectBinding) { b.Forge.TriggerLabel = "" }, sdlc.ErrInvalidInput, "trigger_label"},
-		"unknown forge":   {func(_ *sdlcServiceRig, b *sdlc.ProjectBinding) { b.Forge.Type = "gitlab" }, sdlc.ErrForgeNotRegistered, "gitlab"},
+		"unknown forge":   {func(_ *sdlcServiceRig, b *sdlc.ProjectBinding) { b.Forge.Type = "bitbucket" }, sdlc.ErrForgeNotRegistered, "bitbucket"},
 		"missing project": {func(_ *sdlcServiceRig, b *sdlc.ProjectBinding) { b.ProjectID = "nope" }, nil, "not found"},
 		"repo host": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) {
 			r.projects.projects[sdlcTestProject].Git.RepoURL = "https://github.com/acme/api.git"

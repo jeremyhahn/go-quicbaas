@@ -16,6 +16,7 @@ package sdlc
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -43,12 +44,53 @@ type WebhookSecretResolver interface {
 }
 
 // WebhookDelivery is one inbound delivery, as the transport read it.
+//
+// Header is the request's headers when the transport has them. Each forge
+// names its event, delivery and signature headers differently, and which
+// forge sent a delivery is known only once the project's binding is read, so
+// an empty EventType, DeliveryID or Signature is filled from Header by the
+// BOUND forge's names — never by guessing from which headers are present.
 type WebhookDelivery struct {
 	ProjectID  string
 	EventType  string
 	DeliveryID string
 	Signature  string
 	Payload    []byte
+	Header     http.Header
+}
+
+// webhookHeaderNames are the headers one forge's deliveries arrive with.
+type webhookHeaderNames struct {
+	event     string
+	delivery  string
+	signature string
+}
+
+// forgeWebhookHeaders maps a forge to the headers its deliveries carry.
+var forgeWebhookHeaders = map[ForgeType]webhookHeaderNames{
+	ForgeGitea:  {event: GiteaEventHeader, delivery: GiteaDeliveryHeader, signature: GiteaSignatureHeader},
+	ForgeGitHub: {event: GitHubEventHeader, delivery: GitHubDeliveryHeader, signature: GitHubSignatureHeader},
+	ForgeGitLab: {event: GitLabEventHeader, delivery: GitLabDeliveryHeader, signature: GitLabSignatureHeader},
+}
+
+// fromHeaders fills the delivery's empty fields from its headers, by the
+// names the given forge uses. A forge with no entry leaves it unchanged, and
+// the validation that follows refuses what is still missing.
+func (d WebhookDelivery) fromHeaders(forge ForgeType) WebhookDelivery {
+	names, ok := forgeWebhookHeaders[forge]
+	if !ok || d.Header == nil {
+		return d
+	}
+	if d.EventType == "" {
+		d.EventType = d.Header.Get(names.event)
+	}
+	if d.DeliveryID == "" {
+		d.DeliveryID = d.Header.Get(names.delivery)
+	}
+	if d.Signature == "" {
+		d.Signature = d.Header.Get(names.signature)
+	}
+	return d
 }
 
 // WebhookIngestResult is what a verified delivery led to.
@@ -170,7 +212,13 @@ func (i *WebhookIngestor) SetRulingReadmitter(rulings RulingReadmitter) {
 
 // Ingest verifies one delivery and nudges the poller for its project.
 func (i *WebhookIngestor) Ingest(ctx context.Context, delivery WebhookDelivery) (*WebhookIngestResult, error) {
-	if err := validateDelivery(delivery); err != nil {
+	// A delivery with headers still to read is checked in two steps: what
+	// needs no forge now, the rest once the binding names the forge.
+	early := validateDelivery
+	if delivery.Header != nil {
+		early = validateEnvelope
+	}
+	if err := early(delivery); err != nil {
 		return nil, err
 	}
 	tenantID, err := i.routes.Tenant(ctx, delivery.ProjectID)
@@ -179,6 +227,10 @@ func (i *WebhookIngestor) Ingest(ctx context.Context, delivery WebhookDelivery) 
 	}
 	binding, err := i.bindings.GetBinding(ctx, tenantID, delivery.ProjectID)
 	if err != nil {
+		return nil, err
+	}
+	delivery = delivery.fromHeaders(binding.Forge.Type)
+	if err := validateDelivery(delivery); err != nil {
 		return nil, err
 	}
 	if binding.Forge.WebhookSecretRef == "" {
@@ -285,15 +337,26 @@ func (i *WebhookIngestor) readmitOnRuling(ctx context.Context, tenantID, project
 	return i.rulings.ReadmitOnRuling(ctx, tenantID, projectID, event.IssueNumber)
 }
 
-// validateDelivery refuses a delivery the ingestor cannot act on.
-func validateDelivery(d WebhookDelivery) error {
+// validateEnvelope refuses a delivery whose path or body is unusable, which
+// is everything that can be checked before the bound forge is known.
+func validateEnvelope(d WebhookDelivery) error {
 	switch {
 	case d.ProjectID == "":
 		return &InvalidInputError{Field: "project_id", Message: "the path names no project"}
-	case d.EventType == "":
-		return &InvalidInputError{Field: "event_type", Message: "the delivery names no event"}
 	case len(d.Payload) == 0:
 		return &InvalidInputError{Field: "payload", Message: "an empty body carries nothing to verify"}
+	}
+	return nil
+}
+
+// validateDelivery refuses a delivery the ingestor cannot act on.
+func validateDelivery(d WebhookDelivery) error {
+	if err := validateEnvelope(d); err != nil {
+		return err
+	}
+	switch {
+	case d.EventType == "":
+		return &InvalidInputError{Field: "event_type", Message: "the delivery names no event"}
 	case d.Signature == "":
 		return &InvalidInputError{Field: "signature", Message: "an unsigned delivery cannot be verified"}
 	}

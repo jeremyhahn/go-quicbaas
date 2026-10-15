@@ -472,7 +472,7 @@ an official review.
 ## The forge write surface
 
 Three methods were added to `ForgeBackend`, designed to be SCM-portable —
-Gitea today, GitHub and GitLab as follow-ups. Call sites branch on
+Gitea, GitHub and GitLab implement them. Call sites branch on
 `Capabilities()`, never on `Type()`.
 
 ### `SubmitReview`
@@ -494,11 +494,19 @@ Portable because:
   and expresses the same three outcomes as an approval, an unapproval plus a
   note, and a note. A submission carrying `"APPROVED"` would have encoded one
   platform's vocabulary into every caller. Each adapter owns one table
-  (`giteaReviewStates`) and nothing above it changes.
+  (`giteaReviewStates`, `githubReviewEvents`) and nothing above it changes.
 - **`HeadSHA` is required.** Gitea and GitHub bind it natively (`commit_id`);
   an adapter for a platform that does not must record it in the body so
   `ListReviews` can bind the verdict back. Making it optional would let a
   verdict be posted the gate could never attribute to a head.
+- **GitLab binds an approval through its system notes.** GitLab's approvals
+  answer names who approved but not when or at which commit. The adapter
+  reads the time from the newest "approved this merge request" system note
+  GitLab wrote for that user, and binds it to the head of the newest
+  merge-request version created strictly before it. An approval with no such
+  note, or none older than its note, binds to no head, and the gate does not
+  count it. GitLab's check runs are the latest pipeline's jobs plus the
+  commit statuses written beside them.
 - **`Body` is required for every verdict.** See failure 6.
 
 `VerdictError` is deliberately **not** submittable: a review that could not be
@@ -548,10 +556,10 @@ failure 5.
 
 ### Capabilities
 
-| Flag | Gitea | What turns on it |
-|---|---|---|
-| `SubmitReviews` | true | whether this deployment can review its own pull requests at all. False refuses the runner up front rather than per pull request |
-| `CommitStatuses` | true | whether a verdict is *enforceable* by the platform. False still reviews — the module's own gate is unaffected — but nothing outside the module honours the verdict |
+| Flag | Gitea | GitHub | GitLab | What turns on it |
+|---|---|---|---|---|
+| `SubmitReviews` | true | true | false — REST v4 can approve and unapprove but records no request-changes verdict, so `SubmitReview` refuses rather than post half a verdict | whether this deployment can review its own pull requests at all. False refuses the runner up front rather than per pull request |
+| `CommitStatuses` | true | true | true | whether a verdict is *enforceable* by the platform. False still reviews — the module's own gate is unaffected — but nothing outside the module honours the verdict |
 
 ## How a verdict is read
 

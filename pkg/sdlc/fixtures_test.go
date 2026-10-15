@@ -317,11 +317,16 @@ type fakeForge struct {
 	repoFiles  map[string][]ForgeFile
 	protection map[string]*ForgeBranchProtection
 
-	// prLabels models what Gitea actually is: a pull request IS an issue, so
-	// the label routes address it by the same number. A double that dropped a
-	// label written to a pull request would let the park's pull-request label
-	// regress unnoticed.
+	// prLabels are the pull requests' labels, written only by the pull
+	// request label operations: the double numbers issues and pull requests
+	// apart, as GitLab does, so a pull request label sent through an issue
+	// operation never lands and the test reading it fails.
 	prLabels map[int][]string
+
+	// issueLabelled and pullRequestLabelled record, in order, the number every
+	// label write named, by which operation it used.
+	issueLabelled       []int
+	pullRequestLabelled []int
 
 	// cancelled records the run ids CancelCheckRun was asked to stop, and
 	// cancelErr is what it answers when the capability is declared.
@@ -418,6 +423,13 @@ type fakeForge struct {
 	// onCommentOnIssue runs under the forge's own lock after a comment is
 	// posted, so a test can interrupt a run between two of its comments.
 	onCommentOnIssue func(number int)
+
+	// issueDiscussions and pullRequestDiscussions record, in order, the number
+	// every discussion read or write named, by which operation it used. On
+	// GitLab the two are different objects, so a pull request number must
+	// only ever reach the second.
+	issueDiscussions       []int
+	pullRequestDiscussions []int
 
 	createPRErr     error
 	listOpenPRsErr  error
@@ -641,11 +653,6 @@ func (f *fakeForge) GetIssue(_ context.Context, _ RepoRef, number int) (*ForgeIs
 	}
 	issue, ok := f.issues[number]
 	if !ok {
-		// A pull request IS an issue on Gitea: reading its number as an
-		// issue answers the pull request's labels.
-		if pr, isPR := f.prs[number]; isPR {
-			return &ForgeIssue{Number: number, Title: pr.Title, State: pr.State, Labels: append([]string(nil), f.prLabels[number]...)}, nil
-		}
 		return nil, &NotFoundError{Entity: "issue", ID: strconv.Itoa(number)}
 	}
 	copied := *issue
@@ -656,6 +663,21 @@ func (f *fakeForge) GetIssue(_ context.Context, _ RepoRef, number int) (*ForgeIs
 func (f *fakeForge) CommentOnIssue(_ context.Context, _ RepoRef, number int, body string) (*ForgeComment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.issueDiscussions = append(f.issueDiscussions, number)
+	return f.storeComment(number, body)
+}
+
+// CommentOnPullRequest writes the same thread CommentOnIssue does, as Gitea
+// and GitHub do, but records that a pull request's discussion was meant.
+func (f *fakeForge) CommentOnPullRequest(_ context.Context, _ RepoRef, number int, body string) (*ForgeComment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pullRequestDiscussions = append(f.pullRequestDiscussions, number)
+	return f.storeComment(number, body)
+}
+
+// storeComment stores a comment on number's thread. The caller holds f.mu.
+func (f *fakeForge) storeComment(number int, body string) (*ForgeComment, error) {
 	if f.postFailures > 0 {
 		f.postFailures--
 		return nil, backendError("CommentOnIssue", errors.New("forge down"))
@@ -675,6 +697,21 @@ func (f *fakeForge) CommentOnIssue(_ context.Context, _ RepoRef, number int, bod
 func (f *fakeForge) ListIssueComments(_ context.Context, _ RepoRef, number int) ([]ForgeComment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.issueDiscussions = append(f.issueDiscussions, number)
+	return f.thread(number)
+}
+
+// ListPullRequestComments reads the thread ListIssueComments does, recording
+// that a pull request's discussion was meant.
+func (f *fakeForge) ListPullRequestComments(_ context.Context, _ RepoRef, number int) ([]ForgeComment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pullRequestDiscussions = append(f.pullRequestDiscussions, number)
+	return f.thread(number)
+}
+
+// thread returns a copy of number's comments. The caller holds f.mu.
+func (f *fakeForge) thread(number int) ([]ForgeComment, error) {
 	if f.listCommentsErr != nil {
 		return nil, f.listCommentsErr
 	}
@@ -697,6 +734,7 @@ func (f *fakeForge) AddIssueLabels(_ context.Context, _ RepoRef, number int, lab
 		return f.addLabelErr
 	}
 	f.labelAdds = append(f.labelAdds, labels...)
+	f.issueLabelled = append(f.issueLabelled, number)
 	// ADDING A LABEL AN OBJECT ALREADY CARRIES IS A NO-OP, which is what the
 	// ForgeBackend contract says every forge does and what the idempotence of
 	// a resumed escalation's label writes rests on. A double that stacked
@@ -704,6 +742,17 @@ func (f *fakeForge) AddIssueLabels(_ context.Context, _ RepoRef, number int, lab
 	if issue, ok := f.issues[number]; ok {
 		issue.Labels = mergeLabels(issue.Labels, labels)
 	}
+	return nil
+}
+
+func (f *fakeForge) AddPullRequestLabels(_ context.Context, _ RepoRef, number int, labels []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.addLabelErr != nil {
+		return f.addLabelErr
+	}
+	f.labelAdds = append(f.labelAdds, labels...)
+	f.pullRequestLabelled = append(f.pullRequestLabelled, number)
 	if _, ok := f.prs[number]; ok {
 		f.prLabels[number] = mergeLabels(f.prLabels[number], labels)
 	}
@@ -774,9 +823,21 @@ func (f *fakeForge) RemoveIssueLabel(_ context.Context, _ RepoRef, number int, l
 		return f.removeLabelErr
 	}
 	f.labelRemovals = append(f.labelRemovals, label)
+	f.issueLabelled = append(f.issueLabelled, number)
 	if issue, ok := f.issues[number]; ok {
 		issue.Labels = withoutLabel(issue.Labels, label)
 	}
+	return nil
+}
+
+func (f *fakeForge) RemovePullRequestLabel(_ context.Context, _ RepoRef, number int, label string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.removeLabelErr != nil {
+		return f.removeLabelErr
+	}
+	f.labelRemovals = append(f.labelRemovals, label)
+	f.pullRequestLabelled = append(f.pullRequestLabelled, number)
 	if _, ok := f.prs[number]; ok {
 		f.prLabels[number] = withoutLabel(f.prLabels[number], label)
 	}
@@ -929,6 +990,7 @@ func (f *fakeForge) GetPullRequest(_ context.Context, _ RepoRef, number int) (*F
 		f.onGetPullRequest(pr)
 	}
 	copied := *pr
+	copied.Labels = append([]string(nil), f.prLabels[number]...)
 	return &copied, nil
 }
 
@@ -1232,6 +1294,23 @@ func (f *fakeForges) ForgeFor(_ context.Context, _ string, cfg ForgeConfig) (For
 		return nil, nil
 	}
 	return f.forge, nil
+}
+
+// discussedOnlyAsPullRequest reports whether number's discussion was read or
+// written, and only ever through the pull request operations: on GitLab an
+// issue operation with a merge request's number reaches a different object.
+// labelledOnlyAsPullRequest reports whether number's labels were written,
+// and only ever through the pull request label operations.
+func (f *fakeForge) labelledOnlyAsPullRequest(number int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.pullRequestLabelled, number) && !slices.Contains(f.issueLabelled, number)
+}
+
+func (f *fakeForge) discussedOnlyAsPullRequest(number int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.pullRequestDiscussions, number) && !slices.Contains(f.issueDiscussions, number)
 }
 
 // fakeProjects is a ProjectReader over a map.

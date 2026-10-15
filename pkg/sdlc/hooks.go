@@ -437,16 +437,19 @@ func (h *Hooks) Reviewable(ctx context.Context, job *orchestration.JobContext) e
 // to prevent. Only the module's park labels come off: anything a person put
 // there stays (see stripParkLabels).
 func (h *Hooks) unparkPullRequest(ctx context.Context, a *attempt, number int) error {
-	// A pull request IS an issue on the forge: its labels are read and
-	// removed through the issue routes, as labelPullRequest adds them.
-	pr, err := a.forge.GetIssue(ctx, a.repo, number)
+	// The labels are read and removed through the pull request operations,
+	// as labelPullRequest adds them: on GitLab an issue sharing the number is
+	// a different object.
+	pr, err := a.forge.GetPullRequest(ctx, a.repo, number)
 	if err != nil {
 		return err
 	}
 	if pr == nil {
 		return &NotFoundError{Entity: "pull request", ID: IssueRefString(a.repo, number)}
 	}
-	return stripParkLabels(ctx, a.forge, a.binding, a.repo, pr)
+	return removeParkLabels(a.binding, pr.Labels, func(label string) error {
+		return a.forge.RemovePullRequestLabel(ctx, a.repo, number, label)
+	})
 }
 
 // landDirect is the carve-out path: a change class the strategy exempted from
@@ -830,7 +833,8 @@ func (h *Hooks) deliveryOrNil(ctx context.Context, job *orchestration.JobContext
 // label and may carry labels a person put there, so removing anything but the
 // module's own park label would be destroying a human's annotation. That park
 // label comes off in exactly one place: when a readmitted task's next attempt
-// publishes to the same pull request (unparkPullRequest). AddIssueLabels is idempotent, which is what lets an interrupted
+// publishes to the same pull request (unparkPullRequest).
+// AddPullRequestLabels is idempotent, which is what lets an interrupted
 // escalation re-run this without doubling anything.
 func (h *Hooks) markParked(ctx context.Context, a *attempt, delivery *Delivery, key string) error {
 	if err := h.moveLabels(ctx, a, key); err != nil {
@@ -861,7 +865,7 @@ func (h *Hooks) labelPullRequest(ctx context.Context, a *attempt, delivery *Deli
 	if desired == "" {
 		return nil
 	}
-	return a.forge.AddIssueLabels(ctx, a.repo, delivery.PullRequest.Number, []string{desired})
+	return a.forge.AddPullRequestLabels(ctx, a.repo, delivery.PullRequest.Number, []string{desired})
 }
 
 // moveLabels makes the issue display exactly one of the module's labels:

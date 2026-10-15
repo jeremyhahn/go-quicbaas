@@ -171,13 +171,13 @@ func newIntrospectFixture(t *testing.T) *introspectFixture {
 	})
 
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
-		Issuer:           "https://broker.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       15 * time.Minute,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://broker.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testOIDCKeyManager(t, privateKey),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        15 * time.Minute,
+		AuthCodeTTL:       10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: identityStore,
 		AppStorage:    backend,

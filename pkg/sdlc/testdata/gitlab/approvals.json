@@ -1,0 +1,16 @@
+{
+  "id": 105,
+  "iid": 5,
+  "project_id": 3,
+  "title": "Add widget sizing",
+  "state": "opened",
+  "approved": true,
+  "approvals_required": 2,
+  "approvals_left": 0,
+  "approved_by": [
+    {"user": {"id": 21, "username": "reviewer-a", "name": "Reviewer A", "state": "active"}},
+    {"user": {"id": 22, "username": "reviewer-b", "name": "Reviewer B", "state": "active"}},
+    {"user": {"id": 23, "username": "reviewer-c", "name": "Reviewer C", "state": "active"}},
+    {"user": null}
+  ]
+}

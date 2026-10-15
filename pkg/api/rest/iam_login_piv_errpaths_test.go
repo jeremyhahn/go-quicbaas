@@ -168,13 +168,13 @@ func TestPIVLogin_TokenIssuanceFailure(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	require.NoError(t, err)
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
-		Issuer:           "https://" + pivTrustDomain,
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       15 * time.Minute,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://" + pivTrustDomain,
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testOIDCKeyManager(t, privateKey),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        15 * time.Minute,
+		AuthCodeTTL:       10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: store,
 		AppStorage:    iam.NewBackendStorage(newIntrospectMemKV()),

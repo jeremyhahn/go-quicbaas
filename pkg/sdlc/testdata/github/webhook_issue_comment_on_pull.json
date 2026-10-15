@@ -1,0 +1,9 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 12,
+    "pull_request": {"url": "https://github.example/api/v3/repos/acme/widgets/pulls/12"}
+  },
+  "comment": {"id": 7001, "body": "Please rebase."},
+  "repository": {"name": "widgets", "owner": {"login": "acme"}}
+}

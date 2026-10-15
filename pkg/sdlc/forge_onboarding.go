@@ -281,3 +281,21 @@ func labelNames(labels []ForgeLabel) []string {
 	sort.Strings(names)
 	return names
 }
+
+// verifyLabelsDefined reads back an EnsureLabels pass: every spec must now be
+// defined.
+func verifyLabelsDefined(forge ForgeType, repo RepoRef, after []ForgeLabel, specs []LabelSpec) error {
+	stillMissing := missingLabels(after, specs)
+	if len(stillMissing) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(stillMissing))
+	for _, spec := range stillMissing {
+		names = append(names, spec.Name)
+	}
+	return &ForgeWriteNotAppliedError{
+		Type: forge, Operation: "EnsureLabels", Subject: repo.String(),
+		Want: "labels " + strings.Join(names, " "),
+		Got:  "[" + strings.Join(labelNames(after), " ") + "]",
+	}
+}

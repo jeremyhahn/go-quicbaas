@@ -95,13 +95,13 @@ func TestTokenMTLS_Success(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	require.NoError(t, err)
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
-		Issuer:           "https://" + mtlsTrustDomain,
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       15 * time.Minute,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://" + mtlsTrustDomain,
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testOIDCKeyManager(t, privateKey),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        15 * time.Minute,
+		AuthCodeTTL:       10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: iam.NewIdentityStore(iam.IdentityStoreOptions{
 			UserStorage: iam.NewMemoryStorage(),
@@ -219,13 +219,13 @@ func setupMTLSFullHandler(t *testing.T, tenant, clientID string, cert *x509.Cert
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
 	require.NoError(t, err)
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
-		Issuer:           "https://" + mtlsTrustDomain,
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       15 * time.Minute,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://" + mtlsTrustDomain,
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testOIDCKeyManager(t, privateKey),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        15 * time.Minute,
+		AuthCodeTTL:       10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: iam.NewIdentityStore(iam.IdentityStoreOptions{
 			UserStorage: iam.NewMemoryStorage(), RoleStorage: iam.NewMemoryStorage(),

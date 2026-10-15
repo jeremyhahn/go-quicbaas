@@ -31,15 +31,19 @@ func newDiscoveryProvider(t *testing.T) *iam.OIDCProvider {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
+	keys, err := iam.NewSigningKeyManagerFromSigner(key, "RS256")
+	if err != nil {
+		t.Fatalf("NewSigningKeyManagerFromSigner: %v", err)
+	}
 
 	cfg := &iam.OIDCConfig{
-		Issuer:           "https://test.quicbaas.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       key,
-		AccessTokenTTL:   time.Hour,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://test.quicbaas.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: keys,
+		AccessTokenTTL:    time.Hour,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}
 
 	memStorage := iam.NewMemoryStorage()

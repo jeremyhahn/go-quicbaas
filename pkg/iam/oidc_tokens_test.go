@@ -152,7 +152,6 @@ func createTestTokenService(t *testing.T) (*TokenService, *rsa.PrivateKey) {
 	config := &OIDCConfig{
 		Issuer:           "https://test.example.com",
 		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
 		AccessTokenTTL:   1 * time.Hour,
 		RefreshTokenTTL:  24 * time.Hour,
 		IDTokenTTL:       1 * time.Hour,

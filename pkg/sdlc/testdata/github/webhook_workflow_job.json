@@ -1,0 +1,10 @@
+{
+  "action": "completed",
+  "workflow_job": {
+    "id": 502,
+    "run_id": 9100,
+    "head_sha": "4a4f5c9d1e2b3a4c5d6e7f8091a2b3c4d5e6f708",
+    "conclusion": "failure"
+  },
+  "repository": {"name": "widgets", "owner": {"login": "acme"}}
+}

@@ -733,7 +733,7 @@ func TestReviewValidator_ACancelledCheckIsReRunRatherThanWaitedOut(t *testing.T)
 // 2026-09-28 (20:03:18 EDT): a single 401 on a poll's GetPullRequest, with
 // the same credential reading fine before and after.
 func forgeRejected() error {
-	return backendError("GetPullRequest", &GiteaAPIError{Status: 401, Operation: "GetPullRequest", Message: "invalid username, password or token"})
+	return backendError("GetPullRequest", &ForgeAPIError{Type: ForgeGitea, Status: 401, Operation: "GetPullRequest", Message: "invalid username, password or token"})
 }
 
 // TestReviewValidator_AFailedReadIsPolledAgain pins that a review wait
@@ -765,7 +765,7 @@ func TestReviewValidator_AFailedReadEndsTheWaitAtTheBound(t *testing.T) {
 	rig.forge.getPRErrs = failures
 
 	_, err := rig.validator.Validate(context.Background(), testJob(1), rig.criterion)
-	var apiErr *GiteaAPIError
+	var apiErr *ForgeAPIError
 	if !errors.As(err, &apiErr) || apiErr.Status != 401 {
 		t.Fatalf("Validate against a forge that keeps failing = %v; want its 401", err)
 	}

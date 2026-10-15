@@ -103,6 +103,15 @@ func (e *SigningKeyUnavailableError) Error() string {
 	return "iam: no signing key available"
 }
 
+// SigningKeyRotationUnsupportedError is returned by Rotate on a key manager
+// built from an in-process signer: there is no xkms key to rotate.
+type SigningKeyRotationUnsupportedError struct{}
+
+// Error implements the error interface.
+func (e *SigningKeyRotationUnsupportedError) Error() string {
+	return "iam: signing key is not xkms-backed and cannot be rotated"
+}
+
 // PublicKeyMarshalError is returned when a public key cannot be serialized for
 // kid derivation.
 type PublicKeyMarshalError struct {
@@ -179,7 +188,7 @@ func loadSignerForAttrs(ctx context.Context, attrs *xkmssdk.KeyAttributes) (cryp
 
 // newKeyEntry derives the kid for a signer's public key and packages it as a
 // keyEntry.
-func newKeyEntry(signer crypto.Signer) (keyEntry, error) {
+func newKeyEntry(signer crypto.Signer, alg string) (keyEntry, error) {
 	pub := signer.Public()
 	kid, err := computeKID(pub)
 	if err != nil {
@@ -189,7 +198,7 @@ func newKeyEntry(signer crypto.Signer) (keyEntry, error) {
 		kid:    kid,
 		signer: signer,
 		pub:    pub,
-		alg:    SigningAlgorithmES256,
+		alg:    alg,
 	}, nil
 }
 
@@ -215,7 +224,7 @@ func NewSigningKeyManagerFromXKMS(cn string, tenantID string) (*SigningKeyManage
 		return nil, err
 	}
 
-	entry, err := newKeyEntry(signer)
+	entry, err := newKeyEntry(signer, SigningAlgorithmES256)
 	if err != nil {
 		return nil, err
 	}
@@ -225,6 +234,29 @@ func NewSigningKeyManagerFromXKMS(cn string, tenantID string) (*SigningKeyManage
 		tenantID:  tenantID,
 		storeType: storeType,
 	}
+	m.snap.Store(&keySnapshot{current: entry})
+	return m, nil
+}
+
+// NewSigningKeyManagerFromSigner returns a key manager whose only key is the
+// given in-process signer, signing with alg (for example RS256 or ES256). The
+// kid is derived from the signer's public key exactly as for xkms-backed keys,
+// so tokens carry a kid that the manager's JWKS publishes. The key is not held
+// by xkms, so Rotate returns SigningKeyRotationUnsupportedError.
+func NewSigningKeyManagerFromSigner(signer crypto.Signer, alg string) (*SigningKeyManager, error) {
+	if signer == nil {
+		return nil, &OIDCConfigRequiredError{Field: "signer"}
+	}
+	if alg == "" {
+		return nil, &OIDCConfigRequiredError{Field: "signing algorithm"}
+	}
+
+	entry, err := newKeyEntry(signer, alg)
+	if err != nil {
+		return nil, err
+	}
+
+	m := &SigningKeyManager{}
 	m.snap.Store(&keySnapshot{current: entry})
 	return m, nil
 }
@@ -331,6 +363,11 @@ func (m *SigningKeyManager) Rotate() error {
 	if prev == nil {
 		return &SigningKeyUnavailableError{}
 	}
+	// Only NewSigningKeyManagerFromXKMS sets cn; a manager without one holds
+	// an in-process signer that xkms cannot rotate.
+	if m.cn == "" {
+		return &SigningKeyRotationUnsupportedError{}
+	}
 
 	attrs := es256KeyAttributes(m.cn, m.tenantID, m.storeType)
 
@@ -347,7 +384,7 @@ func (m *SigningKeyManager) Rotate() error {
 		return err
 	}
 
-	newEntry, err := newKeyEntry(signer)
+	newEntry, err := newKeyEntry(signer, SigningAlgorithmES256)
 	if err != nil {
 		return err
 	}

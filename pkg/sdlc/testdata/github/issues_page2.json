@@ -1,0 +1,15 @@
+[
+  {
+    "number": 43,
+    "title": "Document the retry budget",
+    "body": "",
+    "state": "open",
+    "labels": [{"name": "task:ready", "color": "0e8a16", "description": ""}],
+    "milestone": null,
+    "user": {"login": "reporter"},
+    "assignee": null,
+    "pull_request": null,
+    "created_at": "2026-10-03T09:00:00Z",
+    "updated_at": "2026-10-03T09:00:00Z"
+  }
+]

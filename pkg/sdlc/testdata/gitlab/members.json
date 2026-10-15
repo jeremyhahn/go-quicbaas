@@ -1,0 +1,4 @@
+[
+  {"id": 11, "username": "reporter", "name": "Re Porter", "access_level": 30},
+  {"id": 12, "username": "fixer", "name": "Fix Er", "access_level": 40}
+]

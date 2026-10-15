@@ -941,6 +941,9 @@ func TestTrain_ARefusedTrainIsAbandonedAndReformsSmaller(t *testing.T) {
 	if len(comments) != 2 {
 		t.Fatalf("#101 comments = %+v, want one per refused train it rode", comments)
 	}
+	if !rig.forge.discussedOnlyAsPullRequest(101) {
+		t.Fatal("the refusal comment went through the issue discussion, which on GitLab is another object")
+	}
 	for _, want := range []string{"Merge train #1", "#102 and #103", "#" + strconv.Itoa(train1.Number),
 		"own approval at `head-101` still stands", "at most 2 change(s)", "> The cache added by one change"} {
 		if !strings.Contains(comments[0].Body, want) {
@@ -978,11 +981,39 @@ func TestTrain_ARefusedSingleChangeIsEjectedWithTheFindings(t *testing.T) {
 		!strings.Contains(comments[0].Body, "#"+strconv.Itoa(rig.trainPRs()["queue/1"].Number)) {
 		t.Fatalf("#101 comments = %+v, want the findings and the train's pull request", comments)
 	}
+	if !rig.forge.discussedOnlyAsPullRequest(101) {
+		t.Fatal("the ejection comment went through the issue discussion, which on GitLab is another object")
+	}
 	if labels := rig.forge.pullRequestLabels(101); len(labels) != 1 || labels[0] != "factory:train-ejected" {
 		t.Fatalf("#101 labels = %v", labels)
 	}
+	if !rig.forge.labelledOnlyAsPullRequest(101) {
+		t.Fatal("the ejection label reached #101 through an issue operation")
+	}
 	if rig.ledger().Active != nil {
 		t.Fatal("the refused train is still on the ledger")
+	}
+}
+
+// TestTrain_AnEjectionLabelTheForgeRefusesFailsThePass is the error half: a
+// pull request the forge would not label is not recorded as ejected, so the
+// next pass labels it again rather than leaving it reading as queued.
+func TestTrain_AnEjectionLabelTheForgeRefusesFailsThePass(t *testing.T) {
+	rig := newTrainRig(t)
+	rig.queue(101, "task-a")
+	rig.pipeline(trainCommit(1, 101), "success", "")
+	rig.reviews.decide = func(*MergeTrain) (ReviewVerdict, string) {
+		return VerdictRequestChanges, "On the current main this double-closes the file."
+	}
+	rig.forge.mu.Lock()
+	rig.forge.addLabelErr = errors.New("the forge refused the label")
+	rig.forge.mu.Unlock()
+
+	if err := rig.run(orchestration.JobStateInitializing); err == nil || !strings.Contains(err.Error(), "the forge refused the label") {
+		t.Fatalf("Run err = %v, want the refused label", err)
+	}
+	if entry := rig.entry("task-a"); entry.State == TrainEntryEjected {
+		t.Fatalf("entry = %+v, recorded ejected though its label never landed", entry)
 	}
 }
 
@@ -1198,6 +1229,9 @@ func TestTrain_ARedTrainIsBisectedTheCulpritEjectedAndTheRestLand(t *testing.T) 
 	}
 	if labels := rig.forge.pullRequestLabels(102); len(labels) != 1 || labels[0] != "factory:train-ejected" {
 		t.Fatalf("culprit's pull request labels = %v", labels)
+	}
+	if !rig.forge.labelledOnlyAsPullRequest(102) {
+		t.Fatal("the ejection label reached the culprit through an issue operation")
 	}
 	// Every probe that did not land is closed and its branch removed.
 	for branch, pr := range rig.trainPRs() {

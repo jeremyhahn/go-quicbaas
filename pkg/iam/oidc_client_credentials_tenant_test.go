@@ -56,13 +56,13 @@ func newTenantRoutedOIDCProvider(t *testing.T, tenantID string) (*OIDCProvider, 
 	storage := NewBackendStorage(kv)
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
-		Issuer:           "https://burnin.example.test",
-		SigningAlgorithm: "RS256",
-		SigningKey:       key,
-		AccessTokenTTL:   time.Hour,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://burnin.example.test",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, key, "RS256"),
+		AccessTokenTTL:    time.Hour,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}, OIDCDependencies{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{
 			UserStorage: NewMemoryStorage(),

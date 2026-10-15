@@ -39,15 +39,15 @@ func createTestOIDCProvider(t *testing.T) (*OIDCProvider, *rsa.PrivateKey, *mock
 	}
 
 	config := &OIDCConfig{
-		Issuer:           "https://test.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   1 * time.Hour,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       1 * time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
-		PKCERequired:     true,
-		AllowedMethods:   []string{CodeChallengeMethodS256}, // OAuth 2.1: S256 only
+		Issuer:            "https://test.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    1 * time.Hour,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        1 * time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
+		PKCERequired:      true,
+		AllowedMethods:    []string{CodeChallengeMethodS256}, // OAuth 2.1: S256 only
 	}
 
 	appStorage := newMockAppStorage()
@@ -81,13 +81,13 @@ func TestOIDCNewOIDCProvider(t *testing.T) {
 	}
 
 	config := &OIDCConfig{
-		Issuer:           "https://test.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   1 * time.Hour,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       1 * time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://test.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    1 * time.Hour,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        1 * time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}
 
 	memStorage := NewMemoryStorage()
@@ -158,11 +158,10 @@ func TestOIDCNewOIDCProvider(t *testing.T) {
 			errMsg:  "token storage is required",
 		},
 		{
-			name: "nil signing key",
+			name: "nil signing key manager",
 			config: &OIDCConfig{
 				Issuer:           "https://test.example.com",
 				SigningAlgorithm: "RS256",
-				SigningKey:       nil,
 				AccessTokenTTL:   1 * time.Hour,
 			},
 			deps: OIDCDependencies{
@@ -171,7 +170,7 @@ func TestOIDCNewOIDCProvider(t *testing.T) {
 				TokenStorage:  newMockTokenStorage(),
 			},
 			wantErr: true,
-			errMsg:  "signing key is required",
+			errMsg:  "signing key manager is required",
 		},
 	}
 
@@ -1171,47 +1170,6 @@ func TestOIDCJoinScopes(t *testing.T) {
 				t.Errorf("joinScopes() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-// Test generateJWKS
-func TestOIDCGenerateJWKS(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	jwks, err := generateJWKS(privateKey, "RS256")
-	if err != nil {
-		t.Fatalf("generateJWKS() error = %v", err)
-	}
-
-	if jwks == nil {
-		t.Fatal("generateJWKS() returned nil")
-	}
-
-	if len(jwks.Keys) != 1 {
-		t.Errorf("generateJWKS() keys count = %d, want 1", len(jwks.Keys))
-	}
-
-	// The kid is derived from the key's public SPKI (stable across restarts),
-	// not a hardcoded "default".
-	wantKID, err := computeKID(privateKey.Public())
-	if err != nil {
-		t.Fatalf("computeKID() error = %v", err)
-	}
-
-	key := jwks.Keys[0]
-	if key.KeyID != wantKID {
-		t.Errorf("generateJWKS() key ID = %s, want derived kid %s", key.KeyID, wantKID)
-	}
-
-	if key.Algorithm != "RS256" {
-		t.Errorf("generateJWKS() algorithm = %s, want RS256", key.Algorithm)
-	}
-
-	if key.Use != "sig" {
-		t.Errorf("generateJWKS() use = %s, want sig", key.Use)
 	}
 }
 

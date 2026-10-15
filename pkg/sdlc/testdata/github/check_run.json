@@ -1,0 +1,10 @@
+{
+  "id": 502,
+  "name": "unit",
+  "head_sha": "4a4f5c9d1e2b3a4c5d6e7f8091a2b3c4d5e6f708",
+  "status": "completed",
+  "conclusion": "failure",
+  "details_url": "https://github.example/acme/widgets/actions/runs/9100/job/7702",
+  "check_suite": {"id": 8800},
+  "app": {"slug": "github-actions"}
+}

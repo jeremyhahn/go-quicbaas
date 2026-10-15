@@ -51,7 +51,7 @@ type ForgeUnansweredError struct {
 	Operation string
 
 	// Cause is what the transport reported: a deadline, a reset, or the
-	// gateway's own status as a GiteaAPIError.
+	// gateway's own status as a ForgeAPIError.
 	Cause error
 }
 

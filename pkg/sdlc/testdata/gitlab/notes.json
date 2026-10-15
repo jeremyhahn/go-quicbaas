@@ -1,0 +1,5 @@
+[
+  {"id": 501, "body": "I can reproduce this.", "system": false, "author": {"id": 12, "username": "fixer", "name": "Fix Er"}, "created_at": "2026-10-02T10:00:00Z"},
+  {"id": 502, "body": "added ~bug label", "system": true, "author": {"id": 11, "username": "reporter", "name": "Re Porter"}, "created_at": "2026-10-02T10:05:00Z"},
+  {"id": 503, "body": "Fixed on main.", "system": false, "author": {"id": 12, "username": "fixer", "name": "Fix Er"}, "created_at": "2026-10-02T11:00:00Z"}
+]

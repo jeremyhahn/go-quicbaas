@@ -523,6 +523,9 @@ func TestSessionToolsQRDBPermissionMapping(t *testing.T) {
 var orchestratorToolsOutsideTheFamily = map[string]string{
 	// Replacing a tenant's spend limits (go-quicbaas#1058).
 	"quicbaas_orchestrator_spend_policy_set": "spend_policy",
+	// Reading the tenant's spend report: its attribution tree and pooled
+	// account roster (go-quicbaas#885).
+	"quicbaas_orchestrator_cost": "spend_report",
 }
 
 func TestOrchestratorSurfacePermissionMappingIsComplete(t *testing.T) {

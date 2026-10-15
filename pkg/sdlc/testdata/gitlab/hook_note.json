@@ -1,0 +1,8 @@
+{
+  "object_kind": "note",
+  "event_type": "note",
+  "user": {"id": 22, "username": "reviewer-b"},
+  "project": {"id": 42, "path_with_namespace": "acme/widgets"},
+  "object_attributes": {"id": 601, "note": "/approve", "noteable_type": "Issue"},
+  "issue": {"id": 1007, "iid": 7}
+}

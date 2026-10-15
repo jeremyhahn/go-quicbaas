@@ -206,7 +206,7 @@ service OrchestratorService {
     // rather than a zero. Likewise policy_status distinguishes an account
     // with no cap from one this deployment could not read. go-quicbaas#791.
     rpc GetSpendReport(GetSpendReportRequest) returns (GetSpendReportResponse) {
-        option (qrdb.v1.permission) = "orchestrator:status";
+        option (qrdb.v1.permission) = "spend_report:read";
     }
 
     // GetTenantSpendPolicy returns the tenant's own spend limits and its

@@ -98,9 +98,9 @@ steps are done in on a live node.
 
    Bind refuses a project whose repository host or signing policy the
    pipeline could not deliver, and a binding naming a strategy or forge this
-   build does not carry — each refusal names what is available. Only `gitea`
-   has an adapter today (GitHub #617, GitLab #618). It registers no workflow;
-   the one thing it sets on the project is `autonomous: true`. To stage a
+   build does not carry — each refusal names what is available. `gitea`,
+   `github` and `gitlab` have adapters. It registers
+   no workflow; the one thing it sets on the project is `autonomous: true`. To stage a
    project before it takes work, bind with `--paused`, which leaves autonomy
    as it is, then turn it on with `quicbaas project update <project-id>
    --autonomous` when ready.
@@ -160,9 +160,11 @@ steps are done in on a live node.
    [engineering.md](engineering.md#ssh_host_key--the-forge-is-pinned-never-learned).
 
    `base_url` is the forge's **API root**, version segment included
-   (`/api/v1` for Gitea) — not the site origin. The origin alone satisfies
-   `ForgeConfig.Validate`, which only asks that the field name something, and
-   then 404s every call the adapter makes.
+   (`/api/v1` for Gitea; `https://api.github.com` for github.com, or
+   `/api/v3` on a GitHub Enterprise Server; `/api/v4` for GitLab, which
+   defaults to `https://gitlab.com/api/v4` when empty) — not the site origin. The
+   origin alone satisfies `ForgeConfig.Validate`, which only asks that the
+   field name something, and then 404s every call the adapter makes.
 
    The six display labels in `labels:`, and the trigger label, must **already
    exist on the repository**. `GiteaBackend.resolveLabelIDs` resolves names

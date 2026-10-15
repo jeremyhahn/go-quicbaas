@@ -14,7 +14,12 @@
 package iam
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -31,6 +36,11 @@ func TestSigningKeyManagerErrorTypes(t *testing.T) {
 	unavailable := &SigningKeyUnavailableError{}
 	if unavailable.Error() == "" {
 		t.Fatal("SigningKeyUnavailableError must have a message")
+	}
+
+	unsupported := &SigningKeyRotationUnsupportedError{}
+	if !strings.Contains(unsupported.Error(), "rotated") {
+		t.Fatalf("SigningKeyRotationUnsupportedError must say rotation failed, got %q", unsupported.Error())
 	}
 
 	cause := errors.New("der boom")
@@ -97,4 +107,86 @@ func TestRotationKIDFormat(t *testing.T) {
 	if got != want {
 		t.Fatalf("rotationKID() = %q, want %q", got, want)
 	}
+}
+
+// TestNewSigningKeyManagerFromSigner pins that a manager built from an
+// in-process signer signs with that signer under the SPKI-derived kid,
+// publishes the same kid in its JWKS, and refuses to rotate.
+func TestNewSigningKeyManagerFromSigner(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	wantKID, err := computeKID(key.Public())
+	if err != nil {
+		t.Fatalf("computeKID: %v", err)
+	}
+
+	mgr, err := NewSigningKeyManagerFromSigner(key, SigningAlgorithmES256)
+	if err != nil {
+		t.Fatalf("NewSigningKeyManagerFromSigner: %v", err)
+	}
+
+	kid, signer, alg := mgr.Current()
+	if kid != wantKID || signer != key || alg != SigningAlgorithmES256 {
+		t.Fatalf("Current() = (%q, %v, %q), want (%q, the key, ES256)", kid, signer, alg, wantKID)
+	}
+	jwks := mgr.JWKS()
+	if len(jwks.Keys) != 1 || jwks.Keys[0].KeyID != wantKID || jwks.Keys[0].Algorithm != SigningAlgorithmES256 {
+		t.Fatalf("JWKS() = %+v, want one ES256 key with kid %q", jwks.Keys, wantKID)
+	}
+	if _, err := mgr.PublicForKID(wantKID); err != nil {
+		t.Fatalf("PublicForKID(current kid): %v", err)
+	}
+
+	if err := mgr.Rotate(); !errors.As(err, new(*SigningKeyRotationUnsupportedError)) {
+		t.Fatalf("Rotate() = %v, want SigningKeyRotationUnsupportedError", err)
+	}
+	if kid, _, _ := mgr.Current(); kid != wantKID {
+		t.Fatalf("failed Rotate changed the current kid to %q", kid)
+	}
+}
+
+// unmarshalableSigner is a crypto.Signer whose public key has no PKIX form.
+type unmarshalableSigner struct{}
+
+func (unmarshalableSigner) Public() crypto.PublicKey { return "not-a-key" }
+
+func (unmarshalableSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	return nil, &SigningKeyUnavailableError{}
+}
+
+// TestNewSigningKeyManagerFromSignerErrors pins the typed errors for a missing
+// signer, a missing algorithm, and a public key no kid can be derived from.
+func TestNewSigningKeyManagerFromSignerErrors(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		signer crypto.Signer
+		alg    string
+		field  string
+	}{
+		{name: "nil signer", signer: nil, alg: SigningAlgorithmES256, field: "signer"},
+		{name: "empty algorithm", signer: key, alg: "", field: "signing algorithm"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewSigningKeyManagerFromSigner(tt.signer, tt.alg)
+			var required *OIDCConfigRequiredError
+			if !errors.As(err, &required) || required.Field != tt.field {
+				t.Fatalf("err = %v, want OIDCConfigRequiredError{Field: %q}", err, tt.field)
+			}
+		})
+	}
+
+	t.Run("unmarshalable public key", func(t *testing.T) {
+		_, err := NewSigningKeyManagerFromSigner(unmarshalableSigner{}, SigningAlgorithmES256)
+		if !errors.As(err, new(*PublicKeyMarshalError)) {
+			t.Fatalf("err = %v, want PublicKeyMarshalError", err)
+		}
+	})
 }

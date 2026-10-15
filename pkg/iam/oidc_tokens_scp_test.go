@@ -74,7 +74,6 @@ func newSCPTestService(t *testing.T, resolver PermissionResolver) (*TokenService
 	config := &OIDCConfig{
 		Issuer:           "https://test.example.com",
 		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
 		AccessTokenTTL:   time.Hour,
 		RefreshTokenTTL:  24 * time.Hour,
 		IDTokenTTL:       time.Hour,

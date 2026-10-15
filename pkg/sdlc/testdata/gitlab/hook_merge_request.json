@@ -1,0 +1,14 @@
+{
+  "object_kind": "merge_request",
+  "event_type": "merge_request",
+  "user": {"id": 21, "username": "reviewer-a"},
+  "project": {"id": 42, "path_with_namespace": "acme/widgets"},
+  "object_attributes": {
+    "iid": 5,
+    "action": "update",
+    "oldrev": "0000000000000000000000000000000000000000",
+    "source_branch": "feature/x",
+    "target_branch": "main",
+    "last_commit": {"id": "1111111111111111111111111111111111111111"}
+  }
+}

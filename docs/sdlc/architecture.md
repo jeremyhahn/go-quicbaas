@@ -7,8 +7,7 @@
 > Conflicts with this document are defects.
 
 `pkg/sdlc` is the **SDLC module of the Software Factory**: git-based delivery
-automation against a forge (Gitea today; GitHub and GitLab are adapters to
-add). It turns a labelled forge issue into an orchestration Task, lets the
+automation against a forge (Gitea, GitHub and GitLab). It turns a labelled forge issue into an orchestration Task, lets the
 engine run each attempt as a Job with one worker Session, publishes the result
 as a pull request, waits for an independent review and green checks on the
 current head, and merges.
@@ -1424,6 +1423,17 @@ QuicBaaS's policy and lives on the binding. A `ListWorkflows` method would
 have pushed that policy into every adapter and made a GitLab port invent an
 equivalent of a GitHub Actions directory.
 
+A pull request's discussion has its own operations, `CommentOnPullRequest`
+and `ListPullRequestComments`, beside the issue ones. Gitea and GitHub number
+issues and pull requests in one sequence and serve both discussions from the
+issue endpoints, which their adapters share through one embedded type
+(`sharedNumbering`, `pkg/sdlc/forge_shared_numbering.go`). GitLab numbers
+merge requests apart from issues, so an issue operation given a merge
+request's number would write on whatever issue shares it; its adapter serves
+the pull request operations from `/merge_requests/:iid/notes`. Code holding a
+pull request number — the merge train's landing, refusal and ejection
+comments — uses the pull request operations.
+
 ### Forge transport: deadlines, retries, and unanswered writes
 
 Every forge call is bounded by a deadline chosen by what the call costs the
@@ -1445,12 +1455,13 @@ and the retry's create would have been refused as a duplicate.
 | `MergePullRequest` | `heavy_write_timeout` | the PR is re-read: merged with a merge commit is **success**; open and mergeable is not-ready, so the bounded `merge_attempts` retry decides (its next attempt re-reads first and stops at "already merged"); anything else is `ForgeWriteUnconfirmedError` |
 | `CreatePullRequest` | `heavy_write_timeout` | an open PR for the same head → base **from this repository** (never a fork's same-named branch) is **adopted** — looked for before the first create, after an unanswered one, and on Gitea's 409 duplicate refusal. A create is re-sent only after a lookup has just shown none exists, within `read_attempts` |
 | labels (set, add, remove), close issue, delete branch, commit status, update/delete webhook | `write_timeout` | replayed like a read: each is idempotent on the forge and verified by the method's own read-back |
-| comment, create branch, submit review, rerun CI, create webhook, create label, mint/revoke token | `write_timeout` | **never repeated** — a second one is a second comment, verdict, pipeline, hook or credential; `ForgeWriteUnconfirmedError` |
+| comment, create branch, submit review, rerun or cancel CI, create webhook, create label, mint/revoke token | `write_timeout` | **never repeated** — a second one is a second comment, verdict, pipeline, hook or credential; `ForgeWriteUnconfirmedError` |
 
-The table is `giteaWritePolicies` in `pkg/sdlc/forge_gitea_transport.go`; a
-write missing from it takes the last row, and a test fails the build if any
-write in the adapter is unclassified. Only silence is retried: a status the
-forge itself returned (404, 409, 422, Gitea's own 500) is final.
+The table is `forgeWritePolicies` in `pkg/sdlc/forge_http_policy.go`, shared
+by every REST adapter; a write missing from it takes the last row, and a test
+fails the build if any write in an adapter is unclassified. Only silence is
+retried: a status the forge itself returned (404, 409, 422, the forge's own
+500) is final.
 
 **What is charged.** Every one of these errors keeps the unanswered call in
 its chain, and that call unwraps to `orchestration.ErrForgeUnreachable`. A job

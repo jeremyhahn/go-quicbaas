@@ -1,0 +1,15 @@
+[
+  {
+    "iid": 6,
+    "title": "A contribution from a fork",
+    "state": "opened",
+    "source_branch": "main",
+    "target_branch": "main",
+    "sha": "4444444444444444444444444444444444444444",
+    "draft": true,
+    "source_project_id": 77,
+    "target_project_id": 42,
+    "detailed_merge_status": "draft_status",
+    "author": {"id": 13, "username": "outsider", "name": "Out Sider"}
+  }
+]

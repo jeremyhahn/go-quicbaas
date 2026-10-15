@@ -51,9 +51,17 @@ func (s *stubForge) CommentOnIssue(context.Context, RepoRef, int, string) (*Forg
 func (s *stubForge) ListIssueComments(context.Context, RepoRef, int) ([]ForgeComment, error) {
 	return nil, nil
 }
-func (s *stubForge) SetIssueLabels(context.Context, RepoRef, int, []string) error { return nil }
-func (s *stubForge) AddIssueLabels(context.Context, RepoRef, int, []string) error { return nil }
-func (s *stubForge) RemoveIssueLabel(context.Context, RepoRef, int, string) error { return nil }
+func (s *stubForge) CommentOnPullRequest(context.Context, RepoRef, int, string) (*ForgeComment, error) {
+	return nil, nil
+}
+func (s *stubForge) ListPullRequestComments(context.Context, RepoRef, int) ([]ForgeComment, error) {
+	return nil, nil
+}
+func (s *stubForge) AddPullRequestLabels(context.Context, RepoRef, int, []string) error { return nil }
+func (s *stubForge) RemovePullRequestLabel(context.Context, RepoRef, int, string) error { return nil }
+func (s *stubForge) SetIssueLabels(context.Context, RepoRef, int, []string) error       { return nil }
+func (s *stubForge) AddIssueLabels(context.Context, RepoRef, int, []string) error       { return nil }
+func (s *stubForge) RemoveIssueLabel(context.Context, RepoRef, int, string) error       { return nil }
 func (s *stubForge) CreateBranch(context.Context, RepoRef, string, string) (*ForgeBranch, error) {
 	return nil, nil
 }

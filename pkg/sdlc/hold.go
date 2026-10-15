@@ -69,11 +69,19 @@ var triageHoldKeys = []string{LabelBlocked, LabelEscalated}
 
 // heldBy returns the issue's label matching hold, or "" when it carries none.
 func heldBy(issue *ForgeIssue, hold string) string {
-	hold = strings.TrimSpace(hold)
-	if issue == nil || hold == "" {
+	if issue == nil {
 		return ""
 	}
-	for _, label := range issue.Labels {
+	return heldIn(issue.Labels, hold)
+}
+
+// heldIn returns the label in labels matching hold, or "" when none does.
+func heldIn(labels []string, hold string) string {
+	hold = strings.TrimSpace(hold)
+	if hold == "" {
+		return ""
+	}
+	for _, label := range labels {
 		if strings.EqualFold(strings.TrimSpace(label), hold) {
 			return label
 		}

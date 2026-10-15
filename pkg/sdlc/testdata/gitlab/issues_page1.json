@@ -1,0 +1,15 @@
+[
+  {
+    "iid": 7,
+    "title": "Widgets drift under load",
+    "description": "Seen twice this week.",
+    "state": "opened",
+    "labels": ["bug", "factory:queued"],
+    "milestone": {"title": "v1.2"},
+    "author": {"id": 11, "username": "reporter", "name": "Re Porter"},
+    "assignee": {"id": 12, "username": "fixer", "name": "Fix Er"},
+    "web_url": "https://gitlab.example/acme/widgets/-/issues/7",
+    "created_at": "2026-10-01T09:00:00Z",
+    "updated_at": "2026-10-02T09:00:00Z"
+  }
+]

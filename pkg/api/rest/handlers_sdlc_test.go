@@ -282,7 +282,7 @@ func TestSDLCBinding_BindRefusalsAreTyped(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	// An unknown forge type: 400.
 	unknown := restBinding("p1")
-	unknown.Forge.Type = "gitlab"
+	unknown.Forge.Type = "bitbucket"
 	rec = sdlcCall(t, server, "tenant-a", http.MethodPut, "/api/v1/sdlc/projects/p1/binding", unknown)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
@@ -336,10 +336,10 @@ func TestSDLCBinding_PathParametersAreRequired(t *testing.T) {
 }
 
 // TestSDLCForges_ListsRegisteredAdapters proves the endpoint reports what
-// this build can actually talk to. The gitea adapter registers itself from
-// pkg/sdlc's init, so a rest test binary that imports the module carries it;
-// an adapter nobody wrote (github, gitlab) must be absent rather than listed
-// and failing later at NewForgeBackend.
+// this build can actually talk to. The gitea, github and gitlab adapters
+// register themselves from pkg/sdlc's init, so a rest test binary that imports
+// the module carries all three; an adapter nobody wrote (bitbucket) must be
+// absent rather than listed and failing later at NewForgeBackend.
 func TestSDLCForges_ListsRegisteredAdapters(t *testing.T) {
 	server, _ := setupSDLCServer(t)
 
@@ -349,14 +349,16 @@ func TestSDLCForges_ListsRegisteredAdapters(t *testing.T) {
 	var got SDLCForgesResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	assert.Contains(t, got.Forges, string(sdlc.ForgeGitea))
+	assert.Contains(t, got.Forges, string(sdlc.ForgeGitHub))
+	assert.Contains(t, got.Forges, string(sdlc.ForgeGitLab))
 	assert.Equal(t, len(got.Forges), got.Count)
 	assert.True(t, sort.StringsAreSorted(got.Forges), "forges must be sorted: %v", got.Forges)
-	for _, absent := range []sdlc.ForgeType{sdlc.ForgeGitHub, sdlc.ForgeGitLab} {
-		if _, err := sdlc.NewForgeBackend(sdlc.ForgeConfig{Type: absent}, sdlc.ForgeCredentials{}, sdlc.ForgeTransport{}); err != nil {
-			assert.NotContains(t, got.Forges, string(absent),
-				"a type with no adapter must not be listed as available")
-		}
-	}
+
+	const unwritten = sdlc.ForgeType("bitbucket")
+	_, err := sdlc.NewForgeBackend(sdlc.ForgeConfig{Type: unwritten}, sdlc.ForgeCredentials{}, sdlc.ForgeTransport{})
+	require.ErrorIs(t, err, sdlc.ErrForgeNotRegistered)
+	assert.NotContains(t, got.Forges, string(unwritten),
+		"a type with no adapter must not be listed as available")
 }
 
 // TestSDLCForges_TenantIsNotRequired proves the endpoint answers build

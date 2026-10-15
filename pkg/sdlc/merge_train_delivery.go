@@ -167,7 +167,7 @@ func (h *Hooks) closeLanded(ctx context.Context, a *attempt, pr *ForgePullReques
 	if pullRequestStateFor(pr) != PullRequestOpen {
 		return nil
 	}
-	comments, err := a.forge.ListIssueComments(ctx, a.repo, pr.Number)
+	comments, err := a.forge.ListPullRequestComments(ctx, a.repo, pr.Number)
 	if err != nil {
 		return err
 	}
@@ -180,7 +180,7 @@ func (h *Hooks) closeLanded(ctx context.Context, a *attempt, pr *ForgePullReques
 		}
 	}
 	if !posted {
-		if _, err := a.forge.CommentOnIssue(ctx, a.repo, pr.Number, trainLandedComment(entry)); err != nil {
+		if _, err := a.forge.CommentOnPullRequest(ctx, a.repo, pr.Number, trainLandedComment(entry)); err != nil {
 			return err
 		}
 	}

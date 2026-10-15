@@ -1613,13 +1613,13 @@ func TestOIDCProvider_ValidateAccessToken_Success(t *testing.T) {
 	}
 
 	config := &OIDCConfig{
-		Issuer:           "https://test.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   1 * time.Hour,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       1 * time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://test.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    1 * time.Hour,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        1 * time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}
 
 	appStorage := newMockAppStorage()
@@ -1691,10 +1691,10 @@ func TestOIDCProvider_ValidateAccessToken_Invalid(t *testing.T) {
 	}
 
 	config := &OIDCConfig{
-		Issuer:           "https://test.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   1 * time.Hour,
+		Issuer:            "https://test.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    1 * time.Hour,
 	}
 
 	appStorage := newMockAppStorage()
@@ -1737,12 +1737,12 @@ func TestOIDCProviderAdapter_ValidateAccessToken_Success(t *testing.T) {
 	}
 
 	config := &OIDCConfig{
-		Issuer:           "https://test.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   1 * time.Hour,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       1 * time.Hour,
+		Issuer:            "https://test.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    1 * time.Hour,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        1 * time.Hour,
 	}
 
 	appStorage := newMockAppStorage()
@@ -1811,10 +1811,10 @@ func TestOIDCProviderAdapter_ValidateAccessToken_Error(t *testing.T) {
 	}
 
 	config := &OIDCConfig{
-		Issuer:           "https://test.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   1 * time.Hour,
+		Issuer:            "https://test.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    1 * time.Hour,
 	}
 
 	appStorage := newMockAppStorage()
@@ -1855,10 +1855,10 @@ func TestOIDCProviderAdapter_GetOAuthASMetadata_NilCheck(t *testing.T) {
 	}
 
 	config := &OIDCConfig{
-		Issuer:           "https://test.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   1 * time.Hour,
+		Issuer:            "https://test.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    1 * time.Hour,
 	}
 
 	appStorage := newMockAppStorage()

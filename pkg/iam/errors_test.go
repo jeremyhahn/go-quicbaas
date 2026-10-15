@@ -785,17 +785,6 @@ func TestOIDCConfigRequiredError_Error(t *testing.T) {
 	}
 }
 
-func TestJWKSGenerationError_ErrorAndUnwrap(t *testing.T) {
-	cause := errors.New("key gen failed")
-	err := &JWKSGenerationError{Cause: cause}
-	if !strings.Contains(err.Error(), "key gen failed") {
-		t.Errorf("unexpected: %q", err.Error())
-	}
-	if err.Unwrap() != cause {
-		t.Errorf("unwrap mismatch")
-	}
-}
-
 func TestTokenRevokedError_Error(t *testing.T) {
 	err := &TokenRevokedError{}
 	if err.Error() != "token is revoked" {

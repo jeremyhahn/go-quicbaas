@@ -3364,6 +3364,8 @@ The IAM/OIDC subsystem signs tokens with an ES256 key held in the configured xkm
 
 Rotation generates a fresh ES256 key in the xkms backend and demotes the previous key into a JWKS overlap window, so in-flight tokens remain verifiable until they expire.
 
+`OIDCConfig.SigningKeyManager` is the only signing source, and `NewOIDCProvider` returns `OIDCConfigRequiredError` without one; there is no raw-key field. Code that holds an in-process `crypto.Signer` wraps it with `NewSigningKeyManagerFromSigner(signer, alg)`, which derives the `kid` the same way, so its tokens also carry a `kid` that the JWKS publishes. Such a manager cannot rotate: `Rotate` returns `SigningKeyRotationUnsupportedError`.
+
 #### Per-Tenant Signing Keys
 
 Dedicated tenants can opt in to their own signing key via tenant OIDC settings. `TenantSigningKeyResolver` (`pkg/iam/oidc_tenant_signing.go`) maps each tenant to its key manager, and the aggregated JWKS publishes the global key plus every tenant key. Per-tenant IAM data (users, policies, sessions, WebAuthn credentials, OIDC settings) is barrier-isolated via the tenant-routed KV store.

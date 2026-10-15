@@ -89,12 +89,12 @@ func (h *WebhookHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.refuse(w, r, http.StatusBadRequest, "could not read the request body", err)
 		return
 	}
+	// The headers travel whole: which forge's names to read them by is the
+	// bound forge's, known only once the ingestor has read the binding.
 	result, err := h.ingestor.Ingest(r.Context(), WebhookDelivery{
-		ProjectID:  h.params(r),
-		EventType:  r.Header.Get(GiteaEventHeader),
-		DeliveryID: r.Header.Get(GiteaDeliveryHeader),
-		Signature:  r.Header.Get(GiteaSignatureHeader),
-		Payload:    body,
+		ProjectID: h.params(r),
+		Payload:   body,
+		Header:    r.Header,
 	})
 	if err != nil {
 		status, reason := webhookRefusal(err)

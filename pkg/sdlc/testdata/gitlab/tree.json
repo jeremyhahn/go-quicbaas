@@ -1,0 +1,4 @@
+[
+  {"id": "a1", "name": "lanes", "path": ".factory/lanes", "type": "tree", "mode": "040000"},
+  {"id": "b2", "name": "policy.yaml", "path": ".factory/policy.yaml", "type": "blob", "mode": "100644"}
+]

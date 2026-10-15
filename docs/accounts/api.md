@@ -379,7 +379,11 @@ admission enforces both is in
 | MCP | `quicbaas_orchestrator_cost` |
 | Go SDK | `client.Orchestrator().GetSpendReport` |
 
-Permission `orchestrator:status`.
+Permission `spend_report:read`, held by Admin and Operator in the caller's own
+tenant. The report names every project, task, job and session charged and the
+display name and allowance policy of every account that paid, so it takes the
+grants of the account roster read (`agent_accounts:list`), not
+`orchestrator:status`. The embedded transport performs no authorization.
 
 ```
 GET /api/v1/orchestrator/cost

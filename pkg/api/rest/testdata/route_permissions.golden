@@ -171,7 +171,7 @@ GET /api/v1/fleet/{nodeID} permission orchestrator:status
 GET /api/v1/fleet/{nodeID}/backends/{backendName}/models permission orchestrator:backend_list
 GET /api/v1/orchestrator/attention permission orchestrator:status
 GET /api/v1/orchestrator/backends permission orchestrator:backend_list
-GET /api/v1/orchestrator/cost permission orchestrator:status
+GET /api/v1/orchestrator/cost permission spend_report:read
 GET /api/v1/orchestrator/cost-settings permission orchestrator:status
 GET /api/v1/orchestrator/health permission orchestrator:health
 GET /api/v1/orchestrator/jobs permission orchestrator:status

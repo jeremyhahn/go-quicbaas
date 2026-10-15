@@ -61,13 +61,13 @@ func newSessionRefreshProvider(t *testing.T, accessTTL, refreshTTL time.Duration
 	}
 
 	provider, err := NewOIDCProvider(&OIDCConfig{
-		Issuer:           "https://refresh.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       key,
-		AccessTokenTTL:   accessTTL,
-		RefreshTokenTTL:  refreshTTL,
-		IDTokenTTL:       time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://refresh.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, key, "RS256"),
+		AccessTokenTTL:    accessTTL,
+		RefreshTokenTTL:   refreshTTL,
+		IDTokenTTL:        time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}, OIDCDependencies{
 		IdentityStore: identityStore,
 		AppStorage:    newMockAppStorage(),

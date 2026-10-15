@@ -439,7 +439,7 @@ Every route is tenant-scoped by the caller's credential.
 | `POST`, `GET .../tasks/{taskID}/artifacts`; `GET .../artifacts/{name}` | `orchestrator:artifact_submit` / `artifact_read` | Typed task artifacts |
 | `POST`, `GET /api/v1/orchestrator/workflows`; `GET`, `PUT`, `DELETE .../workflows/{name}` | `orchestrator:workflow_write` / `workflow_read` | Workflow definitions |
 | `POST /api/v1/orchestrator/hooks` | `orchestrator:hook` | Agent lifecycle hook receiver |
-| `GET /api/v1/orchestrator/cost` | `orchestrator:status` | Consumption ledger rollup (below) |
+| `GET /api/v1/orchestrator/cost` | `spend_report:read` | Consumption ledger rollup (below) |
 | `GET`, `PUT /api/v1/orchestrator/spend-policy` | `orchestrator:status` / `spend_policy:write` | The tenant's spend limits |
 | `GET`, `PUT /api/v1/orchestrator/cost-settings` | `orchestrator:status` / `cost_settings:write` | Local-inference costing |
 
@@ -537,7 +537,7 @@ The seam itself is documented in [job-runners.md](job-runners.md).
 
 The spend report: query parameters, the response, the two money figures and
 the transports are in [../accounts/api.md](../accounts/api.md#spend-report).
-Permission `orchestrator:status`.
+Permission `spend_report:read`.
 
 
 The project, pooled-account and agent-catalog matrices, the reference-field
@@ -863,7 +863,8 @@ of what remains.
 
 ### quicbaas_orchestrator_cost
 
-Read one scope of the consumption ledger. Arguments and the response are in
+Read one scope of the consumption ledger. Requires `spend_report:read`.
+Arguments and the response are in
 [../accounts/api.md](../accounts/api.md#spend-report).
 
 ### quicbaas_orchestrator_cost_settings_get / _set

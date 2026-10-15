@@ -1,0 +1,6 @@
+[
+  {"old_path": "widget.go", "new_path": "widget.go", "diff": "@@ -1,2 +1,2 @@\n-drift := true\n+drift := false\n keep()\n", "new_file": false, "renamed_file": false, "deleted_file": false},
+  {"old_path": "anchor.go", "new_path": "anchor.go", "diff": "@@ -0,0 +1,2 @@\n+package widgets\n+func anchor() {}\n", "new_file": true, "renamed_file": false, "deleted_file": false},
+  {"old_path": "legacy.go", "new_path": "legacy.go", "diff": "@@ -1 +0,0 @@\n-package widgets\n", "new_file": false, "renamed_file": false, "deleted_file": true},
+  {"old_path": "old_name.go", "new_path": "new_name.go", "diff": "", "new_file": false, "renamed_file": true, "deleted_file": false}
+]

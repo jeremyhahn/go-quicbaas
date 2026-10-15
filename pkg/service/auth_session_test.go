@@ -63,14 +63,17 @@ func newSessionAuthServiceWithUsers(t *testing.T) (*authService, *iam.OIDCProvid
 		RoleStorage: storage,
 	})
 
+	keys, err := iam.NewSigningKeyManagerFromSigner(key, "RS256")
+	require.NoError(t, err)
+
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
-		Issuer:           "https://session.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       key,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://session.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: keys,
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: identityStore,
 		AppStorage:    storage,

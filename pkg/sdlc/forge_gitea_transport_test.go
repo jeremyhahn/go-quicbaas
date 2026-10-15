@@ -334,32 +334,32 @@ func TestGiteaCallPolicy_SplitsDeadlinesByWhatTheCallCosts(t *testing.T) {
 		t.Fatalf("NewGiteaBackend: %v", err)
 	}
 	cases := map[string]struct {
-		req  giteaRequest
-		want giteaCallPolicy
+		req  forgeRequest
+		want forgeCallPolicy
 	}{
 		"a read retries under the read deadline": {
-			giteaRequest{method: http.MethodGet, operation: "ListIssues"},
-			giteaCallPolicy{deadline: time.Second, attempts: 4, recovery: recoverReplay},
+			forgeRequest{method: http.MethodGet, operation: "ListIssues"},
+			forgeCallPolicy{deadline: time.Second, attempts: 4, recovery: recoverReplay},
 		},
 		"a merge is heavy and reconciled": {
-			giteaRequest{method: http.MethodPost, operation: "MergePullRequest"},
-			giteaCallPolicy{deadline: 3 * time.Second, attempts: 1, recovery: recoverReconcile},
+			forgeRequest{method: http.MethodPost, operation: "MergePullRequest"},
+			forgeCallPolicy{deadline: 3 * time.Second, attempts: 1, recovery: recoverReconcile},
 		},
 		"opening a pull request is heavy and reconciled": {
-			giteaRequest{method: http.MethodPost, operation: "CreatePullRequest"},
-			giteaCallPolicy{deadline: 3 * time.Second, attempts: 1, recovery: recoverReconcile},
+			forgeRequest{method: http.MethodPost, operation: "CreatePullRequest"},
+			forgeCallPolicy{deadline: 3 * time.Second, attempts: 1, recovery: recoverReconcile},
 		},
 		"an idempotent verified write is replayed": {
-			giteaRequest{method: http.MethodPut, operation: "SetIssueLabels"},
-			giteaCallPolicy{deadline: 2 * time.Second, attempts: 4, recovery: recoverReplay},
+			forgeRequest{method: http.MethodPut, operation: "SetIssueLabels"},
+			forgeCallPolicy{deadline: 2 * time.Second, attempts: 4, recovery: recoverReplay},
 		},
 		"a comment is sent once": {
-			giteaRequest{method: http.MethodPost, operation: "CommentOnIssue"},
-			giteaCallPolicy{deadline: 2 * time.Second, attempts: 1, recovery: recoverUnconfirmed},
+			forgeRequest{method: http.MethodPost, operation: "CommentOnIssue"},
+			forgeCallPolicy{deadline: 2 * time.Second, attempts: 1, recovery: recoverUnconfirmed},
 		},
 		"an unclassified write fails safe": {
-			giteaRequest{method: http.MethodPost, operation: "SomethingNew"},
-			giteaCallPolicy{deadline: 2 * time.Second, attempts: 1, recovery: recoverUnconfirmed},
+			forgeRequest{method: http.MethodPost, operation: "SomethingNew"},
+			forgeCallPolicy{deadline: 2 * time.Second, attempts: 1, recovery: recoverUnconfirmed},
 		},
 	}
 	for name, tc := range cases {
@@ -371,15 +371,19 @@ func TestGiteaCallPolicy_SplitsDeadlinesByWhatTheCallCosts(t *testing.T) {
 	}
 }
 
-// TestGiteaWritePolicies_EveryWriteIsClassified is the drift gate over the
+// TestForgeWritePolicies_EveryWriteIsClassified is the drift gate over the
 // write table: every request literal in the adapter that is not a read names
 // an operation the table classifies. An unclassified write still fails safe,
 // but it fails as an error where a replay or a reconciliation would have
 // succeeded, and nobody decided that.
-func TestGiteaWritePolicies_EveryWriteIsClassified(t *testing.T) {
-	files, err := filepath.Glob("forge_gitea*.go")
-	if err != nil {
-		t.Fatalf("glob: %v", err)
+func TestForgeWritePolicies_EveryWriteIsClassified(t *testing.T) {
+	var files []string
+	for _, pattern := range []string{"forge_gitea*.go", "forge_github*.go"} {
+		matched, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatalf("glob %s: %v", pattern, err)
+		}
+		files = append(files, matched...)
 	}
 	fset := token.NewFileSet()
 	writes := 0
@@ -396,11 +400,11 @@ func TestGiteaWritePolicies_EveryWriteIsClassified(t *testing.T) {
 			if !ok {
 				return true
 			}
-			if ident, ok := lit.Type.(*ast.Ident); !ok || ident.Name != "giteaRequest" {
+			if ident, ok := lit.Type.(*ast.Ident); !ok || ident.Name != "forgeRequest" {
 				return true
 			}
 			method, operation := requestLiteralFields(lit)
-			if method == "" || giteaReadMethods[method] {
+			if method == "" || forgeReadMethods[method] {
 				return true
 			}
 			writes++
@@ -408,8 +412,8 @@ func TestGiteaWritePolicies_EveryWriteIsClassified(t *testing.T) {
 				t.Errorf("%s: a %s request names no literal operation", fset.Position(lit.Pos()), method)
 				return true
 			}
-			if _, ok := giteaWritePolicies[operation]; !ok {
-				t.Errorf("%s: write %q is not in giteaWritePolicies", fset.Position(lit.Pos()), operation)
+			if _, ok := forgeWritePolicies[operation]; !ok {
+				t.Errorf("%s: write %q is not in forgeWritePolicies", fset.Position(lit.Pos()), operation)
 			}
 			return true
 		})
@@ -420,7 +424,7 @@ func TestGiteaWritePolicies_EveryWriteIsClassified(t *testing.T) {
 }
 
 // requestLiteralFields reads the method (as net/http's constant value) and the
-// literal operation from a giteaRequest composite literal.
+// literal operation from a forgeRequest composite literal.
 func requestLiteralFields(lit *ast.CompositeLit) (method, operation string) {
 	methods := map[string]string{
 		"MethodGet": http.MethodGet, "MethodHead": http.MethodHead, "MethodPost": http.MethodPost,
@@ -629,7 +633,7 @@ func TestGiteaMerge_InternalErrorAndNotLandedIsAnError(t *testing.T) {
 	if !errors.As(err, &unconfirmed) {
 		t.Fatalf("error = %v, want ForgeWriteUnconfirmedError", err)
 	}
-	var apiErr *GiteaAPIError
+	var apiErr *ForgeAPIError
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusInternalServerError {
 		t.Errorf("error = %v, want the 500 kept as its cause", err)
 	}
@@ -816,7 +820,7 @@ func TestCreatePullRequest_ReconciliationNeverAdoptsAFork(t *testing.T) {
 		backend, _ := forge.backend(t, shortWrites)
 
 		_, err := backend.CreatePullRequest(context.Background(), testRepo, frostSpec)
-		if giteaStatusOf(err) != http.StatusConflict {
+		if forgeStatusOf(err) != http.StatusConflict {
 			t.Fatalf("error = %v, want the forge's 409 rather than the fork adopted", err)
 		}
 	})
@@ -899,7 +903,7 @@ func TestCreatePullRequest_AConflictWithNothingOpenIsTheForgesAnswer(t *testing.
 	backend, _ := forge.backend(t, shortWrites)
 
 	_, err := backend.CreatePullRequest(context.Background(), testRepo, frostSpec)
-	if giteaStatusOf(err) != http.StatusConflict {
+	if forgeStatusOf(err) != http.StatusConflict {
 		t.Fatalf("error = %v, want the forge's 409", err)
 	}
 }

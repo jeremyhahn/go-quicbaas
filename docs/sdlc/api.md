@@ -60,6 +60,15 @@ be able to ASK what state a repository is in without being able to change it.
 | `POST` | `/api/v1/sdlc/worker-image/refresh` | `worker_images:refresh` — 202; 409 while a pass runs or is queued |
 | `POST` | `/api/v1/sdlc/webhook/{projectID}` | public — HMAC over the body |
 
+A delivery's event, delivery id and signature are read from the headers of
+the forge the project is BOUND to — `X-Gitea-Event`, `X-Gitea-Delivery`,
+`X-Gitea-Signature` for Gitea; `X-GitHub-Event`, `X-GitHub-Delivery`,
+`X-Hub-Signature-256` (`sha256=<hex>`) for GitHub; `X-Gitlab-Event`,
+`X-Gitlab-Event-UUID`, `X-Gitlab-Token` (the shared secret itself, compared
+in constant time) for GitLab — never guessed from which
+headers are present. Another forge's headers leave the delivery unsigned, a
+`400`.
+
 Tenancy is the caller's own; `?tenant_id=` may only name the bound tenant
 (an unbound admin caller must name one). The PUT body is the
 `ProjectBinding` JSON; `project_id` may be omitted and must otherwise match
@@ -376,7 +385,7 @@ fail-closed), and a selector that silently omits `github` says nothing about
 why.
 
 ```json
-{"forges": ["gitea"], "count": 1}
+{"forges": ["gitea", "github", "gitlab"], "count": 3}
 ```
 
 BUILD capability, not tenant data, so no tenant is derived and the request

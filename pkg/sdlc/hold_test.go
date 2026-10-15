@@ -277,3 +277,29 @@ func TestReadiness_AHeldIssueIsNotAdoptable(t *testing.T) {
 		t.Fatalf("verdict = %s (adoptable=%v), want held and not adoptable", finding.Verdict, finding.Verdict.Adoptable())
 	}
 }
+
+// TestHeldIn_ReturnsTheLabelInItsOwnSpelling proves a hold matches ignoring
+// case and surrounding space, and comes back as the forge spells it, which is
+// what a removal must send.
+func TestHeldIn_ReturnsTheLabelInItsOwnSpelling(t *testing.T) {
+	if got := heldIn([]string{"bug", " Factory:Parked "}, "factory:parked"); got != " Factory:Parked " {
+		t.Errorf("heldIn = %q, want the forge's spelling", got)
+	}
+	if got := heldBy(&ForgeIssue{Labels: []string{"Task:Blocked"}}, HoldLabel); got != "Task:Blocked" {
+		t.Errorf("heldBy = %q, want Task:Blocked", got)
+	}
+}
+
+// TestHeldIn_NothingHeldIsEmpty proves a missing label, an empty hold and a
+// missing issue each hold nothing.
+func TestHeldIn_NothingHeldIsEmpty(t *testing.T) {
+	if got := heldIn([]string{"bug"}, "factory:parked"); got != "" {
+		t.Errorf("unmatched = %q, want empty", got)
+	}
+	if got := heldIn([]string{"bug"}, "  "); got != "" {
+		t.Errorf("empty hold = %q, want empty", got)
+	}
+	if got := heldBy(nil, HoldLabel); got != "" {
+		t.Errorf("nil issue = %q, want empty", got)
+	}
+}

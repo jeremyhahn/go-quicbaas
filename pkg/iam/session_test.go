@@ -1472,13 +1472,13 @@ func TestOIDCProvider_Token_ClientCredentialsGrantFinal(t *testing.T) {
 
 	// Create OIDC provider with full configuration (including SigningAlgorithm)
 	oidcConfig := &OIDCConfig{
-		Issuer:           "https://auth.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  7 * 24 * time.Hour,
-		IDTokenTTL:       1 * time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://auth.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   7 * 24 * time.Hour,
+		IDTokenTTL:        1 * time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}
 
 	deps := OIDCDependencies{
@@ -1524,13 +1524,13 @@ func TestOIDCProvider_Token_ClientCredentialsGrant_InvalidClientFinal(t *testing
 	tokenStorage := newMockTokenStorage()
 
 	oidcConfig := &OIDCConfig{
-		Issuer:           "https://auth.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  7 * 24 * time.Hour,
-		IDTokenTTL:       1 * time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://auth.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   7 * 24 * time.Hour,
+		IDTokenTTL:        1 * time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}
 
 	deps := OIDCDependencies{
@@ -1602,13 +1602,13 @@ func TestOIDCProvider_Token_ClientCredentialsGrant_GrantNotAllowedFinal(t *testi
 	require.NoError(t, err)
 
 	oidcConfig := &OIDCConfig{
-		Issuer:           "https://auth.example.com",
-		SigningAlgorithm: "RS256",
-		SigningKey:       privateKey,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  7 * 24 * time.Hour,
-		IDTokenTTL:       1 * time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            "https://auth.example.com",
+		SigningAlgorithm:  "RS256",
+		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   7 * 24 * time.Hour,
+		IDTokenTTL:        1 * time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}
 
 	deps := OIDCDependencies{

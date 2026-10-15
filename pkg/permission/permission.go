@@ -209,10 +209,21 @@ const (
 	// SpendPolicyWrite ("spend_policy:write") authorizes REPLACING a tenant's
 	// own spend limits: the sliding token and dollar windows over every turn
 	// charged to the tenant, which defer the tenant's new work at admission
-	// once spent (go-quicbaas#1058). Reading them is orchestrator:status,
-	// like the spend report. It is its own family because go-qrdb owns the
-	// "orchestrator" family outright (TestAll_DoesNotShadowAQRDBPermission).
+	// once spent (go-quicbaas#1058). Reading them is orchestrator:status. It
+	// is its own family because go-qrdb owns the "orchestrator" family
+	// outright (TestAll_DoesNotShadowAQRDBPermission).
 	SpendPolicyWrite qrdbsdk.Permission = "spend_policy:write"
+
+	// SpendReportRead ("spend_report:read") authorizes READING a tenant's
+	// spend report: every project, task, job and session id under the
+	// tenant that was charged, and the display name and allowance policy of
+	// every pooled account that paid (go-quicbaas#885). It was gated on
+	// orchestrator:status, the verb for reading ONE session's status, so a
+	// role holding only session status read the tenant's whole attribution
+	// tree and its account roster. It is its own family because go-qrdb
+	// owns the "orchestrator" family outright
+	// (TestAll_DoesNotShadowAQRDBPermission).
+	SpendReportRead qrdbsdk.Permission = "spend_report:read"
 
 	// AgentAccountRead ("agent_accounts:read") and AgentAccountList
 	// ("agent_accounts:list") authorize the METADATA half of the pooled
@@ -598,6 +609,10 @@ var contributions = []contribution{
 	// administrative, like sdlc:bind: Admin alone among the built-ins. It
 	// touches no key material and no module governance.
 	{permission: SpendPolicyWrite, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	// spend_report:read reveals the tenant's pooled-account roster, so it
+	// takes the grants of the other roster read, agent_accounts:list: Admin
+	// and Operator. It touches no key material and no module governance.
+	{permission: SpendReportRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	// The metadata reads follow the read/write split every family here takes:
 	// Admin and Operator both hold them, because listing the pool and reading
 	// an account's health is the day-to-day operational question, and neither

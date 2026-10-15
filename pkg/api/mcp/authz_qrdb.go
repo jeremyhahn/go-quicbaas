@@ -222,7 +222,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_orchestrator_status":               {"orchestrator", "status"},
 	"quicbaas_orchestrator_session_history":      {"orchestrator", "status"},
 	"quicbaas_orchestrator_session_conversation": {"orchestrator", "status"},
-	"quicbaas_orchestrator_cost":                 {"orchestrator", "status"},
+	"quicbaas_orchestrator_cost":                 {"spend_report", "read"},
 	"quicbaas_orchestrator_spend_policy_get":     {"orchestrator", "status"},
 	"quicbaas_orchestrator_spend_policy_set":     {"spend_policy", "write"},
 	// A tenant's runtime cost settings (go-quicbaas#1058). Replacing them is

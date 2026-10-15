@@ -61,7 +61,7 @@ func TestRefreshSession_ReplaysTheAttestationOfTheLoginThatProvedIt(t *testing.T
 		t.Fatalf("RefreshSession: %v", err)
 	}
 
-	claims, err := xkms.JWTVerifyWithKeyAndClaims(tokens.AccessToken, provider.config.SigningKey.Public(), "RS256")
+	claims, err := xkms.JWTVerifyWithKeyAndClaims(tokens.AccessToken, provider.GetJWKS().Keys[0].Key, "RS256")
 	if err != nil {
 		t.Fatalf("verify renewed access token: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestRefreshSession_InventsNoAttestationForAnUnattestedSession(t *testing.T)
 		t.Fatalf("RefreshSession: %v", err)
 	}
 
-	claims, err := xkms.JWTVerifyWithKeyAndClaims(tokens.AccessToken, provider.config.SigningKey.Public(), "RS256")
+	claims, err := xkms.JWTVerifyWithKeyAndClaims(tokens.AccessToken, provider.GetJWKS().Keys[0].Key, "RS256")
 	if err != nil {
 		t.Fatalf("verify renewed access token: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestRefreshSession_MFAAssuranceSurvivesRenewalWithoutBeingInvented(t *testi
 				t.Fatalf("RefreshSession: %v", err)
 			}
 
-			claims, err := xkms.JWTVerifyWithKeyAndClaims(tokens.AccessToken, provider.config.SigningKey.Public(), "RS256")
+			claims, err := xkms.JWTVerifyWithKeyAndClaims(tokens.AccessToken, provider.GetJWKS().Keys[0].Key, "RS256")
 			if err != nil {
 				t.Fatalf("verify renewed access token: %v", err)
 			}

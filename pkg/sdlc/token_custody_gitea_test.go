@@ -436,3 +436,43 @@ func TestGitea_ScrubDoesNotAliasTheRawBody(t *testing.T) {
 		t.Fatalf("no-replacement scrub aliased the raw body: %q", out)
 	}
 }
+
+// TestForgeRequest_SecretsCarriesSubjectAndBodySecrets pins that send scrubs
+// the secrets a request body sends as well as the subject token: a forge that
+// echoes a rejected webhook token must not carry it into an error.
+func TestForgeRequest_SecretsCarriesSubjectAndBodySecrets(t *testing.T) {
+	backend, _ := newCustodyFixture(t)
+	request := forgeRequest{
+		subjectToken: []byte("subject-secret"),
+		bodySecrets:  [][]byte{[]byte("hook-secret"), []byte("other-secret")},
+	}
+
+	raw := []byte(`{"message":"subject-secret hook-secret other-secret kept"}`)
+	scrubbed := backend.scrubCredentials(raw, request.secrets()...)
+
+	for _, secret := range [][]byte{request.subjectToken, request.bodySecrets[0], request.bodySecrets[1]} {
+		if bytes.Contains(scrubbed, secret) {
+			t.Fatalf("a request secret survived the scrub: %s", scrubbed)
+		}
+	}
+	if !bytes.Contains(scrubbed, []byte("kept")) {
+		t.Fatalf("the scrub took more than the secrets: %q", scrubbed)
+	}
+}
+
+// TestForgeRequest_SecretsEmptyRedactsNothing pins that a request carrying no
+// secrets — every call but custody and webhook writes — leaves the forge's
+// answer whole rather than redacting on an empty needle.
+func TestForgeRequest_SecretsEmptyRedactsNothing(t *testing.T) {
+	backend, _ := newCustodyFixture(t)
+
+	raw := []byte(`{"message":"nothing secret here"}`)
+	scrubbed := backend.scrubCredentials(raw, forgeRequest{}.secrets()...)
+
+	if !bytes.Equal(scrubbed, raw) {
+		t.Fatalf("an empty secret set changed the body: %q", scrubbed)
+	}
+	if bytes.Contains(scrubbed, []byte("[redacted]")) {
+		t.Fatalf("an empty secret redacted the body: %q", scrubbed)
+	}
+}

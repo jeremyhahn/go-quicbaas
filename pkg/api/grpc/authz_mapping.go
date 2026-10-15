@@ -643,7 +643,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.orchestrator.v1.OrchestratorService/RotateSessionAccount":   {"orchestrator", "spawn"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents": {"orchestrator", "status"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation": {"orchestrator", "status"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport":         {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport":         {"spend_report", "read"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetTenantSpendPolicy":   {"orchestrator", "status"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/SetTenantSpendPolicy":   {"spend_policy", "write"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetCostSettings":        {"orchestrator", "status"},

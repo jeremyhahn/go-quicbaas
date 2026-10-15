@@ -204,7 +204,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"GET /api/v1/fleet/{nodeID}/backends/{backendName}/models":                                {auth: RouteAuthPermission, resource: "orchestrator", action: "backend_list"},
 	"GET /api/v1/orchestrator/attention":                                                      {auth: RouteAuthPermission, resource: "orchestrator", action: "status"},
 	"GET /api/v1/orchestrator/backends":                                                       {auth: RouteAuthPermission, resource: "orchestrator", action: "backend_list"},
-	"GET /api/v1/orchestrator/cost":                                                           {auth: RouteAuthPermission, resource: "orchestrator", action: "status"},
+	"GET /api/v1/orchestrator/cost":                                                           {auth: RouteAuthPermission, resource: "spend_report", action: "read"},
 	"GET /api/v1/orchestrator/spend-policy":                                                   {auth: RouteAuthPermission, resource: "orchestrator", action: "status"},
 	"PUT /api/v1/orchestrator/spend-policy":                                                   {auth: RouteAuthPermission, resource: "spend_policy", action: "write"},
 	"GET /api/v1/orchestrator/cost-settings":                                                  {auth: RouteAuthPermission, resource: "orchestrator", action: "status"},

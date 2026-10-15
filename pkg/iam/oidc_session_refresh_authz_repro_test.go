@@ -81,13 +81,13 @@ func TestUIRefreshFlow_RenewedTokenAuthorizesTheSameEndpointTheLoginTokenDid(t *
 	rbac := &fakeRBACClient{permsByRole: map[string][]string{roleID: {"orchestrator:*"}}}
 
 	config := &OIDCConfig{
-		Issuer:           issuer,
-		SigningAlgorithm: "ES256",
-		SigningKey:       priv,
-		AccessTokenTTL:   15 * time.Minute,
-		RefreshTokenTTL:  24 * time.Hour,
-		IDTokenTTL:       time.Hour,
-		AuthCodeTTL:      10 * time.Minute,
+		Issuer:            issuer,
+		SigningAlgorithm:  "ES256",
+		SigningKeyManager: testSigningKeyManager(t, priv, "ES256"),
+		AccessTokenTTL:    15 * time.Minute,
+		RefreshTokenTTL:   24 * time.Hour,
+		IDTokenTTL:        time.Hour,
+		AuthCodeTTL:       10 * time.Minute,
 	}
 	provider, err := NewOIDCProvider(config, OIDCDependencies{
 		IdentityStore:      identityStore,
@@ -98,13 +98,9 @@ func TestUIRefreshFlow_RenewedTokenAuthorizesTheSameEndpointTheLoginTokenDid(t *
 	if err != nil {
 		t.Fatalf("NewOIDCProvider: %v", err)
 	}
-	// The legacy single-signing-key path (no SigningKeyManager) does not stamp
-	// currentKID today, which would make every token it mints fail the
-	// platform validator's "missing kid header" check regardless of refresh.
-	// Stamp it here, exactly as production's SigningKeyManager path does, so
-	// this test isolates the refresh question from that unrelated gap.
-	kid := provider.jwks.Keys[0].KeyID
-	provider.tokenService.currentKID = kid
+	// The manager stamps this kid on every token it signs; the platform
+	// validator's key set below publishes the same kid.
+	kid, _, _ := provider.config.SigningKeyManager.Current()
 
 	ctx := context.Background()
 

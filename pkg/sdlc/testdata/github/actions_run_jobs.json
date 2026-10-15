@@ -1,0 +1,7 @@
+{
+  "total_count": 2,
+  "jobs": [
+    {"id": 7701, "run_id": 9100, "run_attempt": 1, "head_sha": "4a4f5c9d1e2b3a4c5d6e7f8091a2b3c4d5e6f708", "status": "completed", "conclusion": "success", "check_run_url": "{{API}}/repos/acme/widgets/check-runs/501"},
+    {"id": 7702, "run_id": 9100, "run_attempt": 1, "head_sha": "4a4f5c9d1e2b3a4c5d6e7f8091a2b3c4d5e6f708", "status": "completed", "conclusion": "failure", "check_run_url": "{{API}}/repos/acme/widgets/check-runs/502"}
+  ]
+}

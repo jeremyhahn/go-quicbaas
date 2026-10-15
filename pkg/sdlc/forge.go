@@ -288,6 +288,9 @@ type ForgePullRequest struct {
 	URL       string    `json:"url,omitempty"`
 	Created   time.Time `json:"created"`
 	Updated   time.Time `json:"updated"`
+
+	// Labels are the pull request's labels as the forge spells them.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // ForgeReview is one review on a pull request.
@@ -450,6 +453,11 @@ type ForgeCheckRun struct {
 	Started    time.Time `json:"started"`
 	Completed  time.Time `json:"completed,omitempty"`
 }
+
+// statusRunPrefix marks a ForgeCheckRun that is a commit status rather than a
+// CI job. Forges number the two independently, so the prefix keeps their ids
+// apart, and a job route is never asked about a status's id.
+const statusRunPrefix = "status:"
 
 // PullRequestSpec is what a branching strategy asks the forge to open.
 type PullRequestSpec struct {
@@ -755,6 +763,31 @@ type ForgeBackend interface {
 	// merged is not an error: a pass that crashed after the close must be
 	// able to finish.
 	ClosePullRequest(ctx context.Context, repo RepoRef, number int) error
+
+	// CommentOnPullRequest posts a comment on a pull request's discussion and
+	// returns it as stored.
+	//
+	// A PULL REQUEST NUMBER IS NOT AN ISSUE NUMBER on every forge. Gitea and
+	// GitHub number issues and pull requests in one sequence and serve both
+	// discussions from the issue endpoints; GitLab numbers them apart, so
+	// CommentOnIssue with a merge request's number writes on whatever issue
+	// shares it. A caller holding a pull request number uses this.
+	CommentOnPullRequest(ctx context.Context, repo RepoRef, number int, body string) (*ForgeComment, error)
+
+	// ListPullRequestComments returns a pull request's discussion, oldest
+	// first, WHOLE, as ListIssueComments does for an issue. See
+	// CommentOnPullRequest for why it is a separate operation.
+	ListPullRequestComments(ctx context.Context, repo RepoRef, number int) ([]ForgeComment, error)
+
+	// AddPullRequestLabels adds labels to a pull request, leaving every other
+	// label alone, verified by read-back. It keeps AddIssueLabels' contract;
+	// it is a separate operation for the reason CommentOnPullRequest gives.
+	AddPullRequestLabels(ctx context.Context, repo RepoRef, number int, labels []string) error
+
+	// RemovePullRequestLabel removes ONE label from a pull request, verified
+	// by read-back. It keeps RemoveIssueLabel's contract; it is a separate
+	// operation for the reason CommentOnPullRequest gives.
+	RemovePullRequestLabel(ctx context.Context, repo RepoRef, number int, label string) error
 
 	// MergePullRequest merges according to spec, verified by read-back.
 	//

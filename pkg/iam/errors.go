@@ -1776,21 +1776,6 @@ func (e *OIDCConfigRequiredError) Error() string {
 	return e.Field + " is required"
 }
 
-// JWKSGenerationError is returned when JWKS generation fails.
-type JWKSGenerationError struct {
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *JWKSGenerationError) Error() string {
-	return "failed to generate JWKS: " + e.Cause.Error()
-}
-
-// Unwrap returns the underlying cause.
-func (e *JWKSGenerationError) Unwrap() error {
-	return e.Cause
-}
-
 // TokenRevokedError is returned when a token has been revoked.
 type TokenRevokedError struct{}
 

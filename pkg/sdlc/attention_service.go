@@ -703,12 +703,22 @@ func handIssueBack(ctx context.Context, forge ForgeBackend, binding *ProjectBind
 // parkLabels). Both ways an operator ends a park use it: handing the issue
 // back to the factory, and closing it as done.
 func stripParkLabels(ctx context.Context, forge ForgeBackend, binding *ProjectBinding, repo RepoRef, issue *ForgeIssue) error {
+	return removeParkLabels(binding, issue.Labels, func(label string) error {
+		return forge.RemoveIssueLabel(ctx, repo, issue.Number, label)
+	})
+}
+
+// removeParkLabels calls remove with every park label in labels, spelled as
+// the forge spells it, stopping at the first refusal. It is the one rule for
+// which labels a park leaves, whichever object — issue or pull request —
+// carries them.
+func removeParkLabels(binding *ProjectBinding, labels []string, remove func(label string) error) error {
 	for _, park := range parkLabels(binding) {
-		held := heldBy(issue, park.label)
+		held := heldIn(labels, park.label)
 		if held == "" {
 			continue
 		}
-		if err := forge.RemoveIssueLabel(ctx, repo, issue.Number, held); err != nil {
+		if err := remove(held); err != nil {
 			return err
 		}
 	}
