@@ -197,6 +197,7 @@ func sdlcCall(t *testing.T, server *Server, tenant, method, path string, body an
 	r.Get("/api/v1/sdlc/tasks/{taskID}/delivery", server.HandleGetSDLCDelivery)
 	r.Get("/api/v1/sdlc/forges", server.HandleListSDLCForges)
 	r.Post("/api/v1/sdlc/projects/{projectID}/onboarding", server.HandleOnboardSDLCProject)
+	r.Post("/api/v1/sdlc/repos/{repo}/onboarding", server.HandleOnboardSDLCRepo)
 	r.Get("/api/v1/sdlc/projects/{projectID}/conformance", server.HandleGetSDLCConformance)
 	r.Get("/api/v1/sdlc/projects/{projectID}/open-work", server.HandleGetSDLCOpenWork)
 	r.Get("/api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer", server.HandleGetSDLCReviewer)

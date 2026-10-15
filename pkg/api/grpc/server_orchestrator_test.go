@@ -61,12 +61,17 @@ type grpcTestAgentService struct {
 	getJobStatusFunc  func(ctx context.Context, tenantID, jobID string) (*orchestration.JobStatus, error)
 	spawnSessionFunc  func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error)
 	promptSessionFunc func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error)
-	sessionStatusFunc func(ctx context.Context, req *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error)
-	closeSessionFunc  func(ctx context.Context, req *orchestration.CloseSessionRequest) (*orchestration.CloseSessionResponse, error)
-	listSessionsFunc  func(ctx context.Context, req *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error)
-	listBackendsFunc  func(ctx context.Context) ([]*orchestration.AgentBackendInfo, error)
-	healthCheckFunc   func(ctx context.Context) (*orchestration.HealthCheckReport, error)
-	inferFunc         func(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error)
+	// promptSessionAsyncFunc, when set, answers PromptSessionAsync in place
+	// of the accepted-turn default.
+	promptSessionAsyncFunc func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error)
+	sessionStatusFunc      func(ctx context.Context, req *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error)
+	closeSessionFunc       func(ctx context.Context, req *orchestration.CloseSessionRequest) (*orchestration.CloseSessionResponse, error)
+	listSessionsFunc       func(ctx context.Context, req *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error)
+	listBackendsFunc       func(ctx context.Context) ([]*orchestration.AgentBackendInfo, error)
+
+	listBackendModelsFunc func(ctx context.Context, backendName string) ([]string, error)
+	healthCheckFunc       func(ctx context.Context) (*orchestration.HealthCheckReport, error)
+	inferFunc             func(ctx context.Context, req *orchestration.InferRequest) (<-chan *orchestration.InferChunk, error)
 }
 
 func (m *grpcTestAgentService) DiscoverProjects(ctx context.Context, req *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error) {
@@ -281,7 +286,10 @@ func (m *grpcTestAgentService) BackendToolGuidance(_ string) string {
 	return ""
 }
 
-func (m *grpcTestAgentService) ListBackendModels(_ context.Context, _ string) ([]string, error) {
+func (m *grpcTestAgentService) ListBackendModels(ctx context.Context, backendName string) ([]string, error) {
+	if m.listBackendModelsFunc != nil {
+		return m.listBackendModelsFunc(ctx, backendName)
+	}
 	return []string{}, nil
 }
 
@@ -1025,6 +1033,9 @@ func TestOrchestratorGRPC_GetTask_MissingTaskID(t *testing.T) {
 // PromptSessionAsync mirrors the production contract: the turn is acknowledged
 // immediately and its output would flow to the session event log.
 func (m *grpcTestAgentService) PromptSessionAsync(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error) {
+	if m.promptSessionAsyncFunc != nil {
+		return m.promptSessionAsyncFunc(ctx, req)
+	}
 	return &orchestration.PromptTurnAck{
 		SessionID: req.SessionID,
 		TurnID:    "turn-test",

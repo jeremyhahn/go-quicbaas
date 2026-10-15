@@ -1243,6 +1243,174 @@ func workflowToSDK(workflow *orchestration.WorkflowDefinition) *orchestratorSDK.
 	}
 }
 
+// workflowFromSDK converts an SDK workflow definition into the orchestration
+// definition the agent service stores. The tenant is carried on the context,
+// so TenantID is left unset.
+func workflowFromSDK(workflow *orchestratorSDK.WorkflowDefinition) *orchestration.WorkflowDefinition {
+	agents := make([]orchestration.AgentRoleSpec, 0, len(workflow.Agents))
+	for _, agent := range workflow.Agents {
+		agents = append(agents, orchestration.AgentRoleSpec{
+			Role:            agent.Role,
+			Backend:         agent.Backend,
+			Model:           agent.Model,
+			Capabilities:    append([]string(nil), agent.Capabilities...),
+			MCPScopes:       append([]string(nil), agent.MCPScopes...),
+			Count:           agent.Count,
+			Env:             cloneStringMap(agent.Env),
+			WorkspacePath:   agent.WorkspacePath,
+			PermissionMode:  agent.PermissionMode,
+			SkipPermissions: agent.SkipPermissions,
+			Sandboxed:       agent.Sandboxed,
+			ContainerImage:  agent.ContainerImage,
+			HostAffinity:    agent.HostAffinity,
+			NumCtx:          agent.NumCtx,
+			SystemPrompt:    agent.SystemPrompt,
+			PromptAppend:    agent.PromptAppend,
+		})
+	}
+	reviewCriteria := make([]orchestration.ReviewCriterion, 0, len(workflow.Settings.ReviewCriteria))
+	for _, criterion := range workflow.Settings.ReviewCriteria {
+		reviewCriteria = append(reviewCriteria, orchestration.ReviewCriterion{
+			Name:      criterion.Name,
+			Validator: criterion.Validator,
+			Config:    criterion.Config,
+			Required:  criterion.Required,
+			Phase:     orchestration.CriterionPhase(criterion.Phase),
+		})
+	}
+	return &orchestration.WorkflowDefinition{
+		Name:        workflow.Name,
+		Description: workflow.Description,
+		Mode:        orchestration.WorkflowMode(workflow.Mode),
+		Agents:      agents,
+		Settings: orchestration.WorkflowSettings{
+			MaxIterations:  workflow.Settings.MaxIterations,
+			MaxParallelism: workflow.Settings.MaxParallelism,
+			PollInterval:   workflow.Settings.PollInterval,
+			TimeoutPerItem: workflow.Settings.TimeoutPerItem,
+			TotalTimeout:   workflow.Settings.TotalTimeout,
+			ReviewCriteria: reviewCriteria,
+			Topology:       orchestration.CommunicationTopology(workflow.Settings.Topology),
+			Isolation:      orchestration.WorkspaceIsolation(workflow.Settings.Isolation),
+			PeerMessaging: orchestration.PeerMessagingSettings{
+				MaxMessageSize: workflow.Settings.PeerMessaging.MaxMessageSize,
+				MaxInboxSize:   workflow.Settings.PeerMessaging.MaxInboxSize,
+				OverflowAction: workflow.Settings.PeerMessaging.OverflowAction,
+				InboxTTL:       workflow.Settings.PeerMessaging.InboxTTL,
+			},
+			FileLocking: orchestration.FileLockSettings{
+				LeaseTTL:          workflow.Settings.FileLocking.LeaseTTL,
+				HeartbeatInterval: workflow.Settings.FileLocking.HeartbeatInterval,
+				MaxRenewals:       workflow.Settings.FileLocking.MaxRenewals,
+			},
+			VectorDB: orchestration.VectorDBSettings{
+				Enabled:        workflow.Settings.VectorDB.Enabled,
+				IndexType:      workflow.Settings.VectorDB.IndexType,
+				AutoIndex:      workflow.Settings.VectorDB.AutoIndex,
+				Triggers:       append([]string(nil), workflow.Settings.VectorDB.Triggers...),
+				GPUAccelerated: workflow.Settings.VectorDB.GPUAccelerated,
+			},
+			CostControls: orchestration.CostControlSettings{
+				MaxTokensPerJob:   workflow.Settings.CostControls.MaxTokensPerJob,
+				MaxTokensPerAgent: workflow.Settings.CostControls.MaxTokensPerAgent,
+				BudgetAction:      workflow.Settings.CostControls.BudgetAction,
+			},
+			Recovery: orchestration.RecoverySettings{
+				AutoRestart:    workflow.Settings.Recovery.AutoRestart,
+				MaxRestarts:    workflow.Settings.Recovery.MaxRestarts,
+				RestartBackoff: workflow.Settings.Recovery.RestartBackoff,
+			},
+			Verbosity: workflow.Settings.Verbosity,
+			NumCtx:    workflow.Settings.NumCtx,
+			Hooks:     workflow.Settings.Hooks,
+		},
+	}
+}
+
+// workflowTenantContext scopes ctx to tenantID, defaulting to the "default"
+// tenant exactly as ListWorkflows does.
+func workflowTenantContext(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	return orchestration.ContextWithTenant(ctx, tenantID)
+}
+
+func handleOrchestratorCreateWorkflow(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.CreateWorkflowRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "CreateWorkflow",
+			"*orchestrator.CreateWorkflowRequest", reflect.TypeOf(req).String())
+	}
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "CreateWorkflow")
+	}
+	if r.Definition == nil {
+		return nil, orchestration.ErrInvalidInput
+	}
+	definition := workflowFromSDK(r.Definition)
+	if err := agentSvc.RegisterWorkflow(workflowTenantContext(ctx, r.TenantID), definition); err != nil {
+		return nil, err
+	}
+	return workflowToSDK(definition), nil
+}
+
+func handleOrchestratorGetWorkflow(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.GetWorkflowRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetWorkflow",
+			"*orchestrator.GetWorkflowRequest", reflect.TypeOf(req).String())
+	}
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "GetWorkflow")
+	}
+	definition, err := agentSvc.GetWorkflow(workflowTenantContext(ctx, r.TenantID), r.Name)
+	if err != nil {
+		return nil, err
+	}
+	return workflowToSDK(definition), nil
+}
+
+func handleOrchestratorUpdateWorkflow(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.UpdateWorkflowRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "UpdateWorkflow",
+			"*orchestrator.UpdateWorkflowRequest", reflect.TypeOf(req).String())
+	}
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "UpdateWorkflow")
+	}
+	if r.Definition == nil {
+		return nil, orchestration.ErrInvalidInput
+	}
+	definition := workflowFromSDK(r.Definition)
+	// The request name wins over the embedded name, as on REST and gRPC.
+	definition.Name = r.Name
+	if err := agentSvc.UpdateWorkflow(workflowTenantContext(ctx, r.TenantID), definition); err != nil {
+		return nil, err
+	}
+	return workflowToSDK(definition), nil
+}
+
+func handleOrchestratorDeleteWorkflow(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.DeleteWorkflowRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "DeleteWorkflow",
+			"*orchestrator.DeleteWorkflowRequest", reflect.TypeOf(req).String())
+	}
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "DeleteWorkflow")
+	}
+	if err := agentSvc.DeleteWorkflow(workflowTenantContext(ctx, r.TenantID), r.Name); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 func cloneStringMap(values map[string]string) map[string]string {
 	if len(values) == 0 {
 		return nil

@@ -186,6 +186,7 @@ func resetAccountFlags() {
 	accountCredentialSecretRef = ""
 	accountCredentialSecretFile = ""
 	accountMaxSessions = 0
+	accountListPage = pageFlags{}
 }
 
 // credentialFile writes a credential JSON document to a temp file and returns

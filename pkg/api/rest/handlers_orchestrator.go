@@ -1878,6 +1878,7 @@ func isOrchInvalidInputError(err error) bool {
 	var noMatch *orchestration.NoMatchingFleetNodeError
 	return isPageInputError(err) ||
 		stderrors.Is(err, orchestration.ErrInvalidInput) ||
+		stderrors.Is(err, orchestration.ErrWorkflowValidation) ||
 		stderrors.Is(err, orchestration.ErrSessionStateUnknown) ||
 		stderrors.Is(err, orchestration.ErrBackendRequired) ||
 		stderrors.Is(err, orchestration.ErrPromptRequired) ||

@@ -298,3 +298,42 @@ func TestMCPTransformListJobs(t *testing.T) {
 		t.Fatalf("source = %+v, want decoded source", job.Source)
 	}
 }
+
+func TestMCPTransformListTasks(t *testing.T) {
+	h := &orchestratorMCPHandler{}
+	result := map[string]interface{}{
+		"tasks": []interface{}{
+			map[string]interface{}{"id": "task-a", "subject": "fix it", "status": "failed"},
+		},
+		"total":       float64(4),
+		"limit":       float64(1),
+		"offset":      float64(0),
+		"next_offset": float64(1),
+		"count":       float64(1),
+		"facets": map[string]interface{}{
+			"status": map[string]interface{}{"failed": float64(2), "completed": float64(2)},
+		},
+	}
+
+	got, err := h.transformResponse("ListTasks", result)
+	if err != nil {
+		t.Fatalf("transform ListTasks: %v", err)
+	}
+	resp, ok := got.(*orchestrator.ListTasksResponse)
+	if !ok {
+		t.Fatalf("response = %T, want *orchestrator.ListTasksResponse", got)
+	}
+	if resp.Total != 4 || resp.Limit != 1 || resp.NextOffset != 1 || resp.Count != 1 {
+		t.Fatalf("envelope = %+v count %d, want total 4 limit 1 next 1 count 1", resp.Envelope, resp.Count)
+	}
+	if len(resp.Tasks) != 1 || resp.Tasks[0].ID != "task-a" || resp.Tasks[0].Status != "failed" {
+		t.Fatalf("tasks = %+v, want the one decoded task", resp.Tasks)
+	}
+	if resp.Facets["status"]["completed"] != 2 {
+		t.Fatalf("facets = %+v, want status counts", resp.Facets)
+	}
+
+	if _, err := h.transformResponse("ListTasks", "not json at all"); err == nil {
+		t.Fatal("transformResponse should reject an undecodable ListTasks result")
+	}
+}

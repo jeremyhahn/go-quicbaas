@@ -44,6 +44,7 @@ func TestRegisteredForwardersCarryTheirRunnersLeasePolicy(t *testing.T) {
 	}{
 		{"review", sdlcReviewRunnerForwarder{}, &sdlc.ReviewRunner{}},
 		{"triage", sdlcTriageForwarder{}, &sdlc.TriageRunner{}},
+		{"preflight", sdlcPreflightForwarder{}, &sdlc.PreflightRunner{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

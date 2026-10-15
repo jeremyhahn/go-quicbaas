@@ -49,6 +49,7 @@ var sdlcMethodMap = map[string]sdlcHandlerFunc{
 	"Delivery":    handleSDLCDelivery,
 	"ListForges":  handleSDLCForges,
 	"Onboard":     handleSDLCOnboard,
+	"OnboardRepo": handleSDLCOnboardRepo,
 	"Conformance": handleSDLCConformance,
 	"OpenWork":    handleSDLCOpenWork,
 
@@ -157,6 +158,23 @@ func handleSDLCOnboard(ctx context.Context, conn *grpc.ClientConn, req interface
 		return nil, convertGRPCError(err, op)
 	}
 	return sdlcOnboardingReportFromProto(resp.GetReport()), nil
+}
+
+func handleSDLCOnboardRepo(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.sdlc.OnboardRepo"
+	sdkReq, ok := req.(*sdlc.RepoOnboardRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	resp, err := pb.NewSDLCServiceClient(conn).OnboardRepo(ctx, &pb.OnboardRepoRequest{
+		TenantId: sdkReq.TenantID, Repo: sdkReq.Repo, Like: sdkReq.Like,
+		MaxConcurrency: int32(sdkReq.MaxConcurrency), Paused: sdkReq.Paused,
+		Preflight: sdkReq.Preflight,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	return sdlcRepoOnboardingReportFromProto(resp.GetReport()), nil
 }
 
 // handleSDLCConformance invokes GetConformance: read-only.
@@ -500,6 +518,25 @@ func sdlcConformanceFromProto(p *pb.ConformanceReport) *sdlc.ConformanceReport {
 		})
 	}
 	return out
+}
+
+func sdlcRepoOnboardingReportFromProto(p *pb.RepoOnboardingReport) *sdlc.RepoOnboardingReport {
+	if p == nil {
+		return &sdlc.RepoOnboardingReport{}
+	}
+	steps := make([]sdlc.RepoOnboardStep, 0, len(p.GetSteps()))
+	for _, step := range p.GetSteps() {
+		steps = append(steps, sdlc.RepoOnboardStep{
+			Step: step.GetStep(), Outcome: step.GetOutcome(), Detail: step.GetDetail(), Remedy: step.GetRemedy(),
+		})
+	}
+	report := &sdlc.RepoOnboardingReport{
+		TenantID: p.GetTenantId(), ProjectID: p.GetProjectId(), Repo: p.GetRepo(), Steps: steps,
+	}
+	if p.GetConformance() != nil {
+		report.Conformance = sdlcConformanceFromProto(p.GetConformance())
+	}
+	return report
 }
 
 func sdlcOpenWorkFromProto(p *pb.OpenWork) *sdlc.OpenWork {

@@ -193,29 +193,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Operations", "UpgradeNode"}:          gapNameDrift + "quicbaas_upgrade_node",
 	{"quicbaas.Operations", "GetUpgradeStatus"}:     gapNoTool,
 
-	// --- Orchestrator ------------------------------------------------------
-	// Every fleet verb is registered under quicbaas_fleet_*; the SDK derives
-	// quicbaas_orchestrator_* for all of them.
-	{"quicbaas.Orchestrator", "RegisterFleetNode"}:   gapNameDrift + "quicbaas_fleet_register",
-	{"quicbaas.Orchestrator", "RemoveFleetNode"}:     gapNameDrift + "quicbaas_fleet_remove",
-	{"quicbaas.Orchestrator", "DisableFleetNode"}:    gapNameDrift + "quicbaas_fleet_disable",
-	{"quicbaas.Orchestrator", "EnableFleetNode"}:     gapNameDrift + "quicbaas_fleet_enable",
-	{"quicbaas.Orchestrator", "CreateTask"}:          gapNameDrift + "quicbaas_orchestrator_task_create",
-	{"quicbaas.Orchestrator", "DecomposeTask"}:       gapNameDrift + "quicbaas_orchestrator_decompose",
-	{"quicbaas.Orchestrator", "ListBackendModels"}:   gapNameDrift + "quicbaas_orchestrator_list_backends",
-	{"quicbaas.Orchestrator", "GetTaskArtifact"}:     gapNameDrift + "quicbaas_task_get_artifact",
-	{"quicbaas.Orchestrator", "GetFleetNode"}:        gapAmbiguous + "quicbaas_fleet_status",
-	{"quicbaas.Orchestrator", "ClaimTask"}:           gapNoTool,
-	{"quicbaas.Orchestrator", "CompleteTask"}:        gapNoTool,
-	{"quicbaas.Orchestrator", "GetTask"}:             gapNoTool,
-	{"quicbaas.Orchestrator", "ListTasks"}:           gapNoTool,
-	{"quicbaas.Orchestrator", "SubmitTaskArtifacts"}: gapNoTool,
-	{"quicbaas.Orchestrator", "SpawnChildJob"}:       gapNoTool,
-	{"quicbaas.Orchestrator", "CreateWorkflow"}:      gapNoTool,
-	{"quicbaas.Orchestrator", "UpdateWorkflow"}:      gapNoTool,
-	{"quicbaas.Orchestrator", "DeleteWorkflow"}:      gapNoTool,
-	{"quicbaas.Orchestrator", "GetWorkflow"}:         gapNoTool,
-
 	// --- Parameter store ---------------------------------------------------
 	// Registered under quicbaas_parameter_*; the SDK derives
 	// quicbaas_parameterstore_*, and the plural verbs map to batch_* tools.

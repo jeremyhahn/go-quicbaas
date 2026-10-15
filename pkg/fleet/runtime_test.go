@@ -290,6 +290,9 @@ func TestRuntime_Spawn_BumpsMetrics(t *testing.T) {
 		t.Fatalf("NewRuntime: %v", err)
 	}
 
+	// SpawnsTotal is process-global: assert the change, not the value, so
+	// -count=N re-runs see the same delta.
+	before := readCounterLabels(t, SpawnsTotal, tenant, backend, "host")
 	if _, err := rt.Spawn(context.Background(), tenant, nil, backend,
 		&orchestration.SpawnRequest{WorkDir: "/tmp/x"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
@@ -297,8 +300,8 @@ func TestRuntime_Spawn_BumpsMetrics(t *testing.T) {
 	if got := spawnCalls.Load(); got != 1 {
 		t.Fatalf("backend spawn calls: got %d want 1", got)
 	}
-	if got := readCounterLabels(t, SpawnsTotal, tenant, backend, "host"); got != 1 {
-		t.Fatalf("SpawnsTotal: got %v want 1", got)
+	if got := readCounterLabels(t, SpawnsTotal, tenant, backend, "host") - before; got != 1 {
+		t.Fatalf("SpawnsTotal grew by %v, want 1", got)
 	}
 }
 

@@ -32,6 +32,7 @@ const (
 	SDLCService_GetDelivery_FullMethodName           = "/quicbaas.sdlc.v1.SDLCService/GetDelivery"
 	SDLCService_ListForges_FullMethodName            = "/quicbaas.sdlc.v1.SDLCService/ListForges"
 	SDLCService_Onboard_FullMethodName               = "/quicbaas.sdlc.v1.SDLCService/Onboard"
+	SDLCService_OnboardRepo_FullMethodName           = "/quicbaas.sdlc.v1.SDLCService/OnboardRepo"
 	SDLCService_GetConformance_FullMethodName        = "/quicbaas.sdlc.v1.SDLCService/GetConformance"
 	SDLCService_GetOpenWork_FullMethodName           = "/quicbaas.sdlc.v1.SDLCService/GetOpenWork"
 	SDLCService_GetReviewerSelection_FullMethodName  = "/quicbaas.sdlc.v1.SDLCService/GetReviewerSelection"
@@ -71,6 +72,13 @@ type SDLCServiceClient interface {
 	// a conformance finding; GetConformance never repairs, which is why the
 	// two are separate verbs under separate permissions.
 	Onboard(ctx context.Context, in *OnboardRequest, opts ...grpc.CallOption) (*OnboardResponse, error)
+	// OnboardRepo onboards one forge repository like an existing bound
+	// project: it checks the repository's signing key and forge token,
+	// generates its webhook secret, creates its project, binds it and
+	// provisions its forge. Every step checks before it acts, so a repeat
+	// run changes nothing; what the module may not write itself is reported
+	// as a named finding with its remedy.
+	OnboardRepo(ctx context.Context, in *OnboardRepoRequest, opts ...grpc.CallOption) (*OnboardRepoResponse, error)
 	// GetConformance reports whether the project is correctly onboarded and
 	// what is wrong if it is not. Read-only.
 	GetConformance(ctx context.Context, in *GetConformanceRequest, opts ...grpc.CallOption) (*GetConformanceResponse, error)
@@ -185,6 +193,16 @@ func (c *sDLCServiceClient) Onboard(ctx context.Context, in *OnboardRequest, opt
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(OnboardResponse)
 	err := c.cc.Invoke(ctx, SDLCService_Onboard_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) OnboardRepo(ctx context.Context, in *OnboardRepoRequest, opts ...grpc.CallOption) (*OnboardRepoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OnboardRepoResponse)
+	err := c.cc.Invoke(ctx, SDLCService_OnboardRepo_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +354,13 @@ type SDLCServiceServer interface {
 	// a conformance finding; GetConformance never repairs, which is why the
 	// two are separate verbs under separate permissions.
 	Onboard(context.Context, *OnboardRequest) (*OnboardResponse, error)
+	// OnboardRepo onboards one forge repository like an existing bound
+	// project: it checks the repository's signing key and forge token,
+	// generates its webhook secret, creates its project, binds it and
+	// provisions its forge. Every step checks before it acts, so a repeat
+	// run changes nothing; what the module may not write itself is reported
+	// as a named finding with its remedy.
+	OnboardRepo(context.Context, *OnboardRepoRequest) (*OnboardRepoResponse, error)
 	// GetConformance reports whether the project is correctly onboarded and
 	// what is wrong if it is not. Read-only.
 	GetConformance(context.Context, *GetConformanceRequest) (*GetConformanceResponse, error)
@@ -412,6 +437,9 @@ func (UnimplementedSDLCServiceServer) ListForges(context.Context, *ListForgesReq
 }
 func (UnimplementedSDLCServiceServer) Onboard(context.Context, *OnboardRequest) (*OnboardResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Onboard not implemented")
+}
+func (UnimplementedSDLCServiceServer) OnboardRepo(context.Context, *OnboardRepoRequest) (*OnboardRepoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OnboardRepo not implemented")
 }
 func (UnimplementedSDLCServiceServer) GetConformance(context.Context, *GetConformanceRequest) (*GetConformanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetConformance not implemented")
@@ -573,6 +601,24 @@ func _SDLCService_Onboard_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SDLCServiceServer).Onboard(ctx, req.(*OnboardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_OnboardRepo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OnboardRepoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).OnboardRepo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_OnboardRepo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).OnboardRepo(ctx, req.(*OnboardRepoRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -823,6 +869,10 @@ var SDLCService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Onboard",
 			Handler:    _SDLCService_Onboard_Handler,
+		},
+		{
+			MethodName: "OnboardRepo",
+			Handler:    _SDLCService_OnboardRepo_Handler,
 		},
 		{
 			MethodName: "GetConformance",

@@ -141,6 +141,10 @@ type (
 	// as the SDLC service reaches it (SDLCService.SetWorkerImageRefresher).
 	WorkerImageRefresher = pkgservice.WorkerImageRefresher
 
+	// SSHKeyGetter loads one SSH key's metadata; the SDLC service checks a
+	// repo's SSH key reference through it (SDLCServiceConfig.SSHKeys).
+	SSHKeyGetter = pkgservice.SSHKeyGetter
+
 	// FIDO2Service provides the tenant-scoped FIDO2/WebAuthn ceremony surface.
 	FIDO2Service = pkgservice.FIDO2Service
 

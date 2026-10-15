@@ -67,6 +67,7 @@ func TestSDLCWebhookPrefix_MatchesTheMountedRoute(t *testing.T) {
 func TestSDLCOnboardingRoutes_SplitReadFromWrite(t *testing.T) {
 	cases := map[string]struct{ resource, action string }{
 		"POST /api/v1/sdlc/projects/{projectID}/onboarding": {"sdlc", "bind"},
+		"POST /api/v1/sdlc/repos/{repo}/onboarding":         {"sdlc", "bind"},
 		"GET /api/v1/sdlc/projects/{projectID}/conformance": {"sdlc", "read"},
 	}
 	for key, want := range cases {

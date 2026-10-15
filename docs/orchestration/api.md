@@ -453,6 +453,44 @@ server-sent-event stream on REST (`sdk/go/transport/rest/orchestrator_stream.go`
 `GetSessionHistory` over gRPC is that stream read to its end with `follow=false`
 (`sdk/go/transport/grpc/orchestrator_handler.go`).
 
+**`ListBackendModels`** (the models one backend offers on a fleet node,
+`orchestrator:backend_list`) is served from the same `AgentService` call on
+every transport (#124):
+
+| Transport | Reached as |
+|---|---|
+| REST | `GET /api/v1/fleet/{nodeID}/backends/{backendName}/models?tenant_id=` |
+| gRPC | `quicbaas.orchestrator.v1.OrchestratorService/ListBackendModels` |
+| QUIC | the REST route over HTTP/3 |
+| Unix | the gRPC RPC over `AF_UNIX` |
+| MCP | `quicbaas_orchestrator_list_backend_models` |
+
+A `node_id` of `""` or `any` lets the resolver pick the node. An unknown backend
+returns not found (gRPC `NotFound`, REST 404). A missing backend name returns
+bad input (gRPC `InvalidArgument`, REST 400). The response is
+`backend`, `models` (never null) and `count`.
+
+**Workflow definitions.** `CreateWorkflow`, `GetWorkflow`, `UpdateWorkflow` and
+`DeleteWorkflow` are served from the same `AgentService` calls on every
+transport. Get requires `orchestrator:workflow_read`; the other three require
+`orchestrator:workflow_write`.
+
+| Verb | REST (QUIC: the same route over HTTP/3) | gRPC (Unix: the same RPC over `AF_UNIX`) | MCP |
+|---|---|---|---|
+| `CreateWorkflow` | `POST /api/v1/orchestrator/workflows` | `OrchestratorService/CreateWorkflow` | `quicbaas_orchestrator_create_workflow` |
+| `GetWorkflow` | `GET /api/v1/orchestrator/workflows/{name}` | `OrchestratorService/GetWorkflow` | `quicbaas_orchestrator_get_workflow` |
+| `UpdateWorkflow` | `PUT /api/v1/orchestrator/workflows/{name}` | `OrchestratorService/UpdateWorkflow` | `quicbaas_orchestrator_update_workflow` |
+| `DeleteWorkflow` | `DELETE /api/v1/orchestrator/workflows/{name}` | `OrchestratorService/DeleteWorkflow` | `quicbaas_orchestrator_delete_workflow` |
+
+The embedded transport calls the service in process. Update takes the name from
+the route or request, not from the body. Errors map the same way everywhere:
+
+| Cause | REST | gRPC | SDK |
+|---|---|---|---|
+| Missing name or definition, or an invalid definition | 400 | `InvalidArgument` | `IsInvalidInput` |
+| Unknown workflow | 404 | `NotFound` | `IsNotFound` |
+| Create of an existing name | 409 | `AlreadyExists` | `IsConflict` (REST, QUIC) / `IsAlreadyExists` (gRPC, Unix, embedded) |
+
 **MCP tools** (`pkg/api/mcp/orchestrator_tools.go`, `fleet_admin_tools.go`,
 `cost_settings_tools.go`, `orchestrator_cache_tools.go`):
 `quicbaas_orchestrator_{discover,register,list,spawn,prompt,session_history,session_conversation,status,close,rotate_account,list_sessions,list_backends,list_runners,decompose,health,broadcast,inference,start_job,get_job_status,cancel_job,list_jobs,list_workflows,task_create,task_block,task_readmit,task_delete,cost,spend_policy_get,spend_policy_set,cost_settings_get,cost_settings_set,cache_put,cache_get}`,
@@ -1312,10 +1350,10 @@ The orchestration surface uses six tool prefixes:
 |--------|-------|-------------|
 | `quicbaas_orchestrator_*` | Session / project / job management | Agent lifecycle, project discovery, ACP session management, jobs, agent cache |
 | `quicbaas_agent_account_*` | Pooled provider accounts | Credential envelopes, rotation, usage — see [../accounts/api.md](../accounts/api.md) |
-| `quicbaas_fleet_*` | Fleet registry | Register / list / heartbeat the QuicBaaS fleet node daemons themselves |
+| `quicbaas_fleet_*` | Fleet registry | Register / list / heartbeat the QuicBaaS fleet node daemons themselves; `quicbaas_fleet_status` (`tenant_id`, `node_id`, returns `node`) serves the SDK's `GetFleetNode` |
 | `project_*` | Project CRUD and agent grants | `project_create`/`get`/`list`/`update`/`delete`, `project_grant_fleet_node`, `project_revoke_fleet_node` |
-| `quicbaas_task_*` | Task artifacts | `quicbaas_task_get_artifact`, `quicbaas_task_list_artifacts` |
-| `agent_*` | Global agent admin | `quicbaas_fleet_disable`, `quicbaas_fleet_enable` |
+| `quicbaas_task_*` | Task artifacts | `quicbaas_task_get_artifact`, `quicbaas_task_list_artifacts`, `quicbaas_task_submit_artifacts` (`orchestrator:artifact_submit`; inline `content` is base64, as on REST) |
+| `quicbaas_fleet_*` | Global fleet admin | `quicbaas_fleet_disable`, `quicbaas_fleet_enable` |
 
 The `quicbaas_orchestrator_*` prefix refers to operations on the orchestrator
 surface (projects, ACP sessions, jobs, cache). The `quicbaas_fleet_*`
@@ -1349,6 +1387,7 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_orchestrator_rotate_account` | `orchestrator:spawn` | Move a session onto a different pooled account |
 | `quicbaas_orchestrator_list_sessions` | `orchestrator:list` | One page of a tenant's sessions, narrowed by `backend`, `status`, `project_id`, `job_id`, `runner` or `agent_id` |
 | `quicbaas_orchestrator_list_backends` | `orchestrator:backend_list` | One page of registered backends and capabilities, paged and counted per [List paging, sorting and search](#list-paging-sorting-and-search) |
+| `quicbaas_orchestrator_list_backend_models` | `orchestrator:backend_list` | The models one `backend_name` offers, asked of `node_id` (empty or `any` lets the resolver choose); returns `backend`, `models`, `count` |
 | `quicbaas_orchestrator_decompose` | `orchestrator:task_decompose` | Decompose a task into prioritized work items |
 | `quicbaas_orchestrator_health` | `orchestrator:health` | Check health of all active sessions |
 | `quicbaas_orchestrator_broadcast` | `orchestrator:broadcast` | Publish a message to a coordination channel |
@@ -1357,7 +1396,16 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_orchestrator_get_job_status` | `orchestrator:job_read` | Query a job's iteration count and task progress |
 | `quicbaas_orchestrator_cancel_job` | `orchestrator:job_cancel` | Cancel a running orchestration job |
 | `quicbaas_orchestrator_list_jobs` | `orchestrator:job_list` | One page of the tenant's jobs, newest first; narrowed by `task_id`, `runner`, `project_id`, `agent_id`, `statuses` or `job_ids`, paged and counted per [List paging, sorting and search](#list-paging-sorting-and-search) |
+| `quicbaas_orchestrator_list_tasks` | `orchestrator:task_list` | One page of the tenant's tasks with the filters, paging and facets of `GET /api/v1/orchestrator/tasks`; the SDK's `ListTasks` over MCP |
 | `quicbaas_orchestrator_task_create` | `orchestrator:task_create` | Create a task, optionally dispatching it at once; carries `project_id`, `source`, `metadata`, `dependencies`, `priority`, `attempt_budget`, `park` and `prompt_append` exactly as the REST body does |
+| `quicbaas_orchestrator_task_get` | `orchestrator:task_read` | One task record by `task_id`, returned under `task` |
+| `quicbaas_orchestrator_task_claim` | `orchestrator:task_claim` | Claim a task for `agent_id` |
+| `quicbaas_orchestrator_task_complete` | `orchestrator:task_complete` | Mark a task complete with an optional `result` (`output`, `files`, `metadata`) |
+| `quicbaas_orchestrator_spawn_child_job` | `orchestrator:job_start` | Spawn a child job under `parent_job_id`, from a `workflow_id` or inline `tasks`; returns `child_job_id` |
+| `quicbaas_orchestrator_get_workflow` | `orchestrator:workflow_read` | Get one workflow definition by `name`; returns `workflow` |
+| `quicbaas_orchestrator_create_workflow` | `orchestrator:workflow_write` | Validate and register a `definition`; an optional `name` overrides the definition's name; returns `workflow` |
+| `quicbaas_orchestrator_update_workflow` | `orchestrator:workflow_write` | Replace the workflow `name` with `definition`; returns `workflow` |
+| `quicbaas_orchestrator_delete_workflow` | `orchestrator:workflow_write` | Remove the workflow `name`; returns `name` and `deleted` |
 | `quicbaas_orchestrator_cache_put` | `orchestrator:cache_write` | Store analysis result in KV (project-scoped) |
 | `quicbaas_orchestrator_cache_get` | `orchestrator:cache_read` | Retrieve cached result by project and key |
 

@@ -122,6 +122,12 @@ type SDLCServiceConfig struct {
 	// review seats are checked against when it is bound. Required.
 	Agents sdlc.AgentCatalog
 
+	// SSHKeys reads the tenant's SSH keys, so OnboardRepo can check a new
+	// repository's signing key exists before it creates a project that
+	// signs with it. Optional: without it OnboardRepo reports the key as
+	// unverifiable rather than guessing.
+	SSHKeys SSHKeyGetter
+
 	// Logger records the bind-time notice that a system-tenant binding runs
 	// the SDLC worker at SYSTEM privilege. Optional; a nil logger falls back
 	// to slog.Default so the notice is never silently dropped.
@@ -147,9 +153,11 @@ type SDLCService struct {
 	transport     sdlc.ForgeTransport
 	logger        *slog.Logger
 	agents        sdlc.AgentCatalog
+	sshKeys       SSHKeyGetter
 	nudger        atomic.Pointer[nudgerHolder]
 	reviews       atomic.Pointer[sdlc.ReviewDispatcher]
 	workerImage   atomic.Pointer[workerImageHolder]
+	preflight     atomic.Pointer[preflightJobsHolder]
 	attention     *sdlc.AttentionService
 	auditor       sdlc.IssueAuditor
 	adopter       *sdlc.IssueAdopter
@@ -157,6 +165,10 @@ type SDLCService struct {
 
 type nudgerHolder struct {
 	nudger sdlc.ProjectNudger
+}
+
+type preflightJobsHolder struct {
+	jobs sdlc.PreflightJobs
 }
 
 var (
@@ -200,7 +212,7 @@ func NewSDLCService(cfg SDLCServiceConfig) (*SDLCService, error) {
 	svc := &SDLCService{
 		store: cfg.Store, routes: cfg.Routes, projects: cfg.Projects, projectWriter: cfg.ProjectWriter,
 		secrets: cfg.Secrets, guard: cfg.Guard, verification: cfg.Verification, transport: cfg.ForgeTransport, logger: logger,
-		auditor: cfg.Auditor, agents: cfg.Agents,
+		auditor: cfg.Auditor, agents: cfg.Agents, sshKeys: cfg.SSHKeys,
 	}
 	onboarder, err := sdlc.NewOnboarder(svc, svc, cfg.WebhookPublicURL)
 	if err != nil {
@@ -265,6 +277,16 @@ func (s *SDLCService) SetProjectNudger(nudger sdlc.ProjectNudger) {
 		return
 	}
 	s.nudger.Store(&nudgerHolder{nudger: nudger})
+}
+
+// SetPreflightJobs attaches the job engine an onboarding's preflight runs on.
+// Until one is set, a requested preflight is a finding and autonomy stays off.
+func (s *SDLCService) SetPreflightJobs(jobs sdlc.PreflightJobs) {
+	if jobs == nil {
+		s.preflight.Store(nil)
+		return
+	}
+	s.preflight.Store(&preflightJobsHolder{jobs: jobs})
 }
 
 // NudgeProject implements sdlc.ProjectNudger by delegating to the attached

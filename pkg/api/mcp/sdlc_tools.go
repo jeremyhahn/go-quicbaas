@@ -210,6 +210,33 @@ func (r *ToolRegistry) registerSDLCTools() {
 		},
 	})
 	r.addTool(ToolDefinition{
+		Name: "sdlc_project_onboard",
+		Description: "Onboard a forge repository like an existing bound project: create its project and webhook secret, bind it and provision its forge. " +
+			"Idempotent: every step checks before it acts, so a second run reports every step unchanged. " +
+			"What it may not do itself — a missing forge token or signing key, an unprotected branch, a stale workflow — it reports as a finding with its remedy.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": tenant,
+				"repo":      map[string]interface{}{"type": "string", "description": "The repository's name on the template's forge and owner"},
+				"like":      map[string]interface{}{"type": "string", "description": "The ID of the bound project the repository is onboarded like"},
+				"max_concurrency": map[string]interface{}{
+					"type":        "integer",
+					"description": "The new project's concurrent job limit; zero takes the template's",
+				},
+				"paused": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Bind without switching the new project's autonomy on",
+				},
+				"preflight": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Run the verification commands once on the default branch in the worker image; autonomy is switched on only when they pass",
+				},
+			},
+			"required": []string{"repo", "like"},
+		},
+	})
+	r.addTool(ToolDefinition{
 		Name: "sdlc_conformance",
 		Description: "Report whether a project is correctly onboarded and, if not, exactly what is wrong: a missing or misdirected webhook, a label the repository does not define, " +
 			"an orchestration workflow still committed to the repository, or a protected branch that does not require the status contexts quicbaas writes. " +
@@ -352,14 +379,15 @@ func (r *ToolRegistry) registerSDLCTools() {
 
 // sdlcTools dispatches the module's tools.
 var sdlcTools = map[string]func(*ToolRegistry, context.Context, map[string]interface{}) (interface{}, error){
-	"sdlc_bind":        (*ToolRegistry).executeSDLCBind,
-	"sdlc_unbind":      (*ToolRegistry).executeSDLCUnbind,
-	"sdlc_binding":     (*ToolRegistry).executeSDLCBinding,
-	"sdlc_delivery":    (*ToolRegistry).executeSDLCDelivery,
-	"sdlc_forges":      (*ToolRegistry).executeSDLCForges,
-	"sdlc_onboard":     (*ToolRegistry).executeSDLCOnboard,
-	"sdlc_conformance": (*ToolRegistry).executeSDLCConformance,
-	"sdlc_open_work":   (*ToolRegistry).executeSDLCOpenWork,
+	"sdlc_bind":            (*ToolRegistry).executeSDLCBind,
+	"sdlc_unbind":          (*ToolRegistry).executeSDLCUnbind,
+	"sdlc_binding":         (*ToolRegistry).executeSDLCBinding,
+	"sdlc_delivery":        (*ToolRegistry).executeSDLCDelivery,
+	"sdlc_forges":          (*ToolRegistry).executeSDLCForges,
+	"sdlc_onboard":         (*ToolRegistry).executeSDLCOnboard,
+	"sdlc_project_onboard": (*ToolRegistry).executeSDLCProjectOnboard,
+	"sdlc_conformance":     (*ToolRegistry).executeSDLCConformance,
+	"sdlc_open_work":       (*ToolRegistry).executeSDLCOpenWork,
 
 	"sdlc_reviewer":                      (*ToolRegistry).executeSDLCReviewer,
 	"sdlc_reviewer_set":                  (*ToolRegistry).executeSDLCReviewerSet,
@@ -458,6 +486,24 @@ func (r *ToolRegistry) executeSDLCOnboard(ctx context.Context, args map[string]i
 		return nil, err
 	}
 	return svc.Onboard(ctx, getString(args, "tenant_id"), getString(args, "project_id"))
+}
+
+// executeSDLCProjectOnboard answers sdlc_project_onboard: a repository
+// onboarded like a bound project.
+func (r *ToolRegistry) executeSDLCProjectOnboard(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return nil, &sdlc.InvalidInputError{Field: "arguments", Message: err.Error()}
+	}
+	var req sdlc.RepoOnboardRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, &sdlc.InvalidInputError{Field: "arguments", Message: err.Error()}
+	}
+	return svc.OnboardRepo(ctx, getString(args, "tenant_id"), req)
 }
 
 // executeSDLCConformance answers sdlc_conformance and changes nothing.

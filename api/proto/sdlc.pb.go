@@ -1974,6 +1974,293 @@ func (x *OnboardResponse) GetReport() *OnboardingReport {
 	return nil
 }
 
+type OnboardRepoRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TenantId string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	// repo is the repository's name on the forge, one path segment.
+	Repo string `protobuf:"bytes,2,opt,name=repo,proto3" json:"repo,omitempty"`
+	// like is the ID of the bound project the new one is modelled on.
+	Like string `protobuf:"bytes,3,opt,name=like,proto3" json:"like,omitempty"`
+	// max_concurrency bounds the new project's concurrent jobs; zero takes
+	// the template's.
+	MaxConcurrency int32 `protobuf:"varint,4,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"`
+	// paused binds without switching the new project's autonomy on.
+	Paused bool `protobuf:"varint,5,opt,name=paused,proto3" json:"paused,omitempty"`
+	// preflight runs the verification commands once on the default branch in
+	// the worker image and switches autonomy on only when they pass.
+	Preflight     bool `protobuf:"varint,6,opt,name=preflight,proto3" json:"preflight,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnboardRepoRequest) Reset() {
+	*x = OnboardRepoRequest{}
+	mi := &file_api_proto_sdlc_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnboardRepoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnboardRepoRequest) ProtoMessage() {}
+
+func (x *OnboardRepoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_sdlc_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnboardRepoRequest.ProtoReflect.Descriptor instead.
+func (*OnboardRepoRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *OnboardRepoRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *OnboardRepoRequest) GetRepo() string {
+	if x != nil {
+		return x.Repo
+	}
+	return ""
+}
+
+func (x *OnboardRepoRequest) GetLike() string {
+	if x != nil {
+		return x.Like
+	}
+	return ""
+}
+
+func (x *OnboardRepoRequest) GetMaxConcurrency() int32 {
+	if x != nil {
+		return x.MaxConcurrency
+	}
+	return 0
+}
+
+func (x *OnboardRepoRequest) GetPaused() bool {
+	if x != nil {
+		return x.Paused
+	}
+	return false
+}
+
+func (x *OnboardRepoRequest) GetPreflight() bool {
+	if x != nil {
+		return x.Preflight
+	}
+	return false
+}
+
+type OnboardRepoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Report        *RepoOnboardingReport  `protobuf:"bytes,1,opt,name=report,proto3" json:"report,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OnboardRepoResponse) Reset() {
+	*x = OnboardRepoResponse{}
+	mi := &file_api_proto_sdlc_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OnboardRepoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OnboardRepoResponse) ProtoMessage() {}
+
+func (x *OnboardRepoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_sdlc_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OnboardRepoResponse.ProtoReflect.Descriptor instead.
+func (*OnboardRepoResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *OnboardRepoResponse) GetReport() *RepoOnboardingReport {
+	if x != nil {
+		return x.Report
+	}
+	return nil
+}
+
+// RepoOnboardStep is one onboarding step's outcome.
+type RepoOnboardStep struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// step is signing_key, forge_token, webhook_secret, project, binding,
+	// forge, protection or workflows.
+	Step string `protobuf:"bytes,1,opt,name=step,proto3" json:"step,omitempty"`
+	// outcome is created, unchanged or finding.
+	Outcome string `protobuf:"bytes,2,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	Detail  string `protobuf:"bytes,3,opt,name=detail,proto3" json:"detail,omitempty"`
+	// remedy says what fixes a finding; empty otherwise.
+	Remedy        string `protobuf:"bytes,4,opt,name=remedy,proto3" json:"remedy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RepoOnboardStep) Reset() {
+	*x = RepoOnboardStep{}
+	mi := &file_api_proto_sdlc_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RepoOnboardStep) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RepoOnboardStep) ProtoMessage() {}
+
+func (x *RepoOnboardStep) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_sdlc_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RepoOnboardStep.ProtoReflect.Descriptor instead.
+func (*RepoOnboardStep) Descriptor() ([]byte, []int) {
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *RepoOnboardStep) GetStep() string {
+	if x != nil {
+		return x.Step
+	}
+	return ""
+}
+
+func (x *RepoOnboardStep) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *RepoOnboardStep) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+func (x *RepoOnboardStep) GetRemedy() string {
+	if x != nil {
+		return x.Remedy
+	}
+	return ""
+}
+
+// RepoOnboardingReport is every onboarding step's outcome and the
+// repository's conformance afterwards.
+type RepoOnboardingReport struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	TenantId  string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	ProjectId string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	Repo      string                 `protobuf:"bytes,3,opt,name=repo,proto3" json:"repo,omitempty"`
+	Steps     []*RepoOnboardStep     `protobuf:"bytes,4,rep,name=steps,proto3" json:"steps,omitempty"`
+	// conformance is absent when the project was never bound.
+	Conformance   *ConformanceReport `protobuf:"bytes,5,opt,name=conformance,proto3" json:"conformance,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RepoOnboardingReport) Reset() {
+	*x = RepoOnboardingReport{}
+	mi := &file_api_proto_sdlc_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RepoOnboardingReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RepoOnboardingReport) ProtoMessage() {}
+
+func (x *RepoOnboardingReport) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_sdlc_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RepoOnboardingReport.ProtoReflect.Descriptor instead.
+func (*RepoOnboardingReport) Descriptor() ([]byte, []int) {
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *RepoOnboardingReport) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *RepoOnboardingReport) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *RepoOnboardingReport) GetRepo() string {
+	if x != nil {
+		return x.Repo
+	}
+	return ""
+}
+
+func (x *RepoOnboardingReport) GetSteps() []*RepoOnboardStep {
+	if x != nil {
+		return x.Steps
+	}
+	return nil
+}
+
+func (x *RepoOnboardingReport) GetConformance() *ConformanceReport {
+	if x != nil {
+		return x.Conformance
+	}
+	return nil
+}
+
 type GetConformanceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
@@ -1984,7 +2271,7 @@ type GetConformanceRequest struct {
 
 func (x *GetConformanceRequest) Reset() {
 	*x = GetConformanceRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[25]
+	mi := &file_api_proto_sdlc_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1996,7 +2283,7 @@ func (x *GetConformanceRequest) String() string {
 func (*GetConformanceRequest) ProtoMessage() {}
 
 func (x *GetConformanceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[25]
+	mi := &file_api_proto_sdlc_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2009,7 +2296,7 @@ func (x *GetConformanceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConformanceRequest.ProtoReflect.Descriptor instead.
 func (*GetConformanceRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{25}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GetConformanceRequest) GetTenantId() string {
@@ -2035,7 +2322,7 @@ type GetConformanceResponse struct {
 
 func (x *GetConformanceResponse) Reset() {
 	*x = GetConformanceResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[26]
+	mi := &file_api_proto_sdlc_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2047,7 +2334,7 @@ func (x *GetConformanceResponse) String() string {
 func (*GetConformanceResponse) ProtoMessage() {}
 
 func (x *GetConformanceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[26]
+	mi := &file_api_proto_sdlc_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2060,7 +2347,7 @@ func (x *GetConformanceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConformanceResponse.ProtoReflect.Descriptor instead.
 func (*GetConformanceResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{26}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *GetConformanceResponse) GetReport() *ConformanceReport {
@@ -2080,7 +2367,7 @@ type GetOpenWorkRequest struct {
 
 func (x *GetOpenWorkRequest) Reset() {
 	*x = GetOpenWorkRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[27]
+	mi := &file_api_proto_sdlc_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2092,7 +2379,7 @@ func (x *GetOpenWorkRequest) String() string {
 func (*GetOpenWorkRequest) ProtoMessage() {}
 
 func (x *GetOpenWorkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[27]
+	mi := &file_api_proto_sdlc_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2105,7 +2392,7 @@ func (x *GetOpenWorkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetOpenWorkRequest.ProtoReflect.Descriptor instead.
 func (*GetOpenWorkRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{27}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *GetOpenWorkRequest) GetTenantId() string {
@@ -2131,7 +2418,7 @@ type GetOpenWorkResponse struct {
 
 func (x *GetOpenWorkResponse) Reset() {
 	*x = GetOpenWorkResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[28]
+	mi := &file_api_proto_sdlc_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2143,7 +2430,7 @@ func (x *GetOpenWorkResponse) String() string {
 func (*GetOpenWorkResponse) ProtoMessage() {}
 
 func (x *GetOpenWorkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[28]
+	mi := &file_api_proto_sdlc_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2156,7 +2443,7 @@ func (x *GetOpenWorkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetOpenWorkResponse.ProtoReflect.Descriptor instead.
 func (*GetOpenWorkResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{28}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GetOpenWorkResponse) GetWork() *OpenWork {
@@ -2186,7 +2473,7 @@ type OpenPullRequest struct {
 
 func (x *OpenPullRequest) Reset() {
 	*x = OpenPullRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[29]
+	mi := &file_api_proto_sdlc_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2198,7 +2485,7 @@ func (x *OpenPullRequest) String() string {
 func (*OpenPullRequest) ProtoMessage() {}
 
 func (x *OpenPullRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[29]
+	mi := &file_api_proto_sdlc_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2211,7 +2498,7 @@ func (x *OpenPullRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenPullRequest.ProtoReflect.Descriptor instead.
 func (*OpenPullRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{29}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *OpenPullRequest) GetNumber() int32 {
@@ -2292,7 +2579,7 @@ type OpenIssue struct {
 
 func (x *OpenIssue) Reset() {
 	*x = OpenIssue{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[30]
+	mi := &file_api_proto_sdlc_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2304,7 +2591,7 @@ func (x *OpenIssue) String() string {
 func (*OpenIssue) ProtoMessage() {}
 
 func (x *OpenIssue) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[30]
+	mi := &file_api_proto_sdlc_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2317,7 +2604,7 @@ func (x *OpenIssue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenIssue.ProtoReflect.Descriptor instead.
 func (*OpenIssue) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{30}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *OpenIssue) GetNumber() int32 {
@@ -2378,7 +2665,7 @@ type OpenWork struct {
 
 func (x *OpenWork) Reset() {
 	*x = OpenWork{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[31]
+	mi := &file_api_proto_sdlc_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2390,7 +2677,7 @@ func (x *OpenWork) String() string {
 func (*OpenWork) ProtoMessage() {}
 
 func (x *OpenWork) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[31]
+	mi := &file_api_proto_sdlc_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2403,7 +2690,7 @@ func (x *OpenWork) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenWork.ProtoReflect.Descriptor instead.
 func (*OpenWork) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{31}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *OpenWork) GetProjectId() string {
@@ -2459,7 +2746,7 @@ type GetReviewerSelectionRequest struct {
 
 func (x *GetReviewerSelectionRequest) Reset() {
 	*x = GetReviewerSelectionRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[32]
+	mi := &file_api_proto_sdlc_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2471,7 +2758,7 @@ func (x *GetReviewerSelectionRequest) String() string {
 func (*GetReviewerSelectionRequest) ProtoMessage() {}
 
 func (x *GetReviewerSelectionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[32]
+	mi := &file_api_proto_sdlc_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2484,7 +2771,7 @@ func (x *GetReviewerSelectionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetReviewerSelectionRequest.ProtoReflect.Descriptor instead.
 func (*GetReviewerSelectionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{32}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GetReviewerSelectionRequest) GetTenantId() string {
@@ -2521,7 +2808,7 @@ type SetReviewerOverrideRequest struct {
 
 func (x *SetReviewerOverrideRequest) Reset() {
 	*x = SetReviewerOverrideRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[33]
+	mi := &file_api_proto_sdlc_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2533,7 +2820,7 @@ func (x *SetReviewerOverrideRequest) String() string {
 func (*SetReviewerOverrideRequest) ProtoMessage() {}
 
 func (x *SetReviewerOverrideRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[33]
+	mi := &file_api_proto_sdlc_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2546,7 +2833,7 @@ func (x *SetReviewerOverrideRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetReviewerOverrideRequest.ProtoReflect.Descriptor instead.
 func (*SetReviewerOverrideRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{33}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *SetReviewerOverrideRequest) GetTenantId() string {
@@ -2588,7 +2875,7 @@ type ClearReviewerOverrideRequest struct {
 
 func (x *ClearReviewerOverrideRequest) Reset() {
 	*x = ClearReviewerOverrideRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[34]
+	mi := &file_api_proto_sdlc_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2600,7 +2887,7 @@ func (x *ClearReviewerOverrideRequest) String() string {
 func (*ClearReviewerOverrideRequest) ProtoMessage() {}
 
 func (x *ClearReviewerOverrideRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[34]
+	mi := &file_api_proto_sdlc_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2613,7 +2900,7 @@ func (x *ClearReviewerOverrideRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClearReviewerOverrideRequest.ProtoReflect.Descriptor instead.
 func (*ClearReviewerOverrideRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{34}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ClearReviewerOverrideRequest) GetTenantId() string {
@@ -2662,7 +2949,7 @@ type ReviewerSelection struct {
 
 func (x *ReviewerSelection) Reset() {
 	*x = ReviewerSelection{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[35]
+	mi := &file_api_proto_sdlc_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2674,7 +2961,7 @@ func (x *ReviewerSelection) String() string {
 func (*ReviewerSelection) ProtoMessage() {}
 
 func (x *ReviewerSelection) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[35]
+	mi := &file_api_proto_sdlc_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2687,7 +2974,7 @@ func (x *ReviewerSelection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviewerSelection.ProtoReflect.Descriptor instead.
 func (*ReviewerSelection) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{35}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ReviewerSelection) GetProjectId() string {
@@ -2755,7 +3042,7 @@ type ReviewerSelectionResponse struct {
 
 func (x *ReviewerSelectionResponse) Reset() {
 	*x = ReviewerSelectionResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[36]
+	mi := &file_api_proto_sdlc_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2767,7 +3054,7 @@ func (x *ReviewerSelectionResponse) String() string {
 func (*ReviewerSelectionResponse) ProtoMessage() {}
 
 func (x *ReviewerSelectionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[36]
+	mi := &file_api_proto_sdlc_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2780,7 +3067,7 @@ func (x *ReviewerSelectionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviewerSelectionResponse.ProtoReflect.Descriptor instead.
 func (*ReviewerSelectionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{36}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ReviewerSelectionResponse) GetSelection() *ReviewerSelection {
@@ -2812,7 +3099,7 @@ type OnboardingReport struct {
 
 func (x *OnboardingReport) Reset() {
 	*x = OnboardingReport{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[37]
+	mi := &file_api_proto_sdlc_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2824,7 +3111,7 @@ func (x *OnboardingReport) String() string {
 func (*OnboardingReport) ProtoMessage() {}
 
 func (x *OnboardingReport) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[37]
+	mi := &file_api_proto_sdlc_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2837,7 +3124,7 @@ func (x *OnboardingReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OnboardingReport.ProtoReflect.Descriptor instead.
 func (*OnboardingReport) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{37}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *OnboardingReport) GetProjectId() string {
@@ -2909,7 +3196,7 @@ type ConformanceFinding struct {
 
 func (x *ConformanceFinding) Reset() {
 	*x = ConformanceFinding{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[38]
+	mi := &file_api_proto_sdlc_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2921,7 +3208,7 @@ func (x *ConformanceFinding) String() string {
 func (*ConformanceFinding) ProtoMessage() {}
 
 func (x *ConformanceFinding) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[38]
+	mi := &file_api_proto_sdlc_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2934,7 +3221,7 @@ func (x *ConformanceFinding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConformanceFinding.ProtoReflect.Descriptor instead.
 func (*ConformanceFinding) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{38}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ConformanceFinding) GetClass() string {
@@ -2986,7 +3273,7 @@ type ConformanceCheckResult struct {
 
 func (x *ConformanceCheckResult) Reset() {
 	*x = ConformanceCheckResult{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[39]
+	mi := &file_api_proto_sdlc_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2998,7 +3285,7 @@ func (x *ConformanceCheckResult) String() string {
 func (*ConformanceCheckResult) ProtoMessage() {}
 
 func (x *ConformanceCheckResult) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[39]
+	mi := &file_api_proto_sdlc_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3011,7 +3298,7 @@ func (x *ConformanceCheckResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConformanceCheckResult.ProtoReflect.Descriptor instead.
 func (*ConformanceCheckResult) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{39}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ConformanceCheckResult) GetName() string {
@@ -3056,7 +3343,7 @@ type ConformanceReport struct {
 
 func (x *ConformanceReport) Reset() {
 	*x = ConformanceReport{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[40]
+	mi := &file_api_proto_sdlc_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3068,7 +3355,7 @@ func (x *ConformanceReport) String() string {
 func (*ConformanceReport) ProtoMessage() {}
 
 func (x *ConformanceReport) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[40]
+	mi := &file_api_proto_sdlc_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3081,7 +3368,7 @@ func (x *ConformanceReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConformanceReport.ProtoReflect.Descriptor instead.
 func (*ConformanceReport) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{40}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ConformanceReport) GetProjectId() string {
@@ -3157,7 +3444,7 @@ type FileIssueRequest struct {
 
 func (x *FileIssueRequest) Reset() {
 	*x = FileIssueRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[41]
+	mi := &file_api_proto_sdlc_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3169,7 +3456,7 @@ func (x *FileIssueRequest) String() string {
 func (*FileIssueRequest) ProtoMessage() {}
 
 func (x *FileIssueRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[41]
+	mi := &file_api_proto_sdlc_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3182,7 +3469,7 @@ func (x *FileIssueRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileIssueRequest.ProtoReflect.Descriptor instead.
 func (*FileIssueRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{41}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *FileIssueRequest) GetTenantId() string {
@@ -3243,7 +3530,7 @@ type ForgeIssue struct {
 
 func (x *ForgeIssue) Reset() {
 	*x = ForgeIssue{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[42]
+	mi := &file_api_proto_sdlc_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3255,7 +3542,7 @@ func (x *ForgeIssue) String() string {
 func (*ForgeIssue) ProtoMessage() {}
 
 func (x *ForgeIssue) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[42]
+	mi := &file_api_proto_sdlc_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3268,7 +3555,7 @@ func (x *ForgeIssue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForgeIssue.ProtoReflect.Descriptor instead.
 func (*ForgeIssue) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{42}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *ForgeIssue) GetNumber() int32 {
@@ -3329,7 +3616,7 @@ type FileIssueResponse struct {
 
 func (x *FileIssueResponse) Reset() {
 	*x = FileIssueResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[43]
+	mi := &file_api_proto_sdlc_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3341,7 +3628,7 @@ func (x *FileIssueResponse) String() string {
 func (*FileIssueResponse) ProtoMessage() {}
 
 func (x *FileIssueResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[43]
+	mi := &file_api_proto_sdlc_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3354,7 +3641,7 @@ func (x *FileIssueResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileIssueResponse.ProtoReflect.Descriptor instead.
 func (*FileIssueResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{43}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *FileIssueResponse) GetIssue() *ForgeIssue {
@@ -3374,7 +3661,7 @@ type ListCollaboratorsRequest struct {
 
 func (x *ListCollaboratorsRequest) Reset() {
 	*x = ListCollaboratorsRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[44]
+	mi := &file_api_proto_sdlc_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3386,7 +3673,7 @@ func (x *ListCollaboratorsRequest) String() string {
 func (*ListCollaboratorsRequest) ProtoMessage() {}
 
 func (x *ListCollaboratorsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[44]
+	mi := &file_api_proto_sdlc_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3399,7 +3686,7 @@ func (x *ListCollaboratorsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCollaboratorsRequest.ProtoReflect.Descriptor instead.
 func (*ListCollaboratorsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{44}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ListCollaboratorsRequest) GetTenantId() string {
@@ -3427,7 +3714,7 @@ type ForgeUser struct {
 
 func (x *ForgeUser) Reset() {
 	*x = ForgeUser{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[45]
+	mi := &file_api_proto_sdlc_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3439,7 +3726,7 @@ func (x *ForgeUser) String() string {
 func (*ForgeUser) ProtoMessage() {}
 
 func (x *ForgeUser) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[45]
+	mi := &file_api_proto_sdlc_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3452,7 +3739,7 @@ func (x *ForgeUser) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForgeUser.ProtoReflect.Descriptor instead.
 func (*ForgeUser) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{45}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ForgeUser) GetLogin() string {
@@ -3478,7 +3765,7 @@ type ListCollaboratorsResponse struct {
 
 func (x *ListCollaboratorsResponse) Reset() {
 	*x = ListCollaboratorsResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[46]
+	mi := &file_api_proto_sdlc_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3490,7 +3777,7 @@ func (x *ListCollaboratorsResponse) String() string {
 func (*ListCollaboratorsResponse) ProtoMessage() {}
 
 func (x *ListCollaboratorsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[46]
+	mi := &file_api_proto_sdlc_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3503,7 +3790,7 @@ func (x *ListCollaboratorsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCollaboratorsResponse.ProtoReflect.Descriptor instead.
 func (*ListCollaboratorsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{46}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *ListCollaboratorsResponse) GetUsers() []*ForgeUser {
@@ -3521,7 +3808,7 @@ type GetWorkerImageStatusRequest struct {
 
 func (x *GetWorkerImageStatusRequest) Reset() {
 	*x = GetWorkerImageStatusRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[47]
+	mi := &file_api_proto_sdlc_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3533,7 +3820,7 @@ func (x *GetWorkerImageStatusRequest) String() string {
 func (*GetWorkerImageStatusRequest) ProtoMessage() {}
 
 func (x *GetWorkerImageStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[47]
+	mi := &file_api_proto_sdlc_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3546,7 +3833,7 @@ func (x *GetWorkerImageStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkerImageStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetWorkerImageStatusRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{47}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{51}
 }
 
 type GetWorkerImageStatusResponse struct {
@@ -3558,7 +3845,7 @@ type GetWorkerImageStatusResponse struct {
 
 func (x *GetWorkerImageStatusResponse) Reset() {
 	*x = GetWorkerImageStatusResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[48]
+	mi := &file_api_proto_sdlc_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3570,7 +3857,7 @@ func (x *GetWorkerImageStatusResponse) String() string {
 func (*GetWorkerImageStatusResponse) ProtoMessage() {}
 
 func (x *GetWorkerImageStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[48]
+	mi := &file_api_proto_sdlc_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3583,7 +3870,7 @@ func (x *GetWorkerImageStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkerImageStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetWorkerImageStatusResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{48}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *GetWorkerImageStatusResponse) GetStatus() *WorkerImageStatus {
@@ -3601,7 +3888,7 @@ type RefreshWorkerImageRequest struct {
 
 func (x *RefreshWorkerImageRequest) Reset() {
 	*x = RefreshWorkerImageRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[49]
+	mi := &file_api_proto_sdlc_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3613,7 +3900,7 @@ func (x *RefreshWorkerImageRequest) String() string {
 func (*RefreshWorkerImageRequest) ProtoMessage() {}
 
 func (x *RefreshWorkerImageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[49]
+	mi := &file_api_proto_sdlc_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3626,7 +3913,7 @@ func (x *RefreshWorkerImageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshWorkerImageRequest.ProtoReflect.Descriptor instead.
 func (*RefreshWorkerImageRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{49}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{53}
 }
 
 type RefreshWorkerImageResponse struct {
@@ -3638,7 +3925,7 @@ type RefreshWorkerImageResponse struct {
 
 func (x *RefreshWorkerImageResponse) Reset() {
 	*x = RefreshWorkerImageResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[50]
+	mi := &file_api_proto_sdlc_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3650,7 +3937,7 @@ func (x *RefreshWorkerImageResponse) String() string {
 func (*RefreshWorkerImageResponse) ProtoMessage() {}
 
 func (x *RefreshWorkerImageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[50]
+	mi := &file_api_proto_sdlc_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3663,7 +3950,7 @@ func (x *RefreshWorkerImageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshWorkerImageResponse.ProtoReflect.Descriptor instead.
 func (*RefreshWorkerImageResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{50}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *RefreshWorkerImageResponse) GetStatus() *WorkerImageStatus {
@@ -3690,7 +3977,7 @@ type WorkerImageStatus struct {
 
 func (x *WorkerImageStatus) Reset() {
 	*x = WorkerImageStatus{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[51]
+	mi := &file_api_proto_sdlc_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3702,7 +3989,7 @@ func (x *WorkerImageStatus) String() string {
 func (*WorkerImageStatus) ProtoMessage() {}
 
 func (x *WorkerImageStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[51]
+	mi := &file_api_proto_sdlc_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3715,7 +4002,7 @@ func (x *WorkerImageStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerImageStatus.ProtoReflect.Descriptor instead.
 func (*WorkerImageStatus) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{51}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *WorkerImageStatus) GetServing() bool {
@@ -3764,7 +4051,7 @@ type WorkerImageAgents struct {
 
 func (x *WorkerImageAgents) Reset() {
 	*x = WorkerImageAgents{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[52]
+	mi := &file_api_proto_sdlc_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3776,7 +4063,7 @@ func (x *WorkerImageAgents) String() string {
 func (*WorkerImageAgents) ProtoMessage() {}
 
 func (x *WorkerImageAgents) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[52]
+	mi := &file_api_proto_sdlc_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3789,7 +4076,7 @@ func (x *WorkerImageAgents) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerImageAgents.ProtoReflect.Descriptor instead.
 func (*WorkerImageAgents) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{52}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *WorkerImageAgents) GetClaudeCode() string {
@@ -3818,7 +4105,7 @@ type WorkerImageCheck struct {
 
 func (x *WorkerImageCheck) Reset() {
 	*x = WorkerImageCheck{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[53]
+	mi := &file_api_proto_sdlc_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3830,7 +4117,7 @@ func (x *WorkerImageCheck) String() string {
 func (*WorkerImageCheck) ProtoMessage() {}
 
 func (x *WorkerImageCheck) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[53]
+	mi := &file_api_proto_sdlc_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3843,7 +4130,7 @@ func (x *WorkerImageCheck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerImageCheck.ProtoReflect.Descriptor instead.
 func (*WorkerImageCheck) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{53}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *WorkerImageCheck) GetName() string {
@@ -3882,7 +4169,7 @@ type WorkerImageBound struct {
 
 func (x *WorkerImageBound) Reset() {
 	*x = WorkerImageBound{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[54]
+	mi := &file_api_proto_sdlc_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3894,7 +4181,7 @@ func (x *WorkerImageBound) String() string {
 func (*WorkerImageBound) ProtoMessage() {}
 
 func (x *WorkerImageBound) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[54]
+	mi := &file_api_proto_sdlc_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3907,7 +4194,7 @@ func (x *WorkerImageBound) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerImageBound.ProtoReflect.Descriptor instead.
 func (*WorkerImageBound) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{54}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *WorkerImageBound) GetImage() string {
@@ -3953,7 +4240,7 @@ type WorkerImagePromotion struct {
 
 func (x *WorkerImagePromotion) Reset() {
 	*x = WorkerImagePromotion{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[55]
+	mi := &file_api_proto_sdlc_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3965,7 +4252,7 @@ func (x *WorkerImagePromotion) String() string {
 func (*WorkerImagePromotion) ProtoMessage() {}
 
 func (x *WorkerImagePromotion) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[55]
+	mi := &file_api_proto_sdlc_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3978,7 +4265,7 @@ func (x *WorkerImagePromotion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerImagePromotion.ProtoReflect.Descriptor instead.
 func (*WorkerImagePromotion) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{55}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *WorkerImagePromotion) GetTenantId() string {
@@ -4045,7 +4332,7 @@ type WorkerImageReport struct {
 
 func (x *WorkerImageReport) Reset() {
 	*x = WorkerImageReport{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[56]
+	mi := &file_api_proto_sdlc_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4057,7 +4344,7 @@ func (x *WorkerImageReport) String() string {
 func (*WorkerImageReport) ProtoMessage() {}
 
 func (x *WorkerImageReport) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[56]
+	mi := &file_api_proto_sdlc_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4070,7 +4357,7 @@ func (x *WorkerImageReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerImageReport.ProtoReflect.Descriptor instead.
 func (*WorkerImageReport) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{56}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *WorkerImageReport) GetTrigger() string {
@@ -4202,7 +4489,7 @@ type AdoptIssueRequest struct {
 
 func (x *AdoptIssueRequest) Reset() {
 	*x = AdoptIssueRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[57]
+	mi := &file_api_proto_sdlc_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4214,7 +4501,7 @@ func (x *AdoptIssueRequest) String() string {
 func (*AdoptIssueRequest) ProtoMessage() {}
 
 func (x *AdoptIssueRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[57]
+	mi := &file_api_proto_sdlc_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4227,7 +4514,7 @@ func (x *AdoptIssueRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdoptIssueRequest.ProtoReflect.Descriptor instead.
 func (*AdoptIssueRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{57}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *AdoptIssueRequest) GetTenantId() string {
@@ -4281,7 +4568,7 @@ type AdoptIssueResponse struct {
 
 func (x *AdoptIssueResponse) Reset() {
 	*x = AdoptIssueResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[58]
+	mi := &file_api_proto_sdlc_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4293,7 +4580,7 @@ func (x *AdoptIssueResponse) String() string {
 func (*AdoptIssueResponse) ProtoMessage() {}
 
 func (x *AdoptIssueResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[58]
+	mi := &file_api_proto_sdlc_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4306,7 +4593,7 @@ func (x *AdoptIssueResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdoptIssueResponse.ProtoReflect.Descriptor instead.
 func (*AdoptIssueResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{58}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *AdoptIssueResponse) GetTaskId() string {
@@ -4373,7 +4660,7 @@ type AttentionItem struct {
 
 func (x *AttentionItem) Reset() {
 	*x = AttentionItem{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[59]
+	mi := &file_api_proto_sdlc_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4385,7 +4672,7 @@ func (x *AttentionItem) String() string {
 func (*AttentionItem) ProtoMessage() {}
 
 func (x *AttentionItem) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[59]
+	mi := &file_api_proto_sdlc_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4398,7 +4685,7 @@ func (x *AttentionItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttentionItem.ProtoReflect.Descriptor instead.
 func (*AttentionItem) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{59}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *AttentionItem) GetId() string {
@@ -4551,7 +4838,7 @@ type ListAttentionRequest struct {
 
 func (x *ListAttentionRequest) Reset() {
 	*x = ListAttentionRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[60]
+	mi := &file_api_proto_sdlc_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4563,7 +4850,7 @@ func (x *ListAttentionRequest) String() string {
 func (*ListAttentionRequest) ProtoMessage() {}
 
 func (x *ListAttentionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[60]
+	mi := &file_api_proto_sdlc_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4576,7 +4863,7 @@ func (x *ListAttentionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAttentionRequest.ProtoReflect.Descriptor instead.
 func (*ListAttentionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{60}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *ListAttentionRequest) GetTenantId() string {
@@ -4638,7 +4925,7 @@ type FacetCounts struct {
 
 func (x *FacetCounts) Reset() {
 	*x = FacetCounts{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[61]
+	mi := &file_api_proto_sdlc_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4650,7 +4937,7 @@ func (x *FacetCounts) String() string {
 func (*FacetCounts) ProtoMessage() {}
 
 func (x *FacetCounts) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[61]
+	mi := &file_api_proto_sdlc_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4663,7 +4950,7 @@ func (x *FacetCounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FacetCounts.ProtoReflect.Descriptor instead.
 func (*FacetCounts) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{61}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *FacetCounts) GetCounts() map[string]int32 {
@@ -4689,7 +4976,7 @@ type ListAttentionResponse struct {
 
 func (x *ListAttentionResponse) Reset() {
 	*x = ListAttentionResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[62]
+	mi := &file_api_proto_sdlc_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4701,7 +4988,7 @@ func (x *ListAttentionResponse) String() string {
 func (*ListAttentionResponse) ProtoMessage() {}
 
 func (x *ListAttentionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[62]
+	mi := &file_api_proto_sdlc_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4714,7 +5001,7 @@ func (x *ListAttentionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAttentionResponse.ProtoReflect.Descriptor instead.
 func (*ListAttentionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{62}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *ListAttentionResponse) GetItems() []*AttentionItem {
@@ -4773,7 +5060,7 @@ type ResolveAttentionRequest struct {
 
 func (x *ResolveAttentionRequest) Reset() {
 	*x = ResolveAttentionRequest{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[63]
+	mi := &file_api_proto_sdlc_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4785,7 +5072,7 @@ func (x *ResolveAttentionRequest) String() string {
 func (*ResolveAttentionRequest) ProtoMessage() {}
 
 func (x *ResolveAttentionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[63]
+	mi := &file_api_proto_sdlc_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4798,7 +5085,7 @@ func (x *ResolveAttentionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveAttentionRequest.ProtoReflect.Descriptor instead.
 func (*ResolveAttentionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{63}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *ResolveAttentionRequest) GetTenantId() string {
@@ -4839,7 +5126,7 @@ type ResolveAttentionResponse struct {
 
 func (x *ResolveAttentionResponse) Reset() {
 	*x = ResolveAttentionResponse{}
-	mi := &file_api_proto_sdlc_proto_msgTypes[64]
+	mi := &file_api_proto_sdlc_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4851,7 +5138,7 @@ func (x *ResolveAttentionResponse) String() string {
 func (*ResolveAttentionResponse) ProtoMessage() {}
 
 func (x *ResolveAttentionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_sdlc_proto_msgTypes[64]
+	mi := &file_api_proto_sdlc_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4864,7 +5151,7 @@ func (x *ResolveAttentionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveAttentionResponse.ProtoReflect.Descriptor instead.
 func (*ResolveAttentionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{64}
+	return file_api_proto_sdlc_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *ResolveAttentionResponse) GetItem() *AttentionItem {
@@ -5048,7 +5335,28 @@ const file_api_proto_sdlc_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x02 \x01(\tR\tprojectId\"M\n" +
 	"\x0fOnboardResponse\x12:\n" +
-	"\x06report\x18\x01 \x01(\v2\".quicbaas.sdlc.v1.OnboardingReportR\x06report\"S\n" +
+	"\x06report\x18\x01 \x01(\v2\".quicbaas.sdlc.v1.OnboardingReportR\x06report\"\xb8\x01\n" +
+	"\x12OnboardRepoRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x12\n" +
+	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x12\n" +
+	"\x04like\x18\x03 \x01(\tR\x04like\x12'\n" +
+	"\x0fmax_concurrency\x18\x04 \x01(\x05R\x0emaxConcurrency\x12\x16\n" +
+	"\x06paused\x18\x05 \x01(\bR\x06paused\x12\x1c\n" +
+	"\tpreflight\x18\x06 \x01(\bR\tpreflight\"U\n" +
+	"\x13OnboardRepoResponse\x12>\n" +
+	"\x06report\x18\x01 \x01(\v2&.quicbaas.sdlc.v1.RepoOnboardingReportR\x06report\"o\n" +
+	"\x0fRepoOnboardStep\x12\x12\n" +
+	"\x04step\x18\x01 \x01(\tR\x04step\x12\x18\n" +
+	"\aoutcome\x18\x02 \x01(\tR\aoutcome\x12\x16\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\x12\x16\n" +
+	"\x06remedy\x18\x04 \x01(\tR\x06remedy\"\xe6\x01\n" +
+	"\x14RepoOnboardingReport\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x12\n" +
+	"\x04repo\x18\x03 \x01(\tR\x04repo\x127\n" +
+	"\x05steps\x18\x04 \x03(\v2!.quicbaas.sdlc.v1.RepoOnboardStepR\x05steps\x12E\n" +
+	"\vconformance\x18\x05 \x01(\v2#.quicbaas.sdlc.v1.ConformanceReportR\vconformance\"S\n" +
 	"\x15GetConformanceRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
@@ -5301,7 +5609,7 @@ const file_api_proto_sdlc_proto_rawDesc = "" +
 	"\x06action\x18\x03 \x01(\tR\x06action\x12\x16\n" +
 	"\x06answer\x18\x04 \x01(\tR\x06answer\"O\n" +
 	"\x18ResolveAttentionResponse\x123\n" +
-	"\x04item\x18\x01 \x01(\v2\x1f.quicbaas.sdlc.v1.AttentionItemR\x04item2\xf3\x10\n" +
+	"\x04item\x18\x01 \x01(\v2\x1f.quicbaas.sdlc.v1.AttentionItemR\x04item2\xde\x11\n" +
 	"\vSDLCService\x12i\n" +
 	"\vBindProject\x12$.quicbaas.sdlc.v1.BindProjectRequest\x1a%.quicbaas.sdlc.v1.BindProjectResponse\"\r\xc2\xf3\x18\tsdlc:bind\x12q\n" +
 	"\rUnbindProject\x12&.quicbaas.sdlc.v1.UnbindProjectRequest\x1a'.quicbaas.sdlc.v1.UnbindProjectResponse\"\x0f\xc2\xf3\x18\vsdlc:unbind\x12f\n" +
@@ -5310,7 +5618,8 @@ const file_api_proto_sdlc_proto_rawDesc = "" +
 	"\vGetDelivery\x12$.quicbaas.sdlc.v1.GetDeliveryRequest\x1a%.quicbaas.sdlc.v1.GetDeliveryResponse\"\r\xc2\xf3\x18\tsdlc:read\x12f\n" +
 	"\n" +
 	"ListForges\x12#.quicbaas.sdlc.v1.ListForgesRequest\x1a$.quicbaas.sdlc.v1.ListForgesResponse\"\r\xc2\xf3\x18\tsdlc:read\x12]\n" +
-	"\aOnboard\x12 .quicbaas.sdlc.v1.OnboardRequest\x1a!.quicbaas.sdlc.v1.OnboardResponse\"\r\xc2\xf3\x18\tsdlc:bind\x12r\n" +
+	"\aOnboard\x12 .quicbaas.sdlc.v1.OnboardRequest\x1a!.quicbaas.sdlc.v1.OnboardResponse\"\r\xc2\xf3\x18\tsdlc:bind\x12i\n" +
+	"\vOnboardRepo\x12$.quicbaas.sdlc.v1.OnboardRepoRequest\x1a%.quicbaas.sdlc.v1.OnboardRepoResponse\"\r\xc2\xf3\x18\tsdlc:bind\x12r\n" +
 	"\x0eGetConformance\x12'.quicbaas.sdlc.v1.GetConformanceRequest\x1a(.quicbaas.sdlc.v1.GetConformanceResponse\"\r\xc2\xf3\x18\tsdlc:read\x12i\n" +
 	"\vGetOpenWork\x12$.quicbaas.sdlc.v1.GetOpenWorkRequest\x1a%.quicbaas.sdlc.v1.GetOpenWorkResponse\"\r\xc2\xf3\x18\tsdlc:read\x12\x81\x01\n" +
 	"\x14GetReviewerSelection\x12-.quicbaas.sdlc.v1.GetReviewerSelectionRequest\x1a+.quicbaas.sdlc.v1.ReviewerSelectionResponse\"\r\xc2\xf3\x18\tsdlc:read\x12\x7f\n" +
@@ -5337,7 +5646,7 @@ func file_api_proto_sdlc_proto_rawDescGZIP() []byte {
 	return file_api_proto_sdlc_proto_rawDescData
 }
 
-var file_api_proto_sdlc_proto_msgTypes = make([]protoimpl.MessageInfo, 70)
+var file_api_proto_sdlc_proto_msgTypes = make([]protoimpl.MessageInfo, 74)
 var file_api_proto_sdlc_proto_goTypes = []any{
 	(*ForgeConfig)(nil),                  // 0: quicbaas.sdlc.v1.ForgeConfig
 	(*ReviewPolicy)(nil),                 // 1: quicbaas.sdlc.v1.ReviewPolicy
@@ -5364,64 +5673,68 @@ var file_api_proto_sdlc_proto_goTypes = []any{
 	(*ListForgesResponse)(nil),           // 22: quicbaas.sdlc.v1.ListForgesResponse
 	(*OnboardRequest)(nil),               // 23: quicbaas.sdlc.v1.OnboardRequest
 	(*OnboardResponse)(nil),              // 24: quicbaas.sdlc.v1.OnboardResponse
-	(*GetConformanceRequest)(nil),        // 25: quicbaas.sdlc.v1.GetConformanceRequest
-	(*GetConformanceResponse)(nil),       // 26: quicbaas.sdlc.v1.GetConformanceResponse
-	(*GetOpenWorkRequest)(nil),           // 27: quicbaas.sdlc.v1.GetOpenWorkRequest
-	(*GetOpenWorkResponse)(nil),          // 28: quicbaas.sdlc.v1.GetOpenWorkResponse
-	(*OpenPullRequest)(nil),              // 29: quicbaas.sdlc.v1.OpenPullRequest
-	(*OpenIssue)(nil),                    // 30: quicbaas.sdlc.v1.OpenIssue
-	(*OpenWork)(nil),                     // 31: quicbaas.sdlc.v1.OpenWork
-	(*GetReviewerSelectionRequest)(nil),  // 32: quicbaas.sdlc.v1.GetReviewerSelectionRequest
-	(*SetReviewerOverrideRequest)(nil),   // 33: quicbaas.sdlc.v1.SetReviewerOverrideRequest
-	(*ClearReviewerOverrideRequest)(nil), // 34: quicbaas.sdlc.v1.ClearReviewerOverrideRequest
-	(*ReviewerSelection)(nil),            // 35: quicbaas.sdlc.v1.ReviewerSelection
-	(*ReviewerSelectionResponse)(nil),    // 36: quicbaas.sdlc.v1.ReviewerSelectionResponse
-	(*OnboardingReport)(nil),             // 37: quicbaas.sdlc.v1.OnboardingReport
-	(*ConformanceFinding)(nil),           // 38: quicbaas.sdlc.v1.ConformanceFinding
-	(*ConformanceCheckResult)(nil),       // 39: quicbaas.sdlc.v1.ConformanceCheckResult
-	(*ConformanceReport)(nil),            // 40: quicbaas.sdlc.v1.ConformanceReport
-	(*FileIssueRequest)(nil),             // 41: quicbaas.sdlc.v1.FileIssueRequest
-	(*ForgeIssue)(nil),                   // 42: quicbaas.sdlc.v1.ForgeIssue
-	(*FileIssueResponse)(nil),            // 43: quicbaas.sdlc.v1.FileIssueResponse
-	(*ListCollaboratorsRequest)(nil),     // 44: quicbaas.sdlc.v1.ListCollaboratorsRequest
-	(*ForgeUser)(nil),                    // 45: quicbaas.sdlc.v1.ForgeUser
-	(*ListCollaboratorsResponse)(nil),    // 46: quicbaas.sdlc.v1.ListCollaboratorsResponse
-	(*GetWorkerImageStatusRequest)(nil),  // 47: quicbaas.sdlc.v1.GetWorkerImageStatusRequest
-	(*GetWorkerImageStatusResponse)(nil), // 48: quicbaas.sdlc.v1.GetWorkerImageStatusResponse
-	(*RefreshWorkerImageRequest)(nil),    // 49: quicbaas.sdlc.v1.RefreshWorkerImageRequest
-	(*RefreshWorkerImageResponse)(nil),   // 50: quicbaas.sdlc.v1.RefreshWorkerImageResponse
-	(*WorkerImageStatus)(nil),            // 51: quicbaas.sdlc.v1.WorkerImageStatus
-	(*WorkerImageAgents)(nil),            // 52: quicbaas.sdlc.v1.WorkerImageAgents
-	(*WorkerImageCheck)(nil),             // 53: quicbaas.sdlc.v1.WorkerImageCheck
-	(*WorkerImageBound)(nil),             // 54: quicbaas.sdlc.v1.WorkerImageBound
-	(*WorkerImagePromotion)(nil),         // 55: quicbaas.sdlc.v1.WorkerImagePromotion
-	(*WorkerImageReport)(nil),            // 56: quicbaas.sdlc.v1.WorkerImageReport
-	(*AdoptIssueRequest)(nil),            // 57: quicbaas.sdlc.v1.AdoptIssueRequest
-	(*AdoptIssueResponse)(nil),           // 58: quicbaas.sdlc.v1.AdoptIssueResponse
-	(*AttentionItem)(nil),                // 59: quicbaas.sdlc.v1.AttentionItem
-	(*ListAttentionRequest)(nil),         // 60: quicbaas.sdlc.v1.ListAttentionRequest
-	(*FacetCounts)(nil),                  // 61: quicbaas.sdlc.v1.FacetCounts
-	(*ListAttentionResponse)(nil),        // 62: quicbaas.sdlc.v1.ListAttentionResponse
-	(*ResolveAttentionRequest)(nil),      // 63: quicbaas.sdlc.v1.ResolveAttentionRequest
-	(*ResolveAttentionResponse)(nil),     // 64: quicbaas.sdlc.v1.ResolveAttentionResponse
-	nil,                                  // 65: quicbaas.sdlc.v1.ForgeConfig.LabelsEntry
-	nil,                                  // 66: quicbaas.sdlc.v1.ReviewPolicy.ReviewersEntry
-	nil,                                  // 67: quicbaas.sdlc.v1.OnboardingConfig.LabelColorsEntry
-	nil,                                  // 68: quicbaas.sdlc.v1.FacetCounts.CountsEntry
-	nil,                                  // 69: quicbaas.sdlc.v1.ListAttentionResponse.FacetsEntry
-	(*AgentRef)(nil),                     // 70: quicbaas.agents.v1.AgentRef
+	(*OnboardRepoRequest)(nil),           // 25: quicbaas.sdlc.v1.OnboardRepoRequest
+	(*OnboardRepoResponse)(nil),          // 26: quicbaas.sdlc.v1.OnboardRepoResponse
+	(*RepoOnboardStep)(nil),              // 27: quicbaas.sdlc.v1.RepoOnboardStep
+	(*RepoOnboardingReport)(nil),         // 28: quicbaas.sdlc.v1.RepoOnboardingReport
+	(*GetConformanceRequest)(nil),        // 29: quicbaas.sdlc.v1.GetConformanceRequest
+	(*GetConformanceResponse)(nil),       // 30: quicbaas.sdlc.v1.GetConformanceResponse
+	(*GetOpenWorkRequest)(nil),           // 31: quicbaas.sdlc.v1.GetOpenWorkRequest
+	(*GetOpenWorkResponse)(nil),          // 32: quicbaas.sdlc.v1.GetOpenWorkResponse
+	(*OpenPullRequest)(nil),              // 33: quicbaas.sdlc.v1.OpenPullRequest
+	(*OpenIssue)(nil),                    // 34: quicbaas.sdlc.v1.OpenIssue
+	(*OpenWork)(nil),                     // 35: quicbaas.sdlc.v1.OpenWork
+	(*GetReviewerSelectionRequest)(nil),  // 36: quicbaas.sdlc.v1.GetReviewerSelectionRequest
+	(*SetReviewerOverrideRequest)(nil),   // 37: quicbaas.sdlc.v1.SetReviewerOverrideRequest
+	(*ClearReviewerOverrideRequest)(nil), // 38: quicbaas.sdlc.v1.ClearReviewerOverrideRequest
+	(*ReviewerSelection)(nil),            // 39: quicbaas.sdlc.v1.ReviewerSelection
+	(*ReviewerSelectionResponse)(nil),    // 40: quicbaas.sdlc.v1.ReviewerSelectionResponse
+	(*OnboardingReport)(nil),             // 41: quicbaas.sdlc.v1.OnboardingReport
+	(*ConformanceFinding)(nil),           // 42: quicbaas.sdlc.v1.ConformanceFinding
+	(*ConformanceCheckResult)(nil),       // 43: quicbaas.sdlc.v1.ConformanceCheckResult
+	(*ConformanceReport)(nil),            // 44: quicbaas.sdlc.v1.ConformanceReport
+	(*FileIssueRequest)(nil),             // 45: quicbaas.sdlc.v1.FileIssueRequest
+	(*ForgeIssue)(nil),                   // 46: quicbaas.sdlc.v1.ForgeIssue
+	(*FileIssueResponse)(nil),            // 47: quicbaas.sdlc.v1.FileIssueResponse
+	(*ListCollaboratorsRequest)(nil),     // 48: quicbaas.sdlc.v1.ListCollaboratorsRequest
+	(*ForgeUser)(nil),                    // 49: quicbaas.sdlc.v1.ForgeUser
+	(*ListCollaboratorsResponse)(nil),    // 50: quicbaas.sdlc.v1.ListCollaboratorsResponse
+	(*GetWorkerImageStatusRequest)(nil),  // 51: quicbaas.sdlc.v1.GetWorkerImageStatusRequest
+	(*GetWorkerImageStatusResponse)(nil), // 52: quicbaas.sdlc.v1.GetWorkerImageStatusResponse
+	(*RefreshWorkerImageRequest)(nil),    // 53: quicbaas.sdlc.v1.RefreshWorkerImageRequest
+	(*RefreshWorkerImageResponse)(nil),   // 54: quicbaas.sdlc.v1.RefreshWorkerImageResponse
+	(*WorkerImageStatus)(nil),            // 55: quicbaas.sdlc.v1.WorkerImageStatus
+	(*WorkerImageAgents)(nil),            // 56: quicbaas.sdlc.v1.WorkerImageAgents
+	(*WorkerImageCheck)(nil),             // 57: quicbaas.sdlc.v1.WorkerImageCheck
+	(*WorkerImageBound)(nil),             // 58: quicbaas.sdlc.v1.WorkerImageBound
+	(*WorkerImagePromotion)(nil),         // 59: quicbaas.sdlc.v1.WorkerImagePromotion
+	(*WorkerImageReport)(nil),            // 60: quicbaas.sdlc.v1.WorkerImageReport
+	(*AdoptIssueRequest)(nil),            // 61: quicbaas.sdlc.v1.AdoptIssueRequest
+	(*AdoptIssueResponse)(nil),           // 62: quicbaas.sdlc.v1.AdoptIssueResponse
+	(*AttentionItem)(nil),                // 63: quicbaas.sdlc.v1.AttentionItem
+	(*ListAttentionRequest)(nil),         // 64: quicbaas.sdlc.v1.ListAttentionRequest
+	(*FacetCounts)(nil),                  // 65: quicbaas.sdlc.v1.FacetCounts
+	(*ListAttentionResponse)(nil),        // 66: quicbaas.sdlc.v1.ListAttentionResponse
+	(*ResolveAttentionRequest)(nil),      // 67: quicbaas.sdlc.v1.ResolveAttentionRequest
+	(*ResolveAttentionResponse)(nil),     // 68: quicbaas.sdlc.v1.ResolveAttentionResponse
+	nil,                                  // 69: quicbaas.sdlc.v1.ForgeConfig.LabelsEntry
+	nil,                                  // 70: quicbaas.sdlc.v1.ReviewPolicy.ReviewersEntry
+	nil,                                  // 71: quicbaas.sdlc.v1.OnboardingConfig.LabelColorsEntry
+	nil,                                  // 72: quicbaas.sdlc.v1.FacetCounts.CountsEntry
+	nil,                                  // 73: quicbaas.sdlc.v1.ListAttentionResponse.FacetsEntry
+	(*AgentRef)(nil),                     // 74: quicbaas.agents.v1.AgentRef
 }
 var file_api_proto_sdlc_proto_depIdxs = []int32{
-	65, // 0: quicbaas.sdlc.v1.ForgeConfig.labels:type_name -> quicbaas.sdlc.v1.ForgeConfig.LabelsEntry
-	66, // 1: quicbaas.sdlc.v1.ReviewPolicy.reviewers:type_name -> quicbaas.sdlc.v1.ReviewPolicy.ReviewersEntry
-	67, // 2: quicbaas.sdlc.v1.OnboardingConfig.label_colors:type_name -> quicbaas.sdlc.v1.OnboardingConfig.LabelColorsEntry
+	69, // 0: quicbaas.sdlc.v1.ForgeConfig.labels:type_name -> quicbaas.sdlc.v1.ForgeConfig.LabelsEntry
+	70, // 1: quicbaas.sdlc.v1.ReviewPolicy.reviewers:type_name -> quicbaas.sdlc.v1.ReviewPolicy.ReviewersEntry
+	71, // 2: quicbaas.sdlc.v1.OnboardingConfig.label_colors:type_name -> quicbaas.sdlc.v1.OnboardingConfig.LabelColorsEntry
 	0,  // 3: quicbaas.sdlc.v1.ProjectBinding.forge:type_name -> quicbaas.sdlc.v1.ForgeConfig
-	70, // 4: quicbaas.sdlc.v1.ProjectBinding.worker:type_name -> quicbaas.agents.v1.AgentRef
+	74, // 4: quicbaas.sdlc.v1.ProjectBinding.worker:type_name -> quicbaas.agents.v1.AgentRef
 	1,  // 5: quicbaas.sdlc.v1.ProjectBinding.review:type_name -> quicbaas.sdlc.v1.ReviewPolicy
 	3,  // 6: quicbaas.sdlc.v1.ProjectBinding.ranking:type_name -> quicbaas.sdlc.v1.RankingPolicy
 	4,  // 7: quicbaas.sdlc.v1.ProjectBinding.onboarding:type_name -> quicbaas.sdlc.v1.OnboardingConfig
 	2,  // 8: quicbaas.sdlc.v1.ProjectBinding.reviewer:type_name -> quicbaas.sdlc.v1.ReviewerConfig
-	70, // 9: quicbaas.sdlc.v1.ProjectBinding.triage:type_name -> quicbaas.agents.v1.AgentRef
+	74, // 9: quicbaas.sdlc.v1.ProjectBinding.triage:type_name -> quicbaas.agents.v1.AgentRef
 	2,  // 10: quicbaas.sdlc.v1.ProjectBinding.reviewers:type_name -> quicbaas.sdlc.v1.ReviewerConfig
 	5,  // 11: quicbaas.sdlc.v1.ProjectBinding.merge_train:type_name -> quicbaas.sdlc.v1.MergeTrainPolicy
 	6,  // 12: quicbaas.sdlc.v1.ProjectBinding.clustering:type_name -> quicbaas.sdlc.v1.ClusteringPolicy
@@ -5433,72 +5746,77 @@ var file_api_proto_sdlc_proto_depIdxs = []int32{
 	7,  // 18: quicbaas.sdlc.v1.BindProjectResponse.binding:type_name -> quicbaas.sdlc.v1.ProjectBinding
 	7,  // 19: quicbaas.sdlc.v1.GetBindingResponse.binding:type_name -> quicbaas.sdlc.v1.ProjectBinding
 	12, // 20: quicbaas.sdlc.v1.GetDeliveryResponse.delivery:type_name -> quicbaas.sdlc.v1.Delivery
-	37, // 21: quicbaas.sdlc.v1.OnboardResponse.report:type_name -> quicbaas.sdlc.v1.OnboardingReport
-	40, // 22: quicbaas.sdlc.v1.GetConformanceResponse.report:type_name -> quicbaas.sdlc.v1.ConformanceReport
-	31, // 23: quicbaas.sdlc.v1.GetOpenWorkResponse.work:type_name -> quicbaas.sdlc.v1.OpenWork
-	29, // 24: quicbaas.sdlc.v1.OpenWork.pull_requests:type_name -> quicbaas.sdlc.v1.OpenPullRequest
-	30, // 25: quicbaas.sdlc.v1.OpenWork.issues:type_name -> quicbaas.sdlc.v1.OpenIssue
-	35, // 26: quicbaas.sdlc.v1.ReviewerSelectionResponse.selection:type_name -> quicbaas.sdlc.v1.ReviewerSelection
-	40, // 27: quicbaas.sdlc.v1.OnboardingReport.conformance:type_name -> quicbaas.sdlc.v1.ConformanceReport
-	39, // 28: quicbaas.sdlc.v1.ConformanceReport.checks:type_name -> quicbaas.sdlc.v1.ConformanceCheckResult
-	38, // 29: quicbaas.sdlc.v1.ConformanceReport.findings:type_name -> quicbaas.sdlc.v1.ConformanceFinding
-	42, // 30: quicbaas.sdlc.v1.FileIssueResponse.issue:type_name -> quicbaas.sdlc.v1.ForgeIssue
-	45, // 31: quicbaas.sdlc.v1.ListCollaboratorsResponse.users:type_name -> quicbaas.sdlc.v1.ForgeUser
-	51, // 32: quicbaas.sdlc.v1.GetWorkerImageStatusResponse.status:type_name -> quicbaas.sdlc.v1.WorkerImageStatus
-	51, // 33: quicbaas.sdlc.v1.RefreshWorkerImageResponse.status:type_name -> quicbaas.sdlc.v1.WorkerImageStatus
-	56, // 34: quicbaas.sdlc.v1.WorkerImageStatus.last:type_name -> quicbaas.sdlc.v1.WorkerImageReport
-	52, // 35: quicbaas.sdlc.v1.WorkerImageBound.agents:type_name -> quicbaas.sdlc.v1.WorkerImageAgents
-	52, // 36: quicbaas.sdlc.v1.WorkerImageReport.latest:type_name -> quicbaas.sdlc.v1.WorkerImageAgents
-	53, // 37: quicbaas.sdlc.v1.WorkerImageReport.probes:type_name -> quicbaas.sdlc.v1.WorkerImageCheck
-	53, // 38: quicbaas.sdlc.v1.WorkerImageReport.smokes:type_name -> quicbaas.sdlc.v1.WorkerImageCheck
-	55, // 39: quicbaas.sdlc.v1.WorkerImageReport.promotions:type_name -> quicbaas.sdlc.v1.WorkerImagePromotion
-	54, // 40: quicbaas.sdlc.v1.WorkerImageReport.bound:type_name -> quicbaas.sdlc.v1.WorkerImageBound
-	68, // 41: quicbaas.sdlc.v1.FacetCounts.counts:type_name -> quicbaas.sdlc.v1.FacetCounts.CountsEntry
-	59, // 42: quicbaas.sdlc.v1.ListAttentionResponse.items:type_name -> quicbaas.sdlc.v1.AttentionItem
-	69, // 43: quicbaas.sdlc.v1.ListAttentionResponse.facets:type_name -> quicbaas.sdlc.v1.ListAttentionResponse.FacetsEntry
-	59, // 44: quicbaas.sdlc.v1.ResolveAttentionResponse.item:type_name -> quicbaas.sdlc.v1.AttentionItem
-	61, // 45: quicbaas.sdlc.v1.ListAttentionResponse.FacetsEntry.value:type_name -> quicbaas.sdlc.v1.FacetCounts
-	13, // 46: quicbaas.sdlc.v1.SDLCService.BindProject:input_type -> quicbaas.sdlc.v1.BindProjectRequest
-	15, // 47: quicbaas.sdlc.v1.SDLCService.UnbindProject:input_type -> quicbaas.sdlc.v1.UnbindProjectRequest
-	17, // 48: quicbaas.sdlc.v1.SDLCService.GetBinding:input_type -> quicbaas.sdlc.v1.GetBindingRequest
-	19, // 49: quicbaas.sdlc.v1.SDLCService.GetDelivery:input_type -> quicbaas.sdlc.v1.GetDeliveryRequest
-	21, // 50: quicbaas.sdlc.v1.SDLCService.ListForges:input_type -> quicbaas.sdlc.v1.ListForgesRequest
-	23, // 51: quicbaas.sdlc.v1.SDLCService.Onboard:input_type -> quicbaas.sdlc.v1.OnboardRequest
-	25, // 52: quicbaas.sdlc.v1.SDLCService.GetConformance:input_type -> quicbaas.sdlc.v1.GetConformanceRequest
-	27, // 53: quicbaas.sdlc.v1.SDLCService.GetOpenWork:input_type -> quicbaas.sdlc.v1.GetOpenWorkRequest
-	32, // 54: quicbaas.sdlc.v1.SDLCService.GetReviewerSelection:input_type -> quicbaas.sdlc.v1.GetReviewerSelectionRequest
-	33, // 55: quicbaas.sdlc.v1.SDLCService.SetReviewerOverride:input_type -> quicbaas.sdlc.v1.SetReviewerOverrideRequest
-	34, // 56: quicbaas.sdlc.v1.SDLCService.ClearReviewerOverride:input_type -> quicbaas.sdlc.v1.ClearReviewerOverrideRequest
-	47, // 57: quicbaas.sdlc.v1.SDLCService.GetWorkerImageStatus:input_type -> quicbaas.sdlc.v1.GetWorkerImageStatusRequest
-	49, // 58: quicbaas.sdlc.v1.SDLCService.RefreshWorkerImage:input_type -> quicbaas.sdlc.v1.RefreshWorkerImageRequest
-	41, // 59: quicbaas.sdlc.v1.SDLCService.FileIssue:input_type -> quicbaas.sdlc.v1.FileIssueRequest
-	44, // 60: quicbaas.sdlc.v1.SDLCService.ListCollaborators:input_type -> quicbaas.sdlc.v1.ListCollaboratorsRequest
-	57, // 61: quicbaas.sdlc.v1.SDLCService.AdoptIssue:input_type -> quicbaas.sdlc.v1.AdoptIssueRequest
-	60, // 62: quicbaas.sdlc.v1.SDLCService.ListAttention:input_type -> quicbaas.sdlc.v1.ListAttentionRequest
-	63, // 63: quicbaas.sdlc.v1.SDLCService.ResolveAttention:input_type -> quicbaas.sdlc.v1.ResolveAttentionRequest
-	14, // 64: quicbaas.sdlc.v1.SDLCService.BindProject:output_type -> quicbaas.sdlc.v1.BindProjectResponse
-	16, // 65: quicbaas.sdlc.v1.SDLCService.UnbindProject:output_type -> quicbaas.sdlc.v1.UnbindProjectResponse
-	18, // 66: quicbaas.sdlc.v1.SDLCService.GetBinding:output_type -> quicbaas.sdlc.v1.GetBindingResponse
-	20, // 67: quicbaas.sdlc.v1.SDLCService.GetDelivery:output_type -> quicbaas.sdlc.v1.GetDeliveryResponse
-	22, // 68: quicbaas.sdlc.v1.SDLCService.ListForges:output_type -> quicbaas.sdlc.v1.ListForgesResponse
-	24, // 69: quicbaas.sdlc.v1.SDLCService.Onboard:output_type -> quicbaas.sdlc.v1.OnboardResponse
-	26, // 70: quicbaas.sdlc.v1.SDLCService.GetConformance:output_type -> quicbaas.sdlc.v1.GetConformanceResponse
-	28, // 71: quicbaas.sdlc.v1.SDLCService.GetOpenWork:output_type -> quicbaas.sdlc.v1.GetOpenWorkResponse
-	36, // 72: quicbaas.sdlc.v1.SDLCService.GetReviewerSelection:output_type -> quicbaas.sdlc.v1.ReviewerSelectionResponse
-	36, // 73: quicbaas.sdlc.v1.SDLCService.SetReviewerOverride:output_type -> quicbaas.sdlc.v1.ReviewerSelectionResponse
-	36, // 74: quicbaas.sdlc.v1.SDLCService.ClearReviewerOverride:output_type -> quicbaas.sdlc.v1.ReviewerSelectionResponse
-	48, // 75: quicbaas.sdlc.v1.SDLCService.GetWorkerImageStatus:output_type -> quicbaas.sdlc.v1.GetWorkerImageStatusResponse
-	50, // 76: quicbaas.sdlc.v1.SDLCService.RefreshWorkerImage:output_type -> quicbaas.sdlc.v1.RefreshWorkerImageResponse
-	43, // 77: quicbaas.sdlc.v1.SDLCService.FileIssue:output_type -> quicbaas.sdlc.v1.FileIssueResponse
-	46, // 78: quicbaas.sdlc.v1.SDLCService.ListCollaborators:output_type -> quicbaas.sdlc.v1.ListCollaboratorsResponse
-	58, // 79: quicbaas.sdlc.v1.SDLCService.AdoptIssue:output_type -> quicbaas.sdlc.v1.AdoptIssueResponse
-	62, // 80: quicbaas.sdlc.v1.SDLCService.ListAttention:output_type -> quicbaas.sdlc.v1.ListAttentionResponse
-	64, // 81: quicbaas.sdlc.v1.SDLCService.ResolveAttention:output_type -> quicbaas.sdlc.v1.ResolveAttentionResponse
-	64, // [64:82] is the sub-list for method output_type
-	46, // [46:64] is the sub-list for method input_type
-	46, // [46:46] is the sub-list for extension type_name
-	46, // [46:46] is the sub-list for extension extendee
-	0,  // [0:46] is the sub-list for field type_name
+	41, // 21: quicbaas.sdlc.v1.OnboardResponse.report:type_name -> quicbaas.sdlc.v1.OnboardingReport
+	28, // 22: quicbaas.sdlc.v1.OnboardRepoResponse.report:type_name -> quicbaas.sdlc.v1.RepoOnboardingReport
+	27, // 23: quicbaas.sdlc.v1.RepoOnboardingReport.steps:type_name -> quicbaas.sdlc.v1.RepoOnboardStep
+	44, // 24: quicbaas.sdlc.v1.RepoOnboardingReport.conformance:type_name -> quicbaas.sdlc.v1.ConformanceReport
+	44, // 25: quicbaas.sdlc.v1.GetConformanceResponse.report:type_name -> quicbaas.sdlc.v1.ConformanceReport
+	35, // 26: quicbaas.sdlc.v1.GetOpenWorkResponse.work:type_name -> quicbaas.sdlc.v1.OpenWork
+	33, // 27: quicbaas.sdlc.v1.OpenWork.pull_requests:type_name -> quicbaas.sdlc.v1.OpenPullRequest
+	34, // 28: quicbaas.sdlc.v1.OpenWork.issues:type_name -> quicbaas.sdlc.v1.OpenIssue
+	39, // 29: quicbaas.sdlc.v1.ReviewerSelectionResponse.selection:type_name -> quicbaas.sdlc.v1.ReviewerSelection
+	44, // 30: quicbaas.sdlc.v1.OnboardingReport.conformance:type_name -> quicbaas.sdlc.v1.ConformanceReport
+	43, // 31: quicbaas.sdlc.v1.ConformanceReport.checks:type_name -> quicbaas.sdlc.v1.ConformanceCheckResult
+	42, // 32: quicbaas.sdlc.v1.ConformanceReport.findings:type_name -> quicbaas.sdlc.v1.ConformanceFinding
+	46, // 33: quicbaas.sdlc.v1.FileIssueResponse.issue:type_name -> quicbaas.sdlc.v1.ForgeIssue
+	49, // 34: quicbaas.sdlc.v1.ListCollaboratorsResponse.users:type_name -> quicbaas.sdlc.v1.ForgeUser
+	55, // 35: quicbaas.sdlc.v1.GetWorkerImageStatusResponse.status:type_name -> quicbaas.sdlc.v1.WorkerImageStatus
+	55, // 36: quicbaas.sdlc.v1.RefreshWorkerImageResponse.status:type_name -> quicbaas.sdlc.v1.WorkerImageStatus
+	60, // 37: quicbaas.sdlc.v1.WorkerImageStatus.last:type_name -> quicbaas.sdlc.v1.WorkerImageReport
+	56, // 38: quicbaas.sdlc.v1.WorkerImageBound.agents:type_name -> quicbaas.sdlc.v1.WorkerImageAgents
+	56, // 39: quicbaas.sdlc.v1.WorkerImageReport.latest:type_name -> quicbaas.sdlc.v1.WorkerImageAgents
+	57, // 40: quicbaas.sdlc.v1.WorkerImageReport.probes:type_name -> quicbaas.sdlc.v1.WorkerImageCheck
+	57, // 41: quicbaas.sdlc.v1.WorkerImageReport.smokes:type_name -> quicbaas.sdlc.v1.WorkerImageCheck
+	59, // 42: quicbaas.sdlc.v1.WorkerImageReport.promotions:type_name -> quicbaas.sdlc.v1.WorkerImagePromotion
+	58, // 43: quicbaas.sdlc.v1.WorkerImageReport.bound:type_name -> quicbaas.sdlc.v1.WorkerImageBound
+	72, // 44: quicbaas.sdlc.v1.FacetCounts.counts:type_name -> quicbaas.sdlc.v1.FacetCounts.CountsEntry
+	63, // 45: quicbaas.sdlc.v1.ListAttentionResponse.items:type_name -> quicbaas.sdlc.v1.AttentionItem
+	73, // 46: quicbaas.sdlc.v1.ListAttentionResponse.facets:type_name -> quicbaas.sdlc.v1.ListAttentionResponse.FacetsEntry
+	63, // 47: quicbaas.sdlc.v1.ResolveAttentionResponse.item:type_name -> quicbaas.sdlc.v1.AttentionItem
+	65, // 48: quicbaas.sdlc.v1.ListAttentionResponse.FacetsEntry.value:type_name -> quicbaas.sdlc.v1.FacetCounts
+	13, // 49: quicbaas.sdlc.v1.SDLCService.BindProject:input_type -> quicbaas.sdlc.v1.BindProjectRequest
+	15, // 50: quicbaas.sdlc.v1.SDLCService.UnbindProject:input_type -> quicbaas.sdlc.v1.UnbindProjectRequest
+	17, // 51: quicbaas.sdlc.v1.SDLCService.GetBinding:input_type -> quicbaas.sdlc.v1.GetBindingRequest
+	19, // 52: quicbaas.sdlc.v1.SDLCService.GetDelivery:input_type -> quicbaas.sdlc.v1.GetDeliveryRequest
+	21, // 53: quicbaas.sdlc.v1.SDLCService.ListForges:input_type -> quicbaas.sdlc.v1.ListForgesRequest
+	23, // 54: quicbaas.sdlc.v1.SDLCService.Onboard:input_type -> quicbaas.sdlc.v1.OnboardRequest
+	25, // 55: quicbaas.sdlc.v1.SDLCService.OnboardRepo:input_type -> quicbaas.sdlc.v1.OnboardRepoRequest
+	29, // 56: quicbaas.sdlc.v1.SDLCService.GetConformance:input_type -> quicbaas.sdlc.v1.GetConformanceRequest
+	31, // 57: quicbaas.sdlc.v1.SDLCService.GetOpenWork:input_type -> quicbaas.sdlc.v1.GetOpenWorkRequest
+	36, // 58: quicbaas.sdlc.v1.SDLCService.GetReviewerSelection:input_type -> quicbaas.sdlc.v1.GetReviewerSelectionRequest
+	37, // 59: quicbaas.sdlc.v1.SDLCService.SetReviewerOverride:input_type -> quicbaas.sdlc.v1.SetReviewerOverrideRequest
+	38, // 60: quicbaas.sdlc.v1.SDLCService.ClearReviewerOverride:input_type -> quicbaas.sdlc.v1.ClearReviewerOverrideRequest
+	51, // 61: quicbaas.sdlc.v1.SDLCService.GetWorkerImageStatus:input_type -> quicbaas.sdlc.v1.GetWorkerImageStatusRequest
+	53, // 62: quicbaas.sdlc.v1.SDLCService.RefreshWorkerImage:input_type -> quicbaas.sdlc.v1.RefreshWorkerImageRequest
+	45, // 63: quicbaas.sdlc.v1.SDLCService.FileIssue:input_type -> quicbaas.sdlc.v1.FileIssueRequest
+	48, // 64: quicbaas.sdlc.v1.SDLCService.ListCollaborators:input_type -> quicbaas.sdlc.v1.ListCollaboratorsRequest
+	61, // 65: quicbaas.sdlc.v1.SDLCService.AdoptIssue:input_type -> quicbaas.sdlc.v1.AdoptIssueRequest
+	64, // 66: quicbaas.sdlc.v1.SDLCService.ListAttention:input_type -> quicbaas.sdlc.v1.ListAttentionRequest
+	67, // 67: quicbaas.sdlc.v1.SDLCService.ResolveAttention:input_type -> quicbaas.sdlc.v1.ResolveAttentionRequest
+	14, // 68: quicbaas.sdlc.v1.SDLCService.BindProject:output_type -> quicbaas.sdlc.v1.BindProjectResponse
+	16, // 69: quicbaas.sdlc.v1.SDLCService.UnbindProject:output_type -> quicbaas.sdlc.v1.UnbindProjectResponse
+	18, // 70: quicbaas.sdlc.v1.SDLCService.GetBinding:output_type -> quicbaas.sdlc.v1.GetBindingResponse
+	20, // 71: quicbaas.sdlc.v1.SDLCService.GetDelivery:output_type -> quicbaas.sdlc.v1.GetDeliveryResponse
+	22, // 72: quicbaas.sdlc.v1.SDLCService.ListForges:output_type -> quicbaas.sdlc.v1.ListForgesResponse
+	24, // 73: quicbaas.sdlc.v1.SDLCService.Onboard:output_type -> quicbaas.sdlc.v1.OnboardResponse
+	26, // 74: quicbaas.sdlc.v1.SDLCService.OnboardRepo:output_type -> quicbaas.sdlc.v1.OnboardRepoResponse
+	30, // 75: quicbaas.sdlc.v1.SDLCService.GetConformance:output_type -> quicbaas.sdlc.v1.GetConformanceResponse
+	32, // 76: quicbaas.sdlc.v1.SDLCService.GetOpenWork:output_type -> quicbaas.sdlc.v1.GetOpenWorkResponse
+	40, // 77: quicbaas.sdlc.v1.SDLCService.GetReviewerSelection:output_type -> quicbaas.sdlc.v1.ReviewerSelectionResponse
+	40, // 78: quicbaas.sdlc.v1.SDLCService.SetReviewerOverride:output_type -> quicbaas.sdlc.v1.ReviewerSelectionResponse
+	40, // 79: quicbaas.sdlc.v1.SDLCService.ClearReviewerOverride:output_type -> quicbaas.sdlc.v1.ReviewerSelectionResponse
+	52, // 80: quicbaas.sdlc.v1.SDLCService.GetWorkerImageStatus:output_type -> quicbaas.sdlc.v1.GetWorkerImageStatusResponse
+	54, // 81: quicbaas.sdlc.v1.SDLCService.RefreshWorkerImage:output_type -> quicbaas.sdlc.v1.RefreshWorkerImageResponse
+	47, // 82: quicbaas.sdlc.v1.SDLCService.FileIssue:output_type -> quicbaas.sdlc.v1.FileIssueResponse
+	50, // 83: quicbaas.sdlc.v1.SDLCService.ListCollaborators:output_type -> quicbaas.sdlc.v1.ListCollaboratorsResponse
+	62, // 84: quicbaas.sdlc.v1.SDLCService.AdoptIssue:output_type -> quicbaas.sdlc.v1.AdoptIssueResponse
+	66, // 85: quicbaas.sdlc.v1.SDLCService.ListAttention:output_type -> quicbaas.sdlc.v1.ListAttentionResponse
+	68, // 86: quicbaas.sdlc.v1.SDLCService.ResolveAttention:output_type -> quicbaas.sdlc.v1.ResolveAttentionResponse
+	68, // [68:87] is the sub-list for method output_type
+	49, // [49:68] is the sub-list for method input_type
+	49, // [49:49] is the sub-list for extension type_name
+	49, // [49:49] is the sub-list for extension extendee
+	0,  // [0:49] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_sdlc_proto_init() }
@@ -5514,7 +5832,7 @@ func file_api_proto_sdlc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_sdlc_proto_rawDesc), len(file_api_proto_sdlc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   70,
+			NumMessages:   74,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

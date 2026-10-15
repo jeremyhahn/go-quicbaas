@@ -132,6 +132,55 @@ func TestAccountMCPTransformResponse_HappyPaths(t *testing.T) {
 	}
 }
 
+// TestAccountMCPTransformResponse_ListCarriesThePageEnvelope pins that the
+// applied limit, offset, next offset and facets of the account list reach the
+// caller, as they do over REST, gRPC and embedded.
+func TestAccountMCPTransformResponse_ListCarriesThePageEnvelope(t *testing.T) {
+	h := newAccountMCPHandler()
+	out, err := h.transformResponse("List", map[string]interface{}{
+		"accounts":    []interface{}{map[string]interface{}{"id": "acct-1"}},
+		"total":       3,
+		"limit":       1,
+		"offset":      1,
+		"next_offset": 2,
+		"facets":      map[string]map[string]int{"provider": {"claude": 3}},
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	list, ok := out.(*account.ListAccountsResponse)
+	if !ok {
+		t.Fatalf("List decoded to %T", out)
+	}
+	if list.Total != 3 || list.Limit != 1 || list.Offset != 1 || list.NextOffset != 2 {
+		t.Errorf("List lost the page envelope: %#v", list.Envelope)
+	}
+	if list.Facets["provider"]["claude"] != 3 {
+		t.Errorf("List lost the facets: %#v", list.Facets)
+	}
+}
+
+// TestAccountMCPTransformResponse_ListWithoutFacetsStaysNil pins that an
+// account list the server counted no facets for decodes with nil facets and
+// an empty, not nil, account slice.
+func TestAccountMCPTransformResponse_ListWithoutFacetsStaysNil(t *testing.T) {
+	h := newAccountMCPHandler()
+	out, err := h.transformResponse("List", map[string]interface{}{"total": 0})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	list, ok := out.(*account.ListAccountsResponse)
+	if !ok {
+		t.Fatalf("List decoded to %T", out)
+	}
+	if list.Facets != nil {
+		t.Errorf("List facets = %#v, want nil", list.Facets)
+	}
+	if list.Accounts == nil || len(list.Accounts) != 0 {
+		t.Errorf("List accounts = %#v, want an empty slice", list.Accounts)
+	}
+}
+
 // TestAccountMCPTransformResponse_ErrorPaths covers the failure modes.
 func TestAccountMCPTransformResponse_ErrorPaths(t *testing.T) {
 	h := newAccountMCPHandler()

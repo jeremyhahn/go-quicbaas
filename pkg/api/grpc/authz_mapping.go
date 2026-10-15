@@ -668,6 +668,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackends":           {"orchestrator", "backend_list"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListRunners":            {"orchestrator", "status"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListWorkflows":          {"orchestrator", "workflow_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/CreateWorkflow":         {"orchestrator", "workflow_write"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetWorkflow":            {"orchestrator", "workflow_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/UpdateWorkflow":         {"orchestrator", "workflow_write"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/DeleteWorkflow":         {"orchestrator", "workflow_write"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/Health":                 {"orchestrator", "health"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/Inference":              {"orchestrator", "inference"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream":        {"orchestrator", "inference"},
@@ -676,6 +680,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListFleetNodes":         {"orchestrator", "agent_list"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/RemoveFleetNode":        {"orchestrator", "agent_remove"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/FleetNodeHeartbeat":     {"orchestrator", "agent_heartbeat"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListBackendModels":      {"orchestrator", "backend_list"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/PushEvents":             {"orchestrator", "hook"},
 
 	// ---- quicbaas.messaging.v1.MessagingService ----
@@ -777,6 +782,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// a reader may ask what state a repository is in without being able to
 	// change it.
 	"/quicbaas.sdlc.v1.SDLCService/Onboard":        {"sdlc", "bind"},
+	"/quicbaas.sdlc.v1.SDLCService/OnboardRepo":    {"sdlc", "bind"},
 	"/quicbaas.sdlc.v1.SDLCService/GetConformance": {"sdlc", "read"},
 	// Open work is read from the forge and changes nothing, like conformance.
 	"/quicbaas.sdlc.v1.SDLCService/GetOpenWork": {"sdlc", "read"},

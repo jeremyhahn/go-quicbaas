@@ -60,6 +60,15 @@ type Client interface {
 	// EXPLICIT REPAIR for a conformance finding — Conformance never repairs.
 	Onboard(ctx context.Context, tenantID, projectID string) (*OnboardingReport, error)
 
+	// OnboardRepo onboards a forge repository like an existing bound
+	// project: it creates the project and the webhook secret, binds the
+	// repository and provisions its forge, and reports every step as
+	// created, unchanged or a finding. IDEMPOTENT: a second run reports
+	// every step unchanged. What it may not do itself — a missing forge
+	// token or signing key, an unprotected branch, a stale workflow — it
+	// reports as a finding with its remedy.
+	OnboardRepo(ctx context.Context, req *RepoOnboardRequest) (*RepoOnboardingReport, error)
+
 	// Conformance reports whether the project is correctly onboarded, and
 	// what is wrong if it is not. It changes nothing.
 	Conformance(ctx context.Context, tenantID, projectID string) (*ConformanceReport, error)
@@ -597,6 +606,71 @@ type OnboardingReport struct {
 	Conformance *ConformanceReport `json:"conformance,omitempty" yaml:"conformance,omitempty"`
 }
 
+// RepoOnboardRequest onboards one forge repository like an existing, bound
+// project.
+type RepoOnboardRequest struct {
+	TenantID string `json:"tenant_id,omitempty" yaml:"tenant_id,omitempty"`
+
+	// Repo is the repository's name on the template's forge and owner, one
+	// path segment.
+	Repo string `json:"repo" yaml:"repo"`
+
+	// Like is the ID of the bound project the repository is onboarded like.
+	Like string `json:"like" yaml:"like"`
+
+	// MaxConcurrency bounds the new project's concurrent jobs. Zero takes
+	// the template's.
+	MaxConcurrency int `json:"max_concurrency,omitempty" yaml:"max_concurrency,omitempty"`
+
+	// Paused binds without switching the new project's autonomy on.
+	Paused bool `json:"paused,omitempty" yaml:"paused,omitempty"`
+
+	// Preflight runs the verification commands once on the default branch in
+	// the worker image and switches autonomy on only when they pass.
+	Preflight bool `json:"preflight,omitempty" yaml:"preflight,omitempty"`
+}
+
+// What one repository onboarding step did.
+const (
+	OnboardCreated   = "created"
+	OnboardUnchanged = "unchanged"
+	OnboardFinding   = "finding"
+)
+
+// RepoOnboardStep is one onboarding step's outcome.
+type RepoOnboardStep struct {
+	Step string `json:"step" yaml:"step"`
+
+	// Outcome is OnboardCreated, OnboardUnchanged or OnboardFinding.
+	Outcome string `json:"outcome" yaml:"outcome"`
+
+	// Detail says what the step created, or what it found wrong.
+	Detail string `json:"detail,omitempty" yaml:"detail,omitempty"`
+
+	// Remedy says what fixes a finding.
+	Remedy string `json:"remedy,omitempty" yaml:"remedy,omitempty"`
+}
+
+// RepoOnboardingReport is every step's outcome and the conformance the
+// repository is in afterwards.
+type RepoOnboardingReport struct {
+	TenantID string `json:"tenant_id,omitempty" yaml:"tenant_id,omitempty"`
+
+	// ProjectID is the onboarded project, empty when it could not be
+	// created.
+	ProjectID string `json:"project_id,omitempty" yaml:"project_id,omitempty"`
+
+	// Repo is the onboarded repository as "owner/repo".
+	Repo string `json:"repo" yaml:"repo"`
+
+	// Steps are the steps in the order they ran.
+	Steps []RepoOnboardStep `json:"steps" yaml:"steps"`
+
+	// Conformance is the repository's state after onboarding, absent when
+	// the project was never bound.
+	Conformance *ConformanceReport `json:"conformance,omitempty" yaml:"conformance,omitempty"`
+}
+
 // ConformanceFinding is one thing that is wrong, and what to do about it.
 //
 // EVERY FINDING CARRIES A REMEDY. "Not conformant" is useless, and the
@@ -857,6 +931,29 @@ func (c *client) Onboard(ctx context.Context, tenantID, projectID string) (*Onbo
 		return nil, err
 	}
 	report, ok := resp.(*OnboardingReport)
+	if !ok || report == nil {
+		return nil, errors.NewInternal(op, "unexpected response type from server")
+	}
+	return report, nil
+}
+
+// OnboardRepo implements Client.
+func (c *client) OnboardRepo(ctx context.Context, req *RepoOnboardRequest) (*RepoOnboardingReport, error) {
+	const op = "sdlc.OnboardRepo"
+	if err := c.refuseUnwired(op); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput(op, "context is required")
+	}
+	if req == nil || req.Repo == "" || req.Like == "" {
+		return nil, errors.NewInvalidInput(op, "repo and like are required")
+	}
+	resp, err := c.transport.Request(ctx, serviceName, "OnboardRepo", req)
+	if err != nil {
+		return nil, err
+	}
+	report, ok := resp.(*RepoOnboardingReport)
 	if !ok || report == nil {
 		return nil, errors.NewInternal(op, "unexpected response type from server")
 	}

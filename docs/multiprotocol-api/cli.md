@@ -145,17 +145,43 @@ them. Flags such as `--output`, `--consistency`, `--max-retries` and
 
 ### Transport selection
 
-The CLI auto-selects a transport from `--address`:
+`--transport` selects the protocol. When it is not passed, the CLI picks
+the transport from `--address`:
 
-| Address pattern | Transport |
-|-----------------|-----------|
-| `https://host:port` | REST |
-| `host:port` (no scheme) | gRPC over TLS |
-| `quic://host:port` or `--transport quic` | QUIC (multiplexed streams) |
-| `mcp://host:port` or `--transport mcp` | MCP (JSON-RPC over WSS) |
-| `/path/to/socket` (starts with `/`) | gRPC over Unix domain socket |
+- An `http://` or `https://` URL selects `rest`.
+- Anything else, a socket path included, selects `unix`, the default.
 
-Pass `--transport <name>` explicitly to override. Every CLI subcommand
+A `host:port` address therefore needs an explicit `--transport`, and an
+explicit `--transport` always wins over the address. Every command, the
+scheduler commands included, applies this one rule.
+
+| `--transport` | `--address` |
+|---------------|-------------|
+| `unix` (default) | Unix domain socket path |
+| `grpc` | `host:port` |
+| `rest` | `https://host:port` |
+| `quic` | `host:port` |
+| `mcp` | `host:port` (JSON-RPC over WSS) |
+| `embedded` | not dialled; the CLI starts an in-process server |
+
+Two further switches apply under an explicit `--transport grpc`:
+
+- The CLI uses `unix` when `--address` ends in `.sock`: the Unix transport
+  is gRPC over that socket.
+- The SDK client switches to REST when `--address` starts with
+  `http://` or `https://`.
+
+```bash
+quicbaas data get user john                         # unix, $HOME/quicbaas.sock
+quicbaas --address https://quicbaas.example.com:8443 \
+  --tls-ca /etc/quicbaas/ca.pem data get user john  # rest, from the URL
+quicbaas --transport grpc --address /run/quicbaas.sock \
+  data get user john                                # unix
+quicbaas --transport grpc --address quicbaas.example.com:9090 \
+  --tls --tls-ca /etc/quicbaas/ca.pem data get user john   # gRPC over TLS
+```
+
+Every CLI subcommand
 works on every transport — see the [multi-protocol parity guide](architecture.md)
 and the integration tests under `test/integration/cli/`.
 

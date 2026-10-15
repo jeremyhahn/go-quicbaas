@@ -46,6 +46,7 @@ be able to ASK what state a repository is in without being able to change it.
 | `DELETE` | `/api/v1/sdlc/projects/{projectID}/binding` | `sdlc:unbind` |
 | `POST` | `/api/v1/sdlc/projects/{projectID}/onboarding` | `sdlc:bind` |
 | `GET` | `/api/v1/sdlc/projects/{projectID}/conformance` | `sdlc:read` |
+| `POST` | `/api/v1/sdlc/repos/{repo}/onboarding` | `sdlc:bind` |
 | `POST` | `/api/v1/sdlc/projects/{projectID}/adopt` | `orchestrator:task_create` |
 | `GET` | `/api/v1/sdlc/projects/{projectID}/open-work` | `sdlc:read` |
 | `GET` | `/api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer` | `sdlc:read` |
@@ -223,6 +224,85 @@ without re-sending every binding.
  "conformance": {"conformant": true, "checks": [{"name": "webhook", "status": "pass", "findings": 0}]}}
 ```
 
+#### `POST /api/v1/sdlc/repos/{repo}/onboarding`
+
+Onboards a new forge repository the way an existing bound project — the
+template, `like` — was onboarded: its project is created from the template's
+(signing key `agent-<repo>-signing`, scope `service`), and it is bound with the
+template's binding with every reference to the template's repository swapped
+for `{repo}`. The body names the template and, optionally, the new binding's
+`max_concurrency` (`0` keeps the template's), `paused` (bind without
+switching autonomy on) and `preflight` (switch autonomy on only after the
+verification commands pass; see below). `repo` may be omitted from the body
+and must otherwise match the path.
+
+```json
+{"like": "go-truststrap", "max_concurrency": 2, "paused": true, "preflight": true}
+```
+
+Every step checks before it acts, so a second run finds everything in place
+and answers every step `unchanged`. A step is `created`, `unchanged` or
+`finding`; a finding carries the remedy, and a step that depends on an earlier
+finding is itself a finding (`blocked: …`) whose remedy is to rerun. In order:
+
+| step | acts | finding when |
+|---|---|---|
+| `signing_key` | never — key material is not imported | the SSH key `agent-<repo>-signing` is absent |
+| `forge_token` | never — tokens are not created | `sdlc/forge/<repo>/token` is absent |
+| `webhook_secret` | creates `sdlc/webhook/<repo>`, a random HMAC secret, in the tenant keyspace | — |
+| `project` | creates the project from the template | the signing key or forge token is missing |
+| `binding` | binds the template's binding, retargeted | the project or forge token is missing |
+| `forge` | provisions the webhook and labels, as `onboarding` above | the project is not bound |
+| `protection` | never — protection is the owner's setting | `CI / CI Gate (pull_request)` or `quicbaas/review` is not required |
+| `workflows` | never — nothing is committed | an orchestration workflow is still in the repository |
+| `preflight` | only with `preflight`: runs the verification commands, then switches autonomy on | a command fails, the guard refuses one, or no verdict was reached |
+
+```json
+{"tenant_id": "acme", "project_id": "…", "repo": "example/go-luks2",
+ "steps": [{"step": "signing_key", "outcome": "unchanged"},
+           {"step": "forge_token", "outcome": "unchanged"},
+           {"step": "webhook_secret", "outcome": "created"},
+           {"step": "project", "outcome": "created"},
+           {"step": "binding", "outcome": "created"},
+           {"step": "forge", "outcome": "created"},
+           {"step": "protection", "outcome": "finding",
+            "detail": "the protection on main does not require quicbaas/review",
+            "remedy": "require quicbaas/review on the forge's protection rule for main"},
+           {"step": "workflows", "outcome": "unchanged"}],
+ "conformance": {"conformant": false, "checks": [{"name": "protection", "status": "fail", "findings": 1}]}}
+```
+
+**`preflight`.** The project binds paused, then the binding's
+`verification_commands` run once as a `preflight` job: on the default branch,
+in the bound worker's container image, with no agent turn and nothing run on
+the daemon. Each command passes the same `container_command` guard as
+delivery verification. The call returns when the job ends.
+
+- **Green** — every command passed: autonomy is switched on (`created`,
+  `…; autonomy on`), unless `paused` was also set (`unchanged`,
+  `…; paused as asked`).
+- **Red** — a `finding`; autonomy stays off. The detail names each failing
+  command with its exit code and failing lines, e.g.
+  `command=make test exit_code=2` followed by `x_test.go:9: want 1, got 2`.
+- **Refused** — a command the operator's allowlist does not carry is a
+  `finding` naming it, and nothing runs. On a first onboarding the same
+  refusal is a `binding` finding, since the binding cannot be stored.
+- **No verdict** — no job engine, or a job that could not start or be
+  followed, is a `finding`; autonomy stays off.
+- **Nothing to gate** — no verification commands: `unchanged`, with that
+  reason, and the bind switches autonomy on as without `preflight`.
+- **Already autonomous** — `unchanged`; no job runs, and the preflight never
+  switches autonomy off.
+
+Without `preflight` the step is not reported. gRPC carries it as
+`OnboardRepoRequest.preflight` (field 6), MCP as the `sdlc_project_onboard`
+boolean argument `preflight`, and the Go SDK as `RepoOnboardRequest.Preflight`.
+
+A report with findings is still a `200`: the report is the answer. A missing
+`like`, a `repo` that differs from the path, or one that is the template's own
+repository is a `400`; a template that does not exist or is not bound is a
+`404`.
+
 #### `GET /api/v1/sdlc/projects/{projectID}/conformance`
 
 Answers "is this project correctly onboarded, and if not, what is wrong".
@@ -315,7 +395,7 @@ the same `401 unauthenticated`, and a node with the module disabled answers
 
 `quicbaas.sdlc.v1.SDLCService` (`api/proto/sdlc.proto`): `BindProject`,
 `UnbindProject`, `GetBinding`, `GetDelivery`, `ListForges`, `Onboard`,
-`GetConformance`, `GetOpenWork`, `GetReviewerSelection`, `SetReviewerOverride`,
+`OnboardRepo`, `GetConformance`, `GetOpenWork`, `GetReviewerSelection`, `SetReviewerOverride`,
 `ClearReviewerOverride`, `GetWorkerImageStatus`, `RefreshWorkerImage`,
 `FileIssue` (`sdlc:issue_create`), `ListCollaborators`, `AdoptIssue`
 (`orchestrator:task_create`), each carrying its permission as
@@ -325,7 +405,7 @@ gRPC verbatim. A node with the module disabled answers `Unavailable`.
 ### MCP
 
 Tools `sdlc_bind`, `sdlc_unbind`, `sdlc_binding`, `sdlc_delivery`,
-`sdlc_forges`, `sdlc_onboard`, `sdlc_conformance`, `sdlc_open_work`, `sdlc_reviewer`,
+`sdlc_forges`, `sdlc_onboard`, `sdlc_project_onboard`, `sdlc_conformance`, `sdlc_open_work`, `sdlc_reviewer`,
 `sdlc_reviewer_set`, `sdlc_reviewer_clear`, `sdlc_issue_create`,
 `sdlc_collaborators`, `quicbaas_sdlc_worker_image`,
 `quicbaas_sdlc_worker_image_refresh`, `sdlc_adopt_issue`, mapped to the same
@@ -344,6 +424,7 @@ delivery, err := client.SDLC().Delivery(ctx, tenant, taskID)
 err = client.SDLC().Unbind(ctx, tenant, projectID)
 forges, err := client.SDLC().ListForges(ctx)
 report, err := client.SDLC().Onboard(ctx, tenant, projectID)
+onboarded, err := client.SDLC().OnboardRepo(ctx, &sdlc.RepoOnboardRequest{TenantID: tenant, Repo: "go-luks2", Like: projectID, Paused: true})
 conformance, err := client.SDLC().Conformance(ctx, tenant, projectID)
 work, err := client.SDLC().OpenWork(ctx, tenant, projectID)
 selection, err := client.SDLC().Reviewer(ctx, tenant, projectID, 1075)

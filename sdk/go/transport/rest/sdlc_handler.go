@@ -58,6 +58,7 @@ var sdlcMethods = map[string]func(*sdlcRESTHandler) sdlcMethodHandler{
 	"Delivery":    func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleDelivery },
 	"ListForges":  func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleListForges },
 	"Onboard":     func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleOnboard },
+	"OnboardRepo": func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleOnboardRepo },
 	"Conformance": func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleConformance },
 	"OpenWork":    func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleOpenWork },
 
@@ -85,6 +86,10 @@ func sdlcBindingPath(projectID string) string {
 
 func sdlcOnboardingPath(projectID string) string {
 	return "/api/v1/sdlc/projects/" + url.PathEscape(projectID) + "/onboarding"
+}
+
+func sdlcRepoOnboardingPath(repo string) string {
+	return "/api/v1/sdlc/repos/" + url.PathEscape(repo) + "/onboarding"
 }
 
 func sdlcConformancePath(projectID string) string {
@@ -189,6 +194,25 @@ func (h *sdlcRESTHandler) handleOnboard(ctx context.Context, req interface{}) (i
 	var resp sdlc.OnboardingReport
 	path := sdlcOnboardingPath(sdkReq.ProjectID) + tenantQuery(sdkReq.TenantID)
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (h *sdlcRESTHandler) handleOnboardRepo(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*sdlc.RepoOnboardRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("sdlc.OnboardRepo", "invalid request type")
+	}
+	body := struct {
+		Like           string `json:"like"`
+		MaxConcurrency int    `json:"max_concurrency,omitempty"`
+		Paused         bool   `json:"paused,omitempty"`
+		Preflight      bool   `json:"preflight,omitempty"`
+	}{Like: sdkReq.Like, MaxConcurrency: sdkReq.MaxConcurrency, Paused: sdkReq.Paused, Preflight: sdkReq.Preflight}
+	var resp sdlc.RepoOnboardingReport
+	path := sdlcRepoOnboardingPath(sdkReq.Repo) + tenantQuery(sdkReq.TenantID)
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, path, &body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

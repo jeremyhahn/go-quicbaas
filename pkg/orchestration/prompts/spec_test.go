@@ -15,11 +15,23 @@ package prompts
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
 
 // simpleSpec is a one-prompt set a test can register under its own kind.
+// useLocalRegistry points the package-level registry at an empty one for the
+// test and restores the process registry when it ends. Registration is
+// append-only, so a set a test registers on the process registry would make
+// the same test refuse, or MustRegisterSet panic, on the next -count run.
+func useLocalRegistry(t *testing.T) {
+	t.Helper()
+	process := registry
+	registry = NewRegistry()
+	t.Cleanup(func() { registry = process })
+}
+
 func simpleSpec(kind SetKind) SetSpec {
 	return SetSpec{
 		Kind:        kind,
@@ -35,6 +47,7 @@ func simpleSpec(kind SetKind) SetSpec {
 }
 
 func TestRegisterSet_PublishesASetWithItsDefaults(t *testing.T) {
+	useLocalRegistry(t)
 	set, err := RegisterSet(simpleSpec("register-ok"))
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -66,6 +79,7 @@ func TestRegisterSet_PublishesASetWithItsDefaults(t *testing.T) {
 }
 
 func TestRegisterSet_RefusesASecondSetClaimingTheKind(t *testing.T) {
+	useLocalRegistry(t)
 	if _, err := RegisterSet(simpleSpec("register-twice")); err != nil {
 		t.Fatalf("first registration: %v", err)
 	}
@@ -94,6 +108,7 @@ func TestLookupSet_AnswersFalseForAKindNothingRegistered(t *testing.T) {
 }
 
 func TestSets_ListsEveryRegisteredSetInKindOrder(t *testing.T) {
+	useLocalRegistry(t)
 	for _, kind := range []SetKind{"zzz-list", "aaa-list"} {
 		if _, err := RegisterSet(simpleSpec(kind)); err != nil {
 			t.Fatalf("register %s: %v", kind, err)
@@ -103,17 +118,13 @@ func TestSets_ListsEveryRegisteredSetInKindOrder(t *testing.T) {
 	for _, set := range Sets() {
 		seen = append(seen, string(set.Kind()))
 	}
-	if len(seen) < 2 {
-		t.Fatalf("Sets returned %v", seen)
-	}
-	for i := 1; i < len(seen); i++ {
-		if seen[i-1] > seen[i] {
-			t.Fatalf("Sets must be ordered by kind, got %v", seen)
-		}
+	if want := []string{"aaa-list", "zzz-list"}; !slices.Equal(seen, want) {
+		t.Fatalf("Sets = %v, want every registered set in kind order %v", seen, want)
 	}
 }
 
 func TestRegisterSet_RefusesEverySpecificationThatDescribesNothing(t *testing.T) {
+	useLocalRegistry(t)
 	valid := PromptSpec{Name: "p", Default: "text"}
 	cases := []struct {
 		name string
@@ -151,6 +162,7 @@ func TestRegisterSet_RefusesEverySpecificationThatDescribesNothing(t *testing.T)
 }
 
 func TestRegisterSet_HoldsAShippedDefaultToItsOwnContract(t *testing.T) {
+	useLocalRegistry(t)
 	spec := SetSpec{Kind: "bad-default", Prompts: []PromptSpec{{
 		Name:    "greeting",
 		Default: "Hello.",
@@ -167,6 +179,7 @@ func TestRegisterSet_HoldsAShippedDefaultToItsOwnContract(t *testing.T) {
 }
 
 func TestMustRegisterSet_ReturnsTheSetAndPanicsOnAnInvalidOne(t *testing.T) {
+	useLocalRegistry(t)
 	if set := MustRegisterSet(simpleSpec("must-register")); set == nil {
 		t.Fatal("MustRegisterSet returned nothing")
 	}
@@ -183,6 +196,7 @@ func TestMustRegisterSet_ReturnsTheSetAndPanicsOnAnInvalidOne(t *testing.T) {
 }
 
 func TestSetBody_RefusesAPromptTheSetDoesNotDeclare(t *testing.T) {
+	useLocalRegistry(t)
 	set, err := RegisterSet(simpleSpec("unknown-prompt"))
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -198,6 +212,7 @@ func TestSetBody_RefusesAPromptTheSetDoesNotDeclare(t *testing.T) {
 }
 
 func TestSetRender_RendersAndMustRenderPanicsOnABadCall(t *testing.T) {
+	useLocalRegistry(t)
 	set, err := RegisterSet(simpleSpec("render-set"))
 	if err != nil {
 		t.Fatalf("register: %v", err)

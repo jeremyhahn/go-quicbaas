@@ -262,6 +262,31 @@ func verificationSummary(result orchestration.ValidationResult) string {
 	return strings.Join(texts, "\n")
 }
 
+// auditVerificationResults puts every verification command's answer on the
+// job's record and returns the commands that failed.
+//
+// A FAILED COMMAND'S RECORD CARRIES ITS FAILING LINES, not its first line:
+// see verificationSummary. The header stays the first line, so a grep for
+// `passed=false` still finds it.
+func auditVerificationResults(job *orchestration.JobRun, results []orchestration.ValidationResult) []orchestration.ValidationResult {
+	var failed []orchestration.ValidationResult
+	for _, result := range results {
+		summary := verificationSummary(result)
+		header := "command=" + result.Name + " passed=" + strconv.FormatBool(result.Passed)
+		if result.ExitCode != 0 {
+			header += " exit_code=" + strconv.Itoa(result.ExitCode)
+		}
+		header += " output_bytes=" + strconv.Itoa(len(result.Details))
+		if result.Passed {
+			job.Audit(auditVerification, header+" "+summary)
+			continue
+		}
+		job.Audit(auditVerification, header+"\n"+summary)
+		failed = append(failed, result)
+	}
+	return failed
+}
+
 // summaryLine is one line of a failed command's summary, and whether it
 // names the failure.
 type summaryLine struct {

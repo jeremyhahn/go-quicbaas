@@ -52,6 +52,10 @@ func TestHandleOrchestratorError_Dispatch(t *testing.T) {
 		// Agent whose limits could not be checked is unavailable.
 		{"agent_over_budget", &orchestration.AgentSpendExhaustedError{AgentID: "a", Window: "daily", Axis: "tokens", Used: 2, Limit: 1}, http.StatusServiceUnavailable},
 		{"agent_spend_undecidable", &orchestration.AgentSpendUndecidableError{AgentID: "a"}, http.StatusServiceUnavailable},
+		// A workflow definition the service refuses is the caller's to fix.
+		{"workflow_validation", &orchestration.WorkflowValidationError{Field: "agents", Message: "at least one agent is required"}, http.StatusBadRequest},
+		{"workflow_not_found", &orchestration.WorkflowNotFoundError{TenantID: "t", Name: "w"}, http.StatusNotFound},
+		{"workflow_exists", &orchestration.WorkflowAlreadyExistsError{TenantID: "t", Name: "w"}, http.StatusConflict},
 		{"conflict", orchestration.ErrTaskAlreadyClaimed, http.StatusConflict},
 		{"forbidden", orchestration.ErrNotLeadOfParent, http.StatusForbidden},
 		{"qb_forbidden", qerrors.New(qerrors.ErrForbidden, "fleet.ListFleetNodes", "scope denied"), http.StatusForbidden},

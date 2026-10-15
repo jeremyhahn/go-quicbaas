@@ -179,7 +179,7 @@ func projectParityTransports(t *testing.T, svc service.ProjectService) map[strin
 // facade: the production REST router, the gRPC services registerGRPC
 // registers (over TCP and over a unix socket), the production MCP module
 // registration and the embedded transport.
-func parityTransports(t *testing.T, facade *mocks.MockQuicBaaS, registerGRPC func(grpclib.ServiceRegistrar)) map[string]transport.Transport {
+func parityTransports(t *testing.T, facade service.QuicBaaS, registerGRPC func(grpclib.ServiceRegistrar)) map[string]transport.Transport {
 	t.Helper()
 
 	log := testLogger(t)
@@ -224,14 +224,17 @@ func parityTransports(t *testing.T, facade *mocks.MockQuicBaaS, registerGRPC fun
 	add("unix", unixTr, err)
 
 	// MCP: the production module registration over a real streamable-HTTP
-	// MCP server.
+	// MCP server, binding the tenant the way the REST row does.
 	mcpBackend := mcpapi.NewServer(facade, nil, log)
 	module, err := NewModule(func() service.QuicBaaS { return facade }, log,
 		WithMCPServer(func() *mcpapi.Server { return mcpBackend }))
 	require.NoError(t, err)
 	mcpSrv := mcpserver.NewMCPServer("quicbaas-parity", "1.0.0")
 	module.RegisterMCP(mcpSrv)
-	mcpHTTP := mcpserver.NewTestStreamableHTTPServer(mcpSrv)
+	mcpHTTP := mcpserver.NewTestStreamableHTTPServer(mcpSrv,
+		mcpserver.WithHTTPContextFunc(func(ctx context.Context, _ *http.Request) context.Context {
+			return tenantctx.WithTenant(ctx, parityProjectTenant)
+		}))
 	t.Cleanup(mcpHTTP.Close)
 	mcpTr, err := sdkmcp.New(&transport.Config{Address: mcpHTTP.URL, Timeout: 5 * time.Second})
 	add("mcp", mcpTr, err)

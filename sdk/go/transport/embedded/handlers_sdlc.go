@@ -125,6 +125,25 @@ func handleSDLCOnboard(ctx context.Context, svc service.QuicBaaS, req interface{
 	return sdlcOnboardingReportFromDomain(report), nil
 }
 
+func handleSDLCOnboardRepo(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*sdlc.RepoOnboardRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "OnboardRepo", "*sdlc.RepoOnboardRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc, err := sdlcServiceOf(svc, "OnboardRepo")
+	if err != nil {
+		return nil, err
+	}
+	report, err := sdlcSvc.OnboardRepo(ctx, r.TenantID, pkgsdlc.RepoOnboardRequest{
+		Repo: r.Repo, Like: r.Like, MaxConcurrency: r.MaxConcurrency, Paused: r.Paused,
+		Preflight: r.Preflight,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sdlcRepoOnboardingReportFromDomain(report), nil
+}
+
 // handleSDLCConformance reads the project's onboarding conformance.
 func handleSDLCConformance(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.ConformanceRequest)
@@ -436,6 +455,19 @@ func sdlcOnboardingReportFromDomain(r *pkgsdlc.OnboardingReport) *sdlc.Onboardin
 		WebhookURL: r.WebhookURL, WebhookEnsured: r.WebhookEnsured,
 		LabelsCreated: append([]string(nil), r.LabelsCreated...),
 		Conformance:   sdlcConformanceFromDomain(r.Conformance),
+	}
+}
+
+func sdlcRepoOnboardingReportFromDomain(r *pkgsdlc.RepoOnboardingReport) *sdlc.RepoOnboardingReport {
+	steps := make([]sdlc.RepoOnboardStep, 0, len(r.Steps))
+	for _, step := range r.Steps {
+		steps = append(steps, sdlc.RepoOnboardStep{
+			Step: step.Step, Outcome: string(step.Outcome), Detail: step.Detail, Remedy: step.Remedy,
+		})
+	}
+	return &sdlc.RepoOnboardingReport{
+		TenantID: r.TenantID, ProjectID: r.ProjectID, Repo: r.Repo, Steps: steps,
+		Conformance: sdlcConformanceFromDomain(r.Conformance),
 	}
 }
 

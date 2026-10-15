@@ -2321,25 +2321,7 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 	// Measured on go-quicbaas PR #970 (2026-09-21): a failed `make build`
 	// was misread as a vanished container, and nothing on the job said the
 	// build had run at all.
-	//
-	// A FAILED COMMAND'S RECORD CARRIES ITS FAILING LINES, not its first
-	// line: see verificationSummary. The header stays the first line, so a
-	// grep for `passed=false` still finds it.
-	var failed []orchestration.ValidationResult
-	for _, result := range results {
-		summary := verificationSummary(result)
-		header := "command=" + result.Name + " passed=" + strconv.FormatBool(result.Passed)
-		if result.ExitCode != 0 {
-			header += " exit_code=" + strconv.Itoa(result.ExitCode)
-		}
-		header += " output_bytes=" + strconv.Itoa(len(result.Details))
-		if result.Passed {
-			s.job.Audit(auditVerification, header+" "+summary)
-			continue
-		}
-		s.job.Audit(auditVerification, header+"\n"+summary)
-		failed = append(failed, result)
-	}
+	failed := auditVerificationResults(s.job, results)
 	if err != nil {
 		return s.refusedVerification(err)
 	}

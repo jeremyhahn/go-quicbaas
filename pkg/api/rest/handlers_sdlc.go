@@ -39,6 +39,7 @@ import (
 //   PUT    /api/v1/sdlc/projects/{projectID}/binding   sdlc:bind
 //   DELETE /api/v1/sdlc/projects/{projectID}/binding   sdlc:unbind
 //   POST   /api/v1/sdlc/projects/{projectID}/onboarding      sdlc:bind
+//   POST   /api/v1/sdlc/repos/{repo}/onboarding              sdlc:bind
 //   GET    /api/v1/sdlc/projects/{projectID}/conformance     sdlc:read
 //   GET    /api/v1/sdlc/projects/{projectID}/open-work       sdlc:read
 //   GET    /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer   sdlc:read
@@ -296,6 +297,45 @@ func (s *Server) HandleOnboardSDLCProject(w http.ResponseWriter, r *http.Request
 		return
 	}
 	report, err := svc.Onboard(r.Context(), tenantID, projectID)
+	if err != nil {
+		respondSDLCError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, report)
+}
+
+// HandleOnboardSDLCRepo onboards the repository in the path like the bound
+// project the body names. Every step checks before it acts, so the same call
+// twice reports every step unchanged the second time.
+func (s *Server) HandleOnboardSDLCRepo(w http.ResponseWriter, r *http.Request) {
+	svc := s.sdlcService(w, r)
+	if svc == nil {
+		return
+	}
+	tenantID, ok := sdlcRequestTenant(w, r)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondBadRequest(w, r, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+	var req sdlc.RepoOnboardRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+	repo := chi.URLParam(r, "repo")
+	if req.Repo == "" {
+		req.Repo = repo
+	}
+	if req.Repo != repo {
+		RespondBadRequest(w, r, "repo in the body must match the path")
+		return
+	}
+	report, err := svc.OnboardRepo(r.Context(), tenantID, req)
 	if err != nil {
 		respondSDLCError(w, r, err)
 		return

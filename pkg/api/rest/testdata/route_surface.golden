@@ -489,6 +489,7 @@ POST /api/v1/scheduler/jobs/{id}/trigger
 POST /api/v1/sdlc/projects/{projectID}/adopt
 POST /api/v1/sdlc/projects/{projectID}/issues
 POST /api/v1/sdlc/projects/{projectID}/onboarding
+POST /api/v1/sdlc/repos/{repo}/onboarding
 POST /api/v1/sdlc/webhook/{projectID}
 POST /api/v1/sdlc/worker-image/refresh
 POST /api/v1/seal/init

@@ -147,7 +147,9 @@ import (
 // user_authfactors:add.
 // PLUS 1 for the project by-name lookup (GET /api/v1/projects/by-name/{name},
 // go-quicbaas#1261) under project:read, the REST face of GetProjectByName.
-const baseRouteTableSize = 671
+// PLUS 1 for repository onboarding (POST /api/v1/sdlc/repos/{repo}/onboarding,
+// go-quicbaas#1041) under sdlc:bind.
+const baseRouteTableSize = 672
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

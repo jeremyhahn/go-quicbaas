@@ -52,6 +52,16 @@ service SDLCService {
     rpc Onboard(OnboardRequest) returns (OnboardResponse) {
         option (qrdb.v1.permission) = "sdlc:bind";
     }
+
+    // OnboardRepo onboards one forge repository like an existing bound
+    // project: it checks the repository's signing key and forge token,
+    // generates its webhook secret, creates its project, binds it and
+    // provisions its forge. Every step checks before it acts, so a repeat
+    // run changes nothing; what the module may not write itself is reported
+    // as a named finding with its remedy.
+    rpc OnboardRepo(OnboardRepoRequest) returns (OnboardRepoResponse) {
+        option (qrdb.v1.permission) = "sdlc:bind";
+    }
     // GetConformance reports whether the project is correctly onboarded and
     // what is wrong if it is not. Read-only.
     rpc GetConformance(GetConformanceRequest) returns (GetConformanceResponse) {
@@ -425,6 +435,49 @@ message OnboardRequest {
 
 message OnboardResponse {
     OnboardingReport report = 1;
+}
+
+message OnboardRepoRequest {
+    string tenant_id = 1;
+    // repo is the repository's name on the forge, one path segment.
+    string repo = 2;
+    // like is the ID of the bound project the new one is modelled on.
+    string like = 3;
+    // max_concurrency bounds the new project's concurrent jobs; zero takes
+    // the template's.
+    int32 max_concurrency = 4;
+    // paused binds without switching the new project's autonomy on.
+    bool paused = 5;
+    // preflight runs the verification commands once on the default branch in
+    // the worker image and switches autonomy on only when they pass.
+    bool preflight = 6;
+}
+
+message OnboardRepoResponse {
+    RepoOnboardingReport report = 1;
+}
+
+// RepoOnboardStep is one onboarding step's outcome.
+message RepoOnboardStep {
+    // step is signing_key, forge_token, webhook_secret, project, binding,
+    // forge, protection or workflows.
+    string step = 1;
+    // outcome is created, unchanged or finding.
+    string outcome = 2;
+    string detail  = 3;
+    // remedy says what fixes a finding; empty otherwise.
+    string remedy  = 4;
+}
+
+// RepoOnboardingReport is every onboarding step's outcome and the
+// repository's conformance afterwards.
+message RepoOnboardingReport {
+    string tenant_id  = 1;
+    string project_id = 2;
+    string repo       = 3;
+    repeated RepoOnboardStep steps = 4;
+    // conformance is absent when the project was never bound.
+    ConformanceReport conformance = 5;
 }
 
 message GetConformanceRequest {

@@ -54,31 +54,51 @@ func TestFactoryTurnLabelsAreBounded(t *testing.T) {
 func TestCountFactoryTurnCountsEachDirectionAndKnownBasis(t *testing.T) {
 	m := metrics.GetMetrics()
 	const tenant = "factory-count"
+	// The registry is process-global, so every assertion is on the change a
+	// turn makes, never on the absolute value: -count=N re-runs this test
+	// against counters the earlier runs already moved.
+	tokens := func(project, kind, provider, engine, model, direction string) float64 {
+		return factorySeries(m.FactoryTokensTotal, tenant, project, kind, provider, engine, model, direction)
+	}
+	cost := func(project, kind, provider, engine, model, basis string) float64 {
+		return factorySeries(m.FactoryCostMicrosTotal, tenant, project, kind, provider, engine, model, basis)
+	}
+
 	priced := ConsumptionEntry{
 		TenantID: tenant, ProjectID: "p1", Kind: "sdlc", Provider: "anthropic", Engine: "claude", Model: "opus",
 		InputTokens: 10, OutputTokens: 20, CacheReadTokens: 300,
 		EquivalentMicros: 5000, PriceRef: "v1:default:*/opus", Billing: BillingSubscription,
 	}
+	wantTokens := map[string]float64{"input": 10, "output": 20, "cache_read": 300, "cache_write": 0}
+	tokensBefore := make(map[string]float64, len(wantTokens))
+	for direction := range wantTokens {
+		tokensBefore[direction] = tokens("p1", "sdlc", "anthropic", "claude", "opus", direction)
+	}
+	equivalentBefore := cost("p1", "sdlc", "anthropic", "claude", "opus", "equivalent")
+	billedBefore := cost("p1", "sdlc", "anthropic", "claude", "opus", "billed")
+
 	countFactoryTurn(m, priced, true)
-	for direction, want := range map[string]float64{"input": 10, "output": 20, "cache_read": 300, "cache_write": 0} {
-		if got := factorySeries(m.FactoryTokensTotal, tenant, "p1", "sdlc", "anthropic", "claude", "opus", direction); got != want {
-			t.Errorf("%s tokens = %v, want %v", direction, got, want)
+	for direction, want := range wantTokens {
+		if got := tokens("p1", "sdlc", "anthropic", "claude", "opus", direction) - tokensBefore[direction]; got != want {
+			t.Errorf("%s tokens grew by %v, want %v", direction, got, want)
 		}
 	}
-	if got := factorySeries(m.FactoryCostMicrosTotal, tenant, "p1", "sdlc", "anthropic", "claude", "opus", "equivalent"); got != 5000 {
-		t.Errorf("equivalent = %v, want 5000", got)
+	if got := cost("p1", "sdlc", "anthropic", "claude", "opus", "equivalent") - equivalentBefore; got != 5000 {
+		t.Errorf("equivalent grew by %v, want 5000", got)
 	}
-	if got := factorySeries(m.FactoryCostMicrosTotal, tenant, "p1", "sdlc", "anthropic", "claude", "opus", "billed"); got != 0 {
-		t.Errorf("billed = %v, want 0: a subscription turn bills nothing", got)
+	if got := cost("p1", "sdlc", "anthropic", "claude", "opus", "billed") - billedBefore; got != 0 {
+		t.Errorf("billed grew by %v, want 0: a subscription turn bills nothing", got)
 	}
 
 	// An unpriced turn whose bill is unknown adds tokens and no money.
 	unpriced := ConsumptionEntry{TenantID: tenant, Engine: "ollama", Model: "x", InputTokens: 7, Billing: BillingUnpooled}
+	unpricedTokensBefore := tokens("none", "none", "unknown", "ollama", "other", "input")
+	unpricedEquivalentBefore := cost("none", "none", "unknown", "ollama", "other", "equivalent")
 	countFactoryTurn(m, unpriced, false)
-	if got := factorySeries(m.FactoryTokensTotal, tenant, "none", "none", "unknown", "ollama", "other", "input"); got != 7 {
-		t.Errorf("unpriced tokens = %v, want 7", got)
+	if got := tokens("none", "none", "unknown", "ollama", "other", "input") - unpricedTokensBefore; got != 7 {
+		t.Errorf("unpriced tokens grew by %v, want 7", got)
 	}
-	if got := factorySeries(m.FactoryCostMicrosTotal, tenant, "none", "none", "unknown", "ollama", "other", "equivalent"); got != 0 {
+	if got := cost("none", "none", "unknown", "ollama", "other", "equivalent") - unpricedEquivalentBefore; got != 0 {
 		t.Errorf("an unpriced turn added %v to the equivalent", got)
 	}
 }

@@ -364,6 +364,10 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Orchestrator/ListBackends":      handleOrchestratorListBackends,
 	"quicbaas.Orchestrator/ListRunners":       handleOrchestratorListRunners,
 	"quicbaas.Orchestrator/ListWorkflows":     handleOrchestratorListWorkflows,
+	"quicbaas.Orchestrator/CreateWorkflow":    handleOrchestratorCreateWorkflow,
+	"quicbaas.Orchestrator/GetWorkflow":       handleOrchestratorGetWorkflow,
+	"quicbaas.Orchestrator/UpdateWorkflow":    handleOrchestratorUpdateWorkflow,
+	"quicbaas.Orchestrator/DeleteWorkflow":    handleOrchestratorDeleteWorkflow,
 	"quicbaas.Orchestrator/ListBackendModels": handleOrchestratorListBackendModels,
 	"quicbaas.Orchestrator/DecomposeTask":     handleOrchestratorDecomposeTask,
 	"quicbaas.Orchestrator/GetCostSettings":   handleOrchestratorGetCostSettings,
@@ -400,6 +404,7 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.SDLC/Delivery":    handleSDLCDelivery,
 	"quicbaas.SDLC/ListForges":  handleSDLCForges,
 	"quicbaas.SDLC/Onboard":     handleSDLCOnboard,
+	"quicbaas.SDLC/OnboardRepo": handleSDLCOnboardRepo,
 	"quicbaas.SDLC/Conformance": handleSDLCConformance,
 	"quicbaas.SDLC/OpenWork":    handleSDLCOpenWork,
 

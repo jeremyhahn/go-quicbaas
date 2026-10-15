@@ -197,6 +197,8 @@ var domainSentinelCodes = []struct {
 	{pkgsdlc.ErrUnavailable, errors.CodeUnavailable},
 	{pkgsdlc.ErrInvalidInput, errors.CodeInvalidInput},
 	{pkgsdlc.ErrReview, errors.CodeInvalidInput},
+	{orchestration.ErrWorkflowNotFound, errors.CodeNotFound},
+	{orchestration.ErrWorkflowAlreadyExists, errors.CodeAlreadyExists},
 	{orchestration.ErrWorkflowValidation, errors.CodeInvalidInput},
 	{orchestration.ErrInvalidInput, errors.CodeInvalidInput},
 }

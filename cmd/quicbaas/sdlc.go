@@ -110,6 +110,7 @@ Examples:
   quicbaas sdlc conformance go-truststrap
   quicbaas sdlc open-work go-truststrap
   quicbaas sdlc onboard go-truststrap
+  quicbaas sdlc project onboard --repo go-truststrap --like go-quicbaas
   quicbaas sdlc delivery 1788567351228350294
   quicbaas sdlc reviewer set go-truststrap 42 qwen
   quicbaas sdlc issue create go-truststrap --title "Follow-up" --label task:ready --parent 41
@@ -180,6 +181,7 @@ READ-ONLY. It is read from the forge, so it shows work whose task is gone too.`,
 		newSDLCCollaboratorsCommand(),
 		newSDLCAdoptCommand(),
 		newSDLCWorkerImageCommand(),
+		newSDLCProjectCommand(),
 	)
 	return cmd
 }

@@ -74,41 +74,35 @@ type SchedulerClientFactory func() (SchedulerClient, error)
 // schedulerClientFactory creates scheduler clients. Defaults to createSchedulerClient.
 var schedulerClientFactory SchedulerClientFactory = createSchedulerClient
 
-// createSchedulerClient creates a client for scheduler operations based on transport.
+// createSchedulerClient creates a client for scheduler operations on the
+// transport selectTransport chooses, the same rule every other command uses.
 func createSchedulerClient() (SchedulerClient, error) {
-	switch transport {
-	case "grpc", "":
-		return createSchedulerGRPCClient()
-	case "rest":
-		return createSchedulerRESTClientFactory()
-	case "mcp":
-		return createSchedulerMCPClientFactory()
-	case "quic":
-		return createSchedulerQUICClientFactory()
-	case "unix":
-		return createSchedulerUnixClient()
-	default:
-		return nil, errors.Newf(
-			errors.ErrConfiguration,
-			"createSchedulerClient",
-			"unsupported transport: %s (supported: grpc, rest, mcp, quic, unix)", transport,
-		)
+	selected := selectTransport()
+	build, ok := schedulerClientBuilders[selected]
+	if !ok {
+		return nil, &UnsupportedTransportError{Transport: selected, Supported: schedulerTransports}
 	}
+	return build()
 }
+
+// schedulerClientBuilders maps each transport the scheduler commands dial to
+// its client constructor. gRPC and unix share one: pkg/api/grpc dials a socket
+// path as gRPC over that socket. The empty transport is gRPC, as in the SDK.
+var schedulerClientBuilders = map[string]func() (SchedulerClient, error){
+	"":     createSchedulerGRPCClient,
+	"grpc": createSchedulerGRPCClient,
+	"unix": createSchedulerGRPCClient,
+	"rest": createSchedulerRESTClientFactory,
+	"mcp":  createSchedulerMCPClientFactory,
+	"quic": createSchedulerQUICClientFactory,
+}
+
+// schedulerTransports names the transports in schedulerClientBuilders for
+// UnsupportedTransportError.
+var schedulerTransports = []string{"grpc", "rest", "mcp", "quic", "unix"}
 
 // createSchedulerGRPCClient creates a gRPC client for scheduler operations.
 func createSchedulerGRPCClient() (SchedulerClient, error) {
-	opts := []grpc.ClientOption{
-		grpc.WithTimeout(globalTimeout),
-	}
-	opts = append(opts, grpcTLSOption()...)
-	return grpc.NewClient(address, opts...)
-}
-
-// createSchedulerUnixClient creates a gRPC client over Unix socket for scheduler operations.
-func createSchedulerUnixClient() (SchedulerClient, error) {
-	// For Unix socket transport, use the gRPC client with the Unix socket address.
-	// The address should be the Unix socket path (e.g., /tmp/quicbaas.sock).
 	opts := []grpc.ClientOption{
 		grpc.WithTimeout(globalTimeout),
 	}

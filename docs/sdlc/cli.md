@@ -31,6 +31,7 @@ repairs it.
 | `binding <project-id>` | exactly 1 | Show a project's forge binding |
 | `delivery <task-id>` | exactly 1 | Show what a task's attempt delivered |
 | `onboard <project-id>` | exactly 1 | Provision the bound repository's webhook and labels on its forge |
+| `project onboard` | none | Create, provision and bind a new repository's project from a bound template project |
 | `conformance <project-id>` | exactly 1 | Report whether a project is correctly onboarded, and what is wrong. Read-only |
 | `open-work <project-id>` | exactly 1 | List a bound project's open factory pull requests and labelled issues |
 | `reviewer <project-id> <pull-request>` | exactly 2 | Show which reviewer profile reviews a pull request |
@@ -47,6 +48,11 @@ repairs it.
 | `--output` | group | string | `table` | `json`, `yaml` or `table` |
 | `--file`, `-f` | `bind` | string | — | The project binding as YAML or JSON (**required** for `bind`) |
 | `--paused` | `bind` | bool | `false` | Bind without switching the project's autonomy on; never switches it off |
+| `--repo` | `project onboard` | string | — | The forge repository to onboard (**required**) |
+| `--like` | `project onboard` | string | — | The bound project to copy the project and binding from (**required**) |
+| `--max-concurrency` | `project onboard` | int | `0` | The new binding's concurrency cap; `0` keeps the template's |
+| `--paused` | `project onboard` | bool | `false` | Bind without switching the new project's autonomy on |
+| `--preflight` | `project onboard` | bool | `false` | Run the verification commands once on the default branch in the worker image; switch autonomy on only when every one passes. A red preflight is a finding naming each failing command and its failing lines |
 | `--title` | `issue create` | string | — | Issue title, one line (**required**) |
 | `--body` | `issue create` | string | — | Issue body |
 | `--body-file` | `issue create` | string | — | Read the issue body from a file; exclusive with `--body` |
@@ -63,6 +69,8 @@ quicbaas sdlc bind go-truststrap --file go-truststrap-binding.yaml --paused
 quicbaas sdlc binding go-truststrap --output json
 quicbaas sdlc conformance go-truststrap
 quicbaas sdlc onboard go-truststrap
+quicbaas sdlc project onboard --repo go-luks2 --like go-truststrap --max-concurrency 2 --paused
+quicbaas sdlc project onboard --repo go-luks2 --like go-truststrap --preflight
 quicbaas sdlc open-work go-truststrap
 quicbaas sdlc delivery 1788567351228350294
 quicbaas sdlc reviewer go-truststrap 42
@@ -86,9 +94,10 @@ quicbaas sdlc worker-image refresh --wait
 | `IssueNumberError` | `adopt` with an issue that is not a positive integer |
 | `PullRequestNumberError` | `reviewer` with a pull request that is not a positive integer |
 
-Two more are raised after the answer arrives: `SDLCNotConformantError` makes
-`conformance` exit non-zero when the project is not conformant, and
-`WorkerImageWaitTimeoutError` ends `worker-image refresh --wait` when the pass
+Three more are raised after the answer arrives: `SDLCNotConformantError` makes
+`conformance` exit non-zero when the project is not conformant,
+`SDLCRepoNotOnboardedError` makes `project onboard` exit non-zero when any
+step ends in a finding, and `WorkerImageWaitTimeoutError` ends `worker-image refresh --wait` when the pass
 outlives `--wait-timeout`.
 
 ## Verb notes
@@ -98,6 +107,14 @@ script the way a test command does — and it still prints the report either
 way, because an exit code that says "something is wrong" without saying what
 is the thing this verb exists to replace. The classes it reports are in
 [architecture.md](architecture.md#what-conformance-checks).
+
+`project onboard` onboards a new repository the way `--like` was onboarded,
+one idempotent step at a time, each reported as `created`, `unchanged` or
+`finding`; the steps are in
+[api.md](api.md#post-apiv1sdlcreposrepoonboarding). Like `conformance`, it
+prints the report and then exits non-zero if anything is left to do. It never
+imports a key or stores a forge token: those are findings with a remedy, and
+the run is repeated once they are in place.
 
 `issue create` is audited as `sdlc:issue_create`, refusals included, and is
 sent once: an unanswered create is reported, not repeated. `collaborators`

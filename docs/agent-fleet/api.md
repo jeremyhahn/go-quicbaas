@@ -117,8 +117,8 @@ and `node_type` filters as `GET /api/v1/fleet`, paged per
 ## gRPC
 
 `OrchestratorService` (`api/proto/orchestrator.proto`): `RegisterFleetNode`,
-`GetFleetNode`, `ListFleetNodes`, `RemoveFleetNode`, `FleetNodeHeartbeat`, and
-`PushEvents` (the node's event stream). `ProjectService`
+`GetFleetNode`, `ListFleetNodes`, `RemoveFleetNode`, `FleetNodeHeartbeat`,
+`ListBackendModels`, and `PushEvents` (the node's event stream). `ProjectService`
 (`api/proto/project.proto`): `GrantFleetNodeRole`, `RevokeFleetNodeRole`.
 
 The node's own service, `quicbaas.fleet.runtime.v1.FleetRuntime`

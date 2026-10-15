@@ -67,12 +67,26 @@ var orchestratorMethodTools = map[string]string{
 	"ReadmitTask": "quicbaas_orchestrator_task_readmit",
 	"DeleteTask":  "quicbaas_orchestrator_task_delete",
 
-	"ListTaskArtifacts": "quicbaas_task_list_artifacts",
-	"ListWorkflows":     "quicbaas_orchestrator_list_workflows",
+	"GetTask":      "quicbaas_orchestrator_task_get",
+	"ClaimTask":    "quicbaas_orchestrator_task_claim",
+	"CompleteTask": "quicbaas_orchestrator_task_complete",
+
+	"ListTaskArtifacts":   "quicbaas_task_list_artifacts",
+	"SubmitTaskArtifacts": "quicbaas_task_submit_artifacts",
+	"ListWorkflows":       "quicbaas_orchestrator_list_workflows",
 
 	// The fleet registry tools are named after the fleet, not the RPC
 	// (quicbaas_fleet_list, not quicbaas_orchestrator_list_fleet_nodes).
-	"ListFleetNodes": "quicbaas_fleet_list",
+	"ListFleetNodes":    "quicbaas_fleet_list",
+	"GetFleetNode":      "quicbaas_fleet_status",
+	"RegisterFleetNode": "quicbaas_fleet_register",
+	"RemoveFleetNode":   "quicbaas_fleet_remove",
+	"DisableFleetNode":  "quicbaas_fleet_disable",
+	"EnableFleetNode":   "quicbaas_fleet_enable",
+
+	"CreateTask":      "quicbaas_orchestrator_task_create",
+	"DecomposeTask":   "quicbaas_orchestrator_decompose",
+	"GetTaskArtifact": "quicbaas_task_get_artifact",
 
 	// A tenant's runtime cost settings (go-quicbaas#1058).
 	"GetCostSettings": "quicbaas_orchestrator_cost_settings_get",
@@ -97,13 +111,16 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 
 	"ListSessions":           decodeMCPListSessions,
 	"ListJobs":               decodeMCPListJobs,
+	"ListTasks":              decodeMCPListTasks,
 	"GetSessionHistory":      decodeMCPSessionHistory,
 	"GetSessionConversation": decodeMCPSessionConversation,
 	"GetSpendReport":         decodeMCPSpendReport,
 	"GetTenantSpendPolicy":   decodeMCPTenantSpendPolicy,
 	"SetTenantSpendPolicy":   decodeMCPTenantSpendPolicy,
 
-	"ListBackends":      decodeMCPListBackends,
+	"ListBackends": decodeMCPListBackends,
+	"ListBackendModels": decodeMCPInto[orchestrator.ListBackendModelsResponse](
+		"ListBackendModels", "backend models list"),
 	"ListRunners":       decodeMCPListRunners,
 	"ListFleetNodes":    decodeMCPListFleetNodes,
 	"ListTaskArtifacts": decodeMCPListTaskArtifacts,
@@ -118,6 +135,28 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"SetCostSettings": decodeMCPCostSettings,
 
 	"FleetNodeHeartbeat": decodeMCPFleetNodeHeartbeat,
+	"GetFleetNode":       decodeMCPGetFleetNode,
+	"RegisterFleetNode":  decodeMCPRegisterFleetNode,
+	"RemoveFleetNode":    decodeMCPRemoveFleetNode,
+	"DisableFleetNode": decodeMCPInto[orchestrator.DisableFleetNodeResponse](
+		"DisableFleetNode", "fleet disable"),
+	"EnableFleetNode": decodeMCPInto[orchestrator.EnableFleetNodeResponse](
+		"EnableFleetNode", "fleet enable"),
+
+	"CreateTask":      decodeMCPCreateTask,
+	"DecomposeTask":   decodeMCPDecomposeTask,
+	"GetTaskArtifact": decodeMCPGetTaskArtifact,
+
+	"GetTask":             decodeMCPGetTask,
+	"ClaimTask":           decodeMCPInto[orchestrator.ClaimTaskResponse]("ClaimTask", "task claim"),
+	"CompleteTask":        decodeMCPInto[orchestrator.CompleteTaskResponse]("CompleteTask", "task complete"),
+	"SubmitTaskArtifacts": decodeMCPInto[orchestrator.SubmitTaskArtifactsResponse]("SubmitTaskArtifacts", "artifact submit"),
+	"SpawnChildJob":       decodeMCPInto[orchestrator.SpawnChildJobResponse]("SpawnChildJob", "child job spawn"),
+
+	// The workflow tools wrap the definition as {"workflow": ...}, as REST does.
+	"CreateWorkflow": decodeMCPWorkflow("CreateWorkflow"),
+	"GetWorkflow":    decodeMCPWorkflow("GetWorkflow"),
+	"UpdateWorkflow": decodeMCPWorkflow("UpdateWorkflow"),
 }
 
 // transformResponse converts the raw MCP tool result to the expected SDK type
@@ -297,6 +336,162 @@ func decodeMCPFleetNodeHeartbeat(raw []byte) (interface{}, error) {
 	return &orchestrator.FleetNodeHeartbeatResponse{NodeID: ack.NodeID, Heartbeat: ack.Acknowledged}, nil
 }
 
+// decodeMCPRegisterFleetNode decodes the quicbaas_fleet_register result,
+// {node, timestamp}, into the SDK response.
+func decodeMCPRegisterFleetNode(raw []byte) (interface{}, error) {
+	var resp orchestrator.RegisterFleetNodeResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.RegisterFleetNode", "failed to decode MCP fleet register result")
+	}
+	return &resp, nil
+}
+
+// decodeMCPRemoveFleetNode decodes the quicbaas_fleet_remove result,
+// {removed, node_id, timestamp}, into the SDK response.
+func decodeMCPRemoveFleetNode(raw []byte) (interface{}, error) {
+	var resp orchestrator.RemoveFleetNodeResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.RemoveFleetNode", "failed to decode MCP fleet remove result")
+	}
+	return &resp, nil
+}
+
+// decodeMCPGetFleetNode decodes the {"node": ...} result of
+// quicbaas_fleet_status into the fleet node GetFleetNode returns.
+func decodeMCPGetFleetNode(raw []byte) (interface{}, error) {
+	var wire struct {
+		Node *orchestrator.FleetNode `json:"node"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.GetFleetNode", "failed to decode MCP fleet status result")
+	}
+	if wire.Node == nil {
+		return nil, errors.NewInternal("mcp.orchestrator.GetFleetNode", "MCP fleet status result carries no node")
+	}
+	return wire.Node, nil
+}
+
+// decodeMCPInto returns the decoder for a tool whose result keys are the SDK
+// response type's own JSON tags, so the result decodes straight into it.
+func decodeMCPInto[T any](method, what string) orchestratorMCPTransform {
+	return func(raw []byte) (interface{}, error) {
+		out := new(T)
+		if err := json.Unmarshal(raw, out); err != nil {
+			return nil, errors.Wrap(err, errors.CodeInternal,
+				"mcp.orchestrator."+method, "failed to decode MCP "+what+" result")
+		}
+		return out, nil
+	}
+}
+
+// decodeMCPGetTask decodes the quicbaas_orchestrator_task_get result, which
+// carries the task record under "task".
+func decodeMCPGetTask(raw []byte) (interface{}, error) {
+	var wire struct {
+		Task *orchestrator.Task `json:"task"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.GetTask", "failed to decode MCP task get result")
+	}
+	if wire.Task == nil {
+		return nil, errors.NewInternal("mcp.orchestrator.GetTask",
+			"MCP task get result carries no task")
+	}
+	return wire.Task, nil
+}
+
+// decodeMCPWorkflow decodes the {"workflow": ...} result of the workflow
+// get, create and update tools into the definition the SDK returns.
+func decodeMCPWorkflow(method string) orchestratorMCPTransform {
+	op := "mcp.orchestrator." + method
+	return func(raw []byte) (interface{}, error) {
+		var wire struct {
+			Workflow *orchestrator.WorkflowDefinition `json:"workflow"`
+		}
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			return nil, errors.Wrap(err, errors.CodeInternal, op, "failed to decode MCP workflow result")
+		}
+		if wire.Workflow == nil {
+			return nil, errors.NewInternal(op, "MCP workflow result carries no workflow")
+		}
+		return wire.Workflow, nil
+	}
+}
+
+// decodeMCPCreateTask decodes the quicbaas_orchestrator_task_create result.
+// The tool reports a failed create as an "error" string beside the summary
+// rather than as a tool error, so a non-empty error becomes an SDK error here,
+// as it is on REST. The full task record is under "task".
+func decodeMCPCreateTask(raw []byte) (interface{}, error) {
+	var wire struct {
+		Task  *orchestrator.Task `json:"task"`
+		Error string             `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.CreateTask", "failed to decode MCP task create result")
+	}
+	if wire.Error != "" {
+		return nil, errors.NewInvalidInput("mcp.orchestrator.CreateTask", wire.Error)
+	}
+	if wire.Task == nil {
+		return nil, errors.NewInternal("mcp.orchestrator.CreateTask",
+			"MCP task create result carries no task")
+	}
+	return wire.Task, nil
+}
+
+// decodeMCPDecomposeTask decodes the quicbaas_orchestrator_decompose result.
+// The tool stamps an RFC 3339 timestamp; the SDK response carries Unix nanos.
+func decodeMCPDecomposeTask(raw []byte) (interface{}, error) {
+	var wire struct {
+		WorkItems []*orchestrator.WorkItem `json:"work_items"`
+		Timestamp time.Time                `json:"timestamp"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.DecomposeTask", "failed to decode MCP decompose result")
+	}
+	return &orchestrator.DecomposeTaskResponse{
+		WorkItems: wire.WorkItems,
+		Timestamp: wire.Timestamp.UnixNano(),
+	}, nil
+}
+
+// decodeMCPGetTaskArtifact decodes the quicbaas_task_get_artifact result. The
+// tool sends inline content as text, where the SDK's []byte expects base64.
+func decodeMCPGetTaskArtifact(raw []byte) (interface{}, error) {
+	var wire struct {
+		Kind     string                        `json:"kind"`
+		Name     string                        `json:"name"`
+		MIMEType string                        `json:"mime_type"`
+		Size     int64                         `json:"size"`
+		Content  string                        `json:"content"`
+		Ref      *orchestrator.TaskArtifactRef `json:"ref"`
+		Metadata map[string]string             `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.GetTaskArtifact", "failed to decode MCP task artifact result")
+	}
+	artifact := &orchestrator.TaskArtifact{
+		Kind:     wire.Kind,
+		Name:     wire.Name,
+		MIMEType: wire.MIMEType,
+		Size:     wire.Size,
+		Ref:      wire.Ref,
+		Metadata: wire.Metadata,
+	}
+	if wire.Content != "" {
+		artifact.Content = []byte(wire.Content)
+	}
+	return artifact, nil
+}
+
 // decodeMCPReadmitTask decodes quicbaas_orchestrator_task_readmit output.
 //
 // Registered as a tool but absent from the transform table, a SUCCESSFUL
@@ -367,6 +562,16 @@ func decodeMCPListJobs(raw []byte) (interface{}, error) {
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
 			"mcp.orchestrator.ListJobs", "failed to decode MCP list jobs result")
+	}
+	return &resp, nil
+}
+
+// decodeMCPListTasks decodes quicbaas_orchestrator_list_tasks output.
+func decodeMCPListTasks(raw []byte) (interface{}, error) {
+	var resp orchestrator.ListTasksResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.ListTasks", "failed to decode MCP list tasks result")
 	}
 	return &resp, nil
 }

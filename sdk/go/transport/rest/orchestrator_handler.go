@@ -91,6 +91,10 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"SubscribeJobEvents":     h.handleSubscribeJobEvents,
 		"Inference":              h.handleInference,
 		"ListWorkflows":          h.handleListWorkflows,
+		"CreateWorkflow":         h.handleCreateWorkflow,
+		"GetWorkflow":            h.handleGetWorkflow,
+		"UpdateWorkflow":         h.handleUpdateWorkflow,
+		"DeleteWorkflow":         h.handleDeleteWorkflow,
 		"DisableFleetNode":       h.handleDisableFleetNode,
 		"EnableFleetNode":        h.handleEnableFleetNode,
 		"SubmitTaskArtifacts":    h.handleSubmitTaskArtifacts,
@@ -825,6 +829,76 @@ func (h *orchestratorHandler) handleListWorkflows(ctx context.Context, req inter
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// workflowResponse is the {"workflow": ...} envelope the REST server wraps
+// around a single workflow definition.
+type workflowResponse struct {
+	Workflow *orchestrator.WorkflowDefinition `json:"workflow"`
+}
+
+// workflowPath returns the REST path of one named workflow, scoped to tenantID.
+func workflowPath(tenantID, name string) string {
+	return "/api/v1/orchestrator/workflows/" + neturl.PathEscape(name) +
+		"?tenant_id=" + neturl.QueryEscape(tenantID)
+}
+
+func (h *orchestratorHandler) handleCreateWorkflow(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.CreateWorkflowRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.CreateWorkflow", "invalid request type")
+	}
+	if sdkReq.Definition == nil {
+		return nil, errors.NewInvalidInput("orchestrator.CreateWorkflow", "definition is required")
+	}
+	body := struct {
+		TenantID   string                           `json:"tenant_id"`
+		Name       string                           `json:"name"`
+		Definition *orchestrator.WorkflowDefinition `json:"definition"`
+	}{TenantID: sdkReq.TenantID, Name: sdkReq.Definition.Name, Definition: sdkReq.Definition}
+	var resp workflowResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/orchestrator/workflows", body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Workflow, nil
+}
+
+func (h *orchestratorHandler) handleGetWorkflow(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetWorkflowRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.GetWorkflow", "invalid request type")
+	}
+	var resp workflowResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, workflowPath(sdkReq.TenantID, sdkReq.Name), nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Workflow, nil
+}
+
+func (h *orchestratorHandler) handleUpdateWorkflow(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.UpdateWorkflowRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.UpdateWorkflow", "invalid request type")
+	}
+	if sdkReq.Definition == nil {
+		return nil, errors.NewInvalidInput("orchestrator.UpdateWorkflow", "definition is required")
+	}
+	var resp workflowResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodPut, workflowPath(sdkReq.TenantID, sdkReq.Name), sdkReq.Definition, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Workflow, nil
+}
+
+func (h *orchestratorHandler) handleDeleteWorkflow(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.DeleteWorkflowRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.DeleteWorkflow", "invalid request type")
+	}
+	if err := h.transport.doJSONRequest(ctx, http.MethodDelete, workflowPath(sdkReq.TenantID, sdkReq.Name), nil, nil); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 func (h *orchestratorHandler) handleDisableFleetNode(ctx context.Context, req interface{}) (interface{}, error) {

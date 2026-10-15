@@ -137,9 +137,12 @@ func TestReconcileTenantBuiltInRoles_AddsAVerbTheBuildGained(t *testing.T) {
 	require.False(t, hasPermission(roleNamed(t, store, reconcileTestTenant, qrdbsdk.RoleNameAdmin), string(gained)),
 		"fixture is only meaningful if the tenant was seeded WITHOUT the verb")
 
-	// What a module does at startup: contribute the permission, then place it
-	// in the roles that should hold it.
+	// What a module does at startup: contribute the permission, declare its
+	// scope, then place it in the roles that should hold it. The registries
+	// are process-global, so an undeclared scope here would fail every later
+	// Admin sign-in in this package with "no scope declared".
 	qrdbsdk.RegisterPermissions(gained)
+	qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeSelf, gained)
 	qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, gained)
 
 	require.NoError(t, srv.reconcileTenantBuiltInRoles(ctx, store, tenants))

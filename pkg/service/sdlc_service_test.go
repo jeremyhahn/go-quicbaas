@@ -63,6 +63,8 @@ type sdlcFakeProjects struct {
 	projects  map[string]*orchestration.Project
 	updates   int
 	updateErr error
+	// created counts CreateProject calls that wrote a project.
+	created int
 }
 
 var _ ProjectWriter = (*sdlcFakeProjects)(nil)
@@ -153,6 +155,9 @@ type sdlcFakeSecrets struct {
 	// errFor fails the read of one secret only, as a store that cannot
 	// answer for it.
 	errFor map[string]error
+	// ensured records every secret EnsureSecret generated, with the tenant
+	// it was generated in.
+	ensured []sdlcEnsuredSecret
 }
 
 func (s *sdlcFakeSecrets) GetSecret(_ context.Context, req *GetSecretRequest) (*GetSecretResponse, error) {
@@ -207,6 +212,9 @@ type sdlcServiceRig struct {
 
 	// audit records every issue filing the service audits.
 	audit *recordingIssueAuditor
+
+	// sshKeys is the tenant's SSH keys, empty until a test adds one.
+	sshKeys *fakeSSHKeys
 }
 
 // sdlcTestPublicURL is the node origin the rig's onboarder provisions
@@ -310,12 +318,13 @@ func newSDLCServiceRig(t *testing.T) *sdlcServiceRig {
 		forge:        giteafake.New(t, "acme", "api"),
 		audit:        &recordingIssueAuditor{},
 		agentCatalog: serviceAgentCatalog(t),
+		sshKeys:      newFakeSSHKeys(),
 	}
 	svc, err := NewSDLCService(SDLCServiceConfig{
 		Store: store, Routes: routes, Projects: rig.projects, ProjectWriter: rig.projects,
 		Secrets: rig.secrets, Guard: guard, Verification: sdlcTestVerificationGuard(t),
 		WebhookPublicURL: sdlcTestPublicURL, Tasks: rig.agents,
-		Auditor: rig.audit, Agents: rig.agentCatalog,
+		Auditor: rig.audit, Agents: rig.agentCatalog, SSHKeys: rig.sshKeys,
 	})
 	if err != nil {
 		t.Fatal(err)

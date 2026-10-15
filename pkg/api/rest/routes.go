@@ -586,6 +586,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "PUT", Pattern: "/api/v1/sdlc/projects/{projectID}/binding", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBindSDLCProject }},
 		{Method: "DELETE", Pattern: "/api/v1/sdlc/projects/{projectID}/binding", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleUnbindSDLCProject }},
 		{Method: "POST", Pattern: "/api/v1/sdlc/projects/{projectID}/onboarding", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOnboardSDLCProject }},
+		{Method: "POST", Pattern: "/api/v1/sdlc/repos/{repo}/onboarding", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOnboardSDLCRepo }},
 		{Method: "GET", Pattern: "/api/v1/sdlc/projects/{projectID}/conformance", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSDLCConformance }},
 		{Method: "GET", Pattern: "/api/v1/sdlc/projects/{projectID}/open-work", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSDLCOpenWork }},
 		{Method: "GET", Pattern: "/api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSDLCReviewer }},

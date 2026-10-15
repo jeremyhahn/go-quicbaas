@@ -119,6 +119,18 @@ service OrchestratorService {
     rpc ListWorkflows(OrchestratorListWorkflowsRequest) returns (OrchestratorListWorkflowsResponse) {
         option (qrdb.v1.permission) = "orchestrator:workflow_read";
     }
+    rpc CreateWorkflow(OrchestratorCreateWorkflowRequest) returns (OrchestratorCreateWorkflowResponse) {
+        option (qrdb.v1.permission) = "orchestrator:workflow_write";
+    }
+    rpc GetWorkflow(OrchestratorGetWorkflowRequest) returns (OrchestratorGetWorkflowResponse) {
+        option (qrdb.v1.permission) = "orchestrator:workflow_read";
+    }
+    rpc UpdateWorkflow(OrchestratorUpdateWorkflowRequest) returns (OrchestratorUpdateWorkflowResponse) {
+        option (qrdb.v1.permission) = "orchestrator:workflow_write";
+    }
+    rpc DeleteWorkflow(OrchestratorDeleteWorkflowRequest) returns (OrchestratorDeleteWorkflowResponse) {
+        option (qrdb.v1.permission) = "orchestrator:workflow_write";
+    }
 
     // Health Operations
     rpc Health(OrchestratorHealthRequest) returns (OrchestratorHealthResponse) {
@@ -140,6 +152,10 @@ service OrchestratorService {
     }
     rpc FleetNodeHeartbeat(FleetNodeHeartbeatRequest) returns (FleetNodeHeartbeatResponse) {
         option (qrdb.v1.permission) = "orchestrator:agent_heartbeat";
+    }
+    // ListBackendModels is GET /api/v1/fleet/{nodeID}/backends/{backendName}/models.
+    rpc ListBackendModels(ListBackendModelsRequest) returns (ListBackendModelsResponse) {
+        option (qrdb.v1.permission) = "orchestrator:backend_list";
     }
 
     // Session event ingest (Phase 3). Daemon-side agents open a bidi stream
@@ -1554,6 +1570,48 @@ message OrchestratorListWorkflowsResponse {
     map<string, quicbaas.sdlc.v1.FacetCounts> facets = 6;
 }
 
+// The definition's own name is the workflow's name; the tenant comes from
+// tenant_id, never from the definition.
+message OrchestratorCreateWorkflowRequest {
+    string tenant_id = 1;
+    OrchestratorWorkflowDefinition definition = 2;
+}
+
+message OrchestratorCreateWorkflowResponse {
+    OrchestratorWorkflowDefinition workflow = 1;
+}
+
+message OrchestratorGetWorkflowRequest {
+    string tenant_id = 1;
+    string name = 2;
+}
+
+message OrchestratorGetWorkflowResponse {
+    OrchestratorWorkflowDefinition workflow = 1;
+}
+
+// name selects the workflow and overrides the definition's own name, as the
+// REST route's {name} does.
+message OrchestratorUpdateWorkflowRequest {
+    string tenant_id = 1;
+    string name = 2;
+    OrchestratorWorkflowDefinition definition = 3;
+}
+
+message OrchestratorUpdateWorkflowResponse {
+    OrchestratorWorkflowDefinition workflow = 1;
+}
+
+message OrchestratorDeleteWorkflowRequest {
+    string tenant_id = 1;
+    string name = 2;
+}
+
+message OrchestratorDeleteWorkflowResponse {
+    string name = 1;
+    bool deleted = 2;
+}
+
 // =============================================================================
 // Health Requests and Responses
 // =============================================================================
@@ -1647,6 +1705,22 @@ message RemoveFleetNodeResponse {
     string node_id = 1;
     bool removed = 2;
     google.protobuf.Timestamp timestamp = 3;
+}
+
+// ListBackendModels
+message ListBackendModelsRequest {
+    string tenant_id = 1;
+    // node_id is a host-affinity hint for the remote backend resolver; empty
+    // or "any" skips host affinity.
+    string node_id = 2;
+    string backend_name = 3;
+}
+
+// models is empty, not an error, when the backend exposes no model lister.
+message ListBackendModelsResponse {
+    string backend = 1;
+    repeated string models = 2;
+    int32 count = 3;
 }
 
 // FleetNodeHeartbeat

@@ -43,6 +43,7 @@ var sdlcMethodTools = map[string]string{
 	"Delivery":    "sdlc_delivery",
 	"ListForges":  "sdlc_forges",
 	"Onboard":     "sdlc_onboard",
+	"OnboardRepo": "sdlc_project_onboard",
 	"Conformance": "sdlc_conformance",
 	"OpenWork":    "sdlc_open_work",
 
@@ -74,6 +75,7 @@ var sdlcMCPTransforms = map[string]sdlcMCPTransform{
 	"Delivery":    decodeMCPSDLCDelivery,
 	"ListForges":  decodeMCPSDLCForges,
 	"Onboard":     decodeMCPSDLCOnboarding,
+	"OnboardRepo": decodeMCPSDLCRepoOnboarding,
 	"Conformance": decodeMCPSDLCConformance,
 	"OpenWork":    decodeMCPSDLCOpenWork,
 
@@ -133,6 +135,14 @@ func decodeMCPSDLCOnboarding(raw []byte) (interface{}, error) {
 	var report sdlc.OnboardingReport
 	if err := json.Unmarshal(raw, &report); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.Onboard", "failed to decode onboarding report")
+	}
+	return &report, nil
+}
+
+func decodeMCPSDLCRepoOnboarding(raw []byte) (interface{}, error) {
+	var report sdlc.RepoOnboardingReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.OnboardRepo", "failed to decode repository onboarding report")
 	}
 	return &report, nil
 }

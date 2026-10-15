@@ -48,12 +48,17 @@ const (
 	OrchestratorService_ListBackends_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/ListBackends"
 	OrchestratorService_ListRunners_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/ListRunners"
 	OrchestratorService_ListWorkflows_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/ListWorkflows"
+	OrchestratorService_CreateWorkflow_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/CreateWorkflow"
+	OrchestratorService_GetWorkflow_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/GetWorkflow"
+	OrchestratorService_UpdateWorkflow_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/UpdateWorkflow"
+	OrchestratorService_DeleteWorkflow_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/DeleteWorkflow"
 	OrchestratorService_Health_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/Health"
 	OrchestratorService_RegisterFleetNode_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/RegisterFleetNode"
 	OrchestratorService_GetFleetNode_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetNode"
 	OrchestratorService_ListFleetNodes_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetNodes"
 	OrchestratorService_RemoveFleetNode_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/RemoveFleetNode"
 	OrchestratorService_FleetNodeHeartbeat_FullMethodName     = "/quicbaas.orchestrator.v1.OrchestratorService/FleetNodeHeartbeat"
+	OrchestratorService_ListBackendModels_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/ListBackendModels"
 	OrchestratorService_PushEvents_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/PushEvents"
 	OrchestratorService_SubscribeSessionEvents_FullMethodName = "/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents"
 	OrchestratorService_GetSessionConversation_FullMethodName = "/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation"
@@ -117,6 +122,10 @@ type OrchestratorServiceClient interface {
 	ListRunners(ctx context.Context, in *OrchestratorListRunnersRequest, opts ...grpc.CallOption) (*OrchestratorListRunnersResponse, error)
 	// Workflow Operations
 	ListWorkflows(ctx context.Context, in *OrchestratorListWorkflowsRequest, opts ...grpc.CallOption) (*OrchestratorListWorkflowsResponse, error)
+	CreateWorkflow(ctx context.Context, in *OrchestratorCreateWorkflowRequest, opts ...grpc.CallOption) (*OrchestratorCreateWorkflowResponse, error)
+	GetWorkflow(ctx context.Context, in *OrchestratorGetWorkflowRequest, opts ...grpc.CallOption) (*OrchestratorGetWorkflowResponse, error)
+	UpdateWorkflow(ctx context.Context, in *OrchestratorUpdateWorkflowRequest, opts ...grpc.CallOption) (*OrchestratorUpdateWorkflowResponse, error)
+	DeleteWorkflow(ctx context.Context, in *OrchestratorDeleteWorkflowRequest, opts ...grpc.CallOption) (*OrchestratorDeleteWorkflowResponse, error)
 	// Health Operations
 	Health(ctx context.Context, in *OrchestratorHealthRequest, opts ...grpc.CallOption) (*OrchestratorHealthResponse, error)
 	// Fleet Management
@@ -125,6 +134,8 @@ type OrchestratorServiceClient interface {
 	ListFleetNodes(ctx context.Context, in *ListFleetNodesRequest, opts ...grpc.CallOption) (*ListFleetNodesResponse, error)
 	RemoveFleetNode(ctx context.Context, in *RemoveFleetNodeRequest, opts ...grpc.CallOption) (*RemoveFleetNodeResponse, error)
 	FleetNodeHeartbeat(ctx context.Context, in *FleetNodeHeartbeatRequest, opts ...grpc.CallOption) (*FleetNodeHeartbeatResponse, error)
+	// ListBackendModels is GET /api/v1/fleet/{nodeID}/backends/{backendName}/models.
+	ListBackendModels(ctx context.Context, in *ListBackendModelsRequest, opts ...grpc.CallOption) (*ListBackendModelsResponse, error)
 	// Session event ingest (Phase 3). Daemon-side agents open a bidi stream
 	// and push each session event as PushEventRequest; the control plane acks
 	// with EventAck carrying the accepted sequence. At-least-once delivery:
@@ -449,6 +460,46 @@ func (c *orchestratorServiceClient) ListWorkflows(ctx context.Context, in *Orche
 	return out, nil
 }
 
+func (c *orchestratorServiceClient) CreateWorkflow(ctx context.Context, in *OrchestratorCreateWorkflowRequest, opts ...grpc.CallOption) (*OrchestratorCreateWorkflowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OrchestratorCreateWorkflowResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_CreateWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) GetWorkflow(ctx context.Context, in *OrchestratorGetWorkflowRequest, opts ...grpc.CallOption) (*OrchestratorGetWorkflowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OrchestratorGetWorkflowResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_GetWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) UpdateWorkflow(ctx context.Context, in *OrchestratorUpdateWorkflowRequest, opts ...grpc.CallOption) (*OrchestratorUpdateWorkflowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OrchestratorUpdateWorkflowResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_UpdateWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) DeleteWorkflow(ctx context.Context, in *OrchestratorDeleteWorkflowRequest, opts ...grpc.CallOption) (*OrchestratorDeleteWorkflowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OrchestratorDeleteWorkflowResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_DeleteWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orchestratorServiceClient) Health(ctx context.Context, in *OrchestratorHealthRequest, opts ...grpc.CallOption) (*OrchestratorHealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(OrchestratorHealthResponse)
@@ -503,6 +554,16 @@ func (c *orchestratorServiceClient) FleetNodeHeartbeat(ctx context.Context, in *
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FleetNodeHeartbeatResponse)
 	err := c.cc.Invoke(ctx, OrchestratorService_FleetNodeHeartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) ListBackendModels(ctx context.Context, in *ListBackendModelsRequest, opts ...grpc.CallOption) (*ListBackendModelsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBackendModelsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_ListBackendModels_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -717,6 +778,10 @@ type OrchestratorServiceServer interface {
 	ListRunners(context.Context, *OrchestratorListRunnersRequest) (*OrchestratorListRunnersResponse, error)
 	// Workflow Operations
 	ListWorkflows(context.Context, *OrchestratorListWorkflowsRequest) (*OrchestratorListWorkflowsResponse, error)
+	CreateWorkflow(context.Context, *OrchestratorCreateWorkflowRequest) (*OrchestratorCreateWorkflowResponse, error)
+	GetWorkflow(context.Context, *OrchestratorGetWorkflowRequest) (*OrchestratorGetWorkflowResponse, error)
+	UpdateWorkflow(context.Context, *OrchestratorUpdateWorkflowRequest) (*OrchestratorUpdateWorkflowResponse, error)
+	DeleteWorkflow(context.Context, *OrchestratorDeleteWorkflowRequest) (*OrchestratorDeleteWorkflowResponse, error)
 	// Health Operations
 	Health(context.Context, *OrchestratorHealthRequest) (*OrchestratorHealthResponse, error)
 	// Fleet Management
@@ -725,6 +790,8 @@ type OrchestratorServiceServer interface {
 	ListFleetNodes(context.Context, *ListFleetNodesRequest) (*ListFleetNodesResponse, error)
 	RemoveFleetNode(context.Context, *RemoveFleetNodeRequest) (*RemoveFleetNodeResponse, error)
 	FleetNodeHeartbeat(context.Context, *FleetNodeHeartbeatRequest) (*FleetNodeHeartbeatResponse, error)
+	// ListBackendModels is GET /api/v1/fleet/{nodeID}/backends/{backendName}/models.
+	ListBackendModels(context.Context, *ListBackendModelsRequest) (*ListBackendModelsResponse, error)
 	// Session event ingest (Phase 3). Daemon-side agents open a bidi stream
 	// and push each session event as PushEventRequest; the control plane acks
 	// with EventAck carrying the accepted sequence. At-least-once delivery:
@@ -878,6 +945,18 @@ func (UnimplementedOrchestratorServiceServer) ListRunners(context.Context, *Orch
 func (UnimplementedOrchestratorServiceServer) ListWorkflows(context.Context, *OrchestratorListWorkflowsRequest) (*OrchestratorListWorkflowsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListWorkflows not implemented")
 }
+func (UnimplementedOrchestratorServiceServer) CreateWorkflow(context.Context, *OrchestratorCreateWorkflowRequest) (*OrchestratorCreateWorkflowResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateWorkflow not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) GetWorkflow(context.Context, *OrchestratorGetWorkflowRequest) (*OrchestratorGetWorkflowResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWorkflow not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) UpdateWorkflow(context.Context, *OrchestratorUpdateWorkflowRequest) (*OrchestratorUpdateWorkflowResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateWorkflow not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) DeleteWorkflow(context.Context, *OrchestratorDeleteWorkflowRequest) (*OrchestratorDeleteWorkflowResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteWorkflow not implemented")
+}
 func (UnimplementedOrchestratorServiceServer) Health(context.Context, *OrchestratorHealthRequest) (*OrchestratorHealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
 }
@@ -895,6 +974,9 @@ func (UnimplementedOrchestratorServiceServer) RemoveFleetNode(context.Context, *
 }
 func (UnimplementedOrchestratorServiceServer) FleetNodeHeartbeat(context.Context, *FleetNodeHeartbeatRequest) (*FleetNodeHeartbeatResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FleetNodeHeartbeat not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) ListBackendModels(context.Context, *ListBackendModelsRequest) (*ListBackendModelsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBackendModels not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) PushEvents(grpc.BidiStreamingServer[PushEventRequest, PushEventAck]) error {
 	return status.Error(codes.Unimplemented, "method PushEvents not implemented")
@@ -1365,6 +1447,78 @@ func _OrchestratorService_ListWorkflows_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorService_CreateWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OrchestratorCreateWorkflowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).CreateWorkflow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_CreateWorkflow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).CreateWorkflow(ctx, req.(*OrchestratorCreateWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_GetWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OrchestratorGetWorkflowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).GetWorkflow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_GetWorkflow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).GetWorkflow(ctx, req.(*OrchestratorGetWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_UpdateWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OrchestratorUpdateWorkflowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).UpdateWorkflow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_UpdateWorkflow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).UpdateWorkflow(ctx, req.(*OrchestratorUpdateWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_DeleteWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OrchestratorDeleteWorkflowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).DeleteWorkflow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_DeleteWorkflow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).DeleteWorkflow(ctx, req.(*OrchestratorDeleteWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OrchestratorService_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(OrchestratorHealthRequest)
 	if err := dec(in); err != nil {
@@ -1469,6 +1623,24 @@ func _OrchestratorService_FleetNodeHeartbeat_Handler(srv interface{}, ctx contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OrchestratorServiceServer).FleetNodeHeartbeat(ctx, req.(*FleetNodeHeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_ListBackendModels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBackendModelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).ListBackendModels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_ListBackendModels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).ListBackendModels(ctx, req.(*ListBackendModelsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1796,6 +1968,22 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _OrchestratorService_ListWorkflows_Handler,
 		},
 		{
+			MethodName: "CreateWorkflow",
+			Handler:    _OrchestratorService_CreateWorkflow_Handler,
+		},
+		{
+			MethodName: "GetWorkflow",
+			Handler:    _OrchestratorService_GetWorkflow_Handler,
+		},
+		{
+			MethodName: "UpdateWorkflow",
+			Handler:    _OrchestratorService_UpdateWorkflow_Handler,
+		},
+		{
+			MethodName: "DeleteWorkflow",
+			Handler:    _OrchestratorService_DeleteWorkflow_Handler,
+		},
+		{
 			MethodName: "Health",
 			Handler:    _OrchestratorService_Health_Handler,
 		},
@@ -1818,6 +2006,10 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FleetNodeHeartbeat",
 			Handler:    _OrchestratorService_FleetNodeHeartbeat_Handler,
+		},
+		{
+			MethodName: "ListBackendModels",
+			Handler:    _OrchestratorService_ListBackendModels_Handler,
 		},
 		{
 			MethodName: "GetSessionConversation",

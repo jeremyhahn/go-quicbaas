@@ -62,8 +62,8 @@ var ErrInvalidCABundle = errors.New("agent deploy: invalid CA bundle in --tls-ca
 var ErrEmptyCABundle = errors.New("agent deploy: CA bundle is empty")
 
 // newSDKFleetNodeCertIssuer derives the HTTP transport from the top-level
-// CLI flags. It reuses --address, --tls, --tls-ca, --tls-cert,
-// --tls-key, --tls-skip-verify exactly like the SDK client does.
+// CLI flags. It reuses --address, --tls, --tls-ca, --tls-cert and
+// --tls-key exactly like the SDK client does.
 func newSDKFleetNodeCertIssuer() (*sdkFleetNodeCertIssuer, error) {
 	addr, err := resolveServerBaseURL()
 	if err != nil {

@@ -102,18 +102,3 @@ func TestRunSchedulerStatusCommand_FactoryError(t *testing.T) {
 		return cmd.RunE(cmd, []string{})
 	})
 }
-
-// --------------------------------------------------------------------------
-// createSchedulerClient unsupported transport branch
-// --------------------------------------------------------------------------
-
-func TestCreateSchedulerClient_UnsupportedTransport(t *testing.T) {
-	savedTransport := transport
-	defer func() { transport = savedTransport }()
-
-	transport = "unsupported_transport_xyz"
-
-	_, err := createSchedulerClient()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported transport")
-}

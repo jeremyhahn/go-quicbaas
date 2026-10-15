@@ -1174,6 +1174,185 @@ func (s *OrchestratorServer) ListWorkflows(ctx context.Context, req *pb.Orchestr
 	}, nil
 }
 
+// CreateWorkflow validates and registers a workflow definition for the
+// tenant, the call REST's POST /api/v1/orchestrator/workflows makes.
+func (s *OrchestratorServer) CreateWorkflow(ctx context.Context, req *pb.OrchestratorCreateWorkflowRequest) (*pb.OrchestratorCreateWorkflowResponse, error) {
+	s.logger.Debug("Processing CreateWorkflow request")
+
+	if req.GetDefinition() == nil {
+		return nil, status.Error(codes.InvalidArgument, "workflow definition is required")
+	}
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
+
+	definition := workflowDefinitionFromProto(req.GetDefinition())
+	if err := s.agentSvc.RegisterWorkflow(tenantCtx, definition); err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+	workflow, err := workflowDefinitionToProto(definition)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.OrchestratorCreateWorkflowResponse{Workflow: workflow}, nil
+}
+
+// GetWorkflow returns the tenant's workflow definition by name.
+func (s *OrchestratorServer) GetWorkflow(ctx context.Context, req *pb.OrchestratorGetWorkflowRequest) (*pb.OrchestratorGetWorkflowResponse, error) {
+	s.logger.Debug("Processing GetWorkflow request")
+
+	if req.GetName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "workflow name is required")
+	}
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
+
+	definition, err := s.agentSvc.GetWorkflow(tenantCtx, req.GetName())
+	if err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+	workflow, err := workflowDefinitionToProto(definition)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.OrchestratorGetWorkflowResponse{Workflow: workflow}, nil
+}
+
+// UpdateWorkflow replaces the tenant's workflow definition. The request's
+// name wins over the definition's own, as the REST route's {name} does.
+func (s *OrchestratorServer) UpdateWorkflow(ctx context.Context, req *pb.OrchestratorUpdateWorkflowRequest) (*pb.OrchestratorUpdateWorkflowResponse, error) {
+	s.logger.Debug("Processing UpdateWorkflow request")
+
+	if req.GetName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "workflow name is required")
+	}
+	if req.GetDefinition() == nil {
+		return nil, status.Error(codes.InvalidArgument, "workflow definition is required")
+	}
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
+
+	definition := workflowDefinitionFromProto(req.GetDefinition())
+	definition.Name = req.GetName()
+	if err := s.agentSvc.UpdateWorkflow(tenantCtx, definition); err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+	workflow, err := workflowDefinitionToProto(definition)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.OrchestratorUpdateWorkflowResponse{Workflow: workflow}, nil
+}
+
+// DeleteWorkflow removes the tenant's workflow definition by name.
+func (s *OrchestratorServer) DeleteWorkflow(ctx context.Context, req *pb.OrchestratorDeleteWorkflowRequest) (*pb.OrchestratorDeleteWorkflowResponse, error) {
+	s.logger.Debug("Processing DeleteWorkflow request")
+
+	if req.GetName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "workflow name is required")
+	}
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.agentSvc.DeleteWorkflow(tenantCtx, req.GetName()); err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+	return &pb.OrchestratorDeleteWorkflowResponse{Name: req.GetName(), Deleted: true}, nil
+}
+
+// workflowDefinitionFromProto is the inverse of workflowDefinitionToProto.
+// The tenant is never read from the wire definition: the loader stamps it
+// from the tenant the verb is called with.
+func workflowDefinitionFromProto(definition *pb.OrchestratorWorkflowDefinition) *orchestration.WorkflowDefinition {
+	agents := make([]orchestration.AgentRoleSpec, 0, len(definition.GetAgents()))
+	for _, agent := range definition.GetAgents() {
+		agents = append(agents, orchestration.AgentRoleSpec{
+			Role:            agent.GetRole(),
+			Backend:         agent.GetBackend(),
+			Model:           agent.GetModel(),
+			Capabilities:    append([]string(nil), agent.GetCapabilities()...),
+			MCPScopes:       append([]string(nil), agent.GetMcpScopes()...),
+			Count:           int(agent.GetCount()),
+			Env:             cloneStringMap(agent.GetEnv()),
+			WorkspacePath:   agent.GetWorkspacePath(),
+			PermissionMode:  agent.GetPermissionMode(),
+			SkipPermissions: agent.GetSkipPermissions(),
+			Sandboxed:       agent.GetSandboxed(),
+			ContainerImage:  agent.GetContainerImage(),
+			HostAffinity:    agent.GetHostAffinity(),
+			NumCtx:          int(agent.GetNumCtx()),
+			SystemPrompt:    agent.GetSystemPrompt(),
+			PromptAppend:    agent.GetPromptAppend(),
+		})
+	}
+	settings := definition.GetSettings()
+	reviewCriteria := make([]orchestration.ReviewCriterion, 0, len(settings.GetReviewCriteria()))
+	for _, criterion := range settings.GetReviewCriteria() {
+		reviewCriteria = append(reviewCriteria, orchestration.ReviewCriterion{
+			Name:      criterion.GetName(),
+			Validator: criterion.GetValidator(),
+			Config:    criterion.GetConfig(),
+			Required:  criterion.GetRequired(),
+			Phase:     orchestration.CriterionPhase(criterion.GetPhase()),
+		})
+	}
+	return &orchestration.WorkflowDefinition{
+		Name:        definition.GetName(),
+		Description: definition.GetDescription(),
+		Mode:        orchestration.WorkflowMode(definition.GetMode()),
+		Agents:      agents,
+		ProjectID:   definition.GetProjectId(),
+		Settings: orchestration.WorkflowSettings{
+			MaxIterations:  int(settings.GetMaxIterations()),
+			MaxParallelism: int(settings.GetMaxParallelism()),
+			PollInterval:   settings.GetPollInterval(),
+			TimeoutPerItem: settings.GetTimeoutPerItem(),
+			TotalTimeout:   settings.GetTotalTimeout(),
+			ReviewCriteria: reviewCriteria,
+			Topology:       orchestration.CommunicationTopology(settings.GetTopology()),
+			Isolation:      orchestration.WorkspaceIsolation(settings.GetIsolation()),
+			PeerMessaging: orchestration.PeerMessagingSettings{
+				MaxMessageSize: int(settings.GetPeerMessaging().GetMaxMessageSize()),
+				MaxInboxSize:   int(settings.GetPeerMessaging().GetMaxInboxSize()),
+				OverflowAction: settings.GetPeerMessaging().GetOverflowAction(),
+				InboxTTL:       settings.GetPeerMessaging().GetInboxTtl(),
+			},
+			FileLocking: orchestration.FileLockSettings{
+				LeaseTTL:          settings.GetFileLocking().GetLeaseTtl(),
+				HeartbeatInterval: settings.GetFileLocking().GetHeartbeatInterval(),
+				MaxRenewals:       int(settings.GetFileLocking().GetMaxRenewals()),
+			},
+			VectorDB: orchestration.VectorDBSettings{
+				Enabled:        settings.GetVectorDb().GetEnabled(),
+				IndexType:      settings.GetVectorDb().GetIndexType(),
+				AutoIndex:      settings.GetVectorDb().GetAutoIndex(),
+				Triggers:       append([]string(nil), settings.GetVectorDb().GetTriggers()...),
+				GPUAccelerated: settings.GetVectorDb().GetGpuAccelerated(),
+			},
+			CostControls: orchestration.CostControlSettings{
+				MaxTokensPerJob:   settings.GetCostControls().GetMaxTokensPerJob(),
+				MaxTokensPerAgent: settings.GetCostControls().GetMaxTokensPerAgent(),
+				BudgetAction:      settings.GetCostControls().GetBudgetAction(),
+			},
+			Recovery: orchestration.RecoverySettings{
+				AutoRestart:    settings.GetRecovery().GetAutoRestart(),
+				MaxRestarts:    int(settings.GetRecovery().GetMaxRestarts()),
+				RestartBackoff: settings.GetRecovery().GetRestartBackoff(),
+			},
+			Verbosity: settings.GetVerbosity(),
+			NumCtx:    int(settings.GetNumCtx()),
+			Hooks:     settings.GetHooks(),
+		},
+	}
+}
+
 func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) (*pb.OrchestratorWorkflowDefinition, error) {
 	if definition == nil {
 		return nil, nil
@@ -1462,6 +1641,41 @@ func (s *OrchestratorServer) FleetNodeHeartbeat(ctx context.Context, req *pb.Fle
 		NodeId:       req.NodeId,
 		Acknowledged: true,
 		Timestamp:    timestamppb.Now(),
+	}, nil
+}
+
+// ListBackendModels serves the same service call as
+// GET /api/v1/fleet/{nodeID}/backends/{backendName}/models. A node_id other
+// than "any" is threaded as host affinity, so the remote backend resolver asks
+// that node. The tenant is the caller's own unless tenant_id names one it may
+// target.
+func (s *OrchestratorServer) ListBackendModels(ctx context.Context, req *pb.ListBackendModelsRequest) (*pb.ListBackendModelsResponse, error) {
+	s.logger.WithField("backend", req.GetBackendName()).Debug("Processing ListBackendModels request")
+
+	if req.GetBackendName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "backend_name is required")
+	}
+
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
+	if nodeID := req.GetNodeId(); nodeID != "" && nodeID != "any" {
+		tenantCtx = orchestration.WithHostAffinity(tenantCtx, nodeID)
+	}
+
+	models, err := s.agentSvc.ListBackendModels(tenantCtx, req.GetBackendName())
+	if err != nil {
+		return nil, convertOrchestratorError(err)
+	}
+	if models == nil {
+		models = []string{}
+	}
+
+	return &pb.ListBackendModelsResponse{
+		Backend: req.GetBackendName(),
+		Models:  models,
+		Count:   pageInt32(len(models)),
 	}, nil
 }
 
@@ -1963,6 +2177,13 @@ func convertOrchestratorError(err error) error {
 		return status.Error(codes.NotFound, sessionNotFoundErr.Error())
 	}
 
+	// An unknown backend is a lookup miss, as REST's 404 and MCP's not-found
+	// already say. It is matched by sentinel so a BackendNotFoundError wrapped
+	// in an AgentServiceError is answered here, not by the Internal branch below.
+	if stderrors.Is(err, orchestration.ErrBackendNotFound) {
+		return status.Error(codes.NotFound, err.Error())
+	}
+
 	// A session that may not rotate is a state problem, not a bad request: the
 	// caller named a real session and the only thing wrong is its policy.
 	var notRotatableErr *orchestration.SessionNotRotatableError
@@ -1991,6 +2212,18 @@ func convertOrchestratorError(err error) error {
 	// oversized prompt append — unwraps to ErrInvalidInput and is the
 	// caller's to correct, never a server fault.
 	if stderrors.Is(err, orchestration.ErrInvalidInput) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// Workflow definitions answer as REST's 404 / 409 and MCP's not-found /
+	// already-exists do; a definition that fails validation is the caller's.
+	if stderrors.Is(err, orchestration.ErrWorkflowNotFound) {
+		return status.Error(codes.NotFound, err.Error())
+	}
+	if stderrors.Is(err, orchestration.ErrWorkflowAlreadyExists) {
+		return status.Error(codes.AlreadyExists, err.Error())
+	}
+	if stderrors.Is(err, orchestration.ErrWorkflowValidation) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
 

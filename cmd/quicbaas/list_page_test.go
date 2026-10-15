@@ -325,10 +325,32 @@ func listCommandCases() []listCommandCase {
 
 // execListCommand installs tc against a server holding total records, runs
 // the command with args, and returns what it printed and the error.
+// restoreListPageFlags puts every list command's page flags back when the
+// test ends. ParseFlags writes them into package-level variables, so a
+// --limit -1 left behind would be refused by the next test, or the next
+// -count run, that calls the command's RunE without binding flags.
+func restoreListPageFlags(t *testing.T) {
+	t.Helper()
+	pages := []*pageFlags{
+		&orchJobListPage, &orchTaskListPage, &orchSessionsPage,
+		&fleetListPage, &projectListPage, &accountListPage,
+	}
+	saved := make([]pageFlags, len(pages))
+	for i, p := range pages {
+		saved[i] = *p
+	}
+	t.Cleanup(func() {
+		for i, p := range pages {
+			*p = saved[i]
+		}
+	})
+}
+
 func execListCommand(t *testing.T, tc listCommandCase, total int, format string, args ...string) (*pagedListServer, string, error) {
 	t.Helper()
 	server := newPagedListServer(t, tc.path, tc.key, tc.idField, total)
 	tc.install(t, server, format)
+	restoreListPageFlags(t)
 	globalTenantID = "acme"
 	globalTimeout = 5 * time.Second
 

@@ -37,7 +37,7 @@ func TestSDLCTools_RegisteredAndDispatched(t *testing.T) {
 	}
 	for _, want := range []string{
 		"sdlc_bind", "sdlc_unbind", "sdlc_binding", "sdlc_delivery", "sdlc_forges",
-		"sdlc_onboard", "sdlc_conformance", "sdlc_open_work",
+		"sdlc_onboard", "sdlc_project_onboard", "sdlc_conformance", "sdlc_open_work",
 	} {
 		if !names[want] {
 			t.Fatalf("%s not registered", want)
@@ -52,14 +52,15 @@ func TestSDLCTools_RegisteredAndDispatched(t *testing.T) {
 	// Without the module the tools refuse typed rather than panic.
 	ctx := context.Background()
 	for name, args := range map[string]map[string]interface{}{
-		"sdlc_bind":        {"project_id": "p", "binding": map[string]interface{}{"project_id": "p"}},
-		"sdlc_unbind":      {"project_id": "p"},
-		"sdlc_binding":     {"project_id": "p"},
-		"sdlc_delivery":    {"task_id": "t"},
-		"sdlc_forges":      nil,
-		"sdlc_onboard":     {"project_id": "p"},
-		"sdlc_conformance": {"project_id": "p"},
-		"sdlc_open_work":   {"project_id": "p"},
+		"sdlc_bind":            {"project_id": "p", "binding": map[string]interface{}{"project_id": "p"}},
+		"sdlc_unbind":          {"project_id": "p"},
+		"sdlc_binding":         {"project_id": "p"},
+		"sdlc_delivery":        {"task_id": "t"},
+		"sdlc_forges":          nil,
+		"sdlc_onboard":         {"project_id": "p"},
+		"sdlc_project_onboard": {"repo": "web", "like": "p"},
+		"sdlc_conformance":     {"project_id": "p"},
+		"sdlc_open_work":       {"project_id": "p"},
 	} {
 		if _, err := registry.executeSDLCTool(ctx, name, args); err == nil {
 			t.Fatalf("%s answered without the module", name)

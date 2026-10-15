@@ -209,6 +209,51 @@ func TestBuildSDKClientOptions_UnixTransport(t *testing.T) {
 	assert.NotEmpty(t, opts, "should have Unix option plus timeout")
 }
 
+// TestRootCommand_DefaultTransportIsUnix pins the default that
+// docs/multiprotocol-api/cli.md "Transport selection" documents.
+func TestRootCommand_DefaultTransportIsUnix(t *testing.T) {
+	flag := rootCmd.PersistentFlags().Lookup("transport")
+	require.NotNil(t, flag)
+	assert.Equal(t, "unix", flag.DefValue)
+}
+
+// TestBuildSDKClientOptions_SocketAddressSelectsUnix pins the CLI's only
+// automatic transport switch: grpc (or no transport) becomes unix when the
+// address ends in ".sock". No other address shape changes the transport.
+func TestBuildSDKClientOptions_SocketAddressSelectsUnix(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport string
+		address   string
+		want      string
+	}{
+		{name: "grpc with socket path", transport: "grpc", address: "/run/quicbaas/quicbaas.sock", want: "unix"},
+		{name: "empty transport with socket file", transport: "", address: "quicbaas.sock", want: "unix"},
+		{name: "grpc with host and port", transport: "grpc", address: "localhost:9090", want: "grpc"},
+		{name: "grpc with path lacking .sock", transport: "grpc", address: "/run/quicbaas/socket", want: "grpc"},
+		{name: "grpc with https URL", transport: "grpc", address: "https://localhost:8443", want: "grpc"},
+		{name: "rest with socket path", transport: "rest", address: "/run/quicbaas/quicbaas.sock", want: "rest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			savedTransport := transport
+			savedAddress := address
+			defer func() {
+				transport = savedTransport
+				address = savedAddress
+			}()
+
+			transport = tt.transport
+			address = tt.address
+
+			_, err := buildSDKClientOptions()
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, transport)
+		})
+	}
+}
+
 func TestBuildSDKClientOptions_UnsupportedTransport(t *testing.T) {
 	// Save and restore global state
 	savedTransport := transport

@@ -511,6 +511,29 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_list_backend_models",
+		Description: "List the models one agent backend offers, as seen from a fleet node",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"backend_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Backend name (e.g. ollama, claude)",
+				},
+				"node_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Fleet node to ask; empty or \"any\" lets the resolver choose",
+				},
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID (defaults to the caller's tenant)",
+				},
+			},
+			"required": []string{"backend_name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name:        "quicbaas_orchestrator_list_runners",
 		Description: "List the registered job runners and the ordered states each drives a job through",
 		InputSchema: map[string]interface{}{
@@ -613,9 +636,18 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Backend type (acp, ollama)",
 				},
+				"model": map[string]interface{}{
+					"type":        "string",
+					"description": "Default model the node runs. Optional.",
+				},
 				"work_dir": map[string]interface{}{
 					"type":        "string",
 					"description": "Working directory",
+				},
+				"metadata": map[string]interface{}{
+					"type":                 "object",
+					"description":          "String metadata carried on the node. Optional.",
+					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 			},
 			"required": []string{"tenant_id", "name", "host", "node_type"},
@@ -826,6 +858,163 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_list_tasks",
+		Description: "List one page of the current tenant's orchestration tasks, optionally narrowed by status, team, assignee, project, agent, job or source",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": withPageProperties(map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"status":      filterSchemaProperty("Narrow the listing to tasks in one status."),
+				"team_name":   filterSchemaProperty("Narrow the listing to one team's tasks."),
+				"assigned_to": filterSchemaProperty("Narrow the listing to the tasks assigned to one agent."),
+				"created_by":  filterSchemaProperty("Narrow the listing to the tasks one principal created."),
+				"project_id":  filterSchemaProperty("Narrow the listing to one project's tasks."),
+				"statuses": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Narrow the listing to tasks in any of these statuses. Optional.",
+				},
+				"auto_spawn": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Narrow the listing to the tasks that asked for immediate dispatch (true) or to the ones queued for a claim (false). Optional.",
+				},
+				"agent_id":    filterSchemaProperty("Narrow the listing to the tasks whose latest attempt ran on one fleet node."),
+				"job_id":      filterSchemaProperty("Narrow the listing to the task whose latest attempt ran as one job."),
+				"source_kind": filterSchemaProperty("With source_ref, narrow the listing to the task holding one source reservation in project_id's scope."),
+				"source_ref":  filterSchemaProperty("With source_kind, the source reference the task holds."),
+			}, strings.Join(orchestration.TaskPageSpec().SortFields(), ", ")),
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_task_get",
+		Description: "Get one orchestration task by ID",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+			},
+			"required": []string{"task_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_task_claim",
+		Description: "Claim a pending orchestration task for a fleet node to execute",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+				"agent_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Fleet node claiming the task. Required.",
+				},
+			},
+			"required": []string{"task_id", "agent_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_task_complete",
+		Description: "Mark an orchestration task completed, optionally recording its result",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+				"result": map[string]interface{}{
+					"type":        "object",
+					"description": "The task's result: {output, files, metadata}. Optional.",
+				},
+			},
+			"required": []string{"task_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_task_submit_artifacts",
+		Description: "Store typed output artifacts on an orchestration task, as POST /api/v1/orchestrator/tasks/{taskID}/artifacts does",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the task. Required.",
+				},
+				"artifacts": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "object"},
+					"description": "Artifacts {kind, name, mime_type, size, content, ref, metadata}; inline content is base64, as on REST. Required.",
+				},
+			},
+			"required": []string{"task_id", "artifacts"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_spawn_child_job",
+		Description: "Spawn a child job under a parent job, from a workflow or inline task specs; the caller must lead the parent",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"parent_job_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The job whose lead agent is spawning the child. Required.",
+				},
+				"caller_agent_id": filterSchemaProperty("Fleet node ID of the spawning lead."),
+				"workflow_id":     filterSchemaProperty("An existing workflow definition for the child's task plan; exclusive with tasks."),
+				"project_id":      filterSchemaProperty("Project the child job is scoped to."),
+				"tasks": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "object"},
+					"description": "Inline task specs when no workflow is named. Optional.",
+				},
+				"host_affinity": filterSchemaProperty("Pin the child to one fleet node daemon (name or host)."),
+				"gpu_required": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Dispatch only to GPU-capable daemons. Optional.",
+				},
+				"host_affinity_strict": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Treat host_affinity as a hard constraint. Optional.",
+				},
+			},
+			"required": []string{"parent_job_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name:        "quicbaas_orchestrator_list_workflows",
 		Description: "List one page of the current tenant's workflow definitions, optionally narrowed by project or mode",
 		InputSchema: map[string]interface{}{
@@ -838,6 +1027,90 @@ func (r *ToolRegistry) registerAgentTools() {
 				"project_id": filterSchemaProperty("Narrow the listing to one project's workflows."),
 				"mode":       filterSchemaProperty("Narrow the listing to one workflow mode."),
 			}, strings.Join(orchestration.WorkflowPageSpec().SortFields(), ", ")),
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_get_workflow",
+		Description: "Get one of the current tenant's workflow definitions by name",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Workflow name. Required.",
+				},
+			},
+			"required": []string{"name"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_create_workflow",
+		Description: "Validate and register a new workflow definition for the current tenant",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Workflow name. Optional; overrides the definition's name when set.",
+				},
+				"definition": map[string]interface{}{
+					"type":        "object",
+					"description": "The workflow definition: name, description, mode, agents, settings. Required.",
+				},
+			},
+			"required": []string{"definition"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_update_workflow",
+		Description: "Replace an existing workflow definition of the current tenant by name",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Name of the workflow to replace; overrides the definition's name. Required.",
+				},
+				"definition": map[string]interface{}{
+					"type":        "object",
+					"description": "The replacement workflow definition. Required.",
+				},
+			},
+			"required": []string{"name", "definition"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_delete_workflow",
+		Description: "Remove one of the current tenant's workflow definitions by name",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Workflow name. Required.",
+				},
+			},
+			"required": []string{"name"},
 		},
 	})
 
@@ -1631,6 +1904,46 @@ func (r *ToolRegistry) executeAgentListBackends(ctx context.Context, args map[st
 	}))
 }
 
+// executeOrchestratorListBackendModels handles
+// quicbaas_orchestrator_list_backend_models from the same service call as
+// GET /api/v1/fleet/{nodeID}/backends/{backendName}/models. A node_id other
+// than "any" is threaded as host affinity, so the remote backend resolver asks
+// that node. The tenant is the caller's own unless tenant_id names one it may
+// target.
+func (r *ToolRegistry) executeOrchestratorListBackendModels(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	backendName := getString(args, "backend_name")
+	if backendName == "" {
+		return nil, api.NewRequiredFieldError("backend_name")
+	}
+
+	ctx, _, err = orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	if nodeID := getString(args, "node_id"); nodeID != "" && nodeID != "any" {
+		ctx = orchestration.WithHostAffinity(ctx, nodeID)
+	}
+
+	models, err := agentSvc.ListBackendModels(ctx, backendName)
+	if err != nil {
+		return nil, err
+	}
+	if models == nil {
+		models = []string{}
+	}
+
+	return marshalResult(map[string]interface{}{
+		"backend": backendName,
+		"models":  models,
+		"count":   len(models),
+	})
+}
+
 // executeOrchestratorListRunners answers quicbaas_orchestrator_list_runners.
 //
 // The runner list is REGISTRY data — the same for every caller, so no tenant is
@@ -1808,7 +2121,9 @@ func (r *ToolRegistry) executeFleetRegister(ctx context.Context, args map[string
 		Host:     host,
 		NodeType: nodeType,
 		Backend:  getString(args, "backend"),
+		Model:    getString(args, "model"),
 		WorkDir:  getString(args, "work_dir"),
+		Metadata: getStringMap(args, "metadata"),
 	}
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
@@ -2325,6 +2640,215 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 	}))
 }
 
+// executeOrchestratorListTasks lists the tenant's orchestration tasks with the
+// filters, paging and facets GET /api/v1/orchestrator/tasks answers with.
+func (r *ToolRegistry) executeOrchestratorListTasks(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// A status the engine does not have is refused, as REST refuses it, so a
+	// misspelt status does not read back as "no such tasks".
+	statuses, err := orchestration.TaskStatusesFrom("statuses", getStringSlice(args, "statuses"))
+	if err != nil {
+		return nil, err
+	}
+
+	tasks, err := agentSvc.ListTasksPage(ctx, tenantID, &orchestration.TaskFilter{
+		Status:     orchestration.TaskStatus(getString(args, "status")),
+		TeamName:   getString(args, "team_name"),
+		AssignedTo: getString(args, "assigned_to"),
+		CreatedBy:  getString(args, "created_by"),
+		ProjectID:  getString(args, "project_id"),
+		Statuses:   statuses,
+		AutoSpawn:  getOptionalBool(args, "auto_spawn"),
+		AgentID:    getString(args, "agent_id"),
+		JobID:      getString(args, "job_id"),
+		SourceKind: orchestration.TaskSourceKind(getString(args, "source_kind")),
+		SourceRef:  getString(args, "source_ref"),
+	}, pageFromArgs(args))
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(pageResultFields(tasks, map[string]interface{}{
+		"tasks": tasks.Items,
+		"count": len(tasks.Items),
+	}))
+}
+
+// executeOrchestratorTaskGet handles the quicbaas_orchestrator_task_get tool.
+func (r *ToolRegistry) executeOrchestratorTaskGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	task, err := agentSvc.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task":      task,
+		"timestamp": time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+// executeOrchestratorTaskClaim handles the quicbaas_orchestrator_task_claim tool.
+func (r *ToolRegistry) executeOrchestratorTaskClaim(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+	agentID := getString(args, "agent_id")
+	if agentID == "" {
+		return nil, api.NewRequiredFieldError("agent_id")
+	}
+
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := agentSvc.ClaimTask(ctx, tenantID, taskID, agentID); err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task_id":   taskID,
+		"agent_id":  agentID,
+		"claimed":   true,
+		"timestamp": time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+// executeOrchestratorTaskComplete handles the
+// quicbaas_orchestrator_task_complete tool.
+func (r *ToolRegistry) executeOrchestratorTaskComplete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+
+	var body struct {
+		Result *orchestration.TaskResult `json:"result"`
+	}
+	if err := parseJSONObject(args, &body); err != nil {
+		return nil, api.NewValidationError("result", err.Error())
+	}
+
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := agentSvc.CompleteTask(ctx, tenantID, taskID, body.Result); err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task_id":   taskID,
+		"completed": true,
+		"timestamp": time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+// executeTaskSubmitArtifacts handles the quicbaas_task_submit_artifacts tool.
+// The artifacts decode exactly as the REST body does, so inline content is
+// base64, the JSON encoding of the bytes every transport carries.
+func (r *ToolRegistry) executeTaskSubmitArtifacts(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+
+	var body struct {
+		Artifacts []orchestration.Artifact `json:"artifacts"`
+	}
+	if err := parseJSONObject(args, &body); err != nil {
+		return nil, api.NewValidationError("artifacts", err.Error())
+	}
+	if body.Artifacts == nil {
+		return nil, api.NewRequiredFieldError("artifacts")
+	}
+
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := agentSvc.SubmitTaskArtifacts(ctx, tenantID, taskID, body.Artifacts); err != nil {
+		return nil, err
+	}
+
+	return marshalResult(map[string]interface{}{
+		"task_id": taskID,
+		"stored":  len(body.Artifacts),
+	})
+}
+
+// executeOrchestratorSpawnChildJob handles the
+// quicbaas_orchestrator_spawn_child_job tool. The arguments decode as the
+// REST body does, caller_agent_id included.
+func (r *ToolRegistry) executeOrchestratorSpawnChildJob(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	var req orchestration.SpawnChildJobRequest
+	if err := parseJSONObject(args, &req); err != nil {
+		return nil, api.NewValidationError("arguments", err.Error())
+	}
+	if req.ParentJobID == "" {
+		return nil, api.NewRequiredFieldError("parent_job_id")
+	}
+
+	ctx, _, err = orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := agentSvc.SpawnChildJob(ctx, &req)
+	if err != nil {
+		return nil, err
+	}
+
+	return marshalResult(resp)
+}
+
 func (r *ToolRegistry) executeOrchestratorListWorkflows(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
@@ -2347,6 +2871,133 @@ func (r *ToolRegistry) executeOrchestratorListWorkflows(ctx context.Context, arg
 		"workflows": workflows.Items,
 		"count":     len(workflows.Items),
 	}))
+}
+
+// executeOrchestratorGetWorkflow handles the quicbaas_orchestrator_get_workflow tool.
+func (r *ToolRegistry) executeOrchestratorGetWorkflow(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	name := getString(args, "name")
+	if name == "" {
+		return nil, api.NewRequiredFieldError("name")
+	}
+
+	ctx, _, err = orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	wf, err := agentSvc.GetWorkflow(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(map[string]interface{}{"workflow": wf})
+}
+
+// executeOrchestratorCreateWorkflow handles the
+// quicbaas_orchestrator_create_workflow tool. A non-empty name argument wins
+// over the definition's own name, as it does on REST.
+func (r *ToolRegistry) executeOrchestratorCreateWorkflow(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	def, err := workflowDefinitionArg(args)
+	if err != nil {
+		return nil, err
+	}
+	if name := getString(args, "name"); name != "" {
+		def.Name = name
+	}
+	if def.Name == "" {
+		return nil, api.NewRequiredFieldError("name")
+	}
+
+	ctx, _, err = orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := agentSvc.RegisterWorkflow(ctx, def); err != nil {
+		return nil, err
+	}
+	return marshalResult(map[string]interface{}{"workflow": def})
+}
+
+// executeOrchestratorUpdateWorkflow handles the
+// quicbaas_orchestrator_update_workflow tool. The name argument names the
+// workflow to replace and overrides the definition's own name.
+func (r *ToolRegistry) executeOrchestratorUpdateWorkflow(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	name := getString(args, "name")
+	if name == "" {
+		return nil, api.NewRequiredFieldError("name")
+	}
+	def, err := workflowDefinitionArg(args)
+	if err != nil {
+		return nil, err
+	}
+	def.Name = name
+
+	ctx, _, err = orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := agentSvc.UpdateWorkflow(ctx, def); err != nil {
+		return nil, err
+	}
+	return marshalResult(map[string]interface{}{"workflow": def})
+}
+
+// executeOrchestratorDeleteWorkflow handles the
+// quicbaas_orchestrator_delete_workflow tool.
+func (r *ToolRegistry) executeOrchestratorDeleteWorkflow(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return nil, err
+	}
+
+	name := getString(args, "name")
+	if name == "" {
+		return nil, api.NewRequiredFieldError("name")
+	}
+
+	ctx, _, err = orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := agentSvc.DeleteWorkflow(ctx, name); err != nil {
+		return nil, err
+	}
+	return marshalResult(map[string]interface{}{
+		"name":    name,
+		"deleted": true,
+	})
+}
+
+// workflowDefinitionArg decodes the definition argument of the workflow
+// create and update tools.
+func workflowDefinitionArg(args map[string]interface{}) (*orchestration.WorkflowDefinition, error) {
+	var body struct {
+		Definition *orchestration.WorkflowDefinition `json:"definition"`
+	}
+	if err := parseJSONObject(args, &body); err != nil {
+		return nil, api.NewValidationError("definition", err.Error())
+	}
+	if body.Definition == nil {
+		return nil, api.NewRequiredFieldError("definition")
+	}
+	return body.Definition, nil
 }
 
 // executeOrchestratorTaskCreate creates an orchestration task, optionally
@@ -2435,6 +3086,8 @@ func (r *ToolRegistry) executeOrchestratorTaskCreate(ctx context.Context, args m
 		result["spawned_job_id"] = task.SpawnedJobID
 		result["runner"] = task.Runner
 		result["dispatch_reason"] = task.DispatchReason
+		// The full record, as REST and gRPC return it.
+		result["task"] = task
 	}
 	if createErr != nil {
 		result["error"] = createErr.Error()
@@ -2809,6 +3462,7 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_rotate_account",
 		"quicbaas_orchestrator_list_sessions",
 		"quicbaas_orchestrator_list_backends",
+		"quicbaas_orchestrator_list_backend_models",
 		"quicbaas_orchestrator_list_runners",
 		"quicbaas_orchestrator_decompose",
 		"quicbaas_orchestrator_health",
@@ -2822,7 +3476,17 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_get_job_status",
 		"quicbaas_orchestrator_cancel_job",
 		"quicbaas_orchestrator_list_jobs",
+		"quicbaas_orchestrator_list_tasks",
+		"quicbaas_orchestrator_task_get",
+		"quicbaas_orchestrator_task_claim",
+		"quicbaas_orchestrator_task_complete",
+		"quicbaas_task_submit_artifacts",
+		"quicbaas_orchestrator_spawn_child_job",
 		"quicbaas_orchestrator_list_workflows",
+		"quicbaas_orchestrator_get_workflow",
+		"quicbaas_orchestrator_create_workflow",
+		"quicbaas_orchestrator_update_workflow",
+		"quicbaas_orchestrator_delete_workflow",
 		"quicbaas_orchestrator_task_create",
 		"quicbaas_orchestrator_task_block",
 		"quicbaas_orchestrator_task_readmit",
@@ -2871,6 +3535,8 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeAgentListSessions(ctx, args)
 	case "quicbaas_orchestrator_list_backends":
 		return r.executeAgentListBackends(ctx, args)
+	case "quicbaas_orchestrator_list_backend_models":
+		return r.executeOrchestratorListBackendModels(ctx, args)
 	case "quicbaas_orchestrator_list_runners":
 		return r.executeOrchestratorListRunners(ctx, args)
 	case "quicbaas_orchestrator_decompose":
@@ -2897,8 +3563,28 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeOrchestratorCancelJob(ctx, args)
 	case "quicbaas_orchestrator_list_jobs":
 		return r.executeOrchestratorListJobs(ctx, args)
+	case "quicbaas_orchestrator_list_tasks":
+		return r.executeOrchestratorListTasks(ctx, args)
+	case "quicbaas_orchestrator_task_get":
+		return r.executeOrchestratorTaskGet(ctx, args)
+	case "quicbaas_orchestrator_task_claim":
+		return r.executeOrchestratorTaskClaim(ctx, args)
+	case "quicbaas_orchestrator_task_complete":
+		return r.executeOrchestratorTaskComplete(ctx, args)
+	case "quicbaas_task_submit_artifacts":
+		return r.executeTaskSubmitArtifacts(ctx, args)
+	case "quicbaas_orchestrator_spawn_child_job":
+		return r.executeOrchestratorSpawnChildJob(ctx, args)
 	case "quicbaas_orchestrator_list_workflows":
 		return r.executeOrchestratorListWorkflows(ctx, args)
+	case "quicbaas_orchestrator_get_workflow":
+		return r.executeOrchestratorGetWorkflow(ctx, args)
+	case "quicbaas_orchestrator_create_workflow":
+		return r.executeOrchestratorCreateWorkflow(ctx, args)
+	case "quicbaas_orchestrator_update_workflow":
+		return r.executeOrchestratorUpdateWorkflow(ctx, args)
+	case "quicbaas_orchestrator_delete_workflow":
+		return r.executeOrchestratorDeleteWorkflow(ctx, args)
 	case "quicbaas_orchestrator_task_create":
 		return r.executeOrchestratorTaskCreate(ctx, args)
 	case "quicbaas_orchestrator_task_block":

@@ -87,7 +87,10 @@ Platform Services:
   - Backup and restore with compression and encryption
   - Cache management and warming
 
-Default connection: /tmp/quicbaas.sock (gRPC over Unix socket)
+Default connection: $HOME/quicbaas.sock (gRPC over Unix socket)
+
+Without --transport, the address picks the transport: an http:// or https://
+URL selects REST, anything else the Unix socket. --transport always wins.
 
 Examples:
   # Data operations
@@ -95,7 +98,8 @@ Examples:
   quicbaas data get mykey
 
   # Connect to remote server
-  quicbaas --address localhost:9090 data get mykey
+  quicbaas --address https://localhost:8443 data get mykey
+  quicbaas --transport grpc --address localhost:9090 data get mykey
 
   # Vector search
   quicbaas vector search --collection docs --query "hello world" --top-k 10
@@ -139,7 +143,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&fipsMode, "fips", false, "enable FIPS 140-3 mode")
 	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "./data", "data directory path")
 	addServerAddressFlag(rootCmd.PersistentFlags())
-	rootCmd.PersistentFlags().StringVar(&transport, "transport", "unix", "Transport protocol (grpc, rest, quic, unix, mcp, embedded)")
+	rootCmd.PersistentFlags().StringVar(&transport, "transport", defaultTransport, "Transport protocol (grpc, rest, quic, unix, mcp, embedded)")
 	rootCmd.PersistentFlags().DurationVar(&globalTimeout, "timeout", 30*time.Second, "Command timeout duration (e.g., 10s, 1m)")
 	rootCmd.PersistentFlags().BoolVar(&tlsEnabled, "tls", false, "Enable TLS")
 	rootCmd.PersistentFlags().StringVar(&tlsCA, "tls-ca", "", "TLS CA certificate file (auto-detected from data-dir if not set)")

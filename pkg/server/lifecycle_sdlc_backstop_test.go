@@ -323,3 +323,43 @@ func TestSDLCTriageForwarder_RefusesWithoutALiveModule(t *testing.T) {
 		t.Fatalf("want ErrSDLCUnavailable, got %v", err)
 	}
 }
+
+// TestSDLCPreflightForwarder_DeclaresItsShapeWithoutARuntime proves the
+// preflight's name, states and lease policy are readable before the module
+// is mounted, for the reason the triage forwarder's are.
+func TestSDLCPreflightForwarder_DeclaresItsShapeWithoutARuntime(t *testing.T) {
+	var runner orchestration.JobRunner = sdlcPreflightForwarder{}
+
+	if runner.Name() != sdlc.PreflightRunnerName {
+		t.Fatalf("name: want %q, got %q", sdlc.PreflightRunnerName, runner.Name())
+	}
+	if len(runner.States()) == 0 {
+		t.Fatal("the states must be readable before the module is mounted")
+	}
+	policy, ok := runner.(orchestration.JobLeasePolicy)
+	if !ok {
+		t.Fatal("the forwarder must declare the lease policy, not only the live runner")
+	}
+	if want := sdlc.PreflightLeaseSubject("proj-1"); policy.LeaseSubject(&orchestration.JobConfig{ProjectID: "proj-1"}) != want {
+		t.Fatalf("lease subject: want %q", want)
+	}
+	if got := policy.LeaseSubject(&orchestration.JobConfig{}); got != "" {
+		t.Fatalf("a config with no project names no subject, got %q", got)
+	}
+}
+
+// TestSDLCPreflightForwarder_RefusesWithoutALiveModule proves the half that
+// needs the runtime says so.
+func TestSDLCPreflightForwarder_RefusesWithoutALiveModule(t *testing.T) {
+	live := sdlcModule.live.Load()
+	sdlcModule.live.Store(nil)
+	t.Cleanup(func() { sdlcModule.live.Store(live) })
+
+	forwarder := sdlcPreflightForwarder{}
+	if err := forwarder.Validate(context.Background(), &orchestration.JobConfig{ProjectID: "p"}); !errors.Is(err, ErrSDLCUnavailable) {
+		t.Fatalf("want ErrSDLCUnavailable, got %v", err)
+	}
+	if err := forwarder.Run(context.Background(), nil); !errors.Is(err, ErrSDLCUnavailable) {
+		t.Fatalf("want ErrSDLCUnavailable, got %v", err)
+	}
+}

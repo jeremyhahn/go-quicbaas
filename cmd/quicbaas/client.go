@@ -41,11 +41,18 @@ var ErrEmptyAddress = errors.New(errors.ErrConfiguration, "createSDKClient", "ad
 // UnsupportedTransportError is returned when an unsupported transport type is specified.
 type UnsupportedTransportError struct {
 	Transport string
+	// Supported lists the transports the failing command accepts; empty
+	// means every CLI transport.
+	Supported []string
 }
 
 // Error implements the error interface.
 func (e *UnsupportedTransportError) Error() string {
-	return "unsupported transport: " + e.Transport + " (supported: grpc, rest, quic, unix, mcp, embedded)"
+	supported := "grpc, rest, quic, unix, mcp, embedded"
+	if len(e.Supported) > 0 {
+		supported = strings.Join(e.Supported, ", ")
+	}
+	return "unsupported transport: " + e.Transport + " (supported: " + supported + ")"
 }
 
 // createSDKClient creates and returns the singleton SDK client.
@@ -117,12 +124,8 @@ func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error)
 		opts = append(opts, quicbaas.WithTenant(globalTenantID))
 	}
 
-	// Auto-detect Unix transport when address is a socket path.
-	if transport == "" || transport == "grpc" {
-		if strings.HasSuffix(address, ".sock") {
-			transport = "unix"
-		}
-	}
+	// Settle the transport from --transport and --address (selectTransport).
+	transport = selectTransport()
 
 	// Configure transport type
 	switch transport {

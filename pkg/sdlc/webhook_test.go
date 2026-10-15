@@ -438,12 +438,20 @@ func TestWebhookRouteIndex_RecordTenantForget(t *testing.T) {
 	if _, err := NewWebhookRouteIndex(nil, n.KV); !errors.Is(err, ErrInvalidInput) {
 		t.Fatal("nil transactor")
 	}
-	var conflict *WebhookRouteConflictError
-	if err := index.Record(ctx, projectID, "tenant-c"); err == nil {
-		// forgotten above; recorded afresh for tenant-c, then a conflict for tenant-d
-		if err := index.Record(ctx, projectID, "tenant-d"); !errors.As(err, &conflict) || conflict.ProjectID != projectID {
-			t.Fatalf("conflict shape: %v", err)
+	// Forgotten above; recorded afresh for tenant-c, then a conflict for
+	// tenant-d. The node is shared across the package and across -count
+	// runs, so the tenant-c route is forgotten again when the test ends.
+	if err := index.Record(ctx, projectID, "tenant-c"); err != nil {
+		t.Fatalf("re-record after forget: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := index.Forget(context.Background(), projectID, "tenant-c"); err != nil {
+			t.Errorf("cleanup forget: %v", err)
 		}
+	})
+	var conflict *WebhookRouteConflictError
+	if err := index.Record(ctx, projectID, "tenant-d"); !errors.As(err, &conflict) || conflict.ProjectID != projectID {
+		t.Fatalf("conflict shape: %v", err)
 	}
 }
 

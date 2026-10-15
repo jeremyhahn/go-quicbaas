@@ -57,6 +57,11 @@ type mockSDLCClient struct {
 
 	// filed is the last issue filing the CLI asked for.
 	filed *sdlcSDK.FileIssueRequest
+
+	// repoOnboarded is the last repository onboarding the CLI asked for;
+	// repoSteps is the report it answers with.
+	repoOnboarded *sdlcSDK.RepoOnboardRequest
+	repoSteps     []sdlcSDK.RepoOnboardStep
 }
 
 func (m *mockSDLCClient) Reviewer(_ context.Context, tenantID, projectID string, pullRequest int) (*sdlcSDK.ReviewerSelection, error) {
@@ -339,7 +344,18 @@ func TestSDLCCommand_Shape(t *testing.T) {
 		assert.True(t, names[want], want)
 	}
 	assert.False(t, names["item"], "the work-item surface is gone")
-	assert.False(t, names["project"], "project registration is gone")
+	// "project" carries only the repository onboarding verb; project
+	// registration stays with "quicbaas project".
+	for _, sub := range cmd.Commands() {
+		if sub.Name() != "project" {
+			continue
+		}
+		var verbs []string
+		for _, verb := range sub.Commands() {
+			verbs = append(verbs, verb.Name())
+		}
+		assert.Equal(t, []string{"onboard"}, verbs, "project registration is gone")
+	}
 }
 
 // =============================================================================

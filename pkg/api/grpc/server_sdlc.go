@@ -176,6 +176,29 @@ func (s *SDLCServer) Onboard(ctx context.Context, req *pb.OnboardRequest) (*pb.O
 	return &pb.OnboardResponse{Report: onboardingReportToProto(report)}, nil
 }
 
+// OnboardRepo onboards one forge repository like an existing bound project.
+func (s *SDLCServer) OnboardRepo(ctx context.Context, req *pb.OnboardRepoRequest) (*pb.OnboardRepoResponse, error) {
+	svc, err := s.sdlcService()
+	if err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "repo and like are required")
+	}
+	tenantID, err := sdlcTenant(ctx, req.TenantId)
+	if err != nil {
+		return nil, err
+	}
+	report, err := svc.OnboardRepo(ctx, tenantID, sdlc.RepoOnboardRequest{
+		Repo: req.Repo, Like: req.Like, MaxConcurrency: int(req.MaxConcurrency), Paused: req.Paused,
+		Preflight: req.Preflight,
+	})
+	if err != nil {
+		return nil, convertSDLCError(err)
+	}
+	return &pb.OnboardRepoResponse{Report: repoOnboardingReportToProto(report)}, nil
+}
+
 // GetConformance implements pb.SDLCServiceServer: read-only.
 //
 // A non-conformant project is still an OK response. The report IS the answer,
@@ -579,6 +602,23 @@ func onboardingReportToProto(r *sdlc.OnboardingReport) *pb.OnboardingReport {
 		LabelsCreated: append([]string(nil), r.LabelsCreated...),
 		Conformance:   conformanceToProto(r.Conformance),
 	}
+}
+
+func repoOnboardingReportToProto(r *sdlc.RepoOnboardingReport) *pb.RepoOnboardingReport {
+	if r == nil {
+		return nil
+	}
+	out := &pb.RepoOnboardingReport{
+		TenantId: r.TenantID, ProjectId: r.ProjectID, Repo: r.Repo,
+		Steps:       make([]*pb.RepoOnboardStep, 0, len(r.Steps)),
+		Conformance: conformanceToProto(r.Conformance),
+	}
+	for _, step := range r.Steps {
+		out.Steps = append(out.Steps, &pb.RepoOnboardStep{
+			Step: step.Step, Outcome: string(step.Outcome), Detail: step.Detail, Remedy: step.Remedy,
+		})
+	}
+	return out
 }
 
 func conformanceToProto(r *sdlc.ConformanceReport) *pb.ConformanceReport {

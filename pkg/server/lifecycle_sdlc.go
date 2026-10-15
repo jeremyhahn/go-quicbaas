@@ -82,6 +82,10 @@ type sdlcRuntime struct {
 	triage     *sdlc.TriageRunner
 	triageJobs *sdlc.TriageScheduler
 
+	// preflight runs an onboarding's verification commands once in the
+	// worker's image before autonomy is switched on.
+	preflight *sdlc.PreflightRunner
+
 	// reviewFloor is the back half's backstop: the pass that finds the open
 	// pull requests which are green and unjudged and asks the dispatcher for
 	// each, so a review does not depend on a delivery having arrived.
@@ -136,6 +140,10 @@ func registerSDLCModule() error {
 		}
 		if err := orchestration.RegisterJobRunner(sdlcTriageForwarder{}); err != nil {
 			sdlcModule.err = &SDLCInitError{Component: "triage runner registration", Cause: err}
+			return
+		}
+		if err := orchestration.RegisterJobRunner(sdlcPreflightForwarder{}); err != nil {
+			sdlcModule.err = &SDLCInitError{Component: "preflight runner registration", Cause: err}
 			return
 		}
 		if err := orchestration.RegisterJobRunner(sdlcTrainForwarder{}); err != nil {
@@ -290,6 +298,55 @@ func (sdlcTriageForwarder) Run(ctx context.Context, job *orchestration.JobRun) e
 		return ErrSDLCUnavailable
 	}
 	return rt.triage.Run(ctx, job)
+}
+
+// sdlcPreflightForwarder is the registered preflight JobRunner: an
+// onboarding's one run of the verification commands before autonomy. Its
+// states and lease policy are static for the reason sdlcTriageForwarder's are.
+type sdlcPreflightForwarder struct{}
+
+var (
+	_ orchestration.JobRunner      = sdlcPreflightForwarder{}
+	_ orchestration.JobLeasePolicy = sdlcPreflightForwarder{}
+)
+
+// Name implements orchestration.JobRunner.
+func (sdlcPreflightForwarder) Name() string { return sdlc.PreflightRunnerName }
+
+// States implements orchestration.JobRunner.
+func (sdlcPreflightForwarder) States() []orchestration.JobStateSpec {
+	return sdlc.PreflightRunnerStates()
+}
+
+// Validate implements orchestration.JobRunner.
+func (sdlcPreflightForwarder) Validate(ctx context.Context, cfg *orchestration.JobConfig) error {
+	rt := liveSDLC()
+	if rt == nil {
+		return ErrSDLCUnavailable
+	}
+	return rt.preflight.Validate(ctx, cfg)
+}
+
+// LeaseSubject implements orchestration.JobLeasePolicy: one preflight per
+// project at a time.
+func (sdlcPreflightForwarder) LeaseSubject(cfg *orchestration.JobConfig) string {
+	if cfg == nil || strings.TrimSpace(cfg.ProjectID) == "" {
+		return ""
+	}
+	return sdlc.PreflightLeaseSubject(strings.TrimSpace(cfg.ProjectID))
+}
+
+// OffProjectBudget implements orchestration.JobLeasePolicy: the preflight is
+// not delivery work and does not spend the project's worker budget.
+func (sdlcPreflightForwarder) OffProjectBudget() bool { return true }
+
+// Run implements orchestration.JobRunner.
+func (sdlcPreflightForwarder) Run(ctx context.Context, job *orchestration.JobRun) error {
+	rt := liveSDLC()
+	if rt == nil {
+		return ErrSDLCUnavailable
+	}
+	return rt.preflight.Run(ctx, job)
 }
 
 // sdlcTrainForwarder is the registered merge-train JobRunner.
@@ -532,6 +589,14 @@ func (s *Server) startSDLC() error {
 		barrierReader = newTenantBarrierAttentionReader(barrierSvc)
 	}
 
+	// The tenant SSH key store, read by OnboardRepo to check a repository's
+	// signing key exists. Assigned only when present, so a node with no key
+	// store passes a nil interface rather than a typed nil.
+	var sshKeys service.SSHKeyGetter
+	if sshClient := s.quicBaaSService.SSHClient(); sshClient != nil {
+		sshKeys = service.NewSSHService(sshClient)
+	}
+
 	rulers := sdlc.RulerPolicy{Default: cfg.Rulers.Default, Tenants: cfg.Rulers.Tenants}
 	sdlcService, err := service.NewSDLCService(service.SDLCServiceConfig{
 		Store: store, Routes: routes, Projects: projectSvc, ProjectWriter: projectStores.Store(),
@@ -546,6 +611,7 @@ func (s *Server) startSDLC() error {
 		Rulers:  rulers,
 		Auditor: newSDLCIssueAuditor(s.auditLoggerForStores),
 		Agents:  agentCatalog,
+		SSHKeys: sshKeys,
 		// The node's public origin, which onboarding provisions forge
 		// webhooks to point at. Validated at load; refused here too, because
 		// a module that reached this line without one would bind projects
@@ -675,6 +741,13 @@ func (s *Server) startSDLC() error {
 	if err != nil {
 		return err
 	}
+	preflight, err := sdlc.NewPreflightRunner(sdlc.PreflightRunnerConfig{
+		Bindings: sdlcService, Tokens: sdlcService, Signing: signing, Guard: guard,
+		CheckoutRoot: cfg.CheckoutRoot, SocketsRoot: socketsRoot,
+	})
+	if err != nil {
+		return &SDLCInitError{Component: "preflight runner", Cause: err}
+	}
 	// The train builds in a container through the same forge access seam,
 	// at the delivery scope: its merge commits are signed as a worker's are.
 	// It starts the review job that judges its own pull request, so it holds
@@ -708,6 +781,8 @@ func (s *Server) startSDLC() error {
 	// An operator's reviewer override dispatches through the same dispatcher:
 	// it cancels nothing, and the newly selected seat reviews from now on.
 	sdlcService.SetReviewDispatcher(dispatcher)
+	// An onboarding's preflight runs as a job on this engine.
+	sdlcService.SetPreflightJobs(agents)
 	ingestor, err := sdlc.NewWebhookIngestor(routes, sdlcService, sdlcService, sdlcService, sdlcService, dispatcher)
 	if err != nil {
 		return &SDLCInitError{Component: "webhook ingestor", Cause: err}
@@ -754,7 +829,7 @@ func (s *Server) startSDLC() error {
 	rt := &sdlcRuntime{
 		store: store, routes: routes, service: sdlcService, source: source, review: review,
 		hooks: hooks, runner: runner, reviewer: reviewer, ingestor: ingestor, webhook: webhook,
-		triage: triage, triageJobs: triageJobs, reviewFloor: reviewFloor,
+		triage: triage, triageJobs: triageJobs, preflight: preflight, reviewFloor: reviewFloor,
 		train: train, trainJobs: trainJobs,
 	}
 	sdlcModule.live.Store(rt)

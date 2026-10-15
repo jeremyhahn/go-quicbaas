@@ -325,9 +325,7 @@ func TestAgentService_SpawnTask_TwoSpawnersStartOneJob(t *testing.T) {
 			return nil
 		},
 	}
-	if err := RegisterJobRunner(runner); err != nil {
-		t.Fatalf("RegisterJobRunner: %v", err)
-	}
+	registerJobRunnerForTest(t, runner)
 	defer cancelAllJobs(impl)
 
 	created, err := impl.CreateTask(ctx, &CreateTaskRequest{

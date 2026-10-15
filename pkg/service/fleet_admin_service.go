@@ -58,10 +58,10 @@ type DisableFleetNodeRequest struct {
 
 // DisableFleetNodeResponse is returned after a fleet node has been disabled.
 type DisableFleetNodeResponse struct {
-	NodeID     string
-	Disabled   bool
-	DisabledAt time.Time
-	Timestamp  time.Time
+	NodeID     string    `json:"node_id"`
+	Disabled   bool      `json:"disabled"`
+	DisabledAt time.Time `json:"disabled_at"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 // EnableFleetNodeRequest contains the parameters for re-enabling a fleet node.
@@ -72,9 +72,9 @@ type EnableFleetNodeRequest struct {
 
 // EnableFleetNodeResponse is returned after a fleet node has been re-enabled.
 type EnableFleetNodeResponse struct {
-	NodeID    string
-	Enabled   bool
-	Timestamp time.Time
+	NodeID    string    `json:"node_id"`
+	Enabled   bool      `json:"enabled"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // GetFleetNodeRegistrationRequest identifies a fleet node by tenant and fleet node ID.

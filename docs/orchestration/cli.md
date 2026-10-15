@@ -681,13 +681,16 @@ quicbaas orchestrator inference \
   --prompt "summarise the NIST CSF"
 
 # Same command over each transport.
-quicbaas --transport grpc --address localhost:19090 --tls-skip-verify \
+quicbaas --transport grpc --address localhost:19090 \
+  --tls-ca ./data/certs/ca-chain.crt \
   orchestrator inference --backend ollama --prompt "ping"
 
-quicbaas --transport quic --address localhost:10443 --tls-skip-verify \
+quicbaas --transport quic --address localhost:10443 \
+  --tls-ca ./data/certs/ca-chain.crt \
   orchestrator inference --backend ollama --prompt "ping"
 
-quicbaas --transport mcp --address localhost:11443 --tls-skip-verify \
+quicbaas --transport mcp --address localhost:11443 \
+  --tls-ca ./data/certs/ca-chain.crt \
   orchestrator inference --backend ollama --prompt "ping"
 
 quicbaas --transport unix --address /tmp/quicbaas.sock \

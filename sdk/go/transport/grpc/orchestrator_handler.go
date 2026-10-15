@@ -50,6 +50,10 @@ var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
 	"ListBackends":           handleOrchestratorListBackends,
 	"ListRunners":            handleOrchestratorListRunners,
 	"ListWorkflows":          handleOrchestratorListWorkflows,
+	"CreateWorkflow":         handleOrchestratorCreateWorkflow,
+	"GetWorkflow":            handleOrchestratorGetWorkflow,
+	"UpdateWorkflow":         handleOrchestratorUpdateWorkflow,
+	"DeleteWorkflow":         handleOrchestratorDeleteWorkflow,
 	"SpawnSession":           handleOrchestratorSpawnSession,
 	"PromptSession":          handleOrchestratorPromptSession,
 	"SessionStatus":          handleOrchestratorSessionStatus,
@@ -71,6 +75,7 @@ var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
 	"ListFleetNodes":         handleFleetList,
 	"RemoveFleetNode":        handleFleetRemove,
 	"FleetNodeHeartbeat":     handleFleetHeartbeat,
+	"ListBackendModels":      handleListBackendModels,
 	"DecomposeTask":          handleOrchestratorDecomposeTask,
 	"SpawnChildJob":          handleOrchestratorSpawnChildJob,
 	"StartJob":               handleOrchestratorStartJob,
@@ -1064,6 +1069,37 @@ func handleFleetHeartbeat(ctx context.Context, conn *grpc.ClientConn, req interf
 	}, nil
 }
 
+// handleListBackendModels lists the models a backend serves, as seen from the
+// requested fleet node. Models decodes to [] rather than nil, as REST renders it.
+func handleListBackendModels(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListBackendModelsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.ListBackendModels", "invalid request type")
+	}
+
+	protoReq := &pb.ListBackendModelsRequest{
+		TenantId:    sdkReq.TenantID,
+		NodeId:      sdkReq.NodeID,
+		BackendName: sdkReq.BackendName,
+	}
+	protoResp := &pb.ListBackendModelsResponse{}
+
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_ListBackendModels_FullMethodName, protoReq, protoResp)
+	if invokeErr != nil {
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.ListBackendModels")
+	}
+
+	models := protoResp.GetModels()
+	if models == nil {
+		models = []string{}
+	}
+	return &orchestrator.ListBackendModelsResponse{
+		Backend: protoResp.GetBackend(),
+		Models:  models,
+		Count:   int(protoResp.GetCount()),
+	}, nil
+}
+
 // =============================================================================
 // Task Decomposition
 // =============================================================================
@@ -1527,6 +1563,190 @@ func workflowDefinitionFromProto(definition *pb.OrchestratorWorkflowDefinition) 
 			Hooks:     settings.GetHooks(),
 		},
 	}
+}
+
+func handleOrchestratorCreateWorkflow(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.CreateWorkflowRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.CreateWorkflow", "invalid request type")
+	}
+	definition, err := workflowDefinitionToProto("grpc.orchestrator.CreateWorkflow", sdkReq.Definition)
+	if err != nil {
+		return nil, err
+	}
+
+	protoReq := &pb.OrchestratorCreateWorkflowRequest{
+		TenantId:   sdkReq.TenantID,
+		Definition: definition,
+	}
+	protoResp := &pb.OrchestratorCreateWorkflowResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_CreateWorkflow_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.CreateWorkflow")
+	}
+	return workflowDefinitionFromProto(protoResp.GetWorkflow()), nil
+}
+
+func handleOrchestratorGetWorkflow(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetWorkflowRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.GetWorkflow", "invalid request type")
+	}
+
+	protoReq := &pb.OrchestratorGetWorkflowRequest{
+		TenantId: sdkReq.TenantID,
+		Name:     sdkReq.Name,
+	}
+	protoResp := &pb.OrchestratorGetWorkflowResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_GetWorkflow_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetWorkflow")
+	}
+	return workflowDefinitionFromProto(protoResp.GetWorkflow()), nil
+}
+
+func handleOrchestratorUpdateWorkflow(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.UpdateWorkflowRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.UpdateWorkflow", "invalid request type")
+	}
+	definition, err := workflowDefinitionToProto("grpc.orchestrator.UpdateWorkflow", sdkReq.Definition)
+	if err != nil {
+		return nil, err
+	}
+
+	protoReq := &pb.OrchestratorUpdateWorkflowRequest{
+		TenantId:   sdkReq.TenantID,
+		Name:       sdkReq.Name,
+		Definition: definition,
+	}
+	protoResp := &pb.OrchestratorUpdateWorkflowResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_UpdateWorkflow_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.UpdateWorkflow")
+	}
+	return workflowDefinitionFromProto(protoResp.GetWorkflow()), nil
+}
+
+func handleOrchestratorDeleteWorkflow(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.DeleteWorkflowRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.DeleteWorkflow", "invalid request type")
+	}
+
+	protoReq := &pb.OrchestratorDeleteWorkflowRequest{
+		TenantId: sdkReq.TenantID,
+		Name:     sdkReq.Name,
+	}
+	protoResp := &pb.OrchestratorDeleteWorkflowResponse{}
+	if err := conn.Invoke(ctx, pb.OrchestratorService_DeleteWorkflow_FullMethodName, protoReq, protoResp); err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.DeleteWorkflow")
+	}
+	return nil, nil
+}
+
+// int32Narrower narrows the SDK's int counts onto int32 wire fields,
+// keeping the first out-of-range field as the error rather than truncating.
+type int32Narrower struct {
+	op  string
+	err error
+}
+
+func (n *int32Narrower) int32(field string, v int) int32 {
+	out, err := int32ToProto(n.op, field, v)
+	if err != nil && n.err == nil {
+		n.err = err
+	}
+	return out
+}
+
+// workflowDefinitionToProto is the inverse of workflowDefinitionFromProto.
+// A count that does not fit its int32 wire field is refused as bad input.
+func workflowDefinitionToProto(op string, definition *orchestrator.WorkflowDefinition) (*pb.OrchestratorWorkflowDefinition, error) {
+	if definition == nil {
+		return nil, nil
+	}
+	n := &int32Narrower{op: op}
+	agents := make([]*pb.OrchestratorWorkflowAgentRoleSpec, 0, len(definition.Agents))
+	for _, agent := range definition.Agents {
+		agents = append(agents, &pb.OrchestratorWorkflowAgentRoleSpec{
+			Role:            agent.Role,
+			Backend:         agent.Backend,
+			Model:           agent.Model,
+			Capabilities:    append([]string(nil), agent.Capabilities...),
+			McpScopes:       append([]string(nil), agent.MCPScopes...),
+			Count:           n.int32("agents.count", agent.Count),
+			Env:             cloneStringMap(agent.Env),
+			WorkspacePath:   agent.WorkspacePath,
+			PermissionMode:  agent.PermissionMode,
+			SkipPermissions: agent.SkipPermissions,
+			Sandboxed:       agent.Sandboxed,
+			ContainerImage:  agent.ContainerImage,
+			HostAffinity:    agent.HostAffinity,
+			NumCtx:          n.int32("agents.num_ctx", agent.NumCtx),
+			SystemPrompt:    agent.SystemPrompt,
+			PromptAppend:    agent.PromptAppend,
+		})
+	}
+	settings := definition.Settings
+	reviewCriteria := make([]*pb.OrchestratorWorkflowReviewCriterion, 0, len(settings.ReviewCriteria))
+	for _, criterion := range settings.ReviewCriteria {
+		reviewCriteria = append(reviewCriteria, &pb.OrchestratorWorkflowReviewCriterion{
+			Name:      criterion.Name,
+			Validator: criterion.Validator,
+			Config:    criterion.Config,
+			Required:  criterion.Required,
+			Phase:     criterion.Phase,
+		})
+	}
+	proto := &pb.OrchestratorWorkflowDefinition{
+		Name:        definition.Name,
+		Description: definition.Description,
+		Mode:        string(definition.Mode),
+		Agents:      agents,
+		Settings: &pb.OrchestratorWorkflowSettings{
+			MaxIterations:  n.int32("settings.max_iterations", settings.MaxIterations),
+			MaxParallelism: n.int32("settings.max_parallelism", settings.MaxParallelism),
+			PollInterval:   settings.PollInterval,
+			TimeoutPerItem: settings.TimeoutPerItem,
+			TotalTimeout:   settings.TotalTimeout,
+			ReviewCriteria: reviewCriteria,
+			Topology:       settings.Topology,
+			Isolation:      settings.Isolation,
+			PeerMessaging: &pb.OrchestratorWorkflowPeerMessagingSettings{
+				MaxMessageSize: n.int32("settings.peer_messaging.max_message_size", settings.PeerMessaging.MaxMessageSize),
+				MaxInboxSize:   n.int32("settings.peer_messaging.max_inbox_size", settings.PeerMessaging.MaxInboxSize),
+				OverflowAction: settings.PeerMessaging.OverflowAction,
+				InboxTtl:       settings.PeerMessaging.InboxTTL,
+			},
+			FileLocking: &pb.OrchestratorWorkflowFileLockSettings{
+				LeaseTtl:          settings.FileLocking.LeaseTTL,
+				HeartbeatInterval: settings.FileLocking.HeartbeatInterval,
+				MaxRenewals:       n.int32("settings.file_locking.max_renewals", settings.FileLocking.MaxRenewals),
+			},
+			VectorDb: &pb.OrchestratorWorkflowVectorDBSettings{
+				Enabled:        settings.VectorDB.Enabled,
+				IndexType:      settings.VectorDB.IndexType,
+				AutoIndex:      settings.VectorDB.AutoIndex,
+				Triggers:       append([]string(nil), settings.VectorDB.Triggers...),
+				GpuAccelerated: settings.VectorDB.GPUAccelerated,
+			},
+			CostControls: &pb.OrchestratorWorkflowCostControlSettings{
+				MaxTokensPerJob:   settings.CostControls.MaxTokensPerJob,
+				MaxTokensPerAgent: settings.CostControls.MaxTokensPerAgent,
+				BudgetAction:      settings.CostControls.BudgetAction,
+			},
+			Recovery: &pb.OrchestratorWorkflowRecoverySettings{
+				AutoRestart:    settings.Recovery.AutoRestart,
+				MaxRestarts:    n.int32("settings.recovery.max_restarts", settings.Recovery.MaxRestarts),
+				RestartBackoff: settings.Recovery.RestartBackoff,
+			},
+			Verbosity: settings.Verbosity,
+			NumCtx:    n.int32("settings.num_ctx", settings.NumCtx),
+			Hooks:     settings.Hooks,
+		},
+	}
+	if n.err != nil {
+		return nil, n.err
+	}
+	return proto, nil
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

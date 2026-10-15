@@ -123,19 +123,19 @@ func decodeMCPAccountEnvelope(raw []byte) (interface{}, error) {
 	return env.Account, nil
 }
 
+// decodeMCPAccountList decodes quicbaas_agent_account_list output. The tool
+// answers in the paging envelope REST does, so the SDK response decodes it
+// whole: the applied page, the next offset and the facet counts.
 func decodeMCPAccountList(raw []byte) (interface{}, error) {
-	var env struct {
-		Accounts []*account.AccountInfo `json:"accounts"`
-		Total    int                    `json:"total"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
+	var resp account.ListAccountsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.account",
 			"failed to decode account list result")
 	}
-	if env.Accounts == nil {
-		env.Accounts = []*account.AccountInfo{}
+	if resp.Accounts == nil {
+		resp.Accounts = []*account.AccountInfo{}
 	}
-	return &account.ListAccountsResponse{Accounts: env.Accounts, Total: env.Total}, nil
+	return &resp, nil
 }
 
 func decodeMCPAccountDelete(raw []byte) (interface{}, error) {

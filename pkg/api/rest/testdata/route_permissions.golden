@@ -481,6 +481,7 @@ POST /api/v1/scheduler/jobs/{id}/trigger permission scheduler:trigger
 POST /api/v1/sdlc/projects/{projectID}/adopt permission orchestrator:task_create
 POST /api/v1/sdlc/projects/{projectID}/issues permission sdlc:issue_create
 POST /api/v1/sdlc/projects/{projectID}/onboarding permission sdlc:bind
+POST /api/v1/sdlc/repos/{repo}/onboarding permission sdlc:bind
 POST /api/v1/sdlc/webhook/{projectID} public -:-
 POST /api/v1/sdlc/worker-image/refresh permission worker_images:refresh
 POST /api/v1/seal/init permission tenant_barrier:init

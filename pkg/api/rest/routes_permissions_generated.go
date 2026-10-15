@@ -532,6 +532,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"PUT /api/v1/sdlc/projects/{projectID}/binding":     {auth: RouteAuthPermission, resource: "sdlc", action: "bind"},
 	"DELETE /api/v1/sdlc/projects/{projectID}/binding":  {auth: RouteAuthPermission, resource: "sdlc", action: "unbind"},
 	"POST /api/v1/sdlc/projects/{projectID}/onboarding": {auth: RouteAuthPermission, resource: "sdlc", action: "bind"},
+	"POST /api/v1/sdlc/repos/{repo}/onboarding":         {auth: RouteAuthPermission, resource: "sdlc", action: "bind"},
 	"POST /api/v1/sdlc/projects/{projectID}/adopt":      {auth: RouteAuthPermission, resource: "orchestrator", action: "task_create"},
 	"GET /api/v1/sdlc/projects/{projectID}/conformance": {auth: RouteAuthPermission, resource: "sdlc", action: "read"},
 	"GET /api/v1/sdlc/projects/{projectID}/open-work":   {auth: RouteAuthPermission, resource: "sdlc", action: "read"},

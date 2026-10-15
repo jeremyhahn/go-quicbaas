@@ -126,6 +126,34 @@ steps are done in on a live node.
    the fix for each. It changes nothing. See
    [architecture.md](architecture.md#onboarding-a-repository).
 
+   **The next repository is one command.** Once one project is bound the way
+   you want, onboard another repository like it:
+
+   ```
+   quicbaas sdlc project onboard --repo go-luks2 --like <project-id> --paused --tenant acme
+   ```
+
+   It creates the project, the webhook secret and the binding from the
+   template's, provisions the forge, and reports each step as `created`,
+   `unchanged` or `finding`. Two things it will not do for you: store the
+   repository's forge token (`sdlc/forge/<repo>/token`) or import its SSH
+   signing key (`agent-<repo>-signing`) — each missing one is a finding with
+   its remedy, and the steps after it wait. Put them in place and run the same
+   command again; whatever already exists is left alone. It exits non-zero
+   until no step is a finding — a branch protection gap included. See
+   [api.md](api.md#post-apiv1sdlcreposrepoonboarding).
+
+   To prove the repository builds before it takes work, add `--preflight`.
+   The project binds paused, and the binding's verification commands run
+   once on the default branch inside the worker image — the same container
+   and command allowlist delivery uses, with no agent turn and nothing run
+   on the daemon. If every command passes, autonomy switches on. If one
+   fails, autonomy stays off and the `preflight` finding shows each failing
+   command and its failing lines; fix the default branch or the worker image
+   and run the same command again. A project with no verification commands
+   has nothing to preflight and is bound as usual. The command waits for
+   the preflight to finish.
+
    `ssh_host_key` is what the worker's ssh verifies the forge against. A
    project cloned over `ssh://` with no key pinned is refused before its
    first container starts; there is no accept-new. See

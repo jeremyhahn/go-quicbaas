@@ -248,42 +248,53 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// a newly selected pooled credential — a spawn's authority, not a close's.
 	// Mirrors the gRPC canon (RotateSessionAccount), the REST PEP rule
 	// ("/rotate-account") and the QUIC sub-op table (rotateSubOpPermissions).
-	"quicbaas_orchestrator_rotate_account":    {"orchestrator", "spawn"},
-	"quicbaas_orchestrator_list":              {"orchestrator", "list"},
-	"quicbaas_orchestrator_list_sessions":     {"orchestrator", "list"},
-	"quicbaas_orchestrator_task_create":       {"orchestrator", "task_create"},
-	"quicbaas_orchestrator_task_block":        {"orchestrator", "task_block"},
-	"quicbaas_orchestrator_task_readmit":      {"orchestrator", "task_readmit"},
-	"quicbaas_orchestrator_task_delete":       {"orchestrator", "task_create"},
-	"quicbaas_orchestrator_attention_list":    {"orchestrator", "task_list"},
-	"quicbaas_orchestrator_attention_resolve": {"orchestrator", "task_readmit"},
-	"quicbaas_orchestrator_decompose":         {"orchestrator", "task_decompose"},
-	"quicbaas_orchestrator_start_job":         {"orchestrator", "job_start"},
-	"quicbaas_orchestrator_get_job_status":    {"orchestrator", "job_read"},
-	"quicbaas_orchestrator_list_jobs":         {"orchestrator", "job_list"},
-	"quicbaas_orchestrator_list_workflows":    {"orchestrator", "workflow_read"},
-	"quicbaas_orchestrator_cancel_job":        {"orchestrator", "job_cancel"},
-	"quicbaas_orchestrator_list_backends":     {"orchestrator", "backend_list"},
-	"quicbaas_orchestrator_list_runners":      {"orchestrator", "status"},
-	"quicbaas_orchestrator_discover":          {"orchestrator", "discover"},
-	"quicbaas_orchestrator_health":            {"orchestrator", "health"},
-	"quicbaas_orchestrator_inference":         {"orchestrator", "inference"},
-	"quicbaas_orchestrator_register":          {"orchestrator", "agent_register"},
-	"quicbaas_orchestrator_cache_get":         {"orchestrator", "cache_read"},
-	"quicbaas_orchestrator_cache_put":         {"orchestrator", "cache_write"},
-	"quicbaas_orchestrator_broadcast":         {"orchestrator", "broadcast"},
+	"quicbaas_orchestrator_rotate_account":      {"orchestrator", "spawn"},
+	"quicbaas_orchestrator_list":                {"orchestrator", "list"},
+	"quicbaas_orchestrator_list_sessions":       {"orchestrator", "list"},
+	"quicbaas_orchestrator_task_create":         {"orchestrator", "task_create"},
+	"quicbaas_orchestrator_task_block":          {"orchestrator", "task_block"},
+	"quicbaas_orchestrator_task_readmit":        {"orchestrator", "task_readmit"},
+	"quicbaas_orchestrator_task_delete":         {"orchestrator", "task_create"},
+	"quicbaas_orchestrator_attention_list":      {"orchestrator", "task_list"},
+	"quicbaas_orchestrator_attention_resolve":   {"orchestrator", "task_readmit"},
+	"quicbaas_orchestrator_decompose":           {"orchestrator", "task_decompose"},
+	"quicbaas_orchestrator_start_job":           {"orchestrator", "job_start"},
+	"quicbaas_orchestrator_get_job_status":      {"orchestrator", "job_read"},
+	"quicbaas_orchestrator_list_jobs":           {"orchestrator", "job_list"},
+	"quicbaas_orchestrator_list_tasks":          {"orchestrator", "task_list"},
+	"quicbaas_orchestrator_task_get":            {"orchestrator", "task_read"},
+	"quicbaas_orchestrator_task_claim":          {"orchestrator", "task_claim"},
+	"quicbaas_orchestrator_task_complete":       {"orchestrator", "task_complete"},
+	"quicbaas_orchestrator_spawn_child_job":     {"orchestrator", "job_start"},
+	"quicbaas_orchestrator_list_workflows":      {"orchestrator", "workflow_read"},
+	"quicbaas_orchestrator_get_workflow":        {"orchestrator", "workflow_read"},
+	"quicbaas_orchestrator_create_workflow":     {"orchestrator", "workflow_write"},
+	"quicbaas_orchestrator_update_workflow":     {"orchestrator", "workflow_write"},
+	"quicbaas_orchestrator_delete_workflow":     {"orchestrator", "workflow_write"},
+	"quicbaas_orchestrator_cancel_job":          {"orchestrator", "job_cancel"},
+	"quicbaas_orchestrator_list_backends":       {"orchestrator", "backend_list"},
+	"quicbaas_orchestrator_list_backend_models": {"orchestrator", "backend_list"},
+	"quicbaas_orchestrator_list_runners":        {"orchestrator", "status"},
+	"quicbaas_orchestrator_discover":            {"orchestrator", "discover"},
+	"quicbaas_orchestrator_health":              {"orchestrator", "health"},
+	"quicbaas_orchestrator_inference":           {"orchestrator", "inference"},
+	"quicbaas_orchestrator_register":            {"orchestrator", "agent_register"},
+	"quicbaas_orchestrator_cache_get":           {"orchestrator", "cache_read"},
+	"quicbaas_orchestrator_cache_put":           {"orchestrator", "cache_write"},
+	"quicbaas_orchestrator_broadcast":           {"orchestrator", "broadcast"},
 
 	// Fleet + task-artifact tools keep their historical quicbaas_fleet_* /
 	// quicbaas_task_* names but belong to the same orchestrator surface, so they
 	// map onto the qrdb-registered orchestrator agent_* / artifact_read family.
 	// Without an entry they were default-denied and never appeared in tools/list.
-	"quicbaas_fleet_register":      {"orchestrator", "agent_register"},
-	"quicbaas_fleet_list":          {"orchestrator", "agent_list"},
-	"quicbaas_fleet_status":        {"orchestrator", "agent_read"},
-	"quicbaas_fleet_remove":        {"orchestrator", "agent_remove"},
-	"quicbaas_fleet_heartbeat":     {"orchestrator", "agent_heartbeat"},
-	"quicbaas_task_get_artifact":   {"orchestrator", "artifact_read"},
-	"quicbaas_task_list_artifacts": {"orchestrator", "artifact_read"},
+	"quicbaas_fleet_register":        {"orchestrator", "agent_register"},
+	"quicbaas_fleet_list":            {"orchestrator", "agent_list"},
+	"quicbaas_fleet_status":          {"orchestrator", "agent_read"},
+	"quicbaas_fleet_remove":          {"orchestrator", "agent_remove"},
+	"quicbaas_fleet_heartbeat":       {"orchestrator", "agent_heartbeat"},
+	"quicbaas_task_get_artifact":     {"orchestrator", "artifact_read"},
+	"quicbaas_task_list_artifacts":   {"orchestrator", "artifact_read"},
+	"quicbaas_task_submit_artifacts": {"orchestrator", "artifact_submit"},
 
 	// SSH -> keys. SSH assets are cryptographic keys, so they authorize with
 	// the qrdb keys:* family — byte-for-byte the same (resource, action)
@@ -377,9 +388,10 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// permission as PUT .../binding; sdlc_conformance only reads. The split
 	// is the point: a reader may ask what state a repository is in without
 	// being able to change it.
-	"sdlc_onboard":     {"sdlc", "bind"},
-	"sdlc_conformance": {"sdlc", "read"},
-	"sdlc_open_work":   {"sdlc", "read"},
+	"sdlc_onboard":         {"sdlc", "bind"},
+	"sdlc_project_onboard": {"sdlc", "bind"},
+	"sdlc_conformance":     {"sdlc", "read"},
+	"sdlc_open_work":       {"sdlc", "read"},
 	// Choosing which reviewer judges a pull request is a decision about the
 	// project's review: writing an override carries sdlc:bind like the
 	// binding it refines, reading one sdlc:read.
