@@ -97,62 +97,6 @@ func TestBuildSDKClientOptions_DefaultTransportFollowsURL(t *testing.T) {
 	assert.Equal(t, "rest", transport)
 }
 
-func TestCreateSchedulerClient_SelectsTransportFromAddress(t *testing.T) {
-	savedTransport, savedAddress, savedBuilders := transport, address, schedulerClientBuilders
-	defer func() {
-		transport, address, schedulerClientBuilders = savedTransport, savedAddress, savedBuilders
-	}()
-
-	var built string
-	schedulerClientBuilders = map[string]func() (SchedulerClient, error){}
-	for name := range savedBuilders {
-		schedulerClientBuilders[name] = func() (SchedulerClient, error) {
-			built = name
-			return nil, nil
-		}
-	}
-
-	tests := []struct {
-		name      string
-		transport string
-		address   string
-		want      string
-	}{
-		{name: "default with https URL", transport: defaultTransport, address: "https://localhost:8443", want: "rest"},
-		{name: "default with socket path", transport: defaultTransport, address: "/run/quicbaas/quicbaas.sock", want: "unix"},
-		{name: "grpc with socket path", transport: "grpc", address: "/run/quicbaas/quicbaas.sock", want: "unix"},
-		{name: "grpc with host and port", transport: "grpc", address: "localhost:9090", want: "grpc"},
-		{name: "quic with https URL", transport: "quic", address: "https://localhost:8443", want: "quic"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			transport, address, built = tt.transport, tt.address, ""
-			_, err := createSchedulerClient()
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, built)
-		})
-	}
-}
-
-func TestCreateSchedulerClient_UnsupportedTransportIsTyped(t *testing.T) {
-	savedTransport := transport
-	defer func() { transport = savedTransport }()
-
-	for _, name := range []string{"unsupported_transport_xyz", "embedded"} {
-		t.Run(name, func(t *testing.T) {
-			transport = name
-
-			client, err := createSchedulerClient()
-			assert.Nil(t, client)
-			var unsupportedErr *UnsupportedTransportError
-			require.ErrorAs(t, err, &unsupportedErr)
-			assert.Equal(t, name, unsupportedErr.Transport)
-			assert.NotContains(t, err.Error(), "embedded)", "the scheduler must not advertise transports it cannot dial")
-		})
-	}
-}
-
 // TestRootHelp_NamesTheDefaultSocket keeps the root help in step with the
 // --address default, which is the socket in the user's home directory.
 func TestRootHelp_NamesTheDefaultSocket(t *testing.T) {

@@ -19,6 +19,7 @@ package iam_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -213,25 +214,9 @@ func setupTestCluster(t *testing.T) *testCluster {
 	quicEndpoint := getQUICEndpoint()
 	unixSocket := getUnixSocket()
 
-	// Create HTTP client that does not follow redirects.
-	// This is important for OAuth2/OIDC testing where we need to inspect
-	// redirect responses rather than follow them to external callback URLs.
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	httpClient := &http.Client{
-		Timeout: defaultTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig:     tlsCfg,
-			TLSHandshakeTimeout: 10 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	httpClient := newIntegrationHTTPClient(tlsCfg)
 
 	// Create gRPC connection
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -250,6 +235,27 @@ func setupTestCluster(t *testing.T) *testCluster {
 		unixSocket:   unixSocket,
 		client:       httpClient,
 		grpcConn:     grpcConn,
+	}
+}
+
+// newIntegrationHTTPClient returns an HTTP client that trusts the fixture CA
+// and does not follow redirects. Not following them matters for OAuth2/OIDC
+// testing, where the redirect response is what is inspected rather than the
+// external callback URL it points at.
+func newIntegrationHTTPClient(tlsCfg *tls.Config) *http.Client {
+	return &http.Client{
+		Timeout: defaultTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig:     tlsCfg,
+			TLSHandshakeTimeout: 10 * time.Second,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 }
 

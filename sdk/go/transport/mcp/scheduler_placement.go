@@ -67,14 +67,14 @@ func transformPlacementRequest(method string, req interface{}) (map[string]inter
 	return args, nil
 }
 
-// decodePlacementResult decodes a tool result into the SDK type.
-func decodePlacementResult(into interface{}, result interface{}) (interface{}, error) {
+// decodeSchedulerResult decodes a scheduler tool result into the given type.
+func decodeSchedulerResult(into interface{}, result interface{}) (interface{}, error) {
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.scheduler", "failed to re-encode tool result")
 	}
 	if err := json.Unmarshal(raw, into); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.scheduler", "tool result does not match the SDK type")
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.scheduler", "tool result does not match the expected type")
 	}
 	return into, nil
 }

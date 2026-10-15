@@ -215,6 +215,8 @@ services:
       - QUICBAAS_NODE1_URL=https://test-node1:8080
       - QUICBAAS_NODE2_URL=https://test-node2:8080
       - QUICBAAS_NODE3_URL=https://test-node3:8080
+      # Separate daemon with self-service registration enabled (#358 flag-on leg).
+      - QUICBAAS_SELFREG_URL=https://test-selfreg:8080
       - QUICBAAS_NODE1_GRPC=test-node1:50051
       - QUICBAAS_NODE2_GRPC=test-node2:50051
       - QUICBAAS_NODE3_GRPC=test-node3:50051
@@ -289,6 +291,8 @@ services:
       test-node2:
         condition: service_healthy
       test-node3:
+        condition: service_healthy
+      test-selfreg:
         condition: service_healthy
       floci:
         condition: service_healthy
@@ -780,6 +784,113 @@ services:
     restart: on-failure
     stop_grace_period: 45s
 
+  # Self-registration daemon - the flag-on leg of #358.
+  # A single-node cluster of its own (distinct deployment ID) with
+  # iam.self_service_registration.enabled=true, so anonymous registration can
+  # be exercised without opening the main cluster's flag-off surface.
+  # Otherwise configured exactly like test-node1.
+  test-selfreg:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.node
+      args:
+        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
+        COVER: "${COVER:-}"
+      secrets:
+        - gomodauth
+    hostname: test-selfreg
+    environment:
+      - CGO_ENABLED=0
+      - QUICBAAS_RAFT_NODE_ID=1
+      - QUICBAAS_RAFT_DEPLOYMENT_ID=358
+      - QUICBAAS_RAFT_RAFT_ADDRESS=test-selfreg:63001
+      - QUICBAAS_RAFT_MUTUAL_TLS=true
+      - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/selfreg.crt
+      - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/selfreg.key
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/selfreg.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/selfreg.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_RAFT_JOIN_ADDRESSES=1=test-selfreg:63001
+      - QUICBAAS_LOGGING_LEVEL=info
+      - QUICBAAS_LOGGING_FORMAT=json
+      - QUICBAAS_STORAGE_DATA_DIR=/data
+      - QUICBAAS_STORAGE_WAL_DIR=/data/wal
+      - QUICBAAS_SERVER_HOST=0.0.0.0
+      - QUICBAAS_SERVER_REST_PORT=8080
+      - QUICBAAS_SERVER_GRPC_PORT=50051
+      - QUICBAAS_SERVER_QUIC_PORT=4433
+      - QUICBAAS_SERVER_GRPC_ENABLED=true
+      - QUICBAAS_SERVER_REST_ENABLED=true
+      - QUICBAAS_SERVER_QUIC_ENABLED=true
+      - QUICBAAS_SERVER_MCP_ENABLED=true
+      - QUICBAAS_SERVER_MCP_PORT=8888
+      - QUICBAAS_SERVER_UNIX_SOCKET=/var/run/quicbaas/selfreg.sock
+      - QUICBAAS_METRICS_PORT=9090
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      - QUICBAAS_KMS_ENABLED=true
+      - QUICBAAS_KMS_BACKEND=software
+      - QUICBAAS_SECRETS_ENABLED=true
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      # Fixture client certificates carry no slot attestation; see test-node1.
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      # The settings this daemon exists for. Approval defaults to required,
+      # which parks the registrant as pending with no session; the flag-on
+      # leg needs an active founder who can go on to invite a member.
+      - QUICBAAS_IAM_SELF_SERVICE_REGISTRATION_ENABLED=true
+      - QUICBAAS_IAM_SELF_SERVICE_REGISTRATION_REQUIRE_ADMIN_APPROVAL=false
+      - QUICBAAS_OLLAMA_BASE_URL=${QUICBAAS_OLLAMA_BASE_URL:-http://ollama:11434}
+      - QUICBAAS_OLLAMA_ENABLED=${QUICBAAS_OLLAMA_ENABLED:-true}
+      - QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL=${QUICBAAS_SERVER_EMBEDDED_AGENT_OLLAMA_URL:-http://ollama:11434}
+      - QUICBAAS_OLLAMA_DEFAULT_EMBEDDING_MODEL=all-minilm
+      - QUICBAAS_OBJECTSTORAGE_ENABLED=true
+      - AWS_ENDPOINT_URL=http://floci:4566
+      - S3_ENDPOINT=http://floci:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - GCS_ENDPOINT=http://fake-gcs-server:4443
+      - STORAGE_EMULATOR_HOST=http://fake-gcs-server:4443
+      - AZURITE_ENDPOINT=http://azurite:10000
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - test-data-selfreg:/data
+      - quicbaas-sockets:/var/run/quicbaas
+      - quicbaas-certs:/etc/quicbaas/certs:ro
+    expose:
+      - "8080"
+    command: ["/usr/local/bin/quicbaasd", "node", "--config", "/etc/quicbaas/quicbaas.yaml"]
+    networks:
+      integration-test-network:
+        aliases:
+          - selfreg
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
+      floci:
+        condition: service_healthy
+      fake-gcs-server:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: on-failure
+    stop_grace_period: 45s
+
   # Test Node 4 - For dynamic membership tests
   # Only started when needed via profiles
   test-node4:
@@ -1053,6 +1164,8 @@ volumes:
   test-data-node4:
     driver: local
   test-data-node5:
+    driver: local
+  test-data-selfreg:
     driver: local
 
   # Log volumes

@@ -72,6 +72,19 @@
         "127.0.0.1",
         "::1"
       ]
+    },
+    {
+      "file": "selfreg",
+      "common_name": "test-selfreg",
+      "dns_names": [
+        "localhost",
+        "test-selfreg",
+        "selfreg"
+      ],
+      "ip_addresses": [
+        "127.0.0.1",
+        "::1"
+      ]
     }
   ],
   "clients": [

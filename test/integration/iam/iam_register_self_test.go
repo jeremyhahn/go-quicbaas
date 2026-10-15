@@ -17,15 +17,19 @@
 package iam_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	webauthnclient "github.com/jeremyhahn/go-xkms/pkg/webauthn/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestSelfRegistration_DisabledByDefault is the "off" leg of the #358
@@ -57,24 +61,158 @@ func TestSelfRegistration_DisabledByDefault(t *testing.T) {
 	}
 }
 
+// TestSelfRegistration_EnabledCreatesTenantWithAdmin is the "on" leg of the
+// #358 registration matrix. It runs against test-selfreg, a separate
+// single-node daemon started with iam.self_service_registration.enabled=true
+// and admin approval off. An anonymous registrant completes the WebAuthn
+// ceremony with a software authenticator, which must create a tenant with
+// its built-in roles seeded and the registrant holding Admin in it, and the
+// session the registrant receives must be able to invite a member.
+func TestSelfRegistration_EnabledCreatesTenantWithAdmin(t *testing.T) {
+	cluster := setupSelfRegistrationDaemon(t)
+	name := generateUniqueTenantID()
+
+	status, body := doAnonymousPost(t, cluster, "/api/v1/auth/register/begin", map[string]interface{}{
+		"tenant_name":  name,
+		"email":        "founder@" + name + ".example",
+		"display_name": "Founder",
+	})
+	require.Equal(t, http.StatusOK, status, "register begin: %s", body)
+	var begin struct {
+		Options   map[string]interface{} `json:"public_key_credential_creation_options"`
+		SessionID string                 `json:"session_id"`
+	}
+	require.NoError(t, json.Unmarshal(body, &begin), "decode register begin: %s", body)
+	require.NotEmpty(t, begin.SessionID, "register begin session id")
+
+	credential := makeSoftwareCredential(t, begin.Options)
+	status, body = doAnonymousPost(t, cluster, "/api/v1/auth/register/finish", map[string]interface{}{
+		"session_id": begin.SessionID,
+		"credential": credential,
+	})
+	require.Equal(t, http.StatusOK, status, "register finish: %s", body)
+	var finish struct {
+		Status      string `json:"status"`
+		TenantID    string `json:"tenant_id"`
+		UserID      string `json:"user_id"`
+		AccessToken string `json:"access_token"`
+	}
+	require.NoError(t, json.Unmarshal(body, &finish), "decode register finish: %s", body)
+	require.Equal(t, "active", finish.Status, "registrant with approval off is active at once: %s", body)
+	require.NotEmpty(t, finish.TenantID, "tenant id")
+	require.NotEmpty(t, finish.UserID, "user id")
+	require.NotEmpty(t, finish.AccessToken, "access token")
+	bearer := finish.AccessToken
+	tenantPath := "/api/v1/tenants/" + url.PathEscape(finish.TenantID)
+
+	status, body = doBearerRequest(t, cluster, http.MethodGet, tenantPath, bearer, nil)
+	require.Equal(t, http.StatusOK, status, "the registered tenant exists: %s", body)
+
+	t.Run("built-in roles are seeded", func(t *testing.T) {
+		status, body := doBearerRequest(t, cluster, http.MethodGet, tenantPath+"/roles/", bearer, nil)
+		require.Equal(t, http.StatusOK, status, "list roles: %s", body)
+		var roles struct {
+			Roles []struct {
+				Name string `json:"name"`
+			} `json:"roles"`
+		}
+		require.NoError(t, json.Unmarshal(body, &roles), "decode roles: %s", body)
+		seeded := make(map[string]bool, len(roles.Roles))
+		for _, role := range roles.Roles {
+			seeded[role.Name] = true
+		}
+		for _, want := range qrdbsdk.BuiltInRoles(finish.TenantID) {
+			assert.True(t, seeded[want.Name], "built-in role %q missing from %s", want.Name, body)
+		}
+	})
+
+	t.Run("registrant is the tenant admin", func(t *testing.T) {
+		status, body := doBearerRequest(t, cluster, http.MethodGet,
+			tenantUsersPath(finish.TenantID)+url.PathEscape(finish.UserID), bearer, nil)
+		require.Equal(t, http.StatusOK, status, "get registrant: %s", body)
+		var user struct {
+			Roles []string `json:"roles"`
+		}
+		require.NoError(t, json.Unmarshal(body, &user), "decode registrant: %s", body)
+		assert.Contains(t, user.Roles, builtInRoleID(t, finish.TenantID, qrdbsdk.RoleNameAdmin),
+			"registrant must hold Admin in the tenant it registered: %s", body)
+	})
+
+	t.Run("registrant invites a member", func(t *testing.T) {
+		status, body := doBearerRequest(t, cluster, http.MethodPost, tenantUsersPath(finish.TenantID), bearer,
+			map[string]interface{}{
+				"email":    "member@" + name + ".example",
+				"username": "member",
+				"name":     "Member",
+			})
+		require.Equal(t, http.StatusCreated, status, "invite member: %s", body)
+		var invited struct {
+			InviteToken string `json:"invite_token"`
+		}
+		require.NoError(t, json.Unmarshal(body, &invited), "decode invite: %s", body)
+		require.NotEmpty(t, invited.InviteToken, "member invite token: %s", body)
+
+		invitePath := "/api/v1/iam/" + url.PathEscape(finish.TenantID) + "/invites/" + url.PathEscape(invited.InviteToken)
+		// Anonymous: the invitee reads the invite before holding any credential.
+		status, body = doBearerRequest(t, cluster, http.MethodGet, invitePath, "", nil)
+		assert.Equal(t, http.StatusOK, status, "the member's invite is redeemable: %s", body)
+	})
+}
+
+// setupSelfRegistrationDaemon returns a REST-only handle on test-selfreg, the
+// daemon with self-service registration enabled. QUICBAAS_SELFREG_URL
+// overrides the default address.
+func setupSelfRegistrationDaemon(t *testing.T) *testCluster {
+	t.Helper()
+	endpoint := os.Getenv("QUICBAAS_SELFREG_URL")
+	if endpoint == "" {
+		endpoint = "https://test-selfreg:8080"
+	}
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	return &testCluster{httpEndpoint: endpoint, client: newIntegrationHTTPClient(tlsCfg)}
+}
+
+// makeSoftwareCredential answers the registration challenge with a software
+// authenticator and returns the attestation as the finish request carries it.
+// The origin is the one the integration config lists for rp_id localhost.
+func makeSoftwareCredential(t *testing.T, options map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	if _, wrapped := options["publicKey"]; !wrapped {
+		options = map[string]interface{}{"publicKey": options}
+	}
+	optionsJSON, err := json.Marshal(options)
+	require.NoError(t, err, "marshal creation options")
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	attestation, err := webauthnclient.NewSoftwareAdapter().MakeCredential(ctx, &webauthnclient.CeremonyOptions{
+		OptionsJSON: optionsJSON,
+		Origin:      "https://localhost",
+	})
+	require.NoError(t, err, "software authenticator MakeCredential")
+
+	var credential map[string]interface{}
+	require.NoError(t, json.Unmarshal(attestation, &credential), "decode attestation")
+	return credential
+}
+
+// builtInRoleID returns the deterministic ID qrdb gives the named built-in
+// role in tenantID.
+func builtInRoleID(t *testing.T, tenantID, name string) string {
+	t.Helper()
+	for _, role := range qrdbsdk.BuiltInRoles(tenantID) {
+		if role.Name == name {
+			return role.ID
+		}
+	}
+	require.Failf(t, "unknown built-in role", "%q", name)
+	return ""
+}
+
 // doAnonymousPost sends body to path with no credential, as a prospective
 // self-registrant would, and returns the status and response body.
 func doAnonymousPost(t *testing.T, cluster *testCluster, path string, body interface{}) (int, []byte) {
 	t.Helper()
-	data, err := json.Marshal(body)
-	require.NoError(t, err, "marshal request body")
-
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cluster.httpEndpoint+path, bytes.NewReader(data))
-	require.NoError(t, err, "build POST %s", path)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := cluster.client.Do(req)
-	require.NoError(t, err, "POST %s", path)
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	require.NoError(t, err, "read POST %s response", path)
-	return resp.StatusCode, respBody
+	return doBearerRequest(t, cluster, http.MethodPost, path, "", body)
 }

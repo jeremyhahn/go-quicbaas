@@ -180,7 +180,7 @@ func provisionTenant(t *testing.T, cluster *testCluster, bearer, tenantID string
 }
 
 // doBearerRequest sends one request with the given bearer and returns the
-// status and body.
+// status and body. An empty bearer sends the request with no credential.
 func doBearerRequest(t *testing.T, cluster *testCluster, method, path, bearer string, body interface{}) (int, []byte) {
 	t.Helper()
 	var reqBody io.Reader
@@ -197,7 +197,9 @@ func doBearerRequest(t *testing.T, cluster *testCluster, method, path, bearer st
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Authorization", "Bearer "+bearer)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
 
 	resp, err := cluster.client.Do(req)
 	require.NoError(t, err, "%s %s", method, path)

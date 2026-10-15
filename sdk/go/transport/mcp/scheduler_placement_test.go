@@ -107,7 +107,7 @@ func TestDecodePlacementResult_EveryMethodDecodesItsToolResult(t *testing.T) {
 	}
 	h := newSchedulerHandler()
 	for method, result := range results {
-		got, err := h.transformResponse(method, result)
+		got, err := h.transformResponse(method, nil, result)
 		if err != nil {
 			t.Fatalf("%s: %v", method, err)
 		}
@@ -130,10 +130,10 @@ func TestDecodePlacementResult_EveryMethodDecodesItsToolResult(t *testing.T) {
 			}
 		}
 	}
-	if _, err := decodePlacementResult(&scheduler.NodeInfo{}, map[string]interface{}{"lease_id": "not-a-number"}); err == nil {
+	if _, err := decodeSchedulerResult(&scheduler.NodeInfo{}, map[string]interface{}{"lease_id": "not-a-number"}); err == nil {
 		t.Fatal("a mismatched tool result decoded")
 	}
-	if _, err := decodePlacementResult(&scheduler.NodeInfo{}, make(chan int)); err == nil {
+	if _, err := decodeSchedulerResult(&scheduler.NodeInfo{}, make(chan int)); err == nil {
 		t.Fatal("an unencodable tool result decoded")
 	}
 }

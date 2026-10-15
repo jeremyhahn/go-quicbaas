@@ -2486,7 +2486,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
 	echo ""; \
 	echo "$(YELLOW)Removing old integration test images to force complete rebuild...$(NC)"; \
-	docker rmi -f $(COMPOSE_PROJECT_INTEGRATION)-integration-test $(COMPOSE_PROJECT_INTEGRATION)-test-node1 $(COMPOSE_PROJECT_INTEGRATION)-test-node2 $(COMPOSE_PROJECT_INTEGRATION)-test-node3 $(COMPOSE_PROJECT_INTEGRATION)-test-node4 $(COMPOSE_PROJECT_INTEGRATION)-test-node5 2>/dev/null || true; \
+	docker rmi -f $(COMPOSE_PROJECT_INTEGRATION)-integration-test $(COMPOSE_PROJECT_INTEGRATION)-test-node1 $(COMPOSE_PROJECT_INTEGRATION)-test-node2 $(COMPOSE_PROJECT_INTEGRATION)-test-node3 $(COMPOSE_PROJECT_INTEGRATION)-test-node4 $(COMPOSE_PROJECT_INTEGRATION)-test-node5 $(COMPOSE_PROJECT_INTEGRATION)-test-selfreg 2>/dev/null || true; \
 	echo ""; \
 	echo "$(YELLOW)Building Docker images (forcing clean rebuild to ensure latest code)...$(NC)"; \
 	echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"; \
@@ -2500,7 +2500,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	$(GOMODAUTH_CLEAR); \
 	echo ""; \
 	echo "$(YELLOW)Starting integration test cluster...$(NC)"; \
-	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 floci minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
+	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 test-selfreg floci minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
 	echo ""; \
 	echo "$(YELLOW)Waiting for cluster nodes to be healthy (checking every 5s, max 120s)...$(NC)"; \
 	WAIT_COUNT=0; \

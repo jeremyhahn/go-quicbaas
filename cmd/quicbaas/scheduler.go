@@ -19,19 +19,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/scheduler"
 )
+
+// The scheduler's job commands. Like the placement commands they go through
+// the SDK's Async().Scheduler() (sdkScheduler) on the client the global
+// --transport selects, so one SDK client serves every transport.
 
 var (
 	schedulerDescription string
@@ -39,9 +42,9 @@ var (
 	schedulerSchedule    string
 	schedulerHandler     string
 	schedulerPayload     string
-	schedulerPriority    int32
+	schedulerPriority    int
 	schedulerTimeout     string
-	schedulerMaxRetries  int32
+	schedulerMaxRetries  int
 	schedulerDelay       string
 	schedulerExecuteAt   string
 	schedulerLimit       int
@@ -52,62 +55,48 @@ var (
 	schedulerCursor      string
 )
 
-// SchedulerClient defines the interface for scheduler operations.
-type SchedulerClient interface {
-	SchedulerCreateJob(ctx stdcontext.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error)
-	SchedulerGetJob(ctx stdcontext.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error)
-	SchedulerUpdateJob(ctx stdcontext.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error)
-	SchedulerDeleteJob(ctx stdcontext.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error)
-	SchedulerListJobs(ctx stdcontext.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error)
-	SchedulerTriggerJob(ctx stdcontext.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error)
-	SchedulerPauseJob(ctx stdcontext.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error)
-	SchedulerResumeJob(ctx stdcontext.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error)
-	SchedulerCancelJob(ctx stdcontext.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error)
-	SchedulerGetJobHistory(ctx stdcontext.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error)
-	SchedulerGetStatus(ctx stdcontext.Context) (*service.GetSchedulerStatusResponse, error)
-	Close() error
+// schedulerJobTypes maps the --type flag values to SDK job types.
+var schedulerJobTypes = map[string]scheduler.JobType{
+	"one-shot":  scheduler.JobTypeOneShot,
+	"recurring": scheduler.JobTypeRecurring,
+	"delayed":   scheduler.JobTypeDelayed,
 }
 
-// SchedulerClientFactory is a function type for creating scheduler clients.
-type SchedulerClientFactory func() (SchedulerClient, error)
+// schedulerJobStatuses maps the --status flag values to SDK job statuses.
+var schedulerJobStatuses = map[string]scheduler.JobStatus{
+	"pending":   scheduler.JobStatusPending,
+	"running":   scheduler.JobStatusRunning,
+	"completed": scheduler.JobStatusCompleted,
+	"failed":    scheduler.JobStatusFailed,
+	"paused":    scheduler.JobStatusPaused,
+	"canceled":  scheduler.JobStatusCanceled,
+}
 
-// schedulerClientFactory creates scheduler clients. Defaults to createSchedulerClient.
-var schedulerClientFactory SchedulerClientFactory = createSchedulerClient
+// schedulerName renders an SDK scheduler enum the way the CLI flags spell
+// it: ONE_SHOT becomes one-shot, PENDING becomes pending.
+func schedulerName(v fmt.Stringer) string {
+	return strings.ToLower(strings.ReplaceAll(v.String(), "_", "-"))
+}
 
-// createSchedulerClient creates a client for scheduler operations on the
-// transport selectTransport chooses, the same rule every other command uses.
-func createSchedulerClient() (SchedulerClient, error) {
-	selected := selectTransport()
-	build, ok := schedulerClientBuilders[selected]
-	if !ok {
-		return nil, &UnsupportedTransportError{Transport: selected, Supported: schedulerTransports}
+// runSchedulerCall resolves the SDK scheduler client and runs call under
+// the global timeout.
+func runSchedulerCall(call func(stdcontext.Context, scheduler.Client) error) error {
+	client, err := sdkScheduler()
+	if err != nil {
+		return err
 	}
-	return build()
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
+	defer cancel()
+	return call(ctx, client)
 }
 
-// schedulerClientBuilders maps each transport the scheduler commands dial to
-// its client constructor. gRPC and unix share one: pkg/api/grpc dials a socket
-// path as gRPC over that socket. The empty transport is gRPC, as in the SDK.
-var schedulerClientBuilders = map[string]func() (SchedulerClient, error){
-	"":     createSchedulerGRPCClient,
-	"grpc": createSchedulerGRPCClient,
-	"unix": createSchedulerGRPCClient,
-	"rest": createSchedulerRESTClientFactory,
-	"mcp":  createSchedulerMCPClientFactory,
-	"quic": createSchedulerQUICClientFactory,
-}
-
-// schedulerTransports names the transports in schedulerClientBuilders for
-// UnsupportedTransportError.
-var schedulerTransports = []string{"grpc", "rest", "mcp", "quic", "unix"}
-
-// createSchedulerGRPCClient creates a gRPC client for scheduler operations.
-func createSchedulerGRPCClient() (SchedulerClient, error) {
-	opts := []grpc.ClientOption{
-		grpc.WithTimeout(globalTimeout),
+// parseSchedulerJobID parses a job ID argument for the command op.
+func parseSchedulerJobID(op, arg string) (uint64, error) {
+	jobID, err := strconv.ParseUint(arg, 10, 64)
+	if err != nil {
+		return 0, errors.Wrapf(err, errors.ErrInvalidInput, op, "invalid job ID format")
 	}
-	opts = append(opts, grpcTLSOption()...)
-	return grpc.NewClient(address, opts...)
+	return jobID, nil
 }
 
 // newSchedulerCommand creates the scheduler command group.
@@ -123,11 +112,9 @@ placement commands register node facts and decide which node a workload
 runs on.`,
 	}
 
-	cmd.PersistentFlags().StringVar(&schedulerOutputFmt, "output", "table", "Output format (json, yaml, table)")
+	cmd.PersistentFlags().StringVar(&schedulerOutputFmt, "output", "table", "Output format (json, yaml, table, raw)")
 
-	// Add job subcommand group
 	cmd.AddCommand(newSchedulerJobCommand())
-	// Add status as direct subcommand of scheduler
 	cmd.AddCommand(newSchedulerStatusCommand())
 	// Workload placement: node facts and placement decisions
 	cmd.AddCommand(newSchedulerNodeCommand())
@@ -188,89 +175,78 @@ Examples:
 	cmd.Flags().StringVar(&schedulerDelay, "delay", "", "Delay duration for delayed jobs")
 	cmd.Flags().StringVar(&schedulerHandler, "handler", "", "Job handler name (required)")
 	cmd.Flags().StringVar(&schedulerPayload, "payload", "", "Job payload (JSON)")
-	cmd.Flags().Int32Var(&schedulerPriority, "priority", 0, "Job priority")
+	cmd.Flags().IntVar(&schedulerPriority, "priority", 0, "Job priority")
 	cmd.Flags().StringVar(&schedulerTimeout, "timeout", "5m", "Job timeout")
-	cmd.Flags().Int32Var(&schedulerMaxRetries, "max-retries", 3, "Maximum retry attempts")
+	cmd.Flags().IntVar(&schedulerMaxRetries, "max-retries", 3, "Maximum retry attempts")
 
 	if err := cmd.MarkFlagRequired("handler"); err != nil {
 		// Log but don't fail - flag marking is a best-effort operation
-		fmt.Fprintf(os.Stderr, "warning: failed to mark handler flag as required: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to mark handler flag as required: %v\n", err)
 	}
 
 	return cmd
 }
 
-// runSchedulerCreateCommand executes the scheduler create command.
-func runSchedulerCreateCommand(cmd *cobra.Command, args []string) error {
-	jobName := args[0]
-
-	client, err := schedulerClientFactory()
-	if err != nil {
-		return err
+// buildSchedulerCreateRequest builds the SDK create request for job name
+// from the create flags.
+func buildSchedulerCreateRequest(name string) (*scheduler.CreateJobRequest, error) {
+	jobType, ok := schedulerJobTypes[schedulerType]
+	if !ok {
+		return nil, errors.Newf(errors.ErrInvalidInput, "scheduler.create",
+			"invalid job type %q (one-shot, recurring, delayed)", schedulerType)
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	// Parse timeout
 	jobTimeout, err := time.ParseDuration(schedulerTimeout)
 	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.create", "invalid timeout format")
+		return nil, errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.create", "invalid timeout format")
 	}
 
-	// Parse execute-at if provided
-	var executeAt time.Time
-	if schedulerExecuteAt != "" {
-		executeAt, err = time.Parse(time.RFC3339, schedulerExecuteAt)
-		if err != nil {
-			return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.create", "invalid execute-at format, use RFC3339")
-		}
-	}
-
-	// Parse delay if provided
-	var delay time.Duration
-	if schedulerDelay != "" {
-		delay, err = time.ParseDuration(schedulerDelay)
-		if err != nil {
-			return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.create", "invalid delay format")
-		}
-	}
-
-	// Parse payload if provided
-	var payload []byte
-	if schedulerPayload != "" {
-		payload = []byte(schedulerPayload)
-	}
-
-	req := &service.CreateSchedulerJobRequest{
-		Name:        jobName,
+	req := &scheduler.CreateJobRequest{
+		Name:        name,
 		Description: schedulerDescription,
-		Type:        service.SchedulerJobType(schedulerType),
-		Schedule:    schedulerSchedule,
-		ExecuteAt:   executeAt,
-		Delay:       delay,
+		JobType:     jobType,
 		Handler:     schedulerHandler,
-		Payload:     payload,
+		Schedule:    schedulerSchedule,
 		Priority:    schedulerPriority,
 		Timeout:     jobTimeout,
 		MaxRetries:  schedulerMaxRetries,
+		OwnerType:   scheduler.OwnerTypeSystem,
 	}
-
-	// Set owner based on tenant flag
+	if schedulerExecuteAt != "" {
+		req.ExecuteAt, err = time.Parse(time.RFC3339, schedulerExecuteAt)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.create", "invalid execute-at format, use RFC3339")
+		}
+	}
+	if schedulerDelay != "" {
+		req.Delay, err = time.ParseDuration(schedulerDelay)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.create", "invalid delay format")
+		}
+	}
+	if schedulerPayload != "" {
+		req.Payload = []byte(schedulerPayload)
+	}
 	if globalTenantID != "" {
-		req.OwnerType = service.SchedulerOwnerTypeTenant
+		req.OwnerType = scheduler.OwnerTypeTenant
 		req.OwnerID = globalTenantID
-	} else {
-		req.OwnerType = service.SchedulerOwnerTypeSystem
 	}
+	return req, nil
+}
 
-	resp, err := client.SchedulerCreateJob(ctx, req)
+// runSchedulerCreateCommand executes the scheduler create command.
+func runSchedulerCreateCommand(cmd *cobra.Command, args []string) error {
+	req, err := buildSchedulerCreateRequest(args[0])
 	if err != nil {
-		return formatError(err)
+		return err
 	}
-
-	return formatSchedulerJobResponse(resp.Job, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		resp, err := client.CreateJob(ctx, req)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJobCreated(cmd.OutOrStdout(), req.Name, resp)
+	})
 }
 
 // =============================================================================
@@ -300,39 +276,42 @@ Examples:
 	return cmd
 }
 
+// buildSchedulerListOptions builds the SDK list options from the list flags.
+func buildSchedulerListOptions() (*scheduler.ListJobsOptions, error) {
+	opts := &scheduler.ListJobsOptions{
+		Limit:   schedulerLimit,
+		Cursor:  schedulerCursor,
+		Handler: schedulerHandler,
+	}
+	if schedulerStatus != "" {
+		status, ok := schedulerJobStatuses[schedulerStatus]
+		if !ok {
+			return nil, errors.Newf(errors.ErrInvalidInput, "scheduler.list",
+				"invalid job status %q (pending, running, completed, failed, paused, canceled)", schedulerStatus)
+		}
+		opts.Status = &status
+	}
+	if globalTenantID != "" {
+		owner := scheduler.OwnerTypeTenant
+		opts.OwnerType = &owner
+		opts.OwnerID = globalTenantID
+	}
+	return opts, nil
+}
+
 // runSchedulerListCommand executes the scheduler list command.
 func runSchedulerListCommand(cmd *cobra.Command, args []string) error {
-	client, err := schedulerClientFactory()
+	opts, err := buildSchedulerListOptions()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	req := &service.ListSchedulerJobsRequest{
-		Limit:  schedulerLimit,
-		Cursor: schedulerCursor,
-	}
-
-	if schedulerStatus != "" {
-		req.Status = service.SchedulerJobStatus(schedulerStatus)
-	}
-	if schedulerHandler != "" {
-		req.Handler = schedulerHandler
-	}
-	if globalTenantID != "" {
-		req.OwnerType = service.SchedulerOwnerTypeTenant
-		req.OwnerID = globalTenantID
-	}
-
-	resp, err := client.SchedulerListJobs(ctx, req)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerJobListResponse(resp, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		resp, err := client.ListJobs(ctx, opts)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJobList(cmd.OutOrStdout(), resp)
+	})
 }
 
 // =============================================================================
@@ -358,31 +337,17 @@ Examples:
 
 // runSchedulerGetCommand executes the scheduler get command.
 func runSchedulerGetCommand(cmd *cobra.Command, args []string) error {
-	jobID, err := strconv.ParseUint(args[0], 10, 64)
-	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.get", "invalid job ID format")
-	}
-
-	client, err := schedulerClientFactory()
+	jobID, err := parseSchedulerJobID("scheduler.get", args[0])
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	req := &service.GetSchedulerJobRequest{
-		JobID:    jobID,
-		TenantID: globalTenantID,
-	}
-
-	resp, err := client.SchedulerGetJob(ctx, req)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerJobResponse(resp.Job, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		job, err := client.GetJob(ctx, jobID)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJob(cmd.OutOrStdout(), job)
+	})
 }
 
 // =============================================================================
@@ -410,32 +375,21 @@ Examples:
 
 // runSchedulerDeleteCommand executes the scheduler delete command.
 func runSchedulerDeleteCommand(cmd *cobra.Command, args []string) error {
-	jobID, err := strconv.ParseUint(args[0], 10, 64)
-	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.delete", "invalid job ID format")
-	}
-
-	client, err := schedulerClientFactory()
+	jobID, err := parseSchedulerJobID("scheduler.delete", args[0])
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	req := &service.DeleteSchedulerJobRequest{
-		JobID:    jobID,
-		TenantID: globalTenantID,
-		Force:    schedulerForce,
-	}
-
-	resp, err := client.SchedulerDeleteJob(ctx, req)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerJobDeleteResponse(resp, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		resp, err := client.DeleteJobWithOptions(ctx, &scheduler.DeleteJobRequest{
+			JobID:    jobID,
+			TenantID: globalTenantID,
+			Force:    schedulerForce,
+		})
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJobDeleted(cmd.OutOrStdout(), resp)
+	})
 }
 
 // =============================================================================
@@ -460,31 +414,17 @@ Examples:
 
 // runSchedulerTriggerCommand executes the scheduler trigger command.
 func runSchedulerTriggerCommand(cmd *cobra.Command, args []string) error {
-	jobID, err := strconv.ParseUint(args[0], 10, 64)
-	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.trigger", "invalid job ID format")
-	}
-
-	client, err := schedulerClientFactory()
+	jobID, err := parseSchedulerJobID("scheduler.trigger", args[0])
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	req := &service.TriggerSchedulerJobRequest{
-		JobID:    jobID,
-		TenantID: globalTenantID,
-	}
-
-	resp, err := client.SchedulerTriggerJob(ctx, req)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerJobTriggerResponse(resp, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		resp, err := client.TriggerJob(ctx, jobID)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJobTriggered(cmd.OutOrStdout(), resp)
+	})
 }
 
 // =============================================================================
@@ -509,31 +449,17 @@ Examples:
 
 // runSchedulerPauseCommand executes the scheduler pause command.
 func runSchedulerPauseCommand(cmd *cobra.Command, args []string) error {
-	jobID, err := strconv.ParseUint(args[0], 10, 64)
-	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.pause", "invalid job ID format")
-	}
-
-	client, err := schedulerClientFactory()
+	jobID, err := parseSchedulerJobID("scheduler.pause", args[0])
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	req := &service.PauseSchedulerJobRequest{
-		JobID:    jobID,
-		TenantID: globalTenantID,
-	}
-
-	resp, err := client.SchedulerPauseJob(ctx, req)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerJobStatusChangeResponse(resp.JobID, resp.OldStatus, resp.NewStatus, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		resp, err := client.PauseJob(ctx, jobID)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJobStatusChange(cmd.OutOrStdout(), resp.JobID, resp.OldStatus, resp.NewStatus)
+	})
 }
 
 // =============================================================================
@@ -558,31 +484,17 @@ Examples:
 
 // runSchedulerResumeCommand executes the scheduler resume command.
 func runSchedulerResumeCommand(cmd *cobra.Command, args []string) error {
-	jobID, err := strconv.ParseUint(args[0], 10, 64)
-	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.resume", "invalid job ID format")
-	}
-
-	client, err := schedulerClientFactory()
+	jobID, err := parseSchedulerJobID("scheduler.resume", args[0])
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	req := &service.ResumeSchedulerJobRequest{
-		JobID:    jobID,
-		TenantID: globalTenantID,
-	}
-
-	resp, err := client.SchedulerResumeJob(ctx, req)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerJobStatusChangeResponse(resp.JobID, resp.OldStatus, resp.NewStatus, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		resp, err := client.ResumeJob(ctx, jobID)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJobStatusChange(cmd.OutOrStdout(), resp.JobID, resp.OldStatus, resp.NewStatus)
+	})
 }
 
 // =============================================================================
@@ -610,32 +522,17 @@ Examples:
 
 // runSchedulerCancelCommand executes the scheduler cancel command.
 func runSchedulerCancelCommand(cmd *cobra.Command, args []string) error {
-	jobID, err := strconv.ParseUint(args[0], 10, 64)
-	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.cancel", "invalid job ID format")
-	}
-
-	client, err := schedulerClientFactory()
+	jobID, err := parseSchedulerJobID("scheduler.cancel", args[0])
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	req := &service.CancelSchedulerJobRequest{
-		JobID:    jobID,
-		TenantID: globalTenantID,
-		Reason:   schedulerReason,
-	}
-
-	resp, err := client.SchedulerCancelJob(ctx, req)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerJobStatusChangeResponse(resp.JobID, resp.OldStatus, resp.NewStatus, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		resp, err := client.CancelJob(ctx, jobID, schedulerReason)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJobStatusChange(cmd.OutOrStdout(), resp.JobID, resp.OldStatus, resp.NewStatus)
+	})
 }
 
 // =============================================================================
@@ -657,40 +554,23 @@ Examples:
 	}
 
 	cmd.Flags().IntVar(&schedulerLimit, "limit", 50, "Maximum number of executions to return")
-	cmd.Flags().StringVar(&schedulerCursor, "cursor", "", "Pagination cursor")
 
 	return cmd
 }
 
 // runSchedulerHistoryCommand executes the scheduler history command.
 func runSchedulerHistoryCommand(cmd *cobra.Command, args []string) error {
-	jobID, err := strconv.ParseUint(args[0], 10, 64)
-	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "scheduler.history", "invalid job ID format")
-	}
-
-	client, err := schedulerClientFactory()
+	jobID, err := parseSchedulerJobID("scheduler.history", args[0])
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	req := &service.GetSchedulerJobHistoryRequest{
-		JobID:    jobID,
-		TenantID: globalTenantID,
-		Limit:    schedulerLimit,
-		Cursor:   schedulerCursor,
-	}
-
-	resp, err := client.SchedulerGetJobHistory(ctx, req)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerJobHistoryResponse(resp, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		resp, err := client.GetJobHistory(ctx, jobID, &scheduler.HistoryOptions{Limit: schedulerLimit})
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerJobHistory(cmd.OutOrStdout(), resp)
+	})
 }
 
 // =============================================================================
@@ -715,311 +595,363 @@ Examples:
 
 // runSchedulerStatusCommand executes the scheduler status command.
 func runSchedulerStatusCommand(cmd *cobra.Command, args []string) error {
-	client, err := schedulerClientFactory()
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	resp, err := client.SchedulerGetStatus(ctx)
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatSchedulerStatusResponse(resp, schedulerOutputFmt, os.Stdout)
+	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
+		status, err := client.GetStatus(ctx)
+		if err != nil {
+			return formatError(err)
+		}
+		return formatSchedulerStatus(cmd.OutOrStdout(), status)
+	})
 }
 
 // =============================================================================
 // Formatting Functions
 // =============================================================================
 
-// formatSchedulerJobResponse formats a scheduler job for output.
-func formatSchedulerJobResponse(job *service.SchedulerJob, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
+// writeSchedulerOutput renders v as JSON or YAML, or as text: table writes
+// the table form and raw, when set, the raw form (table otherwise).
+func writeSchedulerOutput(w io.Writer, v interface{}, table func(*tabwriter.Writer), raw func(io.Writer)) error {
+	format, err := cli.ParseOutputFormat(schedulerOutputFmt)
 	if err != nil {
 		return err
 	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(job)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(job)
-
-	case cli.OutputFormatTable:
+	switch {
+	case format == cli.OutputFormatJSON:
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(v)
+	case format == cli.OutputFormatYAML:
+		// The output types carry JSON tags only; going through their JSON
+		// form gives YAML the same snake_case keys as --output json.
+		data, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		var generic interface{}
+		if err := json.Unmarshal(data, &generic); err != nil {
+			return err
+		}
+		return yaml.NewEncoder(w).Encode(generic)
+	case format == cli.OutputFormatTable || raw == nil:
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "ID:\t%d\n", job.ID)
-		fmt.Fprintf(tw, "Name:\t%s\n", job.Name)
-		if job.Description != "" {
-			fmt.Fprintf(tw, "Description:\t%s\n", job.Description)
-		}
-		fmt.Fprintf(tw, "Type:\t%s\n", job.Type)
-		fmt.Fprintf(tw, "Handler:\t%s\n", job.Handler)
-		fmt.Fprintf(tw, "Status:\t%s\n", job.Status)
-		if job.Schedule != "" {
-			fmt.Fprintf(tw, "Schedule:\t%s\n", job.Schedule)
-		}
-		if !job.NextRun.IsZero() {
-			fmt.Fprintf(tw, "Next Run:\t%s\n", job.NextRun.Format(time.RFC3339))
-		}
-		if !job.LastRun.IsZero() {
-			fmt.Fprintf(tw, "Last Run:\t%s\n", job.LastRun.Format(time.RFC3339))
-		}
-		fmt.Fprintf(tw, "Run Count:\t%d\n", job.RunCount)
-		fmt.Fprintf(tw, "Fail Count:\t%d\n", job.FailCount)
-		if job.LastError != "" {
-			fmt.Fprintf(tw, "Last Error:\t%s\n", job.LastError)
-		}
-		fmt.Fprintf(tw, "Priority:\t%d\n", job.Priority)
-		fmt.Fprintf(tw, "Max Retries:\t%d\n", job.MaxRetries)
-		fmt.Fprintf(tw, "Created:\t%s\n", job.CreatedAt.Format(time.RFC3339))
+		table(tw)
 		return tw.Flush()
-
 	default:
-		fmt.Fprintf(w, "Job created: %s (ID: %d)\n", job.Name, job.ID)
+		raw(w)
 		return nil
 	}
 }
 
-// formatSchedulerJobListResponse formats a job list for output.
-func formatSchedulerJobListResponse(resp *service.ListSchedulerJobsResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
+// schedulerJobView is the CLI's rendering of an SDK job.
+type schedulerJobView struct {
+	ID          uint64            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	OwnerType   string            `json:"owner_type"`
+	OwnerID     string            `json:"owner_id,omitempty"`
+	Type        string            `json:"type"`
+	Schedule    string            `json:"schedule,omitempty"`
+	Delay       time.Duration     `json:"delay,omitempty"`
+	Handler     string            `json:"handler"`
+	Payload     []byte            `json:"payload,omitempty"`
+	Priority    int               `json:"priority"`
+	Timeout     time.Duration     `json:"timeout"`
+	MaxRetries  int               `json:"max_retries"`
+	Status      string            `json:"status"`
+	LastRun     time.Time         `json:"last_run,omitempty"`
+	NextRun     time.Time         `json:"next_run,omitempty"`
+	RunCount    uint64            `json:"run_count"`
+	FailCount   uint64            `json:"fail_count"`
+	LastError   string            `json:"last_error,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+// newSchedulerJobView converts an SDK job for output.
+func newSchedulerJobView(job *scheduler.JobInfo) schedulerJobView {
+	return schedulerJobView{
+		ID:          job.JobID,
+		Name:        job.Name,
+		Description: job.Description,
+		OwnerType:   schedulerName(job.OwnerType),
+		OwnerID:     job.OwnerID,
+		Type:        schedulerName(job.JobType),
+		Schedule:    job.Schedule,
+		Delay:       job.Delay,
+		Handler:     job.Handler,
+		Payload:     job.Payload,
+		Priority:    job.Priority,
+		Timeout:     job.Timeout,
+		MaxRetries:  job.MaxRetries,
+		Status:      schedulerName(job.Status),
+		LastRun:     job.LastRunAt,
+		NextRun:     job.NextRunAt,
+		RunCount:    job.ExecutionCount,
+		FailCount:   job.FailureCount,
+		LastError:   job.LastError,
+		Labels:      job.Tags,
+		CreatedAt:   job.CreatedAt,
+		UpdatedAt:   job.UpdatedAt,
 	}
+}
 
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
+// formatSchedulerJob writes one job.
+func formatSchedulerJob(w io.Writer, job *scheduler.JobInfo) error {
+	view := newSchedulerJobView(job)
+	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
+		fmt.Fprintf(tw, "ID:\t%d\n", view.ID)
+		fmt.Fprintf(tw, "Name:\t%s\n", view.Name)
+		if view.Description != "" {
+			fmt.Fprintf(tw, "Description:\t%s\n", view.Description)
+		}
+		fmt.Fprintf(tw, "Type:\t%s\n", view.Type)
+		fmt.Fprintf(tw, "Handler:\t%s\n", view.Handler)
+		fmt.Fprintf(tw, "Status:\t%s\n", view.Status)
+		if view.Schedule != "" {
+			fmt.Fprintf(tw, "Schedule:\t%s\n", view.Schedule)
+		}
+		if !view.NextRun.IsZero() {
+			fmt.Fprintf(tw, "Next Run:\t%s\n", view.NextRun.Format(time.RFC3339))
+		}
+		if !view.LastRun.IsZero() {
+			fmt.Fprintf(tw, "Last Run:\t%s\n", view.LastRun.Format(time.RFC3339))
+		}
+		fmt.Fprintf(tw, "Run Count:\t%d\n", view.RunCount)
+		fmt.Fprintf(tw, "Fail Count:\t%d\n", view.FailCount)
+		if view.LastError != "" {
+			fmt.Fprintf(tw, "Last Error:\t%s\n", view.LastError)
+		}
+		fmt.Fprintf(tw, "Priority:\t%d\n", view.Priority)
+		fmt.Fprintf(tw, "Max Retries:\t%d\n", view.MaxRetries)
+		fmt.Fprintf(tw, "Created:\t%s\n", view.CreatedAt.Format(time.RFC3339))
+	}, func(w io.Writer) {
+		fmt.Fprintf(w, "Job %s (ID: %d) - %s\n", view.Name, view.ID, view.Status)
+	})
+}
 
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
+// schedulerJobCreatedView is the CLI's rendering of a create response,
+// which carries the new job's ID and first run only.
+type schedulerJobCreatedView struct {
+	ID      uint64    `json:"id"`
+	Name    string    `json:"name"`
+	NextRun time.Time `json:"next_run,omitempty"`
+}
 
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+// formatSchedulerJobCreated writes the job the create command made.
+func formatSchedulerJobCreated(w io.Writer, name string, resp *scheduler.CreateJobResponse) error {
+	view := schedulerJobCreatedView{ID: resp.JobID, Name: name, NextRun: resp.NextRunAt}
+	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
+		fmt.Fprintf(tw, "ID:\t%d\n", view.ID)
+		fmt.Fprintf(tw, "Name:\t%s\n", view.Name)
+		if !view.NextRun.IsZero() {
+			fmt.Fprintf(tw, "Next Run:\t%s\n", view.NextRun.Format(time.RFC3339))
+		}
+	}, func(w io.Writer) {
+		fmt.Fprintf(w, "Job created: %s (ID: %d)\n", view.Name, view.ID)
+	})
+}
+
+// schedulerJobListView is the CLI's rendering of a list response.
+type schedulerJobListView struct {
+	Jobs       []schedulerJobView `json:"jobs"`
+	TotalCount int                `json:"total_count"`
+	HasMore    bool               `json:"has_more"`
+	NextCursor string             `json:"next_cursor,omitempty"`
+}
+
+// formatSchedulerJobList writes a page of jobs.
+func formatSchedulerJobList(w io.Writer, resp *scheduler.ListJobsResponse) error {
+	view := schedulerJobListView{
+		Jobs:       make([]schedulerJobView, 0, len(resp.Jobs)),
+		TotalCount: resp.TotalCount,
+		HasMore:    resp.HasMore,
+		NextCursor: resp.NextCursor,
+	}
+	for i := range resp.Jobs {
+		view.Jobs = append(view.Jobs, newSchedulerJobView(&resp.Jobs[i]))
+	}
+	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
 		fmt.Fprintf(tw, "ID\tNAME\tTYPE\tHANDLER\tSTATUS\tNEXT RUN\n")
-		for _, job := range resp.Jobs {
+		for _, job := range view.Jobs {
 			nextRun := "-"
 			if !job.NextRun.IsZero() {
 				nextRun = job.NextRun.Format(time.RFC3339)
 			}
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
-				job.ID, job.Name, job.Type, job.Handler, job.Status, nextRun)
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n", job.ID, job.Name, job.Type, job.Handler, job.Status, nextRun)
 		}
-		fmt.Fprintf(tw, "\nTotal: %d jobs\n", resp.TotalCount)
-		if resp.HasMore {
-			fmt.Fprintf(tw, "Next cursor: %s\n", resp.NextCursor)
+		fmt.Fprintf(tw, "\nTotal: %d jobs\n", view.TotalCount)
+		if view.HasMore {
+			fmt.Fprintf(tw, "Next cursor: %s\n", view.NextCursor)
 		}
-		return tw.Flush()
-
-	default:
-		for _, job := range resp.Jobs {
+	}, func(w io.Writer) {
+		for _, job := range view.Jobs {
 			fmt.Fprintf(w, "%d: %s (%s) - %s\n", job.ID, job.Name, job.Type, job.Status)
 		}
-		return nil
-	}
+	})
 }
 
-// formatSchedulerJobDeleteResponse formats a job delete response for output.
-func formatSchedulerJobDeleteResponse(resp *service.DeleteSchedulerJobResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
+// schedulerJobDeletedView is the CLI's rendering of a delete response.
+type schedulerJobDeletedView struct {
+	JobID   uint64 `json:"job_id"`
+	Deleted bool   `json:"deleted"`
+}
 
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Job ID:\t%d\n", resp.JobID)
-		fmt.Fprintf(tw, "Deleted:\t%v\n", resp.Deleted)
-		return tw.Flush()
-
-	default:
-		if resp.Deleted {
-			fmt.Fprintf(w, "Job %d deleted successfully\n", resp.JobID)
+// formatSchedulerJobDeleted writes the outcome of a delete.
+func formatSchedulerJobDeleted(w io.Writer, resp *scheduler.DeleteJobResponse) error {
+	view := schedulerJobDeletedView{JobID: resp.JobID, Deleted: resp.Deleted}
+	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
+		fmt.Fprintf(tw, "Job ID:\t%d\n", view.JobID)
+		fmt.Fprintf(tw, "Deleted:\t%v\n", view.Deleted)
+	}, func(w io.Writer) {
+		if view.Deleted {
+			fmt.Fprintf(w, "Job %d deleted successfully\n", view.JobID)
 		} else {
-			fmt.Fprintf(w, "Job %d was not deleted\n", resp.JobID)
+			fmt.Fprintf(w, "Job %d was not deleted\n", view.JobID)
 		}
-		return nil
-	}
+	})
 }
 
-// formatSchedulerJobTriggerResponse formats a job trigger response for output.
-func formatSchedulerJobTriggerResponse(resp *service.TriggerSchedulerJobResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Job ID:\t%d\n", resp.JobID)
-		fmt.Fprintf(tw, "Status:\t%s\n", resp.Status)
-		return tw.Flush()
-
-	default:
-		fmt.Fprintf(w, "Job %d triggered (status: %s)\n", resp.JobID, resp.Status)
-		return nil
-	}
+// schedulerJobTriggeredView is the CLI's rendering of a trigger response.
+type schedulerJobTriggeredView struct {
+	JobID  uint64 `json:"job_id"`
+	Status string `json:"status"`
 }
 
-// formatSchedulerJobStatusChangeResponse formats a status change response for output.
-func formatSchedulerJobStatusChangeResponse(jobID uint64, oldStatus, newStatus service.SchedulerJobStatus, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	response := map[string]interface{}{
-		"job_id":     jobID,
-		"old_status": oldStatus,
-		"new_status": newStatus,
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(response)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(response)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Job ID:\t%d\n", jobID)
-		fmt.Fprintf(tw, "Old Status:\t%s\n", oldStatus)
-		fmt.Fprintf(tw, "New Status:\t%s\n", newStatus)
-		return tw.Flush()
-
-	default:
-		fmt.Fprintf(w, "Job %d status changed: %s -> %s\n", jobID, oldStatus, newStatus)
-		return nil
-	}
+// formatSchedulerJobTriggered writes the outcome of a trigger.
+func formatSchedulerJobTriggered(w io.Writer, resp *scheduler.TriggerJobResponse) error {
+	view := schedulerJobTriggeredView{JobID: resp.JobID, Status: schedulerName(resp.Status)}
+	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
+		fmt.Fprintf(tw, "Job ID:\t%d\n", view.JobID)
+		fmt.Fprintf(tw, "Status:\t%s\n", view.Status)
+	}, func(w io.Writer) {
+		fmt.Fprintf(w, "Job %d triggered (status: %s)\n", view.JobID, view.Status)
+	})
 }
 
-// formatSchedulerJobHistoryResponse formats a job history response for output.
-func formatSchedulerJobHistoryResponse(resp *service.GetSchedulerJobHistoryResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
+// schedulerJobStatusChangeView is the CLI's rendering of a pause, resume or
+// cancel response.
+type schedulerJobStatusChangeView struct {
+	JobID     uint64 `json:"job_id"`
+	OldStatus string `json:"old_status"`
+	NewStatus string `json:"new_status"`
+}
+
+// formatSchedulerJobStatusChange writes a job's status transition.
+func formatSchedulerJobStatusChange(w io.Writer, jobID uint64, oldStatus, newStatus scheduler.JobStatus) error {
+	view := schedulerJobStatusChangeView{JobID: jobID, OldStatus: schedulerName(oldStatus), NewStatus: schedulerName(newStatus)}
+	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
+		fmt.Fprintf(tw, "Job ID:\t%d\n", view.JobID)
+		fmt.Fprintf(tw, "Old Status:\t%s\n", view.OldStatus)
+		fmt.Fprintf(tw, "New Status:\t%s\n", view.NewStatus)
+	}, func(w io.Writer) {
+		fmt.Fprintf(w, "Job %d status changed: %s -> %s\n", view.JobID, view.OldStatus, view.NewStatus)
+	})
+}
+
+// schedulerExecutionView is the CLI's rendering of one job execution.
+type schedulerExecutionView struct {
+	ID        uint64        `json:"id"`
+	JobID     uint64        `json:"job_id"`
+	Status    string        `json:"status"`
+	StartedAt time.Time     `json:"started_at"`
+	EndedAt   time.Time     `json:"ended_at,omitempty"`
+	Duration  time.Duration `json:"duration,omitempty"`
+	Error     string        `json:"error,omitempty"`
+	Output    string        `json:"output,omitempty"`
+}
+
+// schedulerJobHistoryView is the CLI's rendering of a history response.
+type schedulerJobHistoryView struct {
+	JobID      uint64                   `json:"job_id"`
+	Executions []schedulerExecutionView `json:"executions"`
+	HasMore    bool                     `json:"has_more"`
+}
+
+// schedulerHistoryErrorWidth is the widest error the history table shows.
+const schedulerHistoryErrorWidth = 50
+
+// formatSchedulerJobHistory writes a job's executions.
+func formatSchedulerJobHistory(w io.Writer, resp *scheduler.JobHistoryResponse) error {
+	view := schedulerJobHistoryView{
+		JobID:      resp.JobID,
+		Executions: make([]schedulerExecutionView, 0, len(resp.Executions)),
+		HasMore:    resp.HasMore,
 	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, exec := range resp.Executions {
+		view.Executions = append(view.Executions, schedulerExecutionView{
+			ID:        exec.ExecutionID,
+			JobID:     exec.JobID,
+			Status:    schedulerName(exec.Status),
+			StartedAt: exec.StartedAt,
+			EndedAt:   exec.CompletedAt,
+			Duration:  exec.Duration,
+			Error:     exec.Error,
+			Output:    string(exec.Result),
+		})
+	}
+	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
 		fmt.Fprintf(tw, "ID\tSTATUS\tSTARTED\tDURATION\tERROR\n")
-		for _, exec := range resp.Executions {
-			startedAt := exec.StartedAt.Format(time.RFC3339)
-			duration := exec.Duration.String()
+		for _, exec := range view.Executions {
 			errMsg := "-"
 			if exec.Error != "" {
-				// Truncate long error messages
-				if len(exec.Error) > 50 {
-					errMsg = exec.Error[:47] + "..."
-				} else {
-					errMsg = exec.Error
+				errMsg = exec.Error
+				if len(errMsg) > schedulerHistoryErrorWidth {
+					errMsg = errMsg[:schedulerHistoryErrorWidth-3] + "..."
 				}
 			}
 			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n",
-				exec.ID, exec.Status, startedAt, duration, errMsg)
+				exec.ID, exec.Status, exec.StartedAt.Format(time.RFC3339), exec.Duration, errMsg)
 		}
-		if resp.HasMore {
-			fmt.Fprintf(tw, "\nMore results available. Use --cursor %s\n", resp.NextCursor)
+		if view.HasMore {
+			fmt.Fprintf(tw, "\nMore results available. Raise --limit to see them.\n")
 		}
-		return tw.Flush()
-
-	default:
-		for _, exec := range resp.Executions {
-			fmt.Fprintf(w, "%d: %s (%s)\n", exec.ID, exec.Status, exec.Duration.String())
+	}, func(w io.Writer) {
+		for _, exec := range view.Executions {
+			fmt.Fprintf(w, "%d: %s (%s)\n", exec.ID, exec.Status, exec.Duration)
 		}
-		return nil
-	}
+	})
 }
 
-// formatSchedulerStatusResponse formats scheduler status for output.
-func formatSchedulerStatusResponse(resp *service.GetSchedulerStatusResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
+// schedulerStatusView is the CLI's rendering of the scheduler status.
+type schedulerStatusView struct {
+	Running      bool          `json:"running"`
+	TotalJobs    uint64        `json:"total_jobs"`
+	RunningJobs  uint64        `json:"running_jobs"`
+	SuccessCount uint64        `json:"success_count"`
+	FailureCount uint64        `json:"failure_count"`
+	Uptime       time.Duration `json:"uptime,omitempty"`
+	LastTick     time.Time     `json:"last_tick,omitempty"`
+}
+
+// formatSchedulerStatus writes the scheduler status.
+func formatSchedulerStatus(w io.Writer, status *scheduler.SchedulerStatus) error {
+	view := schedulerStatusView{
+		Running:      status.Healthy,
+		TotalJobs:    status.TotalJobs,
+		RunningJobs:  status.RunningJobs,
+		SuccessCount: status.CompletedJobs,
+		FailureCount: status.FailedJobs,
+		Uptime:       status.UptimeDuration,
+		LastTick:     status.LastHeartbeat,
 	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		status := "Stopped"
-		if resp.Running {
-			status = "Running"
-		}
-		fmt.Fprintf(tw, "Status:\t%s\n", status)
-		if resp.Stats != nil {
-			fmt.Fprintf(tw, "Total Jobs:\t%d\n", resp.Stats.JobCount)
-			fmt.Fprintf(tw, "Running Jobs:\t%d\n", resp.Stats.RunningJobs)
-			fmt.Fprintf(tw, "Success Count:\t%d\n", resp.Stats.SuccessCount)
-			fmt.Fprintf(tw, "Failure Count:\t%d\n", resp.Stats.FailureCount)
-			if !resp.Stats.StartedAt.IsZero() {
-				fmt.Fprintf(tw, "Started At:\t%s\n", resp.Stats.StartedAt.Format(time.RFC3339))
-			}
-			if !resp.Stats.LastTickTime.IsZero() {
-				fmt.Fprintf(tw, "Last Tick:\t%s\n", resp.Stats.LastTickTime.Format(time.RFC3339))
-			}
-		}
-		return tw.Flush()
-
-	default:
-		status := "stopped"
-		if resp.Running {
-			status = "running"
-		}
-		fmt.Fprintf(w, "Scheduler: %s\n", status)
-		return nil
+	state := "stopped"
+	if view.Running {
+		state = "running"
 	}
+	return writeSchedulerOutput(w, view, func(tw *tabwriter.Writer) {
+		fmt.Fprintf(tw, "Status:\t%s\n", state)
+		fmt.Fprintf(tw, "Total Jobs:\t%d\n", view.TotalJobs)
+		fmt.Fprintf(tw, "Running Jobs:\t%d\n", view.RunningJobs)
+		fmt.Fprintf(tw, "Success Count:\t%d\n", view.SuccessCount)
+		fmt.Fprintf(tw, "Failure Count:\t%d\n", view.FailureCount)
+		if view.Uptime > 0 {
+			fmt.Fprintf(tw, "Uptime:\t%s\n", view.Uptime.Round(time.Second))
+		}
+		if !view.LastTick.IsZero() {
+			fmt.Fprintf(tw, "Last Tick:\t%s\n", view.LastTick.Format(time.RFC3339))
+		}
+	}, func(w io.Writer) {
+		fmt.Fprintf(w, "Scheduler: %s\n", state)
+	})
 }

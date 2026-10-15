@@ -16,14 +16,20 @@ package mcp
 
 import (
 	"encoding/base64"
-	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
-// schedulerHandler transforms MCP scheduler requests and responses to SDK types.
+// schedulerHandler renders SDK scheduler requests as the arguments of the
+// server's quicbaas_scheduler_* tools and decodes the tool results. Both
+// directions go through the pkg/service scheduler types those tools are
+// written against, so every key and value format is the one the server
+// reads and writes.
 type schedulerHandler struct{}
 
 // newSchedulerHandler creates a new scheduler handler.
@@ -31,680 +37,325 @@ func newSchedulerHandler() *schedulerHandler {
 	return &schedulerHandler{}
 }
 
-// transformRequest transforms SDK scheduler request to MCP tool arguments.
+// schedulerJobArgsFunc renders one SDK job request as tool arguments.
+type schedulerJobArgsFunc func(method string, req interface{}) (map[string]interface{}, error)
+
+// schedulerJobResultFunc decodes one job tool result into the SDK response.
+// It also receives the SDK request, for the values the server does not echo.
+type schedulerJobResultFunc func(req, result interface{}) (interface{}, error)
+
+// schedulerJobArgs maps each job method to its argument renderer.
+var schedulerJobArgs = map[string]schedulerJobArgsFunc{
+	"CreateJob":     createJobArgs,
+	"UpdateJob":     updateJobArgs,
+	"ListJobs":      listJobsArgs,
+	"GetJob":        jobRefArgs,
+	"TriggerJob":    jobRefArgs,
+	"PauseJob":      jobRefArgs,
+	"ResumeJob":     jobRefArgs,
+	"DeleteJob":     deleteJobArgs,
+	"CancelJob":     cancelJobArgs,
+	"GetJobHistory": jobHistoryArgs,
+	"GetStatus":     statusArgs,
+}
+
+// schedulerJobResults maps each job method to its result decoder.
+var schedulerJobResults = map[string]schedulerJobResultFunc{
+	"CreateJob":     decodeJobResult(scheduler.CreateJobResponseFromService),
+	"GetJob":        decodeJobInfoResult,
+	"UpdateJob":     decodeJobInfoResult,
+	"ListJobs":      decodeJobResult(scheduler.ListJobsResponseFromService),
+	"TriggerJob":    decodeJobResult(scheduler.TriggerJobResponseFromService),
+	"PauseJob":      decodeJobResult(scheduler.PauseJobResponseFromService),
+	"ResumeJob":     decodeJobResult(scheduler.ResumeJobResponseFromService),
+	"DeleteJob":     decodeJobResult(scheduler.DeleteJobResponseFromService),
+	"CancelJob":     decodeCancelJobResult,
+	"GetJobHistory": decodeJobHistoryResult,
+	"GetStatus":     decodeStatusResult,
+}
+
+// transformRequest transforms an SDK scheduler request to MCP tool arguments.
 func (h *schedulerHandler) transformRequest(method string, req interface{}) (map[string]interface{}, error) {
 	if _, ok := placementResults[method]; ok {
 		return transformPlacementRequest(method, req)
 	}
-	switch method {
-	case "CreateJob":
-		return h.transformCreateJobRequest(req)
-	case "UpdateJob":
-		return h.transformUpdateJobRequest(req)
-	default:
-		// For other methods, use generic JSON conversion
-		return h.genericTransform(req)
-	}
-}
-
-// genericTransform converts request via JSON for simple request types.
-func (h *schedulerHandler) genericTransform(req interface{}) (map[string]interface{}, error) {
-	if req == nil {
-		return map[string]interface{}{}, nil
-	}
-	data, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	var args map[string]interface{}
-	if err := json.Unmarshal(data, &args); err != nil {
-		return nil, err
-	}
-	// Convert Go struct field names to MCP tool argument names
-	if jobID, ok := args["JobID"]; ok {
-		args["job_id"] = jobID
-		delete(args, "JobID")
-	}
-	if tenantID, ok := args["TenantID"]; ok {
-		args["tenant_id"] = tenantID
-		delete(args, "TenantID")
-	}
-	if reason, ok := args["Reason"]; ok {
-		args["reason"] = reason
-		delete(args, "Reason")
-	}
-	return args, nil
-}
-
-// transformCreateJobRequest transforms CreateJobRequest to MCP arguments.
-func (h *schedulerHandler) transformCreateJobRequest(req interface{}) (map[string]interface{}, error) {
-	sdkReq, ok := req.(*scheduler.CreateJobRequest)
+	render, ok := schedulerJobArgs[method]
 	if !ok {
-		// Fall back to generic conversion
-		return h.genericTransform(req)
+		return nil, errors.NewInvalidInput("mcp.scheduler."+method, "unknown scheduler method")
 	}
-
-	args := map[string]interface{}{
-		"name":       sdkReq.Name,
-		"handler":    sdkReq.Handler,
-		"type":       jobTypeToString(sdkReq.JobType),
-		"owner_type": ownerTypeToString(sdkReq.OwnerType),
-	}
-
-	if sdkReq.Description != "" {
-		args["description"] = sdkReq.Description
-	}
-	if sdkReq.Schedule != "" {
-		args["schedule"] = sdkReq.Schedule
-	}
-	if !sdkReq.ExecuteAt.IsZero() {
-		args["execute_at"] = sdkReq.ExecuteAt.Format(time.RFC3339)
-	}
-	if sdkReq.Delay > 0 {
-		args["delay"] = sdkReq.Delay.String()
-	}
-	if len(sdkReq.Payload) > 0 {
-		args["payload"] = base64.StdEncoding.EncodeToString(sdkReq.Payload)
-	}
-	if sdkReq.OwnerID != "" {
-		args["owner_id"] = sdkReq.OwnerID
-	}
-	if sdkReq.MaxRetries > 0 {
-		args["max_retries"] = sdkReq.MaxRetries
-	}
-	if sdkReq.Timeout > 0 {
-		args["timeout"] = sdkReq.Timeout.String()
-	}
-	if sdkReq.Priority != 0 {
-		args["priority"] = sdkReq.Priority
-	}
-	if len(sdkReq.Tags) > 0 {
-		tagsJSON, _ := json.Marshal(sdkReq.Tags)
-		args["labels"] = string(tagsJSON)
-	}
-
-	return args, nil
+	return render(method, req)
 }
 
-// transformUpdateJobRequest transforms UpdateJobRequest to MCP arguments.
-func (h *schedulerHandler) transformUpdateJobRequest(req interface{}) (map[string]interface{}, error) {
-	sdkReq, ok := req.(*scheduler.UpdateJobRequest)
-	if !ok {
-		// Fall back to generic conversion
-		return h.genericTransform(req)
-	}
-
-	args := map[string]interface{}{
-		"job_id": sdkReq.JobID,
-	}
-
-	if sdkReq.Name != "" {
-		args["name"] = sdkReq.Name
-	}
-	if sdkReq.Description != "" {
-		args["description"] = sdkReq.Description
-	}
-	if sdkReq.Schedule != "" {
-		args["schedule"] = sdkReq.Schedule
-	}
-	if sdkReq.Delay > 0 {
-		args["delay"] = sdkReq.Delay.String()
-	}
-	if len(sdkReq.Payload) > 0 {
-		args["payload"] = base64.StdEncoding.EncodeToString(sdkReq.Payload)
-	}
-	if sdkReq.MaxRetries > 0 {
-		args["max_retries"] = sdkReq.MaxRetries
-	}
-	if sdkReq.Timeout > 0 {
-		args["timeout"] = sdkReq.Timeout.String()
-	}
-
-	return args, nil
-}
-
-// jobTypeToString converts JobType enum to string.
-func jobTypeToString(jt scheduler.JobType) string {
-	switch jt {
-	case scheduler.JobTypeOneShot:
-		return "one-shot"
-	case scheduler.JobTypeRecurring:
-		return "recurring"
-	case scheduler.JobTypeDelayed:
-		return "delayed"
-	default:
-		return "one-shot"
-	}
-}
-
-// ownerTypeToString converts OwnerType enum to string.
-func ownerTypeToString(ot scheduler.OwnerType) string {
-	switch ot {
-	case scheduler.OwnerTypeSystem:
-		return "system"
-	case scheduler.OwnerTypeTenant:
-		return "tenant"
-	case scheduler.OwnerTypeDelegated:
-		return "delegated"
-	default:
-		return "system"
-	}
-}
-
-// transformResponse transforms MCP tool response to SDK scheduler types.
-func (h *schedulerHandler) transformResponse(method string, resp interface{}) (interface{}, error) {
+// transformResponse transforms an MCP tool result to the SDK response type.
+func (h *schedulerHandler) transformResponse(method string, req, result interface{}) (interface{}, error) {
 	if newResult, ok := placementResults[method]; ok {
-		return decodePlacementResult(newResult(), resp)
+		return decodeSchedulerResult(newResult(), result)
 	}
-	switch method {
-	case "CreateJob":
-		return h.transformCreateJobResponse(resp)
-	case "GetJob":
-		return h.transformGetJobResponse(resp)
-	case "UpdateJob":
-		return h.transformUpdateJobResponse(resp)
-	case "DeleteJob":
-		return h.transformDeleteJobResponse(resp)
-	case "ListJobs":
-		return h.transformListJobsResponse(resp)
-	case "TriggerJob":
-		return h.transformTriggerJobResponse(resp)
-	case "PauseJob":
-		return h.transformPauseJobResponse(resp)
-	case "ResumeJob":
-		return h.transformResumeJobResponse(resp)
-	case "CancelJob":
-		return h.transformCancelJobResponse(resp)
-	case "GetJobHistory":
-		return h.transformGetJobHistoryResponse(resp)
-	case "GetStatus":
-		return h.transformGetStatusResponse(resp)
-	default:
-		return resp, nil
+	decode, ok := schedulerJobResults[method]
+	if !ok {
+		return result, nil
+	}
+	return decode(req, result)
+}
+
+// invalidSchedulerRequest reports a request that is nil or not the type the
+// method takes.
+func invalidSchedulerRequest(method string, req interface{}) error {
+	return errors.NewInvalidInput("mcp.scheduler."+method, fmt.Sprintf("unexpected request type %T", req))
+}
+
+// createJobArgs renders a CreateJobRequest as quicbaas_scheduler_create_job
+// arguments.
+func createJobArgs(method string, req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*scheduler.CreateJobRequest)
+	if !ok || r == nil {
+		return nil, invalidSchedulerRequest(method, req)
+	}
+	svc := scheduler.CreateJobRequestToService(r)
+	args := map[string]interface{}{
+		"name":       svc.Name,
+		"handler":    svc.Handler,
+		"type":       string(svc.Type),
+		"owner_type": string(svc.OwnerType),
+	}
+	putString(args, "description", svc.Description)
+	putString(args, "owner_id", svc.OwnerID)
+	putString(args, "schedule", svc.Schedule)
+	putString(args, "node_affinity", svc.NodeAffinity)
+	putTime(args, "execute_at", svc.ExecuteAt)
+	putDuration(args, "delay", svc.Delay)
+	putDuration(args, "timeout", svc.Timeout)
+	putPayload(args, svc.Payload)
+	putLabels(args, svc.Labels)
+	putInt32(args, "priority", svc.Priority)
+	putInt32(args, "max_retries", svc.MaxRetries)
+	return args, nil
+}
+
+// updateJobArgs renders an UpdateJobRequest as quicbaas_scheduler_update_job
+// arguments.
+func updateJobArgs(method string, req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*scheduler.UpdateJobRequest)
+	if !ok || r == nil {
+		return nil, invalidSchedulerRequest(method, req)
+	}
+	svc := scheduler.UpdateJobRequestToService(r)
+	args := jobRefArgsFor(svc.JobID, svc.TenantID)
+	putString(args, "name", svc.Name)
+	putString(args, "description", svc.Description)
+	putString(args, "schedule", svc.Schedule)
+	putDuration(args, "timeout", svc.Timeout)
+	putPayload(args, svc.Payload)
+	putLabels(args, svc.Labels)
+	putInt32(args, "max_retries", svc.MaxRetries)
+	return args, nil
+}
+
+// listJobsArgs renders ListJobsOptions as quicbaas_scheduler_list_jobs
+// arguments.
+func listJobsArgs(method string, req interface{}) (map[string]interface{}, error) {
+	opts, ok := req.(*scheduler.ListJobsOptions)
+	if !ok {
+		return nil, invalidSchedulerRequest(method, req)
+	}
+	svc := scheduler.ListJobsOptionsToService(opts)
+	args := map[string]interface{}{}
+	putString(args, "owner_type", string(svc.OwnerType))
+	putString(args, "owner_id", svc.OwnerID)
+	putString(args, "status", string(svc.Status))
+	putString(args, "handler", svc.Handler)
+	putString(args, "cursor", svc.Cursor)
+	putLabels(args, svc.Labels)
+	if svc.Limit > 0 {
+		args["limit"] = svc.Limit
+	}
+	return args, nil
+}
+
+// jobRefArgs renders the requests that name only a job: GetJob, TriggerJob,
+// PauseJob and ResumeJob.
+func jobRefArgs(method string, req interface{}) (map[string]interface{}, error) {
+	switch r := req.(type) {
+	case *scheduler.GetJobRequest:
+		if r != nil {
+			return jobRefArgsFor(r.JobID, r.TenantID), nil
+		}
+	case *scheduler.TriggerJobRequest:
+		if r != nil {
+			return jobRefArgsFor(r.JobID, r.TenantID), nil
+		}
+	case *scheduler.PauseJobRequest:
+		if r != nil {
+			return jobRefArgsFor(r.JobID, r.TenantID), nil
+		}
+	case *scheduler.ResumeJobRequest:
+		if r != nil {
+			return jobRefArgsFor(r.JobID, r.TenantID), nil
+		}
+	}
+	return nil, invalidSchedulerRequest(method, req)
+}
+
+// deleteJobArgs renders a DeleteJobRequest as quicbaas_scheduler_delete_job
+// arguments.
+func deleteJobArgs(method string, req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*scheduler.DeleteJobRequest)
+	if !ok || r == nil {
+		return nil, invalidSchedulerRequest(method, req)
+	}
+	args := jobRefArgsFor(r.JobID, r.TenantID)
+	if r.Force {
+		args["force"] = true
+	}
+	return args, nil
+}
+
+// cancelJobArgs renders a CancelJobRequest as quicbaas_scheduler_cancel_job
+// arguments.
+func cancelJobArgs(method string, req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*scheduler.CancelJobRequest)
+	if !ok || r == nil {
+		return nil, invalidSchedulerRequest(method, req)
+	}
+	args := jobRefArgsFor(r.JobID, r.TenantID)
+	putString(args, "reason", r.Reason)
+	return args, nil
+}
+
+// jobHistoryArgs renders a GetJobHistoryRequest as
+// quicbaas_scheduler_job_history arguments.
+func jobHistoryArgs(method string, req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*scheduler.GetJobHistoryRequest)
+	if !ok || r == nil {
+		return nil, invalidSchedulerRequest(method, req)
+	}
+	args := jobRefArgsFor(r.JobID, r.TenantID)
+	if limit := scheduler.HistoryLimit(r.Options); limit > 0 {
+		args["limit"] = limit
+	}
+	return args, nil
+}
+
+// statusArgs renders GetStatus, which takes no arguments.
+func statusArgs(method string, req interface{}) (map[string]interface{}, error) {
+	if _, ok := req.(*scheduler.GetStatusRequest); !ok {
+		return nil, invalidSchedulerRequest(method, req)
+	}
+	return map[string]interface{}{}, nil
+}
+
+// jobRefArgsFor returns the arguments that address one job.
+func jobRefArgsFor(jobID uint64, tenantID string) map[string]interface{} {
+	args := map[string]interface{}{"job_id": jobID}
+	putString(args, "tenant_id", tenantID)
+	return args
+}
+
+// putString sets key when value is not empty.
+func putString(args map[string]interface{}, key, value string) {
+	if value != "" {
+		args[key] = value
 	}
 }
 
-// transformCreateJobResponse transforms CreateJob response.
-func (h *schedulerHandler) transformCreateJobResponse(resp interface{}) (*scheduler.CreateJobResponse, error) {
-	if resp == nil {
-		return &scheduler.CreateJobResponse{}, nil
+// putInt32 sets key when value is not zero.
+func putInt32(args map[string]interface{}, key string, value int32) {
+	if value != 0 {
+		args[key] = value
 	}
+}
 
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		// Try JSON round-trip
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
+// putTime sets key to value in RFC 3339, the format the tools parse, when
+// value is set.
+func putTime(args map[string]interface{}, key string, value time.Time) {
+	if !value.IsZero() {
+		args[key] = value.Format(time.RFC3339)
+	}
+}
+
+// putDuration sets key to value as a Go duration string, the format the
+// tools parse, when value is positive.
+func putDuration(args map[string]interface{}, key string, value time.Duration) {
+	if value > 0 {
+		args[key] = value.String()
+	}
+}
+
+// putPayload sets "payload" to the base64 encoding the tools decode.
+func putPayload(args map[string]interface{}, payload []byte) {
+	if len(payload) > 0 {
+		args["payload"] = base64.StdEncoding.EncodeToString(payload)
+	}
+}
+
+// putLabels sets "labels" to the label object the tools read.
+func putLabels(args map[string]interface{}, labels map[string]string) {
+	if len(labels) > 0 {
+		args["labels"] = labels
+	}
+}
+
+// decodeJobResult returns a decoder that reads a tool result as the service
+// response T and converts it with convert.
+func decodeJobResult[T, R any](convert func(*T) R) schedulerJobResultFunc {
+	return func(_, result interface{}) (interface{}, error) {
+		resp := new(T)
+		if _, err := decodeSchedulerResult(resp, result); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
+		return convert(resp), nil
 	}
+}
 
-	// MCP server returns: {job: {id: ..., ...}, timestamp: ...}
-	// Try to extract job_id from nested "job" object first
+// decodeJobInfoResult decodes the {job, timestamp} result of GetJob and
+// UpdateJob. A result without a job decodes to nil, which the client reports
+// as not found.
+func decodeJobInfoResult(_, result interface{}) (interface{}, error) {
+	var resp service.GetSchedulerJobResponse
+	if _, err := decodeSchedulerResult(&resp, result); err != nil {
+		return nil, err
+	}
+	if resp.Job == nil {
+		return nil, nil
+	}
+	return scheduler.JobInfoFromService(resp.Job), nil
+}
+
+// decodeCancelJobResult decodes a CancelJob result. The server does not echo
+// the reason, so it is taken from the request.
+func decodeCancelJobResult(req, result interface{}) (interface{}, error) {
+	var resp service.CancelSchedulerJobResponse
+	if _, err := decodeSchedulerResult(&resp, result); err != nil {
+		return nil, err
+	}
+	var reason string
+	if r, ok := req.(*scheduler.CancelJobRequest); ok && r != nil {
+		reason = r.Reason
+	}
+	return scheduler.CancelJobResponseFromService(&resp, reason), nil
+}
+
+// decodeJobHistoryResult decodes a GetJobHistory result. The server does not
+// echo the job ID, so it is taken from the request.
+func decodeJobHistoryResult(req, result interface{}) (interface{}, error) {
+	var resp service.GetSchedulerJobHistoryResponse
+	if _, err := decodeSchedulerResult(&resp, result); err != nil {
+		return nil, err
+	}
 	var jobID uint64
-	var nextRunAt time.Time
-
-	if jobData, ok := data["job"].(map[string]interface{}); ok {
-		// Get ID from nested job object (MCP format uses "id" not "job_id")
-		jobID = getUint64FromMap(jobData, "id")
-		if jobID == 0 {
-			jobID = getUint64FromMap(jobData, "job_id")
-		}
-		nextRunAt = parseTimeFromMap(jobData, "next_run_at")
+	if r, ok := req.(*scheduler.GetJobHistoryRequest); ok && r != nil {
+		jobID = r.JobID
 	}
-
-	// Fallback to top-level fields if job object not found
-	if jobID == 0 {
-		jobID = getUint64FromMap(data, "job_id")
-	}
-	if nextRunAt.IsZero() {
-		nextRunAt = parseTimeFromMap(data, "next_run_at")
-	}
-
-	return &scheduler.CreateJobResponse{
-		JobID:     jobID,
-		NextRunAt: nextRunAt,
-	}, nil
+	return scheduler.JobHistoryResponseFromService(jobID, &resp), nil
 }
 
-// transformGetJobResponse transforms GetJob response.
-func (h *schedulerHandler) transformGetJobResponse(resp interface{}) (*scheduler.JobInfo, error) {
-	if resp == nil {
-		return nil, nil
+// decodeStatusResult decodes a GetStatus result.
+func decodeStatusResult(_, result interface{}) (interface{}, error) {
+	var resp service.GetSchedulerStatusResponse
+	if _, err := decodeSchedulerResult(&resp, result); err != nil {
+		return nil, err
 	}
-
-	// MCP server returns {job: {...}, timestamp: ...} - extract nested job
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	// Try to get nested job object
-	if jobData, ok := data["job"]; ok {
-		return h.parseJobInfo(jobData)
-	}
-
-	// Fallback to parsing response directly
-	return h.parseJobInfo(resp)
-}
-
-// transformUpdateJobResponse transforms UpdateJob response.
-func (h *schedulerHandler) transformUpdateJobResponse(resp interface{}) (*scheduler.JobInfo, error) {
-	if resp == nil {
-		return nil, nil
-	}
-
-	// MCP server returns {job: {...}, timestamp: ...} - extract nested job
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	// Try to get nested job object
-	if jobData, ok := data["job"]; ok {
-		return h.parseJobInfo(jobData)
-	}
-
-	// Fallback to parsing response directly
-	return h.parseJobInfo(resp)
-}
-
-// transformListJobsResponse transforms ListJobs response.
-func (h *schedulerHandler) transformListJobsResponse(resp interface{}) (*scheduler.ListJobsResponse, error) {
-	if resp == nil {
-		return &scheduler.ListJobsResponse{}, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	result := &scheduler.ListJobsResponse{
-		TotalCount: int(getInt64FromMap(data, "total_count")),
-		HasMore:    getBoolFromMap(data, "has_more"),
-		NextCursor: getStringFromMap(data, "next_cursor"),
-	}
-
-	// Parse jobs array
-	if jobsRaw, ok := data["jobs"].([]interface{}); ok {
-		result.Jobs = make([]scheduler.JobInfo, 0, len(jobsRaw))
-		for _, jobRaw := range jobsRaw {
-			if jobInfo, err := h.parseJobInfo(jobRaw); err == nil && jobInfo != nil {
-				result.Jobs = append(result.Jobs, *jobInfo)
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// transformTriggerJobResponse transforms TriggerJob response.
-func (h *schedulerHandler) transformTriggerJobResponse(resp interface{}) (*scheduler.TriggerJobResponse, error) {
-	if resp == nil {
-		return &scheduler.TriggerJobResponse{}, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	return &scheduler.TriggerJobResponse{
-		JobID:       getUint64FromMap(data, "job_id"),
-		ExecutionID: getUint64FromMap(data, "execution_id"),
-		StartedAt:   parseTimeFromMap(data, "started_at"),
-		Status:      parseJobStatus(getStringFromMap(data, "status")),
-	}, nil
-}
-
-// transformDeleteJobResponse converts MCP response to SDK DeleteJobResponse.
-func (h *schedulerHandler) transformDeleteJobResponse(resp interface{}) (*scheduler.DeleteJobResponse, error) {
-	if resp == nil {
-		return &scheduler.DeleteJobResponse{}, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	return &scheduler.DeleteJobResponse{
-		JobID:     getUint64FromMap(data, "job_id"),
-		Deleted:   getBoolFromMap(data, "deleted"),
-		DeletedAt: parseTimeFromMap(data, "timestamp"),
-	}, nil
-}
-
-// transformPauseJobResponse transforms PauseJob response.
-func (h *schedulerHandler) transformPauseJobResponse(resp interface{}) (*scheduler.PauseJobResponse, error) {
-	if resp == nil {
-		return &scheduler.PauseJobResponse{}, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	return &scheduler.PauseJobResponse{
-		JobID:     getUint64FromMap(data, "job_id"),
-		PausedAt:  parseTimeFromMap(data, "paused_at"),
-		OldStatus: parseJobStatus(getStringFromMap(data, "old_status")),
-		NewStatus: parseJobStatus(getStringFromMap(data, "new_status")),
-	}, nil
-}
-
-// transformResumeJobResponse transforms ResumeJob response.
-func (h *schedulerHandler) transformResumeJobResponse(resp interface{}) (*scheduler.ResumeJobResponse, error) {
-	if resp == nil {
-		return &scheduler.ResumeJobResponse{}, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	return &scheduler.ResumeJobResponse{
-		JobID:     getUint64FromMap(data, "job_id"),
-		ResumedAt: parseTimeFromMap(data, "resumed_at"),
-		NextRunAt: parseTimeFromMap(data, "next_run_at"),
-		OldStatus: parseJobStatus(getStringFromMap(data, "old_status")),
-		NewStatus: parseJobStatus(getStringFromMap(data, "new_status")),
-	}, nil
-}
-
-// transformCancelJobResponse transforms CancelJob response.
-func (h *schedulerHandler) transformCancelJobResponse(resp interface{}) (*scheduler.CancelJobResponse, error) {
-	if resp == nil {
-		return &scheduler.CancelJobResponse{}, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	return &scheduler.CancelJobResponse{
-		JobID:      getUint64FromMap(data, "job_id"),
-		CanceledAt: parseTimeFromMap(data, "canceled_at"),
-		Reason:     getStringFromMap(data, "reason"),
-		OldStatus:  parseJobStatus(getStringFromMap(data, "old_status")),
-		NewStatus:  parseJobStatus(getStringFromMap(data, "new_status")),
-	}, nil
-}
-
-// transformGetJobHistoryResponse transforms GetJobHistory response.
-func (h *schedulerHandler) transformGetJobHistoryResponse(resp interface{}) (*scheduler.JobHistoryResponse, error) {
-	if resp == nil {
-		return &scheduler.JobHistoryResponse{}, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	result := &scheduler.JobHistoryResponse{
-		JobID:      getUint64FromMap(data, "job_id"),
-		TotalCount: int(getInt64FromMap(data, "total_count")),
-		HasMore:    getBoolFromMap(data, "has_more"),
-	}
-
-	// Parse executions array
-	if execsRaw, ok := data["executions"].([]interface{}); ok {
-		result.Executions = make([]scheduler.JobExecution, 0, len(execsRaw))
-		for _, execRaw := range execsRaw {
-			if exec, err := h.parseJobExecution(execRaw); err == nil && exec != nil {
-				result.Executions = append(result.Executions, *exec)
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// transformGetStatusResponse transforms GetStatus response.
-func (h *schedulerHandler) transformGetStatusResponse(resp interface{}) (*scheduler.SchedulerStatus, error) {
-	if resp == nil {
-		return &scheduler.SchedulerStatus{}, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	return &scheduler.SchedulerStatus{
-		Healthy:         getBoolFromMap(data, "healthy"),
-		TotalJobs:       getUint64FromMap(data, "total_jobs"),
-		RunningJobs:     getUint64FromMap(data, "running_jobs"),
-		PendingJobs:     getUint64FromMap(data, "pending_jobs"),
-		CompletedJobs:   getUint64FromMap(data, "completed_jobs"),
-		FailedJobs:      getUint64FromMap(data, "failed_jobs"),
-		PausedJobs:      getUint64FromMap(data, "paused_jobs"),
-		CanceledJobs:    getUint64FromMap(data, "canceled_jobs"),
-		ExecutionsToday: getUint64FromMap(data, "executions_today"),
-		FailuresToday:   getUint64FromMap(data, "failures_today"),
-		AverageLatency:  time.Duration(getInt64FromMap(data, "average_latency")),
-		WorkerCount:     int(getInt64FromMap(data, "worker_count")),
-		QueueDepth:      int(getInt64FromMap(data, "queue_depth")),
-		LastHeartbeat:   parseTimeFromMap(data, "last_heartbeat"),
-		UptimeDuration:  time.Duration(getInt64FromMap(data, "uptime_duration")),
-	}, nil
-}
-
-// parseJobInfo parses a raw response into a JobInfo struct.
-func (h *schedulerHandler) parseJobInfo(resp interface{}) (*scheduler.JobInfo, error) {
-	if resp == nil {
-		return nil, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	// MCP server uses "id" but SDK uses "job_id" - try both
-	jobID := getUint64FromMap(data, "id")
-	if jobID == 0 {
-		jobID = getUint64FromMap(data, "job_id")
-	}
-
-	// MCP server uses "type" but SDK expects "job_type" - try both
-	jobTypeStr := getStringFromMap(data, "type")
-	if jobTypeStr == "" {
-		jobTypeStr = getStringFromMap(data, "job_type")
-	}
-
-	jobInfo := &scheduler.JobInfo{
-		JobID:          jobID,
-		Name:           getStringFromMap(data, "name"),
-		Description:    getStringFromMap(data, "description"),
-		JobType:        parseJobType(jobTypeStr),
-		Status:         parseJobStatus(getStringFromMap(data, "status")),
-		Schedule:       getStringFromMap(data, "schedule"),
-		Payload:        getBytesFromMap(data, "payload"),
-		OwnerType:      parseOwnerType(getStringFromMap(data, "owner_type")),
-		OwnerID:        getStringFromMap(data, "owner_id"),
-		Handler:        getStringFromMap(data, "handler"),
-		Priority:       int(getInt64FromMap(data, "priority")),
-		LastError:      getStringFromMap(data, "last_error"),
-		MaxRetries:     int(getInt64FromMap(data, "max_retries")),
-		Timeout:        time.Duration(getInt64FromMap(data, "timeout")),
-		ExecutionCount: getUint64FromMap(data, "execution_count"),
-		FailureCount:   getUint64FromMap(data, "failure_count"),
-		NextRunAt:      parseTimeFromMap(data, "next_run_at"),
-		LastRunAt:      parseTimeFromMap(data, "last_run_at"),
-		CreatedAt:      parseTimeFromMap(data, "created_at"),
-		UpdatedAt:      parseTimeFromMap(data, "updated_at"),
-	}
-
-	// Parse tags
-	if tagsRaw, ok := data["tags"].(map[string]interface{}); ok {
-		jobInfo.Tags = make(map[string]string)
-		for k, v := range tagsRaw {
-			if s, ok := v.(string); ok {
-				jobInfo.Tags[k] = s
-			}
-		}
-	}
-
-	return jobInfo, nil
-}
-
-// parseJobExecution parses a raw response into a JobExecution struct.
-func (h *schedulerHandler) parseJobExecution(resp interface{}) (*scheduler.JobExecution, error) {
-	if resp == nil {
-		return nil, nil
-	}
-
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		jsonBytes, err := json.Marshal(resp)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(jsonBytes, &data); err != nil {
-			return nil, err
-		}
-	}
-
-	// MCP server uses "id" but SDK expects "execution_id" - try both
-	execID := getUint64FromMap(data, "id")
-	if execID == 0 {
-		execID = getUint64FromMap(data, "execution_id")
-	}
-
-	return &scheduler.JobExecution{
-		ExecutionID: execID,
-		JobID:       getUint64FromMap(data, "job_id"),
-		Status:      parseJobStatus(getStringFromMap(data, "status")),
-		StartedAt:   parseTimeFromMap(data, "started_at"),
-		CompletedAt: parseTimeFromMap(data, "completed_at"),
-		Duration:    time.Duration(getInt64FromMap(data, "duration")),
-		RetryCount:  int(getInt64FromMap(data, "retry_count")),
-		Error:       getStringFromMap(data, "error"),
-		Result:      getBytesFromMap(data, "result"),
-	}, nil
-}
-
-// parseJobType converts a string to JobType.
-func parseJobType(s string) scheduler.JobType {
-	switch strings.ToLower(s) {
-	case "one-shot", "oneshot", "one_shot", "0":
-		return scheduler.JobTypeOneShot
-	case "recurring", "1":
-		return scheduler.JobTypeRecurring
-	case "delayed", "2":
-		return scheduler.JobTypeDelayed
-	default:
-		return scheduler.JobTypeOneShot
-	}
-}
-
-// parseJobStatus converts a string to JobStatus.
-func parseJobStatus(s string) scheduler.JobStatus {
-	switch strings.ToLower(s) {
-	case "pending", "0":
-		return scheduler.JobStatusPending
-	case "running", "1":
-		return scheduler.JobStatusRunning
-	case "completed", "2":
-		return scheduler.JobStatusCompleted
-	case "failed", "3":
-		return scheduler.JobStatusFailed
-	case "paused", "4":
-		return scheduler.JobStatusPaused
-	case "canceled", "cancelled", "5":
-		return scheduler.JobStatusCanceled
-	default:
-		return scheduler.JobStatusPending
-	}
-}
-
-// parseOwnerType converts a string to OwnerType.
-func parseOwnerType(s string) scheduler.OwnerType {
-	switch strings.ToLower(s) {
-	case "system", "0":
-		return scheduler.OwnerTypeSystem
-	case "tenant", "1":
-		return scheduler.OwnerTypeTenant
-	case "delegated", "2":
-		return scheduler.OwnerTypeDelegated
-	default:
-		return scheduler.OwnerTypeSystem
-	}
+	return scheduler.SchedulerStatusFromService(&resp, time.Now()), nil
 }
 
 // Helper functions for extracting values from maps.
@@ -755,18 +406,6 @@ func getBoolFromMap(m map[string]interface{}, key string) bool {
 		}
 	}
 	return false
-}
-
-func getBytesFromMap(m map[string]interface{}, key string) []byte {
-	if v, ok := m[key]; ok {
-		switch b := v.(type) {
-		case []byte:
-			return b
-		case string:
-			return []byte(b)
-		}
-	}
-	return nil
 }
 
 func parseTimeFromMap(m map[string]interface{}, key string) time.Time {

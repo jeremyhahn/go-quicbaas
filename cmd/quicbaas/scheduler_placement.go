@@ -23,9 +23,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/scheduler"
@@ -47,8 +45,9 @@ var (
 	placementNodeID   string
 )
 
-// placementScheduler returns the SDK scheduler client.
-func placementScheduler() (scheduler.Client, error) {
+// sdkScheduler returns Async().Scheduler() of the SDK client. Every
+// scheduler command, job and placement alike, goes through it.
+func sdkScheduler() (scheduler.Client, error) {
 	sdk, err := sdkClientFactory()
 	if err != nil {
 		return nil, err
@@ -94,32 +93,7 @@ func parseStringPairs(flag string, pairs []string) (map[string]string, error) {
 
 // writePlacementOutput renders v as JSON, YAML, or a table via table.
 func writePlacementOutput(w io.Writer, v interface{}, table func(*tabwriter.Writer)) error {
-	format, err := cli.ParseOutputFormat(schedulerOutputFmt)
-	if err != nil {
-		return err
-	}
-	switch format {
-	case cli.OutputFormatJSON:
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(v)
-	case cli.OutputFormatYAML:
-		// The placement types carry JSON tags only; going through their
-		// JSON form gives YAML the same snake_case keys as --output json.
-		raw, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		var generic interface{}
-		if err := json.Unmarshal(raw, &generic); err != nil {
-			return err
-		}
-		return yaml.NewEncoder(w).Encode(generic)
-	default:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		table(tw)
-		return tw.Flush()
-	}
+	return writeSchedulerOutput(w, v, table, nil)
 }
 
 // formatAmounts renders a resource map as "a=1,b=2" in key order.
@@ -177,7 +151,7 @@ func newSchedulerNodeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := placementScheduler()
+			client, err := sdkScheduler()
 			if err != nil {
 				return err
 			}
@@ -243,7 +217,7 @@ func newSchedulerNodeCommand() *cobra.Command {
 			Short: "List live nodes",
 			Args:  cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				client, err := placementScheduler()
+				client, err := sdkScheduler()
 				if err != nil {
 					return err
 				}
@@ -265,7 +239,7 @@ func nodeIDCommand(use, short string, run func(*cobra.Command, scheduler.Client,
 		Short: short,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := placementScheduler()
+			client, err := sdkScheduler()
 			if err != nil {
 				return err
 			}
@@ -327,7 +301,7 @@ spreading. Constraints and affinity terms are given as a JSON request in
 			if err != nil {
 				return err
 			}
-			client, err := placementScheduler()
+			client, err := sdkScheduler()
 			if err != nil {
 				return err
 			}
@@ -349,7 +323,7 @@ spreading. Constraints and affinity terms are given as a JSON request in
 		Short: "List placements",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			client, err := placementScheduler()
+			client, err := sdkScheduler()
 			if err != nil {
 				return err
 			}

@@ -272,7 +272,11 @@ lets anyone who can reach the server create a tenant and become its Admin.
 Turn it on only when public sign-up is intended. While it is off,
 `POST /api/v1/auth/register/begin` and `/finish` answer `403` with the code
 `self_registration_disabled`; `test/integration/iam/iam_register_self_test.go`
-asserts this against the integration daemon, which runs with the default.
+asserts this against the integration daemon, which runs with the default. The
+same file covers the flag turned on, against `test-selfreg`, a separate daemon
+in the integration compose stack with registration enabled and admin approval
+off: an anonymous registrant gets a new tenant with its built-in roles seeded,
+holds Admin in it, and can invite a member.
 
 `require_admin_approval` defaults to `true`: a self-registered account stays
 pending until a platform admin approves it. Set it to `false` only if

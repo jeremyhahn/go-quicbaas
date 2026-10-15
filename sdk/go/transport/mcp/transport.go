@@ -562,7 +562,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	// Transform response for Scheduler service
 	if isScheduler {
 		sh := newSchedulerHandler()
-		return sh.transformResponse(method, result)
+		return sh.transformResponse(method, reqBody, result)
 	}
 
 	// Transform response for TimeSeries service

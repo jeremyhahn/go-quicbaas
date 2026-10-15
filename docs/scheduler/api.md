@@ -51,9 +51,9 @@ The SDK job types carry what the service returns: `JobInfo.Handler`,
 `TriggerJobResponse.Status`; and `OldStatus`/`NewStatus` on pause, resume and
 cancel. `DeleteJobWithOptions` sends `Force` and returns `Deleted`; it rides
 the `DeleteJob` method above. `pkg/apimodule/module_scheduler_parity_test.go`
-round-trips these fields over every transport. Over MCP the SDK handler still
-reads older key names for labels, retries, timeout, cancel reason, history and
-status (go-quicbaas#185).
+round-trips these fields over every transport, MCP included: the SDK MCP handler
+sends the argument keys the `quicbaas_scheduler_*` tools read and decodes their
+results through the same `pkg/service` types the tools return.
 
 MCP tools: `quicbaas_scheduler_cancel_job`, `quicbaas_scheduler_cordon_node`, `quicbaas_scheduler_create_job`, `quicbaas_scheduler_delete_job`, `quicbaas_scheduler_deregister_node`, `quicbaas_scheduler_drain_node`, `quicbaas_scheduler_get_job`, `quicbaas_scheduler_get_node`, `quicbaas_scheduler_get_placement`, `quicbaas_scheduler_job_history`, `quicbaas_scheduler_list_jobs`, `quicbaas_scheduler_list_nodes`, `quicbaas_scheduler_list_placements`, `quicbaas_scheduler_pause_job`, `quicbaas_scheduler_place`, `quicbaas_scheduler_register_node`, `quicbaas_scheduler_release`, `quicbaas_scheduler_renew_node`, `quicbaas_scheduler_resume_job`, `quicbaas_scheduler_status`, `quicbaas_scheduler_trigger_job`, `quicbaas_scheduler_uncordon_node`, `quicbaas_scheduler_update_job`
 
@@ -1900,12 +1900,16 @@ Create a new scheduled job with scheduling parameters, handlers, and optional pa
       "type": "integer",
       "description": "Maximum retry attempts on failure (default: 0)"
     },
+    "node_affinity": {
+      "type": "string",
+      "description": "Node the job should run on (optional)"
+    },
     "labels": {
       "type": "object",
       "description": "Key-value labels for categorization"
     }
   },
-  "required": ["name", "owner_type", "type", "handler"]
+  "required": ["name", "type", "handler"]
 }
 ```
 
@@ -1934,7 +1938,7 @@ Create a new scheduled job with scheduling parameters, handlers, and optional pa
     "status": "pending",
     ...
   },
-  "timestamp": 1737331200
+  "timestamp": "2025-01-20T00:00:00Z"
 }
 ```
 
@@ -2039,7 +2043,7 @@ List scheduled jobs with optional filtering by owner, status, handler, or labels
   "next_cursor": "eyJpZCI6MTIzNDV9",
   "has_more": true,
   "total_count": 150,
-  "timestamp": 1737331200
+  "timestamp": "2025-01-20T00:00:00Z"
 }
 ```
 
@@ -2103,7 +2107,7 @@ Immediately trigger execution of a scheduled job regardless of its schedule.
 {
   "job_id": 12345,
   "status": "running",
-  "timestamp": 1737331200
+  "timestamp": "2025-01-20T00:00:00Z"
 }
 ```
 
@@ -2139,7 +2143,7 @@ Pause a scheduled job to temporarily stop its execution.
   "job_id": 12345,
   "old_status": "pending",
   "new_status": "paused",
-  "timestamp": 1737331200
+  "timestamp": "2025-01-20T00:00:00Z"
 }
 ```
 
@@ -2257,7 +2261,7 @@ Retrieve execution history for a scheduled job including status, duration, and e
   ],
   "next_cursor": "",
   "has_more": false,
-  "timestamp": 1737331200
+  "timestamp": "2025-01-20T00:00:00Z"
 }
 ```
 
@@ -2291,7 +2295,7 @@ No input parameters required.
     "last_tick_time": "2025-01-19T15:59:59Z",
     "started_at": "2025-01-18T00:00:00Z"
   },
-  "timestamp": 1737331200
+  "timestamp": "2025-01-20T00:00:00Z"
 }
 ```
 

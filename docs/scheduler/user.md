@@ -35,7 +35,7 @@ and in a cluster exactly one node owns the timetable at a time.
 
 ```bash
 # Create a recurring job.
-quicbaas scheduler job create nightly-report
+quicbaas scheduler job create nightly-report --type recurring --schedule "0 2 * * *" --handler reports.nightly
 
 # See what is scheduled.
 quicbaas scheduler job list
