@@ -980,6 +980,25 @@ func TestClient_IsAvailable(t *testing.T) {
 			want: false,
 		},
 		{
+			// The MCP transport serves IsAvailable from the health tool.
+			name: "available via health response",
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return &HealthResponse{Available: true, Version: "0.5.1"}, nil
+				},
+			},
+			want: true,
+		},
+		{
+			name: "unavailable via health response",
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return &HealthResponse{Available: false, Error: "connection refused"}, nil
+				},
+			},
+			want: false,
+		},
+		{
 			name: "transport error",
 			transport: &mockTransport{
 				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {

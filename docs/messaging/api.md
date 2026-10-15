@@ -1,6 +1,6 @@
 # Messaging — API
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-14
 > The capability on every transport, with permissions. Feature folder: `docs/messaging/`.
 
 
@@ -34,24 +34,39 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.Messaging` — SDK package `sdk/go/client/messaging`
 
-Dedicated transport handlers: rest=yes, grpc=no, mcp=yes; embedded routes registered: 0; MCP tools registered server-side: 10.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 12; MCP tools registered server-side: 10.
+
+The SDK serves messaging on all six transports: REST, QUIC (REST over
+HTTP/3), gRPC and Unix (`sdk/go/transport/grpc/messaging_handler.go`, onto
+`MessagingService`), MCP, and embedded
+(`sdk/go/transport/embedded/handlers_messaging.go`, onto `svc.Messaging()`).
+Each transport has a test that fails when a `messaging.Client` method is
+missing from its table.
 
 MCP tools: `quicbaas_msg_create_channel`, `quicbaas_msg_dedup_stats`, `quicbaas_msg_delete_channel`, `quicbaas_msg_get_channel`, `quicbaas_msg_list_channels`, `quicbaas_msg_publish`, `quicbaas_msg_publish_delta`, `quicbaas_msg_stats`, `quicbaas_msg_subscribe`, `quicbaas_msg_unsubscribe`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `CreateChannel` | dedicated handler (path not statically recoverable) | ? | MISSING | yes | MISSING | — |
-| `DeleteChannel` | `DELETE /api/v1/messaging/channels/{name}` | yes | MISSING | yes | MISSING | `messaging:channel_delete` |
-| `GetChannel` | `GET /api/v1/messaging/channels/{name}` | yes | MISSING | yes | MISSING | `messaging:channel_read` |
-| `GetChannelStats` | `GET /api/v1/messaging/stats/{channel}` | yes | MISSING | yes | MISSING | `messaging:stats` |
-| `GetDedupStats` | `GET /api/v1/messaging/dedup/stats/{channel}` | yes | MISSING | yes | MISSING | `messaging:stats` |
-| `GetStats` | dedicated handler (path not statically recoverable) | ? | MISSING | yes | MISSING | — |
-| `ListChannels` | dedicated handler (path not statically recoverable) | ? | MISSING | yes | MISSING | — |
-| `Publish` | `POST /api/v1/messaging/publish/{channel}` | yes | MISSING | yes | MISSING | `messaging:publish` |
-| `PublishDelta` | `POST /api/v1/messaging/publish-delta/{channel}` | yes | MISSING | yes | MISSING | `messaging:publish` |
-| `Subscribe` | dedicated handler (path not statically recoverable) | ? | MISSING | yes | MISSING | — |
-| `Unsubscribe` | `DELETE /api/v1/messaging/subscribe/{id}` | yes | MISSING | yes | MISSING | `messaging:unsubscribe` |
-| `WatchChannel` | dedicated handler (path not statically recoverable) | ? | MISSING | yes | MISSING | — |
+| `CreateChannel` | `POST /api/v1/messaging/channels` | yes | yes | yes | yes | `messaging:channel_create` |
+| `DeleteChannel` | `DELETE /api/v1/messaging/channels/{name}` | yes | yes | yes | yes | `messaging:channel_delete` |
+| `GetChannel` | `GET /api/v1/messaging/channels/{name}` | yes | yes | yes | yes | `messaging:channel_read` |
+| `GetChannelStats` | `GET /api/v1/messaging/stats/{channel}` | yes | yes | yes | yes | `messaging:stats` |
+| `GetDedupStats` | `GET /api/v1/messaging/dedup/stats/{channel}` | yes | yes | yes | yes | `messaging:stats` |
+| `GetStats` | `GET /api/v1/messaging/stats` | yes | yes | yes | yes | `messaging:stats` |
+| `ListChannels` | `GET /api/v1/messaging/channels` | yes | yes | yes | yes | `messaging:channel_list` |
+| `Publish` | `POST /api/v1/messaging/publish/{channel}` | yes | yes | yes | yes | `messaging:publish` |
+| `PublishDelta` | `POST /api/v1/messaging/publish-delta/{channel}` | yes | yes | yes | yes | `messaging:publish` |
+| `Subscribe` | `POST /api/v1/messaging/subscribe` | yes | yes | yes | yes | `messaging:subscribe` |
+| `Unsubscribe` | `DELETE /api/v1/messaging/subscribe/{id}` | yes | yes | yes | yes | `messaging:unsubscribe` |
+| `WatchChannel` | none | **no** | yes | yes | yes | — |
+
+Known gaps:
+
+- **`WatchChannel` over REST and QUIC.** The server registers no REST watch
+  route, so REST and QUIC cannot serve it.
+- **`GetDedupStats` needs a channel the client does not send.** Every route
+  and handler is keyed by channel, but `Client.GetDedupStats` takes no
+  argument, so the call fails with `InvalidInput` on every transport.
 
 
 ## Overview

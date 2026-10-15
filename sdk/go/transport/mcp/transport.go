@@ -308,6 +308,22 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return registryResult(method, result)
 	}
 
+	// The parameter store is a closed set of string-typed tools with typed
+	// answers; a method with no tool fails fast.
+	if isMCPParameterStoreService(service) {
+		verb, ok := parameterStoreVerbs[method]
+		if !ok {
+			return nil, newParameterStoreUnsupportedError(method)
+		}
+		return t.requestToolVerb(ctx, "mcp.parameterstore."+method, verb, reqBody)
+	}
+
+	// Ollama's model and availability verbs decode into the client types;
+	// the remaining Ollama methods keep the generic path below.
+	if verb, ok := ollamaVerbs[method]; ok && isMCPOllamaService(service) {
+		return t.requestToolVerb(ctx, "mcp.ollama."+method, verb, reqBody)
+	}
+
 	// Check if this is a service that needs special handling
 	isVector := isMCPVectorService(service)
 	isScheduler := isMCPSchedulerService(service)
@@ -1024,6 +1040,19 @@ func ToolName(service, method string) string {
 	if isMCPAgentsService(service) {
 		if toolName, ok := agentsToolName(method); ok {
 			return toolName
+		}
+	}
+
+	// Parameter store tools are quicbaas_parameter_* and Ollama's model tools
+	// are resource-first (model_list); the generic derivation reaches neither.
+	if isMCPParameterStoreService(service) {
+		if verb, ok := parameterStoreVerbs[method]; ok {
+			return verb.tool
+		}
+	}
+	if isMCPOllamaService(service) {
+		if verb, ok := ollamaVerbs[method]; ok {
+			return verb.tool
 		}
 	}
 

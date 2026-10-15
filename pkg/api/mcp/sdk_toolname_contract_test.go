@@ -178,9 +178,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.ObjectTransfer", "FetchObject"}:                      gapNameDrift + "quicbaas_object_transfer_fetch",
 
 	// --- Ollama ------------------------------------------------------------
-	{"quicbaas.Ollama", "ListModels"}:     gapNameDrift + "quicbaas_ollama_model_list",
-	{"quicbaas.Ollama", "GetModelInfo"}:   gapNameDrift + "quicbaas_ollama_model_info",
-	{"quicbaas.Ollama", "IsAvailable"}:    gapNameDrift + "quicbaas_ollama_health",
 	{"quicbaas.Ollama", "EmbedWithModel"}: gapAmbiguous + "quicbaas_ollama_embed",
 	// BaseURL/DefaultModel are local client accessors with no server verb.
 	{"quicbaas.Ollama", "BaseURL"}:      gapNoTool,
@@ -192,18 +189,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Operations", "ReplaceNode"}:          gapNameDrift + "quicbaas_replace_node",
 	{"quicbaas.Operations", "UpgradeNode"}:          gapNameDrift + "quicbaas_upgrade_node",
 	{"quicbaas.Operations", "GetUpgradeStatus"}:     gapNoTool,
-
-	// --- Parameter store ---------------------------------------------------
-	// Registered under quicbaas_parameter_*; the SDK derives
-	// quicbaas_parameterstore_*, and the plural verbs map to batch_* tools.
-	{"quicbaas.ParameterStore", "GetParameter"}:     gapNameDrift + "quicbaas_parameter_get",
-	{"quicbaas.ParameterStore", "SetParameter"}:     gapNameDrift + "quicbaas_parameter_set",
-	{"quicbaas.ParameterStore", "DeleteParameter"}:  gapNameDrift + "quicbaas_parameter_delete",
-	{"quicbaas.ParameterStore", "ListParameters"}:   gapNameDrift + "quicbaas_parameter_list",
-	{"quicbaas.ParameterStore", "SearchByTags"}:     gapNameDrift + "quicbaas_parameter_search",
-	{"quicbaas.ParameterStore", "GetParameters"}:    gapNameDrift + "quicbaas_parameter_batch_get",
-	{"quicbaas.ParameterStore", "SetParameters"}:    gapNameDrift + "quicbaas_parameter_batch_set",
-	{"quicbaas.ParameterStore", "DeleteParameters"}: gapNameDrift + "quicbaas_parameter_batch_delete",
 
 	// --- Seal --------------------------------------------------------------
 	// The Seal case derives quicbaas_<lowercase method>, which is right for

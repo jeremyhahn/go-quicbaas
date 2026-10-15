@@ -304,6 +304,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// Messaging services use plain Go structs; the messaging handler converts
+	// them to MessagingService protobuf types.
+	if isMessagingService(service) {
+		return newMessagingHandler(conn).handleRequest(ctx, method, req)
+	}
+
 	// Check if this is an RBAC service request and route through RBAC handler.
 	// RBAC services use plain Go structs which don't implement proto.Message,
 	// so we need to convert them to protobuf types before calling gRPC.

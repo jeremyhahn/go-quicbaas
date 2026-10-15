@@ -440,12 +440,16 @@ func (c *client) IsAvailable() bool {
 		return false
 	}
 
-	availResp, ok := resp.(*isAvailableResponse)
-	if !ok {
+	// A transport that serves IsAvailable from the health verb (MCP's
+	// quicbaas_ollama_health) answers with the full health response.
+	switch availResp := resp.(type) {
+	case *isAvailableResponse:
+		return availResp.Available
+	case *HealthResponse:
+		return availResp.Available
+	default:
 		return false
 	}
-
-	return availResp.Available
 }
 
 // DefaultModel returns the configured default embedding model.

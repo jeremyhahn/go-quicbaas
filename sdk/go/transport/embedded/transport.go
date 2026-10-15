@@ -447,6 +447,20 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.ObjectStorage/BatchPutObjects":    handleObjBatchPutObjects,
 	"quicbaas.ObjectStorage/BatchGetObjects":    handleObjBatchGetObjects,
 	"quicbaas.ObjectStorage/BatchDeleteObjects": handleObjBatchDeleteObjects,
+
+	// Messaging service handlers
+	"quicbaas.Messaging/CreateChannel":   handleMessagingCreateChannel,
+	"quicbaas.Messaging/DeleteChannel":   handleMessagingDeleteChannel,
+	"quicbaas.Messaging/GetChannel":      handleMessagingGetChannel,
+	"quicbaas.Messaging/ListChannels":    handleMessagingListChannels,
+	"quicbaas.Messaging/Subscribe":       handleMessagingSubscribe,
+	"quicbaas.Messaging/Unsubscribe":     handleMessagingUnsubscribe,
+	"quicbaas.Messaging/Publish":         handleMessagingPublish,
+	"quicbaas.Messaging/PublishDelta":    handleMessagingPublishDelta,
+	"quicbaas.Messaging/WatchChannel":    handleMessagingWatchChannel,
+	"quicbaas.Messaging/GetStats":        handleMessagingGetStats,
+	"quicbaas.Messaging/GetDedupStats":   handleMessagingGetDedupStats,
+	"quicbaas.Messaging/GetChannelStats": handleMessagingGetChannelStats,
 }
 
 // streamHandlers maps service/method to stream handler functions for O(1) dispatch.
