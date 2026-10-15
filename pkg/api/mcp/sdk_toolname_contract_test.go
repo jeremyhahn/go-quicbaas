@@ -178,9 +178,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 
 	// --- Ollama ------------------------------------------------------------
 	{"quicbaas.Ollama", "EmbedWithModel"}: gapAmbiguous + "quicbaas_ollama_embed",
-	// BaseURL/DefaultModel are local client accessors with no server verb.
-	{"quicbaas.Ollama", "BaseURL"}:      gapNoTool,
-	{"quicbaas.Ollama", "DefaultModel"}: gapNoTool,
 
 	// --- Operations --------------------------------------------------------
 	{"quicbaas.Operations", "MigrateData"}:          gapNameDrift + "quicbaas_migrate_data",

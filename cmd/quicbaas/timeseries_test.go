@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/embedding"
@@ -2297,30 +2296,6 @@ func TestParseGracePeriod_InvalidDurationNoDaySuffix(t *testing.T) {
 // The formatChannelInfoResponse function has a default switch case at line 1244
 // that prints a simple channel name. All other branches (json, yaml, table) are
 // covered, but the default/"raw" path was not exercised.
-
-func TestFormatChannelInfoResponse_DefaultFormat(t *testing.T) {
-	channelResp := &grpc.MessagingGetChannelResponse{
-		Channel: &grpc.MessagingChannel{
-			Name:       "test-channel",
-			BufferSize: 100,
-			Persistent: true,
-		},
-		Timestamp: time.Now(),
-	}
-
-	var buf bytes.Buffer
-	err := formatChannelInfoResponse(
-		channelResp,
-		nil,   // statsResp
-		nil,   // statsErr
-		nil,   // dedupResp
-		nil,   // dedupErr
-		"raw", // format - triggers default branch
-		&buf,
-	)
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "test-channel")
-}
 
 func TestFormatTSWriteResponse_InvalidFormat(t *testing.T) {
 	savedFormat := outputFormat

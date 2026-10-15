@@ -11,12 +11,12 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// ollama_handler.go adapts the Ollama client's model and availability verbs
-// to the quicbaas_ollama_* MCP tools that serve them under resource-first
-// names (quicbaas_ollama_model_list, not _list_models), and decodes their
-// results into the client/ollama types the SDK client type-asserts on.
-// IsAvailable is served by the health tool. The remaining Ollama methods
-// keep the generic path.
+// ollama_handler.go adapts the Ollama client's verbs to the quicbaas_ollama_*
+// MCP tools that serve them, some under resource-first names
+// (quicbaas_ollama_model_list, not _list_models), and decodes their results
+// into the client/ollama types the SDK client type-asserts on. Health and
+// IsAvailable are both served by the health tool. EmbedWithModel keeps the
+// generic path.
 
 package mcp
 
@@ -39,6 +39,9 @@ var ollamaVerbs = map[string]toolVerb{
 	"ListModels":   {tool: "quicbaas_ollama_model_list", args: ollamaNoArgs, decode: decodeOllamaListModels},
 	"GetModelInfo": {tool: "quicbaas_ollama_model_info", args: ollamaModelInfoArgs, decode: decodeOllamaModelInfo},
 	"IsAvailable":  {tool: "quicbaas_ollama_health", args: ollamaNoArgs, decode: decodeOllamaHealth},
+	"Health":       {tool: "quicbaas_ollama_health", args: ollamaNoArgs, decode: decodeOllamaHealth},
+	"Embed":        {tool: "quicbaas_ollama_embed", args: ollamaEmbedArgs, decode: decodeOllamaEmbed},
+	"EmbedBatch":   {tool: "quicbaas_ollama_embed_batch", args: ollamaEmbedBatchArgs, decode: decodeOllamaEmbedBatch},
 }
 
 // ollamaNoArgs serves the verbs whose tool takes no arguments.
@@ -53,6 +56,33 @@ func ollamaModelInfoArgs(req interface{}) (map[string]interface{}, error) {
 			"invalid request type for GetModelInfo")
 	}
 	return map[string]interface{}{"model": r.Model}, nil
+}
+
+func ollamaEmbedArgs(req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*ollamaclient.EmbedRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.ollama.Embed",
+			"invalid request type for Embed")
+	}
+	return map[string]interface{}{"text": r.Text}, nil
+}
+
+// ollamaEmbedBatchArgs encodes the texts as the JSON array string the
+// quicbaas_ollama_embed_batch schema declares.
+func ollamaEmbedBatchArgs(req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*ollamaclient.EmbedBatchRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.ollama.EmbedBatch",
+			"invalid request type for EmbedBatch")
+	}
+	args := map[string]interface{}{}
+	if err := putJSONStringArg(args, "mcp.ollama.EmbedBatch", "texts", r.Texts); err != nil {
+		return nil, err
+	}
+	if r.Model != "" {
+		args["model"] = r.Model
+	}
+	return args, nil
 }
 
 func decodeOllamaListModels(m map[string]interface{}) interface{} {
@@ -93,5 +123,24 @@ func decodeOllamaHealth(m map[string]interface{}) interface{} {
 		BaseURL:     getResultString(m, "base_url"),
 		Error:       getResultString(m, "error"),
 		LastChecked: getResultTime(m, "last_checked"),
+	}
+}
+
+func decodeOllamaEmbed(m map[string]interface{}) interface{} {
+	return &ollamaclient.EmbedResponse{
+		Embedding:      resultFloat32Slice(m, "embedding"),
+		Model:          getResultString(m, "model"),
+		Dimensions:     int(getResultInt64(m, "dimensions")),
+		ProcessingTime: resultDuration(m, "processing_time"),
+	}
+}
+
+func decodeOllamaEmbedBatch(m map[string]interface{}) interface{} {
+	return &ollamaclient.EmbedBatchResponse{
+		Embeddings:     resultFloat32Matrix(m, "embeddings"),
+		Model:          getResultString(m, "model"),
+		Dimensions:     int(getResultInt64(m, "dimensions")),
+		Count:          int(getResultInt64(m, "count")),
+		ProcessingTime: resultDuration(m, "processing_time"),
 	}
 }

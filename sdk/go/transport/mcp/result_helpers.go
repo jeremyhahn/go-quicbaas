@@ -110,6 +110,51 @@ func getResultFloat64(m map[string]interface{}, key string) float64 {
 	return 0
 }
 
+// resultFloat32Slice extracts a []float32 vector from a result field.
+func resultFloat32Slice(m map[string]interface{}, key string) []float32 {
+	return toFloat32Slice(m[key])
+}
+
+// resultFloat32Matrix extracts a list of []float32 vectors from a result
+// field; an entry that is not a vector decodes as nil, keeping the order.
+func resultFloat32Matrix(m map[string]interface{}, key string) [][]float32 {
+	switch v := m[key].(type) {
+	case []interface{}:
+		rows := make([][]float32, len(v))
+		for i, row := range v {
+			rows[i] = toFloat32Slice(row)
+		}
+		return rows
+	case [][]float32:
+		return v
+	default:
+		return nil
+	}
+}
+
+func toFloat32Slice(raw interface{}) []float32 {
+	switch v := raw.(type) {
+	case []interface{}:
+		result := make([]float32, 0, len(v))
+		for _, item := range v {
+			if f, ok := item.(float64); ok {
+				result = append(result, float32(f))
+			}
+		}
+		return result
+	case []float64:
+		result := make([]float32, len(v))
+		for i, f := range v {
+			result[i] = float32(f)
+		}
+		return result
+	case []float32:
+		return v
+	default:
+		return nil
+	}
+}
+
 // getResultTime parses an RFC 3339 timestamp string for key, falling back to
 // a numeric Unix-seconds value when the field is a number. Returns the zero
 // time when the field is missing or unparseable.

@@ -760,20 +760,18 @@ func TestEmbeddingHandler_TransformUnknownMethod(t *testing.T) {
 	})
 }
 
-func TestEmbeddingHandler_ExtractFloat32Slice(t *testing.T) {
-	h := newEmbeddingHandler()
-
+func TestResultFloat32Slice(t *testing.T) {
 	t.Run("extracts from interface slice", func(t *testing.T) {
 		m := map[string]interface{}{
 			"vec": []interface{}{float64(1.0), float64(2.0), float64(3.0)},
 		}
-		result := h.extractFloat32Slice(m, "vec")
+		result := resultFloat32Slice(m, "vec")
 		assert.Equal(t, []float32{1.0, 2.0, 3.0}, result)
 	})
 
 	t.Run("returns nil for missing key", func(t *testing.T) {
 		m := map[string]interface{}{}
-		result := h.extractFloat32Slice(m, "vec")
+		result := resultFloat32Slice(m, "vec")
 		assert.Nil(t, result)
 	})
 
@@ -781,7 +779,7 @@ func TestEmbeddingHandler_ExtractFloat32Slice(t *testing.T) {
 		m := map[string]interface{}{
 			"vec": "not a slice",
 		}
-		result := h.extractFloat32Slice(m, "vec")
+		result := resultFloat32Slice(m, "vec")
 		assert.Nil(t, result)
 	})
 
@@ -789,7 +787,7 @@ func TestEmbeddingHandler_ExtractFloat32Slice(t *testing.T) {
 		m := map[string]interface{}{
 			"vec": []float64{1.5, 2.5},
 		}
-		result := h.extractFloat32Slice(m, "vec")
+		result := resultFloat32Slice(m, "vec")
 		assert.Equal(t, []float32{1.5, 2.5}, result)
 	})
 
@@ -797,7 +795,7 @@ func TestEmbeddingHandler_ExtractFloat32Slice(t *testing.T) {
 		m := map[string]interface{}{
 			"vec": []float32{0.1, 0.2},
 		}
-		result := h.extractFloat32Slice(m, "vec")
+		result := resultFloat32Slice(m, "vec")
 		assert.Equal(t, []float32{0.1, 0.2}, result)
 	})
 }

@@ -47,12 +47,6 @@ type Client interface {
 
 	// IsAvailable returns true if Ollama is available and responding.
 	IsAvailable() bool
-
-	// DefaultModel returns the configured default embedding model.
-	DefaultModel() string
-
-	// BaseURL returns the configured Ollama base URL.
-	BaseURL() string
 }
 
 // =============================================================================
@@ -217,25 +211,6 @@ type HealthResponse struct {
 
 	// Timestamp is when this response was generated.
 	Timestamp time.Time
-}
-
-// =============================================================================
-// Internal Response Types for Transport
-// =============================================================================
-
-// isAvailableResponse is the internal response for IsAvailable.
-type isAvailableResponse struct {
-	Available bool
-}
-
-// defaultModelResponse is the internal response for DefaultModel.
-type defaultModelResponse struct {
-	Model string
-}
-
-// baseURLResponse is the internal response for BaseURL.
-type baseURLResponse struct {
-	BaseURL string
 }
 
 // =============================================================================
@@ -440,60 +415,14 @@ func (c *client) IsAvailable() bool {
 		return false
 	}
 
-	// A transport that serves IsAvailable from the health verb (MCP's
-	// quicbaas_ollama_health) answers with the full health response.
-	switch availResp := resp.(type) {
-	case *isAvailableResponse:
-		return availResp.Available
-	case *HealthResponse:
-		return availResp.Available
-	default:
+	// IsAvailable is served by the health verb (MCP's quicbaas_ollama_health),
+	// which answers with the full health response.
+	healthResp, ok := resp.(*HealthResponse)
+	if !ok {
 		return false
 	}
-}
 
-// DefaultModel returns the configured default embedding model.
-func (c *client) DefaultModel() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	resp, err := c.transport.Request(ctx, serviceName, "DefaultModel", &struct{}{})
-	if err != nil {
-		return ""
-	}
-
-	if resp == nil {
-		return ""
-	}
-
-	modelResp, ok := resp.(*defaultModelResponse)
-	if !ok {
-		return ""
-	}
-
-	return modelResp.Model
-}
-
-// BaseURL returns the configured Ollama base URL.
-func (c *client) BaseURL() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	resp, err := c.transport.Request(ctx, serviceName, "BaseURL", &struct{}{})
-	if err != nil {
-		return ""
-	}
-
-	if resp == nil {
-		return ""
-	}
-
-	urlResp, ok := resp.(*baseURLResponse)
-	if !ok {
-		return ""
-	}
-
-	return urlResp.BaseURL
+	return healthResp.Available
 }
 
 // =============================================================================

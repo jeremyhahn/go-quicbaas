@@ -318,8 +318,8 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return t.requestToolVerb(ctx, "mcp.parameterstore."+method, verb, reqBody)
 	}
 
-	// Ollama's model and availability verbs decode into the client types;
-	// the remaining Ollama methods keep the generic path below.
+	// Ollama's verbs decode into the client types; EmbedWithModel keeps the
+	// generic path below.
 	if verb, ok := ollamaVerbs[method]; ok && isMCPOllamaService(service) {
 		return t.requestToolVerb(ctx, "mcp.ollama."+method, verb, reqBody)
 	}

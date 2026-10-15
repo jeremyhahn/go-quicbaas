@@ -481,7 +481,7 @@ func (r *ToolRegistry) handleMsgDedupStats(ctx context.Context, svc messaging.Se
 	// An unknown channel is refused as NotFound, as the gRPC and REST
 	// handlers refuse it.
 	if _, err := svc.GetChannel(ctx, channel); err != nil {
-		if errors.Is(err, messaging.ErrChannelNotFound) {
+		if messaging.IsChannelNotFound(err) {
 			return nil, api.NewNotFoundError("channel", channel)
 		}
 		return nil, api.NewOperationFailedError("get dedup stats", err)

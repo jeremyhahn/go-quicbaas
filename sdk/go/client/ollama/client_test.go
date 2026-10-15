@@ -965,7 +965,7 @@ func TestClient_IsAvailable(t *testing.T) {
 					if method != "IsAvailable" {
 						t.Errorf("expected method %q, got %q", "IsAvailable", method)
 					}
-					return &isAvailableResponse{Available: true}, nil
+					return &HealthResponse{Available: true, Version: "0.5.1"}, nil
 				},
 			},
 			want: true,
@@ -974,7 +974,7 @@ func TestClient_IsAvailable(t *testing.T) {
 			name: "unavailable",
 			transport: &mockTransport{
 				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return &isAvailableResponse{Available: false}, nil
+					return &HealthResponse{Available: false, Error: "connection refused"}, nil
 				},
 			},
 			want: false,
@@ -1033,130 +1033,6 @@ func TestClient_IsAvailable(t *testing.T) {
 			got := client.IsAvailable()
 			if got != tt.want {
 				t.Errorf("IsAvailable() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-// =============================================================================
-// DefaultModel Tests
-// =============================================================================
-
-func TestClient_DefaultModel(t *testing.T) {
-	tests := []struct {
-		name      string
-		transport *mockTransport
-		want      string
-	}{
-		{
-			name: "returns default model",
-			transport: &mockTransport{
-				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					if method != "DefaultModel" {
-						t.Errorf("expected method %q, got %q", "DefaultModel", method)
-					}
-					return &defaultModelResponse{Model: "nomic-embed-text"}, nil
-				},
-			},
-			want: "nomic-embed-text",
-		},
-		{
-			name: "transport error returns empty",
-			transport: &mockTransport{
-				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return nil, errors.NewUnavailable("test", "connection failed")
-				},
-			},
-			want: "",
-		},
-		{
-			name: "nil response returns empty",
-			transport: &mockTransport{
-				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return nil, nil
-				},
-			},
-			want: "",
-		},
-		{
-			name: "invalid response type returns empty",
-			transport: &mockTransport{
-				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return 123, nil
-				},
-			},
-			want: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewClient(tt.transport)
-			got := client.DefaultModel()
-			if got != tt.want {
-				t.Errorf("DefaultModel() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// =============================================================================
-// BaseURL Tests
-// =============================================================================
-
-func TestClient_BaseURL(t *testing.T) {
-	tests := []struct {
-		name      string
-		transport *mockTransport
-		want      string
-	}{
-		{
-			name: "returns base URL",
-			transport: &mockTransport{
-				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					if method != "BaseURL" {
-						t.Errorf("expected method %q, got %q", "BaseURL", method)
-					}
-					return &baseURLResponse{BaseURL: "http://localhost:11434"}, nil
-				},
-			},
-			want: "http://localhost:11434",
-		},
-		{
-			name: "transport error returns empty",
-			transport: &mockTransport{
-				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return nil, errors.NewUnavailable("test", "connection failed")
-				},
-			},
-			want: "",
-		},
-		{
-			name: "nil response returns empty",
-			transport: &mockTransport{
-				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return nil, nil
-				},
-			},
-			want: "",
-		},
-		{
-			name: "invalid response type returns empty",
-			transport: &mockTransport{
-				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-					return true, nil
-				},
-			},
-			want: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewClient(tt.transport)
-			got := client.BaseURL()
-			if got != tt.want {
-				t.Errorf("BaseURL() = %q, want %q", got, tt.want)
 			}
 		})
 	}

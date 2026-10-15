@@ -39,8 +39,6 @@ MCP tools: `quicbaas_ollama_embed`, `quicbaas_ollama_embed_batch`, `quicbaas_oll
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `BaseURL` | MISSING | ? | MISSING | MISSING | MISSING | — |
-| `DefaultModel` | MISSING | ? | MISSING | MISSING | MISSING | — |
 | `Embed` | MISSING | ? | MISSING | MISSING | MISSING | — |
 | `EmbedBatch` | MISSING | ? | MISSING | MISSING | MISSING | — |
 | `EmbedWithModel` | MISSING | ? | MISSING | MISSING | MISSING | — |

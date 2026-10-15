@@ -42,19 +42,20 @@ quicbaas msg create-channel orders
 quicbaas msg list-channels
 quicbaas msg channel-info orders
 
-# 3. Subscribe in one terminal. The command blocks and prints messages
-#    as they arrive.
+# 3. Register a subscription. The command prints the subscription id and
+#    exits; the CLI does not stream messages.
 quicbaas msg subscribe orders
 
-# 4. Publish from another.
-quicbaas msg publish orders '{"id":"ord-1","total":42.00}'
+# 4. Publish.
+quicbaas msg publish orders --payload '{"id":"ord-1","total":42.00}'
 ```
 
-`subscribe` holds the connection open. To watch a channel without registering a
-durable subscription, use `watch` instead:
+To subscribe to KV changes under a key prefix rather than to a channel, use
+`watch`. Like `subscribe`, it registers and exits. The REST and QUIC
+transports do not serve it.
 
 ```bash
-quicbaas msg watch orders
+quicbaas msg watch orders/
 ```
 
 ## Common tasks
@@ -65,7 +66,7 @@ Delta publishing sends a patch rather than a whole document, which matters when
 subscribers hold large objects and updates are small.
 
 ```bash
-quicbaas msg publish-delta orders '{"total":45.00}'
+quicbaas msg publish-delta orders --old '{"total":42.00}' --new '{"total":45.00}'
 ```
 
 The subscriber receives the delta, not a merged document; merging is the
@@ -74,14 +75,14 @@ subscriber's job. `architecture.md` describes the delta representation.
 ### Stop receiving
 
 ```bash
-quicbaas msg list-subscriptions
 quicbaas msg unsubscribe <subscription-id>
 ```
 
 `unsubscribe` takes the **subscription id**, not the channel name. That is the
-single most common mistake with this command group: the id comes from
-`list-subscriptions`, and passing a channel name gets you a not-found error that
-does not say "you passed the wrong kind of identifier".
+single most common mistake with this command group: the id is printed by
+`subscribe` (`list-subscriptions` shows only subscriber counts per channel), and
+passing a channel name gets you a not-found error that does not say "you passed
+the wrong kind of identifier".
 
 ### Check that deduplication is working
 

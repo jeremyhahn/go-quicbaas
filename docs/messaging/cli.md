@@ -1,22 +1,32 @@
 # Messaging — CLI
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-14
 > Every verb and flag, with runnable examples. Feature folder: `docs/messaging/`.
 
 ## Overview
 
-The `quicbaas msg` commands manage messaging notifications, channels, and subscriptions via the CLI. All commands communicate with the QuicBaaS server through the configured protocol (default: Unix socket).
+The `quicbaas msg` commands manage messaging channels and subscriptions and
+publish messages. Every command goes through the SDK messaging client
+(`Async().Messaging()`), so it runs on every transport the SDK offers.
 
-**Status:** Implemented in Phase 7.
+`subscribe` and `watch` register a subscription and exit. The CLI does not
+stream messages.
 
 ## Global Flags
 
 ```
---transport  Transport protocol (grpc, rest, quic, unix, mcp, embedded) [default: grpc]
---address    Server address (Unix socket path or host:port) [default: /tmp/quicbaas.sock]
+--transport  Transport protocol (grpc, rest, quic, unix, mcp, embedded) [default: unix]
+--address    Server address (Unix socket path or host:port)
 --timeout    Request timeout [default: 30s]
 --output     Output format (table, json, yaml) [default: table]
 ```
+
+Every `msg` command checks `--output` before it contacts the server, so an
+unknown format never leaves a half-finished change behind.
+
+JSON and YAML output print the SDK types as they are. JSON keys use the Go
+field names (`Name`, `BufferSize`); YAML keys are the same names in lower case
+(`name`, `buffersize`).
 
 ## Channel Management
 
@@ -33,46 +43,33 @@ quicbaas msg create-channel <name> [flags]
 --buffer-size       Channel buffer size [default: 256]
 --max-subscribers   Maximum subscribers allowed [default: 1000]
 --persistent        Enable message persistence
---ttl               Message time-to-live [default: 0 (no expiry)]
---description       Channel description
+--ttl               Message time-to-live, a Go duration [default: 0s (no expiry)]
 ```
 
 **Examples:**
 
 ```bash
-# Create a basic channel
 quicbaas msg create-channel orders
-
-# Create a channel with custom buffer and TTL
-quicbaas msg create-channel events \
-  --buffer-size 512 \
-  --ttl 1h \
-  --description "Application events channel"
-
-# Create a persistent channel with subscriber limit
-quicbaas msg create-channel notifications \
-  --persistent \
-  --max-subscribers 5000
-
-# Create channel and output as JSON
-quicbaas msg create-channel audit --format json
+quicbaas msg create-channel events --buffer-size 512 --ttl 1h
+quicbaas msg create-channel notifications --persistent --max-subscribers 5000
+quicbaas msg create-channel audit --output json
 ```
 
 **Output:**
 ```
 Channel created successfully.
 
-Name:            orders
-Buffer Size:     256
-Max Subscribers: 1000
-Persistent:      false
-TTL:             0s
-Created:         2026-01-21T10:30:00Z
+Name:         orders
+Buffer Size:  256
+Persistent:   false
+TTL:          0s (no expiry)
+Created:      2026-01-21T10:30:00Z
 ```
 
 ### msg delete-channel
 
-Delete a channel and disconnect all subscribers.
+Delete a channel and disconnect all subscribers. Without `--force` the command
+asks for confirmation and prints `Delete cancelled.` on any answer but `y`.
 
 ```bash
 quicbaas msg delete-channel <name> [flags]
@@ -86,101 +83,73 @@ quicbaas msg delete-channel <name> [flags]
 **Examples:**
 
 ```bash
-# Delete with confirmation prompt
 quicbaas msg delete-channel orders
-
-# Force delete without confirmation
 quicbaas msg delete-channel orders --force
-```
-
-### msg list-channels
-
-List all channels with optional filtering.
-
-```bash
-quicbaas msg list-channels [flags]
-```
-
-**Flags:**
-```
---limit      Maximum number of results [default: 100]
---offset     Pagination offset
---filter     Filter by name pattern (glob)
-```
-
-**Examples:**
-
-```bash
-# List all channels
-quicbaas msg list-channels
-
-# List channels with JSON output
-quicbaas msg list-channels --format json
-
-# Filter channels by pattern
-quicbaas msg list-channels --filter "order*"
-
-# Paginated listing
-quicbaas msg list-channels --limit 10 --offset 20
 ```
 
 **Output:**
 ```
-NAME            SUBSCRIBERS  MESSAGES  PERSISTENT  CREATED
-orders          12           1542      false       2026-01-20T08:00:00Z
-events          45           8921      true        2026-01-15T12:30:00Z
-notifications   128          25430     true        2026-01-10T09:15:00Z
+Channel 'orders' deleted successfully.
+```
+
+### msg list-channels
+
+List all channels. The command has no flags of its own.
+
+```bash
+quicbaas msg list-channels
+quicbaas msg list-channels --output json
+```
+
+**Output:**
+```
+NAME           SUBSCRIBERS  PERSISTENT  CREATED
+orders         12           false       2026-01-20T08:00:00Z
+events         45           true        2026-01-15T12:30:00Z
+
+Total: 2 channels
 ```
 
 ### msg channel-info
 
-Get detailed information about a channel.
+Show a channel with its delivery and deduplication statistics.
 
 ```bash
-quicbaas msg channel-info <name> [flags]
-```
-
-**Examples:**
-
-```bash
-# Get channel details
-quicbaas msg channel-info orders
-
-# Get channel details as YAML
-quicbaas msg channel-info orders --format yaml
+quicbaas msg channel-info <name>
+quicbaas msg channel-info orders --output yaml
 ```
 
 **Output:**
 ```
 Channel: orders
-=================
-Name:            orders
-Description:     Order processing events
-Buffer Size:     256
-Max Subscribers: 1000
-Persistent:      false
-TTL:             0s
-Created:         2026-01-20T08:00:00Z
+===============
+
+Codec:                  json
+Buffer Size:            256
+Max History:            0
+Persistent:             false
+TTL:                    0s (no expiry)
+Created:                2026-01-20T08:00:00Z
 
 Statistics
-----------
-Active Subscribers: 12
-Messages Published: 1542
-Messages Delivered: 18504
-Bytes Transmitted:  2.4 MB
+  Active Subscribers:   12
+  Messages Published:   1542
+  Messages In History:  0
 
 Deduplication
--------------
-Enabled:           true
-Window:            1m
-Duplicates Blocked: 23
+  Total Checks:         1542
+  Duplicates Detected:  23
+  Duplicate Rate:       1.49%
 ```
+
+JSON and YAML output hold three objects: `Channel`, `Stats` and `Dedup`.
 
 ## Subscription Commands
 
 ### msg subscribe
 
-Subscribe to a channel to receive notifications.
+Create a subscription on a channel and print it. The command exits once the
+subscription exists.
 
 ```bash
 quicbaas msg subscribe <channel> [flags]
@@ -189,50 +158,35 @@ quicbaas msg subscribe <channel> [flags]
 **Flags:**
 ```
 --delta          Enable delta mode (receive only changes)
---dedup          Enable deduplication
+--dedup          Include deduplication metadata
 --dedup-skip     Skip duplicate messages silently
---filter         Message filter expression
---replay         Replay messages from offset
---buffer-size    Client buffer size [default: 256]
+--filter         Only deliver messages whose key has this prefix
+--buffer-size    Subscription buffer size [default: 256]
 ```
 
 **Examples:**
 
 ```bash
-# Basic subscription
 quicbaas msg subscribe orders
-
-# Subscribe with delta mode
 quicbaas msg subscribe orders --delta
-
-# Subscribe with deduplication enabled
-quicbaas msg subscribe orders --dedup
-
-# Subscribe with dedup skip mode (silently drop duplicates)
 quicbaas msg subscribe orders --dedup-skip
-
-# Subscribe with message filter
-quicbaas msg subscribe orders --filter "status=completed"
-
-# Replay from a specific offset
-quicbaas msg subscribe orders --replay 1000
+quicbaas msg subscribe orders --filter "orders/eu/"
 ```
 
 **Output:**
 ```
-Subscribed to channel: orders
-Subscription ID: sub_abc123
+Subscription created successfully.
 
-Waiting for messages (Ctrl+C to exit)...
-
-[2026-01-21T10:30:01Z] {"order_id": "ord_001", "status": "completed"}
-[2026-01-21T10:30:05Z] {"order_id": "ord_002", "status": "processing"}
-[2026-01-21T10:30:08Z] {"order_id": "ord_003", "status": "completed"}
+Subscription ID:  sub_abc123
+Channel:          orders
+Key Prefix:       orders/eu/
+Created:          2026-01-21T10:30:00Z
 ```
 
 ### msg unsubscribe
 
-Remove a subscription.
+Remove a subscription. Without `--force` the command asks for confirmation and
+prints `Unsubscribe cancelled.` on any answer but `y`.
 
 ```bash
 quicbaas msg unsubscribe <subscription-id> [flags]
@@ -243,19 +197,14 @@ quicbaas msg unsubscribe <subscription-id> [flags]
 --force    Unsubscribe without confirmation
 ```
 
-**Examples:**
-
-```bash
-# Unsubscribe from a channel
-quicbaas msg unsubscribe sub_abc123
-
-# Force unsubscribe
-quicbaas msg unsubscribe sub_abc123 --force
+**Output:**
+```
+Subscription 'sub_abc123' removed successfully.
 ```
 
 ### msg list-subscriptions
 
-List active subscriptions.
+List the number of active subscribers on each channel.
 
 ```bash
 quicbaas msg list-subscriptions [flags]
@@ -263,38 +212,29 @@ quicbaas msg list-subscriptions [flags]
 
 **Flags:**
 ```
---channel    Filter by channel name
---limit      Maximum number of results [default: 100]
---offset     Pagination offset
+--channel    Show only this channel
 ```
 
 **Examples:**
 
 ```bash
-# List all subscriptions
 quicbaas msg list-subscriptions
-
-# Filter by channel
 quicbaas msg list-subscriptions --channel orders
-
-# Output as JSON
-quicbaas msg list-subscriptions --format json
+quicbaas msg list-subscriptions --output json
 ```
 
 **Output:**
 ```
-SUBSCRIPTION ID  CHANNEL        MODE     DEDUP   CREATED
-sub_abc123       orders         normal   false   2026-01-21T10:00:00Z
-sub_def456       orders         delta    true    2026-01-21T09:30:00Z
-sub_ghi789       events         normal   false   2026-01-21T08:15:00Z
-sub_jkl012       notifications  delta    true    2026-01-20T16:00:00Z
+CHANNEL  SUBSCRIBERS
+orders   12
+events   45
 ```
 
 ## Publishing Commands
 
 ### msg publish
 
-Publish a message to a channel.
+Publish a message to a channel. Give the payload inline or from a file.
 
 ```bash
 quicbaas msg publish <channel> [flags]
@@ -302,53 +242,34 @@ quicbaas msg publish <channel> [flags]
 
 **Flags:**
 ```
---payload      Message payload as JSON string (required unless --file)
+--payload      Message payload (required unless --file)
 --file         Read payload from file
---dedup-id     Deduplication ID for idempotent publishing
---priority     Message priority (low, normal, high) [default: normal]
---ttl          Message time-to-live
---ack          Wait for delivery acknowledgment
+--dedup-id     Deduplication key for idempotent publishing
+--priority     Priority metadata (low, normal, high) [default: normal]
+--ttl          Time-to-live metadata
 ```
+
+`--priority` and `--ttl` travel as message metadata under the keys `priority`
+and `ttl`.
 
 **Examples:**
 
 ```bash
-# Publish a message with inline payload
 quicbaas msg publish orders --payload '{"order_id": "ord_001", "status": "created"}'
-
-# Publish with deduplication ID
-quicbaas msg publish orders \
-  --dedup-id "order-ord_001-created" \
-  --payload '{"order_id": "ord_001", "status": "created"}'
-
-# Publish from file
-quicbaas msg publish orders --file /path/to/message.json
-
-# Publish with priority and TTL
-quicbaas msg publish alerts \
-  --payload '{"level": "critical", "message": "System overload"}' \
-  --priority high \
-  --ttl 5m
-
-# Publish and wait for acknowledgment
-quicbaas msg publish orders \
-  --payload '{"order_id": "ord_002", "status": "shipped"}' \
-  --ack
+quicbaas msg publish orders --dedup-id "order-ord_001-created" --payload '{"order_id": "ord_001"}'
+quicbaas msg publish orders --file ./message.json
+quicbaas msg publish alerts --payload '{"level": "critical"}' --priority high --ttl 5m
 ```
 
 **Output:**
 ```
-Message published successfully.
-
-Channel:     orders
-Message ID:  msg_xyz789
-Timestamp:   2026-01-21T10:30:00Z
-Delivered:   12 subscribers
+Message published to channel 'orders'.
 ```
 
 ### msg publish-delta
 
-Publish only the differences between two entity states.
+Publish only the differences between two entity states. Both states must be
+JSON, given inline or from a file.
 
 ```bash
 quicbaas msg publish-delta <channel> [flags]
@@ -360,25 +281,25 @@ quicbaas msg publish-delta <channel> [flags]
 --new           Current state as JSON string
 --old-file      Read previous state from file
 --new-file      Read current state from file
---entity-id     Entity identifier
---entity-type   Entity type name
---dedup-id      Deduplication ID
+--entity-id     Entity identifier metadata
+--entity-type   Entity type metadata
+--dedup-id      Deduplication key
 ```
+
+`--entity-id` and `--entity-type` travel as message metadata under the keys
+`entity_id` and `entity_type`.
 
 **Examples:**
 
 ```bash
-# Publish delta with inline JSON
 quicbaas msg publish-delta orders \
-  --old '{"order_id": "ord_001", "status": "created", "items": 3}' \
-  --new '{"order_id": "ord_001", "status": "shipped", "items": 3}'
+  --old '{"order_id": "ord_001", "status": "created"}' \
+  --new '{"order_id": "ord_001", "status": "shipped"}'
 
-# Publish delta from files
 quicbaas msg publish-delta orders \
-  --old-file /path/to/old-state.json \
-  --new-file /path/to/new-state.json
+  --old-file ./old-state.json \
+  --new-file ./new-state.json
 
-# Publish delta with entity metadata
 quicbaas msg publish-delta orders \
   --entity-id "ord_001" \
   --entity-type "Order" \
@@ -388,114 +309,45 @@ quicbaas msg publish-delta orders \
 
 **Output:**
 ```
-Delta published successfully.
-
-Channel:     orders
-Entity ID:   ord_001
-Entity Type: Order
-Version:     42
-Changes:     2
-
-Field Changes:
-  - status: "processing" -> "shipped"
-  - tracking: (none) -> "TRK123"
-
-Delivered:   8 delta subscribers
+Message published to channel 'orders'.
 ```
 
 ## Monitoring Commands
 
 ### msg watch
 
-Watch a channel in real-time and display messages as they arrive.
+Create a subscription on KV changes under a key prefix and print it. The
+command exits once the subscription exists.
+
+The REST and QUIC servers have no watch route, so on those transports the
+command returns the SDK's error.
 
 ```bash
-quicbaas msg watch <channel> [flags]
+quicbaas msg watch <key-prefix> [flags]
 ```
 
 **Flags:**
 ```
---delta          Enable delta mode
---filter         Message filter expression
---output         Output file (append mode)
---timestamps     Show timestamps [default: true]
---raw            Output raw JSON without formatting
+--delta    Enable delta mode
 ```
 
 **Examples:**
 
 ```bash
-# Watch channel in real-time
-quicbaas msg watch orders
-
-# Watch with delta mode
-quicbaas msg watch orders --delta
-
-# Watch with filter
-quicbaas msg watch orders --filter "status=shipped"
-
-# Watch and save to file
-quicbaas msg watch orders --output /var/log/orders.jsonl
-
-# Raw JSON output
-quicbaas msg watch orders --raw
+quicbaas msg watch orders/
+quicbaas msg watch orders/ --delta
 ```
 
-**Output (formatted):**
-```
-Watching channel: orders (Ctrl+C to exit)
-
-[2026-01-21T10:30:01Z] Message received
-  order_id: ord_001
-  status:   completed
-  amount:   $125.00
-
-[2026-01-21T10:30:05Z] Message received
-  order_id: ord_002
-  status:   processing
-  amount:   $89.50
-```
-
-**Output (delta mode):**
-```
-Watching channel: orders (delta mode) (Ctrl+C to exit)
-
-[2026-01-21T10:30:01Z] Delta received for Order:ord_001 (v41 -> v42)
-  - status: "processing" -> "shipped"
-  - updated_at: "2026-01-21T10:25:00Z" -> "2026-01-21T10:30:01Z"
-
-[2026-01-21T10:30:08Z] Delta received for Order:ord_002 (v15 -> v16)
-  - tracking_number: (none) -> "TRK456789"
-```
+The output matches `msg subscribe`.
 
 ### msg dedup-stats
 
-Show deduplication statistics for a channel.
+Show deduplication statistics for a channel. The command has no flags of its
+own.
 
 ```bash
-quicbaas msg dedup-stats <channel> [flags]
-```
-
-**Flags:**
-```
---reset    Reset statistics after display
---window   Show stats for specific time window
-```
-
-**Examples:**
-
-```bash
-# Show dedup statistics
-quicbaas msg dedup-stats orders
-
-# Show stats as JSON
-quicbaas msg dedup-stats orders --format json
-
-# Show stats for last hour
-quicbaas msg dedup-stats orders --window 1h
-
-# Show and reset statistics
-quicbaas msg dedup-stats orders --reset
+quicbaas msg dedup-stats <channel>
+quicbaas msg dedup-stats orders --output json
 ```
 
 **Output:**
@@ -503,70 +355,14 @@ quicbaas msg dedup-stats orders --reset
 Deduplication Statistics: orders
 ================================
 
-Configuration
--------------
-Enabled:           true
-Window:            1m
-Algorithm:         SHA256 (content-based)
-
-Statistics (last 24h)
----------------------
-Total Messages:    15,234
-Unique Messages:   14,891
-Duplicates:        343 (2.3%)
-Bytes Saved:       1.2 MB
-
-Top Duplicate Keys
-------------------
-KEY                             COUNT   LAST SEEN
-order-ord_001-status-update     12      2026-01-21T10:28:00Z
-order-ord_002-status-update     8       2026-01-21T10:25:30Z
-heartbeat-check                 323     2026-01-21T10:30:00Z
-```
-
-## Exit Codes
-
-| Code | Description |
-|------|-------------|
-| 0 | Success |
-| 1 | General error |
-| 2 | Channel not found |
-| 3 | Subscription not found |
-| 4 | Invalid arguments |
-| 5 | Permission denied |
-| 6 | Connection error |
-| 7 | Timeout |
-| 8 | Rate limited |
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `QUICBAAS_SERVER` | Server address | `/run/quicbaas.sock` |
-| `QUICBAAS_PROTOCOL` | Default protocol | `unix` |
-| `QUICBAAS_TENANT` | Default tenant ID | (none) |
-| `QUICBAAS_FORMAT` | Default output format | `table` |
-| `QUICBAAS_TIMEOUT` | Request timeout | `30s` |
-
-## Configuration File
-
-CLI settings can be stored in `~/.quicbaas/config.yaml`:
-
-```yaml
-server: /run/quicbaas.sock
-protocol: unix
-tenant: default
-format: table
-timeout: 30s
-
-msg:
-  default_buffer_size: 256
-  default_dedup: true
-  watch_timestamps: true
+Total Checks:         15234
+Unique Messages:      14891
+Duplicates Detected:  343 (2.25%)
+Cache Size:           14891
+Window:               1m0s
 ```
 
 ## Related Documentation
 
-- API Reference - Messaging API overview
-- [Architecture](architecture.md) - Messaging system design
-- [Delta Publishing](architecture.md) - Delta computation details
+- [Architecture](architecture.md) - Messaging system design and delta publishing
+- [API](api.md) - Messaging API reference

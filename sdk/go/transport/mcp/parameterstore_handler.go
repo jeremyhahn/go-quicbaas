@@ -113,10 +113,10 @@ func parameterText(method string, value []byte) (string, error) {
 
 // putJSONStringArg sets key to the JSON encoding of v, as the string-typed
 // tool schema requires.
-func putJSONStringArg(args map[string]interface{}, method, key string, v interface{}) error {
+func putJSONStringArg(args map[string]interface{}, op, key string, v interface{}) error {
 	encoded, err := json.Marshal(v)
 	if err != nil {
-		return errors.NewInternal("mcp.parameterstore."+method,
+		return errors.NewInternal(op,
 			"failed to encode "+key+": "+err.Error())
 	}
 	args[key] = string(encoded)
@@ -164,7 +164,7 @@ func setParameterArgs(req interface{}) (map[string]interface{}, error) {
 		args["ttl_seconds"] = strconv.FormatInt(r.TTLSeconds, 10)
 	}
 	if len(r.Tags) > 0 {
-		if err := putJSONStringArg(args, "SetParameter", "tags", r.Tags); err != nil {
+		if err := putJSONStringArg(args, "mcp.parameterstore.SetParameter", "tags", r.Tags); err != nil {
 			return nil, err
 		}
 	}
@@ -204,7 +204,7 @@ func searchByTagsArgs(req interface{}) (map[string]interface{}, error) {
 		"with_values":     strconv.FormatBool(r.WithValues),
 		"with_decryption": strconv.FormatBool(r.WithDecryption),
 	}
-	if err := putJSONStringArg(args, "SearchByTags", "tags", r.Tags); err != nil {
+	if err := putJSONStringArg(args, "mcp.parameterstore.SearchByTags", "tags", r.Tags); err != nil {
 		return nil, err
 	}
 	putStringArg(args, "prefix", r.Prefix)
@@ -269,7 +269,7 @@ func setParametersArgs(req interface{}) (map[string]interface{}, error) {
 		})
 	}
 	args := map[string]interface{}{}
-	if err := putJSONStringArg(args, "SetParameters", "parameters", params); err != nil {
+	if err := putJSONStringArg(args, "mcp.parameterstore.SetParameters", "parameters", params); err != nil {
 		return nil, err
 	}
 	return args, nil

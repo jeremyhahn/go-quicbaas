@@ -15,54 +15,49 @@
 package main
 
 import (
-	stdcontext "context"
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/messaging"
 )
 
 // Messaging command flags.
 var (
-	// Channel flags.
-	msgBufferSize     int32
-	msgMaxSubscribers int32
+	// create-channel and subscribe flags.
+	msgBufferSize     int
+	msgMaxSubscribers int
 	msgPersistent     bool
-	msgTTL            string
-	msgDescription    string
-	msgForce          bool
+	msgChannelTTL     string
 
-	// List/pagination flags.
-	msgLimit  int32
-	msgOffset int32
-	msgFilter string
+	// delete-channel and unsubscribe flags.
+	msgForce bool
 
-	// Subscribe flags.
+	// subscribe and watch flags.
+	msgFilter    string
 	msgDelta     bool
 	msgDedup     bool
 	msgDedupSkip bool
-	msgReplay    uint64
 
-	// Publish flags.
-	msgPayload  string
-	msgFile     string
-	msgDedupID  string
-	msgPriority string
-	msgAck      bool
+	// publish flags.
+	msgPayload    string
+	msgFile       string
+	msgDedupID    string
+	msgPriority   string
+	msgPublishTTL string
 
-	// Publish delta flags.
+	// publish-delta flags.
 	msgOld        string
 	msgNew        string
 	msgOldFile    string
@@ -70,94 +65,63 @@ var (
 	msgEntityID   string
 	msgEntityType string
 
-	// Watch flags.
-	msgTimestamps bool
-	msgRaw        bool
-
-	// Dedup stats flags.
-	msgReset  bool
-	msgWindow string
-
-	// Subscription list flags.
+	// list-subscriptions flags.
 	msgChannel string
 
-	// Output format.
+	// Output format (persistent flag).
 	msgOutputFmt string
 )
 
-// MessagingClient defines the interface for messaging operations.
-type MessagingClient interface {
-	MessagingCreateChannel(ctx stdcontext.Context, req *grpc.MessagingCreateChannelRequest) (*grpc.MessagingCreateChannelResponse, error)
-	MessagingDeleteChannel(ctx stdcontext.Context, req *grpc.MessagingDeleteChannelRequest) (*grpc.MessagingDeleteChannelResponse, error)
-	MessagingGetChannel(ctx stdcontext.Context, req *grpc.MessagingGetChannelRequest) (*grpc.MessagingGetChannelResponse, error)
-	MessagingListChannels(ctx stdcontext.Context, req *grpc.MessagingListChannelsRequest) (*grpc.MessagingListChannelsResponse, error)
-	MessagingSubscribe(ctx stdcontext.Context, req *grpc.MessagingSubscribeRequest) (*grpc.MessagingSubscribeResponse, error)
-	MessagingUnsubscribe(ctx stdcontext.Context, req *grpc.MessagingUnsubscribeRequest) (*grpc.MessagingUnsubscribeResponse, error)
-	MessagingPublish(ctx stdcontext.Context, req *grpc.MessagingPublishRequest) (*grpc.MessagingPublishResponse, error)
-	MessagingPublishDelta(ctx stdcontext.Context, req *grpc.MessagingPublishDeltaRequest) (*grpc.MessagingPublishDeltaResponse, error)
-	MessagingStreamNotifications(ctx stdcontext.Context, req *grpc.MessagingStreamNotificationsRequest) (<-chan *grpc.MessagingNotification, <-chan error, error)
-	MessagingGetDedupStats(ctx stdcontext.Context, req *grpc.MessagingGetDedupStatsRequest) (*grpc.MessagingGetDedupStatsResponse, error)
-	MessagingGetChannelStats(ctx stdcontext.Context, req *grpc.MessagingGetChannelStatsRequest) (*grpc.MessagingGetChannelStatsResponse, error)
-	Close() error
+// msgDeleteChannelResult is printed after a channel is deleted.
+type msgDeleteChannelResult struct {
+	Channel string
+	Deleted bool
 }
 
-// MessagingClientFactory is a function type for creating messaging clients.
-type MessagingClientFactory func() (MessagingClient, error)
+// msgUnsubscribeResult is printed after a subscription is removed.
+type msgUnsubscribeResult struct {
+	SubscriptionID string
+	Unsubscribed   bool
+}
 
-// messagingClientFactory creates messaging clients. Defaults to createMessagingClient.
-var messagingClientFactory MessagingClientFactory = createMessagingClient
+// msgPublishResult is printed after a message or delta is published.
+type msgPublishResult struct {
+	Channel   string
+	Published bool
+}
 
-// createMessagingClient creates a client for messaging operations based on transport.
-func createMessagingClient() (MessagingClient, error) {
-	switch transport {
-	case "grpc", "":
-		return createMessagingGRPCClient()
-	case "rest":
-		return nil, errors.Newf(
-			errors.ErrConfiguration,
-			"createMessagingClient",
-			"REST transport is not yet implemented for messaging commands",
-		)
-	case "mcp":
-		return nil, errors.Newf(
-			errors.ErrConfiguration,
-			"createMessagingClient",
-			"MCP transport is not yet implemented for messaging commands",
-		)
-	case "quic":
-		return nil, errors.Newf(
-			errors.ErrConfiguration,
-			"createMessagingClient",
-			"QUIC transport is not yet implemented for messaging commands",
-		)
-	default:
-		return nil, errors.Newf(
-			errors.ErrConfiguration,
-			"createMessagingClient",
-			"unsupported transport: %s (supported: grpc, rest, mcp, quic)", transport,
-		)
+// msgChannelInfo combines a channel with its delivery and dedup statistics.
+type msgChannelInfo struct {
+	Channel *messaging.Channel
+	Stats   *messaging.ChannelStats
+	Dedup   *messaging.DedupStats
+}
+
+// msgChannelSubscribers is one row of the list-subscriptions output.
+type msgChannelSubscribers struct {
+	Channel     string
+	Subscribers int64
+}
+
+// messagingSDKClient returns the messaging client of the shared SDK client.
+// The SDK client is cached by the factory, so callers do not close it.
+func messagingSDKClient() (messaging.Client, error) {
+	client, err := sdkClientFactory()
+	if err != nil {
+		return nil, err
 	}
+	return client.Async().Messaging(), nil
 }
 
-// createMessagingGRPCClient creates a gRPC client for messaging operations.
-// TLS configuration is always included since gRPC requires TLS for all connections.
-func createMessagingGRPCClient() (MessagingClient, error) {
-	opts := []grpc.ClientOption{
-		grpc.WithTimeout(globalTimeout),
-	}
-	opts = append(opts, grpcTLSOption()...)
-	return grpc.NewClient(address, opts...)
-}
-
-// newMsgCommands creates the messaging command group.
+// newMsgCommands creates the msg command group.
 func newMsgCommands() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "msg",
 		Short: "Messaging commands (channels, subscriptions, publishing)",
 		Long: `Messaging commands for managing notification channels and subscriptions.
 
-These commands allow you to create channels, subscribe to notifications,
-publish messages, and monitor real-time events in QuicBaaS.`,
+These commands create and inspect channels, create and remove subscriptions,
+and publish messages in QuicBaaS.`,
 	}
 
 	cmd.PersistentFlags().StringVar(&msgOutputFmt, "output", "table", "Output format (json, yaml, table)")
@@ -174,14 +138,25 @@ publish messages, and monitor real-time events in QuicBaaS.`,
 	cmd.AddCommand(newMsgWatchCommand())
 	cmd.AddCommand(newMsgDedupStatsCommand())
 
+	// Reject an unknown --output before any command changes server state.
+	for _, sub := range cmd.Commands() {
+		sub.PreRunE = validateMsgOutputFormat
+	}
+
 	return cmd
 }
 
+// validateMsgOutputFormat checks --output so a command never creates,
+// publishes or deletes and then fails while printing the result.
+func validateMsgOutputFormat(_ *cobra.Command, _ []string) error {
+	_, err := cli.ParseOutputFormat(msgOutputFmt)
+	return err
+}
+
 // =============================================================================
-// Create Channel Command
+// create-channel
 // =============================================================================
 
-// newMsgCreateChannelCommand creates the create-channel command.
 func newMsgCreateChannelCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create-channel <name>",
@@ -196,59 +171,46 @@ Examples:
 		RunE: runMsgCreateChannelCommand,
 	}
 
-	cmd.Flags().Int32Var(&msgBufferSize, "buffer-size", 256, "Channel buffer size")
-	cmd.Flags().Int32Var(&msgMaxSubscribers, "max-subscribers", 1000, "Maximum subscribers allowed")
+	cmd.Flags().IntVar(&msgBufferSize, "buffer-size", 256, "Channel buffer size")
+	cmd.Flags().IntVar(&msgMaxSubscribers, "max-subscribers", 1000, "Maximum subscribers allowed")
 	cmd.Flags().BoolVar(&msgPersistent, "persistent", false, "Enable message persistence")
-	cmd.Flags().StringVar(&msgTTL, "ttl", "0s", "Message time-to-live")
-	cmd.Flags().StringVar(&msgDescription, "description", "", "Channel description")
+	cmd.Flags().StringVar(&msgChannelTTL, "ttl", "0s", "Message time-to-live")
 
 	return cmd
 }
 
-// runMsgCreateChannelCommand executes the create-channel command.
 func runMsgCreateChannelCommand(cmd *cobra.Command, args []string) error {
-	channelName := args[0]
+	ttl, err := time.ParseDuration(msgChannelTTL)
+	if err != nil {
+		return errors.Wrapf(err, errors.ErrInvalidInput, "msg.create-channel", "invalid TTL format")
+	}
 
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	// Parse TTL
-	var ttlSeconds int64
-	if msgTTL != "" && msgTTL != "0s" {
-		ttlDuration, parseErr := time.ParseDuration(msgTTL)
-		if parseErr != nil {
-			return errors.Wrapf(parseErr, errors.ErrInvalidInput, "msg.create-channel", "invalid TTL format")
-		}
-		ttlSeconds = int64(ttlDuration.Seconds())
-	}
-
-	req := &grpc.MessagingCreateChannelRequest{
-		Name:           channelName,
-		BufferSize:     msgBufferSize,
-		MaxSubscribers: msgMaxSubscribers,
-		Persistent:     msgPersistent,
-		TTLSeconds:     ttlSeconds,
-	}
-
-	resp, err := client.MessagingCreateChannel(ctx, req)
+	channel, err := client.CreateChannel(ctx, &messaging.CreateChannelRequest{
+		Name:       args[0],
+		BufferSize: msgBufferSize,
+		MaxSubs:    msgMaxSubscribers,
+		Persistent: msgPersistent,
+		TTL:        ttl,
+	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatChannelResponse(resp.Channel, msgOutputFmt, os.Stdout)
+	return formatChannelResponse(channel, msgOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
-// Delete Channel Command
+// delete-channel
 // =============================================================================
 
-// newMsgDeleteChannelCommand creates the delete-channel command.
 func newMsgDeleteChannelCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete-channel <name>",
@@ -267,289 +229,185 @@ Examples:
 	return cmd
 }
 
-// runMsgDeleteChannelCommand executes the delete-channel command.
 func runMsgDeleteChannelCommand(cmd *cobra.Command, args []string) error {
 	channelName := args[0]
 
-	// Prompt for confirmation if not forced
 	if !msgForce {
-		fmt.Printf("Are you sure you want to delete channel '%s'? This will disconnect all subscribers. (y/N): ", channelName)
-		var confirm string
-		if _, scanErr := fmt.Scanln(&confirm); scanErr != nil {
-			return errors.Wrapf(scanErr, errors.ErrInvalidInput, "msg.delete-channel", "failed to read confirmation")
+		prompt := fmt.Sprintf("Are you sure you want to delete channel '%s'? This will disconnect all subscribers. (y/N): ", channelName)
+		confirmed, err := confirmMsgAction(cmd, prompt, "msg.delete-channel")
+		if err != nil {
+			return err
 		}
-		if !strings.EqualFold(confirm, "y") && !strings.EqualFold(confirm, "yes") {
-			fmt.Println("Delete cancelled.")
+		if !confirmed {
+			fmt.Fprintln(cmd.OutOrStdout(), "Delete cancelled.")
 			return nil
 		}
 	}
 
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	req := &grpc.MessagingDeleteChannelRequest{
-		Name: channelName,
-	}
-
-	resp, err := client.MessagingDeleteChannel(ctx, req)
-	if err != nil {
+	if err := client.DeleteChannel(ctx, channelName); err != nil {
 		return formatError(err)
 	}
 
-	return formatDeleteChannelResponse(resp, msgOutputFmt, os.Stdout)
+	result := &msgDeleteChannelResult{Channel: channelName, Deleted: true}
+	return writeMsgOutput(cmd.OutOrStdout(), msgOutputFmt, result, func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "Channel '%s' deleted successfully.\n", channelName)
+		return err
+	})
 }
 
 // =============================================================================
-// List Channels Command
+// list-channels
 // =============================================================================
 
-// newMsgListChannelsCommand creates the list-channels command.
 func newMsgListChannelsCommand() *cobra.Command {
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "list-channels",
-		Short: "List all channels with optional filtering",
-		Long: `List all channels with optional filtering.
+		Short: "List all channels",
+		Long: `List all channels.
 
 Examples:
   quicbaas msg list-channels
-  quicbaas msg list-channels --format json
-  quicbaas msg list-channels --filter "order*"
-  quicbaas msg list-channels --limit 10 --offset 20`,
+  quicbaas msg list-channels --output json`,
 		Args: cobra.NoArgs,
 		RunE: runMsgListChannelsCommand,
 	}
-
-	cmd.Flags().Int32Var(&msgLimit, "limit", 100, "Maximum number of results")
-	cmd.Flags().Int32Var(&msgOffset, "offset", 0, "Pagination offset")
-	cmd.Flags().StringVar(&msgFilter, "filter", "", "Filter by name pattern (glob)")
-
-	return cmd
 }
 
-// runMsgListChannelsCommand executes the list-channels command.
 func runMsgListChannelsCommand(cmd *cobra.Command, args []string) error {
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	// Calculate cursor from offset for pagination
-	cursor := ""
-	if msgOffset > 0 {
-		cursor = fmt.Sprintf("%d", msgOffset)
-	}
-
-	req := &grpc.MessagingListChannelsRequest{
-		Limit:      msgLimit,
-		Cursor:     cursor,
-		NamePrefix: msgFilter,
-	}
-
-	resp, err := client.MessagingListChannels(ctx, req)
+	resp, err := client.ListChannels(ctx)
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatChannelListResponse(resp, msgOutputFmt, os.Stdout)
+	return formatChannelListResponse(resp, msgOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
-// Channel Info Command
+// channel-info
 // =============================================================================
 
-// newMsgChannelInfoCommand creates the channel-info command.
 func newMsgChannelInfoCommand() *cobra.Command {
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "channel-info <name>",
 		Short: "Get detailed information about a channel",
-		Long: `Get detailed information about a channel.
+		Long: `Get detailed information about a channel, including its delivery
+and deduplication statistics.
 
 Examples:
   quicbaas msg channel-info orders
-  quicbaas msg channel-info orders --format yaml`,
+  quicbaas msg channel-info orders --output yaml`,
 		Args: cobra.ExactArgs(1),
 		RunE: runMsgChannelInfoCommand,
 	}
-
-	return cmd
 }
 
-// runMsgChannelInfoCommand executes the channel-info command.
 func runMsgChannelInfoCommand(cmd *cobra.Command, args []string) error {
 	channelName := args[0]
 
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	// Get channel info
-	channelReq := &grpc.MessagingGetChannelRequest{
-		Name: channelName,
+	channel, err := client.GetChannel(ctx, channelName)
+	if err != nil {
+		return formatError(err)
 	}
-
-	channelResp, err := client.MessagingGetChannel(ctx, channelReq)
+	stats, err := client.GetChannelStats(ctx, channelName)
+	if err != nil {
+		return formatError(err)
+	}
+	dedup, err := client.GetDedupStats(ctx, channelName)
 	if err != nil {
 		return formatError(err)
 	}
 
-	// Get channel stats
-	statsReq := &grpc.MessagingGetChannelStatsRequest{
-		Name: channelName,
-	}
-
-	statsResp, statsErr := client.MessagingGetChannelStats(ctx, statsReq)
-
-	// Get dedup stats
-	dedupReq := &grpc.MessagingGetDedupStatsRequest{
-		Channel: channelName,
-	}
-
-	dedupResp, dedupErr := client.MessagingGetDedupStats(ctx, dedupReq)
-
-	return formatChannelInfoResponse(channelResp, statsResp, statsErr, dedupResp, dedupErr, msgOutputFmt, os.Stdout)
+	info := &msgChannelInfo{Channel: channel, Stats: stats, Dedup: dedup}
+	return formatChannelInfoResponse(info, msgOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
-// Subscribe Command
+// subscribe
 // =============================================================================
 
-// newMsgSubscribeCommand creates the subscribe command.
 func newMsgSubscribeCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "subscribe <channel>",
-		Short: "Subscribe to a channel to receive notifications",
-		Long: `Subscribe to a channel to receive notifications.
+		Short: "Create a subscription on a channel",
+		Long: `Create a subscription on a channel and print it.
+
+The command registers the subscription and exits; it does not stream messages.
 
 Examples:
   quicbaas msg subscribe orders
   quicbaas msg subscribe orders --delta
   quicbaas msg subscribe orders --dedup
   quicbaas msg subscribe orders --dedup-skip
-  quicbaas msg subscribe orders --filter "status=completed"
-  quicbaas msg subscribe orders --replay 1000`,
+  quicbaas msg subscribe orders --filter "orders/eu/"`,
 		Args: cobra.ExactArgs(1),
 		RunE: runMsgSubscribeCommand,
 	}
 
 	cmd.Flags().BoolVar(&msgDelta, "delta", false, "Enable delta mode (receive only changes)")
-	cmd.Flags().BoolVar(&msgDedup, "dedup", false, "Enable deduplication")
+	cmd.Flags().BoolVar(&msgDedup, "dedup", false, "Include deduplication metadata")
 	cmd.Flags().BoolVar(&msgDedupSkip, "dedup-skip", false, "Skip duplicate messages silently")
-	cmd.Flags().StringVar(&msgFilter, "filter", "", "Message filter expression")
-	cmd.Flags().Uint64Var(&msgReplay, "replay", 0, "Replay messages from offset")
-	cmd.Flags().Int32Var(&msgBufferSize, "buffer-size", 256, "Client buffer size")
+	cmd.Flags().StringVar(&msgFilter, "filter", "", "Only deliver messages whose key has this prefix")
+	cmd.Flags().IntVar(&msgBufferSize, "buffer-size", 256, "Subscription buffer size")
 
 	return cmd
 }
 
-// runMsgSubscribeCommand executes the subscribe command.
 func runMsgSubscribeCommand(cmd *cobra.Command, args []string) error {
-	channelName := args[0]
-
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	// Parse filter into subscription filter
-	var filter *grpc.MessagingSubscriptionFilter
-	if msgFilter != "" {
-		filter = &grpc.MessagingSubscriptionFilter{
-			KeyPrefix: msgFilter,
-		}
-	}
-
-	// Create subscription
-	subReq := &grpc.MessagingSubscribeRequest{
-		Channel:             channelName,
-		Filter:              filter,
+	req := &messaging.SubscribeRequest{
+		Channel:             args[0],
 		DeltaMode:           msgDelta,
 		DedupMetadata:       msgDedup,
 		DedupSkipDuplicates: msgDedupSkip,
 		BufferSize:          msgBufferSize,
 	}
+	if msgFilter != "" {
+		req.Filter = &messaging.SubscriptionFilter{KeyPrefix: msgFilter}
+	}
 
-	subResp, err := client.MessagingSubscribe(ctx, subReq)
+	sub, err := client.Subscribe(ctx, req)
 	if err != nil {
 		return formatError(err)
 	}
 
-	fmt.Printf("Subscribed to channel: %s\n", channelName)
-	fmt.Printf("Subscription ID: %s\n", subResp.Subscription.ID)
-	fmt.Println()
-	fmt.Println("Waiting for messages (Ctrl+C to exit)...")
-	fmt.Println()
-
-	// Setup signal handling for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start streaming notifications
-	streamReq := &grpc.MessagingStreamNotificationsRequest{
-		SubscriptionID: subResp.Subscription.ID,
-		StartSequence:  msgReplay,
-		IncludeHistory: msgReplay > 0,
-	}
-
-	notifChan, errChan, streamErr := client.MessagingStreamNotifications(ctx, streamReq)
-	if streamErr != nil {
-		return formatError(streamErr)
-	}
-
-	// Stream messages until cancelled
-	for {
-		select {
-		case <-sigChan:
-			fmt.Println("\nUnsubscribing...")
-			unsubReq := &grpc.MessagingUnsubscribeRequest{
-				SubscriptionID: subResp.Subscription.ID,
-			}
-			unsubCtx, unsubCancel := stdcontext.WithTimeout(stdcontext.Background(), 5*time.Second)
-			_, unsubErr := client.MessagingUnsubscribe(unsubCtx, unsubReq)
-			unsubCancel()
-			if unsubErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to unsubscribe: %v\n", unsubErr)
-			}
-			return nil
-
-		case notif, ok := <-notifChan:
-			if !ok {
-				return nil
-			}
-			formatNotification(notif, os.Stdout)
-
-		case streamErr, ok := <-errChan:
-			if !ok {
-				return nil
-			}
-			return formatError(streamErr)
-		}
-	}
+	return formatSubscriptionResponse(sub, msgOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
-// Unsubscribe Command
+// unsubscribe
 // =============================================================================
 
-// newMsgUnsubscribeCommand creates the unsubscribe command.
 func newMsgUnsubscribeCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unsubscribe <subscription-id>",
@@ -568,203 +426,180 @@ Examples:
 	return cmd
 }
 
-// runMsgUnsubscribeCommand executes the unsubscribe command.
 func runMsgUnsubscribeCommand(cmd *cobra.Command, args []string) error {
 	subscriptionID := args[0]
 
-	// Prompt for confirmation if not forced
 	if !msgForce {
-		fmt.Printf("Are you sure you want to unsubscribe '%s'? (y/N): ", subscriptionID)
-		var confirm string
-		if _, scanErr := fmt.Scanln(&confirm); scanErr != nil {
-			return errors.Wrapf(scanErr, errors.ErrInvalidInput, "msg.unsubscribe", "failed to read confirmation")
+		prompt := fmt.Sprintf("Are you sure you want to unsubscribe '%s'? (y/N): ", subscriptionID)
+		confirmed, err := confirmMsgAction(cmd, prompt, "msg.unsubscribe")
+		if err != nil {
+			return err
 		}
-		if !strings.EqualFold(confirm, "y") && !strings.EqualFold(confirm, "yes") {
-			fmt.Println("Unsubscribe cancelled.")
+		if !confirmed {
+			fmt.Fprintln(cmd.OutOrStdout(), "Unsubscribe cancelled.")
 			return nil
 		}
 	}
 
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	req := &grpc.MessagingUnsubscribeRequest{
-		SubscriptionID: subscriptionID,
-	}
-
-	resp, err := client.MessagingUnsubscribe(ctx, req)
-	if err != nil {
+	if err := client.Unsubscribe(ctx, subscriptionID); err != nil {
 		return formatError(err)
 	}
 
-	return formatUnsubscribeResponse(resp, msgOutputFmt, os.Stdout)
+	result := &msgUnsubscribeResult{SubscriptionID: subscriptionID, Unsubscribed: true}
+	return writeMsgOutput(cmd.OutOrStdout(), msgOutputFmt, result, func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "Subscription '%s' removed successfully.\n", subscriptionID)
+		return err
+	})
 }
 
 // =============================================================================
-// List Subscriptions Command
+// list-subscriptions
 // =============================================================================
 
-// newMsgListSubscriptionsCommand creates the list-subscriptions command.
 func newMsgListSubscriptionsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list-subscriptions",
-		Short: "List active subscriptions",
-		Long: `List active subscriptions.
+		Short: "List subscriber counts per channel",
+		Long: `List the number of active subscribers on each channel.
 
 Examples:
   quicbaas msg list-subscriptions
   quicbaas msg list-subscriptions --channel orders
-  quicbaas msg list-subscriptions --format json`,
+  quicbaas msg list-subscriptions --output json`,
 		Args: cobra.NoArgs,
 		RunE: runMsgListSubscriptionsCommand,
 	}
 
-	cmd.Flags().StringVar(&msgChannel, "channel", "", "Filter by channel name")
-	cmd.Flags().Int32Var(&msgLimit, "limit", 100, "Maximum number of results")
-	cmd.Flags().Int32Var(&msgOffset, "offset", 0, "Pagination offset")
+	cmd.Flags().StringVar(&msgChannel, "channel", "", "Show only this channel")
 
 	return cmd
 }
 
-// runMsgListSubscriptionsCommand executes the list-subscriptions command.
 func runMsgListSubscriptionsCommand(cmd *cobra.Command, args []string) error {
-	// List subscriptions requires getting channel info first, then iterating
-	// For now, we'll get the channel stats which includes subscriber count
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	// If a channel is specified, get its info
+	var rows []msgChannelSubscribers
 	if msgChannel != "" {
-		statsReq := &grpc.MessagingGetChannelStatsRequest{
-			Name: msgChannel,
+		stats, err := client.GetChannelStats(ctx, msgChannel)
+		if err != nil {
+			return formatError(err)
 		}
-
-		statsResp, statsErr := client.MessagingGetChannelStats(ctx, statsReq)
-		if statsErr != nil {
-			return formatError(statsErr)
+		rows = append(rows, msgChannelSubscribers{Channel: stats.Name, Subscribers: stats.Subscribers})
+	} else {
+		resp, err := client.ListChannels(ctx)
+		if err != nil {
+			return formatError(err)
 		}
-
-		return formatSubscriptionListFromStats(statsResp, msgOutputFmt, os.Stdout)
+		for _, ch := range resp.Channels {
+			rows = append(rows, msgChannelSubscribers{Channel: ch.Name, Subscribers: ch.Subscribers})
+		}
 	}
 
-	// Otherwise, list all channels and their subscription counts
-	listReq := &grpc.MessagingListChannelsRequest{
-		Limit: msgLimit,
-	}
-
-	listResp, listErr := client.MessagingListChannels(ctx, listReq)
-	if listErr != nil {
-		return formatError(listErr)
-	}
-
-	return formatSubscriptionListFromChannels(listResp, msgOutputFmt, os.Stdout)
+	return formatSubscriptionList(rows, msgOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
-// Publish Command
+// publish
 // =============================================================================
 
-// newMsgPublishCommand creates the publish command.
 func newMsgPublishCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "publish <channel>",
 		Short: "Publish a message to a channel",
 		Long: `Publish a message to a channel.
 
+--priority and --ttl are sent as message metadata (keys "priority" and "ttl").
+
 Examples:
   quicbaas msg publish orders --payload '{"order_id": "ord_001", "status": "created"}'
   quicbaas msg publish orders --dedup-id "order-ord_001-created" --payload '{"order_id": "ord_001"}'
-  quicbaas msg publish orders --file /path/to/message.json
+  quicbaas msg publish orders --file ./message.json
   quicbaas msg publish alerts --payload '{"level": "critical"}' --priority high --ttl 5m`,
 		Args: cobra.ExactArgs(1),
 		RunE: runMsgPublishCommand,
 	}
 
-	cmd.Flags().StringVar(&msgPayload, "payload", "", "Message payload as JSON string")
+	cmd.Flags().StringVar(&msgPayload, "payload", "", "Message payload")
 	cmd.Flags().StringVar(&msgFile, "file", "", "Read payload from file")
-	cmd.Flags().StringVar(&msgDedupID, "dedup-id", "", "Deduplication ID for idempotent publishing")
-	cmd.Flags().StringVar(&msgPriority, "priority", "normal", "Message priority (low, normal, high)")
-	cmd.Flags().StringVar(&msgTTL, "ttl", "", "Message time-to-live")
-	cmd.Flags().BoolVar(&msgAck, "ack", false, "Wait for delivery acknowledgment")
+	cmd.Flags().StringVar(&msgDedupID, "dedup-id", "", "Deduplication key for idempotent publishing")
+	cmd.Flags().StringVar(&msgPriority, "priority", "normal", "Priority metadata (low, normal, high)")
+	cmd.Flags().StringVar(&msgPublishTTL, "ttl", "", "Time-to-live metadata")
 
 	return cmd
 }
 
-// runMsgPublishCommand executes the publish command.
 func runMsgPublishCommand(cmd *cobra.Command, args []string) error {
 	channelName := args[0]
 
-	// Get payload from flag or file
 	var payload []byte
-	var err error
-
 	switch {
 	case msgFile != "":
-		payload, err = os.ReadFile(msgFile)
+		data, err := os.ReadFile(msgFile)
 		if err != nil {
 			return errors.Wrapf(err, errors.ErrInvalidInput, "msg.publish", "failed to read payload file")
 		}
+		payload = data
 	case msgPayload != "":
 		payload = []byte(msgPayload)
 	default:
 		return errors.Newf(errors.ErrInvalidInput, "msg.publish", "either --payload or --file must be specified")
 	}
 
-	client, err := messagingClientFactory()
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	// Build metadata from priority
 	metadata := make(map[string]string)
 	if msgPriority != "" {
 		metadata["priority"] = msgPriority
 	}
-	if msgTTL != "" {
-		metadata["ttl"] = msgTTL
+	if msgPublishTTL != "" {
+		metadata["ttl"] = msgPublishTTL
 	}
 
-	req := &grpc.MessagingPublishRequest{
+	client, err := messagingSDKClient()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	defer cancel()
+
+	err = client.Publish(ctx, &messaging.PublishRequest{
 		Channel:  channelName,
 		Payload:  payload,
 		DedupKey: msgDedupID,
 		Metadata: metadata,
-	}
-
-	resp, err := client.MessagingPublish(ctx, req)
+	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatPublishResponse(resp, msgOutputFmt, os.Stdout)
+	return formatPublishResponse(&msgPublishResult{Channel: channelName, Published: true}, msgOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
-// Publish Delta Command
+// publish-delta
 // =============================================================================
 
-// newMsgPublishDeltaCommand creates the publish-delta command.
 func newMsgPublishDeltaCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "publish-delta <channel>",
 		Short: "Publish only the differences between two entity states",
 		Long: `Publish only the differences between two entity states.
+
+Both states must be JSON. --entity-id and --entity-type are sent as message
+metadata (keys "entity_id" and "entity_type").
 
 Examples:
   quicbaas msg publish-delta orders \
@@ -772,8 +607,8 @@ Examples:
     --new '{"order_id": "ord_001", "status": "shipped"}'
 
   quicbaas msg publish-delta orders \
-    --old-file /path/to/old-state.json \
-    --new-file /path/to/new-state.json
+    --old-file ./old-state.json \
+    --new-file ./new-state.json
 
   quicbaas msg publish-delta orders \
     --entity-id "ord_001" \
@@ -788,58 +623,25 @@ Examples:
 	cmd.Flags().StringVar(&msgNew, "new", "", "Current state as JSON string")
 	cmd.Flags().StringVar(&msgOldFile, "old-file", "", "Read previous state from file")
 	cmd.Flags().StringVar(&msgNewFile, "new-file", "", "Read current state from file")
-	cmd.Flags().StringVar(&msgEntityID, "entity-id", "", "Entity identifier")
-	cmd.Flags().StringVar(&msgEntityType, "entity-type", "", "Entity type name")
-	cmd.Flags().StringVar(&msgDedupID, "dedup-id", "", "Deduplication ID")
+	cmd.Flags().StringVar(&msgEntityID, "entity-id", "", "Entity identifier metadata")
+	cmd.Flags().StringVar(&msgEntityType, "entity-type", "", "Entity type metadata")
+	cmd.Flags().StringVar(&msgDedupID, "dedup-id", "", "Deduplication key")
 
 	return cmd
 }
 
-// runMsgPublishDeltaCommand executes the publish-delta command.
 func runMsgPublishDeltaCommand(cmd *cobra.Command, args []string) error {
 	channelName := args[0]
 
-	// Get old value from flag or file
-	var oldValue []byte
-	var err error
-
-	switch {
-	case msgOldFile != "":
-		oldValue, err = os.ReadFile(msgOldFile)
-		if err != nil {
-			return errors.Wrapf(err, errors.ErrInvalidInput, "msg.publish-delta", "failed to read old state file")
-		}
-	case msgOld != "":
-		oldValue = []byte(msgOld)
-	default:
-		return errors.Newf(errors.ErrInvalidInput, "msg.publish-delta", "either --old or --old-file must be specified")
-	}
-
-	// Get new value from flag or file
-	var newValue []byte
-
-	switch {
-	case msgNewFile != "":
-		newValue, err = os.ReadFile(msgNewFile)
-		if err != nil {
-			return errors.Wrapf(err, errors.ErrInvalidInput, "msg.publish-delta", "failed to read new state file")
-		}
-	case msgNew != "":
-		newValue = []byte(msgNew)
-	default:
-		return errors.Newf(errors.ErrInvalidInput, "msg.publish-delta", "either --new or --new-file must be specified")
-	}
-
-	client, err := messagingClientFactory()
+	oldState, err := readMsgDeltaState(msgOld, msgOldFile, "old")
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	newState, err := readMsgDeltaState(msgNew, msgNewFile, "new")
+	if err != nil {
+		return err
+	}
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
-	defer cancel()
-
-	// Build metadata from entity info
 	metadata := make(map[string]string)
 	if msgEntityID != "" {
 		metadata["entity_id"] = msgEntityID
@@ -848,204 +650,157 @@ func runMsgPublishDeltaCommand(cmd *cobra.Command, args []string) error {
 		metadata["entity_type"] = msgEntityType
 	}
 
-	req := &grpc.MessagingPublishDeltaRequest{
-		Channel:  channelName,
-		OldValue: oldValue,
-		NewValue: newValue,
-		DedupKey: msgDedupID,
-		Metadata: metadata,
+	client, err := messagingSDKClient()
+	if err != nil {
+		return err
 	}
 
-	resp, err := client.MessagingPublishDelta(ctx, req)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	defer cancel()
+
+	err = client.PublishDelta(ctx, &messaging.PublishDeltaRequest{
+		Channel:  channelName,
+		Old:      oldState,
+		New:      newState,
+		DedupKey: msgDedupID,
+		Metadata: metadata,
+	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatPublishDeltaResponse(resp, msgOutputFmt, os.Stdout)
+	return formatPublishResponse(&msgPublishResult{Channel: channelName, Published: true}, msgOutputFmt, cmd.OutOrStdout())
+}
+
+// readMsgDeltaState decodes one publish-delta state from its file flag or,
+// failing that, its inline flag. name is "old" or "new".
+func readMsgDeltaState(inline, file, name string) (interface{}, error) {
+	var data []byte
+	switch {
+	case file != "":
+		fileData, err := os.ReadFile(file)
+		if err != nil {
+			return nil, errors.Wrapf(err, errors.ErrInvalidInput, "msg.publish-delta", "failed to read "+name+" state file")
+		}
+		data = fileData
+	case inline != "":
+		data = []byte(inline)
+	default:
+		return nil, errors.Newf(errors.ErrInvalidInput, "msg.publish-delta", "either --%s or --%s-file must be specified", name, name)
+	}
+
+	// UseNumber keeps numbers as their literal text, so a large integer is
+	// forwarded as written rather than rounded through float64.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var state interface{}
+	if err := dec.Decode(&state); err != nil {
+		return nil, errors.Wrapf(err, errors.ErrInvalidInput, "msg.publish-delta", name+" state is not valid JSON")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.Newf(errors.ErrInvalidInput, "msg.publish-delta", "%s state has data after its JSON value", name)
+	}
+	return state, nil
 }
 
 // =============================================================================
-// Watch Command
+// watch
 // =============================================================================
 
-// newMsgWatchCommand creates the watch command.
 func newMsgWatchCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "watch <channel>",
-		Short: "Watch a channel in real-time and display messages as they arrive",
-		Long: `Watch a channel in real-time and display messages as they arrive.
+		Use:   "watch <key-prefix>",
+		Short: "Create a subscription on KV changes under a key prefix",
+		Long: `Create a subscription on KV changes under a key prefix and print it.
+
+The command registers the watch and exits; it does not stream messages.
+The REST and QUIC transports do not serve watch and return an error.
 
 Examples:
-  quicbaas msg watch orders
-  quicbaas msg watch orders --delta
-  quicbaas msg watch orders --filter "status=shipped"
-  quicbaas msg watch orders --output /var/log/orders.jsonl
-  quicbaas msg watch orders --raw`,
+  quicbaas msg watch orders/
+  quicbaas msg watch orders/ --delta`,
 		Args: cobra.ExactArgs(1),
 		RunE: runMsgWatchCommand,
 	}
 
 	cmd.Flags().BoolVar(&msgDelta, "delta", false, "Enable delta mode")
-	cmd.Flags().StringVar(&msgFilter, "filter", "", "Message filter expression")
-	cmd.Flags().StringVar(&msgFile, "output", "", "Output file (append mode)")
-	cmd.Flags().BoolVar(&msgTimestamps, "timestamps", true, "Show timestamps")
-	cmd.Flags().BoolVar(&msgRaw, "raw", false, "Output raw JSON without formatting")
 
 	return cmd
 }
 
-// runMsgWatchCommand executes the watch command.
 func runMsgWatchCommand(cmd *cobra.Command, args []string) error {
-	channelName := args[0]
-
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	// Open output file if specified
-	var outputWriter io.Writer = os.Stdout
-	if msgFile != "" {
-		file, fileErr := os.OpenFile(msgFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-		if fileErr != nil {
-			return errors.Wrapf(fileErr, errors.ErrInvalidInput, "msg.watch", "failed to open output file")
-		}
-		defer file.Close()
-		outputWriter = file
-	}
-
-	// Parse filter into subscription filter
-	var filter *grpc.MessagingSubscriptionFilter
-	if msgFilter != "" {
-		filter = &grpc.MessagingSubscriptionFilter{
-			KeyPrefix: msgFilter,
-		}
-	}
-
-	// Create subscription
-	subReq := &grpc.MessagingSubscribeRequest{
-		Channel:   channelName,
-		Filter:    filter,
+	sub, err := client.WatchChannel(ctx, &messaging.WatchChannelRequest{
+		KeyPrefix: args[0],
 		DeltaMode: msgDelta,
-	}
-
-	subResp, err := client.MessagingSubscribe(ctx, subReq)
+	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	modeStr := ""
-	if msgDelta {
-		modeStr = " (delta mode)"
-	}
-	fmt.Printf("Watching channel: %s%s (Ctrl+C to exit)\n\n", channelName, modeStr)
-
-	// Setup signal handling for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start streaming notifications
-	streamReq := &grpc.MessagingStreamNotificationsRequest{
-		SubscriptionID: subResp.Subscription.ID,
-	}
-
-	notifChan, errChan, streamErr := client.MessagingStreamNotifications(ctx, streamReq)
-	if streamErr != nil {
-		return formatError(streamErr)
-	}
-
-	// Stream messages until cancelled
-	for {
-		select {
-		case <-sigChan:
-			fmt.Println("\nStopping watch...")
-			unsubReq := &grpc.MessagingUnsubscribeRequest{
-				SubscriptionID: subResp.Subscription.ID,
-			}
-			unsubCtx, unsubCancel := stdcontext.WithTimeout(stdcontext.Background(), 5*time.Second)
-			_, unsubErr := client.MessagingUnsubscribe(unsubCtx, unsubReq)
-			unsubCancel()
-			if unsubErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to unsubscribe: %v\n", unsubErr)
-			}
-			return nil
-
-		case notif, ok := <-notifChan:
-			if !ok {
-				return nil
-			}
-			formatWatchNotification(notif, outputWriter, msgTimestamps, msgRaw)
-
-		case watchErr, ok := <-errChan:
-			if !ok {
-				return nil
-			}
-			return formatError(watchErr)
-		}
-	}
+	return formatSubscriptionResponse(sub, msgOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
-// Dedup Stats Command
+// dedup-stats
 // =============================================================================
 
-// newMsgDedupStatsCommand creates the dedup-stats command.
 func newMsgDedupStatsCommand() *cobra.Command {
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "dedup-stats <channel>",
 		Short: "Show deduplication statistics for a channel",
 		Long: `Show deduplication statistics for a channel.
 
 Examples:
   quicbaas msg dedup-stats orders
-  quicbaas msg dedup-stats orders --format json
-  quicbaas msg dedup-stats orders --window 1h
-  quicbaas msg dedup-stats orders --reset`,
+  quicbaas msg dedup-stats orders --output json`,
 		Args: cobra.ExactArgs(1),
 		RunE: runMsgDedupStatsCommand,
 	}
-
-	cmd.Flags().BoolVar(&msgReset, "reset", false, "Reset statistics after display")
-	cmd.Flags().StringVar(&msgWindow, "window", "", "Show stats for specific time window")
-
-	return cmd
 }
 
-// runMsgDedupStatsCommand executes the dedup-stats command.
 func runMsgDedupStatsCommand(cmd *cobra.Command, args []string) error {
 	channelName := args[0]
 
-	client, err := messagingClientFactory()
+	client, err := messagingSDKClient()
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), globalTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	req := &grpc.MessagingGetDedupStatsRequest{
-		Channel: channelName,
-	}
-
-	resp, err := client.MessagingGetDedupStats(ctx, req)
+	stats, err := client.GetDedupStats(ctx, channelName)
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatDedupStatsResponse(resp, msgOutputFmt, os.Stdout)
+	return formatDedupStatsResponse(channelName, stats, msgOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
-// Formatting Functions
+// Helpers and formatters
 // =============================================================================
 
-// formatChannelResponse formats a channel for output.
-func formatChannelResponse(channel *grpc.MessagingChannel, format string, w io.Writer) error {
+// confirmMsgAction prints prompt and reads a y/N answer from the command input.
+func confirmMsgAction(cmd *cobra.Command, prompt, op string) (bool, error) {
+	fmt.Fprint(cmd.OutOrStdout(), prompt)
+	var answer string
+	if _, err := fmt.Fscanln(cmd.InOrStdin(), &answer); err != nil {
+		return false, errors.Wrapf(err, errors.ErrInvalidInput, op, "failed to read confirmation")
+	}
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
+}
+
+// writeMsgOutput encodes v as JSON or YAML, or calls table for table output.
+func writeMsgOutput(w io.Writer, format string, v interface{}, table func(io.Writer) error) error {
 	outputFormat, err := cli.ParseOutputFormat(format)
 	if err != nil {
 		return err
@@ -1055,506 +810,139 @@ func formatChannelResponse(channel *grpc.MessagingChannel, format string, w io.W
 	case cli.OutputFormatJSON:
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(channel)
-
+		return encoder.Encode(v)
 	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(channel)
+		return yaml.NewEncoder(w).Encode(v)
+	default:
+		return table(w)
+	}
+}
 
-	case cli.OutputFormatTable:
+// formatMsgTTL renders a channel TTL, spelling out that zero means no expiry.
+func formatMsgTTL(ttl time.Duration) string {
+	if ttl <= 0 {
+		return "0s (no expiry)"
+	}
+	return ttl.String()
+}
+
+// dedupRate returns duplicates as a percentage of checks.
+func dedupRate(stats *messaging.DedupStats) float64 {
+	if stats.TotalChecks == 0 {
+		return 0
+	}
+	return float64(stats.DuplicatesDetected) / float64(stats.TotalChecks) * 100
+}
+
+func formatChannelResponse(channel *messaging.Channel, format string, w io.Writer) error {
+	return writeMsgOutput(w, format, channel, func(w io.Writer) error {
 		fmt.Fprintln(w, "Channel created successfully.")
 		fmt.Fprintln(w)
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "Name:\t%s\n", channel.Name)
 		fmt.Fprintf(tw, "Buffer Size:\t%d\n", channel.BufferSize)
 		fmt.Fprintf(tw, "Persistent:\t%v\n", channel.Persistent)
-		if channel.TTLSeconds > 0 {
-			fmt.Fprintf(tw, "TTL:\t%s\n", time.Duration(channel.TTLSeconds)*time.Second)
-		} else {
-			fmt.Fprintf(tw, "TTL:\t0s (no expiry)\n")
-		}
+		fmt.Fprintf(tw, "TTL:\t%s\n", formatMsgTTL(channel.TTL))
 		fmt.Fprintf(tw, "Created:\t%s\n", channel.CreatedAt.Format(time.RFC3339))
 		return tw.Flush()
-
-	default:
-		fmt.Fprintf(w, "Channel created: %s\n", channel.Name)
-		return nil
-	}
+	})
 }
 
-// formatDeleteChannelResponse formats a delete channel response for output.
-func formatDeleteChannelResponse(resp *grpc.MessagingDeleteChannelResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
+func formatChannelListResponse(resp *messaging.ListChannelsResponse, format string, w io.Writer) error {
+	return writeMsgOutput(w, format, resp, func(w io.Writer) error {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Channel:\t%s\n", resp.Name)
-		fmt.Fprintf(tw, "Deleted:\t%v\n", resp.Deleted)
-		return tw.Flush()
-
-	default:
-		if resp.Deleted {
-			fmt.Fprintf(w, "Channel '%s' deleted successfully\n", resp.Name)
-		} else {
-			fmt.Fprintf(w, "Channel '%s' was not deleted\n", resp.Name)
-		}
-		return nil
-	}
-}
-
-// formatChannelListResponse formats a channel list for output.
-func formatChannelListResponse(resp *grpc.MessagingListChannelsResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "NAME\tSUBSCRIBERS\tPERSISTENT\tCREATED\n")
+		fmt.Fprintln(tw, "NAME\tSUBSCRIBERS\tPERSISTENT\tCREATED")
 		for _, ch := range resp.Channels {
-			fmt.Fprintf(tw, "%s\t%d\t%v\t%s\n",
-				ch.Name, ch.Subscribers, ch.Persistent, ch.CreatedAt.Format(time.RFC3339))
+			fmt.Fprintf(tw, "%s\t%d\t%v\t%s\n", ch.Name, ch.Subscribers, ch.Persistent, ch.CreatedAt.Format(time.RFC3339))
 		}
-		fmt.Fprintf(tw, "\nTotal: %d channels\n", resp.TotalCount)
-		if resp.HasMore {
-			fmt.Fprintf(tw, "More results available. Use --offset %s\n", resp.NextCursor)
+		if err := tw.Flush(); err != nil {
+			return err
 		}
-		return tw.Flush()
-
-	default:
-		for _, ch := range resp.Channels {
-			fmt.Fprintf(w, "%s (%d subscribers)\n", ch.Name, ch.Subscribers)
-		}
-		return nil
-	}
-}
-
-// formatChannelInfoResponse formats channel info with stats for output.
-func formatChannelInfoResponse(
-	channelResp *grpc.MessagingGetChannelResponse,
-	statsResp *grpc.MessagingGetChannelStatsResponse,
-	statsErr error,
-	dedupResp *grpc.MessagingGetDedupStatsResponse,
-	dedupErr error,
-	format string,
-	w io.Writer,
-) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	// Build combined response for JSON/YAML
-	type combinedResponse struct {
-		Channel *grpc.MessagingChannel      `json:"channel" yaml:"channel"`
-		Stats   *grpc.MessagingChannelStats `json:"stats,omitempty" yaml:"stats,omitempty"`
-		Dedup   *grpc.MessagingDedupStats   `json:"dedup,omitempty" yaml:"dedup,omitempty"`
-	}
-
-	combined := combinedResponse{
-		Channel: channelResp.Channel,
-	}
-	if statsErr == nil && statsResp != nil {
-		combined.Stats = statsResp.Stats
-	}
-	if dedupErr == nil && dedupResp != nil {
-		combined.Dedup = dedupResp.Stats
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(combined)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(combined)
-
-	case cli.OutputFormatTable:
-		ch := channelResp.Channel
-		fmt.Fprintf(w, "Channel: %s\n", ch.Name)
-		fmt.Fprintln(w, strings.Repeat("=", len("Channel: ")+len(ch.Name)))
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Name:\t%s\n", ch.Name)
-		fmt.Fprintf(tw, "Buffer Size:\t%d\n", ch.BufferSize)
-		fmt.Fprintf(tw, "Persistent:\t%v\n", ch.Persistent)
-		if ch.TTLSeconds > 0 {
-			fmt.Fprintf(tw, "TTL:\t%s\n", time.Duration(ch.TTLSeconds)*time.Second)
-		} else {
-			fmt.Fprintf(tw, "TTL:\t0s (no expiry)\n")
-		}
-		fmt.Fprintf(tw, "Created:\t%s\n", ch.CreatedAt.Format(time.RFC3339))
-		if flushErr := tw.Flush(); flushErr != nil {
-			return flushErr
-		}
-
-		// Statistics section
-		if statsErr == nil && statsResp != nil && statsResp.Stats != nil {
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, "Statistics")
-			fmt.Fprintln(w, "----------")
-			tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(tw, "Active Subscribers:\t%d\n", statsResp.Stats.Subscribers)
-			fmt.Fprintf(tw, "Messages Published:\t%d\n", statsResp.Stats.MessagesPublished)
-			fmt.Fprintf(tw, "Messages In History:\t%d\n", statsResp.Stats.MessagesInHistory)
-			if flushErr := tw.Flush(); flushErr != nil {
-				return flushErr
-			}
-		}
-
-		// Deduplication section
-		if dedupErr == nil && dedupResp != nil && dedupResp.Stats != nil {
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, "Deduplication")
-			fmt.Fprintln(w, "-------------")
-			tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(tw, "Total Messages:\t%d\n", dedupResp.Stats.TotalMessages)
-			fmt.Fprintf(tw, "Total Duplicates:\t%d\n", dedupResp.Stats.TotalDuplicates)
-			if dedupResp.Stats.TotalMessages > 0 {
-				rate := float64(dedupResp.Stats.TotalDuplicates) / float64(dedupResp.Stats.TotalMessages) * 100
-				fmt.Fprintf(tw, "Duplicate Rate:\t%.1f%%\n", rate)
-			}
-			if flushErr := tw.Flush(); flushErr != nil {
-				return flushErr
-			}
-		}
-
-		return nil
-
-	default:
-		fmt.Fprintf(w, "Channel: %s\n", channelResp.Channel.Name)
-		return nil
-	}
-}
-
-// formatUnsubscribeResponse formats an unsubscribe response for output.
-func formatUnsubscribeResponse(resp *grpc.MessagingUnsubscribeResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Subscription ID:\t%s\n", resp.SubscriptionID)
-		fmt.Fprintf(tw, "Unsubscribed:\t%v\n", resp.Unsubscribed)
-		return tw.Flush()
-
-	default:
-		if resp.Unsubscribed {
-			fmt.Fprintf(w, "Unsubscribed from '%s' successfully\n", resp.SubscriptionID)
-		} else {
-			fmt.Fprintf(w, "Failed to unsubscribe from '%s'\n", resp.SubscriptionID)
-		}
-		return nil
-	}
-}
-
-// formatSubscriptionListFromStats formats subscription list from channel stats.
-func formatSubscriptionListFromStats(resp *grpc.MessagingGetChannelStatsResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "CHANNEL\tSUBSCRIBERS\n")
-		fmt.Fprintf(tw, "%s\t%d\n", resp.Stats.Name, resp.Stats.Subscribers)
-		return tw.Flush()
-
-	default:
-		fmt.Fprintf(w, "%s: %d subscribers\n", resp.Stats.Name, resp.Stats.Subscribers)
-		return nil
-	}
-}
-
-// formatSubscriptionListFromChannels formats subscription list from channel list.
-func formatSubscriptionListFromChannels(resp *grpc.MessagingListChannelsResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "CHANNEL\tSUBSCRIBERS\n")
-		for _, ch := range resp.Channels {
-			fmt.Fprintf(tw, "%s\t%d\n", ch.Name, ch.Subscribers)
-		}
-		return tw.Flush()
-
-	default:
-		for _, ch := range resp.Channels {
-			fmt.Fprintf(w, "%s: %d subscribers\n", ch.Name, ch.Subscribers)
-		}
-		return nil
-	}
-}
-
-// formatPublishResponse formats a publish response for output.
-func formatPublishResponse(resp *grpc.MessagingPublishResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		fmt.Fprintln(w, "Message published successfully.")
 		fmt.Fprintln(w)
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Channel:\t%s\n", resp.Channel)
-		fmt.Fprintf(tw, "Message ID:\t%s\n", resp.MessageID)
-		fmt.Fprintf(tw, "Timestamp:\t%s\n", resp.Timestamp.Format(time.RFC3339))
-		if resp.IsDuplicate {
-			fmt.Fprintf(tw, "Duplicate:\tyes\n")
-		}
-		return tw.Flush()
-
-	default:
-		fmt.Fprintf(w, "Published message %s to channel %s\n", resp.MessageID, resp.Channel)
-		return nil
-	}
+		_, err := fmt.Fprintf(w, "Total: %d channels\n", len(resp.Channels))
+		return err
+	})
 }
 
-// formatPublishDeltaResponse formats a publish delta response for output.
-func formatPublishDeltaResponse(resp *grpc.MessagingPublishDeltaResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		fmt.Fprintln(w, "Delta published successfully.")
-		fmt.Fprintln(w)
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Channel:\t%s\n", resp.Channel)
-		fmt.Fprintf(tw, "Message ID:\t%s\n", resp.MessageID)
-		if resp.Delta != nil {
-			fmt.Fprintf(tw, "Entity ID:\t%s\n", resp.Delta.EntityID)
-			fmt.Fprintf(tw, "Entity Type:\t%s\n", resp.Delta.EntityType)
-			fmt.Fprintf(tw, "Version:\t%d\n", resp.Delta.Version)
-			fmt.Fprintf(tw, "Changes:\t%d\n", len(resp.Delta.Changes))
-		}
-		fmt.Fprintf(tw, "Timestamp:\t%s\n", resp.Timestamp.Format(time.RFC3339))
-		if flushErr := tw.Flush(); flushErr != nil {
-			return flushErr
-		}
-
-		// Print field changes
-		if resp.Delta != nil && len(resp.Delta.Changes) > 0 {
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, "Field Changes:")
-			for _, change := range resp.Delta.Changes {
-				oldVal := "(none)"
-				if len(change.OldValue) > 0 {
-					oldVal = string(change.OldValue)
-				}
-				newVal := "(none)"
-				if len(change.Value) > 0 {
-					newVal = string(change.Value)
-				}
-				fmt.Fprintf(w, "  - %s: %s -> %s\n", change.Path, oldVal, newVal)
-			}
-		}
-
-		return nil
-
-	default:
-		fmt.Fprintf(w, "Published delta %s to channel %s\n", resp.MessageID, resp.Channel)
-		return nil
-	}
-}
-
-// formatDedupStatsResponse formats dedup stats for output.
-func formatDedupStatsResponse(resp *grpc.MessagingGetDedupStatsResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatYAML:
-		encoder := yaml.NewEncoder(w)
-		return encoder.Encode(resp)
-
-	case cli.OutputFormatTable:
-		stats := resp.Stats
-		fmt.Fprintf(w, "Deduplication Statistics: %s\n", stats.Channel)
-		fmt.Fprintln(w, strings.Repeat("=", len("Deduplication Statistics: ")+len(stats.Channel)))
+func formatChannelInfoResponse(info *msgChannelInfo, format string, w io.Writer) error {
+	return writeMsgOutput(w, format, info, func(w io.Writer) error {
+		header := "Channel: " + info.Channel.Name
+		fmt.Fprintln(w, header)
+		fmt.Fprintln(w, strings.Repeat("=", len(header)))
 		fmt.Fprintln(w)
 
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "Total Messages:\t%d\n", stats.TotalMessages)
-		uniqueMessages := stats.TotalMessages - stats.TotalDuplicates
-		fmt.Fprintf(tw, "Unique Messages:\t%d\n", uniqueMessages)
-		fmt.Fprintf(tw, "Duplicates:\t%d", stats.TotalDuplicates)
-		if stats.TotalMessages > 0 {
-			rate := float64(stats.TotalDuplicates) / float64(stats.TotalMessages) * 100
-			fmt.Fprintf(tw, " (%.1f%%)", rate)
-		}
+		fmt.Fprintf(tw, "Codec:\t%s\n", info.Channel.Codec)
+		fmt.Fprintf(tw, "Buffer Size:\t%d\n", info.Channel.BufferSize)
+		fmt.Fprintf(tw, "Max History:\t%d\n", info.Channel.MaxHistory)
+		fmt.Fprintf(tw, "Persistent:\t%v\n", info.Channel.Persistent)
+		fmt.Fprintf(tw, "TTL:\t%s\n", formatMsgTTL(info.Channel.TTL))
+		fmt.Fprintf(tw, "Created:\t%s\n", info.Channel.CreatedAt.Format(time.RFC3339))
 		fmt.Fprintln(tw)
-		if flushErr := tw.Flush(); flushErr != nil {
-			return flushErr
-		}
-
-		// Print top duplicates if available
-		if len(stats.TopDuplicates) > 0 {
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, "Top Duplicate Keys")
-			fmt.Fprintln(w, "------------------")
-			tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(tw, "KEY\tCOUNT\tLAST SEEN\n")
-			for _, dup := range stats.TopDuplicates {
-				key := dup.MessageID
-				if len(key) > 40 {
-					key = key[:37] + "..."
-				}
-				fmt.Fprintf(tw, "%s\t%d\t%s\n", key, dup.Count, dup.LastSeen.Format(time.RFC3339))
-			}
-			if flushErr := tw.Flush(); flushErr != nil {
-				return flushErr
-			}
-		}
-
-		return nil
-
-	default:
-		fmt.Fprintf(w, "%s: %d messages, %d duplicates\n",
-			resp.Stats.Channel, resp.Stats.TotalMessages, resp.Stats.TotalDuplicates)
-		return nil
-	}
+		fmt.Fprintln(tw, "Statistics")
+		fmt.Fprintf(tw, "  Active Subscribers:\t%d\n", info.Stats.Subscribers)
+		fmt.Fprintf(tw, "  Messages Published:\t%d\n", info.Stats.MessagesPublished)
+		fmt.Fprintf(tw, "  Messages In History:\t%d\n", info.Stats.MessagesInHistory)
+		fmt.Fprintln(tw)
+		fmt.Fprintln(tw, "Deduplication")
+		fmt.Fprintf(tw, "  Total Checks:\t%d\n", info.Dedup.TotalChecks)
+		fmt.Fprintf(tw, "  Duplicates Detected:\t%d\n", info.Dedup.DuplicatesDetected)
+		fmt.Fprintf(tw, "  Duplicate Rate:\t%.2f%%\n", dedupRate(info.Dedup))
+		return tw.Flush()
+	})
 }
 
-// formatNotification formats a notification for subscribe output.
-func formatNotification(notif *grpc.MessagingNotification, w io.Writer) {
-	if notif == nil || notif.Message == nil {
-		return
-	}
-
-	msg := notif.Message
-	timestamp := msg.Timestamp.Format(time.RFC3339)
-	payload := string(msg.Payload)
-
-	fmt.Fprintf(w, "[%s] %s\n", timestamp, payload)
+func formatSubscriptionResponse(sub *messaging.Subscription, format string, w io.Writer) error {
+	return writeMsgOutput(w, format, sub, func(w io.Writer) error {
+		fmt.Fprintln(w, "Subscription created successfully.")
+		fmt.Fprintln(w)
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "Subscription ID:\t%s\n", sub.ID)
+		if sub.Channel != "" {
+			fmt.Fprintf(tw, "Channel:\t%s\n", sub.Channel)
+		}
+		if sub.ClientID != "" {
+			fmt.Fprintf(tw, "Client ID:\t%s\n", sub.ClientID)
+		}
+		if sub.Filters != nil && sub.Filters.KeyPrefix != "" {
+			fmt.Fprintf(tw, "Key Prefix:\t%s\n", sub.Filters.KeyPrefix)
+		}
+		fmt.Fprintf(tw, "Created:\t%s\n", sub.CreatedAt.Format(time.RFC3339))
+		return tw.Flush()
+	})
 }
 
-// formatWatchNotification formats a notification for watch output.
-func formatWatchNotification(notif *grpc.MessagingNotification, w io.Writer, showTimestamps bool, raw bool) {
-	if notif == nil || notif.Message == nil {
-		return
-	}
-
-	msg := notif.Message
-
-	if raw {
-		// Raw JSON output
-		data, marshalErr := json.Marshal(msg)
-		if marshalErr != nil {
-			fmt.Fprintf(w, "Error: %v\n", marshalErr)
-			return
+func formatSubscriptionList(rows []msgChannelSubscribers, format string, w io.Writer) error {
+	return writeMsgOutput(w, format, rows, func(w io.Writer) error {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "CHANNEL\tSUBSCRIBERS")
+		for _, row := range rows {
+			fmt.Fprintf(tw, "%s\t%d\n", row.Channel, row.Subscribers)
 		}
-		fmt.Fprintln(w, string(data))
-		return
-	}
+		return tw.Flush()
+	})
+}
 
-	// Formatted output
-	if showTimestamps {
-		fmt.Fprintf(w, "[%s] ", msg.Timestamp.Format(time.RFC3339))
-	}
+func formatPublishResponse(result *msgPublishResult, format string, w io.Writer) error {
+	return writeMsgOutput(w, format, result, func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "Message published to channel '%s'.\n", result.Channel)
+		return err
+	})
+}
 
-	// Try to pretty-print JSON payload
-	var prettyPayload interface{}
-	if jsonErr := json.Unmarshal(msg.Payload, &prettyPayload); jsonErr == nil {
-		// Successfully parsed as JSON, pretty print
-		prettyBytes, prettyErr := json.MarshalIndent(prettyPayload, "  ", "  ")
-		if prettyErr == nil {
-			fmt.Fprintln(w, "Message received")
-			fmt.Fprintf(w, "  %s\n", string(prettyBytes))
-			return
-		}
-	}
+func formatDedupStatsResponse(channelName string, stats *messaging.DedupStats, format string, w io.Writer) error {
+	return writeMsgOutput(w, format, stats, func(w io.Writer) error {
+		header := "Deduplication Statistics: " + channelName
+		fmt.Fprintln(w, header)
+		fmt.Fprintln(w, strings.Repeat("=", len(header)))
+		fmt.Fprintln(w)
 
-	// Fallback to raw payload
-	fmt.Fprintf(w, "%s\n", string(msg.Payload))
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "Total Checks:\t%d\n", stats.TotalChecks)
+		fmt.Fprintf(tw, "Unique Messages:\t%d\n", stats.UniqueMessages)
+		fmt.Fprintf(tw, "Duplicates Detected:\t%d (%.2f%%)\n", stats.DuplicatesDetected, dedupRate(stats))
+		fmt.Fprintf(tw, "Cache Size:\t%d\n", stats.CacheSize)
+		fmt.Fprintf(tw, "Window:\t%s\n", stats.WindowDuration)
+		return tw.Flush()
+	})
 }

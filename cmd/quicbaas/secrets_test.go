@@ -2302,28 +2302,6 @@ func TestFormatSecretsRotateResponse_AllFormats(t *testing.T) {
 }
 
 // =============================================================================
-// Msg Command Tests
-// =============================================================================
-
-func TestMsgDeleteChannel_FactoryErrorCoverage(t *testing.T) {
-	// Save and restore factory
-	origFactory := messagingClientFactory
-	defer func() { messagingClientFactory = origFactory }()
-
-	messagingClientFactory = func() (MessagingClient, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	// The delete-channel command uses --force, not --yes
-	cmd := newMsgDeleteChannelCommand()
-	cmd.SetArgs([]string{"test-channel", "--force"})
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection failed")
-}
-
-// =============================================================================
 // IAM Stub Tests
 // =============================================================================
 
@@ -3471,22 +3449,6 @@ func TestRootCmd_ErrorWithoutSubcommand(t *testing.T) {
 	err := rootCmd.RunE(rootCmd, []string{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no command specified")
-}
-
-// =============================================================================
-// Messaging Format Functions Tests
-// =============================================================================
-
-func TestFormatNotification_NilSafe(t *testing.T) {
-	var buf bytes.Buffer
-	formatNotification(nil, &buf)
-	assert.Empty(t, buf.String())
-}
-
-func TestFormatWatchNotification_NilSafe(t *testing.T) {
-	var buf bytes.Buffer
-	formatWatchNotification(nil, &buf, true, false)
-	assert.Empty(t, buf.String())
 }
 
 // =============================================================================

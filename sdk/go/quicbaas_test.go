@@ -1315,12 +1315,6 @@ func (m *mockOllamaClientForCoverage) Health(ctx context.Context, req *ollama.He
 func (m *mockOllamaClientForCoverage) IsAvailable() bool {
 	return true
 }
-func (m *mockOllamaClientForCoverage) DefaultModel() string {
-	return "nomic-embed-text"
-}
-func (m *mockOllamaClientForCoverage) BaseURL() string {
-	return "http://localhost:11434"
-}
 
 // =============================================================================
 // Test: Extended Client Accessors - Write Lock Path (nil to initialized)

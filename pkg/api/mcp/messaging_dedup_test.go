@@ -104,6 +104,12 @@ func TestHandleMsgDedupStats_ChannelFigures(t *testing.T) {
 	assert.Equal(t, "orders", stats["channel"])
 	assert.Equal(t, int64(1), stats["total_messages"])
 	assert.Equal(t, int64(2), stats["total_duplicates"])
+
+	// The push service's own not-found error is the typed one, not the
+	// sentinel; it must still reach MCP clients as NotFound.
+	_, err = reg.handleMsgDedupStats(ctx, ps, map[string]interface{}{"channel": "missing"})
+	require.Error(t, err)
+	assert.Equal(t, mcptransport.MCPResourceNotFound, toolErrorCode(err))
 }
 
 // TestMsgDedupStatsPermission pins that the dedup tool requires the same

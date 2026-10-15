@@ -19,6 +19,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -86,6 +87,29 @@ func TestGetResultFloat64AndTime(t *testing.T) {
 	}
 	if !getResultTime(map[string]interface{}{"k": true}, "k").IsZero() {
 		t.Error("bool should yield zero time")
+	}
+}
+
+func TestResultFloat32Matrix(t *testing.T) {
+	m := map[string]interface{}{
+		"rows":  []interface{}{[]interface{}{0.5, 1.0}, "not a vector", []interface{}{}},
+		"typed": [][]float32{{0.25}},
+	}
+	want := [][]float32{{0.5, 1.0}, nil, {}}
+	if got := resultFloat32Matrix(m, "rows"); !reflect.DeepEqual(got, want) {
+		t.Errorf("rows = %v, want %v", got, want)
+	}
+	if got := resultFloat32Matrix(m, "typed"); !reflect.DeepEqual(got, [][]float32{{0.25}}) {
+		t.Errorf("typed = %v", got)
+	}
+}
+
+func TestResultFloat32Matrix_BadInput(t *testing.T) {
+	m := map[string]interface{}{"scalar": 1.0, "flat": []float32{1}}
+	for _, key := range []string{"missing", "scalar", "flat"} {
+		if got := resultFloat32Matrix(m, key); got != nil {
+			t.Errorf("%s = %v, want nil", key, got)
+		}
 	}
 }
 

@@ -178,6 +178,164 @@ func TestOllamaMCP_IsAvailable_ToolError(t *testing.T) {
 	}
 }
 
+// TestOllamaMCP_Health drives Health through the SDK client to the
+// quicbaas_ollama_health tool and asserts every field the tool returns
+// arrives.
+func TestOllamaMCP_Health(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool:   "quicbaas_ollama_health",
+		assertArgs: assertNoOllamaArgs,
+		result: map[string]interface{}{
+			"available": false, "version": "0.5.1", "base_url": "http://ollama.example:11434",
+			"last_checked": ollamaStamp, "error": "model not loaded",
+		},
+	})
+	defer cleanup()
+
+	got, err := ollamaclient.NewClient(tr).Health(context.Background(), &ollamaclient.HealthRequest{})
+	if err != nil {
+		t.Fatalf("Health: %v", err)
+	}
+	want := &ollamaclient.HealthResponse{
+		Available:   false,
+		Version:     "0.5.1",
+		BaseURL:     "http://ollama.example:11434",
+		Error:       "model not loaded",
+		LastChecked: ollamaWhen,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("health = %+v, want %+v", got, want)
+	}
+}
+
+// TestOllamaMCP_Health_ToolError checks a failing health tool surfaces as
+// an error, not as a zero-valued health response.
+func TestOllamaMCP_Health_ToolError(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool:  "quicbaas_ollama_health",
+		result:    map[string]interface{}{"error": "connection refused"},
+		toolError: true,
+	})
+	defer cleanup()
+
+	if _, err := ollamaclient.NewClient(tr).Health(context.Background(), &ollamaclient.HealthRequest{}); err == nil {
+		t.Error("Health returned no error for a failing tool")
+	}
+}
+
+// TestOllamaMCP_Embed drives Embed through the SDK client to the
+// quicbaas_ollama_embed tool and asserts the argument and every field.
+func TestOllamaMCP_Embed(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_ollama_embed",
+		assertArgs: func(t *testing.T, args map[string]interface{}) {
+			want := map[string]interface{}{"text": "hello"}
+			if !reflect.DeepEqual(args, want) {
+				t.Errorf("tool arguments = %v, want %v", args, want)
+			}
+		},
+		result: map[string]interface{}{
+			"embedding":       []interface{}{0.25, -0.5, 1.5},
+			"model":           "nomic-embed-text",
+			"dimensions":      3,
+			"processing_time": "125ms",
+		},
+	})
+	defer cleanup()
+
+	got, err := ollamaclient.NewClient(tr).Embed(context.Background(), &ollamaclient.EmbedRequest{Text: "hello"})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	want := &ollamaclient.EmbedResponse{
+		Embedding:      []float32{0.25, -0.5, 1.5},
+		Model:          "nomic-embed-text",
+		Dimensions:     3,
+		ProcessingTime: 125 * time.Millisecond,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("embed = %+v, want %+v", got, want)
+	}
+}
+
+// TestOllamaMCP_Embed_BadRequest checks a request of the wrong type is
+// refused before it reaches the tool.
+func TestOllamaMCP_Embed_BadRequest(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_ollama_embed",
+		assertArgs: func(t *testing.T, _ map[string]interface{}) {
+			t.Error("a refused request must not reach the tool")
+		},
+	})
+	defer cleanup()
+
+	_, err := tr.Request(context.Background(), ollamaServiceName, "Embed", &ollamaclient.EmbedBatchRequest{})
+	if !sdkerrors.IsInvalidInput(err) {
+		t.Errorf("err = %v, want InvalidInput", err)
+	}
+}
+
+// TestOllamaMCP_EmbedBatch drives EmbedBatch through the SDK client to the
+// quicbaas_ollama_embed_batch tool and asserts the JSON-encoded texts
+// argument and every field.
+func TestOllamaMCP_EmbedBatch(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_ollama_embed_batch",
+		assertArgs: func(t *testing.T, args map[string]interface{}) {
+			want := map[string]interface{}{"texts": `["first","second"]`, "model": "mxbai-embed-large"}
+			if !reflect.DeepEqual(args, want) {
+				t.Errorf("tool arguments = %v, want %v", args, want)
+			}
+		},
+		result: map[string]interface{}{
+			"embeddings": []interface{}{
+				[]interface{}{0.25, -0.5},
+				[]interface{}{1.5, 2},
+			},
+			"model":           "mxbai-embed-large",
+			"dimensions":      2,
+			"count":           2,
+			"processing_time": "1.5s",
+		},
+	})
+	defer cleanup()
+
+	got, err := ollamaclient.NewClient(tr).EmbedBatch(context.Background(), &ollamaclient.EmbedBatchRequest{
+		Texts: []string{"first", "second"},
+		Model: "mxbai-embed-large",
+	})
+	if err != nil {
+		t.Fatalf("EmbedBatch: %v", err)
+	}
+	want := &ollamaclient.EmbedBatchResponse{
+		Embeddings:     [][]float32{{0.25, -0.5}, {1.5, 2}},
+		Model:          "mxbai-embed-large",
+		Dimensions:     2,
+		Count:          2,
+		ProcessingTime: 1500 * time.Millisecond,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("embed batch = %+v, want %+v", got, want)
+	}
+}
+
+// TestOllamaMCP_EmbedBatch_BadRequest checks a request of the wrong type is
+// refused before it reaches the tool.
+func TestOllamaMCP_EmbedBatch_BadRequest(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_ollama_embed_batch",
+		assertArgs: func(t *testing.T, _ map[string]interface{}) {
+			t.Error("a refused request must not reach the tool")
+		},
+	})
+	defer cleanup()
+
+	_, err := tr.Request(context.Background(), ollamaServiceName, "EmbedBatch", &ollamaclient.EmbedRequest{})
+	if !sdkerrors.IsInvalidInput(err) {
+		t.Errorf("err = %v, want InvalidInput", err)
+	}
+}
+
 // TestOllamaMCP_ToolNames pins the method-to-tool map the contract test in
 // pkg/api/mcp checks against the server registry.
 func TestOllamaMCP_ToolNames(t *testing.T) {
@@ -185,6 +343,9 @@ func TestOllamaMCP_ToolNames(t *testing.T) {
 		"ListModels":   "quicbaas_ollama_model_list",
 		"GetModelInfo": "quicbaas_ollama_model_info",
 		"IsAvailable":  "quicbaas_ollama_health",
+		"Health":       "quicbaas_ollama_health",
+		"Embed":        "quicbaas_ollama_embed",
+		"EmbedBatch":   "quicbaas_ollama_embed_batch",
 	}
 	for method, tool := range want {
 		if got := ToolName(ollamaServiceName, method); got != tool {

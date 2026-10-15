@@ -12,12 +12,13 @@ server in `pkg/api/websocket` is not mounted on any listener, so there is
 nothing for a client verb to connect to. A CLI surface would be the second
 thing to build, not the first.
 
-The nearest working commands are in the messaging feature, which reaches the
-same channels over the mounted transports:
+The nearest working commands are in the messaging feature, which registers
+subscriptions on the same channels over the mounted transports. They do not
+stream messages to the terminal:
 
 ```bash
 quicbaas msg subscribe <channel>
-quicbaas msg watch <channel>
+quicbaas msg watch <key-prefix>
 ```
 
 See [`../messaging/cli.md`](../messaging/cli.md).

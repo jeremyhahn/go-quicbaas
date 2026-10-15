@@ -1805,7 +1805,7 @@ quicbaas msg create-channel orders \
 quicbaas msg subscribe orders \
   --transport quic \
   --address localhost:9444 \
-  --filter "status=shipped"
+  --filter "orders/eu/"
 ```
 
 #### Publish a message
@@ -1826,12 +1826,6 @@ quicbaas msg publish-delta orders \
   --address localhost:9444 \
   --old '{"status": "processing"}' \
   --new '{"status": "shipped", "tracking": "TRK123"}'
-```
-
-#### Get service statistics
-
-```bash
-quicbaas msg stats --transport quic --address localhost:9444
 ```
 
 #### Get dedup statistics
@@ -2420,10 +2414,10 @@ quicbaas msg create-channel orders --address /tmp/quicbaas.sock
 # Publish via Unix socket
 quicbaas msg publish orders --payload '{"order_id":"ord_001"}'
 
-# Watch a channel
-quicbaas msg watch orders
+# Watch KV changes under a key prefix
+quicbaas msg watch orders/
 
-# Get service stats
+# Get dedup stats
 quicbaas msg dedup-stats orders
 ```
 

@@ -268,7 +268,7 @@ func (h *embeddingHandler) transformGenerateEmbeddingResponse(resp interface{}) 
 	}
 
 	result := &embedding.GenerateEmbeddingResponse{
-		Embedding: h.extractFloat32Slice(data, "embedding"),
+		Embedding: resultFloat32Slice(data, "embedding"),
 		Timestamp: h.extractTime(data, "timestamp"),
 	}
 
@@ -474,7 +474,7 @@ func (h *embeddingHandler) parseBatchEmbeddingResult(raw interface{}) *embedding
 
 	result := &embedding.BatchEmbeddingResult{
 		ID:        getStringFromMap(m, "id"),
-		Embedding: h.extractFloat32Slice(m, "embedding"),
+		Embedding: resultFloat32Slice(m, "embedding"),
 		Error:     getStringFromMap(m, "error"),
 	}
 
@@ -520,35 +520,6 @@ func (h *embeddingHandler) parseProviderInfoFromMap(m map[string]interface{}) *e
 	}
 
 	return info
-}
-
-// extractFloat32Slice extracts a []float32 from a map field.
-func (h *embeddingHandler) extractFloat32Slice(m map[string]interface{}, key string) []float32 {
-	raw, ok := m[key]
-	if !ok {
-		return nil
-	}
-
-	switch v := raw.(type) {
-	case []interface{}:
-		result := make([]float32, 0, len(v))
-		for _, item := range v {
-			if f, ok := item.(float64); ok {
-				result = append(result, float32(f))
-			}
-		}
-		return result
-	case []float64:
-		result := make([]float32, len(v))
-		for i, f := range v {
-			result[i] = float32(f)
-		}
-		return result
-	case []float32:
-		return v
-	default:
-		return nil
-	}
 }
 
 // extractFloat64 extracts a float64 from a map field.

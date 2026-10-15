@@ -66,16 +66,10 @@
 //	    fmt.Printf("Ollama version: %s\n", health.Version)
 //	}
 //
-// # Client Information
+// # Availability
 //
 //	// Check if service is available
 //	if client.IsAvailable() {
 //	    // Service is ready
 //	}
-//
-//	// Get default model name
-//	model := client.DefaultModel()
-//
-//	// Get base URL
-//	url := client.BaseURL()
 package ollama

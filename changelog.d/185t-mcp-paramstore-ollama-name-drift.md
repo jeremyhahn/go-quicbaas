@@ -19,5 +19,5 @@
   - An unknown ParameterStore method is `Unimplemented`.
 - **The Ollama tools return no `Timestamp` and no `Modelfile`.** Those
   fields stay zero over MCP.
-- **The contract test no longer exempts these verbs.** `EmbedWithModel`,
-  `BaseURL` and `DefaultModel` stay listed.
+- **The contract test no longer exempts these verbs.** `EmbedWithModel`
+  stays listed.

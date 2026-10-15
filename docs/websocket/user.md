@@ -15,14 +15,15 @@ actually open, rather than only from a code search they have no reason to run.
 
 ## What to use instead
 
-For live channel data over a transport that is mounted:
+For channel subscriptions over a transport that is mounted (the CLI registers
+them; it does not stream messages):
 
 ```bash
-# Follow a channel.
-quicbaas msg watch orders
-
-# Register a subscription and stream to it.
+# Register a subscription on a channel.
 quicbaas msg subscribe orders
+
+# Register a watch on KV changes under a key prefix.
+quicbaas msg watch orders/
 ```
 
 See [`../messaging/user.md`](../messaging/user.md) for channels, delta
