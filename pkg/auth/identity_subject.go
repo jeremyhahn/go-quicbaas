@@ -14,6 +14,7 @@
 package auth
 
 import (
+	"strconv"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -39,22 +40,26 @@ import (
 
 // identityUserIDKey is the Identity.Metadata key of the mark. Its presence
 // says a quicbaas token authenticated the caller; its value is the token's
-// verified uid claim, empty when the token carried none. It is namespaced so
-// a metadata entry qrdb sets cannot collide with it.
+// verified uid claim in decimal, empty when the token carried none (qrdb's
+// Metadata holds strings only). It is namespaced so a metadata entry qrdb
+// sets cannot collide with it.
 const identityUserIDKey = "quicbaas.user_id"
 
 // MarkTokenSubject records on identity that its Subject is the sub of a token
-// quicbaas issued, and that userID (the token's verified uid claim, possibly
-// empty) names the caller's account. It returns identity for use in a return
+// quicbaas issued, and that userID (the token's verified uid claim, zero when it
+// carried none) names the caller's account. It returns identity for use in a return
 // statement; a nil identity is returned unchanged.
-func MarkTokenSubject(identity *qrdbsdk.Identity, userID string) *qrdbsdk.Identity {
+func MarkTokenSubject(identity *qrdbsdk.Identity, userID uint64) *qrdbsdk.Identity {
 	if identity == nil {
 		return nil
 	}
 	if identity.Metadata == nil {
 		identity.Metadata = make(map[string]string, 1)
 	}
-	identity.Metadata[identityUserIDKey] = userID
+	identity.Metadata[identityUserIDKey] = ""
+	if userID != 0 {
+		identity.Metadata[identityUserIDKey] = strconv.FormatUint(userID, 10)
+	}
 	return identity
 }
 
@@ -84,9 +89,13 @@ func SubjectFromIdentity(identity *qrdbsdk.Identity) interfaces.Subject {
 		Authenticated: true,
 		IDKind:        interfaces.SubjectIDUsername,
 	}
-	if userID, fromToken := identity.Metadata[identityUserIDKey]; fromToken {
+	if mark, fromToken := identity.Metadata[identityUserIDKey]; fromToken {
 		subject.IDKind = SubjectIDKindOf(identity.Subject)
-		subject.UserID = userID
+		// Only MarkTokenSubject writes the mark, so it is empty or decimal. A
+		// value that does not parse names no account and leaves UserID zero.
+		if userID, err := strconv.ParseUint(mark, 10, 64); err == nil {
+			subject.UserID = userID
+		}
 	}
 	return subject
 }

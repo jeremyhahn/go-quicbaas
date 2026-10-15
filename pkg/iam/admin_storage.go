@@ -163,7 +163,7 @@ func (m *MemoryAdminStorage) ListAssignments(ctx context.Context, opts ListAdmin
 
 	for _, assignment := range m.assignments {
 		// Apply filters
-		if opts.UserID != "" && assignment.UserID != opts.UserID {
+		if opts.UserID != 0 && assignment.UserID != opts.UserID {
 			continue
 		}
 
@@ -210,11 +210,11 @@ func (m *MemoryAdminStorage) ListAssignments(ctx context.Context, opts ListAdmin
 }
 
 // GetUserAssignments retrieves all active assignments for a specific user.
-func (m *MemoryAdminStorage) GetUserAssignments(ctx context.Context, userID string) ([]*AdminAssignment, error) {
+func (m *MemoryAdminStorage) GetUserAssignments(ctx context.Context, userID uint64) ([]*AdminAssignment, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if userID == "" {
+	if userID == 0 {
 		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.admin_storage.get_user_assignments",
@@ -365,11 +365,11 @@ func (m *MemoryImpersonationStorage) IncrementOperationCount(ctx context.Context
 }
 
 // ListActiveImpersonations retrieves active impersonation sessions for an admin user.
-func (m *MemoryImpersonationStorage) ListActiveImpersonations(ctx context.Context, adminUserID string) ([]*ImpersonationSession, error) {
+func (m *MemoryImpersonationStorage) ListActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*ImpersonationSession, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if adminUserID == "" {
+	if adminUserID == 0 {
 		return nil, &dberrors.QBError{
 			Code: dberrors.ErrInvalidInput,
 			Op:   "iam.impersonation_storage.list_active",
@@ -398,7 +398,7 @@ func (m *MemoryImpersonationStorage) ListActiveImpersonations(ctx context.Contex
 }
 
 // ListImpersonations retrieves impersonation sessions with optional filters.
-func (m *MemoryImpersonationStorage) ListImpersonations(ctx context.Context, activeOnly bool, adminUserID string) ([]*ImpersonationSession, error) {
+func (m *MemoryImpersonationStorage) ListImpersonations(ctx context.Context, activeOnly bool, adminUserID uint64) ([]*ImpersonationSession, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -407,7 +407,7 @@ func (m *MemoryImpersonationStorage) ListImpersonations(ctx context.Context, act
 
 	for _, session := range m.sessions {
 		// Filter by admin user ID if specified
-		if adminUserID != "" && session.AdminUserID != adminUserID {
+		if adminUserID != 0 && session.AdminUserID != adminUserID {
 			continue
 		}
 

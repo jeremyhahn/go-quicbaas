@@ -45,7 +45,7 @@ const aliceAccountID = 7
 func aliceLogin(tenantID string) interfaces.Subject {
 	return interfaces.Subject{
 		ID: "alice", IDKind: interfaces.SubjectIDUsername, Username: "alice",
-		UserID: "7", TenantID: tenantID, Authenticated: true,
+		UserID: 7, TenantID: tenantID, Authenticated: true,
 	}
 }
 

@@ -167,11 +167,11 @@ func TestDaemonSIGTERMRunsGracefulShutdown(t *testing.T) {
 	restPort := reservePort(t)
 	logPath := filepath.Join(dataDir, "daemon.log")
 
-	logFile, err := os.Create(logPath) //nolint:gosec // G304: path is test-owned under t.TempDir()
+	logFile, err := os.Create(logPath)
 	require.NoError(t, err, "create daemon log file")
 	defer logFile.Close()
 
-	cmd := exec.Command(binary, //nolint:gosec // G204: arguments are produced by this test
+	cmd := exec.Command(binary,
 		"start",
 		"--data-dir", dataDir,
 		"--log-level", "info",
@@ -225,7 +225,7 @@ func TestDaemonSIGTERMRunsGracefulShutdown(t *testing.T) {
 		"SIGTERM must exit 0 via the graceful path; a non-zero status means a signal "+
 			"handler hard-exited the process before Server.Shutdown could close the store")
 
-	logBytes, readErr := os.ReadFile(logPath) //nolint:gosec // G304: path is test-owned under t.TempDir()
+	logBytes, readErr := os.ReadFile(logPath)
 	require.NoError(t, readErr, "read daemon log")
 	logText := string(logBytes)
 
@@ -248,11 +248,11 @@ func TestDaemonSIGINTRunsGracefulShutdown(t *testing.T) {
 	restPort := reservePort(t)
 	logPath := filepath.Join(dataDir, "daemon.log")
 
-	logFile, err := os.Create(logPath) //nolint:gosec // G304: path is test-owned under t.TempDir()
+	logFile, err := os.Create(logPath)
 	require.NoError(t, err, "create daemon log file")
 	defer logFile.Close()
 
-	cmd := exec.Command(binary, //nolint:gosec // G204: arguments are produced by this test
+	cmd := exec.Command(binary,
 		"start",
 		"--data-dir", dataDir,
 		"--log-level", "info",
@@ -299,7 +299,7 @@ func TestDaemonSIGINTRunsGracefulShutdown(t *testing.T) {
 	}
 
 	logFile.Sync()
-	f, openErr := os.Open(logPath) //nolint:gosec // G304: path is test-owned under t.TempDir()
+	f, openErr := os.Open(logPath)
 	require.NoError(t, openErr, "open daemon log")
 	defer f.Close()
 

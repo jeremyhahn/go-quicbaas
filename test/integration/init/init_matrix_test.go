@@ -239,8 +239,11 @@ func assertNoShareMaterialOnDisk(t *testing.T, dataDir string) {
 
 	var suspicious []string
 	walkErr := filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil //nolint:nilerr // a walk error must not fail the scan
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
 		}
 		name := strings.ToLower(d.Name())
 		if strings.Contains(name, "share") || strings.HasSuffix(name, ".sealed") {

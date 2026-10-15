@@ -698,8 +698,8 @@ func TestConfigProcessor_Process_NilContext(t *testing.T) {
 
 	cfg := &Config{Name: "test"}
 
-	//nolint:staticcheck // intentional nil context for testing
-	result, err := processor.Process(nil, cfg)
+	var nilCtx context.Context
+	result, err := processor.Process(nilCtx, cfg)
 
 	if err == nil {
 		t.Fatal("expected error for nil context")
@@ -717,7 +717,7 @@ func TestConfigProcessor_Process_NilContext(t *testing.T) {
 func TestConfigProcessor_Process_UnexportedFields(t *testing.T) {
 	type Config struct {
 		Public  string
-		private string //nolint:unused
+		private string
 	}
 
 	registry := NewResolverRegistry()

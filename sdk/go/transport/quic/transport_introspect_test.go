@@ -67,7 +67,7 @@ func newIntrospectTransport(t *testing.T) *Transport {
 	t.Helper()
 	addr, shutdown := startTestHTTP3Server(t, introspectServer(t))
 	t.Cleanup(shutdown)
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	t.Cleanup(func() { tr.Close() })
 	return tr

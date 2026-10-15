@@ -53,8 +53,8 @@ func captureRESTConfig(t *testing.T, srv *Server) *restapi.Config {
 	}
 	seamMu.Unlock()
 
-	//nolint:errcheck // the seam above always returns errCaptureOnly.
-	_, _ = srv.buildRESTServer()
+	_, err := srv.buildRESTServer()
+	require.ErrorIs(t, err, errCaptureOnly, "buildRESTServer must stop at the capturing seam")
 	require.NotNil(t, captured, "buildRESTServer did not reach the REST constructor")
 	return captured
 }

@@ -184,7 +184,7 @@ func (h *IAMHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{
 		"id":           session.ID,
-		"user_id":      session.UserID,
+		"user_id":      strconv.FormatUint(session.UserID, 10),
 		"tenant_id":    session.TenantID,
 		"mfa_verified": session.MFAVerified,
 		"ip_address":   session.IPAddress,

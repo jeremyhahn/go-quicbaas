@@ -59,9 +59,10 @@ func hashKeyToID(key string) uint64 {
 // This matches the hashing used by the REST KV API server.
 func hashKeyToIDFNV1a(entityType, key string) uint64 {
 	h := fnv.New64a()
-	h.Write([]byte(entityType)) //nolint:errcheck
-	h.Write([]byte(":"))        //nolint:errcheck
-	h.Write([]byte(key))        //nolint:errcheck
+	// hash.Hash.Write never returns an error.
+	h.Write([]byte(entityType))
+	h.Write([]byte(":"))
+	h.Write([]byte(key))
 	return h.Sum64()
 }
 

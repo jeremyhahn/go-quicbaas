@@ -35,7 +35,7 @@
 - **Vector Search** - HNSW/IVF indexing with similarity search, hybrid search, and metadata filtering
 - **RAG Pipelines** - Embed -> search -> rerank -> build context with token-aware limits
 - **Embedding Providers** - Ollama, OpenAI, LMStudio, Voyage AI with caching
-- **MCP Protocol** - 520 registered tools, 478 of them reachable, for AI agent integration (the server and SDK both use mark3labs/mcp-go; no other MCP client is run against it yet)
+- **MCP Protocol** - 520 registered tools, 478 of them reachable, for AI agent integration (the server and SDK both use mark3labs/mcp-go; the official MCP Go SDK client is also run against the streamable HTTP transport, and no other client is)
 
 ### Security & Identity
 - **IAM System** - Multi-tenant identity with users, groups, roles, policies, and sessions

@@ -42,7 +42,7 @@ func TestRequest_GetSessionConversationOverHTTP3(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 
@@ -73,7 +73,7 @@ func TestRequest_GetSessionConversationRefusalOverHTTP3(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 

@@ -68,7 +68,7 @@ func TestAdminManager_CheckPermission_EmptyTenantIDs(t *testing.T) {
 	// The firstboot super_admin's shape: nil TenantIDs, granted by
 	// system:first-boot (pkg/server/iam_init.go).
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "firstboot-admin",
+		UserID:    30010,
 		AdminRole: AdminRoleSuperAdmin,
 		TenantIDs: nil,
 		GrantedBy: "system:first-boot",
@@ -105,7 +105,7 @@ func TestAdminManager_CheckPermission_EmptyTenantIDs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, err := manager.CheckPermission(ctx, &AdminCheckRequest{
-				UserID:     "firstboot-admin",
+				UserID:     30010,
 				Permission: PermUserImpersonate,
 				TenantID:   tt.tenantID,
 			})
@@ -128,7 +128,7 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 	manager := newTenantScopeTestManager(t)
 
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "firstboot-admin",
+		UserID:    30010,
 		AdminRole: AdminRoleSuperAdmin,
 		TenantIDs: nil,
 		GrantedBy: "system:first-boot",
@@ -136,8 +136,8 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("impersonating a tenant user is denied by default", func(t *testing.T) {
-		_, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
-			TargetUserID: "50001",
+		_, err := manager.StartImpersonation(ctxWithActor(30010), &StartImpersonationOptions{
+			TargetUserID: 50001,
 			TenantID:     "tenant-1",
 			Reason:       "operator overreach attempt",
 		})
@@ -147,8 +147,8 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 	})
 
 	t.Run("impersonating a verified system-tenant user still works", func(t *testing.T) {
-		session, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
-			TargetUserID: "50002",
+		session, err := manager.StartImpersonation(ctxWithActor(30010), &StartImpersonationOptions{
+			TargetUserID: 50002,
 			TenantID:     qrdbsdk.SystemTenantID,
 			Reason:       "system-scope support session",
 		})
@@ -161,8 +161,8 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 		// User 50001 is not a system-tenant user, so the identity
 		// resolver cannot place it there and no session comes into
 		// existence — the unverified-principal path fails closed (#357).
-		_, err := manager.StartImpersonation(ctxWithActor("firstboot-admin"), &StartImpersonationOptions{
-			TargetUserID: "50001",
+		_, err := manager.StartImpersonation(ctxWithActor(30010), &StartImpersonationOptions{
+			TargetUserID: 50001,
 			TenantID:     qrdbsdk.SystemTenantID,
 			Reason:       "ID smuggling attempt",
 		})
@@ -173,15 +173,15 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 
 	t.Run("an explicit tenant-scoped grant is the retained break-glass path", func(t *testing.T) {
 		_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-			UserID:    "breakglass-admin",
+			UserID:    30011,
 			AdminRole: AdminRoleSuperAdmin,
 			TenantIDs: []string{"tenant-1"},
 			GrantedBy: "owner:break-glass",
 		})
 		require.NoError(t, err)
 
-		session, err := manager.StartImpersonation(ctxWithActor("breakglass-admin"), &StartImpersonationOptions{
-			TargetUserID: "50001",
+		session, err := manager.StartImpersonation(ctxWithActor(30011), &StartImpersonationOptions{
+			TargetUserID: 50001,
 			TenantID:     "tenant-1",
 			Reason:       "explicit audited grant",
 		})
@@ -190,8 +190,8 @@ func TestAdminManager_StartImpersonation_SystemPrincipalDenied(t *testing.T) {
 		assert.Equal(t, "tenant-1", session.TenantID)
 
 		// The same grant does not reach a tenant it does not name.
-		_, err = manager.StartImpersonation(ctxWithActor("breakglass-admin"), &StartImpersonationOptions{
-			TargetUserID: "tenant-user-2",
+		_, err = manager.StartImpersonation(ctxWithActor(30011), &StartImpersonationOptions{
+			TargetUserID: 30012,
 			TenantID:     "tenant-2",
 			Reason:       "should be denied",
 		})
@@ -224,15 +224,15 @@ func TestAdminManager_StartImpersonation_ResolverErrorIsNotNotFound(t *testing.T
 	require.NoError(t, err)
 
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "admin-1",
+		UserID:    30021,
 		AdminRole: AdminRoleSuperAdmin,
 		TenantIDs: []string{"tenant-1"},
 		GrantedBy: "system",
 	})
 	require.NoError(t, err)
 
-	_, err = manager.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
-		TargetUserID: "50001",
+	_, err = manager.StartImpersonation(ctxWithActor(30021), &StartImpersonationOptions{
+		TargetUserID: 50001,
 		TenantID:     "tenant-1",
 		Reason:       "resolver outage",
 	})
@@ -254,15 +254,15 @@ func TestAdminManager_StartImpersonation_ResolverRequired(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "admin-1",
+		UserID:    30021,
 		AdminRole: AdminRoleSuperAdmin,
 		TenantIDs: []string{"tenant-1"},
 		GrantedBy: "system",
 	})
 	require.NoError(t, err)
 
-	_, err = manager.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
-		TargetUserID: "50001",
+	_, err = manager.StartImpersonation(ctxWithActor(30021), &StartImpersonationOptions{
+		TargetUserID: 50001,
 		TenantID:     "tenant-1",
 		Reason:       "no resolver wired",
 	})
@@ -288,11 +288,11 @@ func TestListAssignments_TenantFilter_EmptyTenantIDs(t *testing.T) {
 	for name, store := range stores {
 		t.Run(name, func(t *testing.T) {
 			require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{
-				ID: "sys-scope", UserID: "firstboot-admin", AdminRole: AdminRoleSuperAdmin,
+				ID: "sys-scope", UserID: 30010, AdminRole: AdminRoleSuperAdmin,
 				TenantIDs: nil, Active: true,
 			}))
 			require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{
-				ID: "t1-scope", UserID: "tenant-admin", AdminRole: AdminRoleTenantAdmin,
+				ID: "t1-scope", UserID: 30013, AdminRole: AdminRoleTenantAdmin,
 				TenantIDs: []string{"tenant-1"}, Active: true,
 			}))
 

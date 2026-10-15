@@ -64,8 +64,10 @@ type Claims struct {
 	// UserID is the issuer's IMMUTABLE identifier for a user principal. It is
 	// the handle a liveness authority resolves the account by, because sub is
 	// not stable on every issuance path (a login-ceremony sub is a renameable
-	// username). Empty on service tokens and on tokens minted before the claim.
-	UserID string `json:"uid,omitempty"`
+	// username). It is the qrdb Snowflake carried as a decimal string, so an
+	// id above 2^53 survives every JSON reader; a uid that is not one fails
+	// the parse. Zero on service tokens and on tokens minted before the claim.
+	UserID uint64 `json:"uid,string,omitempty"`
 	// PrincipalType positively marks a non-user principal ("service"). It is
 	// asked of the token rather than inferred from a user lookup coming up
 	// empty. Empty on user tokens and on tokens minted before the claim.

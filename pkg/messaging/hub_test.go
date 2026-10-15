@@ -1308,12 +1308,12 @@ func TestNotificationHub_StopIsNotLostRacingStartup(t *testing.T) {
 
 		// Stop the instant the hub claims to be running — the window is
 		// between that claim and the renewal.
-		for !hub.IsRunning() { //nolint:revive // tight by design; see above
+		for !hub.IsRunning() { // tight by design; see above
 		}
 		hub.Stop()
 
 		deadline := time.Now().Add(testTimeout)
-		for hub.IsRunning() && time.Now().Before(deadline) { //nolint:revive // tight by design
+		for hub.IsRunning() && time.Now().Before(deadline) { // tight by design
 		}
 		stillRunning := hub.IsRunning()
 		cancel()
@@ -1503,7 +1503,14 @@ func wedgeHubLoop(t *testing.T, hub *NotificationHub) (release func()) {
 	// IsRunning(), so Run has certainly claimed by now. After this, nothing but
 	// the loop itself reads h.getChannel.
 	hub.lifecycleMu.Lock()
-	hub.lifecycleMu.Unlock() //nolint:staticcheck // the barrier is the point
+	var admissionOpen bool
+	select {
+	case <-hub.stopped:
+	default:
+		admissionOpen = true
+	}
+	hub.lifecycleMu.Unlock()
+	require.True(t, admissionOpen, "the preamble released lifecycleMu without reopening admission")
 
 	blocker := &getChannelRequest{Name: "blocker", Response: make(chan *getChannelResponse)}
 	hub.getChannel <- blocker

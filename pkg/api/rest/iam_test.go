@@ -237,7 +237,7 @@ func TestDeep_CancelDeletion_ManagerError(t *testing.T) {
 func TestDeep_CreateAdminAssignment_NilManager(t *testing.T) {
 	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
 	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/a", strings.NewReader(`{"user_id":"u1","admin_role":"super_admin"}`))
+	r := httptest.NewRequest(http.MethodPost, "/a", strings.NewReader(`{"user_id":"50001","admin_role":"super_admin"}`))
 	w := httptest.NewRecorder()
 	h.CreateAdminAssignment(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -246,7 +246,7 @@ func TestDeep_CreateAdminAssignment_NilManager(t *testing.T) {
 func TestDeep_CreateAdminAssignment_ManagerError(t *testing.T) {
 	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
 	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/a", strings.NewReader(`{"user_id":"u1","admin_role":"super_admin"}`))
+	r := httptest.NewRequest(http.MethodPost, "/a", strings.NewReader(`{"user_id":"50001","admin_role":"super_admin"}`))
 	w := httptest.NewRecorder()
 	h.CreateAdminAssignment(w, r)
 	assert.NotEqual(t, http.StatusOK, w.Code)
@@ -353,7 +353,7 @@ func TestDeep_GetUserAssignments_ManagerError(t *testing.T) {
 func TestDeep_CheckAdminPermission_NilManager(t *testing.T) {
 	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
 	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"user_id":"u1","permission":"manage_users"}`))
+	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"user_id":"50001","permission":"manage_users"}`))
 	w := httptest.NewRecorder()
 	h.CheckAdminPermission(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -362,7 +362,7 @@ func TestDeep_CheckAdminPermission_NilManager(t *testing.T) {
 func TestDeep_CheckAdminPermission_ManagerError(t *testing.T) {
 	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
 	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"user_id":"u1","permission":"manage_users"}`))
+	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"user_id":"50001","permission":"manage_users"}`))
 	w := httptest.NewRecorder()
 	h.CheckAdminPermission(w, r)
 	assert.NotEqual(t, http.StatusOK, w.Code)
@@ -371,7 +371,7 @@ func TestDeep_CheckAdminPermission_ManagerError(t *testing.T) {
 func TestDeep_StartImpersonation_NilManager(t *testing.T) {
 	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
 	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/i", strings.NewReader(`{"admin_user_id":"a1","target_user_id":"u1","tenant_id":"t1","reason":"support"}`))
+	r := httptest.NewRequest(http.MethodPost, "/i", strings.NewReader(`{"target_user_id":"50001","tenant_id":"t1","reason":"support"}`))
 	w := httptest.NewRecorder()
 	h.StartImpersonation(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -380,7 +380,7 @@ func TestDeep_StartImpersonation_NilManager(t *testing.T) {
 func TestDeep_StartImpersonation_ManagerError(t *testing.T) {
 	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
 	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/i", strings.NewReader(`{"admin_user_id":"a1","target_user_id":"u1","tenant_id":"t1","reason":"support"}`))
+	r := httptest.NewRequest(http.MethodPost, "/i", strings.NewReader(`{"target_user_id":"50001","tenant_id":"t1","reason":"support"}`))
 	w := httptest.NewRecorder()
 	h.StartImpersonation(w, r)
 	assert.NotEqual(t, http.StatusOK, w.Code)

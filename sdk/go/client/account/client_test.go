@@ -263,8 +263,8 @@ func TestClient_InvalidInput(t *testing.T) {
 // applies; a nil context would otherwise panic deep in the transport.
 func TestClient_NilContextRejected(t *testing.T) {
 	c := NewClient(&mockTransport{response: sampleInfo()})
-	//nolint:staticcheck // deliberately passing a nil context
-	if _, err := c.Get(nil, "tenant-1", "acct-1"); err == nil {
+	var nilCtx context.Context
+	if _, err := c.Get(nilCtx, "tenant-1", "acct-1"); err == nil {
 		t.Fatal("expected an error for a nil context")
 	}
 }
@@ -350,7 +350,6 @@ func TestClient_NilResponsesAreErrors(t *testing.T) {
 // the whole surface, not just Get.
 func TestClient_NilContextRejectedOnEveryVerb(t *testing.T) {
 	c := NewClient(&mockTransport{response: sampleInfo()})
-	//nolint:staticcheck // deliberately passing a nil context
 	var nilCtx context.Context
 
 	calls := map[string]func() error{
@@ -568,7 +567,6 @@ func TestClient_Materialize_RejectsBadInput(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := NewClient(&mockTransport{response: tc.response})
-			//nolint:staticcheck // SA1012: passing a nil context is the case under test.
 			if _, err := c.Materialize(tc.ctx, tc.req); err == nil {
 				t.Fatal("expected an error")
 			}

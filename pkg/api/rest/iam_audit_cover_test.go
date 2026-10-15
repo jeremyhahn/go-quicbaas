@@ -57,7 +57,7 @@ func setupAuditDeleteHandler(t *testing.T) (*IAMHandler, *iam.AdminManager, func
 	return handler, admin, func() {}
 }
 
-func auditDeleteReq(userSub string) *http.Request {
+func auditDeleteReq(userID uint64) *http.Request {
 	r := systemRequest(http.MethodDelete,
 		"/api/v1/iam/audit?tenant_id=tenant1&before=2024-01-01T00:00:00Z", nil)
 	// Bind the caller's authenticated tenant to match the requested
@@ -65,8 +65,8 @@ func auditDeleteReq(userSub string) *http.Request {
 	// confines every caller to its own tenant, so an unbound caller tenant
 	// would 403 before the stage each test means to exercise.
 	r = r.WithContext(ctxWithCallerTenant(r.Context(), "tenant1"))
-	if userSub != "" {
-		r = r.WithContext(ctxWithTestSubject(r.Context(), userSub, "tenant1"))
+	if userID != 0 {
+		r = r.WithContext(ctxWithTestUser(r.Context(), userID, "tenant1"))
 	}
 	return r
 }
@@ -106,7 +106,7 @@ func TestDeleteOldAuditEvents_Unauthenticated(t *testing.T) {
 	defer cleanup()
 
 	w := httptest.NewRecorder()
-	handler.DeleteOldAuditEvents(w, auditDeleteReq("")) // no user on context
+	handler.DeleteOldAuditEvents(w, auditDeleteReq(0)) // no user on context
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
@@ -116,7 +116,7 @@ func TestDeleteOldAuditEvents_Forbidden(t *testing.T) {
 
 	// Authenticated user with no admin assignment -> CheckPermission denies -> 403.
 	w := httptest.NewRecorder()
-	handler.DeleteOldAuditEvents(w, auditDeleteReq("user-no-perm"))
+	handler.DeleteOldAuditEvents(w, auditDeleteReq(70002))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -126,7 +126,7 @@ func TestDeleteOldAuditEvents_Success(t *testing.T) {
 
 	// Grant the user the audit:delete permission for tenant1.
 	_, err := admin.CreateAssignment(tenantctx.WithSystem(context.Background()), iam.CreateAdminAssignmentOptions{
-		UserID:      "audit-admin",
+		UserID:      70001,
 		AdminRole:   iam.AdminRoleTenantAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []iam.AdminPermission{iam.PermAuditDelete},
@@ -135,7 +135,7 @@ func TestDeleteOldAuditEvents_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
-	handler.DeleteOldAuditEvents(w, auditDeleteReq("audit-admin"))
+	handler.DeleteOldAuditEvents(w, auditDeleteReq(70001))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	assert.Contains(t, w.Body.String(), "deleted_count")
 }

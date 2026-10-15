@@ -44,8 +44,8 @@ func TestTenantSpendPolicy_HappyPath(t *testing.T) {
 // failure and a wrongly typed response are all errors.
 func TestTenantSpendPolicy_Refusals(t *testing.T) {
 	c := NewClient(failTransport())
-	//nolint:staticcheck // intentionally nil ctx
-	_, err := c.GetTenantSpendPolicy(nil, &GetTenantSpendPolicyRequest{TenantID: "t1"})
+	var nilCtx context.Context
+	_, err := c.GetTenantSpendPolicy(nilCtx, &GetTenantSpendPolicyRequest{TenantID: "t1"})
 	assert.ErrorContains(t, err, "context is required")
 	_, err = c.GetTenantSpendPolicy(context.Background(), nil)
 	assert.ErrorContains(t, err, "request is required")

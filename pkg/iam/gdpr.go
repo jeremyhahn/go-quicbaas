@@ -269,7 +269,7 @@ func (m *GDPRManager) ListUserConsents(ctx context.Context, tenantID string, use
 
 // RequestExport creates a new data export request and starts background processing.
 // The export will be processed asynchronously and its status can be checked via GetExportStatus.
-func (m *GDPRManager) RequestExport(ctx context.Context, tenantID string, userID uint64, requestedBy string, format DataExportFormat, includeCategories, excludeCategories []string) (*DataExportRequest, error) {
+func (m *GDPRManager) RequestExport(ctx context.Context, tenantID string, userID, requestedBy uint64, format DataExportFormat, includeCategories, excludeCategories []string) (*DataExportRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -329,7 +329,7 @@ func (m *GDPRManager) RequestExport(ctx context.Context, tenantID string, userID
 
 	// Audit log (optional)
 	if m.deps.AuditLogger != nil {
-		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, requestedBy, "data_export.requested", map[string]interface{}{
+		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, strconv.FormatUint(requestedBy, 10), "data_export.requested", map[string]interface{}{
 			"export_id":          request.ID,
 			"subject_user_id":    strconv.FormatUint(userID, 10),
 			"format":             string(format),
@@ -467,7 +467,7 @@ func (m *GDPRManager) GenerateExport(ctx context.Context, exportID string) (*Use
 
 	// Audit log (optional)
 	if m.deps.AuditLogger != nil {
-		_ = m.deps.AuditLogger.LogGDPREvent(ctx, request.TenantID, request.RequestedBy, "data_export.completed", map[string]interface{}{
+		_ = m.deps.AuditLogger.LogGDPREvent(ctx, request.TenantID, strconv.FormatUint(request.RequestedBy, 10), "data_export.completed", map[string]interface{}{
 			"export_id":       exportID,
 			"subject_user_id": strconv.FormatUint(request.UserID, 10),
 		})
@@ -619,7 +619,7 @@ func (m *GDPRManager) determineCategories(request *DataExportRequest) []string {
 // RequestDeletion creates a new data deletion request with grace period.
 // A gracePeriodDays of 0 means immediate deletion (no grace period).
 // A gracePeriodDays < 0 (e.g., -1) means use the default grace period.
-func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID string, userID uint64, requestedBy, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*DataDeletionRequest, error) {
+func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID string, userID, requestedBy uint64, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*DataDeletionRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -677,7 +677,7 @@ func (m *GDPRManager) RequestDeletion(ctx context.Context, tenantID string, user
 
 	// Audit log (optional)
 	if m.deps.AuditLogger != nil {
-		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, requestedBy, "data_deletion.requested", map[string]interface{}{
+		_ = m.deps.AuditLogger.LogGDPREvent(ctx, tenantID, strconv.FormatUint(requestedBy, 10), "data_deletion.requested", map[string]interface{}{
 			"deletion_id":         request.ID,
 			"subject_user_id":     strconv.FormatUint(userID, 10),
 			"grace_period_days":   gracePeriodDays,
@@ -838,7 +838,7 @@ func (m *GDPRManager) ProcessDeletion(ctx context.Context, deletionID string) (*
 
 	// Audit log (optional)
 	if m.deps.AuditLogger != nil {
-		_ = m.deps.AuditLogger.LogGDPREvent(ctx, request.TenantID, request.RequestedBy, "data_deletion.completed", map[string]interface{}{
+		_ = m.deps.AuditLogger.LogGDPREvent(ctx, request.TenantID, strconv.FormatUint(request.RequestedBy, 10), "data_deletion.completed", map[string]interface{}{
 			"deletion_id":     deletionID,
 			"subject_user_id": strconv.FormatUint(request.UserID, 10),
 			"summary":         summary,

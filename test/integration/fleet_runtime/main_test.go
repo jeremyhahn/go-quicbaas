@@ -106,7 +106,11 @@ func waitForHTTP(url string, timeout time.Duration) bool {
 		case <-ctx.Done():
 			return false
 		case <-ticker.C:
-			resp, err := client.Get(url) //nolint:noctx // context carried through deadline
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				return false
+			}
+			resp, err := client.Do(req)
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {

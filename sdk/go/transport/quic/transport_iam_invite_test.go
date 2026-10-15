@@ -71,7 +71,7 @@ func TestInviteOverHTTP3(t *testing.T) {
 		}))
 		defer shutdown()
 
-		tr, err := New(testTransportConfig(addr))
+		tr, err := New(testTransportConfig(t, addr))
 		require.NoError(t, err)
 		defer tr.Close()
 
@@ -94,7 +94,7 @@ func TestInviteOverHTTP3(t *testing.T) {
 		}))
 		defer shutdown()
 
-		tr, err := New(testTransportConfig(addr))
+		tr, err := New(testTransportConfig(t, addr))
 		require.NoError(t, err)
 		defer tr.Close()
 
@@ -121,7 +121,7 @@ func TestInviteOverHTTP3_UnusableInvite(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 
@@ -133,7 +133,7 @@ func TestInviteOverHTTP3_UnusableInvite(t *testing.T) {
 // request without the tenant the route requires, before anything is sent: the
 // tenant-less path it would otherwise build is served by no route.
 func TestInviteOverHTTP3_MissingTenant(t *testing.T) {
-	tr, err := New(testTransportConfig("127.0.0.1:1"))
+	tr, err := New(testTransportConfig(t, "127.0.0.1:1"))
 	require.NoError(t, err)
 	defer tr.Close()
 

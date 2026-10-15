@@ -25,6 +25,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,8 +101,21 @@ func TestBuildTLSConfig_PreservesExplicitALPN(t *testing.T) {
 func testTLSCert(t *testing.T) tls.Certificate {
 	t.Helper()
 
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	cert, err := loopbackCert()
 	require.NoError(t, err)
+	return cert
+}
+
+// loopbackCert is the one self-signed loopback certificate that every test
+// server presents and every test client trusts, so the client verifies the
+// server's chain the way production does.
+var loopbackCert = sync.OnceValues(newLoopbackCert)
+
+func newLoopbackCert() (tls.Certificate, error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
 
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
@@ -115,16 +129,20 @@ func testTLSCert(t *testing.T) tls.Certificate {
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	require.NoError(t, err)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
 
 	cert, err := x509.ParseCertificate(der)
-	require.NoError(t, err)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
 
 	return tls.Certificate{
 		Certificate: [][]byte{der},
 		PrivateKey:  priv,
 		Leaf:        cert,
-	}
+	}, nil
 }
 
 // startTestHTTP3Server brings up a real http3.Server on loopback serving
@@ -162,12 +180,16 @@ func startTestHTTP3Server(t *testing.T, handler http.Handler) (addr string, shut
 
 // testTransportConfig builds a transport.Config that trusts the test
 // server's self-signed certificate.
-func testTransportConfig(addr string) *transport.Config {
+func testTransportConfig(t *testing.T, addr string) *transport.Config {
+	t.Helper()
+
+	roots := x509.NewCertPool()
+	roots.AddCert(testTLSCert(t).Leaf)
 	return &transport.Config{
 		Address: addr,
 		Timeout: 5 * time.Second,
 		TLSConfig: &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // test-only: self-signed loopback cert
+			RootCAs: roots,
 		},
 	}
 }
@@ -183,7 +205,7 @@ func TestRequest_SuccessOverHTTP3(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 
@@ -209,7 +231,7 @@ func TestRequest_PropagatesAuthTokenHeader(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr), WithAuthToken("test-token"))
+	tr, err := New(testTransportConfig(t, addr), WithAuthToken("test-token"))
 	require.NoError(t, err)
 	defer tr.Close()
 
@@ -233,7 +255,7 @@ func TestRequest_WithAuthTokenOverridesConfigAuthToken(t *testing.T) {
 	}))
 	defer shutdown()
 
-	cfg := testTransportConfig(addr)
+	cfg := testTransportConfig(t, addr)
 	cfg.AuthToken = "config-token"
 	tr, err := New(cfg, WithAuthToken("option-token"))
 	require.NoError(t, err)
@@ -256,7 +278,7 @@ func TestRequest_NonSuccessStatusMapsToError(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 
@@ -271,7 +293,7 @@ func TestRequest_ConnectionRefused(t *testing.T) {
 	// the kernel's ephemeral range.
 	addr := netport.MustReserveLoopbackAddr(t)
 
-	cfg := testTransportConfig(addr)
+	cfg := testTransportConfig(t, addr)
 	cfg.Timeout = 500 * time.Millisecond
 	cfg.MaxRetries = 0
 	tr, err := New(cfg)
@@ -292,7 +314,7 @@ func TestRequest_ContextCancellation(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 

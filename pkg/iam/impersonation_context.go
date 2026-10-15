@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"strconv"
 )
 
 // impersonationContextKey is the context key for impersonation context.
@@ -27,13 +28,13 @@ type ImpersonationContext struct {
 	SessionID string
 
 	// AdminUserID is the admin performing the impersonation.
-	AdminUserID string
+	AdminUserID uint64
 
 	// AdminUsername is the admin's username.
 	AdminUsername string
 
 	// TargetUserID is the user being impersonated.
-	TargetUserID string
+	TargetUserID uint64
 
 	// TargetUsername is the target user's username.
 	TargetUsername string
@@ -88,9 +89,9 @@ func BuildImpersonatedActor(impCtx *ImpersonationContext) *AuditActor {
 		return nil
 	}
 	return &AuditActor{
-		UserID:                impCtx.TargetUserID,
+		UserID:                strconv.FormatUint(impCtx.TargetUserID, 10),
 		Username:              impCtx.TargetUsername,
-		ImpersonatingUserID:   impCtx.AdminUserID,
+		ImpersonatingUserID:   strconv.FormatUint(impCtx.AdminUserID, 10),
 		ImpersonatingUsername: impCtx.AdminUsername,
 	}
 }
@@ -119,7 +120,7 @@ func BuildAuditEventForImpersonatedOperation(
 
 	// Add impersonation details to the event
 	eventDetails := map[string]interface{}{
-		"impersonated_user_id":  impCtx.TargetUserID,
+		"impersonated_user_id":  strconv.FormatUint(impCtx.TargetUserID, 10),
 		"impersonated_username": impCtx.TargetUsername,
 		"impersonation_reason":  impCtx.Reason,
 	}

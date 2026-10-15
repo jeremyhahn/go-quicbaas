@@ -23,7 +23,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -270,7 +269,7 @@ type SelfRegisterFinishResponse struct {
 	TenantID string `json:"tenant_id,omitempty"`
 
 	// UserID of the newly created user (always present).
-	UserID string `json:"user_id,omitempty"`
+	UserID uint64 `json:"user_id,omitempty,string"`
 
 	// AccessToken is present only when Status == "active".
 	AccessToken string `json:"access_token,omitempty"`
@@ -280,6 +279,16 @@ type SelfRegisterFinishResponse struct {
 
 	// Message carries a human-readable explanation when Status != "active".
 	Message string `json:"message,omitempty"`
+}
+
+// selfRegisterDecisionResponse is returned when an admin approves or rejects
+// a pending self-registration.
+type selfRegisterDecisionResponse struct {
+	// Status is "approved" or "rejected".
+	Status string `json:"status"`
+
+	// UserID of the registration the decision applies to.
+	UserID uint64 `json:"user_id,string"`
 }
 
 // --------------------------------------------------------------------------
@@ -618,7 +627,7 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 			Status:   "pending",
 			TenantID: sess.tenantID,
-			UserID:   strconv.FormatUint(createdUser.ID, 10),
+			UserID:   createdUser.ID,
 			Message:  "Your account is awaiting admin approval.",
 		})
 		return
@@ -633,7 +642,7 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 		RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 			Status:   "verification_required",
 			TenantID: sess.tenantID,
-			UserID:   strconv.FormatUint(createdUser.ID, 10),
+			UserID:   createdUser.ID,
 			Message:  "Please check your email to verify your account before signing in.",
 		})
 		return
@@ -689,7 +698,7 @@ func (h *IAMHandler) RegisterSelfFinish(w http.ResponseWriter, r *http.Request) 
 	RespondJSON(w, r, http.StatusOK, &SelfRegisterFinishResponse{
 		Status:       "active",
 		TenantID:     sess.tenantID,
-		UserID:       strconv.FormatUint(createdUser.ID, 10),
+		UserID:       createdUser.ID,
 		AccessToken:  tokens.AccessToken,
 		RefreshToken: tokens.RefreshToken,
 	})
@@ -731,9 +740,9 @@ func (h *IAMHandler) ApproveUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, map[string]string{
-		"status":  "approved",
-		"user_id": strconv.FormatUint(userID, 10),
+	RespondJSON(w, r, http.StatusOK, &selfRegisterDecisionResponse{
+		Status: "approved",
+		UserID: userID,
 	})
 }
 
@@ -777,9 +786,9 @@ func (h *IAMHandler) RejectUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, map[string]string{
-		"status":  "rejected",
-		"user_id": strconv.FormatUint(userID, 10),
+	RespondJSON(w, r, http.StatusOK, &selfRegisterDecisionResponse{
+		Status: "rejected",
+		UserID: userID,
 	})
 }
 

@@ -15,13 +15,16 @@ package iam
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // nonIDUserIDs are string user ids that do not name a uint64 Snowflake:
@@ -63,7 +66,7 @@ func TestProjectInvite_RefusesANonID(t *testing.T) {
 // TestAdminManager_StartImpersonation_ANonIDTargetIsNotFound proves a target
 // id that cannot name a user is refused as not found before the resolver is
 // asked, and no session is minted.
-func TestAdminManager_StartImpersonation_ANonIDTargetIsNotFound(t *testing.T) {
+func TestAdminManager_StartImpersonation_AZeroTargetIsRefused(t *testing.T) {
 	resolver := &countingTargetResolver{}
 	manager, err := NewAdminManager(AdminManagerOptions{
 		AdminStorage:         NewMemoryAdminStorage(),
@@ -73,24 +76,47 @@ func TestAdminManager_StartImpersonation_ANonIDTargetIsNotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = manager.CreateAssignment(context.Background(), CreateAdminAssignmentOptions{
-		UserID:    "admin-1",
+		UserID:    30021,
 		AdminRole: AdminRoleSuperAdmin,
 		TenantIDs: []string{"tenant-1"},
 		GrantedBy: "system",
 	})
 	require.NoError(t, err)
 
-	for _, value := range nonIDUserIDs {
-		session, err := manager.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
-			TargetUserID: value,
-			TenantID:     "tenant-1",
-			Reason:       "malformed target",
-		})
-		assert.Nil(t, session, "value %q", value)
-		assert.True(t, errors.Is(err, ErrImpersonationTargetNotFound),
-			"value %q: want ErrImpersonationTargetNotFound, got %v", value, err)
-	}
-	assert.Zero(t, resolver.calls, "the resolver must not be asked about a non-id")
+	session, err := manager.StartImpersonation(ctxWithActor(30021), &StartImpersonationOptions{
+		TargetUserID: 0,
+		TenantID:     "tenant-1",
+		Reason:       "no target",
+	})
+	assert.Nil(t, session)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	assert.Zero(t, resolver.calls, "the resolver must not be asked about a zero id")
+}
+
+func TestAdminManager_StartImpersonation_AnActorWithoutAUserIDIsRefused(t *testing.T) {
+	manager, err := NewAdminManager(AdminManagerOptions{
+		AdminStorage:         NewMemoryAdminStorage(),
+		ImpersonationStorage: NewMemoryImpersonationStorage(),
+		TargetResolver:       &countingTargetResolver{},
+	})
+	require.NoError(t, err)
+
+	// A login name alone is not an actor: the acting admin is the verified
+	// uid claim, so a subject without one fails closed.
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{
+		ID:            "30021",
+		Username:      "30021",
+		Authenticated: true,
+	})
+	session, err := manager.StartImpersonation(ctx, &StartImpersonationOptions{
+		TargetUserID: 40021,
+		TenantID:     "tenant-1",
+		Reason:       "no uid claim",
+	})
+	assert.Nil(t, session)
+	assert.ErrorIs(t, err, ErrImpersonationActorRequired)
 }
 
 // TestOAuthRefreshGrant_RefusesANonIDSubject proves a refresh token whose

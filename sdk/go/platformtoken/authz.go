@@ -35,8 +35,8 @@ type AuthorizedContext struct {
 	// a resource server can match principals by username in addition to Subject.
 	Username string
 	// UserID is the issuer's immutable user id (uid), the handle a user
-	// principal's account is resolved by. Empty on service tokens.
-	UserID string
+	// principal's account is resolved by. Zero on service tokens.
+	UserID uint64
 	// TenantID is the tenant the request operates within. Downstream services
 	// set this as the row-level-security tenant (e.g. app.current_tenant).
 	TenantID string

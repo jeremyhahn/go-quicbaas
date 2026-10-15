@@ -170,8 +170,9 @@ type DataExportRequest struct {
 	// TenantID is the tenant context.
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
 
-	// RequestedBy is who requested the export (user or admin).
-	RequestedBy string `json:"requested_by" yaml:"requested_by"`
+	// RequestedBy is the qrdb Snowflake id of the user or admin who
+	// requested the export.
+	RequestedBy uint64 `json:"requested_by,string" yaml:"requested_by"`
 
 	// Format is the export format.
 	Format DataExportFormat `json:"format" yaml:"format"`
@@ -222,8 +223,9 @@ type DataDeletionRequest struct {
 	// TenantID is the tenant context.
 	TenantID string `json:"tenant_id" yaml:"tenant_id"`
 
-	// RequestedBy is who requested the deletion (user or admin).
-	RequestedBy string `json:"requested_by" yaml:"requested_by"`
+	// RequestedBy is the qrdb Snowflake id of the user or admin who
+	// requested the deletion.
+	RequestedBy uint64 `json:"requested_by,string" yaml:"requested_by"`
 
 	// Reason is the reason for deletion.
 	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
@@ -439,7 +441,7 @@ type UpdateConsentOptions struct {
 type CreateDataExportOptions struct {
 	UserID            uint64            `json:"user_id,string"`
 	TenantID          string            `json:"tenant_id"`
-	RequestedBy       string            `json:"requested_by"`
+	RequestedBy       uint64            `json:"requested_by,string"`
 	Format            DataExportFormat  `json:"format"`
 	IncludeCategories []string          `json:"include_categories,omitempty"`
 	ExcludeCategories []string          `json:"exclude_categories,omitempty"`
@@ -450,7 +452,7 @@ type CreateDataExportOptions struct {
 type CreateDeletionRequestOptions struct {
 	UserID             uint64            `json:"user_id,string"`
 	TenantID           string            `json:"tenant_id"`
-	RequestedBy        string            `json:"requested_by"`
+	RequestedBy        uint64            `json:"requested_by,string"`
 	Reason             string            `json:"reason,omitempty"`
 	DeleteCategories   []string          `json:"delete_categories,omitempty"`
 	PreserveCategories []string          `json:"preserve_categories,omitempty"`

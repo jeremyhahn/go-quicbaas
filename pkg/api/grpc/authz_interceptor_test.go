@@ -205,11 +205,11 @@ func TestContextWithAuthorizedSubject_AccountIsVerifiedUserID(t *testing.T) {
 		wantKind interfaces.SubjectIDKind
 	}{
 		"numeric username": {
-			ac:       platformtoken.AuthorizedContext{Subject: "12345", UserID: "67890", TenantID: "tenant-a"},
+			ac:       platformtoken.AuthorizedContext{Subject: "12345", UserID: 67890, TenantID: "tenant-a"},
 			wantKind: interfaces.SubjectIDUsername,
 		},
 		"email": {
-			ac:       platformtoken.AuthorizedContext{Subject: "alice@example.com", UserID: "67890", TenantID: "tenant-a"},
+			ac:       platformtoken.AuthorizedContext{Subject: "alice@example.com", UserID: 67890, TenantID: "tenant-a"},
 			wantKind: interfaces.SubjectIDEmail,
 		},
 	}
@@ -219,7 +219,7 @@ func TestContextWithAuthorizedSubject_AccountIsVerifiedUserID(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, tc.ac.Subject, subject.ID)
 			assert.Equal(t, tc.wantKind, subject.IDKind)
-			assert.Equal(t, "67890", subject.UserID)
+			assert.Equal(t, uint64(67890), subject.UserID)
 		})
 	}
 }

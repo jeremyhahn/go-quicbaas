@@ -115,7 +115,6 @@ func TestAttestationVerifier_EmbeddedEndToEnd(t *testing.T) {
 func TestAttestationVerifier_ClientValidation(t *testing.T) {
 	svc := newAttestationService(nil)
 	ctx := context.Background()
-	//nolint:staticcheck // a nil context is the case under test
 	var nilCtx context.Context
 	for name, err := range map[string]error{
 		"put nil":         func() error { _, err := svc.PutEndorsement(ctx, nil); return err }(),

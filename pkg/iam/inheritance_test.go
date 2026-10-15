@@ -1374,7 +1374,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByStatus(t *testing.T)
 	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
 		UserID:      10001,
-		RequestedBy: "user-1",
+		RequestedBy: 1,
 		Format:      DataExportFormatJSON,
 	})
 	if err != nil {
@@ -1403,7 +1403,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
 	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
 		UserID:      10001,
-		RequestedBy: "user-1",
+		RequestedBy: 1,
 		Format:      DataExportFormatJSON,
 	})
 	if err != nil {
@@ -1413,7 +1413,7 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
 	_, err = storage.CreateExportRequest(ctx, CreateDataExportOptions{
 		TenantID:    "tenant-1",
 		UserID:      10002,
-		RequestedBy: "user-2",
+		RequestedBy: 2,
 		Format:      DataExportFormatJSON,
 	})
 	if err != nil {
@@ -1446,7 +1446,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByStatus(t *testing.T)
 	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
 		UserID:      10001,
-		RequestedBy: "user-1",
+		RequestedBy: 1,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeletionRequest failed: %v", err)
@@ -1474,7 +1474,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByUser(t *testing.T) {
 	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
 		UserID:      10001,
-		RequestedBy: "user-1",
+		RequestedBy: 1,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeletionRequest failed: %v", err)
@@ -1483,7 +1483,7 @@ func TestMemoryDeletionStorage_ListDeletionRequests_FilterByUser(t *testing.T) {
 	_, err = storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		TenantID:    "tenant-1",
 		UserID:      10002,
-		RequestedBy: "user-2",
+		RequestedBy: 2,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeletionRequest failed: %v", err)

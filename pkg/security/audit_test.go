@@ -3855,24 +3855,11 @@ func TestCompressFileAsync_ValidFile(t *testing.T) {
 		shutdown: make(chan struct{}),
 	}
 
-	// Call compressFileAsync - it runs compression in background
+	// compressFileAsync compresses on the calling goroutine; callers run it
+	// in their own goroutine, so the file exists as soon as it returns.
 	al.compressFileAsync(srcPath, gzip.DefaultCompression)
 
-	// Wait a bit for async to complete
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			t.Fatal("compression didn't complete in time")
-		default:
-			gzPath := srcPath + ".gz"
-			if _, statErr := os.Stat(gzPath); statErr == nil {
-				// Compressed file was created
-				return
-			}
-			time.Sleep(50 * time.Millisecond) //nolint:forbidigo // polling for async result
-		}
-	}
+	require.FileExists(t, srcPath+".gz", "compressed file was not created")
 }
 
 func TestLog_WriteError(t *testing.T) {

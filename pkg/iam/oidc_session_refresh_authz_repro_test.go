@@ -173,9 +173,9 @@ func TestUIRefreshFlow_RenewedTokenAuthorizesTheSameEndpointTheLoginTokenDid(t *
 		t.Errorf("Authorize(renewed bearer, %q) = %v, want nil (this is the second 401 the UI hits)", requiredPerm, renewedAuthzErr)
 	}
 
-	t.Logf("login claims:   uid=%q roles=%v scp=%v aud=%v cnf=%v",
+	t.Logf("login claims:   uid=%d roles=%v scp=%v aud=%v cnf=%v",
 		loginClaims.UserID, loginClaims.Roles, loginClaims.SCP, loginClaims.Audience, loginClaims.Confirmation)
-	t.Logf("renewed claims: uid=%q roles=%v scp=%v aud=%v cnf=%v",
+	t.Logf("renewed claims: uid=%d roles=%v scp=%v aud=%v cnf=%v",
 		renewedClaims.UserID, renewedClaims.Roles, renewedClaims.SCP, renewedClaims.Audience, renewedClaims.Confirmation)
 	if loginAC != nil {
 		t.Logf("login AuthorizedContext:   scopes=%v tenant=%q", loginAC.Scopes, loginAC.TenantID)

@@ -291,9 +291,9 @@ func TestImpersonationAuditMiddleware(t *testing.T) {
 		// Create impersonation context
 		impCtx := &iam.ImpersonationContext{
 			SessionID:     "session-123",
-			AdminUserID:   "admin-456",
+			AdminUserID:   50456,
 			AdminUsername: "admin@example.com",
-			TargetUserID:  "user-789",
+			TargetUserID:  50789,
 			TenantID:      "tenant-123",
 		}
 
@@ -458,9 +458,9 @@ func TestImpersonationAuditMiddlewareWithContextFinal(t *testing.T) {
 		// Create impersonation context
 		impCtx := &iam.ImpersonationContext{
 			SessionID:     "session-123",
-			AdminUserID:   "admin-456",
+			AdminUserID:   50456,
 			AdminUsername: "admin@example.com",
-			TargetUserID:  "user-789",
+			TargetUserID:  50789,
 			TenantID:      "tenant-123",
 		}
 
@@ -489,9 +489,9 @@ func TestImpersonationAuditMiddlewareWithContextFinal(t *testing.T) {
 
 		impCtx := &iam.ImpersonationContext{
 			SessionID:     "session-456",
-			AdminUserID:   "admin-789",
+			AdminUserID:   50790,
 			AdminUsername: "admin2@example.com",
-			TargetUserID:  "user-101",
+			TargetUserID:  50101,
 			TenantID:      "tenant-456",
 		}
 
@@ -520,9 +520,9 @@ func TestImpersonationAuditMiddlewareWithContextFinal(t *testing.T) {
 
 		impCtx := &iam.ImpersonationContext{
 			SessionID:     "session-999",
-			AdminUserID:   "admin-888",
+			AdminUserID:   50888,
 			AdminUsername: "admin3@example.com",
-			TargetUserID:  "user-777",
+			TargetUserID:  50777,
 			TenantID:      "tenant-666",
 		}
 

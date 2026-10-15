@@ -111,8 +111,8 @@ func TestResolverRegistry_Resolvers(t *testing.T) {
 
 func TestResolverRegistry_Resolve_NilContext(t *testing.T) {
 	registry := NewResolverRegistry()
-	//nolint:staticcheck // testing nil context
-	_, err := registry.Resolve(nil, "test")
+	var nilCtx context.Context
+	_, err := registry.Resolve(nilCtx, "test")
 	if err == nil {
 		t.Fatal("Expected error for nil context")
 	}

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	ggrpc "google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,12 +66,35 @@ func TestShutdownLifecycle_WithGRPCResources(t *testing.T) {
 	srv.grpcServer = grpcServer
 	srv.grpcListener = lis
 
-	go func() {
-		grpcServer.Serve(lis) //nolint:errcheck
-	}()
-	time.Sleep(10 * time.Millisecond)
+	served := serveGRPCUntilReady(t, grpcServer, lis)
 
 	require.NoError(t, srv.Shutdown(context.Background()))
+	require.NoError(t, <-served, "Serve must return nil once the server is stopped")
+}
+
+// serveGRPCUntilReady runs grpcServer.Serve on lis and returns once a client
+// connection reaches READY, so the caller stops a server that is serving. The
+// returned channel delivers Serve's result.
+func serveGRPCUntilReady(t *testing.T, grpcServer *ggrpc.Server, lis net.Listener) <-chan error {
+	t.Helper()
+
+	served := make(chan error, 1)
+	go func() {
+		served <- grpcServer.Serve(lis)
+	}()
+
+	conn, err := ggrpc.NewClient(lis.Addr().String(),
+		ggrpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, conn.Close()) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn.Connect()
+	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+		require.True(t, conn.WaitForStateChange(ctx, state), "gRPC server never became ready")
+	}
+	return served
 }
 
 func TestInitializeLifecycle_AlreadyStartedGuard(t *testing.T) {
@@ -144,12 +169,10 @@ func TestStopGRPCServerLifecycle_WithUnixSocketCleanup(t *testing.T) {
 	srv.grpcListener = lis
 	srv.grpcUnixListener = &dummyListener{}
 
-	go func() {
-		grpcServer.Serve(lis) //nolint:errcheck
-	}()
-	time.Sleep(10 * time.Millisecond)
+	served := serveGRPCUntilReady(t, grpcServer, lis)
 
 	srv.stopGRPCServer()
+	require.NoError(t, <-served, "Serve must return nil once the server is stopped")
 }
 
 func TestStopCatalogManagerLifecycle_NilNoOp(t *testing.T) {

@@ -1254,7 +1254,7 @@ func TestConvertAdminAssignmentToProto_Full(t *testing.T) {
 	now := time.Now()
 	expires := now.Add(24 * time.Hour)
 	a := &iam.AdminAssignment{
-		ID: "aa-1", UserID: "u1", AdminRole: iam.AdminRoleSuperAdmin,
+		ID: "aa-1", UserID: 1, AdminRole: iam.AdminRoleSuperAdmin,
 		TenantIDs: []string{"t1"}, GrantedBy: "admin",
 		GrantedAt: now, Active: true,
 		Permissions:       []iam.AdminPermission{"read", "write"},
@@ -1275,36 +1275,6 @@ func TestConvertAdminAssignmentToProto_Full(t *testing.T) {
 	assert.NotNil(t, result.LastUsedAt)
 }
 
-func TestConvertProtoToAdminAssignment_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToAdminAssignment(nil))
-}
-
-func TestConvertProtoToAdminAssignment_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.AdminAssignment{
-		Id: "aa-1", UserId: "u1",
-		AdminRole: iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN,
-		TenantIds: []string{"t1"}, GrantedBy: "admin",
-		GrantedAt: timestamppb.New(now), Active: true,
-		Permissions:       []string{"read"},
-		DeniedPermissions: []string{"delete"},
-		ResourceScopes: []*iampb.ResourceScope{
-			{ResourceType: "kv", ResourcePattern: "*"},
-		},
-		ExpiresAt:  timestamppb.New(now.Add(24 * time.Hour)),
-		LastUsedAt: timestamppb.New(now),
-		Metadata:   map[string]string{"reason": "test"},
-	}
-	result := convertProtoToAdminAssignment(pb)
-	assert.Equal(t, "aa-1", result.ID)
-	assert.Equal(t, iam.AdminRoleSuperAdmin, result.AdminRole)
-	assert.Len(t, result.Permissions, 1)
-	assert.Len(t, result.DeniedPermissions, 1)
-	assert.Len(t, result.ResourceScopes, 1)
-	assert.NotNil(t, result.ExpiresAt)
-	assert.NotNil(t, result.LastUsedAt)
-}
-
 // =============================================================================
 // Impersonation Session Conversions
 // =============================================================================
@@ -1317,31 +1287,14 @@ func TestConvertImpersonationSessionToProto_Full(t *testing.T) {
 	now := time.Now()
 	ended := now.Add(time.Hour)
 	s := &iam.ImpersonationSession{
-		ID: "imp-1", AdminUserID: "admin-1", TargetUserID: "user-1",
+		ID: "imp-1", AdminUserID: 30021, TargetUserID: 1,
 		TenantID: "t1", Reason: "support ticket",
 		StartedAt: now, ExpiresAt: now.Add(2 * time.Hour),
 		EndedAt: &ended, AuditLogID: "audit-1",
 	}
 	result := convertImpersonationSessionToProto(s)
 	assert.Equal(t, "imp-1", result.Id)
-	assert.Equal(t, "admin-1", result.AdminUserId)
-	assert.NotNil(t, result.EndedAt)
-}
-
-func TestConvertProtoToImpersonationSession_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToImpersonationSession(nil))
-}
-
-func TestConvertProtoToImpersonationSession_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.ImpersonationSession{
-		Id: "imp-1", AdminUserId: "admin-1", TargetUserId: "user-1",
-		TenantId: "t1", Reason: "support",
-		StartedAt: timestamppb.New(now), ExpiresAt: timestamppb.New(now.Add(time.Hour)),
-		EndedAt: timestamppb.New(now.Add(30 * time.Minute)), AuditLogId: "a1",
-	}
-	result := convertProtoToImpersonationSession(pb)
-	assert.Equal(t, "imp-1", result.ID)
+	assert.Equal(t, "30021", result.AdminUserId)
 	assert.NotNil(t, result.EndedAt)
 }
 
@@ -1564,7 +1517,7 @@ func TestConvertDataExportRequestToProto_Full(t *testing.T) {
 	expires := now.Add(24 * time.Hour)
 	r := &iam.DataExportRequest{
 		ID: "exp-1", UserID: 30001, TenantID: "t1",
-		RequestedBy: "admin", Format: iam.DataExportFormatJSON,
+		RequestedBy: 30040, Format: iam.DataExportFormatJSON,
 		Status:            iam.DataExportStatusCompleted,
 		IncludeCategories: []string{"profile"}, ExcludeCategories: []string{"audit"},
 		RequestedAt: now, DownloadURL: "https://example.com/download",
@@ -1589,7 +1542,7 @@ func TestConvertProtoToDataExportRequest_Full(t *testing.T) {
 	now := time.Now()
 	pb := &iampb.DataExportRequest{
 		Id: "exp-1", UserId: "30001", TenantId: "t1",
-		RequestedBy: "admin",
+		RequestedBy: "30040",
 		Format:      iampb.DataExportFormat_DATA_EXPORT_FORMAT_JSON,
 		Status:      iampb.DataExportStatus_DATA_EXPORT_STATUS_COMPLETED,
 		RequestedAt: timestamppb.New(now),
@@ -1660,7 +1613,7 @@ func TestConvertDataDeletionRequestToProto_Full(t *testing.T) {
 	cancelled := now.Add(30 * time.Minute)
 	r := &iam.DataDeletionRequest{
 		ID: "del-1", UserID: 30001, TenantID: "t1",
-		RequestedBy: "admin", Reason: "user request",
+		RequestedBy: 30040, Reason: "user request",
 		Status:           iam.DeletionStatusCompleted,
 		DeleteCategories: []string{"profile"}, PreserveCategories: []string{"audit"},
 		RequestedAt: now, CancelledBy: "",
@@ -1693,7 +1646,7 @@ func TestConvertProtoToDataDeletionRequest_Full(t *testing.T) {
 	now := time.Now()
 	pb := &iampb.DataDeletionRequest{
 		Id: "del-1", UserId: "30001", TenantId: "t1",
-		RequestedBy: "admin", Reason: "test",
+		RequestedBy: "30040", Reason: "test",
 		Status:             iampb.DeletionStatus_DELETION_STATUS_COMPLETED,
 		DeleteCategories:   []string{"profile"},
 		PreserveCategories: []string{"audit"},
@@ -1919,7 +1872,7 @@ func TestConvertAdminAssignmentToProto(t *testing.T) {
 			name: "full_assignment",
 			input: &iam.AdminAssignment{
 				ID:        "assign-1",
-				UserID:    "user-1",
+				UserID:    1,
 				AdminRole: iam.AdminRoleSuperAdmin,
 				TenantIDs: []string{"tenant-1", "tenant-2"},
 				Permissions: []iam.AdminPermission{
@@ -1942,7 +1895,7 @@ func TestConvertAdminAssignmentToProto(t *testing.T) {
 			validate: func(t *testing.T, result *iampb.AdminAssignment) {
 				require.NotNil(t, result)
 				assert.Equal(t, "assign-1", result.Id)
-				assert.Equal(t, "user-1", result.UserId)
+				assert.Equal(t, "1", result.UserId)
 				assert.Equal(t, iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN, result.AdminRole)
 				assert.Equal(t, []string{"tenant-1", "tenant-2"}, result.TenantIds)
 				assert.Len(t, result.Permissions, 2)
@@ -1959,7 +1912,7 @@ func TestConvertAdminAssignmentToProto(t *testing.T) {
 			name: "minimal_assignment",
 			input: &iam.AdminAssignment{
 				ID:        "assign-2",
-				UserID:    "user-2",
+				UserID:    2,
 				AdminRole: iam.AdminRoleReadOnly,
 				GrantedAt: now,
 			},
@@ -1975,87 +1928,6 @@ func TestConvertAdminAssignmentToProto(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := convertAdminAssignmentToProto(tt.input)
-			tt.validate(t, result)
-		})
-	}
-}
-
-func TestConvertProtoToAdminAssignment(t *testing.T) {
-	now := time.Now()
-	expires := now.Add(24 * time.Hour)
-	lastUsed := now.Add(-1 * time.Hour)
-
-	tests := []struct {
-		name     string
-		input    *iampb.AdminAssignment
-		validate func(t *testing.T, result *iam.AdminAssignment)
-	}{
-		{
-			name:  "nil_input",
-			input: nil,
-			validate: func(t *testing.T, result *iam.AdminAssignment) {
-				assert.Nil(t, result)
-			},
-		},
-		{
-			name: "full_assignment",
-			input: &iampb.AdminAssignment{
-				Id:        "assign-1",
-				UserId:    "user-1",
-				AdminRole: iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN,
-				TenantIds: []string{"tenant-1", "tenant-2"},
-				Permissions: []string{
-					"user.create",
-					"user.delete",
-				},
-				DeniedPermissions: []string{
-					"tenant.delete",
-				},
-				ResourceScopes: []*iampb.ResourceScope{
-					{ResourceType: "user", ResourcePattern: "*"},
-				},
-				GrantedBy:  "admin-1",
-				GrantedAt:  timestamppb.New(now),
-				ExpiresAt:  timestamppb.New(expires),
-				LastUsedAt: timestamppb.New(lastUsed),
-				Active:     true,
-				Metadata:   map[string]string{"reason": "promotion"},
-			},
-			validate: func(t *testing.T, result *iam.AdminAssignment) {
-				require.NotNil(t, result)
-				assert.Equal(t, "assign-1", result.ID)
-				assert.Equal(t, "user-1", result.UserID)
-				assert.Equal(t, iam.AdminRoleSuperAdmin, result.AdminRole)
-				assert.Equal(t, []string{"tenant-1", "tenant-2"}, result.TenantIDs)
-				assert.Len(t, result.Permissions, 2)
-				assert.Len(t, result.DeniedPermissions, 1)
-				assert.Len(t, result.ResourceScopes, 1)
-				assert.Equal(t, "admin-1", result.GrantedBy)
-				assert.True(t, result.Active)
-				require.NotNil(t, result.ExpiresAt)
-				require.NotNil(t, result.LastUsedAt)
-				assert.Equal(t, "promotion", result.Metadata["reason"])
-			},
-		},
-		{
-			name: "minimal_assignment",
-			input: &iampb.AdminAssignment{
-				Id:        "assign-2",
-				UserId:    "user-2",
-				AdminRole: iampb.AdminRole_ADMIN_ROLE_READ_ONLY,
-			},
-			validate: func(t *testing.T, result *iam.AdminAssignment) {
-				require.NotNil(t, result)
-				assert.Equal(t, "assign-2", result.ID)
-				assert.Nil(t, result.ExpiresAt)
-				assert.Nil(t, result.LastUsedAt)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertProtoToAdminAssignment(tt.input)
 			tt.validate(t, result)
 		})
 	}
@@ -2086,8 +1958,8 @@ func TestConvertImpersonationSessionToProto(t *testing.T) {
 			name: "active_session",
 			input: &iam.ImpersonationSession{
 				ID:           "session-1",
-				AdminUserID:  "admin-1",
-				TargetUserID: "user-1",
+				AdminUserID:  30021,
+				TargetUserID: 1,
 				TenantID:     "tenant-1",
 				Reason:       "Customer support request",
 				StartedAt:    now,
@@ -2097,8 +1969,8 @@ func TestConvertImpersonationSessionToProto(t *testing.T) {
 			validate: func(t *testing.T, result *iampb.ImpersonationSession) {
 				require.NotNil(t, result)
 				assert.Equal(t, "session-1", result.Id)
-				assert.Equal(t, "admin-1", result.AdminUserId)
-				assert.Equal(t, "user-1", result.TargetUserId)
+				assert.Equal(t, "30021", result.AdminUserId)
+				assert.Equal(t, "1", result.TargetUserId)
 				assert.Equal(t, "tenant-1", result.TenantId)
 				assert.Equal(t, "Customer support request", result.Reason)
 				assert.NotNil(t, result.StartedAt)
@@ -2111,8 +1983,8 @@ func TestConvertImpersonationSessionToProto(t *testing.T) {
 			name: "ended_session",
 			input: &iam.ImpersonationSession{
 				ID:           "session-2",
-				AdminUserID:  "admin-1",
-				TargetUserID: "user-2",
+				AdminUserID:  30021,
+				TargetUserID: 2,
 				TenantID:     "tenant-1",
 				StartedAt:    now,
 				ExpiresAt:    expires,
@@ -2128,72 +2000,6 @@ func TestConvertImpersonationSessionToProto(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := convertImpersonationSessionToProto(tt.input)
-			tt.validate(t, result)
-		})
-	}
-}
-
-func TestConvertProtoToImpersonationSession(t *testing.T) {
-	now := time.Now()
-	expires := now.Add(1 * time.Hour)
-	ended := now.Add(30 * time.Minute)
-
-	tests := []struct {
-		name     string
-		input    *iampb.ImpersonationSession
-		validate func(t *testing.T, result *iam.ImpersonationSession)
-	}{
-		{
-			name:  "nil_input",
-			input: nil,
-			validate: func(t *testing.T, result *iam.ImpersonationSession) {
-				assert.Nil(t, result)
-			},
-		},
-		{
-			name: "active_session",
-			input: &iampb.ImpersonationSession{
-				Id:           "session-1",
-				AdminUserId:  "admin-1",
-				TargetUserId: "user-1",
-				TenantId:     "tenant-1",
-				Reason:       "Customer support request",
-				StartedAt:    timestamppb.New(now),
-				ExpiresAt:    timestamppb.New(expires),
-				AuditLogId:   "audit-123",
-			},
-			validate: func(t *testing.T, result *iam.ImpersonationSession) {
-				require.NotNil(t, result)
-				assert.Equal(t, "session-1", result.ID)
-				assert.Equal(t, "admin-1", result.AdminUserID)
-				assert.Equal(t, "user-1", result.TargetUserID)
-				assert.Equal(t, "tenant-1", result.TenantID)
-				assert.Equal(t, "Customer support request", result.Reason)
-				assert.Nil(t, result.EndedAt)
-				assert.Equal(t, "audit-123", result.AuditLogID)
-			},
-		},
-		{
-			name: "ended_session",
-			input: &iampb.ImpersonationSession{
-				Id:           "session-2",
-				AdminUserId:  "admin-1",
-				TargetUserId: "user-2",
-				TenantId:     "tenant-1",
-				StartedAt:    timestamppb.New(now),
-				ExpiresAt:    timestamppb.New(expires),
-				EndedAt:      timestamppb.New(ended),
-			},
-			validate: func(t *testing.T, result *iam.ImpersonationSession) {
-				require.NotNil(t, result)
-				require.NotNil(t, result.EndedAt)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertProtoToImpersonationSession(tt.input)
 			tt.validate(t, result)
 		})
 	}
@@ -3101,7 +2907,7 @@ func TestConvertDataExportRequestToProtoComplete(t *testing.T) {
 		ID:                "export-1",
 		UserID:            10001,
 		TenantID:          "tenant-1",
-		RequestedBy:       "admin",
+		RequestedBy:       30040,
 		Format:            iam.DataExportFormatJSON,
 		Status:            iam.DataExportStatusCompleted,
 		IncludeCategories: []string{"profile", "sessions"},
@@ -3142,7 +2948,7 @@ func TestConvertProtoToDataExportRequestComplete(t *testing.T) {
 		Id:                "export-1",
 		UserId:            "10001",
 		TenantId:          "tenant-1",
-		RequestedBy:       "admin",
+		RequestedBy:       "30040",
 		Format:            iampb.DataExportFormat_DATA_EXPORT_FORMAT_CSV,
 		Status:            iampb.DataExportStatus_DATA_EXPORT_STATUS_PROCESSING,
 		IncludeCategories: []string{"profile"},
@@ -3379,7 +3185,7 @@ func TestConvertDataDeletionRequestToProtoComplete(t *testing.T) {
 		ID:                 "deletion-1",
 		UserID:             10001,
 		TenantID:           "tenant-1",
-		RequestedBy:        "user-1",
+		RequestedBy:        1,
 		Status:             iam.DeletionStatusPending,
 		Reason:             "User requested deletion",
 		RequestedAt:        now,
@@ -3419,7 +3225,7 @@ func TestConvertProtoToDataDeletionRequestComplete(t *testing.T) {
 		Id:                 "deletion-1",
 		UserId:             "10001",
 		TenantId:           "tenant-1",
-		RequestedBy:        "user-1",
+		RequestedBy:        "30040",
 		Status:             iampb.DeletionStatus_DELETION_STATUS_COMPLETED,
 		Reason:             "GDPR request",
 		RequestedAt:        timestamppb.New(now),

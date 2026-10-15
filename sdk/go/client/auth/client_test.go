@@ -174,7 +174,8 @@ func TestLogin(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.Login(nil, &service.ExtendedLoginRequest{ //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.Login(nilCtx, &service.ExtendedLoginRequest{
 			Username: "testuser",
 		})
 		if err == nil {
@@ -254,7 +255,8 @@ func TestRefreshToken(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.RefreshToken(nil, "token") //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.RefreshToken(nilCtx, "token")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -319,7 +321,8 @@ func TestValidateToken(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.ValidateToken(nil, "token") //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.ValidateToken(nilCtx, "token")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -377,7 +380,8 @@ func TestLogout(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		err := c.Logout(nil, "token") //nolint:staticcheck
+		var nilCtx context.Context
+		err := c.Logout(nilCtx, "token")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -453,7 +457,8 @@ func TestBeginFederatedLogin(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.BeginFederatedLogin(nil, &service.BeginFederatedLoginRequest{ //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.BeginFederatedLogin(nilCtx, &service.BeginFederatedLoginRequest{
 			ProviderID:  "google",
 			RedirectURI: "https://myapp.com/callback",
 		})
@@ -565,7 +570,8 @@ func TestHandleFederatedCallback(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.HandleFederatedCallback(nil, &service.HandleFederatedCallbackRequest{ //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.HandleFederatedCallback(nilCtx, &service.HandleFederatedCallbackRequest{
 			ProviderID: "google",
 			Code:       "auth-code",
 			State:      "state-123",
@@ -642,7 +648,8 @@ func TestListProviders(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.ListProviders(nil, "tenant-1") //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.ListProviders(nilCtx, "tenant-1")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -697,7 +704,8 @@ func TestGetProvider(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.GetProvider(nil, "tenant-1", "google") //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.GetProvider(nilCtx, "tenant-1", "google")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -760,7 +768,8 @@ func TestGetSession(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.GetSession(nil, "session-123") //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.GetSession(nilCtx, "session-123")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -825,7 +834,8 @@ func TestListSessions(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.ListSessions(nil) //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.ListSessions(nilCtx)
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -875,7 +885,8 @@ func TestRevokeSession(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		err := c.RevokeSession(nil, "session-123") //nolint:staticcheck
+		var nilCtx context.Context
+		err := c.RevokeSession(nilCtx, "session-123")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -917,7 +928,8 @@ func TestRevokeAllSessions(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		err := c.RevokeAllSessions(nil) //nolint:staticcheck
+		var nilCtx context.Context
+		err := c.RevokeAllSessions(nilCtx)
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -988,7 +1000,8 @@ func TestIntrospectToken(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.IntrospectToken(nil, "token") //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.IntrospectToken(nilCtx, "token")
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -1041,7 +1054,8 @@ func TestGetJWKS(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.GetJWKS(nil) //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.GetJWKS(nilCtx)
 		if err == nil {
 			t.Error("expected error for nil context")
 		}
@@ -1115,7 +1129,8 @@ func TestGetOpenIDConfiguration(t *testing.T) {
 
 	t.Run("nil context returns error", func(t *testing.T) {
 		c := NewClient(newMockTransport())
-		_, err := c.GetOpenIDConfiguration(nil) //nolint:staticcheck
+		var nilCtx context.Context
+		_, err := c.GetOpenIDConfiguration(nilCtx)
 		if err == nil {
 			t.Error("expected error for nil context")
 		}

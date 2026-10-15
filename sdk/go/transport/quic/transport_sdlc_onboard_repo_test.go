@@ -50,7 +50,7 @@ func TestRequest_OnboardRepoOverHTTP3PostsTheOnboarding(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 	resp, err := tr.Request(context.Background(), "quicbaas.SDLC", "OnboardRepo",

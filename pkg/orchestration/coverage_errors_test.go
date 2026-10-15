@@ -523,7 +523,10 @@ func TestCodexExecTurnReachesTheLedgerOnTheDefaultModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAgentService: %v", err)
 	}
-	impl := svc.(*agentServiceImpl) //nolint:errcheck // NewAgentService returns this type
+	impl, ok := svc.(*agentServiceImpl)
+	if !ok {
+		t.Fatalf("NewAgentService returned %T, want *agentServiceImpl", svc)
+	}
 	ledger := NewConsumptionLedger(NewMemoryTaskKV())
 	impl.SetConsumptionLedger(ledger)
 
@@ -572,7 +575,10 @@ func TestFailedCodexExecTurnReachesTheLedgerOnTheDefaultModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAgentService: %v", err)
 	}
-	impl := svc.(*agentServiceImpl) //nolint:errcheck // NewAgentService returns this type
+	impl, ok := svc.(*agentServiceImpl)
+	if !ok {
+		t.Fatalf("NewAgentService returned %T, want *agentServiceImpl", svc)
+	}
 	ledger := NewConsumptionLedger(NewMemoryTaskKV())
 	impl.SetConsumptionLedger(ledger)
 	book, err := NewPriceBook(config.PricingConfig{Version: "v1", Models: []config.ModelPriceConfig{
@@ -633,7 +639,7 @@ func fakeCodex(t *testing.T, stream string) fakeCodexCLI {
 		t.Fatalf("write events: %v", err)
 	}
 	script := "#!/bin/sh\ncat >/dev/null\necho \"$*\" > '" + cli.argFile + "'\ncat '" + events + "'\n"
-	if err := os.WriteFile(cli.path, []byte(script), 0o700); err != nil { //nolint:gosec // test executable
+	if err := os.WriteFile(cli.path, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
 	return cli

@@ -303,7 +303,8 @@ func TestSealClient_NilContext(t *testing.T) {
 	transport := NewTransport()
 	client := seal.NewClient(transport)
 
-	_, err := client.Status(nil) //nolint:staticcheck
+	var nilCtx context.Context
+	_, err := client.Status(nilCtx)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -641,7 +642,8 @@ func TestKMSClient_NilContext(t *testing.T) {
 	transport := NewTransport()
 	client := kms.NewClient(transport)
 
-	_, err := client.ListKeys(nil) //nolint:staticcheck
+	var nilCtx context.Context
+	_, err := client.ListKeys(nilCtx)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -920,7 +922,8 @@ func TestSecretsClient_NilContext(t *testing.T) {
 	transport := NewTransport()
 	client := secrets.NewClient(transport)
 
-	_, err := client.List(nil, "prefix") //nolint:staticcheck
+	var nilCtx context.Context
+	_, err := client.List(nilCtx, "prefix")
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -1351,7 +1354,8 @@ func TestCryptoClient_NilContext(t *testing.T) {
 	transport := NewTransport()
 	client := crypto.NewClient(transport)
 
-	_, err := client.Encrypt(nil, &crypto.EncryptRequest{ //nolint:staticcheck
+	var nilCtx context.Context
+	_, err := client.Encrypt(nilCtx, &crypto.EncryptRequest{
 		KeyID:     "key",
 		Plaintext: []byte("data"),
 	})

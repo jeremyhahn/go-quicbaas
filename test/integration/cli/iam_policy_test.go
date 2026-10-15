@@ -119,9 +119,17 @@ func createPolicyTestTenant(t *testing.T, runner *TestRunner) string {
 	require.NoError(t, err, "tenant create should succeed: stdout=%s stderr=%s", stdout, stderr)
 	t.Cleanup(func() {
 		delCmd := IAMTenantDeleteCommand(tenantID)
-		runner.Run(delCmd) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd)
 	})
 	return tenantID
+}
+
+// requireCleanupRun runs a cleanup command and fails the test when it does not
+// succeed, so a resource a test created is never silently left behind.
+func requireCleanupRun(t *testing.T, runner *TestRunner, cmd CommandDef) {
+	t.Helper()
+	stdout, stderr, err := runner.Run(cmd)
+	require.NoError(t, err, "%s should succeed: stdout=%s stderr=%s", cmd.Name, stdout, stderr)
 }
 
 // =============================================================================
@@ -203,7 +211,7 @@ func TestIAMPolicyApply(t *testing.T) {
 
 		// Cleanup
 		delCmd := IAMPolicyDeleteCommand(tenantID, policyName)
-		runner.Run(delCmd) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd)
 	})
 }
 
@@ -240,7 +248,7 @@ func TestIAMPolicyApplyJSON(t *testing.T) {
 
 		// Cleanup
 		delCmd := IAMPolicyDeleteCommand(tenantID, policyName)
-		runner.Run(delCmd) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd)
 	})
 }
 
@@ -303,7 +311,7 @@ func TestIAMPolicyGet(t *testing.T) {
 
 		// Cleanup
 		delCmd := IAMPolicyDeleteCommand(tenantID, policyName)
-		runner.Run(delCmd) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd)
 	})
 }
 
@@ -347,7 +355,7 @@ func TestIAMPolicyGetJSON(t *testing.T) {
 
 		// Cleanup
 		delCmd := IAMPolicyDeleteCommand(tenantID, policyName)
-		runner.Run(delCmd) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd)
 	})
 }
 
@@ -422,9 +430,9 @@ func TestIAMPolicyList(t *testing.T) {
 
 		// Cleanup
 		delCmd1 := IAMPolicyDeleteCommand(tenantID, policyName1)
-		runner.Run(delCmd1) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd1)
 		delCmd2 := IAMPolicyDeleteCommand(tenantID, policyName2)
-		runner.Run(delCmd2) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd2)
 	})
 }
 
@@ -476,9 +484,9 @@ func TestIAMPolicyListJSON(t *testing.T) {
 
 		// Cleanup
 		delCmd1 := IAMPolicyDeleteCommand(tenantID, policyName1)
-		runner.Run(delCmd1) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd1)
 		delCmd2 := IAMPolicyDeleteCommand(tenantID, policyName2)
-		runner.Run(delCmd2) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd2)
 	})
 }
 
@@ -653,7 +661,7 @@ func TestIAMPolicyTest(t *testing.T) {
 
 		// Cleanup
 		delCmd := IAMPolicyDeleteCommand(tenantID, policyName)
-		runner.Run(delCmd) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd)
 	})
 }
 
@@ -702,7 +710,7 @@ func TestIAMPolicyTestDeny(t *testing.T) {
 
 		// Cleanup
 		delCmd := IAMPolicyDeleteCommand(tenantID, policyName)
-		runner.Run(delCmd) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd)
 	})
 }
 
@@ -750,6 +758,6 @@ func TestIAMPolicyTestJSON(t *testing.T) {
 
 		// Cleanup
 		delCmd := IAMPolicyDeleteCommand(tenantID, policyName)
-		runner.Run(delCmd) //nolint:errcheck
+		requireCleanupRun(t, runner, delCmd)
 	})
 }

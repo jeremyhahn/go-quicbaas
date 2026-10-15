@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -323,7 +324,10 @@ func (s *sshService) auditSign(ctx context.Context, req SSHSignRequest, cause er
 	}
 	if subject, ok := auth.SubjectFromContext(ctx); ok {
 		event.TenantID = subject.TenantID
-		event.Actor = &iam.AuditActor{UserID: subject.UserID, Username: subject.Username, Roles: subject.Roles}
+		event.Actor = &iam.AuditActor{Username: subject.Username, Roles: subject.Roles}
+		if subject.UserID != 0 {
+			event.Actor.UserID = strconv.FormatUint(subject.UserID, 10)
+		}
 		if event.Actor.Username == "" {
 			event.Actor.Username = subject.ID
 		}

@@ -29,7 +29,7 @@ import (
 func TestTransport_WorkflowCRUDOverHTTP3(t *testing.T) {
 	addr, shutdown := startTestHTTP3Server(t, workflowcrud.HTTPHandler(workflowcrud.NewStore().Agent()))
 	defer shutdown()
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 

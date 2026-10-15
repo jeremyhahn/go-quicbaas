@@ -52,11 +52,11 @@ type Subject struct {
 	// it from what ID looks like, because a username may be all digits.
 	IDKind SubjectIDKind
 
-	// UserID is the caller's qrdb user id in decimal, copied from the
-	// verified user-id claim (uid) of the token that authenticated it. Empty
-	// when the credential carried none. When set it names the caller's
-	// account; ID is then only the name the caller logged in with.
-	UserID string
+	// UserID is the caller's qrdb user id, copied from the verified user-id
+	// claim (uid) of the token that authenticated it. Zero when the
+	// credential carried none. When set it names the caller's account; ID is
+	// then only the name the caller logged in with.
+	UserID uint64
 }
 
 // SubjectIDKind names the qrdb user-store key a Subject's ID is.

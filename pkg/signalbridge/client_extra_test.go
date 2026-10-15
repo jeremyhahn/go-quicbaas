@@ -150,8 +150,8 @@ func TestSignalClient_Login_NoIdentity(t *testing.T) {
 // TestSignalClient_Login_NilContext rejects a nil context.
 func TestSignalClient_Login_NilContext(t *testing.T) {
 	c, _, _ := newTestSignalClient(t)
-	//nolint:staticcheck // intentionally testing the nil-context guard.
-	if err := c.Login(nil, LoginOptions{Account: loginAccount()}); !IsKind(err, ErrKindInvalidInput) {
+	var nilCtx context.Context
+	if err := c.Login(nilCtx, LoginOptions{Account: loginAccount()}); !IsKind(err, ErrKindInvalidInput) {
 		t.Fatalf("want invalid_input, got %v", err)
 	}
 }
@@ -286,8 +286,8 @@ func TestSignalClient_RotatePreKeys_Errors(t *testing.T) {
 	if err := c.RotatePreKeys(context.Background()); !IsKind(err, ErrKindInvalidInput) {
 		t.Fatalf("no account: want invalid_input, got %v", err)
 	}
-	//nolint:staticcheck // intentionally testing the nil-context guard.
-	if err := c.RotatePreKeys(nil); !IsKind(err, ErrKindInvalidInput) {
+	var nilCtx context.Context
+	if err := c.RotatePreKeys(nilCtx); !IsKind(err, ErrKindInvalidInput) {
 		t.Fatalf("nil ctx: want invalid_input, got %v", err)
 	}
 }
@@ -307,8 +307,8 @@ func TestSignalClient_Edit_Success(t *testing.T) {
 // TestSignalClient_Edit_NilContext rejects a nil context.
 func TestSignalClient_Edit_NilContext(t *testing.T) {
 	c, _, _ := newTestSignalClient(t)
-	//nolint:staticcheck // intentionally testing the nil-context guard.
-	if err := c.Edit(nil, "conv", 1, "x"); !IsKind(err, ErrKindInvalidInput) {
+	var nilCtx context.Context
+	if err := c.Edit(nilCtx, "conv", 1, "x"); !IsKind(err, ErrKindInvalidInput) {
 		t.Fatalf("want invalid_input, got %v", err)
 	}
 }
@@ -316,8 +316,8 @@ func TestSignalClient_Edit_NilContext(t *testing.T) {
 // TestSignalClient_Send_NilContext and closed client error appropriately.
 func TestSignalClient_Send_GuardRails(t *testing.T) {
 	c, _, _ := newTestSignalClient(t)
-	//nolint:staticcheck // intentionally testing the nil-context guard.
-	if err := c.Send(nil, OutboundMessage{ConversationID: "c"}); !IsKind(err, ErrKindInvalidInput) {
+	var nilCtx context.Context
+	if err := c.Send(nilCtx, OutboundMessage{ConversationID: "c"}); !IsKind(err, ErrKindInvalidInput) {
 		t.Fatalf("nil ctx: want invalid_input, got %v", err)
 	}
 	if err := c.Send(context.Background(), OutboundMessage{}); !IsKind(err, ErrKindInvalidInput) {

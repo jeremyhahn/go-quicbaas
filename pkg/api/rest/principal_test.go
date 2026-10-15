@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,8 +37,24 @@ import (
 // ad-hoc context keys. userID is both the login name and the verified
 // account, as for a bearer token whose sub and uid agree.
 func ctxWithTestSubject(parent context.Context, userID, tenantID string) context.Context {
-	return auth.SubjectIntoContext(parent, interfaces.Subject{
+	subject := interfaces.Subject{
 		ID:            userID,
+		TenantID:      tenantID,
+		Authenticated: true,
+	}
+	// A numeric login name is also the verified user id, as a token minted
+	// for that account would carry it in its uid claim.
+	if uid, err := strconv.ParseUint(userID, 10, 64); err == nil {
+		subject.UserID = uid
+	}
+	return auth.SubjectIntoContext(parent, subject)
+}
+
+// ctxWithTestUser is ctxWithTestSubject for handlers that act on the
+// caller's verified qrdb user id (Subject.UserID) rather than the login name.
+func ctxWithTestUser(parent context.Context, userID uint64, tenantID string) context.Context {
+	return auth.SubjectIntoContext(parent, interfaces.Subject{
+		ID:            strconv.FormatUint(userID, 10),
 		UserID:        userID,
 		TenantID:      tenantID,
 		Authenticated: true,

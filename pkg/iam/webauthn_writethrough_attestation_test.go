@@ -356,8 +356,8 @@ func TestAttestationRecorder_NilSafety(t *testing.T) {
 
 	// A context with no recorder attached must absorb the call silently.
 	recordAttestation(context.Background(), testHardwareAttestation("x"))
-	//nolint:staticcheck // deliberately exercising the nil-context guard
-	recordAttestation(nil, testHardwareAttestation("x"))
+	var nilCtx context.Context
+	recordAttestation(nilCtx, testHardwareAttestation("x"))
 
 	fresh := &attestationRecorder{}
 	if fresh.get() != nil {

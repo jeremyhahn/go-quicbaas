@@ -141,7 +141,7 @@ func TestTenantProvisionOverHTTP3(t *testing.T) {
 			addr, shutdown := startTestHTTP3Server(t, provisionServer(t, bodies, tc.reply))
 			defer shutdown()
 
-			tr, err := New(testTransportConfig(addr))
+			tr, err := New(testTransportConfig(t, addr))
 			require.NoError(t, err)
 			defer tr.Close()
 
@@ -165,7 +165,7 @@ func TestTenantProvisionOverHTTP3_ServerRefusal(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 
@@ -177,7 +177,7 @@ func TestTenantProvisionOverHTTP3_ServerRefusal(t *testing.T) {
 // TestTenantProvisionOverHTTP3_BadRequestType verifies a request that cannot
 // be encoded is refused as invalid input before any I/O.
 func TestTenantProvisionOverHTTP3_BadRequestType(t *testing.T) {
-	tr, err := New(testTransportConfig("127.0.0.1:1"))
+	tr, err := New(testTransportConfig(t, "127.0.0.1:1"))
 	require.NoError(t, err)
 	defer tr.Close()
 

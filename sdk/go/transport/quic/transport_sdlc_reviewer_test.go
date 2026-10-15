@@ -40,7 +40,7 @@ func TestRequest_ReviewerVerbsOverHTTP3(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 	ctx := context.Background()
@@ -86,7 +86,7 @@ func TestRequest_ARebindOverHTTP3KeepsTheReviewerProfiles(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 	ctx := context.Background()

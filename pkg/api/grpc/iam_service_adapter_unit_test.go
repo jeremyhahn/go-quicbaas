@@ -612,7 +612,7 @@ type adapter91MockAdminStorage struct {
 	updateAssignmentFunc   func(ctx context.Context, assignment *iam.AdminAssignment) error
 	deleteAssignmentFunc   func(ctx context.Context, id string) error
 	listAssignmentsFunc    func(ctx context.Context, opts iam.ListAdminAssignmentsOptions) ([]*iam.AdminAssignment, error)
-	getUserAssignmentsFunc func(ctx context.Context, userID string) ([]*iam.AdminAssignment, error)
+	getUserAssignmentsFunc func(ctx context.Context, userID uint64) ([]*iam.AdminAssignment, error)
 }
 
 func (m *adapter91MockAdminStorage) CreateAssignment(ctx context.Context, assignment *iam.AdminAssignment) error {
@@ -650,7 +650,7 @@ func (m *adapter91MockAdminStorage) ListAssignments(ctx context.Context, opts ia
 	return []*iam.AdminAssignment{{ID: "a1"}}, nil
 }
 
-func (m *adapter91MockAdminStorage) GetUserAssignments(ctx context.Context, userID string) ([]*iam.AdminAssignment, error) {
+func (m *adapter91MockAdminStorage) GetUserAssignments(ctx context.Context, userID uint64) ([]*iam.AdminAssignment, error) {
 	if m.getUserAssignmentsFunc != nil {
 		return m.getUserAssignmentsFunc(ctx, userID)
 	}
@@ -666,8 +666,8 @@ type adapter91MockImpersonationStorage struct {
 	getFunc           func(ctx context.Context, id string) (*iam.ImpersonationSession, error)
 	endFunc           func(ctx context.Context, id string) error
 	incrementFunc     func(ctx context.Context, id string) (int64, error)
-	listActiveFunc    func(ctx context.Context, adminUserID string) ([]*iam.ImpersonationSession, error)
-	listFunc          func(ctx context.Context, activeOnly bool, adminUserID string) ([]*iam.ImpersonationSession, error)
+	listActiveFunc    func(ctx context.Context, adminUserID uint64) ([]*iam.ImpersonationSession, error)
+	listFunc          func(ctx context.Context, activeOnly bool, adminUserID uint64) ([]*iam.ImpersonationSession, error)
 	deleteExpiredFunc func(ctx context.Context) error
 }
 
@@ -699,14 +699,14 @@ func (m *adapter91MockImpersonationStorage) IncrementOperationCount(ctx context.
 	return 1, nil
 }
 
-func (m *adapter91MockImpersonationStorage) ListActiveImpersonations(ctx context.Context, adminUserID string) ([]*iam.ImpersonationSession, error) {
+func (m *adapter91MockImpersonationStorage) ListActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*iam.ImpersonationSession, error) {
 	if m.listActiveFunc != nil {
 		return m.listActiveFunc(ctx, adminUserID)
 	}
 	return []*iam.ImpersonationSession{}, nil
 }
 
-func (m *adapter91MockImpersonationStorage) ListImpersonations(ctx context.Context, activeOnly bool, adminUserID string) ([]*iam.ImpersonationSession, error) {
+func (m *adapter91MockImpersonationStorage) ListImpersonations(ctx context.Context, activeOnly bool, adminUserID uint64) ([]*iam.ImpersonationSession, error) {
 	if m.listFunc != nil {
 		return m.listFunc(ctx, activeOnly, adminUserID)
 	}
@@ -1430,14 +1430,14 @@ func TestAdapter91_AssignRole_Success(t *testing.T) {
 	require.NoError(t, err)
 	createdRole, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "assignable"})
 	require.NoError(t, err)
-	assert.NoError(t, adapter.AssignRole(ctx, "tenant-1", strconv.FormatUint(createdUser.ID, 10), createdRole.ID))
+	assert.NoError(t, adapter.AssignRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
 }
 
 func TestAdapter91_AssignRole_Error(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.AssignRole(ctx, "tenant-1", "nonexistent-user", "nonexistent-role"))
+	assert.Error(t, adapter.AssignRole(ctx, "tenant-1", 999999, "nonexistent-role"))
 }
 
 func TestAdapter91_RevokeRole_Success(t *testing.T) {
@@ -1449,15 +1449,15 @@ func TestAdapter91_RevokeRole_Success(t *testing.T) {
 	require.NoError(t, err)
 	createdRole, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "revocable"})
 	require.NoError(t, err)
-	require.NoError(t, adapter.AssignRole(ctx, "tenant-1", strconv.FormatUint(createdUser.ID, 10), createdRole.ID))
-	assert.NoError(t, adapter.RevokeRole(ctx, "tenant-1", strconv.FormatUint(createdUser.ID, 10), createdRole.ID))
+	require.NoError(t, adapter.AssignRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
+	assert.NoError(t, adapter.RevokeRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
 }
 
 func TestAdapter91_RevokeRole_Error(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.RevokeRole(ctx, "tenant-1", "nonexistent-user", "nonexistent-role"))
+	assert.Error(t, adapter.RevokeRole(ctx, "tenant-1", 999999, "nonexistent-role"))
 }
 
 // adapter91ReconcilingRoleStorage is a role storage that also honours
@@ -1897,7 +1897,7 @@ func TestAdapter91_CreateAdminAssignment_Success(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	opts := iam.CreateAdminAssignmentOptions{
-		UserID: "admin-1", AdminRole: iam.AdminRoleTenantAdmin,
+		UserID: 30021, AdminRole: iam.AdminRoleTenantAdmin,
 		GrantedBy: "super-admin",
 	}
 	result, err := adapter.CreateAdminAssignment(ctx, opts)
@@ -1997,7 +1997,7 @@ func TestAdapter91_CheckAdminPermission_Success(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	result, err := adapter.CheckAdminPermission(ctx, &iam.AdminCheckRequest{
-		UserID: "admin-1", Permission: iam.AdminPermission("manage_users"),
+		UserID: 30021, Permission: iam.AdminPermission("manage_users"),
 	})
 	require.NoError(t, err)
 	assert.NotNil(t, result)
@@ -2019,7 +2019,7 @@ func TestAdapter91_StartImpersonation_ValidationError(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	result, err := adapter.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		TargetUserID: "user-1", TenantID: "tenant-1", Reason: "support ticket",
+		TargetUserID: 1, TenantID: "tenant-1", Reason: "support ticket",
 	})
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -2054,7 +2054,7 @@ func TestAdapter91_GetActiveImpersonations_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.GetActiveImpersonations(ctx, "admin-1")
+	result, err := adapter.GetActiveImpersonations(ctx, 30021)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -2064,7 +2064,7 @@ func TestAdapter91_GetActiveImpersonations_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.GetActiveImpersonations(ctx, "admin-1")
+	result, err := adapter.GetActiveImpersonations(ctx, 30021)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2079,7 +2079,7 @@ func TestAdapter91_GrantConsent_Success(t *testing.T) {
 	adapter := createTestIAMAdapter91(t)
 
 	expires := time.Now().Add(365 * 24 * time.Hour)
-	result, err := adapter.GrantConsent(ctx, "tenant-1", "10001",
+	result, err := adapter.GrantConsent(ctx, "tenant-1", 10001,
 		iam.ConsentPurposeMarketing, "1.0", &expires, "127.0.0.1", "TestAgent")
 	require.NoError(t, err)
 	assert.NotNil(t, result)
@@ -2090,7 +2090,7 @@ func TestAdapter91_GrantConsent_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.GrantConsent(ctx, "t1", "30001", iam.ConsentPurposeMarketing, "1.0", nil, "127.0.0.1", "agent")
+	result, err := adapter.GrantConsent(ctx, "t1", 30001, iam.ConsentPurposeMarketing, "1.0", nil, "127.0.0.1", "agent")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2099,7 +2099,7 @@ func TestAdapter91_WithdrawConsent_NilManager(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	assert.Error(t, adapter.WithdrawConsent(ctx, "t1", "30001", iam.ConsentPurposeMarketing, "127.0.0.1", "agent"))
+	assert.Error(t, adapter.WithdrawConsent(ctx, "t1", 30001, iam.ConsentPurposeMarketing, "127.0.0.1", "agent"))
 }
 
 func TestAdapter91_WithdrawConsent_Success(t *testing.T) {
@@ -2107,7 +2107,7 @@ func TestAdapter91_WithdrawConsent_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 	// May or may not error depending on state; we ensure no panic
-	_ = adapter.WithdrawConsent(ctx, "tenant-1", "10001", iam.ConsentPurposeMarketing, "127.0.0.1", "TestAgent")
+	_ = adapter.WithdrawConsent(ctx, "tenant-1", 10001, iam.ConsentPurposeMarketing, "127.0.0.1", "TestAgent")
 }
 
 func TestAdapter91_GetConsent_NilManager(t *testing.T) {
@@ -2115,7 +2115,7 @@ func TestAdapter91_GetConsent_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.GetConsent(ctx, "t1", "30001", iam.ConsentPurposeMarketing)
+	result, err := adapter.GetConsent(ctx, "t1", 30001, iam.ConsentPurposeMarketing)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2124,7 +2124,7 @@ func TestAdapter91_GetConsent_Success(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
-	_, _ = adapter.GetConsent(ctx, "tenant-1", "10001", iam.ConsentPurposeMarketing)
+	_, _ = adapter.GetConsent(ctx, "tenant-1", 10001, iam.ConsentPurposeMarketing)
 }
 
 func TestAdapter91_ListUserConsents_Success(t *testing.T) {
@@ -2132,7 +2132,7 @@ func TestAdapter91_ListUserConsents_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.ListUserConsents(ctx, "tenant-1", "10001")
+	result, err := adapter.ListUserConsents(ctx, "tenant-1", 10001)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -2142,7 +2142,7 @@ func TestAdapter91_ListUserConsents_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.ListUserConsents(ctx, "t1", "30001")
+	result, err := adapter.ListUserConsents(ctx, "t1", 30001)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2156,7 +2156,7 @@ func TestAdapter91_RequestExport_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.RequestExport(ctx, "tenant-1", "10001", "admin-1", iam.DataExportFormatJSON, nil, nil)
+	result, err := adapter.RequestExport(ctx, "tenant-1", 10001, 30021, iam.DataExportFormatJSON, nil, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -2166,7 +2166,7 @@ func TestAdapter91_RequestExport_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.RequestExport(ctx, "t1", "30001", "a1", iam.DataExportFormatJSON, nil, nil)
+	result, err := adapter.RequestExport(ctx, "t1", 30001, 30021, iam.DataExportFormatJSON, nil, nil)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -2214,7 +2214,7 @@ func TestAdapter91_RequestDeletion_Success(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.RequestDeletion(ctx, "tenant-1", "10001", "admin-1", "GDPR request", nil, nil, 30)
+	result, err := adapter.RequestDeletion(ctx, "tenant-1", 10001, 30021, "GDPR request", nil, nil, 30)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -2224,7 +2224,7 @@ func TestAdapter91_RequestDeletion_NilManager(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
 
-	result, err := adapter.RequestDeletion(ctx, "t1", "30001", "a1", "reason", nil, nil, 30)
+	result, err := adapter.RequestDeletion(ctx, "t1", 30001, 30021, "reason", nil, nil, 30)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }

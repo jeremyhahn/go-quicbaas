@@ -57,7 +57,7 @@ func agentSessionContext() context.Context {
 	return auth.SubjectIntoContext(context.Background(), interfaces.Subject{
 		ID:            "agent-session-42",
 		Username:      "agent-session-42",
-		UserID:        "1042",
+		UserID:        1042,
 		TenantID:      "acme",
 		Roles:         []string{"agent-session"},
 		Authenticated: true,
@@ -87,6 +87,24 @@ func TestSSHService_SignDigestAuditsThePrincipal(t *testing.T) {
 	assert.Equal(t, "1042", event.Actor.UserID)
 	assert.Equal(t, "agent-session-42", event.Actor.Username)
 	assert.Equal(t, &iam.AuditResource{Type: "ssh_key", ID: "tenant/acme/project-signing", Name: "project-signing"}, event.Resource)
+}
+
+func TestSSHService_SignDigestWithoutAUserIDLeavesTheActorUserIDEmpty(t *testing.T) {
+	fake := sshfake.NewClient()
+	fake.SignerPublicKey = testSSHPublicKey(t)
+	logger := &mockAuditLogger{}
+	svc := NewSSHService(fake, WithSSHAudit(auditSource{logger: logger}))
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{
+		ID: "svc-signer", TenantID: "acme", Authenticated: true,
+	})
+
+	_, err := svc.SignDigest(ctx, signRequest())
+	require.NoError(t, err)
+
+	require.Len(t, logger.events, 1)
+	require.NotNil(t, logger.events[0].Actor)
+	assert.Empty(t, logger.events[0].Actor.UserID)
+	assert.Equal(t, "svc-signer", logger.events[0].Actor.Username)
 }
 
 func TestSSHService_SignDigestAuditsARefusedSignature(t *testing.T) {

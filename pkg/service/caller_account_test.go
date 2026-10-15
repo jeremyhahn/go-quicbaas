@@ -107,7 +107,7 @@ func TestResolveCallerAccount_TokenUserIDWinsOverSub(t *testing.T) {
 		ID:       "12345",
 		TenantID: "tenant-a",
 		IDKind:   interfaces.SubjectIDUsername,
-		UserID:   strconv.FormatUint(accounts.numeric.ID, 10),
+		UserID:   accounts.numeric.ID,
 	}
 
 	got, err := resolveCallerAccount(context.Background(), accounts.store, subject, "test")
@@ -149,9 +149,8 @@ func TestResolveCallerAccount_Refusals(t *testing.T) {
 		"kind unresolved":         {ID: "admin", TenantID: "tenant-a"},
 		"no subject id":           {TenantID: "tenant-a", IDKind: interfaces.SubjectIDUsername},
 		"username in wrong scope": {ID: "admin", TenantID: "tenant-b", IDKind: interfaces.SubjectIDUsername},
-		"unknown token uid":       {ID: "admin", TenantID: "tenant-a", IDKind: interfaces.SubjectIDUsername, UserID: "999999"},
-		"token uid not numeric":   {ID: "admin", TenantID: "tenant-a", IDKind: interfaces.SubjectIDUsername, UserID: "admin"},
-		"cross-tenant token uid":  {ID: "bob", TenantID: "tenant-a", IDKind: interfaces.SubjectIDUsername, UserID: strconv.FormatUint(accounts.other.ID, 10)},
+		"unknown token uid":       {ID: "admin", TenantID: "tenant-a", IDKind: interfaces.SubjectIDUsername, UserID: 999999},
+		"cross-tenant token uid":  {ID: "bob", TenantID: "tenant-a", IDKind: interfaces.SubjectIDUsername, UserID: accounts.other.ID},
 		"unknown email":           {ID: "nobody@example.com", TenantID: "tenant-a", IDKind: interfaces.SubjectIDEmail},
 		"malformed email":         {ID: "not@an-email", TenantID: "tenant-a", IDKind: interfaces.SubjectIDEmail},
 		"cross-tenant email":      {ID: "bob@example.com", TenantID: "tenant-a", IDKind: interfaces.SubjectIDEmail},
@@ -201,7 +200,7 @@ func TestQuicBaaSResolveCallerAccount_NoIdentityStore(t *testing.T) {
 	svc := &quicBaaS{logger: createTestLogger(t)}
 
 	_, err := svc.ResolveCallerAccount(context.Background(),
-		interfaces.Subject{ID: "alice", TenantID: "tenant-a", UserID: "12345"})
+		interfaces.Subject{ID: "alice", TenantID: "tenant-a", UserID: 12345})
 	if !stderrors.Is(err, &errors.QBError{Code: errors.ErrConfiguration}) {
 		t.Fatalf("err = %v, want a configuration error", err)
 	}

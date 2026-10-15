@@ -108,19 +108,27 @@ func NewMockQuicBaaS() *MockQuicBaaS {
 // as a user id; anything else, a username above all, is refused, because
 // there is no store here to look a username up in.
 func (m *MockQuicBaaS) ResolveCallerAccount(_ context.Context, subject interfaces.Subject) (uint64, error) {
-	key := subject.UserID
-	if key == "" && subject.IDKind == interfaces.SubjectIDUserID {
-		key = subject.ID
+	if subject.UserID != 0 {
+		return subject.UserID, nil
 	}
-	userID, err := strconv.ParseUint(key, 10, 64)
+	if subject.IDKind != interfaces.SubjectIDUserID {
+		return 0, callerAccountRefused()
+	}
+	userID, err := strconv.ParseUint(subject.ID, 10, 64)
 	if err != nil || userID == 0 {
-		return 0, &dberrors.QBError{
-			Code: dberrors.ErrForbidden,
-			Op:   "MockQuicBaaS.ResolveCallerAccount",
-			Err:  &service.CallerAccountRefusedError{Reason: "the subject names no user account"},
-		}
+		return 0, callerAccountRefused()
 	}
 	return userID, nil
+}
+
+// callerAccountRefused is the error MockQuicBaaS.ResolveCallerAccount returns
+// for a subject that names no user account.
+func callerAccountRefused() error {
+	return &dberrors.QBError{
+		Code: dberrors.ErrForbidden,
+		Op:   "MockQuicBaaS.ResolveCallerAccount",
+		Err:  &service.CallerAccountRefusedError{Reason: "the subject names no user account"},
+	}
 }
 
 // GetInviteStore returns the configured invite store override. It satisfies the

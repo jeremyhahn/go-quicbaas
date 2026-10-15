@@ -148,7 +148,7 @@ func (s *BackendAdminStorage) ListAssignments(ctx context.Context, opts ListAdmi
 	now := time.Now().UTC()
 	out := make([]*AdminAssignment, 0, len(all))
 	for _, a := range all {
-		if opts.UserID != "" && a.UserID != opts.UserID {
+		if opts.UserID != 0 && a.UserID != opts.UserID {
 			continue
 		}
 		if opts.AdminRole != "" && a.AdminRole != opts.AdminRole {
@@ -185,8 +185,8 @@ func (s *BackendAdminStorage) ListAssignments(ctx context.Context, opts ListAdmi
 }
 
 // GetUserAssignments returns the active assignments for the given user.
-func (s *BackendAdminStorage) GetUserAssignments(ctx context.Context, userID string) ([]*AdminAssignment, error) {
-	if userID == "" {
+func (s *BackendAdminStorage) GetUserAssignments(ctx context.Context, userID uint64) ([]*AdminAssignment, error) {
+	if userID == 0 {
 		return nil, &dberrors.QBError{Code: dberrors.ErrInvalidInput, Op: "iam.admin_storage.get_user_assignments"}
 	}
 	all, err := s.scanAssignments(ctx)
@@ -326,8 +326,8 @@ func (s *BackendImpersonationStorage) IncrementOperationCount(ctx context.Contex
 }
 
 // ListActiveImpersonations returns the active sessions for an admin user.
-func (s *BackendImpersonationStorage) ListActiveImpersonations(ctx context.Context, adminUserID string) ([]*ImpersonationSession, error) {
-	if adminUserID == "" {
+func (s *BackendImpersonationStorage) ListActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*ImpersonationSession, error) {
+	if adminUserID == 0 {
 		return nil, &dberrors.QBError{Code: dberrors.ErrInvalidInput, Op: "iam.impersonation_storage.list_active"}
 	}
 	all, err := s.scanSessions(ctx)
@@ -348,7 +348,7 @@ func (s *BackendImpersonationStorage) ListActiveImpersonations(ctx context.Conte
 }
 
 // ListImpersonations returns sessions with optional filters.
-func (s *BackendImpersonationStorage) ListImpersonations(ctx context.Context, activeOnly bool, adminUserID string) ([]*ImpersonationSession, error) {
+func (s *BackendImpersonationStorage) ListImpersonations(ctx context.Context, activeOnly bool, adminUserID uint64) ([]*ImpersonationSession, error) {
 	all, err := s.scanSessions(ctx)
 	if err != nil {
 		return nil, err
@@ -356,7 +356,7 @@ func (s *BackendImpersonationStorage) ListImpersonations(ctx context.Context, ac
 	now := time.Now().UTC()
 	out := make([]*ImpersonationSession, 0)
 	for _, sess := range all {
-		if adminUserID != "" && sess.AdminUserID != adminUserID {
+		if adminUserID != 0 && sess.AdminUserID != adminUserID {
 			continue
 		}
 		if activeOnly {

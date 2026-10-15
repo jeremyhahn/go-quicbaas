@@ -164,7 +164,7 @@ type LinkAccountOptions struct {
 // AccountLink represents a link between a user and an external identity.
 type AccountLink struct {
 	ID           string                 `json:"id"`
-	UserID       string                 `json:"user_id"`
+	UserID       uint64                 `json:"user_id,string"`
 	ProviderID   string                 `json:"provider_id"`
 	ProviderName string                 `json:"provider_name"`
 	ExternalID   string                 `json:"external_id"`
@@ -795,7 +795,7 @@ func (h *IAMHandler) LinkAccount(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	link := &AccountLink{
-		UserID:     strconv.FormatUint(userID, 10),
+		UserID:     userID,
 		ProviderID: req.ProviderID,
 		ExternalID: req.ExternalID,
 		CreatedAt:  time.Now(),

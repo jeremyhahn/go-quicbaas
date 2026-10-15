@@ -18,7 +18,6 @@ package server
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -323,7 +322,7 @@ func TestHasSystemAdministrator_ACountIsNotAnAdministrator(t *testing.T) {
 
 	adminID := seedActiveUser(t, c, "admin", bootstrapAdminEmail).ID
 
-	systemGrant := &iam.AdminAssignment{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleSuperAdmin}
+	systemGrant := &iam.AdminAssignment{UserID: adminID, AdminRole: iam.AdminRoleSuperAdmin}
 
 	cases := map[string]struct {
 		assignments []*iam.AdminAssignment
@@ -335,15 +334,15 @@ func TestHasSystemAdministrator_ACountIsNotAnAdministrator(t *testing.T) {
 			"a super-admin grant on an existing authenticating user IS an administrator",
 		},
 		"orphaned grant — the user was deleted": {
-			[]*iam.AdminAssignment{{UserID: "deleted-user", AdminRole: iam.AdminRoleSuperAdmin}}, false,
+			[]*iam.AdminAssignment{{UserID: 424243, AdminRole: iam.AdminRoleSuperAdmin}}, false,
 			"an assignment that outlived its user confers nothing, but it is still ACTIVE and still counted by len()",
 		},
 		"tenant administrator, not a system one": {
-			[]*iam.AdminAssignment{{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleSuperAdmin, TenantIDs: []string{"acme"}}}, false,
+			[]*iam.AdminAssignment{{UserID: adminID, AdminRole: iam.AdminRoleSuperAdmin, TenantIDs: []string{"acme"}}}, false,
 			"a tenant-scoped grant cannot administer the platform, and first-boot creates the system grant with NO tenant scoping",
 		},
 		"lower-privilege role": {
-			[]*iam.AdminAssignment{{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleTenantAdmin}}, false,
+			[]*iam.AdminAssignment{{UserID: adminID, AdminRole: iam.AdminRoleTenantAdmin}}, false,
 			"a non-super-admin role is not the bootstrap administrator",
 		},
 		"a nil entry in the listing": {
@@ -353,7 +352,7 @@ func TestHasSystemAdministrator_ACountIsNotAnAdministrator(t *testing.T) {
 		"nothing at all": {nil, false, "a fresh install has no administrator"},
 		"an orphan ahead of a real administrator": {
 			[]*iam.AdminAssignment{
-				{UserID: "deleted-user", AdminRole: iam.AdminRoleSuperAdmin},
+				{UserID: 424243, AdminRole: iam.AdminRoleSuperAdmin},
 				systemGrant,
 			}, true,
 			"the scan must not stop at the first grant that confers nothing — that is " +
@@ -388,7 +387,7 @@ func TestHasSystemAdministrator_ASuspendedAdminIsNotAnAdministrator(t *testing.T
 	require.NoError(t, err, "suspending the admin")
 
 	got, err := hasSystemAdministrator(ctx, c,
-		[]*iam.AdminAssignment{{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleSuperAdmin}})
+		[]*iam.AdminAssignment{{UserID: adminID, AdminRole: iam.AdminRoleSuperAdmin}})
 	require.NoError(t, err)
 	assert.False(t, got,
 		"a grant on an account that cannot authenticate was read as an administrator")
@@ -422,7 +421,7 @@ func TestHasSystemAdministrator_AnUnreadableStoreFailsClosed(t *testing.T) {
 	})
 
 	got, err := hasSystemAdministrator(context.Background(), c,
-		[]*iam.AdminAssignment{{UserID: "40001", AdminRole: iam.AdminRoleSuperAdmin}})
+		[]*iam.AdminAssignment{{UserID: 40001, AdminRole: iam.AdminRoleSuperAdmin}})
 
 	assert.False(t, got, "no administrator may be reported when the check could not run")
 	require.Error(t, err, "an unresolved lookup must be surfaced, not swallowed as absence")
@@ -435,23 +434,14 @@ func TestHasSystemAdministrator_AnUnreadableStoreFailsClosed(t *testing.T) {
 		"the operation must name the check that could not answer")
 }
 
-func TestHasSystemAdministrator_AnUnparseableAssignmentConfersNothing(t *testing.T) {
+func TestHasSystemAdministrator_AZeroUserAssignmentConfersNothing(t *testing.T) {
 	c := buildTestIAMComponents(t)
 
-	for name, userID := range map[string]string{
-		"empty":       "",
-		"non-numeric": "admin",
-		"overflowing": "18446744073709551616",
-		"zero":        "0",
-	} {
-		t.Run(name, func(t *testing.T) {
-			got, err := hasSystemAdministrator(context.Background(), c,
-				[]*iam.AdminAssignment{{UserID: userID, AdminRole: iam.AdminRoleSuperAdmin}})
+	got, err := hasSystemAdministrator(context.Background(), c,
+		[]*iam.AdminAssignment{{UserID: 0, AdminRole: iam.AdminRoleSuperAdmin}})
 
-			require.NoError(t, err, "an assignment naming no user is an answer, not a failure")
-			assert.False(t, got, "an assignment naming no user makes nobody an administrator")
-		})
-	}
+	require.NoError(t, err, "an assignment naming no user is an answer, not a failure")
+	assert.False(t, got, "an assignment naming no user makes nobody an administrator")
 }
 
 // TestHasSystemAdministrator_AnUnreadableGrantDoesNotHideARealOne keeps the
@@ -467,8 +457,8 @@ func TestHasSystemAdministrator_AnUnreadableGrantDoesNotHideARealOne(t *testing.
 	adminID := seedActiveUser(t, c, "admin", bootstrapAdminEmail).ID
 
 	got, err := hasSystemAdministrator(context.Background(), c, []*iam.AdminAssignment{
-		{UserID: "", AdminRole: iam.AdminRoleSuperAdmin}, // unreadable
-		{UserID: strconv.FormatUint(adminID, 10), AdminRole: iam.AdminRoleSuperAdmin},
+		{UserID: 0, AdminRole: iam.AdminRoleSuperAdmin}, // names no user
+		{UserID: adminID, AdminRole: iam.AdminRoleSuperAdmin},
 	})
 
 	require.NoError(t, err, "a confirmed administrator settles the question")
@@ -719,12 +709,12 @@ func TestReportUnusableAdministrators_NamesTheOrphanedGrant(t *testing.T) {
 	log := &warnCapture{}
 
 	reportUnusableAdministrators(context.Background(), c, []*iam.AdminAssignment{
-		{ID: "adm_orphan", UserID: "9fe07c04-gone", AdminRole: iam.AdminRoleSuperAdmin},
+		{ID: "adm_orphan", UserID: 424244, AdminRole: iam.AdminRoleSuperAdmin},
 	}, log)
 
 	got := log.String()
 	assert.Contains(t, got, "adm_orphan")
-	assert.Contains(t, got, "9fe07c04-gone")
+	assert.Contains(t, got, "424244")
 	assert.Contains(t, got, "re-entering first-boot")
 }
 
@@ -736,7 +726,7 @@ func TestReportUnusableAdministrators_IgnoresTenantScopedGrants(t *testing.T) {
 	log := &warnCapture{}
 
 	reportUnusableAdministrators(context.Background(), c, []*iam.AdminAssignment{
-		{ID: "adm_tenant", UserID: "someone", AdminRole: iam.AdminRoleSuperAdmin, TenantIDs: []string{"acme"}},
+		{ID: "adm_tenant", UserID: 424245, AdminRole: iam.AdminRoleSuperAdmin, TenantIDs: []string{"acme"}},
 	}, log)
 
 	assert.NotContains(t, log.String(), "adm_tenant")

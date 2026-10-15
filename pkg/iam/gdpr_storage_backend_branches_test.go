@@ -166,8 +166,8 @@ func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
 
 	// Validation.
 	for name, opts := range map[string]CreateDeletionRequestOptions{
-		"no-user":   {TenantID: "acme", RequestedBy: "admin"},
-		"no-tenant": {UserID: 30001, RequestedBy: "admin"},
+		"no-user":   {TenantID: "acme", RequestedBy: 30040},
+		"no-tenant": {UserID: 30001, RequestedBy: 30040},
 		"no-by":     {UserID: 30001, TenantID: "acme"},
 	} {
 		if _, err := store.CreateDeletionRequest(ctx, opts); err == nil {
@@ -176,7 +176,7 @@ func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
 	}
 
 	req, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: 30001, TenantID: "acme", RequestedBy: "admin",
+		UserID: 30001, TenantID: "acme", RequestedBy: 30040,
 		Reason:             "gdpr",
 		GracePeriodDays:    7,
 		DeleteCategories:   []string{"profile"},
@@ -194,7 +194,7 @@ func TestBackendDeletionStorage_OptionalAndValidation(t *testing.T) {
 	}
 
 	if _, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: 30002, TenantID: "globex", RequestedBy: "admin",
+		UserID: 30002, TenantID: "globex", RequestedBy: 30040,
 	}); err != nil {
 		t.Fatalf("CreateDeletionRequest(globex): %v", err)
 	}
@@ -219,13 +219,13 @@ func TestBackendDataExportStorage_ListAcrossTenants(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := store.CreateExportRequest(ctx, CreateDataExportOptions{
-		UserID: 30001, TenantID: "acme", RequestedBy: "admin",
+		UserID: 30001, TenantID: "acme", RequestedBy: 30040,
 		Metadata: map[string]string{"k": "v"}, IncludeCategories: []string{"profile"},
 	}); err != nil {
 		t.Fatalf("CreateExportRequest(acme): %v", err)
 	}
 	if _, err := store.CreateExportRequest(ctx, CreateDataExportOptions{
-		UserID: 30002, TenantID: "globex", RequestedBy: "admin",
+		UserID: 30002, TenantID: "globex", RequestedBy: 30040,
 	}); err != nil {
 		t.Fatalf("CreateExportRequest(globex): %v", err)
 	}
@@ -237,8 +237,8 @@ func TestBackendDataExportStorage_ListAcrossTenants(t *testing.T) {
 
 	// Validation errors.
 	for name, opts := range map[string]CreateDataExportOptions{
-		"no-user":   {TenantID: "acme", RequestedBy: "admin"},
-		"no-tenant": {UserID: 30001, RequestedBy: "admin"},
+		"no-user":   {TenantID: "acme", RequestedBy: 30040},
+		"no-tenant": {UserID: 30001, RequestedBy: 30040},
 		"no-by":     {UserID: 30001, TenantID: "acme"},
 	} {
 		if _, err := store.CreateExportRequest(ctx, opts); err == nil {

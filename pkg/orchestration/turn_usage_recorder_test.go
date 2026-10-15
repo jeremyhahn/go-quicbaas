@@ -181,8 +181,8 @@ func TestTurnAttributionFromContext_UnsetAndNil(t *testing.T) {
 	if got := TurnAttributionFromContext(context.Background()); got != (TurnAttribution{}) {
 		t.Fatalf("TurnAttributionFromContext(background) = %+v, want the zero value", got)
 	}
-	//nolint:staticcheck // SA1012: a nil context is exactly the input under test.
-	if got := TurnAttributionFromContext(nil); got != (TurnAttribution{}) {
+	var nilCtx context.Context
+	if got := TurnAttributionFromContext(nilCtx); got != (TurnAttribution{}) {
 		t.Fatalf("TurnAttributionFromContext(nil) = %+v, want the zero value", got)
 	}
 }

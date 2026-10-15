@@ -367,8 +367,15 @@ func (h *IAMHandler) RequestDataExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default requested_by to user if not specified
-	if req.RequestedBy == "" {
-		req.RequestedBy = strconv.FormatUint(userID, 10)
+	requestedBy := userID
+	if req.RequestedBy != "" {
+		id, err := parseUserIDParam(req.RequestedBy)
+		if err != nil {
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrBadRequest, err.Error()))
+			return
+		}
+		requestedBy = id
 	}
 
 	// Get GDPR manager
@@ -393,7 +400,7 @@ func (h *IAMHandler) RequestDataExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Request export
-	exportReq, err := manager.RequestExport(ctx, tenantID, userID, req.RequestedBy, req.Format, req.IncludeCategories, req.ExcludeCategories)
+	exportReq, err := manager.RequestExport(ctx, tenantID, userID, requestedBy, req.Format, req.IncludeCategories, req.ExcludeCategories)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return
@@ -623,8 +630,15 @@ func (h *IAMHandler) RequestDeletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Default requested_by to user if not specified
-	if req.RequestedBy == "" {
-		req.RequestedBy = strconv.FormatUint(userID, 10)
+	requestedBy := userID
+	if req.RequestedBy != "" {
+		id, err := parseUserIDParam(req.RequestedBy)
+		if err != nil {
+			RespondIAMError(w, r, http.StatusBadRequest,
+				NewIAMAPIError(ErrBadRequest, err.Error()))
+			return
+		}
+		requestedBy = id
 	}
 
 	// Get GDPR manager
@@ -649,7 +663,7 @@ func (h *IAMHandler) RequestDeletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Request deletion
-	deletionReq, err := manager.RequestDeletion(ctx, tenantID, userID, req.RequestedBy, req.Reason, req.DeleteCategories, req.PreserveCategories, req.GracePeriodDays)
+	deletionReq, err := manager.RequestDeletion(ctx, tenantID, userID, requestedBy, req.Reason, req.DeleteCategories, req.PreserveCategories, req.GracePeriodDays)
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return

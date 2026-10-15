@@ -62,8 +62,8 @@ func TestGetSpendReport_HappyPath(t *testing.T) {
 func TestGetSpendReport_Validation(t *testing.T) {
 	c := NewClient(failTransport())
 
-	//nolint:staticcheck // intentionally nil ctx
-	_, err := c.GetSpendReport(nil, &GetSpendReportRequest{TenantID: "t1"})
+	var nilCtx context.Context
+	_, err := c.GetSpendReport(nilCtx, &GetSpendReportRequest{TenantID: "t1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context is required")
 

@@ -76,7 +76,7 @@ func TestLocalDevices_List_HappyPath(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("expected 2 devices, got %d", len(got)) //nolint:revive
+		t.Fatalf("expected 2 devices, got %d", len(got))
 	}
 	if got[0].Path != "/dev/hidraw0" || got[0].Manufacturer != "Yubico" || got[0].VendorID != 0x1050 {
 		t.Errorf("unexpected first device: %+v", got[0])

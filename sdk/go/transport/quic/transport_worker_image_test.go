@@ -39,7 +39,7 @@ func TestRequest_WorkerImageVerbsOverHTTP3(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 
@@ -68,7 +68,7 @@ func TestRequest_WorkerImageRefreshOverHTTP3SurfacesRefusal(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 

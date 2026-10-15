@@ -183,7 +183,7 @@ func TestExecuteIAMGDPRExportRequest_ServiceUnavailable(t *testing.T) {
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
 	_, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "user_id": "30001", "requested_by": "admin",
+		"tenant_id": "t1", "user_id": "30001", "requested_by": "50100",
 	})
 	require.Error(t, err)
 }
@@ -213,7 +213,7 @@ func TestExecuteIAMGDPRDeletionRequest_ServiceUnavailable(t *testing.T) {
 	reg := &ToolRegistry{service: &mockService{}, logger: log}
 
 	_, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "user_id": "30001", "requested_by": "admin",
+		"tenant_id": "t1", "user_id": "30001", "requested_by": "50100",
 	})
 	require.Error(t, err)
 }
@@ -393,7 +393,7 @@ func TestExecuteIAMGDPRExportRequest_Success(t *testing.T) {
 	result, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
 		"tenant_id":    "t1",
 		"user_id":      "30001",
-		"requested_by": "admin",
+		"requested_by": "50100",
 		"format":       "json",
 	})
 	require.NoError(t, err)
@@ -412,7 +412,7 @@ func TestExecuteIAMGDPRDeletionRequest_Success(t *testing.T) {
 	result, err := reg.executeIAMGDPRDeletionRequest(context.Background(), map[string]interface{}{
 		"tenant_id":    "t1",
 		"user_id":      "30001",
-		"requested_by": "admin",
+		"requested_by": "50100",
 		"reason":       "user requested deletion",
 	})
 	require.NoError(t, err)

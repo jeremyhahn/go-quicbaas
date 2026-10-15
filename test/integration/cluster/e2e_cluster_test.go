@@ -36,6 +36,31 @@ import (
 // e2eHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
 var e2eHTTPClient = newInsecureHTTPClient(30 * time.Second)
 
+// e2eCleanup sends a cleanup request, with body as JSON when it is non-nil,
+// and fails the test if the request cannot be sent.
+func e2eCleanup(t *testing.T, method, url string, body []byte) {
+	t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, reader)
+	if err != nil {
+		t.Fatalf("cleanup %s %s: build request: %v", method, url, err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := e2eHTTPClient.Do(req)
+	if err != nil {
+		t.Fatalf("cleanup %s %s: %v", method, url, err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("cleanup %s %s: close body: %v", method, url, err)
+	}
+}
+
 // TestE2EDataConsistency validates that data written to one node is visible on all nodes
 func TestE2EDataConsistency(t *testing.T) {
 	if helpers.IsStandaloneMode(t, helpers.GetClusterEndpoints()) {
@@ -123,8 +148,7 @@ func TestE2EDataConsistency(t *testing.T) {
 
 	// Cleanup
 	deleteURL := fmt.Sprintf("%s/api/v1/entities/%s/%d", nodes[0], entityType, entityID)
-	req, _ := http.NewRequest(http.MethodDelete, deleteURL, nil)
-	e2eHTTPClient.Do(req) //nolint:errcheck // cleanup best-effort
+	e2eCleanup(t, http.MethodDelete, deleteURL, nil)
 
 	t.Log("SUCCESS: Data consistency verified across all nodes")
 }
@@ -438,7 +462,7 @@ func TestE2EBatchOperations(t *testing.T) {
 	deleteBatchBody, _ := json.Marshal(deleteBatchPayload)
 
 	deleteURL := fmt.Sprintf("%s/api/v1/batch/delete", nodes[0])
-	e2eHTTPClient.Post(deleteURL, "application/json", bytes.NewReader(deleteBatchBody)) //nolint:errcheck // cleanup best-effort
+	e2eCleanup(t, http.MethodPost, deleteURL, deleteBatchBody)
 }
 
 // discoverLeaderNode probes each node with a test write to find the Raft leader.
@@ -471,8 +495,7 @@ func discoverLeaderNode(t *testing.T, nodes []string) string {
 
 			// Clean up probe entity
 			deleteURL := fmt.Sprintf("%s/api/v1/entities/%s/%d", node, probeEntityType, probeID)
-			req, _ := http.NewRequest(http.MethodDelete, deleteURL, nil)
-			e2eHTTPClient.Do(req) //nolint:errcheck // cleanup best-effort
+			e2eCleanup(t, http.MethodDelete, deleteURL, nil)
 
 			return node
 		}
@@ -581,8 +604,7 @@ func TestE2EConcurrentWrites(t *testing.T) {
 	for i := 0; i < numConcurrent; i++ {
 		entityID := baseID + uint64(i)
 		deleteURL := fmt.Sprintf("%s/api/v1/entities/%s/%d", leaderNode, entityType, entityID)
-		req, _ := http.NewRequest(http.MethodDelete, deleteURL, nil)
-		e2eHTTPClient.Do(req) //nolint:errcheck // cleanup best-effort
+		e2eCleanup(t, http.MethodDelete, deleteURL, nil)
 	}
 }
 
@@ -660,8 +682,7 @@ func TestE2EListOperations(t *testing.T) {
 	// Cleanup
 	for _, entityID := range createdIDs {
 		deleteURL := fmt.Sprintf("%s/api/v1/entities/%s/%d", nodes[0], entityType, entityID)
-		req, _ := http.NewRequest(http.MethodDelete, deleteURL, nil)
-		e2eHTTPClient.Do(req) //nolint:errcheck // cleanup best-effort
+		e2eCleanup(t, http.MethodDelete, deleteURL, nil)
 	}
 }
 

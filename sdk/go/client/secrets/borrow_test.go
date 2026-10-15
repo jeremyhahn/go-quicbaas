@@ -221,7 +221,7 @@ func TestGetWithBytes_Validation(t *testing.T) {
 	}{
 		{"empty path", context.Background(), "", noop},
 		{"nil fn", context.Background(), "p", nil},
-		{"nil ctx", nil, "p", noop}, //nolint:staticcheck // SA1012: nil context is the case under test
+		{"nil ctx", nil, "p", noop},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

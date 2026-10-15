@@ -114,7 +114,7 @@ func newMessagingHTTP3Transport(t *testing.T, fail bool) (*Transport, <-chan mes
 	}))
 	t.Cleanup(shutdown)
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tr.Close() })
 	return tr, hits
@@ -210,7 +210,7 @@ func TestRequest_MessagingSubscribeKeepsKeyPrefixOverHTTP3(t *testing.T) {
 		_, _ = w.Write([]byte(`{"subscription":{"id":"sub-1","channel":"orders","client_id":"client-1","created_at":1700000000}}`))
 	}))
 	t.Cleanup(shutdown)
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tr.Close() })
 

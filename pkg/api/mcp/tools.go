@@ -1433,9 +1433,10 @@ func getString(args map[string]interface{}, key string) string {
 	return ""
 }
 
-// UserIDArgError reports a user_id tool argument that is missing or is not
+// UserIDArgError reports a user id tool argument that is missing or is not
 // a non-zero decimal uint64 user id.
 type UserIDArgError struct {
+	Arg   string
 	Value string
 	Err   error
 }
@@ -1443,9 +1444,9 @@ type UserIDArgError struct {
 // Error implements the error interface.
 func (e *UserIDArgError) Error() string {
 	if e.Err != nil {
-		return "mcp: invalid user_id " + strconv.Quote(e.Value) + ": " + e.Err.Error()
+		return "mcp: invalid " + e.Arg + " " + strconv.Quote(e.Value) + ": " + e.Err.Error()
 	}
-	return "mcp: invalid user_id " + strconv.Quote(e.Value)
+	return "mcp: invalid " + e.Arg + " " + strconv.Quote(e.Value)
 }
 
 // Unwrap returns the underlying parse error, if any.
@@ -1461,15 +1462,31 @@ func (e *UserIDArgError) ErrorCode() qberrors.ErrorCode {
 // getUserID parses the user_id argument. A missing, non-numeric,
 // overflowing or zero value returns *UserIDArgError.
 func getUserID(args map[string]interface{}) (uint64, error) {
-	value := getString(args, "user_id")
+	return getUserIDArg(args, "user_id")
+}
+
+// getUserIDArg parses the named user id argument. A missing, non-numeric,
+// overflowing or zero value returns *UserIDArgError.
+func getUserIDArg(args map[string]interface{}, name string) (uint64, error) {
+	value := getString(args, name)
 	id, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
-		return 0, &UserIDArgError{Value: value, Err: err}
+		return 0, &UserIDArgError{Arg: name, Value: value, Err: err}
 	}
 	if id == 0 {
-		return 0, &UserIDArgError{Value: value}
+		return 0, &UserIDArgError{Arg: name, Value: value}
 	}
 	return id, nil
+}
+
+// getOptionalUserIDArg parses the named user id argument when present. An
+// absent argument yields 0; a present but invalid one returns
+// *UserIDArgError.
+func getOptionalUserIDArg(args map[string]interface{}, name string) (uint64, error) {
+	if getString(args, name) == "" {
+		return 0, nil
+	}
+	return getUserIDArg(args, name)
 }
 
 // getStringAlt extracts a string argument, trying key1 first then falling back to key2.

@@ -229,8 +229,12 @@ func handleIAMAdminCreateAssignment(ctx context.Context, svc service.QuicBaaS, r
 		grantedBy = subject.ID
 	}
 
+	adminID, err := parseIAMUserID("quicbaas.IAM.Admin", "CreateAssignment", r.AdminID)
+	if err != nil {
+		return nil, err
+	}
 	opts := iam.CreateAdminAssignmentOptions{
-		UserID:      r.AdminID,
+		UserID:      adminID,
 		AdminRole:   iam.AdminRole(r.RoleID),
 		TenantIDs:   tenantIDs,
 		Permissions: adminPermissions(r.Permissions),
@@ -367,8 +371,16 @@ func handleIAMAdminListAssignments(ctx context.Context, svc service.QuicBaaS, re
 		return nil, err
 	}
 
+	// AdminID is an optional filter; only a supplied one must be a user id.
+	var adminID uint64
+	if r.AdminID != "" {
+		adminID, err = parseIAMUserID("quicbaas.IAM.Admin", "ListAssignments", r.AdminID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	opts := iam.ListAdminAssignmentsOptions{
-		UserID:   r.AdminID,
+		UserID:   adminID,
 		TenantID: tenantID,
 		Limit:    r.Limit,
 		Offset:   r.Offset,
@@ -445,8 +457,12 @@ func handleIAMAdminCheckPermission(ctx context.Context, svc service.QuicBaaS, re
 		return nil, err
 	}
 
+	adminID, err := parseIAMUserID("quicbaas.IAM.Admin", "CheckPermission", r.AdminID)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := mgr.CheckPermission(ctx, &iam.AdminCheckRequest{
-		UserID:       r.AdminID,
+		UserID:       adminID,
 		Permission:   iam.AdminPermission(permission),
 		TenantID:     tenantID,
 		ResourceType: r.ResourceType,
@@ -494,8 +510,12 @@ func handleIAMAdminStartImpersonation(ctx context.Context, svc service.QuicBaaS,
 		return nil, err
 	}
 
+	targetUserID, err := parseIAMUserID("quicbaas.IAM.Admin", "StartImpersonation", r.TargetUserID)
+	if err != nil {
+		return nil, err
+	}
 	session, err := mgr.StartImpersonation(ctx, &iam.StartImpersonationOptions{
-		TargetUserID: r.TargetUserID,
+		TargetUserID: targetUserID,
 		TenantID:     tenantID,
 		Reason:       r.Reason,
 		Duration:     r.Duration,
@@ -549,7 +569,7 @@ func handleIAMAdminEndImpersonation(ctx context.Context, svc service.QuicBaaS, r
 // id alone would still let a caller reach across tenants if ids collide, and
 // the tenant alone would let one admin end a peer's session.
 func requireImpersonationOwner(subject interfaces.Subject, session *iam.ImpersonationSession, method string) error {
-	if session == nil || session.AdminUserID != subject.ID || session.TenantID != subject.TenantID {
+	if session == nil || subject.UserID == 0 || session.AdminUserID != subject.UserID || session.TenantID != subject.TenantID {
 		return NewPermissionDeniedError("quicbaas.IAM.Admin", method, "access denied")
 	}
 	return nil
@@ -563,10 +583,17 @@ func handleIAMAdminListActiveImpersonations(ctx context.Context, svc service.Qui
 	if err := requireAdminPermission(ctx, svc, "ListActiveImpersonations", adminResourceUsers, adminActionRead); err != nil {
 		return nil, err
 	}
-	adminUserID, ok := iamRequestField(req, "AdminUserID")
+	requested, ok := iamRequestField(req, "AdminUserID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "ListActiveImpersonations",
 			"struct with AdminUserID field", reflect.TypeOf(req).String())
+	}
+	var adminUserID uint64
+	if requested != "" {
+		adminUserID, err = parseIAMUserID("quicbaas.IAM.Admin", "ListActiveImpersonations", requested)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// The storage API is keyed by admin id alone and applies no tenant filter,
@@ -578,11 +605,11 @@ func handleIAMAdminListActiveImpersonations(ctx context.Context, svc service.Qui
 		return nil, err
 	}
 	if scoped {
-		if adminUserID != "" && adminUserID != subject.ID {
+		if subject.UserID == 0 || (adminUserID != 0 && adminUserID != subject.UserID) {
 			return nil, NewPermissionDeniedError("quicbaas.IAM.Admin", "ListActiveImpersonations",
 				"admin_user_id does not match the authenticated subject")
 		}
-		adminUserID = subject.ID
+		adminUserID = subject.UserID
 	}
 
 	sessions, err := mgr.GetActiveImpersonations(ctx, adminUserID)
@@ -704,7 +731,7 @@ func adminAssignmentToSDK(a *iam.AdminAssignment) *iamsdk.AdminAssignment {
 	}
 	out := &iamsdk.AdminAssignment{
 		ID:            a.ID,
-		AdminID:       a.UserID,
+		AdminID:       strconv.FormatUint(a.UserID, 10),
 		Permissions:   permissionStrings(a.Permissions),
 		RoleID:        string(a.AdminRole),
 		RoleName:      string(a.AdminRole),
@@ -767,9 +794,9 @@ func impersonationSessionToSDK(s *iam.ImpersonationSession) *iamsdk.Impersonatio
 	}
 	out := &iamsdk.ImpersonationSession{
 		ID:             s.ID,
-		AdminID:        s.AdminUserID,
+		AdminID:        strconv.FormatUint(s.AdminUserID, 10),
 		AdminName:      s.AdminUsername,
-		TargetUserID:   s.TargetUserID,
+		TargetUserID:   strconv.FormatUint(s.TargetUserID, 10),
 		TargetUserName: s.TargetUsername,
 		TenantID:       s.TenantID,
 		Reason:         s.Reason,

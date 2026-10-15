@@ -1438,7 +1438,7 @@ func TestGDPRManager_ProcessDeletion_EdgeCases(t *testing.T) {
 		require.NoError(t, err)
 
 		// Request deletion
-		request, err := manager.RequestDeletion(ctx, "tenant-1", user.ID, "admin", "Test", nil, nil, 1)
+		request, err := manager.RequestDeletion(ctx, "tenant-1", user.ID, 30040, "Test", nil, nil, 1)
 		require.NoError(t, err)
 
 		// Set grace period to past time so we can process
@@ -1471,7 +1471,7 @@ func TestGDPRManager_ProcessDeletion_EdgeCases(t *testing.T) {
 		require.NoError(t, err)
 
 		// Request deletion with 30 day grace period
-		request, err := manager.RequestDeletion(ctx, "tenant-1", user.ID, "admin", "Test", nil, nil, 30)
+		request, err := manager.RequestDeletion(ctx, "tenant-1", user.ID, 30040, "Test", nil, nil, 30)
 		require.NoError(t, err)
 
 		// Try to process immediately (should fail due to grace period)
@@ -1501,7 +1501,7 @@ func TestAdminManager_DeleteAssignment_CoverageEdgeCases(t *testing.T) {
 	t.Run("delete existing assignment", func(t *testing.T) {
 		// Create an assignment first
 		opts := CreateAdminAssignmentOptions{
-			UserID:    "user-1",
+			UserID:    1,
 			AdminRole: AdminRoleUserAdmin,
 			GrantedBy: "admin",
 		}
@@ -1541,7 +1541,7 @@ func TestAdminManager_EndImpersonation_CoverageEdgeCases(t *testing.T) {
 		// scoped to the target tenant — empty TenantIDs no longer matches
 		// a tenant-scoped impersonation check (#357).
 		assignmentOpts := CreateAdminAssignmentOptions{
-			UserID:      "admin-user-cov",
+			UserID:      30041,
 			AdminRole:   AdminRoleSuperAdmin,
 			TenantIDs:   []string{"tenant-1"},
 			GrantedBy:   "system",
@@ -1551,8 +1551,8 @@ func TestAdminManager_EndImpersonation_CoverageEdgeCases(t *testing.T) {
 		require.NoError(t, err)
 
 		// Start impersonation
-		session, err := manager.StartImpersonation(ctxWithActor("admin-user-cov"), &StartImpersonationOptions{
-			TargetUserID: "40005",
+		session, err := manager.StartImpersonation(ctxWithActor(30041), &StartImpersonationOptions{
+			TargetUserID: 40005,
 			TenantID:     "tenant-1",
 			Reason:       "Testing",
 			Duration:     time.Hour,

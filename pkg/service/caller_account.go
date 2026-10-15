@@ -107,10 +107,11 @@ func resolveCallerAccount(ctx context.Context, store *iam.IdentityStore, subject
 			Err:  &api.ServiceNotConfiguredError{Service: "identity store"},
 		}
 	}
-	key, kind := subject.ID, subject.IDKind
-	if subject.UserID != "" {
-		key, kind = subject.UserID, interfaces.SubjectIDUserID
+	if subject.UserID != 0 {
+		user, err := store.GetUser(ctx, subject.TenantID, subject.UserID)
+		return callerAccountID(op, subject.TenantID, user, err)
 	}
+	key := subject.ID
 	if key == "" {
 		return 0, callerRefused(op, "the authenticated caller does not name a user account")
 	}
@@ -119,8 +120,9 @@ func resolveCallerAccount(ctx context.Context, store *iam.IdentityStore, subject
 		user *iam.User
 		err  error
 	)
-	switch kind {
+	switch subject.IDKind {
 	case interfaces.SubjectIDUserID:
+		// A subject name of this kind is the account id rendered as text.
 		userID, parseErr := strconv.ParseUint(key, 10, 64)
 		if parseErr != nil || userID == 0 {
 			return 0, callerRefused(op, "the authenticated caller does not name a user account")
@@ -133,6 +135,12 @@ func resolveCallerAccount(ctx context.Context, store *iam.IdentityStore, subject
 	default:
 		return 0, callerRefused(op, "the authenticated caller does not say how it names its account")
 	}
+	return callerAccountID(op, subject.TenantID, user, err)
+}
+
+// callerAccountID turns a store lookup of the caller's account into its id,
+// refusing a caller whose account is missing or belongs to another tenant.
+func callerAccountID(op, tenantID string, user *iam.User, err error) (uint64, error) {
 	if err != nil {
 		var invalid *iam.ValidationError
 		if iam.IsUserNotFound(err) || stderrors.As(err, &invalid) {
@@ -141,7 +149,7 @@ func resolveCallerAccount(ctx context.Context, store *iam.IdentityStore, subject
 		return 0, &errors.QBError{Code: errors.ErrInternal, Op: op, Err: err}
 	}
 	// The store is tenant-keyed; this guards against one that is not.
-	if user.TenantID != subject.TenantID {
+	if user.TenantID != tenantID {
 		return 0, callerRefused(op, "no user account in the caller's tenant matches the authenticated caller")
 	}
 	return user.ID, nil

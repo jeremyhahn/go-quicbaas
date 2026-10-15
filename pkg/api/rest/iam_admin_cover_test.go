@@ -31,7 +31,7 @@ import (
 func TestListAdminAssignments_WithFilters(t *testing.T) {
 	handler, mockSvc := newTestIAMHandler(t)
 	_, err := mockSvc.adminManager.CreateAssignment(context.Background(), iam.CreateAdminAssignmentOptions{
-		UserID:      "u1",
+		UserID:      50001,
 		AdminRole:   iam.AdminRoleTenantAdmin,
 		TenantIDs:   []string{"t1"},
 		Permissions: []iam.AdminPermission{iam.PermUserRead},
@@ -40,7 +40,7 @@ func TestListAdminAssignments_WithFilters(t *testing.T) {
 	assert.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/admin/assignments?limit=10&offset=0&user_id=u1&tenant_id=t1&admin_role=tenant_admin&active_only=true", nil)
+		"/api/v1/admin/assignments?limit=10&offset=0&user_id=50001&tenant_id=t1&admin_role=tenant_admin&active_only=true", nil)
 	w := httptest.NewRecorder()
 	handler.ListAdminAssignments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
@@ -65,7 +65,7 @@ func TestAdminHandlers_ManagerNotAvailable(t *testing.T) {
 			"create",
 			handler.CreateAdminAssignment,
 			httptest.NewRequest(http.MethodPost, "/api/v1/admin/assignments",
-				bytes.NewReader([]byte(`{"user_id":"u1","admin_role":"tenant_admin","tenant_ids":["t1"],"granted_by":"s"}`))),
+				bytes.NewReader([]byte(`{"user_id":"50001","admin_role":"tenant_admin","tenant_ids":["t1"],"granted_by":"s"}`))),
 		},
 	}
 	for _, tt := range tests {

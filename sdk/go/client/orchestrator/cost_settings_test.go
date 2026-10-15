@@ -40,8 +40,8 @@ func TestCostSettings_Validation(t *testing.T) {
 	assert.Error(t, err, "a nil request is refused")
 	_, err = c.SetCostSettings(context.Background(), nil)
 	assert.Error(t, err, "a nil request is refused")
-	//nolint:staticcheck // a nil context is the case under test
-	_, err = c.GetCostSettings(nil, &GetCostSettingsRequest{TenantID: "t1"})
+	var nilCtx context.Context
+	_, err = c.GetCostSettings(nilCtx, &GetCostSettingsRequest{TenantID: "t1"})
 	assert.Error(t, err, "a nil context is refused")
 
 	wrong := NewClient(okTransport(t, "GetCostSettings", &GetSpendReportResponse{}))

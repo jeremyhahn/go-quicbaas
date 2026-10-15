@@ -122,7 +122,8 @@ func TestSigningAgentPlacementPrimitives(t *testing.T) {
 	if isSigningAgentTrait(FleetNodeTraitGPU) {
 		t.Fatal("gpu is not a signing-agent trait")
 	}
-	if SigningAgentRequiredFromContext(context.Background()) || SigningAgentRequiredFromContext(nil) { //nolint:staticcheck // nil is the case under test
+	var nilCtx context.Context
+	if SigningAgentRequiredFromContext(context.Background()) || SigningAgentRequiredFromContext(nilCtx) {
 		t.Fatal("an unmarked context requires nothing")
 	}
 	if !SigningAgentRequiredFromContext(WithSigningAgentRequired(context.Background())) {

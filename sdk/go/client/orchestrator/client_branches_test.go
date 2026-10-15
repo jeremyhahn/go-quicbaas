@@ -47,8 +47,8 @@ func TestCreateTask_NilRequest(t *testing.T) {
 
 func TestCreateTask_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "CreateTask", &Task{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.CreateTask(nil, &CreateTaskRequest{TenantID: "t1", Subject: "s"})
+	var nilCtx context.Context
+	_, err := c.CreateTask(nilCtx, &CreateTaskRequest{TenantID: "t1", Subject: "s"})
 	require.Error(t, err)
 }
 
@@ -80,8 +80,8 @@ func validWorkflowDef() *WorkflowDefinition {
 
 func TestCreateWorkflow_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "CreateWorkflow", validWorkflowDef()))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.CreateWorkflow(nil, &CreateWorkflowRequest{TenantID: "t1", Definition: validWorkflowDef()})
+	var nilCtx context.Context
+	_, err := c.CreateWorkflow(nilCtx, &CreateWorkflowRequest{TenantID: "t1", Definition: validWorkflowDef()})
 	require.Error(t, err)
 }
 
@@ -110,8 +110,8 @@ func TestCreateWorkflow_TypeMismatch(t *testing.T) {
 
 func TestListWorkflows_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ListWorkflows", &ListWorkflowsResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ListWorkflows(nil, &ListWorkflowsRequest{TenantID: "t1"})
+	var nilCtx context.Context
+	_, err := c.ListWorkflows(nilCtx, &ListWorkflowsRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
@@ -133,8 +133,8 @@ func TestListWorkflows_TypeMismatch(t *testing.T) {
 
 func TestGetWorkflow_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "GetWorkflow", validWorkflowDef()))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.GetWorkflow(nil, &GetWorkflowRequest{TenantID: "t1", Name: "wf"})
+	var nilCtx context.Context
+	_, err := c.GetWorkflow(nilCtx, &GetWorkflowRequest{TenantID: "t1", Name: "wf"})
 	require.Error(t, err)
 }
 
@@ -166,8 +166,8 @@ func validUpdateWorkflowReq() *UpdateWorkflowRequest {
 
 func TestUpdateWorkflow_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "UpdateWorkflow", validWorkflowDef()))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.UpdateWorkflow(nil, validUpdateWorkflowReq())
+	var nilCtx context.Context
+	_, err := c.UpdateWorkflow(nilCtx, validUpdateWorkflowReq())
 	require.Error(t, err)
 }
 
@@ -202,8 +202,8 @@ func TestDisableAgent_MissingAgentID_Branch(t *testing.T) {
 
 func TestDisableAgent_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "DisableFleetNode", &DisableFleetNodeResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.DisableFleetNode(nil, &DisableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
+	var nilCtx context.Context
+	_, err := c.DisableFleetNode(nilCtx, &DisableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
@@ -226,8 +226,8 @@ func TestDisableAgent_TypeMismatch(t *testing.T) {
 
 func TestEnableAgent_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "EnableFleetNode", &EnableFleetNodeResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.EnableFleetNode(nil, &EnableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
+	var nilCtx context.Context
+	_, err := c.EnableFleetNode(nilCtx, &EnableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
@@ -262,8 +262,8 @@ func TestEnableAgent_TypeMismatch(t *testing.T) {
 
 func TestSubmitTaskArtifacts_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "SubmitTaskArtifacts", &SubmitTaskArtifactsResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.SubmitTaskArtifacts(nil, &SubmitTaskArtifactsRequest{TenantID: "t1", TaskID: "tk1"})
+	var nilCtx context.Context
+	_, err := c.SubmitTaskArtifacts(nilCtx, &SubmitTaskArtifactsRequest{TenantID: "t1", TaskID: "tk1"})
 	require.Error(t, err)
 }
 
@@ -297,8 +297,8 @@ func validGetArtifactReq() *GetTaskArtifactRequest {
 
 func TestGetTaskArtifact_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "GetTaskArtifact", &TaskArtifact{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.GetTaskArtifact(nil, validGetArtifactReq())
+	var nilCtx context.Context
+	_, err := c.GetTaskArtifact(nilCtx, validGetArtifactReq())
 	require.Error(t, err)
 }
 
@@ -341,8 +341,8 @@ func TestGetTaskArtifact_TypeMismatch(t *testing.T) {
 
 func TestListTaskArtifacts_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ListTaskArtifacts", &ListTaskArtifactsResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ListTaskArtifacts(nil, &ListTaskArtifactsRequest{TenantID: "t1", TaskID: "tk1"})
+	var nilCtx context.Context
+	_, err := c.ListTaskArtifacts(nilCtx, &ListTaskArtifactsRequest{TenantID: "t1", TaskID: "tk1"})
 	require.Error(t, err)
 }
 

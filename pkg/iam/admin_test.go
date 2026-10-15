@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -32,10 +33,12 @@ import (
 // resolves its acting admin from this principal, never from the request
 // (go-quicbaas#383), so every manager-level StartImpersonation test must
 // authenticate the caller it means to act as.
-func ctxWithActor(userID string) context.Context {
+func ctxWithActor(userID uint64) context.Context {
+	login := fmt.Sprintf("admin-%d", userID)
 	return auth.SubjectIntoContext(context.Background(), interfaces.Subject{
-		ID:            userID,
-		Username:      userID,
+		ID:            login,
+		Username:      login,
+		UserID:        userID,
 		Authenticated: true,
 	})
 }
@@ -142,11 +145,11 @@ var testAssignmentCounter int64
 
 // createTestAssignment creates a test admin assignment.
 // Note: TenantIDs is empty by default (global scope). Set it explicitly if needed.
-func createTestAssignment(userID string, role AdminRole) *AdminAssignment {
+func createTestAssignment(userID uint64, role AdminRole) *AdminAssignment {
 	testAssignmentCounter++
 	now := time.Now().UTC()
 	return &AdminAssignment{
-		ID:        fmt.Sprintf("adm_test_%s_%s_%d", userID, role, testAssignmentCounter),
+		ID:        fmt.Sprintf("adm_test_%d_%s_%d", userID, role, testAssignmentCounter),
 		UserID:    userID,
 		AdminRole: role,
 		TenantIDs: []string{}, // Empty by default (global scope)
@@ -157,7 +160,7 @@ func createTestAssignment(userID string, role AdminRole) *AdminAssignment {
 }
 
 // createTestAssignmentWithExpiry creates a test admin assignment with expiration.
-func createTestAssignmentWithExpiry(userID string, role AdminRole, expiresAt time.Time) *AdminAssignment {
+func createTestAssignmentWithExpiry(userID uint64, role AdminRole, expiresAt time.Time) *AdminAssignment {
 	assignment := createTestAssignment(userID, role)
 	assignment.ExpiresAt = &expiresAt
 	return assignment
@@ -244,14 +247,14 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Valid super admin assignment",
 			opts: CreateAdminAssignmentOptions{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleSuperAdmin,
 				GrantedBy: "admin456",
 			},
 			expectError: false,
 			validate: func(t *testing.T, assignment *AdminAssignment) {
 				assert.NotEmpty(t, assignment.ID)
-				assert.Equal(t, "user123", assignment.UserID)
+				assert.Equal(t, uint64(123), assignment.UserID)
 				assert.Equal(t, AdminRoleSuperAdmin, assignment.AdminRole)
 				assert.Equal(t, "admin456", assignment.GrantedBy)
 				assert.True(t, assignment.Active)
@@ -261,7 +264,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Valid tenant admin with tenant scope",
 			opts: CreateAdminAssignmentOptions{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleTenantAdmin,
 				TenantIDs: []string{"tenant1", "tenant2"},
 				GrantedBy: "admin456",
@@ -274,7 +277,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Valid assignment with expiration",
 			opts: CreateAdminAssignmentOptions{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 				ExpiresAt: &futureTime,
 				GrantedBy: "admin456",
@@ -288,7 +291,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Valid assignment with custom permissions",
 			opts: CreateAdminAssignmentOptions{
-				UserID:      "user123",
+				UserID:      123,
 				AdminRole:   AdminRoleUserAdmin,
 				Permissions: []AdminPermission{PermUserCreate, PermUserRead},
 				GrantedBy:   "admin456",
@@ -302,7 +305,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Valid assignment with denied permissions",
 			opts: CreateAdminAssignmentOptions{
-				UserID:            "user123",
+				UserID:            123,
 				AdminRole:         AdminRoleTenantAdmin,
 				DeniedPermissions: []AdminPermission{PermTenantDelete},
 				GrantedBy:         "admin456",
@@ -315,7 +318,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Valid assignment with resource scopes",
 			opts: CreateAdminAssignmentOptions{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 				ResourceScopes: []ResourceScope{
 					{ResourceType: "user", ResourcePattern: "user:*"},
@@ -331,7 +334,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Valid assignment with metadata",
 			opts: CreateAdminAssignmentOptions{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 				GrantedBy: "admin456",
 				Metadata: map[string]string{
@@ -359,7 +362,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Missing admin_role",
 			opts: CreateAdminAssignmentOptions{
-				UserID:    "user123",
+				UserID:    123,
 				GrantedBy: "admin456",
 			},
 			expectError: true,
@@ -370,7 +373,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Invalid admin_role",
 			opts: CreateAdminAssignmentOptions{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: "invalid_role",
 				GrantedBy: "admin456",
 			},
@@ -382,7 +385,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 		{
 			name: "Missing granted_by",
 			opts: CreateAdminAssignmentOptions{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 			},
 			expectError: true,
@@ -427,7 +430,7 @@ func TestAdminManager_GetAssignment(t *testing.T) {
 
 	// Create a test assignment
 	created, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user123",
+		UserID:    123,
 		AdminRole: AdminRoleTenantAdmin,
 		GrantedBy: "admin456",
 	})
@@ -446,7 +449,7 @@ func TestAdminManager_GetAssignment(t *testing.T) {
 			expectError: false,
 			validate: func(t *testing.T, assignment *AdminAssignment) {
 				assert.Equal(t, created.ID, assignment.ID)
-				assert.Equal(t, "user123", assignment.UserID)
+				assert.Equal(t, uint64(123), assignment.UserID)
 			},
 		},
 		{
@@ -495,7 +498,7 @@ func TestAdminManager_UpdateAssignment(t *testing.T) {
 
 	// Create a test assignment
 	created, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user123",
+		UserID:    123,
 		AdminRole: AdminRoleUserAdmin,
 		TenantIDs: []string{"tenant1"},
 		GrantedBy: "admin456",
@@ -678,7 +681,7 @@ func TestAdminManager_DeleteAssignment(t *testing.T) {
 			name: "Delete existing assignment",
 			setupFunc: func(manager *AdminManager) string {
 				assignment, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-					UserID:    "user123",
+					UserID:    123,
 					AdminRole: AdminRoleUserAdmin,
 					GrantedBy: "admin456",
 				})
@@ -749,7 +752,7 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 
 	// User1: active super admin
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user1",
+		UserID:    1,
 		AdminRole: AdminRoleSuperAdmin,
 		GrantedBy: "admin",
 	})
@@ -757,7 +760,7 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 
 	// User2: active tenant admin for tenant1
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user2",
+		UserID:    2,
 		AdminRole: AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant1"},
 		GrantedBy: "admin",
@@ -766,7 +769,7 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 
 	// User2: another assignment for tenant2
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user2",
+		UserID:    2,
 		AdminRole: AdminRoleUserAdmin,
 		TenantIDs: []string{"tenant2"},
 		GrantedBy: "admin",
@@ -775,7 +778,7 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 
 	// User3: inactive assignment
 	assignment, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user3",
+		UserID:    3,
 		AdminRole: AdminRolePolicyAdmin,
 		GrantedBy: "admin",
 	})
@@ -788,7 +791,7 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 
 	// User4: expired assignment
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user4",
+		UserID:    4,
 		AdminRole: AdminRoleAuditAdmin,
 		ExpiresAt: &pastTime,
 		GrantedBy: "admin",
@@ -797,7 +800,7 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 
 	// User5: future expiry
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user5",
+		UserID:    5,
 		AdminRole: AdminRolePolicyAdmin,
 		ExpiresAt: &futureTime,
 		GrantedBy: "admin",
@@ -818,12 +821,12 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 		{
 			name: "Filter by user_id",
 			opts: ListAdminAssignmentsOptions{
-				UserID: "user2",
+				UserID: 2,
 			},
 			expectedCount: 2,
 			validateResult: func(t *testing.T, assignments []*AdminAssignment) {
 				for _, a := range assignments {
-					assert.Equal(t, "user2", a.UserID)
+					assert.Equal(t, uint64(2), a.UserID)
 				}
 			},
 		},
@@ -894,7 +897,7 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 		{
 			name: "Combined filters",
 			opts: ListAdminAssignmentsOptions{
-				UserID:     "user2",
+				UserID:     2,
 				TenantID:   "tenant1",
 				ActiveOnly: true,
 			},
@@ -923,7 +926,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 	// Create test assignments
 	// Super admin
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "super_admin",
+		UserID:    30031,
 		AdminRole: AdminRoleSuperAdmin,
 		GrantedBy: "system",
 	})
@@ -931,7 +934,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 
 	// Tenant admin with tenant scope
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "tenant_admin",
+		UserID:    30032,
 		AdminRole: AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant1"},
 		GrantedBy: "system",
@@ -940,7 +943,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 
 	// User admin with denied permission
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:            "user_admin",
+		UserID:            30033,
 		AdminRole:         AdminRoleUserAdmin,
 		DeniedPermissions: []AdminPermission{PermUserDelete},
 		GrantedBy:         "system",
@@ -949,7 +952,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 
 	// Admin with resource scope
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "scoped_admin",
+		UserID:    30034,
 		AdminRole: AdminRoleUserAdmin,
 		ResourceScopes: []ResourceScope{
 			{ResourceType: "user", ResourcePattern: "user:eng-*"},
@@ -961,7 +964,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 	// Expired assignment
 	pastTime := time.Now().UTC().Add(-1 * time.Hour)
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "expired_admin",
+		UserID:    30035,
 		AdminRole: AdminRoleUserAdmin,
 		ExpiresAt: &pastTime,
 		GrantedBy: "system",
@@ -970,7 +973,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 
 	// Inactive assignment
 	assignment, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "inactive_admin",
+		UserID:    30036,
 		AdminRole: AdminRoleUserAdmin,
 		GrantedBy: "system",
 	})
@@ -991,7 +994,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Super admin allowed",
 			req: &AdminCheckRequest{
-				UserID:     "super_admin",
+				UserID:     30031,
 				Permission: PermUserCreate,
 			},
 			wantErr: false,
@@ -1003,7 +1006,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Tenant admin with matching tenant",
 			req: &AdminCheckRequest{
-				UserID:     "tenant_admin",
+				UserID:     30032,
 				Permission: PermUserCreate,
 				TenantID:   "tenant1",
 			},
@@ -1015,7 +1018,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Tenant admin with non-matching tenant",
 			req: &AdminCheckRequest{
-				UserID:     "tenant_admin",
+				UserID:     30032,
 				Permission: PermUserCreate,
 				TenantID:   "tenant2",
 			},
@@ -1027,7 +1030,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Permission explicitly denied",
 			req: &AdminCheckRequest{
-				UserID:     "user_admin",
+				UserID:     30033,
 				Permission: PermUserDelete,
 			},
 			wantErr: false,
@@ -1039,7 +1042,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Permission not granted",
 			req: &AdminCheckRequest{
-				UserID:     "user_admin",
+				UserID:     30033,
 				Permission: PermTenantCreate,
 			},
 			wantErr: false,
@@ -1051,7 +1054,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Resource scope matches",
 			req: &AdminCheckRequest{
-				UserID:       "scoped_admin",
+				UserID:       30034,
 				Permission:   PermUserRead,
 				ResourceType: "user",
 				ResourceID:   "user:eng-123",
@@ -1064,7 +1067,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Resource scope does not match",
 			req: &AdminCheckRequest{
-				UserID:       "scoped_admin",
+				UserID:       30034,
 				Permission:   PermUserRead,
 				ResourceType: "user",
 				ResourceID:   "user:sales-123",
@@ -1077,7 +1080,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Expired assignment denied",
 			req: &AdminCheckRequest{
-				UserID:     "expired_admin",
+				UserID:     30035,
 				Permission: PermUserRead,
 			},
 			wantErr: false,
@@ -1088,7 +1091,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Inactive assignment denied",
 			req: &AdminCheckRequest{
-				UserID:     "inactive_admin",
+				UserID:     30036,
 				Permission: PermUserRead,
 			},
 			wantErr: false,
@@ -1117,7 +1120,7 @@ func TestAdminManager_CheckPermission(t *testing.T) {
 		{
 			name: "Empty permission",
 			req: &AdminCheckRequest{
-				UserID: "user_admin",
+				UserID: 30033,
 			},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
@@ -1153,7 +1156,7 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 
 	// Create admin with impersonation permission
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -1168,7 +1171,7 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 		name string
 		// actor is the AUTHENTICATED caller bound into context. Empty
 		// means an unauthenticated request (no subject in context).
-		actor    string
+		actor    uint64
 		opts     *StartImpersonationOptions
 		wantErr  bool
 		errCheck func(t *testing.T, err error)
@@ -1176,9 +1179,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 	}{
 		{
 			name:  "Valid impersonation",
-			actor: "admin_user",
+			actor: 30001,
 			opts: &StartImpersonationOptions{
-				TargetUserID: "40001",
+				TargetUserID: 40001,
 				TenantID:     "tenant1",
 				Reason:       "Support ticket #12345",
 			},
@@ -1187,8 +1190,8 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 				assert.NotEmpty(t, session.ID)
 				// The actor is the authenticated caller, never a supplied
 				// value (go-quicbaas#383).
-				assert.Equal(t, "admin_user", session.AdminUserID)
-				assert.Equal(t, "40001", session.TargetUserID)
+				assert.Equal(t, uint64(30001), session.AdminUserID)
+				assert.Equal(t, uint64(40001), session.TargetUserID)
 				assert.Equal(t, "tenant1", session.TenantID)
 				assert.Equal(t, "Support ticket #12345", session.Reason)
 				assert.Nil(t, session.EndedAt)
@@ -1197,9 +1200,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 		},
 		{
 			name:  "Valid with custom duration",
-			actor: "admin_user",
+			actor: 30001,
 			opts: &StartImpersonationOptions{
-				TargetUserID: "40001",
+				TargetUserID: 40001,
 				TenantID:     "tenant1",
 				Reason:       "Emergency access",
 				Duration:     30 * time.Minute,
@@ -1216,9 +1219,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			// decision is made about the caller, not a claim — so the
 			// escalation the issue describes is structurally impossible.
 			name:  "Permission denied for the authenticated caller",
-			actor: "non_admin_user",
+			actor: 30099,
 			opts: &StartImpersonationOptions{
-				TargetUserID: "40001",
+				TargetUserID: 40001,
 				TenantID:     "tenant1",
 				Reason:       "Test",
 			},
@@ -1231,9 +1234,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			// No authenticated principal in context: fail closed rather
 			// than mint a session for an anonymous caller (go-quicbaas#383).
 			name:  "No authenticated caller",
-			actor: "",
+			actor: 0,
 			opts: &StartImpersonationOptions{
-				TargetUserID: "40001",
+				TargetUserID: 40001,
 				TenantID:     "tenant1",
 				Reason:       "Test",
 			},
@@ -1244,7 +1247,7 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 		},
 		{
 			name:    "Nil options",
-			actor:   "admin_user",
+			actor:   30001,
 			opts:    nil,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
@@ -1253,7 +1256,7 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 		},
 		{
 			name:  "Missing target_user_id",
-			actor: "admin_user",
+			actor: 30001,
 			opts: &StartImpersonationOptions{
 				TenantID: "tenant1",
 				Reason:   "Test",
@@ -1265,9 +1268,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 		},
 		{
 			name:  "Missing tenant_id",
-			actor: "admin_user",
+			actor: 30001,
 			opts: &StartImpersonationOptions{
-				TargetUserID: "40001",
+				TargetUserID: 40001,
 				Reason:       "Test",
 			},
 			wantErr: true,
@@ -1277,9 +1280,9 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 		},
 		{
 			name:  "Missing reason",
-			actor: "admin_user",
+			actor: 30001,
 			opts: &StartImpersonationOptions{
-				TargetUserID: "40001",
+				TargetUserID: 40001,
 				TenantID:     "tenant1",
 			},
 			wantErr: true,
@@ -1295,7 +1298,7 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 			auditLogger.events = nil
 
 			callCtx := ctx
-			if tt.actor != "" {
+			if tt.actor != 0 {
 				callCtx = ctxWithActor(tt.actor)
 			}
 			session, err := manager.StartImpersonation(callCtx, tt.opts)
@@ -1315,7 +1318,7 @@ func TestAdminManager_StartImpersonation(t *testing.T) {
 				assert.Len(t, auditLogger.events, 1)
 				assert.Equal(t, "admin.impersonation.start", auditLogger.events[0].Action)
 				require.NotNil(t, auditLogger.events[0].Actor)
-				assert.Equal(t, tt.actor, auditLogger.events[0].Actor.UserID)
+				assert.Equal(t, strconv.FormatUint(tt.actor, 10), auditLogger.events[0].Actor.UserID)
 
 				if tt.validate != nil {
 					tt.validate(t, session)
@@ -1332,7 +1335,7 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 
 	// Create admin with impersonation permission
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -1341,8 +1344,8 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start a test session
-	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "40001",
+	session, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40001,
 		TenantID:     "tenant1",
 		Reason:       "Test",
 	})
@@ -1362,8 +1365,8 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 			name: "End active session",
 			id:   session.ID,
 			setupFn: func() string {
-				s, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-					TargetUserID: "40001",
+				s, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+					TargetUserID: 40001,
 					TenantID:     "tenant1",
 					Reason:       "Test",
 				})
@@ -1375,8 +1378,8 @@ func TestAdminManager_EndImpersonation(t *testing.T) {
 		{
 			name: "End already ended session",
 			setupFn: func() string {
-				s, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-					TargetUserID: "40001",
+				s, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+					TargetUserID: 40001,
 					TenantID:     "tenant1",
 					Reason:       "Test",
 				})
@@ -1443,7 +1446,7 @@ func TestAdminManager_GetActiveImpersonations(t *testing.T) {
 
 	// Create admin with impersonation permission
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -1452,15 +1455,15 @@ func TestAdminManager_GetActiveImpersonations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start multiple sessions
-	session1, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "40002",
+	session1, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40002,
 		TenantID:     "tenant1",
 		Reason:       "Test 1",
 	})
 	require.NoError(t, err)
 
-	session2, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "40003",
+	session2, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40003,
 		TenantID:     "tenant1",
 		Reason:       "Test 2",
 	})
@@ -1472,14 +1475,14 @@ func TestAdminManager_GetActiveImpersonations(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		adminUserID string
+		adminUserID uint64
 		wantErr     bool
 		errCheck    func(t *testing.T, err error)
 		validate    func(t *testing.T, sessions []*ImpersonationSession)
 	}{
 		{
 			name:        "Get active sessions",
-			adminUserID: "admin_user",
+			adminUserID: 30001,
 			wantErr:     false,
 			validate: func(t *testing.T, sessions []*ImpersonationSession) {
 				assert.Len(t, sessions, 1)
@@ -1489,7 +1492,7 @@ func TestAdminManager_GetActiveImpersonations(t *testing.T) {
 		},
 		{
 			name:        "No sessions for user",
-			adminUserID: "other_admin",
+			adminUserID: 30003,
 			wantErr:     false,
 			validate: func(t *testing.T, sessions []*ImpersonationSession) {
 				assert.Len(t, sessions, 0)
@@ -1497,7 +1500,7 @@ func TestAdminManager_GetActiveImpersonations(t *testing.T) {
 		},
 		{
 			name:        "Empty admin_user_id",
-			adminUserID: "",
+			adminUserID: 0,
 			wantErr:     true,
 			errCheck: func(t *testing.T, err error) {
 				assert.True(t, dberrors.IsInvalidInput(err))
@@ -1747,7 +1750,7 @@ func TestAgentAdminAssignmentValidation(t *testing.T) {
 		t.Run(string(role), func(t *testing.T) {
 			assignment := &AdminAssignment{
 				ID:        "adm_agent_" + string(role),
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: role,
 				GrantedBy: "admin456",
 				GrantedAt: time.Now().UTC(),
@@ -1773,7 +1776,7 @@ func TestAdminAssignment_Validate(t *testing.T) {
 			name: "Valid assignment",
 			assignment: &AdminAssignment{
 				ID:        "adm_123",
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 				GrantedBy: "admin456",
 				GrantedAt: now,
@@ -1799,7 +1802,7 @@ func TestAdminAssignment_Validate(t *testing.T) {
 			name: "Invalid admin_role",
 			assignment: &AdminAssignment{
 				ID:        "adm_123",
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: "invalid_role",
 				GrantedBy: "admin456",
 				GrantedAt: now,
@@ -1814,7 +1817,7 @@ func TestAdminAssignment_Validate(t *testing.T) {
 			name: "Missing granted_by",
 			assignment: &AdminAssignment{
 				ID:        "adm_123",
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 				GrantedAt: now,
 				Active:    true,
@@ -1849,7 +1852,7 @@ func TestMemoryAdminStorage_CreateAssignment(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryAdminStorage()
 
-	assignment := createTestAssignment("user123", AdminRoleUserAdmin)
+	assignment := createTestAssignment(123, AdminRoleUserAdmin)
 
 	tests := []struct {
 		name       string
@@ -1881,7 +1884,7 @@ func TestMemoryAdminStorage_CreateAssignment(t *testing.T) {
 		{
 			name: "Assignment with empty ID",
 			assignment: &AdminAssignment{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 				GrantedBy: "admin456",
 			},
@@ -1913,7 +1916,7 @@ func TestMemoryAdminStorage_GetAssignment(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryAdminStorage()
 
-	assignment := createTestAssignment("user123", AdminRoleUserAdmin)
+	assignment := createTestAssignment(123, AdminRoleUserAdmin)
 	err := storage.CreateAssignment(ctx, assignment)
 	require.NoError(t, err)
 
@@ -1930,7 +1933,7 @@ func TestMemoryAdminStorage_GetAssignment(t *testing.T) {
 			wantErr: false,
 			validate: func(t *testing.T, a *AdminAssignment) {
 				assert.Equal(t, assignment.ID, a.ID)
-				assert.Equal(t, "user123", a.UserID)
+				assert.Equal(t, uint64(123), a.UserID)
 			},
 		},
 		{
@@ -1975,7 +1978,7 @@ func TestMemoryAdminStorage_UpdateAssignment(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryAdminStorage()
 
-	assignment := createTestAssignment("user123", AdminRoleUserAdmin)
+	assignment := createTestAssignment(123, AdminRoleUserAdmin)
 	err := storage.CreateAssignment(ctx, assignment)
 	require.NoError(t, err)
 
@@ -1997,7 +2000,7 @@ func TestMemoryAdminStorage_UpdateAssignment(t *testing.T) {
 			name: "Update non-existent assignment",
 			assignment: &AdminAssignment{
 				ID:        "non_existent",
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 				GrantedBy: "admin456",
 			},
@@ -2017,7 +2020,7 @@ func TestMemoryAdminStorage_UpdateAssignment(t *testing.T) {
 		{
 			name: "Empty ID",
 			assignment: &AdminAssignment{
-				UserID:    "user123",
+				UserID:    123,
 				AdminRole: AdminRoleUserAdmin,
 				GrantedBy: "admin456",
 			},
@@ -2049,7 +2052,7 @@ func TestMemoryAdminStorage_DeleteAssignment(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryAdminStorage()
 
-	assignment := createTestAssignment("user123", AdminRoleUserAdmin)
+	assignment := createTestAssignment(123, AdminRoleUserAdmin)
 	err := storage.CreateAssignment(ctx, assignment)
 	require.NoError(t, err)
 
@@ -2108,10 +2111,10 @@ func TestMemoryAdminStorage_ListAssignments(t *testing.T) {
 	futureTime := time.Now().UTC().Add(24 * time.Hour)
 
 	assignments := []*AdminAssignment{
-		createTestAssignment("user1", AdminRoleSuperAdmin),
-		createTestAssignment("user2", AdminRoleTenantAdmin),
-		createTestAssignmentWithExpiry("user3", AdminRoleUserAdmin, pastTime),
-		createTestAssignmentWithExpiry("user4", AdminRolePolicyAdmin, futureTime),
+		createTestAssignment(1, AdminRoleSuperAdmin),
+		createTestAssignment(2, AdminRoleTenantAdmin),
+		createTestAssignmentWithExpiry(3, AdminRoleUserAdmin, pastTime),
+		createTestAssignmentWithExpiry(4, AdminRolePolicyAdmin, futureTime),
 	}
 
 	// Set different tenant IDs
@@ -2140,11 +2143,11 @@ func TestMemoryAdminStorage_ListAssignments(t *testing.T) {
 		{
 			name: "Filter by user_id",
 			opts: ListAdminAssignmentsOptions{
-				UserID: "user2",
+				UserID: 2,
 			},
 			expectedCount: 1,
 			validate: func(t *testing.T, result []*AdminAssignment) {
-				assert.Equal(t, "user2", result[0].UserID)
+				assert.Equal(t, uint64(2), result[0].UserID)
 			},
 		},
 		{
@@ -2209,16 +2212,16 @@ func TestMemoryAdminStorage_GetUserAssignments(t *testing.T) {
 	pastTime := time.Now().UTC().Add(-24 * time.Hour)
 
 	user1Assignments := []*AdminAssignment{
-		createTestAssignment("user1", AdminRoleSuperAdmin),
-		createTestAssignment("user1", AdminRoleTenantAdmin),
+		createTestAssignment(1, AdminRoleSuperAdmin),
+		createTestAssignment(1, AdminRoleTenantAdmin),
 	}
 
 	// One expired
-	expiredAssignment := createTestAssignmentWithExpiry("user1", AdminRoleUserAdmin, pastTime)
+	expiredAssignment := createTestAssignmentWithExpiry(1, AdminRoleUserAdmin, pastTime)
 	expiredAssignment.ID = "expired_assignment"
 
 	// One inactive
-	inactiveAssignment := createTestAssignment("user1", AdminRolePolicyAdmin)
+	inactiveAssignment := createTestAssignment(1, AdminRolePolicyAdmin)
 	inactiveAssignment.ID = "inactive_assignment"
 	inactiveAssignment.Active = false
 
@@ -2231,26 +2234,26 @@ func TestMemoryAdminStorage_GetUserAssignments(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		userID        string
+		userID        uint64
 		expectedCount int
 		wantErr       bool
 		errCheck      func(t *testing.T, err error)
 	}{
 		{
 			name:          "Get user assignments",
-			userID:        "user1",
+			userID:        1,
 			expectedCount: 3, // Active assignments (including expired, for proper error messaging)
 			wantErr:       false,
 		},
 		{
 			name:          "User with no assignments",
-			userID:        "user999",
+			userID:        999,
 			expectedCount: 0,
 			wantErr:       false,
 		},
 		{
 			name:    "Empty user_id",
-			userID:  "",
+			userID:  0,
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
 				assert.True(t, dberrors.IsInvalidInput(err))
@@ -2285,8 +2288,8 @@ func TestMemoryImpersonationStorage_CreateSession(t *testing.T) {
 	now := time.Now().UTC()
 	session := &ImpersonationSession{
 		ID:           "imp_123",
-		AdminUserID:  "admin1",
-		TargetUserID: "user1",
+		AdminUserID:  30021,
+		TargetUserID: 1,
 		TenantID:     "tenant1",
 		Reason:       "Test",
 		StartedAt:    now,
@@ -2324,8 +2327,8 @@ func TestMemoryImpersonationStorage_CreateSession(t *testing.T) {
 		{
 			name: "Session with empty ID",
 			session: &ImpersonationSession{
-				AdminUserID:  "admin1",
-				TargetUserID: "user1",
+				AdminUserID:  30021,
+				TargetUserID: 1,
 			},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
@@ -2358,8 +2361,8 @@ func TestMemoryImpersonationStorage_GetSession(t *testing.T) {
 	now := time.Now().UTC()
 	session := &ImpersonationSession{
 		ID:           "imp_123",
-		AdminUserID:  "admin1",
-		TargetUserID: "user1",
+		AdminUserID:  30021,
+		TargetUserID: 1,
 		TenantID:     "tenant1",
 		Reason:       "Test",
 		StartedAt:    now,
@@ -2383,7 +2386,7 @@ func TestMemoryImpersonationStorage_GetSession(t *testing.T) {
 			wantErr: false,
 			validate: func(t *testing.T, s *ImpersonationSession) {
 				assert.Equal(t, session.ID, s.ID)
-				assert.Equal(t, "admin1", s.AdminUserID)
+				assert.Equal(t, uint64(30021), s.AdminUserID)
 			},
 		},
 		{
@@ -2431,8 +2434,8 @@ func TestMemoryImpersonationStorage_EndSession(t *testing.T) {
 	now := time.Now().UTC()
 	session := &ImpersonationSession{
 		ID:           "imp_123",
-		AdminUserID:  "admin1",
-		TargetUserID: "user1",
+		AdminUserID:  30021,
+		TargetUserID: 1,
 		TenantID:     "tenant1",
 		Reason:       "Test",
 		StartedAt:    now,
@@ -2504,8 +2507,8 @@ func TestMemoryImpersonationStorage_ListActiveImpersonations(t *testing.T) {
 	sessions := []*ImpersonationSession{
 		{
 			ID:           "imp_1",
-			AdminUserID:  "admin1",
-			TargetUserID: "user1",
+			AdminUserID:  30021,
+			TargetUserID: 1,
 			TenantID:     "tenant1",
 			Reason:       "Test 1",
 			StartedAt:    now,
@@ -2514,8 +2517,8 @@ func TestMemoryImpersonationStorage_ListActiveImpersonations(t *testing.T) {
 		},
 		{
 			ID:           "imp_2",
-			AdminUserID:  "admin1",
-			TargetUserID: "user2",
+			AdminUserID:  30021,
+			TargetUserID: 2,
 			TenantID:     "tenant1",
 			Reason:       "Test 2",
 			StartedAt:    now,
@@ -2524,8 +2527,8 @@ func TestMemoryImpersonationStorage_ListActiveImpersonations(t *testing.T) {
 		},
 		{
 			ID:           "imp_3",
-			AdminUserID:  "admin2",
-			TargetUserID: "user3",
+			AdminUserID:  30022,
+			TargetUserID: 3,
 			TenantID:     "tenant1",
 			Reason:       "Test 3",
 			StartedAt:    now,
@@ -2545,32 +2548,32 @@ func TestMemoryImpersonationStorage_ListActiveImpersonations(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		adminUserID   string
+		adminUserID   uint64
 		expectedCount int
 		wantErr       bool
 		errCheck      func(t *testing.T, err error)
 	}{
 		{
 			name:          "Get active sessions for admin1",
-			adminUserID:   "admin1",
+			adminUserID:   30021,
 			expectedCount: 1, // Only imp_1, imp_2 is ended
 			wantErr:       false,
 		},
 		{
 			name:          "Get active sessions for admin2",
-			adminUserID:   "admin2",
+			adminUserID:   30022,
 			expectedCount: 1,
 			wantErr:       false,
 		},
 		{
 			name:          "No sessions for admin",
-			adminUserID:   "admin999",
+			adminUserID:   999,
 			expectedCount: 0,
 			wantErr:       false,
 		},
 		{
 			name:        "Empty admin_user_id",
-			adminUserID: "",
+			adminUserID: 0,
 			wantErr:     true,
 			errCheck: func(t *testing.T, err error) {
 				assert.True(t, dberrors.IsInvalidInput(err))
@@ -2606,8 +2609,8 @@ func TestMemoryImpersonationStorage_DeleteExpiredSessions(t *testing.T) {
 	sessions := []*ImpersonationSession{
 		{
 			ID:           "imp_active",
-			AdminUserID:  "admin1",
-			TargetUserID: "user1",
+			AdminUserID:  30021,
+			TargetUserID: 1,
 			TenantID:     "tenant1",
 			Reason:       "Active",
 			StartedAt:    now,
@@ -2616,8 +2619,8 @@ func TestMemoryImpersonationStorage_DeleteExpiredSessions(t *testing.T) {
 		},
 		{
 			ID:           "imp_expired",
-			AdminUserID:  "admin1",
-			TargetUserID: "user2",
+			AdminUserID:  30021,
+			TargetUserID: 2,
 			TenantID:     "tenant1",
 			Reason:       "Expired",
 			StartedAt:    pastTime,
@@ -2626,8 +2629,8 @@ func TestMemoryImpersonationStorage_DeleteExpiredSessions(t *testing.T) {
 		},
 		{
 			ID:           "imp_ended",
-			AdminUserID:  "admin1",
-			TargetUserID: "user3",
+			AdminUserID:  30021,
+			TargetUserID: 3,
 			TenantID:     "tenant1",
 			Reason:       "Ended",
 			StartedAt:    now,
@@ -2748,7 +2751,7 @@ func TestAdminManager_CheckPermission_ResourceScopeMatching(t *testing.T) {
 
 	// Create admin with resource scope restrictions
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "scoped_admin",
+		UserID:    30034,
 		AdminRole: AdminRoleUserAdmin,
 		TenantIDs: []string{"tenant1"},
 		GrantedBy: "system",
@@ -2767,7 +2770,7 @@ func TestAdminManager_CheckPermission_ResourceScopeMatching(t *testing.T) {
 		{
 			name: "Resource scope matches - suffix wildcard",
 			request: &AdminCheckRequest{
-				UserID:       "scoped_admin",
+				UserID:       30034,
 				Permission:   PermUserUpdate,
 				TenantID:     "tenant1",
 				ResourceType: "user",
@@ -2778,7 +2781,7 @@ func TestAdminManager_CheckPermission_ResourceScopeMatching(t *testing.T) {
 		{
 			name: "Resource scope matches - prefix wildcard",
 			request: &AdminCheckRequest{
-				UserID:       "scoped_admin",
+				UserID:       30034,
 				Permission:   PermRoleRead,
 				TenantID:     "tenant1",
 				ResourceType: "role",
@@ -2789,7 +2792,7 @@ func TestAdminManager_CheckPermission_ResourceScopeMatching(t *testing.T) {
 		{
 			name: "Resource scope does not match",
 			request: &AdminCheckRequest{
-				UserID:       "scoped_admin",
+				UserID:       30034,
 				Permission:   PermUserUpdate,
 				TenantID:     "tenant1",
 				ResourceType: "user",
@@ -2814,7 +2817,7 @@ func TestAdminManager_RecordImpersonatedOperation(t *testing.T) {
 
 	// Create admin with impersonation permission
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -2823,8 +2826,8 @@ func TestAdminManager_RecordImpersonatedOperation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start impersonation session
-	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID:   "40001",
+	session, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID:   40001,
 		TargetUsername: "target@example.com",
 		TenantID:       "tenant1",
 		Reason:         "test operation recording",
@@ -2919,8 +2922,8 @@ func TestAdminManager_RecordImpersonatedOperation(t *testing.T) {
 				// The impersonating admin is the authenticated caller
 				// resolved from context (go-quicbaas#383); ctxWithActor
 				// binds username == id.
-				assert.Equal(t, "admin_user", event.Actor.ImpersonatingUserID)
-				assert.Equal(t, "admin_user", event.Actor.ImpersonatingUsername)
+				assert.Equal(t, "30001", event.Actor.ImpersonatingUserID)
+				assert.Equal(t, "admin-30001", event.Actor.ImpersonatingUsername)
 
 				// Verify details include operation number
 				require.NotNil(t, event.Details)
@@ -2938,7 +2941,7 @@ func TestAdminManager_RecordImpersonatedOperation_EndedSession(t *testing.T) {
 
 	// Create admin with impersonation permission
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -2947,8 +2950,8 @@ func TestAdminManager_RecordImpersonatedOperation_EndedSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start impersonation session
-	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "40001",
+	session, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40001,
 		TenantID:     "tenant1",
 		Reason:       "test ended session",
 		Duration:     time.Hour,
@@ -2971,7 +2974,7 @@ func TestAdminManager_ImpersonationAuditLogging(t *testing.T) {
 
 	// Create admin with impersonation permission
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -2983,8 +2986,8 @@ func TestAdminManager_ImpersonationAuditLogging(t *testing.T) {
 	auditLogger.events = nil
 
 	// Start impersonation session
-	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID:   "40001",
+	session, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID:   40001,
 		TargetUsername: "target@example.com",
 		TenantID:       "tenant1",
 		Reason:         "test audit logging",
@@ -3054,8 +3057,8 @@ func TestMemoryImpersonationStorage_IncrementOperationCount(t *testing.T) {
 	// Create a session
 	session := &ImpersonationSession{
 		ID:             "test_session",
-		AdminUserID:    "admin1",
-		TargetUserID:   "user1",
+		AdminUserID:    30021,
+		TargetUserID:   1,
 		TenantID:       "tenant1",
 		Reason:         "test",
 		StartedAt:      time.Now().UTC(),

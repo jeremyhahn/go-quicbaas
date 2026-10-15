@@ -63,7 +63,7 @@ func newAdminAuditFixture(t *testing.T) *adminAuditFixture {
 	manager, auditLogger := createTestAdminManager(t)
 
 	assignment, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -71,8 +71,8 @@ func newAdminAuditFixture(t *testing.T) *adminAuditFixture {
 	})
 	require.NoError(t, err)
 
-	session, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "40001",
+	session, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40001,
 		TenantID:     "tenant1",
 		Reason:       "audit id test",
 		Duration:     time.Hour,
@@ -106,14 +106,14 @@ func TestAdminManager_AuditedOperationsFailClosedWithoutAuditID(t *testing.T) {
 			name: "CreateAssignment",
 			run: func(f *adminAuditFixture) error {
 				_, err := f.manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-					UserID:    "second_admin",
+					UserID:    30002,
 					AdminRole: AdminRoleSuperAdmin,
 					GrantedBy: "system",
 				})
 				return err
 			},
 			unchanged: func(t *testing.T, f *adminAuditFixture) {
-				got, err := f.manager.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: "second_admin"})
+				got, err := f.manager.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: 30002})
 				require.NoError(t, err)
 				assert.Empty(t, got, "the assignment was stored without its audit record")
 			},
@@ -144,15 +144,15 @@ func TestAdminManager_AuditedOperationsFailClosedWithoutAuditID(t *testing.T) {
 		{
 			name: "StartImpersonation",
 			run: func(f *adminAuditFixture) error {
-				_, err := f.manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-					TargetUserID: "40004",
+				_, err := f.manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+					TargetUserID: 40004,
 					TenantID:     "tenant1",
 					Reason:       "audit id test",
 				})
 				return err
 			},
 			unchanged: func(t *testing.T, f *adminAuditFixture) {
-				got, err := f.manager.GetActiveImpersonations(ctx, "admin_user")
+				got, err := f.manager.GetActiveImpersonations(ctx, 30001)
 				require.NoError(t, err)
 				assert.Len(t, got, 1, "a session was started without its audit record")
 			},

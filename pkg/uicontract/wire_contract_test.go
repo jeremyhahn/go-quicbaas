@@ -406,7 +406,7 @@ func repoRoot(t *testing.T) string {
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
-	data, err := os.ReadFile(path) //nolint:gosec // a path built from the module root
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %s", path, err)
 	}

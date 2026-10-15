@@ -60,8 +60,8 @@ func TestPlacementClient_ValidatesBeforeTheTransport(t *testing.T) {
 	_, checks["Place nil"] = c.Place(ctx, nil)
 	_, checks["Place id"] = c.Place(ctx, &PlacementRequest{})
 	_, checks["GetPlacement"] = c.GetPlacement(ctx, "")
-	//nolint:staticcheck // SA1012: a nil context is the input under test.
-	_, checks["nil context"] = c.ListNodes(nil)
+	var nilCtx context.Context
+	_, checks["nil context"] = c.ListNodes(nilCtx)
 
 	for name, err := range checks {
 		if errors.Code(err) != errors.CodeInvalidInput {

@@ -343,8 +343,8 @@ func TestAttestationChainContext(t *testing.T) {
 	if attestationChainFromContext(context.Background()).Verified() {
 		t.Error("a bare context reported a verified chain")
 	}
-	//nolint:staticcheck // deliberately exercising the nil-context guard
-	if attestationChainFromContext(nil).Verified() {
+	var nilCtx context.Context
+	if attestationChainFromContext(nilCtx).Verified() {
 		t.Error("a nil context reported a verified chain")
 	}
 

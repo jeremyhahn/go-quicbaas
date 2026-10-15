@@ -21,7 +21,6 @@ package liveness
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
@@ -68,25 +67,5 @@ func NewChecker(src Source) *Checker {
 // user id; an absent one is zero, and one that does not parse is refused with
 // a UserIDClaimError rather than read as "no user".
 func (c *Checker) CheckLiveness(ctx context.Context, token string, claims *platformtoken.Claims) (bool, error) {
-	var userID uint64
-	if claims.UserID != "" {
-		parsed, err := strconv.ParseUint(claims.UserID, 10, 64)
-		if err != nil {
-			return false, &UserIDClaimError{Value: claims.UserID, Err: err}
-		}
-		userID = parsed
-	}
-	return c.src.TokenLiveness(ctx, claims.TenantID, claims.Subject, userID, claims.PrincipalType, claims.ID)
+	return c.src.TokenLiveness(ctx, claims.TenantID, claims.Subject, claims.UserID, claims.PrincipalType, claims.ID)
 }
-
-// UserIDClaimError reports a token uid claim that is not a decimal uint64.
-type UserIDClaimError struct {
-	Value string
-	Err   error
-}
-
-func (e *UserIDClaimError) Error() string {
-	return "liveness: uid claim " + strconv.Quote(e.Value) + " is not a decimal uint64: " + e.Err.Error()
-}
-
-func (e *UserIDClaimError) Unwrap() error { return e.Err }

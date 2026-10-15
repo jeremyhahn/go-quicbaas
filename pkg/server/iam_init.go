@@ -34,7 +34,6 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
-	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fips"
@@ -1083,13 +1082,8 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 // an administrator who had no usable credential. Anything added to first-boot
 // belongs BEFORE this call, never after.
 func (s *Server) grantFirstBootSuperAdmin(ctx context.Context, c *iamComponents, userID uint64) error {
-	// The assignment carries the id as text, where zero would format to "0"
-	// and read as a user. Zero is the "not created yet" id, so refuse it here.
-	if userID == 0 {
-		return &FirstBootBootstrapError{Op: "create admin assignment", Cause: api.NewRequiredFieldError("user_id")}
-	}
 	if _, err := c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    strconv.FormatUint(userID, 10),
+		UserID:    userID,
 		AdminRole: iam.AdminRoleSuperAdmin,
 		TenantIDs: nil, // system-tenant scope only (#357)
 		GrantedBy: "system:first-boot",
@@ -1125,13 +1119,11 @@ func hasSystemAdministrator(ctx context.Context, c *iamComponents, assignments [
 			continue
 		}
 
-		// Assignments still carry the user id as a string. One that does not
-		// parse names no user, so like an orphaned grant it confers nothing.
-		userID, err := strconv.ParseUint(a.UserID, 10, 64)
-		if err != nil || userID == 0 {
+		// A grant naming no user, like an orphaned one, confers nothing.
+		if a.UserID == 0 {
 			continue
 		}
-		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, userID)
+		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, a.UserID)
 		if err != nil {
 			if dberrors.IsNotFound(err) {
 				// An ORPHANED grant: the assignment outlived its user. It
@@ -1169,17 +1161,16 @@ func reportUnusableAdministrators(ctx context.Context, c *iamComponents, assignm
 		if a == nil || a.AdminRole != iam.AdminRoleSuperAdmin || len(a.TenantIDs) != 0 {
 			continue
 		}
-		userID, err := strconv.ParseUint(a.UserID, 10, 64)
-		if err != nil || userID == 0 {
-			log.Warnf("first-boot: super-admin grant %s names %q, which is not a user id", a.ID, a.UserID)
+		if a.UserID == 0 {
+			log.Warnf("first-boot: super-admin grant %s names no user", a.ID)
 			continue
 		}
-		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, userID)
+		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, a.UserID)
 		switch {
 		case err != nil:
-			log.Warnf("first-boot: super-admin grant %s names user %s, which cannot be read: %s", a.ID, a.UserID, err.Error())
+			log.Warnf("first-boot: super-admin grant %s names user %d, which cannot be read: %s", a.ID, a.UserID, err.Error())
 		case !user.CanAuthenticate():
-			log.Warnf("first-boot: super-admin grant %s names user %s (%s), whose lifecycle %v cannot authenticate", a.ID, a.UserID, user.Email, user.Lifecycle)
+			log.Warnf("first-boot: super-admin grant %s names user %d (%s), whose lifecycle %v cannot authenticate", a.ID, a.UserID, user.Email, user.Lifecycle)
 		}
 	}
 	log.Warnf("first-boot: none of %d admin grants makes a usable system administrator; re-entering first-boot", len(assignments))

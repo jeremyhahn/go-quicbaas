@@ -141,8 +141,9 @@ type AdminAssignment struct {
 	// ID is the unique identifier for this assignment.
 	ID string `json:"id" yaml:"id"`
 
-	// UserID is the user being granted administrative privileges.
-	UserID string `json:"user_id" yaml:"user_id"`
+	// UserID is the qrdb Snowflake id of the user being granted
+	// administrative privileges.
+	UserID uint64 `json:"user_id,string" yaml:"user_id"`
 
 	// AdminRole is the type of administrative role.
 	AdminRole AdminRole `json:"admin_role" yaml:"admin_role"`
@@ -198,8 +199,8 @@ type ResourceScope struct {
 
 // AdminCheckRequest represents a request to check admin permissions.
 type AdminCheckRequest struct {
-	// UserID is the admin user making the request.
-	UserID string `json:"user_id" yaml:"user_id"`
+	// UserID is the qrdb Snowflake id of the admin user making the request.
+	UserID uint64 `json:"user_id,string" yaml:"user_id"`
 
 	// Permission is the permission being checked.
 	Permission AdminPermission `json:"permission" yaml:"permission"`
@@ -234,14 +235,15 @@ type ImpersonationSession struct {
 	// ID is the unique session identifier.
 	ID string `json:"id" yaml:"id"`
 
-	// AdminUserID is the admin performing impersonation.
-	AdminUserID string `json:"admin_user_id" yaml:"admin_user_id"`
+	// AdminUserID is the qrdb Snowflake id of the admin performing
+	// impersonation.
+	AdminUserID uint64 `json:"admin_user_id,string" yaml:"admin_user_id"`
 
 	// AdminUsername is the admin's username for audit trails.
 	AdminUsername string `json:"admin_username,omitempty" yaml:"admin_username,omitempty"`
 
-	// TargetUserID is the user being impersonated.
-	TargetUserID string `json:"target_user_id" yaml:"target_user_id"`
+	// TargetUserID is the qrdb Snowflake id of the user being impersonated.
+	TargetUserID uint64 `json:"target_user_id,string" yaml:"target_user_id"`
 
 	// TargetUsername is the target user's username for audit trails.
 	TargetUsername string `json:"target_username,omitempty" yaml:"target_username,omitempty"`
@@ -270,7 +272,7 @@ type ImpersonationSession struct {
 
 // CreateAdminAssignmentOptions contains options for creating an admin assignment.
 type CreateAdminAssignmentOptions struct {
-	UserID            string            `json:"user_id"`
+	UserID            uint64            `json:"user_id,string"`
 	AdminRole         AdminRole         `json:"admin_role"`
 	TenantIDs         []string          `json:"tenant_ids,omitempty"`
 	Permissions       []AdminPermission `json:"permissions,omitempty"`
@@ -295,7 +297,7 @@ type UpdateAdminAssignmentOptions struct {
 
 // ListAdminAssignmentsOptions contains options for listing admin assignments.
 type ListAdminAssignmentsOptions struct {
-	UserID     string    `json:"user_id,omitempty"`
+	UserID     uint64    `json:"user_id,string,omitempty"`
 	TenantID   string    `json:"tenant_id,omitempty"`
 	AdminRole  AdminRole `json:"admin_role,omitempty"`
 	ActiveOnly bool      `json:"active_only,omitempty"`
@@ -311,7 +313,7 @@ type ListAdminAssignmentsOptions struct {
 // name the admin it acts as — that is exactly the escalation this removal
 // closes.
 type StartImpersonationOptions struct {
-	TargetUserID   string        `json:"target_user_id"`
+	TargetUserID   uint64        `json:"target_user_id,string"`
 	TargetUsername string        `json:"target_username,omitempty"`
 	TenantID       string        `json:"tenant_id"`
 	Reason         string        `json:"reason"`
@@ -401,7 +403,7 @@ func IsValidAdminRole(role AdminRole) bool {
 
 // Validate validates an admin assignment.
 func (a *AdminAssignment) Validate() error {
-	if a.UserID == "" {
+	if a.UserID == 0 {
 		return NewIAMError(ErrAdminAssignmentInvalid, "iam.admin.validate", "user_id is required", nil)
 	}
 	if !IsValidAdminRole(a.AdminRole) {

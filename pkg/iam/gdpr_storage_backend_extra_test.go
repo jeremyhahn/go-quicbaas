@@ -71,7 +71,7 @@ func TestBackendDataExportStorage_ListFilterPaginate(t *testing.T) {
 
 	for _, uid := range []uint64{30001, 30002, 30003} {
 		if _, err := store.CreateExportRequest(ctx, CreateDataExportOptions{
-			UserID: uid, TenantID: "acme", RequestedBy: "admin",
+			UserID: uid, TenantID: "acme", RequestedBy: 30040,
 		}); err != nil {
 			t.Fatalf("CreateExportRequest(%d): %v", uid, err)
 		}
@@ -110,7 +110,7 @@ func TestBackendDeletionStorage_UpdateAndList(t *testing.T) {
 	ctx := context.Background()
 
 	req, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: 30001, TenantID: "acme", RequestedBy: "admin",
+		UserID: 30001, TenantID: "acme", RequestedBy: 30040,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeletionRequest: %v", err)
@@ -134,7 +134,7 @@ func TestBackendDeletionStorage_UpdateAndList(t *testing.T) {
 
 	// Add a second user's request to exercise list filtering.
 	if _, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: 30002, TenantID: "acme", RequestedBy: "admin",
+		UserID: 30002, TenantID: "acme", RequestedBy: 30040,
 	}); err != nil {
 		t.Fatalf("CreateDeletionRequest(u2): %v", err)
 	}

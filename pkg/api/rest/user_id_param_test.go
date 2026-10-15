@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -97,7 +98,7 @@ func TestRequireTenantUserSubject_ResolvesTheVerifiedAccount(t *testing.T) {
 	defer cleanup()
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req = req.WithContext(auth.SubjectIntoContext(context.Background(), interfaces.Subject{
-		ID: "alice", IDKind: interfaces.SubjectIDUsername, UserID: "30001",
+		ID: "alice", IDKind: interfaces.SubjectIDUsername, UserID: 30001,
 		TenantID: "t1", Authenticated: true,
 	}))
 	w := httptest.NewRecorder()
@@ -115,7 +116,7 @@ func TestRequireTenantUserSubject_NeverReadsTheLoginNameAsAnAccount(t *testing.T
 	defer cleanup()
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req = req.WithContext(auth.SubjectIntoContext(context.Background(), interfaces.Subject{
-		ID: "00042", IDKind: interfaces.SubjectIDUsername, UserID: "7",
+		ID: "00042", IDKind: interfaces.SubjectIDUsername, UserID: 7,
 		TenantID: "t1", Authenticated: true,
 	}))
 	w := httptest.NewRecorder()
@@ -165,5 +166,57 @@ func TestRequireTenantUserSubject_RefusesACallerThatIsNotAUser(t *testing.T) {
 		assert.False(t, ok, "subject %q", subjectID)
 		assert.Zero(t, id)
 		assert.Equal(t, http.StatusForbidden, w.Code, "subject %q", subjectID)
+	}
+}
+
+func TestOptionalUserIDQuery_AbsentIsZeroAndPresentIsParsed(t *testing.T) {
+	w := httptest.NewRecorder()
+	id, ok := optionalUserIDQuery(w, httptest.NewRequest(http.MethodGet, "/x", nil), "user_id")
+	require.True(t, ok)
+	assert.Zero(t, id, "an absent filter means no filter")
+
+	w = httptest.NewRecorder()
+	id, ok = optionalUserIDQuery(w, httptest.NewRequest(http.MethodGet, "/x?user_id=9007199254740993", nil), "user_id")
+	require.True(t, ok)
+	assert.Equal(t, uint64(9007199254740993), id)
+}
+
+func TestOptionalUserIDQuery_RefusesAPresentNonID(t *testing.T) {
+	for _, value := range []string{"user-1", "18446744073709551616", "0"} {
+		w := httptest.NewRecorder()
+		id, ok := optionalUserIDQuery(w, httptest.NewRequest(http.MethodGet, "/x?user_id="+value, nil), "user_id")
+		assert.False(t, ok, "value %q", value)
+		assert.Zero(t, id)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "value %q", value)
+	}
+}
+
+// The body-carried user ids are parsed before any manager is reached, so a
+// handler with no server proves the edge refuses them on its own.
+func TestStartImpersonation_RefusesANonIDTarget(t *testing.T) {
+	for _, value := range []string{"", "user-1", "18446744073709551616", "0"} {
+		body := `{"target_user_id":"` + value + `","tenant_id":"t1","reason":"r"}`
+		w := httptest.NewRecorder()
+		(&IAMHandler{}).StartImpersonation(w,
+			httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)))
+		assert.Equal(t, http.StatusBadRequest, w.Code, "target %q", value)
+	}
+}
+
+func TestGDPRRequests_RefuseANonIDRequestedBy(t *testing.T) {
+	h := &IAMHandler{}
+	handlers := map[string]http.HandlerFunc{
+		"export":   h.RequestDataExport,
+		"deletion": h.RequestDeletion,
+	}
+	for name, handle := range handlers {
+		for _, value := range []string{"user-1", "18446744073709551616", "0"} {
+			body := `{"requested_by":"` + value + `"}`
+			req := withChiParams(httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)),
+				map[string]string{"tenant_id": "t1", "user_id": "30001"})
+			w := httptest.NewRecorder()
+			handle(w, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code, "%s requested_by %q", name, value)
+		}
 	}
 }

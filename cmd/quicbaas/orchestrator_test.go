@@ -1838,7 +1838,7 @@ func TestRunOrchRunWithEventStreaming(t *testing.T) {
 		}
 		setMockOrchestratorFactory(mock)
 		cmd := newOrchRunCommand()
-		cmd.Flags().Set("poll-interval", "50ms") //nolint:errcheck
+		require.NoError(t, cmd.Flags().Set("poll-interval", "50ms"))
 		err := cmd.RunE(cmd, []string{"test event streaming"})
 		assert.NoError(t, err)
 		assert.Greater(t, pollCount, 0)
@@ -1863,7 +1863,7 @@ func TestRunOrchRunWithEventStreaming(t *testing.T) {
 		}
 		setMockOrchestratorFactory(mock)
 		cmd := newOrchRunCommand()
-		cmd.Flags().Set("poll-interval", "50ms") //nolint:errcheck
+		require.NoError(t, cmd.Flags().Set("poll-interval", "50ms"))
 		err := cmd.RunE(cmd, []string{"test polling fallback"})
 		assert.NoError(t, err)
 		assert.Greater(t, pollCount, 0)
@@ -1896,7 +1896,7 @@ func TestRunOrchRunWithEventStreaming(t *testing.T) {
 		}
 		setMockOrchestratorFactory(mock)
 		cmd := newOrchRunCommand()
-		cmd.Flags().Set("poll-interval", "50ms") //nolint:errcheck
+		require.NoError(t, cmd.Flags().Set("poll-interval", "50ms"))
 		err := cmd.RunE(cmd, []string{"test event type only"})
 		assert.NoError(t, err)
 	})
@@ -1922,7 +1922,7 @@ func TestRunOrchRunWithEventStreaming(t *testing.T) {
 		}
 		setMockOrchestratorFactory(mock)
 		cmd := newOrchRunCommand()
-		cmd.Flags().Set("poll-interval", "50ms") //nolint:errcheck
+		require.NoError(t, cmd.Flags().Set("poll-interval", "50ms"))
 		err := cmd.RunE(cmd, []string{"test failed job"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "job_fail_1")
@@ -1943,7 +1943,7 @@ func TestRunOrchRunWithEventStreaming(t *testing.T) {
 		}
 		setMockOrchestratorFactory(mock)
 		cmd := newOrchRunCommand()
-		cmd.Flags().Set("poll-interval", "50ms") //nolint:errcheck
+		require.NoError(t, cmd.Flags().Set("poll-interval", "50ms"))
 		err := cmd.RunE(cmd, []string{"test failed no message"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "job_fail_2")

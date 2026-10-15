@@ -822,19 +822,18 @@ func TestEmbedded_HealthCheck_ErrorHandling(t *testing.T) {
 	client := newEmbeddedClient(t)
 	defer client.Close()
 
+	var nilCtx context.Context
+
 	// Ping with nil context should fail
-	//nolint:staticcheck // Testing nil context behavior intentionally
-	err := client.Health().Ping(nil)
+	err := client.Health().Ping(nilCtx)
 	assert.Error(t, err, "Ping with nil context should fail")
 
 	// Liveness with nil context should fail
-	//nolint:staticcheck // Testing nil context behavior intentionally
-	_, err = client.Health().Liveness(nil)
+	_, err = client.Health().Liveness(nilCtx)
 	assert.Error(t, err, "Liveness with nil context should fail")
 
 	// Readiness with nil context should fail
-	//nolint:staticcheck // Testing nil context behavior intentionally
-	_, err = client.Health().Readiness(nil)
+	_, err = client.Health().Readiness(nilCtx)
 	assert.Error(t, err, "Readiness with nil context should fail")
 }
 

@@ -154,11 +154,11 @@ func (m *mockIAMService) ListRoles(ctx context.Context, tenantID string, limit, 
 	return args.Get(0).([]*iam.Role), args.Int(1), args.Error(2)
 }
 
-func (m *mockIAMService) AssignRole(ctx context.Context, tenantID, userID, role string) error {
+func (m *mockIAMService) AssignRole(ctx context.Context, tenantID string, userID uint64, role string) error {
 	return m.Called(ctx, tenantID, userID, role).Error(0)
 }
 
-func (m *mockIAMService) RevokeRole(ctx context.Context, tenantID, userID, role string) error {
+func (m *mockIAMService) RevokeRole(ctx context.Context, tenantID string, userID uint64, role string) error {
 	return m.Called(ctx, tenantID, userID, role).Error(0)
 }
 
@@ -319,7 +319,7 @@ func (m *mockIAMService) EndImpersonation(ctx context.Context, sessionID string)
 	return m.Called(ctx, sessionID).Error(0)
 }
 
-func (m *mockIAMService) GetActiveImpersonations(ctx context.Context, adminUserID string) ([]*iam.ImpersonationSession, error) {
+func (m *mockIAMService) GetActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*iam.ImpersonationSession, error) {
 	args := m.Called(ctx, adminUserID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -327,7 +327,7 @@ func (m *mockIAMService) GetActiveImpersonations(ctx context.Context, adminUserI
 	return args.Get(0).([]*iam.ImpersonationSession), args.Error(1)
 }
 
-func (m *mockIAMService) GrantConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose, version string, expiresAt *time.Time, ipAddress, userAgent string) (*iam.Consent, error) {
+func (m *mockIAMService) GrantConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose, version string, expiresAt *time.Time, ipAddress, userAgent string) (*iam.Consent, error) {
 	args := m.Called(ctx, tenantID, userID, purpose, version, expiresAt, ipAddress, userAgent)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -335,11 +335,11 @@ func (m *mockIAMService) GrantConsent(ctx context.Context, tenantID, userID stri
 	return args.Get(0).(*iam.Consent), args.Error(1)
 }
 
-func (m *mockIAMService) WithdrawConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose, ipAddress, userAgent string) error {
+func (m *mockIAMService) WithdrawConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose, ipAddress, userAgent string) error {
 	return m.Called(ctx, tenantID, userID, purpose, ipAddress, userAgent).Error(0)
 }
 
-func (m *mockIAMService) GetConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose) (*iam.Consent, error) {
+func (m *mockIAMService) GetConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose) (*iam.Consent, error) {
 	args := m.Called(ctx, tenantID, userID, purpose)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -347,7 +347,7 @@ func (m *mockIAMService) GetConsent(ctx context.Context, tenantID, userID string
 	return args.Get(0).(*iam.Consent), args.Error(1)
 }
 
-func (m *mockIAMService) ListUserConsents(ctx context.Context, tenantID, userID string) ([]*iam.Consent, error) {
+func (m *mockIAMService) ListUserConsents(ctx context.Context, tenantID string, userID uint64) ([]*iam.Consent, error) {
 	args := m.Called(ctx, tenantID, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -355,7 +355,7 @@ func (m *mockIAMService) ListUserConsents(ctx context.Context, tenantID, userID 
 	return args.Get(0).([]*iam.Consent), args.Error(1)
 }
 
-func (m *mockIAMService) RequestExport(ctx context.Context, tenantID, userID, requestedBy string, format iam.DataExportFormat, includeCategories, excludeCategories []string) (*iam.DataExportRequest, error) {
+func (m *mockIAMService) RequestExport(ctx context.Context, tenantID string, userID, requestedBy uint64, format iam.DataExportFormat, includeCategories, excludeCategories []string) (*iam.DataExportRequest, error) {
 	args := m.Called(ctx, tenantID, userID, requestedBy, format, includeCategories, excludeCategories)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -379,7 +379,7 @@ func (m *mockIAMService) GenerateExport(ctx context.Context, exportID string) (*
 	return args.Get(0).(*iam.UserDataExport), args.Error(1)
 }
 
-func (m *mockIAMService) RequestDeletion(ctx context.Context, tenantID, userID, requestedBy, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*iam.DataDeletionRequest, error) {
+func (m *mockIAMService) RequestDeletion(ctx context.Context, tenantID string, userID, requestedBy uint64, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*iam.DataDeletionRequest, error) {
 	args := m.Called(ctx, tenantID, userID, requestedBy, reason, deleteCategories, preserveCategories, gracePeriodDays)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -874,7 +874,7 @@ func TestIAMServer_ListRoles_MissingTenantID(t *testing.T) {
 func TestIAMServer_AssignRole_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("AssignRole", mock.Anything, "t1", "30001", "admin").Return(nil)
+	svc.On("AssignRole", mock.Anything, "t1", uint64(30001), "admin").Return(nil)
 
 	resp, err := srv.AssignRole(callerContext("t1"), &iampb.AssignRoleRequest{
 		TenantId: "t1", UserId: "30001", Role: "admin",
@@ -902,7 +902,7 @@ func TestIAMServer_AssignRole_MissingFields(t *testing.T) {
 func TestIAMServer_RevokeRole_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("RevokeRole", mock.Anything, "t1", "30001", "admin").Return(nil)
+	svc.On("RevokeRole", mock.Anything, "t1", uint64(30001), "admin").Return(nil)
 
 	resp, err := srv.RevokeRole(callerContext("t1"), &iampb.RevokeRoleRequest{
 		TenantId: "t1", UserId: "30001", Role: "admin",
@@ -1380,7 +1380,7 @@ func TestIAMServer_CreateAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("CreateAdminAssignment", mock.Anything, mock.AnythingOfType("iam.CreateAdminAssignmentOptions")).
-		Return(&iam.AdminAssignment{ID: "a1", UserID: "30001", AdminRole: iam.AdminRoleSuperAdmin}, nil)
+		Return(&iam.AdminAssignment{ID: "a1", UserID: 30001, AdminRole: iam.AdminRoleSuperAdmin}, nil)
 
 	resp, err := srv.CreateAdminAssignment(callerContext("t1"), &iampb.CreateAdminAssignmentRequest{
 		UserId:            "30001",
@@ -1423,7 +1423,7 @@ func TestIAMServer_GetAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("GetAdminAssignment", mock.Anything, "a1").
-		Return(&iam.AdminAssignment{ID: "a1", UserID: "30001"}, nil)
+		Return(&iam.AdminAssignment{ID: "a1", UserID: 30001}, nil)
 
 	resp, err := srv.GetAdminAssignment(callerContext("t1"), &iampb.GetAdminAssignmentRequest{Id: "a1"})
 
@@ -1443,7 +1443,7 @@ func TestIAMServer_UpdateAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("UpdateAdminAssignment", mock.Anything, "a1", mock.AnythingOfType("iam.UpdateAdminAssignmentOptions")).
-		Return(&iam.AdminAssignment{ID: "a1", UserID: "30001"}, nil)
+		Return(&iam.AdminAssignment{ID: "a1", UserID: 30001}, nil)
 
 	resp, err := srv.UpdateAdminAssignment(callerContext("t1"), &iampb.UpdateAdminAssignmentRequest{
 		Id:                "a1",
@@ -1492,7 +1492,7 @@ func TestIAMServer_ListAdminAssignments_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("ListAdminAssignments", mock.Anything, mock.AnythingOfType("iam.ListAdminAssignmentsOptions")).
-		Return([]*iam.AdminAssignment{{ID: "a1", UserID: "30001"}}, nil)
+		Return([]*iam.AdminAssignment{{ID: "a1", UserID: 30001}}, nil)
 
 	resp, err := srv.ListAdminAssignments(callerContext("t1"), &iampb.ListAdminAssignmentsRequest{
 		UserId: "30001", TenantId: "t1", ActiveOnly: true,
@@ -1536,7 +1536,7 @@ func TestIAMServer_StartImpersonation_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
 	svc.On("StartImpersonation", mock.Anything, mock.AnythingOfType("*iam.StartImpersonationOptions")).
-		Return(&iam.ImpersonationSession{ID: "s1", AdminUserID: "admin1", TargetUserID: "30001"}, nil)
+		Return(&iam.ImpersonationSession{ID: "s1", AdminUserID: 30021, TargetUserID: 30001}, nil)
 
 	// The request carries no admin_user_id — the actor is the
 	// authenticated caller, resolved server-side (go-quicbaas#383).
@@ -1594,10 +1594,10 @@ func TestIAMServer_EndImpersonation_MissingSessionID(t *testing.T) {
 func TestIAMServer_GetActiveImpersonations_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("GetActiveImpersonations", mock.Anything, "admin1").
-		Return([]*iam.ImpersonationSession{{ID: "s1", AdminUserID: "admin1"}}, nil)
+	svc.On("GetActiveImpersonations", mock.Anything, uint64(30021)).
+		Return([]*iam.ImpersonationSession{{ID: "s1", AdminUserID: 30021}}, nil)
 
-	resp, err := srv.GetActiveImpersonations(callerContext("t1"), &iampb.GetActiveImpersonationsRequest{AdminUserId: "admin1"})
+	resp, err := srv.GetActiveImpersonations(callerContext("t1"), &iampb.GetActiveImpersonationsRequest{AdminUserId: "30021"})
 
 	require.NoError(t, err)
 	assert.Len(t, resp.Sessions, 1)
@@ -1618,7 +1618,7 @@ func TestIAMServer_GetActiveImpersonations_MissingAdminUserID(t *testing.T) {
 func TestIAMServer_GrantConsent_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("GrantConsent", mock.Anything, "t1", "30001", mock.Anything, "v1", mock.Anything, "1.2.3.4", "Mozilla").
+	svc.On("GrantConsent", mock.Anything, "t1", uint64(30001), mock.Anything, "v1", mock.Anything, "1.2.3.4", "Mozilla").
 		Return(&iam.Consent{ID: "c1", TenantID: "t1", UserID: 30001}, nil)
 
 	resp, err := srv.GrantConsent(callerContext("t1"), &iampb.GrantConsentRequest{
@@ -1659,7 +1659,7 @@ func TestIAMServer_GrantConsent_MissingFields(t *testing.T) {
 func TestIAMServer_WithdrawConsent_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("WithdrawConsent", mock.Anything, "t1", "30001", mock.Anything, "1.2.3.4", "Mozilla").Return(nil)
+	svc.On("WithdrawConsent", mock.Anything, "t1", uint64(30001), mock.Anything, "1.2.3.4", "Mozilla").Return(nil)
 
 	resp, err := srv.WithdrawConsent(callerContext("t1"), &iampb.WithdrawConsentRequest{
 		TenantId:  "t1",
@@ -1691,7 +1691,7 @@ func TestIAMServer_WithdrawConsent_MissingFields(t *testing.T) {
 func TestIAMServer_GetConsent_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("GetConsent", mock.Anything, "t1", "30001", mock.Anything).
+	svc.On("GetConsent", mock.Anything, "t1", uint64(30001), mock.Anything).
 		Return(&iam.Consent{ID: "c1", TenantID: "t1", UserID: 30001}, nil)
 
 	resp, err := srv.GetConsent(callerContext("t1"), &iampb.GetConsentRequest{
@@ -1720,7 +1720,7 @@ func TestIAMServer_GetConsent_MissingFields(t *testing.T) {
 func TestIAMServer_ListUserConsents_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("ListUserConsents", mock.Anything, "t1", "30001").
+	svc.On("ListUserConsents", mock.Anything, "t1", uint64(30001)).
 		Return([]*iam.Consent{{ID: "c1", TenantID: "t1", UserID: 30001}}, nil)
 
 	resp, err := srv.ListUserConsents(callerContext("t1"), &iampb.ListUserConsentsRequest{TenantId: "t1", UserId: "30001"})
@@ -1747,13 +1747,13 @@ func TestIAMServer_ListUserConsents_MissingFields(t *testing.T) {
 func TestIAMServer_RequestExport_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("RequestExport", mock.Anything, "t1", "30001", "admin1", mock.Anything, mock.Anything, mock.Anything).
+	svc.On("RequestExport", mock.Anything, "t1", uint64(30001), uint64(30021), mock.Anything, mock.Anything, mock.Anything).
 		Return(&iam.DataExportRequest{ID: "e1", TenantID: "t1", UserID: 30001}, nil)
 
 	resp, err := srv.RequestExport(callerContext("t1"), &iampb.RequestExportRequest{
 		TenantId:          "t1",
 		UserId:            "30001",
-		RequestedBy:       "admin1",
+		RequestedBy:       "30021",
 		IncludeCategories: []string{"profile"},
 		ExcludeCategories: []string{"audit"},
 	})
@@ -1824,13 +1824,13 @@ func TestIAMServer_GenerateExport_MissingID(t *testing.T) {
 func TestIAMServer_RequestDeletion_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("RequestDeletion", mock.Anything, "t1", "30001", "admin1", "gdpr", mock.Anything, mock.Anything, 30).
+	svc.On("RequestDeletion", mock.Anything, "t1", uint64(30001), uint64(30021), "gdpr", mock.Anything, mock.Anything, 30).
 		Return(&iam.DataDeletionRequest{ID: "d1", TenantID: "t1", UserID: 30001}, nil)
 
 	resp, err := srv.RequestDeletion(callerContext("t1"), &iampb.RequestDeletionRequest{
 		TenantId:           "t1",
 		UserId:             "30001",
-		RequestedBy:        "admin1",
+		RequestedBy:        "30021",
 		Reason:             "gdpr",
 		DeleteCategories:   []string{"profile"},
 		PreserveCategories: []string{"audit"},

@@ -513,15 +513,19 @@ func TestRunInlineInit_ShamirDefersToCeremony(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(dataDir, "officers"),
 		"shamir init must never write per-officer share bundles")
 	var stray []string
-	_ = filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil //nolint:nilerr // a walk error must not fail the scan
+	walkErr := filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
 		}
 		if strings.Contains(d.Name(), "share") {
 			stray = append(stray, path)
 		}
 		return nil
 	})
+	require.NoError(t, walkErr, "walk the data dir")
 	assert.Empty(t, stray, "no file named for a share may exist under the data dir")
 
 	// First-boot did NOT run: it follows the ceremony's unseal, not init.

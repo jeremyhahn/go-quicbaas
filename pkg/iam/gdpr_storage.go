@@ -338,7 +338,7 @@ func (m *MemoryDataExportStorage) CreateExportRequest(ctx context.Context, opts 
 	if opts.TenantID == "" {
 		return nil, NewIAMError(ErrDataExportInvalid, "iam.export.create", "tenant_id is required", nil)
 	}
-	if opts.RequestedBy == "" {
+	if opts.RequestedBy == 0 {
 		return nil, NewIAMError(ErrDataExportInvalid, "iam.export.create", "requested_by is required", nil)
 	}
 
@@ -487,7 +487,7 @@ func (m *MemoryDeletionStorage) CreateDeletionRequest(ctx context.Context, opts 
 	if opts.TenantID == "" {
 		return nil, NewIAMError(ErrDeletionInvalid, "iam.deletion.create", "tenant_id is required", nil)
 	}
-	if opts.RequestedBy == "" {
+	if opts.RequestedBy == 0 {
 		return nil, NewIAMError(ErrDeletionInvalid, "iam.deletion.create", "requested_by is required", nil)
 	}
 

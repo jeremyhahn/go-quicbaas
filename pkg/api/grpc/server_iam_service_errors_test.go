@@ -165,10 +165,10 @@ func TestIAMServer_ListRoles_ServiceError(t *testing.T) {
 
 func TestIAMServer_AssignRole_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("AssignRole", mock.Anything, "t-1", "u-1", "r-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
+	svc.On("AssignRole", mock.Anything, "t-1", uint64(1), "r-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.AssignRole(callerContext("t-1"), &iampb.AssignRoleRequest{
-		TenantId: "t-1", UserId: "u-1", Role: "r-1",
+		TenantId: "t-1", UserId: "1", Role: "r-1",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
@@ -176,10 +176,10 @@ func TestIAMServer_AssignRole_ServiceError(t *testing.T) {
 
 func TestIAMServer_RevokeRole_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("RevokeRole", mock.Anything, "t-1", "u-1", "r-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
+	svc.On("RevokeRole", mock.Anything, "t-1", uint64(1), "r-1").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.RevokeRole(callerContext("t-1"), &iampb.RevokeRoleRequest{
-		TenantId: "t-1", UserId: "u-1", Role: "r-1",
+		TenantId: "t-1", UserId: "1", Role: "r-1",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
@@ -359,7 +359,7 @@ func TestIAMServer_CheckAdminPermission_ServiceError(t *testing.T) {
 	svc.On("CheckAdminPermission", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"})
 
 	_, err := srv.CheckAdminPermission(callerContext("t-1"), &iampb.CheckAdminPermissionRequest{
-		UserId: "admin-1", TenantId: "t-1", Permission: "manage_users",
+		UserId: "30021", TenantId: "t-1", Permission: "manage_users",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -376,9 +376,9 @@ func TestIAMServer_EndImpersonation_ServiceError(t *testing.T) {
 
 func TestIAMServer_GetActiveImpersonations_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("GetActiveImpersonations", mock.Anything, "admin-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
+	svc.On("GetActiveImpersonations", mock.Anything, uint64(30021)).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
-	_, err := srv.GetActiveImpersonations(callerContext("t-1"), &iampb.GetActiveImpersonationsRequest{AdminUserId: "admin-1"})
+	_, err := srv.GetActiveImpersonations(callerContext("t-1"), &iampb.GetActiveImpersonationsRequest{AdminUserId: "30021"})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
@@ -389,10 +389,10 @@ func TestIAMServer_GetActiveImpersonations_ServiceError(t *testing.T) {
 
 func TestIAMServer_WithdrawConsent_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("WithdrawConsent", mock.Anything, "t-1", "u-1", mock.Anything, "", "").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
+	svc.On("WithdrawConsent", mock.Anything, "t-1", uint64(1), mock.Anything, "", "").Return(&dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.WithdrawConsent(callerContext("t-1"), &iampb.WithdrawConsentRequest{
-		TenantId: "t-1", UserId: "u-1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
+		TenantId: "t-1", UserId: "1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
@@ -400,10 +400,10 @@ func TestIAMServer_WithdrawConsent_ServiceError(t *testing.T) {
 
 func TestIAMServer_GetConsent_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("GetConsent", mock.Anything, "t-1", "u-1", mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
+	svc.On("GetConsent", mock.Anything, "t-1", uint64(1), mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test"})
 
 	_, err := srv.GetConsent(callerContext("t-1"), &iampb.GetConsentRequest{
-		TenantId: "t-1", UserId: "u-1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
+		TenantId: "t-1", UserId: "1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
@@ -411,10 +411,10 @@ func TestIAMServer_GetConsent_ServiceError(t *testing.T) {
 
 func TestIAMServer_ListUserConsents_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("ListUserConsents", mock.Anything, "t-1", "u-1").Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
+	svc.On("ListUserConsents", mock.Anything, "t-1", uint64(1)).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.ListUserConsents(callerContext("t-1"), &iampb.ListUserConsentsRequest{
-		TenantId: "t-1", UserId: "u-1",
+		TenantId: "t-1", UserId: "1",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))

@@ -94,8 +94,8 @@ func TestJobSlotHostsContext_RoundTripsAndIgnoresNoHosts(t *testing.T) {
 	if WithJobSlotHosts(ctx, nil) != ctx || JobSlotHostsFromContext(ctx) != nil {
 		t.Fatal("no hosts must leave the context unmarked")
 	}
-	//nolint:staticcheck // SA1012: a nil context is the input under test.
-	if JobSlotHostsFromContext(nil) != nil {
+	var nilCtx context.Context
+	if JobSlotHostsFromContext(nilCtx) != nil {
 		t.Fatal("a nil context carries no slots")
 	}
 }

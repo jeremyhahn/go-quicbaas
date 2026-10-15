@@ -114,7 +114,8 @@ func TestSubscribeJobEventsValidation(t *testing.T) {
 	})
 
 	t.Run("NilContext", func(t *testing.T) {
-		ch, err := c.SubscribeJobEvents(nil, &SubscribeJobEventsRequest{ //nolint:staticcheck
+		var nilCtx context.Context
+		ch, err := c.SubscribeJobEvents(nilCtx, &SubscribeJobEventsRequest{
 			TenantID: "tenant_1",
 			JobID:    "job_1",
 		})
@@ -250,7 +251,8 @@ func TestStartJobValidation(t *testing.T) {
 	})
 
 	t.Run("NilContext", func(t *testing.T) {
-		resp, err := c.StartJob(nil, &StartJobRequest{Description: "test"}) //nolint:staticcheck
+		var nilCtx context.Context
+		resp, err := c.StartJob(nilCtx, &StartJobRequest{Description: "test"})
 		require.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "context is required")
@@ -358,7 +360,8 @@ func TestCreateWorkflowValidation(t *testing.T) {
 	})
 
 	t.Run("NilContext", func(t *testing.T) {
-		wf, err := c.CreateWorkflow(nil, &CreateWorkflowRequest{ //nolint:staticcheck
+		var nilCtx context.Context
+		wf, err := c.CreateWorkflow(nilCtx, &CreateWorkflowRequest{
 			TenantID:   "t1",
 			Definition: &WorkflowDefinition{Name: "wf1"},
 		})
@@ -666,7 +669,8 @@ func TestDeleteWorkflowValidation(t *testing.T) {
 	})
 
 	t.Run("NilContext", func(t *testing.T) {
-		err := c.DeleteWorkflow(nil, &DeleteWorkflowRequest{TenantID: "t1", Name: "wf1"}) //nolint:staticcheck
+		var nilCtx context.Context
+		err := c.DeleteWorkflow(nilCtx, &DeleteWorkflowRequest{TenantID: "t1", Name: "wf1"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "context is required")
 	})
@@ -723,7 +727,8 @@ func TestListBackendModelsValidation(t *testing.T) {
 	})
 
 	t.Run("NilContext", func(t *testing.T) {
-		resp, err := c.ListBackendModels(nil, &ListBackendModelsRequest{BackendName: "ollama"}) //nolint:staticcheck
+		var nilCtx context.Context
+		resp, err := c.ListBackendModels(nilCtx, &ListBackendModelsRequest{BackendName: "ollama"})
 		require.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "context is required")

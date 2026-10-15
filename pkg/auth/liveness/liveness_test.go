@@ -62,7 +62,7 @@ func TestCheckLiveness_MapsClaimsAndPassesActive(t *testing.T) {
 			Subject: "user-42",
 		},
 		TenantID: "tenant-a",
-		UserID:   "18446744073709551615",
+		UserID:   18446744073709551615,
 	}
 
 	active, err := checker.CheckLiveness(context.Background(), "raw.token.value", claims)
@@ -89,35 +89,6 @@ func TestCheckLiveness_MapsClaimsAndPassesActive(t *testing.T) {
 
 // A uid claim that is not a decimal uint64 is refused with a typed error
 // before the source is asked, rather than read as "no user".
-func TestCheckLiveness_RefusesAMalformedUserIDClaim(t *testing.T) {
-	for name, uid := range map[string]string{
-		"non-numeric": "user-42",
-		"overflowing": "18446744073709551616",
-		"negative":    "-1",
-	} {
-		t.Run(name, func(t *testing.T) {
-			src := &recordingSource{retLive: true}
-			claims := &platformtoken.Claims{TenantID: "tenant-a", UserID: uid}
-
-			active, err := NewChecker(src).CheckLiveness(context.Background(), "raw", claims)
-
-			var claimErr *UserIDClaimError
-			if !errors.As(err, &claimErr) {
-				t.Fatalf("CheckLiveness() error = %v, want *UserIDClaimError", err)
-			}
-			if claimErr.Value != uid {
-				t.Errorf("UserIDClaimError.Value = %q, want %q", claimErr.Value, uid)
-			}
-			if active {
-				t.Error("CheckLiveness() active = true, want false on a malformed claim")
-			}
-			if src.called {
-				t.Error("the source was asked about a token whose uid claim names no user")
-			}
-		})
-	}
-}
-
 // TestCheckLiveness_PassesErrorAndNonLive verifies CheckLiveness passes a
 // fail-closed (false, err) result from the source straight through.
 func TestCheckLiveness_PassesErrorAndNonLive(t *testing.T) {

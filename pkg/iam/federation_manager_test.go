@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -3056,7 +3055,7 @@ func TestMarkExportFailed_Success(t *testing.T) {
 
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
-	exportReq, err := manager.RequestExport(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "json", nil, nil)
+	exportReq, err := manager.RequestExport(ctx, tenantID, userID, userID, "json", nil, nil)
 	require.NoError(t, err)
 
 	manager.markExportFailed(exportReq.ID, "test failure reason")
@@ -3088,7 +3087,7 @@ func TestMarkDeletionFailed_Success(t *testing.T) {
 
 	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
-	delReq, err := manager.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "test reason", nil, nil, 30)
+	delReq, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "test reason", nil, nil, 30)
 	require.NoError(t, err)
 
 	manager.markDeletionFailed(delReq.ID, "test deletion failure")

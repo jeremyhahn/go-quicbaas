@@ -269,7 +269,7 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 
 	// Check if user has audit:delete permission
 	checkResp, err := manager.CheckPermission(ctx, &iam.AdminCheckRequest{
-		UserID:       subject.ID,
+		UserID:       subject.UserID,
 		Permission:   iam.PermAuditDelete,
 		TenantID:     tenantID,
 		ResourceType: "audit",

@@ -508,10 +508,14 @@ func (r *ToolRegistry) executeIAMGDPRExportRequest(ctx context.Context, args map
 	if err != nil {
 		return nil, err
 	}
+	requestedBy, err := getUserIDArg(args, "requested_by")
+	if err != nil {
+		return nil, err
+	}
 	exportReq, err := gdprMgr.RequestExport(ctx,
 		getString(args, "tenant_id"),
 		userID,
-		getString(args, "requested_by"),
+		requestedBy,
 		iam.DataExportFormat(format),
 		includeCategories,
 		excludeCategories,
@@ -590,10 +594,14 @@ func (r *ToolRegistry) executeIAMGDPRDeletionRequest(ctx context.Context, args m
 	if err != nil {
 		return nil, err
 	}
+	requestedBy, err := getUserIDArg(args, "requested_by")
+	if err != nil {
+		return nil, err
+	}
 	deletionReq, err := gdprMgr.RequestDeletion(ctx,
 		getString(args, "tenant_id"),
 		userID,
-		getString(args, "requested_by"),
+		requestedBy,
 		getString(args, "reason"),
 		deleteCategories,
 		preserveCategories,

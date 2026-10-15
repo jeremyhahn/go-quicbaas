@@ -859,8 +859,8 @@ func TestBatchExecute_NilContext(t *testing.T) {
 		},
 	}
 
-	//nolint:staticcheck // Testing nil context intentionally
-	resp, err := client.Execute(nil, req)
+	var nilCtx context.Context
+	resp, err := client.Execute(nilCtx, req)
 
 	if resp != nil {
 		t.Error("expected nil response for nil context")
@@ -1040,8 +1040,8 @@ func TestTransactionExecute_NilContext(t *testing.T) {
 		},
 	}
 
-	//nolint:staticcheck // Testing nil context intentionally
-	resp, err := client.Execute(nil, req)
+	var nilCtx context.Context
+	resp, err := client.Execute(nilCtx, req)
 
 	if resp != nil {
 		t.Error("expected nil response for nil context")

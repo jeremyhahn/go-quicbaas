@@ -51,7 +51,7 @@ func TestRevokeAllSessions_All(t *testing.T) {
 // credential verified account 7. User 42 is somebody else.
 func numericUsernameCtx() context.Context {
 	return auth.SubjectIntoContext(context.Background(), interfaces.Subject{
-		ID: "00042", IDKind: interfaces.SubjectIDUsername, UserID: "7",
+		ID: "00042", IDKind: interfaces.SubjectIDUsername, UserID: 7,
 		TenantID: "t1", Authenticated: true,
 	})
 }

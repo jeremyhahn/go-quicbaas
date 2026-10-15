@@ -561,7 +561,7 @@ func convertAdminAssignmentToProto(a *iam.AdminAssignment) *iampb.AdminAssignmen
 
 	pb := &iampb.AdminAssignment{
 		Id:        a.ID,
-		UserId:    a.UserID,
+		UserId:    formatUserID(a.UserID),
 		AdminRole: convertAdminRoleToProto(a.AdminRole),
 		TenantIds: a.TenantIDs,
 		GrantedBy: a.GrantedBy,
@@ -608,65 +608,6 @@ func convertAdminAssignmentToProto(a *iam.AdminAssignment) *iampb.AdminAssignmen
 	return pb
 }
 
-// convertProtoToAdminAssignment converts a proto AdminAssignment to a domain AdminAssignment.
-func convertProtoToAdminAssignment(pb *iampb.AdminAssignment) *iam.AdminAssignment {
-	if pb == nil {
-		return nil
-	}
-
-	a := &iam.AdminAssignment{
-		ID:        pb.Id,
-		UserID:    pb.UserId,
-		AdminRole: convertProtoAdminRole(pb.AdminRole),
-		TenantIDs: pb.TenantIds,
-		GrantedBy: pb.GrantedBy,
-		Active:    pb.Active,
-		Metadata:  pb.Metadata,
-	}
-
-	// Convert permissions
-	if len(pb.Permissions) > 0 {
-		a.Permissions = make([]iam.AdminPermission, len(pb.Permissions))
-		for i, p := range pb.Permissions {
-			a.Permissions[i] = iam.AdminPermission(p)
-		}
-	}
-
-	// Convert denied permissions
-	if len(pb.DeniedPermissions) > 0 {
-		a.DeniedPermissions = make([]iam.AdminPermission, len(pb.DeniedPermissions))
-		for i, p := range pb.DeniedPermissions {
-			a.DeniedPermissions[i] = iam.AdminPermission(p)
-		}
-	}
-
-	// Convert resource scopes
-	if len(pb.ResourceScopes) > 0 {
-		a.ResourceScopes = make([]iam.ResourceScope, len(pb.ResourceScopes))
-		for i, rs := range pb.ResourceScopes {
-			a.ResourceScopes[i] = iam.ResourceScope{
-				ResourceType:    rs.ResourceType,
-				ResourcePattern: rs.ResourcePattern,
-			}
-		}
-	}
-
-	// Convert timestamps
-	if pb.GrantedAt != nil {
-		a.GrantedAt = pb.GrantedAt.AsTime()
-	}
-	if pb.ExpiresAt != nil {
-		t := pb.ExpiresAt.AsTime()
-		a.ExpiresAt = &t
-	}
-	if pb.LastUsedAt != nil {
-		t := pb.LastUsedAt.AsTime()
-		a.LastUsedAt = &t
-	}
-
-	return a
-}
-
 // =============================================================================
 // Impersonation Session Conversions
 // =============================================================================
@@ -679,8 +620,8 @@ func convertImpersonationSessionToProto(s *iam.ImpersonationSession) *iampb.Impe
 
 	pb := &iampb.ImpersonationSession{
 		Id:           s.ID,
-		AdminUserId:  s.AdminUserID,
-		TargetUserId: s.TargetUserID,
+		AdminUserId:  formatUserID(s.AdminUserID),
+		TargetUserId: formatUserID(s.TargetUserID),
 		TenantId:     s.TenantID,
 		Reason:       s.Reason,
 		StartedAt:    timestamppb.New(s.StartedAt),
@@ -693,35 +634,6 @@ func convertImpersonationSessionToProto(s *iam.ImpersonationSession) *iampb.Impe
 	}
 
 	return pb
-}
-
-// convertProtoToImpersonationSession converts a proto ImpersonationSession to a domain ImpersonationSession.
-func convertProtoToImpersonationSession(pb *iampb.ImpersonationSession) *iam.ImpersonationSession {
-	if pb == nil {
-		return nil
-	}
-
-	s := &iam.ImpersonationSession{
-		ID:           pb.Id,
-		AdminUserID:  pb.AdminUserId,
-		TargetUserID: pb.TargetUserId,
-		TenantID:     pb.TenantId,
-		Reason:       pb.Reason,
-		AuditLogID:   pb.AuditLogId,
-	}
-
-	if pb.StartedAt != nil {
-		s.StartedAt = pb.StartedAt.AsTime()
-	}
-	if pb.ExpiresAt != nil {
-		s.ExpiresAt = pb.ExpiresAt.AsTime()
-	}
-	if pb.EndedAt != nil {
-		t := pb.EndedAt.AsTime()
-		s.EndedAt = &t
-	}
-
-	return s
 }
 
 // =============================================================================
@@ -960,7 +872,7 @@ func convertDataExportRequestToProto(r *iam.DataExportRequest) *iampb.DataExport
 		Id:                r.ID,
 		UserId:            formatUserID(r.UserID),
 		TenantId:          r.TenantID,
-		RequestedBy:       r.RequestedBy,
+		RequestedBy:       formatUserID(r.RequestedBy),
 		Format:            convertDataExportFormatToProto(r.Format),
 		Status:            convertDataExportStatusToProto(r.Status),
 		IncludeCategories: r.IncludeCategories,
@@ -995,12 +907,16 @@ func convertProtoToDataExportRequest(pb *iampb.DataExportRequest) (*iam.DataExpo
 	if err != nil {
 		return nil, err
 	}
+	requestedBy, err := parseOptionalUserID("data_export_request.requested_by", pb.RequestedBy)
+	if err != nil {
+		return nil, err
+	}
 
 	r := &iam.DataExportRequest{
 		ID:                pb.Id,
 		UserID:            userID,
 		TenantID:          pb.TenantId,
-		RequestedBy:       pb.RequestedBy,
+		RequestedBy:       requestedBy,
 		Format:            convertProtoDataExportFormat(pb.Format),
 		Status:            convertProtoDataExportStatus(pb.Status),
 		IncludeCategories: pb.IncludeCategories,
@@ -1301,7 +1217,7 @@ func convertDataDeletionRequestToProto(r *iam.DataDeletionRequest) (*iampb.DataD
 		Id:                 r.ID,
 		UserId:             formatUserID(r.UserID),
 		TenantId:           r.TenantID,
-		RequestedBy:        r.RequestedBy,
+		RequestedBy:        formatUserID(r.RequestedBy),
 		Reason:             r.Reason,
 		Status:             convertDeletionStatusToProto(r.Status),
 		DeleteCategories:   r.DeleteCategories,
@@ -1343,12 +1259,16 @@ func convertProtoToDataDeletionRequest(pb *iampb.DataDeletionRequest) (*iam.Data
 	if err != nil {
 		return nil, err
 	}
+	requestedBy, err := parseOptionalUserID("data_deletion_request.requested_by", pb.RequestedBy)
+	if err != nil {
+		return nil, err
+	}
 
 	r := &iam.DataDeletionRequest{
 		ID:                 pb.Id,
 		UserID:             userID,
 		TenantID:           pb.TenantId,
-		RequestedBy:        pb.RequestedBy,
+		RequestedBy:        requestedBy,
 		Reason:             pb.Reason,
 		Status:             convertProtoDeletionStatus(pb.Status),
 		DeleteCategories:   pb.DeleteCategories,

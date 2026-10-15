@@ -49,12 +49,12 @@ func TestAuthorizeProjectsUsername(t *testing.T) {
 // The verified uid claim is projected so a resource server resolves a user's
 // account by it rather than by sub; a token without it projects none.
 func TestAuthorizeProjectsUserID(t *testing.T) {
-	withUID := Authorize(&Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "12345"}, UserID: "67890"})
-	if withUID.Subject != "12345" || withUID.UserID != "67890" {
+	withUID := Authorize(&Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "12345"}, UserID: 67890})
+	if withUID.Subject != "12345" || withUID.UserID != 67890 {
 		t.Fatalf("Authorize = %+v, want Subject 12345 and UserID 67890", withUID)
 	}
-	if service := Authorize(&Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "svc"}}); service.UserID != "" {
-		t.Fatalf("UserID = %q, want empty without a uid claim", service.UserID)
+	if service := Authorize(&Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "svc"}}); service.UserID != 0 {
+		t.Fatalf("UserID = %d, want 0 without a uid claim", service.UserID)
 	}
 }
 

@@ -176,7 +176,7 @@ func TestDeleteOldAuditEvents_TenantScoping(t *testing.T) {
 		// tenant-scope gate fires first: the denial is the operator-isolation
 		// rule (no system-tenant lift), not a missing permission.
 		_, err := admin.CreateAssignment(context.Background(), iam.CreateAdminAssignmentOptions{
-			UserID:      "sys-audit-admin",
+			UserID:      70010,
 			AdminRole:   iam.AdminRoleTenantAdmin,
 			TenantIDs:   []string{"tenant-b"},
 			Permissions: []iam.AdminPermission{iam.PermAuditDelete},
@@ -186,7 +186,7 @@ func TestDeleteOldAuditEvents_TenantScoping(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete,
 			"/api/v1/iam/audit?tenant_id=tenant-b&before=2024-01-01T00:00:00Z", nil)
-		req = req.WithContext(ctxWithTestSubject(req.Context(), "sys-audit-admin", "system"))
+		req = req.WithContext(ctxWithTestUser(req.Context(), 70010, "system"))
 		req = req.WithContext(ctxWithCallerTenant(req.Context(), qrdbsdk.SystemTenantID))
 		w := httptest.NewRecorder()
 
@@ -200,7 +200,7 @@ func TestDeleteOldAuditEvents_TenantScoping(t *testing.T) {
 		defer cleanup()
 
 		_, err := admin.CreateAssignment(context.Background(), iam.CreateAdminAssignmentOptions{
-			UserID:      "sys-audit-admin",
+			UserID:      70010,
 			AdminRole:   iam.AdminRoleTenantAdmin,
 			TenantIDs:   []string{qrdbsdk.SystemTenantID},
 			Permissions: []iam.AdminPermission{iam.PermAuditDelete},
@@ -210,7 +210,7 @@ func TestDeleteOldAuditEvents_TenantScoping(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete,
 			"/api/v1/iam/audit?tenant_id="+qrdbsdk.SystemTenantID+"&before=2024-01-01T00:00:00Z", nil)
-		req = req.WithContext(ctxWithTestSubject(req.Context(), "sys-audit-admin", "system"))
+		req = req.WithContext(ctxWithTestUser(req.Context(), 70010, "system"))
 		req = req.WithContext(ctxWithCallerTenant(req.Context(), qrdbsdk.SystemTenantID))
 		w := httptest.NewRecorder()
 

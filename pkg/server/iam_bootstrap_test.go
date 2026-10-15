@@ -27,7 +27,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
@@ -539,7 +538,7 @@ func TestFirstBootBootstrap_ExistingAdmin_Skipped(t *testing.T) {
 
 	// Pre-seed the admin assignment a completed prior boot would have written.
 	_, err = c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    strconv.FormatUint(admin.ID, 10),
+		UserID:    admin.ID,
 		AdminRole: iam.AdminRoleSuperAdmin,
 		GrantedBy: "system:first-boot",
 	})
@@ -583,7 +582,7 @@ func TestFirstBootBootstrap_OrphanedGrantIsNotAnAdministrator(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "existing-admin-id", // never created: the grant outlived its user
+		UserID:    424242, // never created: the grant outlived its user
 		AdminRole: iam.AdminRoleSuperAdmin,
 		GrantedBy: "system:first-boot",
 	})

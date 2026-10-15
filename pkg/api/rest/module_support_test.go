@@ -96,7 +96,7 @@ type fakeModuleTokenAuthorizer struct {
 	wantToken string
 	granted   []string
 	subject   string
-	userID    string
+	userID    uint64
 	tenant    string
 }
 
@@ -324,7 +324,7 @@ func TestServer_AuthenticateHTTP_UserToken(t *testing.T) {
 func TestServer_AuthenticateHTTP_AccountIsVerifiedUserID(t *testing.T) {
 	srv := newModuleSupportServer(t)
 	srv.moduleAuthorizer = &fakeModuleTokenAuthorizer{
-		wantToken: "user-token", subject: "12345", userID: "67890", tenant: "tenant-a",
+		wantToken: "user-token", subject: "12345", userID: 67890, tenant: "tenant-a",
 	}
 
 	req := httptest.NewRequest("GET", "/api/v1/kms/keys", nil)
@@ -335,7 +335,7 @@ func TestServer_AuthenticateHTTP_AccountIsVerifiedUserID(t *testing.T) {
 		t.Fatalf("AuthenticateHTTP() error = %v", err)
 	}
 	subject := auth.SubjectFromIdentity(identity)
-	if subject.ID != "12345" || subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != "67890" {
+	if subject.ID != "12345" || subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != 67890 {
 		t.Fatalf("subject = %+v, want ID 12345 as a username with UserID 67890", subject)
 	}
 }

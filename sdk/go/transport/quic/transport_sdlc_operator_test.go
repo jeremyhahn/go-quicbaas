@@ -36,7 +36,7 @@ func TestRequest_OperatorVerbsOverHTTP3(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	if err != nil {
 		t.Fatal(err)
 	}

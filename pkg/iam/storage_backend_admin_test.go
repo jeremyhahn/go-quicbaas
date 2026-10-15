@@ -34,7 +34,7 @@ func TestBackendAdminStorage_CreateGetAssignment(t *testing.T) {
 
 	a := &AdminAssignment{
 		ID:        "assign-1",
-		UserID:    "user-1",
+		UserID:    1,
 		AdminRole: AdminRole("super"),
 		Active:    true,
 		GrantedAt: time.Now().UTC(),
@@ -44,7 +44,7 @@ func TestBackendAdminStorage_CreateGetAssignment(t *testing.T) {
 
 	got, err := store.GetAssignment(ctx, "assign-1")
 	require.NoError(t, err)
-	assert.Equal(t, "user-1", got.UserID)
+	assert.Equal(t, uint64(1), got.UserID)
 	assert.True(t, got.Active)
 }
 
@@ -61,7 +61,7 @@ func TestBackendAdminStorage_CreateAssignment_Errors(t *testing.T) {
 		t.Fatal("expected error for empty ID")
 	}
 	// duplicate
-	a := &AdminAssignment{ID: "dup", UserID: "u", Active: true}
+	a := &AdminAssignment{ID: "dup", UserID: 7, Active: true}
 	require.NoError(t, store.CreateAssignment(ctx, a))
 	if err := store.CreateAssignment(ctx, a); err == nil {
 		t.Fatal("expected duplicate error")
@@ -83,7 +83,7 @@ func TestBackendAdminStorage_UpdateAssignment(t *testing.T) {
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
-	a := &AdminAssignment{ID: "u1", UserID: "user-1", Active: true}
+	a := &AdminAssignment{ID: "u1", UserID: 1, Active: true}
 	require.NoError(t, store.CreateAssignment(ctx, a))
 
 	a.Active = false
@@ -101,7 +101,7 @@ func TestBackendAdminStorage_UpdateAssignment_Errors(t *testing.T) {
 	if err := store.UpdateAssignment(ctx, nil); err == nil {
 		t.Fatal("expected error for nil assignment")
 	}
-	err := store.UpdateAssignment(ctx, &AdminAssignment{ID: "missing", UserID: "u"})
+	err := store.UpdateAssignment(ctx, &AdminAssignment{ID: "missing", UserID: 7})
 	require.ErrorIs(t, err, ErrAdminAssignmentNotFound)
 }
 
@@ -109,7 +109,7 @@ func TestBackendAdminStorage_DeleteAssignment(t *testing.T) {
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
-	a := &AdminAssignment{ID: "d1", UserID: "user-1", Active: true}
+	a := &AdminAssignment{ID: "d1", UserID: 1, Active: true}
 	require.NoError(t, store.CreateAssignment(ctx, a))
 	require.NoError(t, store.DeleteAssignment(ctx, "d1"))
 
@@ -136,24 +136,24 @@ func TestBackendAdminStorage_ListAssignments_Filters(t *testing.T) {
 	past := time.Now().Add(-time.Hour)
 
 	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{
-		ID: "a1", UserID: "alice", AdminRole: "super", Active: true,
+		ID: "a1", UserID: 101, AdminRole: "super", Active: true,
 		TenantIDs: []string{"t1"}, ExpiresAt: &future,
 	}))
 	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{
-		ID: "a2", UserID: "bob", AdminRole: "tenant", Active: true,
+		ID: "a2", UserID: 102, AdminRole: "tenant", Active: true,
 		TenantIDs: []string{"t2"},
 	}))
 	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{
-		ID: "a3", UserID: "alice", AdminRole: "super", Active: false,
+		ID: "a3", UserID: 101, AdminRole: "super", Active: false,
 		TenantIDs: []string{"t3"},
 	}))
 	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{
-		ID: "a4", UserID: "carol", AdminRole: "super", Active: true,
+		ID: "a4", UserID: 103, AdminRole: "super", Active: true,
 		TenantIDs: []string{"t4"}, ExpiresAt: &past,
 	}))
 
 	// Filter by UserID
-	got, err := store.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: "alice"})
+	got, err := store.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: 101})
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 
@@ -183,22 +183,22 @@ func TestBackendAdminStorage_ListAssignments_Pagination(t *testing.T) {
 
 	for _, id := range []string{"p1", "p2", "p3"} {
 		require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{
-			ID: id, UserID: "alice", Active: true,
+			ID: id, UserID: 101, Active: true,
 		}))
 	}
 
 	// Limit
-	got, err := store.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: "alice", Limit: 2})
+	got, err := store.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: 101, Limit: 2})
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 
 	// Offset beyond range returns empty
-	got, err = store.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: "alice", Offset: 99})
+	got, err = store.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: 101, Offset: 99})
 	require.NoError(t, err)
 	assert.Empty(t, got)
 
 	// Offset within range
-	got, err = store.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: "alice", Offset: 1})
+	got, err = store.ListAssignments(ctx, ListAdminAssignmentsOptions{UserID: 101, Offset: 1})
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
@@ -207,11 +207,11 @@ func TestBackendAdminStorage_GetUserAssignments(t *testing.T) {
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
-	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{ID: "u1", UserID: "alice", Active: true}))
-	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{ID: "u2", UserID: "alice", Active: false}))
-	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{ID: "u3", UserID: "bob", Active: true}))
+	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{ID: "u1", UserID: 101, Active: true}))
+	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{ID: "u2", UserID: 101, Active: false}))
+	require.NoError(t, store.CreateAssignment(ctx, &AdminAssignment{ID: "u3", UserID: 102, Active: true}))
 
-	got, err := store.GetUserAssignments(ctx, "alice")
+	got, err := store.GetUserAssignments(ctx, 101)
 	require.NoError(t, err)
 	assert.Len(t, got, 1) // only active
 	assert.Equal(t, "u1", got[0].ID)
@@ -221,7 +221,7 @@ func TestBackendAdminStorage_GetUserAssignments_Error(t *testing.T) {
 	ctx := context.Background()
 	store := NewBackendAdminStorage(newMockKVStore())
 
-	if _, err := store.GetUserAssignments(ctx, ""); err == nil {
+	if _, err := store.GetUserAssignments(ctx, 0); err == nil {
 		t.Fatal("expected error for empty user id")
 	}
 }
@@ -233,8 +233,8 @@ func TestBackendAdminStorage_GetUserAssignments_Error(t *testing.T) {
 func newImpersonationSession(id string) *ImpersonationSession {
 	return &ImpersonationSession{
 		ID:           id,
-		AdminUserID:  "admin-1",
-		TargetUserID: "target-1",
+		AdminUserID:  30021,
+		TargetUserID: 40021,
 		TenantID:     "t1",
 		Reason:       "investigation",
 		StartedAt:    time.Now().UTC(),
@@ -251,7 +251,7 @@ func TestBackendImpersonationStorage_CreateGet(t *testing.T) {
 
 	got, err := store.GetImpersonationSession(ctx, "s1")
 	require.NoError(t, err)
-	assert.Equal(t, "admin-1", got.AdminUserID)
+	assert.Equal(t, uint64(30021), got.AdminUserID)
 }
 
 func TestBackendImpersonationStorage_Create_Errors(t *testing.T) {
@@ -344,10 +344,10 @@ func TestBackendImpersonationStorage_ListActive(t *testing.T) {
 	require.NoError(t, store.EndImpersonationSession(ctx, "act2"))
 
 	other := newImpersonationSession("act3")
-	other.AdminUserID = "admin-2"
+	other.AdminUserID = 30022
 	require.NoError(t, store.CreateImpersonationSession(ctx, other))
 
-	got, err := store.ListActiveImpersonations(ctx, "admin-1")
+	got, err := store.ListActiveImpersonations(ctx, 30021)
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
 	assert.Equal(t, "act1", got[0].ID)
@@ -357,7 +357,7 @@ func TestBackendImpersonationStorage_ListActive_Error(t *testing.T) {
 	ctx := context.Background()
 	store := NewBackendImpersonationStorage(newMockKVStore())
 
-	if _, err := store.ListActiveImpersonations(ctx, ""); err == nil {
+	if _, err := store.ListActiveImpersonations(ctx, 0); err == nil {
 		t.Fatal("expected error for empty admin id")
 	}
 }
@@ -372,22 +372,22 @@ func TestBackendImpersonationStorage_List(t *testing.T) {
 	require.NoError(t, store.CreateImpersonationSession(ctx, expired))
 
 	// All sessions, no filter
-	got, err := store.ListImpersonations(ctx, false, "")
+	got, err := store.ListImpersonations(ctx, false, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 
 	// activeOnly excludes expired
-	got, err = store.ListImpersonations(ctx, true, "")
+	got, err = store.ListImpersonations(ctx, true, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
 	assert.Equal(t, "l1", got[0].ID)
 
 	// Filter by admin user
-	got, err = store.ListImpersonations(ctx, false, "admin-1")
+	got, err = store.ListImpersonations(ctx, false, 30021)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 
-	got, err = store.ListImpersonations(ctx, false, "nobody")
+	got, err = store.ListImpersonations(ctx, false, 999)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -406,7 +406,7 @@ func TestBackendImpersonationStorage_DeleteExpiredSessions(t *testing.T) {
 
 	require.NoError(t, store.DeleteExpiredSessions(ctx))
 
-	remaining, err := store.ListImpersonations(ctx, false, "")
+	remaining, err := store.ListImpersonations(ctx, false, 0)
 	require.NoError(t, err)
 	assert.Len(t, remaining, 1)
 	assert.Equal(t, "keep", remaining[0].ID)

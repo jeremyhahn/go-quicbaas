@@ -128,8 +128,8 @@ func TestClient_Create_MissingName(t *testing.T) {
 
 func TestClient_Create_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck // intentional nil context test
-	_, err := c.Create(nil, &CreateProjectRequest{TenantID: "t", Name: "n"})
+	var nilCtx context.Context
+	_, err := c.Create(nilCtx, &CreateProjectRequest{TenantID: "t", Name: "n"})
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -231,8 +231,8 @@ func TestClient_Get_EmptyProjectID(t *testing.T) {
 
 func TestClient_Get_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck
-	_, err := c.Get(nil, "t", "p")
+	var nilCtx context.Context
+	_, err := c.Get(nilCtx, "t", "p")
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {
 		t.Errorf("expected CodeInvalidInput, got %v", err)
 	}
@@ -356,8 +356,8 @@ func TestClient_Update_MissingProjectID(t *testing.T) {
 
 func TestClient_Update_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck
-	_, err := c.Update(nil, &UpdateProjectRequest{TenantID: "t", ProjectID: "p"})
+	var nilCtx context.Context
+	_, err := c.Update(nilCtx, &UpdateProjectRequest{TenantID: "t", ProjectID: "p"})
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {
 		t.Errorf("expected CodeInvalidInput, got %v", err)
 	}
@@ -426,8 +426,8 @@ func TestClient_Delete_EmptyProjectID(t *testing.T) {
 
 func TestClient_Delete_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck
-	err := c.Delete(nil, "t", "p")
+	var nilCtx context.Context
+	err := c.Delete(nilCtx, "t", "p")
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {
 		t.Errorf("expected CodeInvalidInput, got %v", err)
 	}
@@ -536,8 +536,8 @@ func TestClient_List_EmptyTenantID(t *testing.T) {
 
 func TestClient_List_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck
-	_, err := c.List(nil, &ListProjectsRequest{TenantID: "t"})
+	var nilCtx context.Context
+	_, err := c.List(nilCtx, &ListProjectsRequest{TenantID: "t"})
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {
 		t.Errorf("expected CodeInvalidInput, got %v", err)
 	}
@@ -859,8 +859,8 @@ func TestClient_Get_InvalidResponseType(t *testing.T) {
 
 func TestClient_GetByName_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck
-	if _, err := c.GetByName(nil, "t", "name"); err == nil || errors.Code(err) != errors.CodeInvalidInput {
+	var nilCtx context.Context
+	if _, err := c.GetByName(nilCtx, "t", "name"); err == nil || errors.Code(err) != errors.CodeInvalidInput {
 		t.Errorf("expected CodeInvalidInput, got %v", err)
 	}
 }
@@ -922,8 +922,8 @@ func TestClient_Update_InvalidResponseType(t *testing.T) {
 
 func TestClient_GrantAgentRole_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck
-	_, err := c.GrantFleetNodeRole(nil, &GrantFleetNodeRoleRequest{
+	var nilCtx context.Context
+	_, err := c.GrantFleetNodeRole(nilCtx, &GrantFleetNodeRoleRequest{
 		TenantID: "t", ProjectID: "p", FleetNodeID: "a", Role: ProjectRoleWorker,
 	})
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {
@@ -994,8 +994,8 @@ func TestClient_GrantAgentRole_InvalidResponseType(t *testing.T) {
 
 func TestClient_RevokeAgentRole_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck
-	_, err := c.RevokeFleetNodeRole(nil, &RevokeFleetNodeRoleRequest{
+	var nilCtx context.Context
+	_, err := c.RevokeFleetNodeRole(nilCtx, &RevokeFleetNodeRoleRequest{
 		TenantID: "t", ProjectID: "p", FleetNodeID: "a",
 	})
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {

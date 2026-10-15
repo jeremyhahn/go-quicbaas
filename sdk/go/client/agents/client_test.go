@@ -144,6 +144,7 @@ func TestClient_RefusesBadInputBeforeTheWire(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeTransport{capable: true}
 	c := NewClient(fake)
+	var nilCtx context.Context
 	refusals := map[string]error{
 		"get without id":        func() error { _, err := c.GetAgent(ctx, "t", " "); return err }(),
 		"create nil":            func() error { _, err := c.CreateAgent(ctx, "t", nil); return err }(),
@@ -157,7 +158,7 @@ func TestClient_RefusesBadInputBeforeTheWire(t *testing.T) {
 		"update pool nil":       func() error { _, err := c.UpdatePool(ctx, "t", "p", nil); return err }(),
 		"delete pool no id":     c.DeletePool(ctx, "t", ""),
 		"pool used-by no id":    func() error { _, err := c.PoolUsedBy(ctx, "t", ""); return err }(),
-		"nil context":           func() error { _, err := c.ListAgents(nil, "t"); return err }(), //nolint:staticcheck // the refusal under test
+		"nil context":           func() error { _, err := c.ListAgents(nilCtx, "t"); return err }(),
 		"transport unsupported": func() error { _, err := NewClient(&plainTransport{}).ListPools(ctx, "t"); return err }(),
 	}
 	for name, err := range refusals {

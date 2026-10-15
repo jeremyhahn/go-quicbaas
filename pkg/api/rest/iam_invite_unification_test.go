@@ -22,7 +22,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -152,7 +151,7 @@ func TestInvite_FirstBootStyleInviteIsRetrievableThroughREST(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "banner token must resolve, not 404; body: %s", w.Body.String())
 	var resp InviteMetadataResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, strconv.FormatUint(userID, 10), resp.UserID)
+	assert.Equal(t, userID, resp.UserID)
 	assert.NotEmpty(t, resp.AuthMethods)
 }
 

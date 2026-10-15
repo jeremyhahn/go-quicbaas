@@ -1090,7 +1090,7 @@ func TestLinkAccount_Success(t *testing.T) {
 	var resp AccountLink
 	err := json.Unmarshal(rec.Body.Bytes(), &resp)
 	require.NoError(t, err)
-	assert.Equal(t, "10123", resp.UserID)
+	assert.Equal(t, uint64(10123), resp.UserID)
 	assert.Equal(t, "prov_google", resp.ProviderID)
 	assert.Equal(t, "google_user_123", resp.ExternalID)
 }
@@ -1538,7 +1538,7 @@ func TestAccountLinkJSONSerialization(t *testing.T) {
 	now := time.Now().UTC()
 	link := &AccountLink{
 		ID:           "link_123",
-		UserID:       "user123",
+		UserID:       1<<60 + 7, // above 2^53: a float64 would round it
 		ProviderID:   "prov_google",
 		ProviderName: "google",
 		ExternalID:   "google_user_456",
@@ -1551,6 +1551,7 @@ func TestAccountLinkJSONSerialization(t *testing.T) {
 	data, err := json.Marshal(link)
 	require.NoError(t, err)
 	require.NotEmpty(t, data)
+	assert.Contains(t, string(data), `"user_id":"1152921504606846983"`)
 
 	var decoded AccountLink
 	err = json.Unmarshal(data, &decoded)

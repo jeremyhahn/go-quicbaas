@@ -27,7 +27,7 @@ func TestAdminManager_ListImpersonations(t *testing.T) {
 	manager, _ := createTestAdminManager(t)
 
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -35,14 +35,14 @@ func TestAdminManager_ListImpersonations(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	s1, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "40011",
+	s1, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40011,
 		TenantID:     "tenant1",
 		Reason:       "one",
 	})
 	require.NoError(t, err)
-	s2, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "40012",
+	s2, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40012,
 		TenantID:     "tenant1",
 		Reason:       "two",
 	})
@@ -52,21 +52,21 @@ func TestAdminManager_ListImpersonations(t *testing.T) {
 	require.NoError(t, manager.EndImpersonation(ctx, s2.ID))
 
 	// All sessions for the admin.
-	all, err := manager.ListImpersonations(ctx, false, "admin_user")
+	all, err := manager.ListImpersonations(ctx, false, 30001)
 	require.NoError(t, err)
 	if len(all) != 2 {
 		t.Fatalf("ListImpersonations(all) = %d, want 2", len(all))
 	}
 
 	// Active-only sessions for the admin.
-	active, err := manager.ListImpersonations(ctx, true, "admin_user")
+	active, err := manager.ListImpersonations(ctx, true, 30001)
 	require.NoError(t, err)
 	if len(active) != 1 || active[0].ID != s1.ID {
 		t.Fatalf("ListImpersonations(active) = %v, want [%s]", active, s1.ID)
 	}
 
 	// No sessions for a different admin.
-	other, err := manager.ListImpersonations(ctx, false, "other_admin")
+	other, err := manager.ListImpersonations(ctx, false, 30003)
 	require.NoError(t, err)
 	if len(other) != 0 {
 		t.Fatalf("ListImpersonations(other) = %d, want 0", len(other))
@@ -79,7 +79,7 @@ func TestAdminManager_GetImpersonationSession(t *testing.T) {
 	manager, _ := createTestAdminManager(t)
 
 	_, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      30001,
 		AdminRole:   AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant1"},
 		Permissions: []AdminPermission{PermUserImpersonate},
@@ -87,8 +87,8 @@ func TestAdminManager_GetImpersonationSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	s, err := manager.StartImpersonation(ctxWithActor("admin_user"), &StartImpersonationOptions{
-		TargetUserID: "40011",
+	s, err := manager.StartImpersonation(ctxWithActor(30001), &StartImpersonationOptions{
+		TargetUserID: 40011,
 		TenantID:     "tenant1",
 		Reason:       "ok",
 	})
@@ -117,7 +117,7 @@ func TestAdminManager_HasAdmin(t *testing.T) {
 	}
 
 	_, err = manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "admin_user",
+		UserID:    30001,
 		AdminRole: AdminRoleSuperAdmin,
 		GrantedBy: "system",
 	})

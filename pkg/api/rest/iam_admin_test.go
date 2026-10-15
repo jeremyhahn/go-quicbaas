@@ -90,7 +90,7 @@ func TestCreateAdminAssignment(t *testing.T) {
 
 	// Create request body
 	opts := iam.CreateAdminAssignmentOptions{
-		UserID:    "user_123",
+		UserID:    50123,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{
@@ -121,7 +121,7 @@ func TestCreateAdminAssignment(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, assignment.ID)
-	assert.Equal(t, "user_123", assignment.UserID)
+	assert.Equal(t, uint64(50123), assignment.UserID)
 	assert.Equal(t, iam.AdminRoleTenantAdmin, assignment.AdminRole)
 	assert.True(t, assignment.Active)
 }
@@ -133,7 +133,7 @@ func TestListAdminAssignments(t *testing.T) {
 	// Create some test assignments first
 	ctx := context.Background()
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "user_1",
+		UserID:    50101,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1"},
 		GrantedBy: "admin",
@@ -141,7 +141,7 @@ func TestListAdminAssignments(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "user_2",
+		UserID:    50102,
 		AdminRole: iam.AdminRoleUserAdmin,
 		TenantIDs: []string{"tenant_2"},
 		GrantedBy: "admin",
@@ -173,7 +173,7 @@ func TestGetAdminAssignment(t *testing.T) {
 	// Create a test assignment
 	ctx := context.Background()
 	created, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "user_123",
+		UserID:    50123,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1"},
 		GrantedBy: "admin",
@@ -199,7 +199,7 @@ func TestGetAdminAssignment(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, created.ID, assignment.ID)
-	assert.Equal(t, "user_123", assignment.UserID)
+	assert.Equal(t, uint64(50123), assignment.UserID)
 }
 
 // TestUpdateAdminAssignment tests the UpdateAdminAssignment handler.
@@ -209,7 +209,7 @@ func TestUpdateAdminAssignment(t *testing.T) {
 	// Create a test assignment
 	ctx := context.Background()
 	created, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "user_123",
+		UserID:    50123,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1"},
 		GrantedBy: "admin",
@@ -258,7 +258,7 @@ func TestDeleteAdminAssignment(t *testing.T) {
 	// Create a test assignment
 	ctx := context.Background()
 	created, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "user_123",
+		UserID:    50123,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1"},
 		GrantedBy: "admin",
@@ -291,7 +291,7 @@ func TestGetUserAssignments(t *testing.T) {
 	// Create test assignments for a specific user
 	ctx := context.Background()
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "50001",
+		UserID:    50001,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1"},
 		GrantedBy: "admin",
@@ -299,7 +299,7 @@ func TestGetUserAssignments(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "50001",
+		UserID:    50001,
 		AdminRole: iam.AdminRoleUserAdmin,
 		TenantIDs: []string{"tenant_2"},
 		GrantedBy: "admin",
@@ -308,7 +308,7 @@ func TestGetUserAssignments(t *testing.T) {
 
 	// Create assignment for different user
 	_, err = mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "other_user",
+		UserID:    50999,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_3"},
 		GrantedBy: "admin",
@@ -345,7 +345,7 @@ func TestCheckAdminPermission(t *testing.T) {
 	// Create a test assignment with specific permissions
 	ctx := context.Background()
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "admin_user",
+		UserID:    50100,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{
@@ -358,7 +358,7 @@ func TestCheckAdminPermission(t *testing.T) {
 
 	// Create check request
 	checkReq := iam.AdminCheckRequest{
-		UserID:     "admin_user",
+		UserID:     50100,
 		Permission: iam.PermUserCreate,
 		TenantID:   "tenant_1",
 	}
@@ -391,7 +391,7 @@ func TestStartImpersonation(t *testing.T) {
 	// Create an admin assignment first
 	ctx := context.Background()
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "admin_user",
+		UserID:    50100,
 		AdminRole: iam.AdminRoleSuperAdmin,
 		TenantIDs: []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{
@@ -415,7 +415,7 @@ func TestStartImpersonation(t *testing.T) {
 	// Create HTTP request authenticated as admin_user.
 	req := httptest.NewRequest("POST", "/api/v1/admin/impersonate", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(ctxWithTestSubject(req.Context(), "admin_user", "tenant_1"))
+	req = req.WithContext(ctxWithTestUser(req.Context(), 50100, "tenant_1"))
 
 	rr := httptest.NewRecorder()
 
@@ -430,8 +430,8 @@ func TestStartImpersonation(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, session.ID)
-	assert.Equal(t, "admin_user", session.AdminUserID)
-	assert.Equal(t, "50001", session.TargetUserID)
+	assert.Equal(t, uint64(50100), session.AdminUserID)
+	assert.Equal(t, uint64(50001), session.TargetUserID)
 	assert.Equal(t, "Support request #12345", session.Reason)
 }
 
@@ -446,7 +446,7 @@ func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
 
 	// admin_user holds PermUserImpersonate in tenant_1; attacker does not.
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      50100,
 		AdminRole:   iam.AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{iam.PermUserImpersonate},
@@ -455,10 +455,10 @@ func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
 	require.NoError(t, err)
 
 	// A non-privileged caller smuggles admin_user's id in the body.
-	body := []byte(`{"admin_user_id":"admin_user","target_user_id":"50001","tenant_id":"tenant_1","reason":"escalation attempt","duration":"1h"}`)
+	body := []byte(`{"admin_user_id":"50100","target_user_id":"50001","tenant_id":"tenant_1","reason":"escalation attempt","duration":"1h"}`)
 	req := httptest.NewRequest("POST", "/api/v1/admin/impersonate", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(ctxWithTestSubject(req.Context(), "attacker", "tenant_1"))
+	req = req.WithContext(ctxWithTestUser(req.Context(), 50666, "tenant_1"))
 	rr := httptest.NewRecorder()
 
 	handler.StartImpersonation(rr, req)
@@ -470,7 +470,7 @@ func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
 	// regardless of any body value.
 	req = httptest.NewRequest("POST", "/api/v1/admin/impersonate", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(ctxWithTestSubject(req.Context(), "admin_user", "tenant_1"))
+	req = req.WithContext(ctxWithTestUser(req.Context(), 50100, "tenant_1"))
 	rr = httptest.NewRecorder()
 
 	handler.StartImpersonation(rr, req)
@@ -478,7 +478,7 @@ func TestStartImpersonation_ActorIsAuthenticatedCaller(t *testing.T) {
 
 	var session iam.ImpersonationSession
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &session))
-	assert.Equal(t, "admin_user", session.AdminUserID)
+	assert.Equal(t, uint64(50100), session.AdminUserID)
 }
 
 // TestEndImpersonation tests the EndImpersonation handler.
@@ -490,7 +490,7 @@ func TestEndImpersonation(t *testing.T) {
 
 	// Create admin assignment
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "admin_user",
+		UserID:    50100,
 		AdminRole: iam.AdminRoleSuperAdmin,
 		TenantIDs: []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{
@@ -501,9 +501,9 @@ func TestEndImpersonation(t *testing.T) {
 	require.NoError(t, err)
 
 	session, err := mockSvc.adminManager.StartImpersonation(
-		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		ctxWithTestUser(ctx, 50100, "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "50001",
+			TargetUserID: 50001,
 			TenantID:     "tenant_1",
 			Reason:       "Testing",
 			Duration:     time.Hour,
@@ -533,7 +533,7 @@ func TestListActiveImpersonations(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "admin_user",
+		UserID:    50100,
 		AdminRole: iam.AdminRoleSuperAdmin,
 		TenantIDs: []string{"tenant_1", "tenant_2"},
 		Permissions: []iam.AdminPermission{
@@ -544,9 +544,9 @@ func TestListActiveImpersonations(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = mockSvc.adminManager.StartImpersonation(
-		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		ctxWithTestUser(ctx, 50100, "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "50011",
+			TargetUserID: 50011,
 			TenantID:     "tenant_1",
 			Reason:       "Support",
 			Duration:     time.Hour,
@@ -554,9 +554,9 @@ func TestListActiveImpersonations(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = mockSvc.adminManager.StartImpersonation(
-		ctxWithTestSubject(ctx, "admin_user", "tenant_2"),
+		ctxWithTestUser(ctx, 50100, "tenant_2"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "50012",
+			TargetUserID: 50012,
 			TenantID:     "tenant_2",
 			Reason:       "Debug",
 			Duration:     time.Hour,
@@ -564,9 +564,9 @@ func TestListActiveImpersonations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create HTTP request
-	req := httptest.NewRequest("GET", "/api/v1/admin/users/admin_user/impersonations", nil)
+	req := httptest.NewRequest("GET", "/api/v1/admin/users/50100/impersonations", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("user_id", "admin_user")
+	rctx.URLParams.Add("user_id", "50100")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -581,7 +581,7 @@ func TestListActiveImpersonations(t *testing.T) {
 	err = json.Unmarshal(rr.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, "admin_user", resp["user_id"])
+	assert.Equal(t, "50100", resp["user_id"])
 	sessions := resp["sessions"].([]interface{})
 	assert.Len(t, sessions, 2)
 }
@@ -594,7 +594,7 @@ func TestListImpersonations(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "admin_user",
+		UserID:    50100,
 		AdminRole: iam.AdminRoleSuperAdmin,
 		TenantIDs: []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{
@@ -605,9 +605,9 @@ func TestListImpersonations(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = mockSvc.adminManager.StartImpersonation(
-		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		ctxWithTestUser(ctx, 50100, "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "50011",
+			TargetUserID: 50011,
 			TenantID:     "tenant_1",
 			Reason:       "Support",
 			Duration:     time.Hour,
@@ -640,7 +640,7 @@ func TestListImpersonations_WithFilters(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    "admin_user",
+		UserID:    50100,
 		AdminRole: iam.AdminRoleSuperAdmin,
 		TenantIDs: []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{
@@ -651,9 +651,9 @@ func TestListImpersonations_WithFilters(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = mockSvc.adminManager.StartImpersonation(
-		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		ctxWithTestUser(ctx, 50100, "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "50011",
+			TargetUserID: 50011,
 			TenantID:     "tenant_1",
 			Reason:       "Support",
 			Duration:     time.Hour,
@@ -661,7 +661,7 @@ func TestListImpersonations_WithFilters(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create HTTP request with filters
-	req := httptest.NewRequest("GET", "/api/v1/admin/impersonation?active=true&admin_user_id=admin_user", nil)
+	req := httptest.NewRequest("GET", "/api/v1/admin/impersonation?active=true&admin_user_id=50100", nil)
 	rr := httptest.NewRecorder()
 
 	// Call handler
@@ -715,7 +715,7 @@ func TestAdminAssignmentJSONSerialization(t *testing.T) {
 	now := time.Now().UTC()
 	assignment := &iam.AdminAssignment{
 		ID:        "adm_test123",
-		UserID:    "user_123",
+		UserID:    50123,
 		AdminRole: iam.AdminRoleTenantAdmin,
 		TenantIDs: []string{"tenant_1", "tenant_2"},
 		Permissions: []iam.AdminPermission{
@@ -750,8 +750,8 @@ func TestImpersonationSessionJSONSerialization(t *testing.T) {
 	now := time.Now().UTC()
 	session := &iam.ImpersonationSession{
 		ID:           "imp_test123",
-		AdminUserID:  "admin_123",
-		TargetUserID: "user_456",
+		AdminUserID:  50100,
+		TargetUserID: 50456,
 		TenantID:     "tenant_1",
 		Reason:       "Support request",
 		StartedAt:    now,
@@ -779,7 +779,7 @@ func TestImpersonationSessionJSONSerialization(t *testing.T) {
 // TestCreateAdminAssignmentRequest verifies request parsing.
 func TestCreateAdminAssignmentRequest(t *testing.T) {
 	opts := iam.CreateAdminAssignmentOptions{
-		UserID:    "user_123",
+		UserID:    50123,
 		AdminRole: iam.AdminRoleUserAdmin,
 		TenantIDs: []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{

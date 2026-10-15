@@ -112,7 +112,10 @@ func (h *IAMHandler) ListAdminAssignments(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	userID := r.URL.Query().Get("user_id")
+	userID, ok := optionalUserIDQuery(w, r, "user_id")
+	if !ok {
+		return
+	}
 	tenantID := r.URL.Query().Get("tenant_id")
 	adminRoleStr := r.URL.Query().Get("admin_role")
 
@@ -338,10 +341,8 @@ func (h *IAMHandler) DeleteAdminAssignment(w http.ResponseWriter, r *http.Reques
 func (h *IAMHandler) GetUserAssignments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -377,13 +378,10 @@ func (h *IAMHandler) GetUserAssignments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Build response
-	resp := map[string]interface{}{
-		"user_id":     userID,
-		"assignments": assignments,
-	}
-
-	RespondJSON(w, r, http.StatusOK, resp)
+	RespondJSON(w, r, http.StatusOK, userAdminAssignmentsResponse{
+		UserID:      userID,
+		Assignments: assignments,
+	})
 }
 
 // CheckAdminPermission handles POST /api/v1/admin/check - Check if an admin has a specific permission.
@@ -450,6 +448,21 @@ type startImpersonationRequest struct {
 	Duration     string `json:"duration,omitempty"`
 }
 
+// userAdminAssignmentsResponse is the GET /admin/users/{user_id}/assignments
+// body. The user id travels as a decimal string so JSON clients keep the full
+// 64-bit Snowflake.
+type userAdminAssignmentsResponse struct {
+	UserID      uint64                 `json:"user_id,string"`
+	Assignments []*iam.AdminAssignment `json:"assignments"`
+}
+
+// userImpersonationsResponse is the GET /admin/users/{user_id}/impersonations
+// body.
+type userImpersonationsResponse struct {
+	UserID   uint64                      `json:"user_id,string"`
+	Sessions []*iam.ImpersonationSession `json:"sessions"`
+}
+
 // StartImpersonation handles POST /api/v1/admin/impersonate - Start an impersonation session.
 func (h *IAMHandler) StartImpersonation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -482,11 +495,18 @@ func (h *IAMHandler) StartImpersonation(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	targetUserID, err := parseUserIDParam(req.TargetUserID)
+	if err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, err.Error()))
+		return
+	}
+
 	// Convert to IAM options. The acting admin is NOT taken from the
 	// request — AdminManager.StartImpersonation resolves it from the
 	// authenticated principal in context (go-quicbaas#383).
 	opts := iam.StartImpersonationOptions{
-		TargetUserID: req.TargetUserID,
+		TargetUserID: targetUserID,
 		TenantID:     req.TenantID,
 		Reason:       req.Reason,
 		Duration:     duration,
@@ -602,10 +622,8 @@ func (h *IAMHandler) EndImpersonation(w http.ResponseWriter, r *http.Request) {
 func (h *IAMHandler) ListActiveImpersonations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		RespondIAMError(w, r, http.StatusBadRequest,
-			NewIAMAPIError(ErrBadRequest, "user ID is required"))
+	userID, ok := requireUserIDParam(w, r)
+	if !ok {
 		return
 	}
 
@@ -637,13 +655,10 @@ func (h *IAMHandler) ListActiveImpersonations(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Build response
-	resp := map[string]interface{}{
-		"user_id":  userID,
-		"sessions": sessions,
-	}
-
-	RespondJSON(w, r, http.StatusOK, resp)
+	RespondJSON(w, r, http.StatusOK, userImpersonationsResponse{
+		UserID:   userID,
+		Sessions: sessions,
+	})
 }
 
 // ListImpersonations handles GET /api/v1/admin/impersonation - List all impersonation sessions.
@@ -652,7 +667,10 @@ func (h *IAMHandler) ListImpersonations(w http.ResponseWriter, r *http.Request) 
 
 	// Parse query params
 	activeOnly := r.URL.Query().Get("active") == "true"
-	adminUserID := r.URL.Query().Get("admin_user_id")
+	adminUserID, ok := optionalUserIDQuery(w, r, "admin_user_id")
+	if !ok {
+		return
+	}
 
 	// Get admin manager from service
 	adminMgr, ok := h.server.service.(interface {

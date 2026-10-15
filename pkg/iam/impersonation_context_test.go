@@ -27,9 +27,9 @@ func TestWithImpersonationContext(t *testing.T) {
 		ctx := context.Background()
 		impCtx := &ImpersonationContext{
 			SessionID:      "imp_test123",
-			AdminUserID:    "admin1",
+			AdminUserID:    30021,
 			AdminUsername:  "admin@example.com",
-			TargetUserID:   "user1",
+			TargetUserID:   1,
 			TargetUsername: "user@example.com",
 			TenantID:       "tenant1",
 			Reason:         "support ticket #123",
@@ -40,9 +40,9 @@ func TestWithImpersonationContext(t *testing.T) {
 		retrieved := GetImpersonationContext(newCtx)
 		require.NotNil(t, retrieved)
 		assert.Equal(t, "imp_test123", retrieved.SessionID)
-		assert.Equal(t, "admin1", retrieved.AdminUserID)
+		assert.Equal(t, uint64(30021), retrieved.AdminUserID)
 		assert.Equal(t, "admin@example.com", retrieved.AdminUsername)
-		assert.Equal(t, "user1", retrieved.TargetUserID)
+		assert.Equal(t, uint64(1), retrieved.TargetUserID)
 		assert.Equal(t, "user@example.com", retrieved.TargetUsername)
 		assert.Equal(t, "tenant1", retrieved.TenantID)
 		assert.Equal(t, "support ticket #123", retrieved.Reason)
@@ -92,9 +92,9 @@ func TestImpersonationContextFromSession(t *testing.T) {
 	t.Run("CreatesContextFromSession", func(t *testing.T) {
 		session := &ImpersonationSession{
 			ID:             "imp_session1",
-			AdminUserID:    "admin1",
+			AdminUserID:    30021,
 			AdminUsername:  "admin@example.com",
-			TargetUserID:   "user1",
+			TargetUserID:   1,
 			TargetUsername: "user@example.com",
 			TenantID:       "tenant1",
 			Reason:         "testing",
@@ -124,18 +124,18 @@ func TestBuildImpersonatedActor(t *testing.T) {
 	t.Run("BuildsActorCorrectly", func(t *testing.T) {
 		impCtx := &ImpersonationContext{
 			SessionID:      "imp_test123",
-			AdminUserID:    "admin1",
+			AdminUserID:    30021,
 			AdminUsername:  "admin@example.com",
-			TargetUserID:   "user1",
+			TargetUserID:   1,
 			TargetUsername: "user@example.com",
 		}
 
 		actor := BuildImpersonatedActor(impCtx)
 
 		require.NotNil(t, actor)
-		assert.Equal(t, "user1", actor.UserID)
+		assert.Equal(t, "1", actor.UserID)
 		assert.Equal(t, "user@example.com", actor.Username)
-		assert.Equal(t, "admin1", actor.ImpersonatingUserID)
+		assert.Equal(t, "30021", actor.ImpersonatingUserID)
 		assert.Equal(t, "admin@example.com", actor.ImpersonatingUsername)
 	})
 
@@ -149,9 +149,9 @@ func TestBuildAuditEventForImpersonatedOperation(t *testing.T) {
 	t.Run("BuildsEventCorrectly", func(t *testing.T) {
 		impCtx := &ImpersonationContext{
 			SessionID:      "imp_test123",
-			AdminUserID:    "admin1",
+			AdminUserID:    30021,
 			AdminUsername:  "admin@example.com",
-			TargetUserID:   "user1",
+			TargetUserID:   1,
 			TargetUsername: "user@example.com",
 			TenantID:       "tenant1",
 			Reason:         "support ticket #123",
@@ -190,9 +190,9 @@ func TestBuildAuditEventForImpersonatedOperation(t *testing.T) {
 
 		// Check actor
 		require.NotNil(t, event.Actor)
-		assert.Equal(t, "user1", event.Actor.UserID)
+		assert.Equal(t, "1", event.Actor.UserID)
 		assert.Equal(t, "user@example.com", event.Actor.Username)
-		assert.Equal(t, "admin1", event.Actor.ImpersonatingUserID)
+		assert.Equal(t, "30021", event.Actor.ImpersonatingUserID)
 		assert.Equal(t, "admin@example.com", event.Actor.ImpersonatingUsername)
 
 		// Check resource
@@ -202,7 +202,7 @@ func TestBuildAuditEventForImpersonatedOperation(t *testing.T) {
 
 		// Check details include both impersonation and custom details
 		require.NotNil(t, event.Details)
-		assert.Equal(t, "user1", event.Details["impersonated_user_id"])
+		assert.Equal(t, "1", event.Details["impersonated_user_id"])
 		assert.Equal(t, "user@example.com", event.Details["impersonated_username"])
 		assert.Equal(t, "support ticket #123", event.Details["impersonation_reason"])
 		assert.Equal(t, "read", event.Details["action_detail"])

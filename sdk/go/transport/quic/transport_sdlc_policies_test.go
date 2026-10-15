@@ -47,7 +47,7 @@ func TestRequest_ARebindOverHTTP3KeepsTheTrainAndClustering(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 	ctx := context.Background()
@@ -81,7 +81,7 @@ func TestRequest_APausedBindOverHTTP3SendsPaused(t *testing.T) {
 	}))
 	defer shutdown()
 
-	tr, err := New(testTransportConfig(addr))
+	tr, err := New(testTransportConfig(t, addr))
 	require.NoError(t, err)
 	defer tr.Close()
 	_, err = tr.Request(context.Background(), "quicbaas.SDLC", "Bind",

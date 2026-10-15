@@ -1115,7 +1115,7 @@ type UpdateRoleResponse = IAMUpdateRoleResponse
 
 // CreateAdminAssignmentRequest contains the request to create an admin assignment.
 type CreateAdminAssignmentRequest struct {
-	UserID            string
+	UserID            uint64
 	AdminRole         iam.AdminRole
 	TenantIDs         []string
 	Permissions       []iam.AdminPermission
@@ -1134,7 +1134,7 @@ type CreateAdminAssignmentResponse struct {
 // GetAdminAssignmentRequest contains the request to get an admin assignment.
 type GetAdminAssignmentRequest struct {
 	AssignmentID string
-	UserID       string
+	UserID       uint64
 }
 
 // GetAdminAssignmentResponse contains the response from getting an admin assignment.
@@ -1145,7 +1145,7 @@ type GetAdminAssignmentResponse struct {
 // UpdateAdminAssignmentRequest contains the request to update an admin assignment.
 type UpdateAdminAssignmentRequest struct {
 	AssignmentID      string
-	UserID            string
+	UserID            uint64
 	AdminRole         *iam.AdminRole
 	TenantIDs         []string
 	Permissions       []iam.AdminPermission
@@ -1164,7 +1164,7 @@ type UpdateAdminAssignmentResponse struct {
 // DeleteAdminAssignmentRequest contains the request to delete an admin assignment.
 type DeleteAdminAssignmentRequest struct {
 	AssignmentID string
-	UserID       string
+	UserID       uint64
 }
 
 // DeleteAdminAssignmentResponse contains the response from deleting an admin assignment.
@@ -1175,7 +1175,7 @@ type DeleteAdminAssignmentResponse struct {
 // ListAdminAssignmentsRequest contains the request to list admin assignments.
 type ListAdminAssignmentsRequest struct {
 	TenantID   string
-	UserID     string
+	UserID     uint64
 	AdminRole  iam.AdminRole
 	ActiveOnly bool
 	Limit      int
@@ -1190,7 +1190,7 @@ type ListAdminAssignmentsResponse struct {
 
 // CheckAdminPermissionRequest contains the request to check an admin permission.
 type CheckAdminPermissionRequest struct {
-	UserID       string
+	UserID       uint64
 	Permission   iam.AdminPermission
 	TenantID     string
 	ResourceType string
@@ -1209,7 +1209,7 @@ type CheckAdminPermissionResponse struct {
 // caller, resolved server-side from the verified principal, never named by
 // the request (go-quicbaas#383).
 type StartImpersonationRequest struct {
-	TargetUserID string
+	TargetUserID uint64
 	TenantID     string
 	Reason       string
 	Duration     time.Duration
@@ -1233,7 +1233,7 @@ type EndImpersonationResponse struct {
 
 // ListActiveImpersonationsRequest contains the request to list active impersonations.
 type ListActiveImpersonationsRequest struct {
-	AdminUserID string
+	AdminUserID uint64
 }
 
 // ListActiveImpersonationsResponse contains the response from listing active impersonations.
@@ -1303,7 +1303,7 @@ type ListUserConsentsResponse struct {
 type RequestExportRequest struct {
 	TenantID          string
 	UserID            uint64
-	RequestedBy       string
+	RequestedBy       uint64
 	Format            iam.DataExportFormat
 	IncludeCategories []string
 	ExcludeCategories []string
@@ -1343,7 +1343,7 @@ type GenerateExportResponse struct {
 type RequestDeletionRequest struct {
 	TenantID           string
 	UserID             uint64
-	RequestedBy        string
+	RequestedBy        uint64
 	Reason             string
 	GracePeriodDays    int
 	DeleteCategories   []string

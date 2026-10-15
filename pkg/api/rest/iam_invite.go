@@ -21,7 +21,6 @@ import (
 	stderrors "errors"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -33,7 +32,7 @@ import (
 
 // InviteMetadataResponse is returned by GET /api/v1/iam/{tenant_id}/invites/{token}.
 type InviteMetadataResponse struct {
-	UserID      string    `json:"user_id"`
+	UserID      uint64    `json:"user_id,string"`
 	Email       string    `json:"email,omitempty"`
 	Name        string    `json:"name,omitempty"`
 	AuthMethods []string  `json:"auth_methods"`
@@ -42,7 +41,7 @@ type InviteMetadataResponse struct {
 
 // ActivationResponse is returned on successful FIDO2 or PIV activation.
 type ActivationResponse struct {
-	UserID  string `json:"user_id"`
+	UserID  uint64 `json:"user_id,string"`
 	Message string `json:"message"`
 
 	// Warning records a non-fatal irregularity behind an otherwise successful
@@ -219,7 +218,7 @@ func (h *IAMHandler) GetInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, &InviteMetadataResponse{
-		UserID:      strconv.FormatUint(meta.UserID, 10),
+		UserID:      meta.UserID,
 		Email:       meta.Email,
 		Name:        meta.Name,
 		AuthMethods: meta.AuthMethods,
@@ -270,7 +269,7 @@ func (h *IAMHandler) ActivateFIDO2Finish(w http.ResponseWriter, r *http.Request)
 	}
 
 	RespondJSON(w, r, http.StatusOK, &ActivationResponse{
-		UserID:  strconv.FormatUint(activation.UserID, 10),
+		UserID:  activation.UserID,
 		Message: "activation successful",
 		Warning: activation.Warning,
 	})
@@ -304,7 +303,7 @@ func (h *IAMHandler) ActivatePIV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, &ActivationResponse{
-		UserID:  strconv.FormatUint(activation.UserID, 10),
+		UserID:  activation.UserID,
 		Message: "PIV activation successful",
 	})
 }

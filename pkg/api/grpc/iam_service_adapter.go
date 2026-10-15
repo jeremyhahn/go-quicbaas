@@ -509,21 +509,13 @@ func (a *IAMServiceAdapter) ListRoles(ctx context.Context, tenantID string, limi
 }
 
 // AssignRole assigns a role to a user.
-func (a *IAMServiceAdapter) AssignRole(ctx context.Context, tenantID, userID, role string) error {
-	id, err := parseUserID("user_id", userID)
-	if err != nil {
-		return err
-	}
-	return a.identityStore.AssignRole(ctx, tenantID, id, role)
+func (a *IAMServiceAdapter) AssignRole(ctx context.Context, tenantID string, userID uint64, role string) error {
+	return a.identityStore.AssignRole(ctx, tenantID, userID, role)
 }
 
 // RevokeRole revokes a role from a user.
-func (a *IAMServiceAdapter) RevokeRole(ctx context.Context, tenantID, userID, role string) error {
-	id, err := parseUserID("user_id", userID)
-	if err != nil {
-		return err
-	}
-	return a.identityStore.RevokeRole(ctx, tenantID, id, role)
+func (a *IAMServiceAdapter) RevokeRole(ctx context.Context, tenantID string, userID uint64, role string) error {
+	return a.identityStore.RevokeRole(ctx, tenantID, userID, role)
 }
 
 // ReconcileBuiltInRoles converges a tenant's stored built-in roles onto the
@@ -773,7 +765,7 @@ func (a *IAMServiceAdapter) EndImpersonation(ctx context.Context, sessionID stri
 }
 
 // GetActiveImpersonations retrieves active impersonation sessions.
-func (a *IAMServiceAdapter) GetActiveImpersonations(ctx context.Context, adminUserID string) ([]*iam.ImpersonationSession, error) {
+func (a *IAMServiceAdapter) GetActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*iam.ImpersonationSession, error) {
 	if a.adminManager == nil {
 		return nil, api.NewServiceNotConfiguredError("admin manager")
 	}
@@ -785,51 +777,35 @@ func (a *IAMServiceAdapter) GetActiveImpersonations(ctx context.Context, adminUs
 // =============================================================================
 
 // GrantConsent grants consent for a specific purpose.
-func (a *IAMServiceAdapter) GrantConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose, version string, expiresAt *time.Time, ipAddress, userAgent string) (*iam.Consent, error) {
+func (a *IAMServiceAdapter) GrantConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose, version string, expiresAt *time.Time, ipAddress, userAgent string) (*iam.Consent, error) {
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	id, err := parseUserID("user_id", userID)
-	if err != nil {
-		return nil, err
-	}
-	return a.gdprManager.GrantConsent(ctx, tenantID, id, purpose, version, expiresAt, ipAddress, userAgent)
+	return a.gdprManager.GrantConsent(ctx, tenantID, userID, purpose, version, expiresAt, ipAddress, userAgent)
 }
 
 // WithdrawConsent withdraws a previously granted consent.
-func (a *IAMServiceAdapter) WithdrawConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose, ipAddress, userAgent string) error {
+func (a *IAMServiceAdapter) WithdrawConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose, ipAddress, userAgent string) error {
 	if a.gdprManager == nil {
 		return api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	id, err := parseUserID("user_id", userID)
-	if err != nil {
-		return err
-	}
-	return a.gdprManager.WithdrawConsent(ctx, tenantID, id, purpose, ipAddress, userAgent)
+	return a.gdprManager.WithdrawConsent(ctx, tenantID, userID, purpose, ipAddress, userAgent)
 }
 
 // GetConsent retrieves a specific consent.
-func (a *IAMServiceAdapter) GetConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose) (*iam.Consent, error) {
+func (a *IAMServiceAdapter) GetConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose) (*iam.Consent, error) {
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	id, err := parseUserID("user_id", userID)
-	if err != nil {
-		return nil, err
-	}
-	return a.gdprManager.GetConsent(ctx, tenantID, id, purpose)
+	return a.gdprManager.GetConsent(ctx, tenantID, userID, purpose)
 }
 
 // ListUserConsents lists all consents for a user.
-func (a *IAMServiceAdapter) ListUserConsents(ctx context.Context, tenantID, userID string) ([]*iam.Consent, error) {
+func (a *IAMServiceAdapter) ListUserConsents(ctx context.Context, tenantID string, userID uint64) ([]*iam.Consent, error) {
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	id, err := parseUserID("user_id", userID)
-	if err != nil {
-		return nil, err
-	}
-	return a.gdprManager.ListUserConsents(ctx, tenantID, id)
+	return a.gdprManager.ListUserConsents(ctx, tenantID, userID)
 }
 
 // =============================================================================
@@ -837,15 +813,11 @@ func (a *IAMServiceAdapter) ListUserConsents(ctx context.Context, tenantID, user
 // =============================================================================
 
 // RequestExport creates a new data export request.
-func (a *IAMServiceAdapter) RequestExport(ctx context.Context, tenantID, userID, requestedBy string, format iam.DataExportFormat, includeCategories, excludeCategories []string) (*iam.DataExportRequest, error) {
+func (a *IAMServiceAdapter) RequestExport(ctx context.Context, tenantID string, userID, requestedBy uint64, format iam.DataExportFormat, includeCategories, excludeCategories []string) (*iam.DataExportRequest, error) {
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	id, err := parseUserID("user_id", userID)
-	if err != nil {
-		return nil, err
-	}
-	return a.gdprManager.RequestExport(ctx, tenantID, id, requestedBy, format, includeCategories, excludeCategories)
+	return a.gdprManager.RequestExport(ctx, tenantID, userID, requestedBy, format, includeCategories, excludeCategories)
 }
 
 // GetExportStatus retrieves the status of an export request.
@@ -869,15 +841,11 @@ func (a *IAMServiceAdapter) GenerateExport(ctx context.Context, exportID string)
 // =============================================================================
 
 // RequestDeletion creates a new data deletion request.
-func (a *IAMServiceAdapter) RequestDeletion(ctx context.Context, tenantID, userID, requestedBy, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*iam.DataDeletionRequest, error) {
+func (a *IAMServiceAdapter) RequestDeletion(ctx context.Context, tenantID string, userID, requestedBy uint64, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*iam.DataDeletionRequest, error) {
 	if a.gdprManager == nil {
 		return nil, api.NewServiceNotConfiguredError("GDPR manager")
 	}
-	id, err := parseUserID("user_id", userID)
-	if err != nil {
-		return nil, err
-	}
-	return a.gdprManager.RequestDeletion(ctx, tenantID, id, requestedBy, reason, deleteCategories, preserveCategories, gracePeriodDays)
+	return a.gdprManager.RequestDeletion(ctx, tenantID, userID, requestedBy, reason, deleteCategories, preserveCategories, gracePeriodDays)
 }
 
 // CancelDeletion cancels a pending deletion request.

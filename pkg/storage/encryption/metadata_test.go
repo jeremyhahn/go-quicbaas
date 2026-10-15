@@ -64,7 +64,7 @@ type TestInvalidFieldType struct {
 type TestUnexportedField struct {
 	ID           uint64 `json:"id"`
 	PublicField  string `json:"public" encrypt:"aes128"`
-	privateField string `encrypt:"aes256"` //nolint:unused
+	privateField string `encrypt:"aes256"`
 }
 
 type TestByteSlice struct {
@@ -125,7 +125,7 @@ func TestParseEncryptionTags(t *testing.T) {
 		},
 		{
 			name:  "unexported field ignored",
-			input: TestUnexportedField{},
+			input: TestUnexportedField{privateField: "never parsed"},
 			want: map[string]string{
 				"PublicField": "aes128",
 			},

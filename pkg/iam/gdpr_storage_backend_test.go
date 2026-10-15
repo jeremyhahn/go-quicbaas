@@ -96,7 +96,7 @@ func TestBackendDataExportStorage_ByID(t *testing.T) {
 	req, err := store.CreateExportRequest(ctx, CreateDataExportOptions{
 		UserID:      30001,
 		TenantID:    "acme",
-		RequestedBy: "admin",
+		RequestedBy: 30040,
 	})
 	if err != nil {
 		t.Fatalf("CreateExportRequest: %v", err)
@@ -132,7 +132,7 @@ func TestBackendDeletionStorage_ByIDAndIsolation(t *testing.T) {
 	req, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
 		UserID:      30001,
 		TenantID:    "acme",
-		RequestedBy: "admin",
+		RequestedBy: 30040,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeletionRequest: %v", err)
@@ -161,7 +161,7 @@ func TestBackendDeletionStorage_SealedFailsClosed(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := store.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		UserID: 30001, TenantID: "acme", RequestedBy: "admin",
+		UserID: 30001, TenantID: "acme", RequestedBy: 30040,
 	})
 	if !errors.Is(err, errTenantSealedTest) {
 		t.Fatalf("CreateDeletionRequest(sealed) err = %v, want sealed", err)

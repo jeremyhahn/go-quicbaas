@@ -452,7 +452,7 @@ table-driven harness.
 | Transport | Default port | Wire | Auth | Streaming |
 |-----------|--------------|------|------|-----------|
 | REST      | `:18080` (TLS) | HTTP/1.1 + JSON | OAuth2 / mTLS | NDJSON over chunked |
-| gRPC      | `:19090` (TLS, `h2` ALPN; Go client only so far) | Protocol Buffers | OAuth2 / mTLS | bidi streams |
+| gRPC      | `:19090` (TLS, `h2` ALPN; facade and interceptor chain verified with connect in gRPC mode) | Protocol Buffers | OAuth2 / mTLS | bidi streams |
 | QUIC      | not served; see [QUIC](#quic-sdk-client-only) | — | — | — |
 | MCP       | `:11443` (TLS) | JSON-RPC over WSS | OAuth2 / mTLS | server push |
 | Unix      | `/tmp/quicbaas.sock` | gRPC over UDS | filesystem perms (no TLS) | bidi streams |

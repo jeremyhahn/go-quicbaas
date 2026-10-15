@@ -76,8 +76,8 @@ type IAMService interface {
 	UpdateRole(ctx context.Context, role *iam.Role) (*iam.Role, error)
 	DeleteRole(ctx context.Context, tenantID, roleID string) error
 	ListRoles(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Role, int, error)
-	AssignRole(ctx context.Context, tenantID, userID, role string) error
-	RevokeRole(ctx context.Context, tenantID, userID, role string) error
+	AssignRole(ctx context.Context, tenantID string, userID uint64, role string) error
+	RevokeRole(ctx context.Context, tenantID string, userID uint64, role string) error
 	ReconcileBuiltInRoles(ctx context.Context, tenantID string) (*iam.RoleReconcileReport, error)
 
 	// Application operations
@@ -106,21 +106,21 @@ type IAMService interface {
 	CheckAdminPermission(ctx context.Context, req *iam.AdminCheckRequest) (*iam.AdminCheckResponse, error)
 	StartImpersonation(ctx context.Context, opts *iam.StartImpersonationOptions) (*iam.ImpersonationSession, error)
 	EndImpersonation(ctx context.Context, sessionID string) error
-	GetActiveImpersonations(ctx context.Context, adminUserID string) ([]*iam.ImpersonationSession, error)
+	GetActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*iam.ImpersonationSession, error)
 
 	// GDPR Consent operations
-	GrantConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose, version string, expiresAt *time.Time, ipAddress, userAgent string) (*iam.Consent, error)
-	WithdrawConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose, ipAddress, userAgent string) error
-	GetConsent(ctx context.Context, tenantID, userID string, purpose iam.ConsentPurpose) (*iam.Consent, error)
-	ListUserConsents(ctx context.Context, tenantID, userID string) ([]*iam.Consent, error)
+	GrantConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose, version string, expiresAt *time.Time, ipAddress, userAgent string) (*iam.Consent, error)
+	WithdrawConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose, ipAddress, userAgent string) error
+	GetConsent(ctx context.Context, tenantID string, userID uint64, purpose iam.ConsentPurpose) (*iam.Consent, error)
+	ListUserConsents(ctx context.Context, tenantID string, userID uint64) ([]*iam.Consent, error)
 
 	// GDPR Data Export operations
-	RequestExport(ctx context.Context, tenantID, userID, requestedBy string, format iam.DataExportFormat, includeCategories, excludeCategories []string) (*iam.DataExportRequest, error)
+	RequestExport(ctx context.Context, tenantID string, userID, requestedBy uint64, format iam.DataExportFormat, includeCategories, excludeCategories []string) (*iam.DataExportRequest, error)
 	GetExportStatus(ctx context.Context, exportID string) (*iam.DataExportRequest, error)
 	GenerateExport(ctx context.Context, exportID string) (*iam.UserDataExport, error)
 
 	// GDPR Data Deletion operations
-	RequestDeletion(ctx context.Context, tenantID, userID, requestedBy, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*iam.DataDeletionRequest, error)
+	RequestDeletion(ctx context.Context, tenantID string, userID, requestedBy uint64, reason string, deleteCategories, preserveCategories []string, gracePeriodDays int) (*iam.DataDeletionRequest, error)
 	CancelDeletion(ctx context.Context, deletionID, cancelledBy string) error
 	ProcessDeletion(ctx context.Context, deletionID string) (*iam.DeletionSummary, error)
 	GetDeletionStatus(ctx context.Context, deletionID string) (*iam.DataDeletionRequest, error)
@@ -676,7 +676,11 @@ func (s *IAMServer) AssignRole(ctx context.Context, req *iampb.AssignRoleRequest
 		return nil, status.Error(codes.InvalidArgument, "role is required")
 	}
 
-	err := s.iamService.AssignRole(ctx, req.TenantId, req.UserId, req.Role)
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	err = s.iamService.AssignRole(ctx, req.TenantId, userID, req.Role)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
@@ -705,7 +709,11 @@ func (s *IAMServer) RevokeRole(ctx context.Context, req *iampb.RevokeRoleRequest
 		return nil, status.Error(codes.InvalidArgument, "role is required")
 	}
 
-	err := s.iamService.RevokeRole(ctx, req.TenantId, req.UserId, req.Role)
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	err = s.iamService.RevokeRole(ctx, req.TenantId, userID, req.Role)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
@@ -1274,8 +1282,12 @@ func (s *IAMServer) CreateAdminAssignment(ctx context.Context, req *iampb.Create
 		expiresAt = &t
 	}
 
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
 	opts := iam.CreateAdminAssignmentOptions{
-		UserID:            req.UserId,
+		UserID:            userID,
 		AdminRole:         convertProtoAdminRole(req.AdminRole),
 		TenantIDs:         req.TenantIds,
 		Permissions:       permissions,
@@ -1398,8 +1410,12 @@ func (s *IAMServer) DeleteAdminAssignment(ctx context.Context, req *iampb.Delete
 func (s *IAMServer) ListAdminAssignments(ctx context.Context, req *iampb.ListAdminAssignmentsRequest) (*iampb.AdminAssignmentList, error) {
 	s.logger.Debug("Processing ListAdminAssignments request")
 
+	userID, err := parseOptionalUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
 	opts := iam.ListAdminAssignmentsOptions{
-		UserID:     req.UserId,
+		UserID:     userID,
 		TenantID:   req.TenantId,
 		AdminRole:  convertProtoAdminRole(req.AdminRole),
 		ActiveOnly: req.ActiveOnly,
@@ -1446,8 +1462,12 @@ func (s *IAMServer) CheckAdminPermission(ctx context.Context, req *iampb.CheckAd
 		return nil, status.Error(codes.InvalidArgument, "permission is required")
 	}
 
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
 	checkReq := &iam.AdminCheckRequest{
-		UserID:       req.UserId,
+		UserID:       userID,
 		Permission:   iam.AdminPermission(req.Permission),
 		TenantID:     req.TenantId,
 		ResourceType: req.ResourceType,
@@ -1495,8 +1515,12 @@ func (s *IAMServer) StartImpersonation(ctx context.Context, req *iampb.StartImpe
 		duration = req.Duration.AsDuration()
 	}
 
+	targetUserID, err := parseUserID("target_user_id", req.TargetUserId)
+	if err != nil {
+		return nil, err
+	}
 	opts := &iam.StartImpersonationOptions{
-		TargetUserID: req.TargetUserId,
+		TargetUserID: targetUserID,
 		TenantID:     req.TenantId,
 		Reason:       req.Reason,
 		Duration:     duration,
@@ -1534,7 +1558,11 @@ func (s *IAMServer) GetActiveImpersonations(ctx context.Context, req *iampb.GetA
 		return nil, status.Error(codes.InvalidArgument, "admin_user_id is required")
 	}
 
-	sessions, err := s.iamService.GetActiveImpersonations(ctx, req.AdminUserId)
+	adminUserID, err := parseUserID("admin_user_id", req.AdminUserId)
+	if err != nil {
+		return nil, err
+	}
+	sessions, err := s.iamService.GetActiveImpersonations(ctx, adminUserID)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
@@ -1578,10 +1606,14 @@ func (s *IAMServer) GrantConsent(ctx context.Context, req *iampb.GrantConsentReq
 		expiresAt = &t
 	}
 
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
 	consent, err := s.iamService.GrantConsent(
 		ctx,
 		req.TenantId,
-		req.UserId,
+		userID,
 		convertProtoConsentPurpose(req.Purpose),
 		req.Version,
 		expiresAt,
@@ -1616,10 +1648,14 @@ func (s *IAMServer) WithdrawConsent(ctx context.Context, req *iampb.WithdrawCons
 		return nil, status.Error(codes.InvalidArgument, "purpose is required")
 	}
 
-	err := s.iamService.WithdrawConsent(
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	err = s.iamService.WithdrawConsent(
 		ctx,
 		req.TenantId,
-		req.UserId,
+		userID,
 		convertProtoConsentPurpose(req.Purpose),
 		req.IpAddress,
 		req.UserAgent,
@@ -1652,7 +1688,11 @@ func (s *IAMServer) GetConsent(ctx context.Context, req *iampb.GetConsentRequest
 		return nil, status.Error(codes.InvalidArgument, "purpose is required")
 	}
 
-	consent, err := s.iamService.GetConsent(ctx, req.TenantId, req.UserId, convertProtoConsentPurpose(req.Purpose))
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	consent, err := s.iamService.GetConsent(ctx, req.TenantId, userID, convertProtoConsentPurpose(req.Purpose))
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
@@ -1677,7 +1717,11 @@ func (s *IAMServer) ListUserConsents(ctx context.Context, req *iampb.ListUserCon
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
 
-	consents, err := s.iamService.ListUserConsents(ctx, req.TenantId, req.UserId)
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	consents, err := s.iamService.ListUserConsents(ctx, req.TenantId, userID)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
@@ -1722,11 +1766,19 @@ func (s *IAMServer) RequestExport(ctx context.Context, req *iampb.RequestExportR
 		return nil, status.Error(codes.InvalidArgument, "requested_by is required")
 	}
 
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	requestedBy, err := parseUserID("requested_by", req.RequestedBy)
+	if err != nil {
+		return nil, err
+	}
 	exportReq, err := s.iamService.RequestExport(
 		ctx,
 		req.TenantId,
-		req.UserId,
-		req.RequestedBy,
+		userID,
+		requestedBy,
 		convertProtoDataExportFormat(req.Format),
 		req.IncludeCategories,
 		req.ExcludeCategories,
@@ -1794,11 +1846,19 @@ func (s *IAMServer) RequestDeletion(ctx context.Context, req *iampb.RequestDelet
 		return nil, status.Error(codes.InvalidArgument, "requested_by is required")
 	}
 
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+	requestedBy, err := parseUserID("requested_by", req.RequestedBy)
+	if err != nil {
+		return nil, err
+	}
 	deletionReq, err := s.iamService.RequestDeletion(
 		ctx,
 		req.TenantId,
-		req.UserId,
-		req.RequestedBy,
+		userID,
+		requestedBy,
 		req.Reason,
 		req.DeleteCategories,
 		req.PreserveCategories,

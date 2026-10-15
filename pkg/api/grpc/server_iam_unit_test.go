@@ -267,7 +267,7 @@ func TestIAMServer_CreateAdminAssignment_ServiceError(t *testing.T) {
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.CreateAdminAssignment(callerContext("t-1"), &iampb.CreateAdminAssignmentRequest{
-		UserId:    "u-1",
+		UserId:    "1",
 		AdminRole: iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN,
 		GrantedBy: "admin-1",
 	})
@@ -302,7 +302,7 @@ func TestIAMServer_StartImpersonation_WithDuration_ServiceError(t *testing.T) {
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"})
 
 	_, err := srv.StartImpersonation(callerContext("t-1"), &iampb.StartImpersonationRequest{
-		TargetUserId: "user-1",
+		TargetUserId: "1",
 		TenantId:     "t-1",
 		Reason:       "support request",
 		Duration:     durationpb.New(30 * time.Minute),
@@ -317,13 +317,13 @@ func TestIAMServer_StartImpersonation_WithDuration_ServiceError(t *testing.T) {
 
 func TestIAMServer_GrantConsent_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("GrantConsent", mock.Anything, "t-1", "u-1", mock.Anything,
+	svc.On("GrantConsent", mock.Anything, "t-1", uint64(1), mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.GrantConsent(callerContext("t-1"), &iampb.GrantConsentRequest{
 		TenantId: "t-1",
-		UserId:   "u-1",
+		UserId:   "1",
 		Purpose:  iampb.ConsentPurpose_CONSENT_PURPOSE_ANALYTICS,
 		Version:  "1.0",
 	})
@@ -337,14 +337,14 @@ func TestIAMServer_GrantConsent_ServiceError(t *testing.T) {
 
 func TestIAMServer_RequestExport_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("RequestExport", mock.Anything, "t-1", "u-1", "admin-1",
+	svc.On("RequestExport", mock.Anything, "t-1", uint64(1), uint64(30021),
 		mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.RequestExport(callerContext("t-1"), &iampb.RequestExportRequest{
 		TenantId:    "t-1",
-		UserId:      "u-1",
-		RequestedBy: "admin-1",
+		UserId:      "1",
+		RequestedBy: "30021",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
@@ -356,14 +356,14 @@ func TestIAMServer_RequestExport_ServiceError(t *testing.T) {
 
 func TestIAMServer_RequestDeletion_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("RequestDeletion", mock.Anything, "t-1", "u-1", "admin-1",
+	svc.On("RequestDeletion", mock.Anything, "t-1", uint64(1), uint64(30021),
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.RequestDeletion(callerContext("t-1"), &iampb.RequestDeletionRequest{
 		TenantId:    "t-1",
-		UserId:      "u-1",
-		RequestedBy: "admin-1",
+		UserId:      "1",
+		RequestedBy: "30021",
 		Reason:      "user request",
 	})
 	require.Error(t, err)

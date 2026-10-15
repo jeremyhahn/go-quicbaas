@@ -51,7 +51,7 @@ type AdminStorage interface {
 	ListAssignments(ctx context.Context, opts ListAdminAssignmentsOptions) ([]*AdminAssignment, error)
 
 	// GetUserAssignments retrieves all active assignments for a specific user.
-	GetUserAssignments(ctx context.Context, userID string) ([]*AdminAssignment, error)
+	GetUserAssignments(ctx context.Context, userID uint64) ([]*AdminAssignment, error)
 }
 
 // ImpersonationStorage defines the interface for impersonation session persistence.
@@ -72,12 +72,12 @@ type ImpersonationStorage interface {
 	IncrementOperationCount(ctx context.Context, id string) (int64, error)
 
 	// ListActiveImpersonations retrieves active impersonation sessions for an admin user.
-	ListActiveImpersonations(ctx context.Context, adminUserID string) ([]*ImpersonationSession, error)
+	ListActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*ImpersonationSession, error)
 
 	// ListImpersonations retrieves impersonation sessions with optional filters.
 	// If activeOnly is true, only returns sessions where EndedAt is nil and not expired.
 	// If adminUserID is not empty, filters by the admin user.
-	ListImpersonations(ctx context.Context, activeOnly bool, adminUserID string) ([]*ImpersonationSession, error)
+	ListImpersonations(ctx context.Context, activeOnly bool, adminUserID uint64) ([]*ImpersonationSession, error)
 
 	// DeleteExpiredSessions removes expired impersonation sessions (cleanup).
 	DeleteExpiredSessions(ctx context.Context) error
@@ -137,7 +137,7 @@ func (m *AdminManager) CreateAssignment(ctx context.Context, opts CreateAdminAss
 	defer m.mu.Unlock()
 
 	// Validate required fields
-	if opts.UserID == "" {
+	if opts.UserID == 0 {
 		return nil, api.NewRequiredFieldError("user_id")
 	}
 	if opts.AdminRole == "" {
@@ -396,7 +396,7 @@ func (m *AdminManager) CheckPermission(ctx context.Context, req *AdminCheckReque
 	if req == nil {
 		return nil, api.NewRequiredFieldError("check request")
 	}
-	if req.UserID == "" {
+	if req.UserID == 0 {
 		return nil, api.NewRequiredFieldError("user_id")
 	}
 	if req.Permission == "" {
@@ -555,7 +555,7 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 	if opts == nil {
 		return nil, api.NewRequiredFieldError("start impersonation options")
 	}
-	if opts.TargetUserID == "" {
+	if opts.TargetUserID == 0 {
 		return nil, api.NewRequiredFieldError("target_user_id")
 	}
 	if opts.TenantID == "" {
@@ -571,11 +571,14 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 	// authorization decision. No authenticated principal means no actor to
 	// authorize, so fail closed rather than mint a session for an
 	// anonymous caller.
+	// The actor is the caller's account, named by the verified uid claim,
+	// because admin assignments are keyed by user id and subject.ID is only
+	// the name the caller logged in with.
 	subject, ok := auth.SubjectFromContext(ctx)
-	if !ok || !subject.Authenticated || subject.ID == "" {
+	if !ok || !subject.Authenticated || subject.UserID == 0 {
 		return nil, ErrImpersonationActorRequired
 	}
-	actorUserID := subject.ID
+	actorUserID := subject.UserID
 	actorUsername := subject.Username
 
 	// Check permission BEFORE acquiring the write lock to avoid deadlock
@@ -604,13 +607,7 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 	if m.targetResolver == nil {
 		return nil, ErrImpersonationTargetResolverRequired
 	}
-	// TargetUserID is still the string form of the uint64 user id; a value
-	// that does not parse cannot name a user, so it is not found.
-	targetUserID, err := strconv.ParseUint(opts.TargetUserID, 10, 64)
-	if err != nil || targetUserID == 0 {
-		return nil, ErrImpersonationTargetNotFound
-	}
-	if _, err := m.targetResolver.GetUser(ctx, opts.TenantID, targetUserID); err != nil {
+	if _, err := m.targetResolver.GetUser(ctx, opts.TenantID, opts.TargetUserID); err != nil {
 		if dberrors.IsNotFound(err) {
 			return nil, ErrImpersonationTargetNotFound
 		}
@@ -673,7 +670,7 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 		ImpersonationSessionID: sessionID,
 		CorrelationID:          sessionID, // Use session ID as correlation for all related events
 		Actor: &AuditActor{
-			UserID:   actorUserID,
+			UserID:   strconv.FormatUint(actorUserID, 10),
 			Username: actorUsername,
 		},
 		Resource: &AuditResource{
@@ -681,7 +678,7 @@ func (m *AdminManager) StartImpersonation(ctx context.Context, opts *StartImpers
 			ID:   sessionID,
 		},
 		Details: map[string]interface{}{
-			"target_user_id":  opts.TargetUserID,
+			"target_user_id":  strconv.FormatUint(opts.TargetUserID, 10),
 			"target_username": opts.TargetUsername,
 			"reason":          opts.Reason,
 			"duration":        duration.String(),
@@ -744,7 +741,7 @@ func (m *AdminManager) EndImpersonation(ctx context.Context, sessionID string) e
 		ImpersonationSessionID: sessionID,
 		CorrelationID:          sessionID, // Link to start event and all operations
 		Actor: &AuditActor{
-			UserID:   session.AdminUserID,
+			UserID:   strconv.FormatUint(session.AdminUserID, 10),
 			Username: session.AdminUsername,
 		},
 		Resource: &AuditResource{
@@ -752,7 +749,7 @@ func (m *AdminManager) EndImpersonation(ctx context.Context, sessionID string) e
 			ID:   sessionID,
 		},
 		Details: map[string]interface{}{
-			"target_user_id":   session.TargetUserID,
+			"target_user_id":   strconv.FormatUint(session.TargetUserID, 10),
 			"target_username":  session.TargetUsername,
 			"reason":           session.Reason,
 			"started_at":       session.StartedAt.Format(time.RFC3339),
@@ -808,7 +805,7 @@ func (m *AdminManager) RecordImpersonatedOperation(ctx context.Context, sessionI
 
 	// Build audit details
 	auditDetails := map[string]interface{}{
-		"impersonated_user_id":  session.TargetUserID,
+		"impersonated_user_id":  strconv.FormatUint(session.TargetUserID, 10),
 		"impersonated_username": session.TargetUsername,
 		"operation_number":      newCount,
 	}
@@ -828,9 +825,9 @@ func (m *AdminManager) RecordImpersonatedOperation(ctx context.Context, sessionI
 		ImpersonationSessionID: sessionID,
 		CorrelationID:          sessionID,
 		Actor: &AuditActor{
-			UserID:                session.TargetUserID, // Acting as the impersonated user
+			UserID:                strconv.FormatUint(session.TargetUserID, 10), // Acting as the impersonated user
 			Username:              session.TargetUsername,
-			ImpersonatingUserID:   session.AdminUserID,
+			ImpersonatingUserID:   strconv.FormatUint(session.AdminUserID, 10),
 			ImpersonatingUsername: session.AdminUsername,
 		},
 		Resource: resource,
@@ -841,11 +838,11 @@ func (m *AdminManager) RecordImpersonatedOperation(ctx context.Context, sessionI
 }
 
 // GetActiveImpersonations retrieves active impersonation sessions for an admin user.
-func (m *AdminManager) GetActiveImpersonations(ctx context.Context, adminUserID string) ([]*ImpersonationSession, error) {
+func (m *AdminManager) GetActiveImpersonations(ctx context.Context, adminUserID uint64) ([]*ImpersonationSession, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if adminUserID == "" {
+	if adminUserID == 0 {
 		return nil, api.NewRequiredFieldError("admin_user_id")
 	}
 
@@ -858,7 +855,7 @@ func (m *AdminManager) GetActiveImpersonations(ctx context.Context, adminUserID 
 }
 
 // ListImpersonations retrieves impersonation sessions with optional filters.
-func (m *AdminManager) ListImpersonations(ctx context.Context, activeOnly bool, adminUserID string) ([]*ImpersonationSession, error) {
+func (m *AdminManager) ListImpersonations(ctx context.Context, activeOnly bool, adminUserID uint64) ([]*ImpersonationSession, error) {
 	sessions, err := m.impersonationStorage.ListImpersonations(ctx, activeOnly, adminUserID)
 	if err != nil {
 		return nil, api.NewOperationFailedError("list impersonations", err)

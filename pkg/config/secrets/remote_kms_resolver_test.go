@@ -427,7 +427,8 @@ func TestRemoteKMSResolver_Resolve_NilContext(t *testing.T) {
 	client := newMockRemoteSecretsClient()
 	resolver := NewRemoteKMSResolver(client)
 
-	result, err := resolver.Resolve(nil, "remote-kms://host:9443/secret") //nolint:staticcheck
+	var nilCtx context.Context
+	result, err := resolver.Resolve(nilCtx, "remote-kms://host:9443/secret")
 
 	if err == nil {
 		t.Fatal("Resolve() error = nil, want nil context error")

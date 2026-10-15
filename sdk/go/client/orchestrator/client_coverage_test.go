@@ -97,8 +97,8 @@ func TestSpawnSession_ByAgentOrPoolNeedsNoBackend(t *testing.T) {
 
 func TestSpawnSession_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "SpawnSession", &SpawnSessionResponse{}))
-	//nolint:staticcheck // intentionally nil to exercise guard
-	_, err := c.SpawnSession(nil, &SpawnSessionRequest{Backend: "ollama"})
+	var nilCtx context.Context
+	_, err := c.SpawnSession(nilCtx, &SpawnSessionRequest{Backend: "ollama"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context is required")
 }
@@ -148,8 +148,8 @@ func TestPromptSession_Validation(t *testing.T) {
 
 func TestPromptSession_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "PromptSession", &PromptSessionResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.PromptSession(nil, &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
+	var nilCtx context.Context
+	_, err := c.PromptSession(nilCtx, &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
 	require.Error(t, err)
 }
 
@@ -192,8 +192,8 @@ func TestSessionStatus_Validation(t *testing.T) {
 
 func TestSessionStatus_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "SessionStatus", &SessionStatusResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.SessionStatus(nil, &SessionStatusRequest{SessionID: "s1"})
+	var nilCtx context.Context
+	_, err := c.SessionStatus(nilCtx, &SessionStatusRequest{SessionID: "s1"})
 	require.Error(t, err)
 }
 
@@ -236,8 +236,8 @@ func TestCloseSession_Validation(t *testing.T) {
 
 func TestCloseSession_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "CloseSession", &CloseSessionResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.CloseSession(nil, &CloseSessionRequest{SessionID: "s1"})
+	var nilCtx context.Context
+	_, err := c.CloseSession(nilCtx, &CloseSessionRequest{SessionID: "s1"})
 	require.Error(t, err)
 }
 
@@ -280,8 +280,8 @@ func TestListSessions_NilRequest(t *testing.T) {
 
 func TestListSessions_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ListSessions", &ListSessionsResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ListSessions(nil, &ListSessionsRequest{})
+	var nilCtx context.Context
+	_, err := c.ListSessions(nilCtx, &ListSessionsRequest{})
 	require.Error(t, err)
 }
 
@@ -331,8 +331,8 @@ func TestGetTask_Validation(t *testing.T) {
 
 func TestGetTask_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "GetTask", &Task{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.GetTask(nil, &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
+	var nilCtx context.Context
+	_, err := c.GetTask(nilCtx, &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
 	require.Error(t, err)
 }
 
@@ -375,8 +375,8 @@ func TestListTasks_Validation(t *testing.T) {
 
 func TestListTasks_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ListTasks", &ListTasksResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ListTasks(nil, &ListTasksRequest{TenantID: "t1"})
+	var nilCtx context.Context
+	_, err := c.ListTasks(nilCtx, &ListTasksRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
@@ -428,8 +428,8 @@ func TestClaimTask_Validation(t *testing.T) {
 
 func TestClaimTask_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ClaimTask", &ClaimTaskResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ClaimTask(nil, &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
+	var nilCtx context.Context
+	_, err := c.ClaimTask(nilCtx, &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
 	require.Error(t, err)
 }
 
@@ -474,8 +474,8 @@ func TestCompleteTask_Validation(t *testing.T) {
 
 func TestCompleteTask_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "CompleteTask", &CompleteTaskResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.CompleteTask(nil, &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
+	var nilCtx context.Context
+	_, err := c.CompleteTask(nilCtx, &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
 	require.Error(t, err)
 }
 
@@ -510,8 +510,8 @@ func TestListBackends_HappyPath(t *testing.T) {
 
 func TestListBackends_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ListBackends", &ListBackendsResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ListBackends(nil)
+	var nilCtx context.Context
+	_, err := c.ListBackends(nilCtx)
 	require.Error(t, err)
 }
 
@@ -562,8 +562,8 @@ func TestListRunners_HappyPath(t *testing.T) {
 
 func TestListRunners_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ListRunners", &ListJobRunnersResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ListRunners(nil)
+	var nilCtx context.Context
+	_, err := c.ListRunners(nilCtx)
 	require.Error(t, err)
 }
 
@@ -600,8 +600,8 @@ func TestHealth_HappyPath(t *testing.T) {
 
 func TestHealth_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "Health", &HealthCheckReport{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.Health(nil)
+	var nilCtx context.Context
+	_, err := c.Health(nilCtx)
 	require.Error(t, err)
 }
 
@@ -658,8 +658,8 @@ func TestRegisterAgent_Validation(t *testing.T) {
 
 func TestRegisterAgent_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "RegisterFleetNode", &RegisterFleetNodeResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.RegisterFleetNode(nil, validRegisterFleetNodeRequest())
+	var nilCtx context.Context
+	_, err := c.RegisterFleetNode(nilCtx, validRegisterFleetNodeRequest())
 	require.Error(t, err)
 }
 
@@ -704,8 +704,8 @@ func TestGetAgent_Validation(t *testing.T) {
 
 func TestGetAgent_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "GetFleetNode", &FleetNode{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.GetFleetNode(nil, &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
+	var nilCtx context.Context
+	_, err := c.GetFleetNode(nilCtx, &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
@@ -748,8 +748,8 @@ func TestListAgents_Validation(t *testing.T) {
 
 func TestListAgents_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ListFleetNodes", &ListFleetNodesResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ListFleetNodes(nil, &ListFleetNodesRequest{TenantID: "t1"})
+	var nilCtx context.Context
+	_, err := c.ListFleetNodes(nilCtx, &ListFleetNodesRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
@@ -796,8 +796,8 @@ func TestRemoveAgent_Validation(t *testing.T) {
 
 func TestRemoveAgent_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "RemoveFleetNode", &RemoveFleetNodeResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.RemoveFleetNode(nil, &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
+	var nilCtx context.Context
+	_, err := c.RemoveFleetNode(nilCtx, &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
@@ -842,8 +842,8 @@ func TestAgentHeartbeat_Validation(t *testing.T) {
 
 func TestAgentHeartbeat_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "FleetNodeHeartbeat", &FleetNodeHeartbeatResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.FleetNodeHeartbeat(nil, &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
+	var nilCtx context.Context
+	_, err := c.FleetNodeHeartbeat(nilCtx, &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
@@ -887,8 +887,8 @@ func TestDecomposeTask_Validation(t *testing.T) {
 
 func TestDecomposeTask_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "DecomposeTask", &DecomposeTaskResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.DecomposeTask(nil, &DecomposeTaskRequest{Task: "x"})
+	var nilCtx context.Context
+	_, err := c.DecomposeTask(nilCtx, &DecomposeTaskRequest{Task: "x"})
 	require.Error(t, err)
 }
 
@@ -932,8 +932,8 @@ func TestSpawnChildJob_Validation(t *testing.T) {
 
 func TestSpawnChildJob_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "SpawnChildJob", &SpawnChildJobResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.SpawnChildJob(nil, &SpawnChildJobRequest{ParentJobID: "j1"})
+	var nilCtx context.Context
+	_, err := c.SpawnChildJob(nilCtx, &SpawnChildJobRequest{ParentJobID: "j1"})
 	require.Error(t, err)
 }
 
@@ -968,8 +968,8 @@ func TestStartJob_HappyPath(t *testing.T) {
 
 func TestStartJob_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "StartJob", &StartJobResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.StartJob(nil, &StartJobRequest{Description: "do work"})
+	var nilCtx context.Context
+	_, err := c.StartJob(nilCtx, &StartJobRequest{Description: "do work"})
 	require.Error(t, err)
 }
 
@@ -1004,8 +1004,8 @@ func TestGetJobStatus_HappyPath(t *testing.T) {
 
 func TestGetJobStatus_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "GetJobStatus", &JobStatus{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.GetJobStatus(nil, &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
+	var nilCtx context.Context
+	_, err := c.GetJobStatus(nilCtx, &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
 	require.Error(t, err)
 }
 
@@ -1049,8 +1049,8 @@ func TestListJobs_Validation(t *testing.T) {
 
 func TestListJobs_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "ListJobs", &ListJobsResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.ListJobs(nil, &ListJobsRequest{TenantID: "t1"})
+	var nilCtx context.Context
+	_, err := c.ListJobs(nilCtx, &ListJobsRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
@@ -1085,8 +1085,8 @@ func TestCancelJob_HappyPath(t *testing.T) {
 
 func TestCancelJob_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "CancelJob", &CancelJobResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.CancelJob(nil, &CancelJobRequest{TenantID: "t1", JobID: "j1"})
+	var nilCtx context.Context
+	_, err := c.CancelJob(nilCtx, &CancelJobRequest{TenantID: "t1", JobID: "j1"})
 	require.Error(t, err)
 }
 
@@ -1121,8 +1121,8 @@ func TestGetSessionHistory_HappyPath(t *testing.T) {
 
 func TestGetSessionHistory_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	//nolint:staticcheck // intentionally nil ctx
-	_, err := c.GetSessionHistory(nil, &GetSessionHistoryRequest{SessionID: "s1"})
+	var nilCtx context.Context
+	_, err := c.GetSessionHistory(nilCtx, &GetSessionHistoryRequest{SessionID: "s1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context is required")
 	_, err = c.GetSessionHistory(context.Background(), nil)
@@ -1183,8 +1183,8 @@ func TestSubscribeSessionEvents_HappyPath(t *testing.T) {
 
 func TestSubscribeSessionEvents_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	//nolint:staticcheck // intentionally nil ctx
-	_, err := c.SubscribeSessionEvents(nil, &SubscribeSessionEventsRequest{SessionID: "s1"})
+	var nilCtx context.Context
+	_, err := c.SubscribeSessionEvents(nilCtx, &SubscribeSessionEventsRequest{SessionID: "s1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context is required")
 	_, err = c.SubscribeSessionEvents(context.Background(), nil)
@@ -1343,16 +1343,16 @@ func TestSubscribeJobEvents_WrongMessageTypeSkipped(t *testing.T) {
 
 func TestInference_NilContext(t *testing.T) {
 	c := NewClient(okTransport(t, "Inference", &InferenceResponse{}))
-	//nolint:staticcheck // intentionally nil
-	_, err := c.Inference(nil, &InferenceRequest{Backend: "ollama", Prompt: "hi"})
+	var nilCtx context.Context
+	_, err := c.Inference(nilCtx, &InferenceRequest{Backend: "ollama", Prompt: "hi"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context is required")
 }
 
 func TestInferenceStream_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	//nolint:staticcheck // intentionally nil
-	_, err := c.InferenceStream(nil, &InferenceRequest{Backend: "ollama", Prompt: "hi"})
+	var nilCtx context.Context
+	_, err := c.InferenceStream(nilCtx, &InferenceRequest{Backend: "ollama", Prompt: "hi"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context is required")
 }

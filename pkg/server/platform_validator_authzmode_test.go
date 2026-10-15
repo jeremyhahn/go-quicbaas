@@ -133,9 +133,9 @@ func TestPlatformBearerAuthenticator_AccountIsVerifiedUserID(t *testing.T) {
 
 	for name, tc := range map[string]struct {
 		userID   string
-		wantUser string
+		wantUser uint64
 	}{
-		"with uid":    {userID: "67890", wantUser: "67890"},
+		"with uid":    {userID: "67890", wantUser: 67890},
 		"without uid": {},
 	} {
 		t.Run(name, func(t *testing.T) {

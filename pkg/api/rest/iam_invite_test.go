@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -80,7 +79,7 @@ func TestGetInvite_Valid(t *testing.T) {
 
 	var resp InviteMetadataResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, strconv.FormatUint(userID, 10), resp.UserID)
+	assert.Equal(t, userID, resp.UserID)
 	assert.NotEmpty(t, resp.AuthMethods)
 }
 

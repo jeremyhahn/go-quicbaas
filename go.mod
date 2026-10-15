@@ -7,6 +7,7 @@ exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
 
 require (
 	cloud.google.com/go/kms v1.31.0
+	connectrpc.com/connect v1.21.1
 	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.36
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.35
@@ -42,6 +43,7 @@ require (
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
 	github.com/moby/sys/user v0.4.1
 	github.com/mochi-mqtt/server/v2 v2.7.9
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/opencontainers/runc v1.5.2
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/pelletier/go-toml/v2 v2.4.3
@@ -198,6 +200,7 @@ require (
 	github.com/google/go-containerregistry v0.21.6 // indirect
 	github.com/google/go-intervals v0.0.2 // indirect
 	github.com/google/go-tpm-tools v0.4.10 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.21 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
@@ -289,6 +292,7 @@ require (
 	github.com/seccomp/libseccomp-golang v0.12.0 // indirect
 	github.com/secure-systems-lab/go-securesystemslib v0.11.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sigstore/fulcio v1.8.7 // indirect
 	github.com/sigstore/protobuf-specs v0.5.1 // indirect
 	github.com/sigstore/sigstore v1.10.8 // indirect

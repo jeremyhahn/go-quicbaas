@@ -45,7 +45,7 @@ func TestWatcher_ConvertEvent(t *testing.T) {
 	}
 	w, err := New(config)
 	require.NoError(t, err)
-	defer w.Stop() //nolint:errcheck
+	t.Cleanup(func() { assert.NoError(t, w.Stop()) })
 	impl := w.(*fsWatcher)
 
 	tests := []struct {
@@ -89,7 +89,7 @@ func TestWatcher_ConvertEvent_Unknown(t *testing.T) {
 	}
 	w, err := New(config)
 	require.NoError(t, err)
-	defer w.Stop() //nolint:errcheck
+	t.Cleanup(func() { assert.NoError(t, w.Stop()) })
 	impl := w.(*fsWatcher)
 
 	got := impl.convertEvent(fsnotify.Event{Name: "x", Op: fsnotify.Op(0)})

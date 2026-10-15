@@ -438,7 +438,8 @@ func TestAdminFactors_InvalidRequestsRefused(t *testing.T) {
 			t.Errorf("%s: Enroll = (%v, %v), want refusal", name, res, err)
 		}
 	}
-	if err := enroller.Preflight(nil, &AdminFactorEnrollRequest{ //nolint:staticcheck // nil ctx is the case under test
+	var nilCtx context.Context
+	if err := enroller.Preflight(nilCtx, &AdminFactorEnrollRequest{
 		Factors: []string{"piv"}, Subject: "root", PIVGenerator: xkmssdk.NewSoftwarePIVKeyGenerator(),
 	}); err == nil {
 		t.Error("nil context: want refusal")

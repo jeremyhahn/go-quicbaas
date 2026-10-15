@@ -20,6 +20,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,6 +76,10 @@ func generateTestCertificates(t *testing.T) (certFile, keyFile, caFile string) {
 		NotAfter:    time.Now().Add(24 * time.Hour),
 		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		// Loopback SANs let a client that verifies the hostname, such as the
+		// gRPC interop leg, trust a server listening on 127.0.0.1.
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+		DNSNames:    []string{"localhost"},
 	}
 
 	serverCertBytes, err := x509.CreateCertificate(rand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)

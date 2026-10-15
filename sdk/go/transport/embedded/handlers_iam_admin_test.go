@@ -15,6 +15,7 @@ package embedded
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -156,7 +157,7 @@ func TestHandleIAMAdminCreateAssignment(t *testing.T) {
 	expiry := time.Now().Add(24 * time.Hour).UTC()
 	out, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID:     "admin-1",
+			AdminID:     "30021",
 			TenantID:    "t-1",
 			Scope:       iamsdk.AdminScopeTenant,
 			ScopeID:     "t-1",
@@ -180,7 +181,7 @@ func TestHandleIAMAdminCreateAssignment(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *iam.AdminAssignment, got %T", out)
 	}
-	if got.AdminID != "admin-1" {
+	if got.AdminID != "30021" {
 		t.Errorf("AdminID = %q, want \"admin-1\"", got.AdminID)
 	}
 	if got.RoleID != string(iam.AdminRoleTenantAdmin) {
@@ -227,7 +228,7 @@ func TestHandleIAMAdminCreateAssignment_NonTenantScopeIDIsNotATenant(t *testing.
 
 	out, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID:   "admin-1",
+			AdminID:   "30021",
 			TenantID:  "t-1",
 			Scope:     iamsdk.AdminScopeProject,
 			ScopeID:   "project-42",
@@ -261,19 +262,19 @@ func TestHandleIAMAdminCreateAssignment_Errors(t *testing.T) {
 		{
 			name: "missing admin role",
 			req: &embeddedCreateAssignmentEnvelope{CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-				AdminID: "admin-1", GrantedBy: "owner",
+				AdminID: "30021", GrantedBy: "owner",
 			}},
 		},
 		{
 			name: "unknown admin role",
 			req: &embeddedCreateAssignmentEnvelope{CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-				AdminID: "admin-1", RoleID: "emperor", GrantedBy: "owner",
+				AdminID: "30021", RoleID: "emperor", GrantedBy: "owner",
 			}},
 		},
 		{
 			name: "missing granting principal",
 			req: &embeddedCreateAssignmentEnvelope{CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-				AdminID: "admin-1", RoleID: string(iam.AdminRoleReadOnly),
+				AdminID: "30021", RoleID: string(iam.AdminRoleReadOnly),
 			}},
 		},
 	}
@@ -290,7 +291,7 @@ func TestHandleIAMAdminCreateAssignment_Errors(t *testing.T) {
 func TestHandleIAMAdminGetAndDeleteAssignment(t *testing.T) {
 	svc, mgr := newAdminTestService(t)
 	ctx := context.Background()
-	created := createSuperAdmin(t, svc, "admin-1", "t-1")
+	created := createSuperAdmin(t, svc, "30021", "t-1")
 
 	out, err := handleIAMAdminGetAssignment(ctx, svc, &embeddedAssignmentIDEnvelope{AssignmentID: created.ID})
 	if err != nil {
@@ -328,7 +329,7 @@ func TestHandleIAMAdminGetAssignment_Errors(t *testing.T) {
 func TestHandleIAMAdminUpdateAssignment_StatusMapsToActive(t *testing.T) {
 	svc, mgr := newAdminTestService(t)
 	ctx := context.Background()
-	created := createSuperAdmin(t, svc, "admin-1", "t-1")
+	created := createSuperAdmin(t, svc, "30021", "t-1")
 
 	suspended := iamsdk.AdminAssignmentStatusSuspended
 	out, err := handleIAMAdminUpdateAssignment(ctx, svc, &embeddedUpdateAssignmentEnvelope{
@@ -398,8 +399,8 @@ func TestHandleIAMAdminUpdateAssignment_Errors(t *testing.T) {
 func TestHandleIAMAdminListAssignments(t *testing.T) {
 	svc, _ := newAdminTestService(t)
 	ctx := context.Background()
-	createSuperAdmin(t, svc, "admin-1", "t-1")
-	createSuperAdmin(t, svc, "admin-2", "t-1")
+	createSuperAdmin(t, svc, "30021", "t-1")
+	createSuperAdmin(t, svc, "30022", "t-1")
 
 	out, err := handleIAMAdminListAssignments(ctx, svc, &embeddedListAssignmentsEnvelope{
 		Filter: &iamsdk.ListAdminAssignmentsRequest{TenantID: "t-1"},
@@ -420,7 +421,7 @@ func TestHandleIAMAdminListAssignments(t *testing.T) {
 
 	// Filtering by admin narrows the result rather than being ignored.
 	out, err = handleIAMAdminListAssignments(ctx, svc, &embeddedListAssignmentsEnvelope{
-		Filter: &iamsdk.ListAdminAssignmentsRequest{AdminID: "admin-1"},
+		Filter: &iamsdk.ListAdminAssignmentsRequest{AdminID: "30021"},
 	})
 	if err != nil {
 		t.Fatalf("handleIAMAdminListAssignments failed: %v", err)
@@ -445,11 +446,11 @@ func TestHandleIAMAdminListAssignments_BadRequest(t *testing.T) {
 func TestHandleIAMAdminCheckPermission(t *testing.T) {
 	svc, _ := newAdminTestService(t)
 	ctx := context.Background()
-	createSuperAdmin(t, svc, "admin-1", "t-1")
+	createSuperAdmin(t, svc, "30021", "t-1")
 
 	out, err := handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
 		Check: &iamsdk.AdminCheckRequest{
-			AdminID:    "admin-1",
+			AdminID:    "30021",
 			TenantID:   "t-1",
 			Permission: string(iam.PermUserImpersonate),
 		},
@@ -465,7 +466,7 @@ func TestHandleIAMAdminCheckPermission(t *testing.T) {
 	// bare false.
 	out, err = handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
 		Check: &iamsdk.AdminCheckRequest{
-			AdminID:    "nobody",
+			AdminID:    "99999",
 			TenantID:   "t-1",
 			Permission: string(iam.PermUserImpersonate),
 		},
@@ -483,11 +484,11 @@ func TestHandleIAMAdminCheckPermission(t *testing.T) {
 func TestHandleIAMAdminCheckPermission_ActionFallback(t *testing.T) {
 	svc, _ := newAdminTestService(t)
 	ctx := context.Background()
-	createSuperAdmin(t, svc, "admin-1", "t-1")
+	createSuperAdmin(t, svc, "30021", "t-1")
 
 	out, err := handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
 		Check: &iamsdk.AdminCheckRequest{
-			AdminID:  "admin-1",
+			AdminID:  "30021",
 			TenantID: "t-1",
 			Action:   string(iam.PermUserImpersonate),
 		},
@@ -519,15 +520,15 @@ func TestHandleIAMAdminImpersonationLifecycle(t *testing.T) {
 	// The acting admin is resolved from the authenticated subject
 	// (go-quicbaas#383); startImpersonationAs seeds admin-1's grant and binds
 	// it as the caller before opening the session.
-	session := startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
-	if session.AdminID != "admin-1" || session.TargetUserID != "10009" {
+	session := startImpersonationAs(t, svc, "30021", "t-1", "10009")
+	if session.AdminID != "30021" || session.TargetUserID != "10009" {
 		t.Errorf("unexpected session principals: %+v", session)
 	}
 	if !session.Active {
 		t.Error("a freshly started session must be active")
 	}
 
-	listed, err := handleIAMAdminListActiveImpersonations(ctx, svc, &embeddedListImpersonationsEnvelope{AdminUserID: "admin-1"})
+	listed, err := handleIAMAdminListActiveImpersonations(ctx, svc, &embeddedListImpersonationsEnvelope{AdminUserID: "30021"})
 	if err != nil {
 		t.Fatalf("handleIAMAdminListActiveImpersonations failed: %v", err)
 	}
@@ -539,7 +540,7 @@ func TestHandleIAMAdminImpersonationLifecycle(t *testing.T) {
 		t.Fatalf("handleIAMAdminEndImpersonation failed: %v", err)
 	}
 
-	listed, err = handleIAMAdminListActiveImpersonations(ctx, svc, &embeddedListImpersonationsEnvelope{AdminUserID: "admin-1"})
+	listed, err = handleIAMAdminListActiveImpersonations(ctx, svc, &embeddedListImpersonationsEnvelope{AdminUserID: "30021"})
 	if err != nil {
 		t.Fatalf("handleIAMAdminListActiveImpersonations failed: %v", err)
 	}
@@ -675,7 +676,7 @@ func TestHandleIAMAdminCreateAssignment_AmbiguousTenantScopeRejected(t *testing.
 
 	_, err := handleIAMAdminCreateAssignment(context.Background(), svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID:   "admin-1",
+			AdminID:   "30021",
 			TenantID:  "t-1",
 			Scope:     iamsdk.AdminScopeTenant,
 			ScopeID:   "t-2",
@@ -698,7 +699,7 @@ func TestHandleIAMAdminCreateAssignment_ScopeIDAloneScopesTheGrant(t *testing.T)
 
 	out, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID:   "admin-1",
+			AdminID:   "30021",
 			Scope:     iamsdk.AdminScopeTenant,
 			ScopeID:   "t-9",
 			RoleID:    string(iam.AdminRoleTenantAdmin),
@@ -725,7 +726,7 @@ func TestHandleIAMAdminCreateAssignment_TaggedResourceFilterRejected(t *testing.
 
 	_, err := handleIAMAdminCreateAssignment(context.Background(), svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID:   "admin-1",
+			AdminID:   "30021",
 			RoleID:    string(iam.AdminRoleReadOnly),
 			GrantedBy: "owner",
 			Constraints: &iamsdk.AdminConstraints{
@@ -749,8 +750,8 @@ func TestHandleIAMAdminCreateAssignment_TaggedResourceFilterRejected(t *testing.
 func TestHandleIAMAdminListAssignments_UnfilteredIncludesInactive(t *testing.T) {
 	svc, _ := newAdminTestService(t)
 	ctx := context.Background()
-	active := createSuperAdmin(t, svc, "admin-1", "t-1")
-	suspendedAssignment := createSuperAdmin(t, svc, "admin-2", "t-1")
+	active := createSuperAdmin(t, svc, "30021", "t-1")
+	suspendedAssignment := createSuperAdmin(t, svc, "30022", "t-1")
 
 	suspended := iamsdk.AdminAssignmentStatusSuspended
 	if _, err := handleIAMAdminUpdateAssignment(ctx, svc, &embeddedUpdateAssignmentEnvelope{
@@ -841,7 +842,7 @@ func TestAdminHandlers_SubjectBoundCallsRequireRoutePermission(t *testing.T) {
 			call: func() (interface{}, error) {
 				return handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 					CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-						AdminID: "admin-1", RoleID: string(iam.AdminRoleSuperAdmin), GrantedBy: "caller",
+						AdminID: "30021", RoleID: string(iam.AdminRoleSuperAdmin), GrantedBy: "caller",
 					},
 				})
 			},
@@ -878,7 +879,7 @@ func TestAdminHandlers_SubjectBoundCallsRequireRoutePermission(t *testing.T) {
 			name: "CheckPermission",
 			call: func() (interface{}, error) {
 				return handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
-					Check: &iamsdk.AdminCheckRequest{AdminID: "admin-1", Permission: string(iam.PermUserRead)},
+					Check: &iamsdk.AdminCheckRequest{AdminID: "30021", Permission: string(iam.PermUserRead)},
 				})
 			},
 		},
@@ -971,7 +972,13 @@ func startImpersonationAs(t *testing.T, svc service.QuicBaaS, adminID, tenantID,
 	}
 	// The acting admin is resolved from the authenticated subject, never from
 	// the request (go-quicbaas#383), so bind adminID as the caller.
-	actorCtx := auth.SubjectIntoContext(ctx, interfaces.Subject{ID: adminID, TenantID: tenantID, Authenticated: true})
+	actorUserID, err := strconv.ParseUint(adminID, 10, 64)
+	if err != nil {
+		t.Fatalf("admin id %q is not a user id: %v", adminID, err)
+	}
+	actorCtx := auth.SubjectIntoContext(ctx, interfaces.Subject{
+		ID: adminID, UserID: actorUserID, TenantID: tenantID, Authenticated: true,
+	})
 	out, err := handleIAMAdminStartImpersonation(actorCtx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
 			TargetUserID: targetID, TenantID: tenantID,
@@ -988,9 +995,9 @@ func startImpersonationAs(t *testing.T, svc service.QuicBaaS, adminID, tenantID,
 // that this particular impersonation session is theirs to end.
 func TestHandleIAMAdminEndImpersonation_DeniesAnotherAdminsSession(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	victim := startImpersonationAs(t, svc, "admin-victim", "t-1", "10009")
+	victim := startImpersonationAs(t, svc, "30051", "t-1", "10009")
 
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-other", TenantID: "t-1"})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-other", UserID: 30052, TenantID: "t-1"})
 	_, err := handleIAMAdminEndImpersonation(ctx, svc, &embeddedImpersonationSessionEnvelope{SessionID: victim.ID})
 	if err == nil {
 		t.Fatal("expected ending another admin's impersonation session to be denied")
@@ -1000,7 +1007,7 @@ func TestHandleIAMAdminEndImpersonation_DeniesAnotherAdminsSession(t *testing.T)
 	}
 
 	// The session survived the denial.
-	still, listErr := svc.admin.GetActiveImpersonations(context.Background(), "admin-victim")
+	still, listErr := svc.admin.GetActiveImpersonations(context.Background(), 30051)
 	if listErr != nil {
 		t.Fatalf("GetActiveImpersonations failed: %v", listErr)
 	}
@@ -1013,9 +1020,9 @@ func TestHandleIAMAdminEndImpersonation_DeniesAnotherAdminsSession(t *testing.T)
 // matches, which is why both halves of the ownership check exist.
 func TestHandleIAMAdminEndImpersonation_DeniesAcrossTenants(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	session := startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
+	session := startImpersonationAs(t, svc, "30021", "t-1", "10009")
 
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-2"})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "t-2"})
 	if _, err := handleIAMAdminEndImpersonation(ctx, svc, &embeddedImpersonationSessionEnvelope{SessionID: session.ID}); err == nil {
 		t.Fatal("expected a cross-tenant end to be denied")
 	}
@@ -1024,14 +1031,14 @@ func TestHandleIAMAdminEndImpersonation_DeniesAcrossTenants(t *testing.T) {
 // The owning admin can still end its own session.
 func TestHandleIAMAdminEndImpersonation_OwnerSucceeds(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	session := startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
+	session := startImpersonationAs(t, svc, "30021", "t-1", "10009")
 
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1"})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "t-1"})
 	if _, err := handleIAMAdminEndImpersonation(ctx, svc, &embeddedImpersonationSessionEnvelope{SessionID: session.ID}); err != nil {
 		t.Fatalf("the owning admin must be able to end its own session: %v", err)
 	}
 
-	still, err := svc.admin.GetActiveImpersonations(context.Background(), "admin-1")
+	still, err := svc.admin.GetActiveImpersonations(context.Background(), 30021)
 	if err != nil {
 		t.Fatalf("GetActiveImpersonations failed: %v", err)
 	}
@@ -1044,10 +1051,10 @@ func TestHandleIAMAdminEndImpersonation_OwnerSucceeds(t *testing.T) {
 // pinned to its own id and its results narrowed to its own tenant.
 func TestHandleIAMAdminListActiveImpersonations_BoundToSubject(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
+	startImpersonationAs(t, svc, "30021", "t-1", "10009")
 
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-other", TenantID: "t-1"})
-	_, err := handleIAMAdminListActiveImpersonations(ctx, svc, &embeddedListImpersonationsEnvelope{AdminUserID: "admin-1"})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-other", UserID: 30052, TenantID: "t-1"})
+	_, err := handleIAMAdminListActiveImpersonations(ctx, svc, &embeddedListImpersonationsEnvelope{AdminUserID: "30021"})
 	if err == nil {
 		t.Fatal("expected enumerating another admin's impersonations to be denied")
 	}
@@ -1057,7 +1064,7 @@ func TestHandleIAMAdminListActiveImpersonations_BoundToSubject(t *testing.T) {
 
 	// An omitted admin id is filled from the subject, and a caller in another
 	// tenant sees nothing even under its own id.
-	ownCtx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1"})
+	ownCtx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "t-1"})
 	out, err := handleIAMAdminListActiveImpersonations(ownCtx, svc, &embeddedListImpersonationsEnvelope{})
 	if err != nil {
 		t.Fatalf("handleIAMAdminListActiveImpersonations failed: %v", err)
@@ -1066,7 +1073,7 @@ func TestHandleIAMAdminListActiveImpersonations_BoundToSubject(t *testing.T) {
 		t.Errorf("the owning admin should see its own session, got %d", len(page.Sessions))
 	}
 
-	otherTenant := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-2"})
+	otherTenant := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "t-2"})
 	out, err = handleIAMAdminListActiveImpersonations(otherTenant, svc, &embeddedListImpersonationsEnvelope{})
 	if err != nil {
 		t.Fatalf("handleIAMAdminListActiveImpersonations failed: %v", err)
@@ -1084,7 +1091,7 @@ func TestHandleIAMAdminCreateAssignment_GrantedByBoundToSubject(t *testing.T) {
 
 	_, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID: "admin-1", TenantID: "t-1",
+			AdminID: "30021", TenantID: "t-1",
 			RoleID: string(iam.AdminRoleSuperAdmin), GrantedBy: "someone-else",
 		},
 	})
@@ -1098,7 +1105,7 @@ func TestHandleIAMAdminCreateAssignment_GrantedByBoundToSubject(t *testing.T) {
 	// Omitted, it is filled from the subject rather than left blank.
 	out, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID: "admin-1", TenantID: "t-1", RoleID: string(iam.AdminRoleSuperAdmin),
+			AdminID: "30021", TenantID: "t-1", RoleID: string(iam.AdminRoleSuperAdmin),
 		},
 	})
 	if err != nil {
@@ -1118,7 +1125,7 @@ func TestHandleIAMAdminCreateAssignment_GrantedByBoundToSubject(t *testing.T) {
 // to even under its own admin id.
 func TestHandleIAMAdminStartImpersonation_BindsTenantToSubject(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1"})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "t-1"})
 
 	_, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
@@ -1140,14 +1147,14 @@ func TestHandleIAMAdminStartImpersonation_FillsIdentityFromSubject(t *testing.T)
 	svc := newAuthorizedAdminTestService(t)
 	if _, err := handleIAMAdminCreateAssignment(context.Background(), svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID: "admin-1", TenantID: "t-1",
+			AdminID: "30021", TenantID: "t-1",
 			RoleID: string(iam.AdminRoleSuperAdmin), GrantedBy: "bootstrap",
 		},
 	}); err != nil {
 		t.Fatalf("seeding the admin assignment failed: %v", err)
 	}
 
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1", Authenticated: true})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "t-1", Authenticated: true})
 	out, err := handleIAMAdminStartImpersonation(ctx, svc, &embeddedStartImpersonationEnvelope{
 		Impersonation: &iamsdk.ImpersonationRequest{
 			TargetUserID: "10009", Reason: "support", Duration: time.Minute,
@@ -1157,7 +1164,7 @@ func TestHandleIAMAdminStartImpersonation_FillsIdentityFromSubject(t *testing.T)
 		t.Fatalf("handleIAMAdminStartImpersonation failed: %v", err)
 	}
 	session := out.(*iamsdk.ImpersonationSession)
-	if session.AdminID != "admin-1" || session.TenantID != "t-1" {
+	if session.AdminID != "30021" || session.TenantID != "t-1" {
 		t.Errorf("session identity = %q/%q, want admin-1/t-1 from the subject", session.AdminID, session.TenantID)
 	}
 }
@@ -1166,7 +1173,7 @@ func TestHandleIAMAdminStartImpersonation_FillsIdentityFromSubject(t *testing.T)
 // another tenant's.
 func TestHandleIAMAdminListAssignments_BoundToSubjectTenant(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1"})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "t-1"})
 
 	_, err := handleIAMAdminListAssignments(ctx, svc, &embeddedListAssignmentsEnvelope{
 		Filter: &iamsdk.ListAdminAssignmentsRequest{TenantID: "t-2"},
@@ -1180,8 +1187,8 @@ func TestHandleIAMAdminListAssignments_BoundToSubjectTenant(t *testing.T) {
 
 	// An omitted filter is FILLED with the subject's tenant, not left open:
 	// seed an assignment in each tenant and prove only the subject's comes back.
-	seedAssignmentIn(t, svc, "admin-here", "t-1")
-	seedAssignmentIn(t, svc, "admin-there", "t-2")
+	seedAssignmentIn(t, svc, "30061", "t-1")
+	seedAssignmentIn(t, svc, "30062", "t-2")
 
 	out, err := handleIAMAdminListAssignments(ctx, svc, &embeddedListAssignmentsEnvelope{
 		Filter: &iamsdk.ListAdminAssignmentsRequest{},
@@ -1190,7 +1197,7 @@ func TestHandleIAMAdminListAssignments_BoundToSubjectTenant(t *testing.T) {
 		t.Fatalf("an unfiltered subject-bound list must succeed in the subject's own tenant: %v", err)
 	}
 	page := out.(*iamsdk.ListAdminAssignmentsResponse)
-	if len(page.Assignments) != 1 || page.Assignments[0].AdminID != "admin-here" {
+	if len(page.Assignments) != 1 || page.Assignments[0].AdminID != "30061" {
 		t.Errorf("an omitted tenant filter must be filled with the subject's tenant, got %+v", page.Assignments)
 	}
 }
@@ -1214,8 +1221,8 @@ func seedAssignmentIn(t *testing.T, svc service.QuicBaaS, adminID, tenantID stri
 // one — that is the whole point of the system tenant.
 func TestHandleIAMAdminListAssignments_SystemScopeSeesEveryTenant(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	seedAssignmentIn(t, svc, "admin-here", "t-1")
-	seedAssignmentIn(t, svc, "admin-there", "t-2")
+	seedAssignmentIn(t, svc, "30061", "t-1")
+	seedAssignmentIn(t, svc, "30062", "t-2")
 
 	ctx := auth.SubjectIntoContext(context.Background(),
 		interfaces.Subject{ID: "platform-admin", TenantID: qrdbsdk.SystemTenantID, Authenticated: true})
@@ -1238,7 +1245,7 @@ func TestHandleIAMAdminListAssignments_SystemScopeSeesEveryTenant(t *testing.T) 
 		t.Fatalf("handleIAMAdminListAssignments failed: %v", err)
 	}
 	page := out.(*iamsdk.ListAdminAssignmentsResponse)
-	if len(page.Assignments) != 1 || page.Assignments[0].AdminID != "admin-there" {
+	if len(page.Assignments) != 1 || page.Assignments[0].AdminID != "30062" {
 		t.Errorf("an explicit system-scope tenant filter returned %+v, want only t-2's", page.Assignments)
 	}
 }
@@ -1256,7 +1263,7 @@ func TestAdminHandlers_SystemScopeIsNotTenantPinned(t *testing.T) {
 			// A cross-tenant grant is the platform's job.
 			out, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 				CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-					AdminID: "admin-1", TenantID: "t-1", RoleID: string(iam.AdminRoleTenantAdmin),
+					AdminID: "30021", TenantID: "t-1", RoleID: string(iam.AdminRoleTenantAdmin),
 				},
 			})
 			if err != nil {
@@ -1274,7 +1281,7 @@ func TestAdminHandlers_SystemScopeIsNotTenantPinned(t *testing.T) {
 			}
 			if _, err := handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
 				Check: &iamsdk.AdminCheckRequest{
-					AdminID: "admin-1", TenantID: "t-1", Permission: string(iam.PermUserRead),
+					AdminID: "30021", TenantID: "t-1", Permission: string(iam.PermUserRead),
 				},
 			}); err != nil {
 				t.Errorf("a system-scope subject must be able to inspect another tenant: %v", err)
@@ -1289,15 +1296,15 @@ func TestAdminHandlers_SystemScopeIsNotTenantPinned(t *testing.T) {
 // every scoped verb refuses it, and nothing it asked for happens.
 func TestAdminHandlers_EmptyTenantSubjectIsRefused(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	session := startImpersonationAs(t, svc, "admin-1", "t-1", "10009")
+	session := startImpersonationAs(t, svc, "30021", "t-1", "10009")
 	ctx := auth.SubjectIntoContext(context.Background(),
-		interfaces.Subject{ID: "admin-1", TenantID: "", Authenticated: true})
+		interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "", Authenticated: true})
 
 	calls := map[string]func() (interface{}, error){
 		"CreateAssignment": func() (interface{}, error) {
 			return handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 				CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-					AdminID: "admin-2", TenantID: "t-1", RoleID: string(iam.AdminRoleTenantAdmin),
+					AdminID: "30022", TenantID: "t-1", RoleID: string(iam.AdminRoleTenantAdmin),
 				},
 			})
 		},
@@ -1309,7 +1316,7 @@ func TestAdminHandlers_EmptyTenantSubjectIsRefused(t *testing.T) {
 		"CheckPermission": func() (interface{}, error) {
 			return handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
 				Check: &iamsdk.AdminCheckRequest{
-					AdminID: "admin-1", TenantID: "t-1", Permission: string(iam.PermUserRead),
+					AdminID: "30021", TenantID: "t-1", Permission: string(iam.PermUserRead),
 				},
 			})
 		},
@@ -1337,11 +1344,11 @@ func TestAdminHandlers_EmptyTenantSubjectIsRefused(t *testing.T) {
 		t.Fatalf("an unbound host listing must succeed: %v", err)
 	}
 	for _, a := range out.(*iamsdk.ListAdminAssignmentsResponse).Assignments {
-		if a.AdminID == "admin-2" {
+		if a.AdminID == "30022" {
 			t.Errorf("the refused grant was stored: %+v", a)
 		}
 	}
-	still, err := svc.admin.GetActiveImpersonations(context.Background(), "admin-1")
+	still, err := svc.admin.GetActiveImpersonations(context.Background(), 30021)
 	if err != nil {
 		t.Fatalf("GetActiveImpersonations failed: %v", err)
 	}
@@ -1355,11 +1362,11 @@ func TestAdminHandlers_EmptyTenantSubjectIsRefused(t *testing.T) {
 func TestHandleIAMAdminStartImpersonation_SystemScopeMayCrossTenants(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
 	ctx := auth.SubjectIntoContext(context.Background(),
-		interfaces.Subject{ID: "platform-admin", TenantID: qrdbsdk.SystemTenantID, Authenticated: true})
+		interfaces.Subject{ID: "platform-admin", UserID: 30070, TenantID: qrdbsdk.SystemTenantID, Authenticated: true})
 
 	if _, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID: "platform-admin", TenantID: "t-1", RoleID: string(iam.AdminRoleSuperAdmin),
+			AdminID: "30070", TenantID: "t-1", RoleID: string(iam.AdminRoleSuperAdmin),
 		},
 	}); err != nil {
 		t.Fatalf("seeding the platform admin's grant failed: %v", err)
@@ -1374,8 +1381,8 @@ func TestHandleIAMAdminStartImpersonation_SystemScopeMayCrossTenants(t *testing.
 		t.Fatalf("a system-scope admin must be able to impersonate into a tenant: %v", err)
 	}
 	session := out.(*iamsdk.ImpersonationSession)
-	if session.TenantID != "t-1" || session.AdminID != "platform-admin" {
-		t.Errorf("session = %q/%q, want platform-admin in t-1", session.AdminID, session.TenantID)
+	if session.TenantID != "t-1" || session.AdminID != "30070" {
+		t.Errorf("session = %q/%q, want admin 30070 in t-1", session.AdminID, session.TenantID)
 	}
 }
 
@@ -1388,7 +1395,7 @@ func TestHandleIAMAdminCreateAssignment_TenantScopedCannotGrantGlobally(t *testi
 	// An omitted scope is filled from the subject rather than left global.
 	out, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID: "admin-1", RoleID: string(iam.AdminRoleTenantAdmin),
+			AdminID: "30021", RoleID: string(iam.AdminRoleTenantAdmin),
 		},
 	})
 	if err != nil {
@@ -1405,7 +1412,7 @@ func TestHandleIAMAdminCreateAssignment_TenantScopedCannotGrantGlobally(t *testi
 	// Naming a different tenant is refused outright.
 	if _, err := handleIAMAdminCreateAssignment(ctx, svc, &embeddedCreateAssignmentEnvelope{
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
-			AdminID: "admin-1", TenantID: "t-2", RoleID: string(iam.AdminRoleTenantAdmin),
+			AdminID: "30021", TenantID: "t-2", RoleID: string(iam.AdminRoleTenantAdmin),
 		},
 	}); err == nil {
 		t.Fatal("expected granting into another tenant to be refused")
@@ -1415,11 +1422,11 @@ func TestHandleIAMAdminCreateAssignment_TenantScopedCannotGrantGlobally(t *testi
 // The tenant a permission answer is computed in is the caller's own.
 func TestHandleIAMAdminCheckPermission_TenantPinnedForScopedSubject(t *testing.T) {
 	svc := newAuthorizedAdminTestService(t)
-	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "admin-1", TenantID: "t-1"})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "30021", UserID: 30021, TenantID: "t-1"})
 
 	_, err := handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
 		Check: &iamsdk.AdminCheckRequest{
-			AdminID: "admin-2", TenantID: "t-2", Permission: string(iam.PermUserRead),
+			AdminID: "30022", TenantID: "t-2", Permission: string(iam.PermUserRead),
 		},
 	})
 	if err == nil {
@@ -1432,7 +1439,7 @@ func TestHandleIAMAdminCheckPermission_TenantPinnedForScopedSubject(t *testing.T
 	// AdminID stays free: naming the admin being inspected is the point.
 	if _, err := handleIAMAdminCheckPermission(ctx, svc, &embeddedAdminCheckEnvelope{
 		Check: &iamsdk.AdminCheckRequest{
-			AdminID: "admin-2", Permission: string(iam.PermUserRead),
+			AdminID: "30022", Permission: string(iam.PermUserRead),
 		},
 	}); err != nil {
 		t.Fatalf("inspecting another admin in the caller's own tenant must be allowed: %v", err)

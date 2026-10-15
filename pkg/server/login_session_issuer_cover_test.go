@@ -201,9 +201,8 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 		t.Fatalf("GetUserByUsername: %v", err)
 	}
 	subject := auth.SubjectFromIdentity(resolved)
-	wantUserID := strconv.FormatUint(seeded.ID, 10)
-	if subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != wantUserID {
-		t.Fatalf("resolved subject %+v, want username kind with UserID %q", subject, wantUserID)
+	if subject.IDKind != interfaces.SubjectIDUsername || subject.UserID != seeded.ID {
+		t.Fatalf("resolved subject %+v, want username kind with UserID %d", subject, seeded.ID)
 	}
 }
 
@@ -226,17 +225,16 @@ func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByUsername(%s): %v", adminID, err)
 	}
-	numericID := strconv.FormatUint(numeric.ID, 10)
 	issuer := newOIDCSessionIssuer()
 	issuer.SetProvider(provider)
 
 	cases := map[string]struct {
 		sub      string
 		wantKind interfaces.SubjectIDKind
-		wantUser string
+		wantUser uint64
 	}{
-		"numeric username": {sub: adminID, wantKind: interfaces.SubjectIDUsername, wantUser: numericID},
-		"email":            {sub: "admin@example.test", wantKind: interfaces.SubjectIDEmail, wantUser: adminID},
+		"numeric username": {sub: adminID, wantKind: interfaces.SubjectIDUsername, wantUser: numeric.ID},
+		"email":            {sub: "admin@example.test", wantKind: interfaces.SubjectIDEmail, wantUser: admin.ID},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -250,7 +248,7 @@ func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
 			}
 			subject := auth.SubjectFromIdentity(resolved)
 			if subject.ID != tc.sub || subject.IDKind != tc.wantKind || subject.UserID != tc.wantUser {
-				t.Fatalf("subject = %+v, want ID %q, IDKind %v, UserID %q", subject, tc.sub, tc.wantKind, tc.wantUser)
+				t.Fatalf("subject = %+v, want ID %q, IDKind %v, UserID %d", subject, tc.sub, tc.wantKind, tc.wantUser)
 			}
 		})
 	}

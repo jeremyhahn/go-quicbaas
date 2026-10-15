@@ -311,3 +311,20 @@ func requireUserIDParam(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 	}
 	return id, true
 }
+
+// optionalUserIDQuery reads an optional user id query parameter. An absent
+// value yields 0 (no filter); an invalid one writes a 400 response and
+// returns false.
+func optionalUserIDQuery(w http.ResponseWriter, r *http.Request, name string) (uint64, bool) {
+	value := r.URL.Query().Get(name)
+	if value == "" {
+		return 0, true
+	}
+	id, err := parseUserIDParam(value)
+	if err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, err.Error()))
+		return 0, false
+	}
+	return id, true
+}

@@ -88,7 +88,8 @@ func TestOrchestratorCostSettings_OverGRPC(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0.2, fake.lastSet.GetElectricityPricePerKwh())
 	assert.Equal(t, 12.0, fake.lastSet.GetEnginePowerWatts()["openvino"])
-	got = resp.(*orchestrator.CostSettings) //nolint:errcheck // asserted above for the same handler
+	got, ok = resp.(*orchestrator.CostSettings)
+	require.Truef(t, ok, "response is %T", resp)
 	require.NotNil(t, got.Settings.ElectricityPricePerKWh)
 
 	_, err = h.handleRequest(ctx, "quicbaas.Orchestrator", "GetCostSettings", &orchestrator.SetCostSettingsRequest{})

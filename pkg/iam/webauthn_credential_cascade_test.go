@@ -809,7 +809,7 @@ func newDueDeletionRequest(t *testing.T, mgr *GDPRManager, tenantID string, user
 	t.Helper()
 	ctx := context.Background()
 
-	request, err := mgr.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "",
+	request, err := mgr.RequestDeletion(ctx, tenantID, userID, userID, "",
 		deleteCategories, preserveCategories, 1)
 	if err != nil {
 		t.Fatalf("RequestDeletion: %v", err)
@@ -1010,7 +1010,7 @@ func TestGDPRErasure_RejectsPreserveCredentialsWithProfileDeletion(t *testing.T)
 	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
-	_, err := mgr.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "",
+	_, err := mgr.RequestDeletion(ctx, tenantID, userID, userID, "",
 		[]string{"profile"}, []string{"credentials"}, 0)
 	if err == nil {
 		t.Fatal("deleting the profile while preserving credentials must be refused, not resolved silently")
@@ -1123,7 +1123,7 @@ func TestGDPRErasure_ConflictOnlyWhereCredentialsCanExist(t *testing.T) {
 	const tenantID, userID = "tenant1", 11
 	createTestUser(t, mgr.deps.UserStorage, tenantID, userID)
 
-	if _, err := mgr.RequestDeletion(ctx, tenantID, userID, strconv.FormatUint(userID, 10), "",
+	if _, err := mgr.RequestDeletion(ctx, tenantID, userID, userID, "",
 		[]string{"profile"}, []string{"credentials"}, 1); err != nil {
 		t.Fatalf("without a credential store the request preserves nothing and must be accepted: %v", err)
 	}

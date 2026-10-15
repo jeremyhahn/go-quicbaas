@@ -1467,7 +1467,7 @@ func TestAdminManager_CreateAssignment_InvalidRole(t *testing.T) {
 
 	// Create assignment with invalid role
 	_, err = mgr.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user-1",
+		UserID:    1,
 		AdminRole: AdminRole("invalid-role"), // Invalid role
 		GrantedBy: "admin-1",
 	})
@@ -1497,7 +1497,7 @@ func TestAdminManager_CreateAssignment_MissingUserID(t *testing.T) {
 
 	// Create assignment with missing user ID
 	_, err = mgr.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "", // Missing user ID
+		UserID:    0, // Missing user ID
 		AdminRole: AdminRoleTenantAdmin,
 		GrantedBy: "admin-1",
 	})
@@ -1527,7 +1527,7 @@ func TestAdminManager_CreateAssignment_MissingGrantedBy(t *testing.T) {
 
 	// Create assignment with missing granted by
 	_, err = mgr.CreateAssignment(ctx, CreateAdminAssignmentOptions{
-		UserID:    "user-1",
+		UserID:    1,
 		AdminRole: AdminRoleTenantAdmin,
 		GrantedBy: "", // Missing granted by
 	})
@@ -1565,7 +1565,7 @@ func TestAdminManager_StartImpersonation_NoAuthenticatedCaller(t *testing.T) {
 	ctx := context.Background()
 
 	_, err = mgr.StartImpersonation(ctx, &StartImpersonationOptions{
-		TargetUserID: "target-1",
+		TargetUserID: 40021,
 		TenantID:     "tenant-1",
 		Reason:       "Testing",
 	})
@@ -1591,8 +1591,8 @@ func TestAdminManager_StartImpersonation_MissingTargetUserID(t *testing.T) {
 		t.Fatalf("NewAdminManager failed: %v", err)
 	}
 
-	_, err = mgr.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
-		TargetUserID: "", // Missing
+	_, err = mgr.StartImpersonation(ctxWithActor(30021), &StartImpersonationOptions{
+		TargetUserID: 0, // Missing
 		TenantID:     "tenant-1",
 		Reason:       "Testing",
 	})
@@ -1618,8 +1618,8 @@ func TestAdminManager_StartImpersonation_MissingReason(t *testing.T) {
 		t.Fatalf("NewAdminManager failed: %v", err)
 	}
 
-	_, err = mgr.StartImpersonation(ctxWithActor("admin-1"), &StartImpersonationOptions{
-		TargetUserID: "target-1",
+	_, err = mgr.StartImpersonation(ctxWithActor(30021), &StartImpersonationOptions{
+		TargetUserID: 40021,
 		TenantID:     "tenant-1",
 		Reason:       "", // Missing
 	})

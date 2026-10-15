@@ -363,8 +363,13 @@ func (r *ToolRegistry) executeIAMAdminAssignmentCreate(ctx context.Context, args
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
+
 	opts := iam.CreateAdminAssignmentOptions{
-		UserID:    getString(args, "user_id"),
+		UserID:    userID,
 		AdminRole: iam.AdminRole(getString(args, "admin_role")),
 		GrantedBy: getString(args, "granted_by"),
 	}
@@ -588,8 +593,13 @@ func (r *ToolRegistry) executeIAMAdminAssignmentList(ctx context.Context, args m
 		activeOnly = active
 	}
 
+	userID, err := getOptionalUserIDArg(args, "user_id")
+	if err != nil {
+		return nil, err
+	}
+
 	opts := iam.ListAdminAssignmentsOptions{
-		UserID:     getString(args, "user_id"),
+		UserID:     userID,
 		TenantID:   getString(args, "tenant_id"),
 		AdminRole:  iam.AdminRole(getString(args, "admin_role")),
 		ActiveOnly: activeOnly,
@@ -614,8 +624,13 @@ func (r *ToolRegistry) executeIAMAdminCheckPermission(ctx context.Context, args 
 		return nil, err
 	}
 
+	userID, err := getUserID(args)
+	if err != nil {
+		return nil, err
+	}
+
 	req := &iam.AdminCheckRequest{
-		UserID:       getString(args, "user_id"),
+		UserID:       userID,
 		Permission:   iam.AdminPermission(getString(args, "permission")),
 		TenantID:     getString(args, "tenant_id"),
 		ResourceType: getString(args, "resource_type"),
@@ -647,8 +662,13 @@ func (r *ToolRegistry) executeIAMImpersonationStart(ctx context.Context, args ma
 	// No admin_user_id from args: the acting admin is the authenticated
 	// caller, resolved by the manager from the verified principal in
 	// context (go-quicbaas#383).
+	targetUserID, err := getUserIDArg(args, "target_user_id")
+	if err != nil {
+		return nil, err
+	}
+
 	opts := &iam.StartImpersonationOptions{
-		TargetUserID: getString(args, "target_user_id"),
+		TargetUserID: targetUserID,
 		TenantID:     getString(args, "tenant_id"),
 		Reason:       getString(args, "reason"),
 		Duration:     time.Duration(durationMinutes) * time.Minute,
@@ -683,7 +703,12 @@ func (r *ToolRegistry) executeIAMImpersonationList(ctx context.Context, args map
 		return nil, err
 	}
 
-	sessions, err := adminMgr.GetActiveImpersonations(ctx, getString(args, "admin_user_id"))
+	adminUserID, err := getUserIDArg(args, "admin_user_id")
+	if err != nil {
+		return nil, err
+	}
+
+	sessions, err := adminMgr.GetActiveImpersonations(ctx, adminUserID)
 	if err != nil {
 		return nil, err
 	}

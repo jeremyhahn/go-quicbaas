@@ -84,8 +84,8 @@ func TestClient_RotateSessionAccount_InvalidInput(t *testing.T) {
 	})
 
 	t.Run("nil context", func(t *testing.T) {
-		//nolint:staticcheck // deliberately exercising the nil-context guard
-		_, err := c.RotateSessionAccount(nil, &RotateSessionAccountRequest{SessionID: "s1"})
+		var nilCtx context.Context
+		_, err := c.RotateSessionAccount(nilCtx, &RotateSessionAccountRequest{SessionID: "s1"})
 		require.Error(t, err)
 	})
 

@@ -995,7 +995,18 @@ MCP surfaces (go-quicbaas#203). A claim is either enforced by a test that
 drives the server with an independent client, or its sentence was narrowed to
 what is true. The OIDC/OAuth2 leg is `pkg/api/rest/oidc_interop_test.go`: it
 serves the REST router on a loopback listener and drives it with
-`golang.org/x/oauth2` and `lestrrat-go/jwx/v2`.
+`golang.org/x/oauth2` and `lestrrat-go/jwx/v2`. The MCP leg is
+`pkg/api/mcp/interop_official_client_test.go`: it serves the module tool
+surface (`apimodule.RegisterMCP` on an mcp-go server built with go-qrdb's
+options) over streamable HTTP on a loopback listener and drives it with the
+official MCP Go SDK, `github.com/modelcontextprotocol/go-sdk`. It does not
+cover stdio or go-qrdb's mTLS and authorization middleware. The gRPC leg is
+`pkg/api/grpc/interop_connect_test.go`: it serves the gRPC facade behind the
+interceptor chain `startGRPCServer` composes, authorization included, over TLS
+on a loopback listener, and drives it with `connectrpc.com/connect` in gRPC
+mode, which implements the wire protocol on `net/http` and shares no code with
+grpc-go. The node's network listener is go-qrdb's unified server, which the leg
+does not start.
 
 | Claim | File | Enforced by / narrowed |
 |---|---|---|
@@ -1010,6 +1021,7 @@ serves the REST router on a loopback listener and drives it with
 | "Full authorization server" | `README.md` | Narrowed to the grants that work |
 | MCP authorization spec / OAuth 2.1 with PKCE | `docs/oauth2-oidc/api.md`, `docs/mcp-server/api.md` | Narrowed: token endpoint only until the authorize gap closes |
 | RFC 8705, 9449, 8707, 7591, 9728 | `docs/oauth2-oidc/api.md` (RFC References) | Narrowed: no external client exercises them yet |
-| MCP works with Claude, Codex, Gemini, Claude Desktop | `README.md`, `docs/mcp-server/api.md` | Narrowed: only mark3labs/mcp-go has been run against the server |
-| gRPC over TLS with `h2`, standard status codes | `docs/multiprotocol-api/architecture.md`, `docs/multiprotocol-api/api.md` | Narrowed: exercised by the Go client only |
+| An independent MCP client completes initialize, tools/list and tools/call over streamable HTTP | `README.md`, `docs/mcp-server/api.md` | `TestOfficialClient_Initialize`, `TestOfficialClient_ListTools`, `TestOfficialClient_CallTool`, `TestOfficialClient_CallUnknownTool` |
+| MCP works with Claude, Codex, Gemini, Claude Desktop | `README.md`, `docs/mcp-server/api.md` | Narrowed: only mark3labs/mcp-go and the official MCP Go SDK have been run against the server, and stdio only with mark3labs/mcp-go |
+| gRPC over TLS with `h2`, standard status codes | `docs/multiprotocol-api/architecture.md`, `docs/multiprotocol-api/api.md` | `TestGRPCInterop_BaselineHealth` (TLS 1.3, `h2`), `TestGRPCInterop_AuthenticatedGet`, `TestGRPCInterop_RefusedCallsCarryStandardStatus` and `TestGRPCInterop_WatchStreamRefusedWithoutToken` (Unauthenticated, PermissionDenied), `TestGRPCInterop_UnknownMethodIsUnimplemented`, `TestGRPCInterop_WatchStreamEndsWithOKTrailer` |
 | QUIC transport served on `:10443`, with performance figures | `docs/multiprotocol-api/architecture.md` | Narrowed: nothing serves HTTP/3, so there is no server to measure |

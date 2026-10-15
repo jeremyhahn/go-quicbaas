@@ -54,8 +54,8 @@ func TestGetSessionConversation_HappyPath(t *testing.T) {
 func TestGetSessionConversation_Validation(t *testing.T) {
 	c := NewClient(failTransport())
 
-	//nolint:staticcheck // intentionally nil ctx
-	_, err := c.GetSessionConversation(nil, &GetSessionConversationRequest{SessionID: "s1"})
+	var nilCtx context.Context
+	_, err := c.GetSessionConversation(nilCtx, &GetSessionConversationRequest{SessionID: "s1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context is required")
 

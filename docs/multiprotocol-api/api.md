@@ -1976,7 +1976,11 @@ func main() {
 
 ### Error Handling
 
-gRPC errors use the standard gRPC status codes (so far exercised by the Go client only):
+gRPC errors use the standard gRPC status codes. An independent client
+(`connectrpc.com/connect` in gRPC mode) reads OK, Unauthenticated,
+PermissionDenied and Unimplemented from the server, and an OK trailer at the end
+of a server stream (`pkg/api/grpc/interop_connect_test.go`); other codes are so
+far exercised by the Go client only:
 
 ```go
 import (

@@ -412,7 +412,7 @@ func TestShardedClient_ForShard_EmbeddedReturnsError(t *testing.T) {
 		// "address is required for embedded qrdb transport" error from the
 		// transport factory. Node-backed clients short-circuit this via nodeClient.
 		sc := NewShardedClient(nil)
-		defer sc.Close() //nolint:errcheck
+		t.Cleanup(func() { assert.NoError(t, sc.Close()) })
 		client, err := sc.ForShard(1)
 		require.Error(t, err)
 		assert.Nil(t, client)

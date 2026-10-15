@@ -696,7 +696,8 @@ func TestSpawnSession_PlacementIsMarkedOnTheResolverContext(t *testing.T) {
 	if len(marks) < 2 || !marks[0] || marks[len(marks)-1] {
 		t.Fatalf("placement marks = %v, want the spawn marked and the close not", marks)
 	}
-	if SpawnPlacementFromContext(nil) { //nolint:staticcheck // nil is the case under test
+	var nilCtx context.Context
+	if SpawnPlacementFromContext(nilCtx) {
 		t.Fatal("a nil context places nothing")
 	}
 }

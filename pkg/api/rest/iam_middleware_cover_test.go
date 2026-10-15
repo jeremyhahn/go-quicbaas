@@ -50,7 +50,7 @@ func TestImpersonationMiddleware_ValidSession(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      50100,
 		AdminRole:   iam.AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{iam.PermUserImpersonate},
@@ -59,9 +59,9 @@ func TestImpersonationMiddleware_ValidSession(t *testing.T) {
 	require.NoError(t, err)
 
 	session, err := mockSvc.adminManager.StartImpersonation(
-		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		ctxWithTestUser(ctx, 50100, "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "50001",
+			TargetUserID: 50001,
 			TenantID:     "tenant_1",
 			Reason:       "support",
 			Duration:     time.Hour,
@@ -92,7 +92,7 @@ func TestImpersonationAuditMiddleware_Records(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := mockSvc.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:      "admin_user",
+		UserID:      50100,
 		AdminRole:   iam.AdminRoleSuperAdmin,
 		TenantIDs:   []string{"tenant_1"},
 		Permissions: []iam.AdminPermission{iam.PermUserImpersonate},
@@ -101,9 +101,9 @@ func TestImpersonationAuditMiddleware_Records(t *testing.T) {
 	require.NoError(t, err)
 
 	session, err := mockSvc.adminManager.StartImpersonation(
-		ctxWithTestSubject(ctx, "admin_user", "tenant_1"),
+		ctxWithTestUser(ctx, 50100, "tenant_1"),
 		&iam.StartImpersonationOptions{
-			TargetUserID: "50002", TenantID: "tenant_1",
+			TargetUserID: 50002, TenantID: "tenant_1",
 			Reason: "support", Duration: time.Hour,
 		})
 	require.NoError(t, err)

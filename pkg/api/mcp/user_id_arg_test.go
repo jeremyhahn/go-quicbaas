@@ -67,6 +67,47 @@ func TestGetUserID_RefusesANonID(t *testing.T) {
 	}
 }
 
+func TestGetUserIDArg_NamesTheArgumentItRefuses(t *testing.T) {
+	for _, value := range []string{"", "alice", "18446744073709551616", "0"} {
+		t.Run(value, func(t *testing.T) {
+			got, err := getUserIDArg(map[string]interface{}{"target_user_id": value}, "target_user_id")
+			assert.Zero(t, got)
+
+			var idErr *UserIDArgError
+			require.ErrorAs(t, err, &idErr)
+			assert.Equal(t, "target_user_id", idErr.Arg)
+			assert.Equal(t, value, idErr.Value)
+		})
+	}
+
+	got, err := getUserIDArg(map[string]interface{}{"requested_by": "9007199254740993"}, "requested_by")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1<<53+1), got)
+}
+
+func TestGetOptionalUserIDArg_AbsentIsZeroAndPresentIsParsed(t *testing.T) {
+	got, err := getOptionalUserIDArg(map[string]interface{}{}, "user_id")
+	require.NoError(t, err)
+	assert.Zero(t, got, "an absent filter means no filter")
+
+	got, err = getOptionalUserIDArg(map[string]interface{}{"user_id": "9007199254740993"}, "user_id")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1<<53+1), got)
+}
+
+func TestGetOptionalUserIDArg_RefusesAPresentNonID(t *testing.T) {
+	for _, value := range []string{"alice", "18446744073709551616", "0"} {
+		t.Run(value, func(t *testing.T) {
+			got, err := getOptionalUserIDArg(map[string]interface{}{"user_id": value}, "user_id")
+			assert.Zero(t, got)
+
+			var idErr *UserIDArgError
+			require.ErrorAs(t, err, &idErr)
+			assert.Equal(t, value, idErr.Value)
+		})
+	}
+}
+
 // TestWebAuthnTools_RefuseANonNumericUserIDBeforeTheService proves a tool
 // rejects a malformed id at the edge and never reaches the service.
 func TestWebAuthnTools_RefuseANonNumericUserIDBeforeTheService(t *testing.T) {
