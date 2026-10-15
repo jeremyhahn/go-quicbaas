@@ -105,6 +105,7 @@ DC is [Dev complete](../../milestone/15): every SPEC row plus every seam row go-
 - **hardware-backend-composition** — device backend adapters registered in the composition, the trusted-firmware go-xkms adapter first; consumer go-trusted-platform through the SDK — [#1321](../../pulls/1321) — open
 - **declarative-placement** — declarative workload placement — [#28](../../issues/28) — open
 - **orchestration-volumes** — go-blockstore volumes in container orchestration — [#195](../../issues/195) — open
+- **transparency-log** — append go-quicbaas's own records to go-xkms's transparency log, re-exported through `sdk/go`; one seam in three rows, built bottom-up: go-qrdb verifiable log → go-xkms transparency log → go-quicbaas appender — DC: [#1341](../../issues/1341) — blocked: waits on go-xkms's transparency log
 
 ## Future
 
