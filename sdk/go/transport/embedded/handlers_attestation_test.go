@@ -230,13 +230,13 @@ func TestTransport_AttestationAttestContainer(t *testing.T) {
 
 	resp, err := tr.Request(context.Background(), "quicbaas.Attestation", "AttestContainer",
 		&attestationclient.AttestContainerRequest{
-			DeviceID:     "device-1",
-			ContainerID:  "container-1",
-			Image:        "alpine@sha256:abc",
-			ImageDigest:  "sha256:abc",
-			TrustLabel:   "prod",
-			TrustLevel:   "measured",
-			ExpectedPCRs: map[uint32][]byte{7: {0x01}},
+			DeviceID:        "device-1",
+			ContainerID:     "container-1",
+			Image:           "alpine@sha256:abc",
+			ImageDigest:     "sha256:abc",
+			TrustLabel:      "prod",
+			TrustLevel:      "measured",
+			ReferenceValues: "golden",
 		})
 	require.NoError(t, err)
 
@@ -253,6 +253,7 @@ func TestTransport_AttestationAttestContainer(t *testing.T) {
 	require.NotNil(t, fake.lastAttest)
 	assert.Equal(t, "device-1", fake.lastAttest.DeviceID)
 	assert.Equal(t, "measured", fake.lastAttest.TrustLevel)
+	assert.Equal(t, "golden", fake.lastAttest.ReferenceValues)
 }
 
 func TestTransport_AttestationAttestContainer_Errors(t *testing.T) {

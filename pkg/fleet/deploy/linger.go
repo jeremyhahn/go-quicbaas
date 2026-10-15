@@ -42,9 +42,9 @@ import (
 // An unreadable Linger property is treated as "off": loginctl declining
 // to answer is not evidence that the manager lingers, and running
 // enable-linger a second time is harmless.
-func EnsureLinger(ctx context.Context, sshClient *SSHClient, user string) error {
+func EnsureLinger(ctx context.Context, target Target, user string) error {
 	user = strings.TrimSpace(user)
-	if sshClient == nil {
+	if target == nil {
 		return &LingerNotEnabledError{User: user, Cause: errClosed}
 	}
 	if user == "" {
@@ -54,11 +54,11 @@ func EnsureLinger(ctx context.Context, sshClient *SSHClient, user string) error 
 		}
 	}
 
-	if lingerEnabled(ctx, sshClient, user) {
+	if lingerEnabled(ctx, target, user) {
 		return nil
 	}
 
-	if _, _, err := sshClient.Exec(ctx, "sudo -n "+lingerEnableCommand(user)); err != nil {
+	if _, _, err := target.Exec(ctx, "sudo -n "+lingerEnableCommand(user)); err != nil {
 		return &LingerNotEnabledError{
 			User:    user,
 			Command: "sudo loginctl enable-linger " + user,
@@ -71,8 +71,8 @@ func EnsureLinger(ctx context.Context, sshClient *SSHClient, user string) error 
 // lingerEnabled reports whether loginctl says the user already lingers.
 // A failed probe or an unexpected reply reports false; see EnsureLinger
 // for why that is the safe direction.
-func lingerEnabled(ctx context.Context, sshClient *SSHClient, user string) bool {
-	stdout, _, err := sshClient.Exec(ctx, "loginctl show-user "+shellQuote(user)+" -p Linger")
+func lingerEnabled(ctx context.Context, target Target, user string) bool {
+	stdout, _, err := target.Exec(ctx, "loginctl show-user "+shellQuote(user)+" -p Linger")
 	if err != nil {
 		return false
 	}

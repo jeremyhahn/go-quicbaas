@@ -229,10 +229,12 @@ type ContainerSpec struct {
 	// attestation verifier.
 	ImageSignature *ImageSignature `json:"image_signature,omitempty"`
 
-	// ExpectedPCRs is the golden PCR set a Tier 1 host quote is checked
-	// against, keyed by PCR index. An empty map means no PCR is checked,
-	// which is only valid below TrustLevelAttested.
-	ExpectedPCRs map[uint32][]byte `json:"expected_pcrs,omitempty"`
+	// ReferenceValues names the signed reference values the Verifier
+	// appraises a Tier 1 host quote against (see
+	// Security().Attestation().PutReferenceValues). The runtime quotes the
+	// PCRs those reference values cover. Required at TrustLevelAttested
+	// and above.
+	ReferenceValues string `json:"reference_values,omitempty"`
 
 	// TrustLevel is the integrity tier required of this container. The zero
 	// value (TrustLevelDefault) defers to the server's TrustPolicy, which
@@ -252,7 +254,8 @@ type ContainerSpec struct {
 	MeasurementPCR int `json:"measurement_pcr,omitempty"`
 
 	// MeasurementBank names the PCR bank hash algorithm used for measured
-	// launch: sha1, sha256, sha384 or sha512. Empty resolves to sha256.
+	// launch: sha256, sha384 or sha512. Empty resolves to sha256. sha1 is
+	// refused: the Verifier does not appraise a SHA-1 quote.
 	MeasurementBank string `json:"measurement_bank,omitempty"`
 }
 

@@ -326,8 +326,8 @@ message AttestContainerRequest {
   // TrustLevel names the required tier: "pinned", "attested" or "measured".
   string trust_level = 6;
 
-  // ExpectedPcrs is the golden PCR set the host quote is checked against.
-  map<uint32, bytes> expected_pcrs = 7;
+  reserved 7;
+  reserved "expected_pcrs";
 
   // MeasurementPcr is the PCR index carrying the launch measurement.
   int32 measurement_pcr = 8;
@@ -337,6 +337,11 @@ message AttestContainerRequest {
 
   // Nonce is caller-supplied qualifying data.
   bytes nonce = 10;
+
+  // ReferenceValues names the stored reference values (PutReferenceValues)
+  // the Verifier appraises the host quote against. Required at the
+  // "attested" tier and above.
+  string reference_values = 11;
 }
 
 // AttestContainerResponse is the attestation evidence produced for a

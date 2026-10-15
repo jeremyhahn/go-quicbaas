@@ -162,7 +162,8 @@ func TestBuildDeploySpec_CarriesCapacityAndDefaults(t *testing.T) {
 // TestDeployFlagAppliers_CoverEveryTargetFlag: a flag without an applier
 // would be silently ignored whenever --spec is given.
 func TestDeployFlagAppliers_CoverEveryTargetFlag(t *testing.T) {
-	notSpecFields := map[string]bool{"spec": true, "preflight": true, "skip-preflight": true, "purge-workspaces": true}
+	// --local is not a spec key: resolveDeploySpec reads it under --spec too.
+	notSpecFields := map[string]bool{"spec": true, "preflight": true, "skip-preflight": true, "purge-workspaces": true, "local": true}
 	for _, build := range []func() *cobra.Command{newFleetDeployCommand, newFleetUndeployCommand, newFleetStopCommand, newFleetStartCommand} {
 		resetDeployFlags(t)
 		cmd := build()
@@ -188,8 +189,8 @@ func TestSpecRelaxesRequiredFlags(t *testing.T) {
 	require.NoError(t, cmd.PreRunE(cmd, nil))
 	require.NoError(t, cmd.ValidateRequiredFlags())
 
-	stop := underRoot(t, newFleetStopCommand(), "--spec", writeNodeSpec(t, nodeSpecBody))
-	require.NoError(t, stop.PreRunE(stop, nil))
+	// A lifecycle verb needs no --ssh: --spec or --local names the node.
+	stop := underRoot(t, newFleetStopCommand(), "--local")
 	require.NoError(t, stop.ValidateRequiredFlags())
 }
 

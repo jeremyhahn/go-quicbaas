@@ -1,13 +1,13 @@
 # Agent Fleet — CLI Reference
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Every `quicbaas fleet` verb, checked against `cmd/quicbaas/fleet*.go`.
 > Conflicts with this document are defects.
 
 ```
 quicbaas fleet register|list|status|remove|heartbeat   registry operations
 quicbaas fleet serve                                   run the node daemon
-quicbaas fleet deploy|stop|start|undeploy              manage a node over SSH
+quicbaas fleet deploy|stop|start|undeploy              manage a node over SSH (deploy --local: this host)
 ```
 
 There is no `inspect`, `events`, `update`, `delete`, `disable` or `enable`
@@ -85,13 +85,14 @@ the global `--tenant` or the spec's `tenant`.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--server` | | Control plane URL the node dials. |
-| `--bind` | `0.0.0.0:9091` | Node runtime bind address. A fixed numeric port is required when `--wait-online` is non-zero. |
+| `--bind` | advertised host, port `9091` | Node runtime bind address; see [Bind address](#bind-address). A fixed numeric port is required when `--wait-online` is non-zero. |
 | `--backend` | | Backend to serve; repeatable. |
 | `--binary` | `bin/quicbaas-agent` | Binary to upload. |
 | `--systemd` | `auto` | `auto`, `yes` or `no` (nohup launcher). |
 | `--max-concurrent-jobs` | | Capacity. |
 | `--preflight` | | Run the checks only. |
 | `--skip-preflight` | | Deploy without the checks. |
+| `--local` | | Install on this host with no ssh; see [Local install](#local-install). |
 | `--wait-online` | `2m` | Wait for registry and port; `0` skips. |
 
 Steps: preflight; generate an ECDSA P-256 key on the CLI host and have the
@@ -116,6 +117,48 @@ calls the same `service.FleetDeployService`. The TypeScript SDK's
 `orchestrator.deployFleetNode` throws `DeployNotSupportedError` on every
 transport except the desktop (Wails) one.
 
+### Local install
+
+```sh
+quicbaas fleet deploy --local --server https://quicbaas.example.com:8443 \
+  --tenant acme --max-concurrent-jobs 4
+```
+
+`--local` installs the node on the host the CLI runs on, as the current
+user, with no ssh and no sshd: a node co-located with quicbaasd. Commands run
+under `/bin/sh` and files are staged beside their destination and renamed into
+place, as the sftp upload does. Everything else is the ssh deploy's own: the
+same preflight, the same rendered unit or nohup launcher, the same
+`--systemd auto|yes|no`. The preflight skips only the ssh, host-key and
+deploy-key checks.
+
+`--local` is refused with `LocalSSHConflictError` alongside `--ssh`, a spec
+that names a `host`, or any ssh setting (`ssh_user`, `ssh_key_name`,
+`ssh_password`, `insecure_host_key`). The node's name is the advertised host
+of this node's config, `raft.raft_address`.
+
+The install primitives take `deploy.Target`; `*SSHClient` and `LocalTarget`
+implement it. Only the dial is ssh-only: the host-key pin, the deploy key and
+their preflight checks.
+
+### Bind address
+
+`--bind`, and a spec's `node_bind`, default to the node's advertised host on
+port `9091`, never to a wildcard:
+
+| Deploy | Default bind |
+|---|---|
+| ssh, `--ssh alice@node01` or spec `host: node01` | `node01:9091` |
+| `--local` | host of `raft.raft_address`, port `9091` |
+
+A wildcard bind exposes the runtime, which the control plane drives, on every
+interface of the node, including ones the operator never meant to serve. The
+advertised host is the address the control plane already dials, so binding it
+serves exactly that route. A `--local` deploy whose `raft.raft_address` has a
+wildcard or no host fails with `RaftAdvertisedHostError`, the same check the
+server applies, rather than guess. To listen on every interface, ask for it:
+`--bind 0.0.0.0:9091`.
+
 ### SSH keys and host pins
 
 The deploy uses a stored key (`quicbaas ssh keys generate`) and a pinned
@@ -139,6 +182,17 @@ spec never carries a password.
 | `fleet undeploy` | `--purge-workspaces` | Remove the install and the registration; the purge refuses `/`, the home directory or an ancestor of it (`PurgeRefusedError`). |
 
 The node's registry ID is derived from the certificate read from the node.
+Each takes the deploy's target flags, `--local` included: a node installed
+with `deploy --local` is managed on this host with no ssh, and the same
+`LocalSSHConflictError` refusals apply. A spec with no `host` resolves only
+under `--local`; without it the verb fails with `InvalidSpecError` on `host`.
+
+```sh
+quicbaas fleet stop --local
+quicbaas fleet start --local
+quicbaas fleet undeploy --local --purge-workspaces
+```
+
 Behaviour and failure types are in [user.md](user.md#lifecycle).
 
 ## Embedded node

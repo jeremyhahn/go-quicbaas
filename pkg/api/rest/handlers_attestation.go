@@ -111,16 +111,16 @@ type AttestationVerifyChainRESTResponse struct {
 // AttestContainerRESTRequest is the JSON body for
 // POST /api/v1/attestation/attest-container.
 type AttestContainerRESTRequest struct {
-	DeviceID        string            `json:"device_id,omitempty"`
-	ContainerID     string            `json:"container_id,omitempty"`
-	Image           string            `json:"image"`
-	ImageDigest     string            `json:"image_digest,omitempty"`
-	TrustLabel      string            `json:"trust_label,omitempty"`
-	TrustLevel      string            `json:"trust_level,omitempty"`
-	ExpectedPCRs    map[uint32][]byte `json:"expected_pcrs,omitempty"`
-	MeasurementPCR  int               `json:"measurement_pcr,omitempty"`
-	MeasurementBank string            `json:"measurement_bank,omitempty"`
-	Nonce           []byte            `json:"nonce,omitempty"`
+	DeviceID        string `json:"device_id,omitempty"`
+	ContainerID     string `json:"container_id,omitempty"`
+	Image           string `json:"image"`
+	ImageDigest     string `json:"image_digest,omitempty"`
+	TrustLabel      string `json:"trust_label,omitempty"`
+	TrustLevel      string `json:"trust_level,omitempty"`
+	ReferenceValues string `json:"reference_values,omitempty"`
+	MeasurementPCR  int    `json:"measurement_pcr,omitempty"`
+	MeasurementBank string `json:"measurement_bank,omitempty"`
+	Nonce           []byte `json:"nonce,omitempty"`
 }
 
 // AttestContainerRESTResponse is the JSON body returned by
@@ -260,7 +260,7 @@ func (s *Server) HandleAttestationAttestContainer(w http.ResponseWriter, r *http
 		ImageDigest:     req.ImageDigest,
 		TrustLabel:      req.TrustLabel,
 		TrustLevel:      req.TrustLevel,
-		ExpectedPCRs:    req.ExpectedPCRs,
+		ReferenceValues: req.ReferenceValues,
 		MeasurementPCR:  req.MeasurementPCR,
 		MeasurementBank: req.MeasurementBank,
 		Nonce:           req.Nonce,

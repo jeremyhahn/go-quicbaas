@@ -224,6 +224,7 @@ func TestExecuteAttestationTool_AttestContainer(t *testing.T) {
 			"image_digest":     "sha256:abc",
 			"trust_label":      "prod",
 			"trust_level":      "measured",
+			"reference_values": "golden",
 			"measurement_pcr":  float64(16),
 			"measurement_bank": "sha256",
 		})
@@ -250,6 +251,7 @@ func TestExecuteAttestationTool_AttestContainer(t *testing.T) {
 	require.NotNil(t, fake.lastAttest)
 	assert.Equal(t, "device-1", fake.lastAttest.DeviceID)
 	assert.Equal(t, 16, fake.lastAttest.MeasurementPCR)
+	assert.Equal(t, "golden", fake.lastAttest.ReferenceValues)
 }
 
 func TestExecuteAttestationTool_AttestContainer_InvalidInput(t *testing.T) {

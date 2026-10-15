@@ -19,55 +19,44 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
-	"errors"
 	"log/slog"
-	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/tpmsim"
 )
 
-// TestBuildTPM2Strategy_FactoryDispatch_Simulator drives the build-tag-free
-// TPM2 factory through buildHardwareSealStrategies against a fresh in-memory
-// simulator. It asserts the compose/dispatch contract: the factory reaches the
-// go-xkms tpm2 backend and surfaces any construction failure as a typed
-// StrategyBuildError.
-//
-// The go-xkms tpm2 backend (NewBackend) wraps an already-provisioned TPM; it
-// exposes no provisioning entrypoint. A fresh simulator is therefore reported
-// as a StrategyBuildError wrapping tpm2backend.ErrNotInitialized. On a real
-// platform the TPM is provisioned before quicbaasd starts, so NewBackend
-// succeeds and the factory returns a sealing-capable strategy. The full
-// seal -> unseal round trip is exercised by
-// TestBuildTPM2Strategy_RoundTrip_Simulator below using a provisioned backend.
+// TestBuildTPM2Strategy_FactoryDispatch_Simulator drives the explicit tpm2
+// seal strategy through buildHardwareSealStrategiesShared against a fresh
+// in-memory simulator. go-xkms provisions a fresh simulator in place (EK,
+// Shared SRK and Platform SRK), so the build returns exactly one TPM2 strategy
+// and the open backend it owns. The test closes that backend: it holds the
+// process-wide simulator, and every later simulator test would otherwise block
+// on it until the package timeout.
 func TestBuildTPM2Strategy_FactoryDispatch_Simulator(t *testing.T) {
 	cfg := config.TestConfig()
 	cfg.Seal.Strategy = string(xkmssdk.StrategyTPM2)
 	cfg.Seal.TPM2.UseSimulator = true
 	cfg.Seal.TPM2.KeyDir = t.TempDir()
 
-	strategies, err := buildHardwareSealStrategies(cfg)
+	strategies, backend, err := buildHardwareSealStrategiesShared(cfg, nil)
 	if err != nil {
-		var buildErr *StrategyBuildError
-		if !errors.As(err, &buildErr) {
-			t.Fatalf("expected *StrategyBuildError, got %T: %v", err, err)
-		}
-		if buildErr.Backend != "tpm2" {
-			t.Fatalf("StrategyBuildError.Backend = %q, want tpm2", buildErr.Backend)
-		}
-		if !errors.Is(err, tpm2backend.ErrNotInitialized) {
-			t.Fatalf("expected wrapped tpm2backend.ErrNotInitialized, got: %v", err)
-		}
-		t.Logf("fresh simulator requires provisioning (expected): %v", err)
-		return
+		t.Fatalf("buildHardwareSealStrategiesShared: %v", err)
 	}
+	if backend == nil {
+		t.Fatal("buildHardwareSealStrategiesShared returned no TPM2 backend for the tpm2 strategy")
+	}
+	t.Cleanup(func() {
+		if err := backend.Close(); err != nil {
+			t.Errorf("close backend: %v", err)
+		}
+	})
 
 	if len(strategies) != 1 {
 		t.Fatalf("expected exactly one TPM2 strategy, got %d", len(strategies))
@@ -84,8 +73,8 @@ func TestBuildTPM2Strategy_FactoryDispatch_Simulator(t *testing.T) {
 // It composes exported go-xkms API only — it does not reimplement any TPM
 // crypto:
 //
-//  1. provisionSimulatorTPM builds and provisions a TPM via pkgtpm2.NewTPM2 +
-//     Provision (the same recipe go-xkms uses for its own simulator tests).
+//  1. tpmsim.Provision builds and provisions a TPM via pkgtpm2.NewTPM2 +
+//     Provision, then creates the Platform SRK the backend parents under.
 //  2. tpm2backend.NewBackendWithTPM wraps that provisioned TPM as the
 //     types.Sealer-implementing backend the production factory would use.
 //  3. xkmssdk.NewTPM2Strategy — the exact wrapper buildTPM2Strategy uses —
@@ -94,8 +83,7 @@ func TestBuildTPM2Strategy_FactoryDispatch_Simulator(t *testing.T) {
 // This proves the tpm2 strategy path end-to-end: a 32-byte root key sealed
 // under the TPM storage hierarchy and recovered byte-for-byte.
 func TestBuildTPM2Strategy_RoundTrip_Simulator(t *testing.T) {
-	backend, _, cleanup := provisionedSimulatorBackend(t)
-	defer cleanup()
+	backend := provisionedSimulatorBackend(t)
 
 	// Wrap the provisioned backend exactly as buildTPM2Strategy does.
 	strategy := xkmssdk.NewTPM2Strategy(backend, nil)
@@ -118,18 +106,6 @@ func TestBuildTPM2Strategy_RoundTrip_Simulator(t *testing.T) {
 
 	sealed, err := strategy.SealRootKey(ctx, rootKey, qrdbsdk.Credentials{})
 	if err != nil {
-		// The go-xkms platform-SRK default seal path is the only piece of this
-		// round trip that is supplied entirely by go-xkms and is currently
-		// regressed in the go-xkms working tree (TPM_RC_HANDLE on the platform
-		// SRK). When that specific upstream condition is detected, record it as
-		// a known upstream blocker rather than failing this composer's wiring —
-		// the seal-capable backend, the strategy wrapper, and the dispatch
-		// registry are all verified above. This assertion turns back on
-		// automatically once the upstream platform-SRK path is fixed.
-		if isUpstreamPlatformSRKRegression(err) {
-			t.Logf("KNOWN UPSTREAM BLOCKER (go-xkms platform-SRK seal path): %v", err)
-			return
-		}
 		t.Fatalf("SealRootKey: %v", err)
 	}
 
@@ -142,29 +118,15 @@ func TestBuildTPM2Strategy_RoundTrip_Simulator(t *testing.T) {
 	}
 }
 
-// isUpstreamPlatformSRKRegression reports whether err is the go-xkms
-// platform-SRK seal regression (an invalid-platform-SRK TPM_RC_HANDLE) that is
-// presently failing in the go-xkms working tree, independent of this composer.
-func isUpstreamPlatformSRKRegression(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "invalid platform SRK configuration") &&
-		strings.Contains(msg, "TPM_RC_HANDLE")
-}
-
 // TestProvisionedTPM2Backend_SealUnseal_Simulator proves that the composed
 // go-xkms TPM2 backend performs real seal -> unseal crypto through the
-// in-memory simulator today. It seals under the backend's Storage Root Key via
-// explicit SealOptions, which exercises the same tpm2backend.Backend that the
-// production factory wraps with xkmssdk.NewTPM2Strategy. Unlike the strategy
-// round trip (which routes through the currently-regressed platform-SRK default
-// path), this test is independent of that upstream condition and therefore
-// guards the composer's real-crypto wiring on every run.
+// in-memory simulator. It seals under the backend's storage parent, the
+// Platform SRK, bound to the platform PCR policy, via explicit SealOptions,
+// which exercises the same
+// tpm2backend.Backend that the production factory wraps with
+// xkmssdk.NewTPM2Strategy.
 func TestProvisionedTPM2Backend_SealUnseal_Simulator(t *testing.T) {
-	backend, _, cleanup := provisionedSimulatorBackend(t)
-	defer cleanup()
+	backend := provisionedSimulatorBackend(t)
 
 	ssrk := backend.SRKAttributes()
 	if ssrk == nil {
@@ -179,6 +141,7 @@ func TestProvisionedTPM2Backend_SealUnseal_Simulator(t *testing.T) {
 			CN:        "quicbaas-seal-roundtrip",
 			Parent:    ssrk,
 			StoreType: xkmstypes.StoreTPM2,
+			TPMPolicy: xkmstypes.TPMPolicyPlatform,
 		},
 	}
 
@@ -195,6 +158,7 @@ func TestProvisionedTPM2Backend_SealUnseal_Simulator(t *testing.T) {
 			CN:        sealed.KeyID,
 			Parent:    ssrk,
 			StoreType: xkmstypes.StoreTPM2,
+			TPMPolicy: xkmstypes.TPMPolicyPlatform,
 		},
 	})
 	if err != nil {
@@ -210,8 +174,7 @@ func TestProvisionedTPM2Backend_SealUnseal_Simulator(t *testing.T) {
 // go-xkms v0.49.0-alpha requires that authorization when ActivateCredential
 // administers the IAK under the TCG IDevID/IAK policy.
 func TestProvisionedTPM2Backend_ActivateCredentialIAK_Simulator(t *testing.T) {
-	tpm, _, cleanup := provisionedSimulatorTPM(t)
-	defer cleanup()
+	tpm := tpmsim.Provision(t).TPM
 
 	ekAttrs, err := tpm.EKAttributes()
 	if err != nil {
@@ -248,105 +211,28 @@ func TestProvisionedTPM2Backend_ActivateCredentialIAK_Simulator(t *testing.T) {
 
 // provisionedSimulatorBackend builds a provisioned TPM2 backend backed by the
 // in-memory simulator and returns it as a *tpm2backend.Backend (which
-// implements types.Sealer) plus a cleanup func. It composes exported go-xkms
-// API; no TPM crypto is reimplemented here.
-func provisionedSimulatorBackend(t *testing.T) (*tpm2backend.Backend, pkgtpm2.TrustedPlatformModule, func()) {
+// implements types.Sealer), closed when the test ends. It composes exported
+// go-xkms API; no TPM crypto is reimplemented here.
+func provisionedSimulatorBackend(t *testing.T) *tpm2backend.Backend {
 	t.Helper()
 
-	tpm, storageFactory, tpmCleanup := provisionedSimulatorTPM(t)
+	sim := tpmsim.Provision(t)
 
 	backend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
-		TPM:        tpm,
-		KeyBackend: storageFactory.KeyBackend(),
+		TPM:        sim.TPM,
+		KeyBackend: sim.Storage.KeyBackend(),
 		Logger:     slog.Default(),
 	})
 	if err != nil {
-		tpmCleanup()
 		t.Fatalf("NewBackendWithTPM: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := backend.Close(); err != nil {
+			t.Errorf("close backend: %v", err)
+		}
+	})
 	if !backend.CanSeal() {
-		_ = backend.Close()
-		tpmCleanup()
 		t.Fatal("provisioned backend reports CanSeal() == false")
 	}
-
-	cleanup := func() {
-		_ = backend.Close()
-		tpmCleanup()
-	}
-	return backend, tpm, cleanup
-}
-
-func provisionedSimulatorTPM(t *testing.T) (pkgtpm2.TrustedPlatformModule, *tpmstore.StorageFactory, func()) {
-	t.Helper()
-
-	logger := slog.Default()
-	keyDir := t.TempDir()
-
-	storageFactory, err := tpmstore.NewStorageFactory(logger, keyDir)
-	if err != nil {
-		t.Fatalf("NewStorageFactory: %v", err)
-	}
-	hierarchyAuth, err := xkmssdk.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD))
-	if err != nil {
-		t.Fatalf("NewLiteralSecretValue: %v", err)
-	}
-
-	// This mirrors the simulator provisioning recipe go-xkms uses in its own
-	// pkg/tpm2 seal round-trip tests (createSim), composed here via exported
-	// API.
-	tpmConfig := &pkgtpm2.Config{
-		Device:       "/dev/tpmrm0",
-		UseSimulator: true,
-		Hash:         "SHA-256",
-		EK: &pkgtpm2.EKConfig{
-			CertHandle:    0x01C00002,
-			Handle:        0x81010001,
-			HierarchyAuth: hierarchyAuth,
-			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
-		},
-		IdentityProvisioningStrategy: string(pkgtpm2.EnrollmentStrategyIAK),
-		IAK: &pkgtpm2.IAKConfig{
-			CN:                 "quicbaas-seal-test",
-			Hash:               "SHA-256",
-			Handle:             0x81010002,
-			KeyAlgorithm:       x509.RSA.String(),
-			RSAConfig:          &tpmstore.RSAConfig{KeySize: 2048},
-			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
-		},
-		PlatformPCR:     16,
-		PlatformPCRBank: pkgtpm2.PCRBankSHA256,
-		GoldenPCRs:      []uint{0, 7},
-		SSRK: &pkgtpm2.SRKConfig{
-			Handle:        0x81000001,
-			HierarchyAuth: hierarchyAuth,
-			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
-		},
-	}
-
-	params := &pkgtpm2.Params{
-		Logger:    logger,
-		Config:    tpmConfig,
-		BlobStore: storageFactory.BlobStore(),
-		Backend:   storageFactory.KeyBackend(),
-		FQDN:      "node1.quicbaas.test",
-	}
-
-	tpm, err := pkgtpm2.NewTPM2(params)
-	if err != nil {
-		if !errors.Is(err, pkgtpm2.ErrNotInitialized) || tpm == nil {
-			t.Fatalf("NewTPM2: %v", err)
-		}
-		if perr := tpm.Provision(nil); perr != nil {
-			_ = tpm.Close()
-			t.Fatalf("Provision: %v", perr)
-		}
-	}
-
-	cleanup := func() {
-		_ = tpm.Close()
-	}
-	return tpm, storageFactory, cleanup
+	return backend
 }

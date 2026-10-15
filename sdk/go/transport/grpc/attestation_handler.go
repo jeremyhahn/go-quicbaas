@@ -156,7 +156,7 @@ func (h *attestationHandler) handleAttestContainer(ctx context.Context, client p
 		ImageDigest:     sdkReq.ImageDigest,
 		TrustLabel:      sdkReq.TrustLabel,
 		TrustLevel:      sdkReq.TrustLevel,
-		ExpectedPcrs:    sdkReq.ExpectedPCRs,
+		ReferenceValues: sdkReq.ReferenceValues,
 		MeasurementPcr:  int32(sdkReq.MeasurementPCR),
 		MeasurementBank: sdkReq.MeasurementBank,
 		Nonce:           sdkReq.Nonce,

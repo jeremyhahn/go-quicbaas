@@ -76,11 +76,19 @@ func (s *fleetDeployService) preflight(ctx context.Context, spec *deploy.Spec) (
 
 	sess, err := s.dial(ctx, spec)
 	if err != nil {
-		report.Add(s.dialFailureChecks(ctx, spec, err)...)
+		if spec.Local {
+			// No ssh to check: the only way to fail is not knowing who
+			// this process runs as.
+			report.Add(deploy.FailedCheck(deploy.CheckRemoteUser, err))
+		} else {
+			report.Add(s.dialFailureChecks(ctx, spec, err)...)
+		}
 		return finished(report)
 	}
 	defer sess.Close()
-	report.Add(s.dialSuccessChecks(spec)...)
+	if !spec.Local {
+		report.Add(s.dialSuccessChecks(spec)...)
+	}
 
 	home, err := s.remoteHome(ctx, sess)
 	if err != nil {
@@ -334,11 +342,8 @@ func (s *fleetDeployService) validateLifecycle(spec *deploy.Spec, deregisters bo
 	if spec == nil {
 		return &deploy.InvalidSpecError{Field: "spec", Reason: "spec is required"}
 	}
-	if spec.Host == "" {
-		return &deploy.InvalidSpecError{Field: "host", Reason: "host is required"}
-	}
-	if spec.SSHUser == "" {
-		return &deploy.InvalidSpecError{Field: "ssh_user", Reason: "ssh user is required"}
+	if err := validateTarget(spec); err != nil {
+		return err
 	}
 	if spec.Tenant == "" {
 		return &deploy.InvalidSpecError{Field: "tenant", Reason: "tenant is required"}

@@ -263,12 +263,12 @@ func TestHandleAttestationAttestContainer(t *testing.T) {
 
 		w := postAttestation(t, server.HandleAttestationAttestContainer, "/api/v1/attestation/attest-container",
 			&AttestContainerRESTRequest{
-				DeviceID:     "device-1",
-				ContainerID:  "container-1",
-				Image:        "alpine@sha256:abc",
-				ImageDigest:  "sha256:abc",
-				TrustLevel:   "measured",
-				ExpectedPCRs: map[uint32][]byte{7: {0x01}},
+				DeviceID:        "device-1",
+				ContainerID:     "container-1",
+				Image:           "alpine@sha256:abc",
+				ImageDigest:     "sha256:abc",
+				TrustLevel:      "measured",
+				ReferenceValues: "golden",
 			})
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -283,7 +283,7 @@ func TestHandleAttestationAttestContainer(t *testing.T) {
 
 		require.NotNil(t, stub.lastAttest)
 		assert.Equal(t, "device-1", stub.lastAttest.DeviceID)
-		assert.Len(t, stub.lastAttest.ExpectedPCRs, 1)
+		assert.Equal(t, "golden", stub.lastAttest.ReferenceValues)
 	})
 
 	t.Run("missing image", func(t *testing.T) {

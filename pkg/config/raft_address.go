@@ -98,6 +98,23 @@ func (c *RaftConfig) ListenAddr() (string, error) {
 	return net.JoinHostPort(host, port), nil
 }
 
+// AdvertisedHost returns the host part of raft_address: the name peers
+// and clients reach this node by. A missing port, or a wildcard host, is
+// a RaftListenAddressError, the latter wrapping RaftAdvertisedHostError.
+func (c *RaftConfig) AdvertisedHost() (string, error) {
+	host, port, err := net.SplitHostPort(c.RaftAddress)
+	if err == nil && port == "" {
+		err = &net.AddrError{Err: "missing port in address", Addr: c.RaftAddress}
+	}
+	if err != nil {
+		return "", &RaftListenAddressError{RaftAddress: c.RaftAddress, Cause: err}
+	}
+	if isWildcardHost(host) {
+		return "", &RaftListenAddressError{RaftAddress: c.RaftAddress, Cause: &RaftAdvertisedHostError{Host: host}}
+	}
+	return host, nil
+}
+
 // isWildcardHost reports whether host is empty or an unspecified IP address.
 func isWildcardHost(host string) bool {
 	if host == "" {

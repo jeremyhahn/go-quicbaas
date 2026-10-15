@@ -51,8 +51,8 @@ still need.
 
 Examples:
   quicbaas fleet undeploy --spec deployments/fleet/agent-01.yaml
-  quicbaas fleet undeploy --ssh agent@agent-01 --ssh-key-name fleet-deploy --purge-workspaces`,
-		PreRunE: relaxRequiredFlagsForSpecFile("ssh"),
+  quicbaas fleet undeploy --ssh agent@agent-01 --ssh-key-name fleet-deploy --purge-workspaces
+  quicbaas fleet undeploy --local`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFleetLifecycle(cmd, func(ctx context.Context, svc service.FleetDeployService, spec *deploy.Spec) (*deploy.LifecycleResult, error) {
 				return svc.Undeploy(ctx, spec, service.UndeployOptions{PurgeWorkspaces: undeployPurgeWorkspaces})
@@ -61,7 +61,6 @@ Examples:
 	}
 	registerDeployTargetFlags(cmd)
 	cmd.Flags().BoolVar(&undeployPurgeWorkspaces, "purge-workspaces", false, "Also remove the projects root and the daemon's work directory")
-	markLifecycleTargetRequired(cmd)
 	return cmd
 }
 
@@ -75,8 +74,8 @@ stopped node never reads "running" there. The installation is kept;
 "quicbaas fleet start" brings it back and it re-registers on its own.
 
 Examples:
-  quicbaas fleet stop --spec deployments/fleet/agent-01.yaml`,
-		PreRunE: relaxRequiredFlagsForSpecFile("ssh"),
+  quicbaas fleet stop --spec deployments/fleet/agent-01.yaml
+  quicbaas fleet stop --local`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFleetLifecycle(cmd, func(ctx context.Context, svc service.FleetDeployService, spec *deploy.Spec) (*deploy.LifecycleResult, error) {
 				return svc.Stop(ctx, spec)
@@ -84,7 +83,6 @@ Examples:
 		},
 	}
 	registerDeployTargetFlags(cmd)
-	markLifecycleTargetRequired(cmd)
 	return cmd
 }
 
@@ -97,8 +95,8 @@ func newFleetStartCommand() *cobra.Command {
 for it to come back online in the fleet registry.
 
 Examples:
-  quicbaas fleet start --spec deployments/fleet/agent-01.yaml`,
-		PreRunE: relaxRequiredFlagsForSpecFile("ssh"),
+  quicbaas fleet start --spec deployments/fleet/agent-01.yaml
+  quicbaas fleet start --local`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFleetLifecycle(cmd, func(ctx context.Context, svc service.FleetDeployService, spec *deploy.Spec) (*deploy.LifecycleResult, error) {
 				return svc.Start(ctx, spec)
@@ -107,15 +105,7 @@ Examples:
 	}
 	registerDeployTargetFlags(cmd)
 	registerWaitOnlineFlag(cmd)
-	markLifecycleTargetRequired(cmd)
 	return cmd
-}
-
-// markLifecycleTargetRequired requires --ssh unless --spec names the node.
-func markLifecycleTargetRequired(cmd *cobra.Command) {
-	if err := cmd.MarkFlagRequired("ssh"); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to mark ssh required: %v\n", err)
-	}
 }
 
 // runFleetLifecycle resolves the node's spec, runs action, and prints the

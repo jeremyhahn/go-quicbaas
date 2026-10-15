@@ -66,6 +66,41 @@ evidence was present and wrong — grounds for quarantine, as opposed to missing
 evidence, which is grounds only for denying service), the baseline's identity
 (`reference_values`, `manifest_id`, `signer`) and `baseline_source: signed`.
 
+### Tier 1 host appraisal
+
+Orchestration's Tier 1 (`attested`, see
+[Orchestration — Tier 1](../orchestration/architecture.md#tier-1--the-host-quote))
+is an `AppraiseQuote` consumer. `service.NewHostAppraiser(store)` exposes the
+Verifier over an `AttestationStore` as an `orchestration.HostAppraiser`, which
+`NewTPMAttestingRuntime` requires. The runtime quotes the registers the named
+reference values cover in the bank its IAK quotes (the IAK's TPM hash
+algorithm, from `IAKAttributes`), binds the PCR read to the signed quote, and
+submits the
+quote, signature, nonce, PCRs and the TPM's `IAKCertificate` for appraisal in the
+caller's tenant. Any verdict short of `verified` refuses the launch.
+
+Before a spec with `reference_values` set can launch, the operator stores, in
+that tenant and in the same store the appraiser reads:
+
+1. an `ak-root` endorsement the host's IAK certificate chains to;
+2. a `reference-signer` endorsement the CoRIM signer chains to;
+3. the signed reference values under the name the spec gives.
+
+The comparison is an equal set, so reference values for a measured launch
+(`measured`) must list the measurement PCR (16 by default) with its expected
+post-launch value alongside the platform PCRs. Only digests in the quoted bank
+count: a register the reference values cover only in another bank is neither
+quoted nor appraised, and reference values with no digest in the quoted bank
+are refused before quoting (`ReferenceBankUncoveredError`, `invalid_input`). A
+SHA-1 IAK is refused (`PCRBankUnavailableError`).
+
+When the quote carries a boot event log, the replay covers every quoted
+register except the spec's measurement PCR (`HostEvidence.LaunchPCRs`). The
+runtime extends that register after boot, so the firmware log never explains
+it; events a log records for it are ignored, and the signed reference values
+judge it. A quote whose only register is the measurement PCR skips the replay.
+`AppraiseQuote` called directly replays every quoted register.
+
 ### Storage
 
 Records are opaque blobs (certificates, keys, signed CoRIMs) in qrdb KV on the

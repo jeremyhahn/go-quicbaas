@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path"
@@ -199,6 +200,11 @@ type fleetDeployService struct {
 	// substitute a deterministic value so the fake session need not
 	// embed an *deploy.SSHClient.
 	resolveHome func(ctx context.Context, sess sshSession) (string, error)
+
+	// localTarget opens the install target for a local deploy
+	// (Spec.Local): this host, reached with no ssh. Production wires
+	// deploy.NewLocalTarget; tests substitute a recording target.
+	localTarget func(host string) (deploy.Target, error)
 }
 
 // FleetDeployServiceDeps wires injectable dependencies for the
@@ -263,6 +269,7 @@ func NewFleetDeployService(deps FleetDeployServiceDeps) FleetDeployService {
 		probe:       deploy.DialFleetRuntime,
 		resolveHome: defaultResolveRemoteHome,
 		mcpEndpoint: deps.MCPEndpoint,
+		localTarget: newLocalTarget,
 	}
 }
 
@@ -398,11 +405,8 @@ func (s *fleetDeployService) validate(spec *deploy.Spec) error {
 	if spec == nil {
 		return &deploy.InvalidSpecError{Field: "spec", Reason: "spec is required"}
 	}
-	if spec.Host == "" {
-		return &deploy.InvalidSpecError{Field: "host", Reason: "host is required"}
-	}
-	if spec.SSHUser == "" {
-		return &deploy.InvalidSpecError{Field: "ssh_user", Reason: "ssh user is required"}
+	if err := validateTarget(spec); err != nil {
+		return err
 	}
 	if spec.Server == "" {
 		return &deploy.InvalidSpecError{Field: "server", Reason: "server is required"}
@@ -450,6 +454,21 @@ func (s *fleetDeployService) stampMCPEndpoint(spec *deploy.Spec) {
 	if strings.TrimSpace(spec.MCPEndpoint) == "" && s.mcpEndpoint != "" {
 		spec.MCPEndpoint = s.mcpEndpoint
 	}
+}
+
+// validateTarget checks that spec names the node and how to reach it: an
+// ssh user for an ssh install, no ssh settings at all for a local one.
+func validateTarget(spec *deploy.Spec) error {
+	if spec.Host == "" {
+		return &deploy.InvalidSpecError{Field: "host", Reason: "host is required"}
+	}
+	if spec.Local {
+		return spec.LocalSSHConflict()
+	}
+	if spec.SSHUser == "" {
+		return &deploy.InvalidSpecError{Field: "ssh_user", Reason: "ssh user is required"}
+	}
+	return nil
 }
 
 // sshAuthConflict rejects specs that set more than one of
@@ -632,7 +651,7 @@ func undialableBindError(spec *deploy.Spec) error {
 	return &deploy.InvalidSpecError{
 		Field: "agent_bind",
 		Reason: "waiting for the agent to come online requires a bind address the deploy can dial back, " +
-			"i.e. host:port with a fixed numeric port such as 0.0.0.0:9091; got " + strconv.Quote(bind),
+			"i.e. host:port with a fixed numeric port such as node01:9091; got " + strconv.Quote(bind),
 	}
 }
 
@@ -672,6 +691,9 @@ func nodeProbeAddr(spec *deploy.Spec) string {
 // private material never leaves its key store. Otherwise the dialer's
 // default credential path (password) applies.
 func (s *fleetDeployService) dial(ctx context.Context, spec *deploy.Spec) (sshSession, error) {
+	if spec.Local {
+		return s.openLocal(spec)
+	}
 	hostKey, err := s.hostKeyPolicy(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -694,6 +716,27 @@ func (s *fleetDeployService) dial(ctx context.Context, spec *deploy.Spec) (sshSe
 		return nil, err
 	}
 	return s.ssh.DialWithAuth(ctx, spec, []ssh.AuthMethod{ssh.PublicKeys(sshSigner)}, hostKey)
+}
+
+// openLocal opens this host as the install target of a local deploy. The
+// install that follows is the ssh deploy's, step for step: only the
+// transport differs.
+func (s *fleetDeployService) openLocal(spec *deploy.Spec) (sshSession, error) {
+	open := s.localTarget
+	if open == nil {
+		open = newLocalTarget
+	}
+	target, err := open(spec.Host)
+	if err != nil {
+		return nil, err
+	}
+	return &sshSessionAdapter{c: target}, nil
+}
+
+// newLocalTarget is the production local target: this host, as the
+// current user.
+func newLocalTarget(host string) (deploy.Target, error) {
+	return deploy.NewLocalTarget(host)
 }
 
 // hostKeyPolicy resolves the target's pinned host key into the policy
@@ -838,21 +881,7 @@ func defaultResolveRemoteHome(ctx context.Context, sess sshSession) (string, err
 // at the last colon would truncate the bare form and keep the brackets
 // on the other.
 func hostnameForCert(target string) string {
-	trimmed := strings.TrimSpace(target)
-	if at := strings.IndexByte(trimmed, '@'); at >= 0 {
-		trimmed = trimmed[at+1:]
-	}
-	// A host:port pair (including a bracketed IPv6 literal with a port)
-	// splits cleanly; anything else is a bare host.
-	if host, _, err := net.SplitHostPort(trimmed); err == nil {
-		return host
-	}
-	// A bare IPv6 literal carries too many colons for SplitHostPort. It
-	// may still be bracketed when written without a port.
-	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-		return trimmed[1 : len(trimmed)-1]
-	}
-	return trimmed
+	return deploy.Hostname(target)
 }
 
 // formatSerial renders the certificate serial number for inclusion in
@@ -943,18 +972,24 @@ func (realSSHDialer) DialWithAuth(ctx context.Context, spec *deploy.Spec, auth [
 	return &sshSessionAdapter{c: c}, nil
 }
 
-// sshSessionAdapter carries the concrete *deploy.SSHClient through the
-// service without leaking the type across the service-local interfaces.
+// sshSessionAdapter carries the install target (an ssh connection or this
+// host) through the service without leaking the type across the
+// service-local interfaces.
 type sshSessionAdapter struct {
-	c *deploy.SSHClient
+	c deploy.Target
 }
 
-// Close tears down the SSH connection.
-func (a *sshSessionAdapter) Close() error { return a.c.Close() }
+// Close tears down the SSH connection; a local target holds nothing open.
+func (a *sshSessionAdapter) Close() error {
+	if closer, ok := a.c.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
 
-// underlyingClient extracts the inner *deploy.SSHClient for adapters
-// that need to call the primitive API directly.
-func underlyingClient(sess sshSession) *deploy.SSHClient {
+// underlyingClient extracts the install target for adapters that need to
+// call the primitive API directly.
+func underlyingClient(sess sshSession) deploy.Target {
 	if a, ok := sess.(*sshSessionAdapter); ok {
 		return a.c
 	}

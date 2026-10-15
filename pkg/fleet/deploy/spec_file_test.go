@@ -270,6 +270,10 @@ func TestCommittedFleetSpecsLoad(t *testing.T) {
 		if err := LoadSpecFile(path, spec); err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}
+		// The CLI defaults an omitted node_bind after loading; do the same.
+		if err := spec.DefaultNodeBind(); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
 		if err := spec.ValidateDaemonConfig(); err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}

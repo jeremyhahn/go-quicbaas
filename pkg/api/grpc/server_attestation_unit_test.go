@@ -241,7 +241,7 @@ func TestServer_AttestContainer(t *testing.T) {
 			ImageDigest:     "sha256:abc",
 			TrustLabel:      "prod",
 			TrustLevel:      "measured",
-			ExpectedPcrs:    map[uint32][]byte{7: {0x01}},
+			ReferenceValues: "golden",
 			MeasurementPcr:  16,
 			MeasurementBank: "sha256",
 		})
@@ -257,7 +257,7 @@ func TestServer_AttestContainer(t *testing.T) {
 		require.NotNil(t, stub.lastAttest)
 		assert.Equal(t, "device-1", stub.lastAttest.DeviceID)
 		assert.Equal(t, 16, stub.lastAttest.MeasurementPCR)
-		assert.Len(t, stub.lastAttest.ExpectedPCRs, 1)
+		assert.Equal(t, "golden", stub.lastAttest.ReferenceValues)
 	})
 
 	t.Run("missing_image", func(t *testing.T) {

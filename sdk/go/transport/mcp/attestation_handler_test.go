@@ -185,6 +185,7 @@ func TestAttestationMCPHandler_TransformAttestContainerRequest(t *testing.T) {
 		ImageDigest:     "sha256:abc",
 		TrustLabel:      "prod",
 		TrustLevel:      "measured",
+		ReferenceValues: "golden",
 		MeasurementPCR:  16,
 		MeasurementBank: "sha256",
 	})
@@ -193,6 +194,9 @@ func TestAttestationMCPHandler_TransformAttestContainerRequest(t *testing.T) {
 	}
 	if args["image"] != "alpine@sha256:abc" || args["trust_level"] != "measured" {
 		t.Fatalf("unexpected arguments: %+v", args)
+	}
+	if args["reference_values"] != "golden" {
+		t.Fatalf("reference_values = %v, want golden", args["reference_values"])
 	}
 	if args["measurement_pcr"] != 16 {
 		t.Fatalf("measurement_pcr = %v", args["measurement_pcr"])

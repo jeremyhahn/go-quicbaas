@@ -216,3 +216,34 @@ func TestProductionConfigWithAdvertisedHost(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "node1:63000", got)
 }
+
+func TestRaftAdvertisedHost(t *testing.T) {
+	cases := map[string]string{
+		"node1:63000":         "node1",
+		"192.0.2.10:63000":    "192.0.2.10",
+		"[2001:db8::1]:63000": "2001:db8::1",
+	}
+	for addr, want := range cases {
+		cfg := RaftConfig{RaftAddress: addr}
+		got, err := cfg.AdvertisedHost()
+		require.NoError(t, err, addr)
+		assert.Equal(t, want, got, addr)
+	}
+}
+
+func TestRaftAdvertisedHostRejectsWildcardAndMalformed(t *testing.T) {
+	for _, addr := range []string{"0.0.0.0:63000", ":63000", "[::]:63000"} {
+		cfg := RaftConfig{RaftAddress: addr}
+		_, err := cfg.AdvertisedHost()
+		var hostErr *RaftAdvertisedHostError
+		require.ErrorAs(t, err, &hostErr, addr)
+	}
+	for _, addr := range []string{"", "node1", "node1:"} {
+		cfg := RaftConfig{RaftAddress: addr}
+		_, err := cfg.AdvertisedHost()
+		var listenErr *RaftListenAddressError
+		require.ErrorAs(t, err, &listenErr, addr)
+		var hostErr *RaftAdvertisedHostError
+		assert.NotErrorAs(t, err, &hostErr, addr)
+	}
+}

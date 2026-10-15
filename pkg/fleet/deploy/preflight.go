@@ -142,7 +142,7 @@ type remoteIdentity struct {
 
 // RunPreflight runs every session-level check against the node and returns
 // their outcomes in report order. Nothing on the node is changed.
-func RunPreflight(ctx context.Context, c *SSHClient, in PreflightInput) []PreflightCheck {
+func RunPreflight(ctx context.Context, c Target, in PreflightInput) []PreflightCheck {
 	var checks []PreflightCheck
 
 	identity, err := probeIdentity(ctx, c)
@@ -174,7 +174,7 @@ func RunPreflight(ctx context.Context, c *SSHClient, in PreflightInput) []Prefli
 // identityCommand prints the uid, the gid and the group names, one per line.
 const identityCommand = "id -un && id -u && id -g && id -nG"
 
-func probeIdentity(ctx context.Context, c *SSHClient) (remoteIdentity, error) {
+func probeIdentity(ctx context.Context, c Target) (remoteIdentity, error) {
 	stdout, _, err := c.Exec(ctx, identityCommand)
 	if err != nil {
 		return remoteIdentity{user: c.User()}, err
@@ -197,7 +197,7 @@ const sudoProbeCommand = "sudo -n true"
 // checkSupervisor checks systemd --user and, when the deploy will use it,
 // lingering. A spec that leaves systemd on auto passes without it: the deploy
 // falls back to the nohup launcher, and the report says so.
-func checkSupervisor(ctx context.Context, c *SSHClient, spec *Spec, user string) []PreflightCheck {
+func checkSupervisor(ctx context.Context, c Target, spec *Spec, user string) []PreflightCheck {
 	if spec.SystemdExplicit() && !spec.UseSystemd() {
 		return []PreflightCheck{PassedCheck(CheckSystemd, "not used: the spec asks for the nohup launcher")}
 	}
@@ -226,7 +226,7 @@ func checkSupervisor(ctx context.Context, c *SSHClient, spec *Spec, user string)
 	return checks
 }
 
-func sudoAvailable(ctx context.Context, c *SSHClient) bool {
+func sudoAvailable(ctx context.Context, c Target) bool {
 	_, _, err := c.Exec(ctx, sudoProbeCommand)
 	return err == nil
 }
@@ -260,7 +260,7 @@ func runtimeInfoCommand(binary string) string {
 	return binary + " info --format " + shellQuote(runtimeRootFormat[binary])
 }
 
-func checkContainerRuntime(ctx context.Context, c *SSHClient, spec *Spec, identity remoteIdentity) (containerRuntime, PreflightCheck) {
+func checkContainerRuntime(ctx context.Context, c Target, spec *Spec, identity remoteIdentity) (containerRuntime, PreflightCheck) {
 	selector := spec.Node.EffectiveContainerRuntime()
 	candidates, ok := runtimeCandidates[selector]
 	if !ok {
@@ -300,7 +300,7 @@ func diskFreeCommand(dir string) string {
 	return "p=" + shellQuotePath(dir) + `; while [ ! -e "$p" ]; do p=$(dirname "$p"); done; df -Pk "$p"`
 }
 
-func checkDisk(ctx context.Context, c *SSHClient, name, dir, purpose string, required uint64) PreflightCheck {
+func checkDisk(ctx context.Context, c Target, name, dir, purpose string, required uint64) PreflightCheck {
 	stdout, _, err := c.Exec(ctx, diskFreeCommand(dir))
 	if err != nil {
 		return FailedCheck(name, err)
@@ -342,7 +342,7 @@ func imagePullableCommand(binary, image string) string {
 // when it is on the node, that it was built for the uid the daemon runs as.
 // An image that is only pullable cannot have its uid read without pulling it,
 // which preflight does not do; the report says the uid is unverified.
-func checkWorkerImage(ctx context.Context, c *SSHClient, binary, image string, identity remoteIdentity) PreflightCheck {
+func checkWorkerImage(ctx context.Context, c Target, binary, image string, identity remoteIdentity) PreflightCheck {
 	name := CheckWorkerImage + " " + image
 	if binary == "" {
 		return FailedCheck(name, &WorkerImageUnavailableError{Image: image})
@@ -385,7 +385,7 @@ const controlPlaneTimeout = 15 * time.Second
 // are the node's — and verifies the server's certificate against the CA the
 // deploy installs. Verification is never skipped: a node that can only reach
 // the control plane insecurely is a node whose daemon cannot enroll.
-func checkControlPlane(ctx context.Context, c *SSHClient, server string, caPEM []byte) PreflightCheck {
+func checkControlPlane(ctx context.Context, c Target, server string, caPEM []byte) PreflightCheck {
 	u, err := url.Parse(strings.TrimSpace(server))
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
 		return FailedCheck(CheckControlPlane, &ControlPlaneUnreachableError{

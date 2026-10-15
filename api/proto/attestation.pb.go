@@ -1469,16 +1469,18 @@ type AttestContainerRequest struct {
 	TrustLabel string `protobuf:"bytes,5,opt,name=trust_label,json=trustLabel,proto3" json:"trust_label,omitempty"`
 	// TrustLevel names the required tier: "pinned", "attested" or "measured".
 	TrustLevel string `protobuf:"bytes,6,opt,name=trust_level,json=trustLevel,proto3" json:"trust_level,omitempty"`
-	// ExpectedPcrs is the golden PCR set the host quote is checked against.
-	ExpectedPcrs map[uint32][]byte `protobuf:"bytes,7,rep,name=expected_pcrs,json=expectedPcrs,proto3" json:"expected_pcrs,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// MeasurementPcr is the PCR index carrying the launch measurement.
 	MeasurementPcr int32 `protobuf:"varint,8,opt,name=measurement_pcr,json=measurementPcr,proto3" json:"measurement_pcr,omitempty"`
 	// MeasurementBank names the PCR bank for the launch measurement.
 	MeasurementBank string `protobuf:"bytes,9,opt,name=measurement_bank,json=measurementBank,proto3" json:"measurement_bank,omitempty"`
 	// Nonce is caller-supplied qualifying data.
-	Nonce         []byte `protobuf:"bytes,10,opt,name=nonce,proto3" json:"nonce,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Nonce []byte `protobuf:"bytes,10,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	// ReferenceValues names the stored reference values (PutReferenceValues)
+	// the Verifier appraises the host quote against. Required at the
+	// "attested" tier and above.
+	ReferenceValues string `protobuf:"bytes,11,opt,name=reference_values,json=referenceValues,proto3" json:"reference_values,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AttestContainerRequest) Reset() {
@@ -1553,13 +1555,6 @@ func (x *AttestContainerRequest) GetTrustLevel() string {
 	return ""
 }
 
-func (x *AttestContainerRequest) GetExpectedPcrs() map[uint32][]byte {
-	if x != nil {
-		return x.ExpectedPcrs
-	}
-	return nil
-}
-
 func (x *AttestContainerRequest) GetMeasurementPcr() int32 {
 	if x != nil {
 		return x.MeasurementPcr
@@ -1579,6 +1574,13 @@ func (x *AttestContainerRequest) GetNonce() []byte {
 		return x.Nonce
 	}
 	return nil
+}
+
+func (x *AttestContainerRequest) GetReferenceValues() string {
+	if x != nil {
+		return x.ReferenceValues
+	}
+	return ""
 }
 
 // AttestContainerResponse is the attestation evidence produced for a
@@ -1913,7 +1915,7 @@ const file_api_proto_attestation_proto_rawDesc = "" +
 	"\x1eVerifyAttestationChainResponse\x12\x14\n" +
 	"\x05valid\x18\x01 \x01(\bR\x05valid\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x128\n" +
-	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\xe6\x03\n" +
+	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\xfd\x02\n" +
 	"\x16AttestContainerRequest\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x14\n" +
@@ -1922,15 +1924,12 @@ const file_api_proto_attestation_proto_rawDesc = "" +
 	"\vtrust_label\x18\x05 \x01(\tR\n" +
 	"trustLabel\x12\x1f\n" +
 	"\vtrust_level\x18\x06 \x01(\tR\n" +
-	"trustLevel\x12f\n" +
-	"\rexpected_pcrs\x18\a \x03(\v2A.quicbaas.attestation.v1.AttestContainerRequest.ExpectedPcrsEntryR\fexpectedPcrs\x12'\n" +
+	"trustLevel\x12'\n" +
 	"\x0fmeasurement_pcr\x18\b \x01(\x05R\x0emeasurementPcr\x12)\n" +
 	"\x10measurement_bank\x18\t \x01(\tR\x0fmeasurementBank\x12\x14\n" +
 	"\x05nonce\x18\n" +
-	" \x01(\fR\x05nonce\x1a?\n" +
-	"\x11ExpectedPcrsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\x9d\x06\n" +
+	" \x01(\fR\x05nonce\x12)\n" +
+	"\x10reference_values\x18\v \x01(\tR\x0freferenceValuesJ\x04\b\a\x10\bR\rexpected_pcrs\"\x9d\x06\n" +
 	"\x17AttestContainerResponse\x12\x1a\n" +
 	"\battested\x18\x01 \x01(\bR\battested\x12\x1b\n" +
 	"\tdevice_id\x18\x02 \x01(\tR\bdeviceId\x12!\n" +
@@ -1983,7 +1982,7 @@ func file_api_proto_attestation_proto_rawDescGZIP() []byte {
 	return file_api_proto_attestation_proto_rawDescData
 }
 
-var file_api_proto_attestation_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_api_proto_attestation_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_api_proto_attestation_proto_goTypes = []any{
 	(*Endorsement)(nil),                    // 0: quicbaas.attestation.v1.Endorsement
 	(*PutEndorsementRequest)(nil),          // 1: quicbaas.attestation.v1.PutEndorsementRequest
@@ -2011,57 +2010,55 @@ var file_api_proto_attestation_proto_goTypes = []any{
 	nil,                                    // 23: quicbaas.attestation.v1.AppraiseQuoteRequest.PcrsEntry
 	nil,                                    // 24: quicbaas.attestation.v1.AttestationVerifyOptions.ExpectedPcrsEntry
 	nil,                                    // 25: quicbaas.attestation.v1.VerifyAttestationRequest.PcrsEntry
-	nil,                                    // 26: quicbaas.attestation.v1.AttestContainerRequest.ExpectedPcrsEntry
-	nil,                                    // 27: quicbaas.attestation.v1.AttestContainerResponse.PcrsEntry
-	(*timestamppb.Timestamp)(nil),          // 28: google.protobuf.Timestamp
+	nil,                                    // 26: quicbaas.attestation.v1.AttestContainerResponse.PcrsEntry
+	(*timestamppb.Timestamp)(nil),          // 27: google.protobuf.Timestamp
 }
 var file_api_proto_attestation_proto_depIdxs = []int32{
-	28, // 0: quicbaas.attestation.v1.Endorsement.created_at:type_name -> google.protobuf.Timestamp
+	27, // 0: quicbaas.attestation.v1.Endorsement.created_at:type_name -> google.protobuf.Timestamp
 	0,  // 1: quicbaas.attestation.v1.ListEndorsementsResponse.endorsements:type_name -> quicbaas.attestation.v1.Endorsement
-	28, // 2: quicbaas.attestation.v1.ReferenceValues.not_before:type_name -> google.protobuf.Timestamp
-	28, // 3: quicbaas.attestation.v1.ReferenceValues.not_after:type_name -> google.protobuf.Timestamp
-	28, // 4: quicbaas.attestation.v1.ReferenceValues.stored_at:type_name -> google.protobuf.Timestamp
+	27, // 2: quicbaas.attestation.v1.ReferenceValues.not_before:type_name -> google.protobuf.Timestamp
+	27, // 3: quicbaas.attestation.v1.ReferenceValues.not_after:type_name -> google.protobuf.Timestamp
+	27, // 4: quicbaas.attestation.v1.ReferenceValues.stored_at:type_name -> google.protobuf.Timestamp
 	6,  // 5: quicbaas.attestation.v1.ListReferenceValuesResponse.reference_values:type_name -> quicbaas.attestation.v1.ReferenceValues
 	23, // 6: quicbaas.attestation.v1.AppraiseQuoteRequest.pcrs:type_name -> quicbaas.attestation.v1.AppraiseQuoteRequest.PcrsEntry
 	14, // 7: quicbaas.attestation.v1.AttestationResult.checks:type_name -> quicbaas.attestation.v1.AppraisalCheck
-	28, // 8: quicbaas.attestation.v1.AttestationResult.appraised_at:type_name -> google.protobuf.Timestamp
+	27, // 8: quicbaas.attestation.v1.AttestationResult.appraised_at:type_name -> google.protobuf.Timestamp
 	24, // 9: quicbaas.attestation.v1.AttestationVerifyOptions.expected_pcrs:type_name -> quicbaas.attestation.v1.AttestationVerifyOptions.ExpectedPcrsEntry
 	25, // 10: quicbaas.attestation.v1.VerifyAttestationRequest.pcrs:type_name -> quicbaas.attestation.v1.VerifyAttestationRequest.PcrsEntry
 	16, // 11: quicbaas.attestation.v1.VerifyAttestationRequest.options:type_name -> quicbaas.attestation.v1.AttestationVerifyOptions
-	28, // 12: quicbaas.attestation.v1.VerifyAttestationResponse.timestamp:type_name -> google.protobuf.Timestamp
+	27, // 12: quicbaas.attestation.v1.VerifyAttestationResponse.timestamp:type_name -> google.protobuf.Timestamp
 	16, // 13: quicbaas.attestation.v1.VerifyAttestationChainRequest.options:type_name -> quicbaas.attestation.v1.AttestationVerifyOptions
-	28, // 14: quicbaas.attestation.v1.VerifyAttestationChainResponse.timestamp:type_name -> google.protobuf.Timestamp
-	26, // 15: quicbaas.attestation.v1.AttestContainerRequest.expected_pcrs:type_name -> quicbaas.attestation.v1.AttestContainerRequest.ExpectedPcrsEntry
-	27, // 16: quicbaas.attestation.v1.AttestContainerResponse.pcrs:type_name -> quicbaas.attestation.v1.AttestContainerResponse.PcrsEntry
-	28, // 17: quicbaas.attestation.v1.AttestContainerResponse.attested_at:type_name -> google.protobuf.Timestamp
-	28, // 18: quicbaas.attestation.v1.AttestContainerResponse.timestamp:type_name -> google.protobuf.Timestamp
-	17, // 19: quicbaas.attestation.v1.AttestationService.Verify:input_type -> quicbaas.attestation.v1.VerifyAttestationRequest
-	19, // 20: quicbaas.attestation.v1.AttestationService.VerifyChain:input_type -> quicbaas.attestation.v1.VerifyAttestationChainRequest
-	21, // 21: quicbaas.attestation.v1.AttestationService.AttestContainer:input_type -> quicbaas.attestation.v1.AttestContainerRequest
-	1,  // 22: quicbaas.attestation.v1.AttestationService.PutEndorsement:input_type -> quicbaas.attestation.v1.PutEndorsementRequest
-	2,  // 23: quicbaas.attestation.v1.AttestationService.ListEndorsements:input_type -> quicbaas.attestation.v1.ListEndorsementsRequest
-	4,  // 24: quicbaas.attestation.v1.AttestationService.DeleteEndorsement:input_type -> quicbaas.attestation.v1.DeleteEndorsementRequest
-	7,  // 25: quicbaas.attestation.v1.AttestationService.PutReferenceValues:input_type -> quicbaas.attestation.v1.PutReferenceValuesRequest
-	8,  // 26: quicbaas.attestation.v1.AttestationService.GetReferenceValues:input_type -> quicbaas.attestation.v1.GetReferenceValuesRequest
-	9,  // 27: quicbaas.attestation.v1.AttestationService.ListReferenceValues:input_type -> quicbaas.attestation.v1.ListReferenceValuesRequest
-	11, // 28: quicbaas.attestation.v1.AttestationService.DeleteReferenceValues:input_type -> quicbaas.attestation.v1.DeleteReferenceValuesRequest
-	13, // 29: quicbaas.attestation.v1.AttestationService.AppraiseQuote:input_type -> quicbaas.attestation.v1.AppraiseQuoteRequest
-	18, // 30: quicbaas.attestation.v1.AttestationService.Verify:output_type -> quicbaas.attestation.v1.VerifyAttestationResponse
-	20, // 31: quicbaas.attestation.v1.AttestationService.VerifyChain:output_type -> quicbaas.attestation.v1.VerifyAttestationChainResponse
-	22, // 32: quicbaas.attestation.v1.AttestationService.AttestContainer:output_type -> quicbaas.attestation.v1.AttestContainerResponse
-	0,  // 33: quicbaas.attestation.v1.AttestationService.PutEndorsement:output_type -> quicbaas.attestation.v1.Endorsement
-	3,  // 34: quicbaas.attestation.v1.AttestationService.ListEndorsements:output_type -> quicbaas.attestation.v1.ListEndorsementsResponse
-	5,  // 35: quicbaas.attestation.v1.AttestationService.DeleteEndorsement:output_type -> quicbaas.attestation.v1.DeleteEndorsementResponse
-	6,  // 36: quicbaas.attestation.v1.AttestationService.PutReferenceValues:output_type -> quicbaas.attestation.v1.ReferenceValues
-	6,  // 37: quicbaas.attestation.v1.AttestationService.GetReferenceValues:output_type -> quicbaas.attestation.v1.ReferenceValues
-	10, // 38: quicbaas.attestation.v1.AttestationService.ListReferenceValues:output_type -> quicbaas.attestation.v1.ListReferenceValuesResponse
-	12, // 39: quicbaas.attestation.v1.AttestationService.DeleteReferenceValues:output_type -> quicbaas.attestation.v1.DeleteReferenceValuesResponse
-	15, // 40: quicbaas.attestation.v1.AttestationService.AppraiseQuote:output_type -> quicbaas.attestation.v1.AttestationResult
-	30, // [30:41] is the sub-list for method output_type
-	19, // [19:30] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	27, // 14: quicbaas.attestation.v1.VerifyAttestationChainResponse.timestamp:type_name -> google.protobuf.Timestamp
+	26, // 15: quicbaas.attestation.v1.AttestContainerResponse.pcrs:type_name -> quicbaas.attestation.v1.AttestContainerResponse.PcrsEntry
+	27, // 16: quicbaas.attestation.v1.AttestContainerResponse.attested_at:type_name -> google.protobuf.Timestamp
+	27, // 17: quicbaas.attestation.v1.AttestContainerResponse.timestamp:type_name -> google.protobuf.Timestamp
+	17, // 18: quicbaas.attestation.v1.AttestationService.Verify:input_type -> quicbaas.attestation.v1.VerifyAttestationRequest
+	19, // 19: quicbaas.attestation.v1.AttestationService.VerifyChain:input_type -> quicbaas.attestation.v1.VerifyAttestationChainRequest
+	21, // 20: quicbaas.attestation.v1.AttestationService.AttestContainer:input_type -> quicbaas.attestation.v1.AttestContainerRequest
+	1,  // 21: quicbaas.attestation.v1.AttestationService.PutEndorsement:input_type -> quicbaas.attestation.v1.PutEndorsementRequest
+	2,  // 22: quicbaas.attestation.v1.AttestationService.ListEndorsements:input_type -> quicbaas.attestation.v1.ListEndorsementsRequest
+	4,  // 23: quicbaas.attestation.v1.AttestationService.DeleteEndorsement:input_type -> quicbaas.attestation.v1.DeleteEndorsementRequest
+	7,  // 24: quicbaas.attestation.v1.AttestationService.PutReferenceValues:input_type -> quicbaas.attestation.v1.PutReferenceValuesRequest
+	8,  // 25: quicbaas.attestation.v1.AttestationService.GetReferenceValues:input_type -> quicbaas.attestation.v1.GetReferenceValuesRequest
+	9,  // 26: quicbaas.attestation.v1.AttestationService.ListReferenceValues:input_type -> quicbaas.attestation.v1.ListReferenceValuesRequest
+	11, // 27: quicbaas.attestation.v1.AttestationService.DeleteReferenceValues:input_type -> quicbaas.attestation.v1.DeleteReferenceValuesRequest
+	13, // 28: quicbaas.attestation.v1.AttestationService.AppraiseQuote:input_type -> quicbaas.attestation.v1.AppraiseQuoteRequest
+	18, // 29: quicbaas.attestation.v1.AttestationService.Verify:output_type -> quicbaas.attestation.v1.VerifyAttestationResponse
+	20, // 30: quicbaas.attestation.v1.AttestationService.VerifyChain:output_type -> quicbaas.attestation.v1.VerifyAttestationChainResponse
+	22, // 31: quicbaas.attestation.v1.AttestationService.AttestContainer:output_type -> quicbaas.attestation.v1.AttestContainerResponse
+	0,  // 32: quicbaas.attestation.v1.AttestationService.PutEndorsement:output_type -> quicbaas.attestation.v1.Endorsement
+	3,  // 33: quicbaas.attestation.v1.AttestationService.ListEndorsements:output_type -> quicbaas.attestation.v1.ListEndorsementsResponse
+	5,  // 34: quicbaas.attestation.v1.AttestationService.DeleteEndorsement:output_type -> quicbaas.attestation.v1.DeleteEndorsementResponse
+	6,  // 35: quicbaas.attestation.v1.AttestationService.PutReferenceValues:output_type -> quicbaas.attestation.v1.ReferenceValues
+	6,  // 36: quicbaas.attestation.v1.AttestationService.GetReferenceValues:output_type -> quicbaas.attestation.v1.ReferenceValues
+	10, // 37: quicbaas.attestation.v1.AttestationService.ListReferenceValues:output_type -> quicbaas.attestation.v1.ListReferenceValuesResponse
+	12, // 38: quicbaas.attestation.v1.AttestationService.DeleteReferenceValues:output_type -> quicbaas.attestation.v1.DeleteReferenceValuesResponse
+	15, // 39: quicbaas.attestation.v1.AttestationService.AppraiseQuote:output_type -> quicbaas.attestation.v1.AttestationResult
+	29, // [29:40] is the sub-list for method output_type
+	18, // [18:29] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_attestation_proto_init() }
@@ -2075,7 +2072,7 @@ func file_api_proto_attestation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_attestation_proto_rawDesc), len(file_api_proto_attestation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

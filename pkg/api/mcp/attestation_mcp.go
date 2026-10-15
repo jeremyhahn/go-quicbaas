@@ -183,6 +183,7 @@ func (r *ToolRegistry) handleAttestationAttestContainer(ctx context.Context, svc
 		ImageDigest:     getString(args, "image_digest"),
 		TrustLabel:      getString(args, "trust_label"),
 		TrustLevel:      getString(args, "trust_level"),
+		ReferenceValues: getString(args, "reference_values"),
 		MeasurementPCR:  getInt(args, "measurement_pcr"),
 		MeasurementBank: getString(args, "measurement_bank"),
 	})

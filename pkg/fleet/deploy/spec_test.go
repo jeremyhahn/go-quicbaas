@@ -13,7 +13,11 @@
 
 package deploy
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestSpecResolvedDefaults(t *testing.T) {
 	cases := []struct {
@@ -92,4 +96,83 @@ func TestSpecSystemdToggle(t *testing.T) {
 			t.Fatal("nil receiver must be false")
 		}
 	})
+}
+
+func TestSpecDefaultNodeBind(t *testing.T) {
+	cases := []struct {
+		name string
+		spec Spec
+		want string
+	}{
+		{name: "ssh host", spec: Spec{Host: "node01"}, want: "node01:9091"},
+		{name: "ssh host with port and user", spec: Spec{Host: "alice@node01:2222"}, want: "node01:9091"},
+		{name: "ipv6 host", spec: Spec{Host: "[2001:db8::1]:22"}, want: "[2001:db8::1]:9091"},
+		{name: "local advertised host", spec: Spec{Host: "node02.internal", Local: true}, want: "node02.internal:9091"},
+		{name: "explicit bind wins", spec: Spec{Host: "node01", NodeBind: "0.0.0.0:9191"}, want: "0.0.0.0:9191"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := tc.spec
+			if err := spec.DefaultNodeBind(); err != nil {
+				t.Fatalf("DefaultNodeBind: %v", err)
+			}
+			if spec.NodeBind != tc.want {
+				t.Fatalf("NodeBind = %q, want %q", spec.NodeBind, tc.want)
+			}
+		})
+	}
+}
+
+func TestSpecDefaultNodeBindNeverWildcard(t *testing.T) {
+	for _, host := range []string{"", "0.0.0.0", "alice@[::]:22"} {
+		spec := Spec{Host: host}
+
+		err := spec.DefaultNodeBind()
+
+		var invalid *InvalidSpecError
+		if !errors.As(err, &invalid) || invalid.Field != "node_bind" {
+			t.Fatalf("host %q: want InvalidSpecError on node_bind, got %v", host, err)
+		}
+		if spec.NodeBind != "" {
+			t.Fatalf("host %q: defaulted to %q", host, spec.NodeBind)
+		}
+	}
+}
+
+func TestHostname(t *testing.T) {
+	cases := map[string]string{
+		"node01":                 "node01",
+		"alice@node01:2222":      "node01",
+		"[2001:db8::1]:22":       "2001:db8::1",
+		"alice@[2001:db8::1]:22": "2001:db8::1",
+		"":                       "",
+	}
+	for in, want := range cases {
+		if got := Hostname(in); got != want {
+			t.Errorf("Hostname(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSpecLocalSSHConflict(t *testing.T) {
+	if err := (&Spec{Local: true}).LocalSSHConflict(); err != nil {
+		t.Fatalf("a spec with no ssh settings conflicts: %v", err)
+	}
+	cases := map[string]Spec{
+		"ssh_user":          {SSHUser: "alice"},
+		"ssh_key_name":      {SSHKeyName: "alice-laptop"},
+		"ssh_password":      {SSHPassword: "secret"},
+		"insecure_host_key": {InsecureHostKey: true},
+	}
+	for field, spec := range cases {
+		err := spec.LocalSSHConflict()
+
+		var conflict *LocalSSHConflictError
+		if !errors.As(err, &conflict) || conflict.Field != field {
+			t.Fatalf("%s: want LocalSSHConflictError, got %v", field, err)
+		}
+		if !strings.Contains(err.Error(), field) {
+			t.Fatalf("%s: error does not name the field: %v", field, err)
+		}
+	}
 }

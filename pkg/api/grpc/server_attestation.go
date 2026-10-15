@@ -135,7 +135,7 @@ func (s *Server) AttestContainer(ctx context.Context, req *pb.AttestContainerReq
 		ImageDigest:     req.ImageDigest,
 		TrustLabel:      req.TrustLabel,
 		TrustLevel:      req.TrustLevel,
-		ExpectedPCRs:    req.ExpectedPcrs,
+		ReferenceValues: req.ReferenceValues,
 		MeasurementPCR:  int(req.MeasurementPcr),
 		MeasurementBank: req.MeasurementBank,
 		Nonce:           req.Nonce,

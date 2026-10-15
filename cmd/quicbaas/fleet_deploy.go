@@ -65,6 +65,7 @@ var (
 	deployProjectsRoot    string
 	deployPreflightOnly   bool
 	deploySkipPreflight   bool
+	deployLocal           bool
 )
 
 // =============================================================================
@@ -177,8 +178,9 @@ func buildDeploySSHResolvers() (service.SSHSignerResolver, service.SSHHostKeyRes
 func newFleetDeployCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy",
-		Short: "Deploy the QuicBaaS agent to a remote host over SSH",
-		Long: `Deploy a QuicBaaS fleet node daemon to a remote host.
+		Short: "Deploy the QuicBaaS agent to a remote host over SSH, or to this host",
+		Long: `Deploy a QuicBaaS fleet node daemon to a remote host, or with --local
+to the host this command runs on.
 
 The command issues an mTLS client certificate for the daemon via the
 QuicBaaS server's CA, uploads the static CLI binary and identity
@@ -230,6 +232,19 @@ Preflight:
   verified by the deploy's CA. Each failure names its fix. --preflight
   runs only the checks; --skip-preflight deploys without them.
 
+Local install:
+  --local installs on this host with no ssh and no sshd: commands run
+  as the current user and files are written in place. The preflight,
+  the rendered unit or start script, and --systemd are the deploy's
+  own; only the ssh, host-key and deploy-key checks are skipped. --local
+  cannot be combined with --ssh or with a spec that names a host.
+
+Bind address:
+  --bind defaults to the node's advertised host on port 9091, never to a
+  wildcard: the ssh target's host, or for --local the host of this
+  node's raft.raft_address. A wildcard bind exposes the agent on every
+  interface; pass --bind 0.0.0.0:9091 to ask for that explicitly.
+
 Examples:
   quicbaas fleet deploy --spec deployments/fleet/agent-01.yaml --preflight
   quicbaas fleet deploy --spec deployments/fleet/agent-01.yaml
@@ -243,7 +258,7 @@ Examples:
 
 	registerDeployTargetFlags(cmd)
 	cmd.Flags().StringVar(&deployServer, "server", "", "QuicBaaS server address the agent will dial (required)")
-	cmd.Flags().StringVar(&deployBindAddr, "bind", "0.0.0.0:9091", "Local bind address the agent exposes on the remote host")
+	cmd.Flags().StringVar(&deployBindAddr, "bind", "", "Address the agent listens on (default: the node's advertised host, port "+deploy.DefaultNodePort+")")
 	cmd.Flags().StringSliceVar(&deployBackends, "backend", []string{"acp"}, "Backend the node serves, by name (claude, codex, opencode, openvino, ollama-agent, vllm, ollama) or the \"acp\" group; repeat for multiple")
 	cmd.Flags().StringVar(&deployBinary, "binary", "bin/quicbaas-agent", "Local path to the linux agent binary (make build-agent; cgo, statically linked)")
 	registerWaitOnlineFlag(cmd)
@@ -251,16 +266,20 @@ Examples:
 	cmd.Flags().IntVar(&deployMaxJobs, "max-concurrent-jobs", 0, "Jobs this node can run at once (the spec's agent.max_concurrent_jobs). Required unless the spec declares it: a node with no declared capacity leaves the fleet's capacity undeclared.")
 	cmd.Flags().BoolVar(&deployPreflightOnly, "preflight", false, "Run the preflight checks and report; change nothing on the node")
 	cmd.Flags().BoolVar(&deploySkipPreflight, "skip-preflight", false, "Deploy without running the preflight checks first")
-
-	for _, flag := range []string{"ssh", "server"} {
-		if err := cmd.MarkFlagRequired(flag); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to mark %s required: %v\n", flag, err)
-		}
+	if err := cmd.MarkFlagRequired("server"); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to mark server required: %v\n", err)
 	}
 	cmd.MarkFlagsMutuallyExclusive("preflight", "skip-preflight")
+	cmd.Long += deployLocalExample
 
 	return cmd
 }
+
+// deployLocalExample closes the deploy help's examples with a local install.
+const deployLocalExample = `
+
+  quicbaas fleet deploy --local --server https://quicbaas.example.com:8443 \
+    --tenant acme --max-concurrent-jobs 4`
 
 // runFleetDeploy orchestrates flag parsing → service invocation →
 // output formatting.
@@ -306,9 +325,12 @@ func runFleetDeploy(cmd *cobra.Command, args []string) error {
 // buildDeploySpec translates the flag surface into a deploy.Spec, for a
 // deploy with no --spec file.
 func buildDeploySpec() (*deploy.Spec, error) {
-	user, host, err := parseSSHTarget(deploySSH)
-	if err != nil {
-		return nil, err
+	var user, host string
+	if !deployLocal {
+		var err error
+		if user, host, err = parseSSHTarget(deploySSH); err != nil {
+			return nil, err
+		}
 	}
 
 	sysFlag, err := parseSystemdFlag(deploySystemdFlag)

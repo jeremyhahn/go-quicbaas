@@ -18,7 +18,9 @@ Adding one is a **declared, pre-flighted, reversible** operation:
 | Remove | `quicbaas fleet undeploy --spec <file>` | removes the install |
 
 Every command talks to the node over SSH with a stored key and a pinned
-host key, and to the control plane with the CLI's own connection.
+host key, and to the control plane with the CLI's own connection. A node on
+the CLI's own host deploys with `--local` and no SSH
+([cli.md](cli.md#local-install)).
 
 ## Quick start
 
@@ -87,7 +89,7 @@ repository ([public-releasability](../release/public-releasability.md)).
 |---|---|
 | `host`, `ssh_user`, `ssh_key_name` (`ssh_key_scope`, `ssh_key_owner`) | How to reach the node. A spec never carries a password. |
 | `server`, `tenant` | The control plane the node dials, and the tenant it serves. |
-| `node_bind`, `backends`, `binary`, `install_dir`, `data_dir`, `systemd`, `wait_online` | What the deploy installs and how. |
+| `node_bind`, `backends`, `binary`, `install_dir`, `data_dir`, `systemd`, `wait_online` | What the deploy installs and how. `node_bind` defaults to the node's advertised host on 9091, never a wildcard ([cli.md](cli.md#bind-address)). |
 | `projects_root` | Where job workspaces live on the node. |
 | `worker_images` | The images the node's sandboxed sessions run. |
 | `node:` | The daemon's configuration — exactly the `fleet serve --config` schema (`fleet.Config`). |

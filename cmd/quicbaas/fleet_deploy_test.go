@@ -73,7 +73,7 @@ func resetDeployFlags(t *testing.T) {
 	deploySSHPassword = ""
 	deployInsecureHostKey = false
 	deployServer = ""
-	deployBindAddr = "0.0.0.0:9091"
+	deployBindAddr = ""
 	deployBackends = []string{"acp"}
 	deployBinary = "bin/quicbaas-agent"
 	deployInstallDir = ""
@@ -85,6 +85,7 @@ func resetDeployFlags(t *testing.T) {
 	deployMaxJobs = 0
 	deployPreflightOnly = false
 	deploySkipPreflight = false
+	deployLocal = false
 	deploySSHKeyName = ""
 	deploySSHKeyScope = ""
 	deploySSHKeyOwner = ""

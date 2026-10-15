@@ -144,13 +144,17 @@ var (
 					Type:        "string",
 					Description: "Required tier: pinned, attested or measured",
 				},
+				"reference_values": {
+					Type:        "string",
+					Description: "Name of the stored reference values the host quote is appraised against. Required at attested and above",
+				},
 				"measurement_pcr": {
 					Type:        "integer",
 					Description: "PCR index carrying the launch measurement. Zero selects the attestor default",
 				},
 				"measurement_bank": {
 					Type:        "string",
-					Description: "PCR bank for the launch measurement: sha1, sha256, sha384 or sha512",
+					Description: "PCR bank for the launch measurement: sha256, sha384 or sha512",
 				},
 			},
 			Required: []string{"image"},

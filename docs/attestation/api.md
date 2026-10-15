@@ -54,6 +54,26 @@ result says `verified: false`; errors are reserved for unusable requests
 (400 / `INVALID_ARGUMENT`), missing records (404 / `NOT_FOUND`) and an
 unreachable store (503 / `UNAVAILABLE`).
 
+### `reference_values` on container specs
+
+`AttestContainer` and the orchestrator's `SpawnSession` carry
+`reference_values` (Go `ReferenceValues`): the name of the tenant's stored
+reference values the Verifier appraises the host quote against. It is required
+at `attested` and above, and replaces `expected_pcrs`, which is removed with no
+fallback (proto fields `AttestContainerRequest` 7 and `SpawnSessionRequest` 25 are
+reserved). Store the `ak-root` and `reference-signer` endorsements and the
+reference values first; see
+[architecture.md](architecture.md#tier-1-host-appraisal).
+
+```json
+// POST /api/v1/attestation/attest-container
+{"image": "registry.example/agent@sha256:…", "trust_level": "attested",
+ "reference_values": "golden"}
+```
+
+A host the Verifier does not verify fails the call with `ErrHostNotVerified`
+(and `ErrPCRMismatch` when a PCR diverged).
+
 ## Go SDK
 
 ```go

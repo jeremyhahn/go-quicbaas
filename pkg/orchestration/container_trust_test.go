@@ -168,9 +168,9 @@ func TestContainerSpec_ValidateTrust_Errors(t *testing.T) {
 		{
 			name: "TagInsteadOfDigestRejectedAtAttestedLevel",
 			spec: &ContainerSpec{
-				Image:        "alpine:3.20",
-				TrustLevel:   TrustLevelAttested,
-				ExpectedPCRs: map[uint32][]byte{7: {0x01}},
+				Image:           "alpine:3.20",
+				TrustLevel:      TrustLevelAttested,
+				ReferenceValues: "golden",
 			},
 			wantIs:  ErrImageNotPinned,
 			wantErr: true,
@@ -207,7 +207,7 @@ func TestContainerSpec_ValidateTrust_Errors(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "AttestedWithoutExpectedPCRs",
+			name: "AttestedWithoutReferenceValues",
 			spec: &ContainerSpec{
 				Image:      "alpine@" + testDigest,
 				TrustLevel: TrustLevelAttested,
@@ -215,22 +215,39 @@ func TestContainerSpec_ValidateTrust_Errors(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "PCRIndexOutOfRange",
+			name: "ReferenceValuesNameWithSlash",
 			spec: &ContainerSpec{
-				Image:        "alpine@" + testDigest,
-				TrustLevel:   TrustLevelAttested,
-				ExpectedPCRs: map[uint32][]byte{MaxPCRIndex + 1: {0x01}},
+				Image:           "alpine@" + testDigest,
+				TrustLevel:      TrustLevelAttested,
+				ReferenceValues: "tenant/golden",
 			},
 			wantErr: true,
 		},
 		{
-			name: "EmptyExpectedPCRDigest",
+			name: "ReferenceValuesNameTooLong",
 			spec: &ContainerSpec{
-				Image:        "alpine@" + testDigest,
-				TrustLevel:   TrustLevelAttested,
-				ExpectedPCRs: map[uint32][]byte{7: {}},
+				Image:           "alpine@" + testDigest,
+				TrustLevel:      TrustLevelAttested,
+				ReferenceValues: strings.Repeat("a", maxReferenceValuesNameLen+1),
 			},
 			wantErr: true,
+		},
+		{
+			name: "ReferenceValuesNameInvalidBelowAttested",
+			spec: &ContainerSpec{
+				Image:           "alpine@" + testDigest,
+				TrustLevel:      TrustLevelPinned,
+				ReferenceValues: "a/b",
+			},
+			wantErr: true,
+		},
+		{
+			name: "AttestedWithReferenceValuesIsAccepted",
+			spec: &ContainerSpec{
+				Image:           "alpine@" + testDigest,
+				TrustLevel:      TrustLevelAttested,
+				ReferenceValues: strings.Repeat("a", maxReferenceValuesNameLen),
+			},
 		},
 		{
 			name: "UnsupportedMeasurementBank",
@@ -266,9 +283,9 @@ func TestContainerSpec_ValidateTrust_Errors(t *testing.T) {
 		{
 			name: "MeasuredIsAccepted",
 			spec: &ContainerSpec{
-				Image:        "alpine@" + testDigest,
-				TrustLevel:   TrustLevelMeasured,
-				ExpectedPCRs: map[uint32][]byte{7: {0x01}},
+				Image:           "alpine@" + testDigest,
+				TrustLevel:      TrustLevelMeasured,
+				ReferenceValues: "golden",
 			},
 		},
 	}
@@ -289,6 +306,35 @@ func TestContainerSpec_ValidateTrust_Errors(t *testing.T) {
 				t.Fatalf("error %v does not wrap %v", err, tt.wantIs)
 			}
 		})
+	}
+}
+
+// TestContainerSpec_ValidateTrust_MeasurementBank pins the banks a spec may
+// extend its launch measurement into to the banks the Verifier appraises. A
+// sha1 bank is refused at validation, before anything launches, because
+// evidence.ParseQuote refuses a SHA-1 selection and the launch could never
+// be appraised.
+func TestContainerSpec_ValidateTrust_MeasurementBank(t *testing.T) {
+	for _, bank := range []string{"", "sha256", "sha384", "sha512"} {
+		spec := &ContainerSpec{Image: "alpine@" + testDigest, MeasurementBank: bank}
+		if err := spec.Validate(); err != nil {
+			t.Errorf("bank %q: %v, want accepted", bank, err)
+		}
+	}
+
+	for _, bank := range []string{"sha1", "SHA256", "md5"} {
+		spec := &ContainerSpec{Image: "alpine@" + testDigest, MeasurementBank: bank}
+		err := spec.Validate()
+		var invalid *InputValidationError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("bank %q: error %v is not an *InputValidationError", bank, err)
+		}
+		if invalid.Field != "measurement_bank" {
+			t.Errorf("bank %q: field = %q, want measurement_bank", bank, invalid.Field)
+		}
+		if strings.Contains(invalid.Message, "sha1") {
+			t.Errorf("bank %q: message %q still offers sha1", bank, invalid.Message)
+		}
 	}
 }
 

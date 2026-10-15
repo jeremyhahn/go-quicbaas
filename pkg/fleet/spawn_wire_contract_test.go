@@ -152,10 +152,10 @@ func sentinelSpawnRequest(mountRoot string) *orchestration.SpawnRequest {
 			Type:     orchestration.MountTypeBind,
 		}},
 
-		ImageDigest:  "sha256:0000000000000000000000000000000000000000000000000000000000000001",
-		TrustLevel:   orchestration.TrustLevelAttested,
-		TrustLabel:   "trust-label-sentinel",
-		ExpectedPCRs: map[uint32][]byte{7: {0xde, 0xad, 0xbe, 0xef}},
+		ImageDigest:     "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+		TrustLevel:      orchestration.TrustLevelAttested,
+		TrustLabel:      "trust-label-sentinel",
+		ReferenceValues: "reference-values-sentinel",
 
 		AccountID:       "acct-sentinel",
 		AccountAuto:     true,

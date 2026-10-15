@@ -135,8 +135,8 @@ const (
 //
 // The caller must have verified that systemctl --user is available
 // on the remote (see DetectSystemdUser).
-func InstallAndStart(ctx context.Context, sshClient *SSHClient, unitContent, unitName string) error {
-	if sshClient == nil {
+func InstallAndStart(ctx context.Context, target Target, unitContent, unitName string) error {
+	if target == nil {
 		return &SystemdInstallError{Unit: unitName, Stage: "ssh", Cause: errClosed}
 	}
 	if unitName == "" {
@@ -148,13 +148,13 @@ func InstallAndStart(ctx context.Context, sshClient *SSHClient, unitContent, uni
 
 	// Ensure the user systemd directory exists. shellQuotePath lets
 	// the remote shell expand $HOME while keeping the remainder literal.
-	if _, _, err := sshClient.Exec(ctx, "mkdir -p "+shellQuotePath(unitDir)); err != nil {
+	if _, _, err := target.Exec(ctx, "mkdir -p "+shellQuotePath(unitDir)); err != nil {
 		return &SystemdInstallError{Unit: unitName, Stage: "mkdir", Cause: err}
 	}
 
 	// Write the unit file. The remote path is quoted so odd $HOME
 	// expansions never escape a shell context.
-	if err := sshClient.WriteFile(ctx, unitPath, []byte(unitContent), 0o644); err != nil {
+	if err := target.WriteFile(ctx, unitPath, []byte(unitContent), 0o644); err != nil {
 		return &SystemdInstallError{Unit: unitName, Stage: "write", Cause: err}
 	}
 
@@ -163,7 +163,7 @@ func InstallAndStart(ctx context.Context, sshClient *SSHClient, unitContent, uni
 		"systemctl --user daemon-reload",
 		"systemctl --user enable " + shellQuote(unitName),
 	} {
-		if _, _, err := sshClient.Exec(ctx, cmd); err != nil {
+		if _, _, err := target.Exec(ctx, cmd); err != nil {
 			return &SystemdInstallError{Unit: unitName, Stage: stageFor(cmd), Cause: err}
 		}
 	}
@@ -172,12 +172,12 @@ func InstallAndStart(ctx context.Context, sshClient *SSHClient, unitContent, uni
 	// not linger is torn down with the last session of its user — this
 	// very SSH connection — so starting the agent first would only
 	// produce one that enrolls, heartbeats, and is killed on disconnect.
-	if err := EnsureLinger(ctx, sshClient, sshClient.User()); err != nil {
+	if err := EnsureLinger(ctx, target, target.User()); err != nil {
 		return err
 	}
 
 	start := "systemctl --user restart " + shellQuote(unitName)
-	if _, _, err := sshClient.Exec(ctx, start); err != nil {
+	if _, _, err := target.Exec(ctx, start); err != nil {
 		return &SystemdInstallError{Unit: unitName, Stage: stageFor(start), Cause: err}
 	}
 	return nil
@@ -186,11 +186,11 @@ func InstallAndStart(ctx context.Context, sshClient *SSHClient, unitContent, uni
 // DetectSystemdUser returns true when the remote host has a working
 // user-scoped systemd. It does the minimal probe — asking systemctl
 // for its version — so the detect step takes milliseconds.
-func DetectSystemdUser(ctx context.Context, sshClient *SSHClient) bool {
-	if sshClient == nil {
+func DetectSystemdUser(ctx context.Context, target Target) bool {
+	if target == nil {
 		return false
 	}
-	_, _, err := sshClient.Exec(ctx, "systemctl --user --version >/dev/null 2>&1")
+	_, _, err := target.Exec(ctx, "systemctl --user --version >/dev/null 2>&1")
 	return err == nil
 }
 

@@ -1041,6 +1041,13 @@ install: build ## Install the binary
 #   canary    memory-scrubbing canary assertions in pkg/api/rest/secureio
 #   otel      OpenTelemetry tracing helpers in pkg/api/grpc
 #   l2_redis  Redis L2 cache; its unit tests drive an in-process mock client
+#   tpm_simulator
+#             TPM 2.0 tests against go-tpm-tools' in-process simulator: the
+#             only end-to-end proof that the go-xkms quote producer and the
+#             attestation Verifier agree, and the TPM2 seal round trip. The
+#             simulator is C compiled through cgo, so this pass needs a C
+#             compiler; built without cgo, every simulator test fails with
+#             "using the simulator requires building with CGO", never skips.
 #
 # rest/quic/mcp/rag gate whole transport packages. Without them `go test`
 # reports "no test files" for pkg/api/{rest,quic,mcp} and PASSES, so every
@@ -1048,7 +1055,7 @@ install: build ## Install the binary
 # silently absent from this gate — a control that appears present but never
 # executes. They are listed here, not in BUILD_TAGS, because they must gate
 # tests without altering a shipped binary.
-TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag
+TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag tpm_simulator
 
 # Note: Go 1.25+ requires space-separated tags, not comma-separated.
 # The leading !integration is documentation: `integration` is simply absent
@@ -1202,7 +1209,10 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 #   coverage                    coverage-mode toggle, driven by coverage targets
 #   production                  shipped-build-only tag, and mutually exclusive
 #                               with the !production test mocks in pkg/secrets
-#   pkcs11 swtpm tpm_simulator  need real or simulated crypto hardware
+#   pkcs11 swtpm                need a crypto device or an external TPM
+#                               emulator daemon; tpm_simulator is NOT here, it
+#                               runs in-process in every unit pass that carries
+#                               TEST_EXTRA_TAGS
 #   awskms gcpkms azurekv vault
 #   awss3 gcpstorage azureblob minio
 #                               need live cloud credentials / endpoints
@@ -1224,7 +1234,7 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 #   OPENVINO_BASE_URL=http://gpu-host:9000 OPENVINO_MODEL=qwen3-8b \
 #     go test -tags openvino_live -run TestOpenVINOBackend_Live ./pkg/orchestration/
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
-	pkcs11 swtpm tpm_simulator \
+	pkcs11 swtpm \
 	awskms gcpkms azurekv vault awss3 gcpstorage azureblob minio \
 	gpu quicbaas_signal \
 	openvino_live

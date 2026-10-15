@@ -23,10 +23,18 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// UploadBinary streams localPath to remotePath on the SSH connection
-// and marks the resulting file executable (0o755). The transfer is
-// performed over the SFTP subsystem negotiated on top of the SSH
-// connection owned by sshClient.
+// UploadBinary copies localPath to remotePath on target and marks the
+// resulting file executable (0o755), through the target's own Upload.
+func UploadBinary(ctx context.Context, target Target, localPath, remotePath string) error {
+	if target == nil {
+		return &SFTPUploadError{LocalPath: localPath, RemotePath: remotePath, Cause: errClosed}
+	}
+	return target.Upload(ctx, localPath, remotePath)
+}
+
+// Upload streams localPath to remotePath and marks the resulting file
+// executable (0o755). The transfer is performed over the SFTP subsystem
+// negotiated on top of the SSH connection.
 //
 // Directories up to and including filepath.Dir(remotePath) are
 // created on demand. Any partial transfer that fails midway leaves a
@@ -40,12 +48,12 @@ import (
 // running (measured redeploying the fleet, 2026-09-23). The upload lands at
 // remotePath+uploadSuffix and a POSIX rename swaps it in atomically: the
 // running process keeps its old inode, and a restart runs the new one.
-func UploadBinary(ctx context.Context, sshClient *SSHClient, localPath, remotePath string) error {
-	if sshClient == nil || sshClient.UnderlyingClient() == nil {
+func (c *SSHClient) Upload(ctx context.Context, localPath, remotePath string) error {
+	if c.UnderlyingClient() == nil {
 		return &SFTPUploadError{LocalPath: localPath, RemotePath: remotePath, Cause: errClosed}
 	}
 
-	client, err := sftp.NewClient(sshClient.UnderlyingClient())
+	client, err := sftp.NewClient(c.UnderlyingClient())
 	if err != nil {
 		return &SFTPUploadError{LocalPath: localPath, RemotePath: remotePath, Cause: err}
 	}

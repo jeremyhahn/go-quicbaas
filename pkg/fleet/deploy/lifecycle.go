@@ -50,7 +50,7 @@ func fileExistsCommand(p string) string {
 
 // InstalledSupervisor reports how the agent under l is installed, or
 // SupervisorNone when neither a unit nor a start script is there.
-func InstalledSupervisor(ctx context.Context, c *SSHClient, l Layout) Supervisor {
+func InstalledSupervisor(ctx context.Context, c Target, l Layout) Supervisor {
 	if _, _, err := c.Exec(ctx, fileExistsCommand(l.UnitFile)); err == nil {
 		return SupervisorSystemd
 	}
@@ -74,7 +74,7 @@ func stopNohupCommand(l Layout) string {
 
 // StopNode stops the installed agent and reports how it was supervised. A
 // node with nothing installed is a *NotDeployedError.
-func StopNode(ctx context.Context, c *SSHClient, l Layout) (Supervisor, error) {
+func StopNode(ctx context.Context, c Target, l Layout) (Supervisor, error) {
 	switch supervisor := InstalledSupervisor(ctx, c, l); supervisor {
 	case SupervisorSystemd:
 		_, _, err := c.Exec(ctx, unitCommand("stop"))
@@ -90,7 +90,7 @@ func StopNode(ctx context.Context, c *SSHClient, l Layout) (Supervisor, error) {
 // StartNode starts the installed agent and reports how it is supervised. A
 // systemd start needs lingering exactly as the install did, so it is ensured
 // again first: an operator may have turned it off since.
-func StartNode(ctx context.Context, c *SSHClient, l Layout) (Supervisor, error) {
+func StartNode(ctx context.Context, c Target, l Layout) (Supervisor, error) {
 	switch supervisor := InstalledSupervisor(ctx, c, l); supervisor {
 	case SupervisorSystemd:
 		if err := EnsureLinger(ctx, c, c.User()); err != nil {
@@ -118,7 +118,7 @@ type UninstallResult struct {
 // files. Workspaces — the projects root and the rest of the work directory —
 // are kept unless purgeWorkspaces is set, because they hold checkouts a job
 // may still need. Removing an agent that is already gone succeeds.
-func UninstallNode(ctx context.Context, c *SSHClient, l Layout, purgeWorkspaces bool) (*UninstallResult, error) {
+func UninstallNode(ctx context.Context, c Target, l Layout, purgeWorkspaces bool) (*UninstallResult, error) {
 	result := &UninstallResult{Supervisor: InstalledSupervisor(ctx, c, l)}
 
 	switch result.Supervisor {
@@ -192,7 +192,7 @@ func quotePaths(paths []string) string {
 // fleet registry keys an agent by an ID derived from this certificate's
 // Common Name, so this is how stop and undeploy find the registration to
 // remove without trusting the caller to name it.
-func ReadNodeCertificate(ctx context.Context, c *SSHClient, l Layout) (*x509.Certificate, error) {
+func ReadNodeCertificate(ctx context.Context, c Target, l Layout) (*x509.Certificate, error) {
 	stdout, _, err := c.Exec(ctx, "cat "+shellQuotePath(l.CertFile))
 	if err != nil {
 		return nil, &AgentIdentityMissingError{Path: l.CertFile, Cause: err}

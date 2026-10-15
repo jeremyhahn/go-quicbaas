@@ -104,16 +104,18 @@ type VerifyChainResponse struct {
 // AttestContainerRequest describes the container whose execution environment
 // is to be attested.
 type AttestContainerRequest struct {
-	DeviceID        string            `json:"device_id,omitempty"`
-	ContainerID     string            `json:"container_id,omitempty"`
-	Image           string            `json:"image"`
-	ImageDigest     string            `json:"image_digest,omitempty"`
-	TrustLabel      string            `json:"trust_label,omitempty"`
-	TrustLevel      string            `json:"trust_level,omitempty"`
-	ExpectedPCRs    map[uint32][]byte `json:"expected_pcrs,omitempty"`
-	MeasurementPCR  int               `json:"measurement_pcr,omitempty"`
-	MeasurementBank string            `json:"measurement_bank,omitempty"`
-	Nonce           []byte            `json:"nonce,omitempty"`
+	DeviceID    string `json:"device_id,omitempty"`
+	ContainerID string `json:"container_id,omitempty"`
+	Image       string `json:"image"`
+	ImageDigest string `json:"image_digest,omitempty"`
+	TrustLabel  string `json:"trust_label,omitempty"`
+	TrustLevel  string `json:"trust_level,omitempty"`
+	// ReferenceValues names the stored reference values the Verifier
+	// appraises the host quote against. Required at "attested" and above.
+	ReferenceValues string `json:"reference_values,omitempty"`
+	MeasurementPCR  int    `json:"measurement_pcr,omitempty"`
+	MeasurementBank string `json:"measurement_bank,omitempty"`
+	Nonce           []byte `json:"nonce,omitempty"`
 }
 
 // AttestContainerResponse is the attestation evidence produced for a

@@ -691,7 +691,8 @@ message SpawnSessionRequest {
     string image_digest = 22;
     TrustLevel trust_level = 23;
     string trust_label = 24;
-    map<uint32, bytes> expected_pcrs = 25;
+    reserved 25;
+    reserved "expected_pcrs";
 
     // account_exclude is account_allow's other half and travels for the same
     // reason. allow narrows the pool to a set; exclude removes one account from
@@ -751,6 +752,10 @@ message SpawnSessionRequest {
     // quiet past the idle bound. It changes nothing for a session bound to a
     // job, which still ends with its job. Persisted on the session record.
     bool keep = 35;
+    // reference_values names the reference values the Verifier holds for
+    // the host (PutReferenceValues). Required at the attested trust level
+    // and above: the host quote is appraised against them.
+    string reference_values = 36;
 }
 
 // SigningRelaySpec lists the public keys (ssh wire form) the relayed signing

@@ -412,11 +412,11 @@ func (s *GRPCSpawnServer) Spawn(ctx context.Context, req *proto.SpawnSessionRequ
 		// them, that authorization ran on a slice that was always empty and the
 		// resolved trust tier never arrived, so a remote session ran untrusted
 		// no matter what the control plane's policy had decided.
-		ExtraMounts:  protoMountsToRuntime(req.GetExtraMounts()),
-		ImageDigest:  req.GetImageDigest(),
-		TrustLevel:   orchestration.TrustLevel(req.GetTrustLevel()),
-		TrustLabel:   req.GetTrustLabel(),
-		ExpectedPCRs: req.GetExpectedPcrs(),
+		ExtraMounts:     protoMountsToRuntime(req.GetExtraMounts()),
+		ImageDigest:     req.GetImageDigest(),
+		TrustLevel:      orchestration.TrustLevel(req.GetTrustLevel()),
+		TrustLabel:      req.GetTrustLabel(),
+		ReferenceValues: req.GetReferenceValues(),
 
 		// THE STORAGE TIER THE CONTROL PLANE RESOLVED FROM THE PROJECT RECORD,
 		// which this daemon does not hold. It is applied where every other

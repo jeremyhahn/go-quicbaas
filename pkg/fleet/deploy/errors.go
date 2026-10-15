@@ -350,3 +350,81 @@ type PurgeRefusedError struct {
 func (e *PurgeRefusedError) Error() string {
 	return "deploy: refusing to purge " + e.Path + ": it is not a workspace directory; check projects_root / --projects-root"
 }
+
+// LocalTargetError reports that the local install target could not
+// resolve the user or home directory it installs for.
+type LocalTargetError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *LocalTargetError) Error() string {
+	msg := "deploy: local target unavailable"
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap exposes the underlying cause for errors.Is / errors.As.
+func (e *LocalTargetError) Unwrap() error { return e.Cause }
+
+// LocalExecError reports a command on the local install target that
+// returned a non-zero exit status or failed to launch.
+type LocalExecError struct {
+	Command string
+	Stderr  string
+	Cause   error
+}
+
+// Error implements the error interface.
+func (e *LocalExecError) Error() string {
+	msg := "deploy: local command failed: " + e.Command
+	if e.Stderr != "" {
+		msg += " stderr=" + e.Stderr
+	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap exposes the underlying cause for errors.Is / errors.As.
+func (e *LocalExecError) Unwrap() error { return e.Cause }
+
+// LocalWriteError reports a file the local install target could not
+// write. Source names the local file an upload copied from, if any.
+type LocalWriteError struct {
+	Path   string
+	Source string
+	Cause  error
+}
+
+// Error implements the error interface.
+func (e *LocalWriteError) Error() string {
+	msg := "deploy: local write failed path=" + e.Path
+	if e.Source != "" {
+		msg += " source=" + e.Source
+	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap exposes the underlying cause for errors.Is / errors.As.
+func (e *LocalWriteError) Unwrap() error { return e.Cause }
+
+// LocalSSHConflictError reports a local install that also names an ssh
+// target: --local installs on this host, so --ssh (or a spec's host or
+// ssh credentials) contradicts it.
+type LocalSSHConflictError struct {
+	// Field is the ssh setting given alongside --local.
+	Field string
+}
+
+// Error implements the error interface.
+func (e *LocalSSHConflictError) Error() string {
+	return "deploy: --local installs on this host and cannot be combined with an ssh target (" + e.Field +
+		"); drop --local to deploy over ssh, or drop " + e.Field + " to install here"
+}

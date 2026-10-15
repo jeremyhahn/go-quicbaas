@@ -79,8 +79,8 @@ func RenderStartScript(spec *Spec) string {
 // StartBackground uploads the rendered script to scriptPath, marks it
 // executable, and runs it. scriptPath should be an absolute path (or
 // use $HOME expansion) that the caller already reserved on the remote.
-func StartBackground(ctx context.Context, sshClient *SSHClient, scriptContent, scriptPath string) error {
-	if sshClient == nil {
+func StartBackground(ctx context.Context, target Target, scriptContent, scriptPath string) error {
+	if target == nil {
 		return &RemoteExecError{Command: "start " + scriptPath, Cause: errClosed}
 	}
 	if scriptPath == "" {
@@ -89,19 +89,19 @@ func StartBackground(ctx context.Context, sshClient *SSHClient, scriptContent, s
 
 	// Ensure the containing directory exists.
 	if dir := path.Dir(scriptPath); dir != "" && dir != "." && dir != "/" {
-		if _, _, err := sshClient.Exec(ctx, "mkdir -p "+shellQuote(dir)); err != nil {
+		if _, _, err := target.Exec(ctx, "mkdir -p "+shellQuote(dir)); err != nil {
 			return err
 		}
 	}
 
-	if err := sshClient.WriteFile(ctx, scriptPath, []byte(scriptContent), 0o755); err != nil {
+	if err := target.WriteFile(ctx, scriptPath, []byte(scriptContent), 0o755); err != nil {
 		return err
 	}
 
 	// Invoke via sh -c so $HOME expansions in the script body resolve
 	// on the login shell. We do not tail the log here; the service
 	// layer polls the control plane registry to confirm liveness.
-	if _, _, err := sshClient.Exec(ctx, "sh "+shellQuote(scriptPath)); err != nil {
+	if _, _, err := target.Exec(ctx, "sh "+shellQuote(scriptPath)); err != nil {
 		return err
 	}
 	return nil

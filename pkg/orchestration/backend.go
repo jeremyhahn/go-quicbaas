@@ -165,9 +165,9 @@ type SpawnRequest struct {
 	// launch measurement.
 	TrustLabel string `json:"trust_label,omitempty"`
 
-	// ExpectedPCRs is the golden PCR set a Tier 1 host quote is checked
-	// against, keyed by PCR index.
-	ExpectedPCRs map[uint32][]byte `json:"expected_pcrs,omitempty"`
+	// ReferenceValues names the signed reference values the Verifier
+	// appraises a Tier 1 host quote against.
+	ReferenceValues string `json:"reference_values,omitempty"`
 
 	// Account pool fields (see account.go / account_resolver.go).
 	//

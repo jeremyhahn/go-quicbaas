@@ -1421,7 +1421,7 @@ counterpart of `SandboxMode`.
 | `TrustLevelDefault` | `default` | — | Nothing; defers to the server's `TrustPolicy`. Zero value. |
 | `TrustLevelNone` | `none` | — | Nothing. Mutable tags allowed, no attestation. What every execution did before the trust axis existed. |
 | `TrustLevelPinned` | `pinned` | 0 | Launch from an immutable content digest (`repository@sha256:<hex>`), verified after launch. No hardware. |
-| `TrustLevelAttested` | `attested` | 1 | Tier 0 plus a host TPM quote verified against the spec's golden PCRs. |
+| `TrustLevelAttested` | `attested` | 1 | Tier 0 plus a host TPM quote appraised by the Verifier against the spec's named reference values. |
 | `TrustLevelMeasured` | `measured` | 2 | Tier 1 plus measured launch: image and configuration digest extended into a PCR *before* the container starts. |
 
 Because `TrustLevelDefault` is the Go zero value and `TrustPolicyOptIn` is the
@@ -1559,7 +1559,7 @@ the same value:
 
 Two things are deliberately **excluded**: `Name`, a per-instance identifier that
 is frequently random; and the trust-verification metadata itself (`TrustLevel`,
-`ExpectedPCRs`, `ImageSignature`, `MeasurementPCR` / `MeasurementBank`), which
+`ReferenceValues`, `ImageSignature`, `MeasurementPCR` / `MeasurementBank`), which
 describes how a launch is *checked* rather than what is launched. Including the
 latter would make the measurement depend on the policy that verifies it.
 
@@ -1573,22 +1573,53 @@ Both tiers compose go-xkms `pkg/tpm2`. Nothing in QuicBaaS reimplements a TPM
 primitive.
 
 `HostTPM` is the narrow capability the attesting runtime needs — `Quote`,
-`ReadPCRs`, `ExtendPCR`. It is satisfied as-is by go-xkms `*tpm2.TPM2` and by
-anything implementing xkms's `TrustedPlatformModule`, including its software
-simulator, so no adapter type exists between the two projects.
+`ReadPCRs`, `ExtendPCR`, `IAKCertificate` and `IAKAttributes`. go-xkms
+`*tpm2.TPM2` satisfies it as-is, which a compile-time assertion in
+`container_attestation.go` keeps true; `IAKCertificate` returns the
+certificate of the attestation key that signs the quote, which the Verifier
+needs to check the signature, and `IAKAttributes` names the PCR bank that
+key quotes, so the runtime asks only for reference registers in that bank.
+
+go-xkms provisioning creates the IAK but issues no certificate for it, so
+`IAKCertificate` fails until a CA enrolls the key and the certificate is saved
+in the TPM's certificate store (`tpm2.Params.CertStore`). The go-xkms CA's
+`tcg-ak` and `tcg-iak` profiles stamp `tcg-cap-verifiedTPMRestricted`
+(2.23.133.11.1.3), which the Verifier requires. The `tpm_simulator`-tagged
+tests in `host_appraisal_simulator_test.go` drive a provisioned, enrolled
+go-xkms TPM on the simulator through this runtime and the Verifier, and
+`pkg/testutil/tpmsim` holds the shared provisioning recipe. Every unit pass
+(`make test` and the per-package targets) sets that tag. The simulator is
+built through cgo, so the pass needs a C compiler.
 
 `TPMAttestingRuntime` is the reference `AttestingContainerRuntime`. It wraps a
 base runtime (normally `ExecContainerRuntime`, which supplies Tier 0) and adds
-attestation on top. Both are required at construction: an attesting runtime with
-no TPM would silently degrade to Tier 0 while advertising more.
+attestation on top. `NewTPMAttestingRuntime(base, tpm, appraiser, logger)`
+requires all three of base, TPM and `HostAppraiser`: an attesting runtime with
+no TPM would silently degrade to Tier 0 while advertising more, and one with no
+appraiser would have nothing to compare the quote against. A missing one is an
+`InputValidationError`, never a pass.
 
 #### Tier 1 — the host quote
 
-`Attest` quotes the union of the spec's expected PCR indices and, for a measured
-launch, the measurement PCR. A host whose firmware, bootloader or kernel changed
-produces different PCRs and is refused before an agent is scheduled onto it
-(`PCRMismatchError`). A missing quoted PCR is a mismatch, not a pass — absence
-of evidence is not evidence of a match.
+Tier 1 is appraised by the Verifier against named reference values. The spec's
+`ReferenceValues` names a signed CoRIM the operator stored for the tenant (see
+[Attestation — Tier 1 host appraisal](../attestation/architecture.md#tier-1-host-appraisal)).
+`Attest` asks the `HostAppraiser` which PCRs those reference values cover,
+quotes exactly those plus, for a measured launch, the measurement PCR, binds the
+PCR read to the signed quote, and hands the bound evidence to the Verifier's
+`AppraiseQuote`. QuicBaaS does not compare PCR values itself.
+
+The Verifier checks that the AK certificate chains to a tenant `ak-root`
+endorsement, that the quote signature verifies under that certificate, and that
+the quoted PCR set equals the reference set. The comparison is an equal set: a
+measured launch's reference values must therefore include the measurement PCR
+(16 by default) with its expected post-launch value.
+
+A host whose firmware, bootloader or kernel changed produces different PCRs and
+is refused before an agent is scheduled onto it. Any verdict short of verified
+is a `HostAppraisalError`. It carries the Verifier's failed checks and per-PCR
+divergences, always unwraps to `ErrHostNotVerified`, and also unwraps to
+`ErrPCRMismatch` when a PCR diverged.
 
 #### Tier 2 — measured launch
 
@@ -1607,7 +1638,16 @@ PCR 16 (`MeasurementPCRDefault`) is the default target. It is the TCG PC Client
 "debug" register: resettable, not consumed by firmware or the bootloader, and
 the conventional home for application-supplied measurements, so extending it
 cannot disturb a platform's boot-integrity PCRs. `MeasurementBank` defaults to
-`sha256`, the mandatory bank on every TPM 2.0 PC Client platform.
+`sha256`, the mandatory bank on every TPM 2.0 PC Client platform. A spec that
+names `sha1` fails validation with an `InputValidationError` on
+`measurement_bank`: the Verifier does not parse a SHA-1 PCR selection, so a
+launch measured into that bank could never be appraised, and refusing it at
+validation stops it before the container starts.
+
+The Verifier computes the reference baseline digest in the hash of the quoted
+PCR bank, not in the quote's signing hash. The two can differ: a SHA-256 AK
+can sign a quote over the SHA-384 bank, and the `pcrDigest` in that quote is
+then a SHA-384 digest.
 
 The resulting quote proves not merely that the host booted correctly, but that
 *this exact configuration* was the thing launched on it — a property no post-hoc
@@ -1615,17 +1655,17 @@ inspection of a running container can establish.
 
 #### Binding the PCR read to the signed quote
 
-This is the subtlest part of the design and the reason the golden-value
-comparison sits *downstream* of a binding step.
+This is the subtlest part of the design and the reason the Verifier's
+reference-value comparison sits *downstream* of a binding step.
 
 A `TPM2_Quote` signs a `TPMS_ATTEST` structure whose `TPMS_QUOTE_INFO` carries
 the PCR selection and a single `pcrDigest` — `H(PCR[i1] || PCR[i2] || …)` over
 the selected registers in selection order. It does **not** carry the individual
 PCR values, so those must come from a separate, unsigned `TPM2_PCR_Read`.
 
-Comparing golden values against that read alone establishes nothing: the read
+Comparing reference values against that read alone establishes nothing: the read
 carries no signature, and a PCR can be extended in the window between the quote
-and the read. `bindQuotedPCRs` closes both gaps before any golden value is
+and the read. `bindQuotedPCRs` closes both gaps before any reference value is
 looked at:
 
 - **Freshness.** The nonce must be inside the signed body, not merely alongside
@@ -1638,19 +1678,17 @@ looked at:
 
 Two further failure modes are errors rather than fallbacks. A PCR selected in
 more than one bank with differing values would make the index-to-value map
-ambiguous, and a golden comparison against an ambiguous value is not a
+ambiguous, and a reference comparison against an ambiguous value is not a
 comparison. A bank that is genuinely absent from the read is
 `PCRBankUnavailableError`, never a fallback to whichever bank happened to be
 first — reading PCRs from an unintended bank produces measurements that look
 valid and mean nothing.
 
-What binding does **not** establish is that the signature over the quote body
-verifies under a trusted attestation key. That needs the AK public key and its
-certificate chain, neither of which the narrow `HostTPM` seam exposes, and it
-belongs to the remote verifier that consumes `ContainerAttestation.Quoted` and
-`.Signature`. Locally, the quote body is trusted because it came from the host's
-own TPM handle; what is being defended against is a divergence between that body
-and the separate PCR read.
+Binding does not establish that the signature over the quote body verifies
+under a trusted attestation key. That check is the Verifier's: the bound
+evidence goes to `AppraiseQuote` together with the `IAKCertificate`, and the
+Verifier chains that certificate to the tenant's `ak-root` endorsement before
+it trusts the signature.
 
 #### The evidence record
 
@@ -1673,9 +1711,9 @@ command line it always did.
 | `ImageSignature` | 0 | Detached endorsement over the digest, plus signer chain. |
 | `TrustLevel` | — | Required tier; `default` defers to server policy. |
 | `TrustLabel` | 0+ | Operator-assigned workload identity; folded into the config digest. |
-| `ExpectedPCRs` | 1 | Golden PCR set, keyed by index. Required at `attested` and above. |
+| `ReferenceValues` | 1 | Name of the tenant's stored reference values (a signed CoRIM) the Verifier appraises the host quote against. Required at `attested` and above. |
 | `MeasurementPCR` | 2 | PCR extended at measured launch. Defaults to 16. |
-| `MeasurementBank` | 2 | `sha1` \| `sha256` \| `sha384` \| `sha512`. Defaults to `sha256`. |
+| `MeasurementBank` | 2 | `sha256` \| `sha384` \| `sha512`. Defaults to `sha256`. `sha1` is refused. |
 
 Validation is offline and deterministic: a spec requiring Tier 0 or above
 without a pin is rejected at `Validate` time (`ImageNotPinnedError`), not at
@@ -1692,7 +1730,8 @@ either the specific condition or the class with `errors.Is`.
 | `ErrImageDigestMismatch` | A resolved image digest disagrees with the pinned one. |
 | `ErrImageDigestUnresolved` | The runtime could not determine an image's content digest. |
 | `ErrAttestationUnavailable` | The capability a tier requires is not present on this host. |
-| `ErrPCRMismatch` | A quoted PCR does not match its golden value. |
+| `ErrPCRMismatch` | The Verifier found a quoted PCR that diverges from the named reference values. Reached through `HostAppraisalError`, which carries the divergences. |
+| `ErrHostNotVerified` | The Verifier's appraisal of the host quote was not verified (AK chain, signature, event log or reference values). Every `HostAppraisalError` unwraps to it. |
 | `ErrMeasurementFailed` | The measured-launch PCR extension failed, so the container was not started. |
 | `ErrQuoteFailed` | The host TPM refused or failed to produce a quote. |
 | `ErrQuoteNotBound` | PCR values could not be tied to the signed quote body. |
@@ -2000,7 +2039,7 @@ orchestration:
 |--------|-------|----------|
 | `opt-in` | none | nothing (default; a session gets a tier only if it asks) |
 | `pinned` | Tier 0 | container launched from an immutable image digest, verified after launch |
-| `attested` | Tier 1 | Tier 0 plus a host TPM quote verified against the session's expected PCRs |
+| `attested` | Tier 1 | Tier 0 plus a host TPM quote appraised by the Verifier against the session's named reference values |
 | `measured` | Tier 2 | Tier 1 plus measured launch (image + launch config extended into a PCR before start) |
 
 `SpawnSession` resolves every request against this floor next to the sandbox

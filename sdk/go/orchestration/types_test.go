@@ -299,8 +299,8 @@ func TestSplitImageReference(t *testing.T) {
 // constructor aliases: a nil dependency must fail closed rather than produce a
 // runtime that advertises tiers it cannot satisfy.
 func TestConstructorsRejectNilDependencies(t *testing.T) {
-	if _, err := sdkorch.NewTPMAttestingRuntime(nil, nil, nil); err == nil {
-		t.Error("NewTPMAttestingRuntime(nil, nil, nil) = nil error, want a validation error")
+	if _, err := sdkorch.NewTPMAttestingRuntime(nil, nil, nil, nil); err == nil {
+		t.Error("NewTPMAttestingRuntime(nil, nil, nil, nil) = nil error, want a validation error")
 	}
 	if _, err := sdkorch.NewExecContainerRuntimeWithCommand("", nil); err == nil {
 		t.Error("NewExecContainerRuntimeWithCommand(\"\", nil) = nil error, want a validation error")

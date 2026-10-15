@@ -259,25 +259,9 @@ func (s *ContainerSpec) validateTrust() error {
 		}
 	}
 
-	for index, value := range s.ExpectedPCRs {
-		if index > MaxPCRIndex {
-			return &InputValidationError{
-				Field:   "expected_pcrs",
-				Message: "PCR index must be in the range 0-" + intToStr(MaxPCRIndex),
-			}
-		}
-		if len(value) == 0 {
-			return &InputValidationError{
-				Field:   "expected_pcrs",
-				Message: "PCR digest cannot be empty",
-			}
-		}
-	}
-
-	if s.TrustLevel.RequiresHostTPM() && len(s.ExpectedPCRs) == 0 {
-		return &InputValidationError{
-			Field:   "expected_pcrs",
-			Message: "at least one expected PCR is required for trust level " + s.TrustLevel.String(),
+	if s.TrustLevel.RequiresHostTPM() || s.ReferenceValues != "" {
+		if err := validateReferenceValuesName(s.ReferenceValues); err != nil {
+			return err
 		}
 	}
 
@@ -291,7 +275,7 @@ func (s *ContainerSpec) validateTrust() error {
 	if s.MeasurementBank != "" && !isSupportedPCRBank(s.MeasurementBank) {
 		return &InputValidationError{
 			Field:   "measurement_bank",
-			Message: "must be one of: sha1, sha256, sha384, sha512",
+			Message: "must be one of: " + strings.Join(supportedPCRBankNames, ", "),
 		}
 	}
 
@@ -308,9 +292,11 @@ const DefaultMeasurementBank = "sha256"
 
 // supportedPCRBankNames lists, in ascending digest-size order, the PCR bank
 // hash algorithms the measured launch and quote-verification paths accept.
-// They match the banks go-xkms tpm2 reads, extends and can parse; the order is
-// fixed so every derived lookup is deterministic.
-var supportedPCRBankNames = []string{"sha1", "sha256", "sha384", "sha512"}
+// They are the banks the Verifier appraises: go-xkms tpm2 can also extend a
+// sha1 bank, but evidence.ParseQuote refuses a SHA-1 selection, so a spec
+// naming sha1 is refused here rather than after the container has launched.
+// The order is fixed so every derived lookup is deterministic.
+var supportedPCRBankNames = []string{"sha256", "sha384", "sha512"}
 
 // supportedPCRBanks is the membership view of supportedPCRBankNames, derived
 // rather than restated so the two can never drift.
@@ -376,7 +362,7 @@ func (s *ContainerSpec) EffectiveMeasurementBank() string {
 //
 // Deliberately excluded:
 //   - Name: a per-instance identifier, frequently randomly generated.
-//   - The trust-verification metadata itself (TrustLevel, ExpectedPCRs,
+//   - The trust-verification metadata itself (TrustLevel, ReferenceValues,
 //     ImageSignature, MeasurementPCR/Bank). Those describe how the launch is
 //     checked, not what is launched, and including them would make the
 //     measurement depend on the policy that verifies it.
@@ -555,6 +541,14 @@ var (
 	// ErrPCRMismatch indicates a quoted PCR does not match its expected
 	// value.
 	ErrPCRMismatch = errors.New("container trust: PCR mismatch")
+
+	// ErrHostNotVerified indicates the Verifier did not verify the host's
+	// evidence against the named reference values.
+	ErrHostNotVerified = errors.New("container trust: host evidence not verified")
+
+	// ErrReferenceBankUncovered indicates the named reference values hold
+	// no PCR digest in the bank the host quotes.
+	ErrReferenceBankUncovered = errors.New("container trust: reference values do not cover the quoted PCR bank")
 
 	// ErrMeasurementFailed indicates the measured-launch PCR extension
 	// failed.

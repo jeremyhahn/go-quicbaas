@@ -1257,6 +1257,12 @@ var (
 // ErrAttestationNoAttestor.
 var NewAttestationService = pkgservice.NewAttestationService
 
+// NewHostAppraiser returns the Verifier over an attestation store as the
+// orchestration HostAppraiser a TPMAttestingRuntime appraises host quotes
+// with. The store must hold the tenant's ak-root and reference-signer
+// endorsements and the named reference values.
+var NewHostAppraiser = pkgservice.NewHostAppraiser
+
 // NewRuntimeContainerAttestor builds the standalone ContainerAttestor from an
 // attesting container runtime. The runtime parameter type is not yet on the
 // SDK surface, so this constructor is currently usable only by callers that

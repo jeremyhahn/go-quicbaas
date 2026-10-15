@@ -163,6 +163,7 @@ func (h *attestationHandler) transformAttestContainerRequest(req interface{}) (m
 		"image_digest":     r.ImageDigest,
 		"trust_label":      r.TrustLabel,
 		"trust_level":      r.TrustLevel,
+		"reference_values": r.ReferenceValues,
 		"measurement_pcr":  r.MeasurementPCR,
 		"measurement_bank": r.MeasurementBank,
 	}, nil

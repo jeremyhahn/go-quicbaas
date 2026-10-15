@@ -1169,10 +1169,10 @@ func (b *ACPBackend) sandboxSpec(req *SpawnRequest, identity containerIdentity, 
 		// Trust dimension (container_trust.go / trust_policy.go). Every
 		// field is inert at its zero value, so a spawn that does not ask
 		// for trusted computing builds the same spec it always did.
-		ImageDigest:  req.ImageDigest,
-		TrustLevel:   req.TrustLevel,
-		TrustLabel:   req.TrustLabel,
-		ExpectedPCRs: req.ExpectedPCRs,
+		ImageDigest:     req.ImageDigest,
+		TrustLevel:      req.TrustLevel,
+		TrustLabel:      req.TrustLabel,
+		ReferenceValues: req.ReferenceValues,
 	}
 
 	// --cap-drop ALL, the add-back set and the pids bound. sudo keeps working

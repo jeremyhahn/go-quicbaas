@@ -250,8 +250,28 @@ type AttestingContainerRuntime = pkgorch.AttestingContainerRuntime
 type TPMAttestingRuntime = pkgorch.TPMAttestingRuntime
 
 // NewTPMAttestingRuntime wraps base with TPM-backed attestation. base supplies
-// Tier 0, tpm supplies Tiers 1 and 2; all three arguments are required.
+// Tier 0, tpm supplies Tiers 1 and 2, and appraiser is the Verifier the host
+// quote is appraised by (service.NewHostAppraiser); all four arguments are
+// required.
 var NewTPMAttestingRuntime = pkgorch.NewTPMAttestingRuntime
+
+// HostAppraiser is the seam through which a TPMAttestingRuntime hands bound
+// host evidence to the Verifier, which appraises it against reference values
+// stored by name.
+type HostAppraiser = pkgorch.HostAppraiser
+
+// HostEvidence is the bound host evidence handed to a HostAppraiser.
+type HostEvidence = pkgorch.HostEvidence
+
+// HostAppraisal is the Verifier's verdict on a HostEvidence.
+type HostAppraisal = pkgorch.HostAppraisal
+
+// HostAppraisalFailure is one appraisal check that did not pass.
+type HostAppraisalFailure = pkgorch.HostAppraisalFailure
+
+// PCRDivergence is one PCR whose quoted value the reference values do not
+// admit.
+type PCRDivergence = pkgorch.PCRDivergence
 
 // =============================================================================
 // Container runtime seam
@@ -326,6 +346,10 @@ var (
 	// ErrPCRMismatch indicates a quoted PCR does not match its expected value.
 	ErrPCRMismatch = pkgorch.ErrPCRMismatch
 
+	// ErrHostNotVerified indicates the Verifier did not verify the host
+	// evidence against the named reference values.
+	ErrHostNotVerified = pkgorch.ErrHostNotVerified
+
 	// ErrMeasurementFailed indicates the measured-launch PCR extension failed.
 	ErrMeasurementFailed = pkgorch.ErrMeasurementFailed
 
@@ -398,9 +422,10 @@ type ContainerImageDigestMismatchError = pkgorch.ContainerImageDigestMismatchErr
 // tier requires is not present.
 type AttestationUnavailableError = pkgorch.AttestationUnavailableError
 
-// PCRMismatchError indicates a quoted PCR does not match the expected golden
-// value, meaning the host is not in the state the operator approved.
-type PCRMismatchError = pkgorch.PCRMismatchError
+// HostAppraisalError indicates the Verifier did not verify the host evidence
+// against the named reference values. It carries the failing checks and, for
+// a divergent PCR, its expected and quoted digests.
+type HostAppraisalError = pkgorch.HostAppraisalError
 
 // ContainerMeasurementError indicates the measured-launch PCR extension
 // failed, so the container was not started.
@@ -472,6 +497,8 @@ var (
 	_ AttestingContainerRuntime         = (pkgorch.AttestingContainerRuntime)(nil)
 	_ pkgorch.HostTPM                   = (HostTPM)(nil)
 	_ HostTPM                           = (pkgorch.HostTPM)(nil)
+	_ pkgorch.HostAppraiser             = (HostAppraiser)(nil)
+	_ HostAppraiser                     = (pkgorch.HostAppraiser)(nil)
 	_ interfaces.Logger                 = (Logger)(nil)
 	_ Logger                            = (interfaces.Logger)(nil)
 )
@@ -509,17 +536,17 @@ var (
 // Function signatures. A var alias silently absorbs an upstream signature
 // change; these assertions do not.
 var (
-	_ func(string) (TrustLevel, error)                                                   = ParseTrustLevel
-	_ func(string) (TrustPolicy, error)                                                  = ParseTrustPolicy
-	_ func(TrustLevel, TrustPolicy, *TrustPolicy, TrustCapabilities) (TrustLevel, error) = ResolveTrustLevel
-	_ func(string) error                                                                 = ValidateImageDigest
-	_ func(string) (string, string, bool)                                                = SplitImageReference
-	_ func(string) string                                                                = ImageRepository
-	_ func(*ContainerSpec) (string, error)                                               = ContainerConfigDigest
-	_ func(*ContainerSpec) ([]byte, error)                                               = LaunchMeasurement
-	_ func(ContainerRuntime, HostTPM, Logger) (*TPMAttestingRuntime, error)              = NewTPMAttestingRuntime
-	_ func(Logger) (*ExecContainerRuntime, error)                                        = NewExecContainerRuntime
-	_ func(string, Logger) (*ExecContainerRuntime, error)                                = NewExecContainerRuntimeWithCommand
+	_ func(string) (TrustLevel, error)                                                     = ParseTrustLevel
+	_ func(string) (TrustPolicy, error)                                                    = ParseTrustPolicy
+	_ func(TrustLevel, TrustPolicy, *TrustPolicy, TrustCapabilities) (TrustLevel, error)   = ResolveTrustLevel
+	_ func(string) error                                                                   = ValidateImageDigest
+	_ func(string) (string, string, bool)                                                  = SplitImageReference
+	_ func(string) string                                                                  = ImageRepository
+	_ func(*ContainerSpec) (string, error)                                                 = ContainerConfigDigest
+	_ func(*ContainerSpec) ([]byte, error)                                                 = LaunchMeasurement
+	_ func(ContainerRuntime, HostTPM, HostAppraiser, Logger) (*TPMAttestingRuntime, error) = NewTPMAttestingRuntime
+	_ func(Logger) (*ExecContainerRuntime, error)                                          = NewExecContainerRuntime
+	_ func(string, Logger) (*ExecContainerRuntime, error)                                  = NewExecContainerRuntimeWithCommand
 )
 
 // Errors alias in both directions, so errors.As with either spelling matches
@@ -531,7 +558,7 @@ var (
 	_ error = (*ImageDigestUnresolvedError)(nil)
 	_ error = (*ContainerImageDigestMismatchError)(nil)
 	_ error = (*AttestationUnavailableError)(nil)
-	_ error = (*PCRMismatchError)(nil)
+	_ error = (*HostAppraisalError)(nil)
 	_ error = (*ContainerMeasurementError)(nil)
 	_ error = (*ContainerQuoteError)(nil)
 	_ error = (*QuoteBindingError)(nil)
@@ -552,7 +579,7 @@ var (
 	_ *pkgorch.ImageDigestUnresolvedError        = (*ImageDigestUnresolvedError)(nil)
 	_ *pkgorch.ContainerImageDigestMismatchError = (*ContainerImageDigestMismatchError)(nil)
 	_ *pkgorch.AttestationUnavailableError       = (*AttestationUnavailableError)(nil)
-	_ *pkgorch.PCRMismatchError                  = (*PCRMismatchError)(nil)
+	_ *pkgorch.HostAppraisalError                = (*HostAppraisalError)(nil)
 	_ *pkgorch.ContainerMeasurementError         = (*ContainerMeasurementError)(nil)
 	_ *pkgorch.ContainerQuoteError               = (*ContainerQuoteError)(nil)
 	_ *pkgorch.InputValidationError              = (*InputValidationError)(nil)

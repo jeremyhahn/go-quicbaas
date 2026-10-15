@@ -468,11 +468,11 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		// at whatever tier the daemon defaulted to, silently, because each of
 		// these is inert at its zero value and nothing fails when a request
 		// asks for nothing.
-		ExtraMounts:  runtimeMountsToProto(extraMounts),
-		ImageDigest:  req.ImageDigest,
-		TrustLevel:   proto.TrustLevel(req.TrustLevel),
-		TrustLabel:   req.TrustLabel,
-		ExpectedPcrs: req.ExpectedPCRs,
+		ExtraMounts:     runtimeMountsToProto(extraMounts),
+		ImageDigest:     req.ImageDigest,
+		TrustLevel:      proto.TrustLevel(req.TrustLevel),
+		TrustLabel:      req.TrustLabel,
+		ReferenceValues: req.ReferenceValues,
 
 		// THE STORAGE TIER, AND IT TRAVELS FOR THE TRUST TIER'S OWN REASON.
 		// This control plane holds the project record and resolved the tier

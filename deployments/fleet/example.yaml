@@ -34,8 +34,10 @@ tenant: acme
 # --- What the deploy installs ----------------------------------------------
 
 # The agent's runtime listener. The control plane dials it, and the deploy
-# probes it after the SSH session closes, so it needs a fixed port.
-node_bind: 0.0.0.0:9091
+# probes it after the SSH session closes, so it needs a fixed port. Omitted,
+# it binds the node's advertised host on 9091 (host above, or raft.raft_address
+# under --local), never a wildcard; 0.0.0.0:9091 listens on every interface.
+# node_bind: agent-01.internal:9091
 # What the node serves, each by name: claude, codex, opencode, openvino,
 # ollama-agent, vllm, ollama -- or "acp", every agent backend. The node
 # advertises exactly these, so a GPU node that must never take hosted-model

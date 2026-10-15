@@ -26,6 +26,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path"
 	"strings"
@@ -163,6 +164,78 @@ type Spec struct {
 	// is an operator's per-invocation choice (--skip-preflight), never part
 	// of a committed node spec, so the spec file cannot set it.
 	SkipPreflight bool `json:"skip_preflight,omitempty" yaml:"-"`
+
+	// Local installs on the host this process runs on, through a
+	// LocalTarget instead of ssh: a fleet node co-located with quicbaasd
+	// needs no sshd. Host is then the host this node is advertised under,
+	// and every ssh setting is empty (see LocalSSHConflict). It is an
+	// operator's per-invocation choice (--local), so the spec file cannot
+	// set it.
+	Local bool `json:"local,omitempty" yaml:"-"`
+}
+
+// DefaultNodePort is the port a fleet node's runtime binds when the spec
+// names no bind address.
+const DefaultNodePort = "9091"
+
+// Hostname returns the host part of target, which may be "host",
+// "host:port", "user@host[:port]" or an IPv6 literal with or without
+// brackets and port.
+func Hostname(target string) string {
+	trimmed := strings.TrimSpace(target)
+	if at := strings.IndexByte(trimmed, '@'); at >= 0 {
+		trimmed = trimmed[at+1:]
+	}
+	// A host:port pair (including a bracketed IPv6 literal with a port)
+	// splits cleanly; anything else is a bare host.
+	if host, _, err := net.SplitHostPort(trimmed); err == nil {
+		return host
+	}
+	// A bare IPv6 literal carries too many colons for SplitHostPort. It
+	// may still be bracketed when written without a port.
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		return trimmed[1 : len(trimmed)-1]
+	}
+	return trimmed
+}
+
+// DefaultNodeBind fills an empty NodeBind with the host being deployed to
+// and DefaultNodePort. The default is the advertised host, never the
+// wildcard (go-quicbaas#185): a fleet node listens where it is reached,
+// not on every interface. An explicit NodeBind, wildcard included, is the
+// operator's choice and is left as it is.
+func (s *Spec) DefaultNodeBind() error {
+	if s.NodeBind != "" {
+		return nil
+	}
+	host := Hostname(s.Host)
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		return &InvalidSpecError{
+			Field:  "node_bind",
+			Reason: "no bind address given and no advertised host to default it to; set node_bind or --bind",
+		}
+	}
+	s.NodeBind = net.JoinHostPort(host, DefaultNodePort)
+	return nil
+}
+
+// LocalSSHConflict reports the first ssh setting a local install carries.
+// A local install reaches no host over ssh, so any of them is a mistake.
+func (s *Spec) LocalSSHConflict() error {
+	for _, field := range []struct {
+		name string
+		set  bool
+	}{
+		{"ssh_user", s.SSHUser != ""},
+		{"ssh_key_name", s.SSHKeyName != ""},
+		{"ssh_password", s.SSHPassword != ""},
+		{"insecure_host_key", s.InsecureHostKey},
+	} {
+		if field.set {
+			return &LocalSSHConflictError{Field: field.name}
+		}
+	}
+	return nil
 }
 
 // Result describes the outcome of a successful deployment.
