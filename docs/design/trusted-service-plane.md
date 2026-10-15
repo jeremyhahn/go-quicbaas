@@ -143,7 +143,7 @@ type Strategy interface {
 | gtp `pkg/registry` (12 files, ~4.4k LOC), `pkg/webservice/v1/rest/registry/ocidist.go` and the gRPC adapter, with tests | `pkg/ociregistry`, served at `/v2/` and in the SDK as `Compute().Images()` | the distribution routes, upload limits, manifest handling and auth handler |
 
 **Changed inside the moved code:**
-- Its storage client gets a qrdb implementation: blobs go to go-objstore through our object-storage service, and metadata goes to qrdb.
+- Its storage client gets a qrdb implementation: blobs and metadata go through go-qrdb's storage API, with the objstore backend selected by configuration; there is no direct go-objstore import.
 - `LocalKMSClient` is replaced by qrdb DEKs.
 - The referrers API is added; provenance needs it.
 
