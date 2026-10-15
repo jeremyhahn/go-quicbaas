@@ -30,6 +30,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -98,6 +99,11 @@ type embeddedFleetNode struct {
 	// now — the gRPC server lifecycle is managed via Stop).
 	cancelCtx context.CancelFunc
 
+	// workDirLock holds the runtime's work dir exclusively until stop. It is
+	// nil when the embedded fleet node has no work dir, and so stamps and
+	// sweeps no owner label.
+	workDirLock *fleet.WorkDirLock
+
 	mu      sync.Mutex
 	stopped bool
 }
@@ -112,7 +118,8 @@ func (ea *embeddedFleetNode) stop(ctx context.Context) error {
 	ea.stopped = true
 	ea.cancelCtx()
 	ea.mu.Unlock()
-	return ea.spawnServer.Stop(ctx)
+	stopErr := ea.spawnServer.Stop(ctx)
+	return errors.Join(stopErr, ea.workDirLock.Release())
 }
 
 // embeddedFleetNodeField guards the embeddedFleetNode pointer on the Server struct.
@@ -142,6 +149,29 @@ func (s *Server) startEmbeddedFleetNode() error {
 
 	cfg := s.config.Server.EmbeddedFleetNode
 	log := logger.NewAdapter(s.logger)
+
+	// The work dir is the owner label the runtime stamps on its containers
+	// and sweeps by, so a fleet node agent sharing it on this host would reap
+	// this node's containers. Hold it exclusively until stop, taken before
+	// anything that stamps or sweeps is constructed; every failed start below
+	// releases it.
+	var workDirLock *fleet.WorkDirLock
+	if cfg.DataDir != "" {
+		lock, lockErr := fleet.AcquireWorkDirLock(cfg.DataDir, log)
+		if lockErr != nil {
+			return &ServerCauseError{Message: "embedded agent: lock work dir", Cause: lockErr}
+		}
+		workDirLock = lock
+	}
+	started := false
+	defer func() {
+		if started {
+			return
+		}
+		if err := workDirLock.Release(); err != nil {
+			log.Warnf("Embedded agent: %v", err)
+		}
+	}()
 
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
@@ -422,8 +452,10 @@ func (s *Server) startEmbeddedFleetNode() error {
 		runtime:      runtime,
 		registration: reg,
 		cancelCtx:    bgCancel,
+		workDirLock:  workDirLock,
 	}
 	s.embeddedFleetNodeState = ea
+	started = true
 
 	log.Infof("Embedded agent started: id=%s backends=%s host=%s gpu=%v",
 		nodeID, strings.Join(cfg.Backends, ","), effectiveHostAffinity, cfg.GPUAvailable)

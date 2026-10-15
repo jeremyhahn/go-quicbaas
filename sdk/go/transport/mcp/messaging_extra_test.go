@@ -207,6 +207,74 @@ func TestMessagingGetDedupStatsRoundTrip(t *testing.T) {
 	})
 }
 
+func TestMessagingGetChannelStatsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("channel figures", func(t *testing.T) {
+		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+			wantTool: "quicbaas_msg_channel_stats",
+			assertArgs: func(t *testing.T, args map[string]interface{}) {
+				if args["channel"] != "orders" {
+					t.Errorf("channel argument = %v, want orders", args["channel"])
+				}
+			},
+			result: map[string]interface{}{
+				"name": "orders", "subscribers": 3, "messages_published": 42,
+			},
+		})
+		defer cleanup()
+
+		got, err := messaging.NewClient(tr).GetChannelStats(ctx, "orders")
+		if err != nil {
+			t.Fatalf("GetChannelStats: %v", err)
+		}
+		want := messaging.ChannelStats{Name: "orders", Subscribers: 3, MessagesPublished: 42}
+		if *got != want {
+			t.Errorf("channel stats = %+v, want %+v", *got, want)
+		}
+	})
+
+	t.Run("unknown channel", func(t *testing.T) {
+		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+			wantTool:      "quicbaas_msg_channel_stats",
+			result:        map[string]interface{}{"error": "channel not found"},
+			toolError:     true,
+			toolErrorCode: MCPResourceNotFound,
+		})
+		defer cleanup()
+
+		_, err := messaging.NewClient(tr).GetChannelStats(ctx, "missing")
+		if !errors.IsNotFound(err) {
+			t.Errorf("err = %v, want a NotFound error", err)
+		}
+	})
+
+	t.Run("missing channel", func(t *testing.T) {
+		h := newMsgHandler(t)
+		if _, err := h.transformRequest("GetChannelStats", &messaging.GetChannelStatsRequest{}); !errors.IsInvalidInput(err) {
+			t.Errorf("empty channel: err = %v, want an InvalidInput error", err)
+		}
+		if _, err := h.transformRequest("GetChannelStats", struct{}{}); !errors.IsInvalidInput(err) {
+			t.Errorf("wrong request type: err = %v, want an InvalidInput error", err)
+		}
+	})
+}
+
+// TestMessagingMethodTableCoversClient fails when a messaging.Client method
+// has no MCP tool, so a new SDK verb cannot ship unreachable over MCP.
+func TestMessagingMethodTableCoversClient(t *testing.T) {
+	clientType := reflect.TypeOf((*messaging.Client)(nil)).Elem()
+	for i := 0; i < clientType.NumMethod(); i++ {
+		name := clientType.Method(i).Name
+		if _, ok := messagingMethodToTool[name]; !ok {
+			t.Errorf("messaging.Client.%s has no MCP tool", name)
+		}
+	}
+	if len(messagingMethodToTool) != clientType.NumMethod() {
+		t.Errorf("MCP table has %d methods, messaging.Client has %d", len(messagingMethodToTool), clientType.NumMethod())
+	}
+}
+
 // TestMessagingWatchChannelRoundTrip pins the watch round trip through the
 // SDK client: every request field reaches the tool arguments, and every
 // subscription field the tool returns reaches the caller.
@@ -311,7 +379,7 @@ func TestMessagingVoidResponses(t *testing.T) {
 
 func TestMessagingTransformResponseErrors(t *testing.T) {
 	h := newMsgHandler(t)
-	for _, m := range []string{"CreateChannel", "ListChannels", "Subscribe", "GetStats", "GetDedupStats"} {
+	for _, m := range []string{"CreateChannel", "ListChannels", "Subscribe", "GetStats", "GetChannelStats", "GetDedupStats"} {
 		if _, err := h.transformResponse(m, "scalar"); err == nil {
 			t.Errorf("%s on scalar must error", m)
 		}

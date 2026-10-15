@@ -231,6 +231,18 @@ start-up.
 control plane and Ollama gets zero-hop dispatch without a second process; it
 registers through the same registry rather than a parallel path.
 
+**One runtime per work dir, enforced by a lock.** The work dir is the owner
+label a runtime stamps on its sandbox containers and sweeps by at startup, so
+two runtimes on one dir would reap each other's containers. `quicbaas fleet
+serve` (`--work-dir`) and the embedded node (`embedded_fleet_node.data_dir`,
+when set) each take an exclusive, non-blocking `flock` on
+`<work dir>/runtime.lock` before building anything, record their PID in it,
+and hold it until shutdown. The kernel drops the lock when the process exits,
+so a crash leaves nothing stale. The second runtime refuses to start with
+`agent: work dir is locked by another runtime: <dir> (held by pid <n>)`; give
+it a work dir of its own. Platforms without `flock` start unlocked and log a
+warning.
+
 ## Naming
 
 The node daemon and its registry are the **fleet**; a registered host is a

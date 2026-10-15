@@ -143,6 +143,11 @@ type ProcessExitObserver func(ProcessExit)
 // one sync.Once. The alternative — a closure captured in spawnCLI and a second
 // Wait on the session — is what the burn-in found: two callers, one of them
 // concurrent, on a call the os/exec contract forbids calling twice.
+//
+// cmd.Wait is how the daemon learns the process exited: it returns at the exit
+// itself, whatever is still unread on stdout. That is safe because stdout is
+// not one of the pipes Wait closes: spawnCLI hands the child a pipe of its own,
+// and the stream reader alone closes the read end.
 type procReaper struct {
 	once sync.Once
 	cmd  *exec.Cmd
@@ -199,13 +204,28 @@ func (s *acpSession) exited() *ProcessExit {
 // Called once, immediately after the session is stored, so the window in which
 // nothing supervises the process is exactly the spawn itself — and every
 // failure path inside the spawn already reaps through teardown.
+//
+// THE EXIT IS OBSERVED BY THE WAIT ITSELF, NOT BY STDOUT. The supervisor calls
+// the reaper at once, so it sees the agent exit the moment it does, whether or
+// not anyone ever reads the output the agent left (#1329): a prompt that timed
+// out with the stream reader parked on a full buffer still gets its process
+// reaped and its exit observed. Whoever reaps first (the reader at EOF, Close,
+// a prompt that found the agent gone, or this goroutine) makes the one Wait;
+// this goroutine reports it, so the observer runs exactly once.
+//
+// Reaping early loses no output. stdout is a pipe spawnCLI owns, which Wait
+// does not close; the reader drains it to EOF at its consumer's pace. A prompt
+// in flight therefore sees every record the agent wrote: a result it reads, an
+// is_error one included, is its answer (ErrStreamJSON), and only a stream that
+// ends without one reports the exit (ErrStreamJSONProcessExited).
 func (b *ACPBackend) superviseProcess(sess *acpSession) {
 	if sess == nil || sess.cmd == nil || sess.reaper == nil {
 		return
 	}
 	go func() {
-		// THE single Wait. It blocks for the session's whole life, which is the
-		// point: the process has an owner for as long as it exists.
+		// THE single Wait, or the answer of whoever made it first. It blocks
+		// for the process's whole life, which is the point: the process has an
+		// owner for as long as it exists.
 		//
 		// A non-zero exit status arrives here as an *exec.ExitError, which is
 		// not a fault of the wait: the code is read from ProcessState below and

@@ -559,6 +559,7 @@ func TestIsMsgTool_AllBranches(t *testing.T) {
 		"quicbaas_msg_unsubscribe",
 		"quicbaas_msg_stats",
 		"quicbaas_msg_publish_delta",
+		"quicbaas_msg_channel_stats",
 		"quicbaas_msg_dedup_stats",
 	}
 

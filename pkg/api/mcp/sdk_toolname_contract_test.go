@@ -159,9 +159,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.KMS", "ListKeyVersions"}: gapNameDrift + "quicbaas_kms_key_versions",
 	{"quicbaas.KMS", "UpdateKeyStatus"}: gapNameDrift + "quicbaas_kms_key_status_update",
 
-	// --- Messaging ---------------------------------------------------------
-	{"quicbaas.Messaging", "GetChannelStats"}: gapAmbiguous + "quicbaas_msg_stats",
-
 	// --- Object storage ----------------------------------------------------
 	// The whole admin surface is registered under quicbaas_object_admin_*; the
 	// SDK collapses ObjectStorageAdmin to the quicbaas_object_ prefix.

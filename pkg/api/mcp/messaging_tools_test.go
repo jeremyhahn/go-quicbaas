@@ -406,7 +406,7 @@ func TestIsMsgTool(t *testing.T) {
 		"quicbaas_msg_get_channel", "quicbaas_msg_list_channels",
 		"quicbaas_msg_subscribe", "quicbaas_msg_unsubscribe",
 		"quicbaas_msg_publish", "quicbaas_msg_publish_delta",
-		"quicbaas_msg_stats", "quicbaas_msg_dedup_stats",
+		"quicbaas_msg_stats", "quicbaas_msg_channel_stats", "quicbaas_msg_dedup_stats",
 		"quicbaas_msg_watch_channel",
 	}
 	for _, name := range msgTools {

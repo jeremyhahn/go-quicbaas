@@ -35,7 +35,7 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.Messaging` — SDK package `sdk/go/client/messaging`
 
-Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 12; MCP tools registered server-side: 10.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 12; MCP tools registered server-side: 12.
 
 The SDK serves messaging on all six transports: REST, QUIC (REST over
 HTTP/3), gRPC and Unix (`sdk/go/transport/grpc/messaging_handler.go`, onto
@@ -44,7 +44,7 @@ HTTP/3), gRPC and Unix (`sdk/go/transport/grpc/messaging_handler.go`, onto
 Each transport has a test that fails when a `messaging.Client` method is
 missing from its table.
 
-MCP tools: `quicbaas_msg_create_channel`, `quicbaas_msg_dedup_stats`, `quicbaas_msg_delete_channel`, `quicbaas_msg_get_channel`, `quicbaas_msg_list_channels`, `quicbaas_msg_publish`, `quicbaas_msg_publish_delta`, `quicbaas_msg_stats`, `quicbaas_msg_subscribe`, `quicbaas_msg_unsubscribe`, `quicbaas_msg_watch_channel`
+MCP tools: `quicbaas_msg_channel_stats`, `quicbaas_msg_create_channel`, `quicbaas_msg_dedup_stats`, `quicbaas_msg_delete_channel`, `quicbaas_msg_get_channel`, `quicbaas_msg_list_channels`, `quicbaas_msg_publish`, `quicbaas_msg_publish_delta`, `quicbaas_msg_stats`, `quicbaas_msg_subscribe`, `quicbaas_msg_unsubscribe`, `quicbaas_msg_watch_channel`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
@@ -2199,6 +2199,41 @@ When stats are unavailable, returns `{"available": false}`.
 {
   "name": "quicbaas_msg_stats",
   "arguments": {}
+}
+```
+
+---
+
+#### quicbaas_msg_channel_stats
+
+Get statistics for a specific channel. Requires `messaging:stats`, as the
+REST route and the gRPC method do. An unknown channel is refused as
+NotFound. The SDK's `GetChannelStats` calls this tool over MCP.
+
+**Input Schema:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel` | string | Yes | Name of the channel to get stats for |
+
+**Output:**
+
+```json
+{
+  "name": "events.orders",
+  "subscribers": 3,
+  "messages_published": 48230
+}
+```
+
+**Example:**
+
+```json
+{
+  "name": "quicbaas_msg_channel_stats",
+  "arguments": {
+    "channel": "events.orders"
+  }
 }
 ```
 

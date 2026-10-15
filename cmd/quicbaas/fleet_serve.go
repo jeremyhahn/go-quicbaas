@@ -193,6 +193,20 @@ func runFleetServe(cmd *cobra.Command, args []string) error {
 
 	logger := cliLoggerForFleetServe()
 
+	// The work dir is the owner label the runtime stamps on its containers
+	// and sweeps by, so a second runtime on it would reap this one's
+	// containers. Hold it exclusively for the life of the process, taken
+	// before anything that stamps or sweeps is constructed.
+	workDirLock, lockErr := fleet.AcquireWorkDirLock(cfg.WorkDir, logger)
+	if lockErr != nil {
+		return formatError(lockErr)
+	}
+	defer func() {
+		if err := workDirLock.Release(); err != nil {
+			logger.Warnf("fleet node daemon: %v", err)
+		}
+	}()
+
 	backends, buildErr := buildFleetBackends(cfg, logger)
 	if buildErr != nil {
 		return formatError(buildErr)

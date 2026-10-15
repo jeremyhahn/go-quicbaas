@@ -18,12 +18,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -515,6 +518,48 @@ func TestStreamJSONErrorHelper(t *testing.T) {
 	}
 
 	os.Exit(0)
+}
+
+// TestStreamJSONExitMidTurnHelper answers the handshake, then answers the
+// first prompt with more assistant records than the stream reader buffers and
+// exits without a result: an agent that dies mid-turn with output still in
+// flight. With STREAM_JSON_EXIT_ON_STDIN_EOF=1 it waits for its stdin to close
+// before it exits.
+func TestStreamJSONExitMidTurnHelper(t *testing.T) {
+	if os.Getenv("STREAM_JSON_EXIT_MID_TURN_HELPER") != "1" {
+		return
+	}
+
+	out := bufio.NewWriter(os.Stdout)
+	fmt.Fprintf(out, `{"type":"system","subtype":"init","session_id":%q,"model":%q}`+"\n",
+		os.Getenv("STREAM_JSON_SESSION_ID"), os.Getenv("STREAM_JSON_MODEL"))
+	out.Flush()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, streamJSONScannerBufferSize), streamJSONScannerBufferSize)
+	if !scanner.Scan() {
+		os.Exit(1)
+	}
+	out.WriteString(`{"type":"result","subtype":"success","result":"ready"}` + "\n")
+	out.Flush()
+
+	if !scanner.Scan() {
+		os.Exit(1)
+	}
+	count, err := strconv.Atoi(os.Getenv("STREAM_JSON_RECORD_COUNT"))
+	if err != nil {
+		os.Exit(1)
+	}
+	for range count {
+		out.WriteString(`{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}` + "\n")
+	}
+	out.Flush()
+	// The caller decides when the agent dies: it exits once its stdin closes.
+	if os.Getenv("STREAM_JSON_EXIT_ON_STDIN_EOF") == "1" {
+		for scanner.Scan() {
+		}
+	}
+	os.Exit(3)
 }
 
 // TestStreamJSONExitHelper is a helper subprocess that writes the init message
@@ -1203,6 +1248,67 @@ func TestACPBackend_CLI_PromptError(t *testing.T) {
 	if !errors.Is(err, ErrStreamJSON) && !errors.Is(err, ErrStreamJSONProcessExited) {
 		t.Errorf("error = %v, want ErrStreamJSON or ErrStreamJSONProcessExited", err)
 	}
+}
+
+// TestACPBackend_CLI_PromptExitDrainsStdout pins the order in which a
+// persistent CLI agent that dies mid-turn is reaped: stdout is drained to EOF
+// first, so the prompt reports the process exit, never the raw "file already
+// closed" a read gets once exec.Cmd.Wait has closed the pipe under the reader
+// (#1329).
+//
+// The prompt's consumer is held on the first record, so the reader fills its
+// buffer and parks with output still unread. synctest.Wait then returns only
+// once every goroutine is durably blocked, which is after the agent has exited
+// and after any reap that would close stdout has finished; only then is the
+// consumer released.
+func TestACPBackend_CLI_PromptExitDrainsStdout(t *testing.T) {
+	// One record held by the consumer, a full buffer, and one more the reader
+	// holds while it waits for room: the reader cannot reach EOF on its own.
+	t.Setenv("STREAM_JSON_RECORD_COUNT", strconv.Itoa(streamJSONReaderBuffer+2))
+
+	synctest.Test(t, func(t *testing.T) {
+		backend := newTestCLIBackend(t, "TestStreamJSONExitMidTurnHelper", "STREAM_JSON_EXIT_MID_TURN_HELPER")
+
+		sess, err := backend.Spawn(context.Background(), &SpawnRequest{WorkDir: "/tmp", Persistent: true})
+		if err != nil {
+			t.Fatalf("Spawn() error = %v", err)
+		}
+		defer backend.Close(context.Background(), sess.ID)
+
+		held := make(chan struct{})
+		release := make(chan struct{})
+		var holdOnce sync.Once
+		promptErr := make(chan error, 1)
+		go func() {
+			_, promptErrValue := backend.Prompt(context.Background(), &PromptRequest{
+				SessionID: sess.ID,
+				Prompt:    "Hello",
+				EventCallback: func(*SessionEvent) {
+					holdOnce.Do(func() {
+						close(held)
+						<-release
+					})
+				},
+			})
+			promptErr <- promptErrValue
+		}()
+
+		<-held
+		synctest.Wait()
+		close(release)
+
+		err = <-promptErr
+		if errors.Is(err, os.ErrClosed) {
+			t.Fatalf("Prompt() error = %v, read stdout after it was closed", err)
+		}
+		var exited *StreamJSONProcessExitedError
+		if !errors.As(err, &exited) {
+			t.Fatalf("Prompt() error = %v, want ErrStreamJSONProcessExited", err)
+		}
+		if exited.ExitCode != 3 {
+			t.Errorf("ExitCode = %d, want 3", exited.ExitCode)
+		}
+	})
 }
 
 func TestACPBackend_CLI_PromptProcessExited(t *testing.T) {

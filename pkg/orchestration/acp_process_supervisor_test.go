@@ -15,13 +15,17 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -204,4 +208,155 @@ func TestProcessExit_CarriesMetadataAndRetainsNoStderrAnywhere(t *testing.T) {
 				"the tail belongs in the typed exit errors, or behind the protected-secret abstraction", f.Name)
 		}
 	}
+}
+
+// TestSupervisedProcess_ExitWithUnreadOutputIsReaped is the hole Codex found
+// in #1329: a prompt gives up while the agent's output fills the stream
+// reader's buffer, then the agent exits. Nobody drains that buffer, so the
+// reader never reaches EOF; the process must be reaped and its exit observed
+// anyway, and the output it left must stay readable to the end of the stream.
+func TestSupervisedProcess_ExitWithUnreadOutputIsReaped(t *testing.T) {
+	// More records than the reader buffers, by more than the prompt takes
+	// before it notices it was cancelled: the reader is parked when the agent
+	// exits.
+	records := streamJSONReaderBuffer + 200
+	t.Setenv("STREAM_JSON_RECORD_COUNT", strconv.Itoa(records))
+	t.Setenv("STREAM_JSON_EXIT_ON_STDIN_EOF", "1")
+
+	synctest.Test(t, func(t *testing.T) {
+		backend := newTestCLIBackend(t, "TestStreamJSONExitMidTurnHelper", "STREAM_JSON_EXIT_MID_TURN_HELPER")
+		var observed atomic.Int32
+		backend.config.ProcessExitObserver = func(ProcessExit) { observed.Add(1) }
+
+		sess := spawnStreamJSONSession(t, backend)
+		defer backend.Close(context.Background(), sess.id)
+
+		// The prompt holds its first record until it times out.
+		promptCtx, timeOut := context.WithCancel(context.Background())
+		held := make(chan struct{})
+		var holdOnce sync.Once
+		promptErr := make(chan error, 1)
+		go func() {
+			_, err := backend.Prompt(promptCtx, &PromptRequest{
+				SessionID: sess.id,
+				Prompt:    "Hello",
+				EventCallback: func(*SessionEvent) {
+					holdOnce.Do(func() {
+						close(held)
+						<-promptCtx.Done()
+					})
+				},
+			})
+			promptErr <- err
+		}()
+		<-held
+		timeOut()
+		if err := <-promptErr; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Prompt() error = %v, want the cancellation", err)
+		}
+
+		// Only now does the agent exit.
+		if err := sess.stdin.Close(); err != nil {
+			t.Fatalf("close the agent's stdin: %v", err)
+		}
+		synctest.Wait()
+
+		if n := observed.Load(); n != 1 {
+			t.Fatalf("observer ran %d times after the agent exited, want 1", n)
+		}
+		exit := sess.exited()
+		if exit == nil {
+			t.Fatal("the agent exited but was never reaped")
+		}
+		if exit.ExitCode != 3 {
+			t.Errorf("ExitCode = %d, want 3", exit.ExitCode)
+		}
+
+		// Everything the prompt did not take is still there, past the buffer
+		// and up to the stream's end, which reports the exit.
+		read := 0
+		for {
+			_, err := sess.reader.next(context.Background())
+			if err != nil {
+				if !errors.Is(err, ErrStreamJSONProcessExited) {
+					t.Fatalf("the stream ended after %d records with %v, want ErrStreamJSONProcessExited", read, err)
+				}
+				break
+			}
+			read++
+		}
+		if read <= streamJSONReaderBuffer {
+			t.Errorf("read %d records after the exit, want the %d the reader did not buffer as well", read, records-streamJSONReaderBuffer)
+		}
+	})
+}
+
+// TestSupervisedProcess_ObservesEveryExitOnce checks the exit is reported
+// exactly once whoever reaps first: the reader at the end of stdout, or Close.
+// The supervisor reaping first is TestSupervisedProcess_ExitWithUnreadOutputIsReaped.
+func TestSupervisedProcess_ObservesEveryExitOnce(t *testing.T) {
+	tests := []struct {
+		name       string
+		helperTest string
+		helperEnv  string
+		end        func(t *testing.T, backend *ACPBackend, sess *acpSession)
+	}{
+		{
+			name:       "the reader reaches the end of stdout",
+			helperTest: "TestStreamJSONExitMidTurnHelper",
+			helperEnv:  "STREAM_JSON_EXIT_MID_TURN_HELPER",
+			end: func(t *testing.T, backend *ACPBackend, sess *acpSession) {
+				_, err := backend.Prompt(context.Background(), &PromptRequest{SessionID: sess.id, Prompt: "Hello"})
+				if !errors.Is(err, ErrStreamJSONProcessExited) {
+					t.Fatalf("Prompt() error = %v, want ErrStreamJSONProcessExited", err)
+				}
+			},
+		},
+		{
+			name:       "the session is closed",
+			helperTest: "TestStreamJSONStaysAliveHelper",
+			helperEnv:  "STREAM_JSON_STAYS_ALIVE_HELPER",
+			end: func(t *testing.T, backend *ACPBackend, sess *acpSession) {
+				if err := backend.Close(context.Background(), sess.id); err != nil {
+					t.Fatalf("Close() error = %v", err)
+				}
+			},
+		},
+	}
+	t.Setenv("STREAM_JSON_RECORD_COUNT", "1")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				backend := newTestCLIBackend(t, tt.helperTest, tt.helperEnv)
+				var observed atomic.Int32
+				backend.config.ProcessExitObserver = func(ProcessExit) { observed.Add(1) }
+
+				sess := spawnStreamJSONSession(t, backend)
+				tt.end(t, backend, sess)
+				// A Close after the exit reaps nothing new. Its error is not
+				// the point: the session may already be gone.
+				_ = backend.Close(context.Background(), sess.id)
+				synctest.Wait()
+
+				if n := observed.Load(); n != 1 {
+					t.Errorf("observer ran %d times, want exactly 1", n)
+				}
+			})
+		})
+	}
+}
+
+// spawnStreamJSONSession spawns a persistent CLI session and returns it.
+func spawnStreamJSONSession(t *testing.T, backend *ACPBackend) *acpSession {
+	t.Helper()
+	spawned, err := backend.Spawn(context.Background(), &SpawnRequest{WorkDir: t.TempDir(), Persistent: true})
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+	value, ok := backend.sessions.Load(spawned.ID)
+	if !ok {
+		t.Fatalf("session %q is not registered", spawned.ID)
+	}
+	return value.(*acpSession)
 }

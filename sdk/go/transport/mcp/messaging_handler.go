@@ -21,8 +21,7 @@
 //
 // Void-result methods (DeleteChannel, Unsubscribe, Publish, PublishDelta)
 // return nil — the messaging client accepts a nil response for those and
-// treats it as success. GetChannelStats has no MCP tool and surfaces a
-// typed MethodNotSupportedError.
+// treats it as success.
 
 package mcp
 
@@ -43,17 +42,18 @@ func isMCPMessagingService(service string) bool {
 // messagingMethodToTool maps Messaging SDK method names onto quicbaasd MCP
 // tool names. Methods absent from this table have no MCP tool.
 var messagingMethodToTool = map[string]string{
-	"CreateChannel": "quicbaas_msg_create_channel",
-	"DeleteChannel": "quicbaas_msg_delete_channel",
-	"GetChannel":    "quicbaas_msg_get_channel",
-	"ListChannels":  "quicbaas_msg_list_channels",
-	"Subscribe":     "quicbaas_msg_subscribe",
-	"WatchChannel":  "quicbaas_msg_watch_channel",
-	"Unsubscribe":   "quicbaas_msg_unsubscribe",
-	"Publish":       "quicbaas_msg_publish",
-	"PublishDelta":  "quicbaas_msg_publish_delta",
-	"GetStats":      "quicbaas_msg_stats",
-	"GetDedupStats": "quicbaas_msg_dedup_stats",
+	"CreateChannel":   "quicbaas_msg_create_channel",
+	"DeleteChannel":   "quicbaas_msg_delete_channel",
+	"GetChannel":      "quicbaas_msg_get_channel",
+	"ListChannels":    "quicbaas_msg_list_channels",
+	"Subscribe":       "quicbaas_msg_subscribe",
+	"WatchChannel":    "quicbaas_msg_watch_channel",
+	"Unsubscribe":     "quicbaas_msg_unsubscribe",
+	"Publish":         "quicbaas_msg_publish",
+	"PublishDelta":    "quicbaas_msg_publish_delta",
+	"GetStats":        "quicbaas_msg_stats",
+	"GetChannelStats": "quicbaas_msg_channel_stats",
+	"GetDedupStats":   "quicbaas_msg_dedup_stats",
 }
 
 // mapMessagingMethodToTool returns the MCP tool name for a Messaging method.
@@ -96,6 +96,8 @@ func (h *messagingHandler) transformRequest(method string, req interface{}) (map
 		return h.transformPublishDelta(req)
 	case "GetStats":
 		return map[string]interface{}{}, nil
+	case "GetChannelStats":
+		return h.transformGetChannelStats(req)
 	case "GetDedupStats":
 		return h.transformGetDedupStats(req)
 	default:
@@ -116,6 +118,8 @@ func (h *messagingHandler) transformResponse(method string, resp interface{}) (i
 		return h.transformSubscriptionResponse("mcp.messaging.WatchChannel", resp)
 	case "GetStats":
 		return h.transformStatsResponse(resp)
+	case "GetChannelStats":
+		return h.transformChannelStatsResponse(resp)
 	case "GetDedupStats":
 		return h.transformDedupStatsResponse(resp)
 	case "DeleteChannel", "Unsubscribe", "Publish", "PublishDelta":
@@ -288,6 +292,19 @@ func (h *messagingHandler) transformPublishDelta(req interface{}) (map[string]in
 	return args, nil
 }
 
+// transformGetChannelStats builds the quicbaas_msg_channel_stats arguments.
+func (h *messagingHandler) transformGetChannelStats(req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*messaging.GetChannelStatsRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.messaging.GetChannelStats",
+			"invalid request type, expected *messaging.GetChannelStatsRequest")
+	}
+	if r.Channel == "" {
+		return nil, errors.NewInvalidInput("mcp.messaging.GetChannelStats", "channel is required")
+	}
+	return map[string]interface{}{"channel": r.Channel}, nil
+}
+
 func (h *messagingHandler) transformGetDedupStats(req interface{}) (map[string]interface{}, error) {
 	r, ok := req.(*messaging.GetDedupStatsRequest)
 	if !ok || r == nil {
@@ -354,6 +371,20 @@ func (h *messagingHandler) transformStatsResponse(resp interface{}) (interface{}
 		DedupHits:          getResultInt64(m, "dedup_hits"),
 		DroppedMessages:    getResultInt64(m, "dropped_messages"),
 		BufferUtilization:  getResultFloat64(m, "buffer_utilization"),
+	}, nil
+}
+
+// transformChannelStatsResponse decodes a quicbaas_msg_channel_stats result
+// into the SDK ChannelStats.
+func (h *messagingHandler) transformChannelStatsResponse(resp interface{}) (interface{}, error) {
+	m, err := asResultMap(resp, "mcp.messaging.GetChannelStats")
+	if err != nil {
+		return nil, err
+	}
+	return &messaging.ChannelStats{
+		Name:              getResultString(m, "name"),
+		Subscribers:       getResultInt64(m, "subscribers"),
+		MessagesPublished: getResultInt64(m, "messages_published"),
 	}, nil
 }
 

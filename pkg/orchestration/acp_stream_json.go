@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sync"
 	"time"
 )
 
@@ -114,13 +115,37 @@ type streamJSONOpen struct {
 // sequence intact across every timeout: a consumer that gives up leaves the
 // records where they are, and the next consumer settles what is owed before
 // it asks for anything of its own.
+//
+// WHEN IT EXITS. The goroutine ends at the stream's end (EOF or a scan
+// error), or when its session closes (stop), whether it is reading stdout or
+// parked on a full records channel. The second exit is what keeps a closed session from
+// leaking it: with no consumer left, a send into a full buffer would block
+// forever, the goroutine would never read stdout again, never see EOF, and
+// hold the scanner buffer and every buffered record. While the session is
+// open the send blocks on the consumer and never drops a record. Either way
+// records closes, then done, and err says why.
 type streamJSONReader struct {
 	records chan *streamJSONMessage
 
 	// err is why the stream ended, readable once records is closed: the
-	// scanner's own error, or the process-gone explanation the opener gave.
+	// scanner's own error, the process-gone explanation the opener gave, or
+	// a SessionClosedError when stop ended it.
 	err  error
 	done chan struct{}
+
+	// stopped closes once, under stopOnce, when the session closes.
+	// closedSessionID is written before it closes, so the goroutine reads it
+	// after receiving from stopped without a race.
+	stopped         chan struct{}
+	stopOnce        sync.Once
+	closedSessionID string
+
+	// source is stdout when it can be closed. The reader owns it: nothing
+	// else closes it under a read, so the output an agent left before it
+	// exited stays readable to the end however long the consumer takes.
+	// It is closed when the goroutine ends and on stop.
+	source     io.Closer
+	sourceOnce sync.Once
 }
 
 // streamJSONReaderBuffer bounds how many records the reader holds for a
@@ -134,19 +159,36 @@ const streamJSONReaderBuffer = 4096
 func newStreamJSONReader(stdout io.Reader, gone func() error) *streamJSONReader {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, streamJSONScannerBufferSize), streamJSONScannerBufferSize)
+	source, _ := stdout.(io.Closer)
 	r := &streamJSONReader{
 		records: make(chan *streamJSONMessage, streamJSONReaderBuffer),
 		done:    make(chan struct{}),
+		stopped: make(chan struct{}),
+		source:  source,
 	}
 	go func() {
 		defer close(r.done)
 		defer close(r.records)
+		defer r.closeSource()
 		for scanner.Scan() {
 			var msg streamJSONMessage
 			if jsonErr := json.Unmarshal(scanner.Bytes(), &msg); jsonErr != nil {
 				continue // an unparseable line is not a record
 			}
-			r.records <- &msg
+			select {
+			case r.records <- &msg:
+			case <-r.stopped:
+				r.err = &SessionClosedError{SessionID: r.closedSessionID}
+				return
+			}
+		}
+		// A stop that closed stdout under a read ends the scan with the
+		// close's error; the session closing is the reason, not the read.
+		select {
+		case <-r.stopped:
+			r.err = &SessionClosedError{SessionID: r.closedSessionID}
+			return
+		default:
 		}
 		if scanErr := scanner.Err(); scanErr != nil {
 			r.err = scanErr
@@ -155,6 +197,28 @@ func newStreamJSONReader(stdout io.Reader, gone func() error) *streamJSONReader 
 		r.err = gone()
 	}()
 	return r
+}
+
+// stop tells the reader its session is closed. A goroutine parked on a full
+// records channel returns at once; one still reading stdout returns as soon as
+// stop closes it, which also frees a reader whose stdout a surviving
+// grandchild still holds open. Safe to call more than once and from any
+// goroutine: only the first call counts.
+func (r *streamJSONReader) stop(sessionID string) {
+	r.stopOnce.Do(func() {
+		r.closedSessionID = sessionID
+		close(r.stopped)
+	})
+	r.closeSource()
+}
+
+// closeSource closes stdout once. The error is dropped because nobody is left
+// to read it: the stream is over, and the reason it ended is already err.
+func (r *streamJSONReader) closeSource() {
+	if r.source == nil {
+		return
+	}
+	r.sourceOnce.Do(func() { _ = r.source.Close() })
 }
 
 // next hands out the next record, or the reason the stream ended once it has,

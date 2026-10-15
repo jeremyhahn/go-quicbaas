@@ -67,6 +67,8 @@ func (r *ToolRegistry) executeMsgTool(ctx context.Context, name string, args map
 		return r.handleMsgPublishDelta(ctx, msgService, args)
 	case "quicbaas_msg_stats":
 		return r.handleMsgStats(ctx, msgService, args)
+	case "quicbaas_msg_channel_stats":
+		return r.handleMsgChannelStats(ctx, msgService, args)
 	case "quicbaas_msg_dedup_stats":
 		return r.handleMsgDedupStats(ctx, msgService, args)
 	default:
@@ -471,6 +473,30 @@ func (r *ToolRegistry) handleMsgStats(ctx context.Context, svc messaging.Service
 	}, nil
 }
 
+// handleMsgChannelStats handles the quicbaas_msg_channel_stats tool.
+func (r *ToolRegistry) handleMsgChannelStats(ctx context.Context, svc messaging.Service, args map[string]interface{}) (interface{}, error) {
+	channelName := getString(args, "channel")
+	if channelName == "" {
+		return nil, api.NewRequiredFieldError("channel")
+	}
+
+	// An unknown channel is refused as NotFound, as the gRPC and REST
+	// handlers refuse it.
+	channel, err := svc.GetChannel(ctx, channelName)
+	if err != nil {
+		if messaging.IsChannelNotFound(err) {
+			return nil, api.NewNotFoundError("channel", channelName)
+		}
+		return nil, api.NewOperationFailedError("get channel stats", err)
+	}
+
+	return map[string]interface{}{
+		"name":               channel.Name,
+		"subscribers":        channel.Subscribers,
+		"messages_published": channel.MessagesPublished,
+	}, nil
+}
+
 // handleMsgDedupStats handles the quicbaas_msg_dedup_stats tool.
 func (r *ToolRegistry) handleMsgDedupStats(ctx context.Context, svc messaging.Service, args map[string]interface{}) (interface{}, error) {
 	channel := getString(args, "channel")
@@ -541,6 +567,7 @@ func isMsgTool(name string) bool {
 		"quicbaas_msg_publish",
 		"quicbaas_msg_publish_delta",
 		"quicbaas_msg_stats",
+		"quicbaas_msg_channel_stats",
 		"quicbaas_msg_dedup_stats":
 		return true
 	default:

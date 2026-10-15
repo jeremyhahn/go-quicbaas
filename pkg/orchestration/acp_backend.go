@@ -840,6 +840,23 @@ func (b *ACPBackend) processExitedError(cmd *exec.Cmd, stderr *stderrTail) *Stre
 // container runtime and there is nothing here to Wait on, so the container is
 // reported instead of a fabricated exit code — see ContainerStreamClosedError.
 func (b *ACPBackend) agentGoneError(sess *acpSession) error {
+	exit := retireGoneAgent(sess)
+	if sess.containerID != "" {
+		return &ContainerStreamClosedError{
+			ContainerID: sess.containerID,
+			Image:       sess.containerImage,
+			Operation:   "prompt",
+			Exit:        exit,
+		}
+	}
+	return b.processExitedError(sess.cmd, sess.stderr)
+}
+
+// retireGoneAgent is what agentGoneError DOES, apart from what it reports: it
+// ends the process, reaps it, and marks the session closed with its exit
+// reported. It returns a container's exit, read before the teardown, and the
+// zero value for a host subprocess. The caller holds sess.mu.
+func retireGoneAgent(sess *acpSession) ContainerExit {
 	// A CONTAINER'S EXIT IS READ BEFORE IT IS TORN DOWN. procCancel kills the
 	// runtime's foreground process, after which the only status left to read
 	// is the kill's. Bounded, because a runtime that keeps its process after
@@ -852,22 +869,14 @@ func (b *ACPBackend) agentGoneError(sess *acpSession) error {
 		sess.procCancel()
 	}
 	// The wait error is deliberately dropped HERE and nowhere else: the exit
-	// code it would restate is read from ProcessState by processExitedError
-	// below, which is the more useful of the two reports. The supervisor keeps
-	// the full answer on the recorded exit. A containerized session owns no
+	// code it would restate is read from ProcessState by processExitedError,
+	// which is the more useful of the two reports. The supervisor keeps the
+	// full answer on the recorded exit. A containerized session owns no
 	// reaper at all, so this is a no-op for it.
 	_ = sess.reapProcess()
 	sess.closed.Store(true)
 	sess.exitReported.Store(true)
-	if sess.containerID != "" {
-		return &ContainerStreamClosedError{
-			ContainerID: sess.containerID,
-			Image:       sess.containerImage,
-			Operation:   "prompt",
-			Exit:        exit,
-		}
-	}
-	return b.processExitedError(sess.cmd, sess.stderr)
+	return exit
 }
 
 // containerExitWaitBound is how long a closed container stream waits for the
@@ -1630,16 +1639,25 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest, plan spawn
 		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	// STDOUT IS A PIPE THE BACKEND OWNS, not cmd.StdoutPipe: cmd.Wait closes
+	// the pipes it made, and a read after that fails with os.ErrClosed and
+	// loses whatever the agent wrote last (#1329). With a pipe of its own the
+	// reaper can wait the moment the agent exits, while the stream reader,
+	// which alone closes the read end, drains every record to EOF at its
+	// consumer's pace.
+	stdoutPipe, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		procCancel()
 		_ = stdinPipe.Close()
 		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
+	cmd.Stdout = stdoutWriter
 
 	if err := cmd.Start(); err != nil {
 		procCancel()
 		_ = stdinPipe.Close()
+		_ = stdoutPipe.Close()
+		_ = stdoutWriter.Close()
 		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
 
@@ -1653,16 +1671,24 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest, plan spawn
 	reaper := &procReaper{cmd: cmd}
 
 	// teardown aborts a partially-spawned persistent subprocess: it closes
-	// stdin, cancels the process context (which SIGINTs the process through the
-	// factory's Cancel hook), and reaps it. Centralising it keeps every spawn
-	// failure path consistent and leak-free.
+	// stdin and stdout, cancels the process context (which SIGINTs the process
+	// through the factory's Cancel hook), and reaps it. Centralising it keeps
+	// every spawn failure path consistent and leak-free.
 	teardown := func() {
 		_ = stdinPipe.Close()
+		_ = stdoutPipe.Close()
 		procCancel()
 		// A teardown reaps to avoid a zombie; the spawn is already failing and
 		// is about to return the reason it failed, which a wait error would
 		// only displace.
 		_ = reaper.reap()
+	}
+
+	// The child has its own copy of the write end now. The parent's must go,
+	// or stdout never reaches EOF.
+	if err := stdoutWriter.Close(); err != nil {
+		teardown()
+		return nil, &SpawnError{Command: b.config.Command, Cause: err}
 	}
 
 	open, openErr := b.openStreamJSON(ctx, &streamJSONProc{
@@ -2075,13 +2101,11 @@ func (b *ACPBackend) streamJSONReadError(sess *acpSession, err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return &TransportError{Operation: "prompt", Cause: err}
 	}
-	// The stream ended. The reader already knows why when the opener could
-	// say; the session is closed and the process reaped either way.
-	gone := b.agentGoneError(sess)
-	if err != nil {
-		return err
-	}
-	return gone
+	// The stream ended, and the reader's err already says why: the opener's
+	// process-gone report, a scan error, or the session's close. Only the
+	// session is left to retire.
+	retireGoneAgent(sess)
+	return err
 }
 
 // promptOneShotCLI runs a single prompt by spawning a fresh CLI process.
@@ -2615,6 +2639,9 @@ func (b *ACPBackend) Close(ctx context.Context, sessionID string) error {
 	// process-lifetime context — the only place this persistent process is ever
 	// torn down. cmd.WaitDelay (set at creation) bounds the reap.
 	if sess.streamJSON() {
+		// The reader first: with no consumer left, a reader parked on its
+		// full buffer would never read to EOF and never exit.
+		sess.reader.stop(sessionID)
 		_ = sess.stdin.Close()
 		// A CONTAINER SESSION IS ENDED BY REMOVING ITS CONTAINER. Cancelling
 		// the process context only kills the `docker run` client, which an
@@ -2628,9 +2655,9 @@ func (b *ACPBackend) Close(ctx context.Context, sessionID string) error {
 			_ = sess.cmd.Process.Signal(os.Interrupt)
 		}
 		// Through the shared reaper, never cmd.Wait directly: the session's
-		// supervisor is already parked in that Wait, and a second one would be
-		// the concurrent call os/exec forbids. This blocks until the supervisor's
-		// wait returns, which is what Close wants — the process is reaped before
+		// stream reader or the supervisor may already be in that Wait, and a
+		// second one would be the concurrent call os/exec forbids. This blocks
+		// until that wait returns, which is what Close wants — the process is reaped before
 		// Close reports it closed. The wait error is not Close's answer: Close
 		// succeeded if the process is gone, however it went, and how it went is
 		// on the recorded exit for whoever asks.

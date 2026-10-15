@@ -208,7 +208,7 @@ func NewDaemon(cfg *Config, deps DaemonDeps) (*Daemon, error) {
 	if deps.Logger == nil {
 		return nil, ErrDaemonNoLogger
 	}
-	if err := ensureWorkDir(cfg.WorkDir); err != nil {
+	if err := EnsureWorkDir(cfg.WorkDir); err != nil {
 		return nil, err
 	}
 	return &Daemon{
@@ -559,9 +559,9 @@ func (d *Daemon) recordRunErr(err error) {
 	d.runErr.Store(&err)
 }
 
-// ensureWorkDir creates the daemon's work directory tree with 0700
+// EnsureWorkDir creates the daemon's work directory tree with 0700
 // permissions. Existing directories are left alone.
-func ensureWorkDir(path string) error {
+func EnsureWorkDir(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return &OpError{Op: "agent: resolve work dir", Cause: err}

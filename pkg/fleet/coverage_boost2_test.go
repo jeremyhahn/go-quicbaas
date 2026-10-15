@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -173,28 +174,25 @@ func TestDaemon_Start_SpawnServerFailureSetsStateFailed(t *testing.T) {
 }
 
 // =============================================================================
-// ensureWorkDir — error path (Abs fails for weird paths is not easy;
-// instead cover MkdirAll failure via unwritable parent)
+// EnsureWorkDir — error path (Abs fails for weird paths is not easy;
+// instead cover MkdirAll failure via a parent that is a regular file)
 // =============================================================================
 
-// TestEnsureWorkDir_UnwritableParentReturnsError verifies ensureWorkDir
-// returns an error when it cannot create the directory tree.
-func TestEnsureWorkDir_UnwritableParentReturnsError(t *testing.T) {
+// TestEnsureWorkDir_ParentIsAFileReturnsError verifies EnsureWorkDir
+// returns an error when it cannot create the directory tree. The parent is a
+// regular file, so MkdirAll fails with ENOTDIR whatever the caller's euid.
+func TestEnsureWorkDir_ParentIsAFileReturnsError(t *testing.T) {
 	t.Parallel()
-	if os.Getuid() == 0 {
-		t.Skip("root can write to any directory")
+
+	parent := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(parent, nil, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
 	}
 
-	dir := t.TempDir()
-	// Remove write permission on the temp dir.
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
-
-	subdir := filepath.Join(dir, "new-subdir")
-	if err := ensureWorkDir(subdir); err == nil {
-		t.Fatal("expected error creating dir inside read-only parent")
+	err := EnsureWorkDir(filepath.Join(parent, "new-subdir"))
+	var opErr *OpError
+	if !errors.As(err, &opErr) || !errors.Is(err, syscall.ENOTDIR) {
+		t.Fatalf("err = %v; want *OpError wrapping ENOTDIR", err)
 	}
 }
 
@@ -295,28 +293,21 @@ func TestProductionEnroller_ExchangeToken_BadTokenURL(t *testing.T) {
 }
 
 // =============================================================================
-// LoadPersistedSessions — directory read failure (read-only parent dir)
+// LoadPersistedSessions — directory read failure (sessions is not a dir)
 // =============================================================================
 
 // TestRuntime_LoadPersistedSessions_ReadDirFailure covers the
-// PersistSessionIOError path from os.ReadDir when the sessions directory
-// exists but cannot be read (e.g., permission denied).
+// PersistSessionIOError path from os.ReadDir when the sessions path exists
+// but cannot be read as a directory. It is a regular file, so ReadDir fails
+// with ENOTDIR whatever the caller's euid.
 func TestRuntime_LoadPersistedSessions_ReadDirFailure(t *testing.T) {
 	t.Parallel()
-	if os.Getuid() == 0 {
-		t.Skip("root bypasses directory read permissions")
-	}
 
 	workDir := t.TempDir()
-	sessionsDir := filepath.Join(workDir, "sessions")
-	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	sessionsPath := filepath.Join(workDir, "sessions")
+	if err := os.WriteFile(sessionsPath, nil, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
 	}
-	// Make the sessions dir unreadable.
-	if err := os.Chmod(sessionsDir, 0o000); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(sessionsDir, 0o700) })
 
 	rt, err := NewRuntime(RuntimeConfig{
 		Backends: map[string]orchestration.AgentBackend{"acp": &mockBackend{}},

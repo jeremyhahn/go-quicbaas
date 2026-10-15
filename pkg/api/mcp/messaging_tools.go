@@ -260,6 +260,22 @@ var (
 		},
 	}
 
+	// MsgChannelStatsTool returns statistics for a specific channel.
+	MsgChannelStatsTool = Tool{
+		Name:        "quicbaas_msg_channel_stats",
+		Description: "Get statistics for a specific channel",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"channel": {
+					Type:        "string",
+					Description: "Name of the channel to get stats for",
+				},
+			},
+			Required: []string{"channel"},
+		},
+	}
+
 	// MsgDedupStatsTool retrieves deduplication statistics for a channel.
 	MsgDedupStatsTool = Tool{
 		Name:        "quicbaas_msg_dedup_stats",
@@ -290,6 +306,7 @@ func getAllMsgTools() []Tool {
 		MsgPublishTool,
 		MsgPublishDeltaTool,
 		MsgStatsTool,
+		MsgChannelStatsTool,
 		MsgDedupStatsTool,
 	}
 }

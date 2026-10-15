@@ -166,22 +166,22 @@ func TestDaemon_SendHeartbeat_ErrorIsLogged(t *testing.T) {
 	}
 }
 
-// TestDaemon_EnsureWorkDir_SucceedsOnExistingDir verifies ensureWorkDir does
+// TestDaemon_EnsureWorkDir_SucceedsOnExistingDir verifies EnsureWorkDir does
 // not fail when the directory already exists (idempotent).
 func TestDaemon_EnsureWorkDir_SucceedsOnExistingDir(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	if err := ensureWorkDir(dir); err != nil {
-		t.Fatalf("ensureWorkDir on existing dir: %v", err)
+	if err := EnsureWorkDir(dir); err != nil {
+		t.Fatalf("EnsureWorkDir on existing dir: %v", err)
 	}
 }
 
-// TestDaemon_EnsureWorkDir_CreatesDir verifies ensureWorkDir creates the
+// TestDaemon_EnsureWorkDir_CreatesDir verifies EnsureWorkDir creates the
 // directory when it does not yet exist.
 func TestDaemon_EnsureWorkDir_CreatesDir(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir() + "/subdir"
-	if err := ensureWorkDir(dir); err != nil {
-		t.Fatalf("ensureWorkDir create: %v", err)
+	if err := EnsureWorkDir(dir); err != nil {
+		t.Fatalf("EnsureWorkDir create: %v", err)
 	}
 }

@@ -168,7 +168,7 @@ func TestDaemon_Stop_SpawnServerStopErrorIsReturned(t *testing.T) {
 }
 
 // =============================================================================
-// NewDaemon — ensureWorkDir called with empty path
+// NewDaemon — EnsureWorkDir called with empty path
 // =============================================================================
 
 // TestNewDaemon_WorkDir_EnsuredOnConstruction verifies that WorkDir is

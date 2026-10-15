@@ -392,6 +392,7 @@ type publishDeltaResponse struct{}
 
 type getStatsRequest struct{}
 
-type getChannelStatsRequest struct {
+// GetChannelStatsRequest is a request for a channel's statistics.
+type GetChannelStatsRequest struct {
 	Channel string
 }

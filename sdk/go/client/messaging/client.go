@@ -377,7 +377,7 @@ func (c *client) GetChannelStats(ctx context.Context, channel string) (*ChannelS
 		return nil, errors.NewInvalidInput("messaging.GetChannelStats", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GetChannelStats", &getChannelStatsRequest{Channel: channel})
+	resp, err := c.transport.Request(ctx, serviceName, "GetChannelStats", &GetChannelStatsRequest{Channel: channel})
 	if err != nil {
 		return nil, err
 	}
