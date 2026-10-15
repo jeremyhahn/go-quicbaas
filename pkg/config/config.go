@@ -2275,16 +2275,29 @@ type RaftConfig struct {
 	// prints the value for a certificate). go-qrdb requires it on every
 	// multi-node replica: a member is admitted by its identity or not at all.
 	// The local replica's identity is derived from its own certificate.
-	MemberIdentities    []string `mapstructure:"member_identities"`
-	ListenAddress       string   `mapstructure:"listen_address"`
-	MutualTLS           bool     `mapstructure:"mutual_tls"`
-	MaxInMemLogSize     uint64   `mapstructure:"max_in_mem_log_size"`
-	MaxSendQueueSize    uint64   `mapstructure:"max_send_queue_size"`
-	MaxReceiveQueueSize uint64   `mapstructure:"max_receive_queue_size"`
-	MaxSnapshotSendBPS  uint64   `mapstructure:"max_snapshot_send_bps"`
-	MaxSnapshotRecvBPS  uint64   `mapstructure:"max_snapshot_recv_bps"`
-	NotifyCommit        bool     `mapstructure:"notify_commit"`
-	EnableMetrics       bool     `mapstructure:"enable_metrics"`
+	MemberIdentities []string `mapstructure:"member_identities"`
+	// ListenAddress is the host:port the Raft transport binds. ListenAddr
+	// resolves the bind address in this order:
+	//
+	//  1. ListenAddress, used as given (the NAT opt-in: it may differ from
+	//     RaftAddress);
+	//  2. ListenHost joined with the port of RaftAddress (the opt-in for
+	//     one interface, or 0.0.0.0 / :: for every interface);
+	//  3. RaftAddress itself: by default a node listens on the host it
+	//     advertises. An empty or wildcard advertised host is then a
+	//     validation error, so no default ever binds every interface.
+	ListenAddress string `mapstructure:"listen_address"`
+	// ListenHost is the interface the Raft transport binds when ListenAddress
+	// is empty; empty (the default) means the host of RaftAddress.
+	ListenHost          string `mapstructure:"listen_host"`
+	MutualTLS           bool   `mapstructure:"mutual_tls"`
+	MaxInMemLogSize     uint64 `mapstructure:"max_in_mem_log_size"`
+	MaxSendQueueSize    uint64 `mapstructure:"max_send_queue_size"`
+	MaxReceiveQueueSize uint64 `mapstructure:"max_receive_queue_size"`
+	MaxSnapshotSendBPS  uint64 `mapstructure:"max_snapshot_send_bps"`
+	MaxSnapshotRecvBPS  uint64 `mapstructure:"max_snapshot_recv_bps"`
+	NotifyCommit        bool   `mapstructure:"notify_commit"`
+	EnableMetrics       bool   `mapstructure:"enable_metrics"`
 
 	// Write mode configuration
 	WriteMode          string        `mapstructure:"write_mode"`           // sync, wal, or batched

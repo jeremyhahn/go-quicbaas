@@ -20,8 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/messagingwatch"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	pkgmessaging "github.com/jeremyhahn/go-quicbaas/pkg/messaging"
+	"github.com/jeremyhahn/go-quicbaas/pkg/storage/file"
 	messagingSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/messaging"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -87,7 +89,7 @@ func newMessagingFixture(t *testing.T) messagingFixture {
 }
 
 // messagingCases calls every messaging.Client method except GetDedupStats,
-// whose request carries no channel (see TestEmbeddedMessaging_GetDedupStats).
+// which needs a dedup-enabled service (see TestEmbeddedMessaging_GetDedupStats).
 // fail drives the same method into a typed error that isWant must accept.
 var messagingCases = []struct {
 	method string
@@ -296,7 +298,7 @@ func TestEmbeddedMessaging_NotConfigured(t *testing.T) {
 		"PublishDelta":    &messagingSDK.PublishDeltaRequest{Channel: "orders"},
 		"WatchChannel":    &messagingSDK.WatchChannelRequest{KeyPrefix: "k"},
 		"GetStats":        &struct{}{},
-		"GetDedupStats":   &struct{ Channel string }{Channel: "orders"},
+		"GetDedupStats":   &messagingSDK.GetDedupStatsRequest{Channel: "orders"},
 		"GetChannelStats": &struct{ Channel string }{Channel: "orders"},
 	} {
 		_, err := tr.Request(context.Background(), messagingServiceName, method, req)
@@ -321,31 +323,114 @@ func TestEmbeddedMessaging_InvalidRequests(t *testing.T) {
 	}
 }
 
-// TestEmbeddedMessaging_GetDedupStats pins that the handler serves dedup
-// stats for a request that names a channel, and rejects one that does not —
-// which is every request the SDK client sends today.
+// TestEmbeddedMessaging_GetDedupStats pins that the SDK client's
+// GetDedupStats reports the named channel's own dedup figures, and that a
+// missing or unknown channel is refused with a typed error.
 func TestEmbeddedMessaging_GetDedupStats(t *testing.T) {
-	f := newMessagingFixture(t)
-	tr := newMessagingTransport(t, newPushService(t, true))
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "console", Output: "stdout"})
+	if err != nil {
+		t.Fatalf("logger.New: %v", err)
+	}
+	storCfg := file.DefaultConfig()
+	storCfg.DataDir = t.TempDir()
+	storCfg.SyncWrites = false
+	stor, err := file.New(storCfg, log)
+	if err != nil {
+		t.Fatalf("file.New: %v", err)
+	}
+	ps := pkgmessaging.NewPushService(log, stor, pkgmessaging.WithDedup(true))
 	ctx := context.Background()
+	if err := ps.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ps.Stop(context.Background()); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
+	client := messagingSDK.NewClient(newMessagingTransport(t, ps))
 
-	if _, err := f.client.GetDedupStats(ctx); !errors.IsInvalidInput(err) {
-		t.Errorf("GetDedupStats without a channel: err = %v, want an InvalidInput error", err)
+	// orders sees one message three times; audit sees one message once.
+	publishes := []struct{ channel, key string }{
+		{"orders", "k-1"}, {"orders", "k-1"}, {"orders", "k-1"}, {"audit", "k-2"},
 	}
-	if _, err := tr.Request(ctx, messagingServiceName, "GetDedupStats", &struct{ Channel string }{Channel: "missing"}); !errors.IsNotFound(err) {
-		t.Errorf("GetDedupStats for a missing channel: err = %v, want a NotFound error", err)
+	for _, name := range []string{"orders", "audit"} {
+		if _, err := client.CreateChannel(ctx, &messagingSDK.CreateChannelRequest{Name: name}); err != nil {
+			t.Fatalf("CreateChannel %s: %v", name, err)
+		}
+	}
+	for _, p := range publishes {
+		req := &messagingSDK.PublishRequest{Channel: p.channel, Payload: []byte(`{"id":1}`), DedupKey: p.key}
+		if err := client.Publish(ctx, req); err != nil {
+			t.Fatalf("Publish %s: %v", p.channel, err)
+		}
 	}
 
-	client := messagingSDK.NewClient(tr)
-	if _, err := client.CreateChannel(ctx, &messagingSDK.CreateChannelRequest{Name: "orders"}); err != nil {
-		t.Fatalf("CreateChannel: %v", err)
-	}
-	got, err := tr.Request(ctx, messagingServiceName, "GetDedupStats", &struct{ Channel string }{Channel: "orders"})
+	got, err := client.GetDedupStats(ctx, "orders")
 	if err != nil {
 		t.Fatalf("GetDedupStats: %v", err)
 	}
-	if _, ok := got.(*messagingSDK.DedupStats); !ok {
-		t.Errorf("GetDedupStats returned %T, want *messaging.DedupStats", got)
+	want := messagingSDK.DedupStats{TotalChecks: 3, DuplicatesDetected: 2, UniqueMessages: 1}
+	if *got != want {
+		t.Errorf("GetDedupStats(orders) = %+v, want %+v", *got, want)
+	}
+
+	if _, err := client.GetDedupStats(ctx, ""); !errors.IsInvalidInput(err) {
+		t.Errorf("GetDedupStats without a channel: err = %v, want an InvalidInput error", err)
+	}
+	if _, err := client.GetDedupStats(ctx, "missing"); !errors.IsNotFound(err) {
+		t.Errorf("GetDedupStats for an unknown channel: err = %v, want a NotFound error", err)
+	}
+}
+
+// TestEmbeddedMessaging_SubscribeKeepsKeyPrefix pins that an embedded
+// subscriber's filter key prefix reaches the messaging service's subscription.
+func TestEmbeddedMessaging_SubscribeKeepsKeyPrefix(t *testing.T) {
+	fx := newMessagingFixture(t)
+
+	sub, err := fx.client.Subscribe(context.Background(), &messagingSDK.SubscribeRequest{
+		Channel: "orders",
+		Filter:  &messagingSDK.SubscriptionFilter{KeyPrefix: "orders/eu/"},
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if sub.Filters == nil || sub.Filters.KeyPrefix != "orders/eu/" {
+		t.Errorf("subscription filters = %+v, want key prefix orders/eu/", sub.Filters)
+	}
+}
+
+// TestEmbeddedMessaging_WatchChannel pins that the embedded transport serves
+// WatchChannel through the shared watch mapping: every request field reaches
+// the service, and an empty key prefix is refused as invalid input.
+func TestEmbeddedMessaging_WatchChannel(t *testing.T) {
+	ctx := context.Background()
+	client := messagingSDK.NewClient(newMessagingTransport(t, newPushService(t, true)))
+
+	sub, err := client.WatchChannel(ctx, &messagingSDK.WatchChannelRequest{
+		KeyPrefix: "orders/",
+		SessionID: "sess-1",
+		Filter: &messagingSDK.SubscriptionFilter{
+			EventTypes: []messagingSDK.EventType{messagingSDK.EventTypeDelete},
+			KeyPrefix:  "orders/eu/",
+		},
+	})
+	if err != nil {
+		t.Fatalf("WatchChannel: %v", err)
+	}
+	if sub.Channel != messagingwatch.ChannelName("orders/") || sub.ClientID != "sess-1" {
+		t.Errorf("subscription = %+v, want channel %s and client sess-1", *sub, messagingwatch.ChannelName("orders/"))
+	}
+	wantFilter := &messagingSDK.SubscriptionFilter{
+		EventTypes: []messagingSDK.EventType{messagingSDK.EventTypeDelete},
+		KeyPrefix:  "orders/eu/",
+	}
+	if !reflect.DeepEqual(sub.Filters, wantFilter) {
+		t.Errorf("subscription filters = %+v, want %+v", sub.Filters, wantFilter)
+	}
+
+	if _, err := client.WatchChannel(ctx, &messagingSDK.WatchChannelRequest{}); !errors.IsInvalidInput(err) {
+		t.Errorf("WatchChannel without a key prefix: err = %v, want an InvalidInput error", err)
 	}
 }
 

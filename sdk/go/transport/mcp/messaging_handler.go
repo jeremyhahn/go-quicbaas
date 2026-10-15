@@ -21,8 +21,7 @@
 //
 // Void-result methods (DeleteChannel, Unsubscribe, Publish, PublishDelta)
 // return nil — the messaging client accepts a nil response for those and
-// treats it as success. Methods with no MCP tool (WatchChannel,
-// GetChannelStats, GetDedupStats without a channel argument) surface a
+// treats it as success. GetChannelStats has no MCP tool and surfaces a
 // typed MethodNotSupportedError.
 
 package mcp
@@ -49,6 +48,7 @@ var messagingMethodToTool = map[string]string{
 	"GetChannel":    "quicbaas_msg_get_channel",
 	"ListChannels":  "quicbaas_msg_list_channels",
 	"Subscribe":     "quicbaas_msg_subscribe",
+	"WatchChannel":  "quicbaas_msg_watch_channel",
 	"Unsubscribe":   "quicbaas_msg_unsubscribe",
 	"Publish":       "quicbaas_msg_publish",
 	"PublishDelta":  "quicbaas_msg_publish_delta",
@@ -86,6 +86,8 @@ func (h *messagingHandler) transformRequest(method string, req interface{}) (map
 		return map[string]interface{}{}, nil
 	case "Subscribe":
 		return h.transformSubscribe(req)
+	case "WatchChannel":
+		return h.transformWatchChannel(req)
 	case "Unsubscribe":
 		return h.transformUnsubscribe(req)
 	case "Publish":
@@ -109,7 +111,9 @@ func (h *messagingHandler) transformResponse(method string, resp interface{}) (i
 	case "ListChannels":
 		return h.transformListChannelsResponse(resp)
 	case "Subscribe":
-		return h.transformSubscriptionResponse(resp)
+		return h.transformSubscriptionResponse("mcp.messaging.Subscribe", resp)
+	case "WatchChannel":
+		return h.transformSubscriptionResponse("mcp.messaging.WatchChannel", resp)
 	case "GetStats":
 		return h.transformStatsResponse(resp)
 	case "GetDedupStats":
@@ -185,23 +189,45 @@ func (h *messagingHandler) transformSubscribe(req interface{}) (map[string]inter
 			"invalid request type, expected *messaging.SubscribeRequest")
 	}
 	args := map[string]interface{}{"channel": r.Channel}
-	if r.BufferSize > 0 {
-		args["buffer_size"] = r.BufferSize
-	}
-	putStringArg(args, "session_id", r.SessionID)
-	if r.Filter != nil {
-		putStringArg(args, "filter_key_prefix", r.Filter.KeyPrefix)
-		if len(r.Filter.EventTypes) > 0 {
-			eventTypes := make([]string, 0, len(r.Filter.EventTypes))
-			for _, et := range r.Filter.EventTypes {
-				eventTypes = append(eventTypes, et.String())
-			}
-			if err := putJSONArrayArg(args, "filter_event_types", eventTypes); err != nil {
-				return nil, err
-			}
-		}
+	if err := putSubscriptionArgs(args, r.SessionID, r.BufferSize, r.Filter); err != nil {
+		return nil, err
 	}
 	return args, nil
+}
+
+// transformWatchChannel builds the quicbaas_msg_watch_channel arguments.
+func (h *messagingHandler) transformWatchChannel(req interface{}) (map[string]interface{}, error) {
+	r, ok := req.(*messaging.WatchChannelRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.messaging.WatchChannel",
+			"invalid request type, expected *messaging.WatchChannelRequest")
+	}
+	args := map[string]interface{}{"key_prefix": r.KeyPrefix}
+	if err := putSubscriptionArgs(args, r.SessionID, r.BufferSize, r.Filter); err != nil {
+		return nil, err
+	}
+	return args, nil
+}
+
+// putSubscriptionArgs adds the session, buffer size and filter arguments the
+// subscribe and watch tools share.
+func putSubscriptionArgs(args map[string]interface{}, sessionID string, bufferSize int, filter *messaging.SubscriptionFilter) error {
+	if bufferSize > 0 {
+		args["buffer_size"] = bufferSize
+	}
+	putStringArg(args, "session_id", sessionID)
+	if filter == nil {
+		return nil
+	}
+	putStringArg(args, "filter_key_prefix", filter.KeyPrefix)
+	if len(filter.EventTypes) == 0 {
+		return nil
+	}
+	eventTypes := make([]string, 0, len(filter.EventTypes))
+	for _, et := range filter.EventTypes {
+		eventTypes = append(eventTypes, et.String())
+	}
+	return putJSONArrayArg(args, "filter_event_types", eventTypes)
 }
 
 func (h *messagingHandler) transformUnsubscribe(req interface{}) (map[string]interface{}, error) {
@@ -263,12 +289,15 @@ func (h *messagingHandler) transformPublishDelta(req interface{}) (map[string]in
 }
 
 func (h *messagingHandler) transformGetDedupStats(req interface{}) (map[string]interface{}, error) {
-	// The SDK GetDedupStats client method passes an internal zero-fielded
-	// request and the server tool requires a "channel" argument. The
-	// generic SDK GetDedupStats has no channel parameter, so this method
-	// cannot satisfy the server contract; surface a typed error.
-	return nil, errors.New(errors.CodeUnimplemented, "mcp.messaging.GetDedupStats",
-		"GetDedupStats requires a channel argument not supplied by the SDK over MCP")
+	r, ok := req.(*messaging.GetDedupStatsRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput("mcp.messaging.GetDedupStats",
+			"invalid request type, expected *messaging.GetDedupStatsRequest")
+	}
+	if r.Channel == "" {
+		return nil, errors.NewInvalidInput("mcp.messaging.GetDedupStats", "channel is required")
+	}
+	return map[string]interface{}{"channel": r.Channel}, nil
 }
 
 // =============================================================================
@@ -299,8 +328,8 @@ func (h *messagingHandler) transformListChannelsResponse(resp interface{}) (inte
 	return out, nil
 }
 
-func (h *messagingHandler) transformSubscriptionResponse(resp interface{}) (interface{}, error) {
-	m, err := asResultMap(resp, "mcp.messaging.Subscribe")
+func (h *messagingHandler) transformSubscriptionResponse(op string, resp interface{}) (interface{}, error) {
+	m, err := asResultMap(resp, op)
 	if err != nil {
 		return nil, err
 	}
@@ -334,10 +363,15 @@ func (h *messagingHandler) transformDedupStatsResponse(resp interface{}) (interf
 		return nil, err
 	}
 	// The quicbaas_msg_dedup_stats tool reports per-channel duplicate
-	// counters; map them onto the SDK DedupStats counters.
+	// counters; map them onto the SDK DedupStats counters as the REST and
+	// gRPC transports do.
+	// total_messages counts unique messages.
+	unique := getResultInt64(m, "total_messages")
+	duplicates := getResultInt64(m, "total_duplicates")
 	return &messaging.DedupStats{
-		TotalChecks:        getResultInt64(m, "total_messages"),
-		DuplicatesDetected: getResultInt64(m, "total_duplicates"),
+		TotalChecks:        unique + duplicates,
+		DuplicatesDetected: duplicates,
+		UniqueMessages:     unique,
 	}, nil
 }
 

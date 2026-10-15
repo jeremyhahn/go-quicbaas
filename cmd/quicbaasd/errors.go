@@ -73,3 +73,47 @@ type MessageError struct {
 func (e *MessageError) Error() string {
 	return e.Message
 }
+
+// RaftHostnameError is a startup configuration error: --raft-port was given
+// without an advertised Raft host, and this machine's hostname could not be
+// resolved to supply one. Advertising a placeholder such as localhost would
+// leave the node unreachable by its peers, so the boot is refused instead.
+type RaftHostnameError struct {
+	// Cause is the hostname lookup failure, or nil when it returned an empty
+	// name.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *RaftHostnameError) Error() string {
+	msg := "cannot derive the advertised Raft address for --raft-port: hostname lookup failed"
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	} else {
+		msg += ": empty hostname"
+	}
+	return msg + "; set --raft-address (or raft.raft_address) to the host:port peers dial"
+}
+
+// Unwrap returns the hostname lookup failure.
+func (e *RaftHostnameError) Unwrap() error { return e.Cause }
+
+// RaftAddressFlagError is a startup configuration error: --raft-port must move
+// the port of a configured Raft address, and that address is not host:port.
+type RaftAddressFlagError struct {
+	// Key is the configuration key holding the address, e.g.
+	// "raft.listen_address".
+	Key string
+	// Address is the configured value that could not be parsed.
+	Address string
+	// Cause is the parse failure.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *RaftAddressFlagError) Error() string {
+	return "--raft-port cannot replace the port of " + e.Key + " \"" + e.Address + "\": " + e.Cause.Error()
+}
+
+// Unwrap returns the parse failure.
+func (e *RaftAddressFlagError) Unwrap() error { return e.Cause }

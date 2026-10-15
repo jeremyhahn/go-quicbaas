@@ -55,6 +55,7 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	BindSDLCLabelReconcileEnv(l.v)
 	BindSDLCWorkerImageEnv(l.v)
 	BindIAMSelfServiceRegistrationEnv(l.v)
+	BindRaftAddressEnv(l.v)
 	BindStorageDirEnv(l.v)
 	BindDevClusterHost(l.v)
 	BindAddressEnv(l.v)

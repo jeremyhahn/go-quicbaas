@@ -69,6 +69,8 @@ func (h *messagingRESTHandler) handleRequest(ctx context.Context, method string,
 		return h.handleSubscribe(ctx, req)
 	case "Unsubscribe":
 		return h.handleUnsubscribe(ctx, req)
+	case "WatchChannel":
+		return h.handleWatchChannel(ctx, req)
 	case "Publish":
 		return h.handlePublish(ctx, req)
 	case "PublishDelta":
@@ -164,6 +166,21 @@ type messagingSubscribeRequest struct {
 	DedupSkipDuplicates bool     `json:"dedup_skip_duplicates,omitempty"`
 	BufferSize          int      `json:"buffer_size,omitempty"`
 	EventTypes          []string `json:"event_types,omitempty"`
+	KeyPrefix           string   `json:"key_prefix,omitempty"`
+}
+
+// messagingWatchRequest is the body of POST /api/v1/messaging/watch.
+type messagingWatchRequest struct {
+	KeyPrefix  string               `json:"key_prefix"`
+	SessionID  string               `json:"session_id,omitempty"`
+	Filter     *messagingFilterWire `json:"filter,omitempty"`
+	BufferSize int                  `json:"buffer_size,omitempty"`
+}
+
+// messagingFilterWire narrows the events a watch delivers.
+type messagingFilterWire struct {
+	EventTypes []string `json:"event_types,omitempty"`
+	KeyPrefix  string   `json:"key_prefix,omitempty"`
 }
 
 type messagingPublishRequest struct {
@@ -266,22 +283,68 @@ func (h *messagingRESTHandler) handleSubscribe(ctx context.Context, req interfac
 		BufferSize:          r.BufferSize,
 	}
 	if r.Filter != nil {
-		for _, et := range r.Filter.EventTypes {
-			body.EventTypes = append(body.EventTypes, et.String())
-		}
+		body.EventTypes = messagingEventTypeNames(r.Filter.EventTypes)
+		body.KeyPrefix = r.Filter.KeyPrefix
 	}
 	var wire messagingSubscribeWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/messaging/subscribe", body, &wire); err != nil {
 		return nil, err
 	}
-	if wire.Subscription == nil {
-		return nil, errors.NewInternal("rest.messaging.Subscribe", "server returned no subscription")
+	return messagingWireToSubscription("rest.messaging.Subscribe", wire.Subscription)
+}
+
+// handleWatchChannel serves WatchChannel from POST /api/v1/messaging/watch,
+// sending the fields the gRPC WatchChannel RPC carries.
+func (h *messagingRESTHandler) handleWatchChannel(ctx context.Context, req interface{}) (interface{}, error) {
+	const op = "rest.messaging.WatchChannel"
+	r, ok := req.(*messagingclient.WatchChannelRequest)
+	if !ok || r == nil {
+		return nil, errors.NewInvalidInput(op, "request is required")
+	}
+	if r.KeyPrefix == "" {
+		return nil, errors.NewInvalidInput(op, "key prefix is required")
+	}
+	body := &messagingWatchRequest{
+		KeyPrefix:  r.KeyPrefix,
+		SessionID:  r.SessionID,
+		BufferSize: r.BufferSize,
+	}
+	if r.Filter != nil {
+		body.Filter = &messagingFilterWire{
+			EventTypes: messagingEventTypeNames(r.Filter.EventTypes),
+			KeyPrefix:  r.Filter.KeyPrefix,
+		}
+	}
+	var wire messagingSubscribeWire
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/messaging/watch", body, &wire); err != nil {
+		return nil, err
+	}
+	return messagingWireToSubscription(op, wire.Subscription)
+}
+
+// messagingEventTypeNames returns the wire names of event types.
+func messagingEventTypeNames(eventTypes []messagingclient.EventType) []string {
+	if len(eventTypes) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(eventTypes))
+	for _, et := range eventTypes {
+		names = append(names, et.String())
+	}
+	return names
+}
+
+// messagingWireToSubscription decodes the subscription a subscribe or watch
+// route returns.
+func messagingWireToSubscription(op string, wire *messagingSubscriptionWire) (*messagingclient.Subscription, error) {
+	if wire == nil {
+		return nil, errors.NewInternal(op, "server returned no subscription")
 	}
 	return &messagingclient.Subscription{
-		ID:        wire.Subscription.ID,
-		Channel:   wire.Subscription.Channel,
-		ClientID:  wire.Subscription.ClientID,
-		CreatedAt: time.Unix(wire.Subscription.CreatedAt, 0).UTC(),
+		ID:        wire.ID,
+		Channel:   wire.Channel,
+		ClientID:  wire.ClientID,
+		CreatedAt: time.Unix(wire.CreatedAt, 0).UTC(),
 	}, nil
 }
 
@@ -401,9 +464,9 @@ func (h *messagingRESTHandler) handleGetDedupStats(ctx context.Context, req inte
 		return nil, err
 	}
 	return &messagingclient.DedupStats{
-		TotalChecks:        wire.TotalMessages,
+		TotalChecks:        wire.TotalMessages + wire.TotalDuplicates,
 		DuplicatesDetected: wire.TotalDuplicates,
-		UniqueMessages:     wire.TotalMessages - wire.TotalDuplicates,
+		UniqueMessages:     wire.TotalMessages,
 	}, nil
 }
 

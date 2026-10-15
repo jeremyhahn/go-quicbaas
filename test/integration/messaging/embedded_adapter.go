@@ -302,14 +302,14 @@ func (a *embeddedAdapter) GetDedupStats(ctx context.Context, req *grpcclient.Mes
 		return nil, ErrEmbeddedClientNotInitialized{}
 	}
 
-	stats, err := a.client.Messaging().GetDedupStats(ctx)
+	stats, err := a.client.Messaging().GetDedupStats(ctx, req.Channel)
 	if err != nil {
 		return nil, err
 	}
 
 	return &grpcclient.MessagingGetDedupStatsResponse{
 		Stats: &grpcclient.MessagingDedupStats{
-			Channel:         req.Channel, // Use the requested channel
+			Channel:         req.Channel,
 			TotalMessages:   stats.UniqueMessages,
 			TotalDuplicates: stats.DuplicatesDetected,
 		},

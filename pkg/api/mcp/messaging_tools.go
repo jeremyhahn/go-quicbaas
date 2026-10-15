@@ -136,6 +136,39 @@ var (
 		},
 	}
 
+	// MsgWatchChannelTool watches the keys under a prefix: the MCP face of
+	// Messaging.WatchChannel.
+	MsgWatchChannelTool = Tool{
+		Name:        "quicbaas_msg_watch_channel",
+		Description: "Watch the keys under a key prefix for changes",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"key_prefix": {
+					Type:        "string",
+					Description: "Key prefix to watch",
+				},
+				"buffer_size": {
+					Type:        "string",
+					Description: "Subscription message buffer size",
+				},
+				"session_id": {
+					Type:        "string",
+					Description: "Optional session ID for the watch",
+				},
+				"filter_key_prefix": {
+					Type:        "string",
+					Description: "Filter events by a narrower key prefix",
+				},
+				"filter_event_types": {
+					Type:        "string",
+					Description: "JSON array of event types to filter (PUT, DELETE)",
+				},
+			},
+			Required: []string{"key_prefix"},
+		},
+	}
+
 	// MsgUnsubscribeTool removes a subscription from a channel.
 	MsgUnsubscribeTool = Tool{
 		Name:        "quicbaas_msg_unsubscribe",
@@ -252,6 +285,7 @@ func getAllMsgTools() []Tool {
 		MsgGetChannelTool,
 		MsgListChannelsTool,
 		MsgSubscribeTool,
+		MsgWatchChannelTool,
 		MsgUnsubscribeTool,
 		MsgPublishTool,
 		MsgPublishDeltaTool,

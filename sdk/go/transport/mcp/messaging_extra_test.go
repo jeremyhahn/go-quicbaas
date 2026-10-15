@@ -19,9 +19,13 @@
 package mcp
 
 import (
+	"context"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/messaging"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -68,6 +72,34 @@ func TestMessagingTransformSubscribe(t *testing.T) {
 	}
 	if args["filter_event_types"] != `["PUT","DELETE"]` {
 		t.Errorf("filter_event_types = %v", args["filter_event_types"])
+	}
+}
+
+// TestMessagingSubscribeKeepsKeyPrefixRoundTrip pins that an MCP subscriber's
+// filter key prefix reaches the subscribe tool as filter_key_prefix.
+func TestMessagingSubscribeKeepsKeyPrefixRoundTrip(t *testing.T) {
+	tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+		wantTool: "quicbaas_msg_subscribe",
+		assertArgs: func(t *testing.T, args map[string]interface{}) {
+			if args["filter_key_prefix"] != "orders/eu/" {
+				t.Errorf("filter_key_prefix = %v, want orders/eu/", args["filter_key_prefix"])
+			}
+		},
+		result: map[string]interface{}{
+			"subscription_id": "sub-1",
+			"channel":         "orders",
+			"client_id":       "client-1",
+			"created_at":      "2023-11-14T22:13:20Z",
+		},
+	})
+	defer cleanup()
+
+	_, err := messaging.NewClient(tr).Subscribe(context.Background(), &messaging.SubscribeRequest{
+		Channel: "orders",
+		Filter:  &messaging.SubscriptionFilter{KeyPrefix: "orders/eu/"},
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
 	}
 }
 
@@ -120,11 +152,126 @@ func TestMessagingTransformPublishMetadata(t *testing.T) {
 	}
 }
 
-func TestMessagingGetDedupStatsUnsupported(t *testing.T) {
-	h := newMsgHandler(t)
-	if _, err := h.transformRequest("GetDedupStats", struct{}{}); err == nil {
-		t.Error("GetDedupStats over MCP must be unsupported")
-	}
+func TestMessagingGetDedupStatsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("channel figures", func(t *testing.T) {
+		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+			wantTool: "quicbaas_msg_dedup_stats",
+			assertArgs: func(t *testing.T, args map[string]interface{}) {
+				if args["channel"] != "orders" {
+					t.Errorf("channel argument = %v, want orders", args["channel"])
+				}
+			},
+			result: map[string]interface{}{
+				"channel": "orders", "available": true,
+				"total_messages": 10, "total_duplicates": 4,
+			},
+		})
+		defer cleanup()
+
+		got, err := messaging.NewClient(tr).GetDedupStats(ctx, "orders")
+		if err != nil {
+			t.Fatalf("GetDedupStats: %v", err)
+		}
+		// The tool reports 10 unique messages and 4 duplicates.
+		want := messaging.DedupStats{TotalChecks: 14, DuplicatesDetected: 4, UniqueMessages: 10}
+		if *got != want {
+			t.Errorf("dedup stats = %+v, want %+v", *got, want)
+		}
+	})
+
+	t.Run("unknown channel", func(t *testing.T) {
+		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+			wantTool:      "quicbaas_msg_dedup_stats",
+			result:        map[string]interface{}{"error": "channel not found"},
+			toolError:     true,
+			toolErrorCode: MCPResourceNotFound,
+		})
+		defer cleanup()
+
+		_, err := messaging.NewClient(tr).GetDedupStats(ctx, "missing")
+		if !errors.IsNotFound(err) {
+			t.Errorf("err = %v, want a NotFound error", err)
+		}
+	})
+
+	t.Run("missing channel", func(t *testing.T) {
+		h := newMsgHandler(t)
+		if _, err := h.transformRequest("GetDedupStats", &messaging.GetDedupStatsRequest{}); !errors.IsInvalidInput(err) {
+			t.Errorf("empty channel: err = %v, want an InvalidInput error", err)
+		}
+		if _, err := h.transformRequest("GetDedupStats", struct{}{}); !errors.IsInvalidInput(err) {
+			t.Errorf("wrong request type: err = %v, want an InvalidInput error", err)
+		}
+	})
+}
+
+// TestMessagingWatchChannelRoundTrip pins the watch round trip through the
+// SDK client: every request field reaches the tool arguments, and every
+// subscription field the tool returns reaches the caller.
+func TestMessagingWatchChannelRoundTrip(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("every field", func(t *testing.T) {
+		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
+			wantTool: "quicbaas_msg_watch_channel",
+			assertArgs: func(t *testing.T, args map[string]interface{}) {
+				want := map[string]interface{}{
+					"key_prefix":         "orders/",
+					"session_id":         "sess-1",
+					"buffer_size":        float64(8),
+					"filter_key_prefix":  "orders/eu/",
+					"filter_event_types": `["DELETE"]`,
+				}
+				if !reflect.DeepEqual(args, want) {
+					t.Errorf("arguments = %v, want %v", args, want)
+				}
+			},
+			result: map[string]interface{}{
+				"subscription_id": "watch-1",
+				"channel":         "watch:orders/",
+				"client_id":       "sess-1",
+				"created_at":      "2023-11-14T22:13:20Z",
+				"channel_name":    "watch:orders/",
+				"timestamp":       "2023-11-14T22:13:21Z",
+			},
+		})
+		defer cleanup()
+
+		sub, err := messaging.NewClient(tr).WatchChannel(ctx, &messaging.WatchChannelRequest{
+			KeyPrefix:  "orders/",
+			SessionID:  "sess-1",
+			BufferSize: 8,
+			Filter: &messaging.SubscriptionFilter{
+				EventTypes: []messaging.EventType{messaging.EventTypeDelete},
+				KeyPrefix:  "orders/eu/",
+			},
+		})
+		if err != nil {
+			t.Fatalf("WatchChannel: %v", err)
+		}
+		if sub.ID != "watch-1" || sub.Channel != "watch:orders/" || sub.ClientID != "sess-1" ||
+			!sub.CreatedAt.Equal(time.Unix(1700000000, 0)) {
+			t.Errorf("subscription = %+v", *sub)
+		}
+	})
+
+	t.Run("empty key prefix", func(t *testing.T) {
+		tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{wantTool: "quicbaas_msg_watch_channel"})
+		defer cleanup()
+
+		_, err := messaging.NewClient(tr).WatchChannel(ctx, &messaging.WatchChannelRequest{})
+		if !errors.IsInvalidInput(err) {
+			t.Errorf("err = %v, want an InvalidInput error", err)
+		}
+	})
+
+	t.Run("wrong request type", func(t *testing.T) {
+		if _, err := newMsgHandler(t).transformRequest("WatchChannel", struct{}{}); !errors.IsInvalidInput(err) {
+			t.Errorf("err = %v, want an InvalidInput error", err)
+		}
+	})
 }
 
 func TestMessagingTransformResponseSubscriptionAndDedup(t *testing.T) {
@@ -145,7 +292,9 @@ func TestMessagingTransformResponseSubscriptionAndDedup(t *testing.T) {
 		t.Fatalf("GetDedupStats response: %v", err)
 	}
 	ds := dedup.(*messaging.DedupStats)
-	if ds.TotalChecks != 100 || ds.DuplicatesDetected != 7 {
+	// total_messages counts unique messages, so every check is one of the
+	// 100 unique messages or one of the 7 duplicates.
+	if ds.TotalChecks != 107 || ds.DuplicatesDetected != 7 || ds.UniqueMessages != 100 {
 		t.Errorf("dedup stats mismatch: %+v", ds)
 	}
 }

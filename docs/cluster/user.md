@@ -190,7 +190,7 @@ See [configs/README.md](../../configs/README.md) for all available configuration
 
 Required ports:
 
-- Raft: 8001 (default, configurable)
+- Raft: 63000 (default; see [Raft Addresses](architecture.md#raft-addresses))
 - gRPC: 50051 (default, configurable)
 - HTTP: 18080 (default, configurable)
 - Metrics: 9090+ (per node)

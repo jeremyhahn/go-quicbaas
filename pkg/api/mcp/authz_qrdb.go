@@ -646,6 +646,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_msg_publish":        {"messaging", "publish"},
 	"quicbaas_msg_publish_delta":  {"messaging", "publish"},
 	"quicbaas_msg_subscribe":      {"messaging", "subscribe"},
+	"quicbaas_msg_watch_channel":  {"messaging", "watch"},
 	"quicbaas_msg_unsubscribe":    {"messaging", "unsubscribe"},
 	"quicbaas_msg_stats":          {"messaging", "stats"},
 	"quicbaas_msg_dedup_stats":    {"messaging", "stats"},

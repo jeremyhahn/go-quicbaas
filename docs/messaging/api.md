@@ -21,10 +21,11 @@ Every row below is derived from source, not from prose. The columns mean:
   (`sdk/go/transport/unix/transport.go:114`).
 - **QUIC** is likewise not a separate column: `sdk/go/transport/quic` embeds
   `*rest.Transport` and swaps only the `http.Client` for an `http3.Transport`
-  (`sdk/go/transport/quic/transport.go:86`), so every QUIC row is its REST row
-  carried over HTTP/3. See the caveat in
-  [../multiprotocol-api/architecture.md](../multiprotocol-api/architecture.md):
-  **no component in this repository serves HTTP/3 today.**
+  (`sdk/go/transport/quic/transport.go:86`), so QUIC carries the REST routes
+  over HTTP/3 and every QUIC row is its REST row. `quicbaasd` has no HTTP/3
+  listener of its own (see
+  [../multiprotocol-api/architecture.md](../multiprotocol-api/architecture.md)),
+  so a QUIC client must dial an endpoint that serves the REST API over HTTP/3.
 - **MCP** — whether the SDK routes the service to an MCP tool; the registered
   server-side tool names are listed above the table.
 - **Embedded** — the `service/method` key registered in
@@ -43,7 +44,7 @@ HTTP/3), gRPC and Unix (`sdk/go/transport/grpc/messaging_handler.go`, onto
 Each transport has a test that fails when a `messaging.Client` method is
 missing from its table.
 
-MCP tools: `quicbaas_msg_create_channel`, `quicbaas_msg_dedup_stats`, `quicbaas_msg_delete_channel`, `quicbaas_msg_get_channel`, `quicbaas_msg_list_channels`, `quicbaas_msg_publish`, `quicbaas_msg_publish_delta`, `quicbaas_msg_stats`, `quicbaas_msg_subscribe`, `quicbaas_msg_unsubscribe`
+MCP tools: `quicbaas_msg_create_channel`, `quicbaas_msg_dedup_stats`, `quicbaas_msg_delete_channel`, `quicbaas_msg_get_channel`, `quicbaas_msg_list_channels`, `quicbaas_msg_publish`, `quicbaas_msg_publish_delta`, `quicbaas_msg_stats`, `quicbaas_msg_subscribe`, `quicbaas_msg_unsubscribe`, `quicbaas_msg_watch_channel`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
@@ -58,15 +59,7 @@ MCP tools: `quicbaas_msg_create_channel`, `quicbaas_msg_dedup_stats`, `quicbaas_
 | `PublishDelta` | `POST /api/v1/messaging/publish-delta/{channel}` | yes | yes | yes | yes | `messaging:publish` |
 | `Subscribe` | `POST /api/v1/messaging/subscribe` | yes | yes | yes | yes | `messaging:subscribe` |
 | `Unsubscribe` | `DELETE /api/v1/messaging/subscribe/{id}` | yes | yes | yes | yes | `messaging:unsubscribe` |
-| `WatchChannel` | none | **no** | yes | yes | yes | — |
-
-Known gaps:
-
-- **`WatchChannel` over REST and QUIC.** The server registers no REST watch
-  route, so REST and QUIC cannot serve it.
-- **`GetDedupStats` needs a channel the client does not send.** Every route
-  and handler is keyed by channel, but `Client.GetDedupStats` takes no
-  argument, so the call fails with `InvalidInput` on every transport.
+| `WatchChannel` | `POST /api/v1/messaging/watch` | yes | yes | yes | yes | `messaging:watch` |
 
 
 ## Overview
@@ -1138,6 +1131,13 @@ rpc WatchChannel(MessagingWatchChannelRequest) returns (MessagingWatchChannelRes
 grpcurl -plaintext -d '{"key_prefix":"users/"}' \
   localhost:10443 quicbaas.messaging.v1.MessagingService/WatchChannel
 ```
+
+REST serves the same call as `POST /api/v1/messaging/watch` with the same
+request and response fields; it answers `201 Created`, and an empty
+`key_prefix` or an unknown event type is refused with `400`. MCP serves it as
+`quicbaas_msg_watch_channel`, taking `filter_key_prefix` and
+`filter_event_types` (a JSON array) in place of `filter`. All three require
+`messaging:watch`.
 
 ---
 

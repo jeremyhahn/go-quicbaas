@@ -132,7 +132,7 @@ func TestBuildQRDBConfig_DataDirFallbackToBarrierDir(t *testing.T) {
 // authenticator pins the same domain the first-boot admin certificate carries.
 func TestBuildQRDBConfig_SPIFFETrustDomainReachesNode(t *testing.T) {
 	for _, clusterMode := range []bool{false, true} {
-		cfg := &config.Config{}
+		cfg := clusterTestConfig()
 		cfg.IAM.SPIFFETrustDomain = testTrustDomain
 
 		qcfg := mustBuildQRDBConfig(t, cfg, clusterMode)
@@ -348,7 +348,7 @@ func buildMemoryStandaloneNode(t *testing.T, nodeOpts ...qrdbnode.NodeOption) *q
 // ---------------------------------------------------------------------------
 
 func TestBuildQRDBConfig_ClusterMode_SetsRaftAddress(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.RaftAddress = "10.0.0.1:63101"
 	cfg.Raft.NodeID = 1
@@ -361,7 +361,7 @@ func TestBuildQRDBConfig_ClusterMode_SetsRaftAddress(t *testing.T) {
 }
 
 func TestBuildQRDBConfig_ClusterMode_DefaultShardID(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 2
 
@@ -372,7 +372,7 @@ func TestBuildQRDBConfig_ClusterMode_DefaultShardID(t *testing.T) {
 }
 
 func TestBuildQRDBConfig_ClusterMode_PeersWithIDPrefix(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 1
 	cfg.Raft.JoinAddresses = []string{"1=10.0.0.1:63101", "2=10.0.0.2:63101", "3=10.0.0.3:63101"}
@@ -386,7 +386,7 @@ func TestBuildQRDBConfig_ClusterMode_PeersWithIDPrefix(t *testing.T) {
 func TestBuildQRDBConfig_ClusterMode_MemberIdentities(t *testing.T) {
 	id2 := "spki:abababababababababababababababababababababababababababababababab"
 	id3 := "spki:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 1
 	cfg.Raft.JoinAddresses = []string{"1=10.0.0.1:63101", "2=10.0.0.2:63101", "3=10.0.0.3:63101"}
@@ -398,7 +398,7 @@ func TestBuildQRDBConfig_ClusterMode_MemberIdentities(t *testing.T) {
 }
 
 func TestBuildQRDBConfig_ClusterMode_NoMemberIdentities(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 1
 
@@ -408,7 +408,7 @@ func TestBuildQRDBConfig_ClusterMode_NoMemberIdentities(t *testing.T) {
 }
 
 func TestBuildQRDBConfig_ClusterMode_NoPeersWithoutIDPrefix(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 1
 	// JoinAddresses without "id=" prefix: no Peers set
@@ -435,7 +435,7 @@ func TestBuildQRDBConfig_ClusterMode_DiscoveryMethodMap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{}
+			cfg := clusterTestConfig()
 			cfg.Storage.Backend = config.StorageBackendMemory
 			cfg.Raft.NodeID = 1
 			cfg.Discovery.Type = tt.quicbaasMethod
@@ -448,7 +448,7 @@ func TestBuildQRDBConfig_ClusterMode_DiscoveryMethodMap(t *testing.T) {
 
 func TestBuildQRDBConfig_ClusterMode_DeploymentIDFallback(t *testing.T) {
 	// NodeID=0 → DeploymentID defaults to 1 to avoid zero deployment ID.
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 0
 
@@ -462,7 +462,7 @@ func TestBuildQRDBConfig_ClusterMode_DeploymentIDFallback(t *testing.T) {
 // last-resort fallback. This is the production multi-node path — all nodes
 // in a cluster set the same deployment_id in their config.
 func TestBuildQRDBConfig_ClusterMode_ExplicitDeploymentIDWins(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 7        // would otherwise be used as DeploymentID
 	cfg.Raft.DeploymentID = 42 // explicit operator value — must win
@@ -477,7 +477,7 @@ func TestBuildQRDBConfig_ClusterMode_ExplicitDeploymentIDWins(t *testing.T) {
 // when DeploymentID is unset (0) but NodeID is set, DeploymentID is derived
 // from NodeID for backward-compatible single-node dev/test mode.
 func TestBuildQRDBConfig_ClusterMode_DeploymentIDFallsBackToNodeID(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Raft.NodeID = 5
 	cfg.Raft.DeploymentID = 0 // unset
@@ -506,17 +506,105 @@ func TestBuildClusterMembers_IDPrefixedPeers(t *testing.T) {
 	assert.Equal(t, "10.0.0.3:63101", members[3])
 }
 
-func TestBuildClusterMembers_NoPeers_SingleNodeFallback(t *testing.T) {
+// TestBuildClusterMembers_SingleNodeAdvertisesConfiguredRaftAddress: single-node
+// clustered mode puts the configured raft.raft_address, port included, in the
+// member map — never an address of its own (#185 item 3).
+func TestBuildClusterMembers_SingleNodeAdvertisesConfiguredRaftAddress(t *testing.T) {
+	tests := []struct {
+		name     string
+		raftAddr string
+	}{
+		{name: "defaults layer", raftAddr: config.DefaultConfig().Raft.RaftAddress},
+		{name: "configured host and port", raftAddr: "10.1.2.3:64123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Raft.NodeID = 7
+			cfg.Raft.RaftAddress = tt.raftAddr
+
+			members, err := buildClusterMembers(cfg)
+
+			require.NoError(t, err)
+			assert.Equal(t, map[uint64]string{7: tt.raftAddr}, members)
+		})
+	}
+}
+
+func TestBuildClusterMembers_SingleNodeEmptyRaftAddressIsTypedError(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Raft.NodeID = 1
-	cfg.Raft.RaftAddress = "127.0.0.1:63101"
-	cfg.Raft.JoinAddresses = nil
 
 	members, err := buildClusterMembers(cfg)
 
-	require.NoError(t, err)
-	require.Len(t, members, 1, "should fall back to single-node map")
-	assert.Equal(t, "127.0.0.1:63101", members[1])
+	require.Nil(t, members)
+	var nodeErr *QRDBNodeError
+	require.ErrorAs(t, err, &nodeErr)
+	var vErr *config.ValidationError
+	require.ErrorAs(t, err, &vErr)
+	assert.Equal(t, "raft.raft_address", vErr.Field)
+}
+
+// TestBuildQRDBConfig_RaftListenAddress: the projected bind address comes from
+// configuration — an explicit raft.listen_address as given, otherwise
+// raft.listen_host on the advertised port (#185 items 1-2).
+func TestBuildQRDBConfig_RaftListenAddress(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(*config.Config)
+		want   string
+	}{
+		{
+			// test/integration/docker-compose.cluster.yml sets only
+			// QUICBAAS_RAFT_RAFT_ADDRESS; peers must reach the node on it.
+			name:   "cluster compose shape listens on the advertised host",
+			modify: func(c *config.Config) { c.Raft.RaftAddress = "quicbaas-node1:63001" },
+			want:   "quicbaas-node1:63001",
+		},
+		{
+			name: "explicit listen address equal to the default address is honoured",
+			modify: func(c *config.Config) {
+				c.Raft.RaftAddress = "quicbaas-node1:63001"
+				c.Raft.ListenAddress = "127.0.0.1:63000"
+			},
+			want: "127.0.0.1:63000",
+		},
+		{
+			name: "listen host chooses the interface",
+			modify: func(c *config.Config) {
+				c.Raft.RaftAddress = "quicbaas-node1:63001"
+				c.Raft.ListenHost = "10.0.0.5"
+			},
+			want: "10.0.0.5:63001",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.DefaultConfig()
+			cfg.Storage.DataDir = t.TempDir()
+			tt.modify(cfg)
+
+			qcfg := mustBuildQRDBConfig(t, cfg, true)
+
+			assert.Equal(t, tt.want, qcfg.Raft.ListenAddress)
+			assert.Equal(t, cfg.Raft.RaftAddress, qcfg.Raft.RaftAddress)
+		})
+	}
+}
+
+func TestBuildQRDBConfig_RaftListenAddressUnderivable(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Storage.DataDir = t.TempDir()
+	cfg.Raft.RaftAddress = "quicbaas-node1"
+
+	qcfg, err := buildQRDBConfig(cfg, true)
+
+	require.Nil(t, qcfg)
+	var nodeErr *QRDBNodeError
+	require.ErrorAs(t, err, &nodeErr)
+	var listenErr *config.RaftListenAddressError
+	require.ErrorAs(t, err, &listenErr)
+	assert.Equal(t, "quicbaas-node1", listenErr.RaftAddress)
 }
 
 func TestBuildClusterMembers_NoPrefixPeers_SingleNodeFallback(t *testing.T) {
@@ -617,7 +705,7 @@ func TestInitClusteredQRDBNode_SingleNode_BootsAndStops(t *testing.T) {
 	require.NoError(t, err)
 
 	s := &Server{
-		config: &config.Config{},
+		config: clusterTestConfig(),
 		logger: log,
 	}
 	s.config.Storage.Backend = config.StorageBackendMemory
@@ -648,7 +736,7 @@ func TestInitClusteredQRDBNode_MemoryKVRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	s := &Server{
-		config: &config.Config{},
+		config: clusterTestConfig(),
 		logger: log,
 	}
 	s.config.Storage.Backend = config.StorageBackendMemory
@@ -706,7 +794,7 @@ func TestNewNodeBackedShardedClient_FromClusteredNode(t *testing.T) {
 	require.NoError(t, err)
 
 	s := &Server{
-		config: &config.Config{},
+		config: clusterTestConfig(),
 		logger: log,
 	}
 	s.config.Storage.Backend = config.StorageBackendMemory
@@ -833,7 +921,7 @@ func TestInitStandaloneQRDBNode_SealPassphrase(t *testing.T) {
 // initClusteredQRDBNode with a passphrase seal config exercises the cluster
 // seal-passphrase injection and seal-enabled strategy resolution branches.
 func TestInitClusteredQRDBNode_SealPassphrase(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Storage.DataDir = t.TempDir()
 	cfg.Server.Mode = config.ServerModeCluster
@@ -912,7 +1000,7 @@ func TestInitClusteredQRDBNode_HardwareStrategyNotCompiled(t *testing.T) {
 		t.Fatal("awskms must not be compiled into the default build for this test")
 	}
 
-	cfg := &config.Config{}
+	cfg := clusterTestConfig()
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Storage.DataDir = t.TempDir()
 	cfg.Server.Mode = config.ServerModeCluster
@@ -1002,6 +1090,14 @@ func TestSoftwarePINProvider_Storage_MkdirError(t *testing.T) {
 	var pinErr *PINBackendError
 	require.ErrorAs(t, err, &pinErr)
 	require.Equal(t, "mkdir pin dir", pinErr.Stage)
+}
+
+// clusterTestConfig returns an otherwise-zero config carrying the Raft
+// address keys a cluster-mode node needs, at their defaults-layer values.
+func clusterTestConfig() *config.Config {
+	cfg := &config.Config{}
+	cfg.Raft.RaftAddress = config.DefaultRaftAddress
+	return cfg
 }
 
 // mustBuildQRDBConfig wraps buildQRDBConfig for tests that exercise the

@@ -407,6 +407,7 @@ func TestIsMsgTool(t *testing.T) {
 		"quicbaas_msg_subscribe", "quicbaas_msg_unsubscribe",
 		"quicbaas_msg_publish", "quicbaas_msg_publish_delta",
 		"quicbaas_msg_stats", "quicbaas_msg_dedup_stats",
+		"quicbaas_msg_watch_channel",
 	}
 	for _, name := range msgTools {
 		assert.True(t, isMsgTool(name))

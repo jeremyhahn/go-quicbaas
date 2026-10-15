@@ -436,6 +436,7 @@ POST /api/v1/messaging/channels permission messaging:channel_create
 POST /api/v1/messaging/publish-delta/{channel} permission messaging:publish
 POST /api/v1/messaging/publish/{channel} permission messaging:publish
 POST /api/v1/messaging/subscribe permission messaging:subscribe
+POST /api/v1/messaging/watch permission messaging:watch
 POST /api/v1/object-transfer/fetch permission objstore:get
 POST /api/v1/object-transfer/stream-fetch permission objstore:get
 POST /api/v1/objects/* permission objstore:put

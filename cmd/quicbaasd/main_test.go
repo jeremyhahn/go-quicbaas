@@ -730,7 +730,7 @@ func TestApplyRaftFlags_NoChanges(t *testing.T) {
 	raftAddress = ""
 
 	// Do not change any flags
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 
 	// Original values should be preserved
 	assert.Equal(t, originalNodeID, cfg.Raft.NodeID)
@@ -759,7 +759,7 @@ func TestRunNode_DiscoveryNotChanged(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = true
 	if cmd.Flags().Changed("discovery") {
 		cfg.Discovery.Type = discoveryType
@@ -801,7 +801,7 @@ func TestRunNode_StaticDiscoveryNoJoinAddresses(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = true
 	cfg.Discovery.Type = "static"
 
@@ -1110,15 +1110,15 @@ func TestApplyRaftFlagsHostnameResolution(t *testing.T) {
 	cmd := newTestCmdWithRaftFlags()
 
 	// Ensure raft-address global is empty
+	viper.Reset()
 	raftAddress = ""
 	err := cmd.Flags().Set("raft-port", "65000")
 	require.NoError(t, err)
 
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, stubHostname("node-a")))
 
-	// Should contain the port from the flag
-	assert.Contains(t, cfg.Raft.RaftAddress, ":65000")
-	assert.Contains(t, cfg.Raft.ListenAddress, "0.0.0.0:65000")
+	assert.Equal(t, "node-a:65000", cfg.Raft.RaftAddress)
+	assertDerivedListenAddr(t, "node-a:65000")
 }
 
 // TestApplyRaftFlagsWithDirectAddress tests when raft-address is set directly.
@@ -1132,10 +1132,10 @@ func TestApplyRaftFlagsWithDirectAddress(t *testing.T) {
 	// Set the global raftAddress variable directly (as cobra would)
 	raftAddress = "10.0.0.50:63500"
 
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 
 	assert.Equal(t, "10.0.0.50:63500", cfg.Raft.RaftAddress)
-	assert.Equal(t, "10.0.0.50:63500", cfg.Raft.ListenAddress)
+	assertDerivedListenAddr(t, "10.0.0.50:63500")
 
 	// Reset global
 	raftAddress = ""
@@ -1265,7 +1265,7 @@ func TestRunClusterAppliesFlags(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = false
 
 	assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)
@@ -1691,7 +1691,7 @@ func TestRunNodeWithDNSDiscovery(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = true
 	cfg.Discovery.Type = "dns"
 
@@ -1762,10 +1762,24 @@ func newTestCmdWithServerFlags() *cobra.Command {
 // newTestCmdWithRaftFlags creates a cobra command with raft flags bound to global variables.
 func newTestCmdWithRaftFlags() *cobra.Command {
 	cmd := newTestCmdWithServerFlags()
-	cmd.Flags().IntVar(&raftPort, "raft-port", 63000, "")
-	cmd.Flags().StringVar(&raftAddress, "raft-address", "", "")
-	cmd.Flags().Uint64Var(&nodeID, "node-id", 1, "")
+	addRaftFlags(cmd)
 	return cmd
+}
+
+// stubHostname returns a hostname resolver that always reports name, so a
+// test's expected advertised address does not depend on the host it runs on.
+func stubHostname(name string) func() (string, error) {
+	return func() (string, error) { return name, nil }
+}
+
+// assertDerivedListenAddr asserts the listen address was left to derivation
+// and derives to want.
+func assertDerivedListenAddr(t *testing.T, want string) {
+	t.Helper()
+	assert.Empty(t, cfg.Raft.ListenAddress, "listen address must stay derived")
+	got, err := cfg.Raft.ListenAddr()
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
 // TestApplyServerFlags tests the applyServerFlags function.
@@ -1865,7 +1879,7 @@ func TestApplyRaftFlags(t *testing.T) {
 		err := cmd.Flags().Set("node-id", "42")
 		require.NoError(t, err)
 
-		applyRaftFlags(cmd)
+		require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 		assert.Equal(t, uint64(42), cfg.Raft.NodeID)
 	})
 
@@ -1876,9 +1890,9 @@ func TestApplyRaftFlags(t *testing.T) {
 		err := cmd.Flags().Set("raft-address", "192.168.1.100:63001")
 		require.NoError(t, err)
 
-		applyRaftFlags(cmd)
+		require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 		assert.Equal(t, "192.168.1.100:63001", cfg.Raft.RaftAddress)
-		assert.Equal(t, "192.168.1.100:63001", cfg.Raft.ListenAddress)
+		assertDerivedListenAddr(t, "192.168.1.100:63001")
 
 		// Reset global for subsequent tests
 		raftAddress = ""
@@ -1889,13 +1903,14 @@ func TestApplyRaftFlags(t *testing.T) {
 		cmd := newTestCmdWithRaftFlags()
 
 		// Ensure raft-address global is empty
+		viper.Reset()
 		raftAddress = ""
 		err := cmd.Flags().Set("raft-port", "64000")
 		require.NoError(t, err)
 
-		applyRaftFlags(cmd)
-		assert.Contains(t, cfg.Raft.RaftAddress, ":64000")
-		assert.Contains(t, cfg.Raft.ListenAddress, "0.0.0.0:64000")
+		require.NoError(t, applyRaftFlags(cmd, stubHostname("node-b")))
+		assert.Equal(t, "node-b:64000", cfg.Raft.RaftAddress)
+		assertDerivedListenAddr(t, "node-b:64000")
 	})
 
 	t.Run("does not modify config when nothing changed", func(t *testing.T) {
@@ -1904,7 +1919,7 @@ func TestApplyRaftFlags(t *testing.T) {
 		cmd := newTestCmdWithRaftFlags()
 
 		raftAddress = ""
-		applyRaftFlags(cmd)
+		require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 		assert.Equal(t, originalNodeID, cfg.Raft.NodeID)
 	})
 }
@@ -2083,7 +2098,7 @@ func TestRunNodeSetsMode(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = true
 	cfg.Discovery.Type = "multicast"
 
@@ -2123,7 +2138,7 @@ func TestRunNodeWithStaticDiscovery(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = true
 	cfg.Discovery.Type = "static"
 	if cmd.Flags().Changed("join-addresses") {
@@ -2158,7 +2173,7 @@ func TestRunClusterSetsMode(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = false
 
 	assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)
@@ -2409,15 +2424,15 @@ func TestApplyRaftFlags_RaftPortWithHostnameResolution(t *testing.T) {
 	cmd := newTestCmdWithRaftFlags()
 
 	// Clear raft address and set raft-port
+	viper.Reset()
 	raftAddress = ""
 	err := cmd.Flags().Set("raft-port", "63099")
 	require.NoError(t, err)
 
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, stubHostname("node-c")))
 
-	// Should contain the port number
-	assert.Contains(t, cfg.Raft.RaftAddress, ":63099")
-	assert.Equal(t, "0.0.0.0:63099", cfg.Raft.ListenAddress)
+	assert.Equal(t, "node-c:63099", cfg.Raft.RaftAddress)
+	assertDerivedListenAddr(t, "node-c:63099")
 }
 
 // TestPrepareDaemon_ClusterModeWithRaftConfig tests cluster mode to cover
@@ -2507,7 +2522,7 @@ func TestRunNode_KubernetesDiscovery(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = true
 	cfg.Discovery.Type = "kubernetes"
 
@@ -2583,11 +2598,11 @@ func TestApplyRaftFlags_AllFlagsChanged(t *testing.T) {
 	// When raftAddress is set, it takes precedence
 	raftAddress = "10.0.0.1:63000"
 
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 
 	assert.Equal(t, uint64(99), cfg.Raft.NodeID)
 	assert.Equal(t, "10.0.0.1:63000", cfg.Raft.RaftAddress)
-	assert.Equal(t, "10.0.0.1:63000", cfg.Raft.ListenAddress)
+	assertDerivedListenAddr(t, "10.0.0.1:63000")
 
 	raftAddress = ""
 }
@@ -2680,7 +2695,7 @@ func TestRunCluster_WithAllOptions(t *testing.T) {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
 	cfg.Discovery.Enabled = false
 
 	assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)

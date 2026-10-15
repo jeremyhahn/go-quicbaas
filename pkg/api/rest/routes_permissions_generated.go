@@ -479,6 +479,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/messaging/publish-delta/{channel}":                                   {auth: RouteAuthPermission, resource: "messaging", action: "publish"},
 	"POST /api/v1/messaging/publish/{channel}":                                         {auth: RouteAuthPermission, resource: "messaging", action: "publish"},
 	"POST /api/v1/messaging/subscribe":                                                 {auth: RouteAuthPermission, resource: "messaging", action: "subscribe"},
+	"POST /api/v1/messaging/watch":                                                     {auth: RouteAuthPermission, resource: "messaging", action: "watch"},
 	"POST /api/v1/object-transfer/fetch":                                               {auth: RouteAuthPermission, resource: "objstore", action: "get"},
 	"POST /api/v1/object-transfer/stream-fetch":                                        {auth: RouteAuthPermission, resource: "objstore", action: "get"},
 	"POST /api/v1/objects/*":                                                           {auth: RouteAuthPermission, resource: "objstore", action: "put"},

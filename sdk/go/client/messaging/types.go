@@ -363,6 +363,11 @@ type PublishDeltaRequest struct {
 	Metadata  map[string]string
 }
 
+// GetDedupStatsRequest is a request for a channel's deduplication statistics.
+type GetDedupStatsRequest struct {
+	Channel string
+}
+
 // WatchChannelRequest is a request to watch a channel.
 type WatchChannelRequest struct {
 	KeyPrefix           string
@@ -386,8 +391,6 @@ type publishResponse struct{}
 type publishDeltaResponse struct{}
 
 type getStatsRequest struct{}
-
-type getDedupStatsRequest struct{}
 
 type getChannelStatsRequest struct {
 	Channel string

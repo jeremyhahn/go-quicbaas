@@ -87,7 +87,54 @@ The integration stack issues its certificates at run time, so
 
 When no `id=`-prefixed addresses are present, QuicBaaS falls back to a
 single-node clustered mode (`WithoutTransport`) which is suitable for
-development and testing.
+development and testing. That node's member map is `{node_id: raft_address}`;
+an empty `raft.raft_address` refuses the boot rather than inventing one.
+
+## Raft Addresses
+
+A node has two Raft addresses: the address it **advertises** to peers and the
+address its transport **binds**. Every one is set from the config file, the
+environment or a `quicbaasd` flag. Precedence is flags > environment > file >
+defaults.
+
+| Key | Environment | Flag | Default | Meaning |
+|---|---|---|---|---|
+| `raft.raft_address` | `QUICBAAS_RAFT_RAFT_ADDRESS` | `--raft-address` | `127.0.0.1:63000` | `host:port` peers dial. |
+| `raft.listen_address` | `QUICBAAS_RAFT_LISTEN_ADDRESS` | `--raft-listen-address` | unset | `host:port` the transport binds. Any value set by any layer is used exactly as given. |
+| `raft.listen_host` | `QUICBAAS_RAFT_LISTEN_HOST` | `--raft-listen-host` | unset (the advertised host) | Interface to bind on the advertised port when `raft.listen_address` is unset. `0.0.0.0` or `::` opts in to every interface. |
+| — | — | `--raft-port` | `63000` | Moves the port only; see below. |
+
+The bind address is resolved in this order:
+
+1. `raft.listen_address`, used as given. This is the NAT opt-in: it may differ
+   from the advertised address.
+2. `raft.listen_host` joined with the port of `raft.raft_address`.
+3. `raft.raft_address` itself: by default a node listens on the host it
+   advertises.
+
+Setting only the advertised address, as `docker-compose.cluster.yml` does with
+`QUICBAAS_RAFT_RAFT_ADDRESS=quicbaas-node1:63001`, therefore binds
+`quicbaas-node1:63001`. No default binds every interface: `0.0.0.0` or `::` is
+bound only when `raft.listen_host` or `raft.listen_address` names it. If
+`raft.raft_address` has no port, or step 3 applies and its host is empty or a
+wildcard, the bind address cannot be derived and the node refuses to start.
+
+The production preset (`config.ProductionConfig`) sets `raft.raft_address` to
+`:63000`: the port, with no host. Only the operator knows the host peers dial,
+so a production config validates once `raft.raft_address` (`--raft-address`)
+supplies it, and until then is refused with `RaftAdvertisedHostError`.
+
+`--raft-port` replaces the port and keeps the configured hosts:
+
+- the advertised address becomes `<host of raft.raft_address>:<port>` when any
+  layer set `raft.raft_address`, otherwise `<hostname>:<port>`;
+- a configured `raft.listen_address` keeps its host and takes the new port,
+  unless `--raft-listen-address` is also given;
+- a derived bind address follows the new port.
+
+`--raft-port` is ignored when `--raft-address` is given. If the machine's
+hostname cannot be read, `quicbaasd` refuses to start and asks for
+`--raft-address`; it never advertises `localhost`.
 
 ## mTLS Configuration
 

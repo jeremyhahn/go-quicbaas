@@ -19,9 +19,11 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/messagingwatch"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 )
 
@@ -55,6 +57,8 @@ func (r *ToolRegistry) executeMsgTool(ctx context.Context, name string, args map
 		return r.handleMsgListChannels(ctx, msgService, args)
 	case "quicbaas_msg_subscribe":
 		return r.handleMsgSubscribe(ctx, msgService, args)
+	case "quicbaas_msg_watch_channel":
+		return r.handleMsgWatchChannel(ctx, msgService, args)
 	case "quicbaas_msg_unsubscribe":
 		return r.handleMsgUnsubscribe(ctx, msgService, args)
 	case "quicbaas_msg_publish":
@@ -264,6 +268,64 @@ func (r *ToolRegistry) handleMsgSubscribe(ctx context.Context, svc messaging.Ser
 	}, nil
 }
 
+// handleMsgWatchChannel opens a watch on a key prefix through the same
+// mapping the gRPC and REST servers serve WatchChannel from.
+func (r *ToolRegistry) handleMsgWatchChannel(ctx context.Context, svc messaging.Service, args map[string]interface{}) (interface{}, error) {
+	req, err := watchRequestFromArgs(args)
+	if err != nil {
+		return nil, err
+	}
+
+	subscription, err := messagingwatch.Watch(ctx, svc, req)
+	if err != nil {
+		var required *api.RequiredFieldError
+		if errors.As(err, &required) {
+			return nil, err
+		}
+		return nil, api.NewOperationFailedError("watch channel", err)
+	}
+
+	return map[string]interface{}{
+		"subscription_id": subscription.ID,
+		"channel":         subscription.Channel,
+		"client_id":       subscription.ClientID,
+		"created_at":      subscription.CreatedAt.Format(time.RFC3339),
+		"channel_name":    messagingwatch.ChannelName(req.KeyPrefix),
+		"timestamp":       time.Now().Format(time.RFC3339),
+	}, nil
+}
+
+// watchRequestFromArgs decodes the quicbaas_msg_watch_channel arguments.
+// filter_event_types is a JSON array of event-type names; an unknown name or
+// a malformed array is refused rather than dropped.
+func watchRequestFromArgs(args map[string]interface{}) (messagingwatch.Request, error) {
+	req := messagingwatch.Request{
+		KeyPrefix:  getString(args, "key_prefix"),
+		SessionID:  getString(args, "session_id"),
+		BufferSize: getInt(args, "buffer_size"),
+	}
+
+	keyPrefix := getString(args, "filter_key_prefix")
+	eventTypesJSON := getString(args, "filter_event_types")
+	if keyPrefix == "" && eventTypesJSON == "" {
+		return req, nil
+	}
+
+	req.Filter = &messaging.SubscriptionFilter{KeyPrefix: keyPrefix}
+	if eventTypesJSON != "" {
+		var names []string
+		if err := json.Unmarshal([]byte(eventTypesJSON), &names); err != nil {
+			return messagingwatch.Request{}, api.NewInvalidInputError("filter_event_types must be a JSON array of event types")
+		}
+		eventTypes, err := messagingwatch.ParseEventTypes(names)
+		if err != nil {
+			return messagingwatch.Request{}, err
+		}
+		req.Filter.EventTypes = eventTypes
+	}
+	return req, nil
+}
+
 // handleMsgUnsubscribe handles the quicbaas_msg_unsubscribe tool.
 func (r *ToolRegistry) handleMsgUnsubscribe(ctx context.Context, svc messaging.Service, args map[string]interface{}) (interface{}, error) {
 	subscriptionID := getString(args, "subscription_id")
@@ -416,6 +478,15 @@ func (r *ToolRegistry) handleMsgDedupStats(ctx context.Context, svc messaging.Se
 		return nil, api.NewRequiredFieldError("channel")
 	}
 
+	// An unknown channel is refused as NotFound, as the gRPC and REST
+	// handlers refuse it.
+	if _, err := svc.GetChannel(ctx, channel); err != nil {
+		if errors.Is(err, messaging.ErrChannelNotFound) {
+			return nil, api.NewNotFoundError("channel", channel)
+		}
+		return nil, api.NewOperationFailedError("get dedup stats", err)
+	}
+
 	// Access the PushService to get dedup store
 	msgSvc, ok := svc.(*messaging.PushService)
 	if !ok {
@@ -465,6 +536,7 @@ func isMsgTool(name string) bool {
 		"quicbaas_msg_get_channel",
 		"quicbaas_msg_list_channels",
 		"quicbaas_msg_subscribe",
+		"quicbaas_msg_watch_channel",
 		"quicbaas_msg_unsubscribe",
 		"quicbaas_msg_publish",
 		"quicbaas_msg_publish_delta",

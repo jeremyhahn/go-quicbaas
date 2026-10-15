@@ -14,8 +14,10 @@
 package config
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -32,6 +34,17 @@ func homeUnixSocket() string {
 }
 
 // DefaultConfig returns the default configuration with all features enabled.
+// Raft address defaults. These are the defaults layer of the Raft address
+// keys; every other layer (file, env, flag) overrides them.
+const (
+	// DefaultRaftPort is the port a node advertises and listens on for Raft.
+	DefaultRaftPort = 63000
+
+	// DefaultRaftAddress is the default raft.raft_address: the address this
+	// node advertises to its peers.
+	DefaultRaftAddress = "127.0.0.1:63000"
+)
+
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -134,8 +147,7 @@ func DefaultConfig() *Config {
 		},
 		Raft: RaftConfig{
 			NodeID:              1,
-			RaftAddress:         "127.0.0.1:63000",
-			ListenAddress:       "127.0.0.1:63000",
+			RaftAddress:         DefaultRaftAddress,
 			MutualTLS:           true,
 			EnableMetrics:       true,
 			NotifyCommit:        true,
@@ -388,8 +400,7 @@ func DefaultRaftConfig() RaftConfig {
 		CompactionOverhead:  5000,
 		RequestTimeout:      5 * time.Second,
 		RTTMillisecond:      200,
-		RaftAddress:         "127.0.0.1:63000",
-		ListenAddress:       "127.0.0.1:63000",
+		RaftAddress:         DefaultRaftAddress,
 		MutualTLS:           true,
 		MaxInMemLogSize:     64 * 1024 * 1024, // 64MB
 		MaxSendQueueSize:    1024,
@@ -523,8 +534,11 @@ func ProductionConfig() *Config {
 	cfg.Server.MaxConnections = 10000
 	cfg.Server.Unix.Socket = DefaultUnixSocket
 
-	cfg.Raft.RaftAddress = "0.0.0.0:63000"
-	cfg.Raft.ListenAddress = "0.0.0.0:63000"
+	// The advertised host is the one peers dial, and only the operator knows
+	// it: keep the port and leave the host for raft.raft_address to supply.
+	// Until it does, validation refuses the config instead of advertising a
+	// wildcard. The listen address stays unset and derives from that host.
+	cfg.Raft.RaftAddress = net.JoinHostPort("", strconv.Itoa(DefaultRaftPort))
 	cfg.Raft.SnapshotEntries = 50000
 	cfg.Raft.CompactionOverhead = 10000
 	cfg.Raft.RequestTimeout = 10 * time.Second

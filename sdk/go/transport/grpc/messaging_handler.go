@@ -305,9 +305,9 @@ func messagingGetDedupStats(ctx context.Context, client pb.MessagingServiceClien
 		return nil, errors.NewInternal(op, "server returned no dedup stats")
 	}
 	return &messaging.DedupStats{
-		TotalChecks:        stats.GetTotalMessages(),
+		TotalChecks:        stats.GetTotalMessages() + stats.GetTotalDuplicates(),
 		DuplicatesDetected: stats.GetTotalDuplicates(),
-		UniqueMessages:     stats.GetTotalMessages() - stats.GetTotalDuplicates(),
+		UniqueMessages:     stats.GetTotalMessages(),
 	}, nil
 }
 

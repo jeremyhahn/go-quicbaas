@@ -160,7 +160,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.KMS", "UpdateKeyStatus"}: gapNameDrift + "quicbaas_kms_key_status_update",
 
 	// --- Messaging ---------------------------------------------------------
-	{"quicbaas.Messaging", "WatchChannel"}:    gapNoTool,
 	{"quicbaas.Messaging", "GetChannelStats"}: gapAmbiguous + "quicbaas_msg_stats",
 
 	// --- Object storage ----------------------------------------------------

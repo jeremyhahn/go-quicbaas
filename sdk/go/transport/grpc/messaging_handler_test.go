@@ -115,6 +115,10 @@ func (f *fakeMessagingServer) GetDedupStats(_ context.Context, req *pb.Messaging
 	if err := f.err(); err != nil {
 		return nil, err
 	}
+	// Like the real server, refuse a channel that does not exist.
+	if req.GetChannel() != "orders" {
+		return nil, status.Error(codes.NotFound, "channel not found")
+	}
 	return &pb.MessagingGetDedupStatsResponse{Stats: &pb.DedupStats{Channel: req.GetChannel(), TotalMessages: 10, TotalDuplicates: 4}}, nil
 }
 
@@ -150,8 +154,7 @@ func newMessagingHandlerWithServer(t *testing.T, fail bool) *messagingHandler {
 }
 
 // messagingRoundTripCases calls every messaging.Client method except
-// GetDedupStats, whose request carries no channel (see
-// TestMessagingHandler_GetDedupStats).
+// GetDedupStats, which has its own test (TestMessagingHandler_GetDedupStats).
 var messagingRoundTripCases = []struct {
 	method string
 	call   func(ctx context.Context, c messaging.Client) (interface{}, error)
@@ -293,30 +296,66 @@ func TestMessagingHandler_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestMessagingHandler_GetDedupStats pins that the handler serves dedup stats
-// for a request that names a channel, and rejects one that does not — which
-// is every request the SDK client sends today.
-func TestMessagingHandler_GetDedupStats(t *testing.T) {
-	h := newMessagingHandlerWithServer(t, false)
+// recordingMessagingServer hands each Subscribe request it receives to the
+// test before answering like fakeMessagingServer.
+type recordingMessagingServer struct {
+	fakeMessagingServer
+	subscribes chan *pb.MessagingSubscribeRequest
+}
 
-	got, err := h.handleRequest(context.Background(), "GetDedupStats", &struct{ Channel string }{Channel: "orders"})
+func (r *recordingMessagingServer) Subscribe(ctx context.Context, req *pb.MessagingSubscribeRequest) (*pb.MessagingSubscribeResponse, error) {
+	r.subscribes <- req
+	return r.fakeMessagingServer.Subscribe(ctx, req)
+}
+
+// TestMessagingHandler_SubscribeKeepsKeyPrefix pins that a gRPC subscriber's
+// filter key prefix reaches the server in the request's filter.
+func TestMessagingHandler_SubscribeKeepsKeyPrefix(t *testing.T) {
+	recorder := &recordingMessagingServer{subscribes: make(chan *pb.MessagingSubscribeRequest, 1)}
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		pb.RegisterMessagingServiceServer(s, recorder)
+	})
+	client := messaging.NewClient(messagingHandlerTransport{newMessagingHandler(srv.dial(t))})
+
+	_, err := client.Subscribe(context.Background(), &messaging.SubscribeRequest{
+		Channel: "orders",
+		Filter:  &messaging.SubscriptionFilter{KeyPrefix: "orders/eu/"},
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if got := (<-recorder.subscribes).GetFilter().GetKeyPrefix(); got != "orders/eu/" {
+		t.Errorf("filter key prefix = %q, want %q", got, "orders/eu/")
+	}
+}
+
+// TestMessagingHandler_GetDedupStats pins that the SDK client's GetDedupStats
+// reports the named channel's figures over gRPC, and that a missing or
+// unknown channel is refused with a typed error.
+func TestMessagingHandler_GetDedupStats(t *testing.T) {
+	ctx := context.Background()
+	client := messaging.NewClient(messagingHandlerTransport{newMessagingHandlerWithServer(t, false)})
+
+	got, err := client.GetDedupStats(ctx, "orders")
 	if err != nil {
 		t.Fatalf("GetDedupStats: %v", err)
 	}
-	want := &messaging.DedupStats{TotalChecks: 10, DuplicatesDetected: 4, UniqueMessages: 6}
+	// The server reports 10 unique messages and 4 duplicates.
+	want := &messaging.DedupStats{TotalChecks: 14, DuplicatesDetected: 4, UniqueMessages: 10}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("dedup stats = %+v, want %+v", got, want)
 	}
 
-	_, err = messaging.NewClient(messagingHandlerTransport{h}).GetDedupStats(context.Background())
-	if !errors.IsInvalidInput(err) {
+	if _, err := client.GetDedupStats(ctx, ""); !errors.IsInvalidInput(err) {
 		t.Errorf("GetDedupStats without a channel: err = %v, want an InvalidInput error", err)
 	}
+	if _, err := client.GetDedupStats(ctx, "missing"); !errors.IsNotFound(err) {
+		t.Errorf("GetDedupStats for an unknown channel: err = %v, want a NotFound error", err)
+	}
 
-	failing := newMessagingHandlerWithServer(t, true)
-	_, err = failing.handleRequest(context.Background(), "GetDedupStats", &struct{ Channel string }{Channel: "orders"})
-	if !errors.IsNotFound(err) {
-		t.Errorf("GetDedupStats against a failing server: err = %v, want a NotFound error", err)
+	h := newMessagingHandlerWithServer(t, false)
+	if _, err := h.handleRequest(ctx, "GetDedupStats", &struct{}{}); !errors.IsInvalidInput(err) {
+		t.Errorf("GetDedupStats with no Channel field: err = %v, want an InvalidInput error", err)
 	}
 }
 

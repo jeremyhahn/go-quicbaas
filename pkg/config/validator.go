@@ -306,8 +306,14 @@ func (v *Validator) validateRaft(cfg *RaftConfig, serverCfg *ServerConfig) {
 		v.addError("raft.raft_address", "Raft address cannot be empty")
 	}
 
-	if cfg.ListenAddress == "" {
-		v.addError("raft.listen_address", "listen address cannot be empty")
+	if _, err := cfg.ListenAddr(); err != nil {
+		// Keep the typed cause so a caller can tell an unset or wildcard
+		// advertised host (*RaftAdvertisedHostError) apart with errors.As.
+		v.errors = append(v.errors, ValidationError{
+			Field:   "raft.listen_address",
+			Message: err.Error(),
+			Cause:   err,
+		})
 	}
 
 	if cfg.MaxInMemLogSize < 1024*1024 { // At least 1MB

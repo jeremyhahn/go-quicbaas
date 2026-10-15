@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/messagingwatch"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 )
 
@@ -110,6 +111,32 @@ type MessagingSubscriptionRESTResponse struct {
 	Channel   string `json:"channel"`
 	ClientID  string `json:"client_id"`
 	CreatedAt int64  `json:"created_at"`
+}
+
+// MessagingWatchRESTRequest is the request body for POST
+// /api/v1/messaging/watch. It carries the fields of the gRPC
+// MessagingWatchChannelRequest.
+type MessagingWatchRESTRequest struct {
+	KeyPrefix  string                                  `json:"key_prefix"`
+	SessionID  string                                  `json:"session_id,omitempty"`
+	Filter     *MessagingSubscriptionFilterRESTRequest `json:"filter,omitempty"`
+	BufferSize int                                     `json:"buffer_size,omitempty"`
+}
+
+// MessagingSubscriptionFilterRESTRequest narrows the events a watch
+// delivers.
+type MessagingSubscriptionFilterRESTRequest struct {
+	EventTypes []string `json:"event_types,omitempty"`
+	KeyPrefix  string   `json:"key_prefix,omitempty"`
+}
+
+// MessagingWatchRESTResponse is the response for POST
+// /api/v1/messaging/watch. It carries the fields of the gRPC
+// MessagingWatchChannelResponse.
+type MessagingWatchRESTResponse struct {
+	Subscription *MessagingSubscriptionRESTResponse `json:"subscription"`
+	ChannelName  string                             `json:"channel_name"`
+	Timestamp    int64                              `json:"timestamp"`
 }
 
 // MessagingUnsubscribeRESTResponse represents the JSON response for unsubscribing.
@@ -463,6 +490,66 @@ func (s *Server) HandleMessagingSubscribe(w http.ResponseWriter, r *http.Request
 	}
 
 	RespondJSON(w, r, http.StatusCreated, resp)
+}
+
+// HandleMessagingWatch handles POST /api/v1/messaging/watch - Watch the keys
+// under a prefix. It is served from the same messagingwatch mapping as the
+// gRPC WatchChannel RPC.
+func (s *Server) HandleMessagingWatch(w http.ResponseWriter, r *http.Request) {
+	messagingService := s.getMessagingService(w, r)
+	if messagingService == nil {
+		return
+	}
+
+	var req MessagingWatchRESTRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+
+	watchReq, err := watchRequestFromREST(&req)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	subscription, err := messagingwatch.Watch(r.Context(), messagingService, watchReq)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusCreated, &MessagingWatchRESTResponse{
+		Subscription: &MessagingSubscriptionRESTResponse{
+			ID:        subscription.ID,
+			Channel:   subscription.Channel,
+			ClientID:  subscription.ClientID,
+			CreatedAt: subscription.CreatedAt.Unix(),
+		},
+		ChannelName: messagingwatch.ChannelName(req.KeyPrefix),
+		Timestamp:   time.Now().Unix(),
+	})
+}
+
+// watchRequestFromREST decodes the REST watch body into the
+// transport-neutral watch request.
+func watchRequestFromREST(req *MessagingWatchRESTRequest) (messagingwatch.Request, error) {
+	watchReq := messagingwatch.Request{
+		KeyPrefix:  req.KeyPrefix,
+		SessionID:  req.SessionID,
+		BufferSize: req.BufferSize,
+	}
+	if req.Filter != nil {
+		eventTypes, err := messagingwatch.ParseEventTypes(req.Filter.EventTypes)
+		if err != nil {
+			return messagingwatch.Request{}, err
+		}
+		watchReq.Filter = &messaging.SubscriptionFilter{
+			EventTypes: eventTypes,
+			KeyPrefix:  req.Filter.KeyPrefix,
+		}
+	}
+	return watchReq, nil
 }
 
 // HandleMessagingUnsubscribe handles DELETE /api/v1/messaging/subscribe/{id} - Unsubscribe.

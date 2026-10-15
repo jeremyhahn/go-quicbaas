@@ -455,6 +455,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "GET", Pattern: "/api/v1/messaging/stats/{channel}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleMessagingChannelStats }},
 		{Method: "POST", Pattern: "/api/v1/messaging/subscribe", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleMessagingSubscribe }},
 		{Method: "DELETE", Pattern: "/api/v1/messaging/subscribe/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleMessagingUnsubscribe }},
+		{Method: "POST", Pattern: "/api/v1/messaging/watch", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleMessagingWatch }},
 		{Method: "GET", Pattern: "/api/v1/metrics/performance", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandlePerformanceMetrics }},
 		{Method: "POST", Pattern: "/api/v1/ollama/embed", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOllamaEmbed }},
 		{Method: "POST", Pattern: "/api/v1/ollama/embed/batch", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOllamaEmbedBatch }},

@@ -1261,17 +1261,23 @@ func TestClient_GetDedupStats(t *testing.T) {
 	tests := []struct {
 		name      string
 		ctx       context.Context
+		channel   string
 		transport *mockTransport
 		wantErr   bool
 		errCode   errors.ErrorCode
 	}{
 		{
-			name: "successful get dedup stats",
-			ctx:  context.Background(),
+			name:    "successful get dedup stats",
+			ctx:     context.Background(),
+			channel: "orders",
 			transport: &mockTransport{
 				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 					if method != "GetDedupStats" {
 						t.Errorf("expected method %q, got %q", "GetDedupStats", method)
+					}
+					r, ok := req.(*GetDedupStatsRequest)
+					if !ok || r.Channel != "orders" {
+						t.Errorf("expected *GetDedupStatsRequest for channel orders, got %#v", req)
 					}
 					return &DedupStats{
 						TotalChecks:        1000,
@@ -1285,15 +1291,37 @@ func TestClient_GetDedupStats(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:      "nil context",
-			ctx:       nil,
+			name:      "empty channel",
+			ctx:       context.Background(),
+			channel:   "",
 			transport: &mockTransport{},
 			wantErr:   true,
 			errCode:   errors.CodeInvalidInput,
 		},
 		{
-			name: "nil response",
-			ctx:  context.Background(),
+			name:      "nil context",
+			ctx:       nil,
+			channel:   "orders",
+			transport: &mockTransport{},
+			wantErr:   true,
+			errCode:   errors.CodeInvalidInput,
+		},
+		{
+			name:    "transport error",
+			ctx:     context.Background(),
+			channel: "missing",
+			transport: &mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return nil, errors.NewNotFound("server", "channel not found")
+				},
+			},
+			wantErr: true,
+			errCode: errors.CodeNotFound,
+		},
+		{
+			name:    "nil response",
+			ctx:     context.Background(),
+			channel: "orders",
 			transport: &mockTransport{
 				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 					return nil, nil
@@ -1303,8 +1331,9 @@ func TestClient_GetDedupStats(t *testing.T) {
 			errCode: errors.CodeInternal,
 		},
 		{
-			name: "invalid response type",
-			ctx:  context.Background(),
+			name:    "invalid response type",
+			ctx:     context.Background(),
+			channel: "orders",
 			transport: &mockTransport{
 				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 					return "invalid", nil
@@ -1318,7 +1347,7 @@ func TestClient_GetDedupStats(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := NewClient(tt.transport)
-			resp, err := client.GetDedupStats(tt.ctx)
+			resp, err := client.GetDedupStats(tt.ctx, tt.channel)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetDedupStats() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -1679,7 +1708,7 @@ func TestTransportErrorPropagation(t *testing.T) {
 	})
 
 	t.Run("GetDedupStats", func(t *testing.T) {
-		_, err := client.GetDedupStats(ctx)
+		_, err := client.GetDedupStats(ctx, "test-channel")
 		if err == nil {
 			t.Error("expected error")
 		}

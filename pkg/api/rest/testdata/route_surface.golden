@@ -443,6 +443,7 @@ POST /api/v1/messaging/channels
 POST /api/v1/messaging/publish-delta/{channel}
 POST /api/v1/messaging/publish/{channel}
 POST /api/v1/messaging/subscribe
+POST /api/v1/messaging/watch
 POST /api/v1/metrics/
 POST /api/v1/object-transfer/fetch
 POST /api/v1/object-transfer/stream-fetch

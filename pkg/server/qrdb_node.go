@@ -231,28 +231,13 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	// ID, and peer list from the quicbaas Raft config.
 	// ------------------------------------------------------------------ //
 	qcfg.Raft.RaftAddress = cfg.Raft.RaftAddress
-	// Derive the listen address for multi-node cluster mode. The quicbaas
-	// default for ListenAddress is "127.0.0.1:63000" which is only valid for
-	// single-node localhost clusters. For a real multi-node cluster the Raft
-	// QUIC transport must listen on 0.0.0.0:<raft-port> so that other nodes on
-	// the Docker network can reach it. Resolution order:
-	//   1. cfg.Raft.ListenAddress if explicitly set to something other than the
-	//      quicbaas single-node default ("127.0.0.1:63000").
-	//   2. Derive "0.0.0.0:<port>" from cfg.Raft.RaftAddress's port component
-	//      when the raft address has a named host (indicating a real multi-node
-	//      cluster where the node must accept connections on all interfaces).
-	//   3. Fall back to cfg.Raft.ListenAddress (the quicbaas default).
-	if listenAddr := cfg.Raft.ListenAddress; listenAddr != "" && listenAddr != "127.0.0.1:63000" {
-		qcfg.Raft.ListenAddress = listenAddr
-	} else if raftAddr := cfg.Raft.RaftAddress; raftAddr != "" {
-		if _, raftPort, found := strings.Cut(raftAddr, ":"); found && raftPort != "" {
-			qcfg.Raft.ListenAddress = "0.0.0.0:" + raftPort
-		} else {
-			qcfg.Raft.ListenAddress = cfg.Raft.ListenAddress
-		}
-	} else {
-		qcfg.Raft.ListenAddress = cfg.Raft.ListenAddress
+	// The bind address comes from configuration: raft.listen_address when any
+	// layer set it, otherwise raft.listen_host on the advertised port.
+	listenAddr, listenErr := cfg.Raft.ListenAddr()
+	if listenErr != nil {
+		return nil, &QRDBNodeError{Stage: "raft listen address", Cause: listenErr}
 	}
+	qcfg.Raft.ListenAddress = listenAddr
 	qcfg.Raft.ReplicaID = cfg.Raft.NodeID
 	// Use shard 1 (the KV shard) for the primary cluster group.
 	qcfg.Raft.ShardID = 1
@@ -1219,10 +1204,16 @@ func buildClusterMembers(cfg *config.Config) (map[uint64]string, error) {
 		return qrdbsdk.ParsePeers(peerStrings)
 	}
 
-	// No id-prefixed peers: single-node clustered mode.
+	// No id-prefixed peers: single-node clustered mode advertises the
+	// configured raft.raft_address. The validator refuses an empty one in
+	// cluster mode, so reaching here without it is a configuration defect,
+	// not a reason to invent an address.
 	raftAddr := cfg.Raft.RaftAddress
 	if raftAddr == "" {
-		raftAddr = "127.0.0.1:63101"
+		return nil, &QRDBNodeError{Stage: "cluster members", Cause: &config.ValidationError{
+			Field:   "raft.raft_address",
+			Message: "Raft address cannot be empty in cluster mode",
+		}}
 	}
 	replicaID := cfg.Raft.NodeID
 	if replicaID == 0 {

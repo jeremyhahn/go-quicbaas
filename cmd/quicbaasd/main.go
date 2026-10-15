@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strconv"
@@ -50,8 +51,11 @@ var (
 	grpcPort    int
 	raftPort    int
 	raftAddress string
-	nodeID      uint64
-	unixSocket  string
+
+	raftListenHost    string
+	raftListenAddress string
+	nodeID            uint64
+	unixSocket        string
 
 	// Embedded fleet node flags.
 	embeddedFleetNodeEnabled       bool
@@ -249,8 +253,10 @@ func addServerFlags(cmd *cobra.Command) {
 
 // addRaftFlags adds Raft-specific flags to a command.
 func addRaftFlags(cmd *cobra.Command) {
-	cmd.Flags().IntVar(&raftPort, "raft-port", 63000, "Raft communication port")
-	cmd.Flags().StringVar(&raftAddress, "raft-address", "", "Raft node address (default: <hostname>:<raft-port>)")
+	cmd.Flags().IntVar(&raftPort, "raft-port", config.DefaultRaftPort, "Raft port: replaces the port of the advertised address (and of raft.listen_address when set), keeping their hosts; ignored with --raft-address")
+	cmd.Flags().StringVar(&raftAddress, "raft-address", "", "Raft address advertised to peers, host:port (raft.raft_address; with only --raft-port, <hostname>:<raft-port>)")
+	cmd.Flags().StringVar(&raftListenHost, "raft-listen-host", "", "Interface the Raft transport binds on the advertised port when raft.listen_address is unset; 0.0.0.0 opts in to every interface (raft.listen_host, default: the advertised host)")
+	cmd.Flags().StringVar(&raftListenAddress, "raft-listen-address", "", "Raft bind address, host:port, e.g. behind NAT (raft.listen_address; default: raft.listen_host, else the advertised host, on the advertised port)")
 	cmd.Flags().Uint64Var(&nodeID, "node-id", 1, "Raft node ID")
 }
 
@@ -418,8 +424,7 @@ func bindEnvVars() {
 	// Raft configuration.
 	_ = viper.BindEnv("raft.node_id")
 	_ = viper.BindEnv("raft.deployment_id")
-	_ = viper.BindEnv("raft.raft_address")
-	_ = viper.BindEnv("raft.listen_address")
+	config.BindRaftAddressEnv(viper.GetViper())
 	_ = viper.BindEnv("raft.join_addresses")
 
 	// Storage configuration.
@@ -642,7 +647,9 @@ func runNode(cmd *cobra.Command, args []string) error {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	if err := applyRaftFlags(cmd, os.Hostname); err != nil {
+		return err
+	}
 
 	// Configure discovery.
 	cfg.Discovery.Enabled = true
@@ -668,7 +675,9 @@ func runCluster(cmd *cobra.Command, args []string) error {
 	cfg.Server.Mode = config.ServerModeCluster
 	cfg.Storage.Backend = config.StorageBackendPebble
 	applyServerFlags(cmd)
-	applyRaftFlags(cmd)
+	if err := applyRaftFlags(cmd, os.Hostname); err != nil {
+		return err
+	}
 
 	// Single-node Raft cluster doesn't need discovery.
 	cfg.Discovery.Enabled = false
@@ -736,22 +745,75 @@ func applyServerFlags(cmd *cobra.Command) {
 	}
 }
 
-// applyRaftFlags applies Raft-specific flags to config.
-func applyRaftFlags(cmd *cobra.Command) {
-	if cmd.Flags().Changed("node-id") {
+// applyRaftFlags applies the Raft flags over the file and environment layers
+// already in cfg (flags > env > file > defaults). hostname resolves the
+// advertised host when --raft-port is given and no layer set
+// raft.raft_address; the daemon passes os.Hostname.
+func applyRaftFlags(cmd *cobra.Command, hostname func() (string, error)) error {
+	flags := cmd.Flags()
+	if flags.Changed("node-id") {
 		cfg.Raft.NodeID = nodeID
+	}
+	// Each flag overrides only its own key, so a flag never wipes a key the
+	// file or environment set and the flag does not name.
+	if flags.Changed("raft-listen-host") {
+		cfg.Raft.ListenHost = raftListenHost
+	}
+	if flags.Changed("raft-listen-address") {
+		cfg.Raft.ListenAddress = raftListenAddress
 	}
 	if raftAddress != "" {
 		cfg.Raft.RaftAddress = raftAddress
-		cfg.Raft.ListenAddress = raftAddress
-	} else if cmd.Flags().Changed("raft-port") {
-		hostname, err := os.Hostname()
-		if err != nil {
-			hostname = "localhost"
-		}
-		cfg.Raft.RaftAddress = fmt.Sprintf("%s:%d", hostname, raftPort)
-		cfg.Raft.ListenAddress = fmt.Sprintf("0.0.0.0:%d", raftPort)
+		return nil
 	}
+	if !flags.Changed("raft-port") {
+		return nil
+	}
+
+	// --raft-port alone moves the port and keeps every configured host.
+	port := strconv.Itoa(raftPort)
+	advertisedHost, err := advertisedRaftHost(hostname)
+	if err != nil {
+		return err
+	}
+	cfg.Raft.RaftAddress = net.JoinHostPort(advertisedHost, port)
+	// An unset listen address is derived from the advertised port, so only an
+	// explicit one needs its port moved.
+	if cfg.Raft.ListenAddress != "" && !flags.Changed("raft-listen-address") {
+		listenHost, err := raftAddressHost("raft.listen_address", cfg.Raft.ListenAddress)
+		if err != nil {
+			return err
+		}
+		cfg.Raft.ListenAddress = net.JoinHostPort(listenHost, port)
+	}
+	return nil
+}
+
+// advertisedRaftHost returns the host --raft-port advertises: the host of
+// raft.raft_address when the file or environment set it, otherwise this
+// machine's hostname. A hostname that cannot be resolved is a configuration
+// error, never a fallback to an address peers cannot reach.
+func advertisedRaftHost(hostname func() (string, error)) (string, error) {
+	if viper.IsSet("raft.raft_address") {
+		return raftAddressHost("raft.raft_address", cfg.Raft.RaftAddress)
+	}
+	host, err := hostname()
+	if err != nil {
+		return "", &RaftHostnameError{Cause: err}
+	}
+	if host == "" {
+		return "", &RaftHostnameError{}
+	}
+	return host, nil
+}
+
+// raftAddressHost returns the host of a configured host:port Raft address.
+func raftAddressHost(key, addr string) (string, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", &RaftAddressFlagError{Key: key, Address: addr, Cause: err}
+	}
+	return host, nil
 }
 
 // prepareDaemon performs pre-server startup tasks: logging configuration details,

@@ -56,8 +56,8 @@ type Client interface {
 	// GetStats returns statistics about the push service.
 	GetStats(ctx context.Context) (*Stats, error)
 
-	// GetDedupStats returns deduplication statistics.
-	GetDedupStats(ctx context.Context) (*DedupStats, error)
+	// GetDedupStats returns deduplication statistics for a channel.
+	GetDedupStats(ctx context.Context, channel string) (*DedupStats, error)
 
 	// GetChannelStats returns statistics for a specific channel.
 	GetChannelStats(ctx context.Context, channel string) (*ChannelStats, error)
@@ -341,12 +341,16 @@ func (c *client) GetStats(ctx context.Context) (*Stats, error) {
 }
 
 // GetDedupStats returns deduplication statistics.
-func (c *client) GetDedupStats(ctx context.Context) (*DedupStats, error) {
+func (c *client) GetDedupStats(ctx context.Context, channel string) (*DedupStats, error) {
+	if channel == "" {
+		return nil, errors.NewInvalidInput("messaging.GetDedupStats", "channel name is required")
+	}
+
 	if ctx == nil {
 		return nil, errors.NewInvalidInput("messaging.GetDedupStats", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GetDedupStats", &getDedupStatsRequest{})
+	resp, err := c.transport.Request(ctx, serviceName, "GetDedupStats", &GetDedupStatsRequest{Channel: channel})
 	if err != nil {
 		return nil, err
 	}

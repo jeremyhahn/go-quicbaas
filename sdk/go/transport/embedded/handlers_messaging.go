@@ -15,8 +15,11 @@ package embedded
 
 import (
 	"context"
+	stderrors "errors"
 	"reflect"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/messagingwatch"
 	pkgmessaging "github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	messagingSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/messaging"
@@ -41,6 +44,14 @@ var messagingErrorCodes = []struct {
 	{pkgmessaging.IsMaxSubscriptionsReached, errors.CodeResourceExhausted},
 	{pkgmessaging.IsHubBufferFull, errors.CodeResourceExhausted},
 	{pkgmessaging.IsClientSlow, errors.CodeResourceExhausted},
+	{isRequiredField, errors.CodeInvalidInput},
+}
+
+// isRequiredField reports whether err is the shared watch mapping's refusal
+// of a request that leaves a required field empty.
+func isRequiredField(err error) bool {
+	var required *api.RequiredFieldError
+	return stderrors.As(err, &required)
 }
 
 // messagingError wraps a messaging service error in an SDK error whose code
@@ -165,7 +176,7 @@ func handleMessagingSubscribe(ctx context.Context, svc service.QuicBaaS, req int
 	if err != nil {
 		return nil, err
 	}
-	opts := messagingWatchOptions(r.SessionID, r.Filter, r.BufferSize)
+	opts := messagingWatchRequest("", r.SessionID, r.Filter, r.BufferSize).Options()
 	if r.DeltaMode {
 		opts = append(opts, pkgmessaging.WithDeltaMode(r.DeltaMode))
 	}
@@ -247,8 +258,7 @@ func handleMessagingWatchChannel(ctx context.Context, svc service.QuicBaaS, req 
 	if err != nil {
 		return nil, err
 	}
-	opts := messagingWatchOptions(r.SessionID, r.Filter, r.BufferSize)
-	sub, err := msgSvc.WatchChannel(ctx, r.KeyPrefix, opts...)
+	sub, err := messagingwatch.Watch(ctx, msgSvc, messagingWatchRequest(r.KeyPrefix, r.SessionID, r.Filter, r.BufferSize))
 	if err != nil {
 		return nil, messagingError("WatchChannel", err)
 	}
@@ -304,9 +314,9 @@ func handleMessagingGetDedupStats(ctx context.Context, svc service.QuicBaaS, req
 		return nil, messagingError("GetDedupStats", err)
 	}
 	return &messagingSDK.DedupStats{
-		TotalChecks:        stats.TotalMessages,
+		TotalChecks:        stats.TotalMessages + stats.TotalDuplicates,
 		DuplicatesDetected: stats.TotalDuplicates,
-		UniqueMessages:     stats.TotalMessages - stats.TotalDuplicates,
+		UniqueMessages:     stats.TotalMessages,
 	}, nil
 }
 
@@ -330,20 +340,15 @@ func handleMessagingGetChannelStats(ctx context.Context, svc service.QuicBaaS, r
 	}, nil
 }
 
-// messagingWatchOptions builds the subscribe options a subscription and a
-// watch share.
-func messagingWatchOptions(sessionID string, filter *messagingSDK.SubscriptionFilter, bufferSize int) []pkgmessaging.SubscribeOption {
-	var opts []pkgmessaging.SubscribeOption
-	if sessionID != "" {
-		opts = append(opts, pkgmessaging.WithSession(sessionID))
-	}
+// messagingWatchRequest maps the SDK fields a subscription and a watch share
+// onto the request the gRPC, REST and MCP servers map theirs onto, so the
+// embedded transport builds the same subscribe options they do.
+func messagingWatchRequest(keyPrefix, sessionID string, filter *messagingSDK.SubscriptionFilter, bufferSize int) messagingwatch.Request {
+	req := messagingwatch.Request{KeyPrefix: keyPrefix, SessionID: sessionID, BufferSize: bufferSize}
 	if filter != nil {
-		opts = append(opts, pkgmessaging.WithFilter(messagingFilterFromSDK(filter)))
+		req.Filter = messagingFilterFromSDK(filter)
 	}
-	if bufferSize > 0 {
-		opts = append(opts, pkgmessaging.WithSubscriptionBufferSize(bufferSize))
-	}
-	return opts
+	return req
 }
 
 func messagingPublishOptions(messageID, dedupKey, codec string, metadata map[string]string) []pkgmessaging.PublishOption {

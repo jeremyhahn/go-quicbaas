@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/api/messagingwatch"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
@@ -308,18 +309,14 @@ func (s *MessagingServer) WatchChannel(ctx context.Context, req *pb.MessagingWat
 		return nil, status.Error(codes.InvalidArgument, "key_prefix is required")
 	}
 
-	opts := buildWatchChannelOptions(req)
-
-	subscription, err := s.messagingSvc.WatchChannel(ctx, req.KeyPrefix, opts...)
+	subscription, err := messagingwatch.Watch(ctx, s.messagingSvc, watchRequestFromProto(req))
 	if err != nil {
 		return nil, convertMessagingError(err)
 	}
 
-	channelName := "watch:" + req.KeyPrefix
-
 	return &pb.MessagingWatchChannelResponse{
 		Subscription: serviceSubscriptionToProto(subscription),
-		ChannelName:  channelName,
+		ChannelName:  messagingwatch.ChannelName(req.KeyPrefix),
 		Timestamp:    time.Now().Unix(),
 	}, nil
 }
@@ -485,21 +482,15 @@ func buildPublishOptions(messageID, dedupKey string, metadata map[string]string)
 	return opts
 }
 
-// buildWatchChannelOptions builds watch channel options from the proto request.
-func buildWatchChannelOptions(req *pb.MessagingWatchChannelRequest) []messaging.SubscribeOption {
-	var opts []messaging.SubscribeOption
-
-	if req.SessionId != "" {
-		opts = append(opts, messaging.WithSession(req.SessionId))
+// watchRequestFromProto decodes the proto request into the transport-neutral
+// watch request every server serves WatchChannel from.
+func watchRequestFromProto(req *pb.MessagingWatchChannelRequest) messagingwatch.Request {
+	return messagingwatch.Request{
+		KeyPrefix:  req.KeyPrefix,
+		SessionID:  req.SessionId,
+		Filter:     protoFilterToService(req.Filter),
+		BufferSize: int(req.BufferSize),
 	}
-	if req.Filter != nil {
-		opts = append(opts, messaging.WithFilter(protoFilterToService(req.Filter)))
-	}
-	if req.BufferSize > 0 {
-		opts = append(opts, messaging.WithSubscriptionBufferSize(int(req.BufferSize)))
-	}
-
-	return opts
 }
 
 // =============================================================================

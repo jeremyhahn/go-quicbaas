@@ -120,7 +120,7 @@ because it runs a server rather than issuing one request.
 | Messages stop arriving under load | The per-client send buffer filled and messages were **dropped**, not queued. `pkg/messaging/client.go:542` applies backpressure by discarding and incrementing `MessagesDropped`; a slow subscriber loses messages rather than stalling the publisher. Raise `messaging.buffer_size` (hub) or drain faster; `DefaultClientSendBufferSize` is 256 per client. |
 | Duplicate deliveries | `dedup_enabled` is false, or `dedup_window` is shorter than the publisher's retry interval. |
 | `permission denied` on a verb that used to work | The route's required permission is per-verb, not per-group. Check the exact `resource:action` pair for that route in `api.md` rather than granting the whole group. |
-| Everything 404s over `--transport quic` | Nothing in this repository serves HTTP/3. See `../multiprotocol-api/architecture.md`. |
+| Every call fails over `--transport quic` | QUIC carries the REST routes over HTTP/3, and `quicbaasd` has no HTTP/3 listener of its own. Point the client at an endpoint that serves the REST API over HTTP/3. See `../multiprotocol-api/architecture.md`. |
 
 ## What this feature does not do
 

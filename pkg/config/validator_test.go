@@ -422,13 +422,64 @@ func TestValidateRaftConfig(t *testing.T) {
 			errorField:  "raft.raft_address",
 		},
 		{
-			name: "empty listen address",
+			name: "empty listen settings bind the advertised host",
 			modify: func(cfg *Config) {
 				cfg.Raft.NodeID = 1
 				cfg.Raft.ListenAddress = ""
+				cfg.Raft.ListenHost = ""
+				cfg.Raft.RaftAddress = "node1:63001"
+			},
+			expectError: false,
+		},
+		{
+			name: "wildcard advertised host with no listen setting",
+			modify: func(cfg *Config) {
+				cfg.Raft.NodeID = 1
+				cfg.Raft.ListenAddress = ""
+				cfg.Raft.ListenHost = ""
+				cfg.Raft.RaftAddress = "0.0.0.0:63001"
 			},
 			expectError: true,
 			errorField:  "raft.listen_address",
+		},
+		{
+			name: "empty advertised host with no listen setting",
+			modify: func(cfg *Config) {
+				cfg.Raft.NodeID = 1
+				cfg.Raft.ListenAddress = ""
+				cfg.Raft.ListenHost = ""
+				cfg.Raft.RaftAddress = ":63001"
+			},
+			expectError: true,
+			errorField:  "raft.listen_address",
+		},
+		{
+			name: "wildcard advertised host with an explicit listen address",
+			modify: func(cfg *Config) {
+				cfg.Raft.NodeID = 1
+				cfg.Raft.ListenAddress = "0.0.0.0:63001"
+				cfg.Raft.RaftAddress = "0.0.0.0:63001"
+			},
+			expectError: false,
+		},
+		{
+			name: "empty listen address with portless raft address",
+			modify: func(cfg *Config) {
+				cfg.Raft.NodeID = 1
+				cfg.Raft.ListenAddress = ""
+				cfg.Raft.RaftAddress = "node1"
+			},
+			expectError: true,
+			errorField:  "raft.listen_address",
+		},
+		{
+			name: "empty listen address derives from listen host",
+			modify: func(cfg *Config) {
+				cfg.Raft.NodeID = 1
+				cfg.Raft.ListenAddress = ""
+				cfg.Raft.ListenHost = "10.0.0.5"
+			},
+			expectError: false,
 		},
 		{
 			name: "invalid max in-mem log size",

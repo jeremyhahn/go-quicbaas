@@ -149,7 +149,9 @@ import (
 // go-quicbaas#1261) under project:read, the REST face of GetProjectByName.
 // PLUS 1 for repository onboarding (POST /api/v1/sdlc/repos/{repo}/onboarding,
 // go-quicbaas#1041) under sdlc:bind.
-const baseRouteTableSize = 672
+// PLUS 1 for the messaging watch (POST /api/v1/messaging/watch, issue #185)
+// under messaging:watch, the REST face of Messaging.WatchChannel.
+const baseRouteTableSize = 673
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
