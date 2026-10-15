@@ -1994,7 +1994,7 @@ to obtain one reporting `hardware` is to have run a verifier that checked a
 certificate chain. `IssueHardwareTokens` refuses `ACRHardwareAttested` unless
 the attestation actually proves hardware.
 
-**What satisfies `mfa_verified`.** For the release candidate, verified hardware
+**What satisfies `mfa_verified`.** For Dev complete, verified hardware
 attestation alone satisfies `mfa_verified` (go-quicbaas#416, option 1).
 `IssueHardwareTokens` sets it to `Attestation.IsHardware()`: a key proven to be
 held on an authenticator counts as the second factor, and an unattested

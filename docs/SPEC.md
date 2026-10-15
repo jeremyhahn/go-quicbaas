@@ -105,9 +105,9 @@ Status is one of `shipped`, `in progress`, `planned`, `future`.
 - Unix: [`sdk/go/transport/unix`](../sdk/go/transport/unix/), gRPC over `AF_UNIX`.
 - Embedded: [`sdk/go/transport/embedded`](../sdk/go/transport/embedded/).
 
-## Release criteria
+## Dev complete criteria
 
-Milestone 15, Release candidate, closes when every open issue below is resolved.
+Milestone 15, Dev complete, closes when every SPEC row here has shipped, every seam row go-trusted-platform's SPEC names on go-quicbaas has shipped, and the API is stable. The open issues below are this repository's part; go-trusted-platform's seam rows arrive as issues once its coordinator lists them. Until the milestone closes, tags are `-alpha` only, and an `-rc.N` is cut only if something needs one.
 
 - Security fails closed: audit signatures and the audit signing key ([#22](../../../issues/22), [#23](../../../issues/23)); object-storage and dynamic-secrets tenant isolation ([#32](../../../issues/32)); TOTP secrets protected beyond derivation ([#402](../../../issues/402)); webhook fixture HMAC keys ([#524](../../../issues/524)).
 - Authorization and tenancy: REST permissions ([#338](../../../issues/338)), the empty caller tenant ([#348](../../../issues/348)), embedded-transport authorization ([#329](../../../issues/329)), `IAMService` under `RequireAuthz` ([#301](../../../issues/301)), orchestration tokens and `DeleteTask` ([#502](../../../issues/502), [#637](../../../issues/637)), the module route-collision guard ([#477](../../../issues/477)).
@@ -117,4 +117,4 @@ Milestone 15, Release candidate, closes when every open issue below is resolved.
 - Gates: the `pkg/iam` race pass ([#718](../../../issues/718)), the scoped FIPS gate on push ([#769](../../../issues/769)), the host Docker socket in CI ([#1168](../../../issues/1168)).
 - Release: public release readiness ([#1130](../../../issues/1130)) and the docs review ([#1258](../../../issues/1258)).
 
-The software-factory feature belongs to milestone 33, not to the release candidate.
+The software-factory feature belongs to milestone 33, not to milestone 15.
