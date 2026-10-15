@@ -7,6 +7,992 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0-alpha] - 2026-10-15
+
+### Added
+
+- **Five more Go SDK orchestrator verbs now work over MCP (go-quicbaas#124).**
+  `GetTask`, `ClaimTask`, `CompleteTask`, `SubmitTaskArtifacts` and
+  `SpawnChildJob` had no MCP tool. The server now registers
+  `quicbaas_orchestrator_task_get`, `quicbaas_orchestrator_task_claim`,
+  `quicbaas_orchestrator_task_complete`, `quicbaas_task_submit_artifacts` and
+  `quicbaas_orchestrator_spawn_child_job`. Each one requires the permission
+  that the gRPC method already requires. The SDK's MCP transport calls them by
+  name and decodes their results into the SDK responses. Inline artifact
+  `content` is base64, as it is on REST.
+
+- **The Go SDK's workflow CRUD verbs now work over MCP (go-quicbaas#124).**
+  `CreateWorkflow`, `GetWorkflow`, `UpdateWorkflow` and `DeleteWorkflow` had
+  no MCP tool. The server now registers `quicbaas_orchestrator_create_workflow`,
+  `quicbaas_orchestrator_get_workflow`, `quicbaas_orchestrator_update_workflow`
+  and `quicbaas_orchestrator_delete_workflow`. Get requires
+  `orchestrator:workflow_read`; the other three require
+  `orchestrator:workflow_write`, as the REST routes do. The tools return the
+  definition as `workflow`, the same shape as REST, and the SDK's MCP
+  transport decodes it into a `WorkflowDefinition`.
+
+- **The Go SDK's `GetFleetNode` and `ListBackendModels` now work over MCP
+  (go-quicbaas#124).** `GetFleetNode` takes the same arguments as the existing
+  `quicbaas_fleet_status` tool, so the SDK's MCP transport now calls that tool
+  and reads the `node` field of its result. `ListBackendModels` had no tool.
+  The server now registers `quicbaas_orchestrator_list_backend_models`
+  (`backend_name`, optional `node_id` and `tenant_id`), which requires
+  `orchestrator:backend_list` as the REST route does and returns the same
+  `backend` / `models` / `count` shape.
+
+- **The Go SDK's `ListBackendModels` now works over gRPC, QUIC and Unix
+  (go-quicbaas#124).** `OrchestratorService` gains a `ListBackendModels` RPC.
+  It requires `orchestrator:backend_list`, as the REST route
+  `GET /api/v1/fleet/{nodeID}/backends/{backendName}/models` does, and is
+  served by the same service call. An unknown backend returns `NotFound`, and
+  a missing name returns `InvalidArgument`. The SDK's gRPC
+  transport, and the Unix transport built on it, now route the verb. QUIC
+  already reached it through the REST route, and now has a test that proves it.
+
+- **The Go SDK's workflow CRUD verbs now work on every transport
+  (go-quicbaas#124).** `CreateWorkflow`, `GetWorkflow`, `UpdateWorkflow` and
+  `DeleteWorkflow` used to be served only over MCP. The REST and QUIC
+  transports now map them onto the existing `/api/v1/orchestrator/workflows`
+  routes. `OrchestratorService` gains the four RPCs, and the gRPC and Unix
+  transports call them. The embedded transport calls the agent service
+  directly. Permissions match REST: `orchestrator:workflow_read` for Get and
+  `orchestrator:workflow_write` for the rest.
+
+- **Every address key is settable by file, env and flag (go-quicbaas#185).**
+  `quicbaasd start`, `node` and `cluster` take `--host`,
+  `--raft-enrollment-acme-challenge-port`,
+  `--raft-enrollment-advertise-noise-port`, `--rag-embedding-api-url`,
+  `--cache-l2-redis-addr` and `--discovery-multicast-group`. The matching
+  `QUICBAAS_*` environment names (the config key with `.` as `_`) now apply
+  on both the daemon and the `pkg/config` loader. Precedence is flag > env >
+  file > defaults.
+
+- **The SDK scheduler job types carry what the scheduler service returns
+  (go-quicbaas#185).** `JobInfo` gains `Handler`, `Priority` and
+  `LastError`. `CreateJobRequest` gains `Priority`. `ListJobsOptions` gains
+  a `Handler` filter and a `Cursor`, and `ListJobsResponse` gains
+  `NextCursor`. `TriggerJobResponse` gains `Status`, and the pause, resume
+  and cancel responses gain `OldStatus` and `NewStatus`. The new
+  `DeleteJobWithOptions` sends `Force` and returns the job ID, `Deleted` and
+  the deletion time. Every transport fills these fields: REST, gRPC, QUIC,
+  MCP, Unix and embedded. A parity test checks each one against the real
+  server stack.
+
+- **The SDK serves messaging on every transport (go-quicbaas#185).**
+  `Async().Messaging()` previously reached the server only over REST and MCP.
+  The gRPC transport (and Unix, which delegates to it) now maps every
+  `quicbaas.Messaging/*` method onto `MessagingService`, and the embedded
+  transport registers all twelve methods against `svc.Messaging()`, mapping
+  messaging errors to SDK codes (NotFound, AlreadyExists, InvalidInput,
+  Unavailable, ResourceExhausted). QUIC carries the REST routes over HTTP/3.
+  Each transport has a round-trip test and a test that fails when a
+  `messaging.Client` method is missing from its table. The matrix is in
+  `docs/messaging/api.md`.
+
+- **`messaging.Client.WatchChannel` is served on every transport
+  (go-quicbaas#185).** REST serves it at `POST /api/v1/messaging/watch` and MCP
+  as `quicbaas_msg_watch_channel`, both with permission `messaging:watch`. The
+  SDK REST, QUIC and MCP transports map `WatchChannel` onto them, so it no
+  longer fails outside gRPC, Unix and embedded. gRPC, REST and MCP share one
+  request mapping, so they validate and build subscribe options the same way. An
+  empty key prefix is refused with `InvalidInput`.
+
+- **OIDC/OAuth2 interop leg (go-quicbaas#203).** A unit-tier test serves the IAM REST routes on a loopback listener and drives them with `golang.org/x/oauth2` and `lestrrat-go/jwx/v2`. It covers the discovery baseline, PKCE S256 code exchange, ID-token verification against the served JWKS, client credentials and RFC 7662 introspection. It also checks that a wrong PKCE verifier and a token signed by a foreign key are both refused. `lestrrat-go/jwx/v2` is now a direct dependency.
+
+- **The sdlc turn record says which tool calls failed (go-quicbaas#234).**
+  `AgentTurn` now has `tool_failures`, the count of `tool_result` blocks the
+  backend marked as errors. It also has `failed_tools`, the names of those
+  calls, matched to their `tool_use` blocks by tool-use id (`unknown` when the
+  turn has no matching call) and capped at eight. `failed_tools_cut` counts
+  the names the cap dropped. These fields are read only from blocks, never from
+  the reply text, so a reply that says a tool failed records no failure. A turn
+  with no `tool_result` block has no `tool_failures` field. The
+  `sdlc:agent_turn` event header shows the same fields.
+
+- **Host workers get a generated shell allowlist (go-quicbaas#250).** A new
+  `orchestration.agent_shell_allow` list of command prefixes (default empty)
+  is rendered at boot, with every `orchestration.verification_commands` entry
+  as an exact rule, into `<orchestration.agent_config_dir>/settings.json` as
+  Claude Code permission rules, so a worker spawned on the daemon host in
+  `acceptEdits` mode can run `go`, `gofmt` or `make` instead of parking as
+  needs_info. The file is generated: one that differs is overwritten
+  atomically (`0600`) with a WARN naming the key, a write failure fails boot,
+  and an empty or multi-line entry is refused at config load. Unset
+  `agent_config_dir` writes nothing; container workers are unchanged.
+
+- **Sysadmin tenant provisioning (go-quicbaas#358).** `POST
+  /api/v1/tenants/{tenant_id}/provision` creates a tenant and its first admin
+  in one call. It is the onboarding path when public registration is off.
+  The admin enrolls by CSR (`cert`, the default) or by a one-time invite token
+  (`invite`). The call is served over REST, QUIC, gRPC, Unix, MCP
+  (`quicbaas_iam_tenant_provision`) and the embedded transport, and is
+  reachable from the SDK as `iam.TenantClient.Provision`. It requires
+  `tenants:create`. Released in the next tag.
+
+- **Startup warning when self-service registration is on
+  (go-quicbaas#358).** With `iam.self_service_registration.enabled: true`,
+  the server logs one warning that names the flag, reports
+  `require_admin_approval`, and states that anyone can create a tenant and
+  become its Admin.
+
+- **`Security().Auth().UserByCertificate` and `UserByCertThumbprint` are
+  proven on every transport (go-quicbaas#376).** One case table (found,
+  unbound, another tenant's user, caller with no tenant) runs on the
+  embedded, gRPC and Unix transports in the unit tier, and on REST, gRPC,
+  QUIC, Unix and MCP against a live daemon in the integration tier. An
+  unbound certificate or another tenant's user is the typed `NotFound` on
+  each.
+
+- **FIDO2 `BeginAddCredential` adds a passkey to the caller's own account.**
+  It takes no request: the owner is the authenticated caller, looked up in its
+  own tenant's user store by username for mTLS and by the verified `uid`
+  claim for a quicbaas-issued bearer token. A token's `sub` (the login's email
+  or username) never names an account by ID, so an all-digit username cannot
+  reach the account whose ID it spells. A caller with no account in its tenant
+  is refused. Served on REST
+  (`POST /api/v1/xkms/fido2/credentials/begin`), gRPC, MCP, QUIC, Unix and
+  embedded, and used by `AdminFactors().Enroll` for fido2 factors
+  (go-quicbaas#378).
+
+- **`AdminFactors().Enroll` enrolls piv on the caller's own card slot.** The
+  request's `PIVGenerator` holds the slot key and `PIVCertStore` the slot's
+  certificate; `Enroll` never generates a key of its own, and a piv plan
+  missing either is refused before any state changes
+  (`AdminFactorUnavailableError`). The CSR is built with go-xkms
+  `CreateCSRWithKey`, and the issued certificate is installed in the slot
+  before the factor is persisted, so the card presents the certificate the
+  factor is bound to (go-quicbaas#378).
+
+- **`AdminFactors().Enroll` binds the request's `TenantID` for every factor.**
+  PIV certificate issuance and the piv factor write act in the requested
+  tenant even from an unbound context, as the passkey ceremony does; a context
+  already bound to a different tenant is refused with a conflict before
+  anything is issued or stored (go-quicbaas#378).
+
+- **Token introspection reports attestation (go-quicbaas#393).** For an active
+  access token that carries attestation, `POST /oauth2/introspect` now returns
+  `attest_level` and `attest_aaguid`, the same values the JWT carries. An
+  introspecting resource server can now enforce a hardware-only policy, as a
+  JWT-parsing one already could. Both fields are omitted for an unattested
+  token, and an inactive token still returns only `{"active":false}`. The Go
+  SDK's `service.TokenIntrospection` has the matching `AttestLevel` and
+  `AttestAAGUID` fields. Userinfo does not report attestation.
+
+- **Token introspection on every transport (go-quicbaas#393).**
+  `Security().Auth().IntrospectToken` now works over REST, QUIC, gRPC, the
+  Unix socket, MCP and the embedded transport. Every transport returns the
+  same `service.TokenIntrospection`, including `AttestLevel` and
+  `AttestAAGUID`. An inactive token returns only `Active=false`, and a missing
+  token is an invalid-input error. gRPC gains the `IntrospectToken` RPC and
+  MCP the `quicbaas_introspecttoken` tool; both need an authenticated caller
+  with `user_authfactors:login`. REST and QUIC call `POST /oauth2/introspect`,
+  which still requires mTLS or client credentials.
+
+- **`make changelog VERSION=vX.Y.Z` assembles the release notes before tagging
+  (go-quicbaas#474).** It folds every `changelog.d/*.md` fragment into a new
+  `## [X.Y.Z] - <date>` section of `CHANGELOG.md`, grouped under the Keep a
+  Changelog headings in their standard order (a `### Changed — BREAKING: …`
+  heading follows the plain `### Changed`), carries any text left under
+  `## [Unreleased]`, and empties `changelog.d` except its `.gitkeep`. A missing
+  or non-SemVer version, a version that already has a section, or a malformed
+  fragment is refused with the reason, and nothing is changed. The step is
+  committed before the tag; `release.yml` does not run it.
+
+- **Go SDK re-exports for config validation and trust bootstrap
+  (go-quicbaas#496, #519, #382, #440).** A consumer that may import only
+  `go-quicbaas/sdk/go` now reaches these upstream primitives as pure aliases,
+  instead of keeping a copy that drifts:
+  - `quicbaas.ParseAdminFactors`, `AdminEnrollmentPlan`, `AdminFactor` and
+    `UnsupportedAdminFactorError` (go-qrdb), to validate
+    `auth.admin_factors` at config load.
+  - `sdk/go/xkms/ssh/knownhosts.ValidateFingerprint` and
+    `InvalidFingerprintError` (go-xkms), the OpenSSH `SHA256:` fingerprint
+    check.
+  - `sdk/go/xkms/trust/fetcher.DefaultBundlePath` (`/v1/ca/bootstrap`) and
+    `DefaultTimeout` (go-xkms), the CA-bundle fetcher defaults.
+
+- **`sdk/go/xkms/acme/http01` re-exports the go-xkms client-side ACME
+  http-01 challenge responder (go-quicbaas#560).** An SDK-only consumer can
+  now answer an http-01 challenge: `NewResponder`, `Responder`,
+  `ResponderConfig`, and the typed errors `ResponderConfigError`,
+  `ResponderBindError` and `ResponderShutdownError`.
+- **`sdk/go/xkms/ssh/knownhosts` re-exports the OpenSSH fingerprint validator
+  (go-quicbaas#382).** `ValidateFingerprint` checks an operator-supplied
+  `SHA256:<base64>` host-key fingerprint and returns
+  `*InvalidFingerprintError` when it is malformed.
+
+- **Every fleet node record carries `backends` on every transport
+  (go-quicbaas#700).** It lists the primary backend first, then each
+  capability, each name once, and is `[]`, never `null`. One renderer,
+  `FleetNode.ServedBackends`, serves REST, QUIC, gRPC (`FleetNode.backends`,
+  field 16), Unix, MCP, the embedded transport and both SDKs. The Go SDK's
+  `ListFleetNodes` now reaches the MCP `quicbaas_fleet_list` tool.
+- **The tasks listing can ask which task holds a source reservation
+  (go-quicbaas#730).** The `source_kind` + `source_ref` filter is answered from the
+  reservation index, on REST, QUIC, gRPC, Unix, embedded and both SDKs.
+- **A prompt response carries a per-turn tool census beside `Usage`
+  (go-quicbaas#799).** `PromptResponse.ToolUse` counts the tool calls the turn
+  made, by tool name.
+
+- **Fleet nodes report host metrics on every heartbeat, and the control plane
+  judges fleet health from them (go-quicbaas#760, slice A).** The daemon
+  samples CPU utilisation, load averages, memory and work-directory disk. Each
+  value carries its provenance (`measured` or `derived`), and a value it could
+  not read is sent as unread, never as zero. `FleetHealthJudge` in
+  `pkg/orchestration` is fail-safe: a node with no sample, an unread reading it
+  needs, an invalid sample, or a sample older than the fleet heartbeat timeout
+  is unhealthy. A sample is aged by both the control plane's clock and the
+  node's clock, and the older of the two ages counts. Admission does not
+  consult health yet. See `docs/agent-fleet/user.md`.
+
+- **Placement admits a spawn through fleet health and measured capacity
+  (go-quicbaas#760, slice B).** A node that is unhealthy, unmeasured or
+  stale is not placed on. A node never takes more jobs than its declared
+  `max_concurrent_jobs`, however idle its sample looks. A node with no
+  measured room for another job is passed over, counting the spawns placed
+  since its last sample. What a job costs is recalibrated from the fleet's
+  own samples once at least 4 jobs are measured. The embedded node is
+  measured by the control plane's host. A refusal is
+  `FleetCapacityRefusedError`, naming each node and why; REST answers 503 and
+  gRPC `ResourceExhausted`, and the spawn never falls through to a local
+  backend. See `docs/agent-fleet/user.md`.
+
+- **Discard removes concluded attempt workspaces (go-quicbaas#777).** The
+  discard stage removes earlier attempts' workspaces, and this attempt's when
+  the task completed; a parked attempt keeps its checkout. Removal runs on the
+  host holding the workspace (locally, or through the fleet node's new
+  `RemoveWorkspace` RPC), refuses links, non-directories and a workspace held
+  by a live session, and logs a failure as `WorkspaceRemovalError`. The fleet
+  daemon sweeps at start-up and every 15 minutes.
+- **Fleet nodes advertise a reachable address (go-quicbaas#795).**
+  `quicbaas fleet serve --advertise <host:port>` (also `advertise_addr` in
+  config and `QUICBAAS_ADVERTISE_ADDR`) names the address the control plane
+  dials. The node binds before it enrolls, and registration refuses an
+  address that does not resolve or accept a connection with
+  `422 agent_address_unreachable`. Fleet node records carry
+  `advertised_address` and `reachability`. A model listing that cannot reach
+  the node's daemon answers 503 (502 when the daemon fails) naming the daemon
+  address, and the web Inference page shows that message and opens on a
+  backend whose models list.
+
+- **Prompts are tenant-scoped, versioned records (go-quicbaas#804).**
+  `pkg/orchestration/prompts` gains a `Store` over each tenant's qrdb store
+  (compare-and-swap writes, inline history bounded at 20 revisions, rollback
+  and reset as new revisions, write audit with identifiers only), a
+  `Resolver` that answers project → tenant → system → embedded while skipping
+  unedited `follow_parent` copies, and a `Seeder`. Boot reconciles the system
+  set onto the build's embedded defaults and seeds any tenant's missing
+  prompts without touching an edit; creating a tenant copies the system set
+  and removes the copy if creation rolls back. Each job resolves its set once
+  at launch, refuses to launch when that fails, and records the versions it
+  ran with in `JobStatus.Prompts` and a `prompts:resolved` audit event; the
+  SDLC issue source resolves once per poll. The `prompts:read`,
+  `prompts:write` and `prompts:history` permissions are registered for
+  `admin` and `operator` (history also `auditor`). Transports, the GUI and
+  the per-role charters follow in #805 to #807.
+
+- **quicbaas's API module is reachable over go-qrdb's QUIC transport
+  (go-quicbaas#819).** `Module.RegisterQUIC` registers the `RegisterGRPC`
+  services, so every unary method that declares a `(qrdb.v1.permission)`
+  projects onto QUIC under the permission gRPC already enforces, with the same
+  late-bound Unavailable answer before the facade is composed. Public login and
+  health methods (QUIC has no unauthenticated path) and streaming methods stay
+  off QUIC. The per-service table is in `docs/composition/architecture.md`.
+
+- **`keep` on the spawn request (go-quicbaas#843).** `SpawnSessionRequest`
+  takes an optional `keep` (proto field 35, JSON `keep`). It is persisted on
+  the session record and keeps a session bound to no job past the idle
+  bound. It changes nothing for a session bound to a job. The field is
+  carried by REST, gRPC, QUIC, Unix, the embedded transport and the MCP spawn
+  tool, and is exposed by the Go and TypeScript SDKs and by
+  `quicbaas orchestrator spawn --keep`. Sessions spawned from Signal chat are
+  kept.
+
+- **`quicbaas-git-sign`, git's `gpg.ssh.program` over MCP
+  (go-quicbaas#903).** The new helper (`make build-git-sign`) signs commits
+  with the session's key held in quicbaas. It reaches the key through the
+  session's own MCP client certificate (`quicbaas_ssh_key_export` and
+  `quicbaas_ssh_key_sign`), so it never holds private key material. It builds
+  and armors the SSHSIG itself, and verifies the signature locally before
+  writing it. It accepts only `-Y sign -n git -f <key>`; any other invocation
+  is a typed `ErrInvalidInvocation` and writes no signature. A signing
+  session that carries a helper (`sdlc.SigningHelper`) has
+  `gpg.ssh.program` set on the commit and the train merge, and only those
+  commands receive the helper's environment. The agent socket is unchanged.
+- **Every SSH signature is audited.** `SignDigest` records an `ssh.key.sign`
+  event on every transport, for success and failure alike. The event names
+  the calling principal, its tenant and the key.
+- An agent session's floor does not include `keys:get` or `keys:sign`, so
+  until signing sessions are granted those permissions the helper is refused
+  with `*rbac.PermissionDeniedError`.
+
+- **`quicbaasd` installs a process-wide locked-memory budget at startup
+  (go-quicbaas#1010).** New setting `server.secure_memory_budget_mib`
+  (`QUICBAAS_SERVER_SECURE_MEMORY_BUDGET_MIB`): `0`, the default, derives the
+  budget from the host (64 MiB, or `RLIMIT_MEMLOCK` less 2 MiB of headroom when
+  that is smaller); a positive value is used as given. The daemon, and
+  `quicbaasd init`, refuse to start with a typed `SecureMemoryBudgetError` when
+  the budget is negative, exceeds `RLIMIT_MEMLOCK`, or cannot be derived.
+
+- **A project can be bound paused (go-quicbaas#1041).** `quicbaas sdlc bind
+  --paused` binds a project without switching its autonomy on, so it can be
+  staged and switched on later with `quicbaas project update --autonomous`.
+  A paused bind never switches autonomy off, and the flag is not stored on
+  the binding. It is REST `?paused=true` (a value that is not a boolean is a
+  `400`), gRPC `BindProjectRequest.paused`, the MCP `sdlc_bind` argument
+  `paused`, and `BindRequest.Paused` / `bind(..., paused?)` in the Go and
+  TypeScript SDKs.
+
+- **A repository can be onboarded like an existing project (go-quicbaas#1041).**
+  `quicbaas sdlc project onboard --repo <repo> --like <project>
+  [--max-concurrency N] [--paused]` creates the repository's project from the
+  template's (signing key `agent-<repo>-signing`, scope `service`), creates
+  its webhook secret, binds it with the template's binding retargeted at the
+  repository, provisions its webhook and labels, and checks its signing key,
+  forge token, branch protection and workflows. Every step checks before it
+  acts and is reported `created`, `unchanged` or `finding`, so a rerun after a
+  repair picks up where the last run stopped; a missing forge token or SSH key
+  is a finding, never imported. The command exits non-zero while any step is
+  a finding. It is REST `POST /api/v1/sdlc/repos/{repo}/onboarding`, gRPC
+  `SDLCService.OnboardRepo`, the MCP tool `sdlc_project_onboard` (all
+  `sdlc:bind`), and `client.SDLC().OnboardRepo` in the Go SDK on every
+  transport.
+
+- **Onboarding can gate autonomy on a green preflight (go-quicbaas#1041).**
+  `quicbaas sdlc project onboard --preflight` binds the project paused, then
+  runs the binding's verification commands once as a `preflight` job: on the
+  default branch, in the worker image, through the `container_command` guard,
+  with no agent turn and nothing run on the daemon. Autonomy switches on only
+  when every command passes; otherwise the `preflight` step is a finding
+  naming each failing command and its failing lines, or the command the
+  guard refused. With `--paused` a green preflight leaves autonomy off. A
+  rerun on an autonomous project runs nothing. It is the `preflight` field
+  on REST, gRPC (`OnboardRepoRequest.preflight`), MCP
+  (`sdlc_project_onboard`) and `RepoOnboardRequest.Preflight` in the Go SDK
+  on every transport.
+
+- **The Software Factory worker image builds through the fleet's dev caches
+  (go-quicbaas#1159).** `make build-worker-image` passes `DEVCACHE_GOPROXY`,
+  `DEVCACHE_GOPRIVATE` and `DEVCACHE_NPM_REGISTRY` through by name, from the
+  caller's environment or command line, to three new `ARG`s the Dockerfile
+  declares but never defaults or `ENV`s; unset, or with a cache unreachable,
+  the build is byte-for-byte what it always was. The toolchain stage's `go
+  install` / `go get` / `go build` feed `DEVCACHE_GOPROXY` through Go's `|`
+  fallback chain and set `GOPRIVATE`/`GONOPROXY`/`GONOSUMDB` from
+  `DEVCACHE_GOPRIVATE`; the agent-CLI `npm install -g` evaluates
+  `devcache-env` first. The image now carries `devcache-env` itself at
+  `/usr/local/bin/devcache-env`, embedded byte-for-byte from dev-cache
+  v0.1.0 via a BuildKit heredoc and checked against its pinned SHA-256 at
+  build time, so the Dockerfile keeps building from the empty context the
+  daemon's worker-image refresh depends on.
+
+- **`sdk/go/tenantctx` re-exports `pkg/tenantctx` (go-quicbaas#1171).** A
+  host that may import only the SDK binds and reads the request tenant as the
+  server does: `WithTenant`, `FromContext` and `Target`. A context with no
+  tenant, or a request naming another tenant, is still refused with
+  `ErrForbidden`.
+- **`sdk/go/xkms` re-exports `TPMPolicyPlatform` (go-quicbaas#1171)**, the
+  name of the built-in TPM policy every scope has.
+- **`sdk/go/xkms/acme` re-exports `ACMETPMModule` and `ACMEXKMSTPMAdapter`
+  (go-quicbaas#1171)**, the types `NewACMEXKMSTPMAdapter` builds, so a
+  consumer can hold and pass the TPM enrollment adapter without importing
+  go-xkms.
+
+- **`batch.yml`: fuzz, race-full, soak and bench on the batch runners
+  (go-quicbaas#1277).** Adopts the handbook's batch workflow template v1. It is
+  dispatch-only and in no merge gate; it runs on the `batch` runner label, so
+  it never takes a CI slot from a pull request. `race-full` runs `./pkg/...
+  ./cmd/...` three times under the race detector with the unit suite's full
+  tag set, `soak` loops `make integration-test` (Ollama and GPU suites
+  excluded), and `bench` runs `make benchmark`'s scope with `-count=5` for
+  benchstat. Findings are printed as `BATCH-FINDING` log lines. The repo has
+  no `Fuzz*` targets yet, so the fuzz job finds none and passes.
+
+- **Per-package benchmark and coverage targets for the Go SDK module.**
+  `make bench-sdk-go-<package>` and `make coverage-sdk-go-<package>` join
+  `make test-sdk-go-<package>`: each resolves the package the same way
+  (dashes name nested directories, so `transport-grpc` is
+  `sdk/go/transport/grpc`) and runs inside the `sdk/go` module. Benchmarks use
+  `bench-sdk-go`'s flags; coverage writes
+  `coverage/coverage-sdk-go-<package>.{out,html}` and prints the total, as
+  `coverage-<package>` does. An unknown package name fails before Go runs, and
+  `make check-package-targets` asserts all three.
+
+- **The container runtime moved in from go-trusted-platform
+  (go-quicbaas#1349).** `pkg/containerruntime` is gtp's `pkg/compute/podman`,
+  brought over with its history and tests: the `PodmanManager` lifecycle
+  model, attestor hooks, exec, attach and pty, and metrics. It runs only in
+  the fleet node agent and is not wired yet; a test fails if `quicbaasd`
+  links it. Its exec core is replaced by in-process runc `libcontainer` in a
+  later change.
+
+- **Two runtimes can no longer share a work dir (go-quicbaas#1349).** The work
+  dir scopes the owner label the container sweep reaps by, so two runtimes on
+  one dir would reap each other's containers. `quicbaas fleet serve` and the
+  embedded fleet node (when `embedded_fleet_node.data_dir` is set) now take an
+  exclusive `flock` on `<work dir>/runtime.lock` at startup and hold it until
+  shutdown; a second runtime refuses to start with `fleet.WorkDirLockedError`,
+  which names the dir and the holder's PID. The lock dies with the process, so
+  a crash never leaves it stale.
+
+- **A cgo fleet node agent build and its FIPS twin (go-quicbaas#1349).**
+  `make build-agent` builds `bin/quicbaas-agent`, the linux `quicbaas` CLI
+  with `CGO_ENABLED=1`, statically linked (`-linkmode external -extldflags
+  -static`, tags `netgo osusergo`), for runc `libcontainer`'s `nsenter` init.
+  `make build-agent-fips` builds the `GOFIPS140=latest` twin,
+  `bin/quicbaas-agent-fips`. `make check-agent-build` builds both and fails
+  unless their build info shows `CGO_ENABLED=1` (and, for the twin,
+  `GOFIPS140` with `fips140=on` by default) and `quicbaasd` still shows
+  `CGO_ENABLED=0`.
+
+### Changed
+
+- **A 3-node integration proof that cluster-wide scheduler jobs fire once
+  per tick (go-quicbaas#105).** The cluster integration config now enables
+  the scheduler. The new `make integration-test-cluster-scheduler` target
+  checks run records on every node. First, a node-affine job runs only on
+  its node. Next, a cluster-wide job fires once per period with matching
+  history on all nodes. Then the target stops the leader, and the job
+  resumes under the new leader with no duplicate or missed firing. Cluster
+  test readiness now accepts any live node, so a stopped node1 no longer
+  fails the suite at start-up.
+
+- **gRPC sends `rate_limited` as `RESOURCE_EXHAUSTED` (go-quicbaas#158).**
+  Before this change a `rate_limited` error reached gRPC clients as
+  `INTERNAL`. Every gRPC service now maps `pkg/errors` codes through one
+  table; the scheduler, messaging, orchestrator, KMS, IAM, MFA, PEP and
+  federation services each used a shorter list of their own. These codes no
+  longer fall through to `INTERNAL` anywhere: `not_allowed` and
+  `system_keyspace_violation` (`PERMISSION_DENIED`), the
+  `missing_*_context` and `missing_justification` codes
+  (`INVALID_ARGUMENT`), `not_implemented` (`UNIMPLEMENTED`) and
+  `circuit_open` (`UNAVAILABLE`). Two codes change status: `configuration` is
+  now `INTERNAL` (was `FAILED_PRECONDITION`) and `out_of_range` is now
+  `INVALID_ARGUMENT` (was `OUT_OF_RANGE`), which matches REST.
+  The full map is in the gRPC status table of the multi-protocol API
+  reference. gRPC carries no retry-after hint.
+- **The Go SDK's gRPC transport returns typed errors (go-quicbaas#158).**
+  Errors from every gRPC service now carry an SDK error code, so
+  `errors.Code` and `errors.IsRetryable` work on them. Before this change
+  most of them came back as `unknown`. A `rate_limited` error is the
+  retryable `rate_limited` code on gRPC as on REST. `rate_limited` is now
+  retryable in the SDK, so the gRPC transport retries it within its
+  `MaxRetries` budget. The REST transport does so only for calls with no
+  dedicated route handler.
+
+- **A rate-limited REST request now gets a typed error code (go-quicbaas#158).**
+  A 429 from the global REST limiter or the OAuth2 client-authentication
+  limiter now has `"code": "rate_limited"` and `"retryable": true` in its body
+  and a `Retry-After: 1` header. Before this change the body had no code and
+  said `"retryable": false`. Clients can now recognise a limiter refusal
+  without parsing the message. Core and module routes return the same body.
+
+- **The REST API now rate-limits every source IP by default (go-quicbaas#158).**
+  The global limiter allows 1000 requests per second per source IP, with a
+  burst of the same size. Over the limit, a request gets `429 Too Many
+  Requests`, which the Go SDK reports as the retryable `CodeRateLimited`. The
+  SDK's REST transport retries it within its `MaxRetries` budget only for
+  calls with no dedicated route handler, and does not wait for `Retry-After`.
+  Set `server.rest.rate_limit` to raise or lower the limit, or set
+  it to `-1` to turn the global limiter off. Omitting the key, or setting it
+  to `0`, keeps the default. Values below `-1` fail validation. The limit
+  applies to the client address that `server.trusted_proxies` resolves.
+  Behind a load balancer that is not listed there, all traffic shares the
+  balancer's single bucket. The stricter per-source limiter on
+  `/oauth2/token`, `/oauth2/revoke` and `/oauth2/introspect` still applies
+  with the global limiter on or off.
+
+- **Every Raft address is now configurable, and none is invented
+  (go-quicbaas#185).** The new key `raft.listen_host`
+  (`QUICBAAS_RAFT_LISTEN_HOST`, `--raft-listen-host`, default unset) sets
+  the interface to bind when `raft.listen_address` is unset. In that case the
+  bind address is `raft.listen_host` on the port of `raft.raft_address`.
+  `raft.listen_address` (`QUICBAAS_RAFT_LISTEN_ADDRESS`, new flag
+  `--raft-listen-address`) now defaults to unset. Any value set for it is used
+  exactly as given, including `127.0.0.1:63000`, which was previously rewritten
+  to `0.0.0.0:63000`. Precedence is flags > environment > file > defaults for
+  every key.
+- `--raft-address` sets only the advertised address. It no longer sets the
+  bind address too, so a node started with `--raft-address 10.0.0.5:63001`
+  binds `10.0.0.5:63001` unless `raft.listen_host` or `raft.listen_address`
+  says otherwise.
+- `--raft-port` keeps the configured hosts. It moves the port of the
+  configured advertised address and of a configured `raft.listen_address`;
+  it no longer resets them to `<hostname>` and `0.0.0.0`. If no advertised
+  address is configured and the hostname cannot be read, `quicbaasd` refuses
+  to start and asks for `--raft-address`; it no longer advertises
+  `localhost`.
+- A single-node clustered node advertises its configured `raft.raft_address`.
+  An empty one refuses the boot instead of falling back to `127.0.0.1:63101`.
+  See `docs/cluster/architecture.md#raft-addresses`.
+
+- **No hardcoded addresses in the CLI, devcluster, WebAuthn origin or
+  tracing (go-quicbaas#185).** A literal address now appears only as a
+  defaults-layer value.
+- devcluster has a new `devcluster.host` setting (env
+  `QUICBAAS_DEVCLUSTER_HOST`, default `localhost`). Every node's Raft
+  address, listen address and join roster is built from it, and IPv6 hosts
+  are bracketed.
+- The CLI tracing settings are now flags as well as environment variables and
+  config keys, with the precedence flag > env > config file > default. The
+  flags are `--tracing-enabled`, `--tracing-exporter`, `--otlp-endpoint` and
+  `--tracing-service-name`; the keys sit under `tracing.*`.
+  `localhost:4317` is the endpoint default only.
+- `quicbaas upgrade start` returns `NotConfiguredError` when both `--server`
+  and `--address` are empty. It no longer substitutes `localhost:50051`.
+- The `quicbaas transaction` `--rest` default is now
+  `https://localhost:<server.rest.port default>`, the same port the daemon
+  uses (8443, over TLS). The WebAuthn issuer falls back to that port as well.
+
+- Configuration validation rejects a
+  `raft.raft_enrollment.acme.challenge_port` that is not a number from 1 to
+  65535, a `raft.raft_enrollment.advertise_noise_port` outside 0 to 65535,
+  and a `discovery.multicast.group` that is not a multicast IP.
+
+- **A malformed environment override fails the config load (go-quicbaas#185).**
+  `config.Loader.Load` (the SDK `NewConfigLoader`) used to drop a
+  `QUICBAAS_*` value it could not parse and start on the file or default
+  value. A port or count that is not an integer, a duration
+  `time.ParseDuration` rejects, or a boolean other than `true`/`1`/`yes`/`on`
+  or `false`/`0`/`no`/`off` now returns `*config.InvalidEnvValueError`
+  (matching `config.ErrInvalidEnvValue`) naming the variable and value; every
+  malformed variable is reported in one error.
+
+- **The CLI's server address is settable by config file and environment, not
+  only by flag (go-quicbaas#185).** `--address` resolves from the
+  `client.address` key and `QUICBAAS_CLIENT_ADDRESS`, and `txn --rest` from
+  `client.transaction_rest` and `QUICBAAS_CLIENT_TRANSACTION_REST`, with the
+  precedence flag > env > config file > default. Flag names and defaults are
+  unchanged.
+- A malformed address fails the command with `ErrMalformedServerAddress`
+  instead of being passed on to the transport.
+- `quicbaas txn` subcommands now load the CLI configuration, logger and
+  tracing like every other command. Before, the txn pre-run hook replaced the
+  root's and skipped them.
+
+- **A malformed daemon environment value fails `quicbaasd` startup
+  (go-quicbaas#185).** The variables `quicbaasd` parses itself used to be
+  dropped (`QUICBAAS_SERVER_{WRITE,READ,IDLE}_TIMEOUT`), read as false
+  (`QUICBAAS_ENABLE_SCHEDULER`, `QUICBAAS_{TIMESERIES,VECTOR,BACKUP}_ENABLED`
+  with any value outside `true`/`1`/`yes`/`on`), or exit the process from
+  inside a helper (`QUICBAAS_SERVER_SHARDS`,
+  `QUICBAAS_SERVER_ENTITY_SHARD_PINS`). Each now fails startup as an invalid
+  configuration with `*config.InvalidEnvValueError` naming the variable and
+  value, using the loader's rules: booleans accept `true`/`1`/`yes`/`on` and
+  `false`/`0`/`no`/`off` in any case. `config.EnvBool` and
+  `config.EnvDuration` are exported for this.
+
+- **An empty CLI server address is refused before any command runs
+  (go-quicbaas#185).** An empty `client.address` from `--address`, a set but
+  empty `QUICBAAS_CLIENT_ADDRESS`, or the config file now fails with
+  `ErrMalformedServerAddress`, as an empty `txn --rest` already did, instead
+  of reaching the client as `ErrEmptyAddress`. The same holds for an empty
+  `QUICBAAS_CLIENT_TRANSACTION_REST`. The error names the key and where the
+  value came from (flag, environment variable, config file or default).
+
+- Without `--transport`, the CLI picks the transport from `--address`
+  (go-quicbaas#185): an `http://` or `https://` URL selects REST, anything
+  else the default `unix`. An explicit `--transport` always wins. Before
+  this, a URL address with the default transport was used as a Unix socket
+  path.
+
+- **The `quicbaas scheduler job` and `scheduler status` commands go through
+  the SDK (go-quicbaas#185).** They call `Async().Scheduler()` on the SDK
+  client the global `--transport` selects, so they behave the same on every
+  transport. The CLI's own per-transport scheduler clients are deleted.
+  Output changes: `job create` prints only the new job's `id`, `name` and
+  `next_run`. The job view drops `target_tenant_id`, `created_by` and
+  `execute_at`. `job list` drops `timestamp`. `job trigger` prints `job_id` and `status`. `scheduler status`
+  shows `Uptime` instead of `Started At`, and its JSON keys are now
+  `running`, `total_jobs`, `running_jobs`, `success_count`, `failure_count`,
+  `uptime` and `last_tick`. `--output raw` is listed in the help.
+
+- **`messaging.Client.GetDedupStats` takes its channel (go-quicbaas#185).**
+  The server keys deduplication statistics by channel, but the SDK method took
+  no argument, so it failed with `InvalidInput` on every transport. It is now
+  `GetDedupStats(ctx, channel)` and is carried on REST, QUIC, gRPC, Unix, MCP
+  and embedded. A missing channel is refused with `InvalidInput`, an unknown
+  one with `NotFound`.
+
+- **`quicbaas msg` runs on the SDK messaging client (go-quicbaas#185).** Every
+  `msg` command now goes through `Async().Messaging()`, so it works on every
+  transport the SDK offers instead of only gRPC. The CLI's own messaging
+  clients are gone.
+- **`msg` flags and output follow the SDK.** Flags the SDK cannot carry are
+  removed: `create-channel --description`, `list-channels --limit/--offset/
+  --filter`, `subscribe --replay`, `list-subscriptions --limit/--offset`,
+  `publish --ack`, `watch --filter/--output/--timestamps/--raw` and
+  `dedup-stats --reset/--window`. JSON and YAML output print the SDK types.
+- **`msg subscribe` and `msg watch` register and exit.** The SDK has no
+  notification stream, so neither command streams messages. `watch` now takes
+  a KV key prefix; the REST and QUIC servers do not serve it and the command
+  returns the SDK's error there.
+- **`msg list-subscriptions` lists subscriber counts per channel.**
+
+- **A node listens on its advertised Raft host by default
+  (go-quicbaas#185).** With neither `raft.listen_address` nor
+  `raft.listen_host` set, the Raft transport binds `raft.raft_address` itself,
+  so `raft_address: node1:63001` binds `node1:63001`. No default binds
+  `0.0.0.0` or `::` any more; `raft.listen_host` (for example `0.0.0.0`) and
+  `raft.listen_address` (for example behind NAT) are the explicit opt-ins and
+  are honoured as given. An empty or wildcard advertised host with no listen
+  setting fails validation with `RaftAdvertisedHostError` instead of being
+  bound. See `docs/cluster/architecture.md#raft-addresses`.
+
+- **Interop claims audit (go-quicbaas#203).** A table in `docs/multiprotocol-api/engineering.md` lists each conformance claim with the test that enforces it. Claims with no enforcing test were narrowed: the incomplete browser authorization-code flow, the MCP client compatibility list, the gRPC client coverage, the unserved QUIC transport, and the RFCs that no external client exercises yet.
+
+- **Module transport docs describe go-qrdb's `RegisterQUIC` hook
+  (go-quicbaas#819).** They no longer say the hook does not exist. quicbaas's
+  own API module still takes the no-op default: its `EmbeddingService`
+  declares no `(qrdb.v1.permission)` options, and delegating to `RegisterGRPC`
+  would make QUIC server construction panic.
+
+- **Four trust-boundary rulings recorded (go-quicbaas#402, #416, #422, #329, #301).** The TOTP secret's unprotected KV read is an accepted boundary; verified hardware attestation alone satisfies `mfa_verified` for the release candidate; a PIV slot attestation reaches the server in the TLS handshake only, which browsers cannot do; and the embedded transport is not an authorization boundary — linking the SDK is the grant — while gRPC and the other network transports stay boundaries.
+
+- **`pkg/iam`'s client-secret tests run in parallel (go-quicbaas#335).** Each
+  of them derives PBKDF2-SHA256 at the production 600,000 iterations, and
+  they ran one at a time. The ones that share no mutable state now call
+  `t.Parallel()`. Under `-race`, the package dropped from about 18 minutes to
+  under 6 on a 6-CPU runner, and the gain grows with the core count. The
+  tests that swap a package seam (`verifySecret`, `tokenIDEntropy`) or
+  compare wall-clock times stay sequential. The work factor and the
+  30-minute timeout are unchanged.
+
+- **Self-service registration is documented in the example config
+  (go-quicbaas#358).** `.quicbaas.example.yaml` now has an
+  `iam.self_service_registration.enabled: false` block, and the IAM
+  configuration reference (`docs/iam/engineering.md`) explains it. The
+  default is still invite-only. Setting the flag to `true` lets anyone create
+  a tenant and become its Admin.
+
+- **`quicbaasd` now refuses to start on an invalid enabled
+  `iam.self_service_registration` section (go-quicbaas#358).** The section's
+  validation existed but no startup path ran it, so an unknown
+  `default_role`, an unsupported isolation mode, a `default_isolation_mode`
+  outside `allowed_isolation_modes`, or `barrier`/`volume` allowed with an
+  explicit empty `tenant_barrier_volume_pool` booted and failed only at the
+  first registration. The boot-time config validator now runs it, and the
+  daemon exits naming the offending key. A disabled section is not checked,
+  and an enabled section with no other keys set still starts.
+
+- **`quicbaasd` now refuses to start when
+  `iam.dynamic_client_registration.anonymous_tenant_id` is `system` on an
+  enabled section (go-quicbaas#358).** That setting would let an
+  unauthenticated caller mint OAuth2 clients in the control plane. The
+  section's validation existed but no startup path ran it; the boot-time
+  config validator now does, and the daemon exits naming the offending key.
+  `POST /oauth2/register` already refused a system landing tenant with 403 at
+  request time, and still does. A disabled section is not checked.
+
+- **Tenant provisioning is verified end to end against a running daemon
+  (go-quicbaas#358).** New IAM integration tests provision a tenant in cert
+  mode (the returned certificate logs in over mTLS and reads the tenant's
+  users) and in invite mode (the admin stays pending until the invite is
+  redeemed over PIV, and the token is refused a second time), assert the
+  system principal is refused a read of the provisioned tenant's users, and
+  assert invite provisioning of the system tenant is a 400, not a 500. The
+  integration helper's PIV invite activation now calls the per-tenant route
+  `POST /api/v1/iam/{tenant_id}/invites/{token}/activate/piv`; it called a
+  path without the tenant segment that no route serves.
+
+- **Self-service registration is proved end to end over REST
+  (go-quicbaas#358).** A new integration test boots the daemon with
+  `iam.self_service_registration.enabled` off and on. Off, both
+  `register/begin` and `register/finish` answer 403
+  `self_registration_disabled` and no tenant is written. On, a software
+  ES256 passkey completes the ceremony: the tenant is created, the registrant
+  holds its Admin role, the session cannot read another tenant's users, a
+  replayed finish is refused, and the passkey signs the registrant in through
+  the FIDO2 login route. The software authenticator is a shared integration
+  helper, `helpers.SoftwarePasskey`.
+
+- **Invite routing on QUIC and Unix, and the registration flag's off leg, are
+  now pinned by tests (go-quicbaas#358).** New SDK transport tests assert
+  `quicbaas.IAM.Invite` reaches the per-tenant route
+  `/api/v1/iam/{tenant_id}/invites/{token}` over QUIC and delegates every
+  invite verb over Unix, and that a request without the tenant is refused
+  before it is sent. A new IAM integration test asserts that with
+  `iam.self_service_registration.enabled` at its default, both registration
+  steps answer `403 self_registration_disabled`.
+
+- **The registration flag's on leg and cert-mode gRPC provisioning are now
+  pinned by tests (go-quicbaas#358).** The integration stack gains
+  `test-selfreg`, a single-node daemon with
+  `iam.self_service_registration.enabled=true` and admin approval off. A new
+  IAM integration test registers against it anonymously with a software
+  WebAuthn authenticator and asserts the tenant is created with its built-in
+  roles seeded, the registrant holds Admin in it, and the registrant can
+  invite a member. New gRPC unit tests cover `ProvisionTenant` in cert mode: a
+  valid CSR yields the issued certificate, and a missing, malformed,
+  mismatched-key or below-policy CSR is refused `InvalidArgument` with the
+  typed provisioning error.
+
+- **IAM user ids are qrdb's uint64 Snowflake (go-quicbaas#389).**
+  `iam.User.ID` is now a `uint64`, the id qrdb assigns, and zero means "not
+  created yet". The iam user-storage interface, `MemoryStorage` and the
+  qrdb adapter take and return it, and so do the Snowflake user-id fields in
+  `pkg/iam` and `pkg/service`. `ParseUserID`, `FormatUserID` and
+  `User.QRDBID` are removed. Both stores refuse id `0` in `GetUser`,
+  `MarkUserDeleting` and `DeleteUser` with `ErrInvalidUserID`.
+- The JSON encoding of these ids is a decimal string (`"id":"…"`), so an
+  id above 2^53 keeps its precision in a JavaScript client. YAML carries the
+  plain integer.
+- REST, gRPC, MCP and the embedded transport still take a user id as a
+  string. They parse it where it enters, and refuse a value that is not a
+  non-zero decimal uint64 with a typed error: `400` on REST,
+  `InvalidArgument` on gRPC, an invalid-input `UserIDArgError` on MCP and
+  `InvalidUserIDError` on the embedded transport. OIDC subjects, external
+  IdP ids and handles stay strings.
+
+- **One go.work script for the seal integration images.** `Dockerfile.seal`
+  and `Dockerfile.seal-hardware` run `test/integration/mkworkspace.sh` instead
+  of four inline copies of the workspace block, and its `go` line is the
+  image toolchain's `go env GOVERSION` rather than a literal.
+  `make check-workspace-script`, now part of `make test`, fails if a
+  Dockerfile writes a go.work inline again and tests the script against a
+  temporary directory (#399).
+- **golangci-lint is pinned everywhere it is installed.** The integration-test
+  image and the devcontainer read `GOLANGCI_VERSION` from
+  `pkg/version/toolchain.mk` and install the v2 module at it; `sdk/go`'s
+  `make tools` does the same, and its `make lint` now fails when the linter is
+  absent instead of skipping (#391).
+- **protoc and its Go plugins are pinned.** `make install-proto-tools` installs
+  protoc from its checksum-verified release zip and protoc-gen-go /
+  protoc-gen-go-grpc at the pins in `pkg/version/toolchain.mk`, and
+  `make proto-gen` refuses to run, naming each mismatch, unless the installed
+  versions match those pins (`make check-proto-tools`). The devcontainer
+  installs the plugins at the same pins (#481).
+
+- **Trust-boundary rulings recorded (go-quicbaas#402, #416, #422, #329).**
+  The plaintext TOTP secret between the KV read and `MFASecret.Secret` is an
+  accepted known limitation until go-qrdb offers a protected-bytes read. A
+  proven-hardware credential satisfies `mfa_verified` for the release
+  candidate; second-factor evidence (WebAuthn UV, PIV PIN policy) is the
+  follow-up. PIV slot attestation is accepted from the TLS handshake only, so
+  attested PIV login does not work from a browser; new tests pin that an
+  attestation sent outside the handshake is refused. The embedded transport
+  is not an authorization boundary: linking the SDK is the grant, and gRPC
+  stays a boundary.
+
+- **Proven hardware satisfies `mfa_verified` (go-quicbaas#416).** The rule
+  ratified for the release candidate is now stated where the claim is derived
+  and pinned by a test: a credential whose WebAuthn or PIV attestation proves
+  hardware yields `mfa_verified: true`, and an unattested or software-attested
+  credential yields `false`. No behaviour changes. Evidence of a second factor
+  (the WebAuthn user-verification flag, the PIV PIN policy) is not yet part of
+  the rule; that is the follow-up on go-quicbaas#416.
+
+- **The attestation-metadata refusal is pinned on the gRPC wire
+  (go-quicbaas#426).** A new integration test in `test/integration/login`
+  dials `qrdb.v1.UserAuthFactorService` on the quicbaas gRPC listener through
+  the go-qrdb SDK. It asserts that an `Add` or `Rotate` asserting
+  `attest_level` or `attest_aaguid` fails with `InvalidArgument` and a message
+  naming the key, that a refused `Rotate` leaves the old factor active, and
+  that a factor without reserved metadata reads back with `attest_level=none`.
+  A go-qrdb bump that turned the refusal into `Internal` now fails CI.
+
+- **The gRPC package has no linter suppression directives.** The dead legacy seal
+  surface on the gRPC `Server` (`SetSealManager` and its unread field) is
+  removed. The lifecycle seal shims are typed against
+  `interfaces.BarrierManager` instead of the deprecated `SealManager`
+  alias. The unused binary FastStateMachine encoders are removed; they
+  wrote a truncated length prefix for oversized keys. Tests dial with
+  `grpc.NewClient`.
+
+- **gRPC client limits are refused, not clamped.** `TSQuery`,
+  `TSListMetrics` and `ListBackupsFromRequest` reject a limit beyond the
+  int32 range as invalid input before the RPC is sent. A negative limit
+  is passed to the server unchanged.
+- **The `interfaces.SealManager` alias is removed.** Its users take
+  `interfaces.BarrierManager`, and the server seams are named for the
+  barrier.
+
+- **TPM-backed node provisioning now treats the go-xkms IAK policy update as
+  a re-provisioning event (go-quicbaas#665).** Operators must re-provision TPM
+  nodes that were provisioned before the go-xkms v0.49.0-alpha bump, and must
+  refresh anything that pinned the old IAK public key or certificate.
+
+- **More backends report a tool census.** codex `exec --json` now reports
+  `PromptResponse.ToolUse`, one call per tool item. If any completed item
+  cannot be decoded, its census is unknown (nil), not a count. Ollama and API inference
+  report a zero census, because their requests offer the model no tools. The
+  sdlc turn census prints `tool_uses=unreported` when the backend reports no
+  census and the content holds no `tool_use` block. A turn whose tool use was
+  not reported is no longer classified as a non-answer.
+
+- **The TypeScript SDK's QUIC transport refuses every verb with a typed reason
+  (go-quicbaas#809).** Orchestration, cost and worker-image verbs, plus auth,
+  barrier, ceremony, bootstrap, `connect` and `disconnect`, no longer throw a
+  bare "not implemented". `QuicNotImplementedError` is now a
+  `TransportNotSupportedError` and names the transport, family, method and
+  reason. Orchestration and cost refuse because the server's QUIC listener has
+  no route for them (go-quicbaas#819); the other families refuse because the
+  SDK does not speak qrdb's frame protocol. Nothing is sent over the network.
+  The reasons are recorded in `docs/software-factory/api.md`.
+
+- **The TypeScript SDK's projects, sdlc and accounts clients now exist on every
+  transport (go-quicbaas#809).** QUIC carries them as the REST dialect over
+  HTTP/3. MCP carries them over the server's `project_*`, `sdlc_*` and
+  `quicbaas_agent_account_*` tools. An argument a tool does not read is refused
+  rather than dropped: `metadata`, `clear_description`, the `autonomous`
+  project filter and the `status` account filter. gRPC-Web, Unix and Wails
+  cannot carry these families yet. On those transports every verb rejects with
+  the new `TransportNotSupportedError`, which names the transport, family,
+  method and reason; the field is no longer `null`. Each reason is recorded in
+  `docs/software-factory/api.md`. MCP tool failures surface as the new
+  `McpError`.
+
+- **The TypeScript SDK's Unix transport refuses every verb with
+  `TransportNotSupportedError` (go-quicbaas#809).** The server's Unix socket
+  serves native gRPC only, and the SDK has no Node gRPC client. The
+  orchestrator, auth and connection verbs therefore reject with the typed
+  refusal naming the transport, family, method and reason, as projects, sdlc
+  and accounts already did. `UnixNotImplementedError` is removed: its message
+  pointed at a framing protocol the server does not speak.
+
+- **The TypeScript SDK's MCP transport now carries the orchestrator family
+  (go-quicbaas#809).** `McpClient.orchestrator` calls the server's
+  `quicbaas_orchestrator_*`, `quicbaas_fleet_*` and
+  `quicbaas_sdlc_worker_image*` tools. It covers jobs, fleet, sessions, spend
+  and cost settings, backends, runners, health, inference, the workflow list,
+  task create/readmit/delete, attention, and the worker image. A verb with no
+  server tool now rejects with `TransportNotSupportedError` instead of
+  `McpNotImplementedError`, and so does an argument the tool does not read.
+  The verbs without a server tool are task list/get/claim/complete/decompose,
+  workflow create/get/update/delete, `listBackendModels` and the three
+  streaming verbs. `PromptSessionRequest`, `CloseSessionRequest` and
+  `RotateSessionAccountRequest` gain an optional `tenant_id`, which the MCP
+  session tools require. The session, job, fleet and workflow page listings
+  pass their filters, `limit`, `offset`, `sort` and `q` to the tool. They
+  return the server's page, with its `total` and `next_offset`, as REST does.
+  The verb list is in `docs/software-factory/api.md`.
+
+- **Deleting a project with an SDLC binding is refused (go-quicbaas#891).**
+  The delete fails with `ProjectBoundError` before the managed workspace is
+  touched, and the message names `quicbaas sdlc unbind` as the first step.
+  REST returns `409`, gRPC returns `FailedPrecondition`, and MCP passes the
+  remedy through in the tool error. A binding store that cannot be read
+  refuses the delete too. Delete never cascades into offboarding. The check
+  runs on every node with a tenant store resolver, including nodes with the
+  SDLC module disabled.
+
+- **Barrier credentials are bytes on every go-quicbaas wire
+  (go-quicbaas#962).** The `secret` of `BarrierInitializeRequest`,
+  `BarrierUnsealRequest` and `BarrierShamirInitializeRequest`, and the
+  `passphrase` of `BarrierEnableEncryptionRequest`,
+  `TenantBarrierInitRequest` and `TenantBarrierEnableEncryptionRequest`, are
+  now protobuf `bytes`. The frames are byte-identical to the old `string`
+  frames, but a credential no longer has to be valid UTF-8. The generated Go
+  fields change from `string` to `[]byte`, so gRPC clients compiled against
+  `api/proto` must update their call sites. Shamir share fields stay
+  `string`.
+- **REST break: barrier credentials in a JSON body must be base64.** This
+  covers `secret` on `/api/v1/barrier/initialize`, `/unseal` and
+  `/shamir/initialize`; `passphrase` on barrier enable-encryption and tenant
+  barrier init; and `key` on tenant barrier unseal. A raw string that is not
+  well-formed base64 now gets `400` with `BarrierCredentialEncodingError`.
+  The response does not echo the rejected text, and the request body is
+  wiped after it is decoded.
+- **TypeScript SDK: barrier credentials are `Uint8Array`.**
+  `BarrierInitRequest.secret`, `BarrierUnsealRequest.secret`,
+  `BarrierShamirInitRequest.secret`, `TenantBarrierInitRequest.passphrase`
+  and the `key` argument of `tenantBarrierUnseal` now take raw bytes, and the
+  REST client base64-encodes them. Callers that passed pre-encoded strings
+  now pass the bytes.
+- MCP is unchanged on the wire. A credential is still a JSON string, and
+  the server converts it to bytes in one function and wipes the copy after
+  use.
+
+- **SDLC webhook secrets are wiped with the SDK's `secure.Wipe`
+  (go-quicbaas#1010)** instead of a hand-rolled loop the compiler could drop.
+
+- **A verification command the allowlist refuses no longer fails an
+  onboarding.** `project onboard` reports it as a `binding` finding with its
+  remedy, and the steps after it wait.
+
+- **Docs name only CLI commands that exist (go-quicbaas#1258).** Documents `quicbaas upgrade`, indexes attestation and service-registry, and replaces invented `quicbaas` verbs and flags across `docs/` with real commands or config-file notes.
+
+- **CA, ACME and TPM documentation points at go-xkms (go-quicbaas#1258).**
+  A feature go-quicbaas re-exports from go-xkms is documented once, in
+  go-xkms. `docs/certificate-authority/` now keeps only the go-quicbaas delta
+  (transport matrix, permissions, CLI verbs, TLS configuration keys, key
+  custody) and links to the go-xkms CA, ACME, trust-bootstrap and DANE pages.
+  The built-in certificate generator, OpenSSL CA tutorial, certificate
+  key-type tables, broker-as-CA ACME prose and profile semantics are removed.
+  QuicBaaS's own certificate service and `/api/v1/acme/*` verbs are marked as
+  being removed, per the SPEC rows. The attestation, composition,
+  security-hardening, go-sdk and ssh pages link to go-xkms for the TPM 2.0,
+  TPM-policy, attestation-evidence and ACME behaviour they re-export.
+
+- **CI is tiered (go-quicbaas#1266, handbook sdlc §5a).** Every pull request
+  runs the PR tier: lint, unit tests, build and security, plus the
+  merge-result and snapshot jobs. The full tier (race, web, docker, the FIPS
+  build step and `integration.yml`) runs on push to `main`, on
+  `workflow_dispatch`, and on a pull request labelled `ci:full`. The label
+  takes effect on the pull request's next push or branch update. `CI Gate`
+  passes a full-tier job the tier skipped and fails one that was selected and
+  did not succeed. `nightly.yml` and `integration.yml` no longer have a
+  `schedule:` trigger; the coordinator dispatches the nightly full tier.
+  `integration.yml` now triggers on pushes to `main` instead of the
+  nonexistent `master` and `develop` branches.
+- **Lint's ceiling is 75 minutes, up from 45.** Lint takes 31-41 minutes on
+  most runners, and every run on the slowest runner hit 45, which turned
+  `main` red with no code at fault.
+
+- **QuicBaaS builds and deploys only on released go-qrdb, go-xkms and
+  go-quicraft versions.** `make check-library-pins`, now part of `make test`,
+  fails when `go.mod` or `sdk/go/go.mod` takes any of the three at a
+  pseudo-version or through a `replace` directive. `make proto-gen` reads
+  go-qrdb's `authz.proto` from the pinned module in the module cache instead
+  of a sibling `../go-qrdb` checkout, so generated code matches the deployed
+  qrdb. `docs/go-sdk/engineering.md` documents the deployment pins.
+
+- **The PR tier runs two unit-test legs, not six (go-quicbaas#1272).** A plain
+  pull request push runs lint, build, security, Merge Result, Merge-Result
+  Snapshot, the `default` and `sdk-go` unit-test legs, and `CI Gate`. The
+  `standard`, `lean`, `minimal` and `coverage` legs move to the full tier
+  (job `test-full`), so the coverage threshold holds on `main` and on a
+  `ci:full` pull request rather than on every push.
+- **Adding `ci:full` starts a full-tier run at once.** The `pull_request`
+  trigger of `ci.yml` and `integration.yml` now carries the `labeled` type.
+  Any other label also starts a run, which re-runs the PR tier on the same
+  commit; the ref-keyed concurrency group cancels the run it supersedes.
+- **Every `CI Gate` check is tagged `pr` or `full`.** A skip passes only for a
+  `full` job when the full tier was not selected; every other skip fails the
+  gate. `test/buildgates` (run by `make test`) asserts that every job is in
+  the gate's `needs` with a tagged `check` line, that the tags match each
+  job's `if:`, that every `pull_request` workflow has a ref-keyed
+  cancel-in-progress group, and that no workflow but `automerge.yml` carries
+  a `schedule:` trigger.
+
+- **`quicbaas fleet deploy --binary` defaults to `bin/quicbaas-agent`**, the
+  cgo agent build, instead of `bin/quicbaas-static`. `quicbaasd` is never
+  built with cgo.
+
+- **A clustered control plane refuses a loopback fleet node address
+  (go-quicbaas#1349).** On the node that hosts a co-located agent, a loopback
+  address (`127.0.0.1`, `::1`, `localhost`) passed the reachability probe,
+  but no other node of the cluster could dial it. Registration on a clustered
+  control plane now refuses it with `422 agent_address_loopback_in_cluster`
+  (`AgentAddressLoopbackInClusterError`), which names `--advertise`,
+  `advertise_addr` and `QUICBAAS_ADVERTISE_ADDR` as the fix. A single-node
+  control plane still accepts loopback, and every other address still goes
+  through the probe.
+- **The dev cluster's gRPC ports move to 9290-9292 (go-quicbaas#1349).** Node
+  2 took 9091, the fleet node agent's default, so an agent could not run
+  beside a dev cluster node. `devcluster.base_ports.grpc` now defaults to
+  9290. The agent's port is unchanged.
+
+### Removed
+
+- **`scheduler job history --cursor`.** The SDK's job history has no cursor.
+  When more executions exist, the command says so; raise `--limit` to see
+  them.
+
+- **The SDK Ollama client no longer has `DefaultModel()` or `BaseURL()`.**
+  No transport and no server verb served them, so they always returned an
+  empty string. `HealthResponse.BaseURL` carries the base URL.
+
 ### Fixed
 
 - **Batch soak survives a failed iteration** (#1317). The failure summary
@@ -15,6 +1001,1186 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prints each testify error, and keeps that iteration's service logs as
   `soak-logs/<i>.compose.log`. A new always-run step brings the integration
   stack down when the runner kills the loop at timeout or on cancel.
+
+- **Audit signature verification fails closed when signing is on (#22).**
+  With `sign_logs` enabled, `AuditLogger.VerifySignature` now reports an
+  event with an empty signature as unverified instead of valid, so stripping
+  a signature no longer hides a tampered field. With signing off every event
+  still verifies. Records written before signing was enabled carry no
+  signature and now report unverified while signing is on; they remain
+  readable.
+
+- **Secrets pointer updates are decided by the store (go-quicbaas#120).**
+  The internal secrets backend made only a path's first publish and Destroy
+  conditional; a Store, soft Delete or Rollback that updated an existing
+  pointer wrote it unconditionally, so two writers in different processes
+  could both be acknowledged and the last one silently won. Every pointer
+  update now goes through `CompareAndSwap` against the pointer bytes the
+  writer read. The loser gets `ErrWriteConflict` and its reserved version
+  entry is removed. A store without guarded writes still takes an
+  unconditional write and needs a single writer process.
+
+- **The Go SDK account list keeps its facets over MCP (go-quicbaas#124).**
+  `account.Client.List` over the MCP transport now returns the facet counts,
+  applied limit and offset, and next offset that the
+  `quicbaas_agent_account_list` tool already sends. Before this fix it kept
+  only the accounts and the total. The QUIC transport is the REST client
+  over HTTP/3, so it already carried every list's facets.
+- A cross-transport parity test now lists projects, accounts, tasks, jobs,
+  fleet nodes, sessions and workflows over REST (which also covers the QUIC
+  wire), gRPC, unix, MCP and embedded. For each list it checks that every
+  transport returns the same facets, and that a list with no counted facets
+  returns nil facets. One pair is not covered yet: workflows over gRPC and
+  unix.
+
+- **The Go SDK's `ListTasks` works over MCP (go-quicbaas#124).** The server
+  now registers `quicbaas_orchestrator_list_tasks`, the tool name the SDK's MCP
+  transport derives for `ListTasks`; before, the call failed with "tool not
+  found". The tool takes the same filters, paging and facets as
+  `GET /api/v1/orchestrator/tasks` and calls the same `ListTasksPage` service
+  method. It requires `orchestrator:task_list`, the permission the gRPC
+  `ListTasks` RPC declares. The cross-transport facet parity test now checks
+  tasks over MCP too.
+
+- **Seven Go SDK orchestrator verbs now work over MCP (go-quicbaas#124).**
+  `RegisterFleetNode`, `RemoveFleetNode`, `DisableFleetNode`,
+  `EnableFleetNode`, `CreateTask`, `DecomposeTask` and `GetTaskArtifact` had
+  server tools, but the tools are named after the surface
+  (`quicbaas_fleet_register`, `quicbaas_orchestrator_task_create`,
+  `quicbaas_task_get_artifact`, ...). The SDK's MCP transport built a different
+  name from the RPC, so each call failed with "tool not found". The transport
+  now calls each tool by its real name. It also translates each tool's result
+  into the SDK response:
+  - the RFC 3339 timestamp from decompose;
+  - artifact content sent as text, not base64.
+
+  `quicbaas_fleet_register` now takes `model` and `metadata`, which REST and
+  gRPC already took. `quicbaas_orchestrator_task_create` now returns the full
+  task record under `task`, next to its summary fields. Over MCP, a failed
+  create now comes back to the SDK as an error, as it does over REST.
+  `ListBackendModels` stays unmapped. `quicbaas_orchestrator_list_backends`
+  lists backends, not the models of one backend, so it does not fit that verb.
+
+- The fleet disable and enable tools now return snake_case keys (`node_id`,
+  `disabled`, `disabled_at`, `enabled`, `timestamp`). They used to return
+  PascalCase. The SDK's translation of the PascalCase keys has been removed.
+
+- MCP tools now report a missing workflow as not found and a duplicate
+  workflow as already exists. Both used to come back as internal errors.
+
+- MCP tools now report a missing fleet node or agent backend as not found.
+  Both used to come back as internal errors.
+
+- **gRPC orchestrator RPCs answer an unknown backend with `NotFound`
+  (go-quicbaas#124).** `SpawnSession`, `PromptSession`, `SessionStatus`,
+  `CloseSession` and `RotateSessionAccount` used to return `Internal` when the
+  named backend was not registered. They now return `NotFound`, as REST (404),
+  MCP (not found) and the gRPC `ListBackendModels` RPC already did, even when
+  the service wraps the error. The mapping now lives in one place for every
+  orchestrator RPC.
+
+- The REST orchestrator routes now return 400 for an invalid workflow
+  definition. They used to return 500.
+
+- **The embedded qrdb node pins the configured SPIFFE trust domain (#125).**
+  `iam.spiffe_trust_domain`, set in the config file or by an SDK consumer on
+  `sdk.ServerFullConfig`, only reached quicbaas's own first-boot and
+  transports; the embedded qrdb node never received it, so its mTLS
+  authenticator did not pin the domain the admin certificate was issued under
+  and its built-in CA minted certificates without a SPIFFE SAN. The value is
+  now passed to the node as its `auth.spiffe_trust_domain`. Left unset, the
+  node keeps qrdb's default (no SPIFFE pin).
+
+- **Closing an embedded-transport stream while its handler is sending no
+  longer panics (go-quicbaas#144).** `Close` cancels the stream context
+  instead of closing the receive channel, and every handler sends through one
+  helper that gives up once the stream is closed, so a send can no longer hit
+  a closed channel. `Recv` still drains buffered messages, including a
+  handler's final error, before it returns `ErrRecvOnClosedStream`; that error
+  is now delivered even when the buffer is full rather than dropped.
+
+- **Calling `CloseSend` on an embedded-transport stream while another
+  goroutine is in `Send` no longer panics (go-quicbaas#144).** `CloseSend`
+  wakes any blocked `Send` and closes the send channel only once no `Send` is
+  in flight. A `Send` that races `CloseSend` either delivers its message or
+  returns `ErrSendOnClosedStream`, and the handler still sees end of input
+  exactly once.
+
+- **The documented error contract now matches what the server sends
+  (go-quicbaas#158).** The REST error body is a flat object (`error`, `code`,
+  `details`, `timestamp`, `request_id`, `retryable`), not a nested `error`
+  envelope, and its codes are the lower-case `pkg/errors` codes. The error
+  table in `docs/multiprotocol-api/api.md` now lists each code with its real
+  HTTP status and retryability (`timeout` is 408, not 504), and notes that
+  the 400/401/403/404/408/409 responses from the core routes carry no
+  `code`. The invented upper-case and nested examples in the scheduler,
+  secrets, messaging, Ollama and data-services docs are replaced. A test
+  pins the REST error fields and checks the doc table against `pkg/errors`.
+  The wire format is unchanged.
+
+- **The root gRPC client reads `rate_limited` back (go-quicbaas#158).** The
+  `pkg/api/grpc` client and `pkg/service.FromGRPCError` returned a throttled
+  call as `resource_exhausted`. They now share one gRPC status map, which reads
+  `rate_limited` from the `RESOURCE_EXHAUSTED` status message, as the Go SDK
+  does.
+- **The Go SDK's gRPC transport keeps `OUT_OF_RANGE` and `DATA_LOSS`
+  (go-quicbaas#158).** They came back as `unknown`; they are now
+  `invalid_input` and `internal`.
+
+- **The global REST rate limit now covers module routes (go-quicbaas#158).**
+  The routes the unified API server serves through the quicbaas service
+  module skipped the global limiter, so a client could exceed its per-IP
+  limit by calling them. They now share the core router's limiter. Each
+  client has one budget across the whole REST surface and gets the same 429
+  on every route. Module routes resolve the client address with the same
+  `server.trusted_proxies` rules as the core routes.
+
+- **`storage.wal_dir` follows `storage.data_dir` from every source (#176).**
+  A daemon whose config file or `QUICBAAS_STORAGE_DATA_DIR` set
+  `storage.data_dir` and left `storage.wal_dir` unset kept the absolute
+  default WAL directory (`/var/lib/quicbaas/wal`) and failed the boot-time
+  writable-directory check; only the `--data-dir` flag derived it. The WAL
+  directory is now `<data_dir>/wal` whichever source set `data_dir`, unless
+  `wal_dir` is set explicitly, in which case it wins. The derivation is one
+  function, `config.DeriveWALDir`, run by the daemon and by `config.Loader`,
+  which now also reads `QUICBAAS_STORAGE_DATA_DIR` and
+  `QUICBAAS_STORAGE_WAL_DIR`.
+
+- **The auto-issued server TLS certificate honours configured SANs and no
+  longer repeats them (go-quicbaas#177).**
+  - Each SAN now appears once. A cert used to carry the host name up to four
+    times and `127.0.0.1` twice. DNS names are compared without regard to
+    case, and IPs by value.
+  - A SAN added to `server.additional_san_dns` or
+    `server.additional_san_ips` now takes effect at the next restart. The
+    server used to keep serving the first certificate it issued. It now
+    re-issues the certificate over the same key, revokes the old one as
+    superseded, and logs the added SANs. A certificate a previous boot
+    revoked but did not delete is replaced without a second revocation, so
+    an interrupted re-issue no longer blocks startup.
+  - The external-CA path now includes the additional SANs too.
+  - The config validator rejects an entry in `server.additional_san_ips`
+    that is not an IP address.
+
+- **The Secrets API reports when a secret was written, not when it was read
+  (go-quicbaas#179).** `GET /api/v1/secrets/<path>` returns the stored write
+  time of the returned version as `created_at`. `GET /api/v1/secrets`
+  returns the first version's write time as `created_at`, the latest
+  version's as `updated_at`, and the real `current_version` (it was always
+  1). The fix is in the secrets service, which every transport passes
+  through unchanged. The times come from the per-version records the store
+  already keeps, so
+  secrets written before this fix show their real write times. A read whose
+  version history cannot be loaded now fails, and the list leaves such a
+  secret out, instead of reporting the time of the read.
+
+- **A secret read over the KV backend reports the version it returned
+  (go-quicbaas#179).** The KV secrets backend now names the version it read
+  in the returned metadata, as the memory and encrypted backends already
+  did. `GET /api/v1/secrets/<path>` with no version therefore reports the
+  version and `created_at` of the data it returns, even when a write lands
+  during the read; before, it could report the newer version's number and
+  time beside the older data. The stored entries are unchanged.
+
+- **A secret write reports the version the backend assigned
+  (go-quicbaas#179).** The secrets service used to predict the next version
+  from the size of the history and store that guess in the secret's
+  metadata. Concurrent writers could report the same version, and after a
+  version was removed the guess fell behind the backend. Store, rotate,
+  rotation-policy and status writes now take the version from the backend's
+  write and no longer put a version into the metadata. The API, wire shapes
+  and tenant scoping are unchanged.
+- A secrets manager that cannot report the version of a write, or a read
+  whose metadata carries no version, is now an internal error
+  (`SecretVersionNotReportedError`) instead of a silent fallback. The
+  `pkg/secrets` backends implement `VersionedBackend`, and `Manager` gains
+  `StoreVersion` and `StoreVersionWithOptions`.
+
+- **A project's `discovery` mode now governs every SDLC trigger, not only
+  review (go-quicbaas#182).** A verified webhook delivery to a `poll` project
+  is acknowledged (`202`, `"ignored":"poll"`) and acts on nothing: no poller
+  nudge, triage wake, ruling readmission or review. Previously only the review
+  dispatch honoured the mode. The triage backstop skips `webhook` projects, as
+  the review floor already did. A `webhook` binding with no
+  `forge.webhook_secret_ref` is refused at bind time: every delivery would
+  fail verification and the mode runs no sweep, so the project would discover
+  nothing. `both` with no secret stays legal. The engine's issue poller still
+  sweeps every project whatever its mode.
+
+- **The inference and embedding upstream endpoints resolve through
+  configuration, not through literals in the code (go-quicbaas#185).**
+  `pkg/config/upstream_defaults.go` now states each provider's default
+  endpoint once: Ollama, OpenAI, Voyage and LM Studio. The RAG embedding
+  factory, the server's embedding wiring, the embedded fleet node and the
+  `--embedded-fleet-node-ollama-url` flag default all read that value instead
+  of restating it.
+- **`rag.embedding.api_url` can be set from the environment** as
+  `QUICBAAS_RAG_EMBEDDING_API_URL`, and the environment value wins over the
+  config file.
+- **With RAG unconfigured, the server's embedding manager dials
+  `ollama.base_url`.** It used to fall back to a hard-coded local address
+  whenever Ollama was disabled.
+- **An endpoint that resolves empty is a typed
+  `config.UpstreamEndpointMissingError` naming the key to set.**
+  - For a provider with no default, embedding stays disabled.
+  - For a blank `server.embedded_fleet_node.ollama_url`, the embedded fleet
+    node refuses to start.
+- **The embedded fleet node's default Ollama endpoint is now
+  `http://localhost:11434`**, the same value as `ollama.base_url`. It was
+  previously `http://127.0.0.1:11434`.
+
+- The CLI docs' Global Flags table lists the root command's real persistent
+  flags. It no longer lists `--output`, `--consistency`, `--max-retries` and
+  `--retry-backoff`, which only some command groups have, or
+  `--tls-skip-verify`, which does not exist; `--tenant` defaults to `system`,
+  not the retired `default`, and `--transport` to `unix`.
+
+- The CLI docs' "Transport selection" section describes what the CLI does
+  (go-quicbaas#185), including the `.sock` switch to `unix` under `grpc`
+  (CLI) and the switch to REST for an `http://` or `https://` address under
+  `grpc` (SDK client).
+- The orchestration CLI examples and the CLI agent instructions no longer
+  name `--tls-skip-verify`, which does not exist. Certificate verification
+  is never bypassed; the examples trust the server with `--tls-ca`.
+
+- The scheduler commands select their transport by the same rule as every
+  other command, so `--transport grpc` with a `.sock` address dials the
+  socket, and an unknown transport returns the typed
+  `UnsupportedTransportError` naming the transports the scheduler supports.
+- The root help names the real default socket, `$HOME/quicbaas.sock`, not
+  `/tmp/quicbaas.sock`, and its remote-server example passes the transport.
+
+- **The SDK MCP transport sends and reads the scheduler keys the server
+  tools use (go-quicbaas#185).** Labels go out as an object, status and owner
+  type as strings, timeouts as duration strings, and the history limit, the
+  cancel reason, the delete `force` flag and `node_affinity` now reach the
+  tools. Results are decoded through the scheduler service types, so tags,
+  run and failure counts, timeouts, job history and scheduler status are no
+  longer lost. The scheduler parity test now runs over MCP as well. The MCP
+  reference in `docs/scheduler/api.md` lists `node_affinity`, the server's
+  real required fields, and RFC3339 timestamps.
+
+- **The SDK reaches the ParameterStore and Ollama verbs over MCP
+  (go-quicbaas#185).** The SDK MCP transport derived tool names that the
+  server never registered, so these calls failed with "tool not found".
+  - ParameterStore `GetParameter`, `SetParameter`, `DeleteParameter`,
+    `ListParameters`, `SearchByTags`, `GetParameters`, `SetParameters` and
+    `DeleteParameters` now call `quicbaas_parameter_get`, `_set`, `_delete`,
+    `_list`, `_search`, `_batch_get`, `_batch_set` and `_batch_delete`.
+  - Ollama `ListModels`, `GetModelInfo` and `IsAvailable` now call
+    `quicbaas_ollama_model_list`, `quicbaas_ollama_model_info` and
+    `quicbaas_ollama_health`.
+- **The transport translates the arguments and results of these verbs.**
+  - Requests are sent in the string-typed arguments the tools parse.
+  - Results are decoded into the typed `client/parameterstore` and
+    `client/ollama` responses.
+  - A wrong request type, or a parameter value that is not valid UTF-8, is
+    refused as `InvalidInput` before any tool is called.
+  - An unknown ParameterStore method is `Unimplemented`.
+- **The Ollama tools return no `Timestamp` and no `Modelfile`.** Those
+  fields stay zero over MCP.
+- **The contract test no longer exempts these verbs.** `EmbedWithModel`
+  stays listed.
+
+- **Dedup figures are reported correctly.** The server's `total_messages`
+  counts unique messages, but every SDK transport treated it as the total
+  number of checks. `DedupStats` now reports `UniqueMessages` as the server's
+  unique count and `TotalChecks` as unique plus duplicates.
+- **The MCP dedup tool refuses an unknown channel.** `quicbaas_msg_dedup_stats`
+  now checks the channel exists, as the gRPC and REST handlers do, and refuses
+  an unknown one with a NotFound code. The SDK MCP transport no longer answers
+  `GetDedupStats` with Unimplemented.
+
+- **Ollama `Health`, `Embed` and `EmbedBatch` work over MCP
+  (go-quicbaas#185).** The tool names already matched, but the SDK client
+  rejected each tool result as the wrong type.
+  - The SDK MCP transport now decodes the `quicbaas_ollama_health`,
+    `quicbaas_ollama_embed` and `quicbaas_ollama_embed_batch` results into
+    `HealthResponse`, `EmbedResponse` and `EmbedBatchResponse`.
+  - `EmbedBatch` sends its texts as the JSON array string the tool expects.
+  - A wrong request type is refused as `InvalidInput` before the tool is
+    called.
+- **The embed tools return no `Timestamp`.** It stays zero over MCP, as it
+  does over REST.
+
+- **An unknown `--output` no longer half-runs a `msg` command.** The format is
+  checked before the command contacts the server.
+
+- **SDK REST and QUIC `messaging.Client.Subscribe` keep the filter's key prefix
+  (go-quicbaas#185).** The REST transport, which QUIC also uses, sent the
+  filter's event types but dropped `Filter.KeyPrefix`. A REST or QUIC
+  subscriber therefore received every key, while a gRPC or MCP subscriber
+  received only the prefix it asked for. The prefix is now sent as the subscribe
+  route's existing `key_prefix` field. The embedded transport now builds
+  `WatchChannel` and `Subscribe` options through the same request mapping as
+  gRPC, REST and MCP. An embedded `WatchChannel` with an empty key prefix is
+  refused with `InvalidInput`.
+
+- **A remote daemon call's token fetch honours the caller's context
+  (go-quicbaas#193).** `RemoteACPBackend` took its bearer token from an
+  `oauth2.TokenSource`, which has no context, so a slow token endpoint held
+  Spawn, Prompt, Status, Close and every other remote RPC, and the REST or
+  gRPC handler waiting on it, past the caller's deadline. The backend now takes
+  a `RemoteTokenSource` whose `Token(ctx)` returns when the caller's context
+  ends. The central's token source reuses a valid cached token and shares one
+  in-flight exchange among concurrent callers, without holding a lock across
+  the network call. It builds the request with `http.NewRequestWithContext`.
+  A token that cannot be had now fails the call with `RemoteBackendTokenError`
+  (`ErrRemoteBackendToken`). Before, the call was sent without a token.
+
+- **CLI help examples now name commands that exist (go-quicbaas#228).** The
+  per-tenant barrier help showed `quicbaas tenant barrier ...`; the group
+  lives under `iam tenant`, so the examples now read
+  `quicbaas iam tenant barrier ...`. The `scheduler job` verbs showed
+  `quicbaas scheduler <verb>` without `job`, and the top-level help named
+  `rag ingest`, `kms create-key` and `secrets store`, none of which exist;
+  they now show `rag query`, `kms key generate` and `secrets put`. A test
+  resolves every `quicbaas ...` example in the CLI's help against the real
+  command tree, so a wrong path fails the build.
+
+- **The desktop UI reports a denial as a denial (go-quicbaas#236).**
+  Previously every failed desktop binding call was reported as
+  `UNAVAILABLE`, so a 401 or 403 read as an outage, and the rejection reached
+  the page as a bare string with no status. A 401 or 403 from the server, or a
+  typed unauthorized/forbidden error, now surfaces as `UNAUTHORIZED` or
+  `FORBIDDEN`; only a genuine transport failure stays `UNAVAILABLE`. The
+  TypeScript SDK's Wails client rejects with the same `APIError` (carrying
+  `status`) that the REST client throws, so the dashboard shows "not
+  permitted" on both transports.
+- **The IAM view and fleet deploy dialog start from your own tenant
+  (go-quicbaas#312).** Previously both defaulted to `system`, and the IAM
+  tenant selector always offered `system`, so a tenant-scoped operator
+  managed, or deployed a node into, a tenant other than their own. Both now
+  start from the signed-in tenant. A tenant listing only adds entries to the
+  IAM selector, as it already did for the header tenant chip.
+
+- **The Go and JavaScript SDKs now call quicbaas's own session verbs,
+  `POST /api/v1/iam/{refresh,validate,logout}` (go-quicbaas#259, closes the
+  subset filed as #231).** Validate and logout send the access token in the
+  `Authorization: Bearer` header, not the body, so validate, logout and
+  renewal now work on a composed node. Before this, the SDKs called the
+  xkms-owned `/api/v1/auth/*` paths, so validate was rejected, logout
+  revoked nothing, and renewal failed. The Go REST transport also no longer
+  clears a caller-configured `Authorization` header after `ValidateToken`.
+
+- **Deleting a secret you do not have now answers `404`, not `500`
+  (go-quicbaas#281).** A delete of a path that is absent from the caller's
+  tenant — including one that exists only in another tenant's — reported an
+  internal error. It now reports `not_found`, as read, rotate and status
+  updates already did.
+- **The secrets tenant-isolation tests now test isolation (go-quicbaas#281).**
+  Two tenants, each with its own bearer, write the same path; each reads back
+  only its own value, and neither can read, list, update or delete the
+  other's. The old test wrote two different paths and passed with tenant
+  scoping removed.
+- **`docs/secrets/cli.md` no longer shows `--tenant-id` as a way to isolate
+  secrets (go-quicbaas#281).** The CLI has no such flag. The tenant comes from
+  the caller's credential; the API's `tenant_id` field may name only the
+  caller's own tenant and selects its DEK.
+
+- **WebAuthn registration no longer leaves a credential behind for an account
+  being deleted (go-quicbaas#290).** The credential write-through refuses an
+  account in the `deleting` lifecycle before writing, and re-checks after the
+  write so a deletion that starts mid-ceremony rolls the credential and its
+  login factor back. The ceremony fails with `WebAuthnRegistrantDeletingError`,
+  or `WebAuthnRegistrantLookupError` when the account cannot be read.
+
+- **An IAM request with a malformed field answers 400 / `InvalidArgument`,
+  not 500 / `Internal` (go-quicbaas#335).** A field the identity store
+  refuses (email, username, display name, tenant ID, user ID, role ID, role
+  name, and the batch import/export request fields) now answers 400 on REST
+  and QUIC and `InvalidArgument` on gRPC and Unix, and the embedded transport
+  hands back an `ErrInvalidInput`-coded error. The error names the field, and
+  `errors.As` still reaches the `*iam.ValidationError` behind it. The
+  validators in `pkg/iam` now report through the same coded error every
+  transport already maps, so no transport needed a case of its own.
+
+- **A malformed IAM create or update is refused as malformed, whatever the
+  server's state (go-quicbaas#335).** Creating a pending user with a malformed
+  email on a server with no invite store answered `Unavailable` on gRPC and
+  500 on REST, because the invite store was checked before the request.
+  `pkg/iam` now validates every field before any lookup or dependency check:
+  user create before the invite store, role references and tenant quota;
+  user update before the user and its named roles are looked up; role update
+  before the role is looked up. A malformed field therefore answers 400 /
+  `InvalidArgument` on every transport. A well-formed pending create with no
+  invite store is still refused, and REST now reports it the way gRPC does:
+  503 Service Unavailable (it was 500), because REST no longer resolves the
+  store itself but leaves that refusal to the shared `CreateInvitedUser`.
+
+- **The IAM service wrapper judges a create or update before it looks for
+  the identity store (go-quicbaas#335).** On a server with no identity store,
+  a malformed `Security().IAM()` user create or update was refused as
+  "identity store not available" rather than for its field. The wrapper now
+  runs the same field validation as `pkg/iam` (now exported as
+  `iam.ValidateCreateUserOptions` / `iam.ValidateUpdateUserOptions`) first.
+  A well-formed request with no identity store is still refused as
+  unavailable.
+- **`make test-iam` no longer times out before its tests finish.** Under
+  `-race`, `pkg/iam` takes about 16 minutes, more than `go test`'s default
+  10-minute timeout. `test-iam`, `test-iam-coverage` and `test-verbose`
+  (which includes `pkg/iam`) now set `-timeout=30m`.
+
+- **A session's history spinner is its own (go-quicbaas#351).** The UI session
+  store held one `historyLoading` flag for every session, so when a second
+  session was opened in the same tenant while the first was still loading, the
+  first load finishing cleared the second's spinner. The flag is now the
+  in-flight load's own token, cleared only by the load that set it, and the
+  history cursor is keyed to the session it pages and pinned before a request
+  goes out.
+
+- **Sidebar dashboard-label test no longer times out under suite load
+  (go-quicbaas#349).** It read `MainApp.svelte` through dynamic
+  `node:*` imports inside each case; it now reads the file once at
+  collection through static imports.
+
+- **MCP tool errors no longer leak server-side failure text (go-quicbaas#358).**
+  A tool call that failed for a server-side reason (storage, raft, internal)
+  returned the full error text to the MCP client, including paths and wrapped
+  store errors. MCP now applies the REST rule, from one shared classification
+  (`errors.DescribesRequest`): an error that describes the request keeps its
+  message, and any other coded error answers `the request could not be
+  completed` with its cause logged server-side. The error code is unchanged.
+- **MCP sealed-window and server-composing refusals are typed (go-quicbaas#358).**
+  Both used to reach the SDK caller as `INTERNAL`. They now carry the MCP
+  service-unavailable code, which the SDK returns as `UNAVAILABLE`, as REST
+  (503) and gRPC (`Unavailable`) already did.
+
+- **MCP tool errors keep their typed code (go-quicbaas#358).** A refused MCP
+  tool call used to reach the SDK caller as an internal error, whatever the
+  service said. For example, tenant provisioning refused as forbidden or
+  already-existing, or a missing secret, all arrived as `INTERNAL`. The
+  server now puts the MCP error code in the tool result's
+  `structuredContent` (`{"code": N}`), and the SDK MCP transport returns the
+  matching `sdk/go/errors` code. An error the server cannot classify is still
+  internal. Tenant provisioning in `cert` mode is now also tested on gRPC.
+
+- **A provisioned tenant admin can log in with the certificate provisioning
+  returns (go-quicbaas#358).** Cert-mode tenant provisioning bound the signed
+  admin certificate to the new admin but never enrolled it as an `mtls` login
+  factor, so `auth login --method mtls` could not resolve it. Provisioning now
+  enrolls it through the same enroller first-boot uses, under the provisioned
+  tenant and with the tenant in the factor's provenance. If the enrollment
+  fails, provisioning returns no certificate and deletes the admin it created,
+  then fails with `*TenantProvisionLoginFactorError`; a retry starts over. If
+  that cleanup fails too, it fails with `*TenantProvisionRollbackError`. The
+  cleanup runs detached from the request, bounded by its own timeout, so a
+  canceled or timed-out request no longer strands an admin that has no login
+  factor. It never deletes the tenant, because qrdb retires a deleted tenant
+  ID and a retry could not reuse it. It deletes only the admin its own call
+  created, so it cannot remove an admin that a concurrent provision of the
+  same tenant created. Provisioning an
+  existing tenant again now returns the existing admin's ID instead of an
+  empty one, and fails with `*TenantAdminLoginCredentialMissingError` rather
+  than reporting success when that admin holds no active login factor. PIV
+  invite activation also enrolls the activated certificate as an `mtls` login
+  factor now, under the invited tenant, before it activates the user. If that
+  enrollment fails, activation returns `*iam.PIVActivationLoginFactorError`
+  and the user stays pending. A certificate already enrolled for another user
+  is rejected before the invite is consumed, so that activation can be
+  retried with the right certificate, on any transport.
+- **A failed or losing PIV invite activation no longer leaves its certificate
+  able to log in (go-quicbaas#1275).** Activation now consumes the invite
+  before it activates the user, so exactly one of two racing activations wins;
+  the other fails with `*iam.PIVActivationRedeemError` (wrapping
+  `ErrInviteUsed`) instead of succeeding. Any activation that fails after
+  enrolling revokes the login factor it created, never one that existed
+  before the call. If the user update fails after the invite is consumed,
+  activation fails with `*iam.PIVActivationUpdateError` and the user must be
+  re-invited. If revoking the factor fails, activation fails with
+  `*iam.PIVActivationFactorCleanupError`, which names the residual factor,
+  and the audit log records its ID. Only the activation that consumed the
+  invite enrolls the factor, so a losing activation that presented the same
+  certificate can no longer revoke the factor the winner logs in with. A
+  factor store failure after the invite is consumed means the user must be
+  re-invited. The revocation also runs detached from the request, bounded by a
+  timeout, so canceling the request does not leave the factor in place.
+  Activation is also arbitrated per user, not only per token: a pending user
+  can hold several live invites (a retried provisioning mints another), and
+  before this change two activations presenting different tokens could each
+  enroll a factor. Activation now takes a per-user claim in the tenant store,
+  a create-if-absent decided by the store, before it writes anything. The
+  loser fails with `*iam.UserActivationInProgressError`, which satisfies
+  `iam.IsUserNotPending` and so maps to the same conflict status, having
+  written nothing. A failed activation releases the claim; a successful one
+  keeps it, so a later invite of the same user cannot activate it again unless
+  an administrator returns the user to pending. A tenant store that cannot
+  perform guarded writes is refused with
+  `*iam.UserActivationClaimUnsupportedError`. A factor revoked by a failed
+  activation still reserves its certificate, so the re-invited user must
+  activate with a different certificate until qrdb can release it.
+- **Tenant provisioning no longer leaves an admin nobody can use
+  (go-quicbaas#358).** Provisioning now accepts only `prefix` isolation and
+  refuses `barrier` (the default), `volume` and `raft` before writing
+  anything, with `*ProvisionBarrierIsolationError`: those keep the tenant's
+  IAM behind its own barrier, sealed until the tenant admin initializes it,
+  and qrdb cannot yet hold that admin outside it. The admin CSR is parsed,
+  signature-checked and held to the key policy (RSA 2048+, ECDSA
+  P-256/P-384/P-521, Ed25519) before any write, failing with
+  `*ProvisionAdminCSRInvalidError` or `*ProvisionAdminCSRKeyError`. When qrdb
+  fails after creating the admin, for example because the CA will not sign,
+  provisioning deletes the admin that call created, so a retry starts over. A re-run reports the existing admin only if that account is
+  active and holds the tenant-admin role; otherwise it fails with
+  `*TenantAdminAccountMismatchError`. In invite mode an omitted
+  `invite_expiry_hours` now gets the default invite lifetime, and a value
+  above the maximum is capped, as user invites are; before, an omitted expiry
+  minted an invite that had already expired.
+
+- **The MCP transport refuses an IAM request it cannot encode
+  (go-quicbaas#358).** An IAM request that could not be encoded as JSON used
+  to reach the tool with no arguments, and the call returned nothing and no
+  error. It now fails as invalid input before any I/O. Tenant provisioning is
+  tested in `cert` and `invite` mode on the REST, QUIC (over a real HTTP/3
+  listener), MCP and Unix SDK transports.
+
+- **A self-registered tenant creator holds the tenant's Admin role, or no
+  account at all (go-quicbaas#358).** Registration wrote the role names into
+  `User.Roles`, which holds role IDs, and discarded the write's error, so the
+  creator got a session without the Admin role. It now resolves the built-in
+  `admin` and default roles to their IDs and assigns them. If a grant fails,
+  finish returns an error and mints no session, and the account is deleted.
+
+- **`iam.self_service_registration.require_admin_approval` now defaults to
+  `true` (go-quicbaas#358).** It was documented as the safe default but was
+  never applied, so the server ran with `false`: with self-registration on,
+  new accounts were active without admin approval. An explicit
+  `require_admin_approval: false` is still honoured.
+
+- **`iam.self_service_registration.default_role` now defaults to `User`
+  (go-quicbaas#358).** It was documented as the default but never applied,
+  so enabling self-registration without naming a role failed validation at
+  startup. An explicit role is still honoured, and an invalid one is still
+  rejected.
+- **The environment now reaches every scalar
+  `iam.self_service_registration.*` key (go-quicbaas#358).** Before, a
+  `QUICBAAS_IAM_SELF_SERVICE_REGISTRATION_*` variable took effect only when
+  the config file also named the key, so an environment-only deployment
+  could not turn registration on. `allowed_isolation_modes` remains
+  file-only.
+
+- **`iam.self_service_registration.tenant_barrier_volume_pool` now defaults
+  to `default` (go-quicbaas#358).** It was documented as the default but
+  never applied, so allowing `barrier` or `volume` isolation without naming a
+  pool failed validation. An explicit pool is still honoured, and an explicit
+  empty pool with either mode allowed is still rejected.
+- **`iam.self_service_registration.default_isolation_mode` now defaults to
+  `keyspace` in the config itself (go-quicbaas#358).** The validator used to
+  substitute `keyspace` for an empty value; it no longer does, so an explicit
+  empty `default_isolation_mode` is now rejected like any other mode outside
+  `allowed_isolation_modes`.
+
+- **A tenant's WebAuthn override is validated when it is written
+  (go-quicbaas#368).** Creating or updating a tenant with a malformed
+  `settings.webauthn` RP ID or origin is refused with an `ErrInvalidInput`
+  error naming the field (REST 400, gRPC `InvalidArgument`), held to the same
+  rules as the global `iam.webauthn` config. Those rules now live in
+  `pkg/webauthnrp`, shared by `pkg/config` and `pkg/iam`.
+- **A stored bad override fails closed.** The per-tenant WebAuthn factory
+  validates the merged relying party before building it and returns
+  `*iam.WebAuthnTenantRPError` instead of building a relying party that fails
+  every ceremony; an override stored before this release is caught there.
+
+- **The web UI reconciles the session identity before it attaches a bearer
+  (go-quicbaas#369).** Previously, when a sibling tab signed in while a request
+  was being prepared, the request could go out under the sibling's session and
+  its response commit under this tab's previous one. It now goes out under the
+  session in effect, and the stale response is discarded. A sibling tab's
+  renewal of the same login is still adopted without ending the session.
+
+- **A replaced or revoked PIV certificate can no longer go on resolving the
+  account after concurrent binding updates (go-quicbaas#375).** QuicBaaS no
+  longer keeps its own legacy-PIV thumbprint index. Both the SPKI thumbprint
+  and the legacy certificate digest now resolve through qrdb's own
+  certificate-binding index, which is updated in the same write as the user
+  record.
+
+- **REST and QUIC `FIDO2().FinishRegistration` report the credential ID.** The
+  REST transport finished registration on the IAM WebAuthn route and filled
+  `CredentialID` with the user ID; it now posts to
+  `POST /api/v1/xkms/fido2/register/finish`, the FIDO2 service gRPC, MCP, Unix
+  and embedded already used, and returns the attested credential's ID
+  (go-quicbaas#378).
+
+- **WebAuthn relying-party settings changes and login handoffs are now
+  race-free.** A relying-party settings change can no longer leave the old RP
+  cached when it races a ceremony that is building the tenant's service. Login
+  ceremony handoffs are consumed exactly once and expire with the ceremony
+  timeout, so abandoned or failed logins no longer accumulate in memory, and
+  two concurrent finishes for one challenge cannot both proceed
+  (go-quicbaas#384).
+
+- **Vector tests no longer fail in a `vector`-only build.** The
+  `pkg/server` index-factory, embedding-provider and lifecycle-seam tests
+  require `vector && qrdb_vector`, and the "not compiled" errors in
+  `pkg/embedding` and `pkg/server` name both tags (#514).
+
+- **Deleting a role now strips it from every holder in the tenant
+  (go-quicbaas#435).** The cascade used to read only the first 1000 users
+  listed, so later holders kept the deleted role id. It now pages through
+  every user. Users deleted while it runs no longer make it skip a holder:
+  each page overlaps the one before, and if that shared user has moved,
+  the cascade starts its scan again. A failure partway leaves the role in
+  place, and a retry finishes the cascade.
+- **The qrdb user and role adapters return exactly the offset a caller asks
+  for.** An offset that was not a multiple of the limit used to return the
+  whole page holding it, which made a role delete over a qrdb tenant with
+  256 or more users loop until it was cancelled.
+
+- **Role sentinels can be told apart (go-quicbaas#449).**
+  `errors.Is` compares only the error code, so it treated a duplicate role
+  name and a duplicate role id as the same error. It did the same for
+  `ErrSystemRoleImmutable` and `ErrReservedRoleName` against any other
+  forbidden or invalid-input error. Each sentinel now carries its own typed
+  condition. `IsRoleAlreadyExists`, `IsRoleIDAlreadyExists`,
+  `IsSystemRoleImmutable` and `IsReservedRoleName` each match only their own
+  error. The code a client receives is unchanged.
+- **Audit event IDs no longer fall back to a timestamp (go-quicbaas#450).**
+  The audit store saves events under this ID, so two events with the same
+  timestamp ID could overwrite each other. A CSPRNG failure now returns
+  `AuditLogIDGenerationError` before any change is made. Admin assignment
+  create/update/delete and impersonation start/end/record operations fail
+  rather than run without an audit record.
+  `BuildAuditEventForImpersonatedOperation` now returns an error as well.
+- **Tenant barrier help shows the right command (go-quicbaas#228).** The
+  examples said `quicbaas tenant barrier ...`, but the command is
+  `quicbaas iam tenant barrier ...`. A test now checks that every example
+  resolves through the real CLI root.
+
+- **Audit log IDs are unique by construction (#450).** An ID is still
+  `audit_` followed by 32 hex digits, now an 8-byte timestamp that never
+  repeats within a process (one past the last value when the clock has not
+  advanced or has stepped back) plus 8 random bytes from `xkms.Rand` that
+  separate processes. Uniqueness within a process no longer depends on the
+  random bytes or the clock. A CSPRNG failure is still refused with
+  `AuditLogIDGenerationError` (#449), so no audited action proceeds without
+  an ID. `MemoryAuditStorage.SaveEvent` now rejects an ID it already holds
+  with `ErrAuditEventExists` instead of overwriting the record. An audit log
+  ID addresses records; it is not a capability, and reading one still needs
+  `audit:read` and the record's tenant scope.
+
+- **Two context-propagation tests in `pkg/service` can now fail
+  (go-quicbaas#508).** `TestSecretsService_GetSecret_ContextTimeout` asserts
+  `context.DeadlineExceeded`, and its mock's fallback returns an error that
+  names the missing propagation. `TestDistributedSearch_ContextCanceled` uses
+  a coordinator timeout longer than the shard delay, so only the caller's
+  cancellation can end the search, and it asserts the typed timeout error.
+- **`TestBootOrder_CARunsAfterStandaloneNodeInit` checks only boot order
+  (go-quicbaas#408).** A failure of `initialize()` before the CA seam is now
+  reported as an infrastructure failure, with the real error. The test also
+  turns off the embedded node's REST, gRPC and MCP listeners, so it binds no
+  port and cannot collide with other jobs on a shared CI host.
+
+- **The TypeScript SDK's REST client no longer rounds 64-bit ids.** Every
+  REST response body is parsed with `parseJSONPreservingLargeIntegers`, which
+  now decides by member name: an integer past 2^53 under `id`, `ids`, `*_id`,
+  `*_ids`, `*Id`, `*Ids`, `*ID` or `*IDs` arrives as its exact decimal
+  string, and an integer under any other key (a `time.UnixNano` timestamp, a
+  size, a counter) stays a `number`. A bare top-level integer is kept exact.
+  `RAGDocument.id` (new `RAGDocumentID`) and `PlacementNodeInfo.lease_id` are
+  now `number | string`, and the RAG document methods accept either; before
+  this, deleting or reindexing a RAG document whose hashed id exceeded 2^53
+  addressed an id the server never issued. The rule is documented in
+  `docs/multiprotocol-api/api.md`.
+
+- **gRPC integer fields no longer wrap silently (go-quicbaas#559).** Every
+  `int` to `int32` narrowing in `pkg/api/grpc` is now checked. Some
+  examples: list limits, counts and totals, secret retention, channel
+  sizes, lease renewals, backup code counts, DEK warning thresholds,
+  rebalance shard counts and ceremony share indexes. A client request value
+  outside the int32 range is rejected as invalid input before the RPC is
+  sent. A server value that does not fit its wire field now returns
+  `codes.Internal` with the field name, instead of a wrapped number. DEK
+  re-encryption progress counts and the time estimate still saturate at
+  the int32 maximum, and this is now documented.
+- **gRPC trace spans record entity IDs correctly.** An entity ID is a
+  uint64 and is now recorded as its decimal string. Before, IDs above
+  MaxInt64 were recorded as negative numbers, and some spans recorded an
+  empty string.
+
+- **Lint suppressions outside the API, server, IAM, security and service
+  packages are replaced by fixes (go-quicbaas#559, slice A).** 82 of 94
+  `//nolint` directives are gone. Behaviour changes that come with them:
+  - The Go code chunker no longer fails on every declaration with a doc
+    comment, and the comment appears once per chunk.
+  - The RAG file watcher rejects a malformed exclude glob at construction.
+  - `Stop` reports a failed close of the underlying notifier.
+  - Pipeline retry jitter is drawn from `crypto/rand`.
+  - SDK transports refuse values too large for the wire field instead of
+    truncating them.
+  - The scheduler refuses an execution timestamp before the epoch.
+  - Triage records a stale disposition label it could not remove on the
+    job audit trail.
+
+  The 12 directives that remain are false positives that a fix would only
+  make worse: gosec G101 on token-named constants that are not credentials,
+  `bodyclose` on `websocket.Dial`, and G301 on a fixture directory other
+  containers must read.
+
+- **MCP tools refuse whole-number arguments they cannot hold (#559).** A
+  limit, offset, threshold, page size, version, dimension or similar
+  argument that is negative, NaN, or too large for the request field was
+  narrowed by a bare cast, wrapping to a wrong value. It is now refused as
+  invalid input (`invalid <argument>`, `MCPInvalidInput`), with the `conv`
+  range error as the cause. List page caps (KMS keys, DEKs, vector listing)
+  still saturate at the cap, as documented. A KMS key version the response
+  cannot hold is reported as an internal error instead of a wrong version.
+  `conv.SafeFloat64ToUint64` is new. No lint suppression directive remains
+  in `pkg/api/mcp`.
+
+- **The service layer no longer suppresses linter findings; it fixes them
+  (go-quicbaas#559).** Integer conversions in `pkg/service` are now checked or
+  saturating instead of wrapping. As a result:
+  - a KV read timeout too large for a duration is rejected as invalid input;
+  - secret versions beyond the platform `int` are rejected as invalid input;
+  - a negative key or secret version reported by a backend is an internal
+    error rather than a huge unsigned number;
+  - list, backup and time-series page sizes and limits beyond `int` mean "all"
+    instead of wrapping negative, which used to panic or return nothing;
+  - out-of-range time-series entity IDs read as absent.
+
+  One justified `//nolint` remains in `pkg/service`: G101 on an environment
+  variable name.
+
+- **REST responses refuse server numbers they cannot hold (#559).** A
+  count, total, version, size, uptime or shard count that did not fit the
+  REST response field was narrowed by a bare cast and reported as a wrong,
+  often negative, value. It is now a sanitized internal error (500), with
+  the `conv` range error kept as the internal cause. A vector cluster total that
+  would wrap `uint64` is refused the same way. Cache size gauges still
+  saturate at the field's maximum, as documented. A negative transaction
+  compare version and a vector namespace dimension beyond `uint32` are
+  refused as invalid input (400) instead of wrapping.
+  `conv.SafeSecondsToDuration` is new.
+- **MCP secrets watch and integer parameters are range checked (#559).**
+  The secrets watch `timeout_seconds` and integer parameters given as
+  floats are refused when out of range instead of wrapping. MCP and prompt
+  record ids hash through the shared `id.HashString` helper instead of
+  discarding the `hash.Hash.Write` result.
+- No lint suppression directive remains in `pkg/api/rest`. The secrets
+  watch REST client and the session events stream test now close
+  response bodies where the close is visible, and a failed status check
+  no longer leaks the body.
+
+- **gRPC vector handlers no longer panic on out-of-range values
+  (go-quicbaas#559).** A request value outside its range returns
+  `codes.InvalidArgument`. A service value that does not fit its wire field
+  returns `codes.Internal` with the field name.
+- **gRPC handlers no longer swallow conversion errors.** An unknown
+  algorithm, a YAML encoding failure or a role lookup failure is now
+  returned to the caller. No default algorithm is substituted.
+- **gRPC embedding, backup, timeseries, entity-type, dynamic-secret and
+  worker-image responses are range-checked.** A count, size or port that
+  does not fit its wire field returns `codes.Internal` with the field
+  name, instead of a wrapped or clamped number. A negative `ListBackups`
+  limit is rejected as invalid input.
+- **gRPC watch streams reject unknown event types.** An event type the
+  wire format does not define now fails the stream with `codes.Internal`,
+  instead of being sent as a different type.
+
+- **Transaction validation errors name the right field (#559).** A REST
+  transaction validation error built the field name from the index with
+  `string(rune(i))`, so `compare[3].id` came out as `compare[\x03].id`
+  and index 12 as a form feed. The index of `compare`, `success` and
+  `failure` entries is now written in decimal.
+
+- **The frontend build is reproducible (go-quicbaas#664).** `make
+  build-frontend` installs with `npm ci` from the tracked
+  `cmd/quicbaas/frontend/package-lock.json` and never rewrites it. Before,
+  it ran `npm install` with the lock excluded. The build root mirrors the
+  repository layout, so the lock's `file:../../../sdk/typescript`
+  dependencies resolve outside the checkout. Its suffix is a hash of the
+  checkout path, so concurrent worktrees no longer share one build
+  directory. `make test-frontend` now runs a new `make install-frontend`
+  first, so it works in a fresh checkout. The dead `_build-frontend` target
+  is removed, and the tracked SDK and frontend `dist/` trees are regenerated
+  from current source.
+
+- **Listing another tenant's fleet nodes is refused, not answered empty
+  (go-quicbaas#680).** The orchestration service checks the requested tenant
+  against the caller's own before it scans the registry. Previously the store
+  scanned the caller's keyspace, found nothing, and the listing returned an
+  empty fleet with 200. The caller now gets 403 on REST and QUIC,
+  `PermissionDenied` on gRPC and Unix, and the typed forbidden error on MCP and
+  the embedded transport. The system tenant gets no cross-tenant lift. A store
+  whose scan denies the prefix (go-qrdb#648) surfaces as the same forbidden
+  error.
+
+- **The gRPC heartbeat no longer drops the node's observation.**
+  `FleetNodeHeartbeatRequest` now carries `FleetNodeObservation` (backends,
+  capacity, signing agents and relay, images, device telemetry, host metrics).
+  `*_reported` flags keep an empty list distinct from an absent one. The Go
+  SDK sends the observation on every transport. Its MCP heartbeat now reaches
+  `quicbaas_fleet_heartbeat`; it used to call a tool name that does not exist.
+
+- **A turn's tool use is now in its content (go-quicbaas#799).** Two backends
+  used to drop every block that was not text: the stream-json CLI and codex
+  `exec --json`. Those backends now keep `tool_use`, `tool_result` and
+  `thinking` blocks. Each kept block carries its tool name, tool-use id, error
+  flag and byte size, but never its payload. A block that cannot be decoded
+  becomes an `unreadable` block, and the text around it is kept. The new
+  `ContentBlock` fields cross the remote_acp and orchestrator gRPC wires.
+
+- **gRPC and QUIC authorize `EmbeddingService` (go-quicbaas#819).** gRPC
+  denied every embedding RPC because none was mapped to a permission. Each RPC
+  now requires the verb REST and MCP already apply to the same operation:
+  generation and cache clearing require `embedding:embed`; provider listing and
+  inspection, default-provider selection and cache statistics require
+  `embedding:list_models`.
+
+- **Sessions bound to no job are now concluded once they go quiet
+  (go-quicbaas#843).** Reconciliation used to end a session only through its
+  job, so a session with no job stayed open forever. The maintenance sweep now
+  concludes a session with no job once it has been quiet past the longest job
+  idle bound, with reason `session_idle` and evidence such as `session has
+  been quiet for 59h55m0s, past the idle bound of 3h0m0s, and is bound to no
+  job`. A session is kept if its record carries the new persisted `keep`
+  marker, if it is the node's lead session, or if its record shows a turn in
+  flight. The sweep reads the stored record again before it writes the
+  ending, so a session whose record shows a prompt, a keep mark or a job
+  binding written in the meantime is not concluded. A prompt still running
+  is not yet on the record, so a sweep during that turn can still conclude
+  the session. Older records that carry a project name in `project_id`
+  reconcile the same way.
+
+- **The idle sweep reclaims ordinary job-less sessions (go-quicbaas#843).**
+  A spawned session's durable record said `active` from spawn until it
+  ended, and the sweep spares an active session, so a job-less session that
+  was not kept was never reclaimed however long it sat quiet. The record now
+  says `active` only while a turn runs: a session is spawned `idle`, each
+  turn marks it `active` and marks it `idle` again when it ends, whether the
+  turn succeeded, failed or was cancelled. A closed, errored or resumable
+  record keeps its status. Session listings and status now report `idle`
+  for an open session with no turn in flight.
+
+- **A triage nudge that arrives while the project is already being triaged
+  is no longer dropped (go-quicbaas#894).** Previously the nudge lost the
+  project's triage lease and was discarded, so an issue opened after the run
+  in flight had listed waited for the periodic sweep. The losing nudge now
+  leaves one durable rerun mark per project in the tenant's SDLC store
+  (`sdlc_triage_rerun`). The run takes the mark before it lists, and again
+  after it cleans up; a mark taken at cleanup sends the same job round to
+  list again, at most 3 extra times. Past that bound the mark stays for the
+  next nudge or sweep. A mark that cannot be written is returned as
+  `TriageRerunUnrecordedError`.
+
+- **A triage needs-info verdict must ask a question, and a duplicate must
+  share something with what it duplicates (go-quicbaas#1135).** A needs-info
+  reply now asks its questions on `SDLC-TRIAGE-QUESTION:` lines (at most
+  five, each cut to 300 characters), and the posted comment lists them
+  numbered. A needs-info reply with no question, such as a summary of the
+  issue under "What is missing:", is set aside as unusable and asked again,
+  with the existing retry bound, instead of parking a well-scoped issue that
+  nobody can answer. A duplicate verdict is set aside when the two issues
+  name no file path or backticked identifier in common. The hidden verdict
+  marker now also records `model=` (the model the triage session reported,
+  `unknown` when none) and `prompt=` (`TriagePromptRevision`, a hash prefix
+  of the prompt text that a test pins), so mis-triage can be counted per
+  model and prompt. Comments posted before the change still parse.
+
+- **The Software Factory worker image carries the C headers portfolio cgo
+  dependencies include (go-quicbaas#1164).** `libssl-dev` (go-tpm-tools' TPM
+  simulator, `openssl/aes.h`) and `libusb-1.0-0-dev` (go-xkms `xkey`) join
+  `build-essential`, so go-xkms `make lint` typechecks in a lane and in
+  `lane-verify`. A new image probe compiles and runs a cgo program including
+  both headers.
+
+- **SDLC version guards are decided by the store (go-quicbaas#1273).**
+  `pkg/sdlc` no longer guards bindings, deliveries, train entries and train
+  ledgers with the qrdb DAO's conditional save, which read the version and
+  wrote in a separate step, so concurrent writers holding the same version
+  all succeeded and every write but the last was lost. A create now lands
+  only through `PutIfAbsent` and an edit only through `CompareAndSwap` over
+  the bytes the writer read: exactly one contender wins and the rest get
+  `VersionConflictError`. `PutDelivery` and `PutBinding` re-read and retry
+  when they lose, so concurrent replacements each get their own version. A
+  tenant store without atomic writes is refused with a `BackendError`
+  carrying the new `ErrGuardedWriteUnsupported`. Records keep their key
+  layout and JSON encoding, so existing data reads back unchanged.
+
+- **SDLC deletes remove only the record they checked (go-quicbaas#1273).**
+  Deleting a binding, merge-train entry, reviewer override (one or all of a
+  project's) or issue cluster read the record, checked it was the right one,
+  then deleted the key without a guard, so a write landing between the read
+  and the delete was erased although it had been acknowledged. Each delete
+  now goes through `CompareAndDelete` over the bytes it read. A record
+  changed after that read is kept and the delete returns
+  `VersionConflictError`; a cluster copy re-filed into a newer cluster is left
+  to it; a record another delete already removed counts as deleted. A tenant
+  store without atomic deletes is refused with a `BackendError` carrying
+  `ErrGuardedWriteUnsupported`.
+
+- **A reviewer override set during an unbind no longer reaches the next
+  binding (go-quicbaas#1273).** Setting an override checked the project's
+  binding, then wrote the override; unbinding deleted the binding, then
+  cleared the overrides. An override whose check passed before an unbind and
+  whose write landed after it survived, and the project's next binding
+  silently ran its reviews with it. A binding now carries an `epoch` the
+  store draws when the project is bound and keeps across updates. Each
+  override records the epoch it was set under, and reviewer selection ignores
+  an override whose epoch is not the current binding's.
+
+- **A PIV activation whose user write landed keeps its login factor
+  (go-quicbaas#1275).** When the user update reported failure but had
+  committed (a lost response or a timeout), the activation revoked the
+  certificate's new mTLS login factor. That left an active, certificate-bound
+  user with a spent invite and no usable login, and no further activation
+  could repair it because the user was no longer pending. The activation now
+  re-reads the persisted user, detached from the request's cancellation and
+  bounded, and succeeds if the user is active and bound to the certificate.
+  Only an update that did not land, or a re-read that fails, revokes the
+  factor. The FIDO2 activation's reconcile re-read uses the same bounded,
+  detached read.
+
+- **The MCP `StartJob` tool now reports the right start time
+  (go-quicbaas#1280).** It used to read the nanosecond timestamp as seconds,
+  which gave a date far in the future. The time is now rendered in UTC to the
+  nanosecond.
+- **A stream-json turn with a tool block that cannot be decoded now reports
+  an unknown tool census (go-quicbaas#1280).** Before, it reported a count
+  that left that call out.
+- **Go SDK content blocks now keep their tool metadata (go-quicbaas#1280).**
+  `PromptContentBlock` and `InferenceContentBlock` carry `tool_name`,
+  `tool_use_id`, `is_error` and `bytes` across the embedded, gRPC, JSON and
+  MCP transports.
+- **The TypeScript SDK's unpaged MCP listings now return every item
+  (go-quicbaas#1280).** `listJobs`, `listSessions`, `listFleetNodes` and
+  `listWorkflows` follow `next_offset` to the last page. `listWorkflowsPage`
+  now passes `project_id` and `mode` to the tool, and MCP sessions keep their
+  `agent_id`.
+
+- **gRPC streaming reads report service errors (go-quicbaas#1284).**
+  `List`, `Query`, `ScanIndex` and `TimeSeriesQuery` used to log a failed
+  service call and still end the stream with OK, often after sending no rows.
+  A gRPC caller could not tell "no rows" from "the server failed". These
+  calls now end with a non-OK status. Rows streamed before the failure are
+  still delivered. Request errors (not found, invalid input, unauthorized,
+  forbidden, conflict) keep their message. Every other error class keeps its
+  status code, but its message is replaced by "the request could not be
+  completed", the same rule REST applies, and the cause is logged on the
+  server.
+
+- **A disconnecting client can no longer crash the server with "send on
+  closed channel" (go-quicbaas#1284).** The gRPC PEP `Subscribe` handler
+  closed the updates channel on return while the policy service goroutine
+  could still be sending on it. The handler now leaves the channel to its
+  sender, and it cancels the context it passes to the service so the service
+  goroutine always exits. The WebSocket MQTT, STOMP and AMQP handlers had the
+  same defect: they closed their delivery channel while a hub publish, which
+  runs subscriber callbacks outside the hub lock, could still be sending on
+  it. They no longer close it.
+
+- **Query results and query errors are no longer lost to a stream race
+  (go-quicbaas#1284).** The query service closes its result channel before it
+  returns, and several callers treated that closed channel as success.
+  - REST `GET /api/v1/query/...` could return an empty list in place of a
+    buffered result. It could also answer HTTP 200 for a failed query.
+  - REST `POST /api/v1/query/range` answered HTTP 200 for a failed scan.
+  - The embedded transport, which also serves QUIC and Unix, returned success
+    for a failed List, Query, ScanIndex or TimeSeriesQuery stream.
+  - The MCP `quicbaas_query` and `quicbaas_scan_index` tools closed the
+    service's channel a second time and panicked.
+
+  Every caller now waits for the service's verdict once the channel closes.
+  The gRPC List, Query and ScanIndex methods still log a service error and
+  report success. That is left for a follow-up.
+
+- **The worker-image refresher now binds each tenant it acts for
+  (go-quicbaas#1310).** Every pass bound only the orchestration tenant key,
+  so the tenant-scoped agent catalog refused each call with "no tenant is
+  bound to the request" and the pass skipped every tenant. The refresher and
+  its smoke now bind go-qrdb's tenant key as well when they read bindings and
+  catalogs, check the fleet, repoint agents and spawn the smoke session. A
+  tenant whose catalog cannot be read is still reported as skipped and the
+  pass carries on to the next tenant. No system-tenant lift was added.
+
+- **Building the same metric concurrently no longer panics
+  (go-quicbaas#1313).** `NewCounter`, `NewGauge` and `NewHistogram` in
+  `pkg/util/metrics` checked the metric cache and registered the collector
+  under separate locks, so two callers that missed the cache together both
+  registered and the second panicked with `duplicate metrics collector
+  registration attempted`. All six constructors now share one helper that
+  re-checks the cache and registers under a single write lock, so every
+  caller gets the same collector. Metric names, the registry and the
+  wrong-type cache eviction are unchanged.
+
+- **Catalog storage benchmarks build valid paths (go-quicbaas#1316).**
+  `BenchmarkPebbleStoragePutEntry` and `BenchmarkPebbleStorageGetEntry`
+  built keys with `string(rune(i))`, which appends control characters,
+  spaces or slashes, so `PutEntry` refused them with `PATH_INVALID`. The keys
+  now use the decimal index. `BenchmarkBatchProcessor_ImportUsers` gets the
+  same fix for its generated email addresses.
+
+- **The integration suites now authenticate their data-plane calls
+  (go-quicbaas#1317).** The api/grpc, api/rest batch and shard-header, and
+  batch suites dialled with server trust only and sent no bearer. The server
+  correctly refused every entity and batch call as unauthenticated within
+  milliseconds. The suites now act as a provisioned tenant user whose only
+  role holds `kv:get`, `kv:put`, `kv:delete`, `kv:list`, `kv:range` and
+  `batch:execute`, carried as a bearer on gRPC and REST. No server
+  authorization check changed. A unit test in `pkg/api/grpc` pins that role
+  to the interceptor's method mapping: it must admit every data-plane RPC and
+  still be denied an admin RPC.
+
+- **The FIDO2 login integration tests pass a WebAuthn origin (go-quicbaas#1320).**
+  go-xkms's software authenticator refuses a ceremony without an origin, so
+  passkey registration and assertion in `test/integration/login` failed before
+  the server saw them. Every ceremony in the suite now uses `https://localhost`,
+  which the integration server's relying party accepts.
+
+- **An expired request context on a REST list or query is a `408`, never an
+  empty `200` (go-quicbaas#1326).** When the service call returned no page
+  and no error after the request context had expired, the handler picked at
+  random between the empty result and the timeout, and could answer `200`
+  with an empty page. It now answers `408`. A page or a service error that is
+  already available still wins over the timeout, in that order. This covers
+  the entity list and query handlers and the KV list handler.
+
+- **An expired request context on a REST range query is a `408`, never an
+  empty `200` (go-quicbaas#1326).** The range query handler (`ScanIndex`)
+  picked at random between the call's verdict and the expired context, so it
+  could answer `200` with no results, turn a service error into a `408`, or
+  drop pages it had already received. It now answers `408` only when the
+  call was still running at expiry or returned nothing after it. A service
+  error still wins, and pages received before a clean completion are
+  returned with `200`.
+
+- **A CLI agent that exits mid-prompt reports its exit, not "file already
+  closed" (go-quicbaas#1329).** The session supervisor of a persistent
+  stream-json CLI agent reaped the process as soon as it exited, and
+  `exec.Cmd.Wait` closed the stdout pipe while the stream reader was still
+  draining it, so the prompt failed with the untyped `read |0: file already
+  closed` and lost the agent's last output. The agent's stdout is now a pipe
+  the backend owns and only the stream reader closes, so a prompt sees every
+  record the agent wrote: an `is_error` result still reports `ErrStreamJSON`,
+  and a stream that ends without a result reports
+  `ErrStreamJSONProcessExited` with the exit code and stderr tail.
+- **A CLI agent that exits behind unread output is still reaped
+  (go-quicbaas#1329).** The supervisor reaps the agent the moment it exits
+  instead of waiting for its stdout to be drained, so a prompt that timed out
+  with the reader's buffer full no longer leaves the process unreaped, the
+  session active, and `ProcessExitObserver` never called. The output the
+  agent left stays readable to the end of the stream.
+
+- **A closed CLI agent session no longer leaks its stream reader
+  (go-quicbaas#1329).** When a persistent CLI session was closed while its
+  stdout reader was waiting on a full record buffer that nobody would drain
+  again, the reader goroutine blocked forever, holding its scanner buffer and
+  every buffered record. Closing the session now stops the reader, which
+  ends with `SessionClosedError`. While the session is open, the reader
+  still waits for the consumer and never drops a record.
+
+- **`messaging.Client.GetChannelStats` works over MCP (go-quicbaas#1352).**
+  The SDK MCP transport refused it, so `quicbaas msg channel-info` and
+  `quicbaas msg list-subscriptions --channel` always failed with
+  `--transport mcp`. The server now registers `quicbaas_msg_channel_stats`,
+  which requires `messaging:stats` as the REST route and the gRPC method do,
+  and refuses an unknown channel with a NotFound code. The SDK request type is
+  exported as `messaging.GetChannelStatsRequest`.
+
+- **`make test-sdk-go`, `make test-sdk-go-coverage` and `make coverage` fail
+  when their package list cannot be built.** They passed
+  `$(go list ... | grep -v ...)` straight to `go test`, so a failing `go list`
+  (a broken `go.mod`, a package that does not load) left an empty argument
+  list, and `go test` with no packages tests only the current directory and
+  can pass. Each now builds the list first and exits non-zero, naming the
+  target, when `go list` fails or the filter leaves nothing.
+  `make check-package-targets` drives all three with a failing and an empty
+  `go list`.
+
+- **`make coverage-<package>` now fails when the package's tests fail.** It
+  used to write the report after a failing `go test` and exit 0. The report
+  step itself now fails the target when `go tool cover` cannot write the HTML,
+  and `make coverage-sdk-go-<package>` accepts an absolute `COVERAGE_DIR`.
+  `make check-package-targets` runs every per-package target (`test-`,
+  `bench-`, `coverage-` and their `sdk-go-` forms) with failing tests and
+  fails if any of them exits 0.
+- **`make integration-test-agents` reports the test result, not `tee`'s.** The
+  run is piped through `tee`, so the target took `tee`'s exit status and
+  passed whatever the tests did.
+
+- **The production preset no longer advertises `0.0.0.0` as its Raft address
+  (go-quicbaas#185).** `config.ProductionConfig` set `raft.raft_address` to
+  `0.0.0.0:63000`, an address no peer can dial. It now carries only the port,
+  `:63000`; the operator supplies the host with `raft.raft_address`
+  (`--raft-address`), and until then validation refuses the config with
+  `RaftAdvertisedHostError`, whose message names that key and flag. The
+  validator now keeps that typed error as the cause of the
+  `raft.listen_address` failure, so callers can match it with `errors.As`.
+
+### Security
+
+- **An authenticated caller with an empty tenant is not the system tenant
+  (go-quicbaas#348).** Only a principal bound to the system tenant id itself
+  (`auth.IsSystemSubject`) acts as system. The per-tenant barrier gates now
+  refuse an authenticated empty-tenant caller with `ErrForbidden`, so it can
+  no longer read every tenant's barrier status. The embedded transport's IAM
+  admin and account-reservation verbs refuse a bound empty-tenant subject with
+  `PermissionDeniedError` instead of letting it keep whatever tenant it named.
+  An unbound in-process context (the embedding host, no subject) keeps its
+  access.
+
+- **The forge token no longer reaches a host's disk (go-quicbaas#899).**
+  Previously it was written beside the workspace spec under the executing
+  host's projects root and bind-mounted into the container. The spec
+  directory now holds only `workspace.json`, and a spec that names a token
+  file is refused. The daemon delivers the token per session, over exec
+  stdin, to `/run/quicbaas/credentials/forge-token`: mode `0400` on a 1 MiB
+  tmpfs, owned by the container's user. It is removed on every session
+  close, and a failed removal is logged and audited as `forge_credential`
+  with no secret in it. The token goes with the container on reap. Anything
+  in a worker image that read `/run/quicbaas/workspace/forge-token` should
+  follow the spec's `forge_token_file`, which now names the new path.
+  Per-job, expiring forge tokens are not yet possible; that needs a
+  forge-side capability.
+
+- **The system tenant gets no lift on the account, agent catalog, cost
+  settings and spend policy services (go-quicbaas#1150).** A request's
+  `tenant_id` now resolves through `tenantctx.Target`: a caller names only
+  its own tenant, and the system tenant naming another tenant is refused
+  (`TenantTargetDeniedError`; REST 403, gRPC `PermissionDenied`), as is a
+  caller with no tenant. Embedded SDK callers acting for a tenant name it
+  with `transport.ContextWithTenant`.
+- **gRPC IAM, federation, project and session servers confine
+  `tenant_id` to the caller's own tenant (go-quicbaas#1150).** Each
+  tenant-scoped method checks the requested tenant before the service is
+  reached; another tenant, the system tenant and a tenantless caller get
+  `PermissionDenied`. Federated login begin, invite activation and tenant
+  provisioning are unchanged.
+
+- **A REST IAM path names only the caller's own tenant (go-quicbaas#1150).**
+  The tenant-scoped IAM routes under `/api/v1/tenants/{tenant_id}/` used the
+  path's tenant as given. These are apps, federation provider administration
+  and account links, GDPR, MFA, policies, roles, sessions, users and WebAuthn
+  credentials. They now resolve it through `tenantctx.Target`. A caller of
+  another tenant, the system tenant and a tenantless request get `403`.
+- **gRPC session event reads are confined the same way.**
+  `SubscribeSessionEvents` and `GetSessionConversation` return
+  `PermissionDenied` for a `tenant_id` that is not the caller's. An omitted
+  `tenant_id` on `GetSessionConversation` now reads the caller's own
+  conversation instead of the system tenant's.
+
+- **App and MFA objects are looked up inside the caller's tenant
+  (go-quicbaas#1312).** The handlers checked that a request named the
+  caller's own tenant, then fetched the object by its id alone. This
+  affected app get, update, delete and secret rotation, and MFA enrollment
+  complete and cancel and challenge verify. A caller could therefore reach
+  another tenant's app or MFA record by its id. These verbs now look the
+  object up inside the resolved tenant on REST, gRPC, MCP (MFA) and the
+  service layer (apps). REST also binds an MFA record to the URL's user.
+  Another tenant's object answers the same not-found as a missing one.
+- **Cancelling an unknown MFA enrollment id now answers not-found** instead
+  of succeeding.
+
+- **App and MFA verbs honour a request's tenant id only for the caller's own
+  tenant (go-quicbaas#1312).** The service layer's app register and list, the
+  embedded transport's app register, list, get and delete, and the MCP and
+  gRPC MFA verbs that take a tenant id (begin enrollment, status, disable,
+  begin challenge, backup codes, and gRPC verify code) used the request's
+  tenant id unchecked. A caller could therefore register or list apps in, or
+  enroll, read, disable or mint backup codes for a user of, another tenant.
+  These verbs now refuse a tenant id that is not the caller's own; the
+  system tenant gets no lift. The embedded app get and delete also look the
+  client up inside the caller's tenant.
 
 ## [0.14.0-alpha] - 2026-10-02
 
