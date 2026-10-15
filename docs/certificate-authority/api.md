@@ -1,8 +1,19 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-14
 > The capability on every transport, with permissions. Feature folder: `docs/certificate-authority/`.
 
+The CA, ACME and trust APIs are go-xkms's and are documented there:
+[Certificate Authority — API](../../../go-xkms/docs/certificate-authority/api.md),
+[ACME Issuance — API](../../../go-xkms/docs/acme-issuance/api.md),
+[Trust Bootstrap — API](../../../go-xkms/docs/trust-bootstrap/api.md). This
+page records only how QuicBaaS's `sdk/go` reaches them on each transport.
+
+> **Being removed.** `quicbaas.Certificate` (`/api/v1/certificate`) and
+> `quicbaas.ACME` (`/api/v1/acme/*`) below are QuicBaaS's own certificate
+> service and ACME handling, a parallel implementation removed on the owner's
+> word ([SPEC](../SPEC.md) rows `certificate-authority` and `acme`). The
+> matrix records the code as it stands until the go-xkms re-export replaces it.
 
 ## Transport matrix
 
@@ -82,15 +93,8 @@ registered server-side: 11.
 
 ## Certificate profiles
 
-A caller selects a profile by name on `SignOptions.Profile`; the names are the
-`ProfileName*` constants re-exported in `sdk/go/xkms/ca` from go-xkms. Two are
-for the platform's overlay and service identity (go-xkms#1385):
-
-| Profile | Constant | Certificate |
-|---|---|---|
-| `ipsec-vtep` | `ProfileNameIPsecVTEP` | IKEv2 tunnel endpoint: EKU `id-kp-ipsecIKE` (`OIDIPsecIKE`), IP SANs supplied by the issuing caller and never copied from the CSR, 30-day default lifetime. May carry the `tp-attestationEvidence` extension (`CreateAttestationEvidenceExtension`). |
-| `x509-svid` | `ProfileNameX509SVID` | SPIFFE X.509-SVID: one caller-supplied SPIFFE URI SAN, serverAuth + clientAuth, not a CA, 1-hour default lifetime. |
-
-Both are issued under a name-constrained subordinate CA for a caller-held key
-(`SubordinateIssuer`, `SubordinateCARequest`, `NameConstraints`); a leaf
-outside the constraints fails with `ErrCANameConstraintViolation`.
+Profiles, including `ipsec-vtep` and `x509-svid` and the name-constrained
+subordinate CA they are issued under, are go-xkms's. `sdk/go/xkms/ca`
+re-exports their `ProfileName*` constants unchanged. See
+[Certificate Authority — API](../../../go-xkms/docs/certificate-authority/api.md)
+and [Certificate types](../../../go-xkms/docs/ca/certificate-types.md).

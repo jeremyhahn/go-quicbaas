@@ -23,6 +23,13 @@ Handbook doc 00 (L1 amendment of 2026-10-01) splits attestation by role:
 3. **The Verifier** — endorsements, signed reference values and quote
    appraisal, below.
 
+The evidence primitives the Verifier calls (`evidence.VerifyAKCertificate`,
+`evidence.VerifyQuote`, `evidence.VerifyEventLog`, `refvalue.VerifySigned`) are
+documented once, in go-xkms:
+[Attestation Evidence — Architecture](../../../go-xkms/docs/attestation-evidence/architecture.md)
+and [API](../../../go-xkms/docs/attestation-evidence/api.md). This feature
+documents only the Verifier built on them.
+
 ## The Verifier
 
 ### Endorsements

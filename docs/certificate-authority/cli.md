@@ -1,17 +1,24 @@
 # Certificate Authority — CLI
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-14
 > Every verb and flag, with runnable examples. Feature folder: `docs/certificate-authority/`.
 
-Certificate Authority operations against the active QuicBaaS daemon.
+The `ca`, `acme` and `trust` verbs reach go-xkms services. What a CA, ACME or
+trust operation does is documented once, in go-xkms:
+[CA CLI](../../../go-xkms/docs/certificate-authority/cli.md),
+[ACME CLI](../../../go-xkms/docs/acme-issuance/cli.md),
+[Trust Bootstrap CLI](../../../go-xkms/docs/trust-bootstrap/cli.md). This page
+lists only the QuicBaaS verbs, their flags and their transports.
+
+> **Being removed.** The `ca` and `acme` verbs run today on QuicBaaS's own
+> certificate service and `/api/v1/acme/*` verbs, a parallel implementation
+> removed on the owner's word ([SPEC](../SPEC.md) rows `certificate-authority`
+> and `acme`). The verbs are documented here because the code still ships.
 
 ## Overview
 
-The `ca` verb tree wires directly to `Security().Certificate()` over
-the active SDK transport (REST / gRPC / QUIC / MCP / Unix /
-embedded). Verbs are the canonical set per the locked architecture
-spec §6. Phase 8e completed the surface by adding `CAInfo` and
-`ListCertificates` so all six verbs are real-wire on every transport.
+The `ca` verb tree wires to `Security().Certificate()` over the active SDK
+transport (REST / gRPC / QUIC / MCP / Unix / embedded).
 
 Source: [`cmd/quicbaas/ca.go`](../../cmd/quicbaas/ca.go).
 
@@ -130,8 +137,8 @@ quicbaas ca revoke 0x7a4f3c1d           # 0x prefix accepted
 ```
 
 The serial is the hex-encoded big-integer serial returned by `issue`
-or `list`. Revocation writes a CRL entry and propagates through the
-CA cert store.
+or `list`. Revocation and CRL publication are go-xkms behaviour; see its
+[CA user guide](../../../go-xkms/docs/certificate-authority/user.md).
 
 Output (table form):
 
@@ -187,129 +194,58 @@ matrix):
 
 ## See also
 
-- [`docs/sdk/security.md`](../ssh/engineering.md) —
-  `Security().Certificate()` and `Security().CertificateExt()`.
-- [`docs/credentials/README.md`](../credentials/user.md) — the
-  broader credentials engine that the CA verbs back.
-- [`docs/api/xkms-compatibility.md`](../composition/api.md) —
-  legacy xkms `/api/v1/xkms/ca/*` routes (compat bridge).
+- [`../go-sdk/api.md`](../go-sdk/api.md) — `Security().Certificate()` and
+  `Security().CertificateExt()`.
+- [`../composition/api.md`](../composition/api.md) — the mounted go-xkms
+  `/api/v1/xkms/ca/*` routes.
 
 
 ---
 
 ## quicbaas acme
 
-ACME (RFC 8555) certificate operations against the active QuicBaaS daemon.
+ACME verbs against the active QuicBaaS daemon. ACME itself (orders,
+challenges, `enroll-01`, renewal) is go-xkms's: see
+[ACME Issuance — CLI](../../../go-xkms/docs/acme-issuance/cli.md) and its
+[user guide](../../../go-xkms/docs/acme-issuance/user.md).
 
-### Overview
+> **Being removed.** These verbs drive QuicBaaS's own `/api/v1/acme/*` control
+> verbs and ACME handling, a parallel implementation removed on the owner's
+> word ([SPEC](../SPEC.md) row `acme`). Its replacement is the go-xkms ACME
+> service re-exported through `sdk/go`.
 
-QuicBaaS is the **broker-as-CA**: it *is* the certificate authority. The
-protocol-client verbs below are therefore in-process service calls, **not**
-JWS-signed exchanges against an external ACME directory.
+Source: [`cmd/quicbaas/acme.go`](../../cmd/quicbaas/acme.go). The verb tree
+wires to `Security().ACME()`: `Server()` for `register-challenge` and `issue`,
+`Client()` for `new-order`, `finalize-order` and `renew`.
 
-The verb tree wires to `Security().ACME()`:
+### Transports
 
-- `Server()` — the server-control surface (`register-challenge`, `issue`)
-- `Client()` — the broker-as-CA protocol surface (`new-order`,
-  `finalize-order`, `renew`)
-
-Source: [`cmd/quicbaas/acme.go`](../../cmd/quicbaas/acme.go).
-
-### Transport exception
-
-ACME is an HTTP-native protocol. Per
-[`pkg/service/acme_service.go`](../../pkg/service/acme_service.go) there are
-deliberately **no gRPC / QUIC / MCP opcodes for ACME**, so this command group
-is an explicit, documented exception to the multi-protocol parity rule.
-
-The SDK compensates: when `--transport` is `grpc`, `quic`, `unix`, or `mcp`,
-`Security().ACME()` lazily builds a dedicated REST transport to the same
-`--address` and caches it. That requires an address a REST client can dial;
-when one cannot be derived the SDK surfaces a typed transport error naming the
-reason instead of silently doing nothing. `--transport rest` and
+There are no gRPC, QUIC or MCP opcodes for ACME. When `--transport` is `grpc`,
+`quic`, `unix` or `mcp`, `Security().ACME()` builds a dedicated REST transport
+to the same `--address` and caches it; when no REST address can be derived it
+returns a typed transport error naming the reason. `--transport rest` and
 `--transport embedded` use the main transport directly.
 
-The raw RFC 8555 directory endpoints (`/acme/directory`, `/acme/new-order`, …)
-are mounted at the REST router root for standards-compliant ACME clients; the
-control verbs this CLI drives live under `/api/v1/acme/*`.
-
-### Verb summary
-
-| Verb | Surface | Purpose |
-|------|---------|---------|
-| `register-challenge <name>` | Server | Install a challenge verifier on the server |
-| `issue` | Server | Server-side issuance from a CSR + validated challenge |
-| `new-order` | Client | Create a broker-as-CA order for one or more identifiers |
-| `finalize-order` | Client | Finalize an order by signing the supplied CSR |
-| `renew <cert-url>` | Client | Resolve an issued certificate for renewal |
-
-### Flags
+### Verbs and flags
 
 `acme` accepts `--output <json|yaml|table>` (default `table`) as a persistent
-flag. Global flags are inherited from the root command.
+flag.
 
-### register-challenge
+| Verb | Flags |
+|------|-------|
+| `register-challenge <name>` | `<name>` is `dns-01`, `endorse-01`, `enroll-01` or `http-01` |
+| `issue` | `--csr <path\|->` (required), `--challenge-type` (required), `--challenge-value`, `--cert-output` |
+| `new-order` | `--identifier <type>:<value>` (repeatable), `--challenge-type` |
+| `finalize-order` | `--order-url`, `--csr <path\|->`, `--cert-output` |
+| `renew <cert-url>` | `<cert-url>` is the hex serial, optionally as `/acme/cert/<serial>` |
 
 ```bash
 quicbaas acme register-challenge http-01
-quicbaas acme register-challenge enroll-01 --output json
-```
-
-Valid names: `dns-01`, `endorse-01`, `enroll-01`, `http-01`.
-
-Only the **name** travels over the wire — the server installs its own canonical
-verifier for it. The SDK also requires a non-nil process-local verifier (for
-callers that additionally embed an ACME server); the CLI supplies thin
-signature adapters onto exactly the same SDK-re-exported xkms verifiers the
-server installs, so there is no forked verification logic.
-
-### issue
-
-```bash
 quicbaas acme issue --csr ./api.csr --challenge-type http-01 --challenge-value api.example.com
-quicbaas acme issue --csr - --challenge-type dns-01 --challenge-value _acme-challenge.example.com
-quicbaas acme issue --csr ./api.csr --challenge-type http-01 --cert-output ./api.crt
-```
-
-| Flag | Meaning |
-|------|---------|
-| `--csr` | Path to the PEM-encoded CSR; `-` reads stdin (required) |
-| `--challenge-type` | Challenge type used for validation (required) |
-| `--challenge-value` | Challenge value (identifier) that was validated |
-| `--cert-output` | Write the issued certificate PEM to this path |
-
-The challenge must already have been validated; the server signs the CSR with
-the composed CA and returns the leaf plus the issuing chain.
-
-### new-order
-
-```bash
 quicbaas acme new-order --identifier dns:api.example.com --challenge-type http-01
-quicbaas acme new-order --identifier dns:a.example.com --identifier dns:b.example.com
-```
-
-`--identifier` is repeatable and takes `<type>:<value>`; the type is usually
-`dns` or `ip`. The returned order carries the finalize URL to hand to
-`finalize-order`.
-
-### finalize-order
-
-```bash
-quicbaas acme finalize-order --order-url /acme/order/42 --csr ./api.csr
-quicbaas acme finalize-order --order-url /acme/order/42 --csr - --cert-output ./api.crt
-```
-
-### renew
-
-```bash
+quicbaas acme finalize-order --order-url /acme/order/42 --csr ./api.csr --cert-output ./api.crt
 quicbaas acme renew 7a4f3c1d
-quicbaas acme renew /acme/cert/7a4f3c1d --output json
 ```
-
-`<cert-url>` is the hex serial the CA assigned at issuance, optionally in
-`/acme/cert/<serial>` form. Because the broker-as-CA holds no subscriber
-private key, this verb resolves the existing certificate but cannot re-sign a
-replacement leaf; use `new-order` + `finalize-order` with a fresh CSR for that.
 
 ### Errors
 
@@ -337,7 +273,10 @@ SDK transport (REST / gRPC / QUIC / MCP / Unix / embedded).
 Trust-**bootstrap** (DANE / Noise / SPKI / Direct fetch of the initial CA
 bundle, i.e. `Security().Trust().Bootstrap()`) is **not** duplicated here — it
 has a canonical home at `quicbaas bootstrap`. This tree covers
-the three server-side trust-artifact verbs only.
+the three server-side trust-artifact verbs only. What DANE publication,
+cross-signed roots and AIA import do is go-xkms behaviour, documented in its
+[DANE](../../../go-xkms/docs/ca/dane.md) and
+[Trust Bootstrap](../../../go-xkms/docs/trust-bootstrap/architecture.md) pages.
 
 Source: [`cmd/quicbaas/trust.go`](../../cmd/quicbaas/trust.go).
 

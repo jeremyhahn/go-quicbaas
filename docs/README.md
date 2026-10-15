@@ -96,7 +96,7 @@ one specification, [SPEC.md](SPEC.md), which lists every feature.
 | [secrets/](secrets/) | The secrets engine, dynamic secrets, secret-reference resolution |
 | [credentials/](credentials/) | Credential storage and lifecycle |
 | [barrier/](barrier/) | The system barrier: init, unseal, seal, rekey, recovery, Shamir custody |
-| [certificate-authority/](certificate-authority/) | Certificate issuance, ACME (RFC 8555), trust anchors |
+| [certificate-authority/](certificate-authority/) | How the go-xkms CA, ACME and trust services are reached: transports, permissions, CLI |
 | [ssh/](ssh/) | Server-held SSH keys, known hosts, authorized keys |
 | [bootstrap/](bootstrap/) | First-boot ceremony and trust bootstrap |
 | [attestation/](attestation/) | The attestation Verifier: endorsements, signed reference values, TPM quote appraisal; statement and chain verification |

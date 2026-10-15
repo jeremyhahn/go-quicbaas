@@ -1,6 +1,6 @@
 # Key Custody — who creates a private key, and where
 
-> **Status: NORMATIVE** · Last verified: 2026-09-12
+> **Status: NORMATIVE** · Last verified: 2026-10-14
 > Layer Ownership contract for asymmetric key creation. Feature folder: `docs/certificate-authority/`.
 > Enforced by `make check-local-keygen`. Ruling: go-quicbaas#910.
 
@@ -19,8 +19,10 @@ exactly one file, checked by the build.
 
 ## Why the last row exists
 
-go-xkms cannot hand back a private key, on any backend. Its keystore wraps
-every generated key in a non-exportable opaque handle, so
+go-xkms cannot hand back a private key, on any backend; its keystore custody is
+documented in
+[Key Management — Architecture](../../../go-xkms/docs/key-management/architecture.md).
+So
 `TrustedCA.IssueCertificate` returns `IssuedCertificate.PrivateKeyPEM` as
 `nil` — always. That is pinned by
 `pkg/testutil/xkmsca`'s `TestIssueCertificateNeverExportsThePrivateKey`, against
@@ -129,7 +131,7 @@ than the whole function. This mirrors `check-coded-sentinels`.
 | Fleet node daemon / per-session agent MCP identity | `service.XKMSFleetNodeCertIssuer` | `xkms.GenerateRequesterKey` | embedded go-xkms CA, `clientAuth`, tenant SPIFFE SAN |
 | Agent identity over an SDK transport | `service.SDKFleetNodeCertIssuer` | `xkms.GenerateRequesterKey` | remote go-xkms CA via `CAService.SignCSR` |
 | `quicbaas fleet deploy` | `cmd/quicbaas` `sdkFleetNodeCertIssuer` | `xkms.GenerateRequesterKey`, on the operator's host | remote CA via `/api/v1/xkms/ca/sign-csr` |
-| `quicbaas ca issue` | `caServiceAdapter.IssueCertificate` | `xkms.GenerateRequesterKey` | embedded go-xkms CA |
+| `quicbaas ca issue` | `caServiceAdapter.IssueCertificate` (QuicBaaS's own CA adapter, being removed: [SPEC](../SPEC.md) row `certificate-authority`) | `xkms.GenerateRequesterKey` | embedded go-xkms CA |
 | `/api/v1/xkms/ca/issue` (mounted go-xkms REST CA) | go-xkms keystore | go-xkms, non-exportable | go-xkms CA. **Returns no private key** — use the CSR-sign route or the certificate service. |
 
 Requester keys are held in an mlocked `secure.Buffer` and destroyed as soon as

@@ -1,9 +1,10 @@
 # Certificate Authority — Engineering
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-14
 > Implementation contract: exported surface, invariants, errors, configuration, tests. Feature folder: `docs/certificate-authority/`.
 
-Comprehensive guide for configuring Transport Layer Security (TLS) in QuicBaaS to secure communications between clients, servers, and cluster nodes.
+QuicBaaS's TLS configuration for clients, servers and cluster nodes. The CA
+that issues the certificates is go-xkms's (see [Certificates](#certificates)).
 
 ## Overview
 
@@ -50,188 +51,26 @@ When FIPS mode is enabled (`security.fips_mode: true`), QuicBaaS restricts to FI
 - `TLS_RSA_WITH_AES_128_GCM_SHA256`
 - `TLS_RSA_WITH_AES_256_GCM_SHA384`
 
-## Certificate Generation
+## Certificates
 
-### Using the Built-in Certificate Generator
+QuicBaaS does not implement a CA. Certificate issuance, profiles, key types,
+key usages and SAN rules are go-xkms's and are documented once there:
 
-QuicBaaS includes a built-in certificate provider for development and standalone deployments.
+- [Certificate Authority — Engineering](../../../go-xkms/docs/certificate-authority/engineering.md)
+- [Certificate types](../../../go-xkms/docs/ca/certificate-types.md)
+- [CA configuration](../../../go-xkms/docs/ca/configuration.md)
 
-**Via CLI:**
+Who creates a private key, and where, is QuicBaaS's own rule:
+[key-custody.md](key-custody.md).
 
-```bash
-# There is no CA-generation verb: the server creates its CA at first boot
-# from the `ca` section of the configuration file. Inspect it with:
-quicbaas ca info
-quicbaas ca bundle
+> **Being removed.** `quicbaas ca issue` and `/api/v1/certificate/issue` run on
+> QuicBaaS's own certificate service, a parallel implementation removed on the
+> owner's word ([SPEC](../SPEC.md) row `certificate-authority`). Until the
+> go-xkms CA re-export replaces it, the rotation steps below use `ca issue`;
+> any certificate your CA issues with the right SANs works the same way.
 
-# Issue a server certificate
-quicbaas ca issue \
-  --common-name "quicbaas-server" \
-  --usage server \
-  --dns localhost --dns quicbaas.example.com \
-  --ip 127.0.0.1 --ip 192.0.2.10 \
-  --validity-days 365 \
-  --output json > server-cert.json
-
-# Issue a client certificate
-quicbaas ca issue \
-  --common-name "quicbaas-client" \
-  --usage client \
-  --validity-days 365 \
-  --output json > client-cert.json
-```
-
-**Via API:**
-
-```bash
-# Issue certificate via REST API
-curl -X POST https://quicbaas:8080/v1/certificates/issue \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "common_name": "my-service",
-    "organization": "My Org",
-    "dns_names": ["my-service.example.com"],
-    "ip_addresses": ["10.0.0.50"],
-    "usage": "both",
-    "validity_days": 365
-  }'
-```
-
-### Manual Certificate Creation with OpenSSL
-
-For production environments or integration with existing PKI:
-
-**Step 1: Create a Certificate Authority**
-
-```bash
-# Generate CA private key (ECDSA P-256 recommended)
-openssl ecparam -genkey -name prime256v1 -out ca.key
-
-# For RSA (2048-bit minimum for FIPS):
-# openssl genrsa -out ca.key 4096
-
-# Generate self-signed CA certificate
-openssl req -new -x509 -days 3650 -key ca.key -out ca.crt \
-  -subj "/C=US/ST=State/L=City/O=Organization/CN=QuicBaaS CA"
-```
-
-**Step 2: Create Server Certificate**
-
-```bash
-# Create OpenSSL config for server
-cat > server.cnf <<EOF
-[req]
-distinguished_name = req_dn
-req_extensions = v3_req
-prompt = no
-
-[req_dn]
-C = US
-ST = State
-L = City
-O = Organization
-CN = quicbaas-server
-
-[v3_req]
-keyUsage = critical, digitalSignature, keyEncipherment
-extendedKeyUsage = serverAuth
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = localhost
-DNS.2 = quicbaas.example.com
-DNS.3 = *.quicbaas.example.com
-IP.1 = 127.0.0.1
-IP.2 = 10.0.0.1
-EOF
-
-# Generate server key
-openssl ecparam -genkey -name prime256v1 -out server.key
-
-# Generate CSR
-openssl req -new -key server.key -out server.csr -config server.cnf
-
-# Sign with CA
-openssl x509 -req -days 365 -in server.csr -CA ca.crt -CAkey ca.key \
-  -CAcreateserial -out server.crt -extensions v3_req -extfile server.cnf
-```
-
-**Step 3: Create Client Certificate (for mTLS)**
-
-```bash
-# Create OpenSSL config for client
-cat > client.cnf <<EOF
-[req]
-distinguished_name = req_dn
-req_extensions = v3_req
-prompt = no
-
-[req_dn]
-C = US
-ST = State
-L = City
-O = Organization
-CN = quicbaas-client
-
-[v3_req]
-keyUsage = critical, digitalSignature, keyEncipherment
-extendedKeyUsage = clientAuth
-EOF
-
-# Generate client key
-openssl ecparam -genkey -name prime256v1 -out client.key
-
-# Generate CSR
-openssl req -new -key client.key -out client.csr -config client.cnf
-
-# Sign with CA
-openssl x509 -req -days 365 -in client.csr -CA ca.crt -CAkey ca.key \
-  -CAcreateserial -out client.crt -extensions v3_req -extfile client.cnf
-```
-
-### Certificate Requirements
-
-**Subject Alternative Names (SANs):**
-- Server certificates must include all hostnames and IP addresses used to access the server
-- Include both DNS names and IP addresses
-- Wildcard certificates (`*.example.com`) are supported
-
-**Key Types:**
-| Type | Size | FIPS Approved | Notes |
-|------|------|---------------|-------|
-| ECDSA | P-256 | Yes | Recommended, fast |
-| ECDSA | P-384 | Yes | Higher security |
-| ECDSA | P-521 | Yes | Maximum security |
-| RSA | 2048 | Yes | Minimum for FIPS |
-| RSA | 3072 | Yes | Good balance |
-| RSA | 4096 | Yes | Maximum security |
-
-**Key Usage Extensions:**
-
-For server certificates:
-```
-X509v3 Key Usage: critical
-    Digital Signature, Key Encipherment
-X509v3 Extended Key Usage:
-    TLS Web Server Authentication
-```
-
-For client certificates:
-```
-X509v3 Key Usage: critical
-    Digital Signature, Key Encipherment
-X509v3 Extended Key Usage:
-    TLS Web Client Authentication
-```
-
-For dual-purpose certificates:
-```
-X509v3 Key Usage: critical
-    Digital Signature, Key Encipherment
-X509v3 Extended Key Usage:
-    TLS Web Server Authentication, TLS Web Client Authentication
-```
+The rest of this page is QuicBaaS's own TLS configuration: which keys load
+which certificate on which listener.
 
 ## Server TLS Configuration
 

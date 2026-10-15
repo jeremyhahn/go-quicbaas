@@ -1,44 +1,44 @@
 # Certificate Authority — User Guide
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
-> Task-oriented guide to issuing, verifying and revoking certificates, and to
-> ACME. Feature folder: `docs/certificate-authority/`.
+> **Status: NORMATIVE** · Last verified: 2026-10-14
+> How the go-xkms CA, ACME and trust services are reached through QuicBaaS.
+> Feature folder: `docs/certificate-authority/`.
 
-The CA is how everything in the deployment gets an identity it can prove: node
-certificates, client certificates for mTLS, and ACME-issued server certificates.
+The certificate authority, ACME and trust anchors are go-xkms services.
+go-xkms documents them once; this page covers only what QuicBaaS adds: the
+CLI verbs, the permissions and the transports that reach them.
+
+| To learn about | Read (go-xkms) |
+|---|---|
+| Issuing, checking and revoking certificates; CRLs; profiles | [Certificate Authority — User Guide](../../../go-xkms/docs/certificate-authority/user.md) |
+| Getting a certificate over ACME (RFC 8555, `enroll-01`) | [ACME Issuance — User Guide](../../../go-xkms/docs/acme-issuance/user.md) |
+| Getting the trust bundle safely before you trust the server | [Trust Bootstrap — User Guide](../../../go-xkms/docs/trust-bootstrap/user.md) |
+
+> **Being removed.** The `ca` and `acme` verbs below still run on QuicBaaS's
+> own certificate service and its own `/api/v1/certificate` and
+> `/api/v1/acme/*` routes. That is a parallel implementation, removed on the
+> owner's word ([SPEC](../SPEC.md) rows `certificate-authority` and `acme`).
+> Its replacement is the go-xkms CA and ACME services re-exported through
+> `sdk/go`. Do not build on the current verbs' wire routes.
 
 ## Prerequisites
 
-- An initialised, unsealed server. The CA's signing key lives under the barrier
-  ([`../barrier/user.md`](../barrier/user.md)); a sealed server cannot sign.
-- A principal holding the certificate permissions. They are per verb —
-  `certs:read` for inspection, `certs:generate` for issuance — and the split is
-  the useful one: a service can be allowed to read the CA bundle without being
-  allowed to mint certificates.
+- An initialised, unsealed server. The CA's signing key rests under the
+  barrier ([`../barrier/user.md`](../barrier/user.md)); a sealed server cannot
+  sign.
+- A principal holding the certificate permissions: `certs:read` to read the
+  bundle or list certificates, `certs:generate` to issue. A service can be
+  allowed to read the bundle without being allowed to mint certificates.
 
-## First run
+## CLI verbs
 
-```bash
-# Is the CA initialised?
-quicbaas ca info
+| Group | Verbs | Source |
+|---|---|---|
+| `ca` | `info`, `bundle`, `list`, `issue`, `revoke <serial>`, `export-bundle <path>` | `cmd/quicbaas/ca.go` |
+| `acme` | `register-challenge <name>`, `issue`, `new-order`, `finalize-order`, `renew <cert-url>` | `cmd/quicbaas/acme.go` |
+| `trust` | `publish-dane`, `cross-signed-roots`, `auto-import-aia` | `cmd/quicbaas/trust.go` |
 
-# Fetch the trust anchor. This is what a client needs to verify anything.
-quicbaas ca bundle
-
-# Issue a certificate.
-quicbaas ca issue
-
-# See what has been issued.
-quicbaas ca list
-```
-
-The `ca` group has exactly six verbs (`cmd/quicbaas/ca.go`): `info`, `bundle`,
-`list`, `issue`, `revoke <serial>` and `export-bundle <path>`. There is no
-`ca verify` and no `ca sign-csr` at the CLI — CSR signing exists in the API and
-during the initialisation ceremony (`quicbaas init sign-csr`), not as a
-standalone CA verb.
-
-## Common tasks
+Flags and examples are in [cli.md](cli.md).
 
 ### Distribute the trust anchor
 
@@ -47,91 +47,28 @@ quicbaas ca bundle > /etc/quicbaas/ca-chain.crt
 quicbaas --tls-ca /etc/quicbaas/ca-chain.crt iam user list
 ```
 
-Everything that connects needs this. `GET /api/v1/certificate/ca/bundle` is the
-route behind it, and it requires only `certs:read`.
-
-### Export the bundle to a file
-
-```bash
-quicbaas ca export-bundle /etc/quicbaas/ca-chain.crt
-```
-
-### Revoke
-
-```bash
-quicbaas ca list                 # find the serial
-quicbaas ca revoke <serial>
-```
-
-`revoke` takes a **serial**, not a subject or a filename. Revocation is only as
-effective as CRL distribution: revoking without publishing a fresh CRL leaves
-every verifier still accepting the certificate. CRL generation is an API
-operation (`GenerateCRL`) with no CLI verb — see the caveat below.
-
-### Get a certificate over ACME
-
-```bash
-quicbaas acme register-challenge <name>
-quicbaas acme new-order
-quicbaas acme finalize-order
-quicbaas acme issue
-quicbaas acme renew <cert-url>
-```
-
-Five verbs (`cmd/quicbaas/acme.go`). `issue` is the single-shot path; the
-`new-order` / `finalize-order` pair is the explicit one when you need to see or
-influence what happens between them. `renew` takes the certificate URL the order
-returned, not a name.
-
-The surface is RFC 8555 and the routes are under `/api/v1/acme`, following the
-directory-URL convention. `api.md` has them.
-
-### Manage trust anchors
-
-```bash
-quicbaas trust publish-dane
-quicbaas trust cross-signed-roots
-quicbaas trust auto-import-aia
-```
-
-Three verbs (`cmd/quicbaas/trust.go`). Trust controls which anchors this
-deployment **accepts**, as distinct from which certificates it **issues**.
-Confusing the two is how a deployment ends up trusting an issuer nobody chose —
-`auto-import-aia` in particular follows Authority Information Access pointers,
-so understand what it will import before enabling it.
+Everything that connects needs the bundle. Fetching it requires only
+`certs:read`.
 
 ## Two things that catch people
 
-**A sealed barrier means no issuance.** Every signing operation needs the key,
-and the key is under the barrier. `ca info` failing right after a restart is
-almost always this — check `barrier status` first.
+**A sealed barrier means no issuance.** `ca info` failing right after a restart
+is almost always this; check `barrier status` first.
 
-**Three methods reach unregistered routes.** `GenerateCRL`, `IsInitialized` and
-`IsRevoked` fall through the REST transport's route map to its default branch
-and are issued as `POST /api/v1/certificate/generatecrl`,
-`.../isinitialized` and `.../isrevoked` — paths the server does not register.
-Those three therefore fail over REST and QUIC while working over gRPC, MCP and
-embedded. See the matrix in [api.md](api.md). Until it is fixed, reach them with
-`--transport grpc` (or `unix`, which is gRPC over a socket).
+**Three methods do not reach the server over REST.** `GenerateCRL`,
+`IsInitialized` and `IsRevoked` fail over REST and QUIC and work over gRPC,
+Unix, MCP and embedded. See [api.md](api.md). Until then, use
+`--transport grpc`.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
 | `ca info` fails after a restart | The barrier is sealed. Unseal it. |
-| Clients reject a freshly issued certificate | They do not have the CA bundle, or they have an older one. Redistribute. |
-| A revoked certificate is still accepted | The CRL was not regenerated or not published. |
-| `GenerateCRL` / `IsRevoked` / `IsInitialized` fail over REST but work elsewhere | Known route mismatch — see above and [api.md](api.md). Use `--transport grpc`. |
+| `GenerateCRL` / `IsRevoked` / `IsInitialized` fail over REST but work elsewhere | Known route mismatch; see [api.md](api.md). Use `--transport grpc`. |
 | `ca revoke` rejects the argument | It takes the certificate **serial**. Get it from `ca list`. |
-| ACME order fails validation | The challenge could not be served. ACME validates reachability; a private deployment usually needs DNS-01 rather than HTTP-01. |
-| http-01 or enroll-01 validation is refused for a device on a private network | Challenge validation refuses reserved addresses (loopback, private, link-local, metadata) by default, so a client-named target cannot reach internal services. Set `server.acme.allow_private_challenge_targets: true` when devices enroll from a private network. |
+| http-01 or enroll-01 validation is refused for a device on a private network | QuicBaaS's own ACME handling refuses reserved addresses by default. Set `server.acme.allow_private_challenge_targets: true` when devices enroll from a private network. |
 | `permission denied` reading the bundle | `certs:read` is separate from `certs:generate`. Grant the narrower one. |
 
-## What this feature does not do
-
-- **It is not a public CA.** Certificates it issues are trusted by whoever
-  installs its bundle.
-- **It does not distribute the bundle.** Fetching it is a command; getting it
-  onto every host is your configuration management's job.
-- **It does not rotate the CA key on a schedule.** That is a deliberate,
-  planned operation with a redistribution step.
+For CA and ACME behaviour itself (revocation and CRLs, challenge validation,
+profiles), see the go-xkms pages in the table at the top.

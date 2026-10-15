@@ -596,24 +596,13 @@ not a security boundary — see
 ### TPM lifecycle and EK credential challenge re-exports (go-xkms#798)
 
 `sdk/go/xkms` aliases the go-xkms TPM provisioning lifecycle so
-go-trusted-platform needs no private copy. The verbs are methods on the
-already-aliased `TrustedPlatformModule`:
-
-| Verb | Purpose |
-|------|---------|
-| `State() (*ProvisioningState, error)` | Hierarchy auth bits, which configured persistent handles exist, Platform SRK policy match |
-| `ClearForReprovision() (rebootRequired bool, err error)` | `TPM2_Clear` via LOCKOUT, then PLATFORM, then UEFI PPI `ForceClear` (the only path that needs a reboot) |
-| `CreateActivationKey() (*ActivationKey, error)` | Transient null-hierarchy key that answers an EK challenge |
-| `AnswerCredentialChallenge(key, challenge) ([]byte, error)` | Device side of the challenge; returns the recovered secret |
-
-The verifier side runs in software with no TPM: `ActivationKeyName(publicArea)`
-computes the Name of a marshaled `TPMT_PUBLIC` received off the wire, and
-`NewCredentialChallenge(ekPub, name)` returns the `CredentialChallenge` and the
-secret to compare. Refusals are the aliased sentinels `ErrTPMClearLockoutRefused`,
-`ErrTPMClearPlatformRefused`, `ErrTPMProvisioningStateRead`,
-`ErrTPMCredentialChallenge`, `ErrTPMEKPublicRequired`,
-`ErrTPMActivationKeyNameRequired`, `ErrTPMActivationKeyCreate`,
-`ErrTPMActivationKeyRequired` and `ErrTPMCredentialChallengeRequired`.
+go-trusted-platform needs no private copy: `State`, `ClearForReprovision`,
+`CreateActivationKey` and `AnswerCredentialChallenge` on the aliased
+`TrustedPlatformModule`, the software verifier side
+(`ActivationKeyName`, `NewCredentialChallenge`) and the `ErrTPM*` sentinels.
+The aliases add no behaviour; what each verb does is documented in go-xkms:
+[TPM 2.0 — API](../../../go-xkms/docs/tpm2/api.md), section "Provisioning
+state, reprovisioning, and an EK credential challenge without a TPM".
 
 ### Trust resolver SDK re-exports and quicbaasd trust: config (Phase C)
 

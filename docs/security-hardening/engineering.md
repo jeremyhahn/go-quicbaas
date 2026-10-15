@@ -838,7 +838,10 @@ kms:
 
 **TPM 2.0 integration:**
 
-QuicBaaS supports TPM 2.0 for PCR-bound hardware sealing through the go-xkms library:
+QuicBaaS reaches TPM 2.0 through go-xkms; the configuration key below selects
+it. TPM behaviour, PCR binding and TPM policies are documented in go-xkms:
+[TPM 2.0](../../../go-xkms/docs/tpm2/user.md) and
+[TPM Policies](../../../go-xkms/docs/tpm-policies/user.md).
 
 ```yaml
 kms:

@@ -52,7 +52,7 @@ quicbaas data delete user john --yes
 | ceremony | Initialisation ceremony state machine | status / claim-cert / claim-share (begin+complete handshake) / sign-csr / enroll-external-officer |
 | bootstrap | Trust-bootstrap the CA bundle | auto / dane / noise / spki / direct |
 | ca | Certificate Authority operations | info / bundle / list / issue / revoke / export-bundle |
-| acme | ACME (RFC 8555) broker-as-CA operations | register-challenge / issue / new-order / finalize-order / renew |
+| acme | ACME operations (being removed; see [certificate-authority/cli.md](../certificate-authority/cli.md)) | register-challenge / issue / new-order / finalize-order / renew |
 | trust | Trust artifacts | publish-dane / cross-signed-roots / auto-import-aia |
 | credential | Named credential service (versioned rotation) | submit / list / rotate / retrieve / versions / delete / gc |
 | init | `quicbaasd init` daemon-side ceremony | First-boot bootstrap with persisted state |

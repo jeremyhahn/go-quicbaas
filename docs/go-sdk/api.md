@@ -2735,6 +2735,14 @@ never a wrapper, so a value crosses the boundary without conversion and
 | `sdk/go/xkms/trust/fetcher` | The SPKI-pinned CA-bundle fetcher's defaults: `DefaultBundlePath` (`/v1/ca/bootstrap`) and `DefaultTimeout`, so the server that serves the bundle and the client that fetches it name one endpoint |
 | `sdk/go/xkms/{backend,certstore,fido2,luks,secure,ssh,storage,transport,trust}` | Keystore backends, certificate stores, FIDO2, LUKS, protected memory, SSH, storage, transport and trust bootstrap |
 
+The aliased names behave exactly as go-xkms documents them:
+[TPM 2.0](../../../go-xkms/docs/tpm2/api.md),
+[TPM Policies](../../../go-xkms/docs/tpm-policies/api.md),
+[Certificate Authority](../../../go-xkms/docs/certificate-authority/api.md),
+[ACME Issuance](../../../go-xkms/docs/acme-issuance/api.md),
+[Attestation Evidence](../../../go-xkms/docs/attestation-evidence/api.md) and
+[Trust Bootstrap](../../../go-xkms/docs/trust-bootstrap/api.md).
+
 ### Obtaining the PKCS#11 provider module (`libxkms_pkcs11.so`)
 
 The module the `signserver` keys are used through is **not** a published

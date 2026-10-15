@@ -423,11 +423,13 @@ type ACMEClientAPI interface {
 }
 ```
 
-Challenge types covered: `http-01`, `dns-01`, `enroll-01` (TCG TPM
-enrollment), `endorse-01`, `device-attest-01`. The verifier
-functions are pure functions re-exported from the xkms ACME library
-(`ACMEVerifyHTTP01`, `ACMEVerifyDNS01`, `ACMEVerifyEnroll01`,
-`ACMEVerifyEndorse01`).
+The challenge verifiers (`ACMEVerifyHTTP01`, `ACMEVerifyDNS01`,
+`ACMEVerifyEnroll01`, `ACMEVerifyEndorse01`) are re-exported from go-xkms; the
+challenge types and what each proves are documented there:
+[ACME Issuance — API](../../../go-xkms/docs/acme-issuance/api.md). The
+`Server()` / `Client()` surface above runs on QuicBaaS's own `/api/v1/acme/*`
+handling, a parallel implementation being removed ([SPEC](../SPEC.md) row
+`acme`).
 
 Challenge verifiers register **in-process**: `RegisterChallenge`
 keeps the verifier inside the SDK and notifies the server that the
