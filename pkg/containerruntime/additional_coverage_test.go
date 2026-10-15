@@ -229,21 +229,6 @@ func TestBuildStopMeasurement_NilFinishedAt(t *testing.T) {
 }
 
 // =============================================================================
-// Runtime — verifyOCIRuntime error path
-// =============================================================================
-
-func TestRuntime_VerifyOCIRuntime_NotFound(t *testing.T) {
-	r := &Runtime{
-		config: &RuntimeConfig{
-			OCIRuntime: "nonexistent-oci-runtime-that-does-not-exist-12345",
-		},
-	}
-	err := r.verifyOCIRuntime()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-// =============================================================================
 // Runtime — ensureDirectories with empty dir paths
 // =============================================================================
 

@@ -15,6 +15,8 @@ package containerruntime
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +33,6 @@ func TestDefaultRuntimeConfig(t *testing.T) {
 	assert.NotEmpty(t, config.GraphDriverName)
 	assert.NotEmpty(t, config.StaticDir)
 	assert.NotEmpty(t, config.VolumePath)
-	assert.NotEmpty(t, config.OCIRuntime)
 	assert.NotEmpty(t, config.ImageStorePath)
 }
 
@@ -55,7 +56,6 @@ func TestRuntimeConfig_Validate(t *testing.T) {
 				TmpDir:          DefaultTmpDir,
 				StaticDir:       "/var/lib/containers/storage/libpod",
 				VolumePath:      "/var/lib/containers/storage/volumes",
-				OCIRuntime:      DefaultOCIRuntime,
 				ImageStorePath:  "/var/lib/containers/storage/images",
 				GraphDriverName: DefaultGraphDriver,
 			},
@@ -70,7 +70,6 @@ func TestRuntimeConfig_Validate(t *testing.T) {
 				TmpDir:          DefaultTmpDir,
 				StaticDir:       "/var/lib/containers/storage/libpod",
 				VolumePath:      "/var/lib/containers/storage/volumes",
-				OCIRuntime:      DefaultOCIRuntime,
 				ImageStorePath:  "/var/lib/containers/storage/images",
 				GraphDriverName: DefaultGraphDriver,
 			},
@@ -85,7 +84,6 @@ func TestRuntimeConfig_Validate(t *testing.T) {
 				TmpDir:          DefaultTmpDir,
 				StaticDir:       "/var/lib/containers/storage/libpod",
 				VolumePath:      "/var/lib/containers/storage/volumes",
-				OCIRuntime:      DefaultOCIRuntime,
 				ImageStorePath:  "/var/lib/containers/storage/images",
 				GraphDriverName: "invalid_driver",
 			},
@@ -158,116 +156,77 @@ func TestRuntimeError_Unwrap(t *testing.T) {
 	assert.ErrorIs(t, err, wrapped)
 }
 
+// testRootfs returns a rootfs whose /etc/passwd and /etc/group name a
+// "nobody" user and group, and an "app" user in two supplementary groups.
+func testRootfs(t *testing.T) string {
+	t.Helper()
+
+	rootfs := t.TempDir()
+	etc := filepath.Join(rootfs, "etc")
+	require.NoError(t, os.MkdirAll(etc, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(etc, "passwd"), []byte(
+		"root:x:0:0:root:/root:/bin/sh\n"+
+			"nobody:x:65534:65534:nobody:/nonexistent:/bin/false\n"+
+			"app:x:1000:1000:app:/home/app:/bin/sh\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(etc, "group"), []byte(
+		"root:x:0:\n"+
+			"nogroup:x:65534:\n"+
+			"app:x:1000:\n"+
+			"video:x:44:app\n"+
+			"audio:x:29:app\n"), 0o644))
+	return rootfs
+}
+
 func TestParseUserSpec(t *testing.T) {
+	rootfs := testRootfs(t)
+
 	tests := []struct {
-		name        string
-		spec        string
-		expectedUID uint32
-		expectedGID uint32
+		name         string
+		spec         string
+		expectedUID  uint32
+		expectedGID  uint32
+		expectedGids []uint32
 	}{
-		{
-			name:        "empty spec",
-			spec:        "",
-			expectedUID: 0,
-			expectedGID: 0,
-		},
-		{
-			name:        "uid only",
-			spec:        "1000",
-			expectedUID: 1000,
-			expectedGID: 0,
-		},
-		{
-			name:        "uid:gid",
-			spec:        "1000:1000",
-			expectedUID: 1000,
-			expectedGID: 1000,
-		},
-		{
-			name:        "different uid and gid",
-			spec:        "1000:2000",
-			expectedUID: 1000,
-			expectedGID: 2000,
-		},
-		{
-			name:        "root user",
-			spec:        "0:0",
-			expectedUID: 0,
-			expectedGID: 0,
-		},
-		{
-			name:        "invalid uid (uses 0)",
-			spec:        "notanumber",
-			expectedUID: 0,
-			expectedGID: 0,
-		},
-		{
-			name:        "invalid gid (uses 0)",
-			spec:        "1000:notanumber",
-			expectedUID: 1000,
-			expectedGID: 0,
-		},
-		{
-			name:        "name spec (returns 0)",
-			spec:        "nobody:nogroup",
-			expectedUID: 0,
-			expectedGID: 0,
-		},
+		{name: "empty spec", spec: "", expectedUID: 0, expectedGID: 0},
+		{name: "uid only", spec: "1000", expectedUID: 1000, expectedGID: 1000, expectedGids: []uint32{44, 29}},
+		{name: "uid:gid", spec: "1000:1000", expectedUID: 1000, expectedGID: 1000},
+		{name: "different uid and gid", spec: "1000:2000", expectedUID: 1000, expectedGID: 2000},
+		{name: "root user", spec: "0:0", expectedUID: 0, expectedGID: 0},
+		{name: "uid absent from passwd", spec: "4242", expectedUID: 4242, expectedGID: 0},
+		{name: "name spec", spec: "nobody:nogroup", expectedUID: 65534, expectedGID: 65534},
+		{name: "user name only", spec: "app", expectedUID: 1000, expectedGID: 1000, expectedGids: []uint32{44, 29}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			uid, gid := parseUserSpec(tt.spec)
-			assert.Equal(t, tt.expectedUID, uid)
-			assert.Equal(t, tt.expectedGID, gid)
+			got, err := parseUserSpec(tt.spec, rootfs)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedUID, got.UID)
+			assert.Equal(t, tt.expectedGID, got.GID)
+			assert.ElementsMatch(t, tt.expectedGids, got.AdditionalGids)
 		})
 	}
 }
 
-func TestSanitizeImageName(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "simple image name",
-			input:    "alpine",
-			expected: "alpine",
-		},
-		{
-			name:     "image with tag",
-			input:    "alpine:latest",
-			expected: "alpine_latest",
-		},
-		{
-			name:     "image with registry",
-			input:    "docker.io/library/alpine:3.18",
-			expected: "docker.io_library_alpine_3.18",
-		},
-		{
-			name:     "image with digest",
-			input:    "alpine@sha256:abc123",
-			expected: "alpine_sha256_abc123",
-		},
-		{
-			name:     "complex image reference",
-			input:    "gcr.io/my-project/my-image:v1.0.0",
-			expected: "gcr.io_my-project_my-image_v1.0.0",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "",
-		},
-	}
+func TestParseUserSpec_Invalid(t *testing.T) {
+	rootfs := testRootfs(t)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := sanitizeImageName(tt.input)
-			assert.Equal(t, tt.expected, result)
+	for _, spec := range []string{"notanumber", "1000:notanumber", "-1"} {
+		t.Run(spec, func(t *testing.T) {
+			_, err := parseUserSpec(spec, rootfs)
+			require.Error(t, err)
 		})
 	}
+}
+
+func TestParseUserSpec_NoPasswdFiles(t *testing.T) {
+	// A numeric user needs no passwd or group file.
+	got, err := parseUserSpec("1000:1000", t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, ociUser{UID: 1000, GID: 1000}, got)
+
+	_, err = parseUserSpec("app", t.TempDir())
+	require.Error(t, err)
 }
 
 func TestRemoveString(t *testing.T) {
@@ -482,7 +441,6 @@ func TestRuntimeConfig_Fields(t *testing.T) {
 		GraphDriverName: "overlay",
 		StaticDir:       "/var/lib/containers/storage/libpod",
 		VolumePath:      "/var/lib/containers/storage/volumes",
-		OCIRuntime:      "crun",
 		ImageStorePath:  "/var/lib/containers/storage/images",
 	}
 
@@ -492,7 +450,6 @@ func TestRuntimeConfig_Fields(t *testing.T) {
 	assert.Equal(t, "overlay", config.GraphDriverName)
 	assert.Equal(t, "/var/lib/containers/storage/libpod", config.StaticDir)
 	assert.Equal(t, "/var/lib/containers/storage/volumes", config.VolumePath)
-	assert.Equal(t, "crun", config.OCIRuntime)
 	assert.Equal(t, "/var/lib/containers/storage/images", config.ImageStorePath)
 }
 

@@ -15,49 +15,17 @@ package containerruntime
 
 import (
 	"context"
-	"errors"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeAttachSession is an in-memory AttachSession for exercising the attach
-// broker without a real pseudo-terminal.
-type fakeAttachSession struct {
-	out      chan AttachChunk
-	exitCode int
-	waitErr  error
-	closed   bool
-}
-
-func newFakeAttachSession(chunks []AttachChunk, exitCode int) *fakeAttachSession {
-	out := make(chan AttachChunk, len(chunks))
-	for _, c := range chunks {
-		out <- c
-	}
-	close(out)
-	return &fakeAttachSession{out: out, exitCode: exitCode}
-}
-
-func (f *fakeAttachSession) Output() <-chan AttachChunk { return f.out }
-func (f *fakeAttachSession) Wait() (int, error)         { return f.exitCode, f.waitErr }
-func (f *fakeAttachSession) Close() error               { f.closed = true; return nil }
-
 func TestRuntimeAttach_Success(t *testing.T) {
-	rt := newTestRuntime(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
 	id := createTestContainer(t, rt, "attach-ok")
-
-	var gotArgs []string
-	restore := startPTYExec
-	startPTYExec = func(ctx context.Context, runtime string, args []string) (AttachSession, error) {
-		gotArgs = args
-		return newFakeAttachSession([]AttachChunk{
-			{Stream: "console", Data: []byte("line1\n")},
-			{Stream: "console", Data: []byte("line2\n")},
-		}, 0), nil
-	}
-	t.Cleanup(func() { startPTYExec = restore })
+	doubles.engine.execResult = fakeResult{stdout: "line1\nline2\n"}
 
 	session, err := rt.Attach(context.Background(), id, ExecOptions{})
 	require.NoError(t, err)
@@ -65,6 +33,7 @@ func TestRuntimeAttach_Success(t *testing.T) {
 
 	var output []byte
 	for chunk := range session.Output() {
+		assert.Equal(t, "console", chunk.Stream)
 		output = append(output, chunk.Data...)
 	}
 	assert.Equal(t, "line1\nline2\n", string(output))
@@ -72,28 +41,40 @@ func TestRuntimeAttach_Success(t *testing.T) {
 	code, err := session.Wait()
 	require.NoError(t, err)
 	assert.Equal(t, 0, code)
+	require.NoError(t, session.Close())
 
-	// The default command is a shell.
-	assert.Contains(t, gotArgs, "/bin/sh")
-	assert.Equal(t, "exec", gotArgs[0])
+	// The default command is a shell, on a terminal.
+	spec := doubles.engine.lastExec()
+	assert.Equal(t, []string{"/bin/sh"}, spec.Args)
+	assert.True(t, spec.TTY)
 }
 
 func TestRuntimeAttach_CustomCommand(t *testing.T) {
-	rt := newTestRuntime(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
 	id := createTestContainer(t, rt, "attach-cmd")
 
-	var gotArgs []string
-	restore := startPTYExec
-	startPTYExec = func(ctx context.Context, runtime string, args []string) (AttachSession, error) {
-		gotArgs = args
-		return newFakeAttachSession(nil, 0), nil
-	}
-	t.Cleanup(func() { startPTYExec = restore })
-
-	_, err := rt.Attach(context.Background(), id, ExecOptions{Command: []string{"/bin/bash", "-l"}})
+	session, err := rt.Attach(context.Background(), id, ExecOptions{Command: []string{"/bin/bash", "-l"}})
 	require.NoError(t, err)
-	assert.Contains(t, gotArgs, "/bin/bash")
-	assert.Contains(t, gotArgs, "-l")
+	require.NoError(t, session.Close())
+	assert.Equal(t, []string{"/bin/bash", "-l"}, doubles.engine.lastExec().Args)
+}
+
+func TestRuntimeAttach_CloseKillsRunningSession(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	id := createTestContainer(t, rt, "attach-close")
+	doubles.engine.execBlocks = true
+
+	session, err := rt.Attach(context.Background(), id, ExecOptions{})
+	require.NoError(t, err)
+	require.NoError(t, session.Close())
+
+	// Closing ends the output stream and reaps the killed process.
+	for range session.Output() {
+		t.Fatal("a silent session produced output")
+	}
+	code, err := session.Wait()
+	require.NoError(t, err)
+	assert.Equal(t, 128+int(syscall.SIGKILL), code)
 }
 
 func TestRuntimeAttach_MissingContainer(t *testing.T) {
@@ -104,30 +85,19 @@ func TestRuntimeAttach_MissingContainer(t *testing.T) {
 }
 
 func TestRuntimeAttach_StartFailure(t *testing.T) {
-	rt := newTestRuntime(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
 	id := createTestContainer(t, rt, "attach-fail")
-
-	sentinel := errors.New("pty allocation failed")
-	restore := startPTYExec
-	startPTYExec = func(ctx context.Context, runtime string, args []string) (AttachSession, error) {
-		return nil, sentinel
-	}
-	t.Cleanup(func() { startPTYExec = restore })
+	doubles.engine.execErr = errTestBackend
 
 	_, err := rt.Attach(context.Background(), id, ExecOptions{})
 	require.Error(t, err)
-	assert.ErrorIs(t, err, sentinel)
+	assert.ErrorIs(t, err, errTestBackend)
 }
 
 func TestManagerAttach_Delegates(t *testing.T) {
-	rt := newTestRuntime(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
 	id := createTestContainer(t, rt, "mgr-attach")
-
-	restore := startPTYExec
-	startPTYExec = func(ctx context.Context, runtime string, args []string) (AttachSession, error) {
-		return newFakeAttachSession([]AttachChunk{{Stream: "console", Data: []byte("hi")}}, 0), nil
-	}
-	t.Cleanup(func() { startPTYExec = restore })
+	doubles.engine.execResult = fakeResult{stdout: "hi"}
 
 	m := &podmanManager{config: DefaultManagerConfig(), logger: rt.logger, runtime: rt}
 	m.initialized.Store(true)
@@ -137,29 +107,11 @@ func TestManagerAttach_Delegates(t *testing.T) {
 	require.NotNil(t, session)
 	chunk := <-session.Output()
 	assert.Equal(t, "hi", string(chunk.Data))
+	require.NoError(t, session.Close())
 }
 
 func TestManagerAttach_NotInitialized(t *testing.T) {
 	m := &podmanManager{config: DefaultManagerConfig(), logger: newTestRuntime(t).logger}
 	_, err := m.AttachContainer(context.Background(), "cid", ExecOptions{})
 	require.ErrorIs(t, err, ErrClientNotConnected)
-}
-
-func TestRunOCIExecTTY_ViaSeam(t *testing.T) {
-	// The buffered TTY exec path drains the attach session's output into the
-	// result Stdout and reports the exit code.
-	restore := startPTYExec
-	startPTYExec = func(ctx context.Context, runtime string, args []string) (AttachSession, error) {
-		return newFakeAttachSession([]AttachChunk{
-			{Stream: "console", Data: []byte("tty-")},
-			{Stream: "console", Data: []byte("out")},
-		}, 3), nil
-	}
-	t.Cleanup(func() { startPTYExec = restore })
-
-	runtimePath := fakeOCIRuntime(t, fakeOCIResult{})
-	result, err := runOCIExecTTY(context.Background(), runtimePath, []string{"exec", "cid", "/bin/sh"})
-	require.NoError(t, err)
-	assert.Equal(t, "tty-out", string(result.Stdout))
-	assert.Equal(t, 3, result.ExitCode)
 }

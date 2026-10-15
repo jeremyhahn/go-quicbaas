@@ -128,8 +128,7 @@ func TestRuntimeStats_NoPID(t *testing.T) {
 	rt := newTestRuntime(t)
 	state, err := rt.CreateContainer(context.Background(), &ContainerConfig{Name: "stats-nopid", Image: "alpine:latest"})
 	require.NoError(t, err)
-	state.PID = 0 // never started; getContainerPID will fail against the fake runtime
-	fakeOCIRuntime(t, fakeOCIResult{Stderr: "container does not exist", ExitCode: 1})
+	state.PID = 0 // never started
 
 	_, err = rt.Stats(context.Background(), state.ID)
 	require.Error(t, err)

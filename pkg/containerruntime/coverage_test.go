@@ -271,24 +271,32 @@ func TestPodmanManager_GetContainerLogs_EmptyID(t *testing.T) {
 
 // TestPodmanManager_GetContainerLogs_WithSinceParam verifies logs with since time.
 func TestPodmanManager_GetContainerLogs_WithSinceParam(t *testing.T) {
-	mgr := createInitializedTestManager(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
+	doubles.engine.initResult = &fakeResult{stdout: "out\n", stderr: "err\n"}
+	id := createTestContainer(t, rt, "logs-since")
+	require.NoError(t, rt.StartContainer(context.Background(), id))
+	_, err := rt.WaitContainer(context.Background(), id)
+	require.NoError(t, err)
+
+	mgr := &podmanManager{config: DefaultManagerConfig(), logger: rt.logger, runtime: rt}
+	mgr.initialized.Store(true)
 
 	since := time.Now().Add(-1 * time.Hour)
-	logs, err := mgr.GetContainerLogs(context.Background(), "some-container", false, &since)
+	logs, err := mgr.GetContainerLogs(context.Background(), id, false, &since)
 	require.NoError(t, err)
-	assert.NotNil(t, logs)
-	assert.Equal(t, "some-container", logs.ContainerID)
+	assert.Equal(t, id, logs.ContainerID)
 	assert.Equal(t, since, logs.Since)
+	assert.Equal(t, "out\n", string(logs.Stdout))
+	assert.Equal(t, "err\n", string(logs.Stderr))
 }
 
-// TestPodmanManager_GetContainerLogs_NilSince verifies logs without since time.
-func TestPodmanManager_GetContainerLogs_NilSince(t *testing.T) {
+// TestPodmanManager_GetContainerLogs_UnknownContainer verifies logs of a
+// container the runtime does not know are an error.
+func TestPodmanManager_GetContainerLogs_UnknownContainer(t *testing.T) {
 	mgr := createInitializedTestManager(t)
 
-	logs, err := mgr.GetContainerLogs(context.Background(), "some-container", false, nil)
-	require.NoError(t, err)
-	assert.NotNil(t, logs)
-	assert.Equal(t, "some-container", logs.ContainerID)
+	_, err := mgr.GetContainerLogs(context.Background(), "some-container", false, nil)
+	require.ErrorIs(t, err, ErrContainerNotFound)
 }
 
 // TestPodmanManager_RemoveImage_EmptyRef verifies error for empty image ref.

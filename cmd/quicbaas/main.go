@@ -485,6 +485,9 @@ func extractLogFileFlag(args []string) string {
 }
 
 func main() {
+	if runContainerInit() {
+		return
+	}
 	if isGUIOnly() {
 		// User intent: launch GUI (no subcommand, no CLI-intent flags).
 		if !hasDisplay() {

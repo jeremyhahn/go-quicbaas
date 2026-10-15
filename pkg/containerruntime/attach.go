@@ -15,9 +15,11 @@ package containerruntime
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
-	"os/exec"
 	"sync"
+	"syscall"
 )
 
 // AttachChunk is one framed slice of container console output produced by an
@@ -55,15 +57,11 @@ type Attacher interface {
 	AttachContainer(ctx context.Context, id string, opts ExecOptions) (AttachSession, error)
 }
 
-// startPTYExec is the seam used to launch a pseudo-terminal exec session. It
-// is a package-level variable so tests can fake the OCI invocation.
-var startPTYExec = defaultStartPTYExec
-
 // Attach starts an interactive attach session against a running container by
-// running an OCI-runtime exec attached to a freshly allocated pseudo-terminal.
-// When no command is supplied it defaults to a shell. The session's console
-// output is delivered on the returned channel and fanned out by the transport
-// layer (e.g. the gRPC AttachContainer server stream).
+// running a process on a freshly allocated pseudo-terminal inside it. When no
+// command is supplied it defaults to a shell. The session's console output is
+// delivered on the returned channel and fanned out by the transport layer
+// (e.g. the gRPC AttachContainer server stream).
 func (r *Runtime) Attach(ctx context.Context, id string, opts ExecOptions) (AttachSession, error) {
 	state, err := r.lookupContainer(id)
 	if err != nil {
@@ -73,7 +71,6 @@ func (r *Runtime) Attach(ctx context.Context, id string, opts ExecOptions) (Atta
 	if len(opts.Command) == 0 {
 		opts.Command = []string{"/bin/sh"}
 	}
-	opts.TTY = true
 
 	r.logger.Debug("attaching to container",
 		"id", id,
@@ -81,70 +78,55 @@ func (r *Runtime) Attach(ctx context.Context, id string, opts ExecOptions) (Atta
 		"command", opts.Command,
 	)
 
-	args := execArgs(state.ID, opts)
-	session, err := startPTYExec(ctx, r.config.OCIRuntime, args)
+	session, err := r.startConsoleSession(state, opts)
 	if err != nil {
 		return nil, NewContainerError(id, "attach", err)
 	}
 	return session, nil
 }
 
-// ptySession is the concrete AttachSession backed by a pseudo-terminal master
-// and the OCI-runtime child process.
-type ptySession struct {
-	cmd    *exec.Cmd
-	master *os.File
-	output chan AttachChunk
-	done   chan struct{}
-
-	waitOnce  sync.Once
-	exitCode  int
-	waitErr   error
-	closeOnce sync.Once
-}
-
-// defaultStartPTYExec launches the OCI runtime with its stdio bound to a
-// pseudo-terminal slave and starts a reader goroutine that fans the master
-// output onto the session channel.
-func defaultStartPTYExec(ctx context.Context, runtime string, args []string) (AttachSession, error) {
-	master, slave, err := openPTY()
+// startConsoleSession runs opts as a TTY process in the container and starts
+// fanning its console output onto a session channel.
+func (r *Runtime) startConsoleSession(state *containerState, opts ExecOptions) (*consoleSession, error) {
+	opts.TTY = true
+	process, err := r.backends.engine.Exec(state.ID, execProcessSpec(state, opts))
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, runtime, args...)
-	cmd.Stdin = slave
-	cmd.Stdout = slave
-	cmd.Stderr = slave
-	cmd.SysProcAttr = ptySysProcAttr()
-
-	if err := cmd.Start(); err != nil {
-		_ = master.Close()
-		_ = slave.Close()
-		return nil, err
-	}
-
-	// The child owns the slave now; the parent only reads/writes the master.
-	_ = slave.Close()
-
-	s := &ptySession{
-		cmd:    cmd,
-		master: master,
-		output: make(chan AttachChunk, 16),
-		done:   make(chan struct{}),
+	s := &consoleSession{
+		process: process,
+		console: process.Console(),
+		output:  make(chan AttachChunk, 16),
+		done:    make(chan struct{}),
 	}
 	go s.readLoop()
 	return s, nil
 }
 
-// readLoop copies pseudo-terminal master output onto the session channel until
-// the master returns an error (EOF/EIO on child exit) or the session is
+// consoleSession is the AttachSession backed by a container process's
+// pseudo-terminal master.
+type consoleSession struct {
+	process containerProcess
+	console io.ReadWriteCloser
+	output  chan AttachChunk
+	done    chan struct{}
+
+	waitOnce  sync.Once
+	exitCode  int
+	waitErr   error
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// readLoop copies console output onto the session channel until the console
+// returns an error (EOF or EIO once the process exits) or the session is
 // closed, then closes the channel.
-func (s *ptySession) readLoop() {
+func (s *consoleSession) readLoop() {
 	defer close(s.output)
 	buf := make([]byte, 4096)
 	for {
-		n, err := s.master.Read(buf)
+		n, err := s.console.Read(buf)
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
@@ -161,32 +143,30 @@ func (s *ptySession) readLoop() {
 }
 
 // Output returns the session's console output channel.
-func (s *ptySession) Output() <-chan AttachChunk {
+func (s *consoleSession) Output() <-chan AttachChunk {
 	return s.output
 }
 
 // Wait blocks until the attached process exits and returns its exit code.
-func (s *ptySession) Wait() (int, error) {
+func (s *consoleSession) Wait() (int, error) {
 	s.waitOnce.Do(func() {
-		err := s.cmd.Wait()
-		s.exitCode, s.waitErr = exitCodeFromRunErr(err)
+		s.exitCode, s.waitErr = s.process.Wait()
 	})
 	return s.exitCode, s.waitErr
 }
 
-// Close terminates the session, closes the pseudo-terminal master, kills the
-// process if it is still running, and reaps it. It is idempotent.
-func (s *ptySession) Close() error {
+// Close terminates the session: it closes the console, kills the process if
+// it is still running, and reaps it. It is idempotent.
+func (s *consoleSession) Close() error {
 	s.closeOnce.Do(func() {
 		close(s.done)
-		_ = s.master.Close()
-		if s.cmd.Process != nil {
-			_ = s.cmd.Process.Kill()
+		closeErr := s.console.Close()
+		killErr := s.process.Signal(syscall.SIGKILL)
+		if errors.Is(killErr, os.ErrProcessDone) {
+			killErr = nil
 		}
-		s.waitOnce.Do(func() {
-			err := s.cmd.Wait()
-			s.exitCode, s.waitErr = exitCodeFromRunErr(err)
-		})
+		_, waitErr := s.Wait()
+		s.closeErr = errors.Join(closeErr, killErr, waitErr)
 	})
-	return nil
+	return s.closeErr
 }

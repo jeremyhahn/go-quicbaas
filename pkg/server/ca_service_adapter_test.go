@@ -420,6 +420,76 @@ func TestCAServiceAdapter_SignCSR(t *testing.T) {
 	})
 }
 
+// requireBundleError asserts that err is a CAServiceAdapterBundleError
+// wrapping cause.
+func requireBundleError(t *testing.T, err, cause error) {
+	t.Helper()
+	var bundleErr *CAServiceAdapterBundleError
+	if !errors.As(err, &bundleErr) {
+		t.Fatalf("want *CAServiceAdapterBundleError, got %v", err)
+	}
+	if !errors.Is(bundleErr.Cause, cause) {
+		t.Fatalf("want the bundle read cause, got %v", bundleErr.Cause)
+	}
+	if !errors.Is(err, ErrCAServiceAdapterBundle) {
+		t.Fatalf("want ErrCAServiceAdapterBundle, got %v", err)
+	}
+}
+
+func TestCAServiceAdapter_IssueCertificate_BundleError(t *testing.T) {
+	ca := newFakeTrustedCA(t)
+	cause := errors.New("bundle unreadable")
+	ca.bundleErr = cause
+	adapter, err := newCAServiceAdapter(ca)
+	if err != nil {
+		t.Fatalf("newCAServiceAdapter: %v", err)
+	}
+
+	resp, err := adapter.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+		CommonName:   "bundle-error.example.com",
+		ValidityDays: 30,
+	})
+	if resp != nil {
+		t.Fatal("no certificate may be returned when the CA bundle cannot be read")
+	}
+	requireBundleError(t, err, cause)
+}
+
+func TestCAServiceAdapter_SignCSR_BundleError(t *testing.T) {
+	ca := newFakeTrustedCA(t)
+	cause := errors.New("bundle unreadable")
+	ca.bundleErr = cause
+	adapter, err := newCAServiceAdapter(ca)
+	if err != nil {
+		t.Fatalf("newCAServiceAdapter: %v", err)
+	}
+
+	resp, err := adapter.SignCSR(context.Background(), &xkmstransport.SignCSRRequest{
+		CSRPEM:       newCSR(t, "bundle-error"),
+		ValidityDays: 30,
+	})
+	if resp != nil {
+		t.Fatal("no certificate may be returned when the CA bundle cannot be read")
+	}
+	requireBundleError(t, err, cause)
+}
+
+func TestCAServiceAdapter_SignCSRPEM_BundleError(t *testing.T) {
+	ca := newFakeTrustedCA(t)
+	cause := errors.New("bundle unreadable")
+	ca.bundleErr = cause
+	adapter, err := newCAServiceAdapter(ca)
+	if err != nil {
+		t.Fatalf("newCAServiceAdapter: %v", err)
+	}
+
+	certPEM, chainPEM, err := adapter.SignCSRPEM(context.Background(), makeCSRPEM(t, "bundle-error"))
+	if certPEM != nil || chainPEM != nil {
+		t.Fatal("no certificate may be returned when the CA bundle cannot be read")
+	}
+	requireBundleError(t, err, cause)
+}
+
 func TestCAServiceAdapter_RevokeCertificate(t *testing.T) {
 	ca := newFakeTrustedCA(t)
 	adapter, _ := newCAServiceAdapter(ca)

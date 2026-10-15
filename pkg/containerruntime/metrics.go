@@ -92,10 +92,9 @@ func (r *Runtime) Stats(ctx context.Context, id string) (*ResourceStats, error) 
 		return nil, err
 	}
 
+	state.mu.Lock()
 	pid := state.PID
-	if pid <= 0 {
-		pid, _ = r.getContainerPID(ctx, state.ID)
-	}
+	state.mu.Unlock()
 	if pid <= 0 {
 		return nil, NewContainerError(id, "metrics", ErrContainerNotRunning)
 	}

@@ -352,6 +352,7 @@ COMPOSE_PROJECT_SIGNALBRIDGE := $(COMPOSE_PROJECT)-signalbridge
 COMPOSE_PROJECT_E2E := $(COMPOSE_PROJECT)-e2e
 COMPOSE_PROJECT_AGENT := $(COMPOSE_PROJECT)-agent
 COMPOSE_PROJECT_FLEET := $(COMPOSE_PROJECT)-fleet
+COMPOSE_PROJECT_CONTAINERRUNTIME := $(COMPOSE_PROJECT)-containerruntime
 export RUN_ID RUN_ID_SLUG
 export QUICBAAS_IMAGE ?= $(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)
 export QUICBAAS_DEV_IMAGE ?= $(DOCKER_IMAGE):$(DOCKER_DEV_TAG)
@@ -846,18 +847,26 @@ build-static-fips-cli: ## Build static FIPS CLI
 # resolution and user lookup in pure Go, so the static glibc never needs NSS.
 AGENT_LDFLAGS := $(LDFLAGS) -s -w -linkmode external -extldflags '-static'
 
+# CONTAINER_LIB_TAGS select the pure-Go paths of the agent's in-process
+# container runtime libraries: OpenPGP signature checks in go.podman.io/image
+# instead of gpgme, and no btrfs graph driver in go.podman.io/storage. The
+# agent's cgo build then needs no C library beyond libc. Without them
+# pkg/containerruntime compiles its ErrRuntimeRequiresLinuxCgo stub, which is
+# what quicbaasd (CGO_ENABLED=0) always links.
+CONTAINER_LIB_TAGS := containers_image_openpgp exclude_graphdriver_btrfs
+
 .PHONY: build-agent
 build-agent: ## Build the linux fleet node agent (quicbaas, cgo, static)
 	@echo "$(BLUE)Building $(APP_NAME)-agent (CGO_ENABLED=1, static)...$(NC)"
 	@mkdir -p $(BIN_DIR)
-	GOOS=linux CGO_ENABLED=1 $(GOBUILD) -tags '$(BUILD_TAGS) netgo osusergo' -ldflags "$(AGENT_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-agent ./$(CMD_DIR)
+	GOOS=linux CGO_ENABLED=1 $(GOBUILD) -tags '$(BUILD_TAGS) $(CONTAINER_LIB_TAGS) netgo osusergo' -ldflags "$(AGENT_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-agent ./$(CMD_DIR)
 	@echo "$(GREEN)Agent build successful: $(BIN_DIR)/$(APP_NAME)-agent$(NC)"
 
 .PHONY: build-agent-fips
 build-agent-fips: ## Build the linux fleet node agent with FIPS 140-3 mode (cgo, static)
 	@echo "$(BLUE)Building $(APP_NAME)-agent-fips (CGO_ENABLED=1, static, GOFIPS140=latest)...$(NC)"
 	@mkdir -p $(BIN_DIR)
-	GOOS=linux CGO_ENABLED=1 GOFIPS140=latest $(GOBUILD) -tags '$(FIPS_BUILD_TAGS) netgo osusergo' -ldflags "$(AGENT_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-agent-fips ./$(CMD_DIR)
+	GOOS=linux CGO_ENABLED=1 GOFIPS140=latest $(GOBUILD) -tags '$(FIPS_BUILD_TAGS) $(CONTAINER_LIB_TAGS) netgo osusergo' -ldflags "$(AGENT_LDFLAGS)" -o $(BIN_DIR)/$(APP_NAME)-agent-fips ./$(CMD_DIR)
 	@echo "$(GREEN)FIPS agent build successful: $(BIN_DIR)/$(APP_NAME)-agent-fips$(NC)"
 
 .PHONY: check-agent-build
@@ -1055,7 +1064,7 @@ install: build ## Install the binary
 # silently absent from this gate — a control that appears present but never
 # executes. They are listed here, not in BUILD_TAGS, because they must gate
 # tests without altering a shipped binary.
-TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag tpm_simulator
+TEST_EXTRA_TAGS := canary otel l2_redis rest quic mcp rag tpm_simulator $(CONTAINER_LIB_TAGS)
 
 # Note: Go 1.25+ requires space-separated tags, not comma-separated.
 # The leading !integration is documentation: `integration` is simply absent
@@ -5504,6 +5513,47 @@ coverage-prompts: ## Generate coverage report for the prompt-set package
 	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
 		-coverprofile=$(COVERAGE_DIR)/coverage-prompts.out -covermode=atomic ./pkg/orchestration/prompts/...
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-prompts.out | grep total
+
+# The in-process container runtime's libcontainer engine is linux && cgo, so
+# its unit, coverage and benchmark targets run with cgo on.
+.PHONY: test-containerruntime
+test-containerruntime: ## Run in-process container runtime unit tests (cgo)
+	@echo "$(BLUE)Running container runtime tests...$(NC)"
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' ./pkg/containerruntime/...
+	@echo "$(GREEN)Container runtime unit tests passed$(NC)"
+
+.PHONY: coverage-containerruntime
+coverage-containerruntime: ## Generate coverage report for the in-process container runtime (cgo)
+	@mkdir -p $(COVERAGE_DIR)
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -tags '$(TEST_TAGS)' \
+		-coverprofile=$(COVERAGE_DIR)/coverage-containerruntime.out -covermode=atomic ./pkg/containerruntime/...
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-containerruntime.out | grep total
+
+.PHONY: bench-containerruntime
+bench-containerruntime: ## Run in-process container runtime benchmarks (cgo)
+	@echo "$(BLUE)Running container runtime benchmarks...$(NC)"
+	CGO_ENABLED=1 GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/containerruntime/...
+
+# Runs pkg/containerruntime end to end in a privileged container against a
+# local registry: real pulls, storage-unpacked root filesystems and
+# libcontainer containers. The EXIT trap tears the stack down on every path,
+# and the test container's exit code is the target's.
+.PHONY: integration-test-containerruntime
+integration-test-containerruntime: ## Run in-process container runtime integration tests in Docker (local registry, privileged)
+	@echo "$(BLUE)Running container runtime integration tests...$(NC)"
+	@$(MAKE) --no-print-directory stage-gomodauth
+	@COMPOSE_FILE="test/integration/containerruntime/docker-compose.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_CONTAINERRUNTIME)"; \
+	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
+	GOMODAUTH_ENV="$(GOMODAUTH_ENV)" $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE \
+		up --build --abort-on-container-exit --exit-code-from test; \
+	RESULT=$$?; \
+	if [ $$RESULT -eq 0 ]; then \
+		echo "$(GREEN)Container runtime integration tests passed$(NC)"; \
+	else \
+		echo "$(RED)Container runtime integration tests failed (exit $$RESULT)$(NC)"; \
+	fi; \
+	exit $$RESULT
 
 .PHONY: coverage-triage
 coverage-triage: ## Report coverage of the issue-triage sources specifically

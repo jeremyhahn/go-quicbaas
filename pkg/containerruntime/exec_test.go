@@ -15,37 +15,11 @@ package containerruntime
 
 import (
 	"context"
-	"errors"
-	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// newTestRuntime builds a Runtime rooted at a temporary directory whose OCI
-// runtime is the fake one (see fakeOCIRuntime), armed to succeed silently, so
-// NewRuntime succeeds without any runtime installed on the host.
-func newTestRuntime(t *testing.T) *Runtime {
-	t.Helper()
-
-	dir := t.TempDir()
-	config := &RuntimeConfig{
-		Root:            dir + "/root",
-		RunRoot:         dir + "/run",
-		TmpDir:          dir + "/tmp",
-		GraphDriverName: "vfs",
-		StaticDir:       dir + "/static",
-		VolumePath:      dir + "/volumes",
-		OCIRuntime:      fakeOCIRuntime(t, fakeOCIResult{}),
-		ImageStorePath:  dir + "/images",
-	}
-
-	rt, err := NewRuntime(context.Background(), config)
-	require.NoError(t, err)
-	require.NotNil(t, rt)
-	return rt
-}
 
 // createTestContainer registers a container in the runtime state and returns
 // its ID.
@@ -62,18 +36,9 @@ func createTestContainer(t *testing.T, rt *Runtime, name string) string {
 }
 
 func TestRuntimeExec_Success(t *testing.T) {
-	rt := newTestRuntime(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
 	id := createTestContainer(t, rt, "exec-ok")
-
-	var gotArgs []string
-	var gotTTY bool
-	restore := runOCIExec
-	runOCIExec = func(ctx context.Context, runtime string, args []string, tty bool) (*ExecResult, error) {
-		gotArgs = args
-		gotTTY = tty
-		return &ExecResult{ExitCode: 0, Stdout: []byte("hello\n")}, nil
-	}
-	t.Cleanup(func() { runOCIExec = restore })
+	doubles.engine.execResult = fakeResult{stdout: "hello\n"}
 
 	result, err := rt.Exec(context.Background(), id, ExecOptions{
 		Command:    []string{"echo", "hello"},
@@ -84,32 +49,69 @@ func TestRuntimeExec_Success(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, "hello\n", string(result.Stdout))
-	assert.False(t, gotTTY)
 
-	// Verify the OCI exec argument vector is well-formed.
-	assert.Equal(t, "exec", gotArgs[0])
-	assert.Contains(t, gotArgs, "--env")
-	assert.Contains(t, gotArgs, "FOO=bar")
-	assert.Contains(t, gotArgs, "--cwd")
-	assert.Contains(t, gotArgs, "/work")
-	assert.Contains(t, gotArgs, "echo")
-	assert.Contains(t, gotArgs, "hello")
+	// The exec process runs the command in the container's environment,
+	// extended by the caller's, in the requested directory.
+	spec := doubles.engine.lastExec()
+	assert.False(t, spec.TTY)
+	assert.Equal(t, []string{"echo", "hello"}, spec.Args)
+	assert.Contains(t, spec.Env, "FOO=bar")
+	assert.Contains(t, spec.Env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	assert.Equal(t, "/work", spec.Cwd)
+}
+
+func TestRuntimeExec_DefaultsToContainerWorkingDirAndUser(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	state, err := rt.CreateContainer(context.Background(), &ContainerConfig{
+		Name:    "exec-defaults",
+		Image:   "alpine:latest",
+		WorkDir: "/srv",
+		User:    "1000:1000",
+	})
+	require.NoError(t, err)
+
+	_, err = rt.Exec(context.Background(), state.ID, ExecOptions{Command: []string{"id"}})
+	require.NoError(t, err)
+
+	spec := doubles.engine.lastExec()
+	assert.Equal(t, "/srv", spec.Cwd)
+	assert.Equal(t, uint32(1000), spec.User.UID)
+	assert.Equal(t, uint32(1000), spec.User.GID)
 }
 
 func TestRuntimeExec_NonZeroExit(t *testing.T) {
-	rt := newTestRuntime(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
 	id := createTestContainer(t, rt, "exec-nonzero")
-
-	restore := runOCIExec
-	runOCIExec = func(ctx context.Context, runtime string, args []string, tty bool) (*ExecResult, error) {
-		return &ExecResult{ExitCode: 7, Stderr: []byte("boom")}, nil
-	}
-	t.Cleanup(func() { runOCIExec = restore })
+	doubles.engine.execResult = fakeResult{stderr: "boom", exitCode: 7}
 
 	result, err := rt.Exec(context.Background(), id, ExecOptions{Command: []string{"false"}})
 	require.NoError(t, err)
 	assert.Equal(t, 7, result.ExitCode)
 	assert.Equal(t, "boom", string(result.Stderr))
+}
+
+func TestRuntimeExec_TTY(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	id := createTestContainer(t, rt, "exec-tty")
+	doubles.engine.execResult = fakeResult{stdout: "tty-out", exitCode: 3}
+
+	result, err := rt.Exec(context.Background(), id, ExecOptions{Command: []string{"/bin/sh"}, TTY: true})
+	require.NoError(t, err)
+	assert.Equal(t, "tty-out", string(result.Stdout))
+	assert.Equal(t, 3, result.ExitCode)
+	assert.True(t, doubles.engine.lastExec().TTY)
+}
+
+func TestRuntimeExec_TTYContextCancelled(t *testing.T) {
+	rt, doubles := newTestRuntimeWithBackends(t)
+	id := createTestContainer(t, rt, "exec-tty-cancel")
+	doubles.engine.execBlocks = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := rt.Exec(ctx, id, ExecOptions{Command: []string{"/bin/sh"}, TTY: true})
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestRuntimeExec_MissingContainer(t *testing.T) {
@@ -130,67 +132,19 @@ func TestRuntimeExec_EmptyCommand(t *testing.T) {
 }
 
 func TestRuntimeExec_RuntimeFailure(t *testing.T) {
-	rt := newTestRuntime(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
 	id := createTestContainer(t, rt, "exec-fail")
-
-	sentinel := errors.New("runtime blew up")
-	restore := runOCIExec
-	runOCIExec = func(ctx context.Context, runtime string, args []string, tty bool) (*ExecResult, error) {
-		return nil, sentinel
-	}
-	t.Cleanup(func() { runOCIExec = restore })
+	doubles.engine.execErr = errTestBackend
 
 	_, err := rt.Exec(context.Background(), id, ExecOptions{Command: []string{"ls"}})
 	require.Error(t, err)
-	assert.ErrorIs(t, err, sentinel)
-}
-
-func TestExitCodeFromRunErr(t *testing.T) {
-	// Clean exit.
-	code, err := exitCodeFromRunErr(nil)
-	require.NoError(t, err)
-	assert.Equal(t, 0, code)
-
-	// A real non-zero process exit is surfaced as an exit code, not an error.
-	runtimePath := fakeOCIRuntime(t, fakeOCIResult{ExitCode: 5})
-	runErr := exec.Command(runtimePath, "state", "cid").Run()
-	code, err = exitCodeFromRunErr(runErr)
-	require.NoError(t, err)
-	assert.Equal(t, 5, code)
-
-	// A non-exit error is propagated.
-	sentinel := errors.New("not an exit error")
-	code, err = exitCodeFromRunErr(sentinel)
-	require.ErrorIs(t, err, sentinel)
-	assert.Equal(t, -1, code)
-}
-
-func TestExecArgs(t *testing.T) {
-	args := execArgs("cid", ExecOptions{
-		Command:    []string{"ps", "-ef"},
-		Env:        []string{"A=1", "B=2"},
-		WorkingDir: "/root",
-	})
-
-	assert.Equal(t, []string{
-		"exec",
-		"--env", "A=1",
-		"--env", "B=2",
-		"--cwd", "/root",
-		"cid",
-		"ps", "-ef",
-	}, args)
+	assert.ErrorIs(t, err, errTestBackend)
 }
 
 func TestManagerExec_Delegates(t *testing.T) {
-	rt := newTestRuntime(t)
+	rt, doubles := newTestRuntimeWithBackends(t)
 	id := createTestContainer(t, rt, "mgr-exec")
-
-	restore := runOCIExec
-	runOCIExec = func(ctx context.Context, runtime string, args []string, tty bool) (*ExecResult, error) {
-		return &ExecResult{ExitCode: 0, Stdout: []byte("ok")}, nil
-	}
-	t.Cleanup(func() { runOCIExec = restore })
+	doubles.engine.execResult = fakeResult{stdout: "ok"}
 
 	m := &podmanManager{config: DefaultManagerConfig(), logger: rt.logger, runtime: rt}
 	m.initialized.Store(true)

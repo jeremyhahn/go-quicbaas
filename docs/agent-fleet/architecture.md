@@ -155,13 +155,24 @@ per-container metrics, with their tests. It was moved from go-trusted-platform
   daemon, never in `quicbaasd`. `quicbaasd` stays `CGO_ENABLED=0`, and
   `TestDaemonNeverLinksContainerRuntime` fails if the daemon links the
   package.
-- **It is not wired yet.** Nothing imports it; the node daemon and the
-  embedded node still launch containers through `ExecContainerRuntime` in
-  `pkg/orchestration`, which is removed once the agent uses this package.
-- **The exec core is replaced later.** The moved core still calls `crun`,
-  `podman` and `skopeo`. A later change replaces it with runc `libcontainer`
-  running in-process in the agent, with `containers/image` and
-  `containers/storage`: no external runtime binaries and no sockets.
+- **Its job wiring comes later.** Only the agent's container init entry
+  point imports it today; the node daemon and the embedded node still launch
+  containers through `ExecContainerRuntime` in `pkg/orchestration`, which is
+  removed once the agent runs jobs through this package.
+- **Everything runs in-process.** runc `libcontainer` creates, starts,
+  signals and destroys containers; `go.podman.io/image/v5` pulls images,
+  honouring the signature policy and digest pins; `go.podman.io/storage`
+  unpacks root filesystems under the runtime's storage root. There are no
+  external runtime binaries and no sockets, and a test fails if a non-test
+  file in the package imports `os/exec`.
+- **It needs linux and cgo.** On any other build `NewRuntime` returns
+  `ErrRuntimeRequiresLinuxCgo`. The agent builds also pass the tags
+  `containers_image_openpgp exclude_graphdriver_btrfs` (`CONTAINER_LIB_TAGS`
+  in the Makefile).
+- **The agent is its own container init.** libcontainer re-executes the
+  agent as `quicbaas init` with `_LIBCONTAINER_INITPIPE` set, and the agent's
+  `main` calls `containerruntime.RunContainerInit` before anything else. The
+  pipe variable keeps the CLI's own `init` subcommand reachable.
 
 ## Design decisions and rejected alternatives
 

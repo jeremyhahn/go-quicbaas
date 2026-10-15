@@ -148,7 +148,14 @@ func boot(dir string) (*Node, error) {
 	cfg.Raft.ShardID = 1
 	cfg.Raft.RaftAddress = addr
 
-	node, err := sdknode.NewClusteredNode(context.Background(), cfg, map[uint64]string{1: addr}, nil)
+	// WithNoSyncWrites: the node's data directory is deleted when the
+	// package ends, so fsync buys these tests nothing, while on a runner
+	// whose disk is shared with other jobs one fsync can outlast a
+	// caller's whole per-operation deadline (go-quicbaas#1340). Without
+	// fsync the order Raft commits proposals in — the only thing an
+	// arbitration test asserts — is unchanged.
+	node, err := sdknode.NewClusteredNode(context.Background(), cfg, map[uint64]string{1: addr}, nil,
+		sdknode.WithNoSyncWrites())
 	if err != nil {
 		return nil, err
 	}

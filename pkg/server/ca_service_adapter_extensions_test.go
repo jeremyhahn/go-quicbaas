@@ -33,6 +33,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -341,6 +342,32 @@ func TestIssueDeviceIdentityCert_EK_RealCA(t *testing.T) {
 	require.NoError(t, cert.CheckSignatureFrom(caCert),
 		"the EK certificate must be signed by the real CA")
 	assert.False(t, issued.NotAfter.IsZero())
+}
+
+// bundleFailingTCGCA pairs the fakeTrustedCA double, whose CABundle read
+// fails, with a real TCG issuer so device identity issuance reaches the
+// bundle read.
+type bundleFailingTCGCA struct {
+	*fakeTrustedCA
+	tcgIssuer
+}
+
+func TestIssueDeviceIdentityCert_BundleError(t *testing.T) {
+	tcg, ok := newRealSoftwareCA(t).(tcgIssuer)
+	require.True(t, ok, "the real CA must implement the TCG surface")
+	fake := newFakeTrustedCA(t)
+	cause := errors.New("bundle unreadable")
+	fake.bundleErr = cause
+	adapter, err := newCAServiceAdapter(&bundleFailingTCGCA{fakeTrustedCA: fake, tcgIssuer: tcg})
+	require.NoError(t, err)
+
+	issued, err := adapter.IssueDeviceIdentityCert(context.Background(), &service.DeviceIdentityIssuance{
+		Type:     service.DeviceIdentityTypeEK,
+		DeviceID: "device-ek-bundle-error",
+		EKPub:    newPKIXPublicKeyPEM(t),
+	})
+	assert.Nil(t, issued, "no certificate may be returned when the CA bundle cannot be read")
+	requireBundleError(t, err, cause)
 }
 
 func TestIssueDeviceIdentityCert_AK_RealCA(t *testing.T) {

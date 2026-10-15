@@ -459,14 +459,15 @@ func (m *podmanManager) GetContainerLogs(ctx context.Context, id string, follow 
 		return nil, NewContainerError("", "logs", ErrContainerNotFound)
 	}
 
-	// For now, return empty logs - full log support requires
-	// integration with conmon or direct log file reading
-	m.logger.Debug("getting container logs - not fully implemented", "container", id)
+	stdout, stderr, err := m.runtime.Logs(id)
+	if err != nil {
+		return nil, err
+	}
 
 	logs := &ContainerLogs{
 		ContainerID: id,
-		Stdout:      []byte{},
-		Stderr:      []byte{},
+		Stdout:      stdout,
+		Stderr:      stderr,
 		Until:       time.Now(),
 	}
 

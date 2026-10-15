@@ -211,7 +211,6 @@ func (c *PodmanConfig) ToRuntimeConfig() *RuntimeConfig {
 		GraphDriverName: c.GraphDriver,
 		StaticDir:       c.StorageRoot + "/libpod",
 		VolumePath:      c.StorageRoot + "/volumes",
-		OCIRuntime:      c.OCIRuntime,
 		ImageStorePath:  c.StorageRoot + "/images",
 	}
 }

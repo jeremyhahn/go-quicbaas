@@ -479,7 +479,6 @@ func TestPodmanConfig_ToRuntimeConfig(t *testing.T) {
 	assert.Equal(t, config.GraphDriver, runtimeConfig.GraphDriverName)
 	assert.Equal(t, config.StorageRoot+"/libpod", runtimeConfig.StaticDir)
 	assert.Equal(t, config.StorageRoot+"/volumes", runtimeConfig.VolumePath)
-	assert.Equal(t, config.OCIRuntime, runtimeConfig.OCIRuntime)
 	assert.Equal(t, config.StorageRoot+"/images", runtimeConfig.ImageStorePath)
 
 	// The host TPM default is a default for the container SPECIFICATION, where

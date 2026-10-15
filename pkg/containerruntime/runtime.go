@@ -18,16 +18,23 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
+
+	securejoin "github.com/cyphar/filepath-securejoin"
+	"github.com/moby/sys/user"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // RuntimeConfig holds configuration for the embedded container runtime.
@@ -50,11 +57,17 @@ type RuntimeConfig struct {
 	// VolumePath is the directory for volumes
 	VolumePath string `json:"volume_path" yaml:"volume_path"`
 
-	// OCIRuntime is the OCI runtime to use (crun, runc)
-	OCIRuntime string `json:"oci_runtime" yaml:"oci_runtime"`
-
-	// ImageStorePath is the path to images
+	// ImageStorePath is the image and layer storage root. Empty means
+	// Root/storage.
 	ImageStorePath string `json:"image_store_path" yaml:"image_store_path"`
+
+	// InsecureRegistries lists registry hosts (host[:port]) that may be
+	// pulled from over plain HTTP or with unverified TLS.
+	InsecureRegistries []string `json:"insecure_registries,omitempty" yaml:"insecure_registries,omitempty"`
+
+	// SignaturePolicyPath is the containers-policy.json the image pull
+	// enforces. Empty means the host default, /etc/containers/policy.json.
+	SignaturePolicyPath string `json:"signature_policy_path,omitempty" yaml:"signature_policy_path,omitempty"`
 }
 
 // The runtime carries no TPM default.
@@ -80,7 +93,6 @@ func DefaultRuntimeConfig() *RuntimeConfig {
 		GraphDriverName: "overlay",
 		StaticDir:       "/var/lib/trusted-platform/containers/static",
 		VolumePath:      "/var/lib/trusted-platform/containers/volumes",
-		OCIRuntime:      "crun",
 		ImageStorePath:  "/var/lib/trusted-platform/containers/images",
 	}
 }
@@ -110,19 +122,23 @@ func (c *RuntimeConfig) Validate() error {
 	return nil
 }
 
-// Runtime provides an embedded container runtime for trusted computing.
-// This implementation uses direct OCI runtime invocation (crun/runc) for
-// full control over container lifecycle and TPM measurements.
+// Runtime provides an embedded container runtime for trusted computing. It
+// runs in-process: runc libcontainer creates and runs containers,
+// go.podman.io/image/v5 pulls images and go.podman.io/storage unpacks their
+// layers into each container's root filesystem. No binary is executed.
 type Runtime struct {
 	config      *RuntimeConfig
 	logger      *slog.Logger
+	backends    *backends
 	containers  sync.Map // map[string]*containerState
 	idCounter   atomic.Uint64
 	initialized atomic.Bool
 	closed      atomic.Bool
 }
 
-// containerState tracks runtime state of a container.
+// containerState tracks runtime state of a container. mu guards the fields
+// the init process's waiter updates when it exits: PID, State, ExitCode,
+// StartedAt and FinishedAt.
 type containerState struct {
 	ID         string
 	Name       string
@@ -135,6 +151,39 @@ type containerState struct {
 	StartedAt  *time.Time
 	FinishedAt *time.Time
 	Config     *ContainerConfig
+
+	mu sync.Mutex
+
+	// init is the init process specification; exec reuses its environment,
+	// working directory and user.
+	init processSpec
+
+	// process is the running init process, nil before start.
+	process containerProcess
+
+	// exited is closed once the init process has exited and its exit code
+	// is recorded. It is nil before start.
+	exited chan struct{}
+}
+
+// snapshot returns a copy of the state that is safe to read while the
+// container runs.
+func (s *containerState) snapshot() *containerState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &containerState{
+		ID:         s.ID,
+		Name:       s.Name,
+		Image:      s.Image,
+		BundleDir:  s.BundleDir,
+		PID:        s.PID,
+		State:      s.State,
+		ExitCode:   s.ExitCode,
+		CreatedAt:  s.CreatedAt,
+		StartedAt:  s.StartedAt,
+		FinishedAt: s.FinishedAt,
+		Config:     s.Config,
+	}
 }
 
 // RuntimeOption configures a Runtime.
@@ -174,16 +223,19 @@ func NewRuntime(ctx context.Context, config *RuntimeConfig, opts ...RuntimeOptio
 		return nil, &RuntimeError{Operation: "init", Err: err}
 	}
 
-	// Verify OCI runtime is available
-	if err := r.verifyOCIRuntime(); err != nil {
-		return nil, &RuntimeError{Operation: "verify runtime", Err: err}
+	if r.backends == nil {
+		b, err := newDefaultBackends(config)
+		if err != nil {
+			return nil, &RuntimeError{Operation: "init backends", Err: err}
+		}
+		r.backends = b
 	}
 
 	r.initialized.Store(true)
 
 	r.logger.Info("embedded container runtime initialized",
 		"root", config.Root,
-		"oci_runtime", config.OCIRuntime,
+		"graph_driver", config.GraphDriverName,
 	)
 
 	return r, nil
@@ -205,7 +257,7 @@ func (r *Runtime) ensureDirectories() error {
 		if dir == "" {
 			continue
 		}
-		if err := os.MkdirAll(dir, 0755); err != nil { // #nosec G301 -- container storage roots the OCI runtime and its users traverse; moved unchanged, the libcontainer core replaces it.
+		if err := os.MkdirAll(dir, 0755); err != nil { // #nosec G301 -- container storage roots that libcontainer and non-root container users traverse.
 			return &WrappedError{Msg: fmt.Sprintf("failed to create directory %s", dir), Err: err}
 		}
 	}
@@ -213,23 +265,19 @@ func (r *Runtime) ensureDirectories() error {
 	return nil
 }
 
-// verifyOCIRuntime checks that the OCI runtime is available.
-func (r *Runtime) verifyOCIRuntime() error {
-	_, err := exec.LookPath(r.config.OCIRuntime)
-	if err != nil {
-		return &OCIRuntimeNotFoundError{Runtime: r.config.OCIRuntime}
-	}
-	return nil
-}
-
 // Close shuts down the runtime.
 func (r *Runtime) Close() error {
-	if r.closed.Load() {
+	if r.closed.Swap(true) {
 		return nil
 	}
 
-	r.closed.Store(true)
 	r.initialized.Store(false)
+
+	if r.backends != nil && r.backends.close != nil {
+		if err := r.backends.close(); err != nil {
+			return &RuntimeError{Operation: "close", Err: err}
+		}
+	}
 
 	r.logger.Info("embedded container runtime shut down")
 	return nil
@@ -264,43 +312,32 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 		return nil, err
 	}
 
+	// The image must already be in local storage, and a pinned reference
+	// must still resolve to the pinned digest.
+	image, err := r.backends.images.Inspect(ctx, config.Image)
+	if err != nil {
+		return nil, NewImageError(config.Image, "create", err)
+	}
+	if err := verifyPinnedDigest(config.Image, image.Digests); err != nil {
+		return nil, NewImageError(config.Image, "create", err)
+	}
+
 	// Generate container ID
 	id := r.generateContainerID()
 
 	r.logger.Info("creating container", "name", config.Name, "image", config.Image, "id", id)
 
-	// Create bundle directory
 	bundleDir := filepath.Join(r.config.RunRoot, "bundles", id)
-	if err := os.MkdirAll(bundleDir, 0755); err != nil { // #nosec G301 -- an OCI bundle the runtime reads; moved unchanged, the libcontainer core replaces it.
+	if err := os.MkdirAll(bundleDir, 0700); err != nil {
 		return nil, &RuntimeError{Operation: "create bundle", Err: err}
 	}
 
-	// Create rootfs directory (placeholder - in production would unpack image)
-	rootfsDir := filepath.Join(bundleDir, "rootfs")
-	if err := os.MkdirAll(rootfsDir, 0755); err != nil { // #nosec G301 -- the container's "/", which a non-root container user must traverse.
-		return nil, &RuntimeError{Operation: "create rootfs", Err: err}
-	}
-
-	// Generate OCI config.json
-	ociConfig := r.generateOCIConfig(config, rootfsDir)
-	configPath := filepath.Join(bundleDir, "config.json")
-	configData, err := json.MarshalIndent(ociConfig, "", "  ")
+	state, err := r.createInBundle(ctx, id, bundleDir, image.ID, config)
 	if err != nil {
-		return nil, &RuntimeError{Operation: "marshal config", Err: err}
-	}
-
-	if err := os.WriteFile(configPath, configData, 0644); err != nil { // #nosec G306 -- the OCI bundle's config.json, which holds no secret; moved unchanged.
-		return nil, &RuntimeError{Operation: "write config", Err: err}
-	}
-
-	state := &containerState{
-		ID:        id,
-		Name:      config.Name,
-		Image:     config.Image,
-		BundleDir: bundleDir,
-		State:     ContainerStateCreated,
-		CreatedAt: time.Now(),
-		Config:    config,
+		if rmErr := os.RemoveAll(bundleDir); rmErr != nil {
+			r.logger.Warn("failed to remove bundle after failed create", "id", id, "error", rmErr)
+		}
+		return nil, err
 	}
 
 	// Store container state
@@ -309,6 +346,65 @@ func (r *Runtime) CreateContainer(ctx context.Context, config *ContainerConfig) 
 
 	r.logger.Info("created container", "name", config.Name, "id", id)
 	return state, nil
+}
+
+// createInBundle unpacks the image into the container's root filesystem,
+// writes the OCI configuration into the bundle and registers the container
+// with the engine. On failure it removes the root filesystem it created.
+func (r *Runtime) createInBundle(ctx context.Context, id, bundleDir, imageID string, config *ContainerConfig) (*containerState, error) {
+	rootfsDir, err := r.backends.rootfs.Create(ctx, id, imageID)
+	if err != nil {
+		return nil, &RuntimeError{Operation: "unpack rootfs", Err: err}
+	}
+
+	state, err := r.configureContainer(id, bundleDir, rootfsDir, config)
+	if err != nil {
+		if rmErr := r.backends.rootfs.Remove(id); rmErr != nil {
+			r.logger.Warn("failed to remove rootfs after failed create", "id", id, "error", rmErr)
+		}
+		return nil, err
+	}
+	return state, nil
+}
+
+// configureContainer builds the OCI configuration for an unpacked root
+// filesystem, records it in the bundle and creates the container.
+func (r *Runtime) configureContainer(id, bundleDir, rootfsDir string, config *ContainerConfig) (*containerState, error) {
+	processUser, err := parseUserSpec(config.User, rootfsDir)
+	if err != nil {
+		return nil, &RuntimeError{Operation: "resolve user", Err: err}
+	}
+
+	oci := r.generateOCIConfig(config, rootfsDir)
+	oci.Process.User = processUser
+
+	configData, err := json.MarshalIndent(oci, "", "  ")
+	if err != nil {
+		return nil, &RuntimeError{Operation: "marshal config", Err: err}
+	}
+	if err := os.WriteFile(filepath.Join(bundleDir, "config.json"), configData, 0600); err != nil {
+		return nil, &RuntimeError{Operation: "write config", Err: err}
+	}
+
+	if err := r.backends.engine.Create(id, oci); err != nil {
+		return nil, &RuntimeError{Operation: "create container", Err: err}
+	}
+
+	return &containerState{
+		ID:        id,
+		Name:      config.Name,
+		Image:     config.Image,
+		BundleDir: bundleDir,
+		State:     ContainerStateCreated,
+		CreatedAt: time.Now(),
+		Config:    config,
+		init: processSpec{
+			Args: oci.Process.Args,
+			Env:  oci.Process.Env,
+			Cwd:  oci.Process.Cwd,
+			User: processUser,
+		},
+	}, nil
 }
 
 // ociConfig represents a minimal OCI runtime specification.
@@ -333,8 +429,9 @@ type ociProcess struct {
 }
 
 type ociUser struct {
-	UID uint32 `json:"uid"`
-	GID uint32 `json:"gid"`
+	UID            uint32   `json:"uid"`
+	GID            uint32   `json:"gid"`
+	AdditionalGids []uint32 `json:"additionalGids,omitempty"`
 }
 
 type ociCapabilities struct {
@@ -607,7 +704,8 @@ func removeString(slice []string, s string) []string {
 	return result
 }
 
-// StartContainer starts a container.
+// StartContainer starts a container's init process. Its stdout and stderr
+// go to stdout.log and stderr.log in the container's bundle.
 func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 	state, err := r.lookupContainer(id)
 	if err != nil {
@@ -616,63 +714,74 @@ func (r *Runtime) StartContainer(ctx context.Context, id string) error {
 
 	r.logger.Info("starting container", "id", id, "name", state.Name)
 
-	// Execute OCI runtime create
-	createCmd := exec.CommandContext(ctx, r.config.OCIRuntime,
-		"create",
-		"--bundle", state.BundleDir,
-		state.ID,
-	)
-	createCmd.Stdout = os.Stdout
-	createCmd.Stderr = os.Stderr
+	state.mu.Lock()
+	defer state.mu.Unlock()
 
-	if err := createCmd.Run(); err != nil {
-		r.logger.Error("failed to create container with OCI runtime", "id", id, "error", err)
-		return NewContainerError(id, "create", err)
+	if state.State == ContainerStateRunning {
+		return NewContainerError(id, "start", ErrContainerAlreadyRunning)
+	}
+	if state.process != nil {
+		return NewContainerError(id, "start", ErrContainerExited)
 	}
 
-	// Execute OCI runtime start
-	startCmd := exec.CommandContext(ctx, r.config.OCIRuntime,
-		"start",
-		state.ID,
-	)
-	startCmd.Stdout = os.Stdout
-	startCmd.Stderr = os.Stderr
-
-	if err := startCmd.Run(); err != nil {
-		r.logger.Error("failed to start container with OCI runtime", "id", id, "error", err)
+	logs, err := openContainerLogs(state.BundleDir)
+	if err != nil {
 		return NewContainerError(id, "start", err)
 	}
 
-	// Get container PID
-	pid, _ := r.getContainerPID(ctx, state.ID)
-	state.PID = pid
-	state.State = ContainerStateRunning
-	now := time.Now()
-	state.StartedAt = &now
+	init := state.init
+	init.Stdout = logs.stdout
+	init.Stderr = logs.stderr
 
-	r.logger.Info("started container", "id", id, "pid", pid)
+	process, err := r.backends.engine.Start(state.ID, init)
+	if err != nil {
+		if closeErr := logs.close(); closeErr != nil {
+			r.logger.Warn("failed to close container logs", "id", id, "error", closeErr)
+		}
+		r.logger.Error("failed to start container", "id", id, "error", err)
+		return NewContainerError(id, "start", err)
+	}
+
+	now := time.Now()
+	state.process = process
+	state.PID = process.Pid()
+	state.State = ContainerStateRunning
+	state.StartedAt = &now
+	state.exited = make(chan struct{})
+
+	go r.awaitExit(state, process, logs)
+
+	r.logger.Info("started container", "id", id, "pid", state.PID)
 	return nil
 }
 
-// getContainerPID gets the PID of a running container.
-func (r *Runtime) getContainerPID(ctx context.Context, id string) (int, error) {
-	stateCmd := exec.CommandContext(ctx, r.config.OCIRuntime, "state", id)
-	output, err := stateCmd.Output()
+// awaitExit waits for a container's init process, records its exit code and
+// closes the state's exited channel.
+func (r *Runtime) awaitExit(state *containerState, process containerProcess, logs *containerLogs) {
+	exitCode, err := process.Wait()
 	if err != nil {
-		return 0, err
+		r.logger.Error("failed to wait for container init", "id", state.ID, "error", err)
+		exitCode = -1
+	}
+	if closeErr := logs.close(); closeErr != nil {
+		r.logger.Warn("failed to close container logs", "id", state.ID, "error", closeErr)
 	}
 
-	var runtimeState struct {
-		PID int `json:"pid"`
-	}
-	if err := json.Unmarshal(output, &runtimeState); err != nil {
-		return 0, err
-	}
+	now := time.Now()
+	state.mu.Lock()
+	state.ExitCode = exitCode
+	state.State = ContainerStateExited
+	state.PID = 0
+	state.FinishedAt = &now
+	exited := state.exited
+	state.mu.Unlock()
 
-	return runtimeState.PID, nil
+	close(exited)
+	r.logger.Info("container exited", "id", state.ID, "exit_code", exitCode)
 }
 
-// StopContainer stops a running container.
+// StopContainer stops a running container: SIGTERM, then SIGKILL once
+// timeout seconds pass without the init process exiting.
 func (r *Runtime) StopContainer(ctx context.Context, id string, timeout uint) error {
 	state, err := r.lookupContainer(id)
 	if err != nil {
@@ -681,63 +790,67 @@ func (r *Runtime) StopContainer(ctx context.Context, id string, timeout uint) er
 
 	r.logger.Info("stopping container", "id", id, "timeout", timeout)
 
-	// Send SIGTERM first
-	killCmd := exec.CommandContext(ctx, r.config.OCIRuntime,
-		"kill",
-		state.ID,
-		"SIGTERM",
-	)
-	if err := killCmd.Run(); err != nil {
-		// Container might already be stopped
-		r.logger.Debug("SIGTERM failed, container may be stopped", "id", id, "error", err)
-	}
+	state.mu.Lock()
+	process, exited := state.process, state.exited
+	state.mu.Unlock()
 
-	// Wait for graceful shutdown
-	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	for time.Now().Before(deadline) {
-		if !r.isContainerRunning(ctx, state.ID) {
-			break
+	if process != nil {
+		if err := stopProcess(ctx, process, exited, time.Duration(timeout)*time.Second); err != nil {
+			return NewContainerError(id, "stop", err)
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Force kill if still running
-	if r.isContainerRunning(ctx, state.ID) {
-		killCmd := exec.CommandContext(ctx, r.config.OCIRuntime,
-			"kill",
-			state.ID,
-			"SIGKILL",
-		)
-		_ = killCmd.Run()
-	}
-
-	state.State = ContainerStateStopped
 	now := time.Now()
-	state.FinishedAt = &now
+	state.mu.Lock()
+	state.State = ContainerStateStopped
+	if state.FinishedAt == nil {
+		state.FinishedAt = &now
+	}
+	state.mu.Unlock()
 
 	r.logger.Info("stopped container", "id", id)
 	return nil
 }
 
-// isContainerRunning checks if a container is running.
-func (r *Runtime) isContainerRunning(ctx context.Context, id string) bool {
-	stateCmd := exec.CommandContext(ctx, r.config.OCIRuntime, "state", id)
-	output, err := stateCmd.Output()
-	if err != nil {
-		return false
+// stopProcess sends SIGTERM and waits up to grace for exited to close, then
+// sends SIGKILL and waits for it again.
+func stopProcess(ctx context.Context, process containerProcess, exited <-chan struct{}, grace time.Duration) error {
+	select {
+	case <-exited:
+		return nil
+	default:
 	}
 
-	var runtimeState struct {
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(output, &runtimeState); err != nil {
-		return false
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		return &RuntimeError{Operation: "signal SIGTERM", Err: err}
 	}
 
-	return runtimeState.Status == "running"
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+
+	select {
+	case <-exited:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+
+	if err := process.Signal(syscall.SIGKILL); err != nil {
+		return &RuntimeError{Operation: "signal SIGKILL", Err: err}
+	}
+
+	select {
+	case <-exited:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
-// RemoveContainer removes a container.
+// RemoveContainer removes a container: its engine state, its root
+// filesystem and its bundle. A running container is refused unless force is
+// set, in which case it is stopped first.
 func (r *Runtime) RemoveContainer(ctx context.Context, id string, force bool) error {
 	state, err := r.lookupContainer(id)
 	if err != nil {
@@ -746,25 +859,28 @@ func (r *Runtime) RemoveContainer(ctx context.Context, id string, force bool) er
 
 	r.logger.Info("removing container", "id", id, "force", force)
 
-	// Stop if running and force is set
-	if force && r.isContainerRunning(ctx, state.ID) {
-		if err := r.StopContainer(ctx, id, 5); err != nil {
-			r.logger.Warn("failed to stop container during forced removal", "id", id, "error", err)
+	state.mu.Lock()
+	running := state.State == ContainerStateRunning
+	state.mu.Unlock()
+
+	if running {
+		if !force {
+			return NewContainerError(id, "remove", ErrContainerRunning)
+		}
+		if err := r.StopContainer(ctx, id, forcedRemoveStopTimeout); err != nil {
+			return err
 		}
 	}
 
-	// Delete from OCI runtime
-	deleteCmd := exec.CommandContext(ctx, r.config.OCIRuntime,
-		"delete",
-		"--force",
-		state.ID,
-	)
-	_ = deleteCmd.Run() // Ignore error - container might not exist in runtime
-
-	// Remove bundle directory
+	if err := r.backends.engine.Destroy(state.ID); err != nil {
+		return NewContainerError(id, "remove", err)
+	}
+	if err := r.backends.rootfs.Remove(state.ID); err != nil {
+		return NewContainerError(id, "remove", err)
+	}
 	if state.BundleDir != "" {
-		if rerr := os.RemoveAll(state.BundleDir); rerr != nil {
-			r.logger.Warn("failed to remove bundle directory", "dir", state.BundleDir, "error", rerr)
+		if err := os.RemoveAll(state.BundleDir); err != nil {
+			return NewContainerError(id, "remove", err)
 		}
 	}
 
@@ -776,9 +892,17 @@ func (r *Runtime) RemoveContainer(ctx context.Context, id string, force bool) er
 	return nil
 }
 
+// forcedRemoveStopTimeout is the grace period, in seconds, a forced remove
+// gives a running container before killing it.
+const forcedRemoveStopTimeout = 5
+
 // InspectContainer returns container details.
 func (r *Runtime) InspectContainer(ctx context.Context, id string) (*containerState, error) {
-	return r.lookupContainer(id)
+	state, err := r.lookupContainer(id)
+	if err != nil {
+		return nil, err
+	}
+	return state.snapshot(), nil
 }
 
 // ListContainers returns all containers.
@@ -793,8 +917,9 @@ func (r *Runtime) ListContainers(ctx context.Context, all bool) ([]*containerSta
 		}
 		seen[state.ID] = true
 
-		if all || state.State == ContainerStateRunning {
-			result = append(result, state)
+		snapshot := state.snapshot()
+		if all || snapshot.State == ContainerStateRunning {
+			result = append(result, snapshot)
 		}
 		return true
 	})
@@ -802,49 +927,50 @@ func (r *Runtime) ListContainers(ctx context.Context, all bool) ([]*containerSta
 	return result, nil
 }
 
-// WaitContainer waits for a container to exit and returns exit code.
+// WaitContainer waits for a started container to exit and returns its exit
+// code.
 func (r *Runtime) WaitContainer(ctx context.Context, id string) (int32, error) {
 	state, err := r.lookupContainer(id)
 	if err != nil {
 		return -1, err
 	}
 
-	// Poll for container to exit
-	for {
-		select {
-		case <-ctx.Done():
-			return -1, ctx.Err()
-		default:
-			if !r.isContainerRunning(ctx, state.ID) {
-				// Get exit code
-				exitCode := r.getContainerExitCode(ctx, state.ID)
-				state.ExitCode = exitCode
-				state.State = ContainerStateExited
-				return int32(exitCode), nil
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
+	state.mu.Lock()
+	exited := state.exited
+	state.mu.Unlock()
+
+	if exited == nil {
+		return -1, NewContainerError(id, "wait", ErrContainerNotRunning)
 	}
+
+	select {
+	case <-exited:
+	case <-ctx.Done():
+		return -1, ctx.Err()
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return int32(state.ExitCode), nil // #nosec G115 -- exit codes are 0-255, or -1 for an unknown status.
 }
 
-// getContainerExitCode gets the exit code of a stopped container.
-func (r *Runtime) getContainerExitCode(ctx context.Context, id string) int {
-	stateCmd := exec.CommandContext(ctx, r.config.OCIRuntime, "state", id)
-	output, err := stateCmd.Output()
+// Logs returns what a started container's init process has written to
+// stdout and stderr.
+func (r *Runtime) Logs(id string) (stdout, stderr []byte, err error) {
+	state, err := r.lookupContainer(id)
 	if err != nil {
-		return -1
+		return nil, nil, err
 	}
 
-	var runtimeState struct {
-		Status string `json:"status"`
+	stdout, err = readContainerLog(filepath.Join(state.BundleDir, stdoutLogName))
+	if err != nil {
+		return nil, nil, NewContainerError(id, "logs", err)
 	}
-	if err := json.Unmarshal(output, &runtimeState); err != nil {
-		return -1
+	stderr, err = readContainerLog(filepath.Join(state.BundleDir, stderrLogName))
+	if err != nil {
+		return nil, nil, NewContainerError(id, "logs", err)
 	}
-
-	// Parse exit code from status if available
-	// Different runtimes format this differently
-	return 0
+	return stdout, stderr, nil
 }
 
 // lookupContainer finds a container by ID or name.
@@ -857,9 +983,9 @@ func (r *Runtime) lookupContainer(id string) (*containerState, error) {
 	return nil, NewContainerError(id, "lookup", ErrContainerNotFound)
 }
 
-// PullImage pulls an image from a registry
-// For now, this uses the `podman pull` command if available,
-// falling back to `skopeo copy` for image downloads.
+// PullImage pulls an image from its registry into local storage, honouring
+// the signature policy. A reference pinned by digest must resolve to that
+// digest.
 func (r *Runtime) PullImage(ctx context.Context, imageRef string) error {
 	if imageRef == "" {
 		return NewImageError("", "pull", ErrImageNotFound)
@@ -867,75 +993,52 @@ func (r *Runtime) PullImage(ctx context.Context, imageRef string) error {
 
 	r.logger.Info("pulling image", "image", imageRef)
 
-	// Try podman first (most likely to be available)
-	if podmanPath, err := exec.LookPath("podman"); err == nil {
-		pullCmd := exec.CommandContext(ctx, podmanPath, "pull", imageRef)
-		pullCmd.Stdout = os.Stdout
-		pullCmd.Stderr = os.Stderr
-		if err := pullCmd.Run(); err == nil {
-			r.logger.Info("pulled image with podman", "image", imageRef)
-			return nil
-		}
+	image, err := r.backends.images.Pull(ctx, imageRef)
+	if err != nil {
+		return NewImageError(imageRef, "pull", errors.Join(ErrImagePullFailed, err))
+	}
+	if err := verifyPinnedDigest(imageRef, image.Digests); err != nil {
+		return NewImageError(imageRef, "pull", err)
 	}
 
-	// Try skopeo as fallback
-	if skopeoPath, err := exec.LookPath("skopeo"); err == nil {
-		destDir := filepath.Join(r.config.ImageStorePath, sanitizeImageName(imageRef))
-		_ = os.MkdirAll(destDir, 0755) // #nosec G301 -- an image store the runtime reads; moved unchanged, the libcontainer core replaces it.
-
-		copyCmd := exec.CommandContext(ctx, skopeoPath, "copy",
-			"docker://"+imageRef,
-			"dir:"+destDir,
-		)
-		copyCmd.Stdout = os.Stdout
-		copyCmd.Stderr = os.Stderr
-		if err := copyCmd.Run(); err == nil {
-			r.logger.Info("pulled image with skopeo", "image", imageRef)
-			return nil
-		}
-	}
-
-	return NewImageError(imageRef, "pull", ErrImagePullFailed)
+	r.logger.Info("pulled image", "image", imageRef, "id", image.ID)
+	return nil
 }
 
-// sanitizeImageName converts an image reference to a safe directory name.
-func sanitizeImageName(imageRef string) string {
-	// Replace characters that are invalid in directory names
-	safe := strings.ReplaceAll(imageRef, "/", "_")
-	safe = strings.ReplaceAll(safe, ":", "_")
-	safe = strings.ReplaceAll(safe, "@", "_")
-	return safe
-}
-
-// RemoveImage removes an image.
+// RemoveImage removes an image from local storage.
 func (r *Runtime) RemoveImage(ctx context.Context, imageRef string, force bool) error {
 	if imageRef == "" {
 		return NewImageError("", "remove", ErrImageNotFound)
 	}
 
-	// Try podman first
-	if podmanPath, err := exec.LookPath("podman"); err == nil {
-		args := []string{"rmi"}
-		if force {
-			args = append(args, "-f")
-		}
-		args = append(args, imageRef)
-
-		rmCmd := exec.CommandContext(ctx, podmanPath, args...)
-		if err := rmCmd.Run(); err == nil {
-			r.logger.Info("removed image with podman", "image", imageRef)
-			return nil
-		}
-	}
-
-	// Remove from local store
-	destDir := filepath.Join(r.config.ImageStorePath, sanitizeImageName(imageRef))
-	if err := os.RemoveAll(destDir); err != nil && !os.IsNotExist(err) {
+	if err := r.backends.images.Remove(ctx, imageRef, force); err != nil {
 		return NewImageError(imageRef, "remove", err)
 	}
 
 	r.logger.Info("removed image", "image", imageRef)
 	return nil
+}
+
+// verifyPinnedDigest checks that an image reference pinned by digest
+// ("name@sha256:...") resolved to an image carrying that digest. An unpinned
+// reference passes.
+func verifyPinnedDigest(imageRef string, digests []string) error {
+	_, pinned, isPinned := orchestration.SplitImageReference(imageRef)
+	if !isPinned {
+		return nil
+	}
+	if err := orchestration.ValidateImageDigest(pinned); err != nil {
+		return err
+	}
+	if slices.Contains(digests, pinned) {
+		return nil
+	}
+
+	actual := ""
+	if len(digests) > 0 {
+		actual = digests[0]
+	}
+	return &orchestration.ImageDigestMismatchError{Image: imageRef, Expected: pinned, Actual: actual}
 }
 
 // RuntimeError represents errors from the embedded runtime.
@@ -957,13 +1060,52 @@ func (e *RuntimeError) Unwrap() error {
 	return e.Err
 }
 
-// Helper function to parse user spec like "1000" or "user".
-func parseUserSpec(spec string) (uint32, uint32) {
-	parts := strings.SplitN(spec, ":", 2)
-	uid, _ := strconv.ParseUint(parts[0], 10, 32)
-	var gid uint64
-	if len(parts) > 1 {
-		gid, _ = strconv.ParseUint(parts[1], 10, 32)
+// parseUserSpec resolves a container user ("name", "uid", "name:group",
+// "uid:gid") against the passwd and group files inside rootfs, the way an OCI
+// runtime does. Numeric IDs need no entry; names must have one. An empty spec
+// is root.
+func parseUserSpec(spec, rootfs string) (ociUser, error) {
+	if spec == "" {
+		return ociUser{}, nil
 	}
-	return uint32(uid), uint32(gid)
+
+	passwdPath, err := securejoin.SecureJoin(rootfs, "/etc/passwd")
+	if err != nil {
+		return ociUser{}, err
+	}
+	groupPath, err := securejoin.SecureJoin(rootfs, "/etc/group")
+	if err != nil {
+		return ociUser{}, err
+	}
+
+	execUser, err := user.GetExecUserPath(spec, &user.ExecUser{}, passwdPath, groupPath)
+	if err != nil {
+		return ociUser{}, err
+	}
+
+	uid, err := toContainerID(execUser.Uid)
+	if err != nil {
+		return ociUser{}, err
+	}
+	gid, err := toContainerID(execUser.Gid)
+	if err != nil {
+		return ociUser{}, err
+	}
+	resolved := ociUser{UID: uid, GID: gid}
+	for _, sgid := range execUser.Sgids {
+		id, err := toContainerID(sgid)
+		if err != nil {
+			return ociUser{}, err
+		}
+		resolved.AdditionalGids = append(resolved.AdditionalGids, id)
+	}
+	return resolved, nil
+}
+
+// toContainerID converts a resolved user or group ID to the OCI uint32 form.
+func toContainerID(id int) (uint32, error) {
+	if id < 0 || uint64(id) > math.MaxUint32 {
+		return 0, ErrInvalidUser
+	}
+	return uint32(id), nil
 }

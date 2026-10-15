@@ -334,7 +334,10 @@ func (a *caServiceAdapter) IssueDeviceIdentityCert(ctx context.Context, req *ser
 		return nil, err
 	}
 
-	chain, _ := ca.CABundle()
+	chain, err := ca.CABundle()
+	if err != nil {
+		return nil, &CAServiceAdapterBundleError{Cause: err}
+	}
 
 	issued := &service.IssuedDeviceIdentity{
 		CertificatePEM: pem.EncodeToMemory(&pem.Block{

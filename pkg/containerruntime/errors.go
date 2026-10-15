@@ -70,6 +70,27 @@ var (
 	// ErrOCIRuntimeNotFound is returned when the configured OCI runtime
 	// binary cannot be found in the system PATH.
 	ErrOCIRuntimeNotFound = errors.New("OCI runtime not found")
+
+	// ErrRuntimeRequiresLinuxCgo is returned by NewRuntime in a build that
+	// lacks the in-process container backends: they need linux, cgo and the
+	// containers_image_openpgp and exclude_graphdriver_btrfs build tags.
+	ErrRuntimeRequiresLinuxCgo = errors.New("container runtime requires a linux cgo build")
+
+	// ErrContainerRunning is returned when removing a running container
+	// without force.
+	ErrContainerRunning = errors.New("container is running")
+
+	// ErrContainerExited is returned when starting a container whose init
+	// process has already run and exited.
+	ErrContainerExited = errors.New("container has already exited")
+
+	// ErrInvalidUser is returned when a container user resolves to an ID
+	// outside the uint32 range.
+	ErrInvalidUser = errors.New("invalid container user")
+
+	// ErrConsoleNotReceived is returned when a TTY process's console socket
+	// does not deliver the pseudo-terminal master.
+	ErrConsoleNotReceived = errors.New("console not received")
 )
 
 // OCIRuntimeNotFoundError provides details about a missing OCI runtime.

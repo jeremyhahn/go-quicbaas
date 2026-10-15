@@ -61,7 +61,28 @@ var (
 	// ErrCAServiceAdapterNoRoot is returned when the cross-signed root pool
 	// cannot be resolved because the CA has no materialised root certificate.
 	ErrCAServiceAdapterNoRoot = errors.New("server: ca service adapter has no root certificate")
+
+	// ErrCAServiceAdapterBundle is returned when the CA bundle cannot be read
+	// while building an issuance response. Issuance fails rather than
+	// returning a certificate with an empty chain.
+	ErrCAServiceAdapterBundle = errors.New("server: ca service adapter cannot read the CA bundle")
 )
+
+// CAServiceAdapterBundleError carries the cause of a failed CA bundle read.
+// It matches ErrCAServiceAdapterBundle and the cause under errors.Is.
+type CAServiceAdapterBundleError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *CAServiceAdapterBundleError) Error() string {
+	return ErrCAServiceAdapterBundle.Error() + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel and the cause.
+func (e *CAServiceAdapterBundleError) Unwrap() []error {
+	return []error{ErrCAServiceAdapterBundle, e.Cause}
+}
 
 // caServiceAdapter wraps an xkmssdk.TrustedCA so it satisfies the
 // xkmstransport.Client interface required by the QuicBaaS service builder's
@@ -218,7 +239,10 @@ func (a *caServiceAdapter) IssueCertificate(
 		Bytes: cert.Raw,
 	})
 
-	chain, _ := a.getCA().CABundle()
+	chain, err := a.getCA().CABundle()
+	if err != nil {
+		return nil, &CAServiceAdapterBundleError{Cause: err}
+	}
 
 	resp := &xkmstransport.IssueCertificateResponse{
 		CertificatePEM: certPEM,
@@ -274,7 +298,10 @@ func (a *caServiceAdapter) SignCSR(
 		return nil, err
 	}
 
-	bundle, _ := a.getCA().CABundle()
+	bundle, err := a.getCA().CABundle()
+	if err != nil {
+		return nil, &CAServiceAdapterBundleError{Cause: err}
+	}
 	return &xkmstransport.SignCSRResponse{
 		CertificatePEM: pem.EncodeToMemory(&pem.Block{
 			Type:  "CERTIFICATE",
@@ -304,7 +331,10 @@ func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certP
 	if err != nil {
 		return nil, nil, err
 	}
-	chain, _ := ca.CABundle()
+	chain, err := ca.CABundle()
+	if err != nil {
+		return nil, nil, &CAServiceAdapterBundleError{Cause: err}
+	}
 	certPEM = pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: cert.Raw,
