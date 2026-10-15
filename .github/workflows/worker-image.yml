@@ -1,0 +1,98 @@
+# worker-image — publish the software-factory worker image to this
+# instance's container registry. Dispatch only.
+#
+# go-quicbaas#1381, first step. The owner's ruling (2026-10-15, relayed by the
+# Company Agent) is that the worker image is published to the registry and the
+# factory launches from the registry. The by-hand rebuild at v0.15.0-alpha is
+# published today, before the nightly build lands. The push credential exists
+# only as this repository's Actions secrets REGISTRY_TOKEN (write:package) and
+# REGISTRY_USER (the repository's own identity), so the push runs here.
+# The nightly schedule, the in-job build, the Trivy gate and the `current` tag
+# arrive with the rest of #1381.
+#
+# WHAT IT DOES. It pushes an image that is already loaded on the runner's host
+# (`make build-worker-image`, then docker save | load onto the hosts) as
+# <registry>/<REGISTRY_USER>/<image>:<tag>, and prints the registry manifest
+# digest from RepoDigests on a line that starts with `WORKER-IMAGE-DIGEST`.
+# A content tag is never overwritten: when <tag> is already in the registry the
+# job pushes nothing and prints the existing digest. A host that does not hold
+# the image fails the job before anything is pushed; dispatch again.
+#
+# The job reaches the host's Docker daemon through the socket the runner mounts
+# into every job container (go-quicbaas#1168 tracks that exposure). Login uses a
+# throwaway DOCKER_CONFIG that is removed when the step ends, so the credential
+# is never written to the host's docker config.
+#
+# WHO RUNS IT. The coordinator, once per image:
+#   POST /repos/{owner}/{repo}/actions/workflows/worker-image.yml/dispatches
+#        {"ref":"main","inputs":{"image":"<image>","tag":"<tag>"}}
+# then pulls <registry>/<REGISTRY_USER>/<image>@<digest> on every node and
+# checks that each host holds TAG@digest.
+name: worker-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Image repository name, as built locally (e.g. quicbaas-software-factory-worker)"
+        required: true
+        default: quicbaas-software-factory-worker
+      tag:
+        description: "Content tag (<ver>-cc<cc>-cx<cx>-go<go>-xt<xt>)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish worker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Push and report the digest
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          SERVER_URL: ${{ github.server_url }}
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$IMAGE$TAG" in
+            *[!A-Za-z0-9._-]*) echo "::error::image and tag take [A-Za-z0-9._-] only"; exit 1 ;;
+          esac
+          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_USER" ]; then
+            echo "::error::REGISTRY_TOKEN or REGISTRY_USER is not set on this repository"
+            exit 1
+          fi
+          registry="${SERVER_URL#*://}"
+          registry="${registry%/}"
+          repo="${registry}/${REGISTRY_USER}/${IMAGE}"
+          src="${IMAGE}:${TAG}"
+          dst="${repo}:${TAG}"
+
+          if ! docker image inspect "$src" >/dev/null 2>&1; then
+            echo "::error::this runner's host does not hold ${src}; dispatch again"
+            exit 1
+          fi
+
+          DOCKER_CONFIG="$(mktemp -d)"
+          export DOCKER_CONFIG
+          trap 'rm -rf "$DOCKER_CONFIG"; docker image rm "$dst" >/dev/null 2>&1 || true' EXIT
+          printf '%s' "$REGISTRY_TOKEN" | docker login "$registry" -u "$REGISTRY_USER" --password-stdin
+
+          if docker pull "$dst" >/dev/null 2>&1; then
+            echo "${dst} is already in the registry; pushing nothing"
+          else
+            docker tag "$src" "$dst"
+            docker push "$dst"
+          fi
+
+          digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$dst" \
+            | grep -F "${repo}@" | head -n 1 | cut -d@ -f2)"
+          if [ -z "$digest" ]; then
+            echo "::error::no registry digest for ${dst}"
+            exit 1
+          fi
+          echo "WORKER-IMAGE-DIGEST ${IMAGE}:${TAG} ${digest}"
