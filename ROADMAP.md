@@ -104,7 +104,12 @@ DC is [Dev complete](../../milestone/15): every SPEC row plus every seam row go-
 
 - **hardware-backend-composition** — device backend adapters registered in the composition, the trusted-firmware go-xkms adapter first; consumer go-trusted-platform through the SDK — [#1321](../../pulls/1321) — open
 - **declarative-placement** — declarative workload placement — [#28](../../issues/28) — open
-- **orchestration-volumes** — go-blockstore volumes in container orchestration — [#195](../../issues/195) — open
+- **orchestration-volumes** — go-blockstore volumes in container orchestration, with the NBD volume store behind them (the boot node hosted here as a broker-class service) — DC: [#195](../../issues/195) — open
+- **container-runtime** — libcontainer in-process in `pkg/containerruntime`, moved from gtp's podman package; the runtime in the cgo fleet node agent, co-located with quicbaasd — DC: [#1349](../../issues/1349) — open
+- **services** — a signed service manifest, the seven lifecycle verbs on every transport, A/B slots and one rollout controller; gtp's deployer moved in, its boot node and NBD hosted as services — DC: [#1344](../../issues/1344) — open
+- **oci-registry** — gtp's OCI registry re-homed: blobs in go-objstore, metadata in go-qrdb, mTLS and TPM-attestation authentication — DC: [#1345](../../issues/1345) — open
+- **measured-launch** — measured containers into the node log and application PCR, the cluster manifest, provenance, default deny; the `HostTPM` seam with gtp — DC: [#1346](../../issues/1346) — open
+- **service-policy** — policy as signed data with one Go engine, moved not rewritten — DC: [#1347](../../issues/1347) — open
 - **transparency-log** — append go-quicbaas's own records to go-xkms's transparency log, re-exported through `sdk/go`; one seam in three rows, built bottom-up: go-qrdb verifiable log → go-xkms transparency log → go-quicbaas appender — DC: [#1341](../../issues/1341) — blocked: waits on go-xkms's transparency log
 
 ## Future
