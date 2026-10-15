@@ -144,6 +144,7 @@ Milestone 15, Dev complete, closes when every SPEC row here has shipped, every s
 - Gates: the `pkg/iam` race pass ([#718](../../../issues/718)), the scoped FIPS gate on push ([#769](../../../issues/769)), the host Docker socket in CI ([#1168](../../../issues/1168)).
 - Seams: go-quicbaas appends its records to go-xkms's transparency log ([#1341](../../../issues/1341)).
 - Trusted service plane ([design](design/trusted-service-plane.md)): one container runtime, libcontainer in the co-located node agent ([#1349](../../../issues/1349)); services, verbs and A/B rollout ([#1344](../../../issues/1344)); the OCI registry ([#1345](../../../issues/1345)); measured launch ([#1346](../../../issues/1346)); signed policy ([#1347](../../../issues/1347)); volumes and the NBD volume store ([#195](../../../issues/195)).
+- CI conforms to handbook `software/conventions/ci-standard.md`: build, unit tests, integration tests, security scans and the latest-version check, all in the project devcontainer image.
 - Release: public release readiness ([#1130](../../../issues/1130)) and the docs review ([#1258](../../../issues/1258)).
 
 The software-factory feature belongs to milestone 33, not to milestone 15.
