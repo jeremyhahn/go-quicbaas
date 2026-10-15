@@ -51,6 +51,7 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **kms** — re-export go-xkms KMS; the own key store and backend router are removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **multi-tenancy** — `tenant barrier unseal-share` takes its share off argv — M32: [#488](../../issues/488) — blocked: see issue
 - **multiprotocol-api** — go-qrdb's tenant and auth chain inherited on every transport — M32: [#1150](../../issues/1150), [#1141](../../issues/1141) — blocked: see issue
+- **object-storage** — objects through go-qrdb's storage API; the direct go-objstore require is removed — [#1378](../../issues/1378) — blocked: waits on go-qrdb's Working fundamentally milestone
 - **projects** — the project record serves the Software Factory on QuicBaaS — M33: [milestone 33](../../milestone/33) — open
 - **rag** — re-export go-qrdb's RAG service; the own pipeline is removed — [#1321](../../pulls/1321) — blocked: held for the owner's word
 - **scheduler** — guarded (CAS) writes for abandoned-run recovery and triage release — M32: [#105](../../issues/105) — open
@@ -77,4 +78,4 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 - **tenant-agent** — a QuicBaaS tenant agent replaces the Company Agent — [milestone 33](../../milestone/33) — open
 
 ## Dependencies
-- Up, pinned to release tags (`make check-library-pins`): go-xkms v0.49.0-alpha (the release without a firmware dependency is needed, [#1185](../../issues/1185)), go-qrdb v0.30.1-alpha, go-quicraft v0.15.0-alpha (indirect), go-signal v0.2.0-alpha (a `pkg/*` import), go-libsignal v0.2.0-alpha, go-objstore v0.3.0-alpha, go-enclave v0.6.1-alpha, go-auth v0.4.0-alpha, go-codec v1.4.0. Down: go-trusted-platform and go-recountly
+- Up, pinned to release tags (`make check-library-pins`): go-xkms v0.49.0-alpha (the release without a firmware dependency is needed, [#1185](../../issues/1185)), go-qrdb v0.30.1-alpha, go-quicraft v0.15.0-alpha (indirect), go-signal v0.2.0-alpha (a `pkg/*` import), go-libsignal v0.2.0-alpha, go-objstore v0.3.0-alpha (a direct require, a departure: object storage goes through go-qrdb's storage API, [#1378](../../issues/1378)), go-enclave v0.6.1-alpha, go-auth v0.4.0-alpha, go-codec v1.4.0. Down: go-trusted-platform and go-recountly

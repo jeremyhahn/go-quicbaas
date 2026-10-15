@@ -1326,7 +1326,10 @@ Network:   QuicBaaS -> ShardedClient -> [shared network SDK client] -> remote qr
 
 QuicBaaS resolves its sibling repos (go-qrdb, go-quicraft, go-xkms, go-signal,
 go-libsignal, go-objstore, go-codec) as **tagged Go modules published to the
-company Gitea server**. There is no Go workspace, no `replace` directive, and
+company Gitea server**. go-objstore is required directly today; that is a
+departure, removed by the SPEC's
+[Storage clean-up](../SPEC.md#storage-clean-up) row, after which object storage
+is reached through go-qrdb's storage API. There is no Go workspace, no `replace` directive, and
 no dependence on where a sibling repo happens to be checked out. A clone of
 this repo alone builds and tests.
 

@@ -938,12 +938,18 @@ toggle.
 
 - **Persistence** - Keys survive restarts
 - **Replication** - Cross-region key availability with cloud storage
-- **Integration** - Works with any go-objstore backend
+- **Integration** - Works with any go-objstore backend (today through a direct go-objstore link; see below)
 - **Hardware Security** - Combine with KMS backends for HSM integration
 
 ### ObjStoreAdapter
 
-The `ObjStoreAdapter` bridges go-objstore's `common.Storage` interface with go-xkms's `storage.Backend` interface.
+The `ObjStoreAdapter` (`pkg/security`) bridges go-objstore's `common.Storage` interface with go-xkms's `storage.Backend` interface.
+
+It imports go-objstore directly. That direct link is a departure, not the
+target design: go-objstore is one of go-qrdb's storage backends, reached
+through go-qrdb's storage API with the objstore backend selected by
+configuration. The SPEC's [Storage clean-up](../SPEC.md#storage-clean-up)
+row removes it.
 
 ```go
 // Create an S3 storage backend
@@ -1597,7 +1603,11 @@ caller's role bindings with `quicbaas iam user get` and the
 
 ## Backup Storage
 
-QuicBaaS's backup manager uses go-objstore for storing database backups to any supported object storage backend.
+QuicBaaS's backup manager (`pkg/backup`) stores database backups to any
+supported object storage backend through a direct go-objstore import. That
+direct link is a departure, removed by the SPEC's
+[Storage clean-up](../SPEC.md#storage-clean-up) row; the backup manager itself
+is replaced by go-qrdb's backup service (see [backup-restore](../backup-restore/)).
 
 ### Configuration
 

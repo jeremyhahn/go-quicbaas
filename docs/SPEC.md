@@ -70,7 +70,7 @@ Status is one of `shipped`, `in progress`, `planned`, `future`.
 | multi-tenancy | in progress | Re-export of go-qrdb's tenants and per-tenant barriers through `sdk/go`; tenants strictly isolated<br>QuicBaaS's own tenant manager and tenant storage: a parallel implementation, removed on the owner's word<br>An empty caller tenant is not treated as the system tenant<br>`tenant barrier unseal-share` has a path off argv | [multi-tenancy/](multi-tenancy/) |
 | multiprotocol-api | in progress | The unified API server and the transport model<br>go-qrdb's unified tenant and authentication chain on every transport<br>REST rate limiting on by default, with an opt-out | [multiprotocol-api/](multiprotocol-api/) |
 | oauth2-oidc | in progress | OAuth 2.1 / OIDC provider, MCP authorization, external IdP federation, DPoP<br>The xkms FIDO2 login token's `kid` is in the published JWKS<br>`acr` / `amr` emitted as their doc comments state | [oauth2-oidc/](oauth2-oidc/) |
-| object-storage | in progress | Tenanted object storage: backends, tiering, replication, catalog<br>Tenant isolation as the compliance model claims | [object-storage/](object-storage/) |
+| object-storage | in progress | Tenanted object storage: backends, tiering, replication, catalog<br>Tenant isolation as the compliance model claims<br>Objects go through go-qrdb's storage API, with the objstore backend selected by configuration; the direct go-objstore require is removed ([Storage clean-up](#storage-clean-up)) | [object-storage/](object-storage/) |
 | observability | shipped | Health, liveness, readiness, metrics<br>Logging and tracing | [observability/](observability/) |
 | ollama | shipped | The Ollama client: embeddings, chat, model inventory, health | [ollama/](ollama/) |
 | orchestration | in progress | Agent sessions with a durable event log and attach; backends and inference<br>The job envelope and its runners, workflows, tasks, autonomy and sandboxing<br>A pending task is claimed once across nodes; no RPC goes out unauthenticated | [orchestration/](orchestration/) |
@@ -119,6 +119,14 @@ Device onboarding and OTA activate / confirm are permissions in go-qrdb's vocabu
 | D10 | Data-plane permission strings written as literals | `pkg/api/rest/routes_permissions_generated.go`, `pkg/api/mcp/authz_qrdb.go` | go-qrdb's exported `Permission*` constants; a string with no constant is a *seam* |
 
 Kept, as go-qrdb's extension points used as intended: `pkg/permission` registers go-quicbaas's own verbs into go-qrdb (`RegisterPermissions`), `pkg/apimodule/module_grants.go` reads the permission a go-qrdb RPC declares, and role reconcile applies go-qrdb's `RoleReconcileResult`.
+
+### Storage clean-up
+
+go-objstore is one of go-qrdb's storage backends. go-quicbaas reaches object storage through go-qrdb's storage API (`pkg/storage.Storage`; `sdk/go` `NewObjStoreStorage`) and selects the objstore backend by configuration; it does not link go-objstore. The row is removed when the departure is. It is sequenced behind go-qrdb's Working fundamentally milestone.
+
+| # | Departure | Where | Replaced by |
+|---|---|---|---|
+| S1 | `go.mod` requires `github.com/jeremyhahn/go-objstore` directly; `sdk/go/go.mod` carries it as `// indirect` | `pkg/backup` (the backup manager and its S3, Azure, GCS, MinIO and local targets), `pkg/security` (`ObjStoreAdapter`), `pkg/catalog` (the backend manager), `pkg/config` (the object-storage config); tests in `pkg/service` and `pkg/server` | go-qrdb's storage API with the objstore backend selected by configuration; both require lines go when the last importer has moved to it |
 
 ## Interfaces
 

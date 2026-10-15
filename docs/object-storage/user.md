@@ -233,5 +233,5 @@ See Configuration Reference for details.
 
 ## Dependencies
 
-- [go-objstore](https://github.com/jeremyhahn/go-objstore) - Multi-backend object storage
+- [go-qrdb](https://github.com/jeremyhahn/go-qrdb) - Storage API; its objstore backend, [go-objstore](https://github.com/jeremyhahn/go-objstore), is selected by configuration. QuicBaaS still links go-objstore directly today; the SPEC's [Storage clean-up](../SPEC.md#storage-clean-up) row removes that link
 - [go-xkms](https://github.com/jeremyhahn/go-xkms) - Encryption key management
