@@ -27,7 +27,7 @@ import (
 
 func probeBuild() softwarefactoryworker.Build {
 	return softwarefactoryworker.Build{Base: "0.11.0-alpha",
-		Agents: softwarefactoryworker.Agents{ClaudeCode: "2.1.280", Codex: "0.156.0"},
+		Agents: softwarefactoryworker.Agents{ClaudeCode: "2.1.280", Codex: "0.156.0", Gemini: testGemini},
 		Pins:   testPins(), UID: os.Getuid(), GID: os.Getgid()}
 }
 

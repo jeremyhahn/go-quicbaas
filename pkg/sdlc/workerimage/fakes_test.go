@@ -66,10 +66,17 @@ func testConfig() Config {
 	}
 }
 
+// testGemini is the Gemini CLI version every fake image and registry carries:
+// Gemini is not in the content tag, so the refresh cases vary only the tagged
+// CLIs.
+const testGemini = "0.64.0"
+
 // labelsFor are the labels an image of the given agent versions carries.
 func labelsFor(claude, codex string) map[string]string {
-	return softwarefactoryworker.Build{Base: "0.11.0-alpha",
-		Agents: softwarefactoryworker.Agents{ClaudeCode: claude, Codex: codex}, Pins: testPins()}.Labels()
+	labels := softwarefactoryworker.Build{Base: "0.11.0-alpha",
+		Agents: softwarefactoryworker.Agents{ClaudeCode: claude, Codex: codex, Gemini: testGemini}, Pins: testPins()}.Labels()
+	labels[softwarefactoryworker.LabelLanguages] = "go typescript yaml bash markdown"
+	return labels
 }
 
 // fakeEngine is an image store in memory.
@@ -183,6 +190,7 @@ func newFakeVersions(claude, codex string) *fakeVersions {
 	return &fakeVersions{versions: map[string]string{
 		softwarefactoryworker.ClaudeCodePackage: claude,
 		softwarefactoryworker.CodexPackage:      codex,
+		softwarefactoryworker.GeminiPackage:     testGemini,
 	}}
 }
 

@@ -1,6 +1,6 @@
 # Admission and readiness — four inputs to start, five predicates to be ready
 
-> **Status: NORMATIVE** · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Supplement to the Software Factory feature folder: what bounds how much work
 > runs at once, and what an issue must satisfy before it becomes a Task.
 > Conflicts with this document are defects.
@@ -36,14 +36,13 @@ above what its operator set.
 
 ### The project quota bounds worker-bearing states only
 
-The owner ruled on go-quicbaas#978 (2026-09-22) that `Project.Quotas.MaxConcurrency`
-bounds **running workers**. It does not bound open jobs. For the sdlc runner the states that spend a slot are
+`Project.Quotas.MaxConcurrency` bounds **running workers**. It does not bound open jobs. For the sdlc runner the states that spend a slot are
 `initializing`, `executing`, `validating`, `re-delegating` and `completing`.
 `reviewing`, `cleanup` and `escalating` hold no slot. A job in `reviewing` is
 waiting on a CI pipeline and a reviewer, often for 30 to 90 minutes, with no worker
-turn running. Before this ruling it held its slot for that whole wait. On the burn-in fleet two
-such jobs held both of a project's slots, and the next ready task sat
-`pending` while no worker ran anywhere.
+turn running. If it held its slot for that wait, two such jobs could hold both of a
+project's slots, and the next ready task would sit `pending` while no worker ran
+anywhere.
 
 | Piece | What it does |
 |---|---|
@@ -76,9 +75,8 @@ a project that filled while the daemon was down does not refuse it.
 
 ### A job waiting in reviewing holds no worker on any axis
 
-The owner ruled on go-quicbaas#938 (2026-09-24) that a job in `reviewing` closes
-its worker container, frees its slot, and stops counting against fleet
-capacity (go-quicbaas#1036).
+A job in `reviewing` closes its worker container, frees its slot, and stops
+counting against fleet capacity.
 
 | Piece | What it does |
 |---|---|
@@ -100,8 +98,7 @@ carries `worker_released_note`.
 `Hooks.Prepare` keeps the attempt's `Delivery` whole on such a respawn.
 
 The fleet axis counts a review or triage job, which is off the project budget
-for its whole life but runs a container while it does (owner ruling,
-2026-09-25). The admission plan's fleet count (`countFleetInflight`) and the
+for its whole life but runs a container while it does. The admission plan's fleet count (`countFleetInflight`) and the
 fleet check both read `ClaimsWorker`, so the plan never hands out a slot the
 check then refuses. Only a dormant job is off it. The backend axis counts both
 kinds for the same reason. A job
@@ -120,7 +117,7 @@ consults, asked one step earlier. A project whose whole pool is spent is
 **deferred**, with a `RetryAt`, rather than spawning an agent whose first turn
 the provider will refuse.
 
-The spend axis (`admission_spend.go`, go-quicbaas#1058 ruling F6) reads the
+The spend axis (`admission_spend.go`) reads the
 project's own `Spend` windows and its tenant's. A spent one **defers** the
 project with axis `project_spend` or `tenant_spend`, the window's usage in the
 reason, and `RetryAt` when the window's oldest turn ages out. The tenant is

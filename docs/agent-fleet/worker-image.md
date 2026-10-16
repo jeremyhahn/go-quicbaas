@@ -5,7 +5,7 @@
 
 The worker image (`deployments/agents/software-factory-worker/Dockerfile`) is
 where every sdlc worker, reviewer and triage session runs. It installs the
-**Claude Code** and **Codex** CLIs, and a model release often needs a newer CLI
+**Claude Code** and **Codex** CLIs (and the **Gemini** CLI, `@google/gemini-cli` at `GEMINI_CLI_VERSION`, 0.64.0, for operators' own use), and a model release often needs a newer CLI
 than the one baked in (`claude-opus-5-5` needs Claude Code 2.1.280; 2.1.278
 rejects it). The daemon therefore keeps the image current by itself:
 **a scheduled, gated refresh** — never an update at container start. It runs
@@ -24,6 +24,7 @@ rather than host-mounting `protoc`, which the container-only tooling rule
 forbids. Every one of these is a pin in `pkg/version/toolchain.mk`, carried into
 `deployments/agents/software-factory-worker/image.go`'s `Pins` and recorded as
 an `io.quicbaas.worker.<tool>.version` label.
+`io.quicbaas.worker.languages` lists the serena languages the image serves (`go python typescript bash yaml markdown cpp rust ruby`, the Dockerfile's `WORKER_LANGUAGES` default): the build fails when a listed server is missing, and the refresh gate refuses an image whose label is empty or names a language outside `LanguageServers`.
 
 ## The base image
 

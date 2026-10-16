@@ -103,7 +103,7 @@ func escapePackage(pkg string) string {
 	return url.PathEscape(pkg)
 }
 
-// LatestAgents reads both agent CLIs' latest versions.
+// LatestAgents reads every agent CLI's latest version.
 func LatestAgents(ctx context.Context, source VersionSource) (softwarefactoryworker.Agents, error) {
 	claude, err := source.Latest(ctx, softwarefactoryworker.ClaudeCodePackage)
 	if err != nil {
@@ -113,5 +113,9 @@ func LatestAgents(ctx context.Context, source VersionSource) (softwarefactorywor
 	if err != nil {
 		return softwarefactoryworker.Agents{}, err
 	}
-	return softwarefactoryworker.Agents{ClaudeCode: claude, Codex: codex}, nil
+	gemini, err := source.Latest(ctx, softwarefactoryworker.GeminiPackage)
+	if err != nil {
+		return softwarefactoryworker.Agents{}, err
+	}
+	return softwarefactoryworker.Agents{ClaudeCode: claude, Codex: codex, Gemini: gemini}, nil
 }

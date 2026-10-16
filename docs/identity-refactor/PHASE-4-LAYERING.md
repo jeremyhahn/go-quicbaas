@@ -1,6 +1,6 @@
 # Phase 4 — Layering follow-up
 
-> **Status: ARCHIVE — historical record. Do NOT build from this document.** · Last verified: 2026-08-18
+> **Status: ARCHIVE — historical record. Do NOT build from this document.** · Last verified: 2026-10-15
 
 Status: **completed** · Last updated: 2026-05-08
 
@@ -63,7 +63,7 @@ contributors don't try to push key-domain permissions upstream.
 **None in this phase.** The webauthn duplication scheduled for Phase 5
 is still scheduled for Phase 5 — that's domain-IAM duplication and lives
 in quicbaas's `pkg/iam`. This document is the architectural follow-up
-that sits alongside the original Phase 4 plan in `PLAN.md`.
+to the layering in [architecture.md](architecture.md).
 
 ## 6. Why this matters going forward
 
@@ -98,6 +98,6 @@ grep -r 'auth\.Identity\b' --include='*.go' <go-xkms-checkout>/ \
 
 ## See also
 
-- `PLAN.md` — the original identity-refactor plan.
+- [architecture.md](architecture.md) — the identity-refactor layering.
 - `<go-xkms-checkout>/docs/auth/layering.md` — xkms-side layering doc.
 - `<go-qrdb-checkout>/docs/auth/layering.md` — qrdb-side layering doc.

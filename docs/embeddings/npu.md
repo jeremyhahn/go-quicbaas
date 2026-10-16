@@ -1,6 +1,6 @@
 # NPU embedding provider
 
-> **Status: REFERENCE** · Last verified: 2026-09-29
+> **Status: REFERENCE** · Last verified: 2026-10-15
 > RAG embeddings on an Intel NPU through an OpenVINO sidecar.
 
 Runs RAG embeddings on an Intel NPU through an OpenVINO sidecar, so embedding
@@ -13,7 +13,8 @@ the GPU.
 
 ## Read this first: it is not a speedup
 
-Measured on gpu-host at sequence length 128: <!-- lab-string-ok: measurement provenance -->
+Measured on an Intel Arrow Lake workstation (24 CPU cores, the integrated NPU,
+an RTX GPU) at sequence length 128:
 
 | Device | Throughput |
 | --- | --- |
@@ -32,7 +33,7 @@ otherwise-idle accelerator pays continuously even at equal speed.
 
 ## Why a sidecar and not cgo
 
-1. The NPU is on gpu-host while `quicbaasd` runs on vm-host-4 <!-- lab-string-ok: measurement provenance -->
+1. The NPU is on a workstation while `quicbaasd` runs on a separate server
    — a network boundary already exists.
 2. `CLAUDE.md` forbids hardcoding vendor SDKs in the central daemon.
 3. cgo would bind the whole daemon build to OpenVINO being installed on every
@@ -42,7 +43,7 @@ otherwise-idle accelerator pays continuously even at equal speed.
 
 ## Hardware and software baseline
 
-Verified on gpu-host, 2026-09-12: <!-- lab-string-ok: measurement provenance -->
+Verified on the measurement workstation:
 
 - Intel Arrow Lake NPU, `DEVICE_ARCHITECTURE 3720`, 2 tiles, at
   `/dev/accel/accel0`, owned by group `render`

@@ -1,6 +1,6 @@
 # Public releasability
 
-> **Status: REFERENCE** · Last verified: 2026-10-12
+> **Status: REFERENCE** · Last verified: 2026-10-15
 > What the public release of this repository ships.
 
 This repository ships publicly: a module zip, a release tarball, two container
@@ -17,8 +17,8 @@ four classes:
 | Class | What it covers | Use instead |
 |---|---|---|
 | `lab-address` | An address on the fleet subnet | RFC 5737 documentation addresses — `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` |
-| `lab-host` | A fleet hostname (`vstation-NN`, `dellemc-NN`, the GPU box, the remote fleet node host) | The role, not the machine: `quicbaas.example.com:8443`, `agent-01`, `gpu-host.internal`, `npu-host.internal` |
-| `owner-path` | A path under the owner's home directory, the lab's NFS mount, or the burn-in node's deployment directory | A repository-relative path, or `/var/lib`, `/srv`, `/home/agent` |
+| `lab-host` | A fleet hostname: the build and runner servers, the GPU and NPU workstations, the remote fleet node host | The role, not the machine: `quicbaas.example.com:8443`, `agent-01`, `gpu-host.internal`, `npu-host.internal` |
+| `owner-path` | A path under the owner's home directory, the lab's shared network mount, or the burn-in node's deployment directory | A repository-relative path, or `/var/lib`, `/srv`, `/home/agent` |
 | `owner-account` | The owner's account name on its own | A role: `operator`, `agent`, or the module path |
 
 The fleet's own subnet, hostnames and path prefixes are written down in exactly
@@ -29,10 +29,11 @@ Local configuration — the burn-in node's node config, its project bindings, it
 deployment tooling — belongs in the private `automatethethings` infra
 repository, not here.
 
-Two things are explicitly *not* violations:
+Benchmark provenance names the hardware class, not the machine: "measured on
+an Intel Arrow Lake workstation", never the fleet hostname.
 
-- **Benchmark provenance.** "Measured on <host>, 2026-09-12" is the
-  measurement's meaning, not a leak. Waive the line.
+One thing is explicitly *not* a violation:
+
 - **RFC 1918 literals that are not the fleet subnet.** Tests across this tree
   use `192.168.1.x` as an opaque address that is never dialed. The gate does not
   look at `192.168.0.0/16` at large, only at the fleet's own /24.
@@ -87,12 +88,11 @@ instead.
 
 ### Accepting a line
 
+A waiver is for a line whose purpose is the value itself, such as the gate's
+own patterns. A line that merely mentions a fleet value is rewritten instead.
+
 Preferred — an **inline waiver**, in the file's own comment syntax, on the
 offending line or the line immediately above it:
-
-```markdown
-Measured on <host> at sequence length 128: <!-- lab-string-ok: measurement provenance -->
-```
 
 ```go
 Expr: regexp.MustCompile(`...`), // lab-string-ok: the pattern this gate matches on
@@ -125,21 +125,3 @@ Pull requests add `changelog.d/<issue>-<slug>.md` fragments and never edit
 `CHANGELOG.md`. Before tagging, run `make changelog VERSION=vX.Y.Z`, which folds
 every fragment into a new `## [X.Y.Z] - <date>` section and empties
 `changelog.d`, and commit the result; the tag goes on that commit.
-
-## What go-quicbaas#944 removed
-
-Seven artefacts committed by accident, now deleted and in `.gitignore`: a
-symlink at the repo root pointing into the lab's NFS mount, a stale
-`SESSION_RESUME.md`, a per-machine Claude permission allowlist, two FUSE
-orphans, and opencode's SQLite WAL/SHM pair.
-
-Lab values in shipping files: seven forge issue links in `docs/barrier/cli.md`
-(now `github.com/jeremyhahn/...`), the private registry in
-`.github/workflows/release.yml` (now `${{ vars.REGISTRY || 'ghcr.io' }}`, set as
-a repository variable on the private forge only), the owner's Gitea principal as
-the commit-author placeholder in the shipped UI, the fleet host and address in
-`--help` text and exported godoc across `cmd/quicbaas` and `pkg/fleet`,
-copy-pasteable endpoints in `docs/embeddings/npu.md`, and the private registry in
-the captured runner logs under `pkg/cifault/testdata` and the `pkg/sdlc` log
-fixtures. The classifier matches on generic signatures — `failed to pull image`,
-`http response to https client` — so neutralising the host changed no assertion.

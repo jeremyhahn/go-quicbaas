@@ -159,12 +159,13 @@ func TestE2E_RunImageReportsTheExitAndWritesAsTheSpawnUID(t *testing.T) {
 }
 
 // npmDouble answers GET /<package>/latest.
-func npmDouble(t *testing.T, claude, codex string) *httptest.Server {
+func npmDouble(t *testing.T, claude, codex, gemini string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		version := map[string]string{
 			"/@anthropic-ai%2Fclaude-code/latest": claude,
 			"/@openai%2Fcodex/latest":             codex,
+			"/@google%2Fgemini-cli/latest":        gemini,
 		}[r.URL.EscapedPath()]
 		if version == "" {
 			http.NotFound(w, r)
@@ -261,20 +262,20 @@ func TestE2E_ACandidateThatFailsItsProbesIsNeverPromoted(t *testing.T) {
 	const repository = "quicbaas-worker-image-it-repo"
 	stale := repository + ":old"
 	build := softwarefactoryworker.Build{
-		Base: "0.0.1-it", Agents: softwarefactoryworker.Agents{ClaudeCode: "9.9.9", Codex: "9.9.9"},
+		Base: "0.0.1-it", Agents: softwarefactoryworker.Agents{ClaudeCode: "9.9.9", Codex: "9.9.9", Gemini: "9.9.9"},
 		Pins: pins, UID: os.Getuid(), GID: os.Getgid(),
 	}
 	candidate := repository + ":" + build.Tag()
 
 	oldBuild := build
-	oldBuild.Agents = softwarefactoryworker.Agents{ClaudeCode: "1.0.0", Codex: "1.0.0"}
+	oldBuild.Agents = softwarefactoryworker.Agents{ClaudeCode: "1.0.0", Codex: "1.0.0", Gemini: "1.0.0"}
 	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{stale}, Labels: oldBuild.Labels()})
 	require.NoError(t, err)
 	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{candidate}, Labels: build.Labels()})
 	require.NoError(t, err)
 	removeImages(t, stale, candidate)
 
-	versions, err := workerimage.NewNPMRegistry(npmDouble(t, "9.9.9", "9.9.9").URL, nil)
+	versions, err := workerimage.NewNPMRegistry(npmDouble(t, "9.9.9", "9.9.9", "9.9.9").URL, nil)
 	require.NoError(t, err)
 	agents := &agentsDouble{agent: orchestration.Agent{
 		ID: "claude-coder", Name: "claude-coder", Roles: []orchestration.AgentRole{orchestration.AgentRoleCoding},

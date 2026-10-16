@@ -614,16 +614,19 @@ func (r *Refresher) staleImages(ctx context.Context, uses []imageUse, latest sof
 	return stale, boundImages, nil
 }
 
-// behind reports whether have is older than latest in either CLI.
+// behind reports whether have is older than latest in Claude Code or Codex.
+// Gemini is left out: it is not in the content tag, so a newer Gemini alone
+// would rebuild under the tag of the image it replaces. It moves forward
+// whenever either tagged CLI does.
 func behind(have, latest softwarefactoryworker.Agents) bool {
 	return versionBehind(have.ClaudeCode, latest.ClaudeCode) || versionBehind(have.Codex, latest.Codex)
 }
 
 // refuseDowngrade refuses a promotion that would move any stale bound image
-// backwards in either CLI. behind marks an image stale when EITHER CLI trails
-// the registry, and the build installs BOTH at the registry's latest — so an
-// image ahead in one CLI and behind in the other would lose the newer one. An
-// image whose versions are unknown has nothing to lose.
+// backwards in any CLI. behind marks an image stale when Claude Code or Codex
+// trails the registry, and the build installs EVERY CLI at the registry's
+// latest — so an image ahead in one CLI and behind in another would lose the
+// newer one. An image whose versions are unknown has nothing to lose.
 func refuseDowngrade(bound []BoundImage, latest softwarefactoryworker.Agents) error {
 	for _, image := range bound {
 		if !image.Stale {
@@ -632,6 +635,7 @@ func refuseDowngrade(bound []BoundImage, latest softwarefactoryworker.Agents) er
 		for _, c := range []struct{ component, have, latest string }{
 			{softwarefactoryworker.ClaudeCodePackage, image.Agents.ClaudeCode, latest.ClaudeCode},
 			{softwarefactoryworker.CodexPackage, image.Agents.Codex, latest.Codex},
+			{softwarefactoryworker.GeminiPackage, image.Agents.Gemini, latest.Gemini},
 		} {
 			if versionAhead(c.have, c.latest) {
 				return &DowngradeRefusedError{Image: image.Image, Component: c.component, Bound: c.have, Latest: c.latest}
@@ -702,7 +706,30 @@ func (r *Refresher) candidate(ctx context.Context, build softwarefactoryworker.B
 		slices.Sort(wrong)
 		return "", &GateError{Image: localRef, Failed: append([]string{"labels"}, wrong...)}
 	}
+	if err := checkLanguages(localRef, built.Labels); err != nil {
+		return "", err
+	}
 	return imageID, nil
+}
+
+// checkLanguages refuses an image whose languages label is missing, empty, or
+// names a language outside softwarefactoryworker.LanguageServers. The factory
+// refuses such an image, so promoting it would strand every lane bound to it.
+func checkLanguages(image string, labels map[string]string) error {
+	languages := softwarefactoryworker.LanguagesFromLabels(labels)
+	if len(languages) == 0 {
+		return &GateError{Image: image, Failed: []string{"label " + softwarefactoryworker.LabelLanguages + " is missing or empty"}}
+	}
+	var unknown []string
+	for _, language := range languages {
+		if _, ok := softwarefactoryworker.LanguageServers[language]; !ok {
+			unknown = append(unknown, "label "+softwarefactoryworker.LabelLanguages+" names unknown language "+strconv.Quote(language))
+		}
+	}
+	if len(unknown) > 0 {
+		return &GateError{Image: image, Failed: unknown}
+	}
+	return nil
 }
 
 // smokeTarget is one smoke the gate runs and the binding it runs on behalf of.

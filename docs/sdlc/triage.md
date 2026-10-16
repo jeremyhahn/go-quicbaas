@@ -1,6 +1,6 @@
 # Issue triage — which issues are ready to be worked
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Supplement to the [SDLC feature folder](architecture.md): the front half
 > of the factory loop, which decides which issues are ready to be worked and
 > marks them. Conflicts with this document are defects.
@@ -513,10 +513,10 @@ has to be re-escaped, it cannot be diffed as text, and every wording change
 reads as a code change in review. `TestTriageCharter_IsNotAGoConstant` reads
 the embedded file and compares, so the two cannot drift.
 
-**This is a temporary home, and the follow-up is named.** The owner's design
-calls for a generic prompt-set package with `system → tenant → project`
+**This is a temporary home, and the follow-up is named.** The design calls
+for a generic prompt-set package with `system → tenant → project`
 inheritance, so a project can tune its own definition of "ready" —
-[prompt-sets.md](../software-factory/prompt-sets.md) and [../design/prompt-sets.md](../design/prompt-sets.md).
+[prompt-sets.md](../software-factory/prompt-sets.md).
 
 When this landed, nothing under `pkg/orchestration` or `pkg/sdlc` implemented
 it. **#803 (scope 1 of 4) landed it in parallel, the same day**, bringing

@@ -812,23 +812,29 @@ RUN set -eux; \
 # and without it `claude` only reports "native binary not installed". The
 # allowance names that package at its pin, so no other package, nor another
 # version of this one, runs a script. Codex needs none: its native binaries
-# arrive as plain platform packages. The npm and language-server installs
+# arrive as plain platform packages. Gemini needs none either:
+# @google/gemini-cli declares no scripts, and the optional dependencies that
+# do (node-pty, @github/keytar) are skipped without them -- the pty arrives
+# prebuilt as the @lydell/node-pty-linux-* platform package. The npm and language-server installs
 # above need none either; the only script in their tree is fsevents, which is
 # macOS-only and never installed here.
 ARG CLAUDE_CODE_VERSION
 ARG CODEX_VERSION
+ARG GEMINI_CLI_VERSION
 RUN set -eux; \
-    if [ -z "${CLAUDE_CODE_VERSION:-}" ] || [ -z "${CODEX_VERSION:-}" ]; then \
-        echo "CLAUDE_CODE_VERSION and CODEX_VERSION are required build arguments." >&2; \
+    if [ -z "${CLAUDE_CODE_VERSION:-}" ] || [ -z "${CODEX_VERSION:-}" ] || [ -z "${GEMINI_CLI_VERSION:-}" ]; then \
+        echo "CLAUDE_CODE_VERSION, CODEX_VERSION and GEMINI_CLI_VERSION are required build arguments." >&2; \
         echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
     fi; \
     eval "$(devcache-env)"; \
     npm install -g --allow-scripts="@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}"; \
+        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" \
+        "@google/gemini-cli@${GEMINI_CLI_VERSION}"; \
     npm cache clean --force; \
     claude --version; \
-    codex --version
+    codex --version; \
+    gemini --version
 
 # OPENCODE, the third agent CLI: the one a fleet node drives against a LOCAL
 # model server, where claude and codex drive hosted ones. A node that serves
@@ -1248,12 +1254,42 @@ RUN set -eux; \
         verify-commit HEAD; \
     rm -rf "${HOME}"
 
+# THE SERENA LANGUAGES THIS IMAGE SERVES, written once: the languages label
+# below reads this default, and the factory refuses an image without it. Each
+# name is serena's language key, mapped here to the server serena runs for it
+# (softwarefactoryworker.LanguageServers is the same vocabulary, and a test
+# holds the two together). The build fails when a listed language's server is
+# not on the PATH -- the npm servers' own prefix included -- so the label
+# cannot claim a server the image does not carry.
+ARG WORKER_LANGUAGES="go python typescript bash yaml markdown cpp rust ruby"
+RUN set -eu; \
+    PATH="${PATH}:/opt/serena/language-servers/bin"; \
+    for language in ${WORKER_LANGUAGES}; do \
+        case "$language" in \
+            bash) server=bash-language-server ;; \
+            cpp) server=clangd ;; \
+            go) server=gopls ;; \
+            markdown) server=marksman ;; \
+            python) server=pyright-langserver ;; \
+            ruby) server=ruby-lsp ;; \
+            rust) server=rust-analyzer ;; \
+            typescript) server=typescript-language-server ;; \
+            yaml) server=yaml-language-server ;; \
+            *) echo "WORKER_LANGUAGES names $language, which has no known language server" >&2; exit 1 ;; \
+        esac; \
+        command -v "$server" >/dev/null || \
+            { echo "WORKER_LANGUAGES names $language, but its server $server is not on the PATH" >&2; exit 1; }; \
+    done
+
 CMD ["claude"]
 
-# THE LABELS ARE THE IMAGE'S BILL OF MATERIALS, and two of them are read by
-# software. io.quicbaas.worker.claude-code.version and ...codex.version are how
+# THE LABELS ARE THE IMAGE'S BILL OF MATERIALS, and four of them are read by
+# software: io.quicbaas.worker.languages is how the factory knows which serena
+# languages it may start (see WORKER_LANGUAGES above). io.quicbaas.worker.claude-code.version and ...codex.version are how
 # the daemon's worker image refresh decides whether a bound image is behind the
-# npm registry; every other one records what the image was built from, so an
+# npm registry; ...gemini.version is how it refuses a rebuild that would move a
+# bound image's Gemini CLI backwards (Gemini is not in the content tag, so it
+# never makes an image stale by itself); every other one records what the image was built from, so an
 # operator rolling back can see what they are rolling back to. The keys are
 # declared once, in Go (softwarefactoryworker.Label*), and the refresh passes
 # the same values as --label, so an image built here and one built by the
@@ -1270,13 +1306,15 @@ ARG PROTOC_GEN_GO_VERSION
 ARG PROTOC_GEN_GO_GRPC_VERSION
 ARG QUICBAAS_VERSION
 LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
-      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, opencode, serena and its language servers, git, ssh, ssh-keygen, make, the Go toolchain, node, python, protoc and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
+      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, gemini, opencode, serena and its language servers, git, ssh, ssh-keygen, make, the Go toolchain, node, python, protoc and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
       org.opencontainers.image.vendor="QuicBaaS" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="${QUICBAAS_VERSION}" \
       io.quicbaas.worker.base.version="${QUICBAAS_VERSION}" \
       io.quicbaas.worker.claude-code.version="${CLAUDE_CODE_VERSION}" \
       io.quicbaas.worker.codex.version="${CODEX_VERSION}" \
+      io.quicbaas.worker.gemini.version="${GEMINI_CLI_VERSION}" \
+      io.quicbaas.worker.languages="${WORKER_LANGUAGES}" \
       io.quicbaas.worker.go.version="${GO_VERSION}" \
       io.quicbaas.worker.golangci-lint.version="${GOLANGCI_VERSION}" \
       io.quicbaas.worker.gosec.version="${GOSEC_VERSION}" \

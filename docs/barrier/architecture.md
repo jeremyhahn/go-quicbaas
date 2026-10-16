@@ -1,6 +1,6 @@
 # Barrier — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Design, component boundaries and data flow. Feature folder: `docs/barrier/`.
 
 QuicBaaS imports the barrier subsystem from go-qrdb rather than
@@ -21,6 +21,42 @@ This page documents only the QuicBaaS-specific deltas.
 | Daemon CLI | `cmd/quicbaasd/init.go` | Mirrors `xkmsd init` — the `--barrier-strategy`, `--shares`, `--threshold`, `--so name:KIND:path`, `--trusted-ca` flag set is identical. |
 | Frontend | `cmd/quicbaas/frontend/src/views/security/{Barrier,Ceremony,Bootstrap}View.svelte` | Strategy-aware UX (disabled / software / shamir / tpm2 / pkcs11 / *kms / auto). Replaces `SealView.svelte`. |
 | TS SDK | `sdk/typescript/src/{types,interfaces,rest,factory}.ts` | `Barrier*` / `Ceremony*` / `Bootstrap*` types and interfaces. `Seal*` types remain as deprecation aliases that `console.warn` on first use. |
+
+## Per-tenant barrier
+
+A tenant admin reaches their own tenant's barrier (init, unseal, unseal-share,
+seal, status, enable-encryption) through the QuicBaaS front door, because the
+embedded go-qrdb node is in-process and has no listener of its own.
+
+- **The logic is go-qrdb's.** QuicBaaS adds no seal logic: it authorizes,
+  audits and forwards.
+- **One facade.** `service.TenantBarrierServicer`
+  (`pkg/service/tenant_barrier_service.go`) forwards to the embedded node's
+  tenant client, the system barrier's service one scope down. Request and
+  response types are the go-qrdb SDK's, re-exported in `sdk/go`; none is
+  redeclared here.
+- **Every transport delegates to it**: REST under
+  `/api/v1/tenants/{tenant_id}/barrier/*` (`pkg/api/rest/handlers_tenant_barrier.go`),
+  gRPC `quicbaas.tenant.v1.TenantBarrier` (`pkg/api/grpc/handler_tenant_barrier.go`)
+  and MCP (`pkg/api/mcp/tools_tenant_barrier.go`). See [api.md](api.md).
+- **Authorization** is the `tenant_barrier` family in every transport's
+  table (below). The caller must administer the named tenant, and the named
+  tenant must not be the system tenant; go-qrdb checks the same on its side.
+- **Audit** records the operation and the tenant, never a share or a
+  passphrase. Share material passes straight through and is never buffered or
+  logged.
+- **Init is an explicit step after tenant creation**, as go-qrdb models it,
+  so tenant CRUD does not depend on seal state. A cryptographic tenant barrier
+  needs a storage volume pool on the embedded node (`tenant_barrier_volume_pool`,
+  [iam/engineering.md](../iam/engineering.md)); without one go-qrdb's
+  `volume pool not configured` error is returned unchanged.
+
+Rejected alternatives:
+
+| Alternative | Why not |
+|---|---|
+| A generic relay forwarding any go-qrdb wire frame to the embedded node | It bypasses the service facade, so authorization, ABAC and audit would not apply uniformly to an unseal path, and it would differ from every other barrier surface |
+| Barrier logic in QuicBaaS | go-qrdb owns barriers; composition is one-way |
 
 ## YAML configuration
 

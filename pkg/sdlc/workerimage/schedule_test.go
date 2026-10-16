@@ -67,7 +67,7 @@ func TestRun_RunsNothingAtStartARequestedPassOnDemandAndStopsWithItsContext(t *t
 	if got := <-h.observer.observed; got != OutcomePromoted {
 		t.Fatalf("requested pass = %s, want promoted", got)
 	}
-	if h.versions.calls != 2 {
+	if h.versions.calls != 3 {
 		t.Fatalf("the registry was read %d times; only the requested pass may read it", h.versions.calls)
 	}
 	if last := h.r.Status().Last; last == nil || last.Trigger != TriggerManual {

@@ -1,13 +1,13 @@
 # Prompt sets
 
-> **Status: NORMATIVE** · Last verified: 2026-10-12
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Every instruction the Software Factory sends an agent is markdown embedded in
 > the binary, declared, validated and rendered by `pkg/orchestration/prompts`,
 > and kept as tenant-scoped, versioned records that each job resolves once at
 > launch (go-quicbaas#804). Both are built and described here as built. The
 > transports, the CLI, the GUI and the per-role charters are not: they are
 > go-quicbaas#805 to #807, specified in
-> [../design/prompt-sets.md](../design/prompt-sets.md).
+> [The editing surface](#the-editing-surface-not-built-yet).
 
 ## What exists
 
@@ -331,9 +331,8 @@ admission that an edit changed what an agent reads.
 
 ## Offloadable work: what we are still paying a model to do
 
-The owner's standing principle: *"we want as much offloaded to quicbaas as
-possible so that we dont need to waste tokens having agents do basic work that
-can be automated with quicbaas using traditional programming."*
+The rule: work that traditional programming can do is done by QuicBaaS, not
+paid for in agent tokens.
 
 Extracting the prompts made every one of these readable in one place for the
 first time. **Nothing here was changed by the extraction** — the catalogue is
@@ -358,15 +357,14 @@ into Go.
 | 14 | "(no findings were written; ask the reviewer)" | `sdlc/changes_requested_no_findings` | the forge's inline review comments are an API call. Fetch them rather than asking an agent to ask a person. |
 | 15 | the four human remedies on an outcome comment | `sdlc/outcome_remedy_*` | `outcome_remedy_self_clearing` already exists because the sweep can check that condition itself. Every condition made machine-checkable moves a row from "ask a person" to "the factory did it". |
 
-Two rulings of 2026-09-10 bear on the same principle and have a natural home
-in the `sdlc` set, to be authored separately: an agent may work cross-project
+Two rules bear on the same principle and belong in the `sdlc` set: an agent may work cross-project
 **only when it is blocked**, and it **owns the issue until it is merged** so it
 can resume after unblocking; and **all work happens in a dedicated branch and
 worktree**, always. A blocked-on-dependency prompt is a member of this set;
 creating the branch and the worktree, and filing the cross-project issue, are
 rows 8 and 15 of the table above — deterministic work the factory should do.
 
-## Not built yet
+## The editing surface (not built yet)
 
 The six transports and the Go SDK (go-quicbaas#805), the TypeScript client and
 the GUI (#806), and the per-role charters (#807). The store is only reachable
@@ -377,3 +375,55 @@ in-process until then:
 - [user.md](user.md#tune-the-prompts) — no verb edits a record yet; changing
   a default is editing a file and rebuilding, and the boot reconcile carries
   it into the system set and every tenant still following it.
+
+### Verbs
+
+Every verb is served on every transport. A request addresses its layer by
+`tenant_id`, `scope=tenant|project|system` and `project_id`; `system` is
+read-only.
+
+| verb | REST | gRPC (`quicbaas.prompt.v1.PromptService`) | MCP | SDK `Prompts()` / CLI `quicbaas prompts` | permission |
+|---|---|---|---|---|---|
+| List | `GET /api/v1/prompts/{set}` | `ListPrompts` | `prompt_list` | `List` / `list <set>` | `prompts:read` |
+| Get (`?version=N`) | `GET /api/v1/prompts/{set}/{name}` | `GetPrompt` | `prompt_get` | `Get` / `get` | `prompts:read` |
+| Effective, with its chain | `GET …/{name}/effective` | `GetEffectivePrompt` | `prompt_effective` | `Effective` / `effective` | `prompts:read` |
+| Diff against the parent | `GET …/{name}/diff` | `DiffPrompt` | `prompt_diff` | `Diff` / `diff` | `prompts:read` |
+| History | `GET …/{name}/history` | `GetPromptHistory` | `prompt_history` | `History` / `history` | `prompts:history` |
+| Put (compare-and-swap on `expected_version`, note required) | `PUT …/{name}` | `PutPrompt` | `prompt_put` | `Put` / `put -f FILE --note` | `prompts:write` |
+| Rollback | `POST …/{name}/rollback` | `RollbackPrompt` | `prompt_rollback` | `Rollback` / `rollback --version N` | `prompts:write` |
+| Reset to the parent | `DELETE …/{name}` | `ResetPrompt` | `prompt_reset` | `Reset` / `reset` | `prompts:write` |
+
+Status mapping: not found is `404` / `NotFound`; a version conflict is `409` /
+`Aborted`; a missing marker, an unknown set or name, or a system-scope write is
+`400` / `InvalidArgument`, with the marker named in the body; a node with no
+store is `503` / `Unavailable`. `Get` is `404` when nothing is overridden at
+that scope; `Effective` always answers with its `origin` and the chain. QUIC
+serves the REST routes over HTTP/3 and Unix serves gRPC over a domain socket.
+
+### GUI
+
+A standalone page under SOFTWARE FACTORY, `#/prompts?set=&project=`:
+
+- a scope picker (tenant or project) and one tab per set;
+- a list showing each prompt's name, whether it is overridden here or
+  inherited from the tenant or the system, and its effective version and hash;
+- an editor that shows the placeholders and required markers, flags a missing
+  marker before saving (the server stays authoritative), requires a note and
+  saves with compare-and-swap, naming who changed the record on a `409` and the
+  marker on a `400`;
+- an inherited prompt shown read-only, with "Override here";
+- panels for the history (view a version, roll back with a note), the diff
+  against the parent and the effective body with its chain;
+- a `403` shows an empty state naming the permission and hides the write verbs;
+  a `503` says the prompt store is not running on this node.
+
+A job's detail view lists the prompts it ran with, as `set/name · scope · vN ·
+hash`, each linking to the page.
+
+### Role charters
+
+The per-role charters of a workflow come from the `workflow` set
+(`charter_lead`, `charter_worker`, `charter_reviewer`, `charter_validator`).
+`AgentRoleSpec.SystemPrompt` is removed: it is an unversioned, unvalidated,
+unpermissioned way around the store, and the workflow loader refuses a
+`system_prompt` key with a typed error naming the store.

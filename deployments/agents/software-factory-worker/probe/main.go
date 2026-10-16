@@ -21,7 +21,7 @@
 // (pkg/version/toolchain.mk), exactly as the daemon's are.
 //
 //	go run ./deployments/agents/software-factory-worker/probe -image quicbaas-software-factory-worker:<tag> \
-//	    -base 0.11.0-alpha -claude-code 2.1.280 -codex 0.156.0
+//	    -base 0.11.0-alpha -claude-code 2.1.280 -codex 0.156.0 -gemini 0.64.0
 package main
 
 import (
@@ -50,6 +50,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	base := flags.String("base", "", "the QuicBaaS release the image was built from (required)")
 	claude := flags.String("claude-code", "", "the Claude Code version the image must carry (required)")
 	codex := flags.String("codex", "", "the Codex version the image must carry (required)")
+	gemini := flags.String("gemini", "", "the Gemini CLI version the image must carry (required)")
 	uid := flags.Int("uid", os.Getuid(), "uid the probes run as: the uid sandboxed spawns run as")
 	gid := flags.Int("gid", os.Getgid(), "gid the probes run as")
 	if err := flags.Parse(args); err != nil {
@@ -63,7 +64,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	build := softwarefactoryworker.Build{
 		Base:   *base,
-		Agents: softwarefactoryworker.Agents{ClaudeCode: *claude, Codex: *codex},
+		Agents: softwarefactoryworker.Agents{ClaudeCode: *claude, Codex: *codex, Gemini: *gemini},
 		Pins:   pins, UID: *uid, GID: *gid,
 	}
 	if err := build.Validate(); err != nil {

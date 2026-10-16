@@ -1,6 +1,6 @@
 # Code review — QuicBaaS reviews its own pull requests
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Supplement to the [SDLC feature folder](architecture.md): the `review` job
 > runner, the forge write surface it needs, and the nine production failures
 > it is built not to repeat. Conflicts with this document are defects.
@@ -422,7 +422,7 @@ the REST routes and the embedded transport calls the service directly. All
 three verbs answer the **selection that now holds**: the profile, whether an
 operator chose it, whether it counts toward merge, and its status context.
 
-**Switching reviewer never cancels anything** (owner ruling, 2026-09-25).
+**Switching reviewer never cancels anything.**
 Setting an override records it and asks for a review by the chosen profile
 now. A review that is already running holds the pull request's lease, so it
 runs on and publishes normally, and the answer says `redispatched: false`.

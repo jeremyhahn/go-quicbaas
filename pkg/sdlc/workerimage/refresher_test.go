@@ -38,7 +38,7 @@ func TestRefresh_PromotesAStaleImageInLocalMode(t *testing.T) {
 	if report.Outcome != OutcomePromoted {
 		t.Fatalf("outcome = %s (%s), want promoted", report.Outcome, report.Error)
 	}
-	wantBound := []BoundImage{{Image: staleImage, Agents: softwarefactoryworker.Agents{ClaudeCode: "2.1.278", Codex: "0.150.0"}, Uses: 2, Stale: true}}
+	wantBound := []BoundImage{{Image: staleImage, Agents: softwarefactoryworker.Agents{ClaudeCode: "2.1.278", Codex: "0.150.0", Gemini: testGemini}, Uses: 2, Stale: true}}
 	if !slices.Equal(report.Bound, wantBound) {
 		t.Fatalf("bound = %+v, want the bound image with its CLI versions and both roles", report.Bound)
 	}
@@ -220,8 +220,12 @@ func TestRefresh_FailuresLeaveBindingsAlone(t *testing.T) {
 		"a probe fails": {setup: func(h *harness) {
 			h.engine.failProbe = softwarefactoryworker.Probes()[3].Name
 		}, want: ErrGate},
-		"a smoke fails":         {setup: func(h *harness) { h.smoker.fail = map[string]bool{"codex": true} }, want: ErrGate},
-		"labels are wrong":      {setup: func(h *harness) { h.engine.builtLabels = labelsFor("2.1.280", "0.1.0") }, want: ErrGate},
+		"a smoke fails":    {setup: func(h *harness) { h.smoker.fail = map[string]bool{"codex": true} }, want: ErrGate},
+		"labels are wrong": {setup: func(h *harness) { h.engine.builtLabels = labelsFor("2.1.280", "0.1.0") }, want: ErrGate},
+		"no languages label": {setup: func(h *harness) {
+			h.engine.builtLabels = labelsFor("2.1.280", "0.156.0")
+			delete(h.engine.builtLabels, softwarefactoryworker.LabelLanguages)
+		}, want: ErrGate},
 		"inspect is broken":     {setup: func(h *harness) { h.engine.inspectFn = brokenInspect }, want: errFake},
 		"push fails":            {cfg: withRegistry, setup: func(h *harness) { h.engine.pushErr = errFake }, want: errFake},
 		"credential unreadable": {cfg: withCredentialError, want: errFake},
@@ -238,6 +242,36 @@ func TestRefresh_FailuresLeaveBindingsAlone(t *testing.T) {
 			}
 			report := h.r.Refresh(t.Context(), TriggerManual)
 			assertUnchanged(t, h, report)
+		})
+	}
+}
+
+func TestCheckLanguages_AcceptsKnownLanguages(t *testing.T) {
+	labels := map[string]string{softwarefactoryworker.LabelLanguages: "go typescript  yaml"}
+	if err := checkLanguages(candidateTag, labels); err != nil {
+		t.Fatalf("checkLanguages = %v, want nil for known serena languages", err)
+	}
+}
+
+func TestCheckLanguages_RefusesAMissingEmptyOrUnknownList(t *testing.T) {
+	cases := map[string]struct {
+		labels map[string]string
+		want   string
+	}{
+		"missing": {labels: map[string]string{}, want: softwarefactoryworker.LabelLanguages + " is missing or empty"},
+		"blank":   {labels: map[string]string{softwarefactoryworker.LabelLanguages: "  "}, want: softwarefactoryworker.LabelLanguages + " is missing or empty"},
+		"unknown": {labels: map[string]string{softwarefactoryworker.LabelLanguages: "go cobol"}, want: `unknown language "cobol"`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := checkLanguages(candidateTag, tc.labels)
+			var gate *GateError
+			if !errors.As(err, &gate) || !errors.Is(err, ErrGate) {
+				t.Fatalf("checkLanguages = %v, want a *GateError", err)
+			}
+			if gate.Image != candidateTag || !slices.ContainsFunc(gate.Failed, func(f string) bool { return strings.Contains(f, tc.want) }) {
+				t.Fatalf("gate = %+v, want image %q and a failure naming %q", gate, candidateTag, tc.want)
+			}
 		})
 	}
 }
@@ -457,6 +491,14 @@ func TestRefuseDowngrade(t *testing.T) {
 		refused.Bound != "0.157.1" || refused.Latest != "0.156.0" {
 		t.Fatalf("err = %v", err)
 	}
+	// A stale image ahead in Gemini would lose it to the rebuild too.
+	latest.Gemini = "0.64.0"
+	err = refuseDowngrade([]BoundImage{{Image: "gemini-ahead", Stale: true,
+		Agents: softwarefactoryworker.Agents{ClaudeCode: "2.1.278", Codex: "0.156.0", Gemini: "0.65.0"}}}, latest)
+	if !errors.As(err, &refused) || refused.Component != softwarefactoryworker.GeminiPackage ||
+		refused.Bound != "0.65.0" || refused.Latest != "0.64.0" {
+		t.Fatalf("gemini ahead: err = %v", err)
+	}
 	unknown := []BoundImage{{Image: "unlabelled", Stale: true}, {Image: "odd", Stale: true,
 		Agents: softwarefactoryworker.Agents{ClaudeCode: "nightly", Codex: "0.1.0"}}}
 	if err := refuseDowngrade(unknown, latest); err != nil {
@@ -478,7 +520,7 @@ func TestRefresh_AnUnreadableRegistryIsAFailedPass(t *testing.T) {
 func TestRefresh_ReadsTheRegistryOncePerPass(t *testing.T) {
 	h := newHarness(t, testConfig())
 	h.r.Refresh(t.Context(), TriggerManual)
-	if h.versions.calls != 2 {
+	if h.versions.calls != 3 {
 		t.Fatalf("registry lookups = %d, want one per package per pass", h.versions.calls)
 	}
 }

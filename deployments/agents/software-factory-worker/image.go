@@ -274,11 +274,12 @@ func (p Pins) named() []namedPin {
 // arguments, so an image built by `make build-worker-image` and one built by
 // the daemon's refresh are labelled identically.
 //
-// The two agent-CLI labels are the ones a refresh READS: they are how the
+// The three agent-CLI labels are the ones a refresh READS: they are how the
 // daemon knows what a bound image carries without running it.
 const (
 	LabelClaudeCodeVersion      = "io.quicbaas.worker.claude-code.version"
 	LabelCodexVersion           = "io.quicbaas.worker.codex.version"
+	LabelGeminiVersion          = "io.quicbaas.worker.gemini.version"
 	LabelBaseVersion            = "io.quicbaas.worker.base.version"
 	LabelGoVersion              = "io.quicbaas.worker.go.version"
 	LabelGolangciVersion        = "io.quicbaas.worker.golangci-lint.version"
@@ -311,6 +312,7 @@ const (
 const (
 	ClaudeCodePackage = "@anthropic-ai/claude-code"
 	CodexPackage      = "@openai/codex"
+	GeminiPackage     = "@google/gemini-cli"
 )
 
 // DevcacheEnvSHA256 is the SHA-256 of the devcache-env client script the
@@ -321,17 +323,52 @@ const (
 // independently of the build.
 const DevcacheEnvSHA256 = "54ebcd1955daa328f31ebe8c93b50b71fcb9489a4a45a0a2986c530d4517cd29"
 
-// Agents are the two agent-CLI versions an image carries.
+// Agents are the npm-installed agent-CLI versions an image carries. Gemini is
+// installed for operators to use by hand; it is not in the content tag (Tag).
 type Agents struct {
 	ClaudeCode string `json:"claude_code"`
 	Codex      string `json:"codex"`
+	Gemini     string `json:"gemini"`
 }
 
 // AgentsFromLabels reads the agent versions an image's labels declare. An
-// image built before the labels existed declares neither, and reports both
-// empty: its versions are unknown, which is not the same as current.
+// image built before a label existed does not declare it, and reports that
+// version empty: it is unknown, which is not the same as current.
 func AgentsFromLabels(labels map[string]string) Agents {
-	return Agents{ClaudeCode: labels[LabelClaudeCodeVersion], Codex: labels[LabelCodexVersion]}
+	return Agents{
+		ClaudeCode: labels[LabelClaudeCodeVersion],
+		Codex:      labels[LabelCodexVersion],
+		Gemini:     labels[LabelGeminiVersion],
+	}
+}
+
+// LabelLanguages names, space-separated, the serena languages whose language
+// servers the image carries. The factory reads it to decide which languages a
+// lane's serena may start, and refuses an image that does not declare it. The
+// list itself is written once, as the Dockerfile's ARG WORKER_LANGUAGES
+// default, and the build fails when a listed language's server is missing.
+const LabelLanguages = "io.quicbaas.worker.languages"
+
+// LanguageServers maps each serena language a worker image may declare to the
+// server binary serena runs for it. It is the vocabulary LabelLanguages is
+// checked against, not the image's list: a name outside it is a typo or a
+// language no image of this Dockerfile supplies.
+var LanguageServers = map[string]string{
+	"bash":       "bash-language-server",
+	"cpp":        "clangd",
+	"go":         "gopls",
+	"markdown":   "marksman",
+	"python":     "pyright-langserver",
+	"ruby":       "ruby-lsp",
+	"rust":       "rust-analyzer",
+	"typescript": "typescript-language-server",
+	"yaml":       "yaml-language-server",
+}
+
+// LanguagesFromLabels reads the serena languages an image's labels declare. An
+// image built before the label existed declares none.
+func LanguagesFromLabels(labels map[string]string) []string {
+	return strings.Fields(labels[LabelLanguages])
 }
 
 // Build is everything one build of the image is a function of.
@@ -362,6 +399,9 @@ func (b Build) Validate() error {
 	if err := ValidateVersion(CodexPackage, b.Agents.Codex); err != nil {
 		return err
 	}
+	if err := ValidateVersion(GeminiPackage, b.Agents.Gemini); err != nil {
+		return err
+	}
 	if b.UID < 0 || b.GID < 0 {
 		return &InvalidBuildError{Field: "uid/gid", Message: "must not be negative"}
 	}
@@ -390,6 +430,7 @@ func (b Build) BuildArgs() map[string]string {
 	args := map[string]string{
 		"CLAUDE_CODE_VERSION": b.Agents.ClaudeCode,
 		"CODEX_VERSION":       b.Agents.Codex,
+		"GEMINI_CLI_VERSION":  b.Agents.Gemini,
 		"QUICBAAS_VERSION":    b.Base,
 		"AGENT_UID":           strconv.Itoa(b.UID),
 		"AGENT_GID":           strconv.Itoa(b.GID),
@@ -405,6 +446,7 @@ func (b Build) Labels() map[string]string {
 	labels := map[string]string{
 		LabelClaudeCodeVersion: b.Agents.ClaudeCode,
 		LabelCodexVersion:      b.Agents.Codex,
+		LabelGeminiVersion:     b.Agents.Gemini,
 		LabelBaseVersion:       b.Base,
 	}
 	for _, pin := range b.Pins.named() {

@@ -1,6 +1,6 @@
 # Data Services — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Design, component boundaries and data flow. Feature folder: `docs/data-services/`.
 
 This document provides a deep dive into the GenericDAO architecture, implementation details, and design decisions.
@@ -1990,8 +1990,7 @@ Shard ID allocation and cluster management are handled by the qrdb database engi
 
 ### Cross-References
 
-- Multi-Tenant BaaS Architecture
-- [Shard Consolidation Design](../design/shard-consolidation.md)
+- [Multi-tenancy: shard allocation](../multi-tenancy/architecture.md#shard-allocation)
 
 
 ---

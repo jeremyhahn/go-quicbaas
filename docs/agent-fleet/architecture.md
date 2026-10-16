@@ -1,6 +1,6 @@
 # Agent Fleet — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Design rationale for the fleet: the node daemon, the registry, enrollment,
 > heartbeat and recovery, remote deploy, and the worker image. Conflicts with
 > this document are defects.
@@ -148,8 +148,8 @@ Recovery is layered so that each failure heals at the lowest layer that can:
 `pkg/containerruntime` is the stack's one container runtime: the
 `PodmanManager` lifecycle model, attestor hooks, exec, attach and pty, and
 per-container metrics, with their tests. It was moved from go-trusted-platform
-`pkg/compute/podman` with its history (go-quicbaas#1349; design:
-[trusted service plane §1](../design/trusted-service-plane.md)).
+`pkg/compute/podman` with its history (design:
+[trusted service plane: container runtime](../service-plane/architecture.md#container-runtime)).
 
 - **It runs only in the fleet node agent**, the `quicbaas fleet serve`
   daemon, never in `quicbaasd`. `quicbaasd` stays `CGO_ENABLED=0`, and

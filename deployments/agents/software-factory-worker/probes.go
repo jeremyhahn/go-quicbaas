@@ -97,6 +97,7 @@ var pidsLimitProbeScript []byte
 const (
 	EnvExpectedClaudeCode      = "EXPECTED_CLAUDE_CODE_VERSION"
 	EnvExpectedCodex           = "EXPECTED_CODEX_VERSION"
+	EnvExpectedGemini          = "EXPECTED_GEMINI_CLI_VERSION"
 	EnvExpectedGopls           = "EXPECTED_GOPLS_VERSION"
 	EnvExpectedGolangci        = "EXPECTED_GOLANGCI_VERSION"
 	EnvExpectedActionlint      = "EXPECTED_ACTIONLINT_VERSION"
@@ -125,6 +126,7 @@ func ProbeEnv(b Build) map[string]string {
 		"HOME":                "/tmp",
 		EnvExpectedClaudeCode: b.Agents.ClaudeCode,
 		EnvExpectedCodex:      b.Agents.Codex,
+		EnvExpectedGemini:     b.Agents.Gemini,
 		EnvExpectedGopls:      b.Pins.Gopls,
 		// golangci-lint reports "version 2.13.2", without the tag's "v".
 		EnvExpectedGolangci: strings.TrimPrefix(b.Pins.Golangci, "v"),
@@ -192,6 +194,7 @@ pkg-config --exists webkit2gtk-4.1 || { echo "webkit2gtk-4.1 dev headers missing
 case "$(npm config get omit)" in dev*) echo "npm omits devDependencies: NODE_ENV must not be production"; exit 1;; esac
 claude --version | grep -qF "$EXPECTED_CLAUDE_CODE_VERSION" || { echo "claude is not $EXPECTED_CLAUDE_CODE_VERSION: $(claude --version)"; exit 1; }
 codex --version | grep -qF "$EXPECTED_CODEX_VERSION" || { echo "codex is not $EXPECTED_CODEX_VERSION: $(codex --version)"; exit 1; }
+gemini --version | grep -qF "$EXPECTED_GEMINI_CLI_VERSION" || { echo "gemini is not $EXPECTED_GEMINI_CLI_VERSION: $(gemini --version)"; exit 1; }
 opencode --version | grep -qxF "$EXPECTED_OPENCODE_VERSION" || { echo "opencode is not the pinned $EXPECTED_OPENCODE_VERSION: $(opencode --version)"; exit 1; }
 ssh-keygen -t ed25519 -N "" -f /tmp/signing-key -q
 git init -q /tmp/probe; cd /tmp/probe

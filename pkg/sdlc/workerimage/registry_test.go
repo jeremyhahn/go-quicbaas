@@ -44,6 +44,7 @@ func TestNPMRegistry_LatestReadsTheScopedPackage(t *testing.T) {
 	srv := npmServer(t, map[string]string{
 		"/@anthropic-ai%2Fclaude-code/latest": `{"name":"@anthropic-ai/claude-code","version":"2.1.280"}`,
 		"/@openai%2Fcodex/latest":             `{"version":"0.156.0"}`,
+		"/@google%2Fgemini-cli/latest":        `{"version":"0.64.0"}`,
 	})
 	registry, err := NewNPMRegistry(srv.URL+"/", srv.Client())
 	if err != nil {
@@ -53,8 +54,24 @@ func TestNPMRegistry_LatestReadsTheScopedPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestAgents: %v", err)
 	}
-	if agents != (softwarefactoryworker.Agents{ClaudeCode: "2.1.280", Codex: "0.156.0"}) {
+	if agents != (softwarefactoryworker.Agents{ClaudeCode: "2.1.280", Codex: "0.156.0", Gemini: "0.64.0"}) {
 		t.Fatalf("agents = %+v", agents)
+	}
+}
+
+func TestLatestAgents_RefusesAMissingGeminiPackage(t *testing.T) {
+	srv := npmServer(t, map[string]string{
+		"/@anthropic-ai%2Fclaude-code/latest": `{"version":"2.1.280"}`,
+		"/@openai%2Fcodex/latest":             `{"version":"0.156.0"}`,
+	})
+	registry, err := NewNPMRegistry(srv.URL+"/", srv.Client())
+	if err != nil {
+		t.Fatalf("NewNPMRegistry: %v", err)
+	}
+	var regErr *RegistryError
+	if _, err := LatestAgents(t.Context(), registry); !errors.As(err, &regErr) ||
+		regErr.Package != softwarefactoryworker.GeminiPackage {
+		t.Fatalf("err = %v, want a RegistryError naming %s", err, softwarefactoryworker.GeminiPackage)
 	}
 }
 

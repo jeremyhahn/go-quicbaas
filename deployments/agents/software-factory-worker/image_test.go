@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func testPins() Pins {
 func testBuild() Build {
 	return Build{
 		Base:   "0.11.0-alpha",
-		Agents: Agents{ClaudeCode: "2.1.280", Codex: "0.156.0"},
+		Agents: Agents{ClaudeCode: "2.1.280", Codex: "0.156.0", Gemini: "0.64.0"},
 		Pins:   testPins(),
 		UID:    1000,
 		GID:    1000,
@@ -83,6 +84,8 @@ func TestBuild_ValidateAcceptsARealBuild(t *testing.T) {
 func TestBuild_ValidateRefuses(t *testing.T) {
 	cases := map[string]func(*Build){
 		"empty claude-code":      func(b *Build) { b.Agents.ClaudeCode = "" },
+		"empty gemini":           func(b *Build) { b.Agents.Gemini = "" },
+		"shell in gemini":        func(b *Build) { b.Agents.Gemini = "0.64.0;id" },
 		"build metadata":         func(b *Build) { b.Agents.Codex = "1.0.0+sha" },
 		"shell in a version":     func(b *Build) { b.Agents.Codex = "1.0;rm -rf /" },
 		"leading dash":           func(b *Build) { b.Base = "-x" },
@@ -105,7 +108,7 @@ func TestBuild_ValidateRefuses(t *testing.T) {
 func TestBuild_BuildArgsCarryEveryInput(t *testing.T) {
 	args := testBuild().BuildArgs()
 	want := map[string]string{
-		"CLAUDE_CODE_VERSION": "2.1.280", "CODEX_VERSION": "0.156.0", "QUICBAAS_VERSION": "0.11.0-alpha",
+		"CLAUDE_CODE_VERSION": "2.1.280", "CODEX_VERSION": "0.156.0", "GEMINI_CLI_VERSION": "0.64.0", "QUICBAAS_VERSION": "0.11.0-alpha",
 		"AGENT_UID": "1000", "AGENT_GID": "1000", "GO_VERSION": "1.27.1", "GOLANGCI_VERSION": "v2.14.0",
 		"GOSEC_VERSION": "v2.29.0", "GOVULNCHECK_VERSION": "v1.8.0", "GOPLS_VERSION": "v0.23.0", "SERENA_VERSION": "v1.7.0",
 		"GO_TOOL_DEPENDENCY_FLOORS": "golang.org/x/mod@v0.41.0",
@@ -154,7 +157,8 @@ func TestDockerfile_DeclaresEveryBuildArgAndLabel(t *testing.T) {
 			t.Errorf("the Dockerfile does not write label %s", label)
 		}
 	}
-	if strings.Contains(dockerfile, "claude-code@latest") || strings.Contains(dockerfile, "codex@latest") {
+	if strings.Contains(dockerfile, "claude-code@latest") || strings.Contains(dockerfile, "codex@latest") ||
+		strings.Contains(dockerfile, "gemini-cli@latest") {
 		t.Error("the agent CLIs must be installed at their pinned versions, never @latest")
 	}
 
@@ -352,11 +356,59 @@ func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 
 func TestAgentsFromLabels(t *testing.T) {
 	got := AgentsFromLabels(testBuild().Labels())
-	if got != (Agents{ClaudeCode: "2.1.280", Codex: "0.156.0"}) {
+	if got != (Agents{ClaudeCode: "2.1.280", Codex: "0.156.0", Gemini: "0.64.0"}) {
 		t.Fatalf("AgentsFromLabels = %+v", got)
 	}
 	if got := AgentsFromLabels(nil); got != (Agents{}) {
 		t.Fatalf("an unlabelled image declares no versions, got %+v", got)
+	}
+	// An image built before the gemini label existed reports Gemini unknown,
+	// without losing the versions it does declare.
+	labels := testBuild().Labels()
+	delete(labels, LabelGeminiVersion)
+	if got := AgentsFromLabels(labels); got != (Agents{ClaudeCode: "2.1.280", Codex: "0.156.0"}) {
+		t.Fatalf("an image without the gemini label must report Gemini empty, got %+v", got)
+	}
+}
+
+func TestLanguagesFromLabels_SplitsTheList(t *testing.T) {
+	got := LanguagesFromLabels(map[string]string{LabelLanguages: " go  typescript\tyaml "})
+	if !slices.Equal(got, []string{"go", "typescript", "yaml"}) {
+		t.Fatalf("LanguagesFromLabels = %q, want [go typescript yaml]", got)
+	}
+}
+
+func TestLanguagesFromLabels_AnUnlabelledImageDeclaresNone(t *testing.T) {
+	if got := LanguagesFromLabels(map[string]string{LabelGoVersion: "1.26.2"}); len(got) != 0 {
+		t.Fatalf("LanguagesFromLabels = %q, want none for an image without the label", got)
+	}
+}
+
+// The Dockerfile's WORKER_LANGUAGES default is the image's one list, and its
+// build check maps each language to a server. Both must stay inside the Go
+// vocabulary the refresher's gate checks the label against.
+func TestDockerfile_LanguagesLabelMatchesTheServerVocabulary(t *testing.T) {
+	dockerfile := string(Dockerfile)
+	match := regexp.MustCompile(`(?m)^ARG WORKER_LANGUAGES="([^"]*)"$`).FindStringSubmatch(dockerfile)
+	if match == nil {
+		t.Fatal("the Dockerfile does not declare ARG WORKER_LANGUAGES with a quoted default")
+	}
+	languages := strings.Fields(match[1])
+	if len(languages) == 0 {
+		t.Fatal("WORKER_LANGUAGES is empty")
+	}
+	for _, language := range languages {
+		if _, ok := LanguageServers[language]; !ok {
+			t.Errorf("WORKER_LANGUAGES names %q, which LanguageServers does not know", language)
+		}
+	}
+	for language, server := range LanguageServers {
+		if !strings.Contains(dockerfile, language+") server="+server+" ;;") {
+			t.Errorf("the Dockerfile's language check does not map %s to %s", language, server)
+		}
+	}
+	if !strings.Contains(dockerfile, LabelLanguages+`="${WORKER_LANGUAGES}"`) {
+		t.Errorf("the Dockerfile does not write label %s from WORKER_LANGUAGES", LabelLanguages)
 	}
 }
 
@@ -438,7 +490,8 @@ func TestProbeEnv_CarriesExpectationsNotShell(t *testing.T) {
 	if env[EnvExpectedProtocGenGo] != "v1.36.12" || env[EnvExpectedProtocGenGoGRPC] != "1.6.2" {
 		t.Fatalf("protoc-gen-go reports its tag, protoc-gen-go-grpc its version without the v: got %v", env)
 	}
-	if env[EnvExpectedClaudeCode] != "2.1.280" || env[EnvExpectedCodex] != "0.156.0" || env["HOME"] != "/tmp" {
+	if env[EnvExpectedClaudeCode] != "2.1.280" || env[EnvExpectedCodex] != "0.156.0" ||
+		env[EnvExpectedGemini] != "0.64.0" || env["HOME"] != "/tmp" {
 		t.Fatalf("env = %v", env)
 	}
 	if env[EnvExpectedNpmBundledFloors] != "brace-expansion@5.0.11 undici@6.28.1" {

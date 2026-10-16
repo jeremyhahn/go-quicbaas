@@ -1,6 +1,6 @@
 # SDLC — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > The SDLC module of the Software Factory: a labelled issue becomes a merged
 > pull request. The engine it plugs into is
 > [../software-factory/architecture.md](../software-factory/architecture.md).
@@ -329,8 +329,8 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
    `-X theirs`, `checkout --ours` or `checkout --theirs`), to commit the
    merge and to re-run the build and tests.
 
-   **The branch is merged, never rewritten.** The owner's ruling (2026-09-04,
-   handbook `software/conventions/version-control.md` §5b) is absolute: no
+   **The branch is merged, never rewritten.** The rule (handbook
+   `software/conventions/version-control.md` §5b) is absolute: no
    force push of any kind, leased or not, and no rebase, reset or amend of a
    pushed commit. The worker charter says so too. Merging the base keeps the
    published head as an ancestor of the new one, so every publication of the
@@ -567,11 +567,10 @@ that carries no container is refused at the SPAWN
 (`WorkerNotContainerizedError`), before a turn is spent on work nothing could
 publish.
 
-6. **No canonical Workflow.** The owner's ruling (plan of 2026-09-06): the
-   SDLC pipeline is not a Workflow on the engine's control loop, whose one
-   shape is lead-driven decomposition — a live run turned one issue into
-   nine work items. The `JobRunner` seam and the `sdlc` runner above are the
-   answer, and they have landed. The module registers **no workflow at all**,
+6. **No canonical Workflow.** The SDLC pipeline is not a Workflow on the
+   engine's control loop, whose one shape is lead-driven decomposition and
+   would turn one issue into many work items. The `JobRunner` seam and the
+   `sdlc` runner above carry the pipeline instead. The module registers **no workflow at all**,
    `Bind` neither reads nor sets `Project.DefaultWorkflow`, and no `sdlc`
    `JobLifecycleHooks` set is registered — the runner calls the moments
    itself. The engine's side of the seam is

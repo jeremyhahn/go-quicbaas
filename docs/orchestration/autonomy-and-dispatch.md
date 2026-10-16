@@ -1,6 +1,6 @@
 # Autonomous Projects — the switch, the dispatcher, and the worker's workspace
 
-> **Status: NORMATIVE** · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Supplement to the Software Factory feature folder: the autonomy switch, the
 > task dispatcher, and the workspace spec a worker container clones from.
 > Conflicts with this document are defects.
@@ -32,6 +32,35 @@ It gates two loops:
 A **parked** project (`Project.Parked`) keeps both loops running for the work it
 has already started and refuses everything new; see
 [Parking a project](../projects/architecture.md#parking).
+
+## The loops
+
+The engine is the control loop for every autonomous project. Agents spend
+tokens on code and judgement; every mechanical step is Go.
+
+| loop | what it does | where |
+|---|---|---|
+| inner | a state machine over **one** `JobRun` (initializing → decomposing → scheduling → assigning → executing → validating → reviewing → completing → cleanup); one iteration is one transition, and it never sees another job | `ControlLoop.RunJob`, `pkg/orchestration/control_loop.go` |
+| outer A | forge issues to Tasks: lists the open issues a project's sources report, stamps priority, adopts up to capacity in priority order | `TaskSourcePoller.Sweep`, `pkg/orchestration/task_source.go`; `IssueSource.Poll`, `pkg/sdlc/issue_source.go` |
+| outer B | Tasks to jobs: orders by priority, then age, then ID, and starts as many as admission allows; it retries whatever auto-spawn missed | `TaskDispatcher.Sweep`, `pkg/orchestration/task_dispatcher.go` |
+| maintenance | job-lease death, stall detection, session reconciliation | `agentServiceImpl.Sweep` (`job_admission.go`), `agentServiceImpl.SweepSessions` (`session_reconcile.go`) |
+
+Both outer loops walk every tenant, then every autonomous project, on the
+`DefaultOrchestrationSweepInterval` tick (`pkg/config/config.go`). A verified
+webhook delivery runs them at once ([Nudges](#nudges)); the SDLC module's
+`discovery` setting chooses between polling, webhooks and both
+([review.md](../sdlc/review.md#discovery-modes--poll-webhook-both)).
+
+What the loops deliberately do not do:
+
+- replace `ControlLoop`, which is the inner loop;
+- merge the two outer loops into one: they serve different stages, and the
+  second exists to retry what the first missed;
+- ask an agent for work Go can do: classifying a red check
+  ([ci-failure-classification.md](../sdlc/ci-failure-classification.md)),
+  admission ([admission-and-readiness.md](../software-factory/admission-and-readiness.md)),
+  the merge ([sdlc architecture](../sdlc/architecture.md)) and the credential
+  tier ([the forge credential](#the-forge-credential)) are the engine's.
 
 `Project.DefaultWorkflow` no longer gates anything. It keeps its original
 meaning — the workflow a Task under this project is auto-spawned into — for

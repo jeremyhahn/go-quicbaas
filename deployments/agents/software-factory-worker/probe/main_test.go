@@ -38,6 +38,14 @@ func TestRun_RefusesAnIncompleteDescription(t *testing.T) {
 	}
 }
 
+func TestRun_RefusesADescriptionWithoutGemini(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-image", "w:1", "-base", "0.11.0", "-claude-code", "2.1.280", "-codex", "0.156.0"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "@google/gemini-cli") {
+		t.Fatalf("exit = %d stderr = %q", code, stderr.String())
+	}
+}
+
 // TestNewProbeLogger_IsAConfigurationTheLoggerAccepts guards the one setting
 // that reached `make test-worker-image` before any probe ran: a log format the
 // logger refuses fails the target after a full image build.

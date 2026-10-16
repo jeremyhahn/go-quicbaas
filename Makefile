@@ -3707,14 +3707,14 @@ endif
 # actionlint and shellcheck, where a project's `make lint` lints workflows
 # (#1039).
 #
-# THE AGENT CLIS ARE PINNED TOO, and these two pins are the ones that MOVE. A
-# manual build installs exactly CLAUDE_CODE_VERSION and CODEX_VERSION; the
-# daemon's worker image refresh (pkg/sdlc/workerimage) rebuilds the same
-# Dockerfile with whatever newer versions the npm registry publishes, gates
-# the result and rebinds projects to it. Override them on the command line to
-# build a newer image by hand:
+# THE AGENT CLIS ARE PINNED TOO, and these pins are the ones that MOVE. A
+# manual build installs exactly CLAUDE_CODE_VERSION, CODEX_VERSION and
+# GEMINI_CLI_VERSION; the daemon's worker image refresh (pkg/sdlc/workerimage)
+# rebuilds the same Dockerfile with whatever newer versions the npm registry
+# publishes, gates the result and rebinds projects to it. Override them on the
+# command line to build a newer image by hand:
 #
-#   make build-worker-image CLAUDE_CODE_VERSION=2.1.293 CODEX_VERSION=0.161.0
+#   make build-worker-image CLAUDE_CODE_VERSION=2.1.293 CODEX_VERSION=0.161.0 GEMINI_CLI_VERSION=0.64.0
 #
 # THE TAG NAMES THE CONTENTS: <version>-cc<claude-code>-cx<codex>, the same
 # content tag the refresh uses (softwarefactoryworker.Build.Tag), so a manual
@@ -3727,6 +3727,7 @@ WORKER_IMAGE_UID ?= $(shell id -u)
 WORKER_IMAGE_GID ?= $(shell id -g)
 CLAUDE_CODE_VERSION ?= 2.1.296
 CODEX_VERSION ?= 0.162.1
+GEMINI_CLI_VERSION ?= 0.64.0
 WORKER_IMAGE_TAG := $(DOCKER_TAG)-cc$(CLAUDE_CODE_VERSION)-cx$(CODEX_VERSION)
 # WORKER_IMAGE_REGISTRY is where `make push-worker-image` publishes, as
 # host[:port]/owner/name. It has no default: the registry is the operator's.
@@ -3791,6 +3792,7 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg MARKSMAN_SHA256_AARCH64=$(MARKSMAN_SHA256_AARCH64) \
 		--build-arg CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION) \
 		--build-arg CODEX_VERSION=$(CODEX_VERSION) \
+		--build-arg GEMINI_CLI_VERSION=$(GEMINI_CLI_VERSION) \
 		--build-arg QUICBAAS_VERSION=$(VERSION) \
 		--build-arg AGENT_UID=$(WORKER_IMAGE_UID) \
 		--build-arg AGENT_GID=$(WORKER_IMAGE_GID) \
@@ -3821,6 +3823,7 @@ test-worker-image: build-worker-image ## Build the worker image and run its prob
 		-base $(VERSION) \
 		-claude-code $(CLAUDE_CODE_VERSION) \
 		-codex $(CODEX_VERSION) \
+		-gemini $(GEMINI_CLI_VERSION) \
 		-uid $(WORKER_IMAGE_UID) \
 		-gid $(WORKER_IMAGE_GID)
 	@echo "$(GREEN)✓ $(WORKER_IMAGE_LOCAL_REF) passed every probe$(NC)"

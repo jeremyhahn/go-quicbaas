@@ -1,6 +1,6 @@
 # Messaging — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > Design, component boundaries and data flow. Feature folder: `docs/messaging/`.
 
 ## Overview
@@ -457,6 +457,24 @@ flowchart TB
 4. Each node's state machine calls `hub.Broadcast()` on apply
 5. Clients connected to any node receive the message
 
+## Watch Bridge
+
+`pkg/watchbridge` connects the watch manager to the messaging system, so that a
+database change becomes a channel message. Each `KeyChannelMapping` binds a
+watch key prefix to a channel prefix (by default `watch:` plus the key prefix),
+an event-type filter, and an optional entity type. When the entity type is set,
+the bridge computes a `DeltaPayload` for each event, with old values when
+`IncludeOldValues` is true.
+
+| Option | Effect |
+|--------|--------|
+| `WithLeaderOnly` | Publish only while this node is the Raft leader (default on), so a change is published once per cluster |
+| `WithAutoCreateChannels` | Create each mapping's channel when the bridge starts (default on) |
+| `WithDefaultChannelPrefix` | Channel prefix used when a mapping leaves it empty |
+| `WithBridgeBufferSize` | Event buffer per watch loop |
+
+Events dropped on a follower are counted in `WatchBridgeStats`.
+
 ## Error Handling
 
 All errors follow the QRDBError pattern with typed errors:
@@ -539,6 +557,7 @@ NewPushService(logger, storage,
 | `pkg/messaging/message.go` | Message type definitions |
 | `pkg/messaging/types.go` | Shared types (DeltaPayload, Subscription, etc.) |
 | `pkg/messaging/errors.go` | Typed errors and error constructors |
+| `pkg/watchbridge/watch_bridge.go` | WatchBridge: watch events to channel messages |
 
 
 ---
