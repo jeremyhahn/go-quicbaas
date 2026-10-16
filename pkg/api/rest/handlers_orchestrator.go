@@ -1879,6 +1879,7 @@ func isOrchInvalidInputError(err error) bool {
 	return isPageInputError(err) ||
 		stderrors.Is(err, orchestration.ErrInvalidInput) ||
 		stderrors.Is(err, orchestration.ErrWorkflowValidation) ||
+		stderrors.Is(err, orchestration.ErrWorkflowRetiredField) ||
 		stderrors.Is(err, orchestration.ErrSessionStateUnknown) ||
 		stderrors.Is(err, orchestration.ErrBackendRequired) ||
 		stderrors.Is(err, orchestration.ErrPromptRequired) ||
@@ -2003,6 +2004,10 @@ func (s *Server) HandleOrchestratorGetWorkflow(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// workflowRequestSource names a workflow definition sent in a request body in
+// a retired-field refusal.
+const workflowRequestSource = "request body"
+
 // HandleOrchestratorUpdateWorkflow handles PUT /api/v1/orchestrator/workflows/{name}
 // Replaces an existing workflow definition. Returns 404 if the workflow does not exist.
 func (s *Server) HandleOrchestratorUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -2027,6 +2032,10 @@ func (s *Server) HandleOrchestratorUpdateWorkflow(w http.ResponseWriter, r *http
 	var def orchestration.WorkflowDefinition
 	if err := json.Unmarshal(body, &def); err != nil {
 		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+	if err := orchestration.RefuseRetiredWorkflowFields(workflowRequestSource, body); err != nil {
+		handleOrchestratorError(w, r, err)
 		return
 	}
 
@@ -2108,6 +2117,17 @@ func (s *Server) HandleOrchestratorCreateWorkflow(w http.ResponseWriter, r *http
 	}
 	if req.Definition == nil {
 		RespondBadRequest(w, r, "workflow definition is required")
+		return
+	}
+	var raw struct {
+		Definition json.RawMessage `json:"definition"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+	if err := orchestration.RefuseRetiredWorkflowFields(workflowRequestSource, raw.Definition); err != nil {
+		handleOrchestratorError(w, r, err)
 		return
 	}
 

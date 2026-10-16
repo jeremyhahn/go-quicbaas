@@ -239,13 +239,8 @@ type AgentRoleSpec struct {
 	// This field is informational for documentation and validation.
 	NumCtx int `yaml:"num_ctx,omitempty" json:"num_ctx,omitempty"`
 
-	// SystemPrompt is the standing instruction set every session of this
-	// role is spawned with. A module ships its charter here; empty leaves
-	// the backend's own default in force.
-	SystemPrompt string `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
-
-	// PromptAppend is run-time prompt material appended after SystemPrompt
-	// (or the Agent's own prompt) for every session of this role, so roles
+	// PromptAppend is run-time prompt material appended after the role's
+	// charter (or the Agent's own prompt) for every session of this role, so roles
 	// that share one charter can each carry their own content. At most
 	// MaxPromptAppendBytes; see prompt_append.go.
 	PromptAppend string `yaml:"prompt_append,omitempty" json:"prompt_append,omitempty"`

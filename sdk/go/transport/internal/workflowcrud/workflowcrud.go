@@ -74,7 +74,6 @@ func Definition(t testing.TB) *orchestrator.WorkflowDefinition {
 			ContainerImage:  "registry.example/agent:1",
 			HostAffinity:    "gpu-node",
 			NumCtx:          32768,
-			SystemPrompt:    "You lead.",
 			PromptAppend:    "Keep commits small.",
 		}, {
 			Role:    "coder",

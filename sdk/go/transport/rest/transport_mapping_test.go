@@ -111,19 +111,6 @@ func TestMapToEndpointAllServices(t *testing.T) {
 		{"Timeseries/ListMetrics", "Timeseries", "ListMetrics", "/api/v1/timeseries/metrics", http.MethodGet},
 		{"TimeSeries/alias", "TimeSeries", "Query", "/api/v1/timeseries/query", http.MethodPost},
 
-		// RBAC service
-		{"RBAC/CreateRole", "RBAC", "CreateRole", "/api/v1/rbac/roles", http.MethodPost},
-		{"RBAC/GetRole", "RBAC", "GetRole", "/api/v1/rbac/roles/{name}", http.MethodGet},
-		{"RBAC/UpdateRole", "RBAC", "UpdateRole", "/api/v1/rbac/roles/{name}", http.MethodPut},
-		{"RBAC/DeleteRole", "RBAC", "DeleteRole", "/api/v1/rbac/roles/{name}", http.MethodDelete},
-		{"RBAC/ListRoles", "RBAC", "ListRoles", "/api/v1/rbac/roles", http.MethodGet},
-		{"RBAC/AssignRole", "RBAC", "AssignRole", "/api/v1/rbac/users/{username}/roles", http.MethodPost},
-		{"RBAC/RevokeRole", "RBAC", "RevokeRole", "/api/v1/rbac/users/{username}/roles/{role}", http.MethodDelete},
-		{"RBAC/GetUserRoles", "RBAC", "GetUserRoles", "/api/v1/rbac/users/{username}/roles", http.MethodGet},
-		{"RBAC/CheckPermission", "RBAC", "CheckPermission", "/api/v1/rbac/permissions/check", http.MethodPost},
-		{"RBAC/ListPermissions", "RBAC", "ListPermissions", "/api/v1/rbac/permissions", http.MethodGet},
-		{"RBAC/default", "RBAC", "Sync", "/api/v1/rbac/sync", http.MethodPost},
-
 		// Backup service
 		{"Backup/Create", "Backup", "Create", "/api/v1/backups", http.MethodPost},
 		{"Backup/List", "Backup", "List", "/api/v1/backups", http.MethodGet},

@@ -2922,11 +2922,17 @@ The MCP server filters the tools/list response based on the agent's scopes. An a
 
 ### Permission Matrix by Role
 
-| Role | Typical Scopes | Purpose |
-|------|---------------|---------|
-| lead | `orchestrator:read`, `orchestrator:write`, `agent:spawn`, `agent:prompt`, `agent:close` | Full orchestration control, manages other agents |
-| coder | `kms:read`, `secrets:read`, `orchestrator:read` | Read secrets and keys for development, read job status |
-| reviewer | `orchestrator:read` | Read-only access to review task status and artifacts |
+| Role | Typical Scopes | Purpose | Charter |
+|------|---------------|---------|---------|
+| lead | `orchestrator:read`, `orchestrator:write`, `agent:spawn`, `agent:prompt`, `agent:close` | Full orchestration control, manages other agents | `charter_lead` |
+| coder | `kms:read`, `secrets:read`, `orchestrator:read` | Read secrets and keys for development, read job status | `charter_worker` |
+| reviewer | `orchestrator:read` | Read-only access to review task status and artifacts | `charter_reviewer` |
+
+Each session starts with its charter from the job's `workflow` prompt set,
+chosen by what the session does (every worker role, whatever its name, gets
+`charter_worker`); an `agent` validator prompts with `charter_validator`. A
+role definition carries no `system_prompt` — the loader refuses one. See
+[../software-factory/prompt-sets.md](../software-factory/prompt-sets.md#role-charters).
 
 ### Defining Custom Scopes in Workflow YAML
 

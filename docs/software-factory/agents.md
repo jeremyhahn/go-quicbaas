@@ -69,7 +69,8 @@ An Agent's prompt is **optional**. A spawn by Agent resolves its system prompt
 in this order:
 
 1. the prompt the spawn itself names, such as an SDLC runner's role charter or
-   a workflow role's `system_prompt`;
+   a workflow job's `charter_<role>` (see
+   [prompt-sets.md](prompt-sets.md#role-charters));
 2. the Agent's own `prompt`;
 3. the built-in charter of the role the spawn is for, when that role has one;
 4. no system prompt, so the runtime's own default applies.
@@ -81,7 +82,7 @@ in this order:
 | `triage` | the SDLC triage charter |
 | `lead`, `project_manager`, `general` | none |
 
-The SDLC runners always name their role's charter. The charter decides what
+The SDLC runners and the workflow control loop always name their role's charter. The charter decides what
 the runner parses back (a verdict, a triage declaration), so an Agent's prompt
 never replaces it. To add to a charter, use run-time prompt material.
 

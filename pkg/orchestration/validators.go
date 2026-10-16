@@ -397,12 +397,20 @@ func validateWithAgent(ctx context.Context, job *JobContext, criterion ReviewCri
 			Cause:     ErrValidatorNilInput,
 		}
 	}
-	prompt := buildValidationPrompt(prompts.RendererOr(job.Prompts, workflowPrompts), criterion, job.Artifacts)
+	set := prompts.RendererOr(job.Prompts, workflowPrompts)
+	charter, err := renderCharter(set, charterValidator)
+	if err != nil {
+		return ValidationResult{Name: criterion.Name, Passed: false}, &ValidatorExecutionError{
+			Validator: ValidatorKindAgent,
+			Cause:     err,
+		}
+	}
 
 	resp, err := job.Agents.PromptSession(ctx, &PromptSessionRequest{
-		Backend: job.Config.LeadBackend,
-		Model:   job.Config.LeadModel,
-		Prompt:  prompt,
+		Backend:      job.Config.LeadBackend,
+		Model:        job.Config.LeadModel,
+		Prompt:       buildValidationPrompt(set, criterion, job.Artifacts),
+		SystemPrompt: charter,
 	})
 	if err != nil {
 		return ValidationResult{

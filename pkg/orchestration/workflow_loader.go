@@ -183,6 +183,9 @@ func (wl *WorkflowLoader) LoadFromFile(tenantID, path string) (*WorkflowDefiniti
 	if err := yaml.Unmarshal(data, &def); err != nil {
 		return nil, &WorkflowParseError{Path: path, Cause: err}
 	}
+	if err := RefuseRetiredWorkflowFields(path, data); err != nil {
+		return nil, err
+	}
 
 	if err := def.Validate(); err != nil {
 		return nil, err

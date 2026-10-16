@@ -41,16 +41,22 @@ Roles only; users are go-qrdb's and are administered over the IAM surface
 ([../iam/api.md](../iam/api.md)). Role records are go-qrdb's, reached through
 `pkg/iam/qrdb_role_storage.go` (`QRDBRoleStorage` over go-qrdb's `RoleClient`).
 
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=no.
+
 | SDK method | REST route (SDK transport) | Served? | gRPC | MCP tool | Embedded |
 |---|---|---|---|---|---|
-| `AssignRole` | `POST /api/v1/rbac/users/{username}/roles` | **no** | yes | `qrdb_role_assign` | yes |
-| `CreateRole` | `POST /api/v1/rbac/roles` | **no** | yes | `qrdb_role_create` | yes |
-| `DeleteRole` | `DELETE /api/v1/rbac/roles/{name}` | **no** | yes | `qrdb_role_delete` | yes |
-| `ListRoles` | `GET /api/v1/rbac/roles` | **no** | yes | `qrdb_role_list` | yes |
-| `RevokeRole` | `DELETE /api/v1/rbac/users/{username}/roles/{role}` | **no** | yes | `quicbaas_role_revoke` | yes |
+| `AssignRole` | `POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles` | yes | yes | `qrdb_role_assign` | yes |
+| `CreateRole` | `POST /api/v1/tenants/{tenant_id}/roles/` | yes | yes | `qrdb_role_create` | yes |
+| `DeleteRole` | `DELETE /api/v1/tenants/{tenant_id}/roles/{role_id}` | yes | yes | `qrdb_role_delete` | yes |
+| `ListRoles` | `GET /api/v1/tenants/{tenant_id}/roles/` | yes | yes | `qrdb_role_list` | yes |
+| `RevokeRole` | `DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role}` | yes | yes | `quicbaas_role_revoke` | yes |
 
-**Served? no** is a live SDK-to-server mismatch: `sdk/go/transport/rest` sends
-these paths and the server registers none of them.
+Over REST every verb is tenant-scoped. The tenant comes from the request
+context (`transport.ContextWithTenant`), then from `rest.WithDefaultTenant`;
+with neither, the call fails with `INVALID_INPUT` before anything is sent.
+`CreateRole` sends the role name as the role ID, so the other verbs address a
+role by its name. The server keys users by a numeric ID, so `Username` must be
+that ID; any other value fails with `INVALID_INPUT`.
 
 ## Permissions go-quicbaas contributes to go-qrdb
 

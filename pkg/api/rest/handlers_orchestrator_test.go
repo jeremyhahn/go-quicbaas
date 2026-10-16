@@ -1501,6 +1501,46 @@ func TestHandleUpdateWorkflow_Success(t *testing.T) {
 	assert.NotNil(t, resp["workflow"])
 }
 
+// retiredSystemPromptDefinition is a workflow definition whose worker still
+// sets the retired system_prompt.
+const retiredSystemPromptDefinition = `{"name":"my-workflow","mode":"autonomous",` +
+	`"agents":[{"role":"worker","backend":"claude","system_prompt":"be careful"}]}`
+
+func TestHandleUpdateWorkflow_RefusesRetiredSystemPrompt(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	agentSvc.updateWorkflowFunc = func(*orchestration.WorkflowDefinition) error {
+		t.Fatal("a definition carrying a retired field must not reach the service")
+		return nil
+	}
+
+	req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/my-workflow",
+		bytes.NewReader([]byte(retiredSystemPromptDefinition)))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", "my-workflow")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorUpdateWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "agents[0].system_prompt")
+}
+
+func TestHandleOrchestratorCreateWorkflow_RefusesRetiredSystemPrompt(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	body := `{"name":"my-workflow","definition":` + retiredSystemPromptDefinition + `}`
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.HandleOrchestratorCreateWorkflow(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "agents[0].system_prompt")
+}
+
 // TestHandleUpdateWorkflow_NotFound verifies that a missing workflow returns 404.
 func TestHandleUpdateWorkflow_NotFound(t *testing.T) {
 	server, agentSvc, cleanup := setupOrchestratorMockServer(t)

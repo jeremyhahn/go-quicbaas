@@ -38,10 +38,11 @@ type VersionRef struct {
 	Hash    string `json:"hash"`
 }
 
-// Renderer renders one prompt of a set, panicking on an assembler defect.
-// Both an embedded *Set and a *ResolvedSet satisfy it, so an assembler is
+// Renderer renders one prompt of a set: Render returns the failure, and
+// MustRender panics on it, for an assembler with no error to return. Both an embedded *Set and a *ResolvedSet satisfy it, so an assembler is
 // written once over either.
 type Renderer interface {
+	Render(name string, vars Vars) (string, error)
 	MustRender(name string, vars Vars) string
 }
 

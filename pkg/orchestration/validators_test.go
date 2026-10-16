@@ -483,6 +483,9 @@ func TestValidateWithAgent_PromptConstructionAndVerdict(t *testing.T) {
 	if svc.lastRequest == nil || svc.lastRequest.Backend != "claude" || svc.lastRequest.Model != "m" {
 		t.Fatalf("the prompt must go to the job's lead backend and model: %+v", svc.lastRequest)
 	}
+	if svc.lastRequest.SystemPrompt != mustRenderCharter(t, charterValidator) {
+		t.Fatalf("validator SystemPrompt = %q, want charter_validator", svc.lastRequest.SystemPrompt)
+	}
 	if !strings.Contains(svc.lastRequest.Prompt, "quality") || !strings.Contains(svc.lastRequest.Prompt, "artifact-one") {
 		t.Fatalf("prompt missing criterion or artifact: %q", svc.lastRequest.Prompt)
 	}

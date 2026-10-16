@@ -70,6 +70,7 @@ type Transport struct {
 	timeseriesHandler   *timeseriesRESTHandler
 	securityHandler     *securityRESTHandler
 	schedulerHandler    *schedulerRESTHandler
+	rbacHandler         *rbacRESTHandler
 
 	// defaultTenant scopes tenant-bound Security() verbs (e.g. WebAuthn)
 	// whose SDK request structs do not themselves carry a tenant. It
@@ -164,6 +165,7 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 	t.timeseriesHandler = newTimeseriesRESTHandler(t)
 	t.securityHandler = newSecurityRESTHandler(t)
 	t.schedulerHandler = newSchedulerRESTHandler(t)
+	t.rbacHandler = newRBACRESTHandler(t)
 
 	// Mark as healthy initially
 	t.lastHealth.Store(time.Now().UnixNano())
@@ -360,6 +362,11 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// service-layer shape for scheduler.Dispatch to map.
 	if isSchedulerService(service) {
 		return t.schedulerHandler.handleRequest(ctx, method, req)
+	}
+
+	// RBAC verbs go to the tenant-scoped IAM role routes.
+	if isRBACService(service) {
+		return t.rbacHandler.handleRequest(ctx, method, req)
 	}
 
 	// Route Security services (WebAuthn/FIDO2/PIV/ACME/Trust) through the
@@ -638,8 +645,6 @@ func (t *Transport) mapToEndpoint(service, method string) (string, string) {
 		return t.mapVectorMethod(method)
 	case "Timeseries", "TimeSeries":
 		return t.mapTimeseriesMethod(method)
-	case "RBAC":
-		return t.mapRBACMethod(method)
 	case "Backup":
 		return t.mapBackupMethod(method)
 	case "Auth":
@@ -1020,41 +1025,6 @@ func (t *Transport) mapTimeseriesMethod(method string) (string, string) {
 		return "/api/v1/timeseries/metrics", http.MethodGet
 	default:
 		return "/api/v1/timeseries/" + strings.ToLower(method), http.MethodPost
-	}
-}
-
-// mapRBACMethod maps RBAC service methods to REST endpoints.
-func (t *Transport) mapRBACMethod(method string) (string, string) {
-	switch method {
-	// Role operations. There are no user routes: users are administered over
-	// /api/v1/iam, the single user surface. See #905.
-	case "CreateRole":
-		return "/api/v1/rbac/roles", http.MethodPost
-	case "GetRole":
-		return "/api/v1/rbac/roles/{name}", http.MethodGet
-	case "UpdateRole":
-		return "/api/v1/rbac/roles/{name}", http.MethodPut
-	case "DeleteRole":
-		return "/api/v1/rbac/roles/{name}", http.MethodDelete
-	case "ListRoles":
-		return "/api/v1/rbac/roles", http.MethodGet
-
-	// Role assignment operations
-	case "AssignRole":
-		return "/api/v1/rbac/users/{username}/roles", http.MethodPost
-	case "RevokeRole":
-		return "/api/v1/rbac/users/{username}/roles/{role}", http.MethodDelete
-	case "GetUserRoles":
-		return "/api/v1/rbac/users/{username}/roles", http.MethodGet
-
-	// Permission operations
-	case "CheckPermission":
-		return "/api/v1/rbac/permissions/check", http.MethodPost
-	case "ListPermissions":
-		return "/api/v1/rbac/permissions", http.MethodGet
-
-	default:
-		return "/api/v1/rbac/" + strings.ToLower(method), http.MethodPost
 	}
 }
 

@@ -430,7 +430,6 @@ func TestWorkflowDefinitionToProto_PreservesFullRESTShape(t *testing.T) {
 			ContainerImage:  "agent:latest",
 			HostAffinity:    "node-a",
 			NumCtx:          32768,
-			SystemPrompt:    "lead",
 			PromptAppend:    "append",
 		}},
 		Settings: orchestration.WorkflowSettings{
@@ -486,7 +485,6 @@ func TestWorkflowDefinitionToProto_PreservesFullRESTShape(t *testing.T) {
 	require.NotNil(t, proto)
 	require.Len(t, proto.GetAgents(), 1)
 	agent := proto.GetAgents()[0]
-	assert.Equal(t, "lead", agent.GetSystemPrompt())
 	assert.Equal(t, []string{"orchestrator:task_read"}, agent.GetMcpScopes())
 	assert.Equal(t, int32(32768), agent.GetNumCtx())
 

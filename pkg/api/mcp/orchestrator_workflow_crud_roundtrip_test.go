@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -228,6 +229,33 @@ func TestWorkflowCRUD_ToolsRejectMissingArguments(t *testing.T) {
 		"name": "build", "definition": "not an object",
 	})
 	require.Error(t, err, "a definition that is not an object must be refused")
+}
+
+// A definition still setting the retired system_prompt is refused, not
+// silently dropped. The SDK client no longer has the field, so the tools are
+// called with the raw arguments an older caller sends.
+func TestWorkflowCRUD_ToolsRefuseRetiredSystemPrompt(t *testing.T) {
+	svc := newWorkflowCRUDService()
+	storeWorkflow(t, svc, "build")
+	reg := newFleetRegistry(t, svc)
+
+	for _, tool := range []string{"quicbaas_orchestrator_create_workflow", "quicbaas_orchestrator_update_workflow"} {
+		_, err := reg.ExecuteTool(tenantctx.WithTenant(context.Background(), "t1"), tool, map[string]interface{}{
+			"tenant_id": "t1",
+			"name":      "build",
+			"definition": map[string]interface{}{
+				"name": "build", "mode": "canned", "description": "retired",
+				"agents": []interface{}{map[string]interface{}{
+					"role": "lead", "backend": "claude", "system_prompt": "be careful",
+				}},
+			},
+		})
+		require.ErrorIs(t, err, orchestration.ErrWorkflowRetiredField, tool)
+	}
+
+	stored, err := svc.loader.Get("t1", "build")
+	require.NoError(t, err)
+	require.Equal(t, "stored", stored.Description, "a refused definition must not be stored")
 }
 
 // The workflow tools require the permissions the REST routes declare.

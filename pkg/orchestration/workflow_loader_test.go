@@ -234,6 +234,38 @@ func TestWorkflowLoader_LoadFromFile_InvalidYAML(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrWorkflowParse))
 }
 
+func TestWorkflowLoader_LoadFromFile_RefusesRetiredSystemPrompt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "retired.yaml")
+	doc := "name: retired\nmode: autonomous\nagents:\n" +
+		"  - role: lead\n    backend: claude\n" +
+		"  - role: worker\n    backend: claude\n    system_prompt: be careful\n"
+	require.NoError(t, os.WriteFile(path, []byte(doc), 0o600))
+
+	loader := NewWorkflowLoader()
+	_, err := loader.LoadFromFile(SystemTenantID, path)
+
+	require.ErrorIs(t, err, ErrWorkflowRetiredField)
+	var retired *RetiredFieldError
+	require.ErrorAs(t, err, &retired)
+	assert.Equal(t, path, retired.Path)
+	assert.Equal(t, "agents[1].system_prompt", retired.Field)
+	assert.Contains(t, err.Error(), "prompts store")
+	_, getErr := loader.Get(SystemTenantID, "retired")
+	assert.Error(t, getErr, "a refused definition must not be stored")
+}
+
+func TestWorkflowLoader_LoadFromFile_LoadsWithoutRetiredFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "clean.yaml")
+	doc := "name: clean\nmode: autonomous\nagents:\n" +
+		"  - role: worker\n    backend: claude\n    prompt_append: be careful\n"
+	require.NoError(t, os.WriteFile(path, []byte(doc), 0o600))
+
+	def, err := NewWorkflowLoader().LoadFromFile(SystemTenantID, path)
+
+	require.NoError(t, err)
+	assert.Equal(t, "be careful", def.Agents[0].PromptAppend)
+}
+
 func TestWorkflowLoader_LoadFromFile_MissingFile(t *testing.T) {
 	loader := NewWorkflowLoader()
 	_, err := loader.LoadFromFile(SystemTenantID, "/nonexistent/path/workflow.yaml")

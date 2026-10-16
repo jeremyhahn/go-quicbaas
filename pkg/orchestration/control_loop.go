@@ -482,7 +482,6 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 				// Apply sandbox configuration from workflow agent spec.
 				if agentSpec != nil {
 					spawnReq.WorkDir = cl.spawnWorkDir(agentSpec)
-					spawnReq.SystemPrompt = agentSpec.SystemPrompt
 					spawnReq.PromptAppend = agentSpec.PromptAppend
 					if agentSpec.SkipPermissions {
 						spawnReq.ExtraArgs = append(spawnReq.ExtraArgs, "--dangerously-skip-permissions")
@@ -517,7 +516,7 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 					persistStr = "true"
 				}
 				cl.audit("worker:session_spawn", "role="+role+" backend="+backendName+" persistent="+persistStr)
-				spawnResp, spawnErr := cl.job.Spawn(ctx, spawnReq)
+				spawnResp, spawnErr := cl.spawnWithCharter(ctx, spawnReq, charterWorker)
 				if spawnErr != nil {
 					cl.audit("worker:session_spawn_failed", "role="+role+" backend="+backendName+" error="+spawnErr.Error())
 					cl.job.Logger.Warnf("control loop: failed to spawn worker session for role=%s backend=%s: %s",
@@ -1713,7 +1712,7 @@ func (cl *ControlLoop) trySpawnLeadSession(ctx context.Context) error {
 
 	cl.audit("lead:session_spawn", "backend="+cl.job.Config.LeadBackend+" model="+cl.job.Config.LeadModel)
 
-	resp, spawnErr := cl.job.Spawn(ctx, req)
+	resp, spawnErr := cl.spawnWithCharter(ctx, req, charterLead)
 	if spawnErr != nil {
 		cl.audit("lead:session_spawn_failed", "error="+spawnErr.Error())
 		return spawnErr
@@ -1776,7 +1775,7 @@ func (cl *ControlLoop) trySpawnReviewerSession(ctx context.Context) error {
 
 	cl.audit("reviewer:session_spawn", "backend="+agentSpec.Backend+" model="+agentSpec.Model)
 
-	resp, spawnErr := cl.job.Spawn(ctx, req)
+	resp, spawnErr := cl.spawnWithCharter(ctx, req, charterReviewer)
 	if spawnErr != nil {
 		cl.audit("reviewer:session_spawn_failed", "error="+spawnErr.Error())
 		return spawnErr
@@ -1785,6 +1784,18 @@ func (cl *ControlLoop) trySpawnReviewerSession(ctx context.Context) error {
 	cl.reviewerSessionID = resp.SessionID
 	cl.audit("reviewer:session_spawned", "session="+resp.SessionID)
 	return nil
+}
+
+// spawnWithCharter starts a session whose system prompt is charter, rendered
+// from the job's workflow set. A charter the set cannot render fails the
+// spawn with a CharterRenderError; the session never starts without one.
+func (cl *ControlLoop) spawnWithCharter(ctx context.Context, req *SpawnSessionRequest, charter string) (*SpawnSessionResponse, error) {
+	systemPrompt, err := renderCharter(cl.job.workflowRenderer(), charter)
+	if err != nil {
+		return nil, err
+	}
+	req.SystemPrompt = systemPrompt
+	return cl.job.Spawn(ctx, req)
 }
 
 // closeReviewerSession terminates the reviewer session if one was spawned.

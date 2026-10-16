@@ -2997,6 +2997,13 @@ func workflowDefinitionArg(args map[string]interface{}) (*orchestration.Workflow
 	if body.Definition == nil {
 		return nil, api.NewRequiredFieldError("definition")
 	}
+	raw, err := json.Marshal(args["definition"])
+	if err != nil {
+		return nil, api.NewValidationError("definition", err.Error())
+	}
+	if err := orchestration.RefuseRetiredWorkflowFields("definition", raw); err != nil {
+		return nil, err
+	}
 	return body.Definition, nil
 }
 

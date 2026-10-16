@@ -1501,7 +1501,6 @@ func workflowDefinitionFromProto(definition *pb.OrchestratorWorkflowDefinition) 
 			ContainerImage:  agent.GetContainerImage(),
 			HostAffinity:    agent.GetHostAffinity(),
 			NumCtx:          int(agent.GetNumCtx()),
-			SystemPrompt:    agent.GetSystemPrompt(),
 			PromptAppend:    agent.GetPromptAppend(),
 		})
 	}
@@ -1681,7 +1680,6 @@ func workflowDefinitionToProto(op string, definition *orchestrator.WorkflowDefin
 			ContainerImage:  agent.ContainerImage,
 			HostAffinity:    agent.HostAffinity,
 			NumCtx:          n.int32("agents.num_ctx", agent.NumCtx),
-			SystemPrompt:    agent.SystemPrompt,
 			PromptAppend:    agent.PromptAppend,
 		})
 	}

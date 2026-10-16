@@ -4,10 +4,10 @@
 > Every instruction the Software Factory sends an agent is markdown embedded in
 > the binary, declared, validated and rendered by `pkg/orchestration/prompts`,
 > and kept as tenant-scoped, versioned records that each job resolves once at
-> launch (go-quicbaas#804). Both are built and described here as built. The
-> transports, the CLI, the GUI and the per-role charters are not: they are
-> go-quicbaas#805 to #807, specified in
-> [The editing surface](#the-editing-surface-not-built-yet).
+> launch (go-quicbaas#804), served by every transport and the CLI (#805), with
+> the workflow role charters among them (#807). All of it is described here as
+> built. The GUI is not: it is go-quicbaas#806, specified in
+> [GUI](#gui-806-not-built-yet).
 
 ## What exists
 
@@ -263,8 +263,8 @@ process-wide role charters registered with `RegisterRoleCharter`;
 `JobMemory.Serialize`; workflow prompts rendered inside an SDLC job (which
 resolved `sdlc`, not `workflow`); outcome comments posted from the
 conclusion seam and the orphaned-label comment, which have no job; and the
-adoption contract `IssueAdopter` posts. The per-role charters move into the
-store with go-quicbaas#807.
+adoption contract `IssueAdopter` posts. The workflow role charters are
+rendered from the job's resolved set; see [Role charters](#role-charters).
 
 ### Persistence and audit
 
@@ -364,14 +364,47 @@ worktree**, always. A blocked-on-dependency prompt is a member of this set;
 creating the branch and the worktree, and filing the cross-project issue, are
 rows 8 and 15 of the table above — deterministic work the factory should do.
 
+## Role charters
+
+A workflow job starts every session it spawns with a **charter**: a prompt of
+the `workflow` set, rendered from the set the job resolved at launch
+(`JobRun.Prompts`), so a tenant or project overrides it like any other prompt.
+
+| charter | session | markers |
+|---|---|---|
+| `charter_lead` | the lead (`trySpawnLeadSession`) | — |
+| `charter_worker` | every worker (`handleAssign`) | — |
+| `charter_reviewer` | the reviewer (`trySpawnReviewerSession`) | `"approved"`, `"feedback"`, `"new_work_items"` |
+| `charter_validator` | an `agent` validator's prompt (`validateWithAgent`) | `"passed"`, `"message"` |
+
+The charter is chosen by what the session does, not by the role's name in the
+definition: roles named `coder` and `tester` both start with `charter_worker`.
+The reviewer's and the validator's replies are parsed as JSON, so their
+charters must name every key the parser reads; a body that drops one fails
+validation.
+
+A charter that cannot be rendered is a `*CharterRenderError`
+(`ErrCharterRender`) and the session is not spawned — never spawned with an
+empty prompt. The lead and the reviewer then fall back to stateless mode with
+a logged warning, a worker's spawn fails like any other, and a validator
+reports a `*ValidatorExecutionError`.
+
+A role adds to its charter with `agents[].prompt_append`. The definition no
+longer carries its own `system_prompt`: that was an unversioned, unvalidated
+way around the store, and the workflow loader refuses a file that still sets
+it with a `*RetiredFieldError` (`ErrWorkflowRetiredField`) naming the field.
+
+These are not the catalog role charters `RegisterRoleCharter` registers (the
+SDLC worker, reviewer and triage charters an Agent spawn falls back to); see
+[agents.md](agents.md#the-prompt).
+
 ## The editing surface
 
 Every transport serves the prompt verbs — REST, gRPC (and Unix), QUIC, MCP
 and the embedded in-process transport — through the Go SDK's `Prompts()`
 client, and `quicbaas prompts` edits them; see [api.md](api.md#prompt-sets)
 and [cli.md](cli.md#quicbaas-prompts). Still to come: the TypeScript client
-and the GUI (#806), and the per-role charters (#807). Until then no GUI screen
-edits a record.
+and the GUI (#806). Until then no GUI screen edits a record.
 
 ### Verbs
 
@@ -416,11 +449,3 @@ A standalone page under SOFTWARE FACTORY, `#/prompts?set=&project=`:
 
 A job's detail view lists the prompts it ran with, as `set/name · scope · vN ·
 hash`, each linking to the page.
-
-### Role charters (#807, not built yet)
-
-The per-role charters of a workflow come from the `workflow` set
-(`charter_lead`, `charter_worker`, `charter_reviewer`, `charter_validator`).
-`AgentRoleSpec.SystemPrompt` is removed: it is an unversioned, unvalidated,
-unpermissioned way around the store, and the workflow loader refuses a
-`system_prompt` key with a typed error naming the store.

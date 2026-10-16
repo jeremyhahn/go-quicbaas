@@ -1470,7 +1470,10 @@ message OrchestratorWorkflowAgentRoleSpec {
     string model = 3;
     repeated string capabilities = 4;
     map<string, string> env = 5;
-    string system_prompt = 6;
+    // A role's standing instructions are its charter in the workflow prompt
+    // set (the prompts store), not a field of the definition.
+    reserved 6;
+    reserved "system_prompt";
     string prompt_append = 7;
     repeated string mcp_scopes = 8;
     int32 count = 9;

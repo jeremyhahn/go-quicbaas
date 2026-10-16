@@ -165,5 +165,19 @@ func TestWorkflowPrompts_Golden(t *testing.T) {
 		{"resume_priming", func() string { return transcript.PrimingMessage() }},
 		{"resume_priming_truncated", func() string { return truncated.PrimingMessage() }},
 		{"handshake", func() string { return (spawnPlan{}).handshakeContent() }},
+		{"charter_lead", func() string { return mustRenderCharter(t, charterLead) }},
+		{"charter_worker", func() string { return mustRenderCharter(t, charterWorker) }},
+		{"charter_reviewer", func() string { return mustRenderCharter(t, charterReviewer) }},
+		{"charter_validator", func() string { return mustRenderCharter(t, charterValidator) }},
 	})
+}
+
+// mustRenderCharter renders charter from the built-in workflow set.
+func mustRenderCharter(t *testing.T, charter string) string {
+	t.Helper()
+	rendered, err := renderCharter(workflowPrompts, charter)
+	if err != nil {
+		t.Fatalf("render %s: %v", charter, err)
+	}
+	return rendered
 }

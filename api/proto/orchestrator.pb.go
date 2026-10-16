@@ -7063,7 +7063,6 @@ type OrchestratorWorkflowAgentRoleSpec struct {
 	Model           string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	Capabilities    []string               `protobuf:"bytes,4,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	Env             map[string]string      `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	SystemPrompt    string                 `protobuf:"bytes,6,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
 	PromptAppend    string                 `protobuf:"bytes,7,opt,name=prompt_append,json=promptAppend,proto3" json:"prompt_append,omitempty"`
 	McpScopes       []string               `protobuf:"bytes,8,rep,name=mcp_scopes,json=mcpScopes,proto3" json:"mcp_scopes,omitempty"`
 	Count           int32                  `protobuf:"varint,9,opt,name=count,proto3" json:"count,omitempty"`
@@ -7141,13 +7140,6 @@ func (x *OrchestratorWorkflowAgentRoleSpec) GetEnv() map[string]string {
 		return x.Env
 	}
 	return nil
-}
-
-func (x *OrchestratorWorkflowAgentRoleSpec) GetSystemPrompt() string {
-	if x != nil {
-		return x.SystemPrompt
-	}
-	return ""
 }
 
 func (x *OrchestratorWorkflowAgentRoleSpec) GetPromptAppend() string {
@@ -14131,14 +14123,13 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
 	"\vnext_offset\x18\x06 \x01(\x05R\n" +
-	"nextOffset\"\x9a\x05\n" +
+	"nextOffset\"\x8a\x05\n" +
 	"!OrchestratorWorkflowAgentRoleSpec\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x14\n" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12\"\n" +
 	"\fcapabilities\x18\x04 \x03(\tR\fcapabilities\x12V\n" +
 	"\x03env\x18\x05 \x03(\v2D.quicbaas.orchestrator.v1.OrchestratorWorkflowAgentRoleSpec.EnvEntryR\x03env\x12#\n" +
-	"\rsystem_prompt\x18\x06 \x01(\tR\fsystemPrompt\x12#\n" +
 	"\rprompt_append\x18\a \x01(\tR\fpromptAppend\x12\x1d\n" +
 	"\n" +
 	"mcp_scopes\x18\b \x03(\tR\tmcpScopes\x12\x14\n" +
@@ -14153,7 +14144,7 @@ const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\anum_ctx\x18\x10 \x01(\x05R\x06numCtx\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa1\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x06\x10\aR\rsystem_prompt\"\xa1\x01\n" +
 	"#OrchestratorWorkflowReviewCriterion\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tvalidator\x18\x02 \x01(\tR\tvalidator\x12\x16\n" +

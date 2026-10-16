@@ -1249,6 +1249,59 @@ func TestLifecycle_PrepareWorkDirReachesEverySpawn(t *testing.T) {
 	}
 }
 
+// TestLifecycle_EverySpawnStartsWithItsCharter pins that the lead, the
+// reviewer and the worker each start with their own charter rendered from the
+// job's prompt set.
+func TestLifecycle_EverySpawnStartsWithItsCharter(t *testing.T) {
+	t.Parallel()
+	base := &controlLoopMockService{backends: newTestBackendsWithPersistent()}
+	base.decomposeFn = func() (*DecomposeTaskResponse, error) {
+		return &DecomposeTaskResponse{WorkItems: []*WorkItem{{ID: "w1", Title: "Task 1", Description: "Do it"}}}, nil
+	}
+	base.promptFn = func(req *PromptSessionRequest) (*PromptSessionResponse, error) {
+		if req.SystemPrompt != "" {
+			return newApprovedReviewResponse(), nil
+		}
+		return &PromptSessionResponse{Content: []ContentBlock{{Type: "text", Text: "changed the files"}}}, nil
+	}
+	svc := credentialGuarded(base)
+	config := newTestConfig()
+	config.LeadBackend = "claude"
+	_, err := runLaunch(t, jobLaunch{
+		Config: config, Agents: svc, Hooks: &recordingHooks{workDir: "/prepared/dir"},
+		Workflow: &WorkflowDefinition{
+			Name: "w", Mode: WorkflowModeConstrained,
+			Agents: []AgentRoleSpec{
+				{Role: "lead", Backend: "claude", Capabilities: []string{"persistent_sessions"}},
+				{Role: "reviewer", Backend: "codex", Capabilities: []string{"persistent_sessions"}},
+				{Role: "worker", Backend: "claude", Capabilities: []string{"persistent_sessions"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	spawns := svc.Spawns()
+	if len(spawns) != 3 {
+		t.Fatalf("expected the lead, the reviewer and the worker to spawn, got %d", len(spawns))
+	}
+	got := map[string]int{}
+	for _, req := range spawns {
+		got[req.SystemPrompt]++
+	}
+	// The three sites are the only spawns, so each distinct charter starting
+	// exactly one session pins every site to its own.
+	if spawns[0].SystemPrompt != mustRenderCharter(t, charterLead) {
+		t.Fatalf("lead SystemPrompt = %q, want charter_lead", spawns[0].SystemPrompt)
+	}
+	for _, charter := range []string{charterLead, charterReviewer, charterWorker} {
+		if got[mustRenderCharter(t, charter)] != 1 {
+			t.Fatalf("%s started %d sessions, want 1: %v", charter, got[mustRenderCharter(t, charter)], got)
+		}
+	}
+}
+
 // TestLifecycle_DiscardRunsDetachedAfterTheParentIsCancelled: the job's
 // context is cancelled mid-execution; Discard still runs, on a live context
 // with its own deadline, and completed=false.

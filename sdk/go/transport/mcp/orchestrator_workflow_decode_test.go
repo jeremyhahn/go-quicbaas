@@ -32,7 +32,6 @@ func TestDecodeMCPListWorkflows_FullRESTShape(t *testing.T) {
 						"container_image":  "agent:latest",
 						"host_affinity":    "node-a",
 						"num_ctx":          32768,
-						"system_prompt":    "lead the workflow",
 						"prompt_append":    "extra instructions",
 					},
 				},
@@ -110,7 +109,7 @@ func TestDecodeMCPListWorkflows_FullRESTShape(t *testing.T) {
 	}
 
 	workflow := resp.Workflows[0]
-	if workflow.Agents[0].SystemPrompt != "lead the workflow" ||
+	if workflow.Agents[0].PromptAppend != "extra instructions" ||
 		workflow.Agents[0].MCPScopes[0] != "orchestrator:task_read" ||
 		workflow.Agents[0].NumCtx != 32768 {
 		t.Fatalf("agent role did not preserve REST fields: %+v", workflow.Agents[0])

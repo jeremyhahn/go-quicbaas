@@ -1720,7 +1720,6 @@ type AgentRoleSpec struct {
 	ContainerImage  string            `json:"container_image,omitempty"`
 	HostAffinity    string            `json:"host_affinity,omitempty"`
 	NumCtx          int               `json:"num_ctx,omitempty"`
-	SystemPrompt    string            `json:"system_prompt,omitempty"`
 
 	// PromptAppend is run-time prompt material appended to every session of
 	// this role, after the role's system prompt or its Agent's. At most

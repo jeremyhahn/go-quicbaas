@@ -1180,7 +1180,6 @@ func workflowToSDK(workflow *orchestration.WorkflowDefinition) *orchestratorSDK.
 			ContainerImage:  agent.ContainerImage,
 			HostAffinity:    agent.HostAffinity,
 			NumCtx:          agent.NumCtx,
-			SystemPrompt:    agent.SystemPrompt,
 			PromptAppend:    agent.PromptAppend,
 		})
 	}
@@ -1264,7 +1263,6 @@ func workflowFromSDK(workflow *orchestratorSDK.WorkflowDefinition) *orchestratio
 			ContainerImage:  agent.ContainerImage,
 			HostAffinity:    agent.HostAffinity,
 			NumCtx:          agent.NumCtx,
-			SystemPrompt:    agent.SystemPrompt,
 			PromptAppend:    agent.PromptAppend,
 		})
 	}

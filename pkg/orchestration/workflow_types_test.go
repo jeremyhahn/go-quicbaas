@@ -15,12 +15,8 @@ package orchestration
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 // =============================================================================
@@ -742,26 +738,3 @@ func TestCriteriaForPhase_SplitsByEffectivePhase(t *testing.T) {
 // TestAgentRoleSpec_SystemPromptRoundTrips pins the role's system prompt on
 // both wire shapes: a module ships its charter here and the engine spawns
 // every session of the role with it.
-func TestAgentRoleSpec_SystemPromptRoundTrips(t *testing.T) {
-	var def WorkflowDefinition
-	if err := yaml.Unmarshal([]byte("name: w\nmode: autonomous\nagents:\n  - role: worker\n    backend: claude\n    system_prompt: |\n      be careful\n      be kind\n"), &def); err != nil {
-		t.Fatal(err)
-	}
-	if def.Agents[0].SystemPrompt != "be careful\nbe kind\n" {
-		t.Fatalf("yaml system_prompt = %q", def.Agents[0].SystemPrompt)
-	}
-	data, err := json.Marshal(def.Agents[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"system_prompt":"be careful\nbe kind\n"`) {
-		t.Fatalf("json = %s", data)
-	}
-	var back AgentRoleSpec
-	if err := json.Unmarshal(data, &back); err != nil || back.SystemPrompt != def.Agents[0].SystemPrompt {
-		t.Fatalf("json round trip: %+v %v", back, err)
-	}
-	if empty, _ := json.Marshal(AgentRoleSpec{Role: "lead"}); strings.Contains(string(empty), "system_prompt") {
-		t.Fatal("an empty prompt must be omitted")
-	}
-}

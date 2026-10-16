@@ -288,6 +288,35 @@ func workflowSetSpec() prompts.SetSpec {
 				Description: "the throwaway first message that makes an agent CLI publish its init record",
 				Default:     workflowDefaults["handshake"],
 			},
+			{
+				Name:        charterLead,
+				Description: "the standing instructions the lead session is spawned with",
+				Default:     workflowDefaults[charterLead],
+			},
+			{
+				Name:        charterWorker,
+				Description: "the standing instructions every worker session is spawned with",
+				Default:     workflowDefaults[charterWorker],
+			},
+			{
+				Name:        charterReviewer,
+				Description: "the standing instructions the reviewer session is spawned with",
+				Default:     workflowDefaults[charterReviewer],
+				Markers: []prompts.Marker{
+					{Literal: "\"approved\"", Reason: "parseReviewResponse reads the approved field out of the reply"},
+					{Literal: "\"feedback\"", Reason: "parseReviewResponse reads the feedback field out of the reply"},
+					{Literal: "\"new_work_items\"", Reason: "parseReviewResponse reads new_work_items out of the reply"},
+				},
+			},
+			{
+				Name:        charterValidator,
+				Description: "the standing instructions an agent validator is prompted with",
+				Default:     workflowDefaults[charterValidator],
+				Markers: []prompts.Marker{
+					{Literal: "\"passed\"", Reason: "validateWithAgent reads the passed field out of the verdict"},
+					{Literal: "\"message\"", Reason: "validateWithAgent reads the message field out of the verdict"},
+				},
+			},
 		},
 	}
 }

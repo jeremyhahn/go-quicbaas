@@ -43,13 +43,13 @@ MCP tools: `qrdb_vector_batch_delete`, `qrdb_vector_batch_upsert`, `qrdb_vector_
 | `BatchUpsert` | `POST /api/v1/vector/namespaces/{namespace}/vectors/batch` | yes | yes | yes | MISSING | `vector:batch_upsert` |
 | `Compact` | `POST /api/v1/vector/admin/compact` | yes | yes | yes | MISSING | `vector:compact` |
 | `CreateNamespace` | `POST /api/v1/vector/namespaces` | **no** | yes | yes | MISSING | — |
-| `Delete` | `DELETE /api/v1/vector/namespaces/{namespace}/vectors/{id}` | yes | yes | yes | MISSING | `vector:namespace_delete` |
+| `Delete` | `DELETE /api/v1/vector/namespaces/{namespace}/vectors/{id}` | yes | yes | yes | MISSING | `vector:delete` |
 | `DeleteNamespace` | `DELETE /api/v1/vector/namespaces/{namespace}` | yes | yes | yes | MISSING | `vector:namespace_delete` |
 | `Export` | `POST /api/v1/vector/export` *(default branch)* | **no** | yes | yes | MISSING | — |
-| `Get` | `GET /api/v1/vector/namespaces/{namespace}/vectors/{id}` | yes | yes | yes | MISSING | `vector:namespace_list` |
-| `GetCompactionProgress` | `GET /api/v1/vector/admin/compact/progress` | yes | yes | yes | MISSING | `vector:get` |
+| `Get` | `GET /api/v1/vector/namespaces/{namespace}/vectors/{id}` | yes | yes | yes | MISSING | `vector:get` |
+| `GetCompactionProgress` | `GET /api/v1/vector/admin/compact/progress` | yes | yes | yes | MISSING | `vector:get_compaction_progress` |
 | `GetIndexProgress` | `GET /api/v1/vector/namespaces/{namespace}/index/progress` | yes | yes | yes | MISSING | `vector:get_rebuild_progress` |
-| `GetNamespaceInfo` | `GET /api/v1/vector/namespaces/{namespace}` | yes | yes | yes | MISSING | `vector:namespace_list` |
+| `GetNamespaceInfo` | `GET /api/v1/vector/namespaces/{namespace}` | yes | yes | yes | MISSING | `vector:namespace_info` |
 | `GetStats` | `POST /api/v1/vector/getstats` *(default branch)* | **no** | yes | yes | MISSING | — |
 | `HybridSearch` | `POST /api/v1/vector/hybrid-search` | yes | yes | yes | MISSING | `vector:hybrid_search` |
 | `Import` | `POST /api/v1/vector/import` *(default branch)* | **no** | yes | yes | MISSING | — |
@@ -59,7 +59,7 @@ MCP tools: `qrdb_vector_batch_delete`, `qrdb_vector_batch_upsert`, `qrdb_vector_
 | `SearchByID` | `POST /api/v1/vector/namespaces/{namespace}/search/by-id/{id}` | yes | yes | yes | MISSING | `vector:search_by_id` |
 | `SearchByMetadata` | `POST /api/v1/vector/search-by-metadata` | yes | yes | yes | MISSING | `vector:search_by_metadata` |
 | `SearchSimilar` | `POST /api/v1/vector/namespaces/{namespace}/search/similar` | yes | yes | yes | MISSING | `vector:search_similar` |
-| `UpdateMetadata` | `PUT /api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata` | yes | yes | yes | MISSING | `vector:upsert` |
+| `UpdateMetadata` | `PUT /api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata` | yes | yes | yes | MISSING | `vector:update_metadata` |
 | `Upsert` | `POST /api/v1/vector/namespaces/{namespace}/vectors` | **no** | yes | yes | MISSING | — |
 
 

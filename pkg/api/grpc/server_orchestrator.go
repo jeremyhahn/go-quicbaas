@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -1187,7 +1188,10 @@ func (s *OrchestratorServer) CreateWorkflow(ctx context.Context, req *pb.Orchest
 		return nil, err
 	}
 
-	definition := workflowDefinitionFromProto(req.GetDefinition())
+	definition, err := workflowDefinitionFromProto(req.GetDefinition())
+	if err != nil {
+		return nil, convertOrchestratorError(err)
+	}
 	if err := s.agentSvc.RegisterWorkflow(tenantCtx, definition); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
@@ -1237,7 +1241,10 @@ func (s *OrchestratorServer) UpdateWorkflow(ctx context.Context, req *pb.Orchest
 		return nil, err
 	}
 
-	definition := workflowDefinitionFromProto(req.GetDefinition())
+	definition, err := workflowDefinitionFromProto(req.GetDefinition())
+	if err != nil {
+		return nil, convertOrchestratorError(err)
+	}
 	definition.Name = req.GetName()
 	if err := s.agentSvc.UpdateWorkflow(tenantCtx, definition); err != nil {
 		return nil, convertOrchestratorError(err)
@@ -1270,9 +1277,14 @@ func (s *OrchestratorServer) DeleteWorkflow(ctx context.Context, req *pb.Orchest
 // workflowDefinitionFromProto is the inverse of workflowDefinitionToProto.
 // The tenant is never read from the wire definition: the loader stamps it
 // from the tenant the verb is called with.
-func workflowDefinitionFromProto(definition *pb.OrchestratorWorkflowDefinition) *orchestration.WorkflowDefinition {
+// It refuses an agent that still sets a retired field, which arrives as an
+// unknown field because the proto reserves its number.
+func workflowDefinitionFromProto(definition *pb.OrchestratorWorkflowDefinition) (*orchestration.WorkflowDefinition, error) {
 	agents := make([]orchestration.AgentRoleSpec, 0, len(definition.GetAgents()))
-	for _, agent := range definition.GetAgents() {
+	for i, agent := range definition.GetAgents() {
+		if err := refuseRetiredAgentFields(i, agent); err != nil {
+			return nil, err
+		}
 		agents = append(agents, orchestration.AgentRoleSpec{
 			Role:            agent.GetRole(),
 			Backend:         agent.GetBackend(),
@@ -1288,7 +1300,6 @@ func workflowDefinitionFromProto(definition *pb.OrchestratorWorkflowDefinition) 
 			ContainerImage:  agent.GetContainerImage(),
 			HostAffinity:    agent.GetHostAffinity(),
 			NumCtx:          int(agent.GetNumCtx()),
-			SystemPrompt:    agent.GetSystemPrompt(),
 			PromptAppend:    agent.GetPromptAppend(),
 		})
 	}
@@ -1350,7 +1361,41 @@ func workflowDefinitionFromProto(definition *pb.OrchestratorWorkflowDefinition) 
 			NumCtx:    int(settings.GetNumCtx()),
 			Hooks:     settings.GetHooks(),
 		},
+	}, nil
+}
+
+// retiredAgentRoleSpecSystemPrompt is the number OrchestratorWorkflowAgentRoleSpec
+// reserves for the retired system_prompt field.
+const retiredAgentRoleSpecSystemPrompt protowire.Number = 6
+
+// retiredAgentRoleSpecFields maps each reserved role-spec field number to the
+// name the orchestration package refuses it under.
+var retiredAgentRoleSpecFields = map[protowire.Number]string{
+	retiredAgentRoleSpecSystemPrompt: "system_prompt",
+}
+
+// workflowRequestSource names a gRPC request as the source of a definition.
+const workflowRequestSource = "request"
+
+// refuseRetiredAgentFields returns the RetiredFieldError for the first
+// reserved field agent index of a request still sets.
+func refuseRetiredAgentFields(index int, agent *pb.OrchestratorWorkflowAgentRoleSpec) error {
+	unknown := agent.ProtoReflect().GetUnknown()
+	for len(unknown) > 0 {
+		number, kind, n := protowire.ConsumeTag(unknown)
+		if n < 0 {
+			return status.Error(codes.InvalidArgument, protowire.ParseError(n).Error())
+		}
+		if field, retired := retiredAgentRoleSpecFields[number]; retired {
+			return orchestration.RetiredAgentFieldError(workflowRequestSource, index, field)
+		}
+		m := protowire.ConsumeFieldValue(number, kind, unknown[n:])
+		if m < 0 {
+			return status.Error(codes.InvalidArgument, protowire.ParseError(m).Error())
+		}
+		unknown = unknown[n+m:]
 	}
+	return nil
 }
 
 func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) (*pb.OrchestratorWorkflowDefinition, error) {
@@ -1375,7 +1420,6 @@ func workflowDefinitionToProto(definition *orchestration.WorkflowDefinition) (*p
 			ContainerImage:  agent.ContainerImage,
 			HostAffinity:    agent.HostAffinity,
 			NumCtx:          n.int32("num_ctx", agent.NumCtx),
-			SystemPrompt:    agent.SystemPrompt,
 			PromptAppend:    agent.PromptAppend,
 		})
 	}
@@ -2223,7 +2267,7 @@ func convertOrchestratorError(err error) error {
 	if stderrors.Is(err, orchestration.ErrWorkflowAlreadyExists) {
 		return status.Error(codes.AlreadyExists, err.Error())
 	}
-	if stderrors.Is(err, orchestration.ErrWorkflowValidation) {
+	if stderrors.Is(err, orchestration.ErrWorkflowValidation) || stderrors.Is(err, orchestration.ErrWorkflowRetiredField) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
 

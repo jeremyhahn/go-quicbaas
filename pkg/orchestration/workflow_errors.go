@@ -34,6 +34,10 @@ var (
 
 	// ErrWorkflowParse indicates a workflow file could not be parsed.
 	ErrWorkflowParse = errors.New("workflow: parse failed")
+
+	// ErrWorkflowRetiredField indicates a workflow definition carries a
+	// field that no longer exists.
+	ErrWorkflowRetiredField = errors.New("workflow: retired field")
 )
 
 // =============================================================================
@@ -126,4 +130,26 @@ func (e *WorkflowParseError) Error() string {
 // Unwrap returns both the sentinel and cause for errors.Is/As support.
 func (e *WorkflowParseError) Unwrap() []error {
 	return []error{ErrWorkflowParse, e.Cause}
+}
+
+// RetiredFieldError is a workflow definition that still carries a field the
+// definition no longer has. It is refused rather than ignored, so a file
+// written for the old field does not load as if its content were in force.
+type RetiredFieldError struct {
+	// Path is the file the definition was read from.
+	Path string
+	// Field locates the field, e.g. "agents[0].system_prompt".
+	Field string
+	// Successor says where what the field held lives now.
+	Successor string
+}
+
+// Error implements the error interface.
+func (e *RetiredFieldError) Error() string {
+	return ErrWorkflowRetiredField.Error() + ": " + e.Path + ": " + e.Field + " is retired: " + e.Successor
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *RetiredFieldError) Unwrap() error {
+	return ErrWorkflowRetiredField
 }

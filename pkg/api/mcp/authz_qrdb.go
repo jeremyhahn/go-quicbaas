@@ -677,6 +677,14 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_vector_get_stats":                     {"vector", "get_index_stats"},
 	"quicbaas_vector_get_index_progress":            {"vector", "get_rebuild_progress"},
 	"quicbaas_vector_health":                        {"vector", "namespace_list"},
+	// qrdb-mirror vector tools whose name extends a shorter prefix entry with
+	// a different verb: qrdb_vector_delete_namespace would match
+	// qrdb_vector_delete, qrdb_vector_search_by_id qrdb_vector_search, and so
+	// on (go-quicbaas#1403). Values are go-qrdb's VectorService actions.
+	"qrdb_vector_delete_namespace":   {"vector", "namespace_delete"},
+	"qrdb_vector_list_namespaces":    {"vector", "namespace_list"},
+	"qrdb_vector_get_namespace_info": {"vector", "namespace_info"},
+	"qrdb_vector_search_by_id":       {"vector", "search_by_id"},
 
 	// Embedding -> embedding. qrdb registers embedding:embed (write) and
 	// embedding:list_models (read); the REST surface

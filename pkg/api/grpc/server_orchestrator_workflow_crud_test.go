@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -159,4 +160,35 @@ func TestOrchestratorGRPC_WorkflowCRUD_Errors(t *testing.T) {
 			assert.Equal(t, tc.want, status.Code(tc.call(srv)))
 		})
 	}
+}
+
+// retiredSystemPromptProto is a valid definition whose first agent still sets
+// system_prompt as the field number 6 it had, the way an older client sends it.
+func retiredSystemPromptProto(name string) *pb.OrchestratorWorkflowDefinition {
+	def := validWorkflowProto(name)
+	def.Description = "retired"
+	agent := def.GetAgents()[0].ProtoReflect()
+	retired := protowire.AppendTag(nil, retiredAgentRoleSpecSystemPrompt, protowire.BytesType)
+	agent.SetUnknown(protowire.AppendString(retired, "be careful"))
+	return def
+}
+
+func TestOrchestratorGRPC_WorkflowCRUD_RefusesRetiredSystemPrompt(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
+	srv := newWorkflowCRUDServer()
+	_, err := srv.CreateWorkflow(ctx, &pb.OrchestratorCreateWorkflowRequest{Definition: validWorkflowProto("existing")})
+	require.NoError(t, err)
+
+	_, err = srv.CreateWorkflow(ctx, &pb.OrchestratorCreateWorkflowRequest{Definition: retiredSystemPromptProto("w")})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "agents[0].system_prompt")
+
+	_, err = srv.UpdateWorkflow(ctx, &pb.OrchestratorUpdateWorkflowRequest{
+		Name: "existing", Definition: retiredSystemPromptProto("existing"),
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	got, err := srv.GetWorkflow(ctx, &pb.OrchestratorGetWorkflowRequest{Name: "existing"})
+	require.NoError(t, err)
+	assert.NotEqual(t, "retired", got.GetWorkflow().GetDescription(), "a refused definition must not be stored")
 }

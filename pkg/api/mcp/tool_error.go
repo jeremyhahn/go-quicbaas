@@ -171,6 +171,7 @@ var domainSentinelClasses = []struct {
 	{sdlc.ErrInvalidInput, qberrors.ErrInvalidInput},
 	{sdlc.ErrReview, qberrors.ErrInvalidInput},
 	{orchestration.ErrWorkflowValidation, qberrors.ErrInvalidInput},
+	{orchestration.ErrWorkflowRetiredField, qberrors.ErrInvalidInput},
 	{orchestration.ErrInvalidInput, qberrors.ErrInvalidInput},
 }
 

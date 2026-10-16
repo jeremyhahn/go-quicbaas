@@ -583,8 +583,6 @@ export interface AgentRoleSpec {
     sandboxed: boolean;
     container_image: string;
     num_ctx: number;
-    /** system_prompt is the role's standing instruction; empty leaves the Agent's or the runtime's. */
-    system_prompt?: string;
     /** prompt_append is run-time prompt material appended to every session of this role. At most 64 KiB. */
     prompt_append?: string;
 }
