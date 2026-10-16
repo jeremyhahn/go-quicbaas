@@ -1344,6 +1344,23 @@ func (s *Server) schedulerClustering() *service.SchedulerClustering {
 	return clustering
 }
 
+// standaloneRegistryNotice returns the one startup line a standalone boot
+// logs about the service registry, or "" on a cluster-like boot.
+//
+// The registry is built on the lease, MVCC and watch planes, which go-qrdb
+// gates behind clustered mode. A standalone boot does not refuse to start
+// over it, by the same rule schedulerClustering, taskClaimArbiter and
+// sdlcTransactor follow: single-node modes run without the raft planes rather
+// than fail. The registry stays wired on every transport and refuses each
+// call with registry.RegistryRequiresRaftError; this line says so up front.
+func (s *Server) standaloneRegistryNotice() string {
+	if config.IsClusterLikeMode(s.getEffectiveMode()) {
+		return ""
+	}
+	return "Service registry unavailable on a standalone qrdb node: " +
+		"it needs the raft lease and watch planes, so registry calls return RegistryRequiresRaftError"
+}
+
 // pivLoginModuleEnabled reports whether the xkms module's own PIV login surface
 // (/api/v1/auth/login/piv) should be mounted.
 //

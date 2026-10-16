@@ -33,6 +33,7 @@ linters:
     - staticcheck
     - unused
     - ineffassign
+    - nolintlint
   disable:
     - unconvert   # Style preference
     - unparam     # Too noisy for production code
@@ -124,6 +125,12 @@ linters:
     godot:
       scope: declarations
       capital: false
+    # Every //nolint must name its linter, say why, and still suppress
+    # something. `make check-nolint` keeps the count from growing.
+    nolintlint:
+      require-specific: true
+      require-explanation: true
+      allow-unused: false
   exclusions:
     generated: lax
     presets:

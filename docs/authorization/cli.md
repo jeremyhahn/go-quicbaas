@@ -1,6 +1,6 @@
 # Authorization — CLI
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-10-16
 > Every verb and flag, with runnable examples. Feature folder: `docs/authorization/`.
 
 Roles are managed with `quicbaas iam role`; there is no top-level
@@ -18,33 +18,14 @@ All take `--tenant` and the `iam` flags `--output` and `--yes`. The CLI has no
 verb to grant or revoke individual permissions on a role; ABAC rules are
 managed with `quicbaas iam policy` and tested with `quicbaas iam policy test`.
 
-## Permission Format
+Policy verbs (`cmd/quicbaas/iam_policy.go`): `apply`, `get`, `delete`, `list`,
+`validate`, `test`. The policy document is go-qrdb's ABAC schema; see
+[engineering.md](engineering.md).
 
-Permissions are specified in the format: `resource:action`
+## Permissions and roles
 
-### Resources
-- `keys` - Database keys/entities
-- `indexes` - Secondary indexes
-- `cluster` - Cluster management
-- `users` - User management
-- `backups` - Backup operations
-- `metrics` - Metrics and monitoring
-- `health` - Health checks
-- `transactions` - Transaction operations
-- `watch` - Watch/subscribe operations
-- `*` - All resources
-
-### Actions
-- `read` - Read access
-- `write` - Write/create access
-- `delete` - Delete access
-- `admin` - Administrative access
-- `*` - All actions
-
-## Notes
-
-- Built-in roles cannot be modified or deleted
-- Users can have multiple roles with combined permissions
-- Custom roles allow fine-grained access control
-- Permission changes take effect immediately
-- Deleting a role revokes permissions from all users with that role
+Permissions are go-qrdb's `resource:action` strings, plus the families
+go-quicbaas contributes ([api.md](api.md#permissions-go-quicbaas-contributes-to-go-qrdb)).
+Built-in roles, their permissions and which may be modified are go-qrdb's; see
+[roles](../../../go-qrdb/docs/auth/roles.md) and
+[built-in roles](../../../go-qrdb/docs/identity-rbac/architecture.md#built-in-roles).

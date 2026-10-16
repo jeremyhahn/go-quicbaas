@@ -45,6 +45,19 @@ A caller with no tenant in context (single-tenant mode, embedded use) uses
 name, and case 7, consumed as a watch stream); expiry is the qrdb lease, never a
 hand-rolled sweep.
 
+## Run mode: raft only
+
+go-qrdb serves the Lease, MVCC and Watch planes only on a raft node; a
+standalone node (`server.mode: standalone`, built with `NewStandaloneNode`)
+gates them off. `registry.NewFromClient` therefore asks the node for its
+capabilities (`Admin().Capabilities`) before building the registry and refuses
+a node that lacks any of the three with `RegistryRequiresRaftError`, which names
+the node's reported mode. The service maps it to a failed-precondition status
+(`ErrPreconditionFailed`) on every transport, so a client does not retry it as an
+outage. A standalone boot still starts, as it does for the scheduler and task
+claims, and logs one startup line saying the registry is unavailable; cluster
+and devcluster boots serve it.
+
 ## Tenancy and lease ownership
 
 The tenant of every call is the **authenticated** tenant the transport's

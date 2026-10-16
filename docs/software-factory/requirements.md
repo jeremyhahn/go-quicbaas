@@ -293,7 +293,7 @@ below hold for every wake.
 |---|---|---|
 | SF-A-01 | Every wake is a task with a typed input record and a typed output record. The factory reads the result from structure, never from prose. An output that is not a valid record is asked for once more, and after that the task is parked. | [triage.md](../sdlc/triage.md#the-verdict-is-read-from-structure-never-from-prose), [review.md](../sdlc/review.md#a-reply-that-stated-no-verdict-is-asked-once-more-for-one) |
 | SF-A-02 | A wake's input is the smallest context that decides its question: the records its row names, the fleet snapshot rather than transcripts, and log excerpts within the log budget. The worker's tools are cut down to what its output needs. | [ci-failure-classification.md](../sdlc/ci-failure-classification.md#two-log-budgets) |
-| SF-A-03 | Every wake runs under its role's spend window and its turn cap. A wake that reaches either ends with its outcome recorded and is not re-run automatically. | [agents.md](agents.md#spend-limits), [../sdlc/architecture.md](../sdlc/architecture.md#this-task-has-spent-its-attempt-budget) |
+| SF-A-03 | Every wake runs under its role's spend window and its turn cap. A wake that reaches either ends with its outcome recorded and is not re-run automatically. | [agents.md](agents.md#spend-limits), [../sdlc/architecture.md](../sdlc/architecture.md#why-budget_exhausted-cannot-be-readmitted) |
 | SF-A-04 | No timer wakes an agent. Every wake is recorded with the event that triggered it. | [triage.md](../sdlc/triage.md#what-wakes-it) |
 | SF-A-05 | No agent's instructions ask it to do deterministic work. The factory does that work, and the prompt does not mention it. | [prompt-sets.md](prompt-sets.md#offloadable-work-what-we-are-still-paying-a-model-to-do) |
 

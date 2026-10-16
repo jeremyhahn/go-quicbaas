@@ -1998,6 +1998,9 @@ func (s *Server) startService() error {
 		s.logger.Info("Clustered scheduler wiring attached to service builder",
 			"node_id", clustering.NodeID)
 	}
+	if notice := s.standaloneRegistryNotice(); notice != "" {
+		s.logger.Info(notice, "mode", s.getEffectiveMode())
+	}
 
 	// Back the project store and agent registry with the tenant-routed store
 	// so they persist across restarts and a barrier-isolated tenant's records

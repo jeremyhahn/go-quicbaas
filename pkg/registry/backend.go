@@ -34,8 +34,21 @@ func NewClientBackend(client *qrdbsdk.Client) Backend {
 // NewFromClient is a convenience constructor returning a Registry backed by a
 // qrdb SDK client. The registry is multi-tenant: each call scopes to the
 // tenant carried in the request context.
-func NewFromClient(client *qrdbsdk.Client) *Registry {
-	return New(NewClientBackend(client))
+//
+// The registry is built on the lease, MVCC and watch planes, which go-qrdb
+// serves only on a raft node. NewFromClient asks the node for its
+// capabilities first and refuses a node without them (a standalone node)
+// with RegistryRequiresRaftError, instead of failing on the first lease call
+// with the transport's not-configured error.
+func NewFromClient(ctx context.Context, client *qrdbsdk.Client) (*Registry, error) {
+	caps, err := client.Admin().Capabilities(ctx)
+	if err != nil {
+		return nil, &RegistryError{Op: "capabilities", Err: err}
+	}
+	if !caps.Lease || !caps.MVCC || !caps.Watch {
+		return nil, &RegistryRequiresRaftError{Mode: caps.Mode}
+	}
+	return New(NewClientBackend(client)), nil
 }
 
 func (b *clientBackend) Grant(ctx context.Context, ttlSeconds int64) (int64, error) {

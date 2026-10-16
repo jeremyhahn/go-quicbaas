@@ -1,0 +1,13 @@
+pkg/orchestration/account_provider_registry.go:gosec
+pkg/orchestration/account_types.go:gosec
+pkg/orchestration/turn_failure_wire.go:gosec
+pkg/orchestration/workspace_spec.go:gosec
+pkg/sdlc/forge_credential.go:gosec
+pkg/sdlc/forge_credential.go:gosec
+pkg/service/fido2_add_credential.go:gosec
+pkg/service/project_git.go:gosec
+pkg/signalbridge/http_transport.go:bodyclose
+scripts/verifycliflags/main.go:gosec
+scripts/verifygomodauth/main.go:gosec
+scripts/verifygomodauth/main.go:gosec
+test/integration/certfixture/set.go:gosec

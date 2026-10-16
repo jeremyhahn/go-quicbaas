@@ -611,12 +611,12 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// The service registry is always wired. It resolves the platform shard's
 	// qrdb client per call, so a server whose store is not up yet answers
 	// with a typed unavailable error instead of a nil service.
-	svc.registryService = newRegistryService(func() (*registry.Registry, error) {
+	svc.registryService = newRegistryService(func(ctx context.Context) (*registry.Registry, error) {
 		client, err := svc.qrdbForShard(registryShardID)
 		if err != nil {
 			return nil, err
 		}
-		return registry.NewFromClient(client), nil
+		return registry.NewFromClient(ctx, client)
 	})
 
 	// The PIV and FIDO2 services are always wired. PIV is a stateless

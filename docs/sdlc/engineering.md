@@ -607,6 +607,14 @@ pins, and `make proto-gen` runs `make check-proto-tools` first, which refuses
 `go env GOVERSION`; `make check-workspace-script` (part of `make test`) fails if
 a Dockerfile writes one inline again (go-quicbaas#399).
 
+**No new `//nolint`.** Fix the cause the linter reports instead of suppressing
+it. `nolintlint` (`.golangci.yml`) requires every directive to name its linter,
+give a `// reason`, and still suppress something, and `make check-nolint` (part
+of `make lint`) fails on any directive not listed as `path:linter` in
+`scripts/nolint-allowlist.txt`, or on an entry whose directive is gone. An
+exception is added to the allowlist only with the reviewer's agreement in the
+PR (go-quicbaas#559).
+
 **Trivy is deliberately absent.** It is the fourth member of `make security`,
 but it downloads a vulnerability database on every run: in a worker sandbox
 whose network policy is the operator's to decide, it would fail for the

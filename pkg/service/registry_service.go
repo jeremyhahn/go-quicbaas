@@ -175,7 +175,10 @@ func registryErrorCode(err error) errors.ErrorCode {
 	var invalid *registry.InvalidInstanceError
 	var notFound *registry.LeaseNotFoundError
 	var compacted *registry.WatchCompactedError
+	var requiresRaft *registry.RegistryRequiresRaftError
 	switch {
+	case stderrors.As(err, &requiresRaft):
+		return errors.ErrPreconditionFailed
 	case stderrors.As(err, &invalid):
 		return errors.ErrInvalidInput
 	case stderrors.As(err, &notFound):
@@ -199,7 +202,7 @@ func registryError(op string, err error) error {
 // registryBackendFunc resolves the registry for one call. The production
 // resolver builds it over the qrdb client of the platform shard; tests
 // supply an in-memory registry.
-type registryBackendFunc func() (*registry.Registry, error)
+type registryBackendFunc func(ctx context.Context) (*registry.Registry, error)
 
 // registryService is the production RegistryService.
 type registryService struct {
@@ -216,15 +219,16 @@ func newRegistryService(resolve registryBackendFunc) RegistryService {
 // backend of its choosing; the server builds it over the platform shard.
 func NewRegistryServiceFromBackend(backend registry.Backend) RegistryService {
 	reg := registry.New(backend)
-	return newRegistryService(func() (*registry.Registry, error) { return reg, nil })
+	return newRegistryService(func(context.Context) (*registry.Registry, error) { return reg, nil })
 }
 
 // registry resolves the registry, reporting an unavailable store as a typed
-// error rather than a nil dereference.
-func (s *registryService) registry(op string) (*registry.Registry, error) {
-	reg, err := s.resolve()
+// error rather than a nil dereference. A standalone qrdb node, which serves
+// no lease or watch plane, is reported as a failed precondition.
+func (s *registryService) registry(ctx context.Context, op string) (*registry.Registry, error) {
+	reg, err := s.resolve(ctx)
 	if err != nil {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: op, Err: err}
+		return nil, registryError(op, err)
 	}
 	return reg, nil
 }
@@ -238,7 +242,7 @@ func (s *registryService) Register(ctx context.Context, req *RegisterServiceInst
 	if req.TTLSeconds < RegistryMinTTLSeconds || req.TTLSeconds > RegistryMaxTTLSeconds {
 		return nil, ErrRegistryTTLRange
 	}
-	reg, err := s.registry(op)
+	reg, err := s.registry(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +259,7 @@ func (s *registryService) Renew(ctx context.Context, req *RenewServiceLeaseReque
 	if req == nil {
 		return nil, ErrRegistryNilRequest
 	}
-	reg, err := s.registry(op)
+	reg, err := s.registry(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +276,7 @@ func (s *registryService) Deregister(ctx context.Context, req *DeregisterService
 	if req == nil {
 		return ErrRegistryNilRequest
 	}
-	reg, err := s.registry(op)
+	reg, err := s.registry(ctx, op)
 	if err != nil {
 		return err
 	}
@@ -288,7 +292,7 @@ func (s *registryService) Resolve(ctx context.Context, req *ResolveServiceReques
 	if req == nil {
 		return nil, ErrRegistryNilRequest
 	}
-	reg, err := s.registry(op)
+	reg, err := s.registry(ctx, op)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +309,7 @@ func (s *registryService) Watch(ctx context.Context, req *WatchServiceRequest) (
 	if req == nil {
 		return nil, ErrRegistryNilRequest
 	}
-	reg, err := s.registry(op)
+	reg, err := s.registry(ctx, op)
 	if err != nil {
 		return nil, err
 	}

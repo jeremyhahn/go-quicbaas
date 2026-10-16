@@ -170,7 +170,7 @@ func TestRegistryService_ErrorCodes(t *testing.T) {
 
 func TestRegistryService_UnavailableStore(t *testing.T) {
 	down := stderrors.New("no qrdb client")
-	svc := newRegistryService(func() (*registry.Registry, error) { return nil, down })
+	svc := newRegistryService(func(context.Context) (*registry.Registry, error) { return nil, down })
 	ctx := tenantctx.WithSystem(context.Background())
 
 	checks := map[string]error{}
@@ -182,6 +182,28 @@ func TestRegistryService_UnavailableStore(t *testing.T) {
 	for name, err := range checks {
 		if codeOf(t, err) != errors.ErrUnavailable || !stderrors.Is(err, down) {
 			t.Fatalf("%s = %v, want ErrUnavailable wrapping the store failure", name, err)
+		}
+	}
+}
+
+// A standalone qrdb node serves no lease or watch plane, so every registry
+// call is refused as a failed precondition naming the mode, not reported as
+// a transient outage a client would retry.
+func TestRegistryService_StandaloneNode(t *testing.T) {
+	standalone := &registry.RegistryRequiresRaftError{Mode: "standalone"}
+	svc := newRegistryService(func(context.Context) (*registry.Registry, error) { return nil, standalone })
+	ctx := tenantctx.WithSystem(context.Background())
+
+	checks := map[string]error{}
+	_, checks["register"] = svc.Register(ctx, &RegisterServiceInstanceRequest{Instance: registryInstance(), TTLSeconds: 5})
+	_, checks["renew"] = svc.Renew(ctx, &RenewServiceLeaseRequest{LeaseID: 1})
+	checks["deregister"] = svc.Deregister(ctx, &DeregisterServiceInstanceRequest{LeaseID: 1})
+	_, checks["resolve"] = svc.Resolve(ctx, &ResolveServiceRequest{Service: "api"})
+	_, checks["watch"] = svc.Watch(ctx, &WatchServiceRequest{Service: "api"})
+	for name, err := range checks {
+		var raftErr *registry.RegistryRequiresRaftError
+		if codeOf(t, err) != errors.ErrPreconditionFailed || !stderrors.As(err, &raftErr) {
+			t.Fatalf("%s = %v, want ErrPreconditionFailed wrapping RegistryRequiresRaftError", name, err)
 		}
 	}
 }

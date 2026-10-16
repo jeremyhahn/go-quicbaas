@@ -46,6 +46,20 @@ func (e *InvalidInstanceError) Error() string {
 	return "registry: invalid service instance: " + e.Reason
 }
 
+// RegistryRequiresRaftError reports a qrdb node that does not serve the
+// lease, MVCC and watch planes service discovery is built on. go-qrdb serves
+// them only in its raft run mode; a standalone node gates them off.
+type RegistryRequiresRaftError struct {
+	// Mode is the run mode the node reports, e.g. "standalone".
+	Mode string
+}
+
+// Error implements error.
+func (e *RegistryRequiresRaftError) Error() string {
+	return "registry: service discovery requires a raft qrdb node, but the node runs in " +
+		strconv.Quote(e.Mode) + " mode"
+}
+
 // LeaseNotFoundError is returned by Renew and Deregister when the lease does
 // not back a registration of the caller's tenant: it never existed, it has
 // already expired or been revoked, or it belongs to another tenant. The three

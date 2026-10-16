@@ -34,6 +34,11 @@ type fakeTransport struct {
 	qrdbtransport.MVCCClient
 	qrdbtransport.KVClient
 	qrdbtransport.WatchClient
+	qrdbtransport.AdminClient
+
+	// caps is what Capabilities reports; nil reports a raft node.
+	caps    *qrdbtransport.CapabilitiesResponse
+	capsErr error
 
 	grantedTTL  int64
 	keepAliveID int64
@@ -63,6 +68,28 @@ func (f *fakeTransport) Close() error                    { return nil }
 func (f *fakeTransport) Healthy(_ context.Context) bool  { return true }
 func (f *fakeTransport) Request(_ context.Context, _ string, _, _ any) error {
 	return nil
+}
+
+func (f *fakeTransport) Capabilities(_ context.Context) (*qrdbtransport.CapabilitiesResponse, error) {
+	if f.capsErr != nil {
+		return nil, f.capsErr
+	}
+	if f.caps != nil {
+		return f.caps, nil
+	}
+	return &raftCapabilities, nil
+}
+
+// raftCapabilities is what a raft qrdb node reports for the planes the
+// registry needs.
+var raftCapabilities = qrdbtransport.CapabilitiesResponse{
+	Mode: "raft", KV: true, MVCC: true, Watch: true, Lease: true,
+}
+
+// standaloneCapabilities is what a standalone qrdb node reports: plain KV,
+// with the raft-only lease, MVCC and watch planes gated off.
+var standaloneCapabilities = qrdbtransport.CapabilitiesResponse{
+	Mode: "standalone", KV: true,
 }
 
 // LeaseClient overrides.
@@ -146,9 +173,67 @@ func newClientWith(t *testing.T, ft *fakeTransport) *qrdbsdk.Client {
 }
 
 func TestNewFromClient_WiresBackend(t *testing.T) {
-	r := NewFromClient(newClientWith(t, &fakeTransport{}))
+	r, err := NewFromClient(context.Background(), newClientWith(t, &fakeTransport{}))
+	if err != nil {
+		t.Fatalf("NewFromClient on a raft node: %v", err)
+	}
 	if r == nil {
 		t.Fatal("NewFromClient returned nil Registry")
+	}
+}
+
+func TestNewFromClient_RefusesStandaloneNode(t *testing.T) {
+	ft := &fakeTransport{caps: &standaloneCapabilities}
+	r, err := NewFromClient(context.Background(), newClientWith(t, ft))
+	if r != nil {
+		t.Fatal("NewFromClient returned a Registry over a standalone node")
+	}
+	var raftErr *RegistryRequiresRaftError
+	if !errors.As(err, &raftErr) {
+		t.Fatalf("err = %v (%T), want *RegistryRequiresRaftError", err, err)
+	}
+	if raftErr.Mode != "standalone" {
+		t.Fatalf("Mode = %q, want %q", raftErr.Mode, "standalone")
+	}
+	if ft.grantedTTL != 0 {
+		t.Fatal("NewFromClient reached the lease plane before refusing")
+	}
+}
+
+func TestNewFromClient_RefusesNodeMissingAnyPlane(t *testing.T) {
+	cases := map[string]qrdbtransport.CapabilitiesResponse{
+		"no lease": {Mode: "raft", MVCC: true, Watch: true},
+		"no mvcc":  {Mode: "raft", Lease: true, Watch: true},
+		"no watch": {Mode: "raft", Lease: true, MVCC: true},
+	}
+	for name, caps := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewFromClient(context.Background(), newClientWith(t, &fakeTransport{caps: &caps}))
+			var raftErr *RegistryRequiresRaftError
+			if !errors.As(err, &raftErr) {
+				t.Fatalf("err = %v (%T), want *RegistryRequiresRaftError", err, err)
+			}
+		})
+	}
+}
+
+func TestNewFromClient_CapabilitiesError(t *testing.T) {
+	boom := errors.New("capabilities boom")
+	_, err := NewFromClient(context.Background(), newClientWith(t, &fakeTransport{capsErr: boom}))
+	var regErr *RegistryError
+	if !errors.As(err, &regErr) || regErr.Op != "capabilities" {
+		t.Fatalf("err = %v (%T), want *RegistryError{Op: capabilities}", err, err)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap the capabilities failure", err)
+	}
+}
+
+func TestRegistryRequiresRaftError_NamesMode(t *testing.T) {
+	err := &RegistryRequiresRaftError{Mode: "standalone"}
+	want := `registry: service discovery requires a raft qrdb node, but the node runs in "standalone" mode`
+	if err.Error() != want {
+		t.Fatalf("Error() = %q, want %q", err.Error(), want)
 	}
 }
 

@@ -1396,6 +1396,35 @@ check-coded-sentinels: ## Fail if errors.Is targets a qrdb-coded sentinel withou
 	@echo "$(BLUE)Checking errors.Is targets against qrdb-coded sentinels...$(NC)"
 	@$(GOCMD) run ./scripts/codedsentinel -dir pkg -dir cmd -dir sdk
 
+.PHONY: check-nolint
+# nolintlint (.golangci.yml) makes every //nolint name its linter, give a
+# reason and still suppress something. This gate keeps the count from growing:
+# each directive in a non-generated .go file must match a `path:linter` line in
+# NOLINT_ALLOWLIST, which holds exactly the directives that exist (go-quicbaas#559).
+# A new one fails, and so does an entry whose directive is gone. Fix the cause
+# instead of adding one; an exception goes on the list with the reviewer's
+# agreement in the PR. A bare //nolint yields `path:`, which never matches.
+NOLINT_ALLOWLIST := scripts/nolint-allowlist.txt
+check-nolint: ## Fail if a //nolint directive is not on scripts/nolint-allowlist.txt, or an entry is stale
+	@echo "$(BLUE)Checking //nolint directives against $(NOLINT_ALLOWLIST)...$(NC)"
+	@LC_ALL=C sort -c $(NOLINT_ALLOWLIST) || { echo "$(RED)$(NOLINT_ALLOWLIST) must be sorted (LC_ALL=C sort)$(NC)"; exit 1; }
+	@found=$$(grep -rlE '//[[:space:]]*nolint' --include='*.go' --exclude-dir=.git --exclude-dir=.deps --exclude-dir=vendor . \
+		| xargs -r grep -LE '^// Code generated .* DO NOT EDIT\.$$' \
+		| xargs -r grep -HoE '//[[:space:]]*nolint(:[^[:space:]]*)?' \
+		| awk '{ sub(/^\.\//, ""); sub(/:\/\/[[:space:]]*nolint:?/, ":"); print }' | LC_ALL=C sort); \
+	new=$$(printf '%s\n' "$$found" | LC_ALL=C comm -23 - $(NOLINT_ALLOWLIST) | grep -v '^$$'); \
+	stale=$$(printf '%s\n' "$$found" | LC_ALL=C comm -13 - $(NOLINT_ALLOWLIST)); \
+	if [ -n "$$new" ]; then \
+		echo "$(RED)//nolint not on $(NOLINT_ALLOWLIST) -- fix the cause instead:$(NC)"; \
+		echo "$$new"; \
+	fi; \
+	if [ -n "$$stale" ]; then \
+		echo "$(RED)$(NOLINT_ALLOWLIST) entries with no directive -- delete them:$(NC)"; \
+		echo "$$stale"; \
+	fi; \
+	[ -z "$$new$$stale" ]
+	@echo "$(GREEN)Every //nolint is on the allowlist$(NC)"
+
 .PHONY: check-build-tags
 # The -pass / -localpass split is not cosmetic: -pass means CI RUNS IT, and a
 # constraint reachable only from a -localpass is reported as a note rather than
@@ -3304,8 +3333,9 @@ vet-integration: ## Typecheck every integration- and hardware-tagged package (th
 # verify-naming after it: the gate is a text scan of the tracked files
 # (milliseconds, no build, no network), so a naming regression reports before
 # the 20-minute golangci-lint pass rather than after it. This is why CI's Lint
-# job needs no separate step for the gate.
-lint: vet-integration verify-naming secure-analyzer secure-analyzer-self-test ## Run linters (naming gate + golangci-lint)
+# job needs no separate step for the gate. check-nolint is the same kind of
+# text scan and runs early for the same reason.
+lint: vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test ## Run linters (naming gate + golangci-lint)
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
 	# 20m, not the template's 5m. This module is ~526k lines across ~1300 files
