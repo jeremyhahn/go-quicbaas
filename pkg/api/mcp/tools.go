@@ -225,6 +225,7 @@ func (r *ToolRegistry) registerTools() {
 	// Register Project tools
 	r.registerProjectTools()
 	r.registerSDLCTools()
+	r.registerPromptTools()
 
 	// Register pooled provider account tools
 	r.registerAccountTools()
@@ -1279,6 +1280,9 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// SDLC module: forge bindings and deliveries
 		if isSDLCTool(name) {
 			return r.executeSDLCTool(ctx, name, args)
+		}
+		if isPromptTool(name) {
+			return r.executePromptTool(ctx, name, args)
 		}
 
 		// Check if it's a pooled provider account tool

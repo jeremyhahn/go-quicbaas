@@ -14,12 +14,14 @@
 package auth
 
 import (
+	"context"
 	"math"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // An identity qrdb built from an mTLS certificate is unmarked, so its subject
@@ -146,5 +148,36 @@ func TestIsSystemSubject_EmptyAndTenantAreNotSystem(t *testing.T) {
 		if IsSystemSubject(subject) {
 			t.Fatalf("%s: IsSystemSubject(TenantID=%q) = true, want false", name, tenantID)
 		}
+	}
+}
+
+// TestContextWithIdentitySubject_ProjectsSubjectAndTenant proves a verified
+// qrdb identity becomes the authenticated Subject and binds its tenant.
+func TestContextWithIdentitySubject_ProjectsSubjectAndTenant(t *testing.T) {
+	ctx := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "alice", TenantID: "tenant-a"})
+	ctx = ContextWithIdentitySubject(ctx)
+
+	subject, ok := SubjectFromContext(ctx)
+	if !ok || subject.ID != "alice" || !subject.Authenticated || subject.TenantID != "tenant-a" {
+		t.Fatalf("subject = %+v, %v", subject, ok)
+	}
+	if got := PrincipalFromContext(ctx); got != "alice" {
+		t.Fatalf("PrincipalFromContext = %q, want alice", got)
+	}
+	if tenantID, bound := tenantctx.Lookup(ctx); !bound || tenantID != "tenant-a" {
+		t.Fatalf("tenant = %q, %v", tenantID, bound)
+	}
+}
+
+// TestContextWithIdentitySubject_NoIdentityIsUnchanged proves a context
+// without a qrdb identity gains no Subject, so a service that needs a
+// principal still refuses it.
+func TestContextWithIdentitySubject_NoIdentityIsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	if got := ContextWithIdentitySubject(ctx); got != ctx {
+		t.Fatal("a context without an identity must be returned unchanged")
+	}
+	if got := PrincipalFromContext(ContextWithIdentitySubject(ctx)); got != "" {
+		t.Fatalf("PrincipalFromContext = %q, want empty", got)
 	}
 }

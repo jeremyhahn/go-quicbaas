@@ -153,10 +153,58 @@ func TestRuntimeStats_CgroupPathAbsent(t *testing.T) {
 }
 
 func TestRuntimeStats_CPUPercent(t *testing.T) {
-	// A cpu.stat whose usage_usec advances between samples yields a non-zero
-	// percentage. The seam replaces the file reader with an advancing counter.
+	// A cpu.stat whose usage_usec advances between samples yields the exact
+	// percentage of the sampling window consumed. The wait seam rewrites
+	// cpu.stat in place of the timer, so the second sample always sees it.
+	rt, stateID, cpuStatPath := cpuStatsFixture(t, "stats-cpu", 4*time.Millisecond)
+
+	var gotWindow time.Duration
+	setCPUSampleWait(t, func(_ context.Context, window time.Duration) error {
+		gotWindow = window
+		// 1000us consumed over a 4ms window => 25% CPU.
+		return os.WriteFile(cpuStatPath, []byte("usage_usec 1000\n"), 0o644)
+	})
+
+	stats, err := rt.Stats(context.Background(), stateID)
+	require.NoError(t, err)
+	assert.Equal(t, 4*time.Millisecond, gotWindow)
+	assert.Equal(t, 25.0, stats.CPUUsagePercent)
+}
+
+func TestRuntimeStats_CPUPercent_ContextCancelled(t *testing.T) {
+	// A ctx cancelled during the sampling window aborts Stats with its error.
+	// The window is an hour, so only the cancellation can end the wait.
+	rt, stateID, _ := cpuStatsFixture(t, "stats-cpu-cancel", time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	setCPUSampleWait(t, func(waitCtx context.Context, window time.Duration) error {
+		cancel()
+		return waitCPUSampleWindow(waitCtx, window)
+	})
+
+	stats, err := rt.Stats(ctx, stateID)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, stats)
+}
+
+func TestWaitCPUSampleWindow(t *testing.T) {
+	t.Run("window elapses", func(t *testing.T) {
+		require.NoError(t, waitCPUSampleWindow(context.Background(), 0))
+	})
+	t.Run("ctx done first", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.ErrorIs(t, waitCPUSampleWindow(ctx, time.Hour), context.Canceled)
+	})
+}
+
+// cpuStatsFixture creates a running container whose fake cgroup reports
+// usage_usec 0, points the package roots at it and sets the sampling window.
+// It returns the runtime, the container ID and the cpu.stat path.
+func cpuStatsFixture(t *testing.T, name string, window time.Duration) (*Runtime, string, string) {
+	t.Helper()
 	rt := newTestRuntime(t)
-	state, err := rt.CreateContainer(context.Background(), &ContainerConfig{Name: "stats-cpu", Image: "alpine:latest"})
+	state, err := rt.CreateContainer(context.Background(), &ContainerConfig{Name: name, Image: "alpine:latest"})
 	require.NoError(t, err)
 	state.PID = 5555
 
@@ -173,21 +221,17 @@ func TestRuntimeStats_CPUPercent(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(cgDir, "memory.current"), []byte("0\n"), 0o644))
 
 	origProc, origCgroup, origWindow := procRoot, cgroupRoot, cpuSampleWindow
-	procRoot, cgroupRoot, cpuSampleWindow = proc, cgroup, 5*time.Millisecond
+	procRoot, cgroupRoot, cpuSampleWindow = proc, cgroup, window
 	t.Cleanup(func() { procRoot, cgroupRoot, cpuSampleWindow = origProc, origCgroup, origWindow })
+	return rt, state.ID, cpuStatPath
+}
 
-	// Advance the counter after the first read by rewriting cpu.stat from a
-	// goroutine keyed off the sampling window.
-	go func() {
-		timer := time.NewTimer(cpuSampleWindow / 2)
-		<-timer.C
-		// 500us consumed over a 5ms window => ~10% CPU.
-		_ = os.WriteFile(cpuStatPath, []byte("usage_usec 500\n"), 0o644)
-	}()
-
-	stats, err := rt.Stats(context.Background(), state.ID)
-	require.NoError(t, err)
-	assert.Greater(t, stats.CPUUsagePercent, 0.0)
+// setCPUSampleWait replaces the sampling wait seam for the test's duration.
+func setCPUSampleWait(t *testing.T, wait func(context.Context, time.Duration) error) {
+	t.Helper()
+	orig := cpuSampleWait
+	cpuSampleWait = wait
+	t.Cleanup(func() { cpuSampleWait = orig })
 }
 
 func TestReadIOStat(t *testing.T) {

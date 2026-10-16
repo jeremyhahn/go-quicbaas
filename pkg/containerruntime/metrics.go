@@ -109,12 +109,8 @@ func (r *Runtime) Stats(ctx context.Context, id string) (*ResourceStats, error) 
 	// CPU usage percent: two cpu.stat samples separated by cpuSampleWindow.
 	usage0, ok0 := readCPUUsageUsec(cgroupDir)
 	if ok0 {
-		timer := time.NewTimer(cpuSampleWindow)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
+		if err := cpuSampleWait(ctx, cpuSampleWindow); err != nil {
+			return nil, err
 		}
 		usage1, ok1 := readCPUUsageUsec(cgroupDir)
 		if ok1 && usage1 >= usage0 {
@@ -148,6 +144,24 @@ func (r *Runtime) Stats(ctx context.Context, id string) (*ResourceStats, error) 
 	}
 
 	return stats, nil
+}
+
+// cpuSampleWait blocks between the two cpu.stat samples. Tests replace it to
+// order the second sample after a known counter change without relying on
+// wall-clock timing.
+var cpuSampleWait = waitCPUSampleWindow
+
+// waitCPUSampleWindow waits for window to elapse, returning ctx.Err() if ctx
+// is done first.
+func waitCPUSampleWindow(ctx context.Context, window time.Duration) error {
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // cgroupDirForPID resolves a process's cgroup v2 directory by parsing

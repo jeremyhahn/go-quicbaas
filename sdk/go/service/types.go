@@ -129,6 +129,62 @@ type (
 	// SDLCService is the SDLC module's binding service.
 	SDLCService = pkgservice.SDLCService
 
+	// PromptService serves the prompt-set verbs: list, get, effective,
+	// diff, history, put, rollback and reset.
+	PromptService = pkgservice.PromptService
+
+	// PromptProjectLookup is the one project verb the prompt service needs:
+	// proving a project-scope address names a project of the tenant.
+	PromptProjectLookup = pkgservice.PromptProjectLookup
+
+	// PromptAddress names one prompt at one scope.
+	PromptAddress = pkgservice.PromptAddress
+
+	// ListPromptsRequest lists one set's prompts at one scope.
+	ListPromptsRequest = pkgservice.ListPromptsRequest
+
+	// ListPromptsResponse lists one set's prompts at one scope.
+	ListPromptsResponse = pkgservice.ListPromptsResponse
+
+	// PromptListEntry is one prompt of a set as a scope sees it.
+	PromptListEntry = pkgservice.PromptListEntry
+
+	// GetPromptRequest reads a scope's record or one revision of it.
+	GetPromptRequest = pkgservice.GetPromptRequest
+
+	// PutPromptRequest writes a new body at a scope.
+	PutPromptRequest = pkgservice.PutPromptRequest
+
+	// RollbackPromptRequest writes an earlier revision's body again.
+	RollbackPromptRequest = pkgservice.RollbackPromptRequest
+
+	// ResetPromptRequest returns a scope's record to following its parent.
+	ResetPromptRequest = pkgservice.ResetPromptRequest
+
+	// PromptView is one prompt body at one scope.
+	PromptView = pkgservice.PromptView
+
+	// EffectivePrompt is the body a job at a scope runs with and its chain.
+	EffectivePrompt = pkgservice.EffectivePrompt
+
+	// PromptLayer is one layer of a prompt's resolution chain.
+	PromptLayer = pkgservice.PromptLayer
+
+	// PromptDiff compares a scope's effective body with its parent's.
+	PromptDiff = pkgservice.PromptDiff
+
+	// PromptDiffLine is one line of a PromptDiff.
+	PromptDiffLine = pkgservice.PromptDiffLine
+
+	// PromptDiffOp is what a PromptDiffLine does.
+	PromptDiffOp = pkgservice.PromptDiffOp
+
+	// PromptHistory is a scope's record's revision identifiers.
+	PromptHistory = pkgservice.PromptHistory
+
+	// PromptRevisionSummary identifies one revision.
+	PromptRevisionSummary = pkgservice.PromptRevisionSummary
+
 	// BindOptions carries the intent of one SDLCService.Bind request, such
 	// as binding a project paused.
 	BindOptions = pkgservice.BindOptions

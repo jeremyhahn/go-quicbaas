@@ -47,8 +47,9 @@ import (
 // For sub-services with conflicting methods (Embedding, Ollama, Certificate),
 // dedicated fields are provided so a separate mock can be injected.
 type MockQuicBaaS struct {
-	sdlcService  *service.SDLCService
-	loginService service.LoginServicer
+	sdlcService   *service.SDLCService
+	promptService *service.PromptService
+	loginService  service.LoginServicer
 	mock.Mock
 
 	// Sub-service fields for interfaces with conflicting method signatures.
@@ -736,6 +737,16 @@ func (m *MockQuicBaaS) SDLC() *service.SDLCService {
 // SetSDLCService records the SDLC service.
 func (m *MockQuicBaaS) SetSDLCService(svc *service.SDLCService) {
 	m.sdlcService = svc
+}
+
+// Prompts returns the prompt service the mock was given.
+func (m *MockQuicBaaS) Prompts() *service.PromptService {
+	return m.promptService
+}
+
+// SetPromptService records the prompt service.
+func (m *MockQuicBaaS) SetPromptService(svc *service.PromptService) {
+	m.promptService = svc
 }
 
 // SetProjectBindingReader is a no-op: a test that needs a delete checked

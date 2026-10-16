@@ -1,7 +1,7 @@
 # Software Factory — CLI
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
-> The Software Factory command groups: `quicbaas agents` and the planned
+> **Status: NORMATIVE** · Last verified: 2026-10-15
+> The Software Factory command groups: `quicbaas agents` and
 > `quicbaas prompts`. `quicbaas project`, `quicbaas account` and
 > `quicbaas sdlc` are in [../projects/cli.md](../projects/cli.md),
 > [../accounts/cli.md](../accounts/cli.md) and [../sdlc/cli.md](../sdlc/cli.md);
@@ -39,10 +39,34 @@ Every verb and flag of `quicbaas sdlc` is in
 
 ## quicbaas prompts
 
-**Not implemented.** The planned command group for editing the prompt sets the
-worker, the reviewer and the lead are given — `list`, `get`, `effective`,
-`diff`, `history`, `put`, `rollback`, `reset` — is specified in
-[prompt-sets.md](prompt-sets.md). The prompts themselves are now markdown
-embedded in the binary rather than Go constants, but there is no store behind
-them yet, so editing one is editing a file and rebuilding — nothing to
-configure from the command line.
+Reads and edits the prompt sets the worker, the reviewer and the lead are
+given. The model — scopes, records, revisions, the stop marker — is in
+[prompt-sets.md](prompt-sets.md). Every verb goes through the Go SDK's `Prompts()`
+client, so it works on every transport.
+
+| Verb | Does |
+|---|---|
+| `list <set>` | Lists the set's prompts at the scope: overridden or inherited, version, effective origin |
+| `get <set> <name>` | Shows the record overridden at the scope; `--version N` shows an earlier revision |
+| `effective <set> <name>` | Shows the body a job at the scope runs with, and the chain it resolved through |
+| `diff <set> <name>` | Compares the scope's body with its parent scope's |
+| `history <set> <name>` | Lists the record's revisions, newest first |
+| `put <set> <name> -f FILE\|-` | Overrides the prompt at the tenant or project scope |
+| `rollback <set> <name> --version N` | Writes a new revision carrying revision N's body |
+| `reset <set> <name>` | Makes the scope follow its parent again |
+
+| Flag | Applies to | Meaning |
+|---|---|---|
+| `--tenant` | all | The global flag; the tenant the prompt belongs to |
+| `--project` | all | The project, for the project scope |
+| `--scope` | all | `system`, `tenant` or `project`; inferred from `--project` when empty |
+| `--output` | all | `table` (default), `json` or `yaml` |
+| `--raw` | `get`, `effective` | Prints only the body |
+| `--version` | `get`, `rollback` | The revision to show or restore |
+| `-f`, `--file` | `put` | The new body; `-` reads stdin |
+| `--note` | `put`, `rollback`, `reset` | Why the change was made; kept in the history |
+| `--expected-version` | `put`, `rollback`, `reset` | The version last read; the write is refused if the record has moved on. `rollback` and `reset` need it ≥ 1 |
+| `--yes` | `rollback`, `reset` | Skips the confirmation prompt |
+
+`rollback` and `reset` ask for confirmation on stderr unless `--yes` is given;
+any answer but `y` or `yes` cancels without a write.

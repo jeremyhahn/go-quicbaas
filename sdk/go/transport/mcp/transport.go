@@ -318,6 +318,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return t.requestToolVerb(ctx, "mcp.parameterstore."+method, verb, reqBody)
 	}
 
+	// The Prompts surface is the closed prompt_* tool set with typed answers.
+	if isMCPPromptsService(service) {
+		return t.requestPrompt(ctx, method, reqBody)
+	}
+
 	// Ollama's verbs decode into the client types; EmbedWithModel keeps the
 	// generic path below.
 	if verb, ok := ollamaVerbs[method]; ok && isMCPOllamaService(service) {
@@ -1052,6 +1057,11 @@ func ToolName(service, method string) string {
 	}
 	if isMCPOllamaService(service) {
 		if verb, ok := ollamaVerbs[method]; ok {
+			return verb.tool
+		}
+	}
+	if isMCPPromptsService(service) {
+		if verb, ok := promptVerbs[method]; ok {
 			return verb.tool
 		}
 	}

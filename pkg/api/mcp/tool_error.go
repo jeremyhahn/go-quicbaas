@@ -114,6 +114,9 @@ func toolErrorCode(err error) int {
 	if fault, ok := orchestration.ClassifyAgentCatalogError(err); ok {
 		return toolErrorCodeOf(agentCatalogClasses[fault])
 	}
+	if fault, ok := service.ClassifyPromptError(err); ok {
+		return toolErrorCodeOf(promptClasses[fault])
+	}
 	if code, ok := domainErrorClass(err); ok {
 		return toolErrorCodeOf(code)
 	}
@@ -131,6 +134,16 @@ var agentCatalogClasses = map[orchestration.AgentCatalogFault]qberrors.ErrorCode
 	orchestration.AgentCatalogFaultForbidden:   qberrors.ErrForbidden,
 	orchestration.AgentCatalogFaultUnavailable: qberrors.ErrUnavailable,
 	orchestration.AgentCatalogFaultExhausted:   qberrors.ErrResourceExhausted,
+}
+
+// promptClasses carries the prompt service's faults to the class gRPC's
+// promptFaultCode gives them, so a prompt refusal reads the same on every
+// transport.
+var promptClasses = map[service.PromptFault]qberrors.ErrorCode{
+	service.PromptFaultInvalid:     qberrors.ErrInvalidInput,
+	service.PromptFaultNotFound:    qberrors.ErrNotFound,
+	service.PromptFaultConflict:    qberrors.ErrConflict,
+	service.PromptFaultUnavailable: qberrors.ErrUnavailable,
 }
 
 // domainSentinelClasses classes the project and SDLC sentinels a tool returns

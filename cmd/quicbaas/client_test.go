@@ -112,6 +112,7 @@ func (m *mockClient) Close() error {
 
 func (m *mockClient) Project() quicbaas.ProjectClient { return nil }
 func (m *mockClient) SDLC() quicbaas.SDLCClient       { return nil }
+func (m *mockClient) Prompts() quicbaas.PromptsClient { return nil }
 func (m *mockClient) Agents() quicbaas.AgentsClient   { return nil }
 func (m *mockClient) Account() quicbaas.AccountClient { return nil }
 

@@ -46,6 +46,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/parameterstore"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/prompt"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/query"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
@@ -131,6 +132,10 @@ type Client interface {
 
 	// SDLC operations (the SDLC module: forge bindings and deliveries)
 	SDLC() SDLCClient
+
+	// Prompt sets (a tenant's prompt overrides at the tenant and project
+	// scopes)
+	Prompts() PromptsClient
 
 	// Agents operations: the tenant's AI agent catalog — the named Agents
 	// (runtime + model + provider) every role slot references, and the
@@ -1556,6 +1561,9 @@ type ProjectClient = project.Client
 // SDLCClient is an alias for the sdlc.Client interface.
 type SDLCClient = sdlc.Client
 
+// PromptsClient is an alias for the prompt.Client interface.
+type PromptsClient = prompt.Client
+
 // AgentsClient is an alias for the agents.Client interface.
 type AgentsClient = agents.Client
 
@@ -1743,6 +1751,7 @@ type client struct {
 	orchestratorClient       OrchestratorClient
 	projectClient            ProjectClient
 	sdlcClient               SDLCClient
+	promptsClient            PromptsClient
 	agentsClient             AgentsClient
 	accountClient            AccountClient
 	qrdb                     qrdbState
@@ -2663,6 +2672,24 @@ func (c *client) SDLC() SDLCClient {
 	return c.sdlcClient
 }
 
+// Prompts returns the client for a tenant's prompt sets.
+func (c *client) Prompts() PromptsClient {
+	c.mu.RLock()
+	if c.promptsClient != nil {
+		c.mu.RUnlock()
+		return c.promptsClient
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.promptsClient == nil {
+		c.promptsClient = newPromptsClient(c.transport)
+	}
+	return c.promptsClient
+}
+
 // Agents returns the client for the tenant AI agent catalog: Agents and the
 // pools role slots fail over along.
 func (c *client) Agents() AgentsClient {
@@ -2737,5 +2764,6 @@ func newRAGClient(t Transport) RAGClient                       { return rag.NewC
 func newOrchestratorClient(t Transport) OrchestratorClient     { return orchestrator.NewClient(t) }
 func newProjectClient(t Transport) ProjectClient               { return project.NewClient(t) }
 func newSDLCClient(t Transport) SDLCClient                     { return sdlc.NewClient(t) }
+func newPromptsClient(t Transport) PromptsClient               { return prompt.NewClient(t) }
 func newAgentsClient(t Transport) AgentsClient                 { return agents.NewClient(t) }
 func newAccountClient(t Transport) AccountClient               { return account.NewClient(t) }

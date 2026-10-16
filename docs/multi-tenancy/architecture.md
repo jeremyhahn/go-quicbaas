@@ -312,53 +312,15 @@ No application-level envelope DEK is applied on top of qrdb's barrier:
   a **dedicated per-tenant qrdb barrier** sealed by any `go-xkms` hardware or
   cloud KMS strategy. This is an operator configuration choice, not hardcoded.
 
-- **Per-key KMS authorization** (Phase 3) enforces fine-grained access control
-  at the service layer, orthogonal to at-rest encryption.
-
 ## Intra-Tenant KMS Key Isolation
 
-Within a single tenant, multiple KMS keys may exist for different purposes (e.g.,
-a separate KEK per database, per service, or per classification level). Each key
-is cryptographically isolated — only principals explicitly authorised for a given key
-may perform cryptographic operations with it. This satisfies the compliance requirement:
-*"intra-tenant multiple keys, each cryptographically isolated so only principals
-authorized for a given key may perform operations with it."*
-
-Authorization is enforced at the **service layer** (`cryptoService`/`kmsServiceImpl`),
-not inside a transport-specific interceptor, so all transports — gRPC, REST, QUIC, MCP,
-and the embedded SDK path — share the same gate uniformly.
-
-### Key Model
-
-```
-Tenant
- └─ Barrier (tenant DEK, qrdb-owned)
-     └─ Key A: KeyPolicy { AllowedPrincipals: ["alice"], AllowedOps: ["encrypt","decrypt"] }
-     └─ Key B: KeyPolicy { AllowedPrincipals: ["service-account-payments"], AllowedOps: ["sign"] }
-     └─ Key C: (no policy = default-allow any authenticated principal)
-```
-
-Policies are stored in the Raft-replicated KVStore under `kms:policy:<keyID>` so every
-node enforces the same rules without TTL drift. An empty policy entry is treated as
-"allow all" so existing keys are unaffected until an operator explicitly sets a policy.
-
-### Subject Propagation
-
-Authentication middleware at each transport boundary:
-- validates the bearer token
-- constructs an `interfaces.Subject` (ID, Username, Roles, TenantID)
-- injects it into the request context via `auth.SubjectIntoContext`
-
-The service layer extracts the Subject with `auth.SubjectFromContext` and evaluates it
-against the key policy. Requests that arrive at the service layer without an authenticated
-Subject are denied fail-closed unless `auth.IsSystemContext` returns true (for internal
-daemon operations only; this mark cannot be forged by external callers).
-
-### Key-Use Audit (AU-2)
-
-Every cryptographic call records a key-use audit event (principal, keyID, operation,
-allow/deny, timestamp) via `KMSKeyUseAuditLogger.LogKeyUse`. Both allow and deny
-outcomes are captured, regardless of which transport delivered the request.
+**Being removed** with QuicBaaS's own KMS service ([SPEC](../SPEC.md) row
+`kms`). Today each key can carry a per-key policy (allowed principals and
+operations), stored under `kms:policy:<keyID>` and checked inside the KMS
+service on every transport; every call records a key-use audit event
+(`KMSKeyUseAuditLogger`). That check is a service-local gate, not a go-qrdb
+authorization decision, and it goes with the service. Key management itself
+is go-xkms's: [Key Management — Architecture](../../../go-xkms/docs/key-management/architecture.md).
 
 ## Cross-References
 

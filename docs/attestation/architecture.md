@@ -17,7 +17,7 @@ Handbook doc 00 (L1 amendment of 2026-10-01) splits attestation by role:
 
 1. **Statement verification** — `Verify`, `VerifyChain`, `VerifyImageSignature`
    (client-side over `Verify`): a pure verifier over go-xkms's attestation
-   verifier.
+   verifier ([Attestation Verifier — Architecture](../../../go-xkms/docs/attestation-verifier/architecture.md)).
 2. **Container attestation seam** — `AttestContainer` forwards to a registered
    `ContainerAttestor` (`WithContainerAttestor`).
 3. **The Verifier** — endorsements, signed reference values and quote

@@ -2192,6 +2192,10 @@ func (s *Server) startService() error {
 		return err
 	}
 
+	if err := s.attachPromptService(svc); err != nil {
+		return err
+	}
+
 	// Tenant barrier lifecycle is owned by the qrdb node's TenantServicer.
 	// When the qrdb node is initialized (initStandaloneQRDBNode/initClusteredQRDBNode),
 	// barrier isolation is configured via the qrdb server options. No separate
@@ -2448,6 +2452,13 @@ func (s *Server) startGRPCServer() error {
 	// and the Unix transport, which delegates to gRPC verbatim, carries it.
 	pb.RegisterSDLCServiceServer(grpcServer, grpcapi.NewSDLCServer(s.quicBaaSService, s.logger))
 	s.logger.Info("Registered SDLC gRPC service")
+
+	// Register the prompt service. Always registered: the server resolves
+	// the prompt service per call through the facade, so a node without a
+	// prompt store answers Unavailable rather than Unimplemented, and the
+	// Unix transport, which delegates to gRPC verbatim, carries it.
+	pb.RegisterPromptServiceServer(grpcServer, grpcapi.NewPromptServer(s.quicBaaSService, s.logger))
+	s.logger.Info("Registered Prompt gRPC service")
 
 	// Register Account service (pooled provider accounts). Always present:
 	// the service container constructs it unconditionally, and its

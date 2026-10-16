@@ -39,8 +39,7 @@
 
 ### Security & Identity
 - **IAM System** - Multi-tenant identity with users, groups, roles, policies, and sessions
-- **ABAC/PEP Engine** - Sub-5us policy evaluation with distributed PEP cache sync
-- **Policy Engine** - Time, network, and attribute conditions with bloom filter caching
+- **ABAC Policies + PEP** - Tenant policy administration and a gRPC PEP service; decisions are made by go-qrdb's RBAC + ABAC authorizer
 - **WebAuthn/FIDO2** - Passwordless authentication with passkeys and hardware keys
 - **MFA/TOTP** - Multi-factor authentication with backup codes
 - **OAuth2/OIDC** - Authorization server (client credentials, token exchange, introspection, discovery) and federated identity provider; the browser authorization-code flow does not complete yet, because `/oauth2/authorize` does not authenticate the user

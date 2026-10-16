@@ -1,6 +1,6 @@
 # Software Factory — API
 
-> **Status: NORMATIVE** · Last verified: 2026-10-11
+> **Status: NORMATIVE** · Last verified: 2026-10-15
 > The Software Factory's transport matrix, reference checks on save and the
 > agent catalog. Projects, pooled provider accounts and the SDLC module are in
 > [../projects/api.md](../projects/api.md),
@@ -9,9 +9,7 @@
 > [../orchestration/api.md](../orchestration/api.md). Feature folder:
 > `docs/software-factory/`. Conflicts with this document are defects.
 
-Prompt sets have no transport surface yet: the prompts are embedded markdown
-with no store behind them, and the planned verbs are in
-[prompt-sets.md](prompt-sets.md).
+Prompt sets are served on every transport; see [Prompt sets](#prompt-sets).
 
 The orchestration engine's own surface (jobs, sessions, backends, the
 list-paging contract, the MCP tool reference) is in
@@ -123,6 +121,47 @@ Refusals map the same way on every transport:
 | in use | 409 | FailedPrecondition |
 | catalog unavailable | 503 | Unavailable |
 | pool exhausted | 503 | ResourceExhausted |
+
+## Prompt sets
+
+A tenant's overrides of the embedded prompts; see [prompt-sets.md](prompt-sets.md).
+Each verb addresses a prompt with `tenant_id` (defaults to the caller's own;
+naming another is `403` / PermissionDenied), `scope` (`tenant`, `project` or
+`system`; `system` is read-only) and `project_id`. On REST they are query
+parameters. gRPC is `quicbaas.prompt.v1.PromptService`, which Unix serves too.
+The Go SDK is `Client.Prompts()` (`sdk/go/client/prompt`, service
+`quicbaas.Prompts`); QUIC sends its REST routes over HTTP/3 and the embedded
+transport calls `service.PromptService` in process. The CLI is
+`quicbaas prompts`; its flags are in [cli.md](cli.md#quicbaas-prompts).
+
+| Verb | REST route | gRPC | MCP | SDK | CLI | Permission |
+|---|---|---|---|---|---|---|
+| List | `GET /api/v1/prompts/{set}` | `ListPrompts` | `prompt_list` | `List` | `list <set>` | `prompts:read` |
+| Get (`?version=N`) | `GET /api/v1/prompts/{set}/{name}` | `GetPrompt` | `prompt_get` | `Get` | `get <set> <name>` | `prompts:read` |
+| Effective | `GET /api/v1/prompts/{set}/{name}/effective` | `GetEffectivePrompt` | `prompt_effective` | `Effective` | `effective <set> <name>` | `prompts:read` |
+| Diff | `GET /api/v1/prompts/{set}/{name}/diff` | `DiffPrompt` | `prompt_diff` | `Diff` | `diff <set> <name>` | `prompts:read` |
+| History | `GET /api/v1/prompts/{set}/{name}/history` | `GetPromptHistory` | `prompt_history` | `History` | `history <set> <name>` | `prompts:history` |
+| Put | `PUT /api/v1/prompts/{set}/{name}` | `PutPrompt` | `prompt_put` | `Put` | `put <set> <name> -f FILE` | `prompts:write` |
+| Rollback | `POST /api/v1/prompts/{set}/{name}/rollback` | `RollbackPrompt` | `prompt_rollback` | `Rollback` | `rollback <set> <name> --version N` | `prompts:write` |
+| Reset | `DELETE /api/v1/prompts/{set}/{name}` | `ResetPrompt` | `prompt_reset` | `Reset` | `reset <set> <name>` | `prompts:write` |
+
+Put takes `content`, `note` (required) and `expected_version` (0 when
+nothing is overridden at that scope). Rollback takes `to_version`, `note` and
+`expected_version`. Both are JSON bodies on REST. Reset takes `note` and
+`expected_version`, which are query parameters on REST. Get answers not-found
+when nothing is overridden at that scope. Effective always answers, with
+the resolution chain and the `origin` layer. History lists identifiers,
+hashes, authors and notes. Its bodies are read with Get and a version.
+
+| refusal | REST | gRPC | MCP |
+|---|---|---|---|
+| missing marker (the body names it), unknown set or name, write at `system` | 400 | InvalidArgument | invalid input |
+| not found | 404 | NotFound | resource not found |
+| `expected_version` stale | 409 | Aborted | resource conflict |
+| no prompt store mounted, or the store unreachable | 503 | Unavailable | service unavailable |
+
+The SDK keeps each class: `errors.IsInvalidInput`, `IsNotFound`, `IsConflict`
+and `IsUnavailable` answer on every transport.
 
 ## The SDLC module
 

@@ -402,6 +402,17 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// its own action, as POST .../issues is; the collaborator listing reads.
 	"sdlc_issue_create":  {"sdlc", "issue_create"},
 	"sdlc_collaborators": {"sdlc", "read"},
+	// Prompt sets carry the permissions the REST routes and the gRPC
+	// PromptService declare: reads prompts:read, the revision listing
+	// prompts:history, and every change prompts:write.
+	"prompt_list":      {"prompts", "read"},
+	"prompt_get":       {"prompts", "read"},
+	"prompt_effective": {"prompts", "read"},
+	"prompt_diff":      {"prompts", "read"},
+	"prompt_history":   {"prompts", "history"},
+	"prompt_put":       {"prompts", "write"},
+	"prompt_rollback":  {"prompts", "write"},
+	"prompt_reset":     {"prompts", "write"},
 	// Adopting an issue creates its task, and is gated as task creation is,
 	// mirroring POST /api/v1/sdlc/projects/{projectID}/adopt.
 	"sdlc_adopt_issue": {"orchestrator", "task_create"},

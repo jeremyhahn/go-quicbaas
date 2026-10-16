@@ -111,15 +111,23 @@ request and working the attention inbox are in
 
 ## Tune the prompts
 
-**Not available from a running node yet.** Every instruction the Software
-Factory sends an agent — the worker charter, the review framing, the lead's
-decomposition prompt — is now a markdown file embedded in the binary rather
-than a Go constant, so changing one is editing
-`pkg/sdlc/promptdefaults/sdlc/*.md` or
-`pkg/orchestration/promptdefaults/workflow/*.md` and rebuilding. Those files
-are the system tenant's defaults. The tenant- and project-scoped, editable,
-versioned store that will let you change one from the node or the GUI is
-specified in [prompt-sets.md](prompt-sets.md).
+Every instruction the Software Factory sends an agent — the worker charter,
+the review framing, the lead's decomposition prompt — belongs to a prompt set.
+The system tenant's defaults are markdown embedded in the binary; a tenant or
+a project overrides one with `quicbaas prompts`:
+
+```bash
+quicbaas prompts effective sdlc worker_charter --project my-app --raw > worker.md
+$EDITOR worker.md
+quicbaas prompts put sdlc worker_charter --project my-app -f worker.md \
+    --note "name the release branch" --expected-version 0
+quicbaas prompts diff sdlc worker_charter --project my-app
+quicbaas prompts reset sdlc worker_charter --project my-app --expected-version 1
+```
+
+Every write is a new revision with its note; `history` lists them and
+`rollback` restores one. The model is in [prompt-sets.md](prompt-sets.md);
+the verbs and flags are in [cli.md](cli.md#quicbaas-prompts).
 
 ## Manage pooled provider accounts
 

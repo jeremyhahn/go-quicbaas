@@ -20,7 +20,7 @@ What QuicBaaS adds on top of the qrdb user:
 
 - **OIDC / OAuth2** — token issuance/consumer flows whose subjects are qrdb users; OAuth2 clients are a principal kind on the qrdb tenant model.
 - **Multi-protocol transports** — REST / gRPC / QUIC / MCP / Unix surfacing the qrdb barrier/ceremony/credentials and the auth model.
-- **ABAC policy engine + PEP** — evaluated over the qrdb user's `Attributes`.
+- **Policy administration + PEP gRPC service** — the decisions themselves are go-qrdb's; see [Authorization (ABAC) and the PEP](#authorization-abac-and-the-pep).
 
 QuicBaaS's identity store implements qrdb's `CertBinder` and user-store seams; admin/tenant-admin certs are bound by the qrdb SPKI thumbprint (the old `SOCertSPKIThumbprint` fork was deleted). The system admin provisions a tenant minimally (control plane); the tenant admin self-bootstraps their own barrier and data plane.
 
@@ -60,38 +60,12 @@ to authenticate with while enrolling their first one.
 │  │  │ - Quotas    │  │ - Roles     │  │ - Authn     │  │ - Consumer  │   │ │
 │  │  │ - Settings  │  │             │  │ - Creds     │  │ - Tokens    │   │ │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │ │
-│  │                                                                         │ │
-│  │  ┌───────────────────────────────────────────────────────────────────┐ │ │
-│  │  │                    ABAC Policy Engine                              │ │ │
-│  │  │                                                                    │ │ │
-│  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │ │ │
-│  │  │  │  Parser  │─▶│ Compiler │─▶│  Cache   │─▶│    Evaluator     │  │ │ │
-│  │  │  │  (YAML)  │  │  (AST)   │  │ (LRU)    │  │ (zero-alloc)     │  │ │ │
-│  │  │  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘  │ │ │
-│  │  └───────────────────────────────────────────────────────────────────┘ │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                         │                                    │
-│                                         │ uses                               │
+│                                         │ policies synced / checks sent      │
 │                                         ▼                                    │
 │  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                     PEP (Policy Enforcement Point)                      │ │
-│  │                          (pkg/abac/)                                    │ │
-│  │                                                                         │ │
-│  │  - Embedded in QuicBaaS for self-enforcement                           │ │
-│  │  - Exported as library for other services                              │ │
-│  │  - Policy sync via gRPC streams                                        │ │
-│  │  - Local evaluation (zero network latency)                             │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                         │                                    │
-│                                         │ enforces                           │
-│                                         ▼                                    │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                        Storage Module (existing)                        │ │
-│  │                                                                         │ │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │ │
-│  │  │  PebbleDB   │  │    Raft     │  │    gRPC     │  │    REST     │   │ │
-│  │  │  (storage)  │  │ (consensus) │  │    API      │  │    API      │   │ │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │ │
+│  │        Embedded go-qrdb node — RBAC + ABAC authorizer, storage          │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -119,10 +93,11 @@ user is bound to.
 
 ### WebAuthn/FIDO2
 
-Passwordless authentication:
-- Passkey registration and authentication
-- Hardware security key support
-- Credential management
+The relying party, its ceremonies and credential stores are go-xkms's:
+[WebAuthn Relying Party — Architecture](../../../go-xkms/docs/webauthn/architecture.md).
+QuicBaaS mounts it per tenant (each tenant has its own RP id and origins) and
+records each registered credential as a factor in go-qrdb's auth-factor store
+([Authentication Factors — Architecture](../../../go-qrdb/docs/auth-factors/architecture.md)).
 
 ### OAuth2/OIDC
 
@@ -131,21 +106,9 @@ Standards-compliant identity protocols:
 - **Consumer**: Federate identity from external providers (Google, GitHub, Azure)
 - PKCE, Device Authorization, Client Credentials flows
 
-### ABAC Policy Engine
+### Authorization
 
-Attribute-Based Access Control:
-- YAML policy parsing via go-codec
-- Condition compilation to bytecode
-- Zero-allocation evaluation (~2-5μs)
-- LRU caching with bloom filters
-
-### PEP (Policy Enforcement Point)
-
-Distributed authorization:
-- Embedded in QuicBaaS for self-enforcement
-- Exported as library for external services
-- Policy sync via gRPC streams
-- Local evaluation with no network latency
+See [Authorization (ABAC) and the PEP](#authorization-abac-and-the-pep).
 
 ## Data Model
 
@@ -172,81 +135,37 @@ __iam:tenant:{tenant_id}:idp:{provider_id}   → External IdP config
 
 Policies:
 __iam:tenant:{tenant_id}:policy:{policy_id}  → Policy document
-__iam:tenant:{tenant_id}:policy:compiled:{id}→ Compiled policy (binary)
 
 Indexes:
 __iam:idx:email:{email}                      → tenant_id:user_id
 __iam:idx:username:{tenant}:{name}           → user_id
 ```
 
-## Policy Processing Pipeline
+## Authorization (ABAC) and the PEP
 
-### Phase 1: Parsing
+Authorization is go-qrdb's. Every decision goes to the embedded node's
+`node.RBAC().Authorize` (`pkg/server/pep_rbac_authorizer.go`), and ABAC
+policies are installed through go-qrdb's live-reload seam. The tenant is the
+subject's OU. For the decision model, tenant scoping and the policy schema, see
+[ABAC Authorization Decorator](../../../go-qrdb/docs/auth/abac.md) and
+[Identity and RBAC — Architecture](../../../go-qrdb/docs/identity-rbac/architecture.md).
 
-```
-YAML Policy → go-codec Unmarshal → Policy AST (structs)
-```
+**Departures.** QuicBaaS still owns two parts of this path. The policy store
+is being removed with the rest of QuicBaaS's own policy storage (SPEC `iam`
+row); policy distribution through the PEP has no clean-up row yet.
 
-### Phase 2: Compilation
+- **Policy documents.** Policies live in QuicBaaS's own per-tenant
+  `PolicyStorage` (`__iam:tenant:{tenant_id}:policy:{policy_id}`) under its own
+  `abac.quicbaas.io/v1` schema (`pkg/iam/policy.go`). On every write,
+  `pkg/server/abac_sync.go` converts the whole set to `qrdbsdk.ABACPolicy` and
+  reloads it into the node.
+- **PEP gRPC service.** `PEPService` (`api/proto/iam/iam.proto`,
+  `pkg/api/grpc/server_pep.go`): `Check` and `CheckBatch` forward to the
+  authorizer above; `Subscribe` streams a snapshot plus polled changes from
+  the QuicBaaS policy store to external enforcement points.
 
-For each condition string like `"subject.role == admin"`:
-
-1. **Lexer/Tokenizer**: `[subject][.][role][==][admin]`
-2. **AST Builder**: `BinaryExpr{Left: Path, Op: Eq, Right: Str}`
-3. **Bytecode Gen**:
-   ```
-   LOAD_PATH 0     ; subject.role
-   LOAD_CONST 1    ; "admin"
-   CMP_EQ          ; compare
-   ```
-
-### Phase 3: Optimization
-
-1. **Resource Pattern Trie**: O(k) lookup for resource matching
-2. **Deny Rule Bloom Filter**: Quick check for potential denies
-3. **Subject Selector Index**: Fast policy lookup by role/user
-
-### Phase 4: Caching
-
-- Storage: `__iam:tenant:acme:policy:compiled:p123 → MessagePack`
-- In-Memory: LRU cache with TTL (5 minutes default)
-
-## Runtime Evaluation
-
-Per-request authorization (~2-5μs typical):
-
-1. **Quick Deny Check** (Bloom Filter) - ~10ns
-2. **Get Applicable Policies** (Cache) - ~100ns
-3. **Resource Pattern Match** (Trie) - ~50ns
-4. **Evaluate Deny Rules First** - ~1μs
-5. **Evaluate Allow Rules** - ~1μs
-6. **Default Deny** if no match
-
-## Policy Distribution
-
-For external services using the PEP library:
-
-```
-┌───────────────────────┐
-│   QuicBaaS (IAM)      │
-│   gRPC Stream Server  │
-└───────────┬───────────┘
-            │ Policy sync
-            │
-┌───────────┼───────────┐
-│           │           │
-▼           ▼           ▼
-Go Service  Python SDK  Sidecar
-(pkg/abac)  (SDK)       (proxy)
-```
-
-Sync Protocol:
-1. PEP connects to QuicBaaS IAM
-2. Sends: `SubscribeRequest{service_id, resource_patterns}`
-3. Receives: Full policy snapshot (initial sync)
-4. Receives: Incremental updates (stream)
-5. PEP applies updates to local cache
-6. Version tracking prevents stale data
+Policy simulation (`pkg/server/abac_simulator.go`) runs a candidate policy
+through go-qrdb's ABAC decorator over a deny-all base.
 
 
 ---
@@ -754,24 +673,14 @@ The token's `cnf` claim is bound to the certificate. Token theft is useless with
 
 #### FIDO2 / WebAuthn Attestation
 
-When a user enrolls a passkey or security key, QuicBaaS verifies attestation (when configured):
-
-- **Attestation Mode: None** (default): No verification. Allows platform authenticators and consumer devices.
-- **Attestation Mode: Indirect**: Authenticator provides attestation certificate. Server verifies it against a trusted CA.
-- **Attestation Mode: Direct**: Authenticator signs attestation data. Server verifies the signature chain to a root CA.
-
-Enroll with FIDO2 devices and inspect the AAGUID (Authenticator AAGUID from `https://fidoalliance.org/metadata/`):
-
-```yaml
-iam:
-  auth:
-    webauthn:
-      attestation: "direct"
-      aaguid_allowlist:
-        - "00000000-0000-0000-0000-000000000000"  # Platform (all)
-        - "08987058-cadc-4b81-b6e1-30de50dcbe96"  # YubiKey 5
-        - "73e4b956-e4cb-49b8-930b-88ef4cb4ec8a"  # Google Titan
-```
+Attestation formats, trust paths and the verification rules are go-xkms's:
+[WebAuthn — Engineering](../../../go-xkms/docs/webauthn/engineering.md),
+[Attestation Verifier — Architecture](../../../go-xkms/docs/attestation-verifier/architecture.md).
+QuicBaaS sets the policy with `iam.webauthn.attestation_preference` and
+`iam.webauthn.attestation_roots_file`, and admits authenticator models with
+`iam.aaguid.mode` (`enforce`, the default, or `log_only`) and
+`iam.aaguid.allowlist_file` (a curated JSON array or a FIDO MDS v3 document).
+An empty allowlist under `enforce` refuses every authenticator.
 
 #### Administrator Certificate Bindings
 
@@ -786,10 +695,9 @@ to bind.) Both writes are required and serve different lookups:
 | mtls auth factor | qrdb `UserAuthFactor` store | the unified login ceremony (`auth login --method mtls`) |
 | PIV cert thumbprint | user-side thumbprint index | the REST PIV login handler's user resolution |
 
-The factor's credential is the certificate digest the login path derives from the
-verified TLS peer certificate: `SHA-256(cert DER)` plus the renewal-stable
-`SHA-256(SubjectPublicKeyInfo)` secondary key, so a certificate renewed with the
-same keypair keeps working without re-binding.
+The mtls factor, its credential key and the SPKI thumbprint are go-qrdb's:
+[Firstboot — Architecture](../../../go-qrdb/docs/firstboot/architecture.md#admin-credential-paths),
+[Identity and RBAC — Architecture](../../../go-qrdb/docs/identity-rbac/architecture.md#the-canonical-login-key).
 
 The enrollment happens **before** the binding is persisted. A failure to enroll
 therefore leaves nothing written and the operator sees a clean no-op, rather than
@@ -797,29 +705,14 @@ a bound certificate that authenticates the TLS handshake but cannot complete a
 login. Re-binding the same certificate is idempotent; binding a certificate that
 is already enrolled to a *different* user fails closed.
 
-#### TPM Attestation
+#### TPM and xkey client certificates
 
-For service accounts on premises, the server validates TPM attestation:
-
-1. Client sends TPM-signed quote of the EK (Endorsement Key) public key
-2. Server verifies the quote against the TPM EK root pool
-3. Server issues a token bound to the EK public key hash (`cnf.x5t#S256`)
-
-#### xkey Root CA Pool
-
-For xkey-issued certificates, QuicBaaS maintains a trusted root pool:
-
-```yaml
-iam:
-  auth:
-    mtls:
-      xkey_ca_roots:
-        - |
-          -----BEGIN CERTIFICATE-----
-          MIIDXTCCAkWgAwIBAgIJALgLyLahbdLAMA0GCSqGSIb3DQEBCwUAMEUxCzAJ
-          ...
-          -----END CERTIFICATE-----
-```
+A service account's client certificate is classified by the root it chains to:
+`iam.mtls.tpm_ek_roots_file` (TPM Endorsement Key roots; the token gets
+`amr: ["mtls","hwk"]` and `attest_method: "tpm"`) or `iam.mtls.xkey_roots_file`
+(xkey-issued roots; `attest_method: "xkey"`). `iam.mtls.tls_client_auth_ca_file`
+is the CA pool for `tls_client_auth` clients (RFC 8705 §2.1). TPM evidence
+itself is go-xkms's: [TPM 2.0 — Architecture](../../../go-xkms/docs/tpm2/architecture.md).
 
 ### id_token Claims
 
@@ -894,22 +787,35 @@ Key metadata:
 
 ### Configuration
 
-Enable passwordless auth in QuicBaaS config:
+The `iam:` keys (`pkg/config/config.go`, `pkg/config/iam_webauthn_config.go`):
 
 ```yaml
 iam:
-  enabled: true
-  auth:
-    webauthn:
-      enabled: true
-      rp_id: "quicbaas.example.com"
-      rp_name: "QuicBaaS"
-      rp_origins:
-        - "https://quicbaas.example.com"
-      attestation: "none"
-      user_verification: "preferred"
-      timeout: 60s
+  webauthn:
+    rp_id: "quicbaas.example.com"
+    rp_display_name: "QuicBaaS"
+    rp_origins:
+      - "https://quicbaas.example.com"
+    user_verification: "preferred"
+    attestation_preference: "none"
+    attestation_roots_file: ""
+    timeout: "60s"
+  aaguid:
+    mode: enforce                 # enforce | log_only
+    allowlist_file: /etc/quicbaas/aaguid-allowlist.json
+  piv_login:
+    enabled: false
+    ca_file: ""
+    attestation_ca_file: ""       # vendor PIV attestation root
+    allow_unattested: false
+  mtls:
+    tls_client_auth_ca_file: ""
+    tpm_ek_roots_file: ""
+    xkey_roots_file: ""
 ```
+
+The WebAuthn ceremony policy keys (`assurance`, `resident_key_requirement`,
+`authenticator_attachment`) are listed in [engineering.md](engineering.md).
 
 > **Defaults / derivation.** When `rp_id` and `rp_origins` are omitted they are
 > derived from the canonical server issuer URL (the same value used for the
@@ -923,32 +829,14 @@ iam:
 > literal and no explicit `rp_id` is set, WebAuthn initialisation fails closed
 > with a clear validation error. Explicit `rp_id` / `rp_origins` always win.
 
-```yaml
-# (continued)
-
-  # Optional: PIV smartcard
-  piv:
-    enabled: false
-
-  # Optional: TPM attestation
-  tpm:
-    enabled: false
-    ek_ca_roots: [...]
-
-  # Optional: xkey integration
-  xkey:
-    enabled: false
-    ca_roots: [...]
-```
-
 ### Troubleshooting
 
 | Issue | Cause | Solution |
 |---|---|---|
-| "Authenticator not allowed" | AAGUID is not in allowlist | Add the device AAGUID to `iam.auth.webauthn.aaguid_allowlist` or disable attestation |
+| "Authenticator not allowed" | AAGUID is not in allowlist | Add the device AAGUID to the file named by `iam.aaguid.allowlist_file` |
 | "Certificate verification failed" | mTLS client cert not enrolled | Re-register the service account with `quicbaas oauth2 client register` |
 | "Token bound to wrong credential" | `cnf.x5t#S256` mismatch | Ensure client always presents the enrolled certificate; check cert renewal |
-| "Challenge expired" | WebAuthn ceremony took >60s | Increase `iam.auth.webauthn.timeout` or prompt user to retry |
+| "Challenge expired" | WebAuthn ceremony took >60s | Increase `iam.webauthn.timeout` or prompt user to retry |
 | `auth login` returns bare `UNAUTHORIZED` at begin | Login sent no tenant scope; the per-tenant WebAuthn relying party fails closed | Pass `--tenant <id>` (defaults to `system`) |
 | `auth login` returns `UNAUTHORIZED` at finish | No fido2 factor is enrolled for the credential in the qrdb auth-factor store | Enroll with `quicbaas auth factor add --type fido2` |
 | `auth login --method mtls` returns `UNAUTHORIZED` at finish | The certificate is not enrolled as an mtls factor — it was never bound, or the binding predates the write-through | Re-run the binding (`auth.bootstrap_admin_piv_cert_path` on first boot, or the SO-cert init ceremony), or enroll explicitly with `quicbaas auth factor add --type mtls --cert <path>` |

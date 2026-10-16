@@ -57,6 +57,7 @@ type Transport struct {
 	orchestratorHandler *orchestratorHandler
 	projectHandler      *projectRESTHandler
 	sdlcHandler         *sdlcRESTHandler
+	promptHandler       *promptRESTHandler
 	accountHandler      *accountRESTHandler
 	sshHandler          *sshRESTHandler
 	certificateHandler  *certificateRESTHandler
@@ -146,6 +147,7 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 
 	// Initialize SDLC project registration handler
 	t.sdlcHandler = newSDLCRESTHandler(t)
+	t.promptHandler = newPromptRESTHandler(t)
 
 	// Initialize pooled provider account handler
 	t.accountHandler = newAccountRESTHandler(t)
@@ -286,6 +288,9 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// Route SDLC project registration through its handler.
 	if isSDLCService(service) {
 		return t.sdlcHandler.handleRequest(ctx, method, req)
+	}
+	if isPromptsService(service) {
+		return t.promptHandler.handleRequest(ctx, method, req)
 	}
 
 	// Route SSH requests through the SSH handler. The routes it targets are

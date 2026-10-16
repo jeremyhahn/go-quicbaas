@@ -364,17 +364,14 @@ worktree**, always. A blocked-on-dependency prompt is a member of this set;
 creating the branch and the worktree, and filing the cross-project issue, are
 rows 8 and 15 of the table above — deterministic work the factory should do.
 
-## The editing surface (not built yet)
+## The editing surface
 
-The six transports and the Go SDK (go-quicbaas#805), the TypeScript client and
-the GUI (#806), and the per-role charters (#807). The store is only reachable
-in-process until then:
-
-- [cli.md](cli.md#quicbaas-prompts) — `quicbaas prompts` does not exist.
-- [api.md](api.md) — there are no prompt routes, RPCs or MCP tools.
-- [user.md](user.md#tune-the-prompts) — no verb edits a record yet; changing
-  a default is editing a file and rebuilding, and the boot reconcile carries
-  it into the system set and every tenant still following it.
+Every transport serves the prompt verbs — REST, gRPC (and Unix), QUIC, MCP
+and the embedded in-process transport — through the Go SDK's `Prompts()`
+client, and `quicbaas prompts` edits them; see [api.md](api.md#prompt-sets)
+and [cli.md](cli.md#quicbaas-prompts). Still to come: the TypeScript client
+and the GUI (#806), and the per-role charters (#807). Until then no GUI screen
+edits a record.
 
 ### Verbs
 
@@ -400,7 +397,7 @@ store is `503` / `Unavailable`. `Get` is `404` when nothing is overridden at
 that scope; `Effective` always answers with its `origin` and the chain. QUIC
 serves the REST routes over HTTP/3 and Unix serves gRPC over a domain socket.
 
-### GUI
+### GUI (#806, not built yet)
 
 A standalone page under SOFTWARE FACTORY, `#/prompts?set=&project=`:
 
@@ -420,7 +417,7 @@ A standalone page under SOFTWARE FACTORY, `#/prompts?set=&project=`:
 A job's detail view lists the prompts it ran with, as `set/name · scope · vN ·
 hash`, each linking to the page.
 
-### Role charters
+### Role charters (#807, not built yet)
 
 The per-role charters of a workflow come from the `workflow` set
 (`charter_lead`, `charter_worker`, `charter_reviewer`, `charter_validator`).

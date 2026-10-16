@@ -65,6 +65,7 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.ParameterStore_ServiceDesc,
 	pb.DynamicSecretsService_ServiceDesc,
 	pb.ProjectService_ServiceDesc,
+	pb.PromptService_ServiceDesc,
 	pb.AccountService_ServiceDesc,
 	pb.SSHService_ServiceDesc,
 	pb.OllamaService_ServiceDesc,
@@ -820,6 +821,17 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// PUT/DELETE /api/v1/projects/{id}/permissions/{node_id}.
 	"/quicbaas.project.v1.ProjectService/GrantFleetNodeRole":  {"project", "grant"},
 	"/quicbaas.project.v1.ProjectService/RevokeFleetNodeRole": {"project", "revoke"},
+
+	// ---- quicbaas.prompt.v1.PromptService ----
+	// Mirrors the REST rules for /api/v1/prompts/{set}[/{name}].
+	"/quicbaas.prompt.v1.PromptService/ListPrompts":        {"prompts", "read"},
+	"/quicbaas.prompt.v1.PromptService/GetPrompt":          {"prompts", "read"},
+	"/quicbaas.prompt.v1.PromptService/GetEffectivePrompt": {"prompts", "read"},
+	"/quicbaas.prompt.v1.PromptService/DiffPrompt":         {"prompts", "read"},
+	"/quicbaas.prompt.v1.PromptService/GetPromptHistory":   {"prompts", "history"},
+	"/quicbaas.prompt.v1.PromptService/PutPrompt":          {"prompts", "write"},
+	"/quicbaas.prompt.v1.PromptService/RollbackPrompt":     {"prompts", "write"},
+	"/quicbaas.prompt.v1.PromptService/ResetPrompt":        {"prompts", "write"},
 
 	// ---- quicbaas.account.v1.AccountService ----
 	// Pooled provider accounts custody credential material (an Anthropic /

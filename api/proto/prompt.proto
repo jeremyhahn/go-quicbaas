@@ -1,0 +1,185 @@
+// QuicBaaS Prompt Set Protocol Buffer Definitions v1
+//
+// A prompt set is a registered family of named prompts (an orchestration
+// charter, a reviewer's instructions) that a tenant may override at the
+// tenant or project scope. The system scope holds the embedded defaults and
+// is read-only. See docs/design/prompt-sets.md.
+//
+// Copyright (c) 2026 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.prompt.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
+// =============================================================================
+// PromptService — the eight verbs over a tenant's prompt sets
+// =============================================================================
+
+service PromptService {
+    rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse) {
+        option (qrdb.v1.permission) = "prompts:read";
+    }
+    rpc GetPrompt(GetPromptRequest) returns (PromptRecord) {
+        option (qrdb.v1.permission) = "prompts:read";
+    }
+    rpc GetEffectivePrompt(PromptAddress) returns (EffectivePrompt) {
+        option (qrdb.v1.permission) = "prompts:read";
+    }
+    rpc DiffPrompt(PromptAddress) returns (PromptDiff) {
+        option (qrdb.v1.permission) = "prompts:read";
+    }
+    rpc GetPromptHistory(PromptAddress) returns (PromptHistory) {
+        option (qrdb.v1.permission) = "prompts:history";
+    }
+    rpc PutPrompt(PutPromptRequest) returns (PromptRecord) {
+        option (qrdb.v1.permission) = "prompts:write";
+    }
+    rpc RollbackPrompt(RollbackPromptRequest) returns (PromptRecord) {
+        option (qrdb.v1.permission) = "prompts:write";
+    }
+    rpc ResetPrompt(ResetPromptRequest) returns (PromptRecord) {
+        option (qrdb.v1.permission) = "prompts:write";
+    }
+}
+
+// PromptAddress names one prompt at one scope. tenant_id may be empty, in
+// which case the caller's own tenant is used; naming another is refused.
+// scope is tenant, project or system; project_id is set for project.
+message PromptAddress {
+    string tenant_id  = 1;
+    string scope      = 2;
+    string project_id = 3;
+    string set        = 4;
+    string name       = 5;
+}
+
+message ListPromptsRequest {
+    string tenant_id  = 1;
+    string scope      = 2;
+    string project_id = 3;
+    string set        = 4;
+}
+
+message GetPromptRequest {
+    PromptAddress address = 1;
+    // version selects one revision; 0 is the current record.
+    int64 version = 2;
+}
+
+message PutPromptRequest {
+    PromptAddress address          = 1;
+    string        content          = 2;
+    string        note             = 3;
+    int64         expected_version = 4;
+}
+
+message RollbackPromptRequest {
+    PromptAddress address          = 1;
+    int64         to_version       = 2;
+    string        note             = 3;
+    int64         expected_version = 4;
+}
+
+message ResetPromptRequest {
+    PromptAddress address          = 1;
+    string        note             = 2;
+    int64         expected_version = 3;
+}
+
+// PromptRecord is the record stored at one scope.
+message PromptRecord {
+    string tenant_id       = 1;
+    string project_id      = 2;
+    string scope           = 3;
+    string set             = 4;
+    string name            = 5;
+    int64  version         = 6;
+    string content_hash    = 7;
+    string content         = 8;
+    bool   follow_parent   = 9;
+    int64  updated_at_unix = 10;
+}
+
+// PromptVersionRef identifies the body a layer answered with.
+message PromptVersionRef {
+    string set      = 1;
+    string name     = 2;
+    string scope    = 3;
+    string scope_id = 4;
+    // version is 0 for the embedded body.
+    int64  version  = 5;
+    string hash     = 6;
+}
+
+message PromptListEntry {
+    string           name          = 1;
+    string           description   = 2;
+    bool             overridden    = 3;
+    int64            version       = 4;
+    bool             follow_parent = 5;
+    PromptVersionRef effective     = 6;
+}
+
+message ListPromptsResponse {
+    string                   set     = 1;
+    string                   scope   = 2;
+    repeated PromptListEntry prompts = 3;
+}
+
+// PromptLayer is one scope of the resolution chain.
+message PromptLayer {
+    string scope         = 1;
+    string scope_id      = 2;
+    bool   present       = 3;
+    int64  version       = 4;
+    string hash          = 5;
+    bool   follow_parent = 6;
+    // answered marks the layer the effective body came from.
+    bool   answered      = 7;
+}
+
+message EffectivePrompt {
+    string               set     = 1;
+    string               name    = 2;
+    string               scope   = 3;
+    string               content = 4;
+    PromptVersionRef     origin  = 5;
+    repeated PromptLayer chain   = 6;
+}
+
+// PromptDiffLine is one line of a diff; op is equal, delete or insert.
+message PromptDiffLine {
+    string op   = 1;
+    string text = 2;
+}
+
+message PromptDiff {
+    string                  set           = 1;
+    string                  name          = 2;
+    string                  scope         = 3;
+    PromptVersionRef        origin        = 4;
+    PromptVersionRef        parent_origin = 5;
+    bool                    same          = 6;
+    repeated PromptDiffLine lines         = 7;
+}
+
+message PromptRevisionSummary {
+    int64  version         = 1;
+    string content_hash    = 2;
+    string author          = 3;
+    string note            = 4;
+    bool   follow_parent   = 5;
+    int64  created_at_unix = 6;
+}
+
+message PromptHistory {
+    string                         set       = 1;
+    string                         name      = 2;
+    string                         scope     = 3;
+    repeated PromptRevisionSummary revisions = 4;
+}

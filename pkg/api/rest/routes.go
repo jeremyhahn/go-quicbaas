@@ -543,6 +543,16 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "PUT", Pattern: "/api/v1/projects/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleUpdateProject }},
 		{Method: "DELETE", Pattern: "/api/v1/projects/{id}/permissions/{node_id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRevokeFleetNodeRole }},
 		{Method: "PUT", Pattern: "/api/v1/projects/{id}/permissions/{node_id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGrantFleetNodeRole }},
+		// The prompt store's eight verbs (handlers_prompt.go), addressed by
+		// the tenant_id, scope and project_id query parameters.
+		{Method: "GET", Pattern: "/api/v1/prompts/{set}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListPrompts }},
+		{Method: "DELETE", Pattern: "/api/v1/prompts/{set}/{name}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleResetPrompt }},
+		{Method: "GET", Pattern: "/api/v1/prompts/{set}/{name}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetPrompt }},
+		{Method: "PUT", Pattern: "/api/v1/prompts/{set}/{name}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandlePutPrompt }},
+		{Method: "GET", Pattern: "/api/v1/prompts/{set}/{name}/diff", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleDiffPrompt }},
+		{Method: "GET", Pattern: "/api/v1/prompts/{set}/{name}/effective", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetEffectivePrompt }},
+		{Method: "GET", Pattern: "/api/v1/prompts/{set}/{name}/history", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetPromptHistory }},
+		{Method: "POST", Pattern: "/api/v1/prompts/{set}/{name}/rollback", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRollbackPrompt }},
 		{Method: "POST", Pattern: "/api/v1/query/range", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRangeQuery }},
 		{Method: "GET", Pattern: "/api/v1/query/{type}/{index}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleQuery }},
 		{Method: "POST", Pattern: "/api/v1/registry/instances", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRegistryRegister }},

@@ -228,6 +228,7 @@ func init() {
 
 	// Add the SDLC module command group (forge bindings)
 	rootCmd.AddCommand(newSDLCCommand())
+	rootCmd.AddCommand(newPromptsCommand())
 	rootCmd.AddCommand(newAgentsCommand())
 
 	// Add MCP command group (stdio bridge, tool discovery, tool invocation)

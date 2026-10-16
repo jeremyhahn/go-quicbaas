@@ -34,6 +34,7 @@ DELETE /api/v1/orchestrator/workflows/{name}
 DELETE /api/v1/parameters/*
 DELETE /api/v1/projects/{id}
 DELETE /api/v1/projects/{id}/permissions/{node_id}
+DELETE /api/v1/prompts/{set}/{name}
 DELETE /api/v1/registry/leases/{lease_id}
 DELETE /api/v1/scheduler/jobs/{id}
 DELETE /api/v1/sdlc/projects/{projectID}/binding
@@ -197,6 +198,11 @@ GET /api/v1/parameters/*
 GET /api/v1/projects/
 GET /api/v1/projects/by-name/{name}
 GET /api/v1/projects/{id}
+GET /api/v1/prompts/{set}
+GET /api/v1/prompts/{set}/{name}
+GET /api/v1/prompts/{set}/{name}/diff
+GET /api/v1/prompts/{set}/{name}/effective
+GET /api/v1/prompts/{set}/{name}/history
 GET /api/v1/query/{type}/{index}
 GET /api/v1/registry/services/{service}
 GET /api/v1/registry/services/{service}/watch
@@ -479,6 +485,7 @@ POST /api/v1/parameters/batch/get
 POST /api/v1/parameters/batch/set
 POST /api/v1/parameters/search
 POST /api/v1/projects/
+POST /api/v1/prompts/{set}/{name}/rollback
 POST /api/v1/query/range
 POST /api/v1/registry/instances
 POST /api/v1/registry/leases/{lease_id}/renew
@@ -651,6 +658,7 @@ PUT /api/v1/orchestrator/workflows/{name}
 PUT /api/v1/parameters/*
 PUT /api/v1/projects/{id}
 PUT /api/v1/projects/{id}/permissions/{node_id}
+PUT /api/v1/prompts/{set}/{name}
 PUT /api/v1/scheduler/jobs/{id}
 PUT /api/v1/sdlc/projects/{projectID}/binding
 PUT /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer

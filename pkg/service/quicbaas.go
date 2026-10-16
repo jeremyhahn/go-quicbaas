@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -190,6 +191,7 @@ type quicBaaS struct {
 	fleetAdminService         FleetAdminService
 	agentService              orchestration.AgentService
 	sdlcService               *SDLCService
+	promptService             atomic.Pointer[PromptService]
 	messagingService          messaging.Service
 	databaseService           DatabaseService
 	schedulerEngine           interfaces.SchedulerEngine
@@ -4955,6 +4957,17 @@ func (s *quicBaaS) SDLC() *SDLCService {
 // SetSDLCService attaches the SDLC module's service.
 func (s *quicBaaS) SetSDLCService(svc *SDLCService) {
 	s.sdlcService = svc
+}
+
+// Prompts returns the prompt service (nil when the prompt store is not
+// mounted on this node).
+func (s *quicBaaS) Prompts() *PromptService {
+	return s.promptService.Load()
+}
+
+// SetPromptService attaches the prompt service.
+func (s *quicBaaS) SetPromptService(svc *PromptService) {
+	s.promptService.Store(svc)
 }
 
 // SetProjectBindingReader wires the SDLC binding store project deletes are

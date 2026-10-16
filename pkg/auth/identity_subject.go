@@ -14,12 +14,14 @@
 package auth
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // A verified qrdbsdk.Identity names its caller in Subject, and that string is
@@ -98,6 +100,23 @@ func SubjectFromIdentity(identity *qrdbsdk.Identity) interfaces.Subject {
 		}
 	}
 	return subject
+}
+
+// ContextWithIdentitySubject projects the verified qrdb identity the unified
+// server bound to ctx onto the quicbaas principal contract: the Subject
+// SubjectFromIdentity builds, and the identity's tenant. A context without a
+// qrdb identity is returned unchanged, so a service that needs a principal
+// still refuses it.
+func ContextWithIdentitySubject(ctx context.Context) context.Context {
+	identity := qrdbsdk.IdentityFromContext(ctx)
+	if identity == nil {
+		return ctx
+	}
+	ctx = SubjectIntoContext(ctx, SubjectFromIdentity(identity))
+	if identity.TenantID != "" {
+		ctx = tenantctx.WithTenant(ctx, identity.TenantID)
+	}
+	return ctx
 }
 
 // IsSystemSubject reports whether an authenticated subject acts as the system

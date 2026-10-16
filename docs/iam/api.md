@@ -698,16 +698,32 @@ POST /api/v1/tenants/{tenant_id}/apps/{client_id}/rotate-secret
 
 ## Policy API
 
-**List Policies**
-```
-GET /api/v1/tenants/{tenant_id}/policies
-```
+Decisions are go-qrdb's: QuicBaaS stores the tenant's policy documents and
+reloads them into the embedded node's ABAC authorizer on every write. See
+[ABAC Authorization Decorator](../../../go-qrdb/docs/auth/abac.md) for the
+evaluation semantics, and
+[Authorization (ABAC) and the PEP](architecture.md#authorization-abac-and-the-pep)
+for the QuicBaaS-owned policy store that is still in place.
 
-**Create Policy**
-```
-POST /api/v1/tenants/{tenant_id}/policies
-Content-Type: application/yaml
+| Method | Path (`/api/v1/tenants/{tenant_id}` +) | Permission (`resource:action`) |
+|--------|----------------------------------------|--------------------------------|
+| GET | `/policies/` | `tenants:read` |
+| POST | `/policies/` | `tenants:create` |
+| GET | `/policies/{policy_name}` | `tenants:read` |
+| PUT | `/policies/{policy_name}` | `tenants:create` |
+| DELETE | `/policies/{policy_name}` | `tenants:delete` |
+| POST | `/policies/validate` | `tenants:create` |
+| POST | `/policies/test` | `tenants:create` |
+| POST | `/policies/simulate` | `tenants:create` |
+| POST | `/policies/effective-permissions` | `tenants:create` |
 
+Over gRPC, the same operations are `IAMService` `CreatePolicy`, `GetPolicy`,
+`UpdatePolicy`, `DeletePolicy`, `ListPolicies`, `ValidatePolicy` and
+`TestPolicy` (`api/proto/iam/iam.proto`).
+
+A policy document (`pkg/iam/types.go` `Policy`):
+
+```yaml
 apiVersion: abac.quicbaas.io/v1
 kind: Policy
 metadata:
@@ -724,172 +740,35 @@ spec:
         authenticated: true
 ```
 
-**Get Policy**
-```
-GET /api/v1/tenants/{tenant_id}/policies/{policy_name}
-```
-
-**Update Policy**
-```
-PUT /api/v1/tenants/{tenant_id}/policies/{policy_name}
-```
-
-**Delete Policy**
-```
-DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name}
-```
-
-**Validate Policy (Dry Run)**
-```
-POST /api/v1/tenants/{tenant_id}/policies/validate
-Content-Type: application/yaml
-```
-
-**Test Policy Decision**
-```
-POST /api/v1/tenants/{tenant_id}/policies/test
-Content-Type: application/json
-
-{
-  "subject": {
-    "id": "user_abc123",
-    "roles": ["developer"],
-    "groups": ["engineering"]
-  },
-  "action": "read",
-  "resource": "orders://orders/123"
-}
-```
-
-Response:
-```json
-{
-  "allowed": true,
-  "matched_policy": "order-access",
-  "matched_rule": "read-own",
-  "evaluation_time_us": 3
-}
-```
+`/policies/test` returns `allowed`, `matched_policy`, `matched_rule` and
+`evaluation_time_ns`.
 
 ---
 
 ## WebAuthn API
 
-WebAuthn provides passwordless authentication using hardware security keys and platform authenticators. For detailed integration guides and frontend examples, see the [WebAuthn Guide](engineering.md).
+The ceremonies, their request and response bodies
+(`PublicKeyCredentialCreationOptions`, the raw `navigator.credentials.*`
+JSON) and their verification are go-xkms's:
+[WebAuthn Relying Party — API](../../../go-xkms/docs/webauthn/api.md). QuicBaaS
+mounts the go-xkms relying party per tenant at
+`/api/v1/iam/{tenant_id}/webauthn/*` (`pkg/api/rest/iam_xkms_webauthn_mount.go`):
 
-The ceremony is served by the canonical xkms-native mount at
-`/api/v1/iam/{tenant_id}/webauthn/*`. The legacy
-`/api/v1/tenants/{tenant_id}/webauthn/*` surface (including its
-per-user credential CRUD endpoints) was deleted. The opaque ceremony
-session id travels in the `X-Session-Id` header: it is returned by
-the begin verbs and must be echoed on the finish verbs.
+| Route | Permission |
+|---|---|
+| `POST /api/v1/iam/{tenant_id}/webauthn/registration/begin` | `user_authfactors:add` |
+| `POST /api/v1/iam/{tenant_id}/webauthn/registration/finish` | `user_authfactors:add` |
+| `GET /api/v1/iam/{tenant_id}/webauthn/registration/status?user_id=<id>` | `user_authfactors:get` |
+| `POST /api/v1/iam/{tenant_id}/webauthn/login/begin` | public (the ceremony is the authentication) |
+| `POST /api/v1/iam/{tenant_id}/webauthn/login/finish` | public |
 
-### Begin Registration
+The ceremony session id travels in the `X-Session-Id` header: the begin verbs
+return it and the finish verbs echo it. The tenant in the path selects the
+relying party (RP id and origins); there is no default-tenant fallback.
 
-Initiates WebAuthn credential registration for an authenticated user.
-Authorization-gated (`user_authfactors:add`).
-
-```
-POST /api/v1/iam/{tenant_id}/webauthn/registration/begin
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "email": "alice@example.com",
-  "display_name": "Alice Smith"
-}
-```
-
-Response: `X-Session-Id` header plus the JSON-marshaled
-`PublicKeyCredentialCreationOptions` (`{"publicKey": {...}}`).
-
-### Complete Registration
-
-Completes registration. The request body is the raw
-`navigator.credentials.create()` PublicKeyCredential JSON.
-
-```
-POST /api/v1/iam/{tenant_id}/webauthn/registration/finish
-Authorization: Bearer <token>
-X-Session-Id: <session>
-Content-Type: application/json
-
-{
-  "id": "credential-id-base64url",
-  "rawId": "credential-id-base64url",
-  "type": "public-key",
-  "response": {
-    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIi...",
-    "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhh..."
-  }
-}
-```
-
-Response:
-```json
-{
-  "token": "<post-registration token>",
-  "user_id": "dXNlcl9hYmMxMjM"
-}
-```
-
-Registration write-through enrolls the credential as a qrdb
-`fido2` user auth factor, so login can resolve it and the factor
-appears under `GET /v1/users/factors/list`.
-
-### Registration Status
-
-```
-GET /api/v1/iam/{tenant_id}/webauthn/registration/status?user_id=<user-id>
-Authorization: Bearer <token>
-```
-
-### Begin Authentication
-
-Initiates WebAuthn authentication for a user by email. Public — the
-ceremony IS the authentication mechanism.
-
-```
-POST /api/v1/iam/{tenant_id}/webauthn/login/begin
-Content-Type: application/json
-
-{
-  "email": "alice@example.com"
-}
-```
-
-Response: `X-Session-Id` header plus the JSON-marshaled
-`PublicKeyCredentialRequestOptions` (`{"publicKey": {...}}`).
-
-### Complete Authentication
-
-Completes authentication. The request body is the raw
-`navigator.credentials.get()` PublicKeyCredential JSON.
-
-```
-POST /api/v1/iam/{tenant_id}/webauthn/login/finish
-X-Session-Id: <session>
-Content-Type: application/json
-
-{
-  "id": "credential-id-base64url",
-  "rawId": "credential-id-base64url",
-  "type": "public-key",
-  "response": {
-    "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0Ii...",
-    "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4...",
-    "signature": "MEUCIQCYrNzWB..."
-  }
-}
-```
-
-Response:
-```json
-{
-  "token": "<post-login token>",
-  "user_id": "dXNlcl9hYmMxMjM"
-}
-```
+Registration write-through enrolls the credential as a go-qrdb `fido2` user
+auth factor, so login can resolve it and it appears under
+`GET /v1/users/factors/list`.
 
 The mount's login token is not an OIDC bearer. Clients that need the
 OIDC access/refresh pair (SPA, TypeScript SDK, CLI) authenticate
@@ -904,6 +783,16 @@ Enrolled passkeys are qrdb user auth factors. List, remove, rotate,
 and relabel them via the auth-factor surface
 (`/v1/users/factors/*` REST wire, `Security().Auth().Factors()` SDK,
 `quicbaas auth factor` CLI).
+
+The credentials the WebAuthn store holds for a user are listed and deleted
+per user (`pkg/api/rest/routes_iam.go`; also over gRPC, MCP and Unix), under
+`/api/v1/tenants/{tenant_id}/users/{user_id}/webauthn/credentials`:
+
+| Route | Permission |
+|---|---|
+| `GET …/webauthn/credentials/` | `users:read` |
+| `DELETE …/webauthn/credentials/` | `users:delete` |
+| `DELETE …/webauthn/credentials/{credential_id}` | `users:delete` |
 
 ---
 
@@ -1082,113 +971,23 @@ enrollment stores the algorithm it was provisioned with, so changing the
 default never invalidates an existing enrollment. See
 [Security Hardening: TOTP in FIPS Mode](../security-hardening/engineering.md#totp-in-fips-mode).
 
-### Get MFA Status
+TOTP MFA is QuicBaaS's own (`pkg/iam/mfa.go`); go-xkms and go-qrdb document
+no TOTP factor. The routes are per user under
+`/api/v1/tenants/{tenant_id}/users/{user_id}` (`pkg/api/rest/routes_iam.go`):
 
-```
-GET /api/v1/iam/mfa/status
-Authorization: Bearer <access_token>
-```
+| Route | Handler | Body → response | Permission |
+|---|---|---|---|
+| `GET …/mfa/` | `GetMFAStatus` | → `MFAStatus` | `tenants:read` |
+| `DELETE …/mfa/` | `DisableMFA` | — | `tenants:delete` |
+| `POST …/mfa/enroll` | `BeginMFAEnrollment` | `MFAEnrollRequest` → `MFAEnrollResponse` (`enrollment_id`, `qr_code_uri`, `secret`, `expires_at`) | `tenants:create` |
+| `POST …/mfa/verify` | `CompleteMFAEnrollment` | `MFAVerifyRequest` (`code`, `enrollment_id`) → `MFAVerifyResponse` | `tenants:create` |
+| `DELETE …/mfa/enroll/{enrollment_id}` | `CancelMFAEnrollment` | — | `tenants:delete` |
+| `POST …/mfa/challenge` | `BeginMFAChallenge` | → `MFAChallenge` | `tenants:create` |
+| `POST …/mfa/verify-challenge` | `VerifyMFAChallenge` | `MFAVerifyRequest` (`code`, `challenge_id`, `use_backup_code`) → `MFAVerifyResponse` | `tenants:create` |
+| `GET …/mfa/backup-codes` | `GetBackupCodeStatus` | → `BackupCodeStatus` (`total`, `remaining`, `used`, `generated_at`) | `tenants:read` |
+| `POST …/mfa/backup-codes` | `GenerateBackupCodes` | → the new codes, shown once | `tenants:create` |
 
-Response:
-```json
-{
-  "enabled": true,
-  "method": "totp",
-  "enrolled_at": "2025-01-10T08:00:00Z",
-  "last_verified": "2025-01-15T10:30:00Z",
-  "backup_codes_remaining": 8
-}
-```
-
-### Begin MFA Enrollment
-
-```
-POST /api/v1/iam/mfa/enroll
-Authorization: Bearer <access_token>
-Content-Type: application/json
-
-{
-  "method": "totp"
-}
-```
-
-Response:
-```json
-{
-  "enrollment_id": "enroll_abc123",
-  "secret": "JBSWY3DPEHPK3PXP",
-  "provisioning_uri": "otpauth://totp/QuicBaaS:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=QuicBaaS",
-  "expires_at": "2025-01-15T10:40:00Z"
-}
-```
-
-### Complete MFA Enrollment
-
-```
-POST /api/v1/iam/mfa/enroll/verify
-Authorization: Bearer <access_token>
-Content-Type: application/json
-
-{
-  "enrollment_id": "enroll_abc123",
-  "code": "123456"
-}
-```
-
-### Disable MFA
-
-```
-DELETE /api/v1/iam/mfa
-Authorization: Bearer <access_token>
-```
-
-### Verify MFA Code
-
-```
-POST /api/v1/iam/mfa/verify
-Authorization: Bearer <access_token>
-Content-Type: application/json
-
-{
-  "code": "123456"
-}
-```
-
-### Generate Backup Codes
-
-```
-POST /api/v1/iam/mfa/backup-codes
-Authorization: Bearer <access_token>
-```
-
-Response:
-```json
-{
-  "codes": [
-    "AAAA-BBBB-CCCC",
-    "DDDD-EEEE-FFFF",
-    "GGGG-HHHH-IIII",
-    "..."
-  ],
-  "warning": "Store these codes securely. They will not be shown again."
-}
-```
-
-### Get Backup Code Status
-
-```
-GET /api/v1/iam/mfa/backup-codes/status
-Authorization: Bearer <access_token>
-```
-
-Response:
-```json
-{
-  "total_codes": 10,
-  "remaining_codes": 8,
-  "generated_at": "2025-01-10T08:00:00Z"
-}
-```
+The types are in `pkg/iam/mfa_types.go`.
 
 ---
 
@@ -1196,119 +995,34 @@ Response:
 
 ### Service Definition
 
+`PEPService` (`api/proto/iam/iam.proto`, served by
+`pkg/api/grpc/server_pep.go`). `Check` and `CheckBatch` forward to go-qrdb's
+authorizer (`node.RBAC().Authorize`). `Subscribe` streams policy documents
+from the QuicBaaS policy store. This is a departure; see
+[Authorization (ABAC) and the PEP](architecture.md#authorization-abac-and-the-pep).
+
 ```protobuf
-service PolicyEnforcementPoint {
-  // Single authorization check
+service PEPService {
   rpc Check(CheckRequest) returns (CheckResponse);
-
-  // Batch authorization check
   rpc CheckBatch(CheckBatchRequest) returns (CheckBatchResponse);
-
-  // Subscribe to policy updates
   rpc Subscribe(SubscribeRequest) returns (stream PolicyUpdate);
 }
-
-message CheckRequest {
-  Subject subject = 1;
-  string action = 2;
-  string resource = 3;
-  map<string, string> context = 4;
-}
-
-message CheckResponse {
-  bool allowed = 1;
-  string matched_policy = 2;
-  string matched_rule = 3;
-  int64 evaluation_time_ns = 4;
-}
-
-message SubscribeRequest {
-  string service_id = 1;
-  repeated string resource_patterns = 2;
-}
-
-message PolicyUpdate {
-  enum Type {
-    SNAPSHOT = 0;
-    CREATED = 1;
-    UPDATED = 2;
-    DELETED = 3;
-  }
-  Type type = 1;
-  bytes policy_data = 2;
-  string policy_id = 3;
-  int64 version = 4;
-}
 ```
+
+`CheckBatchRequest` carries one subject and action with a list of
+`resources`. `CheckBatchResponse` returns a parallel `results` list of bools.
+`PolicyUpdate.type` is one of `SNAPSHOT`, `CREATED`, `UPDATED` or `DELETED`.
 
 ### PEP REST API
 
-**Single Authorization Check**
-```
-POST /api/v1/iam/pep/check
-Authorization: Bearer <access_token>
-Content-Type: application/json
+| Method | Path | Permission |
+|--------|------|------------|
+| POST | `/api/v1/iam/check` | `permissions:resolve` |
+| POST | `/api/v1/iam/check/batch` | `permissions:resolve` |
+| POST | `/api/v1/iam/batch-check` | `permissions:resolve` (alias of `check/batch`) |
 
-{
-  "subject": {
-    "id": "user_abc123",
-    "tenant_id": "acme-corp",
-    "roles": ["developer"],
-    "groups": ["engineering"],
-    "attributes": {
-      "department": "engineering"
-    }
-  },
-  "action": "read",
-  "resource": "orders://orders/12345",
-  "context": {
-    "ip_address": "203.0.113.100",
-    "time": "2025-01-15T10:30:00Z"
-  }
-}
-```
-
-Response:
-```json
-{
-  "allowed": true,
-  "matched_policy": "order-access",
-  "matched_rule": "read-own",
-  "evaluation_time_ns": 2500
-}
-```
-
-**Batch Authorization Check**
-```
-POST /api/v1/iam/pep/check-batch
-Authorization: Bearer <access_token>
-Content-Type: application/json
-
-{
-  "subject": {
-    "id": "user_abc123",
-    "tenant_id": "acme-corp",
-    "roles": ["developer"]
-  },
-  "checks": [
-    {"action": "read", "resource": "orders://orders/123"},
-    {"action": "write", "resource": "orders://orders/123"},
-    {"action": "delete", "resource": "orders://orders/123"}
-  ]
-}
-```
-
-Response:
-```json
-{
-  "results": [
-    {"allowed": true, "matched_policy": "order-access", "matched_rule": "read-own"},
-    {"allowed": true, "matched_policy": "order-access", "matched_rule": "write-own"},
-    {"allowed": false, "matched_policy": "", "matched_rule": ""}
-  ],
-  "total_evaluation_time_ns": 7500
-}
-```
+A request body is `{"subject": {...}, "action": "...", "resource": "..."}`,
+and a batch request carries a list of `checks`.
 
 ---
 
@@ -1349,14 +1063,8 @@ All errors follow this format:
 
 ### WebAuthn Errors
 
-| Error | HTTP Status | Description |
-|-------|-------------|-------------|
-| `challenge_expired` | 400 | Challenge TTL exceeded |
-| `challenge_not_found` | 400 | Challenge not found or already used |
-| `credential_not_found` | 404 | Credential does not exist |
-| `credential_invalid` | 400 | Credential validation failed |
-| `registration_failed` | 400 | Registration verification failed |
-| `authentication_failed` | 401 | Authentication verification failed |
+The mount returns go-xkms's WebAuthn errors unchanged; see
+[go-xkms WebAuthn API: status and error mapping](../../../go-xkms/docs/webauthn/api.md#status-and-error-mapping).
 
 ---
 

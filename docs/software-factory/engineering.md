@@ -86,7 +86,35 @@ only by the boot reconcile.
 
 Byte equality is the acceptance test: `testdata/prompts/*.golden` in both
 packages were written by the previous builders and every assembler still
-reproduces them exactly. The transports and SDK (go-quicbaas#805), the GUI
-(#806) and the per-role charters (#807) are not built. Full description —
+reproduces them exactly.
+
+**The service.** `service.PromptService` (`pkg/service/prompt_service.go`),
+reached through `QuicBaaS.Prompts()` and nil when no store is mounted, is
+the only path from a transport to the store. Its eight verbs — `List`,
+`Get`, `Effective`, `Diff`, `History`, `Put`, `Rollback`, `Reset` — take a
+`PromptAddress` (tenant, scope, project, set, name). `Put` takes the body,
+a required note and `ExpectedVersion`; `Rollback` and `Reset` take the
+version they expect. `system` scope is read-only. Every refusal is
+classified by `ClassifyPromptError` into `PromptFaultInvalid`, `NotFound`,
+`Conflict` or `Unavailable`, and each transport maps that class through one
+table: REST `promptFaultStatus` (`pkg/api/rest/handlers_prompt.go`), gRPC
+`promptFaultCode` (`pkg/api/grpc/server_prompt.go`), MCP `promptClasses`
+(`pkg/api/mcp/prompt_tools.go`). Each transport binds the call to the
+caller's tenant with `tenantctx.Target`. `ErrPromptsUnavailable` is the
+unmounted refusal.
+
+**The SDK and CLI.** `quicbaas.Prompts` (`sdk/go/client/prompt`), reached
+through `Client.Prompts()`, carries the same eight verbs under the service
+name `quicbaas.Prompts`. It refuses an empty set or name as InvalidInput
+before any traffic, and a transport that does not declare
+`prompt.PromptsCapableTransport` with `PromptTransportUnsupportedError`. Every
+transport declares it: REST, gRPC, MCP and embedded carry their own handlers
+(`sdk/go/transport/*/prompt_handler.go`, `embedded/handlers_prompt.go`);
+QUIC inherits REST's over HTTP/3 and Unix delegates to gRPC.
+`sdk/go/prompt_transport_matrix_test.go` pins all six. The embedded
+transport codes errors with `ClassifyPromptError` too, and an unclassified
+one is Internal. `quicbaas prompts` (`cmd/quicbaas/prompts.go`) is the CLI
+over that client. The GUI (#806) and the per-role charters (#807) are not
+built. Full description —
 scopes, `follow_parent`, seeding, reconcile, and the catalogue of
 instructions that ought to become code: [prompt-sets.md](prompt-sets.md).

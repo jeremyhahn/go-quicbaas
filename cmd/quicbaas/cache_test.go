@@ -2634,6 +2634,7 @@ func (m *mockSDKClientForClusterCovPlusTest) Close() error {
 
 func (m *mockSDKClientForClusterCovPlusTest) Project() quicbaas.ProjectClient { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) SDLC() quicbaas.SDLCClient       { return nil }
+func (m *mockSDKClientForClusterCovPlusTest) Prompts() quicbaas.PromptsClient { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) Agents() quicbaas.AgentsClient   { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) Account() quicbaas.AccountClient { return nil }
 

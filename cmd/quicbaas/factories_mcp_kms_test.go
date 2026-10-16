@@ -543,6 +543,7 @@ func (m *mockSDKClientForMCP) Share() (quicbaas.QRDBShareClient, error)  { retur
 func (m *mockSDKClientForMCP) Orchestrator() quicbaas.OrchestratorClient { return nil }
 func (m *mockSDKClientForMCP) Project() quicbaas.ProjectClient           { return nil }
 func (m *mockSDKClientForMCP) SDLC() quicbaas.SDLCClient                 { return nil }
+func (m *mockSDKClientForMCP) Prompts() quicbaas.PromptsClient           { return nil }
 func (m *mockSDKClientForMCP) Agents() quicbaas.AgentsClient             { return nil }
 func (m *mockSDKClientForMCP) Account() quicbaas.AccountClient           { return nil }
 

@@ -521,12 +521,12 @@ quicbaas kms describe-key --name user-data-key
 
 ### Implementation
 - **Security Package** - `pkg/security/`
-- **KMS** - `pkg/kms/`
+- **KMS** - `pkg/kms/` (being removed; key management is go-xkms's, see [SPEC](../SPEC.md) row `kms`)
 - **TLS Configuration** - `pkg/config/tls.go`
 - **Audit Logging** - `pkg/audit/`
 
 ### Documentation
-- **KMS Design** - `../features/KMS.md`
+- **KMS Design** - [Key Management — Architecture](../../../go-xkms/docs/key-management/architecture.md) (go-xkms); QuicBaaS's surface: [../kms/architecture.md](../kms/architecture.md)
 - **Secrets Management** - `../features/SECRETS.md`
 - **Security Features** - `../features/SECURITY_FEATURES.md`
 

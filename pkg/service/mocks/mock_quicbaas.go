@@ -33,8 +33,9 @@ import (
 // All methods delegate to configurable function fields, enabling flexible test scenarios.
 // If a function field is nil, the method returns default empty values.
 type MockQuicBaaS struct {
-	sdlcService  *service.SDLCService
-	loginService service.LoginServicer
+	sdlcService   *service.SDLCService
+	promptService *service.PromptService
+	loginService  service.LoginServicer
 	// KV Service function fields
 	PutFunc             func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	GetFunc             func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
@@ -965,6 +966,16 @@ func (m *MockQuicBaaS) SDLC() *service.SDLCService {
 // SetSDLCService records the SDLC service.
 func (m *MockQuicBaaS) SetSDLCService(svc *service.SDLCService) {
 	m.sdlcService = svc
+}
+
+// Prompts returns the prompt service the mock was given.
+func (m *MockQuicBaaS) Prompts() *service.PromptService {
+	return m.promptService
+}
+
+// SetPromptService records the prompt service.
+func (m *MockQuicBaaS) SetPromptService(svc *service.PromptService) {
+	m.promptService = svc
 }
 
 // SetProjectBindingReader is a no-op: a test that needs a delete checked

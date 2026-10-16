@@ -293,6 +293,11 @@ quicbaas iam app rotate-secret <client-id>
 
 ## Policy Management (ABAC)
 
+These commands manage the tenant's policy documents. Decisions are made by
+go-qrdb's ABAC authorizer
+([ABAC Authorization Decorator](../../../go-qrdb/docs/auth/abac.md)); see
+[Authorization (ABAC) and the PEP](architecture.md#authorization-abac-and-the-pep).
+
 ### policy apply
 
 Apply an ABAC policy from a YAML file.
@@ -363,7 +368,24 @@ quicbaas iam policy test --tenant <tenant-id> \
   --resource "keys/foo"
 ```
 
+### pep check and pep check-batch
+
+Ask the PEP for a decision (`POST /api/v1/iam/check` and `/check/batch`).
+
+```bash
+quicbaas iam pep check --tenant <tenant-id> \
+  --subject '{"id":"user1","roles":["admin"]}' \
+  --action read --resource "keys/foo" [--context '<json>']
+
+quicbaas iam pep check-batch --tenant <tenant-id> -f requests.json
+```
+
+`requests.json` holds `{"requests": [{"subject": {...}, "action": "...", "resource": "..."}]}`.
+
 ## MFA Management
+
+TOTP MFA is QuicBaaS's own; the routes are in [API: MFA API](api.md#mfa-api).
+`--user` is required on every `mfa` verb, and `mfa verify` requires `--code`.
 
 ### mfa status
 
@@ -468,329 +490,148 @@ quicbaas iam session revoke-all --tenant <tenant-id>
 
 ## Users and authenticators
 
-There is no top-level `quicbaas user`; users are managed with `quicbaas iam user`
-above. QuicBaaS uses **passwordless authentication only**: a new user is
+Users, built-in roles and role bindings are go-qrdb's; `quicbaas iam user`
+and `quicbaas iam role` above drive them through the SDK. See
+[go-qrdb identity and RBAC CLI](../../../go-qrdb/docs/identity-rbac/cli.md)
+and [go-qrdb roles](../../../go-qrdb/docs/auth/roles.md). A new user is
 `pending` until they enroll a hardware authenticator.
 
-### Built-in Roles
+### iam webauthn
 
-- **admin**: Full administrative access to all resources
-- **readwrite**: Read and write access to database operations
-- **readonly**: Read-only access to database operations
+Lists or deletes a user's WebAuthn credentials through the per-user routes in
+[API: Credential Management](api.md#credential-management)
+(`cmd/quicbaas/iam_webauthn.go`).
 
-For custom roles, see `quicbaas iam role` above.
+```bash
+quicbaas iam webauthn list --tenant <tenant-id> --user <user-id>
+quicbaas iam webauthn delete --tenant <tenant-id> --user <user-id> --credential <id>
+quicbaas iam webauthn delete --tenant <tenant-id> --user <user-id> --all
+```
 
-### Authenticator Management
-
-Users enroll and manage hardware authenticators via the Web UI or REST API:
-
-- **WebAuthn (Passkey)**: Platform authenticators (Touch ID, Windows Hello) or roaming keys (YubiKey, Titan)
-- **PIV Smartcard**: If PIV support is enabled
-- **mTLS Certificate**: For service accounts (see [Passwordless Authentication](architecture.md))
-
-Users can register **multiple authenticators** as backups. See the [WebAuthn API](engineering.md) or GUI for enrolling and managing credentials.
-
-### Security Best Practices
-
-1. **Passkey or Security Key**: Recommend users enroll a platform passkey + a backup hardware key
-2. **Least Privilege**: Assign minimal required roles
-3. **Regular Audit**: Monitor user creation and deletion events; review inactive users
-4. **TLS**: Use TLS for all API calls
-5. **Backup Authenticators**: Encourage users to register multiple authenticators to prevent lockout
-6. **See Also**: [Passwordless Authentication](architecture.md) for the authentication model
-
-### Notes
-
-- User management requires admin privileges
-- Deleting a user revokes all their tokens immediately
-- Users can be assigned multiple roles
-- Role permissions are cumulative (union of all role permissions)
-- Created timestamp is recorded for audit purposes
-- User IDs are assigned by the store — the go-qrdb Snowflake, rendered in decimal. A caller cannot supply one.
-
+| Flag | Verb | Description |
+|------|------|-------------|
+| `--user <id>` | both | User ID (required) |
+| `--credential <id>` | `delete` | Credential to delete |
+| `--all` | `delete` | Delete every credential registered to the user |
 
 ---
 
 ## quicbaas auth
 
-Authentication and N-factor management for QuicBaaS sessions.
+`quicbaas auth` mirrors go-qrdb's `qrdb auth` verb for verb; the factor model,
+the verbs and the last-factor rule are documented once in
+[go-qrdb auth-factors CLI](../../../go-qrdb/docs/auth-factors/cli.md). The
+client-side FIDO2 and PIV proofs come from go-xkms
+([WebAuthn CLI](../../../go-xkms/docs/webauthn/cli.md),
+[PIV smart card CLI](../../../go-xkms/docs/piv-smartcard/cli.md)). This
+section lists QuicBaaS's flags.
 
-### Overview
-
-The `auth` tree manages operator authentication sessions and the
-multi-factor enrolment state behind them. Login is the unified
-ceremony — `Security().Auth().BeginLogin` / `FinishLogin` — and the
-`auth factor` subgroup mirrors qrdb's User N-AuthFactor enrolment
-model verb-for-verb (add / list / remove / rotate / relabel).
-
-All verbs route through the SDK `Security().Auth()` accessor (see
-[`docs/ssh/engineering.md`](../ssh/engineering.md#auth--authservice)).
-Transport selection is automatic per the global `--transport` flag.
-
-Source:
-[`cmd/quicbaas/canonical.go:128`](../../cmd/quicbaas/canonical.go)
-(wiring) and the per-verb files
-`cmd/quicbaas/auth_login.go` +
-`cmd/quicbaas/auth_factor.go`.
+All verbs go through `Security().Auth()`; the global `--transport` flag picks
+the transport. Source: `cmd/quicbaas/canonical.go` (wiring),
+`cmd/quicbaas/canonical_auth_login.go` and `cmd/quicbaas/canonical_auth.go`.
 
 ### Verb summary
 
 | Verb | Purpose |
 |------|---------|
-| `login <username>` | Canonical N-factor login dispatcher |
-| `logout` | Invalidate the current token and remove it from local storage |
-| `status` | Display information about the current authentication session |
-| `factor list [--user <id>]` | Enumerate enrolled factors |
-| `factor add` | Enrol a new factor |
-| `factor remove <id> [--force]` | Revoke an enrolment |
-| `factor rotate <old-id>` | Replace an existing factor with a fresh credential |
-| `factor relabel <id> --label <s>` | Update the human-readable label of a factor |
-| `login-info` | Legacy informational help text (retained for older runbooks) |
+| `login` | Unified login (`BeginLogin` / `FinishLogin`) |
+| `logout` | Revoke the current token server-side and remove the local file |
+| `status` | Show the current session |
+| `factor list [--user <id>]` | List enrolled factors |
+| `factor add` | Enroll a factor |
+| `factor remove <id> [--force]` | Remove a factor; `--force` allows the last one |
+| `factor rotate <id>` | Replace a factor; takes the `factor add` flags |
+| `factor relabel <id> --label <s>` | Change a factor's label |
+| `login-info` | Legacy informational login (`cmd/quicbaas/auth.go`; `--token-file`, `--no-store`) |
 
-### Authentication methods
-
-QuicBaaS authentication is **passwordless** — there is no
-username/password verb on the canonical surface. The supported
-factor types are:
-
-- **FIDO2 / WebAuthn (passkey)**: local CTAP2 authenticator over
-  USB-HID (YubiKey, SoloKey, Nitrokey, ...), driven with the
-  server-issued WebAuthn options. Admin passkey enrolment runs the
-  server's add-credential ceremony, so the server verifies the
-  attestation and stores the credential before the factor is reported.
-- **PIV**: client-local go-xkms PIV backend (`file` / `pkcs11` /
-  `tpm2`); physical smart cards are reachable through the `pkcs11`
-  backend. There is no PC/SC reader model.
-- **mTLS**: TLS client certificate (service accounts).
-
-The `factor` subgroup manages enrolment for all three factor types.
+Factor types are `fido2`, `piv` (go-xkms local backend: `file`, `pkcs11` or
+`tpm2`; smart cards through `pkcs11`, no PC/SC) and `mtls`.
 
 ### login
 
-Authenticate with a QuicBaaS server and obtain an access token using
-a hardware authenticator.
-
 ```bash
-# Login with auto-discovery (client cert, then FIDO2 device, then local PIV slot)
+# Auto-discovery: client cert, then FIDO2 device, then local PIV slot
 quicbaas auth login --username alice@example.com
 
-# Login with a FIDO2 authenticator explicitly
 quicbaas auth login --username alice@example.com --method fido2
 
-# Login with the local PIV backend (file backend by default)
-quicbaas auth login --username alice@example.com --method piv \
-  --piv-backend file --piv-dir ~/.quicbaas/piv --slot 9a
-
-# Login with a PKCS#11 smart card
 quicbaas auth login --username alice@example.com --method piv \
   --piv-backend pkcs11 --pkcs11-module /usr/lib/libykcs11.so --pin 123456
 
-# Login with mTLS client certificate (service account)
 quicbaas auth login --method mtls --client-cert client.pem
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--method <name>` | (auto-discover) | `mtls` / `fido2` / `piv` |
-| `--username <s>` | (none) | Username (subject) for login |
-| `--factor <id>` | (auto-select) | Pin login to a specific enrolled factor |
-| `--client-cert <path>` | `~/.quicbaas/admin.pem` | Client certificate PEM (`--method mtls`) |
-| `--device <path>` | (first connected) | FIDO2 local HID device path (`--method fido2`) |
-| `--origin <url>` | `https://<rpId>` | WebAuthn origin override (`--method fido2`) |
-| `--piv-backend <name>` | `file` | Local PIV backend: `file` / `pkcs11` / `tpm2` (`--method piv`) |
-| `--piv-dir <path>` | `~/.quicbaas/piv` | Local PIV key/cert dir (`file` backend) |
-| `--pkcs11-module <path>` | (none) | PKCS#11 library path (`pkcs11` backend) |
+| `--method <name>` | auto-discover | `mtls` / `fido2` / `piv` |
+| `--username <s>` | (none) | Username (subject) |
+| `--factor <id>` | (none) | Enrolled factor id |
+| `--client-cert <path>` | first of `~/.quicbaas/admin.pem`, `~/.platformctl/admin.pem`, `~/.config/platformctl/admin.pem` | Client certificate PEM (`mtls`) |
+| `--device <path>` | first connected | FIDO2 HID device (`fido2`) |
+| `--origin <url>` | `https://<server-issued rpId>` | WebAuthn origin (`fido2`) |
+| `--piv-backend <name>` | `file` | `file` / `pkcs11` / `tpm2` (`piv`) |
+| `--piv-dir <path>` | `~/.quicbaas/piv` | Key/cert directory (`file` backend) |
+| `--pkcs11-module <path>` | (none) | PKCS#11 library (`pkcs11` backend) |
 | `--pkcs11-token <label>` | (none) | PKCS#11 token label (`pkcs11` backend) |
-| `--slot <id>` | `9a` | PIV slot id (`--method piv`) |
+| `--slot <id>` | `9a` | PIV slot (`piv`) |
 | `--pin <s>` | `$QUICBAAS_USER_PIN` | PKCS#11 User PIN (`pkcs11` backend) |
-| `--show-token` | `false` | Print the issued session token to stdout |
-| `--save-token` | `false` | **Deprecated and ignored** — the token is always stored |
+| `--token-path <path>` | `~/.quicbaas/token` | Where the session token is written |
+| `--show-token` | `false` | Also print the token to stdout |
+| `--save-token` | `false` | Deprecated and ignored; the token is always stored |
 
-`login` **stores the session token and prints nothing secret by default**
-(owner ruling on #58). The credential is written to `--token-path`
-(default `~/.quicbaas/token`, which is what `cli.GetDefaultTokenPath` returns)
-on every successful login. A login whose credential cannot be stored fails
-rather than reporting success — with the token no longer on stdout, an unstored
-token is unreachable. Scripts that need the raw bearer pass `--show-token`.
+`login` always stores the token and prints nothing secret by default (owner
+ruling on #58). A login whose token cannot be stored fails.
 
-Internally `login` drives the unified ceremony:
-`Security().Auth().BeginLogin(...)` obtains the factor-typed
-challenge, the client produces the proof locally (mTLS handshake /
-CTAP2 assertion / local PIV signature over the nonce), and
-`Security().Auth().FinishLogin(...)` verifies it server-side and
-returns the bearer + refresh token.
+### logout and status
 
-### logout
+| Verb | Flag | Default | Description |
+|------|------|---------|-------------|
+| `logout`, `status` | `--token-file <path>` | `~/.quicbaas/token` | Token file |
+| `status` | `--output <format>` | `table` | `json` or `table` |
 
-Invalidate the current authentication token and remove it from local
-storage.
+### factor add and factor rotate
 
 ```bash
-quicbaas auth logout
-quicbaas auth logout --token-file /path/to/token
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--token-file <path>` | `~/.quicbaas/token` | Custom token file location |
-
-The server is notified so the token is revoked server-side as well —
-logout is not just a local-file delete.
-
-### status
-
-Display information about the current authentication session.
-
-```bash
-quicbaas auth status
-quicbaas auth status --output json
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--token-file <path>` | `~/.quicbaas/token` | Custom token file location |
-| `--output <format>` | `table` | `json` or `table` |
-
-Returns user ID, username, the active factor name, the issued-at and
-expires-at timestamps, and the token type.
-
-### factor list
-
-Enumerate enrolled factors for the authenticated user (or a specific
-user with `--user`, subject to RBAC).
-
-```bash
-quicbaas auth factor list
-quicbaas auth factor list --user alice@example.com
-quicbaas auth factor list --output json
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--user <id>` | (current user) | List factors for a different user (requires permission) |
-| `--output <format>` | `table` | `json` or `table` |
-
-Each row shows the factor ID, factor type (`fido2`, `piv`,
-`mtls`), label, and enrolled-at timestamp.
-
-### factor add
-
-Enrol a new factor.
-
-```bash
-# Enrol a FIDO2 passkey (drives the connected CTAP2 authenticator
-# through the server-issued WebAuthn registration ceremony)
-quicbaas auth factor add --type fido2 --label "Laptop passkey" --user alice@example.com
-
-# Enrol a PIV factor from the client-local PIV backend slot
-quicbaas auth factor add --type piv --label "Corporate ID" \
-  --piv-backend file --piv-dir ~/.quicbaas/piv --slot 9a
-
-# Enrol an mTLS client certificate (cert pre-issued)
-quicbaas auth factor add --type mtls \
-  --label "Service: ingest" \
-  --cert /etc/quicbaas/svc-ingest.crt
+quicbaas auth factor add --type fido2 --label "Laptop passkey"
+quicbaas auth factor add --type piv --label "Corporate ID" --piv-backend file --slot 9a
+quicbaas auth factor add --type mtls --label "Service: ingest" --cert svc-ingest.crt
+quicbaas auth factor rotate <factor-id> --type fido2 --label "Replacement passkey"
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--type <factor>` | (required) | `fido2` / `piv` / `mtls` |
-| `--label <string>` | (required) | Human-readable label for the factor |
-| `--user <id>` | (current user) | Subject to enrol the factor for |
-| `--tenant <id>` | (none) | Tenant scope |
-| `--cert <path>` | (none) | Certificate PEM path (`--type mtls`) |
-| `--device <path>` | (first connected) | FIDO2 local HID device (`--type fido2`) |
-| `--origin <url>` | `https://<rpId>` | WebAuthn origin override (`--type fido2`) |
-| `--piv-backend <name>` | `file` | Local PIV backend: `file` / `pkcs11` / `tpm2` (`--type piv`) |
-| `--piv-dir <path>` | `~/.quicbaas/piv` | Local PIV key/cert dir (`file` backend) |
-| `--slot <id>` | `9a` | PIV slot id (`--type piv`) |
+| `--label <string>` | (required) | Factor label |
+| `--user <id>` | current user | Subject to enroll for |
+| `--tenant <id>` | (none) | Tenant ID |
+| `--cert <path>` | (none) | Certificate PEM (`mtls`) |
+| `--device <id>` | first connected | FIDO2 device (`fido2`) |
+| `--origin <url>` | `https://<rp-id>` | WebAuthn origin (`fido2`) |
+| `--piv-backend <name>` | `file` | `file` / `pkcs11` / `tpm2` (`piv`) |
+| `--piv-dir <path>` | `~/.quicbaas/piv` | Key/cert directory (`file` backend) |
+| `--slot <id>` | `9a` | PIV slot (`piv`) |
 | `--pin <s>` | (none) | PKCS#11 User PIN (`pkcs11` backend) |
-| `--pkcs11-module <path>` | (none) | PKCS#11 library path (`pkcs11` backend) |
+| `--pkcs11-module <path>` | (none) | PKCS#11 library (`pkcs11` backend) |
 | `--pkcs11-token <label>` | (none) | PKCS#11 token label (`pkcs11` backend) |
 
-The canonical SDK call:
-
-```go
-sdk.Security().Auth().Factors().Add(ctx, &quicbaas.AuthFactorEnrollRequest{
-    FactorName: "webauthn",
-    Subject:    userID,
-    Label:      "Laptop passkey",
-    // ... factor-specific metadata
-})
-```
-
-### factor remove
-
-Revoke an enrolment.
-
-```bash
-quicbaas auth factor remove fctr_01HXY...
-quicbaas auth factor remove fctr_01HXY... --force   # allow removing the last factor
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--force` | `false` | Allow removing the last remaining factor (puts the user in inactive state) |
-
-Without `--force`, removing the user's last factor is rejected with a
-`LastFactorRemovalError` to prevent accidental lockout.
-
-### factor rotate
-
-Replace an existing factor with a fresh credential in a single
-transaction. Use when an authenticator is lost or compromised — the
-old credential is revoked atomically as the new one is enrolled.
-
-```bash
-quicbaas auth factor rotate fctr_01HXY... \
-  --new-name webauthn \
-  --new-label "Replacement passkey"
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--new-name <factor>` | (required) | Factor name for the replacement |
-| `--new-label <string>` | (none) | Label for the replacement |
-| `--new-proof @<path>` | (factor-specific) | Proof material for the replacement |
-
-### factor relabel
-
-Update the human-readable label of an enrolled factor.
-
-```bash
-quicbaas auth factor relabel fctr_01HXY... --label "New label"
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--label <string>` | (required) | New label |
-
-### Token storage
-
-Tokens are stored at `~/.quicbaas/token` by default, with mode
-`0o600`. The file is a JSON object with `access_token`,
-`refresh_token`, `token_type`, and `expires_at` fields. Subsequent
-CLI commands that require authentication read the file
-automatically; explicit `--token-file` overrides the default
-location.
+`factor list` takes `--user`, `factor remove` takes `--force`, and
+`factor relabel` takes `--label`.
 
 ### Errors
 
 | Type | When |
 |------|------|
-| `NoFactorsAvailableError` | `login` auto-discovery finds no client cert, no FIDO2 device, and no local PIV certificate |
-| `InvalidFactorTypeError` | `factor add` invoked without `--type` or with an unknown type |
-| `MissingLabelError` | `factor add` / `rotate` invoked without `--label` |
-| `MissingFactorIDError` | `factor remove` / `rotate` invoked without a factor ID |
+| `NoFactorsAvailableError` | `login` auto-discovery finds no client cert, FIDO2 device or local PIV certificate |
+| `InvalidFactorTypeError` | `factor add` / `rotate` without `--type` or with an unknown type |
+| `MissingLabelError` | `factor add` / `rotate` without `--label` |
+| `MissingFactorIDError` | `factor remove` / `rotate` without a factor ID |
 | `InvalidPIVBackendError` | `--piv-backend` is not `file` / `pkcs11` / `tpm2` |
-| `PIVPINRequiredError` | `--method piv` on the `pkcs11` backend without `--pin` / `QUICBAAS_USER_PIN` |
+| `PIVPINRequiredError` | `--method piv` on `pkcs11` without `--pin` or `QUICBAAS_USER_PIN` |
+
+Removing the last factor without `--force` is refused by go-qrdb
+(`LastFactorError`).
 
 ### See also
 
-- [`docs/sdk/security.md`](../ssh/engineering.md) — full `Security().Auth()`
-  surface including FIDO2 / PIV / Devices / Factors sub-services.
-- `docs/security/authentication.md` —
-  server-side authentication architecture.
-- `docs/cli/iam.md` — user and role management.
-- [`docs/auth/passwordless.md`](architecture.md) — passwordless
-  authentication background.
+- [SDK `Security().Auth()`](../ssh/engineering.md#auth--authservice)
+- [IAM architecture](architecture.md)

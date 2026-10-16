@@ -239,6 +239,14 @@ type QuicBaaS interface {
 	// once the module has started, the way SetAgentService is.
 	SetSDLCService(svc *SDLCService)
 
+	// Prompts returns the prompt service (nil when the prompt store is not
+	// mounted on this node). Every transport answers 503 / Unavailable then.
+	Prompts() *PromptService
+
+	// SetPromptService attaches the prompt service. Called by the server once
+	// the prompt store is mounted.
+	SetPromptService(svc *PromptService)
+
 	// SetProjectBindingReader attaches the SDLC binding store a project
 	// delete is checked against. Called by the server on every node whose
 	// qrdb node has a tenant store resolver, with or without the SDLC module.

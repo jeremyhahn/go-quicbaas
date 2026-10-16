@@ -140,6 +140,7 @@ import (
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -327,6 +328,7 @@ type grpcServers struct {
 	objectStorageAdmin pb.ObjectStorageAdminServer
 	ollama             pb.OllamaServiceServer
 	secretsManagement  pb.SecretsManagementServer
+	prompt             pb.PromptServiceServer
 }
 
 // NewModule builds go-quicbaas's ServiceModule around the QuicBaaS facade
@@ -381,6 +383,7 @@ var grpcRegistrations = []grpcRegistration{
 	{&pb.ObjectStorageAdmin_ServiceDesc, "object-storage-admin", func(s *grpcServers) any { return s.objectStorageAdmin }},
 	{&pb.OllamaService_ServiceDesc, "ollama", func(s *grpcServers) any { return s.ollama }},
 	{&pb.SecretsManagement_ServiceDesc, "secrets-management", func(s *grpcServers) any { return s.secretsManagement }},
+	{&pb.PromptService_ServiceDesc, "prompt", func(s *grpcServers) any { return s.prompt }},
 }
 
 // publicGRPCMethods is the exact set of this module's gRPC methods the
@@ -501,6 +504,9 @@ func (m *Module) bind() (*grpcServers, error) {
 		fido2:    facade,
 		login:    grpcapi.NewLoginServer(svc.LoginCeremony(), m.log),
 		ssh:      grpcapi.NewSSHServer(service.SSHServiceFor(svc), m.log),
+		// The prompt server resolves Prompts() per call and answers
+		// Unavailable while no store is mounted, as on the Unix listener.
+		prompt: grpcapi.NewPromptServer(svc, m.log),
 	}
 	if schedulerSvc, placementSvc := svc.Scheduler(), svc.Placement(); schedulerSvc != nil || placementSvc != nil {
 		built.scheduler = grpcapi.NewSchedulerServer(schedulerSvc, placementSvc, m.log)
@@ -569,6 +575,10 @@ func (m *Module) bind() (*grpcServers, error) {
 // instead of at registration time. A resolution error is returned to the
 // caller as the RPC's status; the wire surface (service name, method set,
 // metadata, reflection descriptors) is byte-identical to the generated one.
+// Every handler runs with the qrdb identity the unified server verified
+// projected onto the quicbaas Subject (auth.ContextWithIdentitySubject), as
+// the REST and MCP surfaces do, so services read their caller the same way
+// on every transport.
 func lazyServiceDesc(src *grpc.ServiceDesc, impl func() (any, error)) *grpc.ServiceDesc {
 	desc := &grpc.ServiceDesc{
 		ServiceName: src.ServiceName,
@@ -586,7 +596,7 @@ func lazyServiceDesc(src *grpc.ServiceDesc, impl func() (any, error)) *grpc.Serv
 				if err != nil {
 					return nil, err
 				}
-				return handler(svc, ctx, dec, interceptor)
+				return handler(svc, ctx, dec, projectingInterceptor(interceptor))
 			},
 		})
 	}
@@ -601,9 +611,36 @@ func lazyServiceDesc(src *grpc.ServiceDesc, impl func() (any, error)) *grpc.Serv
 				if err != nil {
 					return err
 				}
-				return handler(svc, ss)
+				return handler(svc, &subjectStream{ServerStream: ss, ctx: auth.ContextWithIdentitySubject(ss.Context())})
 			},
 		})
 	}
 	return desc
 }
+
+// projectingInterceptor runs the server's unary chain, if any, and projects
+// the identity it leaves on the context just before the method runs. A
+// generated unary handler calls the chain itself, so the projection has to
+// sit innermost: qrdb's auth chain is what binds the identity.
+func projectingInterceptor(chain grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		project := func(ctx context.Context, req any) (any, error) {
+			return handler(auth.ContextWithIdentitySubject(ctx), req)
+		}
+		if chain == nil {
+			return project(ctx, req)
+		}
+		return chain(ctx, req, info, project)
+	}
+}
+
+// subjectStream serves a stream under the context its handler reads, the one
+// carrying the projected Subject. Stream interceptors wrap the stream
+// handler, so the identity is already bound when it runs.
+type subjectStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+// Context returns the projected context.
+func (s *subjectStream) Context() context.Context { return s.ctx }

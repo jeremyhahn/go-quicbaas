@@ -151,7 +151,10 @@ import (
 // go-quicbaas#1041) under sdlc:bind.
 // PLUS 1 for the messaging watch (POST /api/v1/messaging/watch, issue #185)
 // under messaging:watch, the REST face of Messaging.WatchChannel.
-const baseRouteTableSize = 673
+// PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
+// handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
+// and prompts:write.
+const baseRouteTableSize = 681
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

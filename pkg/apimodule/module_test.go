@@ -153,8 +153,8 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // attaches the quicbaas-native core plane (QuicBaaS, Login, FIDO2Service),
 // all seven broker capability services, the five quicbaas-native broker
 // data-plane services (ParameterStore, DynamicSecretsService,
-// ObjectStorageService, ObjectStorageAdmin, OllamaService), and
-// SecretsManagement (the one genuinely quicbaas-native xkms-wire service —
+// ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
+// and SecretsManagement (the one genuinely quicbaas-native xkms-wire service —
 // KeyManagement/DEKManagement/Crypto/CertificateService/TrustService/
 // AttestationService/PIVService moved to go-xkms's own ServiceModule, Phase 3
 // of the login-plane plan; see module.go's package doc and
@@ -188,9 +188,10 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.ObjectStorageAdmin_ServiceDesc,
 		&pb.OllamaService_ServiceDesc,
 		&pb.SecretsManagement_ServiceDesc,
+		&pb.PromptService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the sixteen quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the seventeen quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -280,11 +281,11 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
 // returns the client connection.
-func startBufconnModule(t *testing.T, m *Module) *grpc.ClientConn {
+func startBufconnModule(t *testing.T, m *Module, opts ...grpc.ServerOption) *grpc.ClientConn {
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
-	server := grpc.NewServer()
+	server := grpc.NewServer(opts...)
 	m.RegisterGRPC(server)
 	go func() {
 		_ = server.Serve(listener)

@@ -598,8 +598,8 @@ back. `auto`/`""` at any level means "inherit / hardware-prefer".
 
 The legacy `kms.backend` and `ca.keystore_type` fields are honored only when no
 `crypto.*` backend is configured, so older configs keep working unchanged. See
-KMS Configuration for the relationship to the legacy
-`kms.backends` router.
+[KMS configuration](../kms/engineering.md#configuration-keys-kms) for the
+`kms:` keys, including `kms.enabled_backends`.
 
 ### Fail-closed: never a silent software downgrade
 
@@ -683,7 +683,7 @@ explicit backend choice under FIPS. See FIPS 140-3.
 ### See also
 
 - [Crypto Backend Selection — design](../kms/engineering.md) — the implementation design of record.
-- KMS Configuration — `crypto.subsystems.kms` vs the legacy `kms.backends` router.
+- [KMS configuration](../kms/engineering.md) — `crypto.subsystems.kms` vs the `kms:` block.
 - [Seal/Unseal](../barrier/engineering.md) — root-key seal strategies, including `auto`.
 - [Barrier](../barrier/architecture.md) — the two-barrier model and the envelope boundary.
 - [Security Overview](../security-hardening/user.md).

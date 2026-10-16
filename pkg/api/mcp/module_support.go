@@ -20,10 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ToolSpec describes one tool of the quicbaas MCP surface for the
@@ -254,13 +251,5 @@ func (s *Server) InvokeTool(ctx context.Context, name string, args map[string]in
 // binding), matching the injection the token-based gate performs. A context
 // without a qrdb identity is returned unchanged.
 func upstreamToolContext(ctx context.Context) context.Context {
-	identity := qrdbsdk.IdentityFromContext(ctx)
-	if identity == nil {
-		return ctx
-	}
-	ctx = auth.SubjectIntoContext(ctx, auth.SubjectFromIdentity(identity))
-	if identity.TenantID != "" {
-		ctx = tenantctx.WithTenant(ctx, identity.TenantID)
-	}
-	return ctx
+	return auth.ContextWithIdentitySubject(ctx)
 }

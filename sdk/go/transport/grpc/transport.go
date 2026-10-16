@@ -358,6 +358,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// A tenant's prompt sets. Served here and, verbatim, on the Unix
+	// transport.
+	if isPromptsService(service) {
+		return handlePromptRequest(ctx, conn, method, req)
+	}
+
 	// Check if this is a Certificate service request and route through the
 	// certificate handler. Certificate services use plain Go structs which
 	// don't implement proto.Message, so we need to convert them to the

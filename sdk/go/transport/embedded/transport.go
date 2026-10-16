@@ -417,6 +417,16 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.SDLC/FileIssue":          handleSDLCFileIssue,
 	"quicbaas.SDLC/Collaborators":      handleSDLCCollaborators,
 
+	// Prompt sets: per-scope overrides of the factory's prompts
+	promptsServiceName + "/List":      handlePromptList,
+	promptsServiceName + "/Get":       handlePromptGet,
+	promptsServiceName + "/Effective": handlePromptEffective,
+	promptsServiceName + "/Diff":      handlePromptDiff,
+	promptsServiceName + "/History":   handlePromptHistory,
+	promptsServiceName + "/Put":       handlePromptPut,
+	promptsServiceName + "/Rollback":  handlePromptRollback,
+	promptsServiceName + "/Reset":     handlePromptReset,
+
 	// Service registry
 	registryService + "/Register":   handleRegistryRegister,
 	registryService + "/Renew":      handleRegistryRenew,

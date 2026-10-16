@@ -31,6 +31,7 @@ DELETE /api/v1/orchestrator/workflows/{name} permission orchestrator:workflow_wr
 DELETE /api/v1/parameters/* permission parameters:delete
 DELETE /api/v1/projects/{id} permission project:delete
 DELETE /api/v1/projects/{id}/permissions/{node_id} permission project:revoke
+DELETE /api/v1/prompts/{set}/{name} permission prompts:write
 DELETE /api/v1/registry/leases/{lease_id} permission service_registry:register
 DELETE /api/v1/scheduler/jobs/{id} permission scheduler:delete
 DELETE /api/v1/sdlc/projects/{projectID}/binding permission sdlc:unbind
@@ -194,6 +195,11 @@ GET /api/v1/parameters/* permission parameters:read
 GET /api/v1/projects/ permission project:list
 GET /api/v1/projects/by-name/{name} permission project:read
 GET /api/v1/projects/{id} permission project:read
+GET /api/v1/prompts/{set} permission prompts:read
+GET /api/v1/prompts/{set}/{name} permission prompts:read
+GET /api/v1/prompts/{set}/{name}/diff permission prompts:read
+GET /api/v1/prompts/{set}/{name}/effective permission prompts:read
+GET /api/v1/prompts/{set}/{name}/history permission prompts:history
 GET /api/v1/query/{type}/{index} permission kv:range
 GET /api/v1/registry/services/{service} permission service_registry:read
 GET /api/v1/registry/services/{service}/watch permission service_registry:read
@@ -471,6 +477,7 @@ POST /api/v1/parameters/batch/get permission parameters:read
 POST /api/v1/parameters/batch/set permission parameters:write
 POST /api/v1/parameters/search permission parameters:search
 POST /api/v1/projects/ permission project:create
+POST /api/v1/prompts/{set}/{name}/rollback permission prompts:write
 POST /api/v1/query/range permission index:scan
 POST /api/v1/registry/instances permission service_registry:register
 POST /api/v1/registry/leases/{lease_id}/renew permission service_registry:register
@@ -641,6 +648,7 @@ PUT /api/v1/orchestrator/workflows/{name} permission orchestrator:workflow_write
 PUT /api/v1/parameters/* permission parameters:write
 PUT /api/v1/projects/{id} permission project:update
 PUT /api/v1/projects/{id}/permissions/{node_id} permission project:grant
+PUT /api/v1/prompts/{set}/{name} permission prompts:write
 PUT /api/v1/scheduler/jobs/{id} permission scheduler:update
 PUT /api/v1/sdlc/projects/{projectID}/binding permission sdlc:bind
 PUT /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer permission sdlc:bind

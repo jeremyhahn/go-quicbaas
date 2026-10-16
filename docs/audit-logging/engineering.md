@@ -523,6 +523,8 @@ type KMSKeyUseAuditLogger interface {
 | DeleteKey | `kmsServiceImpl.DeleteKey` (existing) |
 | ExportKey | `kmsServiceImpl.ExportKey` (existing) |
 
+**Being removed:** these key-use events come from QuicBaaS's own KMS and crypto services, which go with them ([SPEC](../SPEC.md) row `kms`).
+
 Key-use events are emitted from the service layer and therefore cover all transports
 (gRPC, REST, QUIC, MCP, embedded) without any transport-specific wiring.
 

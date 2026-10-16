@@ -572,6 +572,9 @@ func (m *mockService) SetMessagingService(ms messaging.Service) {
 func (m *mockService) SDLC() *service.SDLCService          { return nil }
 func (m *mockService) SetSDLCService(*service.SDLCService) {}
 
+func (m *mockService) Prompts() *service.PromptService         { return nil }
+func (m *mockService) SetPromptService(*service.PromptService) {}
+
 func (m *mockService) SetProjectBindingReader(sdlc.BindingReader) {}
 
 func (m *mockService) SetAgentService(agent orchestration.AgentService) {
