@@ -391,30 +391,35 @@ Generate short-lived JWT tokens for service authentication. The IAM module provi
 
 #### Usage
 
+Tokens are issued by the OIDC provider. `iam.NewOIDCProvider` is the only
+constructor of the token service: it requires `OIDCConfig.SigningKeyManager`,
+signs every token with the manager's current key and stamps that key's `kid`
+in the JWT header, so a verifier resolves it in the published JWKS
+(`OIDCProvider.GetJWKS`).
+
 ```go
 import "github.com/jeremyhahn/go-quicbaas/pkg/iam"
 
-tokenService := iam.NewTokenService(config, logger)
-
-// Generate access token
-accessToken, err := tokenService.GenerateAccessToken(ctx, &iam.AccessTokenRequest{
-    Subject:   "service-account-123",
-    Audience:  []string{"api.example.com"},
-    Scopes:    []string{"read:data", "write:data"},
-    ExpiresIn: 15 * time.Minute,
+provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
+    Issuer:            "https://auth.example.com",
+    SigningKeyManager: keys, // e.g. iam.NewSigningKeyManagerFromXKMS
+    AccessTokenTTL:    15 * time.Minute,
+}, iam.OIDCDependencies{
+    IdentityStore: identityStore,
+    AppStorage:    appStorage,
+    TokenStorage:  tokenStorage,
 })
 
-// Generate ID token
-idToken, err := tokenService.GenerateIDToken(ctx, &iam.IDTokenRequest{
-    Subject: "user@example.com",
-    Claims: map[string]interface{}{
-        "name":  "John Doe",
-        "email": "john@example.com",
-    },
+// Issue tokens through an OAuth 2.0 grant, e.g. client credentials.
+resp, err := provider.Token(ctx, &iam.TokenRequest{
+    GrantType:    iam.GrantTypeClientCredentials,
+    ClientID:     "service-client",
+    ClientSecret: clientSecret,
 })
 ```
 
-See IAM Documentation for complete token management.
+See [JWT Signing](../iam/engineering.md#jwt-signing) for key management and
+rotation.
 
 ### X.509 Certificates
 

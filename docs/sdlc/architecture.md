@@ -1433,6 +1433,12 @@ the pull request operations from `/merge_requests/:iid/notes`. Code holding a
 pull request number — the merge train's landing, refusal and ejection
 comments — uses the pull request operations.
 
+A GitLab project's `squash_option` constrains the merge method. `never`
+refuses a squash, and `always` refuses a merge or a rebase, because GitLab
+would squash the change anyway. Both refusals are `ForgeUnsupportedError`,
+returned after the project and merge request are read and before the merge
+request is written.
+
 ### Forge transport: deadlines, retries, and unanswered writes
 
 Every forge call is bounded by a deadline chosen by what the call costs the

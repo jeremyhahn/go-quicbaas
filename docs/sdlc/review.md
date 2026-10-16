@@ -554,6 +554,14 @@ Paginated, whole-listing-or-error. It is the reviewer's **map** of the change
 — the checkout is the territory — and the reason it must be complete is
 failure 5.
 
+A forge that stops listing before the end of the change is reported as
+`ChangedFilesTruncatedError` (`ErrChangedFilesTruncated`), never as a short
+list. GitHub lists at most 3,000 files for a pull request; a listing that
+reaches 3,000 is treated as cut off. GitLab keeps only part of a large merge
+request's diff and reports its `changes_count` as `"N+"` (for example
+`"1000+"`); the adapter reads the merge request first and refuses before
+fetching any diffs. Gitea has no cap.
+
 ### Capabilities
 
 | Flag | Gitea | GitHub | GitLab | What turns on it |

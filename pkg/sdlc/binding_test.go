@@ -137,6 +137,30 @@ func TestForgeConfig_SSHHostKeyIsOptionalButMustBeAKey(t *testing.T) {
 	}
 }
 
+// TestForgeConfig_ApplyDefaultsNamesGitHubsAPIRoot proves a GitHub binding
+// with no base_url takes the public API root, while a binding that names one,
+// or a self-hosted forge that does not, is left as it is.
+func TestForgeConfig_ApplyDefaultsNamesGitHubsAPIRoot(t *testing.T) {
+	cfg := testBinding().Forge
+	cfg.Type, cfg.BaseURL = ForgeGitHub, " "
+	cfg.ApplyDefaults()
+	if cfg.BaseURL != githubDefaultBaseURL {
+		t.Errorf("GitHub BaseURL = %q, want %q", cfg.BaseURL, githubDefaultBaseURL)
+	}
+
+	cfg.BaseURL = "https://github.example/api/v3"
+	cfg.ApplyDefaults()
+	if cfg.BaseURL != "https://github.example/api/v3" {
+		t.Errorf("an Enterprise root was replaced: %q", cfg.BaseURL)
+	}
+
+	cfg.Type, cfg.BaseURL = ForgeGitea, ""
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("a Gitea binding with no base_url = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestForgeConfig_LabelsAndOwnership(t *testing.T) {
 	cfg := testBinding().Forge
 	if cfg.Label(LabelMerged) != "factory:merged" || cfg.Label("nothing") != "" {

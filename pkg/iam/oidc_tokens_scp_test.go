@@ -79,9 +79,7 @@ func newSCPTestService(t *testing.T, resolver PermissionResolver) (*TokenService
 		IDTokenTTL:       time.Hour,
 		AuthCodeTTL:      10 * time.Minute,
 	}
-	svc := NewTokenService(newMockTokenStorage(), privateKey, config)
-	svc.permResolver = resolver
-	return svc, privateKey
+	return newKIDTokenService(t, privateKey, config, resolver), privateKey
 }
 
 func baseSCPClaims(t *testing.T, roles []string) *Claims {
@@ -150,6 +148,7 @@ func TestGenerateAccessToken_SCPIsResolvedColonPerms(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
+		requireKIDInServiceJWKS(t, svc, token)
 		scp := scpFromToken(t, token, key)
 		for _, want := range []string{"keys:get", "keys:create", "tenant_barrier:init", "users:read"} {
 			if !hasScope(scp, want) {
@@ -171,6 +170,7 @@ func TestGenerateAccessToken_SCPIsResolvedColonPerms(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
+		requireKIDInServiceJWKS(t, svc, token)
 		scp := scpFromToken(t, token, key)
 		if !hasScope(scp, "kv:get") {
 			t.Errorf("reader scp missing kv:get; got %v", scp)
@@ -185,6 +185,7 @@ func TestGenerateAccessToken_SCPIsResolvedColonPerms(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
+		requireKIDInServiceJWKS(t, svc, token)
 		claims, err := xkms.JWTVerifyWithKeyAndClaims(token, &key.PublicKey, "RS256")
 		if err != nil {
 			t.Fatalf("parse token: %v", err)
@@ -207,6 +208,7 @@ func TestGenerateAccessToken_SCPFallsBackToScope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
+		requireKIDInServiceJWKS(t, svc, token)
 		scp := scpFromToken(t, token, key)
 		if !hasScope(scp, "openid") {
 			t.Errorf("fallback scp should carry OIDC scopes; got %v", scp)
@@ -219,6 +221,7 @@ func TestGenerateAccessToken_SCPFallsBackToScope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
+		requireKIDInServiceJWKS(t, svc, token)
 		scp := scpFromToken(t, token, key)
 		if !hasScope(scp, "profile") {
 			t.Errorf("fallback scp should carry OIDC scopes; got %v", scp)
@@ -234,6 +237,7 @@ func TestGenerateAccessToken_SCPFallsBackToScope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateAccessToken: %v", err)
 		}
+		requireKIDInServiceJWKS(t, svc, token)
 		scp := scpFromToken(t, token, key)
 		if len(scp) != 1 || scp[0] != "explicit:perm" {
 			t.Errorf("pre-populated SCP must win; got %v", scp)
@@ -255,6 +259,7 @@ func TestGenerateAccessToken_SCPDedupAndSkipEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAccessToken: %v", err)
 	}
+	requireKIDInServiceJWKS(t, svc, token)
 	scp := scpFromToken(t, token, key)
 	got := 0
 	for _, s := range scp {
@@ -359,6 +364,7 @@ func TestIssueHardwareTokens_AdminCarriesRolesAndCanonicalSubject(t *testing.T) 
 	}
 
 	// (c) Subject is the canonical decimal STRING, never raw bytes.
+	requireKIDInServiceJWKS(t, svc, set.AccessToken)
 	if sub := subFromToken(t, set.AccessToken, key); sub != adminSubject {
 		t.Errorf("access token sub = %q, want canonical %q", sub, adminSubject)
 	}
@@ -407,6 +413,7 @@ func TestIssueHardwareTokens_NoRolesFallsBackToScope(t *testing.T) {
 		t.Fatalf("IssueHardwareTokens: %v", err)
 	}
 	// Valid token with a canonical subject.
+	requireKIDInServiceJWKS(t, svc, set.AccessToken)
 	if sub := subFromToken(t, set.AccessToken, key); sub != "987654321" {
 		t.Errorf("sub = %q, want canonical 987654321", sub)
 	}

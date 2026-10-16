@@ -320,6 +320,9 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if tenantID == "" {
 		return nil, &sdlc.InvalidInputError{Field: "tenant_id", Message: "bindings are tenant-scoped"}
 	}
+	if binding != nil {
+		binding.Forge.ApplyDefaults()
+	}
 	if err := binding.Validate(); err != nil {
 		return nil, err
 	}

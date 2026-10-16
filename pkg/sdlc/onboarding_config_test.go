@@ -99,6 +99,17 @@ func TestOnboardingConfig_DefaultsCoverTheWholeFleet(t *testing.T) {
 	}
 }
 
+// TestDefaultWebhookEvents_SubscribeToReviews proves the default hook
+// delivers pull request reviews. GitHub sends them as their own event, not
+// under pull_request, so a review submitted there would otherwise never
+// reach the delivery pipeline.
+func TestDefaultWebhookEvents_SubscribeToReviews(t *testing.T) {
+	want := []string{"issues", "pull_request", "pull_request_review", "status"}
+	if !reflect.DeepEqual(DefaultWebhookEvents, want) {
+		t.Errorf("DefaultWebhookEvents = %v, want %v", DefaultWebhookEvents, want)
+	}
+}
+
 // TestOnboardingConfig_DefaultsAreNotAliased proves a caller cannot mutate the
 // package defaults through a value it was handed. A single shared slice would
 // let one project's edit change every other project's onboarding.

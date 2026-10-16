@@ -271,3 +271,5 @@ across an upgrade.
 [engineering.md](engineering.md) · [cli.md](cli.md) · [api.md](api.md) ·
 [user.md](user.md) · [worker-image.md](worker-image.md) ·
 [sandbox](../orchestration/sandbox.md)
+
+Placement, drift and actuation (design, not built): [placement.md](placement.md)

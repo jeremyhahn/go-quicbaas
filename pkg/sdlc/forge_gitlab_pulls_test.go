@@ -343,6 +343,21 @@ func TestGitLabBackend_MergePullRequest_SquashesAndDeletesALeftoverBranch(t *tes
 	}
 }
 
+// TestGitLabBackend_MergePullRequest_SquashesOnAProjectThatAlwaysSquashes
+// proves the one method an always-squash project honours still merges.
+func TestGitLabBackend_MergePullRequest_SquashesOnAProjectThatAlwaysSquashes(t *testing.T) {
+	backend, stub := gitlabMergeStub(t, "mr_merged.json")
+	stub.json("GET "+glProject, http.StatusOK, map[string]string{"merge_method": "merge", "squash_option": "always"})
+	stub.json("PUT "+glMerge, http.StatusOK, nil)
+
+	if err := backend.MergePullRequest(context.Background(), gitlabRepo, 5, MergeSpec{Method: "squash"}, gitlabHeadSHA); err != nil {
+		t.Fatalf("MergePullRequest: %v", err)
+	}
+	if n := len(stub.requests("PUT " + glMerge)); n != 1 {
+		t.Errorf("merges = %d, want 1", n)
+	}
+}
+
 // TestGitLabBackend_MergePullRequest_RefusesAMovedHead proves a head that
 // moved since review is refused before the merge, and GitLab's 409 at the
 // merge is HeadMovedError and never retried.
@@ -441,6 +456,14 @@ func TestGitLabBackend_MergePullRequest_Refusals(t *testing.T) {
 	if err := backend.MergePullRequest(ctx, gitlabRepo, 5, MergeSpec{Method: "squash"}, gitlabHeadSHA); !errors.Is(err, ErrForgeUnsupported) {
 		t.Errorf("squash on never err = %v, want ErrForgeUnsupported", err)
 	}
+	stub.json("GET "+glProject, http.StatusOK, map[string]string{"merge_method": "merge", "squash_option": "always"})
+	if err := backend.MergePullRequest(ctx, gitlabRepo, 5, MergeSpec{Method: "merge"}, gitlabHeadSHA); !errors.Is(err, ErrForgeUnsupported) {
+		t.Errorf("merge on always err = %v, want ErrForgeUnsupported", err)
+	}
+	stub.json("GET "+glProject, http.StatusOK, map[string]string{"merge_method": "ff", "squash_option": "always"})
+	if err := backend.MergePullRequest(ctx, gitlabRepo, 5, MergeSpec{Method: "rebase"}, gitlabHeadSHA); !errors.Is(err, ErrForgeUnsupported) {
+		t.Errorf("rebase on always err = %v, want ErrForgeUnsupported", err)
+	}
 	stub.json("GET "+glProject, http.StatusForbidden, nil)
 	if err := backend.MergePullRequest(ctx, gitlabRepo, 5, MergeSpec{Method: "merge"}, gitlabHeadSHA); forgeStatusOf(err) != http.StatusForbidden {
 		t.Errorf("project read err = %v, want 403", err)
@@ -476,6 +499,7 @@ func TestGitLabBackend_MergePullRequest_Refusals(t *testing.T) {
 // changed file with its kind and line counts.
 func TestGitLabBackend_ListPullRequestFiles_CountsEachDiff(t *testing.T) {
 	backend, stub := newGitLabStub(t)
+	stub.json("GET "+glMergeRequest, http.StatusOK, map[string]any{"iid": 5, "changes_count": "4"})
 	stub.fixture("GET "+glMergeRequest+"/diffs", http.StatusOK, "diffs.json")
 	files, err := backend.ListPullRequestFiles(context.Background(), gitlabRepo, 5)
 	if err != nil {
@@ -493,6 +517,49 @@ func TestGitLabBackend_ListPullRequestFiles_CountsEachDiff(t *testing.T) {
 	for i := range want {
 		if files[i] != want[i] {
 			t.Errorf("file %d = %+v, want %+v", i, files[i], want[i])
+		}
+	}
+}
+
+// TestGitLabBackend_ListPullRequestFiles_ReportsAnOverflow proves a merge
+// request whose changes GitLab capped ("1000+") is reported as truncated
+// before its diffs are read.
+func TestGitLabBackend_ListPullRequestFiles_ReportsAnOverflow(t *testing.T) {
+	backend, stub := newGitLabStub(t)
+	stub.json("GET "+glMergeRequest, http.StatusOK, map[string]any{"iid": 5, "changes_count": "1000+"})
+	stub.fixture("GET "+glMergeRequest+"/diffs", http.StatusOK, "diffs.json")
+
+	_, err := backend.ListPullRequestFiles(context.Background(), gitlabRepo, 5)
+	var truncated *ChangedFilesTruncatedError
+	if !errors.As(err, &truncated) || !errors.Is(err, ErrChangedFilesTruncated) {
+		t.Fatalf("err = %v, want ErrChangedFilesTruncated", err)
+	}
+	if truncated.Type != ForgeGitLab || truncated.Listed != 1000 || truncated.Subject != gitlabRepo.String()+"#5" {
+		t.Errorf("truncated = %+v", truncated)
+	}
+	if diffs := stub.requests("GET " + glMergeRequest + "/diffs"); len(diffs) != 0 {
+		t.Errorf("diffs read %d times, want none once the overflow is known", len(diffs))
+	}
+}
+
+// TestGitLabMergeRequest_ChangesOverflowed proves only a capped count reads
+// as an overflow: an exact count, and the empty count of a merge request
+// GitLab has not sized yet, do not.
+func TestGitLabMergeRequest_ChangesOverflowed(t *testing.T) {
+	cases := map[string]struct {
+		capped bool
+		listed int
+	}{
+		"1000+": {capped: true, listed: 1000},
+		"3000+": {capped: true, listed: 3000},
+		"999":   {},
+		"":      {},
+		"+":     {capped: true},
+	}
+	for count, want := range cases {
+		listed, capped := gitlabMergeRequest{ChangesCount: count}.changesOverflowed()
+		if capped != want.capped || listed != want.listed {
+			t.Errorf("changesOverflowed(%q) = %d, %v, want %d, %v", count, listed, capped, want.listed, want.capped)
 		}
 	}
 }

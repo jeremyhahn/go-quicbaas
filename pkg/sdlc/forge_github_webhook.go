@@ -281,17 +281,19 @@ func (g *GitHubBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec We
 	body := map[string]any{"active": true, "events": spec.Events, "config": config}
 
 	request := forgeRequest{
-		method:    http.MethodPost,
-		path:      repoPath(repo) + "/hooks",
-		body:      body,
-		operation: "CreateWebhook",
+		method:      http.MethodPost,
+		path:        repoPath(repo) + "/hooks",
+		body:        body,
+		operation:   "CreateWebhook",
+		bodySecrets: [][]byte{secret},
 	}
 	if current := findHook(existing, spec.URL); current != nil {
 		request = forgeRequest{
-			method:    http.MethodPatch,
-			path:      repoPath(repo) + "/hooks/" + strconv.FormatInt(current.ID, 10),
-			body:      body,
-			operation: "UpdateWebhook",
+			method:      http.MethodPatch,
+			path:        repoPath(repo) + "/hooks/" + strconv.FormatInt(current.ID, 10),
+			body:        body,
+			operation:   "UpdateWebhook",
+			bodySecrets: [][]byte{secret},
 		}
 	} else {
 		body["name"] = "web"

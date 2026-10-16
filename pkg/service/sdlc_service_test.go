@@ -396,6 +396,29 @@ func TestSDLCService_BindRegistersTheRoute(t *testing.T) {
 	}
 }
 
+// TestSDLCService_BindDefaultsGitHubsAPIRoot proves a GitHub binding that
+// omits base_url passes validation on GitHub's public API root rather than
+// being refused for the field. The bind names a project the tenant does not
+// have, so it stops at the project lookup before anything reaches GitHub.
+func TestSDLCService_BindDefaultsGitHubsAPIRoot(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	binding := rig.binding()
+	binding.ProjectID = "no-such-project"
+	binding.Forge.Type, binding.Forge.BaseURL = sdlc.ForgeGitHub, ""
+
+	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding, BindOptions{})
+	if errors.Is(err, sdlc.ErrInvalidInput) {
+		t.Fatalf("a GitHub binding without base_url was refused: %v", err)
+	}
+	var missing *ProjectNotFoundError
+	if !errors.As(err, &missing) {
+		t.Fatalf("err = %v, want the missing project's ProjectNotFoundError", err)
+	}
+	if binding.Forge.BaseURL != "https://api.github.com" {
+		t.Errorf("BaseURL = %q, want GitHub's public API root", binding.Forge.BaseURL)
+	}
+}
+
 func TestSDLCService_BindRefusesWhatThePipelineCannotDeliver(t *testing.T) {
 	cases := map[string]struct {
 		mutate func(*sdlcServiceRig, *sdlc.ProjectBinding)

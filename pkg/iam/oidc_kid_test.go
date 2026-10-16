@@ -16,6 +16,10 @@ package iam
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
@@ -54,6 +58,36 @@ func verifyByKID(t *testing.T, name, token string, jwks *jose.JSONWebKeySet) {
 	if _, err := jws.Verify(keys[0]); err != nil {
 		t.Fatalf("%s: verify with JWKS key %q: %v", name, kid, err)
 	}
+}
+
+// newKIDTokenService builds a TokenService through NewOIDCProvider, the
+// production constructor, so every token it signs carries the signing key
+// manager's kid. config.SigningKeyManager is set from signer and
+// config.SigningAlgorithm.
+func newKIDTokenService(t *testing.T, signer crypto.Signer, config *OIDCConfig, resolver PermissionResolver) *TokenService {
+	t.Helper()
+	config.SigningKeyManager = testSigningKeyManager(t, signer, config.SigningAlgorithm)
+	memStorage := NewMemoryStorage()
+	provider, err := NewOIDCProvider(config, OIDCDependencies{
+		IdentityStore: NewIdentityStore(IdentityStoreOptions{
+			UserStorage: memStorage,
+			RoleStorage: memStorage,
+		}),
+		AppStorage:         newMockAppStorage(),
+		TokenStorage:       newMockTokenStorage(),
+		PermissionResolver: resolver,
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	return provider.tokenService
+}
+
+// requireKIDInServiceJWKS asserts that token's header kid resolves in the
+// JWKS svc publishes, and that the resolved key verifies the signature.
+func requireKIDInServiceJWKS(t *testing.T, svc *TokenService, token string) {
+	t.Helper()
+	verifyByKID(t, "token", token, svc.keyManager.JWKS())
 }
 
 // TestOIDCTokensCarryKIDInPublishedJWKS pins that the ID token and access
@@ -110,4 +144,110 @@ func TestOIDCTokensCarryKIDInPublishedJWKS(t *testing.T) {
 	jwks := provider.GetJWKS()
 	verifyByKID(t, "ID token", resp.IDToken, jwks)
 	verifyByKID(t, "access token", resp.AccessToken, jwks)
+}
+
+// TestTokenServiceTokensAlwaysCarryKIDInJWKS proves every JWT the token
+// service signs (access, ID and both hardware tokens) carries a kid that its
+// published JWKS contains, so an external RP's JWKS lookup resolves.
+func TestTokenServiceTokensAlwaysCarryKIDInJWKS(t *testing.T) {
+	t.Parallel()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	svc := newKIDTokenService(t, key, &OIDCConfig{
+		Issuer:           "https://test.example.com",
+		SigningAlgorithm: SigningAlgorithmES256,
+		AccessTokenTTL:   time.Hour,
+		RefreshTokenTTL:  24 * time.Hour,
+		IDTokenTTL:       time.Hour,
+		AuthCodeTTL:      10 * time.Minute,
+	}, nil)
+	ctx := context.Background()
+	now := time.Now()
+
+	access, err := svc.GenerateAccessToken(ctx, &Claims{
+		Issuer:    "https://test.example.com",
+		Subject:   "user-1",
+		Audience:  []string{"https://test.example.com"},
+		ExpiresAt: NewUnixTime(now.Add(time.Hour)),
+		IssuedAt:  NewUnixTime(now),
+		NotBefore: NewUnixTime(now),
+		JTI:       "kid-jti",
+		TenantID:  "tenant-1",
+	})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken: %v", err)
+	}
+	id, err := svc.GenerateIDToken(ctx, &IDTokenClaims{
+		Issuer:    "https://test.example.com",
+		Subject:   "user-1",
+		Audience:  []string{"client-1"},
+		ExpiresAt: NewUnixTime(now.Add(time.Hour)),
+		IssuedAt:  NewUnixTime(now),
+		AuthTime:  NewUnixTime(now),
+		TenantID:  "tenant-1",
+	})
+	if err != nil {
+		t.Fatalf("GenerateIDToken: %v", err)
+	}
+	set, err := svc.IssueHardwareTokens(ctx, HardwareTokenOptions{
+		User: &User{ID: 7, TenantID: "tenant-1", Email: "kid@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("IssueHardwareTokens: %v", err)
+	}
+
+	tokens := map[string]string{
+		"access token":          access,
+		"ID token":              id,
+		"hardware access token": set.AccessToken,
+		"hardware ID token":     set.IDToken,
+	}
+	jwks := svc.keyManager.JWKS()
+	for name, token := range tokens {
+		verifyByKID(t, name, token, jwks)
+	}
+}
+
+// TestValidateAccessTokenRejectsKIDNotInJWKS proves a token whose kid the
+// provider's JWKS does not contain fails verification with UnknownKeyIDError.
+func TestValidateAccessTokenRejectsKIDNotInJWKS(t *testing.T) {
+	t.Parallel()
+
+	provider, _, _, _, _ := createTestOIDCProvider(t)
+
+	foreignKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	foreign := newKIDTokenService(t, foreignKey, &OIDCConfig{
+		Issuer:           "https://test.example.com",
+		SigningAlgorithm: SigningAlgorithmES256,
+		AccessTokenTTL:   time.Hour,
+	}, nil)
+	now := time.Now()
+	token, err := foreign.GenerateAccessToken(context.Background(), &Claims{
+		Issuer:    "https://test.example.com",
+		Subject:   "user-1",
+		Audience:  []string{"https://test.example.com"},
+		ExpiresAt: NewUnixTime(now.Add(time.Hour)),
+		IssuedAt:  NewUnixTime(now),
+		NotBefore: NewUnixTime(now),
+		JTI:       "foreign-jti",
+		TenantID:  "tenant-1",
+	})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken: %v", err)
+	}
+
+	_, err = provider.ValidateAccessToken(context.Background(), token)
+	var unknown *UnknownKeyIDError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("ValidateAccessToken err = %T %v, want *UnknownKeyIDError", err, err)
+	}
+	if unknown.KID == "" {
+		t.Fatal("UnknownKeyIDError must name the token's kid")
+	}
 }

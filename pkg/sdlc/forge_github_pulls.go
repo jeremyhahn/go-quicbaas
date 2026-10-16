@@ -519,6 +519,10 @@ func (g *GitHubBackend) MergePullRequest(ctx context.Context, repo RepoRef, numb
 	return deleteMergedSource(ctx, g, repo, merged, spec)
 }
 
+// githubMaxPullFiles is the most files GitHub's pull request files listing
+// returns, however many the change touches.
+const githubMaxPullFiles = 3000
+
 type githubChangedFile struct {
 	Filename         string `json:"filename"`
 	PreviousFilename string `json:"previous_filename"`
@@ -550,6 +554,15 @@ func (g *GitHubBackend) ListPullRequestFiles(ctx context.Context, repo RepoRef, 
 	})
 	if err != nil {
 		return nil, err
+	}
+	// GitHub stops the listing at its cap without saying so: a listing that
+	// reaches it may be missing files.
+	if len(files) >= githubMaxPullFiles {
+		return nil, &ChangedFilesTruncatedError{
+			Type:    ForgeGitHub,
+			Subject: repo.String() + "#" + strconv.Itoa(number),
+			Listed:  len(files),
+		}
 	}
 	return files, nil
 }

@@ -722,6 +722,32 @@ func (e *IncompleteResponseError) Unwrap() []error {
 	return []error{ErrBackend, ErrIncompleteResponse}
 }
 
+// ErrChangedFilesTruncated indicates a forge capped a pull request's
+// changed-file listing, so the listing is not the whole change.
+var ErrChangedFilesTruncated = errors.New("sdlc: forge truncated the changed-file listing")
+
+// ChangedFilesTruncatedError reports a changed-file listing the forge cut
+// short: a reader of it would miss files the change touches.
+type ChangedFilesTruncatedError struct {
+	// Type is the forge that capped the listing.
+	Type ForgeType
+
+	// Subject names the pull request, as owner/repo#number.
+	Subject string
+
+	// Listed is how many files the forge did return.
+	Listed int
+}
+
+// Error implements the error interface.
+func (e *ChangedFilesTruncatedError) Error() string {
+	return ErrChangedFilesTruncated.Error() + ": " + string(e.Type) + " listed " +
+		strconv.Itoa(e.Listed) + " files of " + e.Subject + " and stopped"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *ChangedFilesTruncatedError) Unwrap() error { return ErrChangedFilesTruncated }
+
 // quoteName renders a name in a refusal so an empty one is visible rather
 // than swallowed by the surrounding prose.
 func quoteName(name string) string {

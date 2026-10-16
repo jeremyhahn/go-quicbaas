@@ -21,8 +21,6 @@ import (
 	"testing"
 	"time"
 
-	jose "github.com/go-jose/go-jose/v4"
-
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
@@ -42,22 +40,16 @@ import (
 func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
 	const (
 		issuer       = "https://broker.example.com"
-		kid          = "test-kid-1"
 		adminUserID  = 1234567890123456789
 		adminSubject = "1234567890123456789" // canonical decimal-string user id
 	)
 
-	// Issuer signing key with a matching kid + JWKS, as the live broker emits.
+	// Issuer signing key; the service stamps its kid and publishes the JWKS,
+	// as the live broker does.
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("issuer key: %v", err)
 	}
-	jwks := &jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
-		Key:       priv.Public(),
-		KeyID:     kid,
-		Algorithm: "ES256",
-		Use:       "sig",
-	}}}
 
 	// qrdb RBAC resolver granting the admin role the orchestrator wildcard.
 	rbac := &fakeRBACClient{permsByRole: map[string][]string{
@@ -72,10 +64,8 @@ func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
 		IDTokenTTL:       time.Hour,
 		AuthCodeTTL:      10 * time.Minute,
 	}
-	svc := NewTokenService(newMockTokenStorage(), priv, config)
-	svc.signingAlg = "ES256"
-	svc.currentKID = kid // stamp the kid so the validator's JWKS lookup resolves
-	svc.permResolver = &fakePermissionResolver{client: rbac}
+	svc := newKIDTokenService(t, priv, config, &fakePermissionResolver{client: rbac})
+	jwks := svc.keyManager.JWKS()
 
 	// Mint the hardware (passkey) token set for the admin, exactly as the REST
 	// webauthn login-finish path does.
@@ -96,6 +86,7 @@ func TestPasskeyLogin_AdminTokenAuthorizesOrchestrator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueHardwareTokens: %v", err)
 	}
+	requireKIDInServiceJWKS(t, svc, set.AccessToken)
 
 	// Validate with the real platform-token validator (the downstream resource
 	// server's verification), then run the orchestrator scope decision.

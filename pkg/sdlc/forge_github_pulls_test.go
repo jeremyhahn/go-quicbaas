@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -272,6 +273,36 @@ func TestGitHubBackend_ListPullRequestFiles(t *testing.T) {
 	stub.json("GET "+githubPullPath+"/files", http.StatusNotFound, nil)
 	if _, err := backend.ListPullRequestFiles(context.Background(), githubRepo, 12); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestGitHubBackend_ListPullRequestFiles_ReportsTheCap proves a listing that
+// reaches GitHub's 3,000-file cap is reported as truncated, and one file
+// short of it is not.
+func TestGitHubBackend_ListPullRequestFiles_ReportsTheCap(t *testing.T) {
+	listing := func(n int) []map[string]any {
+		page := make([]map[string]any, n)
+		for i := range page {
+			page[i] = map[string]any{"filename": "f" + strconv.Itoa(i) + ".go", "status": "added"}
+		}
+		return page
+	}
+	backend, stub := newGitHubStub(t)
+
+	stub.json("GET "+githubPullPath+"/files", http.StatusOK, listing(githubMaxPullFiles))
+	_, err := backend.ListPullRequestFiles(context.Background(), githubRepo, 12)
+	var truncated *ChangedFilesTruncatedError
+	if !errors.As(err, &truncated) || !errors.Is(err, ErrChangedFilesTruncated) {
+		t.Fatalf("err = %v, want ErrChangedFilesTruncated", err)
+	}
+	if truncated.Type != ForgeGitHub || truncated.Listed != githubMaxPullFiles || truncated.Subject != "acme/widgets#12" {
+		t.Errorf("truncated = %+v", truncated)
+	}
+
+	stub.json("GET "+githubPullPath+"/files", http.StatusOK, listing(githubMaxPullFiles-1))
+	files, err := backend.ListPullRequestFiles(context.Background(), githubRepo, 12)
+	if err != nil || len(files) != githubMaxPullFiles-1 {
+		t.Errorf("one short of the cap = %d files, %v", len(files), err)
 	}
 }
 

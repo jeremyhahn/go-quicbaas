@@ -167,11 +167,30 @@ type gitlabMergeRequest struct {
 	// names the blocker otherwise ("checking", "ci_still_running", ...).
 	DetailedMergeStatus string `json:"detailed_merge_status"`
 
+	// ChangesCount is a string: the number of changed files, or the cap
+	// with a "+" ("1000+") when GitLab stored only part of the change, which
+	// is the overflow its changes endpoint reports.
+	ChangesCount string `json:"changes_count"`
+
 	Author    *gitlabUser `json:"author"`
 	WebURL    string      `json:"web_url"`
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 	Labels    []string    `json:"labels"`
+}
+
+// changesOverflowed reports whether GitLab capped the merge request's
+// changes, and the cap it stopped at.
+func (m gitlabMergeRequest) changesOverflowed() (listed int, capped bool) {
+	count, capped := strings.CutSuffix(m.ChangesCount, "+")
+	if !capped {
+		return 0, false
+	}
+	listed, err := strconv.Atoi(count)
+	if err != nil {
+		return 0, true
+	}
+	return listed, true
 }
 
 // toForgePullRequest converts GitLab's shape to the module's. repo is the
@@ -578,6 +597,14 @@ func (g *GitLabBackend) checkMergeMethod(ctx context.Context, repo RepoRef, meth
 	if method == "squash" && project.SquashOption == "never" {
 		return &ForgeUnsupportedError{Type: ForgeGitLab, Capability: "squash merge on a project that never squashes"}
 	}
+	// A project that always squashes squashes whatever the request says, so
+	// a merge or rebase would land as something other than what was asked.
+	if method != "squash" && project.SquashOption == "always" {
+		return &ForgeUnsupportedError{
+			Type:       ForgeGitLab,
+			Capability: "merge method " + method + " on a project that always squashes",
+		}
+	}
 	return nil
 }
 
@@ -641,6 +668,25 @@ func (d *gitlabDiff) toForgeChangedFile() ForgeChangedFile {
 // ListPullRequestFiles returns every file the merge request changes, paged to
 // the end; a listing that never ends is a fault.
 func (g *GitLabBackend) ListPullRequestFiles(ctx context.Context, repo RepoRef, number int) ([]ForgeChangedFile, error) {
+	var mr gitlabMergeRequest
+	if err := g.do(ctx, forgeRequest{
+		method:    http.MethodGet,
+		path:      gitlabMergeRequestPath(repo, number),
+		out:       &mr,
+		operation: "ListPullRequestFiles",
+	}); err != nil {
+		return nil, err
+	}
+	// The diffs listing ends where GitLab stopped storing the change, without
+	// saying so; only the merge request's count tells.
+	if listed, capped := mr.changesOverflowed(); capped {
+		return nil, &ChangedFilesTruncatedError{
+			Type:    ForgeGitLab,
+			Subject: repo.String() + "#" + strconv.Itoa(number),
+			Listed:  listed,
+		}
+	}
+
 	var files []ForgeChangedFile
 	err := forgePages(ctx, &g.forgeHTTP, forgeListing{
 		operation: "ListPullRequestFiles",

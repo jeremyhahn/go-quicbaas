@@ -233,13 +233,28 @@ func TestGitHubEnsureWebhook_RefusedCalls(t *testing.T) {
 	t.Run("the create is refused", func(t *testing.T) {
 		backend, stub := newGitHubStub(t)
 		stub.json("GET "+githubHooksPath, http.StatusOK, []map[string]any{})
-		stub.json("POST "+githubHooksPath, http.StatusUnprocessableEntity, map[string]string{"message": "Validation Failed"})
+		stub.json("POST "+githubHooksPath, http.StatusUnprocessableEntity,
+			map[string]string{"message": "secret " + string(githubWebhookSecret) + " rejected"})
 		err := backend.EnsureWebhook(context.Background(), githubRepo, githubHookSpec, githubWebhookSecret)
 		if err == nil {
 			t.Fatal("EnsureWebhook succeeded through a refused create")
 		}
 		if strings.Contains(err.Error(), string(githubWebhookSecret)) || strings.Contains(err.Error(), githubTestToken) {
 			t.Fatalf("the error leaked a credential: %v", err)
+		}
+	})
+
+	t.Run("the update is refused", func(t *testing.T) {
+		backend, stub := newGitHubStub(t)
+		stub.json("GET "+githubHooksPath, http.StatusOK, []map[string]any{githubHookAt(7, githubHookURL, true)})
+		stub.json("PATCH "+githubHooksPath+"/7", http.StatusUnprocessableEntity,
+			map[string]string{"message": "secret " + string(githubWebhookSecret) + " rejected"})
+		err := backend.EnsureWebhook(context.Background(), githubRepo, githubHookSpec, githubWebhookSecret)
+		if err == nil {
+			t.Fatal("EnsureWebhook succeeded through a refused update")
+		}
+		if strings.Contains(err.Error(), string(githubWebhookSecret)) {
+			t.Fatalf("the error leaked the webhook secret: %v", err)
 		}
 	})
 

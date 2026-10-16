@@ -158,10 +158,7 @@ func createTestTokenService(t *testing.T) (*TokenService, *rsa.PrivateKey) {
 		AuthCodeTTL:      10 * time.Minute,
 	}
 
-	storage := newMockTokenStorage()
-	service := NewTokenService(storage, privateKey, config)
-
-	return service, privateKey
+	return newKIDTokenService(t, privateKey, config, nil), privateKey
 }
 
 func TestTokenService_GenerateAccessToken(t *testing.T) {
@@ -207,6 +204,7 @@ func TestTokenService_GenerateAccessToken(t *testing.T) {
 	if mapClaims["tenant_id"] != "tenant-1" {
 		t.Errorf("tenant_id = %v, want tenant-1", mapClaims["tenant_id"])
 	}
+	requireKIDInServiceJWKS(t, service, tokenString)
 
 	// RFC 9068: the access token MUST carry typ "at+jwt".
 	if typ := jwtHeaderTyp(t, tokenString); typ != AccessTokenJWTType {
@@ -236,6 +234,7 @@ func TestTokenService_GenerateIDToken_NotAccessTokenType(t *testing.T) {
 	if typ := jwtHeaderTyp(t, idToken); typ == AccessTokenJWTType {
 		t.Errorf("ID token typ = %q, must not be %q", typ, AccessTokenJWTType)
 	}
+	requireKIDInServiceJWKS(t, service, idToken)
 }
 
 func TestTokenService_GenerateIDToken(t *testing.T) {
@@ -282,6 +281,7 @@ func TestTokenService_GenerateIDToken(t *testing.T) {
 	if mapClaims["email_verified"] != true {
 		t.Errorf("email_verified = %v, want true", mapClaims["email_verified"])
 	}
+	requireKIDInServiceJWKS(t, service, tokenString)
 }
 
 func TestTokenService_GenerateRefreshToken(t *testing.T) {

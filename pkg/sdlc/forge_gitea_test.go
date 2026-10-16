@@ -1749,6 +1749,35 @@ func TestEnsureWebhook_ReportsADeliveryThatNeverAppeared(t *testing.T) {
 	}
 }
 
+// TestEnsureWebhook_ARefusalDoesNotEchoTheSecret proves a create or update
+// Gitea refuses by echoing the hook's secret reaches the error redacted.
+func TestEnsureWebhook_ARefusalDoesNotEchoTheSecret(t *testing.T) {
+	const hooks = "/api/v1/repos/jeremyhahn/go-quicbaas/hooks"
+	secret := []byte("s3cret-hook-value")
+	refusal := map[string]any{"message": "secret " + string(secret) + " rejected"}
+	spec := WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}}
+
+	for name, existing := range map[string][]map[string]any{
+		"create": {},
+		"update": {{"id": 9, "active": true, "events": []string{"issues"}, "config": map[string]string{"url": spec.URL}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend, fixture := newGiteaFixture(t)
+			fixture.respondJSON("GET "+hooks, http.StatusOK, existing)
+			fixture.respondJSON("POST "+hooks, http.StatusUnprocessableEntity, refusal)
+			fixture.respondJSON("PATCH "+hooks+"/9", http.StatusUnprocessableEntity, refusal)
+
+			err := backend.EnsureWebhook(context.Background(), testRepo, spec, secret)
+			if !errors.Is(err, ErrBackend) {
+				t.Fatalf("err = %v, want ErrBackend", err)
+			}
+			if strings.Contains(err.Error(), string(secret)) {
+				t.Fatalf("the error leaked the webhook secret: %v", err)
+			}
+		})
+	}
+}
+
 // TestEnsureWebhook_TheSpecCarriesNoSecret is a leak-prevention property.
 //
 // A WebhookSpec is stored, logged and compared. The secret travels as a

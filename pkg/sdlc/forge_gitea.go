@@ -2288,7 +2288,8 @@ func (g *GiteaBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec Web
 				"events": spec.Events,
 				"config": config,
 			},
-			operation: "CreateWebhook",
+			operation:   "CreateWebhook",
+			bodySecrets: [][]byte{secret},
 		}); err != nil {
 			return err
 		}
@@ -2301,7 +2302,8 @@ func (g *GiteaBackend) EnsureWebhook(ctx context.Context, repo RepoRef, spec Web
 				"events": spec.Events,
 				"config": config,
 			},
-			operation: "UpdateWebhook",
+			operation:   "UpdateWebhook",
+			bodySecrets: [][]byte{secret},
 		}); err != nil {
 			return err
 		}

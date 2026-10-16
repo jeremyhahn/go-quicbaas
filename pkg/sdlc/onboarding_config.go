@@ -112,8 +112,10 @@ var DefaultRequiredStatusContexts = []string{DefaultReviewStatusContext}
 // Issues drive adoption, pull requests and their reviews drive the delivery
 // pipeline, and statuses drive the checks gate. Nothing else is subscribed to:
 // a delivery the ingestor maps to EventUnsupported costs a verification and an
-// HTTP round trip to be discarded.
-var DefaultWebhookEvents = []string{"issues", "pull_request", "status"}
+// HTTP round trip to be discarded. Reviews are named on their own because
+// GitHub delivers them apart from pull_request; Gitea's pull_request family
+// and GitLab's merge request hook already carry them.
+var DefaultWebhookEvents = []string{"issues", "pull_request", "pull_request_review", "status"}
 
 // DefaultForbiddenPaths are the orchestration workflows deleted from every
 // managed repository at the 2026-09-12 cutover.

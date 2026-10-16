@@ -57,8 +57,8 @@ type TokenService struct {
 	// the key manager (ES256) when present, otherwise from config.
 	signingAlg string
 	// currentKID is the kid stamped onto the "kid" JWT header so verifiers can
-	// select the matching public key from a multi-kid JWKS. Empty only for a
-	// service built by NewTokenService, which has no key manager.
+	// select the matching public key from a multi-kid JWKS. NewOIDCProvider,
+	// the only constructor, sets it from the signing key manager.
 	currentKID string
 	// keyManager, when set, is the authoritative xkms-backed source of signing
 	// keys; the token service re-reads the current key/kid per sign so rotation
@@ -76,17 +76,6 @@ type TokenService struct {
 	// scope passthrough. When nil (qrdb not wired) scp falls back to the OIDC
 	// scope, preserving today's behavior.
 	permResolver PermissionResolver
-}
-
-// NewTokenService creates a new token service.
-func NewTokenService(storage TokenStorage, signingKey crypto.Signer, config *OIDCConfig) *TokenService {
-	alg := config.SigningAlgorithm
-	return &TokenService{
-		storage:    storage,
-		signingKey: signingKey,
-		signingAlg: alg,
-		config:     config,
-	}
 }
 
 // signingMaterial returns the signer, algorithm, and kid to use for signing a

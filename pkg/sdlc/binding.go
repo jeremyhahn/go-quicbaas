@@ -157,6 +157,16 @@ func (c ForgeConfig) OwnedLabels() map[string]bool {
 }
 
 // Validate checks the config for what the module needs to reach the forge.
+// ApplyDefaults fills what a forge implies when the binding leaves it out:
+// GitHub has one public API root, so a GitHub binding may omit base_url, as
+// the adapter's own constructor allows. Other forges are self-hosted and
+// must name theirs.
+func (c *ForgeConfig) ApplyDefaults() {
+	if c.Type == ForgeGitHub && strings.TrimSpace(c.BaseURL) == "" {
+		c.BaseURL = githubDefaultBaseURL
+	}
+}
+
 func (c ForgeConfig) Validate() error {
 	switch {
 	case c.Type == "":
