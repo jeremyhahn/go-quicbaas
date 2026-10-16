@@ -22,12 +22,11 @@
 #   github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
 #   contains(github.event.pull_request.labels.*.name, 'ci:full')
 #
-# The pull_request trigger carries `labeled` (#1272, superseding #1266's
-# default types) so that adding `ci:full` starts a full-tier run. Any other
-# label also starts a run, which re-runs the PR tier on the same commit; the
-# ref-keyed `concurrency:` group below cancels the run it supersedes, so that
-# costs one PR tier, not two. CI Gate tags every job `pr` or `full`: it passes
-# a full-tier job the tier skipped and fails every other skip or failure.
+# The pull_request trigger carries no `labeled` (#1445, as go-trusted-platform
+# #853; it superseded #1272), so `ci:full` takes effect on the PR's next push
+# or update-branch, or through workflow_dispatch. CI Gate tags every job `pr`
+# or `full`: it passes a full-tier job the tier skipped and fails every other
+# skip or failure.
 # test/buildgates asserts the tags and the `if:` agree.
 #
 # v1.15 adopted 2026-10-05 (#1156; automatethethings#209): every job starts at
@@ -89,12 +88,18 @@ on:
     # only the latest trunk state is validated. automerge v7's merge trains are
     # PRs into main and get their CI from pull_request.
     branches: [main]
-  # `labeled` so that adding `ci:full` starts a full-tier run (#1272). Any
-  # other label also starts a run, which re-runs the PR tier on the same
-  # commit.
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, labeled]
+    # No `labeled` (#1445, as go-trusted-platform #853). Gitea 1.27.1 sends
+    # every label add AND remove as `label_updated`, and its matcher maps that
+    # to `labeled` whichever label moved, with no `github.event.label` in the
+    # payload. Each `task:*` or `code-review` change then started a run that
+    # the `concurrency` block let cancel the PR's run in progress, and a run
+    # whose jobs an `if:` skips would post `skipped` over the real run's
+    # `CI / *` contexts, CI Gate included. An action outside `types` matches
+    # nothing: no run, no status. The cost: adding `ci:full` waits for the
+    # PR's next push or update-branch, or a workflow_dispatch.
+    types: [opened, synchronize, reopened]
   # Gitea has no API to re-run a finished run (ci-template v1.3).
   workflow_dispatch:
 
@@ -1058,7 +1063,9 @@ jobs:
   # branch protection requires `CI / CI Gate (pull_request)`.
   ci-gate:
     name: CI Gate
-    runs-on: ubuntu-latest
+    # The reserved 1-CPU gate runners (#1445): this job has no checkout and
+    # no `uses:` action, and must keep it that way to fit them.
+    runs-on: ci-gate
     if: always()
     needs: [merge, lint, test, test-full, race, security, build, web, snapshot, docker]
     steps:

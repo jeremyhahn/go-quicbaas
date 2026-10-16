@@ -241,14 +241,17 @@ func TestCIGateTiersMatchTheJobs(t *testing.T) {
 	}
 }
 
-// TestCIStartsAFullTierRunWhenLabelled pins the `labeled` type on ci.yml's
-// pull_request trigger. Without it, adding `ci:full` selects nothing until the
-// pull request's next push.
-func TestCIStartsAFullTierRunWhenLabelled(t *testing.T) {
+// TestCIIgnoresLabelChanges pins ci.yml's pull_request types without
+// `labeled` (#1445). Gitea maps every label add and remove to `labeled`, so
+// with it each code-review or task:* change starts a run that cancels the
+// PR's run in flight.
+func TestCIIgnoresLabelChanges(t *testing.T) {
 	body := readFile(t, ciWorkflowPath)
-	want := "  pull_request:\n    branches: [main]\n    types: [opened, synchronize, reopened, labeled]\n"
-	if !strings.Contains(body, want) {
-		t.Errorf("ci.yml's pull_request trigger is not\n%s", want)
+	if !strings.Contains(body, "\n    types: [opened, synchronize, reopened]\n") {
+		t.Errorf("ci.yml's pull_request types are not [opened, synchronize, reopened]")
+	}
+	if strings.Contains(body, "reopened, labeled]") {
+		t.Errorf("ci.yml's pull_request types still carry `labeled`")
 	}
 }
 
