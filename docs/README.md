@@ -36,7 +36,7 @@ folders) into the folders below. Content was **moved and absorbed, not
 rewritten**; where a document contradicted the code, the document was corrected
 and the correction noted in place.
 
-Five directories are deliberately **not** feature folders and keep their
+Six directories are deliberately **not** feature folders and keep their
 existing shape:
 
 | Directory | Why it is not a feature folder |
@@ -46,6 +46,7 @@ existing shape:
 | `identity-refactor/` | A cross-repo migration plan, still awaiting sign-off. |
 | `testing/` | Contributor guides for running the suites. |
 | `release/` | What must be true of the tree before it is published, and the gates that enforce it. |
+| `reference/` | A copy of each industry standard the code implements, with its index ([reference/README.md](reference/README.md)); handbook `software/conventions/documentation.md` §9. |
 
 There is one roadmap, [`ROADMAP.md`](../ROADMAP.md) at the repository root, and
 one specification, [SPEC.md](SPEC.md), which lists every feature.
