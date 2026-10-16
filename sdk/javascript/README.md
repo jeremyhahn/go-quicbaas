@@ -48,7 +48,6 @@ The SDK provides access to all QuicBaaS services:
 
 ### Security
 - **Auth** - Authentication (login, logout, token refresh)
-- **RBAC** - Role-based access control
 - **Seal** - Database seal/unseal operations
 
 ### Cryptographic Services

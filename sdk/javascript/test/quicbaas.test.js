@@ -103,12 +103,6 @@ describe('QuicBaaS', () => {
       expect(db.auth()).toBe(auth);
     });
 
-    it('should return RBAC client', () => {
-      const rbac = db.rbac();
-      expect(rbac).toBeDefined();
-      expect(db.rbac()).toBe(rbac);
-    });
-
     it('should return Seal client', () => {
       const seal = db.seal();
       expect(seal).toBeDefined();

@@ -39,7 +39,7 @@ The DEK keys are in [`../data-encryption-keys/engineering.md`](../data-encryptio
 
 The **primary KMS crypto backend** — the go-xkms backend that holds the KMS key
 universe and is registered as the go-xkms default — is selected by the
-process-wide [`crypto:` block](../composition/engineering.md), resolved through the
+process-wide [`crypto:` block](../composition/engineering.md#crypto-backend-selection-crypto), resolved through the
 central `BackendResolver` (`pkg/server/backend_resolver.go`). `startKMS`
 (`pkg/server/lifecycle.go`) builds the KMS backend spec with this precedence
 (highest first):

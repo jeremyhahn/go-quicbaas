@@ -45,7 +45,6 @@ export { default as BatchClient } from './clients/batch.js';
 export { default as TransactionClient, CompareTarget, CompareResult, TxnOpType } from './clients/transaction.js';
 export { default as QueryClient, Operator, eq, neq, gt, gte, lt, lte, between, prefix } from './clients/query.js';
 export { default as AuthClient } from './clients/auth.js';
-export { default as RBACClient } from './clients/rbac.js';
 export { default as SealClient } from './clients/seal.js';
 export { default as ClusterClient, NodeState, RebalanceStrategy, RebalanceStatus } from './clients/cluster.js';
 export { default as HealthClient, HealthStatus } from './clients/health.js';

@@ -192,7 +192,7 @@ type SelectionCriteria struct {
 3. Check shard configuration (shard.primary_backend)
        │
        ▼
-4. Use cluster default (defaults.primary_backend)
+4. Use cluster primary (object_storage.primary_backend)
        │
        ▼
 5. Filter by enabled backends on this node

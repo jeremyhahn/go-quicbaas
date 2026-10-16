@@ -15,7 +15,6 @@ import BatchClient from './clients/batch.js';
 import TransactionClient, { CompareTarget, CompareResult, TxnOpType } from './clients/transaction.js';
 import QueryClient, { Operator } from './clients/query.js';
 import AuthClient from './clients/auth.js';
-import RBACClient from './clients/rbac.js';
 import SealClient from './clients/seal.js';
 import ClusterClient, { NodeState, RebalanceStrategy, RebalanceStatus } from './clients/cluster.js';
 import HealthClient, { HealthStatus } from './clients/health.js';
@@ -81,7 +80,6 @@ export class QuicBaaS {
   #transactionClient = null;
   #queryClient = null;
   #authClient = null;
-  #rbacClient = null;
   #sealClient = null;
   #clusterClient = null;
   #healthClient = null;
@@ -259,18 +257,6 @@ export class QuicBaaS {
       this.#authClient = new AuthClient(this.#transport);
     }
     return this.#authClient;
-  }
-
-  /**
-   * Get the RBAC client for role-based access control.
-   *
-   * @returns {RBACClient}
-   */
-  rbac() {
-    if (!this.#rbacClient) {
-      this.#rbacClient = new RBACClient(this.#transport);
-    }
-    return this.#rbacClient;
   }
 
   /**
@@ -623,7 +609,6 @@ export {
   TransactionClient,
   QueryClient,
   AuthClient,
-  RBACClient,
   SealClient,
   ClusterClient,
   HealthClient,

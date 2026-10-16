@@ -91,7 +91,6 @@ object_storage:
 
   # Cluster-wide defaults
   defaults:
-    primary_backend: s3-primary
     required_backends: [s3-primary]
     value_threshold: 1048576      # 1MB - offload threshold
     compression: zstd

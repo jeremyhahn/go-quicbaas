@@ -591,13 +591,30 @@ secure-analyzer-build: ## Build go-qrdb's secure analyzer from the pinned module
 	@$(GOCMD) list github.com/jeremyhahn/go-qrdb/pkg/secure/analyzer/cmd/secure-analyzer >/dev/null
 	$(GOCMD) build -o $(BIN_DIR)/secure-analyzer github.com/jeremyhahn/go-qrdb/pkg/secure/analyzer/cmd/secure-analyzer
 
-.PHONY: secure-analyzer
-secure-analyzer: secure-analyzer-build ## Run go-qrdb's secure analyzer across every module and declared tag set
-	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh maximal '$(TEST_TAGS)' $(BIN_DIR)/secure-analyzer
-	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh standard '$(STANDARD_TEST_TAGS)' $(BIN_DIR)/secure-analyzer
-	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh lean '$(LEAN_TEST_TAGS)' $(BIN_DIR)/secure-analyzer
-	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh minimal '$(MINIMAL_TEST_TAGS)' $(BIN_DIR)/secure-analyzer
-	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh desktop '$(DESKTOP_TEST_TAGS)' $(BIN_DIR)/secure-analyzer
+# The analyzer runs one pass per declared unit tag set, then the integration,
+# hardware and Go SDK integration passes. The whole gate took 616 s wall on a
+# lane node on 2026-10-16 (load average 80-191, warm build cache), past one
+# 600 s call, so it is split (#1416) into one target per unit tag set plus
+# secure-analyzer-integration. Measured per pass in that run: maximal 124 s,
+# standard 128 s, lean 138 s, minimal 104 s, desktop 46 s, integration 75 s.
+# `secure-analyzer` is their composition, in the same order with the same exit
+# codes, so `make lint-pre` and `make lint` run exactly the checks they ran.
+SECURE_ANALYZER_TAGS_maximal = $(TEST_TAGS)
+SECURE_ANALYZER_TAGS_standard = $(STANDARD_TEST_TAGS)
+SECURE_ANALYZER_TAGS_lean = $(LEAN_TEST_TAGS)
+SECURE_ANALYZER_TAGS_minimal = $(MINIMAL_TEST_TAGS)
+SECURE_ANALYZER_TAGS_desktop = $(DESKTOP_TEST_TAGS)
+SECURE_ANALYZER_UNIT_TARGETS := $(addprefix secure-analyzer-,maximal standard lean minimal desktop)
+
+.PHONY: secure-analyzer $(SECURE_ANALYZER_UNIT_TARGETS) secure-analyzer-integration
+secure-analyzer: $(SECURE_ANALYZER_UNIT_TARGETS) secure-analyzer-integration ## Run go-qrdb's secure analyzer across every module and declared tag set
+
+# secure-analyzer-maximal, -standard, -lean, -minimal, -desktop: one unit tag
+# set each, across every module.
+$(SECURE_ANALYZER_UNIT_TARGETS): secure-analyzer-%: secure-analyzer-build
+	@GOCMD="$(GOCMD)" scripts/secure-analyzer.sh $* '$(SECURE_ANALYZER_TAGS_$*)' $(BIN_DIR)/secure-analyzer
+
+secure-analyzer-integration: secure-analyzer-build ## Run the secure analyzer's integration, hardware and Go SDK integration passes
 	@GOCMD="$(GOCMD)" SECURE_ANALYZER_MODULES=go.mod SECURE_ANALYZER_PACKAGES=./test/... scripts/secure-analyzer.sh integration-test '$(INTEGRATION_VET_TAGS)' $(BIN_DIR)/secure-analyzer
 	@pkgs=$$($(INTEGRATION_VET_SCAN) | xargs -n1 dirname | sort -u | grep -v '^test/' | grep -v '^sdk/'); \
 	test -n "$$pkgs" || { echo "$(RED)secure-analyzer: the integration build-tag scan matched no package -- it has rotted$(NC)"; exit 1; }; \
@@ -3335,7 +3352,31 @@ vet-integration: ## Typecheck every integration- and hardware-tagged package (th
 # the 20-minute golangci-lint pass rather than after it. This is why CI's Lint
 # job needs no separate step for the gate. check-nolint is the same kind of
 # text scan and runs early for the same reason.
-lint: vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test ## Run linters (naming gate + golangci-lint)
+#
+# The gate is split in two (#1416) so each half fits inside one bounded call
+# on a loaded node: `lint-pre` runs the prerequisites, `lint-go` runs
+# golangci-lint alone. `lint` is their composition, in that order, with the
+# same output and exit codes, so CI keeps calling `make lint`. Both halves
+# share GOLANGCI_LINT_RECIPE below, so the timeout and the triage live once.
+lint: lint-pre ## Run linters (naming gate + golangci-lint)
+	$(GOLANGCI_LINT_RECIPE)
+
+.PHONY: lint-pre
+# 718 s wall on a lane node on 2026-10-16 (load average 52-95, warm build
+# cache) -- still above one 600 s call there, so poll it rather than wait on
+# it. Each prerequisite fits in one call on its own; measured one at a time on
+# 2026-10-16 (load average 70-217): vet-integration 153 s, verify-naming and
+# check-nolint about 1 s each, secure-analyzer-self-test 89 s. secure-analyzer
+# took 616 s, so it is split per tag set; see the times above its targets.
+lint-pre: vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test ## Run the lint prerequisites (vet-integration, naming, nolint, secure-analyzer)
+
+.PHONY: lint-go
+# 205 s wall on the same node right after lint-pre (load average 59-65,
+# warm lint cache). A cold lint cache is far slower; see the --timeout note.
+lint-go: ## Run golangci-lint alone (the second half of `make lint`)
+	$(GOLANGCI_LINT_RECIPE)
+
+define GOLANGCI_LINT_RECIPE
 	@echo "$(BLUE)Running linters...$(NC)"
 	@test -x $(GOLINT) || (echo "$(RED)golangci-lint not installed. Run: make install-tools$(NC)" && exit 1)
 	# 20m, not the template's 5m. This module is ~526k lines across ~1300 files
@@ -3365,6 +3406,7 @@ lint: vet-integration verify-naming check-nolint secure-analyzer secure-analyzer
 		echo "$(RED)golangci-lint reported findings (exit $$rc)$(NC)"; \
 		exit $$rc; \
 	fi
+endef
 
 .PHONY: coverage
 coverage: ## Generate coverage report (unit only; excludes generated code)
