@@ -151,6 +151,27 @@ Tenant/Shard Config (object_storage.tenants.{id})
 
 See Configuration Reference for details.
 
+## Primary Backend
+
+Objects stored without a `target_backend` go to `object_storage.primary_backend`:
+
+```yaml
+object_storage:
+  primary_backend: hot
+  backends:
+    hot:  { type: local, config: { path: /data/hot } }
+    cold: { type: s3, config: { bucket: archive } }
+```
+
+- An explicit `primary_backend` must name a configured backend; otherwise the
+  server refuses to start with `UnknownPrimaryBackendError`.
+- Unset with exactly one backend (including the automatic in-memory `default`),
+  that backend is primary.
+- Unset with several backends, the server refuses to start with
+  `PrimaryBackendUnresolvedError`, which lists the backends to choose from.
+
+A request's `target_backend` always wins over the primary.
+
 ## API Coverage
 
 | Operation | gRPC | REST | QUIC | MCP | CLI |

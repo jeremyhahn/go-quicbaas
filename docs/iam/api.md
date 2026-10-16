@@ -721,6 +721,9 @@ Over gRPC, the same operations are `IAMService` `CreatePolicy`, `GetPolicy`,
 `UpdatePolicy`, `DeletePolicy`, `ListPolicies`, `ValidatePolicy` and
 `TestPolicy` (`api/proto/iam/iam.proto`).
 
+Over REST, creating a policy whose name already exists in the tenant answers
+`409` with the `conflict` error body.
+
 A policy document (`pkg/iam/types.go` `Policy`):
 
 ```yaml

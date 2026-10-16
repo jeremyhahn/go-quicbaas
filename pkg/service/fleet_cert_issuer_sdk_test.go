@@ -152,24 +152,24 @@ func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
 	}
 	defer issued.PrivateKey.Destroy()
 
-	if ca.SignCSRCalls != 1 {
-		t.Fatalf("SignCSRCalls = %d, want 1: the issuer must hand the CA a CSR", ca.SignCSRCalls)
+	if ca.SignCSRCalls() != 1 {
+		t.Fatalf("SignCSRCalls = %d, want 1: the issuer must hand the CA a CSR", ca.SignCSRCalls())
 	}
-	if ca.LastSignCSR == nil {
+	if ca.LastSignCSR() == nil {
 		t.Fatal("no CSR was recorded")
 	}
-	if ca.LastSignCSR.Profile != "client" {
-		t.Errorf("CSR profile = %q, want %q", ca.LastSignCSR.Profile, "client")
+	if ca.LastSignCSR().Profile != "client" {
+		t.Errorf("CSR profile = %q, want %q", ca.LastSignCSR().Profile, "client")
 	}
-	if ca.LastSignCSR.TenantID != sdkIssuerTenant {
-		t.Errorf("CSR tenant = %q, want %q", ca.LastSignCSR.TenantID, sdkIssuerTenant)
+	if ca.LastSignCSR().TenantID != sdkIssuerTenant {
+		t.Errorf("CSR tenant = %q, want %q", ca.LastSignCSR().TenantID, sdkIssuerTenant)
 	}
-	if ca.LastSignCSR.ValidityDays != 30 {
-		t.Errorf("CSR validity = %d, want 30", ca.LastSignCSR.ValidityDays)
+	if ca.LastSignCSR().ValidityDays != 30 {
+		t.Errorf("CSR validity = %d, want 30", ca.LastSignCSR().ValidityDays)
 	}
 
 	// The CSR must carry the agent's public key and nothing of its private one.
-	csrBlock, _ := pem.Decode(ca.LastSignCSR.CSRPEM)
+	csrBlock, _ := pem.Decode(ca.LastSignCSR().CSRPEM)
 	if csrBlock == nil {
 		t.Fatal("recorded CSR is not PEM")
 	}
@@ -258,8 +258,8 @@ func TestSDKAgentCertIssuer_AppliesDefaults(t *testing.T) {
 	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
 		t.Errorf("OU = %v, want %q as the default", leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
 	}
-	if ca.LastSignCSR.ValidityDays != DefaultFleetNodeCertValidityDays {
-		t.Errorf("validity = %d, want the default %d", ca.LastSignCSR.ValidityDays, DefaultFleetNodeCertValidityDays)
+	if ca.LastSignCSR().ValidityDays != DefaultFleetNodeCertValidityDays {
+		t.Errorf("validity = %d, want the default %d", ca.LastSignCSR().ValidityDays, DefaultFleetNodeCertValidityDays)
 	}
 
 	var count int
@@ -332,14 +332,14 @@ func TestSDKAgentCertIssuer_Errors(t *testing.T) {
 		if !errors.As(err, &fieldErr) || fieldErr.Field != "tenant_id" {
 			t.Fatalf("error = %v, want a tenant_id field error", err)
 		}
-		if ca.SignCSRCalls != 0 {
-			t.Errorf("SignCSRCalls = %d, want 0: validation must precede the CA call", ca.SignCSRCalls)
+		if ca.SignCSRCalls() != 0 {
+			t.Errorf("SignCSRCalls = %d, want 0: validation must precede the CA call", ca.SignCSRCalls())
 		}
 	})
 
 	t.Run("a refused CSR is wrapped", func(t *testing.T) {
 		ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Refusal CA")
-		ca.SignCSRErr = errors.New("ca down")
+		ca.SetSignCSRErr(errors.New("ca down"))
 		issuer, err := NewSDKFleetNodeCertIssuer(ca)
 		if err != nil {
 			t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
@@ -355,7 +355,7 @@ func TestSDKAgentCertIssuer_Errors(t *testing.T) {
 
 	t.Run("an unparseable certificate is refused", func(t *testing.T) {
 		ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Corrupt CA")
-		ca.CorruptCertificatePEM = true
+		ca.SetCorruptCertificatePEM(true)
 		issuer, err := NewSDKFleetNodeCertIssuer(ca)
 		if err != nil {
 			t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
@@ -371,8 +371,8 @@ func TestSDKAgentCertIssuer_Errors(t *testing.T) {
 
 	t.Run("no bundle and no chain is refused", func(t *testing.T) {
 		ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer No Anchor CA")
-		ca.BundleErr = errors.New("no bundle")
-		ca.SuppressChain = true
+		ca.SetBundleErr(errors.New("no bundle"))
+		ca.SetSuppressChain(true)
 		issuer, err := NewSDKFleetNodeCertIssuer(ca)
 		if err != nil {
 			t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
@@ -397,8 +397,8 @@ func TestSDKAgentCertIssuer_Errors(t *testing.T) {
 // its endpoint is no better off than one with no certificate.
 func TestSDKAgentCertIssuer_FallsBackToTheSigningChain(t *testing.T) {
 	for name, configure := range map[string]func(*xkmsca.CAService){
-		"bundle call fails":       func(ca *xkmsca.CAService) { ca.BundleErr = errors.New("no bundle") },
-		"bundle call returns nil": func(ca *xkmsca.CAService) { ca.NilBundleResponse = true },
+		"bundle call fails":       func(ca *xkmsca.CAService) { ca.SetBundleErr(errors.New("no bundle")) },
+		"bundle call returns nil": func(ca *xkmsca.CAService) { ca.SetNilBundleResponse(true) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Fallback CA "+name)

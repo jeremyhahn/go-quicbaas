@@ -545,19 +545,19 @@ func (t *Transport) RequestStream(ctx context.Context, svcName, method string, r
 	ctx = inProcessTenant(ctx)
 	s := newStream(ctx, 100)
 
-	go runStreamHandler(ctx, handler, t.service, req, s)
+	go runStreamHandler(ctx, svcName, method, handler, t.service, req, s)
 
 	return s, nil
 }
 
-// runStreamHandler runs handler to completion, delivers its error (if any) as
-// the stream's last message, and then closes the stream. The error is
+// runStreamHandler runs handler to completion, delivers its error (if any),
+// classified like a unary error, as the stream's last message, and then closes the stream. The error is
 // delivered with a blocking send so a full buffer does not drop it; the
 // caller's Close unblocks that send.
-func runStreamHandler(ctx context.Context, handler streamHandlerFunc, svc service.QuicBaaS, req interface{}, s *stream) {
+func runStreamHandler(ctx context.Context, svcName, method string, handler streamHandlerFunc, svc service.QuicBaaS, req interface{}, s *stream) {
 	if err := handler(ctx, svc, req, s); err != nil {
 		// A closed stream has no reader left to take the error.
-		_ = s.deliver(err)
+		_ = s.deliver(classifyServiceError(svcName, method, err))
 	}
 	_ = s.Close()
 }

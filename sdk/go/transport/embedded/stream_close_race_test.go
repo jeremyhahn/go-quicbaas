@@ -43,7 +43,7 @@ func TestStream_CloseRacesHandlerSend(t *testing.T) {
 	handlerDone := make(chan struct{})
 	go func() {
 		defer close(handlerDone)
-		runStreamHandler(context.Background(), sendForever, nil, nil, s)
+		runStreamHandler(context.Background(), "quicbaas.KV", "List", sendForever, nil, nil, s)
 	}()
 
 	var closers sync.WaitGroup

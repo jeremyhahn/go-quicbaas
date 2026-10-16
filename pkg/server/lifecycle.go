@@ -21,6 +21,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -1256,6 +1257,27 @@ func (s *Server) startSecrets() error {
 
 // startCatalogManager initializes the catalog manager, backend manager, and background workers
 // if object storage is configured or enabled via environment variable.
+// newObjectStoreResolver builds the object store config resolver shared by the
+// reencrypt worker and the object storage service. The cluster defaults carry
+// the resolved primary backend, so a request without a target backend always
+// reaches a configured backend.
+func (s *Server) newObjectStoreResolver() (*config.ObjectStoreResolver, error) {
+	primary, err := s.config.ObjectStorage.ResolvePrimaryBackend()
+	if err != nil {
+		return nil, err
+	}
+	defaults := config.DefaultObjectStoreDefaults()
+	defaults.PrimaryBackend = primary
+	fullConfig := &config.ObjectStoreFullConfig{
+		Backends: s.config.ObjectStorage.Backends,
+		Defaults: *defaults,
+	}
+	nodeConfig := &config.NodeObjectStorageConfig{
+		EnabledBackends: slices.Sorted(maps.Keys(s.config.ObjectStorage.Backends)),
+	}
+	return config.NewObjectStoreResolver(fullConfig, nodeConfig), nil
+}
+
 func (s *Server) startCatalogManager() error {
 	// Skip if object storage is neither configured with backends nor enabled
 	if !s.config.ObjectStorage.Enabled && len(s.config.ObjectStorage.Backends) == 0 {
@@ -1276,6 +1298,12 @@ func (s *Server) startCatalogManager() error {
 			Config:      map[string]string{},
 			Description: "Auto-created default memory backend",
 		}
+	}
+
+	// Refuse to start when no primary backend can be resolved: a request
+	// without a target backend must never fall back to an empty name.
+	if _, err := s.config.ObjectStorage.ResolvePrimaryBackend(); err != nil {
+		return err
 	}
 
 	// Create logger adapter
@@ -1396,18 +1424,10 @@ func (s *Server) startCatalogManager() error {
 		if dekErr != nil {
 			s.logger.WithError(dekErr).Warn("Failed to create DEK provider, reencrypt worker will not be registered")
 		} else {
-			fullConfig := &config.ObjectStoreFullConfig{
-				Backends: s.config.ObjectStorage.Backends,
-				Defaults: *config.DefaultObjectStoreDefaults(),
+			configResolver, resolverErr := s.newObjectStoreResolver()
+			if resolverErr != nil {
+				return resolverErr
 			}
-			enabledBackendStrings := make([]string, len(s.config.KMS.EnabledBackends))
-			for i, bt := range s.config.KMS.EnabledBackends {
-				enabledBackendStrings[i] = string(bt)
-			}
-			nodeConfig := &config.NodeObjectStorageConfig{
-				EnabledBackends: enabledBackendStrings,
-			}
-			configResolver := config.NewObjectStoreResolver(fullConfig, nodeConfig)
 
 			encryptionMgr, encErr := newEncryptionManagerFn(dekProvider, configResolver)
 			if encErr != nil {
@@ -1778,18 +1798,10 @@ func (s *Server) startService() error {
 		builder = builder.WithBackendManager(s.backendManager)
 		s.logger.Info("Object storage catalog and backend managers attached to service")
 		if len(s.config.ObjectStorage.Backends) > 0 {
-			fullConfig := &config.ObjectStoreFullConfig{
-				Backends: s.config.ObjectStorage.Backends,
-				Defaults: *config.DefaultObjectStoreDefaults(),
+			configResolver, err := s.newObjectStoreResolver()
+			if err != nil {
+				return err
 			}
-			enabledBackendStrings := make([]string, 0)
-			for name := range s.config.ObjectStorage.Backends {
-				enabledBackendStrings = append(enabledBackendStrings, name)
-			}
-			nodeConfig := &config.NodeObjectStorageConfig{
-				EnabledBackends: enabledBackendStrings,
-			}
-			configResolver := config.NewObjectStoreResolver(fullConfig, nodeConfig)
 			builder = builder.WithObjectStoreConfigResolver(configResolver)
 			s.logger.Info("Object storage config resolver attached to service")
 		}

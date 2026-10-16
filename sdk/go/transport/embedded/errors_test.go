@@ -14,7 +14,6 @@
 package embedded
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -188,11 +187,9 @@ func TestClassifyServiceError_CodesProjectAndSDLCErrors(t *testing.T) {
 	}
 }
 
-func TestClassifyServiceError_LeavesOtherErrorsUnchanged(t *testing.T) {
+func TestClassifyServiceError_LeavesCodedErrorsUnchanged(t *testing.T) {
 	require.NoError(t, classifyServiceError("project", "Get", nil))
 
 	coded := sdkerrors.NewNotFound("project.Get", "project")
 	assert.Same(t, coded, classifyServiceError("project", "Get", coded))
-
-	assert.Equal(t, context.Canceled, classifyServiceError("project", "Get", context.Canceled))
 }

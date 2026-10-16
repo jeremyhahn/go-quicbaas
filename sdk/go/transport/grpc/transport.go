@@ -712,11 +712,18 @@ func convertGRPCError(err error, op string) error {
 	if !ok {
 		return errors.Wrap(err, errors.CodeUnknown, op, "unknown error")
 	}
+	if st.Code() == codes.OK {
+		return nil
+	}
+	return errors.Wrap(err, StatusErrorCode(st), op, st.Message())
+}
 
+// StatusErrorCode returns the SDK error code a gRPC caller reads for st. It
+// is the one gRPC-status-to-SDK-code table: the embedded transport classes a
+// service error through it too, so both transports report the same code.
+func StatusErrorCode(st *status.Status) errors.ErrorCode {
 	var code errors.ErrorCode
 	switch st.Code() {
-	case codes.OK:
-		return nil
 	case codes.InvalidArgument:
 		code = errors.CodeInvalidInput
 	case codes.NotFound:
@@ -750,8 +757,7 @@ func convertGRPCError(err error, op string) error {
 	default:
 		code = errors.CodeUnknown
 	}
-
-	return errors.Wrap(err, code, op, st.Message())
+	return code
 }
 
 // rateLimitedCode is the server's pkg/errors code for a call refused by rate

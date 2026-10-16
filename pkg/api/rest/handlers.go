@@ -30,6 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
@@ -1417,6 +1418,16 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 	if stderrors.As(err, &notLeaderErr) {
 		RespondError(w, r, http.StatusServiceUnavailable,
 			errors.Wrap(err, errors.ErrLeaderNotAvailable, "rest.handleServiceError"))
+		return
+	}
+
+	// A duplicate policy name is the caller's conflict, not a server fault
+	// (go-quicbaas#1417). Policy create and batch import both return it.
+	var policyExistsErr *iam.PolicyExistsError
+	if stderrors.As(err, &policyExistsErr) {
+		RespondError(w, r, http.StatusConflict, &ConflictError{
+			Message: policyExistsErr.Error(),
+		})
 		return
 	}
 

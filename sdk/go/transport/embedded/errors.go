@@ -14,13 +14,19 @@
 package embedded
 
 import (
+	"context"
 	stderrors "errors"
 	"strconv"
 
+	"google.golang.org/grpc/status"
+
+	apigrpc "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
+	pkgerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	grpctransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/grpc"
 )
 
 // Error types for the embedded transport.
@@ -235,10 +241,14 @@ func domainErrorCode(err error) (errors.ErrorCode, bool) {
 	return errors.CodeUnknown, false
 }
 
-// classifyServiceError gives a project or SDLC service error the SDK code the
-// network transports report for it, keeping the service error as the cause so
-// errors.As still finds it. Any other error, including one already coded, is
-// returned unchanged.
+// classifyServiceError is the embedded transport's error boundary: every unary
+// and stream handler error passes through it, so an embedded caller reads the
+// same SDK code a network caller does. An error already coded by the SDK
+// passes through unchanged. A project or SDLC service error, a pkg/errors
+// (go-qrdb) error, or one of this transport's own typed errors takes the code
+// the network transports report for it. Anything else is CodeInternal. Every
+// converted error keeps the original as its cause, so errors.Is and errors.As
+// still reach it.
 func classifyServiceError(svcName, method string, err error) error {
 	if err == nil {
 		return nil
@@ -247,9 +257,60 @@ func classifyServiceError(svcName, method string, err error) error {
 	if stderrors.As(err, &coded) {
 		return err
 	}
-	code, ok := domainErrorCode(err)
-	if !ok {
-		return err
+	if code, ok := domainErrorCode(err); ok {
+		return errors.Wrap(err, code, "embedded."+svcName+"."+method, "service request failed")
 	}
-	return errors.Wrap(err, code, "embedded."+svcName+"."+method, "service request failed")
+	var serviceErr *pkgerrors.QBError
+	if stderrors.As(err, &serviceErr) {
+		return errors.Wrap(err, serviceErrorCode(serviceErr), serviceErr.Op, serviceErrorMessage(serviceErr))
+	}
+	if code, ok := transportErrorCode(err); ok {
+		return errors.Wrap(err, code, "embedded."+svcName+"."+method, err.Error())
+	}
+	return errors.Wrap(err, errors.CodeInternal, "embedded."+svcName+"."+method, "service request failed")
+}
+
+// serviceErrorCode returns the SDK code a gRPC caller reads for a pkg/errors
+// error. It composes the server's pkg/errors-to-gRPC table with the client's
+// gRPC-to-SDK table rather than keeping a third table that could drift.
+func serviceErrorCode(err *pkgerrors.QBError) errors.ErrorCode {
+	return grpctransport.StatusErrorCode(status.Convert(apigrpc.ToGRPCError(err)))
+}
+
+// serviceErrorMessage returns a pkg/errors error's message without its op and
+// code, which the SDK error carries in its own fields.
+func serviceErrorMessage(err *pkgerrors.QBError) string {
+	if err.Err == nil {
+		return err.Code.String()
+	}
+	return err.Err.Error()
+}
+
+// transportErrorCode classes the typed errors this transport's handlers
+// return, with the code each one's message already names, and a context
+// cancellation or deadline the way a network caller reads it.
+func transportErrorCode(err error) (errors.ErrorCode, bool) {
+	var (
+		unknownMethod   *UnknownMethodError
+		invalidRequest  *InvalidRequestTypeError
+		invalidUserID   *InvalidUserIDError
+		notConfigured   *ServiceNotConfiguredError
+		streamNotServed *StreamNotSupportedError
+		denied          *PermissionDeniedError
+	)
+	switch {
+	case stderrors.As(err, &invalidRequest), stderrors.As(err, &invalidUserID):
+		return errors.CodeInvalidInput, true
+	case stderrors.As(err, &denied):
+		return errors.CodeForbidden, true
+	case stderrors.As(err, &notConfigured):
+		return errors.CodeUnavailable, true
+	case stderrors.As(err, &unknownMethod), stderrors.As(err, &streamNotServed):
+		return errors.CodeUnimplemented, true
+	case stderrors.Is(err, context.Canceled):
+		return errors.CodeCanceled, true
+	case stderrors.Is(err, context.DeadlineExceeded):
+		return errors.CodeTimeout, true
+	}
+	return errors.CodeUnknown, false
 }

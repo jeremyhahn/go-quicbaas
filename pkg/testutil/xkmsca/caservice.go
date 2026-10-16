@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"math/big"
+	"sync"
 	"testing"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -41,38 +42,96 @@ type CAService struct {
 	ca xkmssdk.TrustedCA
 	t  *testing.T
 
-	// SignCSRErr, when set, is returned by SignCSR instead of signing. It is the
-	// honest "the CA refused" condition; the rest of the type stays real.
-	SignCSRErr error
+	// mu guards every fault and record field below. A served CAService is
+	// called on transport handler goroutines while the test goroutine sets
+	// faults and reads records, so each field is reached only through the
+	// setter and getter methods.
+	mu sync.Mutex
 
-	// BundleErr, when set, is returned by GetCABundle. Used to exercise the
+	// signCSRErr, when set, is returned by SignCSR instead of signing. It is
+	// the honest "the CA refused" condition; the rest of the type stays real.
+	signCSRErr error
+
+	// bundleErr, when set, is returned by GetCABundle. Used to exercise the
 	// caller's bundle fallback.
-	BundleErr error
+	bundleErr error
 
-	// NilBundleResponse makes GetCABundle return (nil, nil) — a served
+	// nilBundleResponse makes GetCABundle return (nil, nil) — a served
 	// implementation that answers without answering. Real transports can do
 	// this, and a caller that dereferences the response crashes on it.
-	NilBundleResponse bool
+	nilBundleResponse bool
 
-	// SuppressChain makes SignCSR omit ChainPEM, standing for a CA that returns
+	// suppressChain makes SignCSR omit ChainPEM, standing for a CA that returns
 	// the leaf but cannot produce its own chain. It is the second half of the
-	// caller's bundle fallback: with BundleErr set too, there is no trust anchor
+	// caller's bundle fallback: with bundleErr set too, there is no trust anchor
 	// at all and the caller must refuse rather than deliver an unusable bundle.
-	SuppressChain bool
+	suppressChain bool
 
-	// CorruptCertificatePEM makes SignCSR return a well-formed PEM envelope
+	// corruptCertificatePEM makes SignCSR return a well-formed PEM envelope
 	// around bytes that are not a certificate. Fault injection on the wire, not
 	// a fake CA: it is how a caller's parse-failure path gets exercised without
 	// pretending the CA signed something it did not.
-	CorruptCertificatePEM bool
+	corruptCertificatePEM bool
 
-	// SignCSRCalls counts the CSRs this service was asked to sign, so a test can
-	// assert the caller took the CSR path rather than the keypair path.
-	SignCSRCalls int
+	// signCSRCalls counts the CSRs this service was asked to sign, so a test
+	// can assert the caller took the CSR path rather than the keypair path.
+	signCSRCalls int
 
-	// LastSignCSR records the most recent request, so a test can inspect the
+	// lastSignCSR records the most recent request, so a test can inspect the
 	// CSR the caller actually built.
-	LastSignCSR *xkmstransport.SignCSRRequest
+	lastSignCSR *xkmstransport.SignCSRRequest
+}
+
+// SetSignCSRErr makes SignCSR return err instead of signing; nil restores
+// signing.
+func (s *CAService) SetSignCSRErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.signCSRErr = err
+}
+
+// SetBundleErr makes GetCABundle return err; nil restores the bundle.
+func (s *CAService) SetBundleErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bundleErr = err
+}
+
+// SetNilBundleResponse makes GetCABundle answer (nil, nil) while on is true.
+func (s *CAService) SetNilBundleResponse(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nilBundleResponse = on
+}
+
+// SetSuppressChain makes SignCSR omit ChainPEM while on is true.
+func (s *CAService) SetSuppressChain(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.suppressChain = on
+}
+
+// SetCorruptCertificatePEM makes SignCSR return a PEM envelope around bytes
+// that are not a certificate while on is true.
+func (s *CAService) SetCorruptCertificatePEM(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.corruptCertificatePEM = on
+}
+
+// SignCSRCalls reports how many CSRs this service was asked to sign.
+func (s *CAService) SignCSRCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.signCSRCalls
+}
+
+// LastSignCSR returns the most recent SignCSR request, or nil before the
+// first call.
+func (s *CAService) LastSignCSR() *xkmstransport.SignCSRRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSignCSR
 }
 
 // Compile-time proof the real CA satisfies the interface its consumers declare.
@@ -104,10 +163,13 @@ func (s *CAService) TrustedCA() xkmssdk.TrustedCA { return s.ca }
 // SignCSR signs the supplied PKCS#10 CSR with the real CA, under the client
 // profile when one is named.
 func (s *CAService) SignCSR(ctx context.Context, req *xkmstransport.SignCSRRequest) (*xkmstransport.SignCSRResponse, error) {
-	s.SignCSRCalls++
-	s.LastSignCSR = req
-	if s.SignCSRErr != nil {
-		return nil, s.SignCSRErr
+	s.mu.Lock()
+	s.signCSRCalls++
+	s.lastSignCSR = req
+	signErr, corrupt, suppressChain := s.signCSRErr, s.corruptCertificatePEM, s.suppressChain
+	s.mu.Unlock()
+	if signErr != nil {
+		return nil, signErr
 	}
 
 	cert, err := s.ca.SignCSR(ctx, req.CSRPEM, &xkmssdk.TrustedCASignOptions{
@@ -120,12 +182,12 @@ func (s *CAService) SignCSR(ctx context.Context, req *xkmstransport.SignCSRReque
 	}
 
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-	if s.CorruptCertificatePEM {
+	if corrupt {
 		certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not-a-certificate")})
 	}
 
 	var chain []byte
-	if !s.SuppressChain {
+	if !suppressChain {
 		chain = s.bundle()
 	}
 
@@ -160,10 +222,13 @@ func (s *CAService) IssueCertificate(ctx context.Context, req *xkmstransport.Iss
 
 // GetCABundle returns the CA's own certificate as the trust bundle.
 func (s *CAService) GetCABundle(_ context.Context, _ *xkmstransport.GetCABundleRequest) (*xkmstransport.GetCABundleResponse, error) {
-	if s.BundleErr != nil {
-		return nil, s.BundleErr
+	s.mu.Lock()
+	bundleErr, nilResponse := s.bundleErr, s.nilBundleResponse
+	s.mu.Unlock()
+	if bundleErr != nil {
+		return nil, bundleErr
 	}
-	if s.NilBundleResponse {
+	if nilResponse {
 		return nil, nil
 	}
 	return &xkmstransport.GetCABundleResponse{BundlePEM: s.bundle()}, nil

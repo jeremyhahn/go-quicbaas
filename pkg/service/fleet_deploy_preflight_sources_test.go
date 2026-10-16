@@ -65,7 +65,7 @@ func TestSDKAgentCertIssuer_AgentCABundle(t *testing.T) {
 	}
 
 	failing := xkmsca.NewCAService(t, "QuicBaaS #1022 SDK Preflight CA failing")
-	failing.BundleErr = errors.New("no bundle")
+	failing.SetBundleErr(errors.New("no bundle"))
 	issuer, err = NewSDKFleetNodeCertIssuer(failing)
 	if err != nil {
 		t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)

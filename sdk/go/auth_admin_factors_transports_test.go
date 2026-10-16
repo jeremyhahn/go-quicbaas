@@ -475,7 +475,7 @@ func TestAdminFactors_PIVRefusedByCAOnEveryTransport(t *testing.T) {
 	for name, open := range adminFactorTransports {
 		t.Run(name, func(t *testing.T) {
 			s := newPIVServer(t, open)
-			s.ca.SignCSRErr = errors.New("ca offline")
+			s.ca.SetSignCSRErr(errors.New("ca offline"))
 
 			if _, err := s.enroller.Enroll(context.Background(), pivRequest(t)); err == nil {
 				t.Fatal("Enroll succeeded although the CA refused the certificate")

@@ -15,12 +15,32 @@ Node Config (server.node_object_storage)
 Tenant/Shard Config (object_storage.tenants.{id})
 ```
 
+## Primary Backend
+
+`object_storage.primary_backend` names the backend that receives objects stored
+without an explicit `target_backend` (put, copy, batch put, restore). The server
+resolves it once at startup and seeds the cluster defaults with it:
+
+| Configuration | Result |
+|---------------|--------|
+| `primary_backend` set to a configured backend | That backend is primary |
+| `primary_backend` set to a name not under `backends` | Startup refused: `UnknownPrimaryBackendError` |
+| `primary_backend` unset, exactly one backend (including the automatic in-memory `default` created when `enabled: true` has no backends) | That backend is primary |
+| `primary_backend` unset, several backends | Startup refused: `PrimaryBackendUnresolvedError`, which names the configured backends |
+
+An explicit `target_backend` on a request always wins over the primary.
+Tenant and shard `primary_backend` overrides still apply on top of it.
+
 ## Complete Configuration Example
 
 ```yaml
 # quicbaas.yaml
 
 object_storage:
+  # Receives objects stored without a target_backend. Required when more
+  # than one backend is configured.
+  primary_backend: s3-primary
+
   # Backend definitions (cluster-wide)
   backends:
     s3-primary:

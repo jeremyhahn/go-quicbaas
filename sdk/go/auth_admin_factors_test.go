@@ -322,7 +322,7 @@ func TestAdminFactors_EnrolledPIVCompletesLogin(t *testing.T) {
 
 func TestAdminFactors_PIVRefusedWhenCARefuses(t *testing.T) {
 	enroller, _, factors, ca := newAdminEnrollerCAFixture(t)
-	ca.SignCSRErr = errors.New("ca offline")
+	ca.SetSignCSRErr(errors.New("ca offline"))
 
 	_, err := enroller.Enroll(context.Background(), &AdminFactorEnrollRequest{
 		Factors:      []string{"piv"},
@@ -334,8 +334,8 @@ func TestAdminFactors_PIVRefusedWhenCARefuses(t *testing.T) {
 	if err == nil {
 		t.Fatal("Enroll succeeded although the CA refused the certificate")
 	}
-	if ca.SignCSRCalls != 1 {
-		t.Errorf("SignCSR calls = %d, want 1", ca.SignCSRCalls)
+	if ca.SignCSRCalls() != 1 {
+		t.Errorf("SignCSR calls = %d, want 1", ca.SignCSRCalls())
 	}
 	listed, err := factors.List(context.Background(), "root")
 	if err != nil {
@@ -411,8 +411,8 @@ func TestAdminFactors_EnrollPIVWithoutGeneratorStoresNothing(t *testing.T) {
 	if !errors.As(err, &unavailable) || unavailable.Factor != qrdbsdk.FactorPIV {
 		t.Fatalf("Enroll err = %v, want a piv AdminFactorUnavailableError", err)
 	}
-	if ca.SignCSRCalls != 0 {
-		t.Errorf("SignCSR calls = %d, want 0", ca.SignCSRCalls)
+	if ca.SignCSRCalls() != 0 {
+		t.Errorf("SignCSR calls = %d, want 0", ca.SignCSRCalls())
 	}
 	listed, err := factors.List(context.Background(), "root")
 	if err != nil {

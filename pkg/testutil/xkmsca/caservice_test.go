@@ -28,6 +28,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"sync"
 	"testing"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -79,10 +80,10 @@ func TestCAServiceSignsTheSuppliedCSR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignCSR: %v", err)
 	}
-	if svc.SignCSRCalls != 1 {
-		t.Errorf("SignCSRCalls = %d, want 1", svc.SignCSRCalls)
+	if svc.SignCSRCalls() != 1 {
+		t.Errorf("SignCSRCalls = %d, want 1", svc.SignCSRCalls())
 	}
-	if svc.LastSignCSR == nil || svc.LastSignCSR.TenantID != "automatethethings" {
+	if svc.LastSignCSR() == nil || svc.LastSignCSR().TenantID != "automatethethings" {
 		t.Error("the request was not recorded for inspection")
 	}
 	if len(resp.ChainPEM) == 0 {
@@ -129,11 +130,52 @@ func TestCAServiceRefusesAMalformedCSR(t *testing.T) {
 func TestCAServiceSignCSRErr(t *testing.T) {
 	svc := NewCAService(t, "QuicBaaS CAService Refusal CA")
 	sentinel := errors.New("ca down")
-	svc.SignCSRErr = sentinel
+	svc.SetSignCSRErr(sentinel)
 	csrPEM, _ := newCSR(t, "leaf.example.test")
 
 	if _, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM}); !errors.Is(err, sentinel) {
 		t.Fatalf("error = %v, want the configured sentinel", err)
+	}
+}
+
+// A served CAService answers on transport handler goroutines while the test
+// goroutine sets faults and reads records. Under -race this fails if any fault
+// or record field is reached without the lock (go-quicbaas#1422).
+func TestCAServiceIsSafeAcrossGoroutines(t *testing.T) {
+	svc := NewCAService(t, "QuicBaaS CAService Concurrency CA")
+	sentinel := errors.New("ca down")
+	csrPEM, _ := newCSR(t, "leaf.example.test")
+	const callers = 8
+
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM})
+			if err != nil && !errors.Is(err, sentinel) {
+				t.Errorf("SignCSR error = %v, want nil or the configured sentinel", err)
+			}
+			if _, err := svc.GetCABundle(context.Background(), &xkmssdk.GetCABundleRequest{}); err != nil && !errors.Is(err, sentinel) {
+				t.Errorf("GetCABundle error = %v, want nil or the configured sentinel", err)
+			}
+		}()
+	}
+	svc.SetSignCSRErr(sentinel)
+	svc.SetSuppressChain(true)
+	svc.SetCorruptCertificatePEM(true)
+	svc.SetBundleErr(sentinel)
+	svc.SetNilBundleResponse(true)
+	if req := svc.LastSignCSR(); req != nil && len(req.CSRPEM) == 0 {
+		t.Error("LastSignCSR recorded a request without its CSR")
+	}
+	wg.Wait()
+
+	if got := svc.SignCSRCalls(); got != callers {
+		t.Errorf("SignCSRCalls = %d, want %d", got, callers)
+	}
+	if svc.LastSignCSR() == nil {
+		t.Error("LastSignCSR = nil after concurrent calls, want the last request")
 	}
 }
 
@@ -204,7 +246,7 @@ func TestCAServiceBundleFaults(t *testing.T) {
 	t.Run("BundleErr", func(t *testing.T) {
 		svc := NewCAService(t, "QuicBaaS CAService BundleErr CA")
 		sentinel := errors.New("no bundle")
-		svc.BundleErr = sentinel
+		svc.SetBundleErr(sentinel)
 		if _, err := svc.GetCABundle(context.Background(), &xkmssdk.GetCABundleRequest{}); !errors.Is(err, sentinel) {
 			t.Fatalf("error = %v, want the configured sentinel", err)
 		}
@@ -212,7 +254,7 @@ func TestCAServiceBundleFaults(t *testing.T) {
 
 	t.Run("NilBundleResponse", func(t *testing.T) {
 		svc := NewCAService(t, "QuicBaaS CAService NilBundle CA")
-		svc.NilBundleResponse = true
+		svc.SetNilBundleResponse(true)
 		resp, err := svc.GetCABundle(context.Background(), &xkmssdk.GetCABundleRequest{})
 		if err != nil {
 			t.Fatalf("GetCABundle: %v", err)
@@ -224,7 +266,7 @@ func TestCAServiceBundleFaults(t *testing.T) {
 
 	t.Run("SuppressChain", func(t *testing.T) {
 		svc := NewCAService(t, "QuicBaaS CAService SuppressChain CA")
-		svc.SuppressChain = true
+		svc.SetSuppressChain(true)
 		csrPEM, _ := newCSR(t, "leaf.example.test")
 		resp, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM})
 		if err != nil {
@@ -243,7 +285,7 @@ func TestCAServiceBundleFaults(t *testing.T) {
 // which is what a caller's parse-failure path needs.
 func TestCAServiceCorruptCertificatePEM(t *testing.T) {
 	svc := NewCAService(t, "QuicBaaS CAService Corrupt CA")
-	svc.CorruptCertificatePEM = true
+	svc.SetCorruptCertificatePEM(true)
 	csrPEM, _ := newCSR(t, "leaf.example.test")
 
 	resp, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM})

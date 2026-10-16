@@ -1972,6 +1972,12 @@ type ObjectStorageConfig struct {
 	// Backends is a map of backend name to backend configuration.
 	// Example keys: "primary", "keyring", "backup", "archive"
 	Backends map[string]*StorageBackendConfig `mapstructure:"backends"`
+
+	// PrimaryBackend names the backend that receives objects stored without
+	// an explicit target backend. It must be one of Backends. When unset and
+	// exactly one backend is configured, that backend is primary; with
+	// several backends it is required. See ResolvePrimaryBackend.
+	PrimaryBackend string `mapstructure:"primary_backend"`
 }
 
 // StorageBackendConfig defines configuration for a single storage backend.
