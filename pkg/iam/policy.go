@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
@@ -203,6 +204,7 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 
 	// Check if policy exists
 	existing, err := e.storage.GetPolicy(ctx, tenantID, policy.Metadata.Name)
+	existing, err = repairableRecord(existing, err)
 	if err != nil {
 		return err
 	}
@@ -245,6 +247,7 @@ func (e *PolicyEngine) DeletePolicy(ctx context.Context, tenantID, name string) 
 
 	// Check if policy exists
 	existing, err := e.storage.GetPolicy(ctx, tenantID, name)
+	existing, err = repairableRecord(existing, err)
 	if err != nil {
 		return err
 	}
@@ -283,6 +286,17 @@ func (e *PolicyEngine) ListPolicies(ctx context.Context, tenantID string, opts L
 	defer e.mu.RUnlock()
 
 	return e.storage.ListPolicies(ctx, tenantID, opts)
+}
+
+// repairableRecord lets an update or delete reach a stored record that does
+// not decode strictly: replacing or removing it is how an operator repairs
+// it. The record stands in as its flagged entry, which applies no rules.
+func repairableRecord(existing *Policy, err error) (*Policy, error) {
+	var loadErr *StoredPolicyDecodeError
+	if errors.As(err, &loadErr) {
+		return flaggedPolicy(loadErr), nil
+	}
+	return existing, err
 }
 
 // ValidatePolicy validates a policy for correctness.
@@ -404,6 +418,10 @@ func (e *PolicyEngine) SimulatePolicy(ctx context.Context, req *PolicySimulation
 
 	startTime := time.Now()
 
+	// A flagged entry is a stored record that is never applied.
+	if req.Policy.LoadError != nil {
+		return nil, req.Policy.LoadError
+	}
 	if err := req.Policy.Validate(); err != nil {
 		return nil, NewIAMError(ErrPolicyInvalid, "iam.policy.simulate", "policy validation failed", err)
 	}

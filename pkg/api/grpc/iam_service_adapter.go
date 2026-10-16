@@ -15,11 +15,8 @@ package grpc
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -665,18 +662,21 @@ func (a *IAMServiceAdapter) ListPolicies(ctx context.Context, tenantID string, l
 }
 
 // ValidatePolicy validates a policy YAML without creating it.
-func (a *IAMServiceAdapter) ValidatePolicy(ctx context.Context, tenantID string, specYAML []byte) (bool, []string, error) {
-	// Parse YAML into Policy struct
-	var policy iam.Policy
-	if err := yaml.Unmarshal(specYAML, &policy); err != nil {
-		return false, []string{fmt.Sprintf("failed to parse YAML: %v", err)}, nil
+func (a *IAMServiceAdapter) ValidatePolicy(ctx context.Context, tenantID, name string, specYAML []byte) (bool, []string, error) {
+	// Parse with the strict decoder CreatePolicy uses, so a document this
+	// reports valid is one CreatePolicy accepts.
+	policy, err := iam.ParsePolicyYAML(specYAML, iam.PolicyMetadata{Tenant: tenantID})
+	if err != nil {
+		return false, []string{err.Error()}, nil
 	}
 
-	// Ensure tenant is set
-	policy.Metadata.Tenant = tenantID
+	// Check the document against the name it will be stored under; an
+	// empty name checks nothing.
+	if err := iam.CheckPolicyName(policy, name); err != nil {
+		return false, []string{err.Error()}, nil
+	}
 
-	// Validate the policy
-	if err := a.policyEngine.ValidatePolicy(&policy); err != nil {
+	if err := a.policyEngine.ValidatePolicy(policy); err != nil {
 		return false, []string{err.Error()}, nil
 	}
 

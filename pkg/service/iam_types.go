@@ -1018,6 +1018,10 @@ type ListPoliciesResponse struct {
 type ValidatePolicyRequest struct {
 	// Policy is the policy document to validate
 	Policy *iam.Policy `json:"policy"`
+
+	// Name is the name the policy will be stored under. When set, a
+	// document declaring a different metadata.name is invalid.
+	Name string `json:"name,omitempty"`
 }
 
 // ValidatePolicyResponse returns validation results.

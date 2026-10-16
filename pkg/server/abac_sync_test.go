@@ -17,6 +17,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 	"time"
@@ -329,13 +330,18 @@ func TestPolicyToABAC(t *testing.T) {
 		},
 	}
 
-	assert.Equal(t, want, policyToABAC(in))
+	got, err := policyToABAC(in)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
 func TestPolicyToABAC_NilAndEmpty(t *testing.T) {
-	assert.Nil(t, policyToABAC(nil))
+	none, err := policyToABAC(nil)
+	require.NoError(t, err)
+	assert.Nil(t, none)
 
-	got := policyToABAC(&iam.Policy{})
+	got, err := policyToABAC(&iam.Policy{})
+	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.NotNil(t, got.Spec.Rules, "rules must be an empty slice, not nil")
 	assert.Empty(t, got.Spec.Rules)
@@ -357,7 +363,119 @@ func TestConditionsToABAC(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, conditionsToABAC(tt.conds))
+			got, err := conditionsToABAC("when", tt.conds)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func nestedConditionPolicy(nested iam.Condition) *iam.Policy {
+	return &iam.Policy{
+		Metadata: iam.PolicyMetadata{Name: "p1", Tenant: "t1"},
+		Spec: iam.PolicySpec{Rules: []iam.Rule{{
+			Name:      "r1",
+			Effect:    iam.EffectAllow,
+			Actions:   []string{"read"},
+			Resources: []string{"*"},
+			Unless:    []iam.Condition{{Expression: "x == 1"}, nested},
+		}}},
+	}
+}
+
+func requireNestedConditionError(t *testing.T, err error, field string, index int) {
+	t.Helper()
+	var nested *iam.NestedConditionError
+	if !errors.As(err, &nested) {
+		t.Fatalf("expected iam.NestedConditionError, got %T: %v", err, err)
+	}
+	if nested.Field != field || nested.Index != index {
+		t.Errorf("got %s[%d], want %s[%d]", nested.Field, nested.Index, field, index)
+	}
+}
+
+func TestConditionsToABAC_Flat(t *testing.T) {
+	got, err := conditionsToABAC("when", []iam.Condition{{Expression: "a == 1"}, {Expression: "b and not c"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0].Expression != "a == 1" || got[1].Expression != "b and not c" {
+		t.Errorf("converted conditions = %+v", got)
+	}
+
+	empty, err := conditionsToABAC("when", nil)
+	if err != nil || empty != nil {
+		t.Errorf("empty conditions: got %+v, %v", empty, err)
+	}
+}
+
+func TestConditionsToABAC_NestedRefused(t *testing.T) {
+	cases := map[string]iam.Condition{
+		"and": {And: []iam.Condition{{Expression: "a == 1"}}},
+		"or":  {Or: []iam.Condition{{Expression: "a == 1"}}},
+		"not": {Not: &iam.Condition{Expression: "a == 1"}},
+	}
+	for name, nested := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := conditionsToABAC("when", []iam.Condition{nested})
+			requireNestedConditionError(t, err, "when", 0)
+			if got != nil {
+				t.Errorf("refused conversion returned conditions: %+v", got)
+			}
+		})
+	}
+}
+
+func TestPolicyToABAC_NestedRefused(t *testing.T) {
+	got, err := policyToABAC(nestedConditionPolicy(iam.Condition{Not: &iam.Condition{Expression: "a == 1"}}))
+	requireNestedConditionError(t, err, "unless", 1)
+	if got != nil {
+		t.Errorf("refused conversion returned a policy: %+v", got)
+	}
+}
+
+func TestPolicyToABAC_FlatConverted(t *testing.T) {
+	got, err := policyToABAC(nestedConditionPolicy(iam.Condition{Expression: "y == 2"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	unless := got.Spec.Rules[0].Unless
+	if len(unless) != 2 || unless[1].Expression != "y == 2" {
+		t.Errorf("converted unless = %+v", unless)
+	}
+}
+
+func TestQRDBPolicySimulator_NestedRefused(t *testing.T) {
+	policy := nestedConditionPolicy(iam.Condition{Or: []iam.Condition{{Expression: "a == 1"}}})
+	resp, err := newQRDBPolicySimulator().Simulate(context.Background(), policy, &iam.CheckRequest{})
+	requireNestedConditionError(t, err, "unless", 1)
+	if resp != nil {
+		t.Errorf("refused simulation returned a response: %+v", resp)
+	}
+}
+
+// TestQRDBPolicySimulator_EmptyWhenCondition records what go-qrdb does with a
+// condition that has no expression: the shape a YAML block with an unknown
+// key (all:, any:, none:) decoded to before ParsePolicyYAML became strict.
+// go-qrdb refuses to compile it. A block that set an expression beside the
+// unknown key compiled, without the dropped part, which is why the decode
+// is strict.
+func TestQRDBPolicySimulator_EmptyWhenCondition(t *testing.T) {
+	policy := &iam.Policy{
+		APIVersion: iam.PolicyYAMLAPIVersion,
+		Kind:       "Policy",
+		Metadata:   iam.PolicyMetadata{Name: "p1", Tenant: "t1"},
+		Spec: iam.PolicySpec{Rules: []iam.Rule{{
+			Name:      "r1",
+			Effect:    iam.EffectAllow,
+			Actions:   []string{"read"},
+			Resources: []string{"*"},
+			When:      []iam.Condition{{}},
+		}}},
+	}
+	resp, err := newQRDBPolicySimulator().Simulate(context.Background(), policy,
+		&iam.CheckRequest{Resource: "doc", Action: "read"})
+	if err == nil || resp != nil {
+		t.Fatalf("Simulate() = %+v, %v; want go-qrdb to refuse the empty expression", resp, err)
 	}
 }

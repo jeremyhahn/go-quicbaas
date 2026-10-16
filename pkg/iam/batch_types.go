@@ -333,6 +333,18 @@ func (p *PolicyImportItem) Validate() error {
 	if p.Policy == nil && p.Name == "" {
 		return fieldValidationError("policy/name", "policy or name is required")
 	}
+	rules := p.Rules
+	if p.Policy != nil {
+		rules = p.Policy.Spec.Rules
+	}
+	for _, r := range rules {
+		if err := ValidateConditions("when", r.When); err != nil {
+			return err
+		}
+		if err := ValidateConditions("unless", r.Unless); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

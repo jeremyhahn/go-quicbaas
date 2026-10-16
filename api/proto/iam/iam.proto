@@ -767,6 +767,10 @@ message ListPoliciesResponse {
 message ValidatePolicyRequest {
   string tenant_id = 1;
   bytes spec_yaml = 2;
+  // name is the policy name the document will be stored under. When set, a
+  // document whose metadata.name differs is invalid; when empty, the
+  // document's own name is not checked.
+  string name = 3;
 }
 
 message ValidatePolicyResponse {

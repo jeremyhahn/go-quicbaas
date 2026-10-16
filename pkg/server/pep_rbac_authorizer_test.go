@@ -56,7 +56,8 @@ func TestQRDBPEPRBACAuthorizer_Authorize_NoNode(t *testing.T) {
 func TestQRDBPEPRBACAuthorizer_Authorize_DelegatesToQRDB(t *testing.T) {
 	const tenant = "acme"
 	s, node := newABACTestServer(t, true)
-	grant := policyToABAC(abacTestPolicy("grant-alice", tenant, "alice", "kv/**", iam.EffectAllow))
+	grant, err := policyToABAC(abacTestPolicy("grant-alice", tenant, "alice", "kv/**", iam.EffectAllow))
+	require.NoError(t, err)
 	require.NoError(t, node.ABACPolicyReloader().Reload([]*qrdbsdk.ABACPolicy{grant}))
 	pep := newQRDBPEPRBACAuthorizer(s)
 	ctx := qrdbsdk.ContextWithTenant(context.Background(), tenant)

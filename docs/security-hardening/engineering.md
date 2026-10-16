@@ -609,108 +609,93 @@ security:
 
 ```yaml
 # /etc/quicbaas/policies/time-based-access.yaml
-apiVersion: quicbaas.io/v1
+# Allow write access only during business hours
+apiVersion: abac.quicbaas.io/v1
 kind: Policy
 metadata:
   name: business-hours-only
   tenant: production
 spec:
-  description: "Allow write access only during business hours"
   subjects:
-    roles:
-      - readwrite
-  resources:
-    - keys
-  actions:
-    - write
-    - delete
-  conditions:
-    - type: time_range
-      start_hour: 9
-      end_hour: 17
-      timezone: "America/New_York"
-      days: [monday, tuesday, wednesday, thursday, friday]
-  effect: allow
+    roles: [readwrite]
+  rules:
+    - name: business-hours-writes
+      effect: allow
+      actions: [write, delete]
+      resources:
+        - keys/**
+      when:
+        - expression: 'time.hour >= 9 && time.hour < 17'
+        - expression: 'time.weekday in ["monday", "tuesday", "wednesday", "thursday", "friday"]'
 ```
 
 **IP-based access policy:**
 
 ```yaml
 # /etc/quicbaas/policies/ip-restriction.yaml
-apiVersion: quicbaas.io/v1
+# Restrict admin access to internal network
+apiVersion: abac.quicbaas.io/v1
 kind: Policy
 metadata:
   name: internal-network-only
   tenant: production
 spec:
-  description: "Restrict admin access to internal network"
   subjects:
-    roles:
-      - admin
-  resources:
-    - "*"
-  actions:
-    - "*"
-  conditions:
-    - type: ip_range
-      cidr:
-        - "10.0.0.0/8"
-        - "172.16.0.0/12"
-        - "203.0.113.0/24"
-  effect: allow
+    roles: [admin]
+  rules:
+    - name: internal-admin
+      effect: allow
+      actions: ["*"]
+      resources:
+        - "**"
+      when:
+        # Flat conditions only: nested and/or/not is refused at write time.
+        - expression: 'context.source_ip in_cidr "10.0.0.0/8"'
 ```
 
 **Resource ownership policy:**
 
 ```yaml
 # /etc/quicbaas/policies/resource-ownership.yaml
-apiVersion: quicbaas.io/v1
+# Users can only access their own resources
+apiVersion: abac.quicbaas.io/v1
 kind: Policy
 metadata:
   name: owner-access
   tenant: production
 spec:
-  description: "Users can only access their own resources"
   subjects:
-    match: all
-  resources:
-    - keys
-    - secrets
-  actions:
-    - read
-    - write
-    - delete
-  conditions:
-    - type: attribute_match
-      subject_attr: "id"
-      resource_attr: "owner"
-  effect: allow
+    authenticated: true
+  rules:
+    - name: own-resources
+      effect: allow
+      actions: [read, write, delete]
+      resources:
+        - keys/users/${subject.id}/**
+        - secrets/users/${subject.id}/**
 ```
 
 **Multi-tenant isolation policy:**
 
 ```yaml
 # /etc/quicbaas/policies/tenant-isolation.yaml
-apiVersion: quicbaas.io/v1
+# Enforce tenant data isolation
+apiVersion: abac.quicbaas.io/v1
 kind: Policy
 metadata:
   name: tenant-isolation
 spec:
-  description: "Enforce tenant data isolation"
   subjects:
-    match: all
-  resources:
-    - keys
-    - secrets
-    - kms
-  actions:
-    - "*"
-  conditions:
-    - type: attribute_match
-      subject_attr: "tenant"
-      resource_attr: "tenant"
-  effect: allow
-  priority: 1000  # High priority
+    authenticated: true
+  rules:
+    - name: cross-tenant-deny
+      effect: deny
+      priority: 1000  # High priority
+      actions: ["*"]
+      resources:
+        - "**"
+      unless:
+        - expression: 'resource.tenant == subject.tenant'
 ```
 
 ---

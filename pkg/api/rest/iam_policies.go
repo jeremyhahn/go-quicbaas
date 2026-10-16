@@ -23,7 +23,6 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -128,47 +127,17 @@ func parsePolicyFromBody(body []byte, tenantID string) (*iam.Policy, error) {
 	}
 
 	if len(createReq.SpecYAML) > 0 {
-		// Parse the YAML - try full policy format first
-		var fullPolicy iam.Policy
-		if err := yaml.Unmarshal(createReq.SpecYAML, &fullPolicy); err != nil {
+		parsed, err := iam.ParsePolicyYAML(createReq.SpecYAML, iam.PolicyMetadata{
+			Name:        createReq.Name,
+			Tenant:      tenantID,
+			Description: createReq.Description,
+			Labels:      createReq.Labels,
+			Priority:    createReq.Priority,
+		})
+		if err != nil {
 			return nil, &PolicyParseError{Reason: "invalid spec_yaml", Cause: err}
 		}
-
-		if fullPolicy.APIVersion != "" && fullPolicy.Kind != "" {
-			// Full policy format from YAML
-			if createReq.Name != "" {
-				fullPolicy.Metadata.Name = createReq.Name
-			}
-			fullPolicy.Metadata.Tenant = tenantID
-			if createReq.Description != "" {
-				fullPolicy.Metadata.Description = createReq.Description
-			}
-			if len(createReq.Labels) > 0 {
-				fullPolicy.Metadata.Labels = createReq.Labels
-			}
-			if createReq.Priority > 0 {
-				fullPolicy.Metadata.Priority = createReq.Priority
-			}
-			return &fullPolicy, nil
-		}
-
-		// Spec-only YAML format
-		var spec iam.PolicySpec
-		if err := yaml.Unmarshal(createReq.SpecYAML, &spec); err != nil {
-			return nil, &PolicyParseError{Reason: "invalid spec_yaml", Cause: err}
-		}
-		return &iam.Policy{
-			APIVersion: "iam.quicbaas.io/v1",
-			Kind:       "Policy",
-			Metadata: iam.PolicyMetadata{
-				Name:        createReq.Name,
-				Tenant:      tenantID,
-				Description: createReq.Description,
-				Labels:      createReq.Labels,
-				Priority:    createReq.Priority,
-			},
-			Spec: spec,
-		}, nil
+		return parsed, nil
 	}
 
 	// Fallback: try direct iam.Policy unmarshal with relaxed validation
@@ -177,6 +146,26 @@ func parsePolicyFromBody(body []byte, tenantID string) (*iam.Policy, error) {
 	}
 	policy.Metadata.Tenant = tenantID
 	return &policy, nil
+}
+
+// sdkDocumentName returns the metadata.name the spec_yaml document of an
+// SDK-format body declares, before parsePolicyFromBody overrides it with the
+// body's name. It returns "" for a full policy document, a body without
+// spec_yaml, a bare spec, or a body that does not parse (parsePolicyFromBody
+// reports that).
+func sdkDocumentName(body []byte) string {
+	var sdkBody struct {
+		APIVersion string `json:"apiVersion"`
+		SpecYAML   []byte `json:"spec_yaml"`
+	}
+	if err := json.Unmarshal(body, &sdkBody); err != nil || sdkBody.APIVersion != "" || len(sdkBody.SpecYAML) == 0 {
+		return ""
+	}
+	document, err := iam.ParsePolicyYAML(sdkBody.SpecYAML, iam.PolicyMetadata{})
+	if err != nil {
+		return ""
+	}
+	return document.Metadata.Name
 }
 
 // CreatePolicy handles POST /api/v1/tenants/{tenant_id}/policies - Create a new policy.
@@ -434,6 +423,8 @@ func (h *IAMHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 // ValidatePolicy handles POST /api/v1/tenants/{tenant_id}/policies/validate - Validate a policy document.
+// The optional name query parameter is the name the policy will be stored
+// under; a document declaring a different metadata.name is invalid.
 func (h *IAMHandler) ValidatePolicy(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -486,8 +477,19 @@ func (h *IAMHandler) ValidatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate policy
-	if err := engine.ValidatePolicy(policy); err != nil {
+	// Check the document against the name it will be stored under (the
+	// optional ?name= query parameter), then validate it. For an SDK-format
+	// body the spec_yaml document's own metadata.name is checked too, since
+	// parsePolicyFromBody overrode it with the body's name.
+	requested := r.URL.Query().Get("name")
+	err = iam.CheckPolicyName(&iam.Policy{Metadata: iam.PolicyMetadata{Name: sdkDocumentName(body)}}, requested)
+	if err == nil {
+		err = iam.CheckPolicyName(policy, requested)
+	}
+	if err == nil {
+		err = engine.ValidatePolicy(policy)
+	}
+	if err != nil {
 		resp := map[string]interface{}{
 			"valid":  false,
 			"errors": []string{err.Error()},

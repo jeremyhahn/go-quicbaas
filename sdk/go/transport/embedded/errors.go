@@ -22,6 +22,7 @@ import (
 
 	apigrpc "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	pkgerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -98,6 +99,27 @@ type InvalidUserIDError struct {
 	Method  string
 	Value   string
 	Err     error
+}
+
+// UnsupportedPolicyFieldError reports a policy request that sets a
+// structured SDK field the embedded transport cannot translate into the
+// engine's policy: structured conditions, rule subjects or policy targets.
+// Storing the policy without the field would grant more than the caller
+// asked for, so the request is refused. Field names the offending field.
+type UnsupportedPolicyFieldError struct {
+	Service string
+	Method  string
+	Field   string
+}
+
+// Error implements the error interface.
+func (e *UnsupportedPolicyFieldError) Error() string {
+	if e.Field == "effect" || e.Field == "enabled" {
+		return "embedded: " + e.Service + "." + e.Method + ": " + e.Field +
+			" is not supported; stored policies are enabled and deny by default"
+	}
+	return "embedded: " + e.Service + "." + e.Method + ": " + e.Field +
+		" is not supported; describe the policy in spec_yaml instead"
 }
 
 // Error implements the error interface.
@@ -221,6 +243,9 @@ func domainErrorCode(err error) (errors.ErrorCode, bool) {
 		roleInvalid   *service.ProjectRoleInvalidError
 		forge         *pkgsdlc.ForgeNotRegisteredError
 		strategy      *pkgsdlc.StrategyNotRegisteredError
+		policyField   *UnsupportedPolicyFieldError
+		nested        *iam.NestedConditionError
+		policyYAML    *iam.PolicyYAMLError
 	)
 	switch {
 	case stderrors.As(err, &accessDenied):
@@ -230,7 +255,9 @@ func domainErrorCode(err error) (errors.ErrorCode, bool) {
 	case stderrors.As(err, &alreadyExists):
 		return errors.CodeAlreadyExists, true
 	case stderrors.As(err, &invalid), stderrors.As(err, &roleInvalid),
-		stderrors.As(err, &forge), stderrors.As(err, &strategy):
+		stderrors.As(err, &forge), stderrors.As(err, &strategy),
+		stderrors.As(err, &policyField), stderrors.As(err, &nested),
+		stderrors.As(err, &policyYAML):
 		return errors.CodeInvalidInput, true
 	}
 	for _, class := range domainSentinelCodes {

@@ -80,14 +80,14 @@ metadata:
   tenant: my-tenant
 
 spec:
+  subjects:
+    authenticated: true
   rules:
     - name: read-own-data
       effect: allow
       actions: [read]
       resources:
         - keys/users/${subject.id}/**
-      subjects:
-        authenticated: true
 ```
 
 ## Documentation

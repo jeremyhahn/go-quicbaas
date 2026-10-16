@@ -250,8 +250,8 @@ func (m *mockIAMService) ListPolicies(ctx context.Context, tenantID string, limi
 	return args.Get(0).([]*iam.Policy), args.Int(1), args.Error(2)
 }
 
-func (m *mockIAMService) ValidatePolicy(ctx context.Context, tenantID string, specYAML []byte) (bool, []string, error) {
-	args := m.Called(ctx, tenantID, specYAML)
+func (m *mockIAMService) ValidatePolicy(ctx context.Context, tenantID, name string, specYAML []byte) (bool, []string, error) {
+	args := m.Called(ctx, tenantID, name, specYAML)
 	return args.Bool(0), args.Get(1).([]string), args.Error(2)
 }
 
@@ -1313,7 +1313,7 @@ func TestIAMServer_ListPolicies_MissingTenantID(t *testing.T) {
 func TestIAMServer_ValidatePolicy_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("ValidatePolicy", mock.Anything, "t1", mock.Anything).
+	svc.On("ValidatePolicy", mock.Anything, "t1", "", mock.Anything).
 		Return(true, []string{}, nil)
 
 	resp, err := srv.ValidatePolicy(callerContext("t1"), &iampb.ValidatePolicyRequest{

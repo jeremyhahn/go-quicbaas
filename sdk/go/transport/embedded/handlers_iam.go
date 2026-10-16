@@ -856,11 +856,83 @@ func handleIAMPolicyCreate(ctx context.Context, svc service.QuicBaaS, req interf
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Policy", "Create",
 			"*iam.CreatePolicyRequest", reflect.TypeOf(req).String())
 	}
-	// Translate SDK CreatePolicyRequest into the canonical iam.Policy
-	// the engine persists. Rules are mapped from the SDK matcher
-	// objects into the engine's flat string slices.
-	rules := make([]iam.Rule, 0, len(sdkReq.Rules))
-	for _, r := range sdkReq.Rules {
+	// Structured conditions, targets and rule subjects have no
+	// translation into the engine's policy. Refuse them: storing the
+	// policy without them would grant more than the caller asked for.
+	if err := checkNoUntranslatableFields(sdkReq); err != nil {
+		return nil, err
+	}
+	meta := iam.PolicyMetadata{
+		Name:        sdkReq.Name,
+		Tenant:      tenantID,
+		Description: sdkReq.Description,
+		Priority:    sdkReq.Priority,
+		Labels:      sdkReq.Labels,
+	}
+	// SpecYAML takes precedence over the individual fields, as on REST
+	// and gRPC.
+	var policy *iam.Policy
+	if len(sdkReq.SpecYAML) > 0 {
+		policy, err = iam.ParsePolicyYAML(sdkReq.SpecYAML, meta)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		policy = &iam.Policy{
+			APIVersion: "v1",
+			Kind:       "Policy",
+			Metadata:   meta,
+			Spec:       iam.PolicySpec{Rules: iamRulesFromSDK(sdkReq.Rules)},
+		}
+	}
+	if err := pe.CreatePolicy(ctx, tenantID, policy); err != nil {
+		return nil, err
+	}
+	out := sdkPolicyFromInternal(policy)
+	return &out, nil
+}
+
+// checkNoUntranslatableFields refuses a create request that sets an SDK
+// field the engine's policy has no equivalent for: structured conditions
+// (policy or rule level), policy targets, or rule-level subjects. The
+// engine selects subjects once per policy (spec.subjects), so a per-rule
+// subject list cannot be carried over without changing who a rule covers.
+func checkNoUntranslatableFields(req *iamsdk.CreatePolicyRequest) error {
+	refuse := func(field string) error {
+		return &UnsupportedPolicyFieldError{
+			Service: "quicbaas.IAM.Policy", Method: "Create", Field: field,
+		}
+	}
+	// The engine's policy has no policy-level effect: stored policies
+	// deny by default, so a requested allow would be silently dropped.
+	// This matches policyfields.Refuse on gRPC and MCP. Enabled is a plain
+	// bool here, so false is indistinguishable from unset and true is the
+	// stored state: there is nothing to refuse.
+	if req.Effect != iamsdk.EffectDeny {
+		return refuse("effect")
+	}
+	if len(req.Conditions) > 0 {
+		return refuse("conditions")
+	}
+	if len(req.Targets) > 0 {
+		return refuse("targets")
+	}
+	for i, r := range req.Rules {
+		if len(r.Conditions) > 0 {
+			return refuse("rules[" + strconv.Itoa(i) + "].conditions")
+		}
+		if len(r.Subjects) > 0 {
+			return refuse("rules[" + strconv.Itoa(i) + "].subjects")
+		}
+	}
+	return nil
+}
+
+// iamRulesFromSDK maps SDK rules into the engine's rules: the SDK matcher
+// objects become the engine's flat pattern slices.
+func iamRulesFromSDK(sdkRules []iamsdk.Rule) []iam.Rule {
+	rules := make([]iam.Rule, 0, len(sdkRules))
+	for _, r := range sdkRules {
 		actions := make([]string, 0, len(r.Actions))
 		for _, a := range r.Actions {
 			actions = append(actions, a.Pattern)
@@ -888,25 +960,7 @@ func handleIAMPolicyCreate(ctx context.Context, svc service.QuicBaaS, req interf
 			Resources: resources,
 		})
 	}
-	policy := &iam.Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata: iam.PolicyMetadata{
-			Name:        sdkReq.Name,
-			Tenant:      tenantID,
-			Description: sdkReq.Description,
-			Priority:    sdkReq.Priority,
-			Labels:      sdkReq.Labels,
-		},
-		Spec: iam.PolicySpec{
-			Rules: rules,
-		},
-	}
-	if err := pe.CreatePolicy(ctx, tenantID, policy); err != nil {
-		return nil, err
-	}
-	out := sdkPolicyFromInternal(policy)
-	return &out, nil
+	return rules
 }
 
 func handleIAMPolicyDelete(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

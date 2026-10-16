@@ -7,6 +7,7 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -656,5 +657,65 @@ func TestIAMHandlerRefusesTheGroupService(t *testing.T) {
 	}
 	if rec.gotPath != "" {
 		t.Fatalf("a group request reached the server at %s", rec.gotPath)
+	}
+}
+
+func TestIAMHandlerPolicyUpdateSendsSpecYAML(t *testing.T) {
+	rec := newIAMRecorder(t)
+	tr := newTestTransport(t, rec.server)
+	specYAML := []byte("rules: []")
+	_, err := tr.Request(context.Background(), "quicbaas.IAM.Policy", "Update", map[string]interface{}{
+		"tenant_id":   "t1",
+		"policy_name": "p",
+		"request":     map[string]interface{}{"spec_yaml": specYAML},
+	})
+	if err != nil {
+		t.Fatalf("Update() = %v, want nil", err)
+	}
+	if rec.gotMethod != http.MethodPut || rec.gotPath != "/api/v1/tenants/t1/policies/p" {
+		t.Fatalf("request = %s %s, want PUT /api/v1/tenants/t1/policies/p", rec.gotMethod, rec.gotPath)
+	}
+	var body struct {
+		SpecYAML []byte `json:"spec_yaml"`
+	}
+	if err := json.Unmarshal(rec.gotBody, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if string(body.SpecYAML) != string(specYAML) {
+		t.Fatalf("body spec_yaml = %q, want %q", body.SpecYAML, specYAML)
+	}
+}
+
+func TestIAMHandlerPolicyValidateSendsName(t *testing.T) {
+	rec := newIAMRecorder(t)
+	tr := newTestTransport(t, rec.server)
+	_, err := tr.Request(context.Background(), "quicbaas.IAM.Policy", "Validate", map[string]interface{}{
+		"tenant_id": "t1",
+		"policy":    map[string]interface{}{"name": "a b&c"},
+		"name":      "a b&c",
+	})
+	if err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+	want := "/api/v1/tenants/t1/policies/validate?name=a+b%26c"
+	if rec.gotMethod != http.MethodPost || rec.gotRawPath != want {
+		t.Fatalf("request = %s %s, want POST %s", rec.gotMethod, rec.gotRawPath, want)
+	}
+}
+
+func TestIAMHandlerPolicyValidateOmitsEmptyName(t *testing.T) {
+	rec := newIAMRecorder(t)
+	tr := newTestTransport(t, rec.server)
+	_, err := tr.Request(context.Background(), "quicbaas.IAM.Policy", "Validate", map[string]interface{}{
+		"tenant_id": "t1",
+		"policy":    map[string]interface{}{},
+		"name":      "",
+	})
+	if err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+	want := "/api/v1/tenants/t1/policies/validate"
+	if rec.gotRawPath != want {
+		t.Fatalf("request URI = %s, want %s (no name query)", rec.gotRawPath, want)
 	}
 }

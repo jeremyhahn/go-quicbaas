@@ -294,6 +294,41 @@ func TestIAMServiceWrapper_PolicyLifecycle_HappyPath(t *testing.T) {
 		assert.NotEmpty(t, resp.Errors)
 	})
 
+	t.Run("ValidatePolicy_NilPolicyWithName", func(t *testing.T) {
+		// A name with no policy reports the engine's nil-policy failure.
+		resp, err := w.ValidatePolicy(ctx, &ValidatePolicyRequest{Name: "v"})
+		require.NoError(t, err)
+		assert.False(t, resp.Valid)
+		require.Len(t, resp.Errors, 1)
+		assert.Contains(t, resp.Errors[0], "policy is nil")
+	})
+
+	t.Run("ValidatePolicy_Name", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			reqName   string
+			wantValid bool
+		}{
+			{name: "match", reqName: "v", wantValid: true},
+			{name: "mismatch", reqName: "other", wantValid: false},
+			{name: "empty", reqName: "", wantValid: true},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				resp, err := w.ValidatePolicy(ctx, &ValidatePolicyRequest{
+					Policy: happyPolicy(tenantID, "v"),
+					Name:   tt.reqName,
+				})
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantValid, resp.Valid)
+				if !tt.wantValid {
+					require.Len(t, resp.Errors, 1)
+					assert.Contains(t, resp.Errors[0], tt.reqName)
+				}
+			})
+		}
+	})
+
 	t.Run("TestPolicy", func(t *testing.T) {
 		resp, err := w.TestPolicy(ctx, &TestPolicyRequest{
 			Check: &iam.CheckRequest{

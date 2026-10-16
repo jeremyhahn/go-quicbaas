@@ -1447,7 +1447,7 @@ func (s *BackendStorage) CreatePolicy(ctx context.Context, tenantID string, poli
 		return ErrAlreadyExists
 	}
 
-	data, err := json.Marshal(policy)
+	data, err := encodeStoredPolicy(policy)
 	if err != nil {
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.create", Err: err}
 	}
@@ -1462,12 +1462,13 @@ func (s *BackendStorage) GetPolicy(ctx context.Context, tenantID, name string) (
 		return nil, err
 	}
 
-	var policy Policy
-	if err := json.Unmarshal(data, &policy); err != nil {
-		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.get", Err: err}
+	policy, loadErr := decodeStoredPolicy(tenantID, name, data)
+	if loadErr != nil {
+		warnPolicyNotApplied(s.logger, loadErr)
+		return nil, loadErr
 	}
 
-	return &policy, nil
+	return policy, nil
 }
 
 // UpdatePolicy updates an existing policy.
@@ -1479,7 +1480,7 @@ func (s *BackendStorage) UpdatePolicy(ctx context.Context, tenantID string, poli
 		return err
 	}
 
-	data, err := json.Marshal(policy)
+	data, err := encodeStoredPolicy(policy)
 	if err != nil {
 		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.policy.update", Err: err}
 	}
@@ -1499,18 +1500,21 @@ func (s *BackendStorage) DeletePolicy(ctx context.Context, tenantID, name string
 // ListPolicies lists policies for a tenant.
 func (s *BackendStorage) ListPolicies(ctx context.Context, tenantID string, opts ListOptions) ([]*Policy, error) {
 	prefix := KeyPrefixTenant + tenantID + KeyPrefixPolicy
-	values, err := s.list(ctx, prefix)
+	// A record that does not decode strictly is listed as a flagged entry
+	// (LoadError set, no rules), never dropped, so no caller applies it
+	// unawares.
+	var policies []*Policy
+	err := s.kv.Scan(ctx, prefix, func(key string, value []byte) error {
+		policy, loadErr := decodeStoredPolicy(tenantID, strings.TrimPrefix(key, prefix), value)
+		if loadErr != nil {
+			warnPolicyNotApplied(s.logger, loadErr)
+			policy = flaggedPolicy(loadErr)
+		}
+		policies = append(policies, policy)
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	policies := make([]*Policy, 0, len(values))
-	for _, data := range values {
-		var policy Policy
-		if err := json.Unmarshal(data, &policy); err != nil {
-			continue
-		}
-		policies = append(policies, &policy)
 	}
 
 	// Apply pagination

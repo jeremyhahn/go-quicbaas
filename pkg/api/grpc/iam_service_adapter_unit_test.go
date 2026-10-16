@@ -1842,7 +1842,7 @@ spec:
       actions: ["read"]
       resources: ["/*"]
 `)
-	valid, issues, err := adapter.ValidatePolicy(ctx, "tenant-1", yamlSpec)
+	valid, issues, err := adapter.ValidatePolicy(ctx, "tenant-1", "", yamlSpec)
 	require.NoError(t, err)
 	_ = valid
 	_ = issues
@@ -1853,7 +1853,7 @@ func TestAdapter91_ValidatePolicy_InvalidYAML(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	valid, issues, err := adapter.ValidatePolicy(ctx, "tenant-1", []byte(`{{{{invalid yaml`))
+	valid, issues, err := adapter.ValidatePolicy(ctx, "tenant-1", "", []byte(`{{{{invalid yaml`))
 	require.NoError(t, err)
 	assert.False(t, valid)
 	assert.NotEmpty(t, issues)

@@ -42,6 +42,71 @@ them (`pkg/server/iam_init.go`):
 - Only the subject ID, tenant, roles and string-valued attributes reach go-qrdb
   (`subjectToQRDBIdentity`); there is no request context.
 
+## Write-Time Limits
+
+go-qrdb's ABAC engine evaluates flat expression conditions only, and a stored
+policy has one `spec.subjects` selector, no targets, no policy-level effect
+and no enabled flag: it is enabled and denies by default. QuicBaaS refuses a
+policy write it cannot hand to the engine whole, because storing part of a
+policy would grant more than the policy says. A refused write stores nothing.
+Request formats are in the [API reference](api.md).
+
+Server transports are REST, gRPC, MCP and the SDK's embedded transport. The
+SDK's QUIC transport rides REST and its Unix transport rides gRPC, so each
+refuses what the transport under it refuses.
+
+- **Nested conditions.** A `when` or `unless` entry that sets `and`, `or` or
+  `not` fails on create, update and import on every transport: every write
+  ends in `PolicyEngine` → `Policy.Validate`. The error is
+  `ErrConditionNested` (`ErrValidation` class); `*iam.NestedConditionError`
+  names the field and index. REST returns 400, gRPC `InvalidArgument`, MCP
+  and embedded invalid input. Write the logic inline in one expression:
+  `subject.role == admin or resource.owner == subject.id`.
+- **Strict `spec_yaml`.** `iam.ParsePolicyYAML` decodes with known keys only,
+  on REST create and update, gRPC create and `ValidatePolicy`, MCP create,
+  validate and update, and embedded create. An unknown key, a typo, `all:`/`any:`/`none:` (also
+  `none:` next to an `expression`), rule-level `subjects:` and a bare-string
+  condition fail with `*iam.PolicyYAMLError` (`ErrPolicyInvalid`,
+  `ErrValidation` class); the client status is as for nested conditions.
+  The YAML is a full document only when it sets both `apiVersion` and
+  `kind`, otherwise it is the `spec` alone; name, tenant and description
+  always come from the request. gRPC `ValidatePolicy` returns a refused
+  document as invalid, with the reason naming the key.
+- **Stored records load strictly.** `BackendStorage` decodes a stored policy
+  record with known keys only. A record with unknown keys, or one that does
+  not decode, is never applied, so it denies: `GetPolicy` returns
+  `*iam.StoredPolicyDecodeError` (`ErrPolicyRecordInvalid`, `ErrInternal`
+  class), and `ListPolicies` returns a flagged entry in its place (its name,
+  no rules, `Policy.LoadError` set) instead of dropping it. Each load logs a
+  WARN naming the tenant, the policy and the unknown keys. The ABAC sync skips
+  a flagged entry, a simulate on it denies, and an export refuses the tenant
+  with the decode error. Update and delete still reach the record, so an
+  operator repairs it with an update or removes it with a delete.
+- **Policy-level effect and enabled.** An effect other than deny, or
+  `enabled` other than true, is refused before any request is sent by the
+  SDK gRPC and MCP transports (invalid input, from
+  `policyfields.Refuse`), and by the server MCP tools
+  (`api.InvalidFormatError` on `policy.effect` or `policy.enabled`, invalid
+  input). Embedded create refuses an effect other than deny with
+  `UnsupportedPolicyFieldError` (invalid input). `CreatePolicyRequest.Enabled`
+  is a plain bool, so embedded and the omitted-when-false SDK encoding cannot
+  tell `false` from unset; that policy is stored enabled.
+- **Structured SDK fields.** The SDK gRPC and MCP transports carry only
+  `spec_yaml`, so a create or update that sets `Rules`, `Targets` or
+  `Conditions` fails with invalid input naming the field, and no request is
+  sent. Embedded create refuses `Conditions`, `Targets` and each rule's
+  `Conditions` and `Subjects` with `UnsupportedPolicyFieldError`, even
+  alongside `spec_yaml`. REST sends the whole body.
+- **`spec_yaml` on a gRPC update.** The SDK gRPC transport refuses it with
+  invalid input until the server's `UpdatePolicy` applies it (#1406).
+- **Server MCP policy tools.** In the SDK format (no `apiVersion`), a
+  `policy` key other than `name`, `description`, `labels`, `priority`,
+  `spec_yaml`, `version`, `enabled` and `effect` fails with
+  `api.InvalidFormatError` on `policy.<key>` (invalid input). Create and
+  validate require `spec_yaml` (`api.RequiredFieldError`), since a rule-less
+  policy is never what the caller described. An update without `spec_yaml`
+  changes only description, labels and priority.
+
 ## Errors
 
 | Error | When |

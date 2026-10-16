@@ -458,6 +458,10 @@ type UpdatePolicyRequest struct {
 
 	// Version is for optimistic concurrency control.
 	Version int64 `json:"version,omitempty"`
+
+	// SpecYAML is the raw replacement policy specification as YAML
+	// (optional). If provided, it takes precedence over individual fields.
+	SpecYAML []byte `json:"spec_yaml,omitempty"`
 }
 
 // ListPoliciesRequest is the request to list policies.
@@ -1008,6 +1012,9 @@ type listPoliciesRequestInternal struct {
 type validatePolicyRequest struct {
 	TenantID string  `json:"tenant_id"`
 	Policy   *Policy `json:"policy"`
+	// Name is the policy name the server checks against the document's
+	// metadata.name. Empty means unchecked, so it is omitted on the wire.
+	Name string `json:"name,omitempty"`
 }
 
 type testPolicyRequestInternal struct {
@@ -1285,6 +1292,7 @@ func (c *policyClient) Validate(ctx context.Context, tenantID string, policy *Po
 	internalReq := &validatePolicyRequest{
 		TenantID: tenantID,
 		Policy:   policy,
+		Name:     policy.Name,
 	}
 
 	resp, err := c.transport.Request(ctx, policyServiceName, "Validate", internalReq)

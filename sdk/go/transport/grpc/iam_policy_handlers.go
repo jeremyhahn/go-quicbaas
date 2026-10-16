@@ -22,7 +22,13 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyfields"
 )
+
+// grpcPolicyTransport names this transport in a policyfields refusal. The
+// IAM proto carries a policy as spec_yaml only until #1405, so structured
+// rules, conditions, subjects and targets are refused instead of dropped.
+const grpcPolicyTransport = "gRPC"
 
 // handleCreatePolicy handles CreatePolicy requests.
 func (h *iamHandler) handleCreatePolicy(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
@@ -33,6 +39,9 @@ func (h *iamHandler) handleCreatePolicy(ctx context.Context, client iampb.IAMSer
 
 	tenantID, _ := getString(reqMap, "tenant_id")
 	requestData, _ := getMap(reqMap, "request")
+	if err := policyfields.Refuse("handleCreatePolicy", grpcPolicyTransport, requestData); err != nil {
+		return nil, err
+	}
 
 	name, _ := getString(requestData, "name")
 	description, _ := getString(requestData, "description")
@@ -90,11 +99,21 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 	tenantID, _ := getString(reqMap, "tenant_id")
 	policyName, _ := getString(reqMap, "policy_name")
 	requestData, _ := getMap(reqMap, "request")
+	if err := policyfields.Refuse("handleUpdatePolicy", grpcPolicyTransport, requestData); err != nil {
+		return nil, err
+	}
 
 	description, _ := getString(requestData, "description")
 	labels, _ := getStringMap(requestData, "labels")
 	priority, _ := getInt(requestData, "priority")
-	specYAML, _ := getBytes(requestData, "spec_yaml")
+	// The server's UpdatePolicy does not apply spec_yaml yet (#1406): it
+	// echoes the bytes back while keeping the stored rules, so a caller
+	// could not tell the replacement was dropped. Refuse before the RPC.
+	if specYAML, _ := getBytes(requestData, "spec_yaml"); len(specYAML) > 0 {
+		return nil, errors.NewInvalidInput("handleUpdatePolicy",
+			"spec_yaml cannot be sent on a policy update over "+grpcPolicyTransport+
+				"; the server does not apply it yet")
+	}
 
 	pbReq := &iampb.UpdatePolicyRequest{
 		TenantId:    tenantID,
@@ -102,7 +121,6 @@ func (h *iamHandler) handleUpdatePolicy(ctx context.Context, client iampb.IAMSer
 		Description: description,
 		Labels:      labels,
 		Priority:    int32(priority),
-		SpecYaml:    specYAML,
 	}
 
 	resp, err := client.UpdatePolicy(ctx, pbReq)
@@ -197,9 +215,13 @@ func (h *iamHandler) handleValidatePolicy(ctx context.Context, client iampb.IAMS
 		}
 	}
 
+	// The name the server checks against metadata.name; empty is unchecked.
+	name, _ := getString(reqMap, "name")
+
 	pbReq := &iampb.ValidatePolicyRequest{
 		TenantId: tenantID,
 		SpecYaml: specYAML,
+		Name:     name,
 	}
 
 	resp, err := client.ValidatePolicy(ctx, pbReq)

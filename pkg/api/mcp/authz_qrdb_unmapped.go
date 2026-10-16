@@ -127,6 +127,7 @@ var unmappedToolGroups = []unmappedToolGroup{
 			"quicbaas_iam_policy_update",
 			"quicbaas_iam_policy_delete",
 			"quicbaas_iam_policy_test",
+			"quicbaas_iam_policy_validate",
 		},
 	},
 	{

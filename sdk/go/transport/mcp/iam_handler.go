@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyfields"
 )
 
 // iamHandler handles IAM-specific request/response transformations for MCP transport.
@@ -222,6 +223,13 @@ func (h *iamHandler) transformRequest(service, method string, reqBody interface{
 	// Apply tool-specific argument transformations
 	toolName, ok := mapIAMToolName(service, method)
 	if ok {
+		// The MCP policy tools build the stored policy from spec_yaml and
+		// drop structured rules, conditions and targets, so refuse them.
+		if toolName == "quicbaas_iam_policy_create" || toolName == "quicbaas_iam_policy_update" {
+			if err := policyfields.Refuse("mcp.iam."+method, "MCP", flatArgs); err != nil {
+				return nil, err
+			}
+		}
 		flatArgs = transformIAMToolArguments(toolName, flatArgs)
 	}
 
@@ -740,17 +748,21 @@ func transformIAMToolArguments(toolName string, args map[string]interface{}) map
 			delete(args, "provider_id")
 		}
 
-	// Policy get/delete/update: The SDK sends policy_name but the MCP
-	// server handler reads getString(args, "name"). Map policy_name to name.
+	// Policy update: The SDK sends {tenant_id, policy_name, request: {...}}
+	// which after flattening puts the update fields at the top level. The MCP
+	// server expects {tenant_id, name, policy: {...}}: decode spec_yaml and
+	// re-group the update fields under "policy" while policy_name is still a
+	// top-level key, then rename policy_name to name.
+	case "quicbaas_iam_policy_update":
+		args = decodeSpecYAMLBase64(args)
+		args = regroupPolicyFields(args)
+		renamePolicyName(args)
+
+	// Policy get/delete: The SDK sends policy_name but the MCP server
+	// handler reads getString(args, "name"). Map policy_name to name.
 	case "quicbaas_iam_policy_get",
-		"quicbaas_iam_policy_delete",
-		"quicbaas_iam_policy_update":
-		if pn, ok := args["policy_name"]; ok {
-			if _, hasName := args["name"]; !hasName {
-				args["name"] = pn
-			}
-			delete(args, "policy_name")
-		}
+		"quicbaas_iam_policy_delete":
+		renamePolicyName(args)
 	// Policy create: The SDK sends {tenant_id: "...", request: {name: ..., spec_yaml: ...}}
 	// which after flattening becomes {tenant_id: ..., name: ..., spec_yaml: ...}.
 	// The MCP server expects {tenant_id: ..., policy: {name: ..., spec_yaml: ...}}.
@@ -886,6 +898,19 @@ func regroupPolicyFields(args map[string]interface{}) map[string]interface{} {
 	}
 
 	return result
+}
+
+// renamePolicyName moves the SDK's policy_name argument to the name key the
+// MCP server policy tools read, unless name is already set.
+func renamePolicyName(args map[string]interface{}) {
+	pn, ok := args["policy_name"]
+	if !ok {
+		return
+	}
+	if _, hasName := args["name"]; !hasName {
+		args["name"] = pn
+	}
+	delete(args, "policy_name")
 }
 
 // transformPEPCheckArguments transforms PEP check arguments from SDK format

@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"time"
 
@@ -28,8 +29,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
-
-	"gopkg.in/yaml.v3"
 )
 
 // iamServiceAccessor is the interface for accessing the IAM service from QuicBaaS.
@@ -742,6 +741,29 @@ func (r *ToolRegistry) registerPolicyTools() {
 				},
 			},
 			"required": []string{"policy", "check"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_iam_policy_validate",
+		Description: "Validate a policy document without storing it",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Name the policy will be stored under; when set, the document's name must match it",
+				},
+				"policy": map[string]interface{}{
+					"type":        "object",
+					"description": "Policy document to validate",
+				},
+			},
+			"required": []string{"policy"},
 		},
 	})
 }
@@ -1804,60 +1826,136 @@ func (r *ToolRegistry) executeIAMPolicyCreate(ctx context.Context, args map[stri
 // The SDK sends {name, spec_yaml, description, enabled, ...} instead of the
 // server format {apiVersion, kind, metadata, spec}.
 func buildPolicyFromSDKFormat(policyRaw map[string]interface{}, tenantID string) (*iam.Policy, error) {
+	if err := refuseUntranslatedPolicyKeys(policyRaw); err != nil {
+		return nil, err
+	}
 	name, _ := policyRaw["name"].(string)
-
-	// Check for spec_yaml (base64-encoded YAML from the SDK)
-	var specYAML []byte
-	if yamlStr, ok := policyRaw["spec_yaml"].(string); ok && yamlStr != "" {
-		specYAML = []byte(yamlStr)
+	specYAML, _ := policyRaw["spec_yaml"].(string)
+	if specYAML == "" {
+		// Without spec_yaml there are no rules to store, and a rule-less
+		// policy is never what the caller described.
+		return nil, api.NewRequiredFieldError("policy.spec_yaml")
 	}
+	return parseSDKPolicySpec(policyRaw, tenantID, name, specYAML)
+}
 
-	if len(specYAML) > 0 {
-		// Try full policy format first
-		var fullPolicy iam.Policy
-		if parseErr := yaml.Unmarshal(specYAML, &fullPolicy); parseErr == nil && fullPolicy.APIVersion != "" {
-			if name != "" {
-				fullPolicy.Metadata.Name = name
-			}
-			fullPolicy.Metadata.Tenant = tenantID
-			if desc, ok := policyRaw["description"].(string); ok {
-				fullPolicy.Metadata.Description = desc
-			}
-			return &fullPolicy, nil
-		}
+// sdkPolicyKeys are the SDK-format policy keys the MCP policy tools
+// translate. Any other key would be dropped, storing a policy that differs
+// from the request, so it is refused instead.
+var sdkPolicyKeys = map[string]bool{
+	"name":        true,
+	"description": true,
+	"labels":      true,
+	"priority":    true,
+	"spec_yaml":   true,
+	"version":     true,
+	"enabled":     true,
+	"effect":      true,
+}
 
-		// Try spec-only YAML
-		var spec iam.PolicySpec
-		if parseErr := yaml.Unmarshal(specYAML, &spec); parseErr != nil {
-			return nil, api.NewInvalidFormatError("spec_yaml", parseErr)
-		}
-
-		desc, _ := policyRaw["description"].(string)
-
-		return &iam.Policy{
-			APIVersion: "iam.quicbaas.io/v1",
-			Kind:       "Policy",
-			Metadata: iam.PolicyMetadata{
-				Name:        name,
-				Tenant:      tenantID,
-				Description: desc,
-			},
-			Spec: spec,
-		}, nil
+// refuseUntranslatedPolicyKeys refuses an SDK-format policy carrying a key
+// the MCP policy tools do not translate, or a policy-level enabled or effect
+// the server cannot honour: stored policies are enabled and deny by default.
+func refuseUntranslatedPolicyKeys(policyRaw map[string]interface{}) error {
+	keys := make([]string, 0, len(policyRaw))
+	for key := range policyRaw {
+		keys = append(keys, key)
 	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if !sdkPolicyKeys[key] {
+			return api.NewInvalidFormatMessageError("policy."+key,
+				"not translated by the MCP policy tools; describe the policy in spec_yaml instead")
+		}
+	}
+	if enabled, ok := policyRaw["enabled"]; ok && enabled != true {
+		return api.NewInvalidFormatMessageError("policy.enabled",
+			"stored policies are enabled and deny by default")
+	}
+	if effect, ok := policyRaw["effect"]; ok && !isZeroNumber(effect) {
+		return api.NewInvalidFormatMessageError("policy.effect",
+			"stored policies are enabled and deny by default")
+	}
+	return nil
+}
 
-	// No spec_yaml - create a minimal policy from the available fields
+// sdkPolicyRecordKeys are the keys an SDK iam.Policy serializes that describe
+// the stored record, not the document. Validation checks only the document,
+// so it ignores them; create and update still refuse them.
+var sdkPolicyRecordKeys = []string{"tenant_id", "created_at", "updated_at", "created_by", "updated_by"}
+
+// withoutSDKPolicyRecordKeys returns a copy of policyRaw without the SDK
+// record keys, leaving every other key for refuseUntranslatedPolicyKeys.
+func withoutSDKPolicyRecordKeys(policyRaw map[string]interface{}) map[string]interface{} {
+	document := make(map[string]interface{}, len(policyRaw))
+	for key, value := range policyRaw {
+		document[key] = value
+	}
+	for _, key := range sdkPolicyRecordKeys {
+		delete(document, key)
+	}
+	return document
+}
+
+// isZeroNumber reports whether v is a numeric zero, the SDK's EffectDeny.
+func isZeroNumber(v interface{}) bool {
+	switch n := v.(type) {
+	case float64:
+		return n == 0
+	case int:
+		return n == 0
+	case int64:
+		return n == 0
+	}
+	return false
+}
+
+// parseSDKPolicySpec parses an SDK-format spec_yaml under the request's
+// metadata.
+func parseSDKPolicySpec(policyRaw map[string]interface{}, tenantID, name, specYAML string) (*iam.Policy, error) {
 	desc, _ := policyRaw["description"].(string)
-	policy := &iam.Policy{
-		APIVersion: "iam.quicbaas.io/v1",
-		Kind:       "Policy",
-		Metadata: iam.PolicyMetadata{
-			Name:        name,
-			Tenant:      tenantID,
-			Description: desc,
-		},
+	policy, err := iam.ParsePolicyYAML([]byte(specYAML), iam.PolicyMetadata{
+		Name:        name,
+		Tenant:      tenantID,
+		Description: desc,
+		Labels:      getStringMap(policyRaw, "labels"),
+		Priority:    getInt(policyRaw, "priority"),
+	})
+	if err != nil {
+		return nil, api.NewInvalidFormatError("spec_yaml", err)
+	}
+	return policy, nil
+}
+
+// patchPolicyFromSDKFormat builds the replacement for an SDK-format update.
+// A spec_yaml replaces the document; without one, the stored policy is
+// fetched and only the metadata the request carries is patched, so an
+// update never stores a policy with blank rules.
+func patchPolicyFromSDKFormat(ctx context.Context, iamSvc service.IAMService, policyRaw map[string]interface{}, tenantID, name string) (*iam.Policy, error) {
+	if err := refuseUntranslatedPolicyKeys(policyRaw); err != nil {
+		return nil, err
+	}
+	if specYAML, _ := policyRaw["spec_yaml"].(string); specYAML != "" {
+		return parseSDKPolicySpec(policyRaw, tenantID, name, specYAML)
 	}
 
+	stored, err := iamSvc.GetPolicy(ctx, &service.GetPolicyRequest{TenantID: tenantID, Name: name})
+	if err != nil {
+		return nil, err
+	}
+	if stored == nil || stored.Policy == nil {
+		return nil, api.NewInvalidInputError("policy " + name + " has no stored document to patch")
+	}
+	policy := stored.Policy
+	if desc, ok := policyRaw["description"].(string); ok {
+		policy.Metadata.Description = desc
+	}
+	if _, ok := policyRaw["labels"]; ok {
+		policy.Metadata.Labels = getStringMap(policyRaw, "labels")
+	}
+	if _, ok := policyRaw["priority"]; ok {
+		policy.Metadata.Priority = getInt(policyRaw, "priority")
+	}
 	return policy, nil
 }
 
@@ -1890,14 +1988,26 @@ func (r *ToolRegistry) executeIAMPolicyUpdate(ctx context.Context, args map[stri
 		return nil, api.NewInvalidTypeError("policy", "an object")
 	}
 
+	tenantID := getString(args, "tenant_id")
+	name := getString(args, "name")
+
 	policy := &iam.Policy{}
 	if err := parseJSONObject(policyRaw, policy); err != nil {
 		return nil, api.NewInvalidFormatError("policy", err)
 	}
 
+	// Without apiVersion the policy is in SDK format: translate it rather
+	// than store the empty document the server-format decode produced.
+	if policy.APIVersion == "" {
+		policy, err = patchPolicyFromSDKFormat(ctx, iamSvc, policyRaw, tenantID, name)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	req := &service.UpdatePolicyRequest{
-		TenantID: getString(args, "tenant_id"),
-		Name:     getString(args, "name"),
+		TenantID: tenantID,
+		Name:     name,
 		Policy:   policy,
 	}
 
@@ -2275,7 +2385,7 @@ func (r *ToolRegistry) executeIAMPolicyValidate(ctx context.Context, args map[st
 
 	// If the policy doesn't have apiVersion, try parsing from SDK format
 	if policy.APIVersion == "" {
-		policy, err = buildPolicyFromSDKFormat(policyRaw, tenantID)
+		policy, err = buildPolicyFromSDKFormat(withoutSDKPolicyRecordKeys(policyRaw), tenantID)
 		if err != nil {
 			return nil, err
 		}
@@ -2283,6 +2393,7 @@ func (r *ToolRegistry) executeIAMPolicyValidate(ctx context.Context, args map[st
 
 	req := &service.ValidatePolicyRequest{
 		Policy: policy,
+		Name:   getString(args, "name"),
 	}
 
 	resp, err := iamSvc.ValidatePolicy(ctx, req)

@@ -100,6 +100,25 @@ Guard tests make an unregistered mapping a test failure:
 registers them too; the `TestRegister_*` and `TestContributions_*` tests in
 `pkg/permission` read each grant and duty back from go-qrdb's live registry.
 
+## Validating a policy: `Policy.Validate`
+
+`Security().Auth()`'s policy client `Validate(ctx, tenantID, policy)` checks an
+ABAC policy document ([engineering](engineering.md)) without storing it. It
+sends `policy.Name` as the request name; the server compares it with the
+document's `metadata.name`. An empty name is not checked, and the SDK omits it
+rather than sending an empty value.
+
+| Transport | Request | Name |
+|---|---|---|
+| REST / QUIC | `POST /api/v1/tenants/{tenant_id}/policies/validate` | `?name=` query parameter |
+| gRPC / Unix | `IAMService.ValidatePolicy` | `ValidatePolicyRequest.name` (field 3) |
+| MCP | `quicbaas_iam_policy_validate` | top-level `name` argument |
+| Embedded | not served | — |
+
+A mismatch is a validation result, not a transport error: the response is
+`valid: false` with the `PolicyNameMismatchError` text (`pkg/iam/policy_name.go`),
+`policy metadata.name "p1" does not match the request name "p2"`.
+
 ## See also
 
 - [CLI](cli.md) · [architecture](architecture.md) · [ABAC policies](engineering.md)

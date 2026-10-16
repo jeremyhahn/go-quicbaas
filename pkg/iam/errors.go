@@ -15,6 +15,7 @@ package iam
 
 import (
 	"strconv"
+	"strings"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
@@ -127,11 +128,28 @@ var (
 		Err:  &IAMMessageError{Message: "invalid policy"},
 	}
 
+	// ErrPolicyRecordInvalid is returned when a stored policy record does
+	// not decode strictly. The record is never applied.
+	ErrPolicyRecordInvalid = &dberrors.QBError{
+		Code: dberrors.ErrInternal,
+		Op:   "iam.policy.load",
+		Err:  &IAMMessageError{Message: "stored policy record does not decode"},
+	}
+
 	// ErrRuleInvalid is returned when rule validation fails.
 	ErrRuleInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
 		Op:   "iam.rule",
 		Err:  &IAMMessageError{Message: "invalid rule"},
+	}
+
+	// ErrConditionNested is returned when a rule condition nests And, Or or
+	// Not. go-qrdb's ABAC condition carries only a flat Expression, so a
+	// nested condition cannot be enforced and is refused rather than dropped.
+	ErrConditionNested = &dberrors.QBError{
+		Code: dberrors.ErrValidation,
+		Op:   "iam.condition",
+		Err:  &IAMMessageError{Message: "nested conditions are not supported"},
 	}
 
 	// ErrPolicyNotFound is returned when a policy is not found.
@@ -813,6 +831,52 @@ func (e *InvalidPolicyError) Error() string {
 		return "invalid policy '" + e.Name + "': " + e.Reason
 	}
 	return "invalid policy: " + e.Reason
+}
+
+// NestedConditionError identifies a rule condition that nests And, Or or
+// Not. Field is the rule's condition list ("when" or "unless") and Index the
+// position of the offending condition in it.
+type NestedConditionError struct {
+	Field string
+	Index int
+}
+
+// Error implements the error interface.
+func (e *NestedConditionError) Error() string {
+	return "condition " + e.Field + "[" + strconv.Itoa(e.Index) +
+		"] nests and/or/not; only a flat expression is supported"
+}
+
+// StoredPolicyDecodeError reports a stored policy record that does not
+// decode strictly: it has keys no policy field takes, or it is not a policy
+// document at all. The record is never applied, so none of its rules take
+// effect. UnknownKeys names the refused keys as dotted paths
+// ("spec.rules[0].subjects"); it is empty when the record does not decode
+// for another reason, which Reason gives.
+type StoredPolicyDecodeError struct {
+	TenantID    string
+	Name        string
+	UnknownKeys []string
+	Reason      string
+
+	// record is the record's original stored bytes. A write that restores
+	// the flagged record (a rolled-back repair or delete) stores them
+	// unchanged, never the rule-less placeholder ListPolicies returns.
+	record []byte
+}
+
+// Error implements the error interface.
+func (e *StoredPolicyDecodeError) Error() string {
+	msg := "stored policy '" + e.Name + "' in tenant '" + e.TenantID + "' is not applied: "
+	if len(e.UnknownKeys) > 0 {
+		return msg + "unknown keys " + strings.Join(e.UnknownKeys, ", ")
+	}
+	return msg + e.Reason
+}
+
+// Unwrap returns ErrPolicyRecordInvalid so callers can match the class.
+func (e *StoredPolicyDecodeError) Unwrap() error {
+	return ErrPolicyRecordInvalid
 }
 
 // PolicyExistsError is returned when a policy already exists.

@@ -98,8 +98,20 @@ func subjectToABACIdentity(subject *iam.Subject) *qrdbsdk.Identity {
 // DENY path's PolicyDeniedError carries Policy/Rule names), so
 // MatchedRule/EvaluationSteps are always empty on allow.
 func (s *qrdbPolicySimulator) Simulate(ctx context.Context, policy *iam.Policy, req *iam.CheckRequest) (*iam.CheckResponse, error) {
+	if policy != nil && policy.LoadError != nil {
+		// A stored record that did not decode strictly is never applied.
+		return &iam.CheckResponse{
+			Allowed:       false,
+			MatchedPolicy: policy.Metadata.Name,
+			Reason:        policy.LoadError.Error(),
+		}, nil
+	}
+	abacPolicy, err := policyToABAC(policy)
+	if err != nil {
+		return nil, err
+	}
 	decorator, err := qrdbsdk.DecorateAuthorizer(denyAllAuthorizer{},
-		qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{policyToABAC(policy)}))
+		qrdbsdk.ABACWithPolicies([]*qrdbsdk.ABACPolicy{abacPolicy}))
 	if err != nil {
 		return nil, err
 	}

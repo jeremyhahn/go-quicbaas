@@ -223,6 +223,11 @@ func (bm *BatchManager) ExportPolicies(ctx context.Context, tenantID string, fil
 
 		// Apply filters
 		for _, policy := range policies {
+			// A flagged entry has no rules: exporting it would let a
+			// re-import overwrite the stored record with an empty policy.
+			if policy.LoadError != nil {
+				return nil, policy.LoadError
+			}
 			if bm.policyMatchesFilter(policy, filter) {
 				allPolicies = append(allPolicies, policy)
 			}

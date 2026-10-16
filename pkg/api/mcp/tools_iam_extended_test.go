@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // =============================================================================
@@ -82,15 +84,52 @@ func TestConvertStringNumerics_EmptyMap(t *testing.T) {
 // =============================================================================
 
 func TestBuildPolicyFromSDKFormat_NoSpecYAML(t *testing.T) {
+	// Without spec_yaml the policy has no rules; it is refused, not built.
 	policy, err := buildPolicyFromSDKFormat(map[string]interface{}{
 		"name":        "test-policy",
 		"description": "A test policy",
 	}, "tenant-1")
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidInput(err), "error = %v, want INVALID_INPUT", err)
+	assert.Nil(t, policy)
+}
+
+func TestBuildPolicyFromSDKFormat_TranslatesMetadata(t *testing.T) {
+	policy, err := buildPolicyFromSDKFormat(map[string]interface{}{
+		"name":      "read-docs",
+		"spec_yaml": "rules: []",
+		"labels":    map[string]interface{}{"team": "a"},
+		"priority":  float64(5),
+		"enabled":   true,
+		"effect":    float64(0),
+	}, "tenant-1")
 	require.NoError(t, err)
-	require.NotNil(t, policy)
-	assert.Equal(t, "test-policy", policy.Metadata.Name)
-	assert.Equal(t, "tenant-1", policy.Metadata.Tenant)
-	assert.Equal(t, "A test policy", policy.Metadata.Description)
+	assert.Equal(t, map[string]string{"team": "a"}, policy.Metadata.Labels)
+	assert.Equal(t, 5, policy.Metadata.Priority)
+}
+
+func TestBuildPolicyFromSDKFormat_RefusesUntranslatedKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+		val  interface{}
+	}{
+		{"rules", "rules", []interface{}{map[string]interface{}{"effect": "allow"}}},
+		{"targets", "targets", []interface{}{}},
+		{"conditions", "conditions", []interface{}{}},
+		{"enabled_false", "enabled", false},
+		{"effect_allow_number", "effect", float64(1)},
+		{"effect_allow_string", "effect", "allow"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := buildPolicyFromSDKFormat(map[string]interface{}{
+				"name":      "p",
+				"spec_yaml": "rules: []",
+				tc.key:      tc.val,
+			}, "tenant-1")
+			assert.True(t, errors.IsInvalidInput(err), "error = %v, want INVALID_INPUT", err)
+		})
+	}
 }
 
 func TestBuildPolicyFromSDKFormat_SpecOnlyYAML(t *testing.T) {

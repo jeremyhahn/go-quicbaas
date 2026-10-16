@@ -891,7 +891,10 @@ func (w *iamServiceWrapper) ValidatePolicy(ctx context.Context, req *ValidatePol
 		return nil, errors.New(errors.ErrUnavailable, "iam.ValidatePolicy", "policy engine not available")
 	}
 
-	validationErr := pe.ValidatePolicy(req.Policy)
+	validationErr := iam.CheckPolicyName(req.Policy, req.Name)
+	if validationErr == nil {
+		validationErr = pe.ValidatePolicy(req.Policy)
+	}
 
 	resp := &ValidatePolicyResponse{
 		Valid:     validationErr == nil,

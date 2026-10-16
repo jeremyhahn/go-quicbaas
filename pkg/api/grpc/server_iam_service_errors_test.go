@@ -302,7 +302,7 @@ func TestIAMServer_ListPolicies_ServiceError(t *testing.T) {
 
 func TestIAMServer_ValidatePolicy_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("ValidatePolicy", mock.Anything, "t-1", []byte("spec")).Return(false, []string(nil), &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
+	svc.On("ValidatePolicy", mock.Anything, "t-1", "", []byte("spec")).Return(false, []string(nil), &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.ValidatePolicy(callerContext("t-1"), &iampb.ValidatePolicyRequest{TenantId: "t-1", SpecYaml: []byte("spec")})
 	require.Error(t, err)

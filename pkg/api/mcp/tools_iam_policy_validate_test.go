@@ -61,7 +61,7 @@ func TestExecuteIAMPolicyValidate(t *testing.T) {
 		})
 		// No apiVersion -> routes through buildPolicyFromSDKFormat.
 		res, err := reg.executeIAMPolicyValidate(context.Background(), map[string]interface{}{
-			"policy":    map[string]interface{}{"name": "p1", "description": "d"},
+			"policy":    map[string]interface{}{"name": "p1", "description": "d", "spec_yaml": "rules: []"},
 			"tenant_id": "t1",
 		})
 		require.NoError(t, err)
@@ -72,6 +72,72 @@ func TestExecuteIAMPolicyValidate(t *testing.T) {
 		assert.Equal(t, true, out["valid"])
 	})
 
+	t.Run("sdk_policy_record_metadata_accepted", func(t *testing.T) {
+		// An SDK iam.Policy always serializes tenant_id, created_at and
+		// updated_at; validation checks the document and ignores them.
+		var captured *service.ValidatePolicyRequest
+		reg := newIAMTestRegistry(&mockIAMService{
+			validatePolFunc: func(ctx context.Context, req *service.ValidatePolicyRequest) (*service.ValidatePolicyResponse, error) {
+				captured = req
+				return &service.ValidatePolicyResponse{Valid: true, Timestamp: time.Now()}, nil
+			},
+		})
+		_, err := reg.executeIAMPolicyValidate(context.Background(), map[string]interface{}{
+			"policy": map[string]interface{}{
+				"name": "p1", "spec_yaml": "rules: []", "tenant_id": "t1",
+				"created_at": "0001-01-01T00:00:00Z", "updated_at": "0001-01-01T00:00:00Z",
+			},
+			"tenant_id": "t1",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, captured)
+		assert.Equal(t, "p1", captured.Policy.Metadata.Name)
+	})
+
+	t.Run("sdk_policy_unknown_key_refused", func(t *testing.T) {
+		reg := newIAMTestRegistry(&mockIAMService{})
+		_, err := reg.executeIAMPolicyValidate(context.Background(), map[string]interface{}{
+			"policy": map[string]interface{}{"name": "p1", "spec_yaml": "rules: []", "tenant_id": "t1", "owner": "ops"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "policy.owner")
+	})
+
+	t.Run("name_forwarded", func(t *testing.T) {
+		for _, name := range []string{"p1", "other", ""} {
+			var captured *service.ValidatePolicyRequest
+			reg := newIAMTestRegistry(&mockIAMService{
+				validatePolFunc: func(ctx context.Context, req *service.ValidatePolicyRequest) (*service.ValidatePolicyResponse, error) {
+					captured = req
+					return &service.ValidatePolicyResponse{Valid: true, Timestamp: time.Now()}, nil
+				},
+			})
+			_, err := reg.executeIAMPolicyValidate(context.Background(), map[string]interface{}{
+				"policy": map[string]interface{}{"name": "p1", "spec_yaml": "rules: []"},
+				"name":   name,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, captured)
+			assert.Equal(t, name, captured.Name)
+		}
+	})
+
+	t.Run("schema_declares_name", func(t *testing.T) {
+		reg := newIAMTestRegistry(&mockIAMService{})
+		var def *ToolDefinition
+		for _, tool := range reg.ListTools() {
+			if tool.Name == "quicbaas_iam_policy_validate" {
+				def = &tool
+				break
+			}
+		}
+		require.NotNil(t, def, "quicbaas_iam_policy_validate is not registered")
+		props, ok := def.InputSchema["properties"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Contains(t, props, "name")
+		assert.Contains(t, props, "policy")
+	})
+
 	t.Run("service_error_propagated", func(t *testing.T) {
 		reg := newIAMTestRegistry(&mockIAMService{
 			validatePolFunc: func(ctx context.Context, req *service.ValidatePolicyRequest) (*service.ValidatePolicyResponse, error) {
@@ -79,7 +145,7 @@ func TestExecuteIAMPolicyValidate(t *testing.T) {
 			},
 		})
 		_, err := reg.executeIAMPolicyValidate(context.Background(), map[string]interface{}{
-			"policy": map[string]interface{}{"name": "p1"},
+			"policy": map[string]interface{}{"name": "p1", "spec_yaml": "rules: []"},
 		})
 		require.Error(t, err)
 	})

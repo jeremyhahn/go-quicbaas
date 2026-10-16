@@ -182,8 +182,8 @@ spec:
       resources:
         - parameters:/*/prod/**
       unless:
-        - subject.roles contains prod-admin
-
+        - expression: 'subject.roles contains prod-admin'
+---
 # Tag-based access - environment restriction
 apiVersion: abac.quicbaas.io/v1
 kind: Policy
@@ -199,7 +199,7 @@ spec:
       resources:
         - parameters:**
       when:
-        - context.parameter_tags.env == subject.attrs.allowed_env
+        - expression: 'context.parameter_tags.env == subject.attrs.allowed_env'
 ```
 
 ## Encryption

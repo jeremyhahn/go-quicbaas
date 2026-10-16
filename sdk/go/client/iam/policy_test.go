@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -704,6 +705,49 @@ func TestPolicyClient_Validate(t *testing.T) {
 			t.Error("expected error for nil policy")
 		}
 	})
+}
+
+// TestPolicyClient_ValidateSendsName pins that Validate carries the policy's
+// name, which the server checks against metadata.name, and that an unnamed
+// policy omits the field rather than sending an empty value.
+func TestPolicyClient_ValidateSendsName(t *testing.T) {
+	tests := []struct {
+		name       string
+		policyName string
+		wantKey    bool
+	}{
+		{name: "named policy sends name", policyName: "p1", wantKey: true},
+		{name: "unnamed policy omits name", policyName: "", wantKey: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sent []byte
+			tr := &mockPolicyTransport{
+				requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					body, err := json.Marshal(req)
+					if err != nil {
+						return nil, err
+					}
+					sent = body
+					return &ValidationResult{Valid: true}, nil
+				},
+			}
+			if _, err := NewPolicyClient(tr).Validate(context.Background(), "t1", &Policy{Name: tt.policyName}); err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+			var wire map[string]interface{}
+			if err := json.Unmarshal(sent, &wire); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			got, ok := wire["name"]
+			if ok != tt.wantKey {
+				t.Fatalf("name present = %v, want %v (request %s)", ok, tt.wantKey, sent)
+			}
+			if tt.wantKey && got != tt.policyName {
+				t.Errorf("name = %v, want %q", got, tt.policyName)
+			}
+		})
+	}
 }
 
 func TestPolicyClient_Test(t *testing.T) {

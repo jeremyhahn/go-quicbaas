@@ -846,6 +846,11 @@ metadata:
   tenant: acme-corp
 
 spec:
+  # Subjects are selected once per policy; per-rule audiences are
+  # expressed as `when` conditions.
+  subjects:
+    authenticated: true
+
   variables:
     user_orders: "orders://orders/user/${subject.id}/**"
     team_orders: "orders://orders/team/${subject.team_id}/**"
@@ -857,8 +862,6 @@ spec:
       actions: [read, list]
       resources:
         - ${user_orders}
-      subjects:
-        authenticated: true
 
     # Users can create orders for themselves
     - name: create-own-orders
@@ -866,8 +869,6 @@ spec:
       actions: [create]
       resources:
         - orders://orders/user/${subject.id}/*
-      subjects:
-        authenticated: true
 
     # Team leads can view all team orders
     - name: team-lead-read
@@ -875,8 +876,8 @@ spec:
       actions: [read, list]
       resources:
         - ${team_orders}
-      subjects:
-        roles: [team-lead]
+      when:
+        - expression: "'team-lead' in subject.roles"
 
     # Support staff can read any order (business hours only)
     - name: support-read-all
@@ -884,11 +885,9 @@ spec:
       actions: [read]
       resources:
         - orders://orders/**
-      subjects:
-        groups: [customer-support]
       when:
-        - time.hour between 8..18
-        - time.weekday in [mon, tue, wed, thu, fri]
+        - expression: "'customer-support' in subject.groups"
+        - expression: "time.hour >= 8 && time.hour < 18"
 
     # Admins have full access with MFA
     - name: admin-full-access
@@ -896,10 +895,9 @@ spec:
       actions: ["*"]
       resources:
         - orders://**
-      subjects:
-        roles: [admin]
       when:
-        - subject.mfa_verified exists
+        - expression: "'admin' in subject.roles"
+        - expression: "subject.mfa_verified == true"
 ```
 
 Apply the policy:

@@ -21,6 +21,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -382,7 +383,12 @@ func (h *iamRESTHandler) handlePolicyRequest(ctx context.Context, method string,
 		if innerReq == nil {
 			innerReq = reqMap
 		}
-		return h.doRequest(ctx, http.MethodPost, "/api/v1/tenants/"+tenantID+"/policies/validate", innerReq)
+		path := "/api/v1/tenants/" + tenantID + "/policies/validate"
+		// The name the server checks against metadata.name; empty is unchecked.
+		if name := getString(reqMap, "name"); name != "" {
+			path += "?name=" + url.QueryEscape(name)
+		}
+		return h.doRequest(ctx, http.MethodPost, path, innerReq)
 
 	case "Test", "Simulate":
 		// POST /api/v1/tenants/{tenant_id}/policies/test

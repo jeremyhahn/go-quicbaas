@@ -148,7 +148,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.IAM.Invite", "GetInvite"}:           gapNoTool,
 
 	{"quicbaas.IAM.Policy", "GetEffectivePermissions"}: gapNoTool,
-	{"quicbaas.IAM.Policy", "Validate"}:                gapAmbiguous + "quicbaas_iam_policy_test",
 
 	{"quicbaas.IAM.User", "Approve"}:   gapNoTool,
 	{"quicbaas.IAM.User", "Reject"}:    gapNoTool,

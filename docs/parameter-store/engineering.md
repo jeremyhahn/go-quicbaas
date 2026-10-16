@@ -78,8 +78,10 @@ spec:
       effect: allow|deny
       actions: [action-list]
       resources: [resource-patterns]
-      when: [conditions]   # Required conditions
-      unless: [exceptions] # Exception conditions
+      when:                # Required conditions (all must hold)
+        - expression: "condition"
+      unless:              # Exception conditions (any one exempts)
+        - expression: "exception"
 ```
 
 ### Example Policies
@@ -134,8 +136,8 @@ spec:
         - parameters:/*/prod/**
         - parameters:/*/production/**
       unless:
-        - subject.roles contains prod-admin
-        - subject.groups contains platform-team
+        - expression: 'subject.roles contains prod-admin'
+        - expression: 'subject.groups contains platform-team'
 
     # Allow production reads for everyone
     - name: allow-prod-reads
@@ -166,7 +168,7 @@ spec:
       resources:
         - parameters:**
       when:
-        - context.parameter_tags.env == subject.attrs.allowed_env
+        - expression: 'context.parameter_tags.env == subject.attrs.allowed_env'
 
     # Sensitive parameters require special role
     - name: sensitive-parameters
@@ -175,9 +177,9 @@ spec:
       resources:
         - parameters:**
       when:
-        - context.parameter_tags.sensitivity == "high"
+        - expression: 'context.parameter_tags.sensitivity == "high"'
       unless:
-        - subject.roles contains security-admin
+        - expression: 'subject.roles contains security-admin'
 ```
 
 #### 4. Encryption Policy
@@ -202,7 +204,7 @@ spec:
         - parameters:/*/secrets/**
         - parameters:/*/credentials/**
       when:
-        - context.parameter_encrypted == false
+        - expression: 'context.parameter_encrypted == false'
 ```
 
 #### 5. Tenant Isolation
@@ -226,7 +228,7 @@ spec:
       resources:
         - parameters:/tenant/**
       unless:
-        - resource.path startswith "parameters:/tenant/${subject.tenant}/"
+        - expression: 'resource.path startswith "parameters:/tenant/${subject.tenant}/"'
 ```
 
 #### 6. Time-Based Access
@@ -249,9 +251,9 @@ spec:
       resources:
         - parameters:/production/**
       when:
-        - time.hour >= 2
-        - time.hour <= 6
-        - time.weekday in ["saturday", "sunday"]
+        - expression: 'time.hour >= 2'
+        - expression: 'time.hour <= 6'
+        - expression: 'time.weekday in ["saturday", "sunday"]'
 ```
 
 #### 7. Batch Operation Limits
@@ -274,9 +276,9 @@ spec:
       resources:
         - parameters:**
       when:
-        - context.parameter_batch_size > 100
+        - expression: 'context.parameter_batch_size > 100'
       unless:
-        - subject.roles contains parameters-admin
+        - expression: 'subject.roles contains parameters-admin'
 ```
 
 ## Parameter Context

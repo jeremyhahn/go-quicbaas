@@ -315,14 +315,14 @@ metadata:
   name: order-access
   tenant: acme-corp
 spec:
+  subjects:
+    authenticated: true
   rules:
     - name: read-own
       effect: allow
       actions: [read]
       resources:
         - orders://orders/${{subject.id}}/**
-      subjects:
-        authenticated: true
 ```
 
 ### policy get

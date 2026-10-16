@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -478,6 +479,69 @@ func TestIAMHandler_TransformRequest(t *testing.T) {
 		assert.Equal(t, "test-tenant", args["tenant_id"])
 		assert.Equal(t, "my-app", args["name"])
 		assert.Nil(t, args["app"])
+	})
+}
+
+func TestIAMHandler_TransformRequest_PolicyStructuredFields(t *testing.T) {
+	transport, err := New(&transport.Config{Address: "http://localhost:8888"})
+	require.NoError(t, err)
+	handler := newIAMHandler(transport)
+
+	for _, method := range []string{"Create", "Update"} {
+		t.Run("refuses rules on "+method, func(t *testing.T) {
+			req := map[string]interface{}{
+				"tenant_id": "test-tenant",
+				"request": map[string]interface{}{
+					"name":      "p",
+					"spec_yaml": "rules: []",
+					"rules":     []map[string]interface{}{{"effect": "allow", "subjects": []string{"alice"}}},
+				},
+			}
+			args, err := handler.transformRequest("quicbaas.IAM.Policy", method, req)
+			assert.True(t, errors.IsInvalidInput(err), "err = %v", err)
+			assert.Contains(t, err.Error(), "rules[0].subjects")
+			assert.Nil(t, args, "a refused request must not produce tool arguments")
+		})
+	}
+
+	t.Run("passes spec_yaml only", func(t *testing.T) {
+		req := map[string]interface{}{
+			"tenant_id": "test-tenant",
+			"request":   map[string]interface{}{"name": "p", "spec_yaml": "rules: []"},
+		}
+		args, err := handler.transformRequest("quicbaas.IAM.Policy", "Create", req)
+		require.NoError(t, err)
+		assert.NotNil(t, args)
+	})
+}
+
+// TestIAMHandler_TransformRequest_PolicyValidateName pins that the name the
+// server checks against metadata.name reaches quicbaas_iam_policy_validate as
+// a top-level argument, matching the server's tool schema, and that a request
+// without one sends no name argument at all.
+func TestIAMHandler_TransformRequest_PolicyValidateName(t *testing.T) {
+	transport, err := New(&transport.Config{Address: "http://localhost:8888"})
+	require.NoError(t, err)
+	handler := newIAMHandler(transport)
+
+	t.Run("name is a top-level argument", func(t *testing.T) {
+		args, err := handler.transformRequest("quicbaas.IAM.Policy", "Validate", map[string]interface{}{
+			"tenant_id": "t1",
+			"policy":    map[string]interface{}{"name": "p1", "spec_yaml": "rules: []"},
+			"name":      "p1",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "p1", args["name"])
+		assert.Contains(t, args, "policy")
+	})
+
+	t.Run("no name sends no name argument", func(t *testing.T) {
+		args, err := handler.transformRequest("quicbaas.IAM.Policy", "Validate", map[string]interface{}{
+			"tenant_id": "t1",
+			"policy":    map[string]interface{}{"spec_yaml": "rules: []"},
+		})
+		require.NoError(t, err)
+		assert.NotContains(t, args, "name")
 	})
 }
 

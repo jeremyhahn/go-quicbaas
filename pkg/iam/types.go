@@ -627,6 +627,11 @@ type Policy struct {
 
 	// Spec contains the policy specification
 	Spec PolicySpec `json:"spec" yaml:"spec"`
+
+	// LoadError is set only on an entry ListPolicies returns for a stored
+	// record that does not decode strictly. Such an entry carries the
+	// record's name and tenant and no rules: it is never applied.
+	LoadError *StoredPolicyDecodeError `json:"-" yaml:"-"`
 }
 
 // PolicyMetadata contains policy identification and description.
@@ -1157,6 +1162,25 @@ func (r *Rule) Validate() error {
 	}
 	if len(r.Resources) == 0 {
 		return NewIAMError(ErrRuleInvalid, "iam.rule.validate", "rule must have at least one resource", nil)
+	}
+	if err := ValidateConditions("when", r.When); err != nil {
+		return err
+	}
+	return ValidateConditions("unless", r.Unless)
+}
+
+// ValidateConditions refuses any condition that nests And, Or or Not.
+// go-qrdb's ABAC condition carries only a flat Expression, so a nested
+// condition could not be enforced; it is refused at write time instead of
+// being silently dropped. Field names the rule's condition list for the
+// error ("when" or "unless").
+func ValidateConditions(field string, conds []Condition) error {
+	for i, c := range conds {
+		if len(c.And) > 0 || len(c.Or) > 0 || c.Not != nil {
+			return NewIAMError(ErrConditionNested, "iam.condition.validate",
+				"nested conditions are not supported",
+				&NestedConditionError{Field: field, Index: i})
+		}
 	}
 	return nil
 }

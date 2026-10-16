@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gopkg.in/yaml.v3"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -94,7 +93,7 @@ type IAMService interface {
 	UpdatePolicy(ctx context.Context, policy *iam.Policy) (*iam.Policy, error)
 	DeletePolicy(ctx context.Context, tenantID, policyName string) error
 	ListPolicies(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Policy, int, error)
-	ValidatePolicy(ctx context.Context, tenantID string, specYAML []byte) (bool, []string, error)
+	ValidatePolicy(ctx context.Context, tenantID, name string, specYAML []byte) (bool, []string, error)
 	TestPolicy(ctx context.Context, tenantID string, req *iam.CheckRequest) (*iam.CheckResponse, error)
 
 	// Delegated Administration operations
@@ -967,51 +966,15 @@ func (s *IAMServer) CreatePolicy(ctx context.Context, req *iampb.CreatePolicyReq
 		return nil, status.Error(codes.InvalidArgument, "spec_yaml is required")
 	}
 
-	// Parse the policy YAML - try full policy format first, then spec-only format
-	var policy *iam.Policy
-	var fullPolicy iam.Policy
-	if err := yaml.Unmarshal(req.SpecYaml, &fullPolicy); err != nil {
+	policy, err := iam.ParsePolicyYAML(req.SpecYaml, iam.PolicyMetadata{
+		Name:        req.Name,
+		Tenant:      req.TenantId,
+		Description: req.Description,
+		Labels:      req.Labels,
+		Priority:    int(req.Priority),
+	})
+	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid spec_yaml: %v", err)
-	}
-
-	// Check if this is a full policy document (has apiVersion and kind)
-	if fullPolicy.APIVersion != "" && fullPolicy.Kind != "" {
-		// Full policy format - use parsed policy with metadata from YAML
-		policy = &fullPolicy
-		// Override with request values if provided
-		if req.Name != "" {
-			policy.Metadata.Name = req.Name
-		}
-		if req.TenantId != "" {
-			policy.Metadata.Tenant = req.TenantId
-		}
-		if req.Description != "" {
-			policy.Metadata.Description = req.Description
-		}
-		if len(req.Labels) > 0 {
-			policy.Metadata.Labels = req.Labels
-		}
-		if req.Priority > 0 {
-			policy.Metadata.Priority = int(req.Priority)
-		}
-	} else {
-		// Spec-only format - build policy from request fields
-		var spec iam.PolicySpec
-		if err := yaml.Unmarshal(req.SpecYaml, &spec); err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid spec_yaml: %v", err)
-		}
-		policy = &iam.Policy{
-			APIVersion: "iam.quicbaas.io/v1",
-			Kind:       "Policy",
-			Metadata: iam.PolicyMetadata{
-				Name:        req.Name,
-				Tenant:      req.TenantId,
-				Description: req.Description,
-				Labels:      req.Labels,
-				Priority:    int(req.Priority),
-			},
-			Spec: spec,
-		}
 	}
 
 	created, err := s.iamService.CreatePolicy(ctx, policy)
@@ -1180,7 +1143,7 @@ func (s *IAMServer) ValidatePolicy(ctx context.Context, req *iampb.ValidatePolic
 		return nil, status.Error(codes.InvalidArgument, "spec_yaml is required")
 	}
 
-	valid, validationErrors, err := s.iamService.ValidatePolicy(ctx, req.TenantId, req.SpecYaml)
+	valid, validationErrors, err := s.iamService.ValidatePolicy(ctx, req.TenantId, req.Name, req.SpecYaml)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}

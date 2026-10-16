@@ -218,6 +218,70 @@ func TestValidatePolicy_ValidAndInvalid(t *testing.T) {
 	assert.Equal(t, false, resp["valid"])
 }
 
+// TestValidatePolicy_Name checks the document against the optional ?name=
+// query parameter: a mismatch is reported invalid, a match or no name is not.
+func TestValidatePolicy_Name(t *testing.T) {
+	handler, cleanup := setupPolicyHandler(t)
+	defer cleanup()
+	params := map[string]string{"tenant_id": policyTenant}
+
+	tests := []struct {
+		name      string
+		target    string
+		wantValid bool
+	}{
+		{name: "match", target: "/x?name=v1", wantValid: true},
+		{name: "mismatch", target: "/x?name=other", wantValid: false},
+		{name: "empty", target: "/x?name=", wantValid: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handler.ValidatePolicy(w, policyRequest(t, http.MethodPost, tt.target, validPolicyDoc("v1"), params))
+			require.Equal(t, http.StatusOK, w.Code)
+			var resp map[string]interface{}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.Equal(t, tt.wantValid, resp["valid"])
+			if !tt.wantValid {
+				assert.Contains(t, resp["errors"], iam.CheckPolicyName(validPolicyDoc("v1"), "other").Error())
+			}
+		})
+	}
+}
+
+// TestValidatePolicy_SDKBodyDocumentName pins that for an SDK-format body the
+// spec_yaml document's own metadata.name is checked against ?name= before
+// the body's name overrides it.
+func TestValidatePolicy_SDKBodyDocumentName(t *testing.T) {
+	handler, cleanup := setupPolicyHandler(t)
+	defer cleanup()
+	params := map[string]string{"tenant_id": policyTenant}
+
+	specYAML := []byte(`apiVersion: iam.quicbaas.io/v1
+kind: Policy
+metadata:
+  name: other
+spec:
+  subjects:
+    authenticated: true
+  rules:
+    - name: r1
+      effect: allow
+      actions: [read]
+      resources: ["docs/*"]
+`)
+	body := map[string]interface{}{"name": "requested", "spec_yaml": specYAML}
+
+	w := httptest.NewRecorder()
+	handler.ValidatePolicy(w, policyRequest(t, http.MethodPost, "/x?name=requested", body, params))
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, false, resp["valid"])
+	want := iam.CheckPolicyName(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "other"}}, "requested").Error()
+	assert.Contains(t, resp["errors"], want)
+}
+
 func TestTestPolicy_And_CheckAccess(t *testing.T) {
 	handler, cleanup := setupPolicyHandler(t)
 	defer cleanup()

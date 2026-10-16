@@ -52,7 +52,7 @@ func TestIAMToolsRegistration(t *testing.T) {
 	}
 
 	// We should have all IAM tools registered
-	expectedCount := 43 // 6 tenant + 7 user + 6 role + 6 policy + 6 app + 10 mfa + 2 pep
+	expectedCount := 44 // 6 tenant + 7 user + 6 role + 7 policy + 6 app + 10 mfa + 2 pep
 	if iamToolCount != expectedCount {
 		t.Errorf("Expected %d IAM tools, got %d", expectedCount, iamToolCount)
 	}
@@ -1021,7 +1021,7 @@ func TestExecuteIAMTool_RoutesToPolicyOps(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
 	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
-	policyMap := map[string]interface{}{"name": "test-policy", "effect": "allow"}
+	policyMap := map[string]interface{}{"name": "test-policy", "spec_yaml": "rules: []"}
 
 	tests := []struct {
 		name     string
@@ -2087,7 +2087,7 @@ func TestIAMCoverage91_ServiceErrorPaths(t *testing.T) {
 		{"role_list_error", "quicbaas_iam_role_list", map[string]interface{}{"tenant_id": "t"}},
 
 		// Policy operations
-		{"policy_create_error", "quicbaas_iam_policy_create", map[string]interface{}{"policy": map[string]interface{}{"name": "p"}}},
+		{"policy_create_error", "quicbaas_iam_policy_create", map[string]interface{}{"policy": map[string]interface{}{"name": "p", "spec_yaml": "rules: []"}}},
 		{"policy_get_error", "quicbaas_iam_policy_get", map[string]interface{}{"name": "p"}},
 		{"policy_update_error", "quicbaas_iam_policy_update", map[string]interface{}{"policy": map[string]interface{}{"name": "p"}}},
 		{"policy_delete_error", "quicbaas_iam_policy_delete", map[string]interface{}{"name": "p"}},
