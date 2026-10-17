@@ -1871,6 +1871,11 @@ integration-test-merge-result: ## Run the merge-result snapshot suite in a conta
 	@#
 	@# One logical line, because the EXIT trap has to outlive the build: make
 	@# runs every recipe line in a shell of its own.
+	@#
+	@# `--pull --no-cache`, as the integration compose build does: the image's
+	@# `apk upgrade` RUN line never changes, so a cached layer freezes the
+	@# packages of the day it was built and the Trivy gate below fails on
+	@# advisories Alpine has already fixed (#1501, CVE-2026-77214 in libexpat).
 	@set -eu; \
 	IIDFILE=$$(mktemp "$${TMPDIR:-/tmp}/quicbaas-merge-result-iid.XXXXXX"); \
 	IMAGE=""; \
@@ -1881,7 +1886,7 @@ integration-test-merge-result: ## Run the merge-result snapshot suite in a conta
 		rm -f "$$IIDFILE"; \
 	}; \
 	trap cleanup EXIT; \
-	DOCKER_BUILDKIT=1 $(DOCKER) build \
+	DOCKER_BUILDKIT=1 $(DOCKER) build --pull --no-cache \
 		--secret id=gomodauth,src=$(GOMODAUTH_ENV) \
 		-f test/integration/Dockerfile.merge-result \
 		--iidfile "$$IIDFILE" .; \
