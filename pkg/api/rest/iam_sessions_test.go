@@ -2396,16 +2396,6 @@ func TestIAM91_ValidateDCRRequest(t *testing.T) {
 		assert.Equal(t, DCRErrorInvalidClientMetadata, err.code)
 	})
 
-	t.Run("unsupported token endpoint auth method", func(t *testing.T) {
-		req := &DynamicClientRequest{
-			GrantTypes:              []string{"client_credentials"},
-			TokenEndpointAuthMethod: "bad_method",
-		}
-		err := validateDCRRequest(req)
-		require.NotNil(t, err)
-		assert.Equal(t, DCRErrorInvalidClientMetadata, err.code)
-	})
-
 	t.Run("valid client_credentials", func(t *testing.T) {
 		req := &DynamicClientRequest{GrantTypes: []string{"client_credentials"}}
 		err := validateDCRRequest(req)

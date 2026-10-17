@@ -654,6 +654,12 @@ type RegisterAppOptions struct {
 
 	// PKCERequired indicates if PKCE is mandatory
 	PKCERequired bool
+
+	// TokenEndpointAuthMethod is the RFC 7591 §2 client authentication
+	// method. Empty registers the default, client_secret_basic; any other
+	// value must be one of the supported methods (see
+	// ValidateTokenEndpointAuthMethod).
+	TokenEndpointAuthMethod string
 }
 
 // UpdateAppOptions contains options for updating an OAuth2 application.

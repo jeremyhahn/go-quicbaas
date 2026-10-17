@@ -119,6 +119,18 @@ func TestAppUpdate_EveryArgReachesRequest(t *testing.T) {
 	}
 }
 
+// TestAppUpdate_AuthMethodPresence proves client_secret_basic reaches the
+// request when named, and an update that omits the method leaves it unset so
+// the stored one is unchanged (#1473).
+func TestAppUpdate_AuthMethodPresence(t *testing.T) {
+	got := captureAppUpdate(t, map[string]interface{}{"client_id": "c1", "token_endpoint_auth_method": "client_secret_basic"})
+	require.NotNil(t, got.TokenEndpointAuthMethod, "client_secret_basic must stay present")
+	assert.Equal(t, "client_secret_basic", *got.TokenEndpointAuthMethod)
+
+	got = captureAppUpdate(t, map[string]interface{}{"client_id": "c1", "name": "renamed"})
+	assert.Nil(t, got.TokenEndpointAuthMethod, "an omitted method must not be sent")
+}
+
 func TestAppUpdate_RefusedFieldIsInvalidInput(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{
 		updateAppFunc: func(_ context.Context, _ *service.UpdateAppRequest) (*service.UpdateAppResponse, error) {

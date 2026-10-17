@@ -67,6 +67,10 @@ func TestUpdateAppOptionsFromProto_CarriesEveryField(t *testing.T) {
 			require.NotNil(t, o.TokenEndpointAuthMethod)
 			assert.Equal(t, "client_secret_post", *o.TokenEndpointAuthMethod)
 		}},
+		{"token_endpoint_auth_method client_secret_basic", &iampb.UpdateAppRequest{TokenEndpointAuthMethod: proto.String("client_secret_basic")}, func(t *testing.T, o iam.UpdateAppOptions) {
+			require.NotNil(t, o.TokenEndpointAuthMethod, "client_secret_basic must stay present")
+			assert.Equal(t, "client_secret_basic", *o.TokenEndpointAuthMethod)
+		}},
 		{"mtls_cert_thumbprint cleared", &iampb.UpdateAppRequest{MtlsCertThumbprint: proto.String("")}, func(t *testing.T, o iam.UpdateAppOptions) {
 			require.NotNil(t, o.MTLSCertThumbprint, "an explicit empty thumbprint unbinds and must stay present")
 			assert.Empty(t, *o.MTLSCertThumbprint)
@@ -169,6 +173,54 @@ func TestIAMServer_UpdateApp_UnsupportedGrantIsInvalidArgument(t *testing.T) {
 		TenantId: "t1", ClientId: "c1", GrantTypes: []string{"password"},
 	})
 
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "got %v", err)
+}
+
+// TestIAMServer_UpdateApp_InvalidAuthMethodIsInvalidArgument proves the
+// manager's typed refusal of an unknown method reaches the caller as
+// InvalidArgument.
+func TestIAMServer_UpdateApp_InvalidAuthMethodIsInvalidArgument(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+	svc.On("UpdateApp", mock.Anything, "t1", "c1", mock.AnythingOfType("iam.UpdateAppOptions")).
+		Return(nil, iam.ErrInvalidTokenEndpointAuthMethod)
+
+	_, err := srv.UpdateApp(callerContext("t1"), &iampb.UpdateAppRequest{
+		TenantId: "t1", ClientId: "c1", TokenEndpointAuthMethod: proto.String("client_secret_magic"),
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "got %v", err)
+}
+
+// TestIAMServer_RegisterApp_TokenEndpointAuthMethod proves RegisterApp stores
+// the method through the adapter and a real app manager: client_secret_post
+// reads back through GetApp, an omitted method reads back as
+// client_secret_basic, and an unsupported one is InvalidArgument (#1473).
+func TestIAMServer_RegisterApp_TokenEndpointAuthMethod(t *testing.T) {
+	t.Parallel()
+	srv := newRedirectURITestServer(t)
+	ctx := callerContext("t1")
+	register := func(method string) (*iampb.Application, error) {
+		return srv.RegisterApp(ctx, &iampb.RegisterAppRequest{
+			TenantId: "t1", Name: "MyApp", GrantTypes: []string{iam.GrantTypeClientCredentials},
+			TokenEndpointAuthMethod: method,
+		})
+	}
+
+	for method, want := range map[string]string{
+		iam.AuthMethodClientSecretPost: iam.AuthMethodClientSecretPost,
+		"":                             iam.AuthMethodClientSecretBasic,
+	} {
+		created, err := register(method)
+		require.NoError(t, err)
+		assert.Equal(t, want, created.TokenEndpointAuthMethod, "register reply for %q", method)
+		got, err := srv.GetApp(ctx, &iampb.GetAppRequest{TenantId: "t1", ClientId: created.ClientId})
+		require.NoError(t, err)
+		assert.Equal(t, want, got.TokenEndpointAuthMethod, "GetApp after register with %q", method)
+	}
+
+	_, err := register("client_secret_magic")
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "got %v", err)
 }

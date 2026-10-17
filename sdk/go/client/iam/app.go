@@ -183,6 +183,28 @@ func (m TokenEndpointAuthMethod) String() string {
 	}
 }
 
+// ParseTokenEndpointAuthMethod maps an RFC 7591 §2 method name onto the
+// enum. An empty or unrecognised name is client_secret_basic, the RFC
+// default.
+func ParseTokenEndpointAuthMethod(s string) TokenEndpointAuthMethod {
+	switch s {
+	case "client_secret_post":
+		return TokenEndpointAuthClientSecretPost
+	case "client_secret_jwt":
+		return TokenEndpointAuthClientSecretJWT
+	case "private_key_jwt":
+		return TokenEndpointAuthPrivateKeyJWT
+	case "none":
+		return TokenEndpointAuthNone
+	case "tls_client_auth":
+		return TokenEndpointAuthTLSClientAuth
+	case "self_signed_tls_client_auth":
+		return TokenEndpointAuthSelfSignedTLSClientAuth
+	default:
+		return TokenEndpointAuthClientSecretBasic
+	}
+}
+
 // MarshalJSON serializes TokenEndpointAuthMethod as its string representation.
 func (m TokenEndpointAuthMethod) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m.String())
@@ -192,24 +214,7 @@ func (m TokenEndpointAuthMethod) MarshalJSON() ([]byte, error) {
 func (m *TokenEndpointAuthMethod) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
-		switch s {
-		case "client_secret_basic":
-			*m = TokenEndpointAuthClientSecretBasic
-		case "client_secret_post":
-			*m = TokenEndpointAuthClientSecretPost
-		case "client_secret_jwt":
-			*m = TokenEndpointAuthClientSecretJWT
-		case "private_key_jwt":
-			*m = TokenEndpointAuthPrivateKeyJWT
-		case "none":
-			*m = TokenEndpointAuthNone
-		case "tls_client_auth":
-			*m = TokenEndpointAuthTLSClientAuth
-		case "self_signed_tls_client_auth":
-			*m = TokenEndpointAuthSelfSignedTLSClientAuth
-		default:
-			*m = TokenEndpointAuthClientSecretBasic
-		}
+		*m = ParseTokenEndpointAuthMethod(s)
 		return nil
 	}
 
@@ -317,8 +322,10 @@ type RegisterAppRequest struct {
 	// Scopes are the allowed OAuth2 scopes.
 	Scopes []string `json:"scopes,omitempty"`
 
-	// TokenEndpointAuthMethod is the client authentication method.
-	TokenEndpointAuthMethod TokenEndpointAuthMethod `json:"token_endpoint_auth_method,omitempty"`
+	// TokenEndpointAuthMethod is the client authentication method. The zero
+	// value is client_secret_basic, the RFC 7591 §2 default, so the field is
+	// always sent.
+	TokenEndpointAuthMethod TokenEndpointAuthMethod `json:"token_endpoint_auth_method"`
 
 	// Contacts are the contact emails for the application.
 	Contacts []string `json:"contacts,omitempty"`
@@ -478,8 +485,10 @@ type Application struct {
 	// Scopes are the allowed scopes.
 	Scopes []string `json:"scopes,omitempty"`
 
-	// TokenEndpointAuthMethod is the client authentication method.
-	TokenEndpointAuthMethod TokenEndpointAuthMethod `json:"token_endpoint_auth_method,omitempty"`
+	// TokenEndpointAuthMethod is the client authentication method. The zero
+	// value is client_secret_basic, so the field is serialised for every
+	// value.
+	TokenEndpointAuthMethod TokenEndpointAuthMethod `json:"token_endpoint_auth_method"`
 
 	// Contacts are the contact emails.
 	Contacts []string `json:"contacts,omitempty"`

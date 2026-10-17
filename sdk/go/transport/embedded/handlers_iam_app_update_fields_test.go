@@ -286,6 +286,50 @@ func TestHandleIAMAppUpdate_UnknownAuthMethodIsRefused(t *testing.T) {
 	}
 }
 
+// TestHandleIAMAppRegister_TokenEndpointAuthMethod registers through the
+// embedded transport and reads the method back through Get: client_secret_post
+// is stored, the zero value is client_secret_basic, and a method the manager
+// does not support is refused with its typed error (#1473).
+func TestHandleIAMAppRegister_TokenEndpointAuthMethod(t *testing.T) {
+	t.Parallel()
+	f := newAppUpdateFieldsFixture(t)
+	register := func(method iamsdk.TokenEndpointAuthMethod) (*iamsdk.Application, error) {
+		got, err := handleIAMAppRegister(f.ctx, f.svc, &embeddedRegisterAppRequest{
+			TenantID: "tenant-a",
+			App: &iamsdk.RegisterAppRequest{
+				Name:                    "Registered",
+				RedirectURIs:            []string{"https://registered.example/cb"},
+				TokenEndpointAuthMethod: method,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		return got.(*iamsdk.Application), nil
+	}
+
+	for _, method := range []iamsdk.TokenEndpointAuthMethod{
+		iamsdk.TokenEndpointAuthClientSecretPost,
+		iamsdk.TokenEndpointAuthClientSecretBasic,
+	} {
+		created, err := register(method)
+		if err != nil {
+			t.Fatalf("register %v: %v", method, err)
+		}
+		fetched, err := handleIAMAppGet(f.ctx, f.svc, &embeddedAppRequest{ClientID: created.ClientID})
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got := fetched.(*iamsdk.Application).TokenEndpointAuthMethod; got != method {
+			t.Fatalf("registered %v, Get read back %v", method, got)
+		}
+	}
+
+	if _, err := register(iamsdk.TokenEndpointAuthPrivateKeyJWT); !errors.Is(err, iam.ErrInvalidTokenEndpointAuthMethod) {
+		t.Fatalf("register private_key_jwt: err = %v, want ErrInvalidTokenEndpointAuthMethod", err)
+	}
+}
+
 func TestAppUpdateDecodeError_UnwrapsCause(t *testing.T) {
 	t.Parallel()
 	cause := &json.UnsupportedValueError{Str: "bad"}

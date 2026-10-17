@@ -609,9 +609,10 @@ func (w *iamServiceWrapper) RegisterApp(ctx context.Context, req *RegisterAppReq
 	}
 
 	opts := iam.RegisterAppOptions{
-		Name:         req.Name,
-		RedirectURIs: req.RedirectURIs,
-		GrantTypes:   req.GrantTypes,
+		Name:                    req.Name,
+		RedirectURIs:            req.RedirectURIs,
+		GrantTypes:              req.GrantTypes,
+		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
 	}
 
 	tenantID, err := tenantctx.Target(ctx, "iam.RegisterApp", req.TenantID)

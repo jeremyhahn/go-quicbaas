@@ -766,12 +766,13 @@ func (s *IAMServer) RegisterApp(ctx context.Context, req *iampb.RegisterAppReque
 	}
 
 	app := &iam.Application{
-		TenantID:       req.TenantId,
-		Name:           req.Name,
-		RedirectURIs:   req.RedirectUris,
-		ResourcePrefix: req.ResourcePrefix,
-		GrantTypes:     req.GrantTypes,
-		ResponseTypes:  req.ResponseTypes,
+		TenantID:                req.TenantId,
+		Name:                    req.Name,
+		RedirectURIs:            req.RedirectUris,
+		ResourcePrefix:          req.ResourcePrefix,
+		GrantTypes:              req.GrantTypes,
+		ResponseTypes:           req.ResponseTypes,
+		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
 	}
 
 	created, err := s.iamService.RegisterApp(ctx, app)

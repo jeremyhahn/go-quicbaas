@@ -358,16 +358,17 @@ func convertApplicationToProto(a *iam.Application) *iampb.Application {
 	}
 
 	return &iampb.Application{
-		ClientId:       a.ClientID,
-		ClientSecret:   a.ClientSecret,
-		TenantId:       a.TenantID,
-		Name:           a.Name,
-		RedirectUris:   a.RedirectURIs,
-		ResourcePrefix: a.ResourcePrefix,
-		GrantTypes:     a.GrantTypes,
-		ResponseTypes:  a.ResponseTypes,
-		CreatedAt:      timestamppb.New(a.Created),
-		UpdatedAt:      timestamppb.New(a.Updated),
+		ClientId:                a.ClientID,
+		ClientSecret:            a.ClientSecret,
+		TenantId:                a.TenantID,
+		Name:                    a.Name,
+		RedirectUris:            a.RedirectURIs,
+		ResourcePrefix:          a.ResourcePrefix,
+		GrantTypes:              a.GrantTypes,
+		ResponseTypes:           a.ResponseTypes,
+		CreatedAt:               timestamppb.New(a.Created),
+		UpdatedAt:               timestamppb.New(a.Updated),
+		TokenEndpointAuthMethod: a.TokenEndpointAuthMethod,
 	}
 }
 

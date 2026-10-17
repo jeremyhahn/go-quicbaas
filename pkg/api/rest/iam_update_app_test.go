@@ -143,6 +143,79 @@ func TestUpdateApp_UnsupportedGrantIsBadRequest(t *testing.T) {
 	assert.Equal(t, []string{"authorization_code"}, app.GrantTypes)
 }
 
+// TestUpdateApp_AuthMethodBackToClientSecretBasic proves an app moved to
+// client_secret_post moves back to client_secret_basic, an update that omits
+// the method leaves it unchanged, and an unknown method is refused without
+// touching the stored one (#1473).
+func TestUpdateApp_AuthMethodBackToClientSecretBasic(t *testing.T) {
+	handler, cleanup := setupAppHandler(t)
+	defer cleanup()
+	clientID := registerUpdateTarget(t, handler)
+	params := map[string]string{"tenant_id": appsTenant, "client_id": clientID}
+	mgr := handler.server.service.(*appMockService).manager
+
+	update := func(body map[string]interface{}, wantCode int) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.UpdateApp(w, appRequest(t, http.MethodPut, body, params))
+		require.Equal(t, wantCode, w.Code, "body: %s", w.Body.String())
+		app, err := mgr.GetAppInTenant(context.Background(), appsTenant, clientID)
+		require.NoError(t, err)
+		return app.TokenEndpointAuthMethod
+	}
+
+	assert.Equal(t, iam.AuthMethodClientSecretPost,
+		update(map[string]interface{}{"token_endpoint_auth_method": "client_secret_post"}, http.StatusOK))
+	assert.Equal(t, iam.AuthMethodClientSecretBasic,
+		update(map[string]interface{}{"token_endpoint_auth_method": "client_secret_basic"}, http.StatusOK))
+	assert.Equal(t, iam.AuthMethodClientSecretBasic,
+		update(map[string]interface{}{"name": "Renamed"}, http.StatusOK), "an omitted method must stay unchanged")
+	assert.Equal(t, iam.AuthMethodClientSecretBasic,
+		update(map[string]interface{}{"token_endpoint_auth_method": "client_secret_magic"}, http.StatusBadRequest))
+}
+
+// TestRegisterApp_TokenEndpointAuthMethod proves the REST register body
+// carries the method: client_secret_post reads back through GetApp, an
+// omitted method reads back as client_secret_basic, and an unsupported one
+// is refused with 400 (#1473).
+func TestRegisterApp_TokenEndpointAuthMethod(t *testing.T) {
+	handler, cleanup := setupAppHandler(t)
+	defer cleanup()
+
+	register := func(method string, wantCode int) map[string]interface{} {
+		t.Helper()
+		body := map[string]interface{}{
+			"name":          "Method Target",
+			"redirect_uris": []string{"https://app.example/callback"},
+			"grant_types":   []string{"authorization_code"},
+		}
+		if method != "" {
+			body["token_endpoint_auth_method"] = method
+		}
+		w := httptest.NewRecorder()
+		handler.RegisterApp(w, appRequest(t, http.MethodPost, body, map[string]string{"tenant_id": appsTenant}))
+		require.Equal(t, wantCode, w.Code, "body: %s", w.Body.String())
+		var app map[string]interface{}
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&app))
+		return app
+	}
+	readBack := func(clientID string) interface{} {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.GetApp(w, appRequest(t, http.MethodGet, nil, map[string]string{"tenant_id": appsTenant, "client_id": clientID}))
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		var app map[string]interface{}
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&app))
+		return app["token_endpoint_auth_method"]
+	}
+
+	posted := register("client_secret_post", http.StatusCreated)
+	assert.Equal(t, "client_secret_post", readBack(posted["client_id"].(string)))
+	omitted := register("", http.StatusCreated)
+	assert.Equal(t, "client_secret_basic", readBack(omitted["client_id"].(string)))
+	register("client_secret_magic", http.StatusBadRequest)
+}
+
 // grantorUpdate PUTs body to the app as a caller holding roles and returns
 // the response with the stored app.
 func grantorUpdate(t *testing.T, body map[string]interface{}, roles ...string) (*httptest.ResponseRecorder, *iam.Application) {

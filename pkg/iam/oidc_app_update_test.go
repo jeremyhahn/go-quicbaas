@@ -135,6 +135,72 @@ func TestRegisterApp_UnsupportedGrantIsInvalidInput(t *testing.T) {
 	assertInvalidInput(t, err)
 }
 
+// TestRegisterApp_TokenEndpointAuthMethod proves registration stores the
+// method it is given, stores client_secret_basic when none is given, and
+// refuses a method the update path would refuse (#1473).
+func TestRegisterApp_TokenEndpointAuthMethod(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mgr := NewAppManager(NewMemoryStorage(), nil)
+	register := func(method string) (*Application, error) {
+		return mgr.RegisterApp(ctx, "tenant-1", RegisterAppOptions{
+			Name:                    "svc",
+			GrantTypes:              []string{GrantTypeClientCredentials},
+			TokenEndpointAuthMethod: method,
+		})
+	}
+
+	for method, want := range map[string]string{
+		AuthMethodClientSecretPost:  AuthMethodClientSecretPost,
+		AuthMethodClientSecretBasic: AuthMethodClientSecretBasic,
+		AuthMethodTLSClientAuth:     AuthMethodTLSClientAuth,
+		"":                          AuthMethodClientSecretBasic,
+	} {
+		app, err := register(method)
+		if err != nil {
+			t.Fatalf("RegisterApp(%q): %v", method, err)
+		}
+		stored, err := mgr.GetAppInTenant(ctx, "tenant-1", app.ClientID)
+		if err != nil {
+			t.Fatalf("GetAppInTenant: %v", err)
+		}
+		if stored.TokenEndpointAuthMethod != want {
+			t.Fatalf("RegisterApp(%q) stored %q, want %q", method, stored.TokenEndpointAuthMethod, want)
+		}
+	}
+}
+
+// TestRegisterApp_InvalidTokenEndpointAuthMethodRefused proves an unsupported
+// method, and self_signed_tls_client_auth with no pinned thumbprint, are
+// refused with the typed errors update uses, and nothing is stored.
+func TestRegisterApp_InvalidTokenEndpointAuthMethodRefused(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mgr := NewAppManager(NewMemoryStorage(), nil)
+
+	for method, want := range map[string]error{
+		"private_key_jwt":                 ErrInvalidTokenEndpointAuthMethod,
+		"none":                            ErrInvalidTokenEndpointAuthMethod,
+		AuthMethodSelfSignedTLSClientAuth: ErrMTLSThumbprintRequired,
+	} {
+		_, err := mgr.RegisterApp(ctx, "tenant-1", RegisterAppOptions{
+			Name:                    "svc",
+			GrantTypes:              []string{GrantTypeClientCredentials},
+			TokenEndpointAuthMethod: method,
+		})
+		if !errors.Is(err, want) {
+			t.Fatalf("RegisterApp(%q) err = %v, want %v", method, err, want)
+		}
+	}
+	apps, err := mgr.ListApps(ctx, "tenant-1", ListOptions{})
+	if err != nil {
+		t.Fatalf("ListApps: %v", err)
+	}
+	if len(apps) != 0 {
+		t.Fatalf("refused registrations stored %d apps", len(apps))
+	}
+}
+
 func TestUpdateAppInTenant_SwitchesToClientSecretBasic(t *testing.T) {
 	t.Parallel()
 	mgr, _, app := newUpdateTestApp(t)

@@ -128,12 +128,13 @@ func (h *IAMHandler) RegisterApp(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request
 	var req struct {
-		Name           string   `json:"name"`
-		RedirectURIs   []string `json:"redirect_uris"`
-		ResourcePrefix string   `json:"resource_prefix,omitempty"`
-		GrantTypes     []string `json:"grant_types,omitempty"`
-		ResponseTypes  []string `json:"response_types,omitempty"`
-		PKCERequired   bool     `json:"pkce_required"`
+		Name                    string   `json:"name"`
+		RedirectURIs            []string `json:"redirect_uris"`
+		ResourcePrefix          string   `json:"resource_prefix,omitempty"`
+		GrantTypes              []string `json:"grant_types,omitempty"`
+		ResponseTypes           []string `json:"response_types,omitempty"`
+		PKCERequired            bool     `json:"pkce_required"`
+		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
 	}
 
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -178,12 +179,13 @@ func (h *IAMHandler) RegisterApp(w http.ResponseWriter, r *http.Request) {
 
 	// Register app
 	opts := iam.RegisterAppOptions{
-		Name:           req.Name,
-		RedirectURIs:   req.RedirectURIs,
-		ResourcePrefix: req.ResourcePrefix,
-		GrantTypes:     req.GrantTypes,
-		ResponseTypes:  req.ResponseTypes,
-		PKCERequired:   req.PKCERequired,
+		Name:                    req.Name,
+		RedirectURIs:            req.RedirectURIs,
+		ResourcePrefix:          req.ResourcePrefix,
+		GrantTypes:              req.GrantTypes,
+		ResponseTypes:           req.ResponseTypes,
+		PKCERequired:            req.PKCERequired,
+		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
 	}
 
 	app, err := mgr.RegisterApp(ctx, tenantID, opts)

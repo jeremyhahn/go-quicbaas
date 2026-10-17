@@ -264,6 +264,8 @@ message Application {
   repeated string response_types = 8;
   google.protobuf.Timestamp created_at = 9;
   google.protobuf.Timestamp updated_at = 10;
+  // token_endpoint_auth_method is the RFC 7591 §2 client authentication method.
+  string token_endpoint_auth_method = 11;
 }
 
 message Policy {
@@ -688,6 +690,9 @@ message RegisterAppRequest {
   string resource_prefix = 4;
   repeated string grant_types = 5;
   repeated string response_types = 6;
+  // token_endpoint_auth_method is the RFC 7591 §2 client authentication
+  // method; empty registers the default, client_secret_basic.
+  string token_endpoint_auth_method = 7;
 }
 
 message GetAppRequest {

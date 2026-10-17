@@ -813,6 +813,10 @@ func (r *ToolRegistry) registerAppTools() {
 					"type":        "string",
 					"description": "Resource namespace for this application",
 				},
+				"token_endpoint_auth_method": map[string]interface{}{
+					"type":        "string",
+					"description": "RFC 7591 client authentication method; omitted registers client_secret_basic",
+				},
 			},
 			"required": []string{"tenant_id", "name", "redirect_uris", "grant_types", "response_types"},
 		},
@@ -2269,9 +2273,10 @@ func (r *ToolRegistry) executeIAMAppRegister(ctx context.Context, args map[strin
 	}
 
 	req := &service.RegisterAppRequest{
-		TenantID:       getString(args, "tenant_id"),
-		Name:           getString(args, "name"),
-		ResourcePrefix: getString(args, "resource_prefix"),
+		TenantID:                getString(args, "tenant_id"),
+		Name:                    getString(args, "name"),
+		ResourcePrefix:          getString(args, "resource_prefix"),
+		TokenEndpointAuthMethod: getString(args, "token_endpoint_auth_method"),
 	}
 
 	if urisRaw, ok := args["redirect_uris"].([]interface{}); ok {

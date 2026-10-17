@@ -1017,29 +1017,6 @@ func appManagerFor(ctx context.Context, svc service.QuicBaaS) (*iam.AppManager, 
 	return mgr, nil
 }
 
-// tokenEndpointAuthMethodFromString maps the internal string-typed
-// TokenEndpointAuthMethod onto the SDK's iota enum so the embedded
-// transport can hand back well-typed Application DTOs without leaking
-// internal types.
-func tokenEndpointAuthMethodFromString(s string) iamsdk.TokenEndpointAuthMethod {
-	switch s {
-	case "client_secret_post":
-		return iamsdk.TokenEndpointAuthClientSecretPost
-	case "client_secret_jwt":
-		return iamsdk.TokenEndpointAuthClientSecretJWT
-	case "private_key_jwt":
-		return iamsdk.TokenEndpointAuthPrivateKeyJWT
-	case "none":
-		return iamsdk.TokenEndpointAuthNone
-	case "tls_client_auth":
-		return iamsdk.TokenEndpointAuthTLSClientAuth
-	case "self_signed_tls_client_auth":
-		return iamsdk.TokenEndpointAuthSelfSignedTLSClientAuth
-	default:
-		return iamsdk.TokenEndpointAuthClientSecretBasic
-	}
-}
-
 func sdkAppFromInternal(a *iam.Application) iamsdk.Application {
 	grants := make([]iamsdk.GrantType, 0, len(a.GrantTypes))
 	for _, g := range a.GrantTypes {
@@ -1054,7 +1031,7 @@ func sdkAppFromInternal(a *iam.Application) iamsdk.Application {
 		GrantTypes:              grants,
 		ResponseTypes:           a.ResponseTypes,
 		Scopes:                  a.Scopes,
-		TokenEndpointAuthMethod: tokenEndpointAuthMethodFromString(a.TokenEndpointAuthMethod),
+		TokenEndpointAuthMethod: iamsdk.ParseTokenEndpointAuthMethod(a.TokenEndpointAuthMethod),
 		MTLSCertThumbprint:      a.MTLSCertThumbprint,
 		MTLSSubjectDN:           a.MTLSSubjectDN,
 		MTLSSANDNS:              a.MTLSSANDNS,
@@ -1121,11 +1098,12 @@ func handleIAMAppRegister(ctx context.Context, svc service.QuicBaaS, req interfa
 		grants = append(grants, grantTypeToString(g))
 	}
 	a, err := mgr.RegisterApp(ctx, tenantID, iam.RegisterAppOptions{
-		Name:           sdkReq.Name,
-		RedirectURIs:   sdkReq.RedirectURIs,
-		GrantTypes:     grants,
-		ResponseTypes:  sdkReq.ResponseTypes,
-		ResourcePrefix: "",
+		Name:                    sdkReq.Name,
+		RedirectURIs:            sdkReq.RedirectURIs,
+		GrantTypes:              grants,
+		ResponseTypes:           sdkReq.ResponseTypes,
+		ResourcePrefix:          "",
+		TokenEndpointAuthMethod: sdkReq.TokenEndpointAuthMethod.String(),
 	})
 	if err != nil {
 		return nil, err

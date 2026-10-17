@@ -532,11 +532,12 @@ func (a *IAMServiceAdapter) RegisterApp(ctx context.Context, app *iam.Applicatio
 	}
 
 	opts := iam.RegisterAppOptions{
-		Name:           app.Name,
-		RedirectURIs:   app.RedirectURIs,
-		ResourcePrefix: app.ResourcePrefix,
-		GrantTypes:     app.GrantTypes,
-		ResponseTypes:  app.ResponseTypes,
+		Name:                    app.Name,
+		RedirectURIs:            app.RedirectURIs,
+		ResourcePrefix:          app.ResourcePrefix,
+		GrantTypes:              app.GrantTypes,
+		ResponseTypes:           app.ResponseTypes,
+		TokenEndpointAuthMethod: app.TokenEndpointAuthMethod,
 	}
 
 	return a.appManager.RegisterApp(ctx, app.TenantID, opts)

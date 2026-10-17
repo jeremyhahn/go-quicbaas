@@ -236,6 +236,38 @@ func TestIAMServiceWrapper_AppVerbsStayInCallerTenant(t *testing.T) {
 	})
 }
 
+// TestIAMServiceWrapper_RegisterApp_TokenEndpointAuthMethod proves the
+// wrapper hands the method to the manager: it is stored when given, defaults
+// to client_secret_basic when absent, and an unsupported one is refused with
+// the manager's typed error (#1473).
+func TestIAMServiceWrapper_RegisterApp_TokenEndpointAuthMethod(t *testing.T) {
+	provider, _ := newHappyAppProvider()
+	w := &iamServiceWrapper{provider: provider}
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+	register := func(method string) (*RegisterAppResponse, error) {
+		return w.RegisterApp(ctx, &RegisterAppRequest{
+			TenantID:                "tenant-a",
+			Name:                    "svc",
+			GrantTypes:              []string{iam.GrantTypeClientCredentials},
+			TokenEndpointAuthMethod: method,
+		})
+	}
+
+	for method, want := range map[string]string{
+		iam.AuthMethodClientSecretPost: iam.AuthMethodClientSecretPost,
+		"":                             iam.AuthMethodClientSecretBasic,
+	} {
+		resp, err := register(method)
+		require.NoError(t, err)
+		got, err := w.GetApp(ctx, &GetAppRequest{ClientID: resp.App.ClientID})
+		require.NoError(t, err)
+		assert.Equal(t, want, got.App.TokenEndpointAuthMethod, "registered with %q", method)
+	}
+
+	_, err := register("client_secret_magic")
+	assert.ErrorIs(t, err, iam.ErrInvalidTokenEndpointAuthMethod)
+}
+
 func TestIAMServiceWrapper_PolicyLifecycle_HappyPath(t *testing.T) {
 	provider, _ := newHappyPolicyProvider()
 	w := &iamServiceWrapper{provider: provider}

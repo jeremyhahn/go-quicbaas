@@ -754,6 +754,10 @@ type RegisterAppRequest struct {
 
 	// ResourcePrefix is the resource namespace for this application
 	ResourcePrefix string `json:"resource_prefix,omitempty"`
+
+	// TokenEndpointAuthMethod is the RFC 7591 §2 client authentication
+	// method; empty registers client_secret_basic.
+	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 }
 
 // Validate validates the RegisterAppRequest.

@@ -957,8 +957,10 @@ type Application struct {
 	ResponseTypes  []string               `protobuf:"bytes,8,rep,name=response_types,json=responseTypes,proto3" json:"response_types,omitempty"`
 	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt      *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// token_endpoint_auth_method is the RFC 7591 §2 client authentication method.
+	TokenEndpointAuthMethod string `protobuf:"bytes,11,opt,name=token_endpoint_auth_method,json=tokenEndpointAuthMethod,proto3" json:"token_endpoint_auth_method,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *Application) Reset() {
@@ -1059,6 +1061,13 @@ func (x *Application) GetUpdatedAt() *timestamppb.Timestamp {
 		return x.UpdatedAt
 	}
 	return nil
+}
+
+func (x *Application) GetTokenEndpointAuthMethod() string {
+	if x != nil {
+		return x.TokenEndpointAuthMethod
+	}
+	return ""
 }
 
 type Policy struct {
@@ -3971,8 +3980,11 @@ type RegisterAppRequest struct {
 	ResourcePrefix string                 `protobuf:"bytes,4,opt,name=resource_prefix,json=resourcePrefix,proto3" json:"resource_prefix,omitempty"`
 	GrantTypes     []string               `protobuf:"bytes,5,rep,name=grant_types,json=grantTypes,proto3" json:"grant_types,omitempty"`
 	ResponseTypes  []string               `protobuf:"bytes,6,rep,name=response_types,json=responseTypes,proto3" json:"response_types,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// token_endpoint_auth_method is the RFC 7591 §2 client authentication
+	// method; empty registers the default, client_secret_basic.
+	TokenEndpointAuthMethod string `protobuf:"bytes,7,opt,name=token_endpoint_auth_method,json=tokenEndpointAuthMethod,proto3" json:"token_endpoint_auth_method,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *RegisterAppRequest) Reset() {
@@ -4045,6 +4057,13 @@ func (x *RegisterAppRequest) GetResponseTypes() []string {
 		return x.ResponseTypes
 	}
 	return nil
+}
+
+func (x *RegisterAppRequest) GetTokenEndpointAuthMethod() string {
+	if x != nil {
+		return x.TokenEndpointAuthMethod
+	}
+	return ""
 }
 
 type GetAppRequest struct {
@@ -13389,7 +13408,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
 	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12/\n" +
-	"\x13retired_permissions\x18\b \x03(\tR\x12retiredPermissions\"\x8c\x03\n" +
+	"\x13retired_permissions\x18\b \x03(\tR\x12retiredPermissions\"\xc9\x03\n" +
 	"\vApplication\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12#\n" +
 	"\rclient_secret\x18\x02 \x01(\tR\fclientSecret\x12\x1b\n" +
@@ -13404,7 +13423,8 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"created_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
 	"updated_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xc3\x03\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12;\n" +
+	"\x1atoken_endpoint_auth_method\x18\v \x01(\tR\x17tokenEndpointAuthMethod\"\xc3\x03\n" +
 	"\x06Policy\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12 \n" +
@@ -13646,7 +13666,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x16ReconcileRolesResponse\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12:\n" +
 	"\x05roles\x18\x02 \x03(\v2$.quicbaas.iam.v1.RoleReconcileResultR\x05roles\x12\x18\n" +
-	"\achanged\x18\x03 \x01(\bR\achanged\"\xdb\x01\n" +
+	"\achanged\x18\x03 \x01(\bR\achanged\"\x98\x02\n" +
 	"\x12RegisterAppRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12#\n" +
@@ -13654,7 +13674,8 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x0fresource_prefix\x18\x04 \x01(\tR\x0eresourcePrefix\x12\x1f\n" +
 	"\vgrant_types\x18\x05 \x03(\tR\n" +
 	"grantTypes\x12%\n" +
-	"\x0eresponse_types\x18\x06 \x03(\tR\rresponseTypes\"I\n" +
+	"\x0eresponse_types\x18\x06 \x03(\tR\rresponseTypes\x12;\n" +
+	"\x1atoken_endpoint_auth_method\x18\a \x01(\tR\x17tokenEndpointAuthMethod\"I\n" +
 	"\rGetAppRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\"\xa4\t\n" +

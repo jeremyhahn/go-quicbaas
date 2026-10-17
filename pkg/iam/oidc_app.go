@@ -222,6 +222,10 @@ func (m *AppManager) registerAppWithClientID(ctx context.Context, tenantID, clie
 	if len(app.ResponseTypes) == 0 {
 		app.ResponseTypes = []string{ResponseTypeCode}
 	}
+	app.TokenEndpointAuthMethod = opts.TokenEndpointAuthMethod
+	if app.TokenEndpointAuthMethod == "" {
+		app.TokenEndpointAuthMethod = AuthMethodClientSecretBasic
+	}
 
 	// Store application
 	if err := m.storage.CreateApp(ctx, app); err != nil {
@@ -566,6 +570,18 @@ func (m *AppManager) validateRegisterOptions(opts RegisterAppOptions) error {
 	// Validate the per-app default service audience (empty = no default).
 	if err := ValidateDefaultAudience(opts.DefaultAudience); err != nil {
 		return &IAMContextError{Message: "invalid default audience", Cause: err}
+	}
+
+	// The method is checked by the same rules an update applies. Registration
+	// carries no certificate thumbprint, so self_signed_tls_client_auth is
+	// refused here exactly as an update that leaves it unpinned is.
+	if opts.TokenEndpointAuthMethod != "" {
+		if err := ValidateTokenEndpointAuthMethod(opts.TokenEndpointAuthMethod); err != nil {
+			return err
+		}
+		if opts.TokenEndpointAuthMethod == AuthMethodSelfSignedTLSClientAuth {
+			return ErrMTLSThumbprintRequired
+		}
 	}
 
 	return nil

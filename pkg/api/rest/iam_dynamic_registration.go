@@ -63,7 +63,8 @@ type DynamicClientRequest struct {
 	RedirectURIs []string `json:"redirect_uris,omitempty"`
 
 	// TokenEndpointAuthMethod is the authentication method at the token endpoint
-	// Supported: "client_secret_basic", "client_secret_post", "none"
+	// Empty registers client_secret_basic; register decides which methods are
+	// supported (iam.ValidateTokenEndpointAuthMethod).
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 
 	// GrantTypes is the list of OAuth 2.0 grant types the client may use
@@ -217,6 +218,9 @@ func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Reques
 		RedirectURIs:  req.RedirectURIs,
 		GrantTypes:    req.GrantTypes,
 		ResponseTypes: req.ResponseTypes,
+
+		// Register validates the method and defaults it to client_secret_basic.
+		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
 	}
 
 	// Set defaults
@@ -246,7 +250,7 @@ func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Reques
 
 		// Echo back accepted values
 		RedirectURIs:            app.RedirectURIs,
-		TokenEndpointAuthMethod: "client_secret_basic", // Default
+		TokenEndpointAuthMethod: app.TokenEndpointAuthMethod,
 		GrantTypes:              app.GrantTypes,
 		ResponseTypes:           app.ResponseTypes,
 		ClientName:              app.Name,
@@ -427,21 +431,9 @@ func validateDCRRequest(req *DynamicClientRequest) *dcrValidationError {
 		}
 	}
 
-	// Validate token endpoint auth method
-	if req.TokenEndpointAuthMethod != "" {
-		validMethods := map[string]bool{
-			"client_secret_basic": true,
-			"client_secret_post":  true,
-			"none":                true,
-			"private_key_jwt":     true,
-		}
-		if !validMethods[req.TokenEndpointAuthMethod] {
-			return &dcrValidationError{
-				code:        DCRErrorInvalidClientMetadata,
-				description: "unsupported token_endpoint_auth_method",
-			}
-		}
-	}
+	// token_endpoint_auth_method is not checked here: register owns the one
+	// list of supported methods, and its refusal is mapped to
+	// invalid_client_metadata by the caller.
 
 	return nil
 }
@@ -600,7 +592,7 @@ func (h *IAMHandler) GetDynamicClient(w http.ResponseWriter, r *http.Request) {
 		ClientSecretExpiresAt:   0,
 		RegistrationClientURI:   requestAbsoluteURI(r),
 		RedirectURIs:            app.RedirectURIs,
-		TokenEndpointAuthMethod: "client_secret_basic",
+		TokenEndpointAuthMethod: app.TokenEndpointAuthMethod,
 		GrantTypes:              app.GrantTypes,
 		ResponseTypes:           app.ResponseTypes,
 		ClientName:              app.Name,
@@ -680,7 +672,7 @@ func (h *IAMHandler) UpdateDynamicClient(w http.ResponseWriter, r *http.Request)
 		ClientSecretExpiresAt:   0,
 		RegistrationClientURI:   requestAbsoluteURI(r),
 		RedirectURIs:            app.RedirectURIs,
-		TokenEndpointAuthMethod: "client_secret_basic",
+		TokenEndpointAuthMethod: app.TokenEndpointAuthMethod,
 		GrantTypes:              app.GrantTypes,
 		ResponseTypes:           app.ResponseTypes,
 		ClientName:              app.Name,

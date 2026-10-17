@@ -120,17 +120,6 @@ func TestRegisterDynamicClient(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "unsupported response_type")
 	})
 
-	t.Run("unsupported token_endpoint_auth_method", func(t *testing.T) {
-		handler, cleanup := setupOpenDCRHandler(t)
-		defer cleanup()
-
-		w := httptest.NewRecorder()
-		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["client_credentials"],"token_endpoint_auth_method":"invalid_method"}`))
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "unsupported token_endpoint_auth_method")
-	})
-
 	t.Run("dynamic registration not available", func(t *testing.T) {
 		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
@@ -210,7 +199,7 @@ func TestRegisterDynamicClient(t *testing.T) {
 	})
 
 	t.Run("all valid token auth methods", func(t *testing.T) {
-		validMethods := []string{"client_secret_basic", "client_secret_post", "none", "private_key_jwt"}
+		validMethods := []string{"client_secret_basic", "client_secret_post", "tls_client_auth"}
 		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 

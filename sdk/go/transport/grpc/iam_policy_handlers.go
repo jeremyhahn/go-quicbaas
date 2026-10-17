@@ -385,14 +385,16 @@ func (h *iamHandler) handleRegisterApp(ctx context.Context, client iampb.IAMServ
 	resourcePrefix, _ := getString(requestData, "resource_prefix")
 	grantTypes, _ := getStringSlice(requestData, "grant_types")
 	responseTypes, _ := getStringSlice(requestData, "response_types")
+	authMethod, _ := getString(requestData, "token_endpoint_auth_method")
 
 	pbReq := &iampb.RegisterAppRequest{
-		TenantId:       tenantID,
-		Name:           name,
-		RedirectUris:   redirectURIs,
-		ResourcePrefix: resourcePrefix,
-		GrantTypes:     grantTypes,
-		ResponseTypes:  responseTypes,
+		TenantId:                tenantID,
+		Name:                    name,
+		RedirectUris:            redirectURIs,
+		ResourcePrefix:          resourcePrefix,
+		GrantTypes:              grantTypes,
+		ResponseTypes:           responseTypes,
+		TokenEndpointAuthMethod: authMethod,
 	}
 
 	resp, err := client.RegisterApp(ctx, pbReq)
@@ -680,6 +682,7 @@ func convertProtoAppToSDK(a *iampb.Application) *iam.Application {
 		ResourcePrefix: a.ResourcePrefix,
 		ResponseTypes:  a.ResponseTypes,
 	}
+	resp.TokenEndpointAuthMethod = iam.ParseTokenEndpointAuthMethod(a.TokenEndpointAuthMethod)
 
 	// Convert grant type strings to GrantType values.
 	if len(a.GrantTypes) > 0 {
