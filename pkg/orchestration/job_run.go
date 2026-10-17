@@ -191,7 +191,8 @@ type JobRun struct {
 	fault          EnvironmentFault
 
 	// park is the runner's own judgement that the task must wait for a
-	// person; see Park. Nil for a job that made none.
+	// person; see Park. Nil for a job that made none. Written under
+	// fanoutMu, which the publish path reads it under.
 	park *BlockReason
 
 	// satisfied is the runner's judgement that the work was already done. See
@@ -248,7 +249,9 @@ type JobRun struct {
 	sessionMu sync.Mutex
 	sessions  []string
 
-	// fanoutMu guards the sub-job lineage. It lives on the run, not on the
+	// fanoutMu guards the sub-job lineage and the park, and orders every
+	// workspace-pin change against the run's own publish (see storeStatus).
+	// It lives on the run, not on the
 	// status, because a status the run has published is IMMUTABLE: it is
 	// read by every status poll and by the next snapshot, from goroutines
 	// the run does not own, so a caller that appended a child to it in
@@ -619,14 +622,12 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 		Stage:        string(r.stage),
 		FailureClass: r.failureClass,
 		Error:        r.failureMessage,
-		Park:         r.park.clone(),
 		Satisfied:    r.satisfied,
 		Superseded:   r.superseded,
 		Prompts:      r.promptRefs,
 	}
 	status.Stages = r.stageHistory()
 	status.AgentID = r.AgentID()
-	status.WorkspacePin = r.WorkspacePin()
 	status.Verification = r.verificationResults()
 
 	if r.decorate != nil {
@@ -646,16 +647,20 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 	return status
 }
 
-// storeStatus publishes status with the run's current sub-job lineage. It
-// holds fanoutMu from copying the lineage to the store, and AddChildJob and
-// RecordParent hold it from changing the lineage to republishing it, so the
+// storeStatus publishes status with the run's current sub-job lineage,
+// workspace pin and park. It holds fanoutMu from copying those fields to the
+// store, and every change that republishes one of them holds it from the
+// change to the republish — AddChildJob and RecordParent for the lineage,
+// recordWorkspace for the pin, Park and ParkSurfaced for the park — so the
 // two cannot interleave: a change made before the copy is in the stored
 // status, and one made after it republishes on top of the stored status. A
 // store outside the lock could overwrite a republish that landed between
-// the copy and the store and lose the child or parent it carried (#1474).
+// the copy and the store and lose the change it carried (#1474, #1477).
 func (r *JobRun) storeStatus(status *JobStatus) {
 	r.fanoutMu.Lock()
 	defer r.fanoutMu.Unlock()
+	status.WorkspacePin = r.WorkspacePin()
+	status.Park = r.park.clone()
 	status.ParentJobID = r.parentJobID
 	status.SpawnedBy = r.spawnedBy
 	status.SpawnedAt = r.spawnedAt
@@ -1200,10 +1205,13 @@ func (r *JobRun) WorkspacePin() *WorkspacePlacement {
 // run publishes later claims a placement no session holds.
 func (r *JobRun) recordWorkspace(placement WorkspacePlacement) error {
 	pin := &placement
+	r.fanoutMu.Lock()
 	if !r.workspacePin.CompareAndSwap(nil, pin) {
+		r.fanoutMu.Unlock()
 		return nil
 	}
 	published := r.republishWorkspacePin()
+	r.fanoutMu.Unlock()
 	if published == nil {
 		return nil
 	}
@@ -1211,8 +1219,10 @@ func (r *JobRun) recordWorkspace(placement WorkspacePlacement) error {
 	switch {
 	case r.storeFn != nil:
 		if err := r.storeFn(&persisted); err != nil {
+			r.fanoutMu.Lock()
 			r.workspacePin.CompareAndSwap(pin, nil)
 			r.republishWorkspacePin()
+			r.fanoutMu.Unlock()
 			return &WorkspacePinPersistError{JobID: r.JobID, Key: placement.Key, Cause: err}
 		}
 	case r.persistFn != nil:
@@ -1225,6 +1235,9 @@ func (r *JobRun) recordWorkspace(placement WorkspacePlacement) error {
 // workspace pin, and answers what it published. Nil when the job has
 // published nothing yet; the envelope publishes its start state before any
 // runner can spawn, so that is a run no envelope drives.
+//
+// The caller holds fanoutMu, which storeStatus also holds, so a snapshot's
+// store cannot land between the pin change and this republish (#1477).
 func (r *JobRun) republishWorkspacePin() *JobStatus {
 	for {
 		current, ok := r.status.Load().(*JobStatus)
@@ -1352,6 +1365,8 @@ func (r *JobRun) Park(kind TaskBlockKind, reason, faultClass string) {
 	//
 	// The same park is the same kind and the same words. A park that
 	// changed either is a different judgement and has not been announced.
+	r.fanoutMu.Lock()
+	defer r.fanoutMu.Unlock()
 	surfaced := r.park != nil && r.park.Surfaced &&
 		r.park.Kind == kind && r.park.Message == reason
 	r.park = &BlockReason{
@@ -1360,9 +1375,13 @@ func (r *JobRun) Park(kind TaskBlockKind, reason, faultClass string) {
 	}
 }
 
-// Parked is the runner's park judgement, nil when it made none.
+// Parked is a snapshot of the runner's park judgement, nil when it made none.
+// It is copied under fanoutMu, the lock Park, ParkSurfaced and restore write
+// the park under, so the caller never holds the run's own *BlockReason.
 func (r *JobRun) Parked() *BlockReason {
-	return r.park
+	r.fanoutMu.Lock()
+	defer r.fanoutMu.Unlock()
+	return r.park.clone()
 }
 
 // Satisfy records the runner's judgement that this task's work was ALREADY
@@ -1398,7 +1417,9 @@ func (r *JobRun) Superseded() bool { return r.superseded }
 // attempted, so a caller that set it alongside Park would be asserting the
 // thing it is supposed to be measuring.
 func (r *JobRun) ParkSurfaced() {
+	r.fanoutMu.Lock()
 	if r.park == nil || r.park.Surfaced {
+		r.fanoutMu.Unlock()
 		return
 	}
 	r.park.Surfaced = true
@@ -1409,6 +1430,7 @@ func (r *JobRun) ParkSurfaced() {
 	// time. The duplicate is a trade worth making when the surfacing really
 	// did fail; on this path it would be a duplicate for no reason at all.
 	published := r.republishPark()
+	r.fanoutMu.Unlock()
 	if published != nil && r.persistFn != nil {
 		persisted := *published
 		r.persistFn(&persisted)
@@ -1423,6 +1445,9 @@ func (r *JobRun) ParkSurfaced() {
 // It is the same compare-and-swap republishFanout uses, for the same reason:
 // the published status is immutable, so a change to it is a new value
 // swapped in rather than a write through a pointer somebody is reading.
+//
+// The caller holds fanoutMu, which storeStatus also holds, so a snapshot's
+// store cannot land between the park change and this republish (#1477).
 func (r *JobRun) republishPark() *JobStatus {
 	for {
 		current, ok := r.status.Load().(*JobStatus)

@@ -382,7 +382,9 @@ func (r *JobRun) restore(status *JobStatus) {
 	// A CLONE, for the reason every other park copy is one: the status
 	// belongs to the persisted record and the run must not write through
 	// it.
+	r.fanoutMu.Lock()
 	r.park = status.Park.clone()
+	r.fanoutMu.Unlock()
 	// AND THE WORKSPACE PIN, for the park's own reason: snapshot() rebuilds
 	// it from the run, so a resumed run that did not restore it would erase
 	// the only record of where its checkout is — and its respawn would then
