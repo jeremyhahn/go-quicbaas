@@ -30,4 +30,10 @@ var (
 	ErrPIVInvalidSlot           = xkmssdk.ServiceErrPIVInvalidSlot
 	ErrPIVNoAttestationMaterial = xkmssdk.ErrPIVNoAttestationMaterial
 	ErrPIVNotInitialized        = xkmssdk.ServiceErrPIVNotInitialized
+
+	// Key sentinels the go-xkms key backends return: ErrKeyNotFound for a
+	// lookup of a key that is not stored, ErrKeyAlreadyExists for a
+	// generate whose key ID is already taken.
+	ErrKeyAlreadyExists = xkmssdk.ErrBackendKeyAlreadyExists
+	ErrKeyNotFound      = xkmssdk.ErrBackendKeyNotFound
 )
