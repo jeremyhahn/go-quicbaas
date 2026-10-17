@@ -738,7 +738,7 @@ jobs:
   # Item 2 of #551 -- rebuilding the frontend and failing on a `dist/` diff, so
   # the committed assets cannot drift from their source -- is an OWNER DECISION
   # and is deliberately not implemented here. This job runs the tests; it does
-  # not judge the bundle.
+  # not judge the bundle. The JavaScript SDK (sdk/javascript) joined it in #1424.
   web:
     name: Web Tests
     runs-on: ubuntu-latest
@@ -790,13 +790,20 @@ jobs:
           (cd sdk/typescript && npm ci)
           (cd cmd/quicbaas/frontend && npm ci)
 
-      # `make` is the contract (devops.md §4): the same two targets a developer
+      # `make` is the contract (devops.md §4): the same targets a developer
       # runs, so a green here means the same thing it means locally.
       - name: Run the TypeScript SDK tests (make test-sdk-ts)
         run: make test-sdk-ts
 
       - name: Run the frontend tests (make test-frontend)
         run: make test-frontend
+
+      # #1424: until this step nothing ran the JavaScript SDK, so a broken
+      # sdk/javascript could merge green. The target installs its own
+      # dependencies (`npm ci` from the committed lockfile), then runs jest and
+      # eslint.
+      - name: Run the JavaScript SDK tests and lint (make test-sdk-js)
+        run: make test-sdk-js
 
   # THE MERGE-RESULT SNAPSHOT SUITE (#982). It is the only thing that measures
   # what the tree a verification judges actually HOLDS: `git add --all` staged
