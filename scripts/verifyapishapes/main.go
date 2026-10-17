@@ -93,12 +93,9 @@ var goPrefixRewrites = []struct {
 // NOT drift, plus the ones that are drift and are tracked rather than silenced.
 //
 // EVERY ENTRY IS A NAME NOBODY IS CHECKING, so every entry carries a reason.
-// The first group are upstream concepts the TS SDK represents inline through
+// Today they are all upstream concepts the TS SDK represents inline through
 // BarrierStatusResponse and CeremonyStatusResponse, or forms left over from
-// normalization. BarrierSealRequest is real drift, tracked by go-quicbaas#946:
-// no REST seal handler reads its so_pin, so a TS field would be dropped
-// unread. Delete the entry when the server verifies the SO PIN on seal and the
-// TS seal() sends it.
+// normalization.
 var knownUnmirrored = map[string]string{
 	"CeremonyOfficer":          "represented inline in CeremonyStatusResponse",
 	"EnrollExternalOfficer":    "prefixed form is what the TS SDK exports",
@@ -107,7 +104,6 @@ var knownUnmirrored = map[string]string{
 	"BarrierShamirResponse":    "normalization residue of BarrierInitializeShamirResponse",
 	"BarrierInitialize":        "TS SDK spells the verb BarrierInit",
 	"BarrierInitializeRequest": "TS SDK exports it as BarrierInitRequest",
-	"BarrierSealRequest":       "go-quicbaas#946 — the REST seal handlers do not read so_pin",
 }
 
 func main() {

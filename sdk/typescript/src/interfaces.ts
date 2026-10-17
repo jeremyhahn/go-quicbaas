@@ -143,6 +143,7 @@ import type {
   BarrierStatusResponse,
   BarrierInitRequest,
   BarrierUnsealRequest,
+  BarrierSealRequest,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
   BarrierUnsealShareRequest,
@@ -1026,9 +1027,10 @@ export interface BarrierClient {
   // Maps to POST /api/v1/barrier/unseal.
   unseal(req: BarrierUnsealRequest): Promise<void>;
 
-  // seal transitions the barrier to the sealed state.
+  // seal transitions the barrier to the sealed state. req.so_pin is required
+  // when the server has a PIN backend with an SO PIN set.
   // Maps to POST /api/v1/barrier/seal.
-  seal(): Promise<void>;
+  seal(req?: BarrierSealRequest): Promise<void>;
 
   // initializeShamir initialises the barrier with Shamir secret sharing.
   // Maps to POST /api/v1/barrier/shamir/initialize.

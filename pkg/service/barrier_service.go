@@ -58,8 +58,10 @@ type BarrierServicer interface {
 	// owns secret and may wipe it as soon as the call returns.
 	BarrierUnseal(ctx context.Context, secret []byte) error
 
-	// BarrierSeal transitions the barrier to the sealed state.
-	BarrierSeal(ctx context.Context) error
+	// BarrierSeal transitions the barrier to the sealed state. When a PIN
+	// backend is configured and an SO PIN is set on it, req must carry that
+	// SO PIN; otherwise the seal is refused and the barrier keeps its state.
+	BarrierSeal(ctx context.Context, req *BarrierSealRequest) error
 
 	// BarrierInitializeShamir initialises the barrier with Shamir secret
 	// sharing and returns the generated shares.
@@ -192,6 +194,20 @@ type BarrierService struct {
 	// the embedded *qrdbnode.Node (not the BarrierClient transport, which
 	// stubs BarrierEnableEncryption). Wired via SetMigrator after node init.
 	migrator qrdbsdk.EncryptionMigrator
+
+	// pinBackend is the PIN backend the embedded qrdb node verifies SO PINs
+	// against (the one wired through qrdb's WithPINBackend). BarrierSeal
+	// checks the caller's SO PIN against it. Nil leaves seal PIN-less.
+	pinBackend qrdbsdk.PINBackend
+}
+
+// BarrierSealRequest carries the Security Officer PIN that authorises a
+// seal. The caller owns SOPIN and may wipe it as soon as BarrierSeal
+// returns; nothing below this seam retains the slice.
+type BarrierSealRequest struct {
+	// SOPIN is the Security Officer PIN. It is required when a PIN backend
+	// is configured and an SO PIN has been set on it.
+	SOPIN []byte
 }
 
 // Compile-time interface check.
@@ -282,11 +298,45 @@ func (s *BarrierService) BarrierUnseal(ctx context.Context, secret []byte) error
 }
 
 // BarrierSeal transitions the barrier to the sealed state.
-func (s *BarrierService) BarrierSeal(ctx context.Context) error {
+func (s *BarrierService) BarrierSeal(ctx context.Context, req *BarrierSealRequest) error {
+	if err := s.verifySealSOPIN(req); err != nil {
+		return err
+	}
 	if s.client == nil {
 		return &BarrierServiceMissingError{}
 	}
 	return s.client.BarrierSeal(ctx)
+}
+
+// verifySealSOPIN checks the seal request's SO PIN against the configured
+// PIN backend through VerifyBarrierSealSOPIN.
+func (s *BarrierService) verifySealSOPIN(req *BarrierSealRequest) error {
+	var soPIN []byte
+	if req != nil {
+		soPIN = req.SOPIN
+	}
+	return VerifyBarrierSealSOPIN(s.pinBackend, soPIN)
+}
+
+// VerifyBarrierSealSOPIN checks soPIN against backend before a seal. It
+// mirrors qrdb's own seal gate: with no backend, or a backend on which no
+// SO PIN has been set yet, there is nothing to verify. A refusal is an
+// ErrForbidden QBError wrapping the backend's own error
+// (qrdbsdk.ErrSOPINRequired for a missing PIN), so errors.Is still finds
+// it. Every seal route verifies through this one function: the
+// BarrierService facade (REST, MCP, quicbaas.v1 gRPC) and the interceptor
+// guarding the canonical qrdb.v1 BarrierSeal on the gRPC and Unix servers.
+func VerifyBarrierSealSOPIN(backend qrdbsdk.PINBackend, soPIN []byte) error {
+	if backend == nil || !backend.SOPINSet() {
+		return nil
+	}
+	if len(soPIN) == 0 {
+		return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "barrier.Seal", Err: qrdbsdk.ErrSOPINRequired}
+	}
+	if err := backend.VerifySOPIN(string(soPIN)); err != nil {
+		return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "barrier.Seal", Err: err}
+	}
+	return nil
 }
 
 // BarrierInitializeShamir initialises the barrier with Shamir secret sharing.
@@ -423,6 +473,13 @@ func (s *BarrierService) BarrierGenerateRootToken(ctx context.Context, shares []
 // concurrently with request handling.
 func (s *BarrierService) SetMigrator(m qrdbsdk.EncryptionMigrator) {
 	s.migrator = m
+}
+
+// SetPINBackend injects the PIN backend BarrierSeal verifies the SO PIN
+// against. Pass the backend the embedded qrdb node was given through
+// WithPINBackend so seal and the qrdb ceremony check one PIN.
+func (s *BarrierService) SetPINBackend(b qrdbsdk.PINBackend) {
+	s.pinBackend = b
 }
 
 // EnableEncryption migrates the target barrier from none-strategy to a keyed

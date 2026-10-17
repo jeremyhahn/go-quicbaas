@@ -40,8 +40,8 @@ quicbaas barrier unseal         --passphrase-stdin | --passphrase <pp>
                                                               (passphrase / single-secret only)
 quicbaas barrier unseal-shares  --share <s1> [--share <s2> ...]
                                 | --shares-file <path>        ('-' = stdin)
-quicbaas barrier seal           [--so-pin <pin>]               (accepted for parity; NOT transmitted -- #491)
-                                [-y | --assume-yes]
+quicbaas barrier seal           [--so-pin-stdin]              (SO PIN; required with a PIN backend -- #946)
+                                [-y | --assume-yes]           (pair with --so-pin-stdin)
 quicbaas barrier rekey          [--so-pin <pin>]              (NO --user-pin on rekey)
                                 [--threshold N --total M]     (paired; Shamir share regeneration;
                                                                no secret on the wire)
@@ -157,7 +157,7 @@ for the full architectural rationale. In quicbaas concretely:
 | Flag | Concern | Server-side path |
 |------|---------|-----------------|
 | `--passphrase` | Strategy wrapping passphrase. `passphrase` Argon2id-derives the wrapping key, `shamir` uses it as the strategy seal, `none` ignores it. | qrdb `pkg/seal` strategy registry |
-| `--so-pin`, `--user-pin` | Two-PIN compliance-gating material (FIPS 140-3 / PCI-DSS v4). Gates rekey / recovery-generate. **Not `seal`:** the SDK's `BarrierSeal` takes no request, so `barrier seal --so-pin` is parsed for surface parity and discarded — leave it off rather than putting a PIN in the process list for nothing ([#491](https://github.com/jeremyhahn/go-quicbaas/issues/491)). | qrdb `pkg/pin.PINBackend` (composed in via `WithPINBackend`) |
+| `--so-pin`, `--user-pin` | Two-PIN compliance-gating material (FIPS 140-3 / PCI-DSS v4). Gates rekey / recovery-generate, and `seal` (#946): when the server has a PIN backend with an SO PIN set, `barrier seal` is refused without the right SO PIN. `seal` reads it from `--so-pin-stdin`, then `QUICBAAS_BARRIER_SO_PIN`, and binds it to the call with the SDK's `WithSOPIN`; `--so-pin` is accepted for parity but puts the PIN in the process list, so do not use it ([#491](https://github.com/jeremyhahn/go-quicbaas/issues/491)). | qrdb `pkg/pin.PINBackend` (composed in via `WithPINBackend`) |
 
 CLI-side validation lives in `runBarrierInitCmd` / `runBarrierInitShamirCmd`
 / `runBarrierRekeyCmd` ([`cmd/quicbaas/barrier.go`](../../cmd/quicbaas/barrier.go)):
@@ -299,7 +299,7 @@ printf '%s' "$PP" | quicbaas barrier init \
   --user-pin USR12345
 
 quicbaas barrier status --output json
-quicbaas barrier seal -y
+printf '%s\n' "$SO_PIN" | quicbaas barrier seal --so-pin-stdin -y
 printf '%s' "$PP" | quicbaas barrier unseal --passphrase-stdin
 ```
 

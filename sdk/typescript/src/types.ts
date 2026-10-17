@@ -2594,6 +2594,13 @@ export interface BarrierUnsealRequest {
   secret: Uint8Array;
 }
 
+// BarrierSealRequest carries the Security Officer PIN that authorises a seal.
+// Mirrors transport.BarrierSealRequest.
+export interface BarrierSealRequest {
+  /** Security Officer PIN. Required when the server has a PIN backend with an SO PIN set. */
+  so_pin?: string;
+}
+
 // BarrierShamirInitRequest initialises the barrier with Shamir secret
 // sharing. Mirrors transport.BarrierInitializeShamirRequest.
 export interface BarrierShamirInitRequest {

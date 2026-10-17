@@ -684,15 +684,11 @@ func TestBarrierSeal_AssumeYes(t *testing.T) {
 	assert.Contains(t, out.String(), "Barrier sealed successfully")
 }
 
-// TestBarrierSeal_AcceptsSOPin verifies the canonical --so-pin flag is
-// accepted (parsed for surface parity).
-//
-// This is the half of the design #491 deliberately did NOT change: it chose
-// option A (soften the help that demanded a PIN the verb discards) over
-// option C (drop the flag). Removing the flag would give up the four-CLI
-// lock-step newBarrierSealCommand's doc comment buys, and would have to be
-// undone when the SDK gains a request-bearing BarrierSeal. If this test is
-// ever deleted, that is option C being taken by accident.
+// TestBarrierSeal_AcceptsSOPin verifies the canonical --so-pin flag stays
+// accepted for surface parity with the other barrier verbs. The help steers
+// operators to --so-pin-stdin instead (#491); the flag is the last-precedence
+// source and is forwarded like the others (#946). If this test is ever
+// deleted, the flag is being dropped by accident.
 func TestBarrierSeal_AcceptsSOPin(t *testing.T) {
 	defer resetBarrierFlags()
 	fc := &fakeBarrierClient{}

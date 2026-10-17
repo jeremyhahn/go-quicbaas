@@ -28,6 +28,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -41,7 +42,7 @@ type fakeBarrierService struct {
 	statusFn           func(ctx context.Context) (*service.BarrierStatusInfo, error)
 	initializeFn       func(ctx context.Context, secret []byte) error
 	unsealFn           func(ctx context.Context, secret []byte) error
-	sealFn             func(ctx context.Context) error
+	sealFn             func(ctx context.Context, req *service.BarrierSealRequest) error
 	initShamirFn       func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error)
 	unsealWithShareFn  func(ctx context.Context, share string) (*service.UnsealShareProgress, error)
 	unsealWithSharesFn func(ctx context.Context, shares []string) error
@@ -75,9 +76,9 @@ func (f *fakeBarrierService) BarrierUnseal(ctx context.Context, secret []byte) e
 	return nil
 }
 
-func (f *fakeBarrierService) BarrierSeal(ctx context.Context) error {
+func (f *fakeBarrierService) BarrierSeal(ctx context.Context, req *service.BarrierSealRequest) error {
 	if f.sealFn != nil {
-		return f.sealFn(ctx)
+		return f.sealFn(ctx, req)
 	}
 	return nil
 }
@@ -287,15 +288,75 @@ func TestHandleBarrierUnseal_ServiceError(t *testing.T) {
 }
 
 func TestHandleBarrierSeal(t *testing.T) {
-	svc := &fakeBarrierService{sealFn: func(ctx context.Context) error { return nil }}
+	svc := &fakeBarrierService{sealFn: func(_ context.Context, req *service.BarrierSealRequest) error {
+		if len(req.SOPIN) != 0 {
+			t.Errorf("an empty body must reach the service with no SO PIN, got %q", req.SOPIN)
+		}
+		return nil
+	}}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/seal", "")
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
 	}
 }
 
+// soPINCheckingSeal stands in for a service whose PIN backend holds want: it
+// refuses any other PIN with the service's typed forbidden error and keeps
+// the PIN slice it received so the caller can check it was wiped.
+func soPINCheckingSeal(want string, got *[]byte) func(context.Context, *service.BarrierSealRequest) error {
+	return func(_ context.Context, req *service.BarrierSealRequest) error {
+		*got = req.SOPIN
+		if string(req.SOPIN) != want {
+			return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "barrier.Seal", Err: qrdbsdk.ErrPINInvalid}
+		}
+		return nil
+	}
+}
+
+func TestHandleBarrierSeal_SOPIN(t *testing.T) {
+	const soPIN = "so-pin-1234"
+	tests := []struct {
+		name     string
+		path     string
+		body     string
+		wantCode int
+	}{
+		{name: "right PIN seals", path: "/api/v1/barrier/seal", body: `{"so_pin":"` + soPIN + `"}`, wantCode: http.StatusNoContent},
+		{name: "right PIN seals on the qrdb route", path: "/v1/barrier/seal", body: `{"so_pin":"` + soPIN + `"}`, wantCode: http.StatusNoContent},
+		{name: "wrong PIN is refused", path: "/api/v1/barrier/seal", body: `{"so_pin":"wrong"}`, wantCode: http.StatusForbidden},
+		{name: "wrong PIN is refused on the qrdb route", path: "/v1/barrier/seal", body: `{"so_pin":"wrong"}`, wantCode: http.StatusForbidden},
+		{name: "missing PIN is refused", path: "/api/v1/barrier/seal", body: `{}`, wantCode: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []byte
+			svc := &fakeBarrierService{sealFn: soPINCheckingSeal(soPIN, &got)}
+			w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, tt.path, tt.body)
+			if w.Code != tt.wantCode {
+				t.Fatalf("expected %d, got %d: %s", tt.wantCode, w.Code, w.Body.String())
+			}
+			for _, b := range got {
+				if b != 0 {
+					t.Fatalf("handler must wipe the SO PIN after the call, got %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleBarrierSeal_MalformedBody(t *testing.T) {
+	svc := &fakeBarrierService{sealFn: func(context.Context, *service.BarrierSealRequest) error {
+		t.Error("a malformed body must not reach the service")
+		return nil
+	}}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/seal", `{"so_pin":`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
 func TestHandleBarrierSeal_ServiceError(t *testing.T) {
-	svc := &fakeBarrierService{sealFn: func(ctx context.Context) error { return errBarrierBoom }}
+	svc := &fakeBarrierService{sealFn: func(context.Context, *service.BarrierSealRequest) error { return errBarrierBoom }}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/seal", "")
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)

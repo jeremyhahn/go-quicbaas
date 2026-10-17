@@ -32,7 +32,7 @@
 //	                                                    (strategy passphrase replay)
 //	barrier unseal-shares  --share <s1> [--share <s2> ...]   (repeatable)
 //	                       | --shares-file <path>       ('-' = stdin)
-//	barrier seal           [--so-pin <pin>] [-y|--assume-yes]
+//	barrier seal           [--so-pin-stdin] [-y|--assume-yes]
 //	barrier rekey          [--so-pin <pin>]
 //	                       [--threshold N --total M]    (paired; for Shamir rekey)
 //	barrier recovery generate   --threshold N --total M [--so-pin <pin>]
@@ -722,26 +722,17 @@ func readSharesFile(path, op string) ([]string, error) {
 
 // newBarrierSealCommand builds 'quicbaas barrier seal'.
 //
-// The --so-pin flag is parsed for surface parity with the canonical CLI
-// tree. PIN propagation rides on the SDK auth context (the same model
-// the ceremony surface uses); the qrdb BarrierSealRequest currently
-// carries SOPin server-side when a PINBackend is configured. The flag
-// is accepted unconditionally to keep the four-CLI surface lock-step,
-// and the value is forwarded once the SDK Barrier() interface exposes
-// a request-bearing BarrierSeal.
+// The SDK's BarrierSeal takes no request, so the SO PIN rides the call
+// context: the verb binds it with WithSOPIN and the server verifies it
+// against its PIN backend before sealing (#946). The PIN is read from
+// --so-pin-stdin or QUICBAAS_BARRIER_SO_PIN; --so-pin stays accepted to keep
+// the flag surface in lock-step with the other barrier verbs, but the help
+// never shows it in an example, because a PIN on argv sits in
+// /proc/<pid>/cmdline for every local process to read (#491).
 //
-// Until then the help does NOT ask the operator to supply one (#491).
-// Parity in the FLAG SURFACE is what the lock-step above buys; it does not
-// require a help string instructing operators to put a Security Officer PIN
-// into /proc/<pid>/cmdline — readable by every local process, and captured by
-// shell history and process accounting — for a value this verb discards.
-// The instruction was the harm, not the flag.
-//
-// TestBarrierSeal_HelpAndBehaviourAgreeOnTheSOPin holds the two halves
-// together in both directions: it fails if the help solicits a PIN that
-// BarrierSeal has nowhere to carry, AND it fails once BarrierSeal gains a
-// request bearing SOPin while the help still says nothing. Whoever finishes
-// the plumbing will be told to restore the instruction.
+// TestBarrierSeal_HelpAndBehaviourAgreeOnTheSOPin holds the help and the
+// behaviour together: the help asks for a PIN exactly when the verb forwards
+// one.
 func newBarrierSealCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "seal",
@@ -752,19 +743,27 @@ All cryptographic operations are blocked until the barrier is unsealed
 again. By default the command prompts for confirmation; pass
 --assume-yes to skip the prompt (e.g. in scripted runbooks).
 
---so-pin is accepted for parity with the rest of the barrier surface, but
-this verb does not transmit it: the SDK's BarrierSeal takes no request, so
-there is nowhere to put it. Passing it therefore changes nothing and places
-a Security Officer PIN in the process list, so leave it off. Seal-time PIN
-authorization rides on the SDK auth context in the meantime.
+A Security Officer PIN is required when the server has a PIN backend
+configured: a seal without it, or with the wrong one, is refused and the
+barrier stays unsealed. With no PIN backend the PIN is not checked.
+
+` + soPINInputHelp + `
+
+The PIN is read before the confirmation prompt, so pair --so-pin-stdin
+with --assume-yes.
 
 Examples:
-  quicbaas barrier seal -y
-  quicbaas barrier seal --assume-yes`,
+  # Preferred
+  printf '%s\n' "$SO_PIN" | quicbaas barrier seal --so-pin-stdin --assume-yes
+
+  # Environment
+  QUICBAAS_BARRIER_SO_PIN="$SO_PIN" quicbaas barrier seal -y
+
+  # No PIN backend configured
+  quicbaas barrier seal -y`,
 		RunE: runBarrierSealCommand,
 	}
-	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
-		"Security Officer PIN (accepted for surface parity; this verb does not transmit it — leave it off)")
+	addSOPINFlags(cmd, &barrierSOPin)
 	cmd.Flags().BoolVarP(&barrierAssumeYes, "assume-yes", "y", false,
 		"Skip the interactive confirmation prompt")
 	return cmd
@@ -772,6 +771,14 @@ Examples:
 
 // runBarrierSealCommand executes 'barrier seal'.
 func runBarrierSealCommand(cmd *cobra.Command, _ []string) error {
+	// The PIN is resolved before the prompt so --so-pin-stdin consumes its
+	// own line and nothing else.
+	soPIN, err := resolveSOPIN(cmd, "barrier.seal", barrierSOPin)
+	if err != nil {
+		return formatError(err)
+	}
+	defer soPIN.Destroy()
+
 	if !barrierAssumeYes {
 		fmt.Fprint(cmd.OutOrStdout(), "Are you sure you want to seal the barrier? (yes/no): ")
 		reader := bufio.NewReader(os.Stdin)
@@ -786,11 +793,6 @@ func runBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// --so-pin is parsed for surface parity; propagation is wired once
-	// the SDK BarrierSeal exposes a request-bearing form. The help no longer
-	// asks for it while that is true (#491).
-	_ = barrierSOPin
-
 	client, err := barrierClientFactory()
 	if err != nil {
 		return formatError(err)
@@ -798,6 +800,12 @@ func runBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
+
+	ctx, release, err := bindSOPIN(ctx, "barrier.seal", soPIN)
+	if err != nil {
+		return formatError(err)
+	}
+	defer release()
 
 	if err := client.BarrierSeal(ctx); err != nil {
 		return formatError(err)

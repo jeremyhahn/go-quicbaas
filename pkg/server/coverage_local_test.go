@@ -38,11 +38,13 @@ import (
 	"github.com/stretchr/testify/require"
 	ggrpc "google.golang.org/grpc"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
@@ -98,6 +100,56 @@ func TestServer_BuildBarrierCeremonyServices_Local_NilClient(t *testing.T) {
 	barrier, ceremony := srv.buildBarrierCeremonyServices()
 	require.NotNil(t, barrier, "BarrierService must be constructed even with nil transport")
 	require.NotNil(t, ceremony, "CeremonyService must be constructed even with nil transport")
+}
+
+func TestServer_BuildBarrierCeremonyServices_Local_WiresSOPINBackend(t *testing.T) {
+	srv := withTempServer(t)
+	backend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig())
+	require.NoError(t, err)
+	require.NoError(t, backend.SetSOPIN("", "so-pin-1234"))
+	srv.pinBackend = backend
+
+	barrier, _ := srv.buildBarrierCeremonyServices()
+	err = barrier.BarrierSeal(context.Background(), &service.BarrierSealRequest{})
+	require.ErrorIs(t, err, qrdbsdk.ErrSOPINRequired,
+		"seal must be gated on the server's SO PIN backend")
+}
+
+func TestServer_BuildBarrierCeremonyServices_Local_NoPINBackendLeavesSealUngated(t *testing.T) {
+	srv := withTempServer(t)
+	require.Nil(t, srv.pinBackend)
+
+	barrier, _ := srv.buildBarrierCeremonyServices()
+	err := barrier.BarrierSeal(context.Background(), &service.BarrierSealRequest{})
+	var missing *service.BarrierServiceMissingError
+	require.ErrorAs(t, err, &missing, "without a PIN backend seal reaches the (nil) transport")
+}
+
+func TestServer_QRDBSealSOPINInterceptor_GatesCanonicalSeal(t *testing.T) {
+	srv := withTempServer(t)
+	backend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig())
+	require.NoError(t, err)
+	require.NoError(t, backend.SetSOPIN("", "so-pin-1234"))
+	srv.pinBackend = backend
+
+	reached := false
+	handler := func(context.Context, any) (any, error) { reached = true; return nil, nil }
+	info := &ggrpc.UnaryServerInfo{FullMethod: "/qrdb.v1.QRDBService/BarrierSeal"}
+	_, err = srv.qrdbSealSOPINInterceptor()(context.Background(), nil, info, handler)
+	require.Error(t, err, "qrdb.v1 seal without the SO PIN must be refused")
+	require.False(t, reached, "a refused seal must not reach the barrier")
+}
+
+func TestServer_QRDBSealSOPINInterceptor_NoPINBackendLeavesSealUngated(t *testing.T) {
+	srv := withTempServer(t)
+	require.Nil(t, srv.pinBackend)
+
+	reached := false
+	handler := func(context.Context, any) (any, error) { reached = true; return nil, nil }
+	info := &ggrpc.UnaryServerInfo{FullMethod: "/qrdb.v1.QRDBService/BarrierSeal"}
+	_, err := srv.qrdbSealSOPINInterceptor()(context.Background(), nil, info, handler)
+	require.NoError(t, err)
+	require.True(t, reached, "without a PIN backend seal reaches the barrier")
 }
 
 func TestServer_BuildBarrierCeremonyServices_Local_NonNilClient(t *testing.T) {

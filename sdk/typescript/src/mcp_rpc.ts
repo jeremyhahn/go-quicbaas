@@ -39,7 +39,8 @@ interface ToolCallResult {
 }
 
 export class McpSession {
-  private readonly endpoint: string;
+  /** endpoint is the MCP URL; callers check its scheme before sending secrets. */
+  readonly endpoint: string;
   private readonly config: ClientConfig;
   private sessionId = '';
   private ready: Promise<void> | null = null;

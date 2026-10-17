@@ -42,7 +42,8 @@ service Barrier {
 
   // BarrierSeal transitions the barrier to the sealed state. Subsequent
   // data operations are rejected until the barrier is unsealed again.
-  rpc BarrierSeal(google.protobuf.Empty) returns (google.protobuf.Empty) {
+  // When a PIN backend with an SO PIN is configured, so_pin must carry it.
+  rpc BarrierSeal(BarrierSealRequest) returns (google.protobuf.Empty) {
       option (qrdb.v1.permission) = "tenant_barrier:seal";
   }
 
@@ -148,6 +149,12 @@ message BarrierInitializeRequest {
 message BarrierUnsealRequest {
   // secret is the raw master-key material, carried as bytes end to end.
   bytes secret = 1;
+}
+
+// BarrierSealRequest seals the barrier. so_pin is the Security Officer PIN;
+// it may be empty only when no PIN backend with an SO PIN is configured.
+message BarrierSealRequest {
+  string so_pin = 1;
 }
 
 // BarrierStatusResponse describes the current barrier state.

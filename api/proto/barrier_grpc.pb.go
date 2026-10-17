@@ -69,7 +69,8 @@ type BarrierClient interface {
 	BarrierUnseal(ctx context.Context, in *BarrierUnsealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// BarrierSeal transitions the barrier to the sealed state. Subsequent
 	// data operations are rejected until the barrier is unsealed again.
-	BarrierSeal(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// When a PIN backend with an SO PIN is configured, so_pin must carry it.
+	BarrierSeal(ctx context.Context, in *BarrierSealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// BarrierStatus reports the current barrier state including the active
 	// sealing strategy, hardware backing, and initialization timestamp.
 	BarrierStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BarrierStatusResponse, error)
@@ -142,7 +143,7 @@ func (c *barrierClient) BarrierUnseal(ctx context.Context, in *BarrierUnsealRequ
 	return out, nil
 }
 
-func (c *barrierClient) BarrierSeal(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *barrierClient) BarrierSeal(ctx context.Context, in *BarrierSealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, Barrier_BarrierSeal_FullMethodName, in, out, cOpts...)
@@ -318,7 +319,8 @@ type BarrierServer interface {
 	BarrierUnseal(context.Context, *BarrierUnsealRequest) (*emptypb.Empty, error)
 	// BarrierSeal transitions the barrier to the sealed state. Subsequent
 	// data operations are rejected until the barrier is unsealed again.
-	BarrierSeal(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	// When a PIN backend with an SO PIN is configured, so_pin must carry it.
+	BarrierSeal(context.Context, *BarrierSealRequest) (*emptypb.Empty, error)
 	// BarrierStatus reports the current barrier state including the active
 	// sealing strategy, hardware backing, and initialization timestamp.
 	BarrierStatus(context.Context, *emptypb.Empty) (*BarrierStatusResponse, error)
@@ -376,7 +378,7 @@ func (UnimplementedBarrierServer) BarrierInitialize(context.Context, *BarrierIni
 func (UnimplementedBarrierServer) BarrierUnseal(context.Context, *BarrierUnsealRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierUnseal not implemented")
 }
-func (UnimplementedBarrierServer) BarrierSeal(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
+func (UnimplementedBarrierServer) BarrierSeal(context.Context, *BarrierSealRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierSeal not implemented")
 }
 func (UnimplementedBarrierServer) BarrierStatus(context.Context, *emptypb.Empty) (*BarrierStatusResponse, error) {
@@ -481,7 +483,7 @@ func _Barrier_BarrierUnseal_Handler(srv interface{}, ctx context.Context, dec fu
 }
 
 func _Barrier_BarrierSeal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
+	in := new(BarrierSealRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -493,7 +495,7 @@ func _Barrier_BarrierSeal_Handler(srv interface{}, ctx context.Context, dec func
 		FullMethod: Barrier_BarrierSeal_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BarrierServer).BarrierSeal(ctx, req.(*emptypb.Empty))
+		return srv.(BarrierServer).BarrierSeal(ctx, req.(*BarrierSealRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

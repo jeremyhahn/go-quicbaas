@@ -51,6 +51,7 @@ import type {
   BarrierShamirSharesResponse,
   BarrierStatusResponse,
   BarrierUnsealRequest,
+  BarrierSealRequest,
   BarrierUnsealShareRequest,
   BarrierUnsealShareResponse,
   BarrierUnsealSharesRequest,
@@ -188,6 +189,7 @@ import {
   type WorkflowPageParams,
 } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError, McpError, TransportNotSupportedError } from './errors.js';
+import { requireTLSForSOPIN } from './so_pin.js';
 
 
 // McpNotImplementedError is thrown by all methods until the MCP protocol
@@ -848,13 +850,19 @@ class McpAuthClient implements AuthClient {
   async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return notImpl('registerFinish'); }
 }
 
-// McpBarrierClient is a stub BarrierClient that throws McpNotImplementedError
-// on every call. Real MCP tool wiring will replace this stub.
+// McpBarrierClient throws McpNotImplementedError on every verb except seal,
+// which calls the qrdb_barrier_seal tool. Real MCP tool wiring will replace
+// the remaining stubs.
 export class McpBarrierClient implements BarrierClient {
+  constructor(private readonly session: McpSession) {}
+
   async status(): Promise<BarrierStatusResponse> { return notImpl('barrier.status'); }
   async initialize(_req: BarrierInitRequest): Promise<void> { return notImpl('barrier.initialize'); }
   async unseal(_req: BarrierUnsealRequest): Promise<void> { return notImpl('barrier.unseal'); }
-  async seal(): Promise<void> { return notImpl('barrier.seal'); }
+  async seal(req?: BarrierSealRequest): Promise<void> {
+    requireTLSForSOPIN('mcp', this.session.endpoint, req?.so_pin);
+    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_seal', req?.so_pin ? { so_pin: req.so_pin } : {});
+  }
   async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return notImpl('barrier.initializeShamir'); }
   async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return notImpl('barrier.unsealWithShare'); }
   async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return notImpl('barrier.unsealWithShares'); }
@@ -1205,7 +1213,7 @@ export class McpClient implements Client {
     this.accounts = new McpAccountsClient(session);
     this.orchestrator = new McpOrchestratorClient(session);
     this.auth = new McpAuthClient();
-    this.barrier = new McpBarrierClient();
+    this.barrier = new McpBarrierClient(session);
     this.ceremony = new McpCeremonyClient();
     this.bootstrap = new McpBootstrapClient();
   }

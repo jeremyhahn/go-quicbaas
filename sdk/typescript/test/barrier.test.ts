@@ -9,8 +9,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
-import { APIError } from '../src/errors';
+import { APIError, McpError, SOPINRequiresTLSError } from '../src/errors';
 import { createBarrierClient } from '../src/factory';
+import { McpClient } from '../src/mcp';
+import { jsonReply, scriptServer, toolCalls, toolText } from './mcp_server';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -141,6 +143,46 @@ describe('RestBarrierClient passphrase strategy', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/seal');
     expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({});
+  });
+
+  it('seal sends the SO PIN as so_pin over https', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    const client = new RestClient('https://node.example');
+    await client.barrier.seal({ so_pin: 'so-pin-1234' });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ so_pin: 'so-pin-1234' });
+  });
+
+  it('seal refuses to send an SO PIN over plaintext http, before any request', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    for (const base of ['http://node.example', 'http://localhost', 'http://127.0.0.1:8080']) {
+      const client = new RestClient(base);
+      const err = await client.barrier.seal({ so_pin: 'so-pin-1234' }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+      expect((err as SOPINRequiresTLSError).transport).toBe('rest');
+      expect((err as Error).message).not.toContain('so-pin-1234');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('seal with an empty SO PIN still works over http', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    const client = new RestClient('http://localhost');
+    await client.barrier.seal({ so_pin: '' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('seal surfaces the server refusing a wrong SO PIN', async () => {
+    fetchMock.mockResolvedValue(errorResponse(403, 'SO PIN invalid'));
+
+    const client = new RestClient('https://node.example');
+    await expect(client.barrier.seal({ so_pin: 'wrong' })).rejects.toBeInstanceOf(APIError);
   });
 });
 
@@ -498,6 +540,61 @@ describe('RestBarrierClient auth headers', () => {
     const [, init] = fetchMock.mock.calls[0];
     const headers = init.headers as Record<string, string>;
     expect(headers['X-Tenant-ID']).toBe('tenant-x');
+  });
+});
+
+// =============================================================================
+// McpBarrierClient.seal forwards the SO PIN as the so_pin tool argument
+// =============================================================================
+
+describe('McpBarrierClient.seal', () => {
+  const endpoint = 'http://node.example:8081/mcp';
+  const tlsEndpoint = 'https://node.example:8081/mcp';
+
+  it('calls qrdb_barrier_seal with the SO PIN over https', async () => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { status: 'sealed' })));
+
+    await new McpClient(tlsEndpoint).barrier.seal({ so_pin: 'so-pin-1234' });
+
+    const calls = toolCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].params?.name).toBe('qrdb_barrier_seal');
+    expect(calls[0].params?.arguments).toEqual({ so_pin: 'so-pin-1234' });
+  });
+
+  it('sends no so_pin when none is given', async () => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { status: 'sealed' })));
+
+    await new McpClient(endpoint).barrier.seal();
+
+    expect(toolCalls(fetchMock)[0].params?.arguments).toEqual({});
+  });
+
+  it('sends no so_pin for an empty PIN over http', async () => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { status: 'sealed' })));
+
+    await new McpClient(endpoint).barrier.seal({ so_pin: '' });
+
+    expect(toolCalls(fetchMock)[0].params?.arguments).toEqual({});
+  });
+
+  it('refuses to send an SO PIN over plaintext http, before any request', async () => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { status: 'sealed' })));
+
+    for (const url of [endpoint, 'http://localhost:8081/mcp']) {
+      const err = await new McpClient(url).barrier.seal({ so_pin: 'so-pin-1234' }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+      expect((err as SOPINRequiresTLSError).transport).toBe('mcp');
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the server refusing a wrong SO PIN', async () => {
+    scriptServer(fetchMock, (msg) =>
+      jsonReply({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: 'SO PIN invalid' }] } }),
+    );
+
+    await expect(new McpClient(tlsEndpoint).barrier.seal({ so_pin: 'wrong' })).rejects.toBeInstanceOf(McpError);
   });
 });
 

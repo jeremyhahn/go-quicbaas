@@ -210,8 +210,13 @@ func (r *ToolRegistry) registerBarrierTools() {
 		Name:        "qrdb_barrier_seal",
 		Description: "Seal the barrier, transitioning it back to the sealed state and clearing the root key from memory.",
 		InputSchema: map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
+			"type": "object",
+			"properties": map[string]interface{}{
+				"so_pin": map[string]interface{}{
+					"type":        "string",
+					"description": "Security Officer PIN. Required when a PIN backend with an SO PIN is configured.",
+				},
+			},
 		},
 	})
 
@@ -693,8 +698,10 @@ func executeBarrierUnseal(ctx context.Context, svc service.BarrierServicer, args
 }
 
 // executeBarrierSeal implements qrdb_barrier_seal.
-func executeBarrierSeal(ctx context.Context, svc service.BarrierServicer, _ map[string]interface{}) (interface{}, error) {
-	if err := svc.BarrierSeal(ctx); err != nil {
+func executeBarrierSeal(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
+	soPIN := []byte(getString(args, "so_pin"))
+	defer secure.Wipe(soPIN)
+	if err := svc.BarrierSeal(ctx, &service.BarrierSealRequest{SOPIN: soPIN}); err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{"status": "sealed"}, nil

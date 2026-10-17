@@ -59,6 +59,7 @@ import type {
   BarrierShamirSharesResponse,
   BarrierStatusResponse,
   BarrierUnsealRequest,
+  BarrierSealRequest,
   BarrierUnsealShareRequest,
   BarrierUnsealShareResponse,
   BarrierUnsealSharesRequest,
@@ -311,7 +312,7 @@ export class GrpcWebBarrierClient implements BarrierClient {
   async status(): Promise<BarrierStatusResponse> { return notImpl('barrier.status'); }
   async initialize(_req: BarrierInitRequest): Promise<void> { return notImpl('barrier.initialize'); }
   async unseal(_req: BarrierUnsealRequest): Promise<void> { return notImpl('barrier.unseal'); }
-  async seal(): Promise<void> { return notImpl('barrier.seal'); }
+  async seal(_req?: BarrierSealRequest): Promise<void> { return notImpl('barrier.seal'); }
   async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return notImpl('barrier.initializeShamir'); }
   async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return notImpl('barrier.unsealWithShare'); }
   async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return notImpl('barrier.unsealWithShares'); }

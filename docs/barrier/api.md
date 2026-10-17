@@ -177,9 +177,48 @@ sends `BarrierEnableEncryptionRequest` (base64-encoding `passphrase`; set
 `BarrierEnableEncryptionResponse`. A refusal rejects with `APIError`. The
 gRPC-Web, MCP and QUIC TS transports refuse the verb.
 
-The TS `seal()` takes no request. go-qrdb's `BarrierSealRequest` carries an
-optional `so_pin`, but neither REST seal handler reads a body, so the TS SDK
-does not offer a field the server would drop (go-quicbaas#946).
+#### Seal requires the SO PIN when a PIN backend is configured
+
+When the server composes a PIN backend (`WithPINBackend`) and an SO PIN is
+set on it, `barrier seal` must carry the Security Officer PIN
+(go-quicbaas#946). `BarrierService.BarrierSeal` verifies it once, before the
+barrier is touched: a missing or wrong PIN is refused with a forbidden
+`QBError` (`403` on REST, `PermissionDenied` on gRPC) and the barrier stays
+unsealed. With no PIN backend, or none with an SO PIN set, seal is not gated,
+and an empty request still seals.
+
+| Surface | Where the PIN travels |
+|---|---|
+| REST `POST /api/v1/barrier/seal`, `POST /v1/barrier/seal` | body `{"so_pin": "..."}`; an empty body is still valid |
+| gRPC / Unix `quicbaas.barrier.v1.Barrier/BarrierSeal` | `BarrierSealRequest.so_pin` |
+| gRPC / Unix `qrdb.v1.QRDBService/BarrierSeal` (the Go SDK's route) | `x-qrdb-so-pin` metadata, else `BarrierSealRequest.so_pin` |
+| MCP `qrdb_barrier_seal` | `so_pin` tool argument |
+| Go SDK `Security().Barrier().BarrierSeal(ctx)` | bound to `ctx` with `WithSOPIN`; REST and MCP send it, over TLS only |
+| CLI `quicbaas barrier seal` | `--so-pin-stdin`, then `QUICBAAS_BARRIER_SO_PIN`; `--so-pin` is accepted but visible in `ps` |
+| TypeScript `barrier.seal({ so_pin })` | REST body and MCP tool argument, over `https://` only (`SOPINRequiresTLSError` otherwise) |
+
+The go-qrdb SDK's gRPC and Unix transports call go-qrdb's own `qrdb.v1`
+`BarrierSeal`, which quicbaasd registers with no PIN backend: the go-qrdb SDK
+re-exports no register option that takes one. So quicbaasd's gRPC server,
+which also serves the Unix socket, runs
+`UnaryBarrierSealSOPINInterceptor` (`pkg/api/grpc`) on that one method. It
+reads the PIN from the `x-qrdb-so-pin` metadata the SDK clients send, falling
+back to the request's `so_pin`, and verifies it through
+`service.VerifyBarrierSealSOPIN`, the same check the facade makes, so a refusal
+is the same `PermissionDenied`.
+
+quicbaasd serves no `qrdb.v1` seal over QUIC. Its QUIC is REST over HTTP/3,
+whose seal is the facade route above. go-qrdb's native QUIC server, which
+answers `barrier.Seal`, starts only with `Protocols.QUIC`, and the embedded
+node never sets it (`TestBuildQRDBConfig_NoNativeQUICListener`). Were it
+enabled, that server would verify `so_pin` itself against the PIN backend
+quicbaasd passes the node with `WithPINBackend`.
+
+The handlers and the interceptor wipe the PIN bytes on return. One limit
+remains: qrdb's `PINBackend.VerifySOPIN` takes a `string`, which cannot be
+wiped. The embedded transport has no SO gate by go-qrdb's design. The
+gRPC-Web and QUIC TypeScript barrier clients do not implement any barrier
+verb yet.
 
 #### Who owns the mount on a composed node
 

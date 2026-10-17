@@ -312,6 +312,7 @@ import type {
   BarrierStatusResponse,
   BarrierInitRequest,
   BarrierUnsealRequest,
+  BarrierSealRequest,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
   BarrierUnsealShareRequest,
@@ -413,6 +414,7 @@ import {
   SSHServerError,
   SSHHostMismatchError,
 } from './errors.js';
+import { requireTLSForSOPIN } from './so_pin.js';
 
 // API base path for all orchestrator endpoints.
 const API_PREFIX = '/api/v1/orchestrator';
@@ -4480,9 +4482,11 @@ export class RestDynamicSecretsClient implements DynamicSecretsClient {
 // RestBarrierClient implements BarrierClient by routing to the QuicBaaS
 // barrier REST endpoints. The shape mirrors go-qrdb's BarrierClient surface.
 export class RestBarrierClient implements BarrierClient {
+  private readonly baseUrl: string;
   private readonly http: FetchHelper;
 
   constructor(baseUrl: string, config: ClientConfig = {}) {
+    this.baseUrl = baseUrl;
     this.http = newFetchHelper(baseUrl, config);
   }
 
@@ -4504,8 +4508,12 @@ export class RestBarrierClient implements BarrierClient {
     });
   }
 
-  async seal(): Promise<void> {
-    await this.http.fetchVoid('/api/v1/barrier/seal', { method: 'POST' });
+  async seal(req?: BarrierSealRequest): Promise<void> {
+    requireTLSForSOPIN('rest', this.baseUrl, req?.so_pin);
+    await this.http.fetchVoid('/api/v1/barrier/seal', {
+      method: 'POST',
+      body: JSON.stringify({ so_pin: req?.so_pin }),
+    });
   }
 
   async initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> {

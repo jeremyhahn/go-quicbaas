@@ -356,6 +356,7 @@ func (s *Server) startSealedGRPCServer() error {
 			grpcapi.UnaryLoggingInterceptor(s.logger),
 			grpcapi.UnaryRecoveryInterceptor(s.logger),
 			qrdbsdk.SealedWindowUnaryInterceptor(probe, allow),
+			s.qrdbSealSOPINInterceptor(),
 		),
 		ggrpc.ChainStreamInterceptor(
 			grpcapi.StreamLoggingInterceptor(s.logger),

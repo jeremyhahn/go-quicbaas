@@ -22,8 +22,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -48,6 +50,7 @@ type mockBarrierClient struct {
 	initErr        error
 	unsealErr      error
 	sealErr        error
+	sealCalls      int
 	initShamirResp *transport.BarrierInitializeShamirResponse
 	initShamirErr  error
 	unsealShareRsp *transport.BarrierUnsealShareResponse
@@ -73,7 +76,10 @@ func (m *mockBarrierClient) BarrierUnseal(_ context.Context, _ *transport.Barrie
 	return m.unsealErr
 }
 
-func (m *mockBarrierClient) BarrierSeal(_ context.Context) error { return m.sealErr }
+func (m *mockBarrierClient) BarrierSeal(_ context.Context) error {
+	m.sealCalls++
+	return m.sealErr
+}
 
 func (m *mockBarrierClient) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
 	return m.statusResp, m.statusErr
@@ -183,7 +189,7 @@ func TestBarrierService_NilClient_ReturnsMissingError(t *testing.T) {
 
 	assertMissing(svc.BarrierInitialize(ctx, []byte("secret")))
 	assertMissing(svc.BarrierUnseal(ctx, []byte("secret")))
-	assertMissing(svc.BarrierSeal(ctx))
+	assertMissing(svc.BarrierSeal(ctx, &service.BarrierSealRequest{}))
 
 	_, err = svc.BarrierInitializeShamir(ctx, []byte("secret"), 2, 3)
 	assertMissing(err)
@@ -290,10 +296,80 @@ func TestBarrierService_BarrierUnseal(t *testing.T) {
 func TestBarrierService_BarrierSeal(t *testing.T) {
 	mc := &mockBarrierClient{}
 	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierSeal(context.Background()))
+	require.NoError(t, svc.BarrierSeal(context.Background(), nil))
+	assert.Equal(t, 1, mc.sealCalls)
 
 	mc.sealErr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierSeal(context.Background()), errBarrierBackend)
+	assert.ErrorIs(t, svc.BarrierSeal(context.Background(), &service.BarrierSealRequest{}), errBarrierBackend)
+}
+
+// newSOPINBackend returns an in-memory qrdb software PIN backend, with
+// soPIN set as its SO PIN when soPIN is not empty.
+func newSOPINBackend(t *testing.T, soPIN string) qrdbsdk.PINBackend {
+	t.Helper()
+	backend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig())
+	require.NoError(t, err)
+	if soPIN != "" {
+		require.NoError(t, backend.SetSOPIN("", soPIN))
+	}
+	return backend
+}
+
+func TestBarrierService_BarrierSeal_VerifiesSOPIN(t *testing.T) {
+	const soPIN = "so-pin-1234"
+	backend := newSOPINBackend(t, soPIN)
+
+	tests := []struct {
+		name    string
+		req     *service.BarrierSealRequest
+		wantErr error
+	}{
+		{name: "right PIN seals", req: &service.BarrierSealRequest{SOPIN: []byte(soPIN)}},
+		{name: "nil request is refused", req: nil, wantErr: qrdbsdk.ErrSOPINRequired},
+		{name: "empty PIN is refused", req: &service.BarrierSealRequest{}, wantErr: qrdbsdk.ErrSOPINRequired},
+		{name: "wrong PIN is refused", req: &service.BarrierSealRequest{SOPIN: []byte("not-the-pin")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mc := &mockBarrierClient{}
+			svc := service.NewBarrierService(mc)
+			svc.SetPINBackend(backend)
+
+			err := svc.BarrierSeal(context.Background(), tt.req)
+			if tt.req != nil && string(tt.req.SOPIN) == soPIN {
+				require.NoError(t, err)
+				assert.Equal(t, 1, mc.sealCalls)
+				return
+			}
+			var qbErr *dberrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, dberrors.ErrForbidden, qbErr.Code)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			}
+			assert.Zero(t, mc.sealCalls, "a refused seal must leave the barrier untouched")
+		})
+	}
+}
+
+func TestBarrierService_BarrierSeal_NoSOPINSetIsUngated(t *testing.T) {
+	mc := &mockBarrierClient{}
+	svc := service.NewBarrierService(mc)
+	svc.SetPINBackend(newSOPINBackend(t, ""))
+
+	require.NoError(t, svc.BarrierSeal(context.Background(), &service.BarrierSealRequest{}))
+	assert.Equal(t, 1, mc.sealCalls)
+}
+
+func TestBarrierService_SetPINBackend_NilClearsTheGate(t *testing.T) {
+	mc := &mockBarrierClient{}
+	svc := service.NewBarrierService(mc)
+	svc.SetPINBackend(newSOPINBackend(t, "so-pin-1234"))
+	require.Error(t, svc.BarrierSeal(context.Background(), nil))
+
+	svc.SetPINBackend(nil)
+	require.NoError(t, svc.BarrierSeal(context.Background(), nil))
+	assert.Equal(t, 1, mc.sealCalls)
 }
 
 // =============================================================================

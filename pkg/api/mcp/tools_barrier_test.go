@@ -26,6 +26,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -44,6 +45,8 @@ type fakeBarrierService struct {
 	initErr         error
 	unsealErr       error
 	sealErr         error
+	soPIN           string
+	gotSealPIN      []byte
 	shamirInit      *service.ShamirInitInfo
 	shamirInitErr   error
 	unsealShare     *service.UnsealShareProgress
@@ -95,7 +98,14 @@ func (f *fakeBarrierService) BarrierUnseal(_ context.Context, secret []byte) err
 	return f.unsealErr
 }
 
-func (f *fakeBarrierService) BarrierSeal(_ context.Context) error {
+// BarrierSeal stands in for a service whose PIN backend holds f.soPIN: when
+// f.soPIN is set any other PIN is refused with the service's typed forbidden
+// error. The PIN slice is kept so a test can check the executor wiped it.
+func (f *fakeBarrierService) BarrierSeal(_ context.Context, req *service.BarrierSealRequest) error {
+	f.gotSealPIN = req.SOPIN
+	if f.soPIN != "" && string(req.SOPIN) != f.soPIN {
+		return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "barrier.Seal", Err: qrdbsdk.ErrPINInvalid}
+	}
 	return f.sealErr
 }
 
@@ -474,6 +484,38 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		assert.True(t, fakeGov.gotEntitlements.AllowDedicatedWAL)
 		assert.Equal(t, []string{"passphrase", "shamir"}, fakeGov.gotEntitlements.AllowedBarrierModes)
 	})
+}
+
+func TestBarrierToolsExecuteSeal_SOPIN(t *testing.T) {
+	const soPIN = "so-pin-1234"
+	tests := []struct {
+		name    string
+		args    map[string]interface{}
+		wantErr bool
+	}{
+		{name: "right PIN seals", args: map[string]interface{}{"so_pin": soPIN}},
+		{name: "wrong PIN is refused", args: map[string]interface{}{"so_pin": "wrong"}, wantErr: true},
+		{name: "missing PIN is refused", args: nil, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeBarrierService{soPIN: soPIN}
+			r := newBarrierTestRegistry(t, fake)
+
+			out, err := r.ExecuteTool(context.Background(), "qrdb_barrier_seal", tt.args)
+			if tt.wantErr {
+				var qbErr *dberrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, dberrors.ErrForbidden, qbErr.Code)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, "sealed", out.(map[string]interface{})["status"])
+			}
+			for _, b := range fake.gotSealPIN {
+				require.Zero(t, b, "executor must wipe the SO PIN after the call")
+			}
+		})
+	}
 }
 
 // TestBarrierToolsValidation covers required-argument and threshold checks.

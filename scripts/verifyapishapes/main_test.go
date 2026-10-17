@@ -114,16 +114,16 @@ func TestRunFailsOnAGoTypeWithNoTypeScriptCounterpart(t *testing.T) {
 }
 
 func TestRunHonoursTheTrackedExemptions(t *testing.T) {
-	// knownUnmirrored is the tracking mechanism for drift that a product
-	// decision owns (go-quicbaas#946), not a way to make the gate unable to
-	// fail: the entry must be exact, a neighbouring name still fails, and a
-	// name whose drift was closed fails again when the TS mirror goes missing.
+	// knownUnmirrored is not a way to make the gate unable to fail: the entry
+	// must be exact, a neighbouring name still fails, and a name whose drift
+	// was closed fails again when the TS mirror goes missing.
 	qrdb := writeQRDB(t,
 		"type BarrierStatusResponse struct{}\n"+
 			"type BarrierSealRequest struct{}\n"+
-			"type BarrierEnableEncryptionRequest struct{}\n"+
-			"type BarrierEnableEncryptionResponse struct{}\n",
-		"type CeremonyStatusResponse struct{}\n")
+			"type BarrierEnableEncryptionRequest struct{}\n",
+		"type CeremonyStatusResponse struct{}\n"+
+			"type CeremonyOfficer struct{}\n"+
+			"type CeremonyOfficerList struct{}\n")
 	ts := writeTS(t,
 		"export interface BarrierStatusResponse {}\n"+
 			"export interface CeremonyStatusResponse {}\n")
@@ -134,13 +134,14 @@ func TestRunHonoursTheTrackedExemptions(t *testing.T) {
 		t.Fatalf("run exited %d, want %d\nstdout: %s", status, gate.ExitFindings, stdout.String())
 	}
 	report := stdout.String()
-	for _, closed := range []string{"BarrierEnableEncryptionRequest", "BarrierEnableEncryptionResponse"} {
+	// BarrierSealRequest was exempt until go-quicbaas#946 closed its drift.
+	for _, closed := range []string{"BarrierSealRequest", "BarrierEnableEncryptionRequest", "CeremonyOfficerList"} {
 		if !strings.Contains(report, closed) {
-			t.Fatalf("%s is mirrored in TS and no longer exempt, so it must be reported: %s", closed, report)
+			t.Fatalf("%s is not exempt, so its missing TS mirror must be reported: %s", closed, report)
 		}
 	}
-	if strings.Contains(report, "BarrierSealRequest\n") {
-		t.Fatalf("BarrierSealRequest is on the exemption list and must not be reported: %s", report)
+	if strings.Contains(report, "CeremonyOfficer\n") {
+		t.Fatalf("CeremonyOfficer is on the exemption list and must not be reported: %s", report)
 	}
 }
 

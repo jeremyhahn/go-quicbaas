@@ -18,6 +18,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
@@ -88,6 +89,14 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 	)
 
 	return opts
+}
+
+// qrdbSealSOPINInterceptor guards the qrdb.v1 BarrierSeal registered by
+// registerQRDBService with the SO PIN backend the BarrierService facade
+// verifies against. The qrdb SDK's register options take no PIN backend,
+// so the guard sits on the gRPC server chain, which the Unix socket shares.
+func (s *Server) qrdbSealSOPINInterceptor() ggrpc.UnaryServerInterceptor {
+	return grpcapi.UnaryBarrierSealSOPINInterceptor(s.pinBackend)
 }
 
 // qrdbCredentialServicer returns the credential management service used by

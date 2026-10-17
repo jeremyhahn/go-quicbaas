@@ -136,6 +136,14 @@ type barrierEnableEncryptionRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
+// barrierSealRequest is the optional seal body. SOPin is a plain JSON
+// string, matching qrdbtransport.BarrierSealRequest.SOPin, so the qrdb SDK's
+// REST transport and this route share one wire shape. An empty body is
+// valid: it is refused only when a PIN backend with an SO PIN is configured.
+type barrierSealRequest struct {
+	SOPin string `json:"so_pin,omitempty"`
+}
+
 // barrierWireEnableEncryptionRequest is the JSON payload for the go-qrdb
 // wire mount POST /v1/barrier/enable-encryption. Unlike the /api/v1 shape
 // above, it IS an alias of qrdbtransport.BarrierEnableEncryptionRequest: the
@@ -369,7 +377,14 @@ func (s *Server) HandleBarrierSeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.barrierSvc.BarrierSeal(r.Context()); err != nil {
+	var req barrierSealRequest
+	if !readBarrierJSON(w, r, &req) {
+		return
+	}
+	soPIN := []byte(req.SOPin)
+	defer wipeCredential(&soPIN)()
+
+	if err := s.barrierSvc.BarrierSeal(r.Context(), &service.BarrierSealRequest{SOPIN: soPIN}); err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}

@@ -21,12 +21,15 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	stderrors "errors"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -40,6 +43,42 @@ type toolResultFn func(t *testing.T, tool string, args map[string]interface{}) m
 // every name in tools, delegating each call's result to fn. It records the
 // tool names that were called for assertion.
 func newMultiToolMCPServer(t *testing.T, tools []string, fn toolResultFn) (*Transport, *[]string, func()) {
+	t.Helper()
+	srv, called := newMultiToolServer(t, tools, fn)
+	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		httpSrv.Close()
+		t.Fatalf("New: %v", err)
+	}
+	return tr, called, func() {
+		_ = tr.Close()
+		httpSrv.Close()
+	}
+}
+
+// newMultiToolMCPServerTLS is newMultiToolMCPServer over HTTPS, for calls
+// that only travel over TLS, such as one carrying an SO PIN.
+func newMultiToolMCPServerTLS(t *testing.T, tools []string, fn toolResultFn) (*Transport, *[]string) {
+	t.Helper()
+	srv, called := newMultiToolServer(t, tools, fn)
+	httpSrv := httptest.NewUnstartedServer(mcpserver.NewStreamableHTTPServer(srv))
+	httpSrv.StartTLS()
+	t.Cleanup(httpSrv.Close)
+
+	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second},
+		WithHTTPClient(httpSrv.Client()))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	return tr, called
+}
+
+// newMultiToolServer registers tools on an MCP server whose handler records
+// each called tool and answers with fn's payload.
+func newMultiToolServer(t *testing.T, tools []string, fn toolResultFn) (*mcpserver.MCPServer, *[]string) {
 	t.Helper()
 	var called []string
 
@@ -55,18 +94,7 @@ func newMultiToolMCPServer(t *testing.T, tools []string, fn toolResultFn) (*Tran
 	for _, name := range tools {
 		srv.AddTool(mcpgo.NewTool(name), handler)
 	}
-
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
-
-	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
-	if err != nil {
-		httpSrv.Close()
-		t.Fatalf("New: %v", err)
-	}
-	return tr, &called, func() {
-		_ = tr.Close()
-		httpSrv.Close()
-	}
+	return srv, &called
 }
 
 // =============================================================================
@@ -481,5 +509,85 @@ func TestBarrierCredentialsCrossAsPlaintext(t *testing.T) {
 			t.Errorf("%s: server received %q, want the plaintext %q (base64 would be %q)",
 				tool, got, passphrase, base64.StdEncoding.EncodeToString([]byte(passphrase)))
 		}
+	}
+}
+
+// recordSealPIN returns a tool handler that keeps the so_pin argument the
+// seal tool received, and whether it received one at all.
+func recordSealPIN(pin *string, sent *bool) toolResultFn {
+	return func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+		if tool == "qrdb_barrier_seal" {
+			v, ok := args["so_pin"]
+			*sent = ok
+			if ok {
+				s, isString := v.(string)
+				if !isString {
+					t.Errorf("so_pin arrived as %T, want a JSON string", v)
+				}
+				*pin = s
+			}
+		}
+		return map[string]interface{}{"status": "sealed"}
+	}
+}
+
+func TestBarrierSeal_SendsBoundSOPIN(t *testing.T) {
+	const soPIN = "so-pin-1234"
+	var (
+		got  string
+		sent bool
+	)
+	tr, _ := newMultiToolMCPServerTLS(t, barrierToolNames, recordSealPIN(&got, &sent))
+
+	ctx, release, err := qrdbsdk.WithSOPIN(context.Background(), []byte(soPIN))
+	if err != nil {
+		t.Fatalf("WithSOPIN: %v", err)
+	}
+	defer release()
+
+	if err := tr.BarrierSeal(ctx); err != nil {
+		t.Fatalf("BarrierSeal: %v", err)
+	}
+	if !sent || got != soPIN {
+		t.Fatalf("server received so_pin %q (sent=%v), want %q", got, sent, soPIN)
+	}
+}
+
+func TestBarrierSeal_NoBoundSOPINSendsNone(t *testing.T) {
+	var (
+		got  string
+		sent bool
+	)
+	tr, _ := newMultiToolMCPServerTLS(t, barrierToolNames, recordSealPIN(&got, &sent))
+
+	if err := tr.BarrierSeal(context.Background()); err != nil {
+		t.Fatalf("BarrierSeal: %v", err)
+	}
+	if sent {
+		t.Fatalf("an unbound context must send no so_pin, server received %q", got)
+	}
+}
+
+func TestBarrierSeal_SOPINRefusedOverPlaintext(t *testing.T) {
+	var (
+		got  string
+		sent bool
+	)
+	tr, called, cleanup := newMultiToolMCPServer(t, barrierToolNames, recordSealPIN(&got, &sent))
+	defer cleanup()
+
+	ctx, release, err := qrdbsdk.WithSOPIN(context.Background(), []byte("so-pin-1234"))
+	if err != nil {
+		t.Fatalf("WithSOPIN: %v", err)
+	}
+	defer release()
+
+	err = tr.BarrierSeal(ctx)
+	var tlsErr *qrdbtransport.SOPINRequiresTLSError
+	if !stderrors.As(err, &tlsErr) {
+		t.Fatalf("expected SOPINRequiresTLSError, got %v", err)
+	}
+	if len(*called) != 0 {
+		t.Fatalf("the PIN must not be sent over http://, server saw %v", *called)
 	}
 }

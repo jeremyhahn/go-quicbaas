@@ -165,11 +165,13 @@ func (s *BarrierServer) BarrierUnseal(ctx context.Context, req *pb.BarrierUnseal
 }
 
 // BarrierSeal transitions the barrier to the sealed state.
-func (s *BarrierServer) BarrierSeal(ctx context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
+func (s *BarrierServer) BarrierSeal(ctx context.Context, req *pb.BarrierSealRequest) (*emptypb.Empty, error) {
 	if err := s.requireBarrierService(); err != nil {
 		return nil, err
 	}
-	if err := s.barrierSvc.BarrierSeal(ctx); err != nil {
+	soPIN := []byte(req.GetSoPin())
+	defer secure.Wipe(soPIN)
+	if err := s.barrierSvc.BarrierSeal(ctx, &service.BarrierSealRequest{SOPIN: soPIN}); err != nil {
 		return nil, mapBarrierError(err)
 	}
 	return &emptypb.Empty{}, nil

@@ -151,6 +151,27 @@ func TestBuildQRDBConfig_SPIFFETrustDomainUnsetLeavesNodeUnpinned(t *testing.T) 
 	assert.Empty(t, qcfg.Auth.SPIFFETrustDomain)
 }
 
+// TestBuildQRDBConfig_NoNativeQUICListener pins that the embedded node never
+// starts go-qrdb's native QUIC server, whatever quicbaas serves. That server
+// is the only QUIC route to qrdb.v1 barrier.Seal; quicbaas's QUIC is REST
+// over HTTP/3, whose seal the BarrierService facade gates on the SO PIN
+// (#946). Enabling native QUIC would add a route docs/barrier/api.md must
+// then cover.
+func TestBuildQRDBConfig_NoNativeQUICListener(t *testing.T) {
+	for _, clusterMode := range []bool{false, true} {
+		cfg := clusterTestConfig()
+		cfg.Server.REST.Enabled = true
+		cfg.Server.GRPC.Enabled = true
+		cfg.Server.MCP.Enabled = true
+
+		qcfg := mustBuildQRDBConfig(t, cfg, clusterMode)
+
+		assert.True(t, qcfg.Protocols.REST, "clusterMode=%v: REST must be served", clusterMode)
+		assert.False(t, qcfg.Protocols.QUIC,
+			"clusterMode=%v: quicbaas serves QUIC as REST over HTTP/3 only, never go-qrdb's native QUIC", clusterMode)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // buildXKMSCryptoOptions
 // ---------------------------------------------------------------------------

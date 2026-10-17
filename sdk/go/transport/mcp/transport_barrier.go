@@ -16,8 +16,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -73,7 +75,21 @@ func (t *Transport) BarrierUnseal(ctx context.Context, req *qrdbtransport.Barrie
 // BarrierSeal transitions the barrier back to the sealed state by calling
 // the qrdb_barrier_seal MCP tool.
 func (t *Transport) BarrierSeal(ctx context.Context) error {
-	if _, err := t.callBarrier(ctx, "qrdb_barrier_seal", nil); err != nil {
+	// The SO PIN travels as the tool's so_pin argument when the caller bound
+	// one with qrdbsdk.WithSOPIN; the server verifies it.
+	pin, ok, err := qrdbtransport.SOPINFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	var args map[string]interface{}
+	if ok {
+		defer secure.Wipe(pin)
+		if !strings.HasPrefix(t.endpoint, "https://") {
+			return &qrdbtransport.SOPINRequiresTLSError{Transport: "mcp"}
+		}
+		args = map[string]interface{}{"so_pin": string(pin)}
+	}
+	if _, err := t.callBarrier(ctx, "qrdb_barrier_seal", args); err != nil {
 		return err
 	}
 	return nil

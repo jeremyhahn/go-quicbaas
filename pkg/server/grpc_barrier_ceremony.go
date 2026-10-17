@@ -115,5 +115,11 @@ func (s *Server) buildBarrierCeremonyServices() (service.BarrierServicer, servic
 		barrierSvc.SetMigrator(node)
 	}
 
+	// Gate seal on the same SO PIN backend the embedded node verifies its
+	// SO-authorised operations against (#946).
+	if s.pinBackend != nil {
+		barrierSvc.SetPINBackend(s.pinBackend)
+	}
+
 	return barrierSvc, ceremonySvc
 }

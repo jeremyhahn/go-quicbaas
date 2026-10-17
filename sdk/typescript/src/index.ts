@@ -350,6 +350,7 @@ export {
 // Typed errors.
 export {
   QuicBaaSError,
+  SOPINRequiresTLSError,
   ConnectionError,
   NotConnectedError,
   APIError,

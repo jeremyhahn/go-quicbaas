@@ -2300,6 +2300,10 @@ func (s *Server) startGRPCServer() error {
 	streamInterceptors = append(streamInterceptors,
 		qrdbsdk.SealedWindowStreamInterceptor(sealedProbe, sealedAllow))
 
+	// Gate the canonical qrdb.v1 BarrierSeal on the SO PIN, as the
+	// BarrierService facade gates REST, MCP and quicbaas.v1 seal (#946).
+	unaryInterceptors = append(unaryInterceptors, s.qrdbSealSOPINInterceptor())
+
 	// Install the platform-token authorization interceptors after the sealed
 	// gate (so sealed-window denials never require a token) when
 	// RequireAuthz=true. Post-unseal gate construction is FAIL-CLOSED: under

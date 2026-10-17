@@ -28,6 +28,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -43,7 +44,7 @@ type mockBarrierService struct {
 	statusFn            func(ctx context.Context) (*service.BarrierStatusInfo, error)
 	initFn              func(ctx context.Context, secret []byte) error
 	unsealFn            func(ctx context.Context, secret []byte) error
-	sealFn              func(ctx context.Context) error
+	sealFn              func(ctx context.Context, req *service.BarrierSealRequest) error
 	initShamirFn        func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error)
 	unsealShareFn       func(ctx context.Context, share string) (*service.UnsealShareProgress, error)
 	unsealSharesFn      func(ctx context.Context, shares []string) error
@@ -79,9 +80,9 @@ func (m *mockBarrierService) BarrierUnseal(ctx context.Context, secret []byte) e
 	return nil
 }
 
-func (m *mockBarrierService) BarrierSeal(ctx context.Context) error {
+func (m *mockBarrierService) BarrierSeal(ctx context.Context, req *service.BarrierSealRequest) error {
 	if m.sealFn != nil {
-		return m.sealFn(ctx)
+		return m.sealFn(ctx, req)
 	}
 	return nil
 }
@@ -337,13 +338,13 @@ func TestBarrierUnseal_Success(t *testing.T) {
 func TestBarrierSeal_Success(t *testing.T) {
 	called := false
 	mock := &mockBarrierService{
-		sealFn: func(_ context.Context) error {
+		sealFn: func(_ context.Context, _ *service.BarrierSealRequest) error {
 			called = true
 			return nil
 		},
 	}
 	srv := newTestBarrierServer(mock)
-	_, err := srv.BarrierSeal(context.Background(), &emptypb.Empty{})
+	_, err := srv.BarrierSeal(context.Background(), &pb.BarrierSealRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -354,12 +355,49 @@ func TestBarrierSeal_Success(t *testing.T) {
 
 func TestBarrierSeal_FacadeErrorBubblesUp(t *testing.T) {
 	mock := &mockBarrierService{
-		sealFn: func(_ context.Context) error { return stderrors.New("nope") },
+		sealFn: func(_ context.Context, _ *service.BarrierSealRequest) error { return stderrors.New("nope") },
 	}
 	srv := newTestBarrierServer(mock)
-	_, err := srv.BarrierSeal(context.Background(), &emptypb.Empty{})
+	_, err := srv.BarrierSeal(context.Background(), &pb.BarrierSealRequest{})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestBarrierSeal_SOPIN(t *testing.T) {
+	const soPIN = "so-pin-1234"
+	tests := []struct {
+		name     string
+		pin      string
+		wantCode codes.Code
+	}{
+		{name: "right PIN seals", pin: soPIN, wantCode: codes.OK},
+		{name: "wrong PIN is refused", pin: "wrong", wantCode: codes.PermissionDenied},
+		{name: "missing PIN is refused", pin: "", wantCode: codes.PermissionDenied},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []byte
+			mock := &mockBarrierService{
+				sealFn: func(_ context.Context, req *service.BarrierSealRequest) error {
+					got = req.SOPIN
+					if string(req.SOPIN) != soPIN {
+						return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "barrier.Seal", Err: qrdbsdk.ErrPINInvalid}
+					}
+					return nil
+				},
+			}
+			srv := newTestBarrierServer(mock)
+			_, err := srv.BarrierSeal(context.Background(), &pb.BarrierSealRequest{SoPin: tt.pin})
+			if code := status.Code(err); code != tt.wantCode {
+				t.Fatalf("expected %v, got %v (%v)", tt.wantCode, code, err)
+			}
+			for _, b := range got {
+				if b != 0 {
+					t.Fatalf("handler must wipe the SO PIN after the call, got %q", got)
+				}
+			}
+		})
 	}
 }
 
@@ -714,7 +752,7 @@ func TestBarrier_AllHandlersReturnUnavailableWhenUnwired(t *testing.T) {
 			return err
 		}},
 		{"BarrierSeal", func() error {
-			_, err := srv.BarrierSeal(ctx, &emptypb.Empty{})
+			_, err := srv.BarrierSeal(ctx, &pb.BarrierSealRequest{})
 			return err
 		}},
 		{"BarrierStatus", func() error {

@@ -57,6 +57,7 @@ import type {
   BarrierShamirSharesResponse,
   BarrierStatusResponse,
   BarrierUnsealRequest,
+  BarrierSealRequest,
   BarrierUnsealShareRequest,
   BarrierUnsealShareResponse,
   BarrierUnsealSharesRequest,
@@ -319,7 +320,7 @@ export class QuicBarrierClient implements BarrierClient {
   async status(): Promise<BarrierStatusResponse> { return frameOnly('barrier', 'status'); }
   async initialize(_req: BarrierInitRequest): Promise<void> { return frameOnly('barrier', 'initialize'); }
   async unseal(_req: BarrierUnsealRequest): Promise<void> { return frameOnly('barrier', 'unseal'); }
-  async seal(): Promise<void> { return frameOnly('barrier', 'seal'); }
+  async seal(_req?: BarrierSealRequest): Promise<void> { return frameOnly('barrier', 'seal'); }
   async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return frameOnly('barrier', 'initializeShamir'); }
   async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return frameOnly('barrier', 'unsealWithShare'); }
   async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return frameOnly('barrier', 'unsealWithShares'); }
