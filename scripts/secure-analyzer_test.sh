@@ -4,20 +4,38 @@ set -eu
 GOCMD=${GOCMD:-go}
 MAKE=${MAKE:-make}
 root=$(git rev-parse --show-toplevel)
+tmp_dir=$(mktemp -d)
+
+# Every planted source lives in tmp_dir, outside the clone, and reaches the
+# analyzer through go's -overlay, so a run killed at any point leaves no
+# tracked file changed. selftest_dir is created empty because the vettool
+# runs inside the package directory; git never shows an empty directory.
 selftest_dir="$root/.secure-analyzer-selftest"
+selftest_src="$tmp_dir/selftest.go"
+selftest_overlay="$tmp_dir/selftest-overlay.json"
 hardware_selftest_file="$root/cmd/quicbaas/piv_local_pkcs11.go"
-hardware_selftest_backup="$selftest_dir/piv_local_pkcs11.go.orig"
+hardware_probe="$tmp_dir/piv_local_pkcs11.go"
+hardware_overlay="$tmp_dir/hardware-overlay.json"
 
 cleanup() {
-	if [ -f "$hardware_selftest_backup" ]; then
-		cp "$hardware_selftest_backup" "$hardware_selftest_file"
-	fi
-	rm -rf "$selftest_dir"
+	rm -rf "$tmp_dir" "$selftest_dir"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 1' INT TERM
 
-cleanup
-mkdir -p "$selftest_dir"
+# write_overlay <overlay-json> <path-go-sees> <planted-copy>
+write_overlay() {
+	printf '{"Replace":{"%s":"%s"}}\n' "$2" "$3" > "$1"
+}
+
+# overlay_goflags <overlay-json> prints GOFLAGS with -overlay appended.
+overlay_goflags() {
+	printf '%s' "${GOFLAGS:+$GOFLAGS }-overlay=$1"
+}
+
+rm -rf "$selftest_dir"
+mkdir "$selftest_dir"
+write_overlay "$selftest_overlay" "$selftest_dir/selftest.go" "$selftest_src"
 {
 	printf 'package secureanalyzerselftest\n\n'
 	printf 'import (\n'
@@ -54,10 +72,11 @@ mkdir -p "$selftest_dir"
 	printf '\t_ = out\n'
 	printf '\treturn nil\n'
 	printf '}\n'
-} > "$selftest_dir/selftest.go"
+} > "$selftest_src"
 
 set +e
-output=$(SECURE_ANALYZER_MODULES=go.mod \
+output=$(GOFLAGS=$(overlay_goflags "$selftest_overlay") \
+	SECURE_ANALYZER_MODULES=go.mod \
 	SECURE_ANALYZER_PACKAGES=./.secure-analyzer-selftest \
 	GOCMD="$GOCMD" \
 	"$root/scripts/secure-analyzer.sh" self-test "${SECURE_ANALYZER_SELFTEST_TAGS:-}" "${1:?usage: secure-analyzer_test.sh <vettool>}" 2>&1)
@@ -88,21 +107,18 @@ assert_diagnostic sensitive-field 'field "Secret" holds sensitive material'
 assert_diagnostic buffer-bytes 'secure.Buffer.Bytes holds no borrow'
 assert_diagnostic secure-copy 'copies protected bytes into ordinary memory'
 
-cleanup
+rm -rf "$selftest_dir"
 
-mkdir -p "$selftest_dir"
-cp "$hardware_selftest_file" "$hardware_selftest_backup"
-hardware_probe="$selftest_dir/piv_local_pkcs11.go"
 while IFS= read -r line; do
 	printf '%s\n' "$line"
 	if [ "$line" = "import (" ]; then
 		printf '\t_ "github.com/awnumar/memguard"\n'
 	fi
 done < "$hardware_selftest_file" > "$hardware_probe"
-cp "$hardware_probe" "$hardware_selftest_file"
+write_overlay "$hardware_overlay" "$hardware_selftest_file" "$hardware_probe"
 
 set +e
-hardware_output=$(GOCMD="$GOCMD" "$MAKE" -C "$root" secure-analyzer 2>&1)
+hardware_output=$(GOFLAGS=$(overlay_goflags "$hardware_overlay") GOCMD="$GOCMD" "$MAKE" -C "$root" secure-analyzer 2>&1)
 hardware_rc=$?
 set -e
 
@@ -131,7 +147,6 @@ case "$hardware_output" in
 esac
 
 printf 'secure-analyzer self-test: hardware-unit planted violation failed make secure-analyzer with rc=%s\n' "$hardware_rc"
-cleanup
 
 SECURE_ANALYZER_MODULES=go.mod \
 SECURE_ANALYZER_PACKAGES=./... \
