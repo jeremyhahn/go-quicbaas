@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/permscope"
@@ -32,18 +33,19 @@ import (
 // role placements (see module_grants.go's doc comment for the full
 // rationale): a permission some built-in role already holds is left exactly
 // as qrdb placed it, and only a permission held by NO built-in role is
-// filled in for Admin/Owner.
+// filled in for Admin/Owner. Every assertion holds whatever ran earlier in
+// the process; what the module itself contributes is proved by the
+// roleGrantGaps tests.
 func TestNewModule_RegistersRoleGrants(t *testing.T) {
 	_, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
 	require.NoError(t, err)
 
-	// keys:sign is declared by ssh.proto (this module's SSHService) but is
-	// deliberately reserved for Operator/User in go-qrdb's built-in grants
-	// (registerAdminGrants withholds it): the module must not widen Admin.
+	// keys:sign is declared by ssh.proto (this module's SSHService) and is
+	// already held by a built-in role, so this module never grants it.
+	// Whether Admin holds it depends on what else the process composed (go-xkms
+	// grants it to Admin); TestComposedModules_AdminHoldsKeysSign pins that.
 	assert.True(t, qrdbsdk.IsPermissionRegistered("keys:sign"),
 		"keys:sign must be registered so role creation never fails on it")
-	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, "keys:sign"),
-		"keys:sign must stay withheld from Admin; go-qrdb reserves it for Operator/User")
 	assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleOperator, "keys:sign"),
 		"keys:sign must still be reachable via the Operator role qrdb granted it to")
 
@@ -72,6 +74,83 @@ func TestNewModule_RegistersRoleGrants(t *testing.T) {
 	// this contribution, gap-fill included.
 	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleSO, "credentials:store"))
 	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleSO, "keys:sign"))
+}
+
+// TestRoleGrantGaps_KeepsOnlyUnheldPermissions proves the gap computation
+// keeps exactly the permissions no built-in role holds, in input order.
+func TestRoleGrantGaps_KeepsOnlyUnheldPermissions(t *testing.T) {
+	held := map[qrdbsdk.Permission]bool{"keys:sign": true}
+	perms := []qrdbsdk.Permission{"credentials:store", "keys:sign", "embedding:embed"}
+
+	got := roleGrantGaps(perms, func(p qrdbsdk.Permission) bool { return held[p] })
+
+	assert.Equal(t, []qrdbsdk.Permission{"credentials:store", "embedding:embed"}, got)
+}
+
+// TestRoleGrantGaps_EmptyAndAllHeldInputs pins the degenerate inputs: no
+// permissions, or every permission already held, leaves nothing to grant.
+func TestRoleGrantGaps_EmptyAndAllHeldInputs(t *testing.T) {
+	allHeld := func(qrdbsdk.Permission) bool { return true }
+	noneHeld := func(qrdbsdk.Permission) bool { return false }
+
+	assert.Nil(t, roleGrantGaps(nil, noneHeld))
+	assert.Nil(t, roleGrantGaps([]qrdbsdk.Permission{"credentials:store", "keys:sign"}, allHeld))
+}
+
+// TestRoleGrantGaps_ModuleContributionAgainstQRDBPlacements proves what this
+// module grants Admin and Owner, whatever ran earlier in the process. The
+// predicate reads only the built-in roles neither this module nor go-xkms
+// grants into, so another module's Admin grants cannot change the answer:
+// keys:sign, which qrdb places on Operator, is never a gap, and
+// credentials:store, which qrdb places on no role, is one.
+func TestRoleGrantGaps_ModuleContributionAgainstQRDBPlacements(t *testing.T) {
+	_, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
+	require.NoError(t, err)
+
+	perms := derivedPermissions()
+	require.Contains(t, perms, qrdbsdk.Permission("keys:sign"), "ssh.proto declares keys:sign")
+	require.Contains(t, perms, qrdbsdk.Permission("credentials:store"), "account.proto declares credentials:store")
+
+	nonAdminRoles := []string{
+		qrdbsdk.PermissionRoleSO,
+		qrdbsdk.PermissionRoleOperator,
+		qrdbsdk.PermissionRoleUser,
+		qrdbsdk.PermissionRoleAuditor,
+	}
+	heldByNonAdminRole := func(p qrdbsdk.Permission) bool {
+		for _, role := range nonAdminRoles {
+			if qrdbsdk.HasPermissionRoleGrant(role, p) {
+				return true
+			}
+		}
+		return false
+	}
+
+	gaps := roleGrantGaps(perms, heldByNonAdminRole)
+	assert.NotContains(t, gaps, qrdbsdk.Permission("keys:sign"), "keys:sign is held by Operator; the module must not grant it")
+	assert.Contains(t, gaps, qrdbsdk.Permission("credentials:store"), "credentials:store is held by no built-in role")
+	for _, p := range gaps {
+		assert.False(t, heldByNonAdminRole(p), "%s is already held by a built-in role", p)
+	}
+}
+
+// TestComposedModules_AdminHoldsKeysSign pins the owner ruling of 2026-10-17:
+// Admin holds every permission outside the Security Officer set, keys:sign
+// included. It composes both modules as pkg/server/qrdb_node.go does; go-xkms
+// grants keys:sign to Admin, while qrdb's own placement on Operator and the
+// Security Officer's separation of duties stand.
+func TestComposedModules_AdminHoldsKeysSign(t *testing.T) {
+	_, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
+	require.NoError(t, err)
+	_, err = xkmssdk.NewServiceModule(func() *xkmssdk.XKMSService { return nil })
+	require.NoError(t, err)
+
+	assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, "keys:sign"),
+		"admin must hold keys:sign in the composed server")
+	assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleOperator, "keys:sign"),
+		"operator must still hold keys:sign")
+	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleSO, "keys:sign"),
+		"the security officer must not hold keys:sign")
 }
 
 // TestNewModule_RegistersRoleGrants_NewBrokerDataPlaneServices proves

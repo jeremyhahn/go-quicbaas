@@ -69,16 +69,18 @@ var builtInRoleNames = []string{
 // broker_dataplane_scope.go's Stage 0.5 broker families — objstore:*,
 // orchestrator:*, scheduler:*, messaging:*, parameters:*, dynamic_secrets:*,
 // project:*, ollama:*, each already placed on Admin/Operator/User/Auditor by
-// pkg/permission/builtin_role_grants.go with real SoD care, e.g. Admin holds
-// KeysCreate/Rotate/Delete but deliberately NOT KeysSign, and Owner receives
+// pkg/permission/builtin_role_grants.go with real SoD care, e.g. Operator
+// holds KeysSign and the Security Officer never does, and Owner receives
 // every registered permission automatically via role.OwnerRole ->
 // permission.All(), independent of any role-grant registration at all).
 //
-// Blanket-granting the module's full derived set to Admin (as xkms's pattern
-// does) would therefore silently WIDEN Admin beyond that upstream curation
-// (e.g. handing Admin keys:sign, which qrdb deliberately reserves for
-// Operator/User) rather than merely filling an omission. registerRoleGrants
-// instead:
+// The model those placements serve (owner ruling, 2026-10-17): Admin holds
+// every permission outside the Security Officer set, keys:sign and
+// vlog:sign_head included. Those grants are go-qrdb's and go-xkms's to make
+// (go-xkms grants its whole vocabulary, keys:sign among it, to Admin); this
+// module does not re-decide them. Blanket-granting its own derived set to
+// Admin would duplicate or second-guess them rather than fill an omission.
+// registerRoleGrants instead:
 //
 //  1. Registers every derived permission (RegisterPermissions is an
 //     idempotent registry insert) — a pure safety net against a genuinely
@@ -103,21 +105,7 @@ var builtInRoleNames = []string{
 // without this contribution.
 func registerRoleGrants() {
 	roleGrantOnce.Do(func() {
-		set := map[string]struct{}{}
-
-		if restRouteContributor != nil {
-			restRouteContributor(set)
-		}
-		if mcpToolContributor != nil {
-			mcpToolContributor(set)
-		}
-		contributeGRPCPermissions(set)
-
-		perms := make([]qrdbsdk.Permission, 0, len(set))
-		for p := range set {
-			perms = append(perms, qrdbsdk.Permission(p))
-		}
-		sort.Slice(perms, func(i, j int) bool { return perms[i] < perms[j] })
+		perms := derivedPermissions()
 
 		// Which of these this module is the FIRST to name has to be
 		// answered BEFORE RegisterPermissions, because that call erases the
@@ -150,19 +138,35 @@ func registerRoleGrants() {
 			qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeSelf, novel...)
 		}
 
-		var gaps []qrdbsdk.Permission
-		for _, p := range perms {
-			if hasAnyBuiltInGrant(p) {
-				continue
-			}
-			gaps = append(gaps, p)
-		}
+		gaps := roleGrantGaps(perms, hasAnyBuiltInGrant)
 		if len(gaps) == 0 {
 			return
 		}
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, gaps...)
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.RoleNameOwner, gaps...)
 	})
+}
+
+// derivedPermissions returns, sorted, every permission this module's
+// transports declare: its REST route table and MCP tool map (on builds with
+// those tags) and the qrdb.v1.permission options of its gRPC services.
+func derivedPermissions() []qrdbsdk.Permission {
+	set := map[string]struct{}{}
+
+	if restRouteContributor != nil {
+		restRouteContributor(set)
+	}
+	if mcpToolContributor != nil {
+		mcpToolContributor(set)
+	}
+	contributeGRPCPermissions(set)
+
+	perms := make([]qrdbsdk.Permission, 0, len(set))
+	for p := range set {
+		perms = append(perms, qrdbsdk.Permission(p))
+	}
+	sort.Slice(perms, func(i, j int) bool { return perms[i] < perms[j] })
+	return perms
 }
 
 // undeclaredPermissions returns the members of perms that no layer has
@@ -190,6 +194,23 @@ func undeclaredPermissions(perms []qrdbsdk.Permission) []qrdbsdk.Permission {
 		out = append(out, p)
 	}
 	return out
+}
+
+// roleGrantGaps returns, in input order, the permissions of perms that
+// heldByBuiltInRole reports no built-in role holds: the only permissions this
+// module grants to Admin and Owner. It reads no registry itself, so what the
+// module contributes can be proved apart from whatever another module (go-xkms
+// grants its whole vocabulary to Admin) has already placed in qrdb's
+// process-global registry.
+func roleGrantGaps(perms []qrdbsdk.Permission, heldByBuiltInRole func(qrdbsdk.Permission) bool) []qrdbsdk.Permission {
+	var gaps []qrdbsdk.Permission
+	for _, p := range perms {
+		if heldByBuiltInRole(p) {
+			continue
+		}
+		gaps = append(gaps, p)
+	}
+	return gaps
 }
 
 // hasAnyBuiltInGrant reports whether p is already placed on at least one of
