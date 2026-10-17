@@ -964,11 +964,11 @@ toggle.
 
 The `ObjStoreAdapter` (`pkg/security`) bridges go-objstore's `common.Storage` interface with go-xkms's `storage.Backend` interface.
 
-It imports go-objstore directly. That direct link is a departure, not the
-target design: go-objstore is one of go-qrdb's storage backends, reached
-through go-qrdb's storage API with the objstore backend selected by
-configuration. The SPEC's [Storage clean-up](../SPEC.md#storage-clean-up)
-row removes it.
+It imports go-objstore directly, as intended: go-objstore owns all object
+storage, buckets and multipart included, and go-quicbaas links it as its
+provider. What remains open is the SDK side: `sdk/go` re-exports go-objstore's
+types rather than defining its own (the SPEC's
+[Storage clean-up](../SPEC.md#storage-clean-up) row).
 
 ```go
 // Create an S3 storage backend

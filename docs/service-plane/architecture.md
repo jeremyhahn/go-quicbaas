@@ -199,9 +199,9 @@ and its tests. The registry is served at `/v2/` and in the SDK as
 - manifest handling;
 - the auth handler.
 
-- **Storage.** Blobs and metadata go through go-qrdb's storage API, with the
-  objstore backend selected by configuration. There is no direct go-objstore
-  import.
+- **Storage.** Blobs and metadata go through the go-quicbaas object-storage
+  service, which re-exports go-objstore. go-objstore owns all object storage;
+  go-qrdb owns nothing there.
 - **Layer encryption** uses go-qrdb DEKs. The file-backed `LocalKMSClient` is
   removed.
 - **Referrers API.** The registry serves the referrers API, which provenance
