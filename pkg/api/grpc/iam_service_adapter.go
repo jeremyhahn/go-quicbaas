@@ -615,10 +615,11 @@ func (a *IAMServiceAdapter) CreatePolicy(ctx context.Context, policy *iam.Policy
 	// PolicyEngine.CreatePolicy needs tenantID explicitly
 	err := a.policyEngine.CreatePolicy(ctx, policy.Metadata.Tenant, policy)
 	if err != nil {
-		return nil, err
+		return nil, service.PolicyCreateError("iam.grpc.CreatePolicy", err)
 	}
 
-	return policy, nil
+	// Return what was stored, not the caller's input.
+	return a.policyEngine.GetPolicy(ctx, policy.Metadata.Tenant, policy.Metadata.Name)
 }
 
 // GetPolicy retrieves a policy by name.
@@ -638,7 +639,8 @@ func (a *IAMServiceAdapter) UpdatePolicy(ctx context.Context, policy *iam.Policy
 		return nil, err
 	}
 
-	return policy, nil
+	// Return what was stored, not the caller's input.
+	return a.policyEngine.GetPolicy(ctx, policy.Metadata.Tenant, policy.Metadata.Name)
 }
 
 // DeletePolicy deletes a policy.

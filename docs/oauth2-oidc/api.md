@@ -776,6 +776,34 @@ Content-Type: application/json
 | -32002 | InvalidToken | Token is malformed or expired |
 | -32003 | PermissionDenied | Insufficient permissions |
 
+### Token Revocation (RFC 7009)
+
+`POST /oauth2/revoke` takes a form body with `token` and an optional
+`token_type_hint` (`access_token` or `refresh_token`).
+
+The client authenticates as it does at the token endpoint (RFC 7009 §2.1):
+HTTP Basic, or `client_id` and `client_secret` in the form body. Credentials in
+the query string are never read. A client with no registered secret (a public
+client) cannot authenticate here, just as it cannot obtain a token.
+
+A client may revoke only tokens issued to it. For an access token that client
+is the `client_id` claim of the signature-verified JWT; for a refresh token it
+is the client recorded with the token.
+
+| Response | When |
+|----------|------|
+| `200 OK`, empty body | The token was revoked, or it was unknown, expired or already revoked (RFC 7009 §2.2) |
+| `400 invalid_request` | `token` is missing |
+| `400 unauthorized_client` | The token was issued to another client; it stays active |
+| `401 invalid_client` | Client authentication failed or was absent; carries `WWW-Authenticate: Basic` when the request used Basic |
+
+```bash
+curl -X POST https://quicbaas.example.com/oauth2/revoke \
+  -u "$CLIENT_ID:$CLIENT_SECRET" \
+  -d "token=$REFRESH_TOKEN" \
+  -d "token_type_hint=refresh_token"
+```
+
 ### Dynamic Client Registration (RFC 7591)
 
 Register new OAuth clients programmatically:

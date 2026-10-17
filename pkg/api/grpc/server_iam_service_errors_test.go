@@ -24,6 +24,7 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // =============================================================================
@@ -273,6 +274,8 @@ func TestIAMServer_GetPolicy_ServiceError(t *testing.T) {
 
 func TestIAMServer_UpdatePolicy_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
+	svc.On("GetPolicy", mock.Anything, "t-1", "pol").
+		Return(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "pol", Tenant: "t-1"}}, nil)
 	svc.On("UpdatePolicy", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.UpdatePolicy(callerContext("t-1"), &iampb.UpdatePolicyRequest{
@@ -280,6 +283,18 @@ func TestIAMServer_UpdatePolicy_ServiceError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
+func TestIAMServer_UpdatePolicy_ReadError(t *testing.T) {
+	srv, svc := newTestIAMServer(t)
+	svc.On("GetPolicy", mock.Anything, "t-1", "pol").Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
+
+	_, err := srv.UpdatePolicy(callerContext("t-1"), &iampb.UpdatePolicyRequest{
+		TenantId: "t-1", PolicyName: "pol", Description: "never written",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	svc.AssertNotCalled(t, "UpdatePolicy", mock.Anything, mock.Anything)
 }
 
 func TestIAMServer_DeletePolicy_ServiceError(t *testing.T) {

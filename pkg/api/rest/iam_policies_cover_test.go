@@ -183,6 +183,148 @@ func TestPolicyLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, w.Code)
 }
 
+// getPolicyBody returns the body of a GET for the named policy.
+func getPolicyBody(t *testing.T, handler *IAMHandler, name string) string {
+	t.Helper()
+	w := httptest.NewRecorder()
+	handler.GetPolicy(w, policyRequest(t, http.MethodGet, "/x", nil,
+		map[string]string{"tenant_id": policyTenant, "policy_name": name}))
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	return w.Body.String()
+}
+
+func TestCreatePolicy_RespondsWithStoredPolicy(t *testing.T) {
+	handler, cleanup := setupPolicyHandler(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	handler.CreatePolicy(w, policyRequest(t, http.MethodPost,
+		"/api/v1/tenants/"+policyTenant+"/policies", validPolicyDoc("p1"),
+		map[string]string{"tenant_id": policyTenant}))
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	// The store stamps Created and Updated; an echo of the request would not
+	// carry them.
+	assert.JSONEq(t, getPolicyBody(t, handler, "p1"), w.Body.String())
+}
+
+func TestCreatePolicy_DuplicateLeavesStoredPolicy(t *testing.T) {
+	handler, cleanup := setupPolicyHandler(t)
+	defer cleanup()
+
+	tenantParams := map[string]string{"tenant_id": policyTenant}
+	w := httptest.NewRecorder()
+	handler.CreatePolicy(w, policyRequest(t, http.MethodPost, "/x", validPolicyDoc("p1"), tenantParams))
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	before := getPolicyBody(t, handler, "p1")
+
+	duplicate := validPolicyDoc("p1")
+	duplicate.Metadata.Description = "duplicate"
+	w = httptest.NewRecorder()
+	handler.CreatePolicy(w, policyRequest(t, http.MethodPost, "/x", duplicate, tenantParams))
+	assert.NotEqual(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	assert.JSONEq(t, before, getPolicyBody(t, handler, "p1"))
+}
+
+func TestUpdatePolicy_ResponseMatchesFollowingGet(t *testing.T) {
+	handler, cleanup := setupPolicyHandler(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	handler.CreatePolicy(w, policyRequest(t, http.MethodPost, "/x", validPolicyDoc("p1"),
+		map[string]string{"tenant_id": policyTenant}))
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+
+	updated := validPolicyDoc("p1")
+	updated.Metadata.Description = "updated"
+	w = httptest.NewRecorder()
+	handler.UpdatePolicy(w, policyRequest(t, http.MethodPut, "/x", updated,
+		map[string]string{"tenant_id": policyTenant, "policy_name": "p1"}))
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var got iam.Policy
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, "updated", got.Metadata.Description)
+	assert.False(t, got.Metadata.Updated.IsZero(), "response must carry the stored Updated stamp")
+	assert.JSONEq(t, getPolicyBody(t, handler, "p1"), w.Body.String())
+}
+
+// TestUpdatePolicy_DocumentName pins that Update refuses a body whose
+// document names another policy, for both body formats, and stores nothing;
+// a matching name is accepted.
+func TestUpdatePolicy_DocumentName(t *testing.T) {
+	sdkBody := func(docName string) map[string]interface{} {
+		return map[string]interface{}{"name": "p1", "spec_yaml": []byte(`apiVersion: iam.quicbaas.io/v1
+kind: Policy
+metadata:
+  name: ` + docName + `
+  description: updated
+spec:
+  subjects:
+    authenticated: true
+  rules:
+    - name: r1
+      effect: allow
+      actions: [read]
+      resources: ["docs/*"]
+`)}
+	}
+	fullDoc := func(docName string) interface{} {
+		doc := validPolicyDoc(docName)
+		doc.Metadata.Description = "updated"
+		return doc
+	}
+	tests := []struct {
+		name     string
+		body     interface{}
+		wantCode int
+	}{
+		{"full document mismatch", fullDoc("other"), http.StatusBadRequest},
+		{"sdk spec_yaml mismatch", sdkBody("other"), http.StatusBadRequest},
+		{"full document match", fullDoc("p1"), http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, cleanup := setupPolicyHandler(t)
+			defer cleanup()
+			w := httptest.NewRecorder()
+			handler.CreatePolicy(w, policyRequest(t, http.MethodPost, "/x", validPolicyDoc("p1"),
+				map[string]string{"tenant_id": policyTenant}))
+			require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+			before := getPolicyBody(t, handler, "p1")
+
+			w = httptest.NewRecorder()
+			handler.UpdatePolicy(w, policyRequest(t, http.MethodPut, "/x", tt.body,
+				map[string]string{"tenant_id": policyTenant, "policy_name": "p1"}))
+			require.Equal(t, tt.wantCode, w.Code, "body: %s", w.Body.String())
+
+			if tt.wantCode == http.StatusOK {
+				var got iam.Policy
+				require.NoError(t, json.Unmarshal([]byte(getPolicyBody(t, handler, "p1")), &got))
+				assert.Equal(t, "updated", got.Metadata.Description)
+				return
+			}
+			var resp struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			want := (&iam.PolicyNameMismatchError{Requested: "p1", Document: "other"}).Error()
+			assert.Contains(t, resp.Error, want)
+			assert.JSONEq(t, before, getPolicyBody(t, handler, "p1"), "a refused update must not change the stored policy")
+		})
+	}
+}
+
+func TestUpdatePolicy_UnknownPolicyIsNotFound(t *testing.T) {
+	handler, cleanup := setupPolicyHandler(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	handler.UpdatePolicy(w, policyRequest(t, http.MethodPut, "/x", validPolicyDoc("missing"),
+		map[string]string{"tenant_id": policyTenant, "policy_name": "missing"}))
+	assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
+}
+
 func TestCreatePolicy_InvalidDocument(t *testing.T) {
 	handler, cleanup := setupPolicyHandler(t)
 	defer cleanup()

@@ -74,14 +74,36 @@ refuses what the transport under it refuses.
   document as invalid, with the reason naming the key.
 - **Stored records load strictly.** `BackendStorage` decodes a stored policy
   record with known keys only. A record with unknown keys, or one that does
-  not decode, is never applied, so it denies: `GetPolicy` returns
+  not decode, is never applied, so it denies. Storage `GetPolicy` returns
   `*iam.StoredPolicyDecodeError` (`ErrPolicyRecordInvalid`, `ErrInternal`
-  class), and `ListPolicies` returns a flagged entry in its place (its name,
-  no rules, `Policy.LoadError` set) instead of dropping it. Each load logs a
-  WARN naming the tenant, the policy and the unknown keys. The ABAC sync skips
-  a flagged entry, a simulate on it denies, and an export refuses the tenant
-  with the decode error. Update and delete still reach the record, so an
-  operator repairs it with an update or removes it with a delete.
+  class). The engine's `GetPolicy` and `ListPolicies` return a flagged entry
+  in its place (its name, no rules, `Policy.LoadError` set) instead of
+  dropping it. Each load logs a WARN naming the tenant, the policy and the
+  unknown keys. The ABAC sync never converts a flagged entry's rules: it
+  stands in a deny-all policy (rule `stored-record-not-applied`) scoped to
+  the record's tenant, so every request in that tenant is denied until the
+  record is repaired or deleted. A record whose tenant is unknown is scoped
+  to the system tenant and denies everywhere. A simulate on a flagged entry
+  denies, and an export refuses the tenant with the decode error. The engine
+  refuses to update with a flagged entry itself (a get-then-patch writer
+  cannot write it back); an update with a corrected document, a batch import
+  of the same name with `UpdateExisting`, and a delete all still reach the
+  record.
+- **Finding and repairing a flagged record (operators).** Find it in two
+  places. One is the WARN log line naming the tenant, the policy and the
+  unknown keys. The other is the policy get and list responses, which carry
+  `load_error` with `reason` and `unknown_keys` (key paths such as
+  `spec.rules[0].bogus`, never values) on every transport: REST, gRPC
+  (`Policy.load_error`), MCP, and embedded, and in the SDK as
+  `Policy.LoadError`. A REST get of a flagged record returns 200 with the
+  flagged entry. Repair it by sending a corrected document with a policy
+  update (REST `PUT`, MCP, the service layer) or a batch import with
+  `UpdateExisting`. The record is replaced, a get returns it whole without
+  `load_error`, and evaluation applies it. A malformed document is refused
+  and the flagged record stays as it was. Or remove the record with a policy
+  delete (every transport). gRPC update cannot repair yet, because it does
+  not apply `spec_yaml` (#1406). Authorization for these calls
+  is go-qrdb's, unchanged.
 - **Policy-level effect and enabled.** An effect other than deny, or
   `enabled` other than true, is refused before any request is sent by the
   SDK gRPC and MCP transports (invalid input, from

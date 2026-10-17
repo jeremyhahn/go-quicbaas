@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -149,4 +150,51 @@ func TestExecuteIAMPolicyValidate(t *testing.T) {
 		})
 		require.Error(t, err)
 	})
+}
+
+// TestExecuteIAMPolicyValidate_DocumentName pins that the MCP validate tool
+// forwards both the requested name and the document's metadata.name, so the
+// service's iam.CheckPolicyName (mirrored by the double) reports a mismatch
+// as Valid=false with its message.
+func TestExecuteIAMPolicyValidate_DocumentName(t *testing.T) {
+	want := iam.CheckPolicyName(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "other"}}, "p1").Error()
+	tests := []struct {
+		docName   string
+		wantValid bool
+	}{
+		{"other", false},
+		{"p1", true},
+	}
+	for _, tt := range tests {
+		reg := newIAMTestRegistry(&mockIAMService{
+			validatePolFunc: func(ctx context.Context, req *service.ValidatePolicyRequest) (*service.ValidatePolicyResponse, error) {
+				resp := &service.ValidatePolicyResponse{Valid: true, Timestamp: time.Now()}
+				if err := iam.CheckPolicyName(req.Policy, req.Name); err != nil {
+					resp.Valid = false
+					resp.Errors = []string{err.Error()}
+				}
+				return resp, nil
+			},
+		})
+		res, err := reg.executeIAMPolicyValidate(context.Background(), map[string]interface{}{
+			"tenant_id": "t1",
+			"name":      "p1",
+			"policy": map[string]interface{}{
+				"apiVersion": "iam.quicbaas.io/v1",
+				"kind":       "Policy",
+				"metadata":   map[string]interface{}{"name": tt.docName},
+				"spec": map[string]interface{}{
+					"rules": []interface{}{map[string]interface{}{
+						"name": "r1", "effect": "allow", "actions": []interface{}{"read"}, "resources": []interface{}{"documents"},
+					}},
+				},
+			},
+		})
+		require.NoError(t, err, tt.docName)
+		out := res.(map[string]interface{})
+		assert.Equal(t, tt.wantValid, out["valid"], tt.docName)
+		if !tt.wantValid {
+			assert.Contains(t, out["errors"], want)
+		}
+	}
 }

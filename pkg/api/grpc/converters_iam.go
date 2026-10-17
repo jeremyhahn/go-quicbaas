@@ -435,6 +435,13 @@ func convertPolicyToProto(p *iam.Policy) (*iampb.Policy, error) {
 	}
 	pb.SpecYaml = specYAML
 
+	if p.LoadError != nil {
+		pb.LoadError = &iampb.PolicyLoadError{
+			Reason:      p.LoadError.Reason,
+			UnknownKeys: p.LoadError.UnknownKeys,
+		}
+	}
+
 	return pb, nil
 }
 

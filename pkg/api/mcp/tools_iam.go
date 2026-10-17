@@ -1789,6 +1789,11 @@ func (r *ToolRegistry) executeIAMPolicyCreate(ctx context.Context, args map[stri
 		return nil, err
 	}
 
+	// Policies are not versioned: refuse a version rather than drop it.
+	if err := iam.RefusePolicyVersionIn(args); err != nil {
+		return nil, err
+	}
+
 	policyRaw, ok := args["policy"].(map[string]interface{})
 	if !ok {
 		return nil, api.NewInvalidTypeError("policy", "an object")
@@ -1936,7 +1941,17 @@ func patchPolicyFromSDKFormat(ctx context.Context, iamSvc service.IAMService, po
 		return nil, err
 	}
 	if specYAML, _ := policyRaw["spec_yaml"].(string); specYAML != "" {
-		return parseSDKPolicySpec(policyRaw, tenantID, name, specYAML)
+		// Keep a full document's own metadata.name: the service checks it
+		// against the requested name (iam.CheckPolicyName). A bare spec
+		// declares none and takes the requested name.
+		policy, err := parseSDKPolicySpec(policyRaw, tenantID, "", specYAML)
+		if err != nil {
+			return nil, err
+		}
+		if policy.Metadata.Name == "" {
+			policy.Metadata.Name = name
+		}
+		return policy, nil
 	}
 
 	stored, err := iamSvc.GetPolicy(ctx, &service.GetPolicyRequest{TenantID: tenantID, Name: name})
@@ -1974,12 +1989,17 @@ func (r *ToolRegistry) executeIAMPolicyGet(ctx context.Context, args map[string]
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(resp)
+	return marshalResult(policyGetResult{Policy: iam.NewPolicyView(resp.Policy), Timestamp: resp.Timestamp})
 }
 
 func (r *ToolRegistry) executeIAMPolicyUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	iamSvc, err := r.getIAMService()
 	if err != nil {
+		return nil, err
+	}
+
+	// Policies are not versioned: refuse a version rather than drop it.
+	if err := iam.RefusePolicyVersionIn(args); err != nil {
 		return nil, err
 	}
 
@@ -2063,7 +2083,26 @@ func (r *ToolRegistry) executeIAMPolicyList(ctx context.Context, args map[string
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(resp)
+	return marshalResult(policyListResult{
+		Policies:   iam.NewPolicyViews(resp.Policies),
+		TotalCount: resp.TotalCount,
+		Timestamp:  resp.Timestamp,
+	})
+}
+
+// policyGetResult is the iam_policy_get result: the service response with
+// the policy in its transport view, so a flagged record carries load_error.
+type policyGetResult struct {
+	Policy    iam.PolicyView `json:"policy"`
+	Timestamp time.Time      `json:"timestamp"`
+}
+
+// policyListResult is the iam_policy_list result: the service response with
+// each policy in its transport view, so a flagged entry carries load_error.
+type policyListResult struct {
+	Policies   []iam.PolicyView `json:"policies"`
+	TotalCount int64            `json:"total_count,omitempty"`
+	Timestamp  time.Time        `json:"timestamp"`
 }
 
 func (r *ToolRegistry) executeIAMPolicyTest(ctx context.Context, args map[string]interface{}) (interface{}, error) {

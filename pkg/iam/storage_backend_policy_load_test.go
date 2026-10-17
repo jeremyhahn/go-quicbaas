@@ -270,8 +270,9 @@ func TestPolicyEngine_RollbackRestoresFlaggedRecordBytes(t *testing.T) {
 		got, err := kv.Get(ctx, key)
 		require.NoError(t, err, op)
 		assert.Equal(t, storedPolicyUnknownKeysJSON, string(got), "%s rollback must restore the original bytes", op)
-		_, err = engine.GetPolicy(ctx, "t-stored", "stored-eng")
-		assert.ErrorIs(t, err, ErrPolicyRecordInvalid, "%s rollback must leave the record flagged", op)
+		flagged, err := engine.GetPolicy(ctx, "t-stored", "stored-eng")
+		require.NoError(t, err, op)
+		assert.ErrorIs(t, flagged.LoadError, ErrPolicyRecordInvalid, "%s rollback must leave the record flagged", op)
 	}
 
 	require.Error(t, engine.UpdatePolicy(ctx, "t-stored", wantStoredPolicy()))
@@ -279,6 +280,106 @@ func TestPolicyEngine_RollbackRestoresFlaggedRecordBytes(t *testing.T) {
 
 	require.Error(t, engine.DeletePolicy(ctx, "t-stored", "stored-eng"))
 	assertOriginal("delete")
+}
+
+func TestPolicyEngine_GetPolicyReturnsFlaggedEntry(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
+	require.NoError(t, kv.Put(ctx, policyKey("t-stored", "stored-eng"), []byte(storedPolicyUnknownKeysJSON)))
+
+	flagged, err := engine.GetPolicy(ctx, "t-stored", "stored-eng")
+	require.NoError(t, err)
+	assert.Equal(t, "stored-eng", flagged.Metadata.Name)
+	assert.Empty(t, flagged.Spec.Rules, "a flagged entry applies no rules")
+	require.NotNil(t, flagged.LoadError)
+	assert.NotEmpty(t, flagged.LoadError.UnknownKeys)
+
+	_, err = engine.GetPolicy(ctx, "t-stored", "missing")
+	assert.Error(t, err, "a missing record is still an error")
+}
+
+func TestPolicyEngine_UpdatePolicyRefusesFlaggedEntry(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
+	key := policyKey("t-stored", "stored-eng")
+	require.NoError(t, kv.Put(ctx, key, []byte(storedPolicyUnknownKeysJSON)))
+
+	// A get-then-patch writer must not store the flagged entry back as if
+	// it were the record repaired.
+	flagged, err := engine.GetPolicy(ctx, "t-stored", "stored-eng")
+	require.NoError(t, err)
+	flagged.Metadata.Description = "patched"
+	err = engine.UpdatePolicy(ctx, "t-stored", flagged)
+	assert.ErrorIs(t, err, ErrPolicyRecordInvalid)
+
+	got, err := kv.Get(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, storedPolicyUnknownKeysJSON, string(got), "the record must be left as it was")
+}
+
+// assertRecordRepaired checks a repaired record loads clean: a strict
+// decode, no load error, and the replacement's rules.
+func assertRecordRepaired(t *testing.T, engine *PolicyEngine, wantRules []Rule) {
+	t.Helper()
+	ctx := context.Background()
+	repaired, err := engine.GetPolicy(ctx, "t-stored", "stored-eng")
+	require.NoError(t, err)
+	assert.Nil(t, repaired.LoadError, "a repaired record has no load_error")
+	assert.Equal(t, wantRules, repaired.Spec.Rules)
+
+	listed, err := engine.ListPolicies(ctx, "t-stored", ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Nil(t, listed[0].LoadError, "the listed record must load clean")
+}
+
+func TestPolicyEngine_FullReplacementRepairsFlaggedRecord(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
+	require.NoError(t, kv.Put(ctx, policyKey("t-stored", "stored-eng"), []byte(storedPolicyUnknownKeysJSON)))
+
+	replacement := wantStoredPolicy()
+	require.NoError(t, engine.UpdatePolicy(ctx, "t-stored", replacement),
+		"a new document without LoadError must repair the flagged record")
+	assertRecordRepaired(t, engine, replacement.Spec.Rules)
+}
+
+func TestBatchImport_ReplacesFlaggedRecordThroughUpdate(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
+	require.NoError(t, kv.Put(ctx, policyKey("t-stored", "stored-eng"), []byte(storedPolicyUnknownKeysJSON)))
+	bm := NewBatchManager(BatchManagerOptions{PolicyEngine: engine, BatchSize: 10, Parallelism: 1})
+
+	rules := []Rule{{Name: "imported", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"docs/*"}}}
+	result, err := bm.ImportPolicies(ctx, "t-stored", []*PolicyImport{{Name: "stored-eng", Rules: rules}},
+		BatchImportOptions{UpdateExisting: true})
+	require.NoError(t, err)
+	require.Empty(t, result.Errors)
+	assert.Equal(t, 1, result.SuccessCount)
+	assertRecordRepaired(t, engine, rules)
+}
+
+func TestBatchImport_FlaggedRecordExistsWithoutUpdateExisting(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	key := policyKey("t-stored", "stored-eng")
+	engine := NewPolicyEngine(PolicyEngineOptions{Storage: NewBackendStorage(kv)})
+	require.NoError(t, kv.Put(ctx, key, []byte(storedPolicyUnknownKeysJSON)))
+	bm := NewBatchManager(BatchManagerOptions{PolicyEngine: engine, BatchSize: 10, Parallelism: 1})
+
+	rules := []Rule{{Name: "imported", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"docs/*"}}}
+	result, err := bm.ImportPolicies(ctx, "t-stored", []*PolicyImport{{Name: "stored-eng", Rules: rules}},
+		BatchImportOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.SuccessCount, "a flagged record exists: import without UpdateExisting must not replace it")
+
+	got, err := kv.Get(ctx, key)
+	require.NoError(t, err)
+	assert.Equal(t, storedPolicyUnknownKeysJSON, string(got), "the record must be left as it was")
 }
 
 // newStoredPolicyBatchManager returns a BatchManager over an in-memory store

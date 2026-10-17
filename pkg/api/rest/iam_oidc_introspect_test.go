@@ -154,6 +154,7 @@ type introspectFixture struct {
 	provider      *iam.OIDCProvider
 	auditLogger   iam.AuditLogger
 	identityStore *iam.IdentityStore
+	appStorage    *iam.BackendStorage
 	cleanup       func()
 }
 
@@ -234,6 +235,7 @@ func newIntrospectFixture(t *testing.T) *introspectFixture {
 		provider:      provider,
 		auditLogger:   auditLogger,
 		identityStore: identityStore,
+		appStorage:    backend,
 		cleanup:       cleanup,
 	}
 }

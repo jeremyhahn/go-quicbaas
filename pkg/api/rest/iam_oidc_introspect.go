@@ -70,6 +70,7 @@ func (h *IAMHandler) Introspect(w http.ResponseWriter, r *http.Request) {
 	peerCert := verifiedPeerCertFromRequest(r)
 	callerClientID, authErr := h.authenticateIntrospectionCaller(ctx, r, provider, peerCert)
 	if authErr != nil {
+		challengeBasicClient(w, r)
 		RespondOAuthError(w, r, http.StatusUnauthorized,
 			&OAuthError{Code: ErrInvalidClient, ErrorDescription: "introspection caller authentication failed"})
 		return

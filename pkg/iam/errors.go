@@ -1310,6 +1310,27 @@ func (e *OAuthError) Error() string {
 	return e.ErrorCode
 }
 
+// AuthorizeDirectError is an authorization-endpoint error raised while the
+// client_id or redirect_uri is missing, unknown or unregistered. Per
+// draft-ietf-oauth-v2-1-16 §4.1.2.1 the server must not redirect the user
+// agent to an unvalidated redirect URI, so the caller reports it directly.
+// Every other error from OIDCProvider.Authorize is raised after the client
+// and its redirect URI are validated and goes back to the client through
+// that redirect URI.
+type AuthorizeDirectError struct {
+	*OAuthError
+}
+
+// newAuthorizeDirectError creates an AuthorizeDirectError.
+func newAuthorizeDirectError(code, description string) *AuthorizeDirectError {
+	return &AuthorizeDirectError{OAuthError: NewOAuthError(code, description)}
+}
+
+// Unwrap returns the underlying OAuth error.
+func (e *AuthorizeDirectError) Unwrap() error {
+	return e.OAuthError
+}
+
 // ErrPKCEPlainMethodNotAllowed is returned when the plain PKCE method is used.
 // OAuth 2.1 prohibits the plain method; only S256 is allowed.
 var ErrPKCEPlainMethodNotAllowed = &OAuthError{
@@ -1447,6 +1468,20 @@ type VersionConflictError struct {
 // Error implements the error interface.
 func (e *VersionConflictError) Error() string {
 	return "version conflict: current=" + strconv.FormatInt(e.Current, 10) + ", incoming=" + strconv.FormatInt(e.Incoming, 10)
+}
+
+// PolicyVersionUnsupportedError is returned when a policy create or update
+// carries a non-zero version. Policies are not versioned and nothing
+// compares and sets on one, so the key is refused rather than accepted and
+// ignored (go-quicbaas#1409).
+type PolicyVersionUnsupportedError struct {
+	// Version is the version the caller sent, as text.
+	Version string
+}
+
+// Error implements the error interface.
+func (e *PolicyVersionUnsupportedError) Error() string {
+	return "policy version is not supported: got " + e.Version + ", send 0 or omit it"
 }
 
 // PolicyCompileFailedError is returned when a policy fails to compile during sync.

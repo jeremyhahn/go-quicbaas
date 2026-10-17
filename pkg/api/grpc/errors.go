@@ -122,6 +122,22 @@ func (e *UserIDError) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
 
+// PolicySpecYAMLError reports a policy spec_yaml document that does not parse.
+type PolicySpecYAMLError struct {
+	Err error
+}
+
+func (e *PolicySpecYAMLError) Error() string {
+	return fmt.Sprintf("invalid spec_yaml: %v", e.Err)
+}
+
+func (e *PolicySpecYAMLError) Unwrap() error { return e.Err }
+
+// GRPCStatus maps the error to InvalidArgument for gRPC callers.
+func (e *PolicySpecYAMLError) GRPCStatus() *status.Status {
+	return status.New(codes.InvalidArgument, e.Error())
+}
+
 // parseUserID converts a wire user id into the iam uint64 id. Zero is
 // refused because it means "not created yet" in the iam model.
 func parseUserID(field, value string) (uint64, error) {

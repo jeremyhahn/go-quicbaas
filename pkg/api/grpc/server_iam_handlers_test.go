@@ -1241,8 +1241,19 @@ func TestIAMServer_GetPolicy_MissingFields(t *testing.T) {
 func TestIAMServer_UpdatePolicy_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("UpdatePolicy", mock.Anything, mock.AnythingOfType("*iam.Policy")).
-		Return(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "my-policy", Tenant: "t1"}}, nil)
+	stored := &iam.Policy{
+		APIVersion: "iam.quicbaas.io/v1",
+		Kind:       "Policy",
+		Metadata:   iam.PolicyMetadata{Name: "my-policy", Tenant: "t1"},
+		Spec: iam.PolicySpec{Rules: []iam.Rule{{
+			Name: "allow-read", Effect: iam.EffectAllow, Actions: []string{"read"}, Resources: []string{"/*"},
+		}}},
+	}
+	svc.On("GetPolicy", mock.Anything, "t1", "my-policy").Return(stored, nil)
+	svc.On("UpdatePolicy", mock.Anything, mock.MatchedBy(func(p *iam.Policy) bool {
+		return p.Metadata.Description == "Updated" && p.Metadata.Priority == 5 &&
+			len(p.Spec.Rules) == 1 && p.Spec.Rules[0].Name == "allow-read"
+	})).Return(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "my-policy", Tenant: "t1", Description: "from-store"}}, nil)
 
 	resp, err := srv.UpdatePolicy(callerContext("t1"), &iampb.UpdatePolicyRequest{
 		TenantId:    "t1",
@@ -1250,11 +1261,10 @@ func TestIAMServer_UpdatePolicy_Success(t *testing.T) {
 		Description: "Updated",
 		Labels:      map[string]string{"env": "prod"},
 		Priority:    5,
-		SpecYaml:    []byte("rules: []"),
 	})
 
 	require.NoError(t, err)
-	assert.NotNil(t, resp)
+	assert.Equal(t, "from-store", resp.Description, "the response must describe the service's stored result")
 	svc.AssertExpectations(t)
 }
 

@@ -253,28 +253,17 @@ func TestIAMHandler_Authorize_MissingClientID(t *testing.T) {
 	assert.Equal(t, "invalid_request", errResp["error"])
 }
 
-func TestIAMHandler_Authorize_MissingRedirectURI(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?client_id=test&response_type=code", nil)
-	w := httptest.NewRecorder()
-
-	handler.Authorize(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
+// A missing response_type from a validated client is redirected to the
+// client (draft-ietf-oauth-v2-1-16 §4.1.2.1), not answered with a 400.
 func TestIAMHandler_Authorize_MissingResponseType(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
+	handler := setupAuthorizeHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?client_id=test&redirect_uri=http://example.com", nil)
+	req := httptest.NewRequest(http.MethodGet, authorizeMissingResponseTypeTarget, nil)
 	w := httptest.NewRecorder()
 
 	handler.Authorize(w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assertAuthorizeErrorRedirect(t, w, ErrInvalidRequest, "st-1")
 }
 
 func TestIAMHandler_Token_InvalidFormData(t *testing.T) {

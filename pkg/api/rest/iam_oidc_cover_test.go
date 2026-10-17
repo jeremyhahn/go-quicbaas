@@ -94,6 +94,70 @@ func TestToken_InvalidClient(t *testing.T) {
 	assert.Equal(t, "invalid_client", resp["error"])
 }
 
+// TestToken_InvalidClientBasicChallenge pins draft-ietf-oauth-v2-1-16 §3.2.4:
+// a client that authenticated with HTTP Basic and fails gets 401 with a
+// WWW-Authenticate challenge for the Basic scheme; credentials sent in the
+// body get the 401 without one.
+func TestToken_InvalidClientBasicChallenge(t *testing.T) {
+	handler, _, _, cleanup := setupIntrospectHandler(t)
+	defer cleanup()
+
+	t.Run("basic", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(tokenForm().Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetBasicAuth(introspectClientID, "wrong")
+		w := httptest.NewRecorder()
+		handler.Token(w, req)
+
+		require.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Equal(t, basicAuthChallenge, w.Header().Get("WWW-Authenticate"))
+		var resp map[string]interface{}
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "invalid_client", resp["error"])
+	})
+
+	t.Run("body credentials", func(t *testing.T) {
+		form := tokenForm()
+		form.Set("client_id", introspectClientID)
+		form.Set("client_secret", "wrong")
+		req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		handler.Token(w, req)
+
+		require.Equal(t, http.StatusUnauthorized, w.Code)
+		assert.Empty(t, w.Header().Get("WWW-Authenticate"))
+	})
+}
+
+// TestChallengeBasicClient checks that the Basic challenge follows the
+// scheme the client attempted, including a malformed Basic header, and is
+// absent for other schemes or no Authorization header.
+func TestChallengeBasicClient(t *testing.T) {
+	tests := []struct {
+		name          string
+		authorization string
+		want          string
+	}{
+		{name: "basic", authorization: "Basic YTpi", want: basicAuthChallenge},
+		{name: "basic lower case", authorization: "basic YTpi", want: basicAuthChallenge},
+		{name: "malformed basic", authorization: "Basic !!!", want: basicAuthChallenge},
+		{name: "bearer", authorization: "Bearer abc"},
+		{name: "none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", nil)
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+			w := httptest.NewRecorder()
+			challengeBasicClient(w, req)
+			assert.Equal(t, tt.want, w.Header().Get("WWW-Authenticate"))
+		})
+	}
+}
+
 // An unsupported grant_type returns a 400 OAuth error from the provider.
 func TestToken_UnsupportedGrant(t *testing.T) {
 	handler, _, _, cleanup := setupIntrospectHandler(t)
@@ -123,8 +187,8 @@ func TestUserInfo_InvalidToken(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-// Revoke maps an OAuthError from the provider onto a 400 (the public endpoint
-// forwards token/hint to a confidential client that requires client auth).
+// Revoke maps the provider's invalid_client onto a 401 (RFC 7009 §2.1: the
+// endpoint requires client authentication, and this request sends none).
 func TestRevoke_OAuthError(t *testing.T) {
 	handler, provider, _, cleanup := setupIntrospectHandler(t)
 	defer cleanup()
@@ -138,7 +202,7 @@ func TestRevoke_OAuthError(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.Revoke(w, req)
 
-	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	require.Equal(t, http.StatusUnauthorized, w.Code, "body: %s", w.Body.String())
 	var resp map[string]interface{}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.NotEmpty(t, resp["error"])

@@ -25,8 +25,16 @@ const sdkReadDocsSpec = `rules:
 // p1 in tenant t1, created through the MCP create tool in SDK format.
 func newStoredPolicyService(t *testing.T) (*ToolRegistry, iam.PolicyStorage, context.Context) {
 	t.Helper()
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
 	iamSvc, storage := newEnginePolicyService()
+	reg, ctx := storePolicyP1(t, iamSvc, storage)
+	return reg, storage, ctx
+}
+
+// storePolicyP1 wires iamSvc's reads to storage and creates policy p1 in
+// tenant t1 through the MCP create tool in SDK format.
+func storePolicyP1(t *testing.T, iamSvc *mockIAMService, storage iam.PolicyStorage) (*ToolRegistry, context.Context) {
+	t.Helper()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 	iamSvc.getPolicyFunc = func(ctx context.Context, req *service.GetPolicyRequest) (*service.GetPolicyResponse, error) {
 		policy, err := storage.GetPolicy(ctx, req.TenantID, req.Name)
 		if err != nil {
@@ -40,7 +48,7 @@ func newStoredPolicyService(t *testing.T) (*ToolRegistry, iam.PolicyStorage, con
 		"policy":    map[string]interface{}{"name": "p1", "description": "old", "spec_yaml": sdkReadDocsSpec},
 	})
 	require.NoError(t, err)
-	return reg, storage, ctx
+	return reg, ctx
 }
 
 func TestExecuteIAMPolicyCreate_SDKFormatRefusals(t *testing.T) {
@@ -127,6 +135,69 @@ func TestExecuteIAMPolicyUpdate_SDKFormatReplacesSpec(t *testing.T) {
 	assert.Equal(t, "p1", stored.Metadata.Name)
 	require.Len(t, stored.Spec.Rules, 1)
 	assert.Equal(t, []string{"write"}, stored.Spec.Rules[0].Actions)
+}
+
+// TestExecuteIAMPolicyUpdate_SDKFormatDocumentName pins that the MCP update
+// forwards the spec_yaml document's own metadata.name to the service rather
+// than overwriting it with the requested name, so the service's
+// iam.CheckPolicyName (mirrored by the double below) refuses a document
+// naming another policy and the store is left unchanged.
+func TestExecuteIAMPolicyUpdate_SDKFormatDocumentName(t *testing.T) {
+	document := func(name string) string {
+		return `apiVersion: iam.quicbaas.io/v1
+kind: Policy
+metadata:
+  name: ` + name + `
+spec:
+  rules:
+    - name: "write-docs"
+      actions: ["write"]
+      resources: ["documents"]
+      effect: "allow"`
+	}
+	tests := []struct {
+		name    string
+		docName string
+		wantErr bool
+	}{
+		{"mismatch refused", "other", true},
+		{"match accepted", "p1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iamSvc, storage := newEnginePolicyService()
+			reg, ctx := storePolicyP1(t, iamSvc, storage)
+			var forwarded string
+			update := iamSvc.updatePolicyFunc
+			iamSvc.updatePolicyFunc = func(ctx context.Context, req *service.UpdatePolicyRequest) (*service.UpdatePolicyResponse, error) {
+				forwarded = req.Policy.Metadata.Name
+				if err := iam.CheckPolicyName(req.Policy, req.Name); err != nil {
+					return nil, err
+				}
+				return update(ctx, req)
+			}
+
+			_, err := reg.executeIAMPolicyUpdate(ctx, map[string]interface{}{
+				"tenant_id": "t1",
+				"name":      "p1",
+				"policy":    map[string]interface{}{"spec_yaml": document(tt.docName)},
+			})
+			assert.Equal(t, tt.docName, forwarded, "the document's name must reach the service")
+
+			stored, getErr := storage.GetPolicy(ctx, "t1", "p1")
+			require.NoError(t, getErr)
+			require.Len(t, stored.Spec.Rules, 1)
+			if tt.wantErr {
+				want := iam.CheckPolicyName(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "other"}}, "p1").Error()
+				require.Error(t, err)
+				assert.Equal(t, want, err.Error())
+				assert.Equal(t, []string{"read"}, stored.Spec.Rules[0].Actions, "a refused update must not change the store")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []string{"write"}, stored.Spec.Rules[0].Actions)
+		})
+	}
 }
 
 func TestExecuteIAMPolicyUpdate_SDKFormatMissingPolicy(t *testing.T) {

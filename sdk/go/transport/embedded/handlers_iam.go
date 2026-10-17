@@ -794,6 +794,12 @@ func sdkPolicyFromInternal(p *iam.Policy) iamsdk.Policy {
 		UpdatedAt:   p.Metadata.Updated,
 		Labels:      p.Metadata.Labels,
 	}
+	if p.LoadError != nil {
+		out.LoadError = &iamsdk.PolicyLoadError{
+			Reason:      p.LoadError.Reason,
+			UnknownKeys: p.LoadError.UnknownKeys,
+		}
+	}
 	return out
 }
 

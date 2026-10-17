@@ -167,7 +167,9 @@ func (e *PolicyEngine) GetPolicy(ctx context.Context, tenantID, name string) (*P
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	policy, err := e.storage.GetPolicy(ctx, tenantID, name)
+	// A record that does not decode strictly is returned as its flagged
+	// entry (LoadError set, no rules), the same entry ListPolicies lists.
+	policy, err := repairableRecord(e.storage.GetPolicy(ctx, tenantID, name))
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +192,12 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// A flagged entry (a fetched record that did not decode) is never
+	// written back: only a corrected document repairs the record.
+	if policy != nil && policy.LoadError != nil {
+		return policy.LoadError
+	}
+
 	// Validate policy
 	if err := e.ValidatePolicy(policy); err != nil {
 		return err
@@ -203,8 +211,7 @@ func (e *PolicyEngine) UpdatePolicy(ctx context.Context, tenantID string, policy
 	}
 
 	// Check if policy exists
-	existing, err := e.storage.GetPolicy(ctx, tenantID, policy.Metadata.Name)
-	existing, err = repairableRecord(existing, err)
+	existing, err := repairableRecord(e.storage.GetPolicy(ctx, tenantID, policy.Metadata.Name))
 	if err != nil {
 		return err
 	}
@@ -288,9 +295,10 @@ func (e *PolicyEngine) ListPolicies(ctx context.Context, tenantID string, opts L
 	return e.storage.ListPolicies(ctx, tenantID, opts)
 }
 
-// repairableRecord lets an update or delete reach a stored record that does
-// not decode strictly: replacing or removing it is how an operator repairs
-// it. The record stands in as its flagged entry, which applies no rules.
+// repairableRecord lets a get, update or delete reach a stored record that
+// does not decode strictly: a get reports it, and replacing or removing it
+// is how an operator repairs it. The record stands in as its flagged entry,
+// which applies no rules.
 func repairableRecord(existing *Policy, err error) (*Policy, error) {
 	var loadErr *StoredPolicyDecodeError
 	if errors.As(err, &loadErr) {

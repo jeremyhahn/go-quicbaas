@@ -20,11 +20,19 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
+	iamcore "github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
+
+// PolicyVersionUnsupportedError is returned by Update when the request
+// carries a non-zero Version. Policies are not versioned, so the value is
+// refused before it is sent, on every transport. It is the same type the
+// server returns for a version sent over REST or MCP.
+type PolicyVersionUnsupportedError = iamcore.PolicyVersionUnsupportedError
 
 const (
 	policyServiceName = "quicbaas.IAM.Policy"
@@ -74,7 +82,9 @@ type Policy struct {
 	// Description is a human-readable description of the policy.
 	Description string `json:"description,omitempty"`
 
-	// Version is the policy version for optimistic concurrency.
+	// Version is always zero: policies are not versioned, and a non-zero
+	// version sent to Update or to the server is refused with
+	// PolicyVersionUnsupportedError.
 	Version int64 `json:"version,omitempty"`
 
 	// Enabled indicates if the policy is active.
@@ -113,6 +123,23 @@ type Policy struct {
 	// SpecYAML is the raw policy specification as YAML (optional).
 	// Used for validation to pass the complete policy definition.
 	SpecYAML []byte `json:"spec_yaml,omitempty"`
+
+	// LoadError is set when the server holds this policy's stored record
+	// but the record does not decode strictly, so the server never applies
+	// it. Repair the record with Update (a corrected document) or Delete.
+	LoadError *PolicyLoadError `json:"load_error,omitempty"`
+}
+
+// PolicyLoadError describes a stored policy record the server flagged and
+// does not apply. It carries the reason and the unknown key paths, never
+// the record's values.
+type PolicyLoadError struct {
+	// Reason is why the stored record did not decode.
+	Reason string `json:"reason"`
+
+	// UnknownKeys are the key paths the record carries that the policy
+	// document does not define, e.g. "spec.rules[0].bogus".
+	UnknownKeys []string `json:"unknown_keys,omitempty"`
 }
 
 // Rule defines an individual access control rule within a policy.
@@ -456,7 +483,9 @@ type UpdatePolicyRequest struct {
 	// Labels replaces the labels (optional).
 	Labels map[string]string `json:"labels,omitempty"`
 
-	// Version is for optimistic concurrency control.
+	// Version must be zero: policies are not versioned, and a non-zero
+	// value is refused with PolicyVersionUnsupportedError before the
+	// request is sent.
 	Version int64 `json:"version,omitempty"`
 
 	// SpecYAML is the raw replacement policy specification as YAML
@@ -1126,6 +1155,9 @@ func (c *policyClient) Update(ctx context.Context, tenantID, policyName string, 
 	}
 	if req == nil {
 		return nil, errors.NewInvalidInput("iam.Policy.Update", "request is required")
+	}
+	if req.Version != 0 {
+		return nil, &PolicyVersionUnsupportedError{Version: strconv.FormatInt(req.Version, 10)}
 	}
 
 	if ctx == nil {

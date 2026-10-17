@@ -115,18 +115,6 @@ func (h *IAMHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.RedirectURI == "" {
-		RespondOAuthError(w, r, http.StatusBadRequest,
-			NewInvalidRequestError("redirect_uri is required"))
-		return
-	}
-
-	if req.ResponseType == "" {
-		RespondOAuthError(w, r, http.StatusBadRequest,
-			NewInvalidRequestError("response_type is required"))
-		return
-	}
-
 	// Get OIDC provider
 	oidcProvider, ok := h.server.service.(interface {
 		GetOIDCProvider(ctx context.Context) (*iam.OIDCProvider, error)
@@ -152,32 +140,70 @@ func (h *IAMHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 	// Perform authorization
 	resp, err := provider.Authorize(ctx, req)
 	if err != nil {
-		oauthErr := &iam.OAuthError{}
-		if errors.As(err, &oauthErr) {
-			RespondOAuthError(w, r, http.StatusBadRequest, &OAuthError{
-				Code:             oauthErr.ErrorCode,
-				ErrorDescription: oauthErr.ErrorDescription,
-				State:            req.State,
-			})
-			return
-		}
-		RespondOAuthError(w, r, http.StatusInternalServerError,
-			&OAuthError{Code: ErrServerError, ErrorDescription: err.Error(), State: req.State})
+		respondAuthorizeError(w, r, provider.Issuer(), req, err)
 		return
 	}
 
 	// Redirect to redirect_uri with authorization code
-	redirectURL, err := url.Parse(resp.RedirectURI)
+	params := url.Values{}
+	params.Set("code", resp.Code)
+	if resp.State != "" {
+		params.Set("state", resp.State)
+	}
+	redirectToClient(w, r, provider.Issuer(), resp.RedirectURI, params)
+}
+
+// respondAuthorizeError reports a failed authorization request
+// (draft-ietf-oauth-v2-1-16 §4.1.2.1). While the client_id or redirect_uri is
+// missing, unknown or unregistered (iam.AuthorizeDirectError) the error is
+// returned to the user agent directly and never redirected. Once both are
+// validated, the error goes back to the client as a 302 to its redirect URI
+// carrying error, error_description and state.
+func respondAuthorizeError(w http.ResponseWriter, r *http.Request, issuer string, req *iam.AuthorizeRequest, err error) {
+	var directErr *iam.AuthorizeDirectError
+	if errors.As(err, &directErr) {
+		RespondOAuthError(w, r, http.StatusBadRequest, &OAuthError{
+			Code:             directErr.ErrorCode,
+			ErrorDescription: directErr.ErrorDescription,
+			State:            req.State,
+		})
+		return
+	}
+
+	params := url.Values{}
+	oauthErr := &iam.OAuthError{}
+	if errors.As(err, &oauthErr) {
+		params.Set("error", oauthErr.ErrorCode)
+		if oauthErr.ErrorDescription != "" {
+			params.Set("error_description", oauthErr.ErrorDescription)
+		}
+	} else {
+		params.Set("error", ErrServerError)
+	}
+	if req.State != "" {
+		params.Set("state", req.State)
+	}
+	redirectToClient(w, r, issuer, req.RedirectURI, params)
+}
+
+// redirectToClient sends the authorization response to the client with a 302
+// to its validated redirect URI. The parameters are added to any query the
+// registered URI already carries (draft-ietf-oauth-v2-1-16 §4.1.2), and iss
+// identifies this authorization server (§4.1.2, RFC 9207).
+func redirectToClient(w http.ResponseWriter, r *http.Request, issuer, redirectURI string, params url.Values) {
+	redirectURL, err := url.Parse(redirectURI)
 	if err != nil {
 		RespondOAuthError(w, r, http.StatusInternalServerError,
-			&OAuthError{Code: ErrServerError, ErrorDescription: "invalid redirect_uri", State: req.State})
+			&OAuthError{Code: ErrServerError, ErrorDescription: "invalid redirect_uri", State: params.Get("state")})
 		return
 	}
 
 	query := redirectURL.Query()
-	query.Set("code", resp.Code)
-	if resp.State != "" {
-		query.Set("state", resp.State)
+	for name, values := range params {
+		query[name] = values
+	}
+	if issuer != "" {
+		query.Set("iss", issuer)
 	}
 	redirectURL.RawQuery = query.Encode()
 
@@ -283,6 +309,7 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 			statusCode := http.StatusBadRequest
 			if oauthErr.ErrorCode == ErrInvalidClient {
 				statusCode = http.StatusUnauthorized
+				challengeBasicClient(w, r)
 			}
 			RespondOAuthError(w, r, statusCode, &OAuthError{
 				Code:             oauthErr.ErrorCode,
@@ -432,16 +459,24 @@ func (h *IAMHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build revoke request
+	clientID, clientSecret := revocationClientCredentials(r)
 	revokeReq := &iam.RevokeRequest{
 		Token:         token,
 		TokenTypeHint: tokenTypeHint,
+		ClientID:      clientID,
+		ClientSecret:  clientSecret,
 	}
 
 	// Revoke token
 	if err := provider.Revoke(ctx, revokeReq); err != nil {
 		oauthErr := &iam.OAuthError{}
 		if errors.As(err, &oauthErr) {
-			RespondOAuthError(w, r, http.StatusBadRequest, &OAuthError{
+			statusCode := http.StatusBadRequest
+			if oauthErr.ErrorCode == iam.ErrOAuthInvalidClient {
+				statusCode = http.StatusUnauthorized
+				challengeBasicClient(w, r)
+			}
+			RespondOAuthError(w, r, statusCode, &OAuthError{
 				Code:             oauthErr.ErrorCode,
 				ErrorDescription: oauthErr.ErrorDescription,
 			})
@@ -452,6 +487,18 @@ func (h *IAMHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// RFC 7009: The revocation endpoint responds with HTTP status code 200
-	RespondNoContent(w, r)
+	// RFC 7009 §2.2: the revocation endpoint answers 200 with an empty body,
+	// including for a token that was unknown, expired or already revoked.
+	w.WriteHeader(http.StatusOK)
+}
+
+// revocationClientCredentials returns the client credentials of a revocation
+// request, read as the token endpoint reads them (RFC 7009 §2.1): HTTP Basic
+// first, else client_id/client_secret from the form body. The query string is
+// never consulted, so a secret placed there does not authenticate.
+func revocationClientCredentials(r *http.Request) (clientID, clientSecret string) {
+	if id, secret, ok := r.BasicAuth(); ok {
+		return id, secret
+	}
+	return r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
 }

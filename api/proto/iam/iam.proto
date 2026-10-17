@@ -275,6 +275,16 @@ message Policy {
   bytes spec_yaml = 6;  // YAML policy spec
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
+  // Set only when the stored record does not decode strictly: the entry
+  // carries its name and tenant, no rules, and is never applied.
+  PolicyLoadError load_error = 9;
+}
+
+// PolicyLoadError reports why a stored policy record was not applied.
+// unknown_keys names key paths only, never values.
+message PolicyLoadError {
+  string reason = 1;
+  repeated string unknown_keys = 2;
 }
 
 // PEP messages

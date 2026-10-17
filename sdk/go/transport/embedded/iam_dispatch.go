@@ -62,10 +62,13 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.Role/Reconcile": handleIAMRoleReconcile,
 
 	// Policy
-	"quicbaas.IAM.Policy/Create": handleIAMPolicyCreate,
-	"quicbaas.IAM.Policy/Get":    handleIAMPolicyGet,
-	"quicbaas.IAM.Policy/List":   handleIAMPolicyList,
-	"quicbaas.IAM.Policy/Delete": handleIAMPolicyDelete,
+	"quicbaas.IAM.Policy/Create":   handleIAMPolicyCreate,
+	"quicbaas.IAM.Policy/Get":      handleIAMPolicyGet,
+	"quicbaas.IAM.Policy/List":     handleIAMPolicyList,
+	"quicbaas.IAM.Policy/Delete":   handleIAMPolicyDelete,
+	"quicbaas.IAM.Policy/Update":   handleIAMPolicyUpdate,
+	"quicbaas.IAM.Policy/Validate": handleIAMPolicyValidate,
+	"quicbaas.IAM.Policy/Test":     handleIAMPolicyTest,
 
 	// App
 	"quicbaas.IAM.App/Register": handleIAMAppRegister,

@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -296,24 +297,6 @@ func TestOIDCValidateAuthorizeRequest(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "missing client_id",
-			req: &AuthorizeRequest{
-				RedirectURI:  "https://example.com/callback",
-				ResponseType: ResponseTypeCode,
-			},
-			wantErr: true,
-			errCode: ErrOAuthInvalidRequest,
-		},
-		{
-			name: "missing redirect_uri",
-			req: &AuthorizeRequest{
-				ClientID:     "client-123",
-				ResponseType: ResponseTypeCode,
-			},
-			wantErr: true,
-			errCode: ErrOAuthInvalidRequest,
-		},
-		{
 			name: "missing response_type",
 			req: &AuthorizeRequest{
 				ClientID:    "client-123",
@@ -371,12 +354,22 @@ func TestOIDCAuthorize(t *testing.T) {
 		GrantTypes:    []string{GrantTypeAuthorizationCode},
 	}
 	appStorage.CreateApp(ctx, app)
+	appStorage.CreateApp(ctx, &Application{
+		ClientID:      "multi-client",
+		TenantID:      "tenant-1",
+		RedirectURIs:  []string{"https://example.com/a", "https://example.com/b"},
+		ResponseTypes: []string{ResponseTypeCode},
+		GrantTypes:    []string{GrantTypeAuthorizationCode},
+	})
 
 	tests := []struct {
 		name    string
 		req     *AuthorizeRequest
 		wantErr bool
 		errCode string
+		// direct marks an error that must not be redirected
+		// (draft-ietf-oauth-v2-1-16 §4.1.2.1).
+		direct bool
 	}{
 		{
 			name: "valid authorization with PKCE",
@@ -414,6 +407,7 @@ func TestOIDCAuthorize(t *testing.T) {
 			},
 			wantErr: true,
 			errCode: ErrOAuthInvalidClient,
+			direct:  true,
 		},
 		{
 			name: "invalid redirect_uri",
@@ -424,6 +418,56 @@ func TestOIDCAuthorize(t *testing.T) {
 			},
 			wantErr: true,
 			errCode: ErrOAuthInvalidRequest,
+			direct:  true,
+		},
+		{
+			name: "missing client_id",
+			req: &AuthorizeRequest{
+				RedirectURI:  "https://example.com/callback",
+				ResponseType: ResponseTypeCode,
+			},
+			wantErr: true,
+			errCode: ErrOAuthInvalidRequest,
+			direct:  true,
+		},
+		{
+			name: "missing redirect_uri with several registered",
+			req: &AuthorizeRequest{
+				ClientID:     "multi-client",
+				ResponseType: ResponseTypeCode,
+			},
+			wantErr: true,
+			errCode: ErrOAuthInvalidRequest,
+			direct:  true,
+		},
+		{
+			name: "invalid client_id with missing response_type",
+			req: &AuthorizeRequest{
+				ClientID:    "invalid-client",
+				RedirectURI: "https://example.com/callback",
+			},
+			wantErr: true,
+			errCode: ErrOAuthInvalidClient,
+			direct:  true,
+		},
+		{
+			name: "missing response_type after valid client is redirectable",
+			req: &AuthorizeRequest{
+				ClientID:    "test-client",
+				RedirectURI: "https://example.com/callback",
+			},
+			wantErr: true,
+			errCode: ErrOAuthInvalidRequest,
+		},
+		{
+			name: "unsupported response_type after valid client is redirectable",
+			req: &AuthorizeRequest{
+				ClientID:     "test-client",
+				RedirectURI:  "https://example.com/callback",
+				ResponseType: "token",
+			},
+			wantErr: true,
+			errCode: ErrOAuthUnsupportedResponseType,
 		},
 		{
 			name: "valid with PKCE S256",
@@ -474,11 +518,15 @@ func TestOIDCAuthorize(t *testing.T) {
 				if err == nil {
 					t.Error("Authorize() expected error, got nil")
 				} else {
-					oauthErr, ok := err.(*OAuthError)
-					if !ok {
+					var oauthErr *OAuthError
+					if !errors.As(err, &oauthErr) {
 						t.Errorf("Authorize() error type = %T, want *OAuthError", err)
 					} else if oauthErr.ErrorCode != tt.errCode {
 						t.Errorf("Authorize() error code = %s, want %s", oauthErr.ErrorCode, tt.errCode)
+					}
+					var directErr *AuthorizeDirectError
+					if got := errors.As(err, &directErr); got != tt.direct {
+						t.Errorf("Authorize() direct error = %v, want %v", got, tt.direct)
 					}
 				}
 			} else {
@@ -815,6 +863,74 @@ func TestOIDCRevoke(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOIDCRevoke_RefreshTokenOwnership covers RFC 7009 §2.1 for opaque refresh
+// tokens: the stored record names the client, and only that client may revoke.
+func TestOIDCRevoke_RefreshTokenOwnership(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	newProvider := func(t *testing.T) (*OIDCProvider, *Token) {
+		t.Helper()
+		provider, _, appStorage, tokenStorage, _ := createTestOIDCProvider(t)
+		for _, clientID := range []string{"client-a", "client-b"} {
+			if err := appStorage.CreateApp(ctx, &Application{
+				ClientID:     clientID,
+				ClientSecret: currentSecretHash(t, clientID+"-secret"),
+				TenantID:     "tenant-1",
+			}); err != nil {
+				t.Fatalf("CreateApp(%s): %v", clientID, err)
+			}
+		}
+		refresh := &Token{
+			JTI:       "refresh-jti-a",
+			Subject:   "123",
+			TenantID:  "tenant-1",
+			TokenType: TokenTypeRefresh,
+			ClientID:  "client-a",
+			Expires:   time.Now().Add(time.Hour),
+		}
+		tokenStorage.tokens[refresh.JTI] = refresh
+		tokenStorage.tokenValues["refresh-value-a"] = refresh
+		return provider, refresh
+	}
+
+	t.Run("owner revokes its refresh token", func(t *testing.T) {
+		provider, refresh := newProvider(t)
+		err := provider.Revoke(ctx, &RevokeRequest{
+			Token: "refresh-value-a", ClientID: "client-a", ClientSecret: "client-a-secret",
+		})
+		if err != nil {
+			t.Fatalf("Revoke() unexpected error = %v", err)
+		}
+		if !refresh.Revoked {
+			t.Error("Revoke() did not revoke the owner's refresh token")
+		}
+	})
+
+	t.Run("another client is refused", func(t *testing.T) {
+		provider, refresh := newProvider(t)
+		err := provider.Revoke(ctx, &RevokeRequest{
+			Token: "refresh-value-a", ClientID: "client-b", ClientSecret: "client-b-secret",
+		})
+		if !errors.Is(err, ErrRevokeTokenNotOwned) {
+			t.Fatalf("Revoke() error = %v, want ErrRevokeTokenNotOwned", err)
+		}
+		if refresh.Revoked {
+			t.Error("Revoke() revoked a token issued to another client")
+		}
+	})
+
+	t.Run("unknown token is not an error", func(t *testing.T) {
+		provider, _ := newProvider(t)
+		err := provider.Revoke(ctx, &RevokeRequest{
+			Token: "never-issued", ClientID: "client-a", ClientSecret: "client-a-secret",
+		})
+		if err != nil {
+			t.Fatalf("Revoke() unexpected error = %v", err)
+		}
+	})
 }
 
 // Test UserInfo function
@@ -1541,6 +1657,19 @@ func TestOIDCResourceIndicatorsSupportedInMetadata(t *testing.T) {
 
 	if !metadata.ResourceIndicatorsSupported {
 		t.Error("GetOAuthASMetadata().ResourceIndicatorsSupported should be true")
+	}
+}
+
+// TestOIDCIssParameterSupportedInMetadata covers RFC 9207 §3 (#1444): both
+// metadata documents advertise the iss authorization response parameter.
+func TestOIDCIssParameterSupportedInMetadata(t *testing.T) {
+	provider, _, _, _, _ := createTestOIDCProvider(t)
+
+	if got := provider.GetConfiguration()["authorization_response_iss_parameter_supported"]; got != true {
+		t.Errorf("GetConfiguration() authorization_response_iss_parameter_supported = %v, want true", got)
+	}
+	if !provider.GetOAuthASMetadata().IsAuthorizationResponseIssParameterSupported() {
+		t.Error("GetOAuthASMetadata().AuthorizationResponseIssParameterSupported should be true")
 	}
 }
 

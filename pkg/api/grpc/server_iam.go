@@ -982,13 +982,8 @@ func (s *IAMServer) CreatePolicy(ctx context.Context, req *iampb.CreatePolicyReq
 		return nil, convertIAMError(err)
 	}
 
-	pbPolicy, err := convertPolicyToProto(created)
-	if err != nil {
-		return nil, err
-	}
-	pbPolicy.SpecYaml = req.SpecYaml
-
-	return pbPolicy, nil
+	// The response describes the stored policy, never the request's spec_yaml.
+	return convertPolicyToProto(created)
 }
 
 // GetPolicy retrieves a policy by name.
@@ -1033,33 +1028,58 @@ func (s *IAMServer) UpdatePolicy(ctx context.Context, req *iampb.UpdatePolicyReq
 		return nil, status.Error(codes.InvalidArgument, "policy_name is required")
 	}
 
-	policy := &iam.Policy{
-		APIVersion: "iam.quicbaas.io/v1",
-		Kind:       "Policy",
-		Metadata: iam.PolicyMetadata{
-			Name:        req.PolicyName,
-			Tenant:      req.TenantId,
-			Description: req.Description,
-			Labels:      req.Labels,
-			Priority:    int(req.Priority),
-		},
-		// Spec would be parsed from spec_yaml by the service layer
+	// Read-modify-write: the stored policy is the base, so a metadata-only
+	// update keeps the stored spec rather than replacing it with an empty one.
+	existing, err := s.iamService.GetPolicy(ctx, req.TenantId, req.PolicyName)
+	if err != nil {
+		return nil, convertIAMError(err)
 	}
+	policy := *existing
+	if len(req.SpecYaml) > 0 {
+		parsed, err := parsePolicyDocument(req.SpecYaml)
+		if err != nil {
+			return nil, err
+		}
+		// The request selects the target; the document may not redirect it.
+		if err := iam.CheckPolicyName(parsed, req.PolicyName); err != nil {
+			return nil, convertIAMError(err)
+		}
+		policy.Spec = parsed.Spec
+	}
+	applyPolicyMetadata(&policy.Metadata, req.Description, req.Labels, req.Priority)
 
-	updated, err := s.iamService.UpdatePolicy(ctx, policy)
+	updated, err := s.iamService.UpdatePolicy(ctx, &policy)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
 
-	pbPolicy, err := convertPolicyToProto(updated)
-	if err != nil {
-		return nil, err
-	}
-	if len(req.SpecYaml) > 0 {
-		pbPolicy.SpecYaml = req.SpecYaml
-	}
+	// The response describes the stored policy, never the request's spec_yaml.
+	return convertPolicyToProto(updated)
+}
 
-	return pbPolicy, nil
+// parsePolicyDocument parses a spec_yaml document. A document that names its
+// apiVersion and kind is a full policy; anything else is a bare policy spec.
+func parsePolicyDocument(specYAML []byte) (*iam.Policy, error) {
+	policy, err := iam.ParsePolicyYAML(specYAML, iam.PolicyMetadata{})
+	if err != nil {
+		return nil, &PolicySpecYAMLError{Err: err}
+	}
+	return policy, nil
+}
+
+// applyPolicyMetadata overlays the request's metadata fields that are set.
+// proto3 cannot tell an unset field from a zero one, so zero values keep the
+// existing metadata.
+func applyPolicyMetadata(meta *iam.PolicyMetadata, description string, labels map[string]string, priority int32) {
+	if description != "" {
+		meta.Description = description
+	}
+	if len(labels) > 0 {
+		meta.Labels = labels
+	}
+	if priority != 0 {
+		meta.Priority = int(priority)
+	}
 }
 
 // DeletePolicy deletes a policy.

@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyfields"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyloaderror"
 )
 
 // iamHandler handles IAM-specific request/response transformations for MCP transport.
@@ -383,6 +384,8 @@ func mapMCPServerPolicyToSDK(respMap map[string]interface{}) interface{} {
 			result["enabled"] = enabled
 		}
 	}
+
+	policyloaderror.Copy(policyRaw, result)
 
 	return result
 }

@@ -53,6 +53,7 @@ func TestIAMServiceWrapper_UpdatePolicy_NestedCondition(t *testing.T) {
 
 	_, err = w.UpdatePolicy(ctx, &UpdatePolicyRequest{
 		TenantID: "t1",
+		Name:     "p1",
 		Policy:   conditionHappyPolicy(iam.Condition{Not: &iam.Condition{Expression: "x == 2"}}),
 	})
 	var nested *iam.NestedConditionError
@@ -63,6 +64,7 @@ func TestIAMServiceWrapper_UpdatePolicy_NestedCondition(t *testing.T) {
 
 	_, err = w.UpdatePolicy(ctx, &UpdatePolicyRequest{
 		TenantID: "t1",
+		Name:     "p1",
 		Policy:   conditionHappyPolicy(iam.Condition{Expression: "x == 2"}),
 	})
 	require.NoError(t, err)

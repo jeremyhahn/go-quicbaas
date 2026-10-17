@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -169,6 +170,23 @@ func NewInvalidRequestError(description string) *OAuthError {
 // NewInvalidClientError creates an invalid_client OAuth error.
 func NewInvalidClientError(description string) *OAuthError {
 	return NewOAuthError(ErrInvalidClient, description)
+}
+
+// basicAuthChallenge is the WWW-Authenticate challenge sent with a 401
+// invalid_client to a client that authenticated with HTTP Basic. RFC 7617 §2
+// requires the realm parameter.
+const basicAuthChallenge = `Basic realm="oauth2"`
+
+// challengeBasicClient sets the WWW-Authenticate Basic challenge when the
+// request attempted HTTP Basic client authentication. Per
+// draft-ietf-oauth-v2-1-16 §3.2.4 an invalid_client response to such a request
+// must be a 401 that names the scheme the client used. Call it before writing
+// the 401.
+func challengeBasicClient(w http.ResponseWriter, r *http.Request) {
+	scheme, _, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+	if strings.EqualFold(scheme, "Basic") {
+		w.Header().Set("WWW-Authenticate", basicAuthChallenge)
+	}
 }
 
 // NewInvalidGrantError creates an invalid_grant OAuth error.

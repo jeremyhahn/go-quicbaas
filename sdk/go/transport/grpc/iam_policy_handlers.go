@@ -632,6 +632,13 @@ func convertProtoPolicyToSDK(p *iampb.Policy) *iam.Policy {
 		resp.Rules = parseRulesFromSpecYAML(p.SpecYaml)
 	}
 
+	if p.LoadError != nil {
+		resp.LoadError = &iam.PolicyLoadError{
+			Reason:      p.LoadError.Reason,
+			UnknownKeys: p.LoadError.UnknownKeys,
+		}
+	}
+
 	return resp
 }
 

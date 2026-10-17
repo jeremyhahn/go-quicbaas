@@ -77,30 +77,19 @@ func TestAuthorize(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "client_id is required")
 	})
 
-	t.Run("missing redirect_uri", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
-
-		req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?client_id=test-client", nil)
-		w := httptest.NewRecorder()
-
-		handler.Authorize(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "redirect_uri is required")
-	})
-
 	t.Run("missing response_type", func(t *testing.T) {
-		handler, _, cleanup := setupIAMHandler(t)
-		defer cleanup()
+		handler := setupAuthorizeHandler(t)
 
-		req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?client_id=test-client&redirect_uri=https://example.com/callback", nil)
+		req := httptest.NewRequest(http.MethodGet,
+			"/oauth2/authorize?client_id=app_tenant-auth_web&redirect_uri=https://app.example/callback", nil)
 		w := httptest.NewRecorder()
 
 		handler.Authorize(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "response_type is required")
+		// draft-ietf-oauth-v2-1-16 §4.1.2.1: redirected to the client, and
+		// no state because the request carried none.
+		assertAuthorizeErrorRedirect(t, w, ErrInvalidRequest, "")
+		assert.NotContains(t, w.Header().Get("Location"), "state=")
 	})
 
 	t.Run("OIDC provider not available", func(t *testing.T) {

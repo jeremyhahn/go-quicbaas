@@ -365,7 +365,6 @@ func TestPolicyClient_Update(t *testing.T) {
 		desc := "Updated description"
 		req := &UpdatePolicyRequest{
 			Description: &desc,
-			Version:     1,
 		}
 
 		policy, err := client.Update(context.Background(), "tenant-1", "test-policy", req)

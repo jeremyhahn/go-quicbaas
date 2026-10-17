@@ -244,6 +244,19 @@ Parameters:
 | `code_challenge` | PKCE | Base64url-encoded SHA256 hash |
 | `code_challenge_method` | PKCE | `S256` |
 
+On success the server answers `302 Found` to `redirect_uri` with `code`,
+`state` (when sent) and `iss` (the issuer) added to any query the registered
+URI already has.
+
+Errors follow draft-ietf-oauth-v2-1-16 §4.1.2.1:
+
+- When `client_id` is missing or unknown, or `redirect_uri` is missing or not
+  registered for the client, the server never redirects: it answers `400`
+  with a JSON error body.
+- Every later error (missing or unsupported `response_type`, missing PKCE,
+  `plain` PKCE, ...) is a `302 Found` to the validated `redirect_uri` with
+  `error`, `error_description`, `state` (when sent) and `iss`.
+
 ### Token Exchange
 
 ```
@@ -724,6 +737,28 @@ Over gRPC, the same operations are `IAMService` `CreatePolicy`, `GetPolicy`,
 Over REST, creating a policy whose name already exists in the tenant answers
 `409` with the `conflict` error body.
 
+Write responses are what the store holds after the write, not the request:
+
+- **Create** (REST `POST /policies/`, gRPC `CreatePolicy`, MCP
+  `quicbaas_iam_policy_create`): the response is the stored policy, read
+  back after the write.
+- **Update** (REST `PUT /policies/{policy_name}`, gRPC `UpdatePolicy`, MCP
+  `quicbaas_iam_policy_update`): the response is the stored policy, read
+  back after the write. The request's policy name selects the target. Over
+  gRPC, the stored spec is replaced only when `spec_yaml` is given.
+
+The requested policy name and a document's `metadata.name` must agree
+(`iam.CheckPolicyName`; a document that declares no name takes the requested
+one). On every transport (REST, gRPC, MCP):
+
+- **Update** refuses a document naming a different policy with an invalid-input
+  error (validation class: REST `400`, gRPC `InvalidArgument`) carrying the
+  `CheckPolicyName` message (`iam.PolicyNameMismatchError`); nothing is stored.
+- **Validate** reports the same case as `valid: false` with that message in
+  `errors`.
+
+The embedded transport serves no policy Update or Validate verb.
+
 A policy document (`pkg/iam/types.go` `Policy`):
 
 ```yaml
@@ -1051,6 +1086,10 @@ All errors follow this format:
 | `unauthorized_client` | Client not authorized for this grant type |
 | `unsupported_grant_type` | Grant type not supported |
 | `invalid_scope` | Requested scope is invalid |
+
+`invalid_client` from the token and introspection endpoints is a `401`. When
+the client authenticated with HTTP Basic, the response also carries
+`WWW-Authenticate: Basic realm="oauth2"` (draft-ietf-oauth-v2-1-16 §3.2.4).
 
 ### API Errors
 

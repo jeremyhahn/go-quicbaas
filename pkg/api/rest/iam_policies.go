@@ -92,7 +92,7 @@ func (h *IAMHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	resp := map[string]interface{}{
-		"policies": policies,
+		"policies": iam.NewPolicyViews(policies),
 		"limit":    limit,
 		"offset":   offset,
 	}
@@ -105,6 +105,15 @@ func (h *IAMHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 //  2. SDK CreatePolicyRequest JSON (with name, spec_yaml, etc.) - the spec_yaml
 //     field contains raw YAML that is parsed into a full policy document.
 func parsePolicyFromBody(body []byte, tenantID string) (*iam.Policy, error) {
+	// Policies are not versioned: refuse a version rather than drop it.
+	var doc map[string]interface{}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, &PolicyParseError{Reason: "invalid JSON body", Cause: err}
+	}
+	if err := iam.RefusePolicyVersionIn(doc); err != nil {
+		return nil, err
+	}
+
 	// First, try to parse as a full policy document
 	var policy iam.Policy
 	if err := json.Unmarshal(body, &policy); err == nil && policy.APIVersion != "" {
@@ -166,6 +175,17 @@ func sdkDocumentName(body []byte) string {
 		return ""
 	}
 	return document.Metadata.Name
+}
+
+// checkBodyPolicyName applies iam.CheckPolicyName to a parsed request body:
+// first to the name an SDK-format body's spec_yaml declares (which
+// parsePolicyFromBody overrode), then to the parsed policy, which then
+// carries requested.
+func checkBodyPolicyName(body []byte, policy *iam.Policy, requested string) error {
+	if err := iam.CheckPolicyName(&iam.Policy{Metadata: iam.PolicyMetadata{Name: sdkDocumentName(body)}}, requested); err != nil {
+		return err
+	}
+	return iam.CheckPolicyName(policy, requested)
 }
 
 // CreatePolicy handles POST /api/v1/tenants/{tenant_id}/policies - Create a new policy.
@@ -234,7 +254,14 @@ func (h *IAMHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusCreated, policy)
+	// Answer with what was stored, not the caller's input.
+	created, err := engine.GetPolicy(ctx, tenantID, policy.Metadata.Name)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusCreated, created)
 }
 
 // GetPolicy handles GET /api/v1/tenants/{tenant_id}/policies/{policy_name} - Get a specific policy.
@@ -287,7 +314,7 @@ func (h *IAMHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, policy)
+	RespondJSON(w, r, http.StatusOK, iam.NewPolicyView(policy))
 }
 
 // UpdatePolicy handles PUT /api/v1/tenants/{tenant_id}/policies/{policy_name} - Update a policy.
@@ -329,9 +356,12 @@ func (h *IAMHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure tenant ID and name match
+	// The URL selects the target; the document may not redirect it.
+	if err := checkBodyPolicyName(body, policy, policyName); err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
 	policy.Metadata.Tenant = tenantID
-	policy.Metadata.Name = policyName
 
 	// Validate policy
 	if err := policy.Validate(); err != nil {
@@ -367,7 +397,14 @@ func (h *IAMHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, policy)
+	// Answer with what was stored, not the caller's input.
+	updated, err := engine.GetPolicy(ctx, tenantID, policyName)
+	if err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, updated)
 }
 
 // DeletePolicy handles DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name} - Delete a policy.
@@ -482,10 +519,7 @@ func (h *IAMHandler) ValidatePolicy(w http.ResponseWriter, r *http.Request) {
 	// body the spec_yaml document's own metadata.name is checked too, since
 	// parsePolicyFromBody overrode it with the body's name.
 	requested := r.URL.Query().Get("name")
-	err = iam.CheckPolicyName(&iam.Policy{Metadata: iam.PolicyMetadata{Name: sdkDocumentName(body)}}, requested)
-	if err == nil {
-		err = iam.CheckPolicyName(policy, requested)
-	}
+	err = checkBodyPolicyName(body, policy, requested)
 	if err == nil {
 		err = engine.ValidatePolicy(policy)
 	}

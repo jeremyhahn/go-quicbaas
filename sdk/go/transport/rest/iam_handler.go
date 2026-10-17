@@ -28,6 +28,7 @@ import (
 
 	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyloaderror"
 )
 
 // IAM service prefixes for routing.
@@ -1892,6 +1893,8 @@ func mapServerPolicyToSDK(resp interface{}) interface{} {
 			result["enabled"] = enabled
 		}
 	}
+
+	policyloaderror.Copy(policyMap, result)
 
 	return result
 }

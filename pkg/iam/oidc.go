@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -102,7 +103,7 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 	// The SigningKeyManager is the only signing source: the token service
 	// signs with the manager's current key and stamps its derived kid, and
 	// the published JWKS is the manager's multi-kid set.
-	kid, signer, alg := config.SigningKeyManager.Current()
+	_, signer, alg := config.SigningKeyManager.Current()
 	if signer == nil {
 		return nil, &SigningKeyUnavailableError{}
 	}
@@ -112,22 +113,21 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 
 	tokenService := &TokenService{
 		storage:      deps.TokenStorage,
-		signingKey:   signer,
-		signingAlg:   alg,
-		currentKID:   kid,
 		keyManager:   config.SigningKeyManager,
 		tenantKeys:   config.TenantSigningKeys,
 		config:       config,
 		permResolver: deps.PermissionResolver,
 	}
 
-	return &OIDCProvider{
+	provider := &OIDCProvider{
 		config:        config,
 		identityStore: deps.IdentityStore,
 		appStorage:    deps.AppStorage,
 		tokenService:  tokenService,
 		dpopReplay:    dpop.NewMemoryReplayCache(nil),
-	}, nil
+	}
+	tokenService.verifyClaims = provider.parseVerifiedAccessTokenClaims
+	return provider, nil
 }
 
 // GetConfiguration returns the OIDC discovery configuration.
@@ -162,6 +162,8 @@ func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 			"cnf", "amr", "attest_method", "uid", "ptyp", "sid",
 		},
 		"code_challenge_methods_supported": []string{CodeChallengeMethodS256}, // OAuth 2.1 mandates S256 only
+		// Authorization responses carry iss (RFC 9207 §3).
+		"authorization_response_iss_parameter_supported": true,
 	}
 }
 
@@ -232,6 +234,10 @@ type OAuthASMetadata struct {
 	// ResourceIndicatorsSupported indicates whether Resource Indicators (RFC 8707) is supported.
 	ResourceIndicatorsSupported bool `json:"resource_indicators_supported,omitempty"`
 
+	// AuthorizationResponseIssParameterSupported indicates that authorization
+	// responses carry the iss parameter (RFC 9207 §3).
+	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported,omitempty"`
+
 	// ServiceDocumentation is a URL to the service documentation.
 	ServiceDocumentation string `json:"service_documentation,omitempty"`
 }
@@ -263,25 +269,23 @@ func (p *OIDCProvider) GetOAuthASMetadata() *OAuthASMetadata {
 		ScopesSupported:               []string{"openid", "profile", "email", "offline_access", "mcp:tools", "mcp:resources", "mcp:admin", "agent:runtime:spawn", "agent:runtime:prompt", "agent:runtime:status"},
 		CodeChallengeMethodsSupported: []string{CodeChallengeMethodS256}, // OAuth 2.1 mandates S256 only
 		ResourceIndicatorsSupported:   true,                              // RFC 8707
+
+		AuthorizationResponseIssParameterSupported: true, // RFC 9207
 	}
 }
 
 // Authorize processes an OAuth2 authorization request.
 func (p *OIDCProvider) Authorize(ctx context.Context, req *AuthorizeRequest) (*AuthorizeResponse, error) {
-	// Validate request
-	if err := p.validateAuthorizeRequest(req); err != nil {
+	// The client and its redirect URI are validated first: until they are,
+	// errors must not be redirected (draft-ietf-oauth-v2-1-16 §4.1.2.1).
+	app, err := p.validateAuthorizeClient(ctx, req)
+	if err != nil {
 		return nil, err
 	}
 
-	// Get application
-	app, err := p.appStorage.GetApp(ctx, req.ClientID)
-	if err != nil {
-		return nil, NewOAuthError(ErrOAuthInvalidClient, "invalid client_id")
-	}
-
-	// Validate redirect URI
-	if !contains(app.RedirectURIs, req.RedirectURI) {
-		return nil, NewOAuthError(ErrOAuthInvalidRequest, "invalid redirect_uri")
+	// Validate request
+	if err := p.validateAuthorizeRequest(req); err != nil {
+		return nil, err
 	}
 
 	// Validate response type
@@ -457,20 +461,57 @@ func (p *OIDCProvider) Refresh(ctx context.Context, req *RefreshRequest) (*Token
 	return p.Token(ctx, tokenReq)
 }
 
+// ErrRevokeTokenNotOwned refuses a revocation by a client the token was not
+// issued to (RFC 7009 §2.1). The token is left untouched.
+var ErrRevokeTokenNotOwned = NewOAuthError(ErrOAuthUnauthorizedClient,
+	"token was not issued to the authenticating client")
+
 // Revoke processes a token revocation request.
 func (p *OIDCProvider) Revoke(ctx context.Context, req *RevokeRequest) error {
-	// Validate client
-	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
-	if err != nil || !valid {
-		return NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+	// RFC 7009 §2.1: the client authenticates as it does at the token
+	// endpoint. Every grant there requires a registered secret, so a public
+	// client (none registered) is refused here too.
+	if err := p.AuthenticateClient(ctx, req.ClientID, req.ClientSecret); err != nil {
+		return err
 	}
 
-	// Revoke the token
-	if err := p.tokenService.RevokeToken(ctx, req.Token); err != nil {
+	target, found := p.resolveRevocationTarget(ctx, req.Token)
+	if !found {
+		// RFC 7009 §2.2: an invalid or unknown token is not an error.
+		return nil
+	}
+	if target.ClientID != req.ClientID {
+		return ErrRevokeTokenNotOwned
+	}
+
+	err := p.tokenService.storage.RevokeToken(withTokenTenant(ctx, target.TenantID), target.JTI)
+	if err != nil && !dberrors.IsNotFound(err) {
 		return NewOAuthError(ErrOAuthServerError, "failed to revoke token")
 	}
-
 	return nil
+}
+
+// revocationTarget is the token a revocation request names: the client it was
+// issued to and where its record lives.
+type revocationTarget struct {
+	ClientID string
+	TenantID string
+	JTI      string
+}
+
+// resolveRevocationTarget resolves a presented token to its record. An access token
+// is a JWT whose signature is verified before its client_id claim is trusted;
+// a refresh token is opaque, and its stored record names the client. found is
+// false for a token this provider did not issue or no longer verifies.
+func (p *OIDCProvider) resolveRevocationTarget(ctx context.Context, token string) (revocationTarget, bool) {
+	if claims, err := p.parseVerifiedAccessTokenClaims(token); err == nil && claims.JTI != "" {
+		return revocationTarget{ClientID: claims.ClientID, TenantID: claims.TenantID, JTI: claims.JTI}, true
+	}
+	stored, err := p.tokenService.storage.GetTokenByValue(ctx, token)
+	if err != nil || stored == nil {
+		return revocationTarget{}, false
+	}
+	return revocationTarget{ClientID: stored.ClientID, TenantID: stored.TenantID, JTI: stored.JTI}, true
 }
 
 // Introspect implements RFC 7662 token introspection. It verifies the token
@@ -973,12 +1014,6 @@ func publicForKIDInJWKS(jwks *jose.JSONWebKeySet, kid string) crypto.PublicKey {
 // Helper methods
 
 func (p *OIDCProvider) validateAuthorizeRequest(req *AuthorizeRequest) error {
-	if req.ClientID == "" {
-		return NewOAuthError(ErrOAuthInvalidRequest, "client_id is required")
-	}
-	if req.RedirectURI == "" {
-		return NewOAuthError(ErrOAuthInvalidRequest, "redirect_uri is required")
-	}
 	if req.ResponseType == "" {
 		return NewOAuthError(ErrOAuthInvalidRequest, "response_type is required")
 	}
@@ -986,6 +1021,34 @@ func (p *OIDCProvider) validateAuthorizeRequest(req *AuthorizeRequest) error {
 		return NewOAuthError(ErrOAuthUnsupportedResponseType, "only 'code' response_type is supported")
 	}
 	return nil
+}
+
+// validateAuthorizeClient checks that the authorization request names a
+// registered client and one of that client's registered redirect URIs. Its
+// errors are *AuthorizeDirectError: draft-ietf-oauth-v2-1-16 §4.1.2.1 forbids
+// redirecting to a redirect URI that has not been validated.
+func (p *OIDCProvider) validateAuthorizeClient(ctx context.Context, req *AuthorizeRequest) (*Application, error) {
+	if req.ClientID == "" {
+		return nil, newAuthorizeDirectError(ErrOAuthInvalidRequest, "client_id is required")
+	}
+	app, err := p.appStorage.GetApp(ctx, req.ClientID)
+	if err != nil {
+		return nil, newAuthorizeDirectError(ErrOAuthInvalidClient, "invalid client_id")
+	}
+	if req.RedirectURI == "" {
+		// redirect_uri may be omitted only when the client registered exactly
+		// one (draft-ietf-oauth-v2-1-16 §4.1.1). The resolved value is stored
+		// with the code so the token endpoint compares against it.
+		if len(app.RedirectURIs) != 1 {
+			return nil, newAuthorizeDirectError(ErrOAuthInvalidRequest, "redirect_uri is required")
+		}
+		req.RedirectURI = app.RedirectURIs[0]
+		return app, nil
+	}
+	if !redirectURIRegistered(app.RedirectURIs, req.RedirectURI) {
+		return nil, newAuthorizeDirectError(ErrOAuthInvalidRequest, "invalid redirect_uri")
+	}
+	return app, nil
 }
 
 func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
@@ -1001,8 +1064,9 @@ func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *To
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "invalid authorization code")
 	}
 
-	// Validate redirect URI
-	if authCode.RedirectURI != req.RedirectURI {
+	// redirect_uri is compared only when the client sends it, against the
+	// value the authorize step resolved (draft-ietf-oauth-v2-1-16 §4.1.3).
+	if req.RedirectURI != "" && authCode.RedirectURI != req.RedirectURI {
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "redirect_uri mismatch")
 	}
 

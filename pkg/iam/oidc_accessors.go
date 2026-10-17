@@ -129,6 +129,12 @@ func (m *OAuthASMetadata) IsResourceIndicatorsSupported() bool {
 	return m.ResourceIndicatorsSupported
 }
 
+// IsAuthorizationResponseIssParameterSupported returns true if authorization
+// responses carry the iss parameter (RFC 9207).
+func (m *OAuthASMetadata) IsAuthorizationResponseIssParameterSupported() bool {
+	return m.AuthorizationResponseIssParameterSupported
+}
+
 // Compile-time interface compliance checks.
 var (
 	_ interfaces.OIDCClaims      = (*Claims)(nil)

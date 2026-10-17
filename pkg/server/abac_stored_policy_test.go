@@ -186,7 +186,7 @@ func TestStoredPolicy_FlaggedRecordDenies(t *testing.T) {
 
 // A stored record the JSON decoder cannot read fails GetPolicy with an error
 // rather than reaching the evaluator.
-func TestStoredPolicy_UndecodableRecordFailsGet(t *testing.T) {
+func TestStoredPolicy_UndecodableRecordGetsFlaggedEntry(t *testing.T) {
 	ctx := context.Background()
 	kv := qrdbsdk.NewMemoryKVStore()
 	if err := kv.Put(ctx, iam.KeyPrefixTenant+"t-stored"+iam.KeyPrefixPolicy+"corrupt", []byte(`{"spec": {"rules": 1}}`)); err != nil {
@@ -197,8 +197,12 @@ func TestStoredPolicy_UndecodableRecordFailsGet(t *testing.T) {
 		Simulator: newQRDBPolicySimulator(),
 	})
 
-	if policy, err := engine.GetPolicy(ctx, "t-stored", "corrupt"); err == nil {
-		t.Fatalf("GetPolicy() = %+v, want a decode error", policy)
+	policy, err := engine.GetPolicy(ctx, "t-stored", "corrupt")
+	if err != nil {
+		t.Fatalf("GetPolicy() error = %v, want the flagged entry", err)
+	}
+	if policy.LoadError == nil || len(policy.Spec.Rules) != 0 {
+		t.Fatalf("GetPolicy() = %+v, want a rule-less entry carrying its load error", policy)
 	}
 }
 

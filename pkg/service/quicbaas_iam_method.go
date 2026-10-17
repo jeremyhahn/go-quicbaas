@@ -15,6 +15,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"strings"
 	"time"
 
@@ -787,13 +788,25 @@ func (w *iamServiceWrapper) CreatePolicy(ctx context.Context, req *CreatePolicyR
 
 	err = pe.CreatePolicy(ctx, req.TenantID, req.Policy)
 	if err != nil {
-		return nil, err
+		return nil, PolicyCreateError("iam.CreatePolicy", err)
 	}
 
 	return &CreatePolicyResponse{
 		Policy:    req.Policy,
 		Timestamp: time.Now(),
 	}, nil
+}
+
+// PolicyCreateError classifies a policy engine create failure for the
+// transports: a *iam.PolicyExistsError becomes an ErrAlreadyExists coded
+// error with the original kept in the chain, so errors.As still finds it.
+// Any other error is returned unchanged.
+func PolicyCreateError(op string, err error) error {
+	var exists *iam.PolicyExistsError
+	if stderrors.As(err, &exists) {
+		return WrapError(err, errors.ErrAlreadyExists, op, "")
+	}
+	return err
 }
 
 func (w *iamServiceWrapper) GetPolicy(ctx context.Context, req *GetPolicyRequest) (*GetPolicyResponse, error) {
@@ -825,13 +838,35 @@ func (w *iamServiceWrapper) UpdatePolicy(ctx context.Context, req *UpdatePolicyR
 		return nil, errors.New(errors.ErrUnavailable, "iam.UpdatePolicy", "policy engine not available")
 	}
 
-	err = pe.UpdatePolicy(ctx, req.TenantID, req.Policy)
+	if req == nil || req.Policy == nil {
+		return nil, errors.New(errors.ErrInvalidInput, "iam.UpdatePolicy", "policy is required")
+	}
+	if req.Name == "" {
+		return nil, errors.New(errors.ErrInvalidInput, "iam.UpdatePolicy", "policy name is required")
+	}
+
+	// The request selects the target; the document may not redirect it.
+	policy := *req.Policy
+	if err := iam.CheckPolicyName(&policy, req.Name); err != nil {
+		return nil, err
+	}
+	if policy.Metadata.Tenant == "" {
+		policy.Metadata.Tenant = req.TenantID
+	}
+
+	err = pe.UpdatePolicy(ctx, req.TenantID, &policy)
+	if err != nil {
+		return nil, err
+	}
+
+	// Answer with what was stored, not the caller's input.
+	updated, err := pe.GetPolicy(ctx, req.TenantID, req.Name)
 	if err != nil {
 		return nil, err
 	}
 
 	return &UpdatePolicyResponse{
-		Policy:    req.Policy,
+		Policy:    updated,
 		Timestamp: time.Now(),
 	}, nil
 }

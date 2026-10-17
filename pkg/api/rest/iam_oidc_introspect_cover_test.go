@@ -92,6 +92,25 @@ func TestIntrospect_ClientCredentialsBadSecret(t *testing.T) {
 	assert.Equal(t, "invalid_client", resp["error"])
 }
 
+// TestIntrospect_BasicBadSecretChallenge pins draft-ietf-oauth-v2-1-16
+// §3.2.4 on the introspection endpoint: a caller that failed HTTP Basic
+// client authentication gets 401 with a WWW-Authenticate Basic challenge.
+func TestIntrospect_BasicBadSecretChallenge(t *testing.T) {
+	handler, provider, _, cleanup := setupIntrospectHandler(t)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("token", mintToken(t, provider))
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(introspectClientID, "wrong-secret")
+	w := httptest.NewRecorder()
+	handler.Introspect(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, basicAuthChallenge, w.Header().Get("WWW-Authenticate"))
+}
+
 // A caller using HTTP Basic credentials is accepted (the hasBasic branch of
 // authenticateIntrospectionCaller).
 func TestIntrospect_BasicAuthCaller(t *testing.T) {

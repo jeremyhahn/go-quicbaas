@@ -2940,26 +2940,18 @@ func TestIAM91_Authorize_MissingClientID(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "client_id is required")
 }
 
-func TestIAM91_Authorize_MissingRedirectURI(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/oauth2/authorize?client_id=c1", nil)
-	w := httptest.NewRecorder()
-	handler.Authorize(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "redirect_uri is required")
-}
-
 func TestIAM91_Authorize_MissingResponseType(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
+	handler := setupAuthorizeHandler(t)
 
-	req := systemRequest(http.MethodGet, "/oauth2/authorize?client_id=c1&redirect_uri=https://x.com/cb", nil)
+	req := httptest.NewRequest(http.MethodGet, authorizeMissingResponseTypeTarget, nil)
 	w := httptest.NewRecorder()
 	handler.Authorize(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "response_type is required")
+
+	// draft-ietf-oauth-v2-1-16 §4.1.2.1: redirected to the client.
+	assertAuthorizeErrorRedirect(t, w, ErrInvalidRequest, "st-1")
+	loc, err := url.Parse(w.Header().Get("Location"))
+	require.NoError(t, err)
+	assert.Contains(t, loc.Query().Get("error_description"), "response_type is required")
 }
 
 func TestIAM91_Authorize_ServiceNotAvailable(t *testing.T) {
@@ -3486,8 +3478,8 @@ func TestIAM91_UpdatePolicy_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"apiVersion":"iam.quicbaas.io/v1","kind":"Policy","metadata":{"name":"test-policy","version":"1"},"spec":{"rules":[{"name":"r1","effect":"allow","actions":["read"],"resources":["*"]}]}}`
-	req := systemRequest(http.MethodPut, "/policies/p1", strings.NewReader(body))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "policy_name": "p1"})
+	req := systemRequest(http.MethodPut, "/policies/test-policy", strings.NewReader(body))
+	req = withChiParams(req, map[string]string{"tenant_id": "t1", "policy_name": "test-policy"})
 	w := httptest.NewRecorder()
 	handler.UpdatePolicy(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

@@ -51,15 +51,7 @@ type PermissionResolver interface {
 
 // TokenService handles token generation, validation, and storage.
 type TokenService struct {
-	storage    TokenStorage
-	signingKey crypto.Signer
-	// signingAlg is the JWS algorithm used to sign tokens. It is derived from
-	// the key manager (ES256) when present, otherwise from config.
-	signingAlg string
-	// currentKID is the kid stamped onto the "kid" JWT header so verifiers can
-	// select the matching public key from a multi-kid JWKS. NewOIDCProvider,
-	// the only constructor, sets it from the signing key manager.
-	currentKID string
+	storage TokenStorage
 	// keyManager, when set, is the authoritative xkms-backed source of signing
 	// keys; the token service re-reads the current key/kid per sign so rotation
 	// takes effect without rebuilding the service.
@@ -76,6 +68,11 @@ type TokenService struct {
 	// scope passthrough. When nil (qrdb not wired) scp falls back to the OIDC
 	// scope, preserving today's behavior.
 	permResolver PermissionResolver
+	// verifyClaims is the provider's verified access-token parse
+	// (OIDCProvider.parseVerifiedAccessTokenClaims), set by NewOIDCProvider.
+	// RevokeToken acts on a JWT's claims only through it; when nil no JWT
+	// is revoked by jti.
+	verifyClaims func(tokenString string) (*Claims, error)
 }
 
 // signingMaterial returns the signer, algorithm, and kid to use for signing a
@@ -85,7 +82,10 @@ type TokenService struct {
 // is returned rather than downgrading to the global key). When no resolver is
 // configured the static keyManager is used.
 //
-// A key manager is consulted live so a rotation is picked up immediately.
+// No key is ever substituted: when the resolved manager has no current signer
+// the call fails with SigningKeyUnavailableError, or with
+// TenantSigningKeyUnavailableError for a dedicated tenant. A key manager is
+// consulted live so a rotation is picked up immediately.
 func (s *TokenService) signingMaterial(ctx context.Context, tenantID string) (crypto.Signer, string, string, error) {
 	km := s.keyManager
 	if s.tenantKeys != nil {
@@ -95,17 +95,17 @@ func (s *TokenService) signingMaterial(ctx context.Context, tenantID string) (cr
 		}
 		km = resolved
 	}
-	if km != nil {
-		kid, signer, alg := km.Current()
-		if signer != nil {
-			return signer, alg, kid, nil
-		}
+	if km == nil {
+		return nil, "", "", &SigningKeyUnavailableError{}
 	}
-	alg := s.signingAlg
-	if alg == "" {
-		alg = s.config.SigningAlgorithm
+	kid, signer, alg := km.Current()
+	if signer != nil {
+		return signer, alg, kid, nil
 	}
-	return s.signingKey, alg, s.currentKID, nil
+	if s.tenantKeys != nil && km != s.tenantKeys.Global() {
+		return nil, "", "", &TenantSigningKeyUnavailableError{TenantID: tenantID, Cause: &SigningKeyUnavailableError{}}
+	}
+	return nil, "", "", &SigningKeyUnavailableError{}
 }
 
 // GenerateAccessToken generates a new JWT access token.
@@ -443,18 +443,19 @@ func (s *TokenService) ValidateAuthCode(ctx context.Context, code string) (*Auth
 
 // RevokeToken revokes a token by its JTI or value.
 func (s *TokenService) RevokeToken(ctx context.Context, tokenValue string) error {
-	// Try to parse as JWT first (without verification to extract JTI).
-	claims, err := xkms.JWTParse(tokenValue)
-	if err == nil && claims != nil {
-		// The token tenant is authoritative from the tenant_id claim. Inject
-		// it into the context so the tenant-scoped token index is resolved
-		// (revocation already parses the JWT, so this is free).
-		if tid, ok := claims["tenant_id"].(string); ok && tid != "" {
-			ctx = tenantctx.WithTenant(ctx, tid)
-		}
-		// Extract JTI from JWT
-		if jti, ok := claims["jti"].(string); ok {
-			return s.storage.RevokeToken(ctx, jti)
+	// A JWT is revoked by its jti only after its signature verifies: an
+	// unverified token must never choose the jti revoked or the tenant it is
+	// revoked in. The verified parse also refuses an expired token, which no
+	// verifier accepts any more, so it is not revoked by jti either.
+	if s.verifyClaims != nil {
+		claims, err := s.verifyClaims(tokenValue)
+		if err == nil && claims.JTI != "" {
+			// The verified tenant_id claim is authoritative: inject it so
+			// the tenant-scoped token index is resolved.
+			if claims.TenantID != "" {
+				ctx = tenantctx.WithTenant(ctx, claims.TenantID)
+			}
+			return s.storage.RevokeToken(ctx, claims.JTI)
 		}
 	}
 
