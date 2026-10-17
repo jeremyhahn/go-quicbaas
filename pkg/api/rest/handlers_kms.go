@@ -993,6 +993,25 @@ func (s *Server) HandleUpdateKeyStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The KMS service resolves the key in the caller's tenant (#1476).
+	if kmsService := s.service.KMS(); kmsService != nil {
+		svcResp, err := kmsService.UpdateKeyStatus(ctx, &service.UpdateKeyStatusRequest{
+			KeyID:  keyID,
+			Status: service.KeyStatus(status),
+		})
+		if err != nil {
+			s.handleKMSError(w, r, err)
+			return
+		}
+		RespondJSON(w, r, http.StatusOK, &UpdateKeyStatusRESTResponse{
+			KeyID:     svcResp.KeyID,
+			Status:    string(svcResp.Status),
+			Timestamp: svcResp.Timestamp.Unix(),
+		})
+		return
+	}
+
+	// Fallback: KMS manager directly (no tenant isolation)
 	kmsMgr := s.service.KMSManager()
 	if kmsMgr == nil {
 		RespondError(w, r, http.StatusInternalServerError, ErrKMSServiceUnavailable)
@@ -1037,6 +1056,38 @@ func (s *Server) HandleListKeyVersions(w http.ResponseWriter, r *http.Request) {
 	// limit := 100
 	// cursor := r.URL.Query().Get("cursor")
 
+	// The KMS service resolves the key in the caller's tenant (#1476).
+	if kmsService := s.service.KMS(); kmsService != nil {
+		svcResp, err := kmsService.ListKeyVersions(ctx, &service.ListKeyVersionsRequest{KeyID: keyID})
+		if err != nil {
+			s.handleKMSError(w, r, err)
+			return
+		}
+		versions := make([]*KeyVersionResponse, 0, len(svcResp.Versions))
+		for _, v := range svcResp.Versions {
+			version, err := conv.SafeUint64ToInt(v.Version)
+			if err != nil {
+				s.handleServiceError(w, r, api.NewEncodeError("rest.kms", "key version", err))
+				return
+			}
+			versions = append(versions, &KeyVersionResponse{
+				Version:   version,
+				Status:    string(v.Status),
+				Algorithm: string(v.Algorithm),
+				CreatedAt: v.CreatedAt.Unix(),
+			})
+		}
+		RespondJSON(w, r, http.StatusOK, &ListKeyVersionsRESTResponse{
+			KeyID:      keyID,
+			Versions:   versions,
+			NextCursor: svcResp.NextCursor,
+			HasMore:    svcResp.HasMore,
+			Timestamp:  svcResp.Timestamp.Unix(),
+		})
+		return
+	}
+
+	// Fallback: KMS manager directly (no tenant isolation)
 	kmsMgr := s.service.KMSManager()
 	if kmsMgr == nil {
 		RespondError(w, r, http.StatusInternalServerError, ErrKMSServiceUnavailable)

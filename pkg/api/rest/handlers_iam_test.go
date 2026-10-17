@@ -1069,6 +1069,7 @@ func TestHandleUpdateKeyStatusEnableErrorBoost(t *testing.T) {
 		Op:   "EnableKey",
 		Err:  stderrors.New("key not found"),
 	}).Once()
+	mockService.DisableKMS = true
 	mockService.On("KMSManager").Return(mockKMSMgr)
 
 	body := `{"status":"enabled"}`
@@ -1095,6 +1096,7 @@ func TestHandleUpdateKeyStatusDisableErrorBoost(t *testing.T) {
 		Op:   "DisableKey",
 		Err:  stderrors.New("internal error"),
 	}).Once()
+	mockService.DisableKMS = true
 	mockService.On("KMSManager").Return(mockKMSMgr)
 
 	body := `{"status":"disabled"}`

@@ -530,7 +530,20 @@ func (s *KMSServer) RevokeKey(ctx context.Context, req *pb.RevokeKeyRequest) (*p
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
-	// Call KMS manager to revoke key
+	// Route through the service layer for tenant-aware key resolution
+	if s.kmsSvc != nil {
+		svcResp, err := s.kmsSvc.RevokeKey(ctx, &service.RevokeKeyRequest{KeyID: req.KeyId})
+		if err != nil {
+			return nil, convertKMSError(err)
+		}
+		return &pb.RevokeKeyResponse{
+			KeyId:     req.KeyId,
+			Status:    convertKeyStatus(svcResp.Status),
+			Timestamp: svcResp.Timestamp.Unix(),
+		}, nil
+	}
+
+	// Fallback: call KMS manager directly (no tenant isolation)
 	err := s.kmsMgr.RevokeKey(ctx, req.KeyId)
 	if err != nil {
 		return nil, convertKMSError(err)
@@ -553,6 +566,25 @@ func (s *KMSServer) DeleteKey(ctx context.Context, req *pb.DeleteKeyRequest) (*p
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
+	// Route through the service layer for tenant-aware key resolution
+	if s.kmsSvc != nil {
+		svcResp, err := s.kmsSvc.DeleteKey(ctx, &service.DeleteKeyRequest{
+			KeyID:             req.KeyId,
+			PendingWindowDays: int(req.PendingWindowDays),
+			Force:             req.Force,
+		})
+		if err != nil {
+			return nil, convertKMSError(err)
+		}
+		return &pb.DeleteKeyResponse{
+			KeyId:        req.KeyId,
+			Status:       convertKeyStatus(svcResp.Status),
+			DeletionDate: svcResp.DeletionDate.Unix(),
+			Timestamp:    svcResp.Timestamp.Unix(),
+		}, nil
+	}
+
+	// Fallback: call KMS manager directly (no tenant isolation).
 	// Disable key first if not forcing
 	if !req.Force {
 		if err := s.kmsMgr.DisableKey(ctx, req.KeyId); err != nil {
@@ -591,7 +623,24 @@ func (s *KMSServer) GetKeyMetadata(ctx context.Context, req *pb.GetKeyMetadataRe
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
-	// Call KMS manager to get key metadata
+	// Route through the service layer for tenant-aware key resolution
+	if s.kmsSvc != nil {
+		svcResp, err := s.kmsSvc.GetKeyMetadata(ctx, &service.GetKeyMetadataRequest{KeyID: req.KeyId})
+		if err != nil {
+			return nil, convertKMSError(err)
+		}
+		var n responseNarrower
+		resp := &pb.GetKeyMetadataResponse{
+			Metadata:  convertKeyMetadata(&n, svcResp.Metadata),
+			Timestamp: svcResp.Timestamp.Unix(),
+		}
+		if err := n.err(); err != nil {
+			return nil, err
+		}
+		return resp, nil
+	}
+
+	// Fallback: call KMS manager directly (no tenant isolation)
 	result, err := s.kmsMgr.GetKey(ctx, req.KeyId)
 	if err != nil {
 		return nil, convertKMSError(err)
@@ -622,7 +671,35 @@ func (s *KMSServer) UpdateKeyMetadata(ctx context.Context, req *pb.UpdateKeyMeta
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
-	// Get existing metadata
+	// Route through the service layer for tenant-aware key resolution
+	if s.kmsSvc != nil {
+		svcReq := &service.UpdateKeyMetadataRequest{
+			KeyID:      req.KeyId,
+			Tags:       req.Tags,
+			RemoveTags: req.RemoveTags,
+		}
+		if req.Name != "" {
+			svcReq.Name = &req.Name
+		}
+		if req.Description != "" {
+			svcReq.Description = &req.Description
+		}
+		svcResp, err := s.kmsSvc.UpdateKeyMetadata(ctx, svcReq)
+		if err != nil {
+			return nil, convertKMSError(err)
+		}
+		var n responseNarrower
+		resp := &pb.UpdateKeyMetadataResponse{
+			Metadata:  convertKeyMetadata(&n, svcResp.Metadata),
+			Timestamp: svcResp.Timestamp.Unix(),
+		}
+		if err := n.err(); err != nil {
+			return nil, err
+		}
+		return resp, nil
+	}
+
+	// Fallback: get existing metadata from the KMS manager (no tenant isolation)
 	result, err := s.kmsMgr.GetKey(ctx, req.KeyId)
 	if err != nil {
 		return nil, convertKMSError(err)
@@ -679,6 +756,29 @@ func (s *KMSServer) UpdateKeyStatus(ctx context.Context, req *pb.UpdateKeyStatus
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
+	if req.Status != pb.KeyStatus_KEY_STATUS_ENABLED && req.Status != pb.KeyStatus_KEY_STATUS_DISABLED {
+		return nil, status.Error(codes.InvalidArgument, "unsupported status transition")
+	}
+
+	// Route through the service layer for tenant-aware key resolution
+	if s.kmsSvc != nil {
+		svcResp, err := s.kmsSvc.UpdateKeyStatus(ctx, &service.UpdateKeyStatusRequest{
+			KeyID:   req.KeyId,
+			Version: req.Version,
+			Status:  convertProtoToServiceKeyStatus(req.Status),
+		})
+		if err != nil {
+			return nil, convertKMSError(err)
+		}
+		return &pb.UpdateKeyStatusResponse{
+			KeyId:     req.KeyId,
+			Version:   req.Version,
+			Status:    convertKeyStatus(svcResp.Status),
+			Timestamp: svcResp.Timestamp.Unix(),
+		}, nil
+	}
+
+	// Fallback: call KMS manager directly (no tenant isolation)
 	var err error
 	switch req.Status {
 	case pb.KeyStatus_KEY_STATUS_ENABLED:

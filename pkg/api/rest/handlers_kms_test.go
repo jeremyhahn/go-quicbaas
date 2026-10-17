@@ -2327,6 +2327,7 @@ func TestHandleUpdateKeyStatusKMSManagerNil(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
+	mockService.DisableKMS = true
 	mockService.On("KMSManager").Return(nil)
 
 	body := `{"status":"enabled"}`
@@ -2370,6 +2371,7 @@ func TestHandleListKeyVersionsKMSManagerNil(t *testing.T) {
 	server, mockService, cleanup := setupMockServer(t)
 	defer cleanup()
 
+	mockService.DisableKMS = true
 	mockService.On("KMSManager").Return(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/kms/keys/test-key/versions", nil)
@@ -2391,6 +2393,7 @@ func TestHandleListKeyVersionsWrongReturnType(t *testing.T) {
 
 	mockKMSMgr := &MockKMSManager{}
 	mockKMSMgr.On("GetKey", mock.Anything, "test-key").Return("wrong-type", nil).Once()
+	mockService.DisableKMS = true
 	mockService.On("KMSManager").Return(mockKMSMgr)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/kms/keys/test-key/versions", nil)

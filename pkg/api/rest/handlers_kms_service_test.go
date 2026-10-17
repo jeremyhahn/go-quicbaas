@@ -478,6 +478,7 @@ func TestHandleUpdateKeyStatus_DisableKey(t *testing.T) {
 
 	mockKMS := &MockKMSManager{}
 	mockKMS.On("DisableKey", mock.Anything, "key-123").Return(nil).Once()
+	mockService.DisableKMS = true
 	mockService.On("KMSManager").Return(mockKMS)
 
 	rctx := chi.NewRouteContext()
@@ -506,6 +507,7 @@ func TestHandleUpdateKeyStatus_EnableKey(t *testing.T) {
 
 	mockKMS := &MockKMSManager{}
 	mockKMS.On("EnableKey", mock.Anything, "key-456").Return(nil).Once()
+	mockService.DisableKMS = true
 	mockService.On("KMSManager").Return(mockKMS)
 
 	rctx := chi.NewRouteContext()
