@@ -119,7 +119,13 @@ func TestExecuteIAMPolicyValidate(t *testing.T) {
 			})
 			require.NoError(t, err)
 			require.NotNil(t, captured)
-			assert.Equal(t, name, captured.Name)
+			// Validate predicts Create: with no top-level name, the body's
+			// name ("p1") is the one Create would store the policy under.
+			want := name
+			if want == "" {
+				want = "p1"
+			}
+			assert.Equal(t, want, captured.Name)
 		}
 	})
 

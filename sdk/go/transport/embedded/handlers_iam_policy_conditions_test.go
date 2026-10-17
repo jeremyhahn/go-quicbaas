@@ -100,6 +100,55 @@ func TestHandleIAMPolicyCreate_SpecYAMLFlatConditionStored(t *testing.T) {
 	assert.Equal(t, policyConditionsTenant, stored.Metadata.Tenant)
 }
 
+// TestHandleIAMPolicyCreate_SpecYAMLDocumentName pins that a spec_yaml
+// document naming another policy is refused and nothing is stored, while a
+// matching document and a bare spec are stored under the request's name.
+func TestHandleIAMPolicyCreate_SpecYAMLDocumentName(t *testing.T) {
+	fullDocument := func(name string) []byte {
+		return []byte(`apiVersion: iam.quicbaas.io/v1
+kind: Policy
+metadata:
+  name: ` + name + `
+spec:
+  rules:
+    - name: r1
+      effect: allow
+      actions: ["read"]
+      resources: ["doc/*"]
+`)
+	}
+	tests := []struct {
+		name     string
+		specYAML []byte
+		wantErr  bool
+	}{
+		{"mismatch refused", fullDocument("other"), true},
+		{"match accepted", fullDocument("p1"), false},
+		{"bare spec takes the request name", specYAMLWithWhen("      - expression: \"x == 1\"\n"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newPolicyStoreTestService(t)
+			err := createPolicyViaEmbedded(t, svc, &iamsdk.CreatePolicyRequest{
+				Name:     "p1",
+				SpecYAML: tt.specYAML,
+			})
+			if tt.wantErr {
+				require.Error(t, err)
+				want := (&iam.PolicyNameMismatchError{Requested: "p1", Document: "other"}).Error()
+				assert.Contains(t, err.Error(), want)
+				assertPolicyNotStored(t, svc, "p1")
+				assertPolicyNotStored(t, svc, "other")
+				return
+			}
+			require.NoError(t, err)
+			stored, err := svc.policy.GetPolicy(context.Background(), policyConditionsTenant, "p1")
+			require.NoError(t, err)
+			assert.Equal(t, "p1", stored.Metadata.Name)
+		})
+	}
+}
+
 func TestHandleIAMPolicyCreate_BadSpecYAMLRefused(t *testing.T) {
 	svc := newPolicyStoreTestService(t)
 	err := createPolicyViaEmbedded(t, svc, &iamsdk.CreatePolicyRequest{

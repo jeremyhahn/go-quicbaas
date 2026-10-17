@@ -956,8 +956,9 @@ func (s *IAMServer) CreatePolicy(ctx context.Context, req *iampb.CreatePolicyReq
 		return nil, status.Error(codes.InvalidArgument, "spec_yaml is required")
 	}
 
+	// Parse without the request's name so a full document keeps its own
+	// metadata.name for the check below.
 	policy, err := iam.ParsePolicyYAML(req.SpecYaml, iam.PolicyMetadata{
-		Name:        req.Name,
 		Tenant:      req.TenantId,
 		Description: req.Description,
 		Labels:      req.Labels,
@@ -965,6 +966,10 @@ func (s *IAMServer) CreatePolicy(ctx context.Context, req *iampb.CreatePolicyReq
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid spec_yaml: %v", err)
+	}
+	// The request selects the name; the document may not name another policy.
+	if err := iam.CheckPolicyName(policy, req.Name); err != nil {
+		return nil, convertIAMError(err)
 	}
 
 	created, err := s.iamService.CreatePolicy(ctx, policy)

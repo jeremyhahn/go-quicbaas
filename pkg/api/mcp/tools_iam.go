@@ -1845,8 +1845,9 @@ func (r *ToolRegistry) executeIAMPolicyCreate(ctx context.Context, args map[stri
 	}
 
 	// If the policy doesn't have apiVersion, try parsing from SDK format with spec_yaml
+	var name string
 	if policy.APIVersion == "" {
-		policy, err = buildPolicyFromSDKFormat(policyRaw, tenantID)
+		policy, name, err = buildPolicyFromSDKFormat(policyRaw, tenantID)
 		if err != nil {
 			return nil, err
 		}
@@ -1854,6 +1855,7 @@ func (r *ToolRegistry) executeIAMPolicyCreate(ctx context.Context, args map[stri
 
 	req := &service.CreatePolicyRequest{
 		TenantID: tenantID,
+		Name:     name,
 		Policy:   policy,
 	}
 
@@ -1867,18 +1869,28 @@ func (r *ToolRegistry) executeIAMPolicyCreate(ctx context.Context, args map[stri
 // buildPolicyFromSDKFormat constructs an iam.Policy from SDK-format fields.
 // The SDK sends {name, spec_yaml, description, enabled, ...} instead of the
 // server format {apiVersion, kind, metadata, spec}.
-func buildPolicyFromSDKFormat(policyRaw map[string]interface{}, tenantID string) (*iam.Policy, error) {
+func buildPolicyFromSDKFormat(policyRaw map[string]interface{}, tenantID string) (*iam.Policy, string, error) {
 	if err := refuseUntranslatedPolicyKeys(policyRaw); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	name, _ := policyRaw["name"].(string)
 	specYAML, _ := policyRaw["spec_yaml"].(string)
 	if specYAML == "" {
 		// Without spec_yaml there are no rules to store, and a rule-less
 		// policy is never what the caller described.
-		return nil, api.NewRequiredFieldError("policy.spec_yaml")
+		return nil, "", api.NewRequiredFieldError("policy.spec_yaml")
 	}
-	return parseSDKPolicySpec(policyRaw, tenantID, name, specYAML)
+	// Keep a full document's own metadata.name: the service checks it
+	// against the body's name (iam.CheckPolicyName). A bare spec declares
+	// none and takes the body's name.
+	policy, err := parseSDKPolicySpec(policyRaw, tenantID, "", specYAML)
+	if err != nil {
+		return nil, "", err
+	}
+	if policy.Metadata.Name == "" {
+		policy.Metadata.Name = name
+	}
+	return policy, name, nil
 }
 
 // sdkPolicyKeys are the SDK-format policy keys the MCP policy tools
@@ -2451,16 +2463,23 @@ func (r *ToolRegistry) executeIAMPolicyValidate(ctx context.Context, args map[st
 	}
 
 	// If the policy doesn't have apiVersion, try parsing from SDK format
+	name := getString(args, "name")
 	if policy.APIVersion == "" {
-		policy, err = buildPolicyFromSDKFormat(withoutSDKPolicyRecordKeys(policyRaw), tenantID)
+		var bodyName string
+		policy, bodyName, err = buildPolicyFromSDKFormat(withoutSDKPolicyRecordKeys(policyRaw), tenantID)
 		if err != nil {
 			return nil, err
+		}
+		// Validate what Create would store: the body's name applies when
+		// no name is given.
+		if name == "" {
+			name = bodyName
 		}
 	}
 
 	req := &service.ValidatePolicyRequest{
 		Policy: policy,
-		Name:   getString(args, "name"),
+		Name:   name,
 	}
 
 	resp, err := iamSvc.ValidatePolicy(ctx, req)

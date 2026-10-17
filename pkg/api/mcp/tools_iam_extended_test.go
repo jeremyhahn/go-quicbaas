@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // =============================================================================
@@ -85,7 +86,7 @@ func TestConvertStringNumerics_EmptyMap(t *testing.T) {
 
 func TestBuildPolicyFromSDKFormat_NoSpecYAML(t *testing.T) {
 	// Without spec_yaml the policy has no rules; it is refused, not built.
-	policy, err := buildPolicyFromSDKFormat(map[string]interface{}{
+	policy, _, err := buildPolicyFromSDKFormat(map[string]interface{}{
 		"name":        "test-policy",
 		"description": "A test policy",
 	}, "tenant-1")
@@ -95,7 +96,7 @@ func TestBuildPolicyFromSDKFormat_NoSpecYAML(t *testing.T) {
 }
 
 func TestBuildPolicyFromSDKFormat_TranslatesMetadata(t *testing.T) {
-	policy, err := buildPolicyFromSDKFormat(map[string]interface{}{
+	policy, _, err := buildPolicyFromSDKFormat(map[string]interface{}{
 		"name":      "read-docs",
 		"spec_yaml": "rules: []",
 		"labels":    map[string]interface{}{"team": "a"},
@@ -122,7 +123,7 @@ func TestBuildPolicyFromSDKFormat_RefusesUntranslatedKeys(t *testing.T) {
 		{"effect_allow_string", "effect", "allow"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := buildPolicyFromSDKFormat(map[string]interface{}{
+			_, _, err := buildPolicyFromSDKFormat(map[string]interface{}{
 				"name":      "p",
 				"spec_yaml": "rules: []",
 				tc.key:      tc.val,
@@ -138,7 +139,7 @@ func TestBuildPolicyFromSDKFormat_SpecOnlyYAML(t *testing.T) {
     resources: ["documents"]
     effect: "allow"`
 
-	policy, err := buildPolicyFromSDKFormat(map[string]interface{}{
+	policy, _, err := buildPolicyFromSDKFormat(map[string]interface{}{
 		"name":        "read-docs",
 		"spec_yaml":   specYAML,
 		"description": "Read documents policy",
@@ -160,20 +161,28 @@ spec:
       resources: ["files"]
       effect: "allow"`
 
-	policy, err := buildPolicyFromSDKFormat(map[string]interface{}{
+	// The document keeps its own name and the body's name is returned
+	// beside it, so the service refuses the mismatch instead of renaming.
+	policy, name, err := buildPolicyFromSDKFormat(map[string]interface{}{
 		"name":        "override-name",
 		"spec_yaml":   fullYAML,
 		"description": "Override desc",
 	}, "tenant-1")
 	require.NoError(t, err)
 	require.NotNil(t, policy)
-	assert.Equal(t, "override-name", policy.Metadata.Name)
+	assert.Equal(t, "original-name", policy.Metadata.Name)
+	assert.Equal(t, "override-name", name)
 	assert.Equal(t, "tenant-1", policy.Metadata.Tenant)
 	assert.Equal(t, "Override desc", policy.Metadata.Description)
+
+	var mismatch *iam.PolicyNameMismatchError
+	require.ErrorAs(t, iam.CheckPolicyName(policy, name), &mismatch)
+	assert.Equal(t, "override-name", mismatch.Requested)
+	assert.Equal(t, "original-name", mismatch.Document)
 }
 
 func TestBuildPolicyFromSDKFormat_InvalidSpecYAML(t *testing.T) {
-	_, err := buildPolicyFromSDKFormat(map[string]interface{}{
+	_, _, err := buildPolicyFromSDKFormat(map[string]interface{}{
 		"spec_yaml": "{{invalid yaml",
 	}, "tenant-1")
 	require.Error(t, err)

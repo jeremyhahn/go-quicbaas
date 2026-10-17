@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -107,4 +108,59 @@ func TestIAMServiceWrapper_UpdatePolicy_RefusesMissingInput(t *testing.T) {
 		Policy:   happyPolicy(updatePolicyWrapperTenant, "target"),
 	})
 	assert.Error(t, err)
+}
+
+func TestIAMServiceWrapper_CreatePolicy_DocumentName(t *testing.T) {
+	tests := []struct {
+		name    string
+		docName string
+		wantErr bool
+	}{
+		{"mismatch refused", "other", true},
+		{"match accepted", "target", false},
+		{"nameless document takes the requested name", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider, pe := newHappyPolicyProvider()
+			w := &iamServiceWrapper{provider: provider}
+			ctx := context.Background()
+
+			doc := happyPolicy(updatePolicyWrapperTenant, tt.docName)
+			resp, err := w.CreatePolicy(ctx, &CreatePolicyRequest{
+				TenantID: updatePolicyWrapperTenant,
+				Name:     "target",
+				Policy:   doc,
+			})
+			assert.Equal(t, tt.docName, doc.Metadata.Name, "the caller's document must not be mutated")
+
+			if tt.wantErr {
+				var mismatch *iam.PolicyNameMismatchError
+				require.True(t, stderrors.As(err, &mismatch), "got %T: %v", err, err)
+				assert.Equal(t, "target", mismatch.Requested)
+				assert.Equal(t, "other", mismatch.Document)
+				for _, name := range []string{"target", "other"} {
+					_, getErr := pe.GetPolicy(ctx, updatePolicyWrapperTenant, name)
+					assert.Error(t, getErr, "a refused create must store nothing under %q", name)
+				}
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "target", resp.Policy.Metadata.Name)
+			stored, err := pe.GetPolicy(ctx, updatePolicyWrapperTenant, "target")
+			require.NoError(t, err)
+			assert.Equal(t, "target", stored.Metadata.Name)
+		})
+	}
+}
+
+func TestIAMServiceWrapper_CreatePolicy_RefusesNilPolicy(t *testing.T) {
+	provider, _ := newHappyPolicyProvider()
+	w := &iamServiceWrapper{provider: provider}
+	ctx := context.Background()
+
+	_, err := w.CreatePolicy(ctx, nil)
+	assert.True(t, errors.IsInvalidInput(err), "nil request: %v", err)
+	_, err = w.CreatePolicy(ctx, &CreatePolicyRequest{TenantID: updatePolicyWrapperTenant, Name: "target"})
+	assert.True(t, errors.IsInvalidInput(err), "nil policy: %v", err)
 }

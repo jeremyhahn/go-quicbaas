@@ -980,6 +980,11 @@ type CreatePolicyRequest struct {
 	// TenantID is the owning tenant
 	TenantID string `json:"tenant_id"`
 
+	// Name is the name the policy is stored under. Empty keeps the
+	// document's own metadata.name; otherwise the document may not name
+	// another policy (iam.CheckPolicyName).
+	Name string `json:"name,omitempty"`
+
 	// Policy is the policy document
 	Policy *iam.Policy `json:"policy"`
 }

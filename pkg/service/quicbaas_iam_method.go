@@ -775,13 +775,23 @@ func (w *iamServiceWrapper) CreatePolicy(ctx context.Context, req *CreatePolicyR
 		return nil, errors.New(errors.ErrUnavailable, "iam.CreatePolicy", "policy engine not available")
 	}
 
-	err = pe.CreatePolicy(ctx, req.TenantID, req.Policy)
+	if req == nil || req.Policy == nil {
+		return nil, errors.New(errors.ErrInvalidInput, "iam.CreatePolicy", "policy is required")
+	}
+
+	// The request selects the name; the document may not name another policy.
+	policy := *req.Policy
+	if err := iam.CheckPolicyName(&policy, req.Name); err != nil {
+		return nil, err
+	}
+
+	err = pe.CreatePolicy(ctx, req.TenantID, &policy)
 	if err != nil {
 		return nil, PolicyCreateError("iam.CreatePolicy", err)
 	}
 
 	return &CreatePolicyResponse{
-		Policy:    req.Policy,
+		Policy:    &policy,
 		Timestamp: time.Now(),
 	}, nil
 }

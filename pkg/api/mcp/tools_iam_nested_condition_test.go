@@ -24,6 +24,11 @@ func newEnginePolicyService() (*mockIAMService, iam.PolicyStorage) {
 	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{Storage: storage})
 	return &mockIAMService{
 		createPolicyFunc: func(ctx context.Context, req *service.CreatePolicyRequest) (*service.CreatePolicyResponse, error) {
+			// Mirror the service: the request's name is checked against
+			// the document's own (iam.CheckPolicyName).
+			if err := iam.CheckPolicyName(req.Policy, req.Name); err != nil {
+				return nil, err
+			}
 			if err := engine.CreatePolicy(ctx, req.TenantID, req.Policy); err != nil {
 				return nil, err
 			}

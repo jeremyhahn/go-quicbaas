@@ -880,8 +880,15 @@ func handleIAMPolicyCreate(ctx context.Context, svc service.QuicBaaS, req interf
 	// and gRPC.
 	var policy *iam.Policy
 	if len(sdkReq.SpecYAML) > 0 {
-		policy, err = iam.ParsePolicyYAML(sdkReq.SpecYAML, meta)
+		// Parse without the request's name so a full document keeps its
+		// own metadata.name; the document may not name another policy.
+		docMeta := meta
+		docMeta.Name = ""
+		policy, err = iam.ParsePolicyYAML(sdkReq.SpecYAML, docMeta)
 		if err != nil {
+			return nil, err
+		}
+		if err := iam.CheckPolicyName(policy, sdkReq.Name); err != nil {
 			return nil, err
 		}
 	} else {

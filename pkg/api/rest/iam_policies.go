@@ -220,6 +220,13 @@ func (h *IAMHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An SDK body's name selects where the policy is stored; its
+	// spec_yaml document may not name another policy.
+	if err := checkBodyPolicyName(body, policy, policy.Metadata.Name); err != nil {
+		h.server.handleServiceError(w, r, err)
+		return
+	}
+
 	// Validate policy
 	if err := policy.Validate(); err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,

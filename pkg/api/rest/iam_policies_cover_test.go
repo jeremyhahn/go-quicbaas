@@ -315,6 +315,74 @@ spec:
 	}
 }
 
+// TestCreatePolicy_DocumentName pins that an SDK-format Create whose
+// spec_yaml document names another policy is refused and stores nothing; a
+// matching document and a bare spec are stored under the body's name.
+func TestCreatePolicy_DocumentName(t *testing.T) {
+	fullSpec := func(docName string) []byte {
+		return []byte(`apiVersion: iam.quicbaas.io/v1
+kind: Policy
+metadata:
+  name: ` + docName + `
+spec:
+  subjects:
+    authenticated: true
+  rules:
+    - name: r1
+      effect: allow
+      actions: [read]
+      resources: ["docs/*"]
+`)
+	}
+	bareSpec := []byte(`subjects:
+  authenticated: true
+rules:
+  - name: r1
+    effect: allow
+    actions: [read]
+    resources: ["docs/*"]
+`)
+	tests := []struct {
+		name     string
+		specYAML []byte
+		wantCode int
+	}{
+		{"document names another policy", fullSpec("other"), http.StatusBadRequest},
+		{"document names this policy", fullSpec("p1"), http.StatusCreated},
+		{"bare spec takes the body name", bareSpec, http.StatusCreated},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, cleanup := setupPolicyHandler(t)
+			defer cleanup()
+			w := httptest.NewRecorder()
+			handler.CreatePolicy(w, policyRequest(t, http.MethodPost, "/x",
+				map[string]interface{}{"name": "p1", "spec_yaml": tt.specYAML},
+				map[string]string{"tenant_id": policyTenant}))
+			require.Equal(t, tt.wantCode, w.Code, "body: %s", w.Body.String())
+
+			if tt.wantCode == http.StatusCreated {
+				var got iam.Policy
+				require.NoError(t, json.Unmarshal([]byte(getPolicyBody(t, handler, "p1")), &got))
+				assert.Equal(t, "p1", got.Metadata.Name)
+				return
+			}
+			var resp struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			want := (&iam.PolicyNameMismatchError{Requested: "p1", Document: "other"}).Error()
+			assert.Contains(t, resp.Error, want)
+			for _, name := range []string{"p1", "other"} {
+				w = httptest.NewRecorder()
+				handler.GetPolicy(w, policyRequest(t, http.MethodGet, "/x", nil,
+					map[string]string{"tenant_id": policyTenant, "policy_name": name}))
+				assert.Equal(t, http.StatusNotFound, w.Code, "a refused create must store nothing under %q", name)
+			}
+		})
+	}
+}
+
 func TestUpdatePolicy_UnknownPolicyIsNotFound(t *testing.T) {
 	handler, cleanup := setupPolicyHandler(t)
 	defer cleanup()

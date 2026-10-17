@@ -284,6 +284,44 @@ rules:
 	assert.Equal(t, "fresh", resp.Description)
 }
 
+func TestGRPC_CreatePolicyRefusesMismatchedDocumentName(t *testing.T) {
+	t.Parallel()
+	server := newPolicyGRPCStack(t, "existing")
+
+	_, err := server.CreatePolicy(callerContext(updatePolicyTenant), &iampb.CreatePolicyRequest{
+		TenantId: updatePolicyTenant,
+		Name:     "create-target",
+		SpecYaml: namedPolicyDocument("other"),
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	want := iam.CheckPolicyName(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "other"}}, "create-target").Error()
+	assert.Contains(t, status.Convert(err).Message(), want)
+
+	for _, name := range []string{"create-target", "other"} {
+		_, err := server.GetPolicy(callerContext(updatePolicyTenant), &iampb.GetPolicyRequest{
+			TenantId:   updatePolicyTenant,
+			PolicyName: name,
+		})
+		assert.Equal(t, codes.NotFound, status.Code(err), "a refused create must store nothing under %q", name)
+	}
+}
+
+func TestGRPC_CreatePolicyAcceptsMatchingDocumentName(t *testing.T) {
+	t.Parallel()
+	server := newPolicyGRPCStack(t, "existing")
+
+	_, err := server.CreatePolicy(callerContext(updatePolicyTenant), &iampb.CreatePolicyRequest{
+		TenantId: updatePolicyTenant,
+		Name:     "create-match",
+		SpecYaml: namedPolicyDocument("create-match"),
+	})
+	require.NoError(t, err)
+
+	_, stored := storedPolicy(t, server, "create-match")
+	assert.Equal(t, []string{"deny-write"}, ruleNames(stored))
+}
+
 func TestGRPC_CreatePolicyRefusesADuplicateAndKeepsTheStoredPolicy(t *testing.T) {
 	t.Parallel()
 	server := newPolicyGRPCStack(t, "taken")

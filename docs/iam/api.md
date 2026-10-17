@@ -749,13 +749,18 @@ Write responses are what the store holds after the write, not the request:
 
 The requested policy name and a document's `metadata.name` must agree
 (`iam.CheckPolicyName`; a document that declares no name takes the requested
-one). On every transport (REST, gRPC, MCP):
+one). On every transport (REST, gRPC, MCP; Create also on embedded):
 
+- **Create** in SDK format (`{name, spec_yaml, ...}`) stores the policy under
+  the body's `name`. A `spec_yaml` document naming a different policy is
+  refused the same way as on Update, and nothing is stored. A full document
+  sent without a body `name` keeps its own `metadata.name`.
 - **Update** refuses a document naming a different policy with an invalid-input
   error (validation class: REST `400`, gRPC `InvalidArgument`) carrying the
   `CheckPolicyName` message (`iam.PolicyNameMismatchError`); nothing is stored.
 - **Validate** reports the same case as `valid: false` with that message in
-  `errors`.
+  `errors`. Over MCP, with no top-level `name`, the SDK body's `name` is
+  checked, so Validate predicts what Create would do with the same body.
 
 The embedded transport serves no policy Update or Validate verb.
 

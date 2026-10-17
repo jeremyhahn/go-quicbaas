@@ -200,6 +200,72 @@ spec:
 	}
 }
 
+// TestExecuteIAMPolicyCreate_SDKFormatDocumentName pins that the MCP create
+// forwards the body's name and the spec_yaml document's own metadata.name to
+// the service separately, so a document naming another policy is refused
+// and nothing is stored; a matching document and a bare spec are stored
+// under the body's name.
+func TestExecuteIAMPolicyCreate_SDKFormatDocumentName(t *testing.T) {
+	document := func(name string) string {
+		return `apiVersion: iam.quicbaas.io/v1
+kind: Policy
+metadata:
+  name: ` + name + `
+spec:
+  rules:
+    - name: "read-docs"
+      actions: ["read"]
+      resources: ["documents"]
+      effect: "allow"`
+	}
+	tests := []struct {
+		name          string
+		specYAML      string
+		wantForwarded string
+		wantErr       bool
+	}{
+		{"mismatch refused", document("other"), "other", true},
+		{"match accepted", document("p1"), "p1", false},
+		{"bare spec takes the body name", sdkReadDocsSpec, "p1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			iamSvc, storage := newEnginePolicyService()
+			reg := newIAMTestRegistry(iamSvc)
+			ctx := tenantctx.WithTenant(context.Background(), "t1")
+			var forwarded *service.CreatePolicyRequest
+			create := iamSvc.createPolicyFunc
+			iamSvc.createPolicyFunc = func(ctx context.Context, req *service.CreatePolicyRequest) (*service.CreatePolicyResponse, error) {
+				forwarded = req
+				return create(ctx, req)
+			}
+
+			_, err := reg.executeIAMPolicyCreate(ctx, map[string]interface{}{
+				"tenant_id": "t1",
+				"policy":    map[string]interface{}{"name": "p1", "spec_yaml": tt.specYAML},
+			})
+			require.NotNil(t, forwarded)
+			assert.Equal(t, "p1", forwarded.Name, "the body's name must reach the service")
+			assert.Equal(t, tt.wantForwarded, forwarded.Policy.Metadata.Name, "the document's name must reach the service")
+
+			if tt.wantErr {
+				want := iam.CheckPolicyName(&iam.Policy{Metadata: iam.PolicyMetadata{Name: "other"}}, "p1").Error()
+				require.Error(t, err)
+				assert.Equal(t, want, err.Error())
+				for _, name := range []string{"p1", "other"} {
+					_, getErr := storage.GetPolicy(ctx, "t1", name)
+					assert.Error(t, getErr, "a refused create must store nothing under %q", name)
+				}
+				return
+			}
+			require.NoError(t, err)
+			stored, getErr := storage.GetPolicy(ctx, "t1", "p1")
+			require.NoError(t, getErr)
+			assert.Equal(t, "p1", stored.Metadata.Name)
+		})
+	}
+}
+
 func TestExecuteIAMPolicyUpdate_SDKFormatMissingPolicy(t *testing.T) {
 	reg, _, ctx := newStoredPolicyService(t)
 	_, err := reg.executeIAMPolicyUpdate(ctx, map[string]interface{}{
