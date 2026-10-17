@@ -239,7 +239,6 @@ describe('RestBarrierClient.enableEncryption', () => {
 
   it.each([
     ['grpc-web', { baseURL: 'http://localhost' }],
-    ['mcp', { mcp: { endpoint: '' } }],
   ] as const)('is refused by the %s stub transport', async (transport, config) => {
     const barrier = await createBarrierClient(transport, config);
     await expect(barrier.enableEncryption({ strategy: 'shamir' })).rejects.toThrow(`${transport} transport`);

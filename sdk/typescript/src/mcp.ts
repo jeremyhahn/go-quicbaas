@@ -850,49 +850,196 @@ class McpAuthClient implements AuthClient {
   async registerFinish(_req: import('./interfaces.js').SelfRegisterFinishRequest): Promise<import('./interfaces.js').SelfRegisterFinishResponse> { return notImpl('registerFinish'); }
 }
 
-// McpBarrierClient throws McpNotImplementedError on every verb except seal,
-// which calls the qrdb_barrier_seal tool. Real MCP tool wiring will replace
-// the remaining stubs.
+// secretArg renders a barrier credential as the plaintext string an MCP tool
+// argument has to be, as the Go MCP transport's secretArg does: JSON carries
+// no bytes, and the server reads the argument as the credential itself.
+function secretArg(secret: Uint8Array): string {
+  return new TextDecoder().decode(secret);
+}
+
+// McpBarrierClient calls the qrdb_barrier_* MCP tools, with the tool names
+// and argument keys of the Go SDK's MCP transport. Four verbs still throw
+// McpNotImplementedError, because the server registers no MCP tool for them
+// (pkg/api/mcp/tools_barrier.go) and the Go MCP transport has no counterpart:
+// shamirListShares, shamirDeleteShare, shamirDeleteAllShares and shamirVerify.
 export class McpBarrierClient implements BarrierClient {
   constructor(private readonly session: McpSession) {}
 
-  async status(): Promise<BarrierStatusResponse> { return notImpl('barrier.status'); }
-  async initialize(_req: BarrierInitRequest): Promise<void> { return notImpl('barrier.initialize'); }
-  async unseal(_req: BarrierUnsealRequest): Promise<void> { return notImpl('barrier.unseal'); }
+  async status(): Promise<BarrierStatusResponse> {
+    return this.session.callTool<BarrierStatusResponse>('qrdb_barrier_status', {});
+  }
+
+  async initialize(req: BarrierInitRequest): Promise<void> {
+    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_initialize', { secret: secretArg(req.secret) });
+  }
+
+  async unseal(req: BarrierUnsealRequest): Promise<void> {
+    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_unseal', { secret: secretArg(req.secret) });
+  }
+
   async seal(req?: BarrierSealRequest): Promise<void> {
     requireTLSForSOPIN('mcp', this.session.endpoint, req?.so_pin);
     await this.session.callTool<Record<string, unknown>>('qrdb_barrier_seal', req?.so_pin ? { so_pin: req.so_pin } : {});
   }
-  async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return notImpl('barrier.initializeShamir'); }
-  async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return notImpl('barrier.unsealWithShare'); }
-  async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return notImpl('barrier.unsealWithShares'); }
+
+  // The MCP tool never returns share material (officers claim shares through
+  // the qrdb share-claim flow), so shares is empty unless the server sends it.
+  async initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> {
+    const reply = await this.session.callTool<Partial<BarrierShamirInitResponse>>('qrdb_barrier_shamir_initialize', {
+      secret: secretArg(req.secret),
+      threshold: req.threshold,
+      total_shares: req.total_shares,
+    });
+    return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
+  }
+
+  async unsealWithShare(req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> {
+    return this.session.callTool<BarrierUnsealShareResponse>('qrdb_barrier_shamir_unseal_share', { share: req.share });
+  }
+
+  async unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void> {
+    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_shamir_unseal_shares', { shares: req.shares });
+  }
+
   async shamirListShares(): Promise<BarrierShamirSharesResponse> { return notImpl('barrier.shamirListShares'); }
   async shamirDeleteShare(_req: BarrierShamirDeleteShareRequest): Promise<void> { return notImpl('barrier.shamirDeleteShare'); }
   async shamirDeleteAllShares(): Promise<void> { return notImpl('barrier.shamirDeleteAllShares'); }
   async shamirVerify(): Promise<void> { return notImpl('barrier.shamirVerify'); }
-  async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return notImpl('barrier.rekey'); }
-  async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return notImpl('barrier.generateRecoveryKeys'); }
-  async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return notImpl('barrier.recoverWithKeys'); }
-  async deleteRecoveryKeys(): Promise<void> { return notImpl('barrier.deleteRecoveryKeys'); }
-  async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return notImpl('barrier.recoveryStatus'); }
-  async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return notImpl('barrier.generateRootToken'); }
-  async enableEncryption(_req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> { return notImpl('barrier.enableEncryption'); }
+
+  // Like initializeShamir, the rekey tool reports the new quorum but no shares.
+  async rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> {
+    const reply = await this.session.callTool<Partial<BarrierRekeyResponse>>('qrdb_barrier_rekey', {
+      threshold: req.threshold,
+      total: req.total,
+    });
+    return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
+  }
+
+  // The recovery tool reports the quorum but never the recovery keys.
+  async generateRecoveryKeys(req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> {
+    const reply = await this.session.callTool<Partial<BarrierRecoveryKeysResponse>>('qrdb_barrier_recovery_generate', {
+      threshold: req.threshold,
+      total: req.total,
+    });
+    return { keys: reply.keys ?? [], threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
+  }
+
+  async recoverWithKeys(req: BarrierRecoverWithKeysRequest): Promise<void> {
+    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_recovery_recover', { keys: req.keys });
+  }
+
+  async deleteRecoveryKeys(): Promise<void> {
+    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_recovery_delete', {});
+  }
+
+  // The tool names the flag has_recovery_keys; the SDK type names it has_keys.
+  async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> {
+    const reply = await this.session.callTool<{ has_recovery_keys?: boolean }>('qrdb_barrier_recovery_status', {});
+    return { has_keys: reply.has_recovery_keys === true };
+  }
+
+  async generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> {
+    const reply = await this.session.callTool<Partial<BarrierRootTokenResponse>>('qrdb_barrier_root_token', { shares: req.shares });
+    return { token: reply.token ?? '', created_at: reply.created_at ?? '' };
+  }
+
+  // A tenant request goes to the tenant tool: the system tool ignores
+  // tenant_id and would migrate the system barrier. The tools do not report
+  // the scope, so it is the scope of the tool that was called.
+  async enableEncryption(req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> {
+    const args: Record<string, unknown> = {
+      target_strategy: req.strategy,
+      mechanism: req.mechanism ?? '',
+      availability: req.availability ?? '',
+      passphrase: req.passphrase === undefined ? '' : secretArg(req.passphrase),
+      shamir_threshold: req.shamir_threshold ?? 0,
+      shamir_total: req.shamir_total ?? 0,
+    };
+    let tool = 'qrdb_barrier_enable_encryption';
+    let scope = 'system';
+    if (req.tenant_id) {
+      tool = 'qrdb_tenant_barrier_enable_encryption';
+      scope = 'tenant';
+      args.tenant_id = req.tenant_id;
+    }
+    const reply = await this.session.callTool<{ status?: string }>(tool, args);
+    return { status: reply.status ?? '', scope };
+  }
 }
 
-// McpCeremonyClient is a stub CeremonyClient that throws
-// McpNotImplementedError on every call.
+// McpCeremonyClient calls the qrdb_ceremony_* MCP tools, with the tool names
+// and argument keys of the Go SDK's MCP transport. claimShare still throws
+// McpNotImplementedError: the server serves a share only through the
+// qrdb_ceremony_begin_claim_share / qrdb_ceremony_complete_claim_share pair,
+// whose completion needs the officer's signature over the begin nonce
+// (pkg/api/mcp/tools_ceremony.go), and CeremonyClaimShareRequest carries only
+// a username, so no single call can prove the officer's key.
 export class McpCeremonyClient implements CeremonyClient {
-  async initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> { return notImpl('ceremony.initialize'); }
-  async status(): Promise<CeremonyStatusResponse> { return notImpl('ceremony.status'); }
-  async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return notImpl('ceremony.claimCertBegin'); }
-  async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return notImpl('ceremony.claimCertComplete'); }
+  constructor(private readonly session: McpSession) {}
+
+  async initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> {
+    requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
+    const args: Record<string, unknown> = { so_pin: req.so_pin, user_pin: req.user_pin, threshold: req.threshold };
+    if (req.credential_seal_strategy) args.credential_seal_strategy = req.credential_seal_strategy;
+    if (req.officers && req.officers.length > 0) {
+      args.officers = req.officers.map((o) => ({ username: o.username, csr_pem: o.csr_pem }));
+    }
+    if (req.hostname) args.hostname = req.hostname;
+    if (req.sans && req.sans.length > 0) args.sans = req.sans;
+    return this.session.callTool<CeremonyInitializeResponse>('qrdb_ceremony_initialize', args);
+  }
+
+  async status(): Promise<CeremonyStatusResponse> {
+    return this.session.callTool<CeremonyStatusResponse>('qrdb_ceremony_status', {});
+  }
+
+  async claimCertBegin(req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> {
+    const reply = await this.session.callTool<Partial<CeremonyClaimCertBeginResponse>>(
+      'qrdb_ceremony_claim_cert_begin',
+      { username: req.username },
+    );
+    return { nonce_hex: reply.nonce_hex ?? '', expires_at: reply.expires_at ?? '' };
+  }
+
+  async claimCertComplete(req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> {
+    return this.session.callTool<CeremonyClaimCertCompleteResponse>('qrdb_ceremony_claim_cert_complete', {
+      username: req.username,
+      nonce_hex: req.nonce_hex,
+      signature: req.signature,
+    });
+  }
+
   async claimShare(_req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse> { return notImpl('ceremony.claimShare'); }
-  async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return notImpl('ceremony.signCSR'); }
-  async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return notImpl('ceremony.enrollExternalOfficer'); }
+
+  async signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> {
+    requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
+    return this.session.callTool<CeremonySignCSRResponse>('qrdb_ceremony_sign_csr', {
+      username: req.username,
+      so_pin: req.so_pin,
+      csr_pem: req.csr_pem,
+      role: req.role,
+    });
+  }
+
+  async enrollExternalOfficer(
+    req: CeremonyEnrollExternalOfficerRequest,
+  ): Promise<CeremonyEnrollExternalOfficerResponse> {
+    const args: Record<string, unknown> = {
+      username: req.username,
+      share_index: req.share_index,
+      auth_factor: req.auth_factor,
+    };
+    if (req.cert_pem) args.cert_pem = req.cert_pem;
+    if (req.pubkey_pem) args.pubkey_pem = req.pubkey_pem;
+    if (req.share_bytes) args.share_bytes = req.share_bytes;
+    return this.session.callTool<CeremonyEnrollExternalOfficerResponse>('qrdb_ceremony_enroll_external_officer', args);
+  }
 }
 
-// McpBootstrapClient is a stub BootstrapClient that throws
-// McpNotImplementedError on every call.
+// McpBootstrapClient throws McpNotImplementedError on every verb: the server
+// registers no bootstrap MCP tool (pkg/api/mcp) and the Go MCP transport has
+// none (sdk/go/transport/mcp). Go reaches bootstrap through the go-xkms
+// library, not through a transport.
 export class McpBootstrapClient implements BootstrapClient {
   async auto(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.auto'); }
   async dane(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.dane'); }
@@ -1214,7 +1361,7 @@ export class McpClient implements Client {
     this.orchestrator = new McpOrchestratorClient(session);
     this.auth = new McpAuthClient();
     this.barrier = new McpBarrierClient(session);
-    this.ceremony = new McpCeremonyClient();
+    this.ceremony = new McpCeremonyClient(session);
     this.bootstrap = new McpBootstrapClient();
   }
   async logout(_token?: string): Promise<void> {

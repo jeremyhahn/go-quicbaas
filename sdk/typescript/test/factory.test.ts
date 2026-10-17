@@ -221,7 +221,7 @@ describe('stub transport errors', () => {
   it('mcp methods throw McpNotImplementedError', async () => {
     const { createClient } = await import('../src/factory.js');
     const client = await createClient({ transport: 'mcp', mcp: { endpoint: '' } });
-    await expect(client.barrier.status()).rejects.toThrow('mcp transport');
+    await expect(client.barrier.shamirVerify()).rejects.toThrow('mcp transport');
   });
 
   it('quic methods throw QuicNotImplementedError', async () => {
@@ -277,10 +277,10 @@ describe('createBarrierClient', () => {
     await expect(barrier.status()).rejects.toThrow('quic transport');
   });
 
-  it('returns a stub barrier client for transport=mcp', async () => {
+  it('returns the MCP barrier client for transport=mcp', async () => {
     const { createBarrierClient } = await import('../src/factory.js');
     const barrier = await createBarrierClient('mcp', { mcp: { endpoint: '' } });
-    await expect(barrier.status()).rejects.toThrow('mcp transport');
+    await expect(barrier.shamirListShares()).rejects.toThrow('mcp transport');
   });
 
   it('defaults to the auto-detected transport when none is supplied', async () => {
@@ -331,10 +331,10 @@ describe('createCeremonyClient', () => {
     await expect(ceremony.status()).rejects.toThrow('quic transport');
   });
 
-  it('returns a stub ceremony client for transport=mcp', async () => {
+  it('returns the MCP ceremony client for transport=mcp', async () => {
     const { createCeremonyClient } = await import('../src/factory.js');
     const ceremony = await createCeremonyClient('mcp', { mcp: { endpoint: '' } });
-    await expect(ceremony.status()).rejects.toThrow('mcp transport');
+    await expect(ceremony.claimShare({ username: 'officer-1' })).rejects.toThrow('mcp transport');
   });
 });
 
