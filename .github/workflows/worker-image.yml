@@ -7,8 +7,8 @@
 # published today, before the nightly build lands. The push credential exists
 # only as this repository's Actions secrets REGISTRY_TOKEN (write:package) and
 # REGISTRY_USER (the repository's own identity), so the push runs here.
-# The nightly schedule, the in-job build, the Trivy gate and the `current` tag
-# arrive with the rest of #1381.
+# The nightly schedule, the in-job build and the Trivy gate arrive with the
+# rest of #1381.
 #
 # WHAT IT DOES. It pushes an image that is already loaded on the runner's host
 # (`make build-worker-image`, then docker save | load onto the hosts) as
@@ -23,11 +23,24 @@
 # throwaway DOCKER_CONFIG that is removed when the step ends, so the credential
 # is never written to the host's docker config.
 #
+# MOVING `current`. With the `current` input set to a digest, the job publishes
+# nothing and moves <registry>/<REGISTRY_USER>/<image>:current to that digest.
+# It fetches the manifest by digest, refuses a digest the registry does not
+# hold or a manifest whose bytes do not hash to it, and PUTs those same bytes
+# under `current`, so the tag can only ever name an image that was already
+# published. It needs no Docker daemon: it talks to the registry's v2 API with
+# a bearer token issued for REGISTRY_TOKEN, passed to curl on stdin so neither
+# credential is in a process's argv. It prints the digest `current` named
+# before the move (the rollback target) and, once the registry reports the new
+# one, a line that starts with `WORKER-IMAGE-CURRENT`.
+#
 # WHO RUNS IT. The coordinator, once per image:
 #   POST /repos/{owner}/{repo}/actions/workflows/worker-image.yml/dispatches
 #        {"ref":"main","inputs":{"image":"<image>","tag":"<tag>"}}
 # then pulls <registry>/<REGISTRY_USER>/<image>@<digest> on every node and
-# checks that each host holds TAG@digest.
+# checks that each host holds TAG@digest. To move `current`, once per image:
+#        {"ref":"main","inputs":{"image":"<image>","current":"sha256:<hex>"}}
+# and Infra verifies that every host pulls :current at that digest.
 name: worker-image
 
 on:
@@ -38,8 +51,13 @@ on:
         required: true
         default: quicbaas-software-factory-worker
       tag:
-        description: "Content tag (<ver>-cc<cc>-cx<cx>-go<go>-xt<xt>)"
-        required: true
+        description: "Content tag (<ver>-cc<cc>-cx<cx>-go<go>-xt<xt>); leave empty when moving current"
+        required: false
+        default: ""
+      current:
+        description: "Move the current tag to this already published digest (sha256:<64 hex>) instead of publishing"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -47,6 +65,7 @@ permissions:
 jobs:
   publish:
     name: Publish worker image
+    if: ${{ inputs.current == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -59,6 +78,10 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          if [ -z "$IMAGE" ] || [ -z "$TAG" ]; then
+            echo "::error::publishing needs both image and tag"
+            exit 1
+          fi
           case "$IMAGE$TAG" in
             *[!A-Za-z0-9._-]*) echo "::error::image and tag take [A-Za-z0-9._-] only"; exit 1 ;;
           esac
@@ -96,3 +119,98 @@ jobs:
             exit 1
           fi
           echo "WORKER-IMAGE-DIGEST ${IMAGE}:${TAG} ${digest}"
+
+  move-current:
+    name: Move the current tag
+    if: ${{ inputs.current != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Point current at a published digest
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          SERVER_URL: ${{ github.server_url }}
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.current }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TAG" ]; then
+            echo "::error::give either tag (publish) or current (move), not both"
+            exit 1
+          fi
+          case "$IMAGE" in
+            '' | *[!A-Za-z0-9._-]*) echo "::error::image takes [A-Za-z0-9._-] only"; exit 1 ;;
+          esac
+          hex="${DIGEST#sha256:}"
+          if [ "$hex" = "$DIGEST" ] || [ "${#hex}" -ne 64 ]; then
+            echo "::error::current must be sha256:<64 lowercase hex>"
+            exit 1
+          fi
+          case "$hex" in
+            *[!0-9a-f]*) echo "::error::current must be sha256:<64 lowercase hex>"; exit 1 ;;
+          esac
+          if [ -z "$REGISTRY_TOKEN" ] || [ -z "$REGISTRY_USER" ]; then
+            echo "::error::REGISTRY_TOKEN or REGISTRY_USER is not set on this repository"
+            exit 1
+          fi
+          base="${SERVER_URL%/}"
+          repo="${REGISTRY_USER}/${IMAGE}"
+          manifests="${base}/v2/${repo}/manifests"
+          accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+
+          # The credentials reach curl as config on stdin, never as arguments.
+          printf 'user = "%s:%s"\n' "$REGISTRY_USER" "$REGISTRY_TOKEN" \
+            | curl -K - -fsS -o "$work/token.json" "${base}/v2/token?scope=repository:${repo}:pull,push"
+          bearer="$(sed -n 's/.*"token": *"\([^"]*\)".*/\1/p' "$work/token.json")"
+          rm -f "$work/token.json"
+          if [ -z "$bearer" ]; then
+            echo "::error::the registry issued no token for ${repo}"
+            exit 1
+          fi
+          registry() {
+            printf 'header = "Authorization: Bearer %s"\n' "$bearer" | curl -K - -sS "$@"
+          }
+          header() {
+            sed -n "s/^$1: *//Ip" "$2" | tr -d '\r' | tail -n 1
+          }
+
+          code="$(registry -o "$work/manifest" -D "$work/headers" -w '%{http_code}' \
+            -H "Accept: ${accept}" "${manifests}/${DIGEST}")"
+          if [ "$code" != 200 ]; then
+            echo "::error::the registry does not hold ${repo}@${DIGEST} (HTTP ${code}); refusing to move current"
+            exit 1
+          fi
+          fetched="sha256:$(sha256sum "$work/manifest" | cut -d' ' -f1)"
+          if [ "$fetched" != "$DIGEST" ]; then
+            echo "::error::the manifest served for ${DIGEST} hashes to ${fetched}; refusing to move current"
+            exit 1
+          fi
+          media="$(header content-type "$work/headers")"
+          if [ -z "$media" ]; then
+            echo "::error::the registry gave no media type for ${repo}@${DIGEST}"
+            exit 1
+          fi
+
+          registry -o /dev/null -D "$work/before" -I -H "Accept: ${accept}" "${manifests}/current"
+          previous="$(header docker-content-digest "$work/before")"
+          echo "current named ${previous:-nothing} before this move"
+
+          code="$(registry -o "$work/put" -w '%{http_code}' -X PUT \
+            -H "Content-Type: ${media}" --data-binary "@$work/manifest" "${manifests}/current")"
+          if [ "$code" != 201 ]; then
+            echo "::error::the registry refused the manifest PUT for ${repo}:current (HTTP ${code})"
+            head -c 2000 "$work/put"
+            exit 1
+          fi
+
+          registry -o /dev/null -D "$work/after" -I -H "Accept: ${accept}" "${manifests}/current"
+          moved="$(header docker-content-digest "$work/after")"
+          if [ "$moved" != "$DIGEST" ]; then
+            echo "::error::${repo}:current names ${moved:-nothing} after the move, not ${DIGEST}"
+            exit 1
+          fi
+          echo "WORKER-IMAGE-CURRENT ${IMAGE}:current ${DIGEST}"
