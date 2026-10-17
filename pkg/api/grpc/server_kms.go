@@ -20,7 +20,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -41,10 +40,9 @@ import (
 // KMSServer wraps the KMS manager for gRPC endpoints.
 type KMSServer struct {
 	pb.UnimplementedKeyManagementServer
-	kmsMgr   interfaces.KMSManager
-	kmsSvc   service.KMSService // optional: for service-layer operations
-	logger   *logger.Logger
-	keyNames sync.Map // tracks key names to prevent duplicates
+	kmsMgr interfaces.KMSManager
+	kmsSvc service.KMSService // optional: for service-layer operations
+	logger *logger.Logger
 }
 
 // NewKMSServer creates a new gRPC server for KMS operations.
@@ -84,10 +82,8 @@ func (s *KMSServer) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest)
 		return nil, status.Error(codes.InvalidArgument, "key_spec is required")
 	}
 
-	// Check for duplicate key name
-	if _, exists := s.keyNames.Load(req.Name); exists {
-		return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("key with name '%s' already exists", req.Name))
-	}
+	// Key names are unique within a tenant, so the duplicate check runs in
+	// the service layer under the caller's tenant scope, not here.
 
 	// Use user-provided name as key ID
 	keyID := req.Name
@@ -114,8 +110,6 @@ func (s *KMSServer) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest)
 		if err != nil {
 			return nil, convertKMSError(err)
 		}
-
-		s.keyNames.Store(req.Name, keyID)
 
 		var n responseNarrower
 		resp := &pb.GenerateKeyResponse{
@@ -152,8 +146,6 @@ func (s *KMSServer) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest)
 	if err := s.kmsMgr.UpdateStoredMetadata(metadata); err != nil {
 		s.logger.WithError(err).Warn("Failed to persist key metadata")
 	}
-
-	s.keyNames.Store(req.Name, keyID)
 
 	now := time.Now()
 

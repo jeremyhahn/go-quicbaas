@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -31,7 +30,7 @@ func TestKMSService_SetKeySafety_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.SetKeySafety(context.Background(), nil)
+	resp, err := svc.SetKeySafety(systemTenantCtx(), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -50,7 +49,7 @@ func TestKMSService_SetKeySafety_InvalidWarningPercentTooHigh(t *testing.T) {
 		createdAt: time.Now(),
 	}
 
-	resp, err := svc.SetKeySafety(context.Background(), &SetKeySafetyRequest{
+	resp, err := svc.SetKeySafety(systemTenantCtx(), &SetKeySafetyRequest{
 		KeyID:          "test-key",
 		WarningPercent: 150, // Invalid: > 100
 	})
@@ -71,7 +70,7 @@ func TestKMSService_SetKeySafety_InvalidAutoRotatePercentNegative(t *testing.T) 
 		createdAt: time.Now(),
 	}
 
-	resp, err := svc.SetKeySafety(context.Background(), &SetKeySafetyRequest{
+	resp, err := svc.SetKeySafety(systemTenantCtx(), &SetKeySafetyRequest{
 		KeyID:             "test-key",
 		AutoRotatePercent: -5, // Invalid: < 0
 	})
@@ -92,7 +91,7 @@ func TestKMSService_SetKeySafety_WarningGEAutoRotate(t *testing.T) {
 		createdAt: time.Now(),
 	}
 
-	resp, err := svc.SetKeySafety(context.Background(), &SetKeySafetyRequest{
+	resp, err := svc.SetKeySafety(systemTenantCtx(), &SetKeySafetyRequest{
 		KeyID:             "test-key",
 		WarningPercent:    90,
 		AutoRotatePercent: 80, // Invalid: warning >= auto-rotate
@@ -115,7 +114,7 @@ func TestKMSService_SetKeySafety_DefaultsApplied(t *testing.T) {
 	}
 
 	// All zero values should use defaults
-	resp, err := svc.SetKeySafety(context.Background(), &SetKeySafetyRequest{
+	resp, err := svc.SetKeySafety(systemTenantCtx(), &SetKeySafetyRequest{
 		KeyID: "default-key",
 	})
 	require.NoError(t, err)
@@ -137,7 +136,7 @@ func TestKMSService_SetKeySafety_NilLogger(t *testing.T) {
 		createdAt: time.Now(),
 	}
 
-	resp, err := svc.SetKeySafety(context.Background(), &SetKeySafetyRequest{
+	resp, err := svc.SetKeySafety(systemTenantCtx(), &SetKeySafetyRequest{
 		KeyID:             "no-logger-key",
 		MaxOperations:     500000,
 		WarningPercent:    70,
@@ -168,7 +167,7 @@ func TestKMSService_SetDEKSafety_InvalidWarningPercentTooHigh(t *testing.T) {
 		},
 	})
 
-	resp, err := svc.SetDEKSafety(context.Background(), &SetDEKSafetyRequest{
+	resp, err := svc.SetDEKSafety(systemTenantCtx(), &SetDEKSafetyRequest{
 		Path:           "test/dek",
 		WarningPercent: 150, // Invalid
 	})
@@ -181,7 +180,7 @@ func TestKMSService_SetDEKSafety_DEKNotFound(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.SetDEKSafety(context.Background(), &SetDEKSafetyRequest{
+	resp, err := svc.SetDEKSafety(systemTenantCtx(), &SetDEKSafetyRequest{
 		Path: "nonexistent/dek",
 	})
 	assert.Nil(t, resp)

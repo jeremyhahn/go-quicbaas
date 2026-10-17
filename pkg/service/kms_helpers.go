@@ -50,7 +50,12 @@ func (k *kmsServiceImpl) SetKeySafety(ctx context.Context, req *SetKeySafetyRequ
 	}
 
 	// Verify the key exists first
-	_, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		return nil, NewError(errors.ErrNotFound, "kms.SetKeySafety", "key not found: "+req.KeyID)
 	}
@@ -90,7 +95,7 @@ func (k *kmsServiceImpl) SetKeySafety(ctx context.Context, req *SetKeySafetyRequ
 	}
 
 	// Set the configuration in the safety tracker
-	k.safetyTracker.SetKeyConfig(req.KeyID, config)
+	k.safetyTracker.SetKeyConfig(scopedKeyID, config)
 
 	if k.logger != nil {
 		k.logger.WithFields(map[string]interface{}{
@@ -119,13 +124,18 @@ func (k *kmsServiceImpl) ClearKeySafety(ctx context.Context, req *ClearKeySafety
 	}
 
 	// Verify the key exists first
-	_, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		return nil, NewError(errors.ErrNotFound, "kms.ClearKeySafety", "key not found: "+req.KeyID)
 	}
 
 	// Clear the per-key configuration (reverts to server defaults)
-	k.safetyTracker.ClearKeyConfig(req.KeyID)
+	k.safetyTracker.ClearKeyConfig(scopedKeyID)
 
 	if k.logger != nil {
 		k.logger.WithFields(map[string]interface{}{

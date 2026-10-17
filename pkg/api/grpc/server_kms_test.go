@@ -32,6 +32,8 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
 )
 
 // mockKMSManager implements interfaces.KMSManager for testing.
@@ -1570,17 +1572,19 @@ func TestGenerateKey_EmptyName(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
+// The duplicate-name check is tenant scoped and lives in the service layer;
+// the transport maps the service's conflict to AlreadyExists.
 func TestGenerateKey_DuplicateKeyName(t *testing.T) {
-	mgr := &mockKMSManager{
-		generateKeyFunc: func(_ context.Context, _ *xkmssdk.KeyAttributes) (interface{}, error) {
-			return &struct{}{}, nil
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+	svc := &mocks.MockKMSService{
+		GenerateKeyFunc: func(_ context.Context, _ *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+			return nil, dberrors.New(dberrors.ErrConflict, "kms.GenerateKey", "key already exists")
 		},
 	}
-	srv := newTestKMSServer(t, mgr)
-	// Pre-populate the key name
-	srv.keyNames.Store("dup-key", "dup-key")
+	srv := NewKMSServerWithService(&mockKMSManager{}, svc, log)
 
-	_, err := srv.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+	_, err = srv.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		Name: "dup-key",
 		KeySpec: &pb.KeySpec{
 			Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM,
@@ -1588,6 +1592,35 @@ func TestGenerateKey_DuplicateKeyName(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
+}
+
+// The transport keeps no name registry of its own: a name the service accepts
+// (for example the same name in two tenants) is never refused here.
+func TestGenerateKey_SameNameTwiceDefersToService(t *testing.T) {
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+	calls := 0
+	svc := &mocks.MockKMSService{
+		GenerateKeyFunc: func(_ context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+			calls++
+			return &service.GenerateKeyResponse{
+				Key:       &service.KeyHandle{KeyID: req.Name, Version: 1, Algorithm: service.KeyAlgAES256GCM, Status: service.KeyStatusEnabled},
+				Metadata:  &service.KeyMetadata{KeyID: req.Name, Name: req.Name, Algorithm: service.KeyAlgAES256GCM, Status: service.KeyStatusEnabled, Version: 1},
+				Timestamp: time.Now(),
+			}, nil
+		},
+	}
+	srv := NewKMSServerWithService(&mockKMSManager{}, svc, log)
+	req := &pb.GenerateKeyRequest{
+		Name:    "shared-name",
+		KeySpec: &pb.KeySpec{Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM},
+	}
+
+	_, err = srv.GenerateKey(context.Background(), req)
+	require.NoError(t, err)
+	_, err = srv.GenerateKey(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, 2, calls)
 }
 
 func TestGenerateKey_TypeAssertionFailure(t *testing.T) {

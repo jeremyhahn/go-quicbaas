@@ -128,8 +128,17 @@ func (k *kmsServiceImpl) ExportKey(ctx context.Context, req *ExportKeyRequest) (
 		return nil, NewError(errors.ErrInvalidInput, "kms.ExportKey", "unsupported wrapping algorithm: "+req.WrappingAlgorithm)
 	}
 
+	// Both keys resolve under the caller's tenant, so another tenant's key
+	// id is not found and the wrapped blob binds the tenant-scoped id.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedWrappingKeyID := tenantScopedKeyID(tenantID, req.WrappingKeyID)
+
 	// Get source key metadata to verify it exists and is exportable
-	keyMeta, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyMeta, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		k.logAuditExport(ctx, req.KeyID, "", req.WrappingKeyID, req.WrappingAlgorithm, false)
 		return nil, NewError(errors.ErrNotFound, "kms.ExportKey", "source key not found: "+req.KeyID)
@@ -183,7 +192,7 @@ func (k *kmsServiceImpl) ExportKey(ctx context.Context, req *ExportKeyRequest) (
 	}
 
 	// Verify wrapping key exists and is enabled
-	wrappingKeyMeta, err := k.kmsManager.GetKey(ctx, req.WrappingKeyID)
+	wrappingKeyMeta, err := k.kmsManager.GetKey(ctx, scopedWrappingKeyID)
 	if err != nil {
 		k.logAuditExport(ctx, req.KeyID, algorithm, req.WrappingKeyID, req.WrappingAlgorithm, false)
 		return nil, NewError(errors.ErrNotFound, "kms.ExportKey", "wrapping key not found: "+req.WrappingKeyID)
@@ -207,7 +216,7 @@ func (k *kmsServiceImpl) ExportKey(ctx context.Context, req *ExportKeyRequest) (
 	// Generate a data key that represents the exportable key material.
 	// This uses the source key to generate a wrapped data key that can be exported.
 	// The plaintext is then wrapped with the wrapping key for secure transport.
-	keyAttrs := k.algorithmToKeyAttributes(req.KeyID, KeyAlgorithm(algorithm), true)
+	keyAttrs := k.algorithmToKeyAttributes(scopedKeyID, KeyAlgorithm(algorithm), true)
 	plaintextKeyMaterial, _, err := k.kmsManager.GenerateDataKey(ctx, keyAttrs, 32)
 	if err != nil {
 		k.logAuditExport(ctx, req.KeyID, algorithm, req.WrappingKeyID, req.WrappingAlgorithm, false)
@@ -215,10 +224,10 @@ func (k *kmsServiceImpl) ExportKey(ctx context.Context, req *ExportKeyRequest) (
 	}
 
 	// Additional authenticated data for the wrapping operation
-	aad := []byte(fmt.Sprintf("export:%s:v%d", req.KeyID, exportVersion))
+	aad := []byte(fmt.Sprintf("export:%s:v%d", scopedKeyID, exportVersion))
 
 	// Wrap the plaintext key material using the wrapping key for secure transport
-	wrappedKey, err := k.kmsManager.Encrypt(ctx, req.WrappingKeyID, plaintextKeyMaterial, aad)
+	wrappedKey, err := k.kmsManager.Encrypt(ctx, scopedWrappingKeyID, plaintextKeyMaterial, aad)
 	if err != nil {
 		k.logAuditExport(ctx, req.KeyID, algorithm, req.WrappingKeyID, req.WrappingAlgorithm, false)
 		return nil, WrapError(err, errors.ErrInternal, "kms.ExportKey", "failed to wrap key with wrapping key")
@@ -276,8 +285,18 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 		return nil, NewError(errors.ErrInvalidInput, "kms.UnwrapKey", "unsupported wrapping algorithm: "+req.WrappingAlgorithm)
 	}
 
+	// Every key id resolves under the caller's tenant: the wrapping key of
+	// another tenant is not found, and a blob exported by another tenant
+	// fails authentication because its AAD binds that tenant's scoped id.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedWrappingKeyID := tenantScopedKeyID(tenantID, req.WrappingKeyID)
+
 	// Check if target key ID already exists
-	_, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err == nil {
 		// Key already exists
 		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
@@ -285,7 +304,7 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 	}
 
 	// Verify wrapping key exists and is enabled
-	wrappingKeyMeta, err := k.kmsManager.GetKey(ctx, req.WrappingKeyID)
+	wrappingKeyMeta, err := k.kmsManager.GetKey(ctx, scopedWrappingKeyID)
 	if err != nil {
 		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
 		return nil, NewError(errors.ErrNotFound, "kms.UnwrapKey", "wrapping key not found: "+req.WrappingKeyID)
@@ -307,10 +326,10 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 		sourceKeyID = req.KeyID // Fallback for backwards compatibility
 	}
 	sourceVersion := req.SourceVersion
-	aad := []byte(fmt.Sprintf("export:%s:v%d", sourceKeyID, sourceVersion))
+	aad := []byte(fmt.Sprintf("export:%s:v%d", tenantScopedKeyID(tenantID, sourceKeyID), sourceVersion))
 
 	// Unwrap the key material using the wrapping key
-	unwrappedKeyMaterial, err := k.kmsManager.Decrypt(ctx, req.WrappingKeyID, req.WrappedKey, aad)
+	unwrappedKeyMaterial, err := k.kmsManager.Decrypt(ctx, scopedWrappingKeyID, req.WrappedKey, aad)
 	if err != nil {
 		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
 		return nil, WrapError(err, errors.ErrInternal, "kms.UnwrapKey", "failed to unwrap key material")
@@ -323,7 +342,7 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 	}
 
 	// Import the unwrapped key into the KMS
-	_, err = k.kmsManager.ImportKey(ctx, req.KeyID, unwrappedKeyMaterial, req.Algorithm)
+	_, err = k.kmsManager.ImportKey(ctx, scopedKeyID, unwrappedKeyMaterial, req.Algorithm)
 	if err != nil {
 		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
 		return nil, WrapError(err, errors.ErrInternal, "kms.UnwrapKey", "failed to import unwrapped key")

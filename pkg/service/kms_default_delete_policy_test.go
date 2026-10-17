@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -30,7 +29,7 @@ import (
 // =============================================================================
 
 func TestKMSService_SetDefaultKey(t *testing.T) {
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("nil request", func(t *testing.T) {
 		svc := newKMSService(newMockKMSManager(), newMockLogger())
@@ -67,7 +66,7 @@ func TestKMSService_SetDefaultKey(t *testing.T) {
 }
 
 func TestKMSService_DeleteKeyPolicy(t *testing.T) {
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("nil request", func(t *testing.T) {
 		svc := newKMSService(newMockKMSManager(), newMockLogger())

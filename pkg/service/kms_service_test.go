@@ -4333,21 +4333,6 @@ func TestKMSService_ValidateGenerateKeyRequest(t *testing.T) {
 			errContains: "at least one key usage is required",
 		},
 		{
-			name: "duplicate key name returns error",
-			setupFunc: func(k *kmsServiceImpl) {
-				k.keyNames.Store("existing-key", "some-id")
-			},
-			req: &GenerateKeyRequest{
-				Name: "existing-key",
-				KeyAttributes: &xkmssdk.KeyAttributes{
-					SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
-				},
-				Usage: []KeyUsage{KeyUsageEncrypt},
-			},
-			wantErr:     true,
-			errContains: "already exists",
-		},
-		{
 			name: "valid request returns no error",
 			req: &GenerateKeyRequest{
 				Name: "test-key",
@@ -5038,7 +5023,7 @@ func TestKMSValidationErrorTypes(t *testing.T) {
 
 	t.Run("duplicate key returns ErrAlreadyExists", func(t *testing.T) {
 		k.keyNames.Store("duplicate-key", "some-id")
-		err := k.validateGenerateKeyRequest(&GenerateKeyRequest{
+		_, err := k.GenerateKey(systemTenantCtx(), &GenerateKeyRequest{
 			Name: "duplicate-key",
 			KeyAttributes: &xkmssdk.KeyAttributes{
 				SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,

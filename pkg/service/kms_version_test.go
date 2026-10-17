@@ -87,7 +87,7 @@ func TestKMSService_GetKeyMetadata_NegativeVersion(t *testing.T) {
 func TestKMSService_ExportKey_NegativeVersion(t *testing.T) {
 	svc := newKMSService(negativeVersionKMSManager(), newMockLogger())
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",

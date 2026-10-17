@@ -85,6 +85,7 @@ type KMSSchedulerQuerier interface {
 // reencryptionState tracks the state of an ongoing re-encryption operation.
 type reencryptionState struct {
 	mu                  sync.RWMutex
+	tenantID            string // tenant that started the operation; "" is the system scope
 	operationID         string
 	inProgress          bool
 	status              string
@@ -97,6 +98,12 @@ type reencryptionState struct {
 	cancelFunc          context.CancelFunc
 }
 
+// hiddenFrom reports whether the recorded operation belongs to a tenant other
+// than tenantID. The system scope ("") sees every operation. The caller holds mu.
+func (s *reencryptionState) hiddenFrom(tenantID string) bool {
+	return s.operationID != "" && tenantID != "" && s.tenantID != tenantID
+}
+
 // dekEntry holds DEK metadata and the wrapped key material.
 type dekEntry struct {
 	metadata   *DEKMetadata
@@ -107,7 +114,7 @@ type dekEntry struct {
 type dekStore struct {
 	mu         sync.RWMutex
 	entries    map[string]*dekEntry
-	defaultDEK string
+	defaultDEK map[string]string // tenant scope prefix -> scoped path of that tenant's default DEK
 }
 
 // newDEKStore creates a new DEK store.
@@ -157,25 +164,35 @@ func (s *dekStore) list(prefix string) []*DEKMetadata {
 }
 
 // setDefault sets the default DEK path.
-func (s *dekStore) setDefault(path string) string {
+func (s *dekStore) setDefault(scope, path string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	prev := s.defaultDEK
-	s.defaultDEK = path
-	// Update isDefault flag on entries
+	if s.defaultDEK == nil {
+		s.defaultDEK = make(map[string]string)
+	}
+	prev := s.defaultDEK[scope]
+	s.defaultDEK[scope] = path
+	// Update the isDefault flag on the entries of this scope only, so one
+	// tenant's choice never clears another tenant's default.
 	for p, entry := range s.entries {
-		entry.metadata.IsDefault = (p == path)
+		if dekPathInScope(scope, p) {
+			entry.metadata.IsDefault = (p == path)
+		}
 	}
 	return prev
 }
 
-// count returns the number of DEK entries.
-func (s *dekStore) count() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.entries)
+// dekPathInScope reports whether a scoped DEK path belongs to the tenant
+// scope prefix (tenantListPrefix). The platform scope ("") owns every path
+// outside the tenant namespace.
+func dekPathInScope(scope, path string) bool {
+	if scope == "" {
+		return !strings.HasPrefix(path, kmsTenantKeyPrefix)
+	}
+	return strings.HasPrefix(path, scope)
 }
 
+// count returns the number of DEK entries.
 // kmsServiceImpl implements the KMSService interface.
 // It provides cryptographic key lifecycle management operations.
 type kmsServiceImpl struct {
@@ -188,7 +205,7 @@ type kmsServiceImpl struct {
 	reencryptionState *reencryptionState
 	dekStore          *dekStore
 	keyNames          sync.Map           // tracks key names to prevent duplicates
-	defaultKeyName    atomic.Value       // stores string: the current default key name
+	defaultKeyNames   sync.Map           // tenant scope prefix -> that tenant's default key name
 	scheduler         KMSScheduler       // scheduler for grace period jobs
 	versionStatus     sync.Map           // local cache: "keyID:version" -> *versionStatusInfo
 	kvStore           interfaces.KVStore // persistent store for version status and key policies (Raft-replicated)
@@ -445,6 +462,9 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	// Use the provided name as the key ID, scoped by tenant if applicable
 	// The name must be unique within the KMS/tenant namespace
 	keyID := tenantScopedKeyID(tenantID, req.Name)
+	if _, exists := k.keyNames.Load(keyID); exists {
+		return nil, NewError(errors.ErrAlreadyExists, "kms.GenerateKey", "key with name '"+req.Name+"' already exists")
+	}
 
 	// Prepare attributes with key ID
 	attrs := req.KeyAttributes
@@ -546,7 +566,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 			kmsMeta.RotationPolicy = serviceRotationToKMS(resolvedRotationPolicy)
 
 			// Persist in KVStore for distributed replication.
-			if persistErr := k.persistRotationPolicy(ctx, req.Name, resolvedRotationPolicy); persistErr != nil {
+			if persistErr := k.persistRotationPolicy(ctx, keyID, resolvedRotationPolicy); persistErr != nil {
 				if k.logger != nil {
 					k.logger.WithFields(map[string]interface{}{
 						"key_id": req.Name,
@@ -566,8 +586,8 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		}
 	}
 
-	// Track key name to prevent duplicates
-	k.keyNames.Store(req.Name, keyID)
+	// Track the tenant-scoped key name to prevent duplicates within a tenant
+	k.keyNames.Store(keyID, keyID)
 
 	return resp, nil
 }
@@ -775,7 +795,7 @@ func (k *kmsServiceImpl) GetKey(ctx context.Context, req *GetKeyRequest) (*GetKe
 	versionStatus := status
 	if requestedVersion < currentVersion {
 		// Check if this old version has been explicitly disabled
-		if explicitStatus, _ := k.getVersionStatus(ctx, req.KeyID, requestedVersion); explicitStatus != "" {
+		if explicitStatus, _ := k.getVersionStatus(ctx, scopedKeyID, requestedVersion); explicitStatus != "" {
 			versionStatus = explicitStatus
 		}
 		// If no explicit status, keep as enabled (default for old versions during grace period)
@@ -834,8 +854,15 @@ func (k *kmsServiceImpl) GetPublicKey(ctx context.Context, req *GetPublicKeyRequ
 		return nil, NewError(errors.ErrInvalidInput, "kms.GetPublicKey", "key ID is required")
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Call KMS manager to get public key
-	publicKeyBytes, err := k.kmsManager.GetPublicKey(ctx, req.KeyID)
+	publicKeyBytes, err := k.kmsManager.GetPublicKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_public_key").Inc()
@@ -844,7 +871,7 @@ func (k *kmsServiceImpl) GetPublicKey(ctx context.Context, req *GetPublicKeyRequ
 	}
 
 	// Get key metadata for algorithm and version info
-	keyMetadata, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyMetadata, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_public_key").Inc()
@@ -1046,7 +1073,7 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "rotate_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrInternal, "kms.RotateKey", "failed to get key before rotation")
+		return nil, WrapError(err, errors.ErrNotFound, "kms.RotateKey", "key not found")
 	}
 
 	oldMetadata, ok := oldResult.(*kms.KeyMetadata)
@@ -1063,6 +1090,11 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "rotate_key").Inc()
+		}
+		// A key outside the caller's tenant is absent from its scope and
+		// surfaces as not-found, mirroring GetKey and DeleteKey.
+		if stderrors.Is(err, kms.ErrKeyNotFound) {
+			return nil, WrapError(err, errors.ErrNotFound, "kms.RotateKey", "key not found")
 		}
 		return nil, WrapError(err, errors.ErrInternal, "kms.RotateKey", "failed to rotate key")
 	}
@@ -1088,10 +1120,12 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 		gracePeriodDisableAt := time.Now().Add(time.Duration(req.GracePeriodSeconds) * time.Second)
 
 		// Create payload for the grace period handler
-		payload := fmt.Sprintf(`{"key_id":%q,"version":%d}`, req.KeyID, resp.OldVersion)
+		// The handler addresses the version by its tenant-scoped key ID, the
+		// same ID GetKey, UpdateKeyStatus and ListKeyVersions read it under.
+		payload := fmt.Sprintf(`{"key_id":%q,"version":%d}`, scopedKeyID, resp.OldVersion)
 
 		job := &SchedulerJob{
-			Name:        fmt.Sprintf("kms-grace-%s-v%d", req.KeyID, resp.OldVersion),
+			Name:        fmt.Sprintf("kms-grace-%s-v%d", scopedKeyID, resp.OldVersion),
 			Description: fmt.Sprintf("Disable key %s version %d after grace period", req.KeyID, resp.OldVersion),
 			OwnerType:   SchedulerOwnerTypeDelegated,
 			Type:        SchedulerJobTypeOneShot,
@@ -1161,11 +1195,21 @@ func (k *kmsServiceImpl) RevokeKey(ctx context.Context, req *RevokeKeyRequest) (
 		return nil, err
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Call KMS manager to revoke key
-	err := k.kmsManager.RevokeKey(ctx, req.KeyID)
+	err = k.kmsManager.RevokeKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "revoke_key").Inc()
+		}
+		if stderrors.Is(err, kms.ErrKeyNotFound) {
+			return nil, WrapError(err, errors.ErrNotFound, "kms.RevokeKey", "key not found")
 		}
 		return nil, WrapError(err, errors.ErrInternal, "kms.RevokeKey", "failed to revoke key")
 	}
@@ -1228,6 +1272,10 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 		return nil, WrapError(err, errors.ErrInternal, "kms.DeleteKey", "failed to delete key")
 	}
 
+	// Release the name in the caller's tenant only; another tenant's key of
+	// the same name keeps its entry.
+	k.keyNames.Delete(scopedKeyID)
+
 	// Calculate deletion date based on pending window
 	pendingDays := req.PendingWindowDays
 	if pendingDays == 0 {
@@ -1281,8 +1329,15 @@ func (k *kmsServiceImpl) GetKeyMetadata(ctx context.Context, req *GetKeyMetadata
 		return nil, err
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Call KMS manager to get key metadata
-	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_key_metadata").Inc()
@@ -1320,8 +1375,15 @@ func (k *kmsServiceImpl) UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMe
 		return nil, err
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Retrieve existing key metadata to merge with updates
-	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "update_key_metadata").Inc()
@@ -1399,8 +1461,15 @@ func (k *kmsServiceImpl) SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequ
 		return nil, err
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Verify key exists
-	_, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "set_key_policy").Inc()
@@ -1410,11 +1479,12 @@ func (k *kmsServiceImpl) SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequ
 
 	// Stamp the policy with the updated timestamp and incremented version.
 	newPolicy := *req.Policy
-	newPolicy.KeyID = req.KeyID
+	newPolicy.KeyID = scopedKeyID
 	newPolicy.Version = req.Policy.Version + 1
 	newPolicy.UpdatedAt = time.Now()
 
-	// Persist the policy via the Raft-backed KVStore.
+	// Persist the policy via the Raft-backed KVStore, under the tenant-scoped
+	// key ID so that one tenant's policy never lands on another's key.
 	if err := k.persistKeyPolicy(ctx, &newPolicy); err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("storage_error", "set_key_policy").Inc()
@@ -1455,8 +1525,15 @@ func (k *kmsServiceImpl) GetKeyPolicy(ctx context.Context, req *GetKeyPolicyRequ
 		return nil, err
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Verify key exists
-	_, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_key_policy").Inc()
@@ -1465,7 +1542,7 @@ func (k *kmsServiceImpl) GetKeyPolicy(ctx context.Context, req *GetKeyPolicyRequ
 	}
 
 	// Load persisted policy.
-	policy, err := k.loadKeyPolicy(ctx, req.KeyID)
+	policy, err := k.loadKeyPolicy(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("storage_error", "get_key_policy").Inc()
@@ -1476,12 +1553,14 @@ func (k *kmsServiceImpl) GetKeyPolicy(ctx context.Context, req *GetKeyPolicyRequ
 	// No policy set yet — return a default open policy.
 	if policy == nil {
 		policy = &KeyPolicy{
-			KeyID:             req.KeyID,
 			Version:           0,
 			AllowedOperations: []KeyUsage{},
 			UpdatedAt:         time.Now(),
 		}
 	}
+	// The policy is stored under the tenant-scoped key ID; the caller sees
+	// the ID it asked for.
+	policy.KeyID = req.KeyID
 
 	return &GetKeyPolicyResponse{
 		Policy:    policy,
@@ -1499,13 +1578,20 @@ func (k *kmsServiceImpl) DeleteKeyPolicy(ctx context.Context, req *DeleteKeyPoli
 		return nil, NewError(errors.ErrInvalidInput, "kms.DeleteKeyPolicy", "key_id is required")
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Verify key exists
-	_, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKeyPolicy", "key not found")
 	}
 
-	if err := k.deleteKeyPolicy(ctx, req.KeyID); err != nil {
+	if err := k.deleteKeyPolicy(ctx, scopedKeyID); err != nil {
 		return nil, WrapError(err, errors.ErrStorage, "kms.DeleteKeyPolicy", "failed to delete key policy")
 	}
 
@@ -1596,13 +1682,20 @@ func (k *kmsServiceImpl) SetKeyRotationPolicy(ctx context.Context, req *SetKeyRo
 		return nil, NewError(errors.ErrInvalidInput, "kms.SetKeyRotationPolicy", "interval must be positive when auto_rotate is true")
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Per-key authz gate: key-management operation.
-	if err := k.checkKeyAuthz(ctx, req.KeyID, "set_rotation_policy"); err != nil {
+	if err := k.checkKeyAuthz(ctx, scopedKeyID, "set_rotation_policy"); err != nil {
 		return nil, err
 	}
 
 	// Verify key exists.
-	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrNotFound, "kms.SetKeyRotationPolicy", "key not found")
 	}
@@ -1614,7 +1707,7 @@ func (k *kmsServiceImpl) SetKeyRotationPolicy(ctx context.Context, req *SetKeyRo
 	}
 
 	// Persist to KVStore (distributed replication).
-	if err := k.persistRotationPolicy(ctx, req.KeyID, &policy); err != nil {
+	if err := k.persistRotationPolicy(ctx, scopedKeyID, &policy); err != nil {
 		return nil, WrapError(err, errors.ErrStorage, "kms.SetKeyRotationPolicy", "failed to persist rotation policy")
 	}
 
@@ -1657,19 +1750,26 @@ func (k *kmsServiceImpl) GetKeyRotationPolicy(ctx context.Context, req *GetKeyRo
 		return nil, NewError(errors.ErrInvalidInput, "kms.GetKeyRotationPolicy", "key_id is required")
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Per-key authz gate: read operation.
-	if err := k.checkKeyAuthz(ctx, req.KeyID, "get_rotation_policy"); err != nil {
+	if err := k.checkKeyAuthz(ctx, scopedKeyID, "get_rotation_policy"); err != nil {
 		return nil, err
 	}
 
 	// Verify key exists.
-	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrNotFound, "kms.GetKeyRotationPolicy", "key not found")
 	}
 
 	// Prefer KVStore (replicated); fall back to embedded metadata.
-	policy, err := k.loadRotationPolicy(ctx, req.KeyID)
+	policy, err := k.loadRotationPolicy(ctx, scopedKeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrStorage, "kms.GetKeyRotationPolicy", "failed to load rotation policy")
 	}
@@ -1697,19 +1797,26 @@ func (k *kmsServiceImpl) DeleteKeyRotationPolicy(ctx context.Context, req *Delet
 		return nil, NewError(errors.ErrInvalidInput, "kms.DeleteKeyRotationPolicy", "key_id is required")
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Per-key authz gate: key-management operation.
-	if err := k.checkKeyAuthz(ctx, req.KeyID, "delete_rotation_policy"); err != nil {
+	if err := k.checkKeyAuthz(ctx, scopedKeyID, "delete_rotation_policy"); err != nil {
 		return nil, err
 	}
 
 	// Verify key exists.
-	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKeyRotationPolicy", "key not found")
 	}
 
 	// Remove from KVStore.
-	if err := k.persistRotationPolicy(ctx, req.KeyID, nil); err != nil {
+	if err := k.persistRotationPolicy(ctx, scopedKeyID, nil); err != nil {
 		return nil, WrapError(err, errors.ErrStorage, "kms.DeleteKeyRotationPolicy", "failed to remove rotation policy")
 	}
 
@@ -1784,11 +1891,6 @@ func (k *kmsServiceImpl) validateGenerateKeyRequest(req *GenerateKeyRequest) err
 
 	if len(req.Usage) == 0 {
 		return NewError(errors.ErrInvalidInput, "kms.validateGenerateKeyRequest", "at least one key usage is required")
-	}
-
-	// Check for duplicate key name
-	if _, exists := k.keyNames.Load(req.Name); exists {
-		return NewError(errors.ErrAlreadyExists, "kms.validateGenerateKeyRequest", "key with name '"+req.Name+"' already exists")
 	}
 
 	return nil
@@ -2380,8 +2482,15 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 		return nil, err
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Verify key exists
-	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "update_key_status").Inc()
@@ -2393,7 +2502,7 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 	var oldStatus KeyStatus
 	if req.Version > 0 {
 		// Get version-specific status for grace period and similar operations
-		versionStatus, _ := k.getVersionStatus(ctx, req.KeyID, req.Version)
+		versionStatus, _ := k.getVersionStatus(ctx, scopedKeyID, req.Version)
 		if versionStatus != "" {
 			oldStatus = versionStatus
 		} else {
@@ -2432,13 +2541,13 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 		if req.Status == KeyStatusDisabled {
 			disabledAt = &now
 		}
-		k.setVersionStatus(req.KeyID, req.Version, req.Status, disabledAt)
+		k.setVersionStatus(scopedKeyID, req.Version, req.Status, disabledAt)
 	} else {
 		// Call appropriate KMS manager method for whole-key status updates
 		// This is used when no specific version is targeted
 		switch req.Status {
 		case KeyStatusEnabled:
-			err = k.kmsManager.EnableKey(ctx, req.KeyID)
+			err = k.kmsManager.EnableKey(ctx, scopedKeyID)
 			if err != nil {
 				if k.metrics != nil {
 					k.metrics.errorsByType.With("kms_error", "update_key_status").Inc()
@@ -2446,7 +2555,7 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 				return nil, WrapError(err, errors.ErrInternal, "kms.UpdateKeyStatus", "failed to enable key")
 			}
 		case KeyStatusDisabled:
-			err = k.kmsManager.DisableKey(ctx, req.KeyID)
+			err = k.kmsManager.DisableKey(ctx, scopedKeyID)
 			if err != nil {
 				if k.metrics != nil {
 					k.metrics.errorsByType.With("kms_error", "update_key_status").Inc()
@@ -2501,8 +2610,15 @@ func (k *kmsServiceImpl) ListKeyVersions(ctx context.Context, req *ListKeyVersio
 		return nil, err
 	}
 
+	// Extract tenant context for multi-tenant isolation
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+
 	// Verify key exists and get metadata
-	keyData, err := k.kmsManager.GetKey(ctx, req.KeyID)
+	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "list_key_versions").Inc()
@@ -2546,7 +2662,7 @@ func (k *kmsServiceImpl) ListKeyVersions(ctx context.Context, req *ListKeyVersio
 
 		// Check if this version has been explicitly disabled via grace period or other mechanism
 		// By default, all versions remain enabled (available for decryption) until explicitly disabled
-		explicitStatus, disabledTime := k.getVersionStatus(ctx, req.KeyID, v)
+		explicitStatus, disabledTime := k.getVersionStatus(ctx, scopedKeyID, v)
 		switch {
 		case explicitStatus != "":
 			versionInfo.Status = explicitStatus
@@ -2641,8 +2757,15 @@ func (k *kmsServiceImpl) CreateDEK(ctx context.Context, req *CreateDEKRequest) (
 	// Normalize path
 	normalizedPath := normalizeDEKPath(req.Path)
 
+	// Scope the DEK path to the caller's tenant, the same way key IDs are
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)
+
 	// Check if DEK already exists
-	if _, exists := k.dekStore.get(normalizedPath); exists {
+	if _, exists := k.dekStore.get(scopedPath); exists {
 		return nil, NewError(errors.ErrAlreadyExists, "kms.CreateDEK", "DEK already exists at path: "+normalizedPath)
 	}
 
@@ -2693,7 +2816,7 @@ func (k *kmsServiceImpl) CreateDEK(ctx context.Context, req *CreateDEKRequest) (
 	}
 
 	// Store the DEK entry with the key material
-	k.dekStore.set(normalizedPath, &dekEntry{
+	k.dekStore.set(scopedPath, &dekEntry{
 		metadata:   metadata,
 		wrappedKey: keyMaterial,
 	})
@@ -2705,7 +2828,7 @@ func (k *kmsServiceImpl) CreateDEK(ctx context.Context, req *CreateDEKRequest) (
 			MaxBytes:       req.MaxBytes,
 			WarningPercent: req.WarningPercent,
 		}
-		k.safetyTracker.SetDEKConfig(normalizedPath, config)
+		k.safetyTracker.SetDEKConfig(scopedPath, config)
 	}
 
 	// Update metrics
@@ -2749,8 +2872,15 @@ func (k *kmsServiceImpl) GetDEK(ctx context.Context, req *GetDEKRequest) (*GetDE
 	// Normalize path
 	normalizedPath := normalizeDEKPath(req.Path)
 
+	// Scope the DEK path to the caller's tenant, the same way key IDs are
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)
+
 	// Retrieve DEK from store
-	entry, exists := k.dekStore.get(normalizedPath)
+	entry, exists := k.dekStore.get(scopedPath)
 	if !exists {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_dek").Inc()
@@ -2764,7 +2894,7 @@ func (k *kmsServiceImpl) GetDEK(ctx context.Context, req *GetDEKRequest) (*GetDE
 	}
 
 	// Get usage stats from safety tracker
-	operationCount, bytesProcessed, _ := k.safetyTracker.GetDEKUsage(normalizedPath)
+	operationCount, bytesProcessed, _ := k.safetyTracker.GetDEKUsage(scopedPath)
 	metadata := entry.metadata
 	metadata.UsageCount = operationCount
 	metadata.BytesUsed = bytesProcessed
@@ -2790,8 +2920,14 @@ func (k *kmsServiceImpl) ListDEKs(ctx context.Context, req *ListDEKsRequest) (*L
 		prefix = normalizeDEKPath(req.Prefix)
 	}
 
-	// List DEKs from store
-	deks := k.dekStore.list(prefix)
+	// List only the caller's tenant's DEKs
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tenantPrefix := tenantListPrefix(tenantID)
+	totalCount := len(k.dekStore.list(tenantPrefix))
+	deks := k.dekStore.list(tenantPrefix + prefix)
 
 	// Apply pagination
 	limit := 100
@@ -2811,7 +2947,7 @@ func (k *kmsServiceImpl) ListDEKs(ctx context.Context, req *ListDEKsRequest) (*L
 
 	// Enrich with usage stats
 	for _, dek := range deks {
-		operationCount, bytesProcessed, _ := k.safetyTracker.GetDEKUsage(dek.Path)
+		operationCount, bytesProcessed, _ := k.safetyTracker.GetDEKUsage(tenantScopedKeyID(tenantID, dek.Path))
 		dek.UsageCount = operationCount
 		dek.BytesUsed = bytesProcessed
 	}
@@ -2820,7 +2956,7 @@ func (k *kmsServiceImpl) ListDEKs(ctx context.Context, req *ListDEKsRequest) (*L
 		DEKs:       deks,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
-		TotalCount: k.dekStore.count(),
+		TotalCount: totalCount,
 		Timestamp:  time.Now(),
 	}, nil
 }
@@ -2846,8 +2982,15 @@ func (k *kmsServiceImpl) RotateDEK(ctx context.Context, req *RotateDEKRequest) (
 	// Normalize path
 	normalizedPath := normalizeDEKPath(req.Path)
 
+	// Scope the DEK path to the caller's tenant, the same way key IDs are
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)
+
 	// Retrieve existing DEK
-	entry, exists := k.dekStore.get(normalizedPath)
+	entry, exists := k.dekStore.get(scopedPath)
 	if !exists {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "rotate_dek").Inc()
@@ -2888,7 +3031,7 @@ func (k *kmsServiceImpl) RotateDEK(ctx context.Context, req *RotateDEKRequest) (
 	entry.wrappedKey = newKeyMaterial
 
 	// Reset AEAD safety tracking for the new key version
-	k.safetyTracker.ResetDEKUsage(normalizedPath)
+	k.safetyTracker.ResetDEKUsage(scopedPath)
 
 	// Update metrics
 	if k.metrics != nil {
@@ -2932,8 +3075,15 @@ func (k *kmsServiceImpl) DeleteDEK(ctx context.Context, req *DeleteDEKRequest) (
 	// Normalize path
 	normalizedPath := normalizeDEKPath(req.Path)
 
+	// Scope the DEK path to the caller's tenant, the same way key IDs are
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)
+
 	// Check if DEK exists
-	entry, exists := k.dekStore.get(normalizedPath)
+	entry, exists := k.dekStore.get(scopedPath)
 	if !exists {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "delete_dek").Inc()
@@ -2947,10 +3097,10 @@ func (k *kmsServiceImpl) DeleteDEK(ctx context.Context, req *DeleteDEKRequest) (
 	}
 
 	// Delete the DEK
-	deleted := k.dekStore.delete(normalizedPath)
+	deleted := k.dekStore.delete(scopedPath)
 
 	// Clear AEAD safety tracking
-	k.safetyTracker.ClearDEKConfig(normalizedPath)
+	k.safetyTracker.ClearDEKConfig(scopedPath)
 
 	// Update metrics
 	if k.metrics != nil && deleted {
@@ -2992,8 +3142,15 @@ func (k *kmsServiceImpl) GetDEKStatus(ctx context.Context, req *GetDEKStatusRequ
 	// Normalize path
 	normalizedPath := normalizeDEKPath(req.Path)
 
+	// Scope the DEK path to the caller's tenant, the same way key IDs are
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)
+
 	// Retrieve DEK from store
-	entry, exists := k.dekStore.get(normalizedPath)
+	entry, exists := k.dekStore.get(scopedPath)
 	if !exists {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "get_dek_status").Inc()
@@ -3002,7 +3159,7 @@ func (k *kmsServiceImpl) GetDEKStatus(ctx context.Context, req *GetDEKStatusRequ
 	}
 
 	// Get usage stats from safety tracker
-	operationCount, bytesProcessed, _ := k.safetyTracker.GetDEKUsage(normalizedPath)
+	operationCount, bytesProcessed, _ := k.safetyTracker.GetDEKUsage(scopedPath)
 	metadata := entry.metadata
 	metadata.UsageCount = operationCount
 	metadata.BytesUsed = bytesProcessed
@@ -3038,8 +3195,15 @@ func (k *kmsServiceImpl) SetDefaultDEK(ctx context.Context, req *SetDefaultDEKRe
 	// Normalize path
 	normalizedPath := normalizeDEKPath(req.Path)
 
+	// Scope the DEK path to the caller's tenant, the same way key IDs are
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)
+
 	// Verify DEK exists
-	if _, exists := k.dekStore.get(normalizedPath); !exists {
+	if _, exists := k.dekStore.get(scopedPath); !exists {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("not_found", "set_default_dek").Inc()
 		}
@@ -3047,7 +3211,7 @@ func (k *kmsServiceImpl) SetDefaultDEK(ctx context.Context, req *SetDefaultDEKRe
 	}
 
 	// Set as default
-	previousDefault := k.dekStore.setDefault(normalizedPath)
+	previousDefault := tenantStripKeyID(tenantID, k.dekStore.setDefault(tenantListPrefix(tenantID), scopedPath))
 
 	// Log the operation
 	if k.logger != nil {
@@ -3075,17 +3239,21 @@ func (k *kmsServiceImpl) SetDefaultKey(ctx context.Context, req *SetDefaultKeyRe
 		return nil, NewError(errors.ErrInvalidInput, "kms.SetDefaultKey", "key name is required")
 	}
 
-	// Verify the key exists by looking up its ID from the name map.
-	if _, ok := k.keyNames.Load(req.Name); !ok {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify the key exists within the caller's tenant.
+	if _, ok := k.keyNames.Load(tenantScopedKeyID(tenantID, req.Name)); !ok {
 		return nil, NewError(errors.ErrNotFound, "kms.SetDefaultKey", "key not found: "+req.Name)
 	}
 
-	// Swap in the new default, capturing the previous value.
+	// Swap in the tenant's new default, capturing its previous value.
 	prev := ""
-	if v := k.defaultKeyName.Load(); v != nil {
+	if v, loaded := k.defaultKeyNames.Swap(tenantListPrefix(tenantID), req.Name); loaded {
 		prev, _ = v.(string)
 	}
-	k.defaultKeyName.Store(req.Name)
 
 	return &SetDefaultKeyResponse{
 		Name:            req.Name,
@@ -3106,7 +3274,14 @@ func (k *kmsServiceImpl) SetDEKSafety(ctx context.Context, req *SetDEKSafetyRequ
 
 	// Verify the DEK exists
 	normalizedPath := normalizeDEKPath(req.Path)
-	_, err := k.GetDEK(ctx, &GetDEKRequest{Path: normalizedPath})
+
+	// Scope the DEK path to the caller's tenant, the same way key IDs are
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)
+	_, err = k.GetDEK(ctx, &GetDEKRequest{Path: normalizedPath})
 	if err != nil {
 		return nil, NewError(errors.ErrNotFound, "kms.SetDEKSafety", "DEK not found: "+normalizedPath)
 	}
@@ -3136,7 +3311,7 @@ func (k *kmsServiceImpl) SetDEKSafety(ctx context.Context, req *SetDEKSafetyRequ
 	}
 
 	// Set the configuration in the safety tracker (path already normalized above)
-	k.safetyTracker.SetDEKConfig(normalizedPath, config)
+	k.safetyTracker.SetDEKConfig(scopedPath, config)
 
 	if k.logger != nil {
 		k.logger.WithFields(map[string]interface{}{
@@ -3169,13 +3344,20 @@ func (k *kmsServiceImpl) ClearDEKSafety(ctx context.Context, req *ClearDEKSafety
 
 	// Verify the DEK exists
 	normalizedPath := normalizeDEKPath(req.Path)
-	_, err := k.GetDEK(ctx, &GetDEKRequest{Path: normalizedPath})
+
+	// Scope the DEK path to the caller's tenant, the same way key IDs are
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)
+	_, err = k.GetDEK(ctx, &GetDEKRequest{Path: normalizedPath})
 	if err != nil {
 		return nil, NewError(errors.ErrNotFound, "kms.ClearDEKSafety", "DEK not found: "+normalizedPath)
 	}
 
 	// Clear the per-DEK configuration (reverts to server defaults)
-	k.safetyTracker.ClearDEKConfig(normalizedPath)
+	k.safetyTracker.ClearDEKConfig(scopedPath)
 
 	if k.logger != nil {
 		k.logger.WithFields(map[string]interface{}{
@@ -3208,6 +3390,12 @@ func (k *kmsServiceImpl) StartReencryption(ctx context.Context, req *StartReencr
 		return nil, NewError(errors.ErrInvalidInput, "kms.StartReencryption", "to_version must be greater than from_version")
 	}
 
+	// The operation covers only the caller's tenant's keys.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check if re-encryption is already in progress
 	k.reencryptionState.mu.Lock()
 	if k.reencryptionState.inProgress {
@@ -3220,7 +3408,7 @@ func (k *kmsServiceImpl) StartReencryption(ctx context.Context, req *StartReencr
 	startedAt := time.Now()
 
 	// Count total keys to re-encrypt
-	keys, err := k.kmsManager.ListKeys(ctx, "")
+	keys, err := k.kmsManager.ListKeys(ctx, tenantListPrefix(tenantID))
 	if err != nil {
 		k.reencryptionState.mu.Unlock()
 		return nil, WrapError(err, errors.ErrInternal, "kms.StartReencryption", "failed to list keys for re-encryption")
@@ -3248,6 +3436,7 @@ func (k *kmsServiceImpl) StartReencryption(ctx context.Context, req *StartReencr
 	reencryptCtx, cancelFunc := context.WithCancel(context.WithoutCancel(ctx)) // #nosec G118 -- cancelFunc stored in reencryptionState, called on cancellation
 
 	// Initialize re-encryption state
+	k.reencryptionState.tenantID = tenantID
 	k.reencryptionState.operationID = operationID
 	k.reencryptionState.inProgress = true
 	k.reencryptionState.status = "running"
@@ -3380,8 +3569,17 @@ func (k *kmsServiceImpl) runReencryption(ctx context.Context, req *StartReencryp
 
 // GetReencryptionProgress returns the current progress of the re-encryption operation.
 func (k *kmsServiceImpl) GetReencryptionProgress(ctx context.Context, req *GetReencryptionProgressRequest) (*GetReencryptionProgressResponse, error) {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	k.reencryptionState.mu.RLock()
 	defer k.reencryptionState.mu.RUnlock()
+
+	if k.reencryptionState.hiddenFrom(tenantID) {
+		return nil, NewError(errors.ErrNotFound, "kms.GetReencryptionProgress", "re-encryption operation not found")
+	}
 
 	processedKeys := k.reencryptionState.processedKeys.Load()
 	failedKeys := k.reencryptionState.failedKeys.Load()
@@ -3424,8 +3622,17 @@ func (k *kmsServiceImpl) GetReencryptionProgress(ctx context.Context, req *GetRe
 
 // CancelReencryption cancels an in-progress re-encryption operation.
 func (k *kmsServiceImpl) CancelReencryption(ctx context.Context) error {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return err
+	}
+
 	k.reencryptionState.mu.Lock()
 	defer k.reencryptionState.mu.Unlock()
+
+	if k.reencryptionState.hiddenFrom(tenantID) {
+		return NewError(errors.ErrNotFound, "kms.CancelReencryption", "re-encryption operation not found")
+	}
 
 	if !k.reencryptionState.inProgress {
 		return NewError(errors.ErrInvalidInput, "kms.CancelReencryption", "no re-encryption operation in progress")

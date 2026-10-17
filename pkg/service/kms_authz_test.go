@@ -33,7 +33,7 @@ import (
 
 // subjectCtx returns a context carrying an authenticated Subject.
 func subjectCtx(subject interfaces.Subject) context.Context {
-	return auth.SubjectIntoContext(context.Background(), subject)
+	return auth.SubjectIntoContext(systemTenantCtx(), subject)
 }
 
 // authenticatedSubject returns an authenticated Subject with the given id/username/roles.
@@ -179,16 +179,16 @@ func TestSubjectIntoContext_RoundTrip(t *testing.T) {
 }
 
 func TestSubjectFromContext_MissingReturnsNotOK(t *testing.T) {
-	_, ok := auth.SubjectFromContext(context.Background())
+	_, ok := auth.SubjectFromContext(systemTenantCtx())
 	assert.False(t, ok, "SubjectFromContext should return false for empty context")
 }
 
 func TestIsSystemContext_False(t *testing.T) {
-	assert.False(t, auth.IsSystemContext(context.Background()))
+	assert.False(t, auth.IsSystemContext(systemTenantCtx()))
 }
 
 func TestIsSystemContext_True(t *testing.T) {
-	ctx := auth.NewSystemContext(context.Background())
+	ctx := auth.NewSystemContext(systemTenantCtx())
 	assert.True(t, auth.IsSystemContext(ctx))
 }
 
@@ -200,13 +200,13 @@ func TestCheckKeyAuthz_AuthzDisabled_Allows(t *testing.T) {
 	svc, _ := newAuthzEnabledKMS()
 	svc.authzEnabled = false
 	// No subject in context — must still allow when authz is disabled.
-	err := svc.checkKeyAuthz(context.Background(), "key1", "encrypt")
+	err := svc.checkKeyAuthz(systemTenantCtx(), "key1", "encrypt")
 	require.NoError(t, err)
 }
 
 func TestCheckKeyAuthz_SystemContext_Allows(t *testing.T) {
 	svc, _ := newAuthzEnabledKMS()
-	ctx := auth.NewSystemContext(context.Background())
+	ctx := auth.NewSystemContext(systemTenantCtx())
 	// System context bypasses authz entirely regardless of policy.
 	err := svc.checkKeyAuthz(ctx, "key1", "encrypt")
 	require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestCheckKeyAuthz_SystemContext_Allows(t *testing.T) {
 
 func TestCheckKeyAuthz_NoSubjectInContext_Denies(t *testing.T) {
 	svc, _ := newAuthzEnabledKMS()
-	err := svc.checkKeyAuthz(context.Background(), "key1", "encrypt")
+	err := svc.checkKeyAuthz(systemTenantCtx(), "key1", "encrypt")
 	require.Error(t, err)
 	var qe *errors.QBError
 	require.ErrorAs(t, err, &qe)
@@ -365,7 +365,7 @@ func TestEmitKeyUseAudit_DenyEmitted(t *testing.T) {
 	svc.auditLogger = logger
 
 	// No subject → deny
-	err := svc.checkKeyAuthz(context.Background(), "key1", "decrypt")
+	err := svc.checkKeyAuthz(systemTenantCtx(), "key1", "decrypt")
 	require.Error(t, err)
 
 	require.Len(t, logger.events, 1)
@@ -383,7 +383,7 @@ func TestSetKeyPolicy_PersistAndRetrieve(t *testing.T) {
 	km := svc.kmsManager.(*mockKMSManager)
 	km.keys["test-key"] = &mockKeyData{keyID: "test-key", status: "enabled"}
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	policy := &KeyPolicy{
 		KeyID:             "test-key",
@@ -406,7 +406,7 @@ func TestSetKeyPolicy_PersistAndRetrieve(t *testing.T) {
 
 func TestSetKeyPolicy_KeyNotFound(t *testing.T) {
 	svc, _ := newAuthzEnabledKMS()
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	_, err := svc.SetKeyPolicy(ctx, &SetKeyPolicyRequest{
 		KeyID: "nonexistent",
 		Policy: &KeyPolicy{
@@ -421,7 +421,7 @@ func TestGetKeyPolicy_NoPolicy_ReturnsDefault(t *testing.T) {
 	km := svc.kmsManager.(*mockKMSManager)
 	km.keys["my-key"] = &mockKeyData{keyID: "my-key", status: "enabled"}
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.GetKeyPolicy(ctx, &GetKeyPolicyRequest{KeyID: "my-key"})
 	require.NoError(t, err)
 	require.NotNil(t, resp.Policy)
@@ -434,7 +434,7 @@ func TestDeleteKeyPolicy_RemovesPolicy(t *testing.T) {
 	km := svc.kmsManager.(*mockKMSManager)
 	km.keys["del-key"] = &mockKeyData{keyID: "del-key", status: "enabled"}
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	_, err := svc.SetKeyPolicy(ctx, &SetKeyPolicyRequest{
 		KeyID: "del-key",
 		Policy: &KeyPolicy{
@@ -466,7 +466,7 @@ func TestCryptoService_Encrypt_AuthzDenied(t *testing.T) {
 	kmsSvc.authzEnabled = true
 
 	// Store a policy that denies user-2.
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	kmsManager.keys["sym-key"] = &mockKeyData{keyID: "sym-key", status: "enabled"}
 	policy := &KeyPolicy{
 		KeyID:            "sym-key",
@@ -499,7 +499,7 @@ func TestCryptoService_Encrypt_AuthzAllowed(t *testing.T) {
 	kmsSvc.kvStore = kv
 	kmsSvc.authzEnabled = true
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	kmsManager.keys["sym-key"] = &mockKeyData{keyID: "sym-key", status: "enabled"}
 	// Policy allows only alice.
 	policy := &KeyPolicy{
@@ -534,7 +534,7 @@ func TestCryptoService_Decrypt_MissingSubject_Denied(t *testing.T) {
 	svc.kmsSvc = kmsSvc
 	svc.authzEnabled = true
 
-	_, err := svc.Decrypt(context.Background(), &DecryptRequest{
+	_, err := svc.Decrypt(systemTenantCtx(), &DecryptRequest{
 		KeyID:      "key1",
 		Ciphertext: []byte("encrypted"),
 	})
@@ -552,7 +552,7 @@ func TestCryptoService_Sign_AuthzDenied(t *testing.T) {
 	kmsSvc.kvStore = kv
 	kmsSvc.authzEnabled = true
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	kmsManager.keys["sign-key"] = &mockKeyData{keyID: "sign-key", status: "enabled"}
 	// Only encrypt is allowed — sign should be denied.
 	policy := &KeyPolicy{
@@ -615,7 +615,7 @@ func TestCryptoService_KeyUseAudit_EmittedOnDeny(t *testing.T) {
 	auditLog := &mockKeyUseAuditLogger{}
 	kmsSvc.auditLogger = auditLog
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	kmsManager.keys["key1"] = &mockKeyData{keyID: "key1", status: "enabled"}
 	policy := &KeyPolicy{
 		KeyID:            "key1",

@@ -34,7 +34,7 @@ func TestKMSService_ExportKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.ExportKey(context.Background(), nil)
+	resp, err := svc.ExportKey(systemTenantCtx(), nil)
 
 	assert.Nil(t, resp)
 	require.Error(t, err)
@@ -47,7 +47,7 @@ func TestKMSService_ExportKey_SourceKeyNotFound(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 
 	// Do not add any keys - source key will not be found
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "missing-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -76,7 +76,7 @@ func TestKMSService_ExportKey_KeyNotExportable(t *testing.T) {
 		return nil, errors.New("key not found")
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -105,7 +105,7 @@ func TestKMSService_ExportKey_KeyNotEnabled(t *testing.T) {
 		return nil, errors.New("key not found")
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -134,7 +134,7 @@ func TestKMSService_ExportKey_WrappingKeyNotFound(t *testing.T) {
 		return nil, errors.New("key not found")
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "missing-wrapper",
 		WrappingAlgorithm: "AES-KW",
@@ -169,7 +169,7 @@ func TestKMSService_ExportKey_WrappingKeyNotEnabled(t *testing.T) {
 		return nil, errors.New("key not found")
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -191,7 +191,7 @@ func TestKMSService_ExportKey_UnknownMetadataType(t *testing.T) {
 		return struct{ Name string }{Name: "unknown"}, nil
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -235,7 +235,7 @@ func TestKMSService_ExportKey_WithKMSKeyMetadata(t *testing.T) {
 		return []byte("wrapped-key-material"), nil
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -284,7 +284,7 @@ func TestKMSService_ExportKey_WithServiceKeyMetadata(t *testing.T) {
 		return []byte("wrapped-key-data"), nil
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -315,7 +315,7 @@ func TestKMSService_ExportKey_GenerateDataKeyError(t *testing.T) {
 		return nil, nil, errors.New("HSM failure")
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -349,7 +349,7 @@ func TestKMSService_ExportKey_EncryptError(t *testing.T) {
 		return nil, errors.New("encryption failure")
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -385,7 +385,7 @@ func TestKMSService_ExportKey_WithAuditLogger(t *testing.T) {
 		return []byte("wrapped"), nil
 	}
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "source-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -405,7 +405,7 @@ func TestKMSService_ExportKey_FailedAuditOnSourceNotFound(t *testing.T) {
 	auditLogger := &mockKMSAuditLogger{}
 	svc.auditLogger = auditLogger
 
-	resp, err := svc.ExportKey(context.Background(), &ExportKeyRequest{
+	resp, err := svc.ExportKey(systemTenantCtx(), &ExportKeyRequest{
 		KeyID:             "missing-key",
 		WrappingKeyID:     "wrapper-key",
 		WrappingAlgorithm: "AES-KW",
@@ -426,7 +426,7 @@ func TestKMSService_UnwrapKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.UnwrapKey(context.Background(), nil)
+	resp, err := svc.UnwrapKey(systemTenantCtx(), nil)
 
 	assert.Nil(t, resp)
 	require.Error(t, err)
@@ -442,7 +442,7 @@ func TestKMSService_UnwrapKey_KeyAlreadyExists(t *testing.T) {
 		return &KeyMetadata{KeyID: keyID}, nil // Key exists
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "existing-key",
 		WrappedKey:        []byte("data"),
 		WrappingKeyID:     "wrapper-key",
@@ -464,7 +464,7 @@ func TestKMSService_UnwrapKey_WrappingKeyNotFound(t *testing.T) {
 		return nil, errors.New("key not found")
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "new-key",
 		WrappedKey:        []byte("data"),
 		WrappingKeyID:     "missing-wrapper",
@@ -494,7 +494,7 @@ func TestKMSService_UnwrapKey_WrappingKeyDisabled(t *testing.T) {
 		}, nil
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "new-key",
 		WrappedKey:        []byte("data"),
 		WrappingKeyID:     "disabled-wrapper",
@@ -528,7 +528,7 @@ func TestKMSService_UnwrapKey_DecryptError(t *testing.T) {
 		return nil, errors.New("decryption failed")
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "new-key",
 		WrappedKey:        []byte("encrypted-data"),
 		WrappingKeyID:     "wrapper-key",
@@ -562,7 +562,7 @@ func TestKMSService_UnwrapKey_InvalidKeySize(t *testing.T) {
 		return make([]byte, 15), nil // Wrong size for AES-256-GCM (should be 32)
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "new-key",
 		WrappedKey:        []byte("encrypted-data"),
 		WrappingKeyID:     "wrapper-key",
@@ -605,7 +605,7 @@ func TestKMSService_UnwrapKey_Success(t *testing.T) {
 		}, nil
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "new-key",
 		Name:              "imported-key",
 		WrappedKey:        []byte("encrypted-data"),
@@ -642,7 +642,7 @@ func TestKMSService_UnwrapKey_WithSourceKeyIDAndVersion(t *testing.T) {
 		return make([]byte, 32), nil
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "new-key",
 		WrappedKey:        []byte("encrypted-data"),
 		WrappingKeyID:     "wrapper-key",
@@ -681,7 +681,7 @@ func TestKMSService_UnwrapKey_ImportError(t *testing.T) {
 		return nil, errors.New("storage full")
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "new-key",
 		WrappedKey:        []byte("encrypted-data"),
 		WrappingKeyID:     "wrapper-key",
@@ -714,7 +714,7 @@ func TestKMSService_UnwrapKey_WithAuditLogger(t *testing.T) {
 		return make([]byte, 32), nil
 	}
 
-	resp, err := svc.UnwrapKey(context.Background(), &UnwrapKeyRequest{
+	resp, err := svc.UnwrapKey(systemTenantCtx(), &UnwrapKeyRequest{
 		KeyID:             "new-key",
 		Name:              "imported",
 		WrappedKey:        []byte("data"),
@@ -738,7 +738,7 @@ func TestKMSService_LogAuditExport_NilAuditLogger(t *testing.T) {
 	svc.auditLogger = nil
 
 	// Should not panic with nil audit logger
-	svc.logAuditExport(context.Background(), "key-id", "AES-256-GCM", "wrapping-key", "AES-KW", true)
+	svc.logAuditExport(systemTenantCtx(), "key-id", "AES-256-GCM", "wrapping-key", "AES-KW", true)
 }
 
 func TestKMSService_LogAuditImport_NilAuditLogger(t *testing.T) {
@@ -748,7 +748,7 @@ func TestKMSService_LogAuditImport_NilAuditLogger(t *testing.T) {
 	svc.auditLogger = nil
 
 	// Should not panic with nil audit logger
-	svc.logAuditImport(context.Background(), "key-id", "key-name", "AES-256-GCM", true)
+	svc.logAuditImport(systemTenantCtx(), "key-id", "key-name", "AES-256-GCM", true)
 }
 
 func TestKMSService_LogAuditExport_WithAuditLogger(t *testing.T) {
@@ -758,7 +758,7 @@ func TestKMSService_LogAuditExport_WithAuditLogger(t *testing.T) {
 	auditLogger := &mockKMSAuditLogger{}
 	svc.auditLogger = auditLogger
 
-	svc.logAuditExport(context.Background(), "exported-key", "AES-256-GCM", "wrapper-key", "AES-KW", true)
+	svc.logAuditExport(systemTenantCtx(), "exported-key", "AES-256-GCM", "wrapper-key", "AES-KW", true)
 
 	assert.Contains(t, auditLogger.exports, "exported-key")
 }
@@ -770,7 +770,7 @@ func TestKMSService_LogAuditImport_WithAuditLogger(t *testing.T) {
 	auditLogger := &mockKMSAuditLogger{}
 	svc.auditLogger = auditLogger
 
-	svc.logAuditImport(context.Background(), "imported-key", "my-key", "AES-256-GCM", true)
+	svc.logAuditImport(systemTenantCtx(), "imported-key", "my-key", "AES-256-GCM", true)
 	// Just verify no panic
 }
 
@@ -781,7 +781,7 @@ func TestKMSService_LogAuditExport_WithAuditContext(t *testing.T) {
 	auditLogger := &mockKMSAuditLogger{}
 	svc.auditLogger = auditLogger
 
-	ctx := WithAuditContext(context.Background(), "admin", "user-123", "10.0.0.1")
+	ctx := WithAuditContext(systemTenantCtx(), "admin", "user-123", "10.0.0.1")
 	svc.logAuditExport(ctx, "audit-key", "AES-256-GCM", "wrap-key", "AES-KW", true)
 
 	assert.Contains(t, auditLogger.exports, "audit-key")

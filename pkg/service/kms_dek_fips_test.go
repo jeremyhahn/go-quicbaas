@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	goerrors "errors"
 	"testing"
 
@@ -56,7 +55,7 @@ func TestCreateDEKRefusesUnapprovedAlgorithmWhenFIPSActivated(t *testing.T) {
 			activateFIPS(t, true)
 			svc := newDEKTestService(t)
 
-			resp, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+			resp, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 				Path:      "data/objects",
 				Algorithm: tt.algorithm,
 			})
@@ -94,7 +93,7 @@ func TestCreateDEKAcceptsApprovedAlgorithmWhenFIPSActivated(t *testing.T) {
 			activateFIPS(t, true)
 			svc := newDEKTestService(t)
 
-			resp, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+			resp, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 				Path:      "data/objects",
 				Algorithm: tt.algorithm,
 			})
@@ -113,7 +112,7 @@ func TestCreateDEKKeepsChaCha20WhenNotActivated(t *testing.T) {
 	activateFIPS(t, false)
 	svc := newDEKTestService(t)
 
-	resp, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	resp, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path:      "data/objects",
 		Algorithm: KeyAlgChaCha20Poly1305,
 	})
@@ -126,7 +125,7 @@ func TestCreateDEKKeepsChaCha20WhenNotActivated(t *testing.T) {
 func TestRotateDEKRefusesAnUnapprovedExistingDEKWhenFIPSActivated(t *testing.T) {
 	activateFIPS(t, false)
 	svc := newDEKTestService(t)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	created, err := svc.CreateDEK(ctx, &CreateDEKRequest{
 		Path:      "data/objects",
@@ -159,7 +158,7 @@ func TestRotateDEKRefusesAnUnapprovedExistingDEKWhenFIPSActivated(t *testing.T) 
 func TestRotateDEKAllowsAnApprovedDEKWhenFIPSActivated(t *testing.T) {
 	activateFIPS(t, true)
 	svc := newDEKTestService(t)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	_, err := svc.CreateDEK(ctx, &CreateDEKRequest{
 		Path:      "data/objects",
@@ -181,7 +180,7 @@ func TestRotateDEKAllowsAnApprovedDEKWhenFIPSActivated(t *testing.T) {
 func TestCreateDEKMatchesThisBuild(t *testing.T) {
 	svc := newDEKTestService(t)
 
-	resp, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	resp, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path:      "data/objects",
 		Algorithm: KeyAlgChaCha20Poly1305,
 	})

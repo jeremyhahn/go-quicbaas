@@ -34,7 +34,7 @@ func TestKMSService_StartReencryption_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.StartReencryption(context.Background(), nil)
+	resp, err := svc.StartReencryption(systemTenantCtx(), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "request is nil")
@@ -46,7 +46,7 @@ func TestKMSService_StartReencryption_MissingFromVersion(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 
 	req := &StartReencryptionRequest{FromVersion: 0, ToVersion: 2}
-	resp, err := svc.StartReencryption(context.Background(), req)
+	resp, err := svc.StartReencryption(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "from_version is required")
@@ -58,7 +58,7 @@ func TestKMSService_StartReencryption_MissingToVersion(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 
 	req := &StartReencryptionRequest{FromVersion: 1, ToVersion: 0}
-	resp, err := svc.StartReencryption(context.Background(), req)
+	resp, err := svc.StartReencryption(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "to_version is required")
@@ -70,7 +70,7 @@ func TestKMSService_StartReencryption_InvalidVersionOrder(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 
 	req := &StartReencryptionRequest{FromVersion: 3, ToVersion: 1}
-	resp, err := svc.StartReencryption(context.Background(), req)
+	resp, err := svc.StartReencryption(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "to_version must be greater")
@@ -86,7 +86,7 @@ func TestKMSService_StartReencryption_AlreadyInProgress(t *testing.T) {
 	svc.reencryptionState.mu.Unlock()
 
 	req := &StartReencryptionRequest{FromVersion: 1, ToVersion: 2}
-	resp, err := svc.StartReencryption(context.Background(), req)
+	resp, err := svc.StartReencryption(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already in progress")
@@ -102,7 +102,7 @@ func TestKMSService_StartReencryption_ListKeysError(t *testing.T) {
 	}
 
 	req := &StartReencryptionRequest{FromVersion: 1, ToVersion: 2}
-	resp, err := svc.StartReencryption(context.Background(), req)
+	resp, err := svc.StartReencryption(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list keys")
@@ -126,7 +126,7 @@ func TestKMSService_StartReencryption_WithKeys(t *testing.T) {
 		BatchSize:   10,
 		Concurrency: 2,
 	}
-	resp, err := svc.StartReencryption(context.Background(), req)
+	resp, err := svc.StartReencryption(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Started)
@@ -149,7 +149,7 @@ func TestKMSService_StartReencryption_DefaultBatchSizeAndConcurrency(t *testing.
 		BatchSize:   0,
 		Concurrency: 0,
 	}
-	resp, err := svc.StartReencryption(context.Background(), req)
+	resp, err := svc.StartReencryption(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Started)
@@ -180,7 +180,7 @@ func TestKMSService_RunReencryption_CompletesSuccessfully(t *testing.T) {
 	}
 	req := &StartReencryptionRequest{BatchSize: 2}
 
-	svc.runReencryption(context.Background(), req, keys)
+	svc.runReencryption(systemTenantCtx(), req, keys)
 
 	svc.reencryptionState.mu.RLock()
 	defer svc.reencryptionState.mu.RUnlock()
@@ -208,7 +208,7 @@ func TestKMSService_RunReencryption_Cancelled(t *testing.T) {
 		keys[i] = &kms.KeyMetadata{KeyID: "key"}
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(systemTenantCtx())
 	cancel()
 
 	req := &StartReencryptionRequest{BatchSize: 10}
@@ -236,7 +236,7 @@ func TestKMSService_RunReencryption_WithFailedKeys(t *testing.T) {
 	keys := []interface{}{&kms.KeyMetadata{KeyID: "k1"}, &kms.KeyMetadata{KeyID: "k2"}}
 	req := &StartReencryptionRequest{BatchSize: 100}
 
-	svc.runReencryption(context.Background(), req, keys)
+	svc.runReencryption(systemTenantCtx(), req, keys)
 
 	svc.reencryptionState.mu.RLock()
 	defer svc.reencryptionState.mu.RUnlock()
@@ -257,7 +257,7 @@ func TestKMSService_RunReencryption_DefaultBatchSize(t *testing.T) {
 	keys := []interface{}{&kms.KeyMetadata{KeyID: "k1"}}
 	req := &StartReencryptionRequest{BatchSize: 0}
 
-	svc.runReencryption(context.Background(), req, keys)
+	svc.runReencryption(systemTenantCtx(), req, keys)
 
 	assert.Equal(t, uint64(1), svc.reencryptionState.processedKeys.Load())
 }
@@ -271,7 +271,7 @@ func TestKMSService_GetReencryptionProgress_Idle(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.GetReencryptionProgress(context.Background(), nil)
+	resp, err := svc.GetReencryptionProgress(systemTenantCtx(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.NotNil(t, resp.Progress)
@@ -299,7 +299,7 @@ func TestKMSService_GetReencryptionProgress_InProgress(t *testing.T) {
 	svc.reencryptionState.operationID = "progress-op"
 	svc.reencryptionState.mu.Unlock()
 
-	resp, err := svc.GetReencryptionProgress(context.Background(), nil)
+	resp, err := svc.GetReencryptionProgress(systemTenantCtx(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "running", resp.Progress.Status)
@@ -325,7 +325,7 @@ func TestKMSService_GetReencryptionProgress_CompletedNoStartTime(t *testing.T) {
 	svc.reencryptionState.failedKeys.Store(0)
 	svc.reencryptionState.mu.Unlock()
 
-	resp, err := svc.GetReencryptionProgress(context.Background(), nil)
+	resp, err := svc.GetReencryptionProgress(systemTenantCtx(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "completed", resp.Progress.Status)
@@ -343,7 +343,7 @@ func TestKMSService_GetReencryptionProgress_ZeroTotalKeys(t *testing.T) {
 	svc.reencryptionState.processedKeys.Store(0)
 	svc.reencryptionState.mu.Unlock()
 
-	resp, err := svc.GetReencryptionProgress(context.Background(), nil)
+	resp, err := svc.GetReencryptionProgress(systemTenantCtx(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, float64(0), resp.Progress.PercentComplete)
@@ -364,7 +364,7 @@ func TestKMSService_CancelReencryption_SuccessWithCancelFunc(t *testing.T) {
 	svc.reencryptionState.cancelFunc = func() { cancelled = true }
 	svc.reencryptionState.mu.Unlock()
 
-	err := svc.CancelReencryption(context.Background())
+	err := svc.CancelReencryption(systemTenantCtx())
 	require.NoError(t, err)
 	assert.True(t, cancelled)
 }
@@ -378,7 +378,7 @@ func TestKMSService_CancelReencryption_InProgressNilCancelFunc(t *testing.T) {
 	svc.reencryptionState.cancelFunc = nil
 	svc.reencryptionState.mu.Unlock()
 
-	err := svc.CancelReencryption(context.Background())
+	err := svc.CancelReencryption(systemTenantCtx())
 	require.NoError(t, err)
 }
 
@@ -391,7 +391,7 @@ func TestKMSService_ListDEKs_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.ListDEKs(context.Background(), nil)
+	resp, err := svc.ListDEKs(systemTenantCtx(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 0, len(resp.DEKs))
@@ -424,7 +424,7 @@ func TestKMSService_ListDEKs_WithPrefix(t *testing.T) {
 	})
 
 	req := &ListDEKsRequest{Prefix: "app/", Limit: 10}
-	resp, err := svc.ListDEKs(context.Background(), req)
+	resp, err := svc.ListDEKs(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 2, len(resp.DEKs))
@@ -450,7 +450,7 @@ func TestKMSService_ListDEKs_WithLimitTruncation(t *testing.T) {
 	}
 
 	req := &ListDEKsRequest{Prefix: "dek/", Limit: 3}
-	resp, err := svc.ListDEKs(context.Background(), req)
+	resp, err := svc.ListDEKs(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Len(t, resp.DEKs, 3)
@@ -463,7 +463,7 @@ func TestKMSService_ListDEKs_DefaultLimit(t *testing.T) {
 	svc := newKMSService(mockMgr, nil)
 
 	req := &ListDEKsRequest{Prefix: "", Limit: 0}
-	resp, err := svc.ListDEKs(context.Background(), req)
+	resp, err := svc.ListDEKs(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.False(t, resp.HasMore)
@@ -478,7 +478,7 @@ func TestKMSService_BackendStatus_HealthyBackend(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.BackendStatus(context.Background())
+	resp, err := svc.BackendStatus(systemTenantCtx())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "healthy", resp.Status)
@@ -491,7 +491,7 @@ func TestKMSService_BackendStatus_NilManager(t *testing.T) {
 		safetyTracker:     NewAEADSafetyTracker(),
 	}
 
-	resp, err := svc.BackendStatus(context.Background())
+	resp, err := svc.BackendStatus(systemTenantCtx())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "not_initialized", resp.Status)
