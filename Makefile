@@ -1718,7 +1718,7 @@ integration-test-sdk-js-%: ## Run JavaScript SDK integration tests for a specifi
 	@PKG="$*"; \
 	if [ -f "sdk/javascript/test/integration/$${PKG}.integration.test.js" ]; then \
 		echo "$(BLUE)Running JavaScript SDK integration tests for: $${PKG}$(NC)"; \
-		cd sdk/javascript && npm run test:integration -- --testPathPattern="$${PKG}"; \
+		$(SDK_JS_INTEGRATION_RUN); \
 	else \
 		echo "$(RED)Error: No JavaScript SDK integration tests found for '$${PKG}'$(NC)"; \
 		echo "$(YELLOW)Searched: sdk/javascript/test/integration/$${PKG}.integration.test.js$(NC)"; \
@@ -1737,11 +1737,32 @@ integration-test-sdk-go: ## Run ALL Go SDK integration tests
 	cd sdk/go && go test -v -tags integration -timeout 10m ./test/integration/...
 	@echo "$(GREEN)✓ Go SDK integration tests passed$(NC)"
 
-# All JavaScript SDK integration tests
+# All JavaScript SDK integration tests. The suites run in a Node container
+# against a standalone QuicBaaS server in Docker (never on the host);
+# JS_TEST_PATTERN narrows the jest path pattern. SDK_JS_INTEGRATION_RUN is
+# shared by both targets so a recursive make never sees QUICBAAS_IMAGE as
+# supplied by the environment and skips the image build.
+JS_TEST_PATTERN ?= integration
+COMPOSE_PROJECT_SDK_JS := $(COMPOSE_PROJECT)-sdkjs
+define SDK_JS_INTEGRATION_RUN
+COMPOSE_FILE="sdk/javascript/test/integration/docker-compose.yml"; \
+	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_SDK_JS)"; \
+	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true' EXIT; \
+	if [ "$(origin QUICBAAS_IMAGE)" = "command line" ] || [ "$(origin QUICBAAS_IMAGE)" = "environment" ] || [ "$(origin QUICBAAS_IMAGE)" = "environment override" ]; then \
+		echo "$(YELLOW)Using supplied QUICBAAS_IMAGE=$$QUICBAAS_IMAGE$(NC)"; \
+	else \
+		$(MAKE) --no-print-directory docker-build || exit 1; \
+	fi; \
+	JS_TEST_PATTERN="$(JS_TEST_PATTERN)" $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE \
+		run --rm -T js-integration-test
+endef
+
+integration-test-sdk-js-%: JS_TEST_PATTERN = integration/$*
+
 .PHONY: integration-test-sdk-js
-integration-test-sdk-js: ## Run ALL JavaScript SDK integration tests
-	@echo "$(BLUE)Running all JavaScript SDK integration tests...$(NC)"
-	@cd sdk/javascript && npm run test:integration
+integration-test-sdk-js: ## Run ALL JavaScript SDK integration tests in Docker
+	@echo "$(BLUE)Running JavaScript SDK integration tests ($(JS_TEST_PATTERN)) in Docker...$(NC)"
+	@$(SDK_JS_INTEGRATION_RUN)
 	@echo "$(GREEN)✓ JavaScript SDK integration tests passed$(NC)"
 
 # All SDK integration tests

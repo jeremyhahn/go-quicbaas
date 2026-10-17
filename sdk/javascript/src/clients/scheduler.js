@@ -4,6 +4,9 @@
  * Provides job scheduling operations including creation, management,
  * execution control, and status monitoring.
  *
+ * Request bodies, query parameters and responses follow the REST contract
+ * served by pkg/api/rest/handlers_scheduler.go.
+ *
  * @module @quicbaas/client/clients/scheduler
  * @copyright 2025 Jeremy Hahn, Automate The Things, LLC
  * @license AGPL-3.0-or-later
@@ -26,7 +29,13 @@ import {
 const SCHEDULER_API_PATH = '/api/v1/scheduler';
 
 /**
- * Job type values indicating how a job is scheduled.
+ * Nanoseconds per millisecond, for the server's Go time.Duration fields.
+ * @constant {number}
+ */
+const NANOSECONDS_PER_MILLISECOND = 1e6;
+
+/**
+ * Job type enumeration.
  * @readonly
  * @enum {string}
  */
@@ -40,7 +49,7 @@ export const JobType = Object.freeze({
 });
 
 /**
- * Job status values.
+ * Job status enumeration.
  * @readonly
  * @enum {string}
  */
@@ -60,7 +69,7 @@ export const JobStatus = Object.freeze({
 });
 
 /**
- * Owner type values indicating job ownership context.
+ * Owner type enumeration.
  * @readonly
  * @enum {string}
  */
@@ -74,48 +83,65 @@ export const OwnerType = Object.freeze({
 });
 
 /**
+ * Create-job options and the JSON field each is sent as
+ * (CreateSchedulerJobRESTRequest).
+ * @constant {Object<string, string>}
+ */
+const CREATE_JOB_FIELDS = Object.freeze({
+  name: 'name',
+  type: 'type',
+  handler: 'handler',
+  description: 'description',
+  schedule: 'schedule',
+  executeAt: 'execute_at',
+  delaySeconds: 'delay_seconds',
+  ownerType: 'owner_type',
+  ownerId: 'owner_id',
+  targetTenantId: 'target_tenant_id',
+  payload: 'payload',
+  priority: 'priority',
+  timeoutSeconds: 'timeout_seconds',
+  maxRetries: 'max_retries',
+  nodeAffinity: 'node_affinity',
+  labels: 'labels',
+});
+
+/**
+ * Update-job options and the JSON field each is sent as
+ * (UpdateSchedulerJobRESTRequest).
+ * @constant {Object<string, string>}
+ */
+const UPDATE_JOB_FIELDS = Object.freeze({
+  name: 'name',
+  description: 'description',
+  schedule: 'schedule',
+  executeAt: 'execute_at',
+  handler: 'handler',
+  payload: 'payload',
+  priority: 'priority',
+  timeoutSeconds: 'timeout_seconds',
+  maxRetries: 'max_retries',
+  labels: 'labels',
+});
+
+/**
  * @typedef {Object} CreateJobRequest
  * @property {string} name - Name for the job
  * @property {string} type - Job type (from JobType enum)
- * @property {string} [description] - Optional job description
- * @property {string} [schedule] - Cron expression for recurring jobs
- * @property {number} [delayMs] - Delay in milliseconds for delayed jobs
- * @property {number} [runAt] - Unix timestamp for one-shot jobs
+ * @property {string} handler - Name of the server-registered handler that runs the job
  * @property {Object} payload - Job payload data
+ * @property {string} [description] - Optional job description
+ * @property {string} [schedule] - Cron expression; required for recurring jobs
+ * @property {Date|string} [executeAt] - When a one-shot job runs (Date or RFC 3339 string)
+ * @property {number} [delaySeconds] - Delay in seconds; required for delayed jobs
  * @property {string} [ownerType] - Owner type (from OwnerType enum)
  * @property {string} [ownerId] - Owner identifier
- * @property {Object} [metadata] - Custom metadata key-value pairs
+ * @property {string} [targetTenantId] - Tenant a system job acts on
+ * @property {number} [priority] - Execution priority (integer)
+ * @property {number} [timeoutSeconds] - Execution timeout in seconds
  * @property {number} [maxRetries] - Maximum retry attempts on failure
- * @property {number} [retryDelayMs] - Delay between retries in milliseconds
- * @property {number} [timeoutMs] - Job execution timeout in milliseconds
- * @property {string[]} [tags] - Tags for categorization
- */
-
-/**
- * @typedef {Object} CreateJobResponse
- * @property {string} jobId - Unique identifier for the created job
- * @property {string} name - Job name
- * @property {string} status - Initial job status
- * @property {number} createdAt - Creation timestamp (Unix nanoseconds)
- */
-
-/**
- * @typedef {Object} JobInfo
- * @property {string} jobId - Unique job identifier
- * @property {string} name - Job name
- * @property {string} type - Job type
- * @property {string} status - Current job status
- * @property {string} [description] - Job description
- * @property {string} [schedule] - Cron schedule expression
- * @property {Object} payload - Job payload data
- * @property {string} ownerType - Owner type
- * @property {string} [ownerId] - Owner identifier
- * @property {number} createdAt - Creation timestamp (Unix nanoseconds)
- * @property {number} updatedAt - Last update timestamp (Unix nanoseconds)
- * @property {number} [lastRunAt] - Last execution timestamp (Unix nanoseconds)
- * @property {number} [nextRunAt] - Next scheduled execution timestamp (Unix nanoseconds)
- * @property {number} runCount - Total execution count
- * @property {number} failureCount - Total failure count
+ * @property {string} [nodeAffinity] - Node the job is pinned to (empty = cluster-wide)
+ * @property {Object<string, string>} [labels] - Labels for categorization
  */
 
 /**
@@ -123,45 +149,81 @@ export const OwnerType = Object.freeze({
  * @property {string} [name] - New job name
  * @property {string} [description] - New description
  * @property {string} [schedule] - New cron schedule
+ * @property {Date|string} [executeAt] - New execution time (Date or RFC 3339 string)
+ * @property {string} [handler] - New handler name
  * @property {Object} [payload] - New payload data
- * @property {Object} [metadata] - Custom metadata to merge
- * @property {number} [maxRetries] - Maximum retry attempts
- * @property {number} [retryDelayMs] - Delay between retries
- * @property {number} [timeoutMs] - Execution timeout
- * @property {string[]} [tags] - New tags
+ * @property {number} [priority] - New priority (integer)
+ * @property {number} [timeoutSeconds] - New execution timeout in seconds
+ * @property {number} [maxRetries] - New maximum retry attempts
+ * @property {Object<string, string>} [labels] - New labels
+ */
+
+/**
+ * @typedef {Object} JobInfo
+ * @property {string} jobId - Unique job identifier
+ * @property {string} name - Job name
+ * @property {string} [description] - Job description
+ * @property {string} type - Job type
+ * @property {string} status - Current job status
+ * @property {string} handler - Handler name
+ * @property {string} [schedule] - Cron schedule expression
+ * @property {string} [executeAt] - Execution time (RFC 3339)
+ * @property {number} [delayMs] - Delay in milliseconds
+ * @property {Object} payload - Job payload data
+ * @property {number} priority - Execution priority
+ * @property {number} timeoutMs - Execution timeout in milliseconds
+ * @property {number} maxRetries - Maximum retry attempts
+ * @property {string} ownerType - Owner type
+ * @property {string} [ownerId] - Owner identifier
+ * @property {string} [targetTenantId] - Tenant a system job acts on
+ * @property {string} [createdBy] - Identity that created the job
+ * @property {Object<string, string>} labels - Job labels
+ * @property {string} createdAt - Creation time (RFC 3339)
+ * @property {string} updatedAt - Last update time (RFC 3339)
+ * @property {string} [lastRunAt] - Last execution time (RFC 3339)
+ * @property {string} [nextRunAt] - Next scheduled execution time (RFC 3339)
+ * @property {number} runCount - Total execution count
+ * @property {number} failureCount - Total failure count
+ * @property {string} [lastError] - Error of the last failed run
  */
 
 /**
  * @typedef {Object} ListJobsOptions
- * @property {number} [limit] - Maximum number of jobs to return
- * @property {number} [offset] - Number of jobs to skip
+ * @property {number} [limit] - Maximum number of jobs to return (1-1000)
+ * @property {string} [cursor] - Cursor from a previous page's nextCursor
  * @property {string} [status] - Filter by job status
- * @property {string} [type] - Filter by job type
+ * @property {string} [handler] - Filter by handler name
  * @property {string} [ownerType] - Filter by owner type
  * @property {string} [ownerId] - Filter by owner ID
- * @property {string[]} [tags] - Filter by tags
+ * @property {string} [targetTenantId] - Filter by target tenant ID
  */
 
 /**
  * @typedef {Object} ListJobsResponse
  * @property {JobInfo[]} jobs - List of jobs
- * @property {number} totalCount - Total number of jobs available
+ * @property {number} totalCount - Total number of jobs the server reports
+ * @property {string} [nextCursor] - Cursor for the next page
+ * @property {boolean} hasMore - Whether another page exists
+ */
+
+/**
+ * @typedef {Object} DeleteJobResponse
+ * @property {string} jobId - Job identifier
+ * @property {boolean} deleted - Whether the job was deleted
  */
 
 /**
  * @typedef {Object} TriggerJobResponse
  * @property {string} jobId - Job identifier
- * @property {string} executionId - Unique identifier for this execution
- * @property {string} status - Execution status
- * @property {number} triggeredAt - Trigger timestamp (Unix nanoseconds)
+ * @property {string} status - Job status after the trigger
+ * @property {string} triggeredAt - Trigger time (RFC 3339)
  */
 
 /**
  * @typedef {Object} JobActionResponse
- * @property {boolean} success - Whether the action was successful
- * @property {string} message - Additional information
- * @property {string} [previousStatus] - Previous job status
- * @property {string} [newStatus] - New job status
+ * @property {string} jobId - Job identifier
+ * @property {string} previousStatus - Job status before the action
+ * @property {string} newStatus - Job status after the action
  */
 
 /**
@@ -169,41 +231,41 @@ export const OwnerType = Object.freeze({
  * @property {string} executionId - Unique execution identifier
  * @property {string} jobId - Job identifier
  * @property {string} status - Execution status
- * @property {number} startedAt - Start timestamp (Unix nanoseconds)
- * @property {number} [completedAt] - Completion timestamp (Unix nanoseconds)
+ * @property {string} startedAt - Start time (RFC 3339)
+ * @property {string} [endedAt] - End time (RFC 3339)
  * @property {number} [durationMs] - Execution duration in milliseconds
  * @property {string} [error] - Error message if failed
- * @property {Object} [result] - Execution result data
- * @property {number} attemptNumber - Retry attempt number
+ * @property {string} [output] - Execution output
  */
 
 /**
  * @typedef {Object} JobHistoryOptions
- * @property {number} [limit] - Maximum number of executions to return
- * @property {number} [offset] - Number of executions to skip
- * @property {string} [status] - Filter by execution status
- * @property {number} [startTime] - Filter executions after this timestamp
- * @property {number} [endTime] - Filter executions before this timestamp
+ * @property {number} [limit] - Maximum number of executions to return (1-1000)
+ * @property {string} [cursor] - Cursor from a previous page's nextCursor
  */
 
 /**
  * @typedef {Object} JobHistoryResponse
  * @property {string} jobId - Job identifier
  * @property {JobExecution[]} executions - List of executions
- * @property {number} totalCount - Total number of executions
+ * @property {string} [nextCursor] - Cursor for the next page
+ * @property {boolean} hasMore - Whether another page exists
+ */
+
+/**
+ * @typedef {Object} SchedulerStats
+ * @property {number} jobCount - Number of jobs
+ * @property {number} runningJobs - Number of currently running jobs
+ * @property {number} successCount - Number of successful executions
+ * @property {number} failureCount - Number of failed executions
+ * @property {string} [lastTickTime] - Time of the last scheduler tick (RFC 3339)
+ * @property {string} [startedAt] - Scheduler start time (RFC 3339)
  */
 
 /**
  * @typedef {Object} SchedulerStatus
  * @property {boolean} running - Whether the scheduler is running
- * @property {number} activeJobs - Number of active jobs
- * @property {number} pendingJobs - Number of pending jobs
- * @property {number} runningJobs - Number of currently running jobs
- * @property {number} completedJobs - Number of completed jobs
- * @property {number} failedJobs - Number of failed jobs
- * @property {number} pausedJobs - Number of paused jobs
- * @property {number} uptime - Scheduler uptime in milliseconds
- * @property {string} version - Scheduler version
+ * @property {SchedulerStats} stats - Scheduler counters
  */
 
 /**
@@ -214,7 +276,7 @@ export const OwnerType = Object.freeze({
  *
  * @example
  * import { HttpTransport } from '@quicbaas/client/transport';
- * import SchedulerClient, { JobType, JobStatus } from '@quicbaas/client/clients/scheduler';
+ * import SchedulerClient, { JobType } from '@quicbaas/client/clients/scheduler';
  *
  * const transport = new HttpTransport('https://api.quicbaas.example.com');
  * const scheduler = new SchedulerClient(transport);
@@ -223,6 +285,7 @@ export const OwnerType = Object.freeze({
  * const { jobId } = await scheduler.createJob({
  *   name: 'daily-backup',
  *   type: JobType.RECURRING,
+ *   handler: 'backup',
  *   schedule: '0 0 * * *',
  *   payload: { target: 'database' }
  * });
@@ -235,16 +298,16 @@ export const OwnerType = Object.freeze({
  */
 export class SchedulerClient {
   /**
-   * HTTP transport instance.
-   * @type {import('../transport/http.js').HttpTransport}
+   * The transport layer for making HTTP requests.
+   * @type {Object}
    * @private
    */
   #transport;
 
   /**
-   * Create a new SchedulerClient instance.
+   * Creates a new SchedulerClient instance.
    *
-   * @param {import('../transport/http.js').HttpTransport} transport - HTTP transport instance
+   * @param {Object} transport - Transport instance for HTTP communication
    * @throws {ValidationError} If transport is not provided or invalid
    */
   constructor(transport) {
@@ -259,92 +322,41 @@ export class SchedulerClient {
   }
 
   /**
-   * Create a new scheduled job.
+   * Creates a new scheduled job.
    *
-   * @param {CreateJobRequest} request - Job creation request
-   * @returns {Promise<CreateJobResponse>} Response with jobId and initial status
+   * @param {CreateJobRequest} request - Job creation parameters
+   * @returns {Promise<JobInfo>} The created job
    * @throws {ValidationError} If request parameters are invalid
+   * @throws {QuicBaaSError} If the server returns an error
    *
    * @example
-   * // Create a one-shot job
-   * const { jobId } = await scheduler.createJob({
-   *   name: 'send-report',
-   *   type: JobType.ONE_SHOT,
-   *   runAt: Date.now() + 3600000, // 1 hour from now
-   *   payload: { reportId: 'monthly-sales' }
-   * });
-   *
-   * // Create a recurring job with cron schedule
-   * const { jobId } = await scheduler.createJob({
-   *   name: 'cleanup-temp-files',
-   *   type: JobType.RECURRING,
-   *   schedule: '0 0 * * *', // Daily at midnight
-   *   payload: { directory: '/tmp' },
-   *   maxRetries: 3
+   * const job = await scheduler.createJob({
+   *   name: 'send-reminder',
+   *   type: JobType.DELAYED,
+   *   handler: 'email',
+   *   delaySeconds: 3600,
+   *   payload: { userId: 'user123', message: 'Reminder!' }
    * });
    */
   async createJob(request) {
     this.#validateCreateJobRequest(request);
 
-    const requestBody = {
-      name: request.name,
-      type: request.type,
-      payload: request.payload,
-    };
-
-    if (request.description !== undefined) {
-      requestBody.description = request.description;
-    }
-    if (request.schedule !== undefined) {
-      requestBody.schedule = request.schedule;
-    }
-    if (request.delayMs !== undefined) {
-      requestBody.delay_ms = request.delayMs;
-    }
-    if (request.runAt !== undefined) {
-      requestBody.run_at = request.runAt;
-    }
-    if (request.ownerType !== undefined) {
-      requestBody.owner_type = request.ownerType;
-    }
-    if (request.ownerId !== undefined) {
-      requestBody.owner_id = request.ownerId;
-    }
-    if (request.metadata !== undefined) {
-      requestBody.metadata = request.metadata;
-    }
-    if (request.maxRetries !== undefined) {
-      requestBody.max_retries = request.maxRetries;
-    }
-    if (request.retryDelayMs !== undefined) {
-      requestBody.retry_delay_ms = request.retryDelayMs;
-    }
-    if (request.timeoutMs !== undefined) {
-      requestBody.timeout_ms = request.timeoutMs;
-    }
-    if (request.tags !== undefined) {
-      requestBody.tags = request.tags;
-    }
-
     const response = await this.#transport.post(
       `${SCHEDULER_API_PATH}/jobs`,
-      requestBody,
+      this.#toRequestBody(request, CREATE_JOB_FIELDS),
     );
 
-    return this.#transformCreateJobResponse(response);
+    return this.#transformJobInfo(response?.job);
   }
 
   /**
-   * Get information about a job.
+   * Retrieves information about a specific job.
    *
-   * @param {string} jobId - Unique job identifier
+   * @param {string} jobId - The job identifier
    * @returns {Promise<JobInfo>} Job information
-   * @throws {ValidationError} If jobId is empty
-   * @throws {NotFoundError} If job does not exist
-   *
-   * @example
-   * const job = await scheduler.getJob('job-12345');
-   * console.log(`Job ${job.name} is ${job.status}`);
+   * @throws {ValidationError} If jobId is invalid
+   * @throws {NotFoundError} If the job does not exist
+   * @throws {QuicBaaSError} If the server returns an error
    */
   async getJob(jobId) {
     requiredString(jobId, 'jobId');
@@ -353,22 +365,22 @@ export class SchedulerClient {
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}`,
     );
 
-    return this.#transformJobInfo(response);
+    return this.#transformJobInfo(response?.job);
   }
 
   /**
-   * Update a job's configuration.
+   * Updates an existing job.
    *
-   * @param {string} jobId - Unique job identifier
+   * @param {string} jobId - The job identifier
    * @param {UpdateJobRequest} updates - Fields to update
    * @returns {Promise<JobInfo>} Updated job information
-   * @throws {ValidationError} If jobId is empty or updates are invalid
-   * @throws {NotFoundError} If job does not exist
+   * @throws {ValidationError} If parameters are invalid
+   * @throws {NotFoundError} If the job does not exist
+   * @throws {QuicBaaSError} If the server returns an error
    *
    * @example
-   * const updated = await scheduler.updateJob('job-12345', {
-   *   description: 'Updated description',
-   *   schedule: '0 0 * * 1', // Changed to weekly
+   * await scheduler.updateJob(jobId, {
+   *   schedule: '0 2 * * *',
    *   maxRetries: 5
    * });
    */
@@ -377,57 +389,22 @@ export class SchedulerClient {
     requiredObject(updates, 'updates');
     this.#validateUpdateJobRequest(updates);
 
-    const requestBody = {};
-
-    if (updates.name !== undefined) {
-      requestBody.name = updates.name;
-    }
-    if (updates.description !== undefined) {
-      requestBody.description = updates.description;
-    }
-    if (updates.schedule !== undefined) {
-      requestBody.schedule = updates.schedule;
-    }
-    if (updates.payload !== undefined) {
-      requestBody.payload = updates.payload;
-    }
-    if (updates.metadata !== undefined) {
-      requestBody.metadata = updates.metadata;
-    }
-    if (updates.maxRetries !== undefined) {
-      requestBody.max_retries = updates.maxRetries;
-    }
-    if (updates.retryDelayMs !== undefined) {
-      requestBody.retry_delay_ms = updates.retryDelayMs;
-    }
-    if (updates.timeoutMs !== undefined) {
-      requestBody.timeout_ms = updates.timeoutMs;
-    }
-    if (updates.tags !== undefined) {
-      requestBody.tags = updates.tags;
-    }
-
-    const response = await this.#transport.patch(
+    const response = await this.#transport.put(
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}`,
-      requestBody,
+      this.#toRequestBody(updates, UPDATE_JOB_FIELDS),
     );
 
-    return this.#transformJobInfo(response);
+    return this.#transformJobInfo(response?.job);
   }
 
   /**
-   * Delete a job permanently.
+   * Deletes a job.
    *
-   * @param {string} jobId - Unique job identifier
-   * @returns {Promise<JobActionResponse>} Response indicating success
-   * @throws {ValidationError} If jobId is empty
-   * @throws {NotFoundError} If job does not exist
-   *
-   * @example
-   * const { success, message } = await scheduler.deleteJob('job-12345');
-   * if (success) {
-   *   console.log('Job deleted successfully');
-   * }
+   * @param {string} jobId - The job identifier
+   * @returns {Promise<DeleteJobResponse>} Deletion result
+   * @throws {ValidationError} If jobId is invalid
+   * @throws {NotFoundError} If the job does not exist
+   * @throws {QuicBaaSError} If the server returns an error
    */
   async deleteJob(jobId) {
     requiredString(jobId, 'jobId');
@@ -436,45 +413,41 @@ export class SchedulerClient {
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}`,
     );
 
-    return this.#transformJobActionResponse(response);
+    return {
+      jobId: this.#idToString(response?.job_id, jobId),
+      deleted: response?.deleted === true,
+    };
   }
 
   /**
-   * List all jobs with optional filtering and pagination.
+   * Lists jobs with optional filtering.
    *
-   * @param {ListJobsOptions} [options={}] - List options
-   * @returns {Promise<ListJobsResponse>} Response with jobs and total count
+   * @param {ListJobsOptions} [options={}] - Filter and pagination options
+   * @returns {Promise<ListJobsResponse>} List of jobs
    * @throws {ValidationError} If options are invalid
+   * @throws {QuicBaaSError} If the server returns an error
    *
    * @example
-   * // List all pending jobs
-   * const { jobs, totalCount } = await scheduler.listJobs({
+   * const { jobs, nextCursor } = await scheduler.listJobs({
    *   status: JobStatus.PENDING,
-   *   limit: 10
-   * });
-   *
-   * // List recurring jobs by owner
-   * const { jobs } = await scheduler.listJobs({
-   *   type: JobType.RECURRING,
-   *   ownerId: 'tenant-123'
+   *   limit: 50
    * });
    */
   async listJobs(options = {}) {
     this.#validateListJobsOptions(options);
 
     const query = {};
-
     if (options.limit !== undefined) {
       query.limit = options.limit;
     }
-    if (options.offset !== undefined) {
-      query.offset = options.offset;
+    if (options.cursor !== undefined) {
+      query.cursor = options.cursor;
     }
     if (options.status !== undefined) {
       query.status = options.status;
     }
-    if (options.type !== undefined) {
-      query.type = options.type;
+    if (options.handler !== undefined) {
+      query.handler = options.handler;
     }
     if (options.ownerType !== undefined) {
       query.owner_type = options.ownerType;
@@ -482,8 +455,8 @@ export class SchedulerClient {
     if (options.ownerId !== undefined) {
       query.owner_id = options.ownerId;
     }
-    if (options.tags !== undefined) {
-      query.tags = options.tags.join(',');
+    if (options.targetTenantId !== undefined) {
+      query.target_tenant_id = options.targetTenantId;
     }
 
     const response = await this.#transport.get(
@@ -491,20 +464,23 @@ export class SchedulerClient {
       { query },
     );
 
-    return this.#transformListJobsResponse(response);
+    const jobs = (response?.jobs || []).map(job => this.#transformJobInfo(job));
+    return {
+      jobs,
+      totalCount: response?.total_count || jobs.length,
+      nextCursor: response?.next_cursor,
+      hasMore: response?.has_more === true,
+    };
   }
 
   /**
-   * Trigger immediate execution of a job.
+   * Triggers immediate execution of a job.
    *
-   * @param {string} jobId - Unique job identifier
-   * @returns {Promise<TriggerJobResponse>} Response with execution details
-   * @throws {ValidationError} If jobId is empty
-   * @throws {NotFoundError} If job does not exist
-   *
-   * @example
-   * const { executionId, status } = await scheduler.triggerJob('job-12345');
-   * console.log(`Triggered execution ${executionId}`);
+   * @param {string} jobId - The job identifier
+   * @returns {Promise<TriggerJobResponse>} Trigger result
+   * @throws {ValidationError} If jobId is invalid
+   * @throws {NotFoundError} If the job does not exist
+   * @throws {QuicBaaSError} If the server returns an error
    */
   async triggerJob(jobId) {
     requiredString(jobId, 'jobId');
@@ -514,73 +490,50 @@ export class SchedulerClient {
       {},
     );
 
-    return this.#transformTriggerJobResponse(response, jobId);
+    return {
+      jobId: this.#idToString(response?.job_id, jobId),
+      status: response?.status || '',
+      triggeredAt: response?.timestamp || '',
+    };
   }
 
   /**
-   * Pause a job to prevent scheduled executions.
+   * Pauses a job, preventing future executions.
    *
-   * @param {string} jobId - Unique job identifier
-   * @returns {Promise<JobActionResponse>} Response indicating success
-   * @throws {ValidationError} If jobId is empty
-   * @throws {NotFoundError} If job does not exist
-   *
-   * @example
-   * const { success, newStatus } = await scheduler.pauseJob('job-12345');
-   * console.log(`Job is now ${newStatus}`);
+   * @param {string} jobId - The job identifier
+   * @returns {Promise<JobActionResponse>} Pause result
+   * @throws {ValidationError} If jobId is invalid
+   * @throws {NotFoundError} If the job does not exist
+   * @throws {QuicBaaSError} If the server returns an error
    */
   async pauseJob(jobId) {
-    requiredString(jobId, 'jobId');
-
-    const response = await this.#transport.post(
-      `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/pause`,
-      {},
-    );
-
-    return this.#transformJobActionResponse(response, JobStatus.PAUSED);
+    return this.#jobAction(jobId, 'pause');
   }
 
   /**
-   * Resume a paused job.
+   * Resumes a paused job.
    *
-   * @param {string} jobId - Unique job identifier
-   * @returns {Promise<JobActionResponse>} Response indicating success
-   * @throws {ValidationError} If jobId is empty
-   * @throws {NotFoundError} If job does not exist
-   *
-   * @example
-   * const { success, newStatus } = await scheduler.resumeJob('job-12345');
-   * console.log(`Job is now ${newStatus}`);
+   * @param {string} jobId - The job identifier
+   * @returns {Promise<JobActionResponse>} Resume result
+   * @throws {ValidationError} If jobId is invalid
+   * @throws {NotFoundError} If the job does not exist
+   * @throws {QuicBaaSError} If the server returns an error
    */
   async resumeJob(jobId) {
-    requiredString(jobId, 'jobId');
-
-    const response = await this.#transport.post(
-      `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/resume`,
-      {},
-    );
-
-    return this.#transformJobActionResponse(response, JobStatus.PENDING);
+    return this.#jobAction(jobId, 'resume');
   }
 
   /**
-   * Cancel a job with an optional reason.
+   * Cancels a job permanently.
    *
-   * @param {string} jobId - Unique job identifier
+   * @param {string} jobId - The job identifier
    * @param {string} [reason] - Optional cancellation reason
-   * @returns {Promise<JobActionResponse>} Response indicating success
-   * @throws {ValidationError} If jobId is empty
-   * @throws {NotFoundError} If job does not exist
-   *
-   * @example
-   * const { success } = await scheduler.cancelJob('job-12345', 'No longer needed');
-   * if (success) {
-   *   console.log('Job canceled successfully');
-   * }
+   * @returns {Promise<JobActionResponse>} Cancellation result
+   * @throws {ValidationError} If jobId is invalid
+   * @throws {NotFoundError} If the job does not exist
+   * @throws {QuicBaaSError} If the server returns an error
    */
   async cancelJob(jobId, reason) {
-    requiredString(jobId, 'jobId');
-
     if (reason !== undefined && typeof reason !== 'string') {
       throw new ValidationError('reason must be a string', 'reason');
     }
@@ -590,56 +543,29 @@ export class SchedulerClient {
       requestBody.reason = reason;
     }
 
-    const response = await this.#transport.post(
-      `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/cancel`,
-      requestBody,
-    );
-
-    return this.#transformJobActionResponse(response, JobStatus.CANCELED);
+    return this.#jobAction(jobId, 'cancel', requestBody);
   }
 
   /**
-   * Get execution history for a job.
+   * Retrieves execution history for a job.
    *
-   * @param {string} jobId - Unique job identifier
-   * @param {JobHistoryOptions} [options={}] - History options
-   * @returns {Promise<JobHistoryResponse>} Response with execution history
-   * @throws {ValidationError} If jobId is empty or options are invalid
-   * @throws {NotFoundError} If job does not exist
-   *
-   * @example
-   * // Get recent executions
-   * const { executions } = await scheduler.getJobHistory('job-12345', {
-   *   limit: 10
-   * });
-   *
-   * // Get failed executions in a time range
-   * const { executions } = await scheduler.getJobHistory('job-12345', {
-   *   status: JobStatus.FAILED,
-   *   startTime: Date.now() - 86400000,
-   *   endTime: Date.now()
-   * });
+   * @param {string} jobId - The job identifier
+   * @param {JobHistoryOptions} [options={}] - Pagination options
+   * @returns {Promise<JobHistoryResponse>} Execution history
+   * @throws {ValidationError} If parameters are invalid
+   * @throws {NotFoundError} If the job does not exist
+   * @throws {QuicBaaSError} If the server returns an error
    */
   async getJobHistory(jobId, options = {}) {
     requiredString(jobId, 'jobId');
     this.#validateJobHistoryOptions(options);
 
     const query = {};
-
     if (options.limit !== undefined) {
       query.limit = options.limit;
     }
-    if (options.offset !== undefined) {
-      query.offset = options.offset;
-    }
-    if (options.status !== undefined) {
-      query.status = options.status;
-    }
-    if (options.startTime !== undefined) {
-      query.start_time = options.startTime;
-    }
-    if (options.endTime !== undefined) {
-      query.end_time = options.endTime;
+    if (options.cursor !== undefined) {
+      query.cursor = options.cursor;
     }
 
     const response = await this.#transport.get(
@@ -647,35 +573,104 @@ export class SchedulerClient {
       { query },
     );
 
-    return this.#transformJobHistoryResponse(response, jobId);
+    return {
+      jobId,
+      executions: (response?.executions || []).map(exec => this.#transformJobExecution(exec)),
+      nextCursor: response?.next_cursor,
+      hasMore: response?.has_more === true,
+    };
   }
 
   /**
-   * Get the current status of the scheduler.
+   * Retrieves the scheduler's status and counters.
    *
-   * @returns {Promise<SchedulerStatus>} Scheduler status information
-   *
-   * @example
-   * const status = await scheduler.getStatus();
-   * console.log(`Scheduler running: ${status.running}`);
-   * console.log(`Active jobs: ${status.activeJobs}`);
-   * console.log(`Running jobs: ${status.runningJobs}`);
+   * @returns {Promise<SchedulerStatus>} Scheduler status
+   * @throws {QuicBaaSError} If the server returns an error
    */
   async getStatus() {
     const response = await this.#transport.get(
       `${SCHEDULER_API_PATH}/status`,
     );
+    if (!response) {
+      throw new ValidationError('Invalid response from server', 'response');
+    }
 
-    return this.#transformSchedulerStatus(response);
+    const stats = response.stats || {};
+    return {
+      running: response.running === true,
+      stats: {
+        jobCount: stats.job_count || 0,
+        runningJobs: stats.running_jobs || 0,
+        successCount: stats.success_count || 0,
+        failureCount: stats.failure_count || 0,
+        lastTickTime: stats.last_tick_time,
+        startedAt: stats.started_at,
+      },
+    };
   }
 
-  // Validation methods
+  /**
+   * Posts a pause, resume or cancel action and maps the server's
+   * old_status/new_status response.
+   *
+   * @param {string} jobId - The job identifier
+   * @param {string} action - The action path segment
+   * @param {Object} [requestBody={}] - Request body
+   * @returns {Promise<JobActionResponse>} Action result
+   * @private
+   */
+  async #jobAction(jobId, action, requestBody = {}) {
+    requiredString(jobId, 'jobId');
+
+    const response = await this.#transport.post(
+      `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/${action}`,
+      requestBody,
+    );
+
+    return {
+      jobId: this.#idToString(response?.job_id, jobId),
+      previousStatus: response?.old_status || '',
+      newStatus: response?.new_status || '',
+    };
+  }
 
   /**
-   * Validate create job request.
+   * Builds a request body from the options a field table names, converting
+   * executeAt to RFC 3339.
+   *
+   * @param {Object} options - Caller options
+   * @param {Object<string, string>} fields - Option name to JSON field name
+   * @returns {Object} The request body
+   * @private
+   */
+  #toRequestBody(options, fields) {
+    const body = {};
+    for (const [option, field] of Object.entries(fields)) {
+      const value = options[option];
+      if (value === undefined) {
+        continue;
+      }
+      body[field] = option === 'executeAt' ? this.#toRFC3339(value) : value;
+    }
+    return body;
+  }
+
+  /**
+   * Converts a Date or RFC 3339 string to an RFC 3339 string.
+   *
+   * @param {Date|string} value - The time
+   * @returns {string} RFC 3339 time
+   * @private
+   */
+  #toRFC3339(value) {
+    return value instanceof Date ? value.toISOString() : value;
+  }
+
+  /**
+   * Validates job creation request.
    *
    * @param {CreateJobRequest} request - Request to validate
-   * @throws {ValidationError} If request is invalid
+   * @throws {ValidationError} If validation fails
    * @private
    */
   #validateCreateJobRequest(request) {
@@ -683,197 +678,206 @@ export class SchedulerClient {
     requiredString(request.name, 'request.name');
     requiredString(request.type, 'request.type');
     oneOf(request.type, Object.values(JobType), 'request.type');
+    requiredString(request.handler, 'request.handler');
     required(request.payload, 'request.payload');
 
     if (request.type === JobType.RECURRING && request.schedule === undefined) {
       throw new ValidationError('request.schedule is required for recurring jobs', 'request.schedule');
     }
-
-    if (request.type === JobType.DELAYED && request.delayMs === undefined) {
-      throw new ValidationError('request.delayMs is required for delayed jobs', 'request.delayMs');
+    if (request.type === JobType.DELAYED && request.delaySeconds === undefined) {
+      throw new ValidationError('request.delaySeconds is required for delayed jobs', 'request.delaySeconds');
     }
 
-    if (request.description !== undefined && typeof request.description !== 'string') {
-      throw new ValidationError('request.description must be a string', 'request.description');
-    }
-    if (request.schedule !== undefined && typeof request.schedule !== 'string') {
-      throw new ValidationError('request.schedule must be a string', 'request.schedule');
-    }
-    if (request.delayMs !== undefined) {
-      nonNegativeInteger(request.delayMs, 'request.delayMs');
-    }
-    if (request.runAt !== undefined) {
-      nonNegativeInteger(request.runAt, 'request.runAt');
-    }
+    this.#validateOptionalString(request.description, 'request.description');
+    this.#validateOptionalString(request.schedule, 'request.schedule');
+    this.#validateExecuteAt(request.executeAt, 'request.executeAt');
+    positiveInteger(request.delaySeconds, 'request.delaySeconds');
     if (request.ownerType !== undefined) {
       oneOf(request.ownerType, Object.values(OwnerType), 'request.ownerType');
     }
-    if (request.ownerId !== undefined && typeof request.ownerId !== 'string') {
-      throw new ValidationError('request.ownerId must be a string', 'request.ownerId');
-    }
-    if (request.metadata !== undefined && (typeof request.metadata !== 'object' || Array.isArray(request.metadata))) {
-      throw new ValidationError('request.metadata must be an object', 'request.metadata');
-    }
-    if (request.maxRetries !== undefined) {
-      nonNegativeInteger(request.maxRetries, 'request.maxRetries');
-    }
-    if (request.retryDelayMs !== undefined) {
-      nonNegativeInteger(request.retryDelayMs, 'request.retryDelayMs');
-    }
-    if (request.timeoutMs !== undefined) {
-      positiveInteger(request.timeoutMs, 'request.timeoutMs');
-    }
-    if (request.tags !== undefined) {
-      this.#validateTagsArray(request.tags, 'request.tags');
-    }
+    this.#validateOptionalString(request.ownerId, 'request.ownerId');
+    this.#validateOptionalString(request.targetTenantId, 'request.targetTenantId');
+    this.#validateOptionalString(request.nodeAffinity, 'request.nodeAffinity');
+    this.#validateTuning(request, 'request');
   }
 
   /**
-   * Validate update job request.
+   * Validates job update request.
    *
    * @param {UpdateJobRequest} updates - Updates to validate
-   * @throws {ValidationError} If updates are invalid
+   * @throws {ValidationError} If validation fails
    * @private
    */
   #validateUpdateJobRequest(updates) {
     if (updates.name !== undefined && (typeof updates.name !== 'string' || updates.name.trim() === '')) {
       throw new ValidationError('updates.name must be a non-empty string', 'updates.name');
     }
-    if (updates.description !== undefined && typeof updates.description !== 'string') {
-      throw new ValidationError('updates.description must be a string', 'updates.description');
+    if (updates.handler !== undefined && (typeof updates.handler !== 'string' || updates.handler.trim() === '')) {
+      throw new ValidationError('updates.handler must be a non-empty string', 'updates.handler');
     }
-    if (updates.schedule !== undefined && typeof updates.schedule !== 'string') {
-      throw new ValidationError('updates.schedule must be a string', 'updates.schedule');
-    }
-    if (updates.payload !== undefined && updates.payload === null) {
+    this.#validateOptionalString(updates.description, 'updates.description');
+    this.#validateOptionalString(updates.schedule, 'updates.schedule');
+    this.#validateExecuteAt(updates.executeAt, 'updates.executeAt');
+    if (updates.payload === null) {
       throw new ValidationError('updates.payload cannot be null', 'updates.payload');
     }
-    if (updates.metadata !== undefined && (typeof updates.metadata !== 'object' || Array.isArray(updates.metadata))) {
-      throw new ValidationError('updates.metadata must be an object', 'updates.metadata');
+    this.#validateTuning(updates, 'updates');
+  }
+
+  /**
+   * Validates the priority, timeoutSeconds, maxRetries and labels options
+   * that create and update share.
+   *
+   * @param {Object} options - Options to validate
+   * @param {string} prefix - Field-name prefix for error messages
+   * @throws {ValidationError} If validation fails
+   * @private
+   */
+  #validateTuning(options, prefix) {
+    if (options.priority !== undefined && !Number.isInteger(options.priority)) {
+      throw new ValidationError(`${prefix}.priority must be an integer`, `${prefix}.priority`);
     }
-    if (updates.maxRetries !== undefined) {
-      nonNegativeInteger(updates.maxRetries, 'updates.maxRetries');
+    positiveInteger(options.timeoutSeconds, `${prefix}.timeoutSeconds`);
+    if (options.maxRetries !== undefined) {
+      nonNegativeInteger(options.maxRetries, `${prefix}.maxRetries`);
     }
-    if (updates.retryDelayMs !== undefined) {
-      nonNegativeInteger(updates.retryDelayMs, 'updates.retryDelayMs');
-    }
-    if (updates.timeoutMs !== undefined) {
-      positiveInteger(updates.timeoutMs, 'updates.timeoutMs');
-    }
-    if (updates.tags !== undefined) {
-      this.#validateTagsArray(updates.tags, 'updates.tags');
+    if (options.labels !== undefined) {
+      this.#validateLabels(options.labels, `${prefix}.labels`);
     }
   }
 
   /**
-   * Validate list jobs options.
+   * Validates an optional string field.
    *
-   * @param {ListJobsOptions} options - Options to validate
-   * @throws {ValidationError} If options are invalid
+   * @param {*} value - Value to validate
+   * @param {string} name - Field name for error messages
+   * @throws {ValidationError} If the value is set and not a string
    * @private
    */
-  #validateListJobsOptions(options) {
-    if (options.limit !== undefined) {
-      positiveInteger(options.limit, 'options.limit');
-    }
-    if (options.offset !== undefined) {
-      nonNegativeInteger(options.offset, 'options.offset');
-    }
-    if (options.status !== undefined) {
-      oneOf(options.status, Object.values(JobStatus), 'options.status');
-    }
-    if (options.type !== undefined) {
-      oneOf(options.type, Object.values(JobType), 'options.type');
-    }
-    if (options.ownerType !== undefined) {
-      oneOf(options.ownerType, Object.values(OwnerType), 'options.ownerType');
-    }
-    if (options.ownerId !== undefined && typeof options.ownerId !== 'string') {
-      throw new ValidationError('options.ownerId must be a string', 'options.ownerId');
-    }
-    if (options.tags !== undefined) {
-      this.#validateTagsArray(options.tags, 'options.tags');
+  #validateOptionalString(value, name) {
+    if (value !== undefined && typeof value !== 'string') {
+      throw new ValidationError(`${name} must be a string`, name);
     }
   }
 
   /**
-   * Validate job history options.
+   * Validates an optional execution time: a valid Date or a parseable
+   * date-time string.
    *
-   * @param {JobHistoryOptions} options - Options to validate
-   * @throws {ValidationError} If options are invalid
+   * @param {*} value - Value to validate
+   * @param {string} name - Field name for error messages
+   * @throws {ValidationError} If the value is set and not a valid time
    * @private
    */
-  #validateJobHistoryOptions(options) {
-    if (options.limit !== undefined) {
-      positiveInteger(options.limit, 'options.limit');
+  #validateExecuteAt(value, name) {
+    if (value === undefined) {
+      return;
     }
-    if (options.offset !== undefined) {
-      nonNegativeInteger(options.offset, 'options.offset');
-    }
-    if (options.status !== undefined) {
-      oneOf(options.status, Object.values(JobStatus), 'options.status');
-    }
-    if (options.startTime !== undefined) {
-      nonNegativeInteger(options.startTime, 'options.startTime');
-    }
-    if (options.endTime !== undefined) {
-      nonNegativeInteger(options.endTime, 'options.endTime');
-    }
-    if (options.startTime !== undefined && options.endTime !== undefined && options.startTime > options.endTime) {
-      throw new ValidationError('options.startTime cannot be greater than options.endTime', 'options.startTime');
+    const valid = value instanceof Date
+      ? !Number.isNaN(value.getTime())
+      : typeof value === 'string' && !Number.isNaN(Date.parse(value));
+    if (!valid) {
+      throw new ValidationError(`${name} must be a Date or an RFC 3339 string`, name);
     }
   }
 
   /**
-   * Validate tags array.
+   * Validates a labels map: an object of string values.
    *
-   * @param {string[]} tags - Tags array to validate
-   * @param {string} fieldName - Field name for error messages
-   * @throws {ValidationError} If tags are invalid
+   * @param {*} labels - Labels to validate
+   * @param {string} name - Field name for error messages
+   * @throws {ValidationError} If validation fails
    * @private
    */
-  #validateTagsArray(tags, fieldName) {
-    if (!Array.isArray(tags)) {
-      throw new ValidationError(`${fieldName} must be an array`, fieldName);
+  #validateLabels(labels, name) {
+    if (labels === null || typeof labels !== 'object' || Array.isArray(labels)) {
+      throw new ValidationError(`${name} must be an object`, name);
     }
-
-    for (let i = 0; i < tags.length; i++) {
-      if (typeof tags[i] !== 'string' || tags[i].trim() === '') {
-        throw new ValidationError(
-          `${fieldName}[${i}] must be a non-empty string`,
-          `${fieldName}[${i}]`,
-        );
+    for (const [key, value] of Object.entries(labels)) {
+      if (typeof value !== 'string') {
+        throw new ValidationError(`${name}.${key} must be a string`, `${name}.${key}`);
       }
     }
   }
 
-  // Response transformation methods
-
   /**
-   * Transform create job response.
+   * Validates list jobs options.
    *
-   * @param {Object} response - Raw server response
-   * @returns {CreateJobResponse}
+   * @param {ListJobsOptions} options - Options to validate
+   * @throws {ValidationError} If validation fails
    * @private
    */
-  #transformCreateJobResponse(response) {
-    if (!response) {
-      throw new ValidationError('Invalid response from server', 'response');
+  #validateListJobsOptions(options) {
+    this.#validatePage(options);
+    if (options.status !== undefined) {
+      oneOf(options.status, Object.values(JobStatus), 'options.status');
     }
-
-    return {
-      jobId: response.job_id || response.jobId || '',
-      name: response.name || '',
-      status: response.status || JobStatus.PENDING,
-      createdAt: response.created_at || response.createdAt || 0,
-    };
+    if (options.ownerType !== undefined) {
+      oneOf(options.ownerType, Object.values(OwnerType), 'options.ownerType');
+    }
+    this.#validateOptionalString(options.handler, 'options.handler');
+    this.#validateOptionalString(options.ownerId, 'options.ownerId');
+    this.#validateOptionalString(options.targetTenantId, 'options.targetTenantId');
   }
 
   /**
-   * Transform job info from server response.
+   * Validates job history options.
    *
-   * @param {Object} job - Raw job object from server
-   * @returns {JobInfo}
+   * @param {JobHistoryOptions} options - Options to validate
+   * @throws {ValidationError} If validation fails
+   * @private
+   */
+  #validateJobHistoryOptions(options) {
+    this.#validatePage(options);
+  }
+
+  /**
+   * Validates the limit and cursor pagination options.
+   *
+   * @param {Object} options - Options to validate
+   * @throws {ValidationError} If validation fails
+   * @private
+   */
+  #validatePage(options) {
+    if (options.limit !== undefined) {
+      positiveInteger(options.limit, 'options.limit');
+      if (options.limit > 1000) {
+        throw new ValidationError('options.limit cannot exceed 1000', 'options.limit');
+      }
+    }
+    this.#validateOptionalString(options.cursor, 'options.cursor');
+  }
+
+  /**
+   * Converts a server job ID (a JSON number) to the string the client's
+   * methods take.
+   *
+   * @param {number|undefined} id - Server job ID
+   * @param {string} [fallback=''] - Value when the server sent none
+   * @returns {string} Job ID string
+   * @private
+   */
+  #idToString(id, fallback = '') {
+    return id === undefined || id === null ? fallback : String(id);
+  }
+
+  /**
+   * Converts a Go time.Duration (nanoseconds) to milliseconds.
+   *
+   * @param {number|undefined} nanoseconds - Duration in nanoseconds
+   * @returns {number|undefined} Duration in milliseconds
+   * @private
+   */
+  #durationToMs(nanoseconds) {
+    return nanoseconds === undefined ? undefined : nanoseconds / NANOSECONDS_PER_MILLISECOND;
+  }
+
+  /**
+   * Transforms a server job (SchedulerJobRESTResponse) to JobInfo.
+   *
+   * @param {Object} job - Server job
+   * @returns {JobInfo} Transformed job info
+   * @throws {ValidationError} If the response carries no job
    * @private
    */
   #transformJobInfo(job) {
@@ -882,139 +886,52 @@ export class SchedulerClient {
     }
 
     return {
-      jobId: job.job_id || job.jobId || '',
+      jobId: this.#idToString(job.id),
       name: job.name || '',
-      type: job.type || JobType.ONE_SHOT,
-      status: job.status || JobStatus.PENDING,
       description: job.description,
+      type: job.type || '',
+      status: job.status || '',
+      handler: job.handler || '',
       schedule: job.schedule,
+      executeAt: job.execute_at,
+      delayMs: this.#durationToMs(job.delay),
       payload: job.payload || {},
-      ownerType: job.owner_type || job.ownerType || OwnerType.SYSTEM,
-      ownerId: job.owner_id || job.ownerId,
-      createdAt: job.created_at || job.createdAt || 0,
-      updatedAt: job.updated_at || job.updatedAt || 0,
-      lastRunAt: job.last_run_at || job.lastRunAt,
-      nextRunAt: job.next_run_at || job.nextRunAt,
-      runCount: job.run_count || job.runCount || 0,
-      failureCount: job.failure_count || job.failureCount || 0,
+      priority: job.priority || 0,
+      timeoutMs: this.#durationToMs(job.timeout) || 0,
+      maxRetries: job.max_retries || 0,
+      ownerType: job.owner_type || '',
+      ownerId: job.owner_id,
+      targetTenantId: job.target_tenant_id,
+      createdBy: job.created_by,
+      labels: job.labels || {},
+      createdAt: job.created_at,
+      updatedAt: job.updated_at,
+      lastRunAt: job.last_run,
+      nextRunAt: job.next_run,
+      runCount: job.run_count || 0,
+      failureCount: job.fail_count || 0,
+      lastError: job.last_error,
     };
   }
 
   /**
-   * Transform list jobs response.
+   * Transforms a server execution (SchedulerJobExecutionRESTResponse) to
+   * JobExecution.
    *
-   * @param {Object} response - Raw server response
-   * @returns {ListJobsResponse}
-   * @private
-   */
-  #transformListJobsResponse(response) {
-    const jobs = (response?.jobs || []).map(job => this.#transformJobInfo(job));
-
-    return {
-      jobs,
-      totalCount: response?.total_count || response?.totalCount || jobs.length,
-    };
-  }
-
-  /**
-   * Transform trigger job response.
-   *
-   * @param {Object} response - Raw server response
-   * @param {string} jobId - Job identifier
-   * @returns {TriggerJobResponse}
-   * @private
-   */
-  #transformTriggerJobResponse(response, jobId) {
-    if (!response) {
-      throw new ValidationError('Invalid response from server', 'response');
-    }
-
-    return {
-      jobId: response.job_id || response.jobId || jobId,
-      executionId: response.execution_id || response.executionId || '',
-      status: response.status || JobStatus.RUNNING,
-      triggeredAt: response.triggered_at || response.triggeredAt || 0,
-    };
-  }
-
-  /**
-   * Transform job action response.
-   *
-   * @param {Object} response - Raw server response
-   * @param {string} [expectedNewStatus] - Expected new status
-   * @returns {JobActionResponse}
-   * @private
-   */
-  #transformJobActionResponse(response, expectedNewStatus) {
-    return {
-      success: response?.success ?? true,
-      message: response?.message || '',
-      previousStatus: response?.previous_status || response?.previousStatus,
-      newStatus: response?.new_status || response?.newStatus || expectedNewStatus,
-    };
-  }
-
-  /**
-   * Transform job execution from server response.
-   *
-   * @param {Object} execution - Raw execution object from server
-   * @returns {JobExecution}
+   * @param {Object} execution - Server execution
+   * @returns {JobExecution} Transformed execution
    * @private
    */
   #transformJobExecution(execution) {
     return {
-      executionId: execution.execution_id || execution.executionId || '',
-      jobId: execution.job_id || execution.jobId || '',
-      status: execution.status || JobStatus.PENDING,
-      startedAt: execution.started_at || execution.startedAt || 0,
-      completedAt: execution.completed_at || execution.completedAt,
-      durationMs: execution.duration_ms || execution.durationMs,
+      executionId: this.#idToString(execution.id),
+      jobId: this.#idToString(execution.job_id),
+      status: execution.status || '',
+      startedAt: execution.started_at,
+      endedAt: execution.ended_at,
+      durationMs: this.#durationToMs(execution.duration),
       error: execution.error,
-      result: execution.result,
-      attemptNumber: execution.attempt_number || execution.attemptNumber || 1,
-    };
-  }
-
-  /**
-   * Transform job history response.
-   *
-   * @param {Object} response - Raw server response
-   * @param {string} jobId - Job identifier
-   * @returns {JobHistoryResponse}
-   * @private
-   */
-  #transformJobHistoryResponse(response, jobId) {
-    const executions = (response?.executions || []).map(exec => this.#transformJobExecution(exec));
-
-    return {
-      jobId: response?.job_id || response?.jobId || jobId,
-      executions,
-      totalCount: response?.total_count || response?.totalCount || executions.length,
-    };
-  }
-
-  /**
-   * Transform scheduler status response.
-   *
-   * @param {Object} response - Raw server response
-   * @returns {SchedulerStatus}
-   * @private
-   */
-  #transformSchedulerStatus(response) {
-    if (!response) {
-      throw new ValidationError('Invalid response from server', 'response');
-    }
-
-    return {
-      running: response.running ?? false,
-      activeJobs: response.active_jobs || response.activeJobs || 0,
-      pendingJobs: response.pending_jobs || response.pendingJobs || 0,
-      runningJobs: response.running_jobs || response.runningJobs || 0,
-      completedJobs: response.completed_jobs || response.completedJobs || 0,
-      failedJobs: response.failed_jobs || response.failedJobs || 0,
-      pausedJobs: response.paused_jobs || response.pausedJobs || 0,
-      uptime: response.uptime || 0,
-      version: response.version || '',
+      output: execution.output,
     };
   }
 }

@@ -1,4 +1,8 @@
 /**
+ * @jest-environment node
+ */
+
+/**
  * Scheduler SDK Integration Tests
  *
  * These tests run against a real QuicBaaS server.
@@ -15,17 +19,53 @@ const QUICBAAS_URL = process.env.QUICBAAS_URL || 'http://localhost:58080';
 const TIMEOUT = 30000;
 
 /**
- * Check if the QuicBaaS server is available by hitting the health endpoint.
- * @returns {Promise<boolean>} True if server is available
+ * Handler every test job names. The server requires one on create and
+ * registers the no-op handlers of pkg/scheduler/handlers
+ * (StandardTestHandlers) whenever the scheduler is enabled; `noop` succeeds
+ * without side effects when a job fires.
  */
-const checkServerAvailable = async () => {
+const TEST_HANDLER = 'noop';
+
+/**
+ * Raised when the QuicBaaS server under test does not answer its health check.
+ */
+class ServerUnreachableError extends Error {
+  /**
+   * @param {string} url - The QUICBAAS_URL that was probed
+   * @param {string} reason - Why the probe failed
+   */
+  constructor(url, reason) {
+    super(
+      `QuicBaaS server not reachable at QUICBAAS_URL=${url} (${reason}); ` +
+        'start a server and set QUICBAAS_URL before running the integration tests',
+    );
+    this.name = 'ServerUnreachableError';
+    this.url = url;
+  }
+}
+
+/**
+ * Require the QuicBaaS server to answer its health endpoint.
+ * @returns {Promise<void>}
+ * @throws {ServerUnreachableError} If the server does not answer or is unhealthy
+ */
+const requireServer = async () => {
+  let response;
   try {
-    const response = await fetch(`${QUICBAAS_URL}/api/v1/health`, {
+    response = await fetch(`${QUICBAAS_URL}/api/v1/health`, {
       signal: AbortSignal.timeout(5000),
     });
-    return response.ok;
-  } catch {
-    return false;
+  } catch (err) {
+    throw new ServerUnreachableError(
+      QUICBAAS_URL,
+      err.cause?.code || err.message,
+    );
+  }
+  if (!response.ok) {
+    throw new ServerUnreachableError(
+      QUICBAAS_URL,
+      `health returned HTTP ${response.status}`,
+    );
   }
 };
 
@@ -41,24 +81,16 @@ const generateJobName = (prefix = 'test-job') => {
 describe('Scheduler Integration Tests', () => {
   let db;
   let scheduler;
-  let serverAvailable = false;
   const createdJobIds = [];
 
   beforeAll(async () => {
-    serverAvailable = await checkServerAvailable();
-    if (!serverAvailable) {
-      // eslint-disable-next-line no-console -- tells the operator why the suite did nothing
-      console.warn(
-        `QuicBaaS server not available at ${QUICBAAS_URL}, skipping integration tests`,
-      );
-      return;
-    }
+    await requireServer();
     db = new QuicBaaS(QUICBAAS_URL);
     scheduler = db.scheduler();
   }, TIMEOUT);
 
   afterAll(async () => {
-    if (!serverAvailable || !scheduler) {
+    if (!scheduler) {
       return;
     }
 
@@ -73,21 +105,12 @@ describe('Scheduler Integration Tests', () => {
   }, TIMEOUT);
 
   /**
-   * Helper to conditionally run tests based on server availability.
-   * @param {Function} fn - Test function to run
-   * @returns {Function} Test function or no-op
-   */
-  const skipIfNoServer = (fn) => {
-    return serverAvailable ? fn : () => {};
-  };
-
-  /**
-   * Helper to create a job and track it for cleanup.
+   * Helper to create a job that names TEST_HANDLER and track it for cleanup.
    * @param {Object} request - Job creation request
-   * @returns {Promise<Object>} Created job response
+   * @returns {Promise<Object>} Created job
    */
   const createTrackedJob = async (request) => {
-    const result = await scheduler.createJob(request);
+    const result = await scheduler.createJob({ handler: TEST_HANDLER, ...request });
     if (result.jobId) {
       createdJobIds.push(result.jobId);
     }
@@ -97,18 +120,16 @@ describe('Scheduler Integration Tests', () => {
   describe('Scheduler Status', () => {
     it(
       'should get scheduler status',
-      skipIfNoServer(async () => {
+      async () => {
         const status = await scheduler.getStatus();
 
         expect(status).toBeDefined();
         expect(typeof status.running).toBe('boolean');
-        expect(typeof status.activeJobs).toBe('number');
-        expect(typeof status.pendingJobs).toBe('number');
-        expect(typeof status.runningJobs).toBe('number');
-        expect(typeof status.completedJobs).toBe('number');
-        expect(typeof status.failedJobs).toBe('number');
-        expect(typeof status.pausedJobs).toBe('number');
-      }),
+        expect(typeof status.stats.jobCount).toBe('number');
+        expect(typeof status.stats.runningJobs).toBe('number');
+        expect(typeof status.stats.successCount).toBe('number');
+        expect(typeof status.stats.failureCount).toBe('number');
+      },
       TIMEOUT,
     );
   });
@@ -116,7 +137,7 @@ describe('Scheduler Integration Tests', () => {
   describe('Job Lifecycle', () => {
     it(
       'should create, get, update, and delete a one-shot job',
-      skipIfNoServer(async () => {
+      async () => {
         const jobName = generateJobName('one-shot');
 
         // Create job
@@ -124,18 +145,18 @@ describe('Scheduler Integration Tests', () => {
           name: jobName,
           type: JobType.ONE_SHOT,
           description: 'Integration test one-shot job',
-          runAt: Date.now() + 3600000, // 1 hour from now
+          executeAt: new Date(Date.now() + 3600000), // 1 hour from now
           payload: { action: 'test', data: { value: 42 } },
-          metadata: { environment: 'test', version: '1.0.0' },
           maxRetries: 3,
-          retryDelayMs: 1000,
-          timeoutMs: 30000,
-          tags: ['integration-test', 'one-shot'],
+          timeoutSeconds: 30,
+          priority: 5,
+          labels: { suite: 'integration-test', kind: 'one-shot' },
         });
 
         expect(createResult).toBeDefined();
-        expect(createResult.jobId).toBeDefined();
+        expect(createResult.jobId).toMatch(/^\d+$/);
         expect(createResult.name).toBe(jobName);
+        expect(createResult.handler).toBe(TEST_HANDLER);
         expect(createResult.status).toBeDefined();
 
         const jobId = createResult.jobId;
@@ -149,13 +170,18 @@ describe('Scheduler Integration Tests', () => {
         expect(job.type).toBe(JobType.ONE_SHOT);
         expect(job.description).toBe('Integration test one-shot job');
         expect(job.payload).toEqual({ action: 'test', data: { value: 42 } });
+        expect(job.handler).toBe(TEST_HANDLER);
+        expect(job.maxRetries).toBe(3);
+        expect(job.timeoutMs).toBe(30000);
+        expect(job.priority).toBe(5);
+        expect(job.labels).toEqual({ suite: 'integration-test', kind: 'one-shot' });
 
         // Update job
         const updatedDescription = 'Updated integration test description';
         const updatedJob = await scheduler.updateJob(jobId, {
           description: updatedDescription,
           maxRetries: 5,
-          tags: ['integration-test', 'one-shot', 'updated'],
+          labels: { suite: 'integration-test', kind: 'one-shot', state: 'updated' },
         });
 
         expect(updatedJob).toBeDefined();
@@ -164,8 +190,7 @@ describe('Scheduler Integration Tests', () => {
         // Delete job
         const deleteResult = await scheduler.deleteJob(jobId);
 
-        expect(deleteResult).toBeDefined();
-        expect(deleteResult.success).toBe(true);
+        expect(deleteResult).toEqual({ jobId, deleted: true });
 
         // Remove from tracked jobs since we deleted it
         const index = createdJobIds.indexOf(jobId);
@@ -175,13 +200,13 @@ describe('Scheduler Integration Tests', () => {
 
         // Verify job is deleted
         await expect(scheduler.getJob(jobId)).rejects.toThrow();
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should create a recurring job with cron schedule',
-      skipIfNoServer(async () => {
+      async () => {
         const jobName = generateJobName('recurring');
 
         const createResult = await createTrackedJob({
@@ -191,7 +216,7 @@ describe('Scheduler Integration Tests', () => {
           schedule: '*/5 * * * *', // Every 5 minutes
           payload: { action: 'heartbeat' },
           ownerType: OwnerType.SYSTEM,
-          tags: ['integration-test', 'recurring'],
+          labels: { suite: 'integration-test', kind: 'recurring' },
         });
 
         expect(createResult).toBeDefined();
@@ -201,22 +226,22 @@ describe('Scheduler Integration Tests', () => {
 
         expect(job.type).toBe(JobType.RECURRING);
         expect(job.schedule).toBe('*/5 * * * *');
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should create a delayed job',
-      skipIfNoServer(async () => {
+      async () => {
         const jobName = generateJobName('delayed');
 
         const createResult = await createTrackedJob({
           name: jobName,
           type: JobType.DELAYED,
           description: 'Integration test delayed job',
-          delayMs: 60000, // 1 minute delay
+          delaySeconds: 60, // 1 minute delay
           payload: { action: 'delayed-task' },
-          tags: ['integration-test', 'delayed'],
+          labels: { suite: 'integration-test', kind: 'delayed' },
         });
 
         expect(createResult).toBeDefined();
@@ -225,7 +250,7 @@ describe('Scheduler Integration Tests', () => {
         const job = await scheduler.getJob(createResult.jobId);
 
         expect(job.type).toBe(JobType.DELAYED);
-      }),
+      },
       TIMEOUT,
     );
   });
@@ -233,84 +258,77 @@ describe('Scheduler Integration Tests', () => {
   describe('Job Control Operations', () => {
     let controlJobId;
 
-    beforeAll(
-      skipIfNoServer(async () => {
-        if (!serverAvailable) {
-          return;
-        }
-
-        const jobName = generateJobName('control');
-        const result = await createTrackedJob({
-          name: jobName,
-          type: JobType.RECURRING,
-          schedule: '0 * * * *', // Every hour
-          payload: { action: 'control-test' },
-          tags: ['integration-test', 'control'],
-        });
-        controlJobId = result.jobId;
-      }),
-      TIMEOUT,
-    );
+    beforeAll(async () => {
+      const jobName = generateJobName('control');
+      const result = await createTrackedJob({
+        name: jobName,
+        type: JobType.RECURRING,
+        schedule: '0 * * * *', // Every hour
+        payload: { action: 'control-test' },
+        labels: { suite: 'integration-test', kind: 'control' },
+      });
+      controlJobId = result.jobId;
+    }, TIMEOUT);
 
     it(
       'should pause a job',
-      skipIfNoServer(async () => {
+      async () => {
         const result = await scheduler.pauseJob(controlJobId);
 
         expect(result).toBeDefined();
-        expect(result.success).toBe(true);
+        expect(result.jobId).toBe(controlJobId);
         expect(result.newStatus).toBe(JobStatus.PAUSED);
 
         // Verify job is paused
         const job = await scheduler.getJob(controlJobId);
         expect(job.status).toBe(JobStatus.PAUSED);
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should resume a paused job',
-      skipIfNoServer(async () => {
+      async () => {
         // Ensure job is paused first
         await scheduler.pauseJob(controlJobId);
 
         const result = await scheduler.resumeJob(controlJobId);
 
         expect(result).toBeDefined();
-        expect(result.success).toBe(true);
+        expect(result.jobId).toBe(controlJobId);
         expect(result.newStatus).toBe(JobStatus.PENDING);
 
         // Verify job is resumed
         const job = await scheduler.getJob(controlJobId);
         expect(job.status).toBe(JobStatus.PENDING);
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should trigger a job for immediate execution',
-      skipIfNoServer(async () => {
+      async () => {
         const result = await scheduler.triggerJob(controlJobId);
 
         expect(result).toBeDefined();
         expect(result.jobId).toBe(controlJobId);
-        expect(result.executionId).toBeDefined();
-        expect(result.triggeredAt).toBeDefined();
-      }),
+        expect(typeof result.status).toBe('string');
+        expect(result.triggeredAt).not.toBe('');
+      },
       TIMEOUT,
     );
 
     it(
       'should cancel a job with reason',
-      skipIfNoServer(async () => {
+      async () => {
         // Create a new job specifically for cancellation
         const jobName = generateJobName('cancel');
         const createResult = await createTrackedJob({
           name: jobName,
           type: JobType.ONE_SHOT,
-          runAt: Date.now() + 7200000, // 2 hours from now
+          executeAt: new Date(Date.now() + 7200000), // 2 hours from now
           payload: { action: 'to-be-canceled' },
-          tags: ['integration-test', 'cancel'],
+          labels: { suite: 'integration-test', kind: 'cancel' },
         });
 
         const result = await scheduler.cancelJob(
@@ -319,87 +337,84 @@ describe('Scheduler Integration Tests', () => {
         );
 
         expect(result).toBeDefined();
-        expect(result.success).toBe(true);
+        expect(result.jobId).toBe(createResult.jobId);
         expect(result.newStatus).toBe(JobStatus.CANCELED);
 
         // Verify job is canceled
         const job = await scheduler.getJob(createResult.jobId);
         expect(job.status).toBe(JobStatus.CANCELED);
-      }),
+      },
       TIMEOUT,
     );
   });
 
   describe('Job Listing and Filtering', () => {
-    const testTagPrefix = `list-test-${Date.now()}`;
+    const testRun = `list-test-${Date.now()}`;
 
-    beforeAll(
-      skipIfNoServer(async () => {
-        if (!serverAvailable) {
-          return;
-        }
+    beforeAll(async () => {
+      // Create several jobs for listing tests
+      const jobConfigs = [
+        {
+          name: generateJobName('list-pending'),
+          type: JobType.ONE_SHOT,
+          executeAt: new Date(Date.now() + 3600000),
+          payload: { index: 1 },
+          labels: { run: testRun, kind: 'pending' },
+        },
+        {
+          name: generateJobName('list-recurring'),
+          type: JobType.RECURRING,
+          schedule: '0 0 * * *',
+          payload: { index: 2 },
+          labels: { run: testRun, kind: 'recurring' },
+        },
+        {
+          name: generateJobName('list-delayed'),
+          type: JobType.DELAYED,
+          delaySeconds: 120,
+          payload: { index: 3 },
+          labels: { run: testRun, kind: 'delayed' },
+        },
+      ];
 
-        // Create several jobs for listing tests
-        const jobConfigs = [
-          {
-            name: generateJobName('list-pending'),
-            type: JobType.ONE_SHOT,
-            runAt: Date.now() + 3600000,
-            payload: { index: 1 },
-            tags: [testTagPrefix, 'pending'],
-          },
-          {
-            name: generateJobName('list-recurring'),
-            type: JobType.RECURRING,
-            schedule: '0 0 * * *',
-            payload: { index: 2 },
-            tags: [testTagPrefix, 'recurring'],
-          },
-          {
-            name: generateJobName('list-delayed'),
-            type: JobType.DELAYED,
-            delayMs: 120000,
-            payload: { index: 3 },
-            tags: [testTagPrefix, 'delayed'],
-          },
-        ];
-
-        for (const config of jobConfigs) {
-          await createTrackedJob(config);
-        }
-      }),
-      TIMEOUT,
-    );
+      for (const config of jobConfigs) {
+        await createTrackedJob(config);
+      }
+    }, TIMEOUT);
 
     it(
       'should list all jobs',
-      skipIfNoServer(async () => {
+      async () => {
         const result = await scheduler.listJobs();
 
         expect(result).toBeDefined();
         expect(Array.isArray(result.jobs)).toBe(true);
         expect(typeof result.totalCount).toBe('number');
-      }),
+        expect(typeof result.hasMore).toBe('boolean');
+      },
       TIMEOUT,
     );
 
     it(
-      'should list jobs with pagination',
-      skipIfNoServer(async () => {
-        const result = await scheduler.listJobs({
-          limit: 2,
-          offset: 0,
-        });
+      'should list jobs with cursor pagination',
+      async () => {
+        const first = await scheduler.listJobs({ limit: 2 });
 
-        expect(result).toBeDefined();
-        expect(result.jobs.length).toBeLessThanOrEqual(2);
-      }),
+        expect(first.jobs.length).toBeLessThanOrEqual(2);
+        if (first.hasMore) {
+          const second = await scheduler.listJobs({ limit: 2, cursor: first.nextCursor });
+          const firstIds = first.jobs.map(job => job.jobId);
+          for (const job of second.jobs) {
+            expect(firstIds).not.toContain(job.jobId);
+          }
+        }
+      },
       TIMEOUT,
     );
 
     it(
       'should list jobs filtered by status',
-      skipIfNoServer(async () => {
+      async () => {
         const result = await scheduler.listJobs({
           status: JobStatus.PENDING,
         });
@@ -409,49 +424,37 @@ describe('Scheduler Integration Tests', () => {
         for (const job of result.jobs) {
           expect(job.status).toBe(JobStatus.PENDING);
         }
-      }),
+      },
       TIMEOUT,
     );
 
     it(
-      'should list jobs filtered by type',
-      skipIfNoServer(async () => {
+      'should list jobs filtered by handler',
+      async () => {
         const result = await scheduler.listJobs({
-          type: JobType.RECURRING,
+          handler: TEST_HANDLER,
+          limit: 1000,
         });
 
-        expect(result).toBeDefined();
-        expect(Array.isArray(result.jobs)).toBe(true);
+        const runJobs = result.jobs.filter(job => job.labels?.run === testRun);
+        expect(runJobs.length).toBe(3);
         for (const job of result.jobs) {
-          expect(job.type).toBe(JobType.RECURRING);
+          expect(job.handler).toBe(TEST_HANDLER);
         }
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should list jobs filtered by owner type',
-      skipIfNoServer(async () => {
+      async () => {
         const result = await scheduler.listJobs({
           ownerType: OwnerType.SYSTEM,
         });
 
         expect(result).toBeDefined();
         expect(Array.isArray(result.jobs)).toBe(true);
-      }),
-      TIMEOUT,
-    );
-
-    it(
-      'should list jobs filtered by tags',
-      skipIfNoServer(async () => {
-        const result = await scheduler.listJobs({
-          tags: [testTagPrefix],
-        });
-
-        expect(result).toBeDefined();
-        expect(Array.isArray(result.jobs)).toBe(true);
-      }),
+      },
       TIMEOUT,
     );
   });
@@ -459,71 +462,47 @@ describe('Scheduler Integration Tests', () => {
   describe('Job History', () => {
     let historyJobId;
 
-    beforeAll(
-      skipIfNoServer(async () => {
-        if (!serverAvailable) {
-          return;
-        }
+    beforeAll(async () => {
+      const jobName = generateJobName('history');
+      const result = await createTrackedJob({
+        name: jobName,
+        type: JobType.ONE_SHOT,
+        executeAt: new Date(Date.now() + 3600000),
+        payload: { action: 'history-test' },
+        labels: { suite: 'integration-test', kind: 'history' },
+      });
+      historyJobId = result.jobId;
 
-        const jobName = generateJobName('history');
-        const result = await createTrackedJob({
-          name: jobName,
-          type: JobType.ONE_SHOT,
-          runAt: Date.now() - 1000, // Set in the past to potentially trigger
-          payload: { action: 'history-test' },
-          tags: ['integration-test', 'history'],
-        });
-        historyJobId = result.jobId;
-
-        // Trigger the job to generate some history
-        try {
-          await scheduler.triggerJob(historyJobId);
-        } catch {
-          // Job may already be running or completed
-        }
-      }),
-      TIMEOUT,
-    );
+      // Trigger the job to generate some history
+      await scheduler.triggerJob(historyJobId);
+    }, TIMEOUT);
 
     it(
       'should get job history',
-      skipIfNoServer(async () => {
+      async () => {
         const result = await scheduler.getJobHistory(historyJobId);
 
         expect(result).toBeDefined();
         expect(result.jobId).toBe(historyJobId);
         expect(Array.isArray(result.executions)).toBe(true);
-        expect(typeof result.totalCount).toBe('number');
-      }),
+        expect(typeof result.hasMore).toBe('boolean');
+        for (const execution of result.executions) {
+          expect(execution.jobId).toBe(historyJobId);
+        }
+      },
       TIMEOUT,
     );
 
     it(
-      'should get job history with pagination',
-      skipIfNoServer(async () => {
+      'should get job history with a page limit',
+      async () => {
         const result = await scheduler.getJobHistory(historyJobId, {
           limit: 5,
-          offset: 0,
         });
 
         expect(result).toBeDefined();
         expect(result.executions.length).toBeLessThanOrEqual(5);
-      }),
-      TIMEOUT,
-    );
-
-    it(
-      'should get job history filtered by time range',
-      skipIfNoServer(async () => {
-        const now = Date.now();
-        const result = await scheduler.getJobHistory(historyJobId, {
-          startTime: now - 86400000, // Last 24 hours
-          endTime: now,
-        });
-
-        expect(result).toBeDefined();
-        expect(Array.isArray(result.executions)).toBe(true);
-      }),
+      },
       TIMEOUT,
     );
   });
@@ -531,83 +510,85 @@ describe('Scheduler Integration Tests', () => {
   describe('Error Handling', () => {
     it(
       'should handle job not found error',
-      skipIfNoServer(async () => {
-        const nonExistentJobId = 'non-existent-job-id-12345';
+      async () => {
+        const nonExistentJobId = '999912345';
 
         await expect(scheduler.getJob(nonExistentJobId)).rejects.toThrow();
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should handle delete of non-existent job',
-      skipIfNoServer(async () => {
-        const nonExistentJobId = 'non-existent-job-id-67890';
+      async () => {
+        const nonExistentJobId = '999967890';
 
         await expect(scheduler.deleteJob(nonExistentJobId)).rejects.toThrow();
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should handle update of non-existent job',
-      skipIfNoServer(async () => {
-        const nonExistentJobId = 'non-existent-job-id-11111';
+      async () => {
+        const nonExistentJobId = '999911111';
 
         await expect(
           scheduler.updateJob(nonExistentJobId, { description: 'Updated' }),
         ).rejects.toThrow();
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should handle pause of non-existent job',
-      skipIfNoServer(async () => {
-        const nonExistentJobId = 'non-existent-job-id-22222';
+      async () => {
+        const nonExistentJobId = '999922222';
 
         await expect(scheduler.pauseJob(nonExistentJobId)).rejects.toThrow();
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should handle resume of non-existent job',
-      skipIfNoServer(async () => {
-        const nonExistentJobId = 'non-existent-job-id-33333';
+      async () => {
+        const nonExistentJobId = '999933333';
 
         await expect(scheduler.resumeJob(nonExistentJobId)).rejects.toThrow();
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should handle cancel of non-existent job',
-      skipIfNoServer(async () => {
-        const nonExistentJobId = 'non-existent-job-id-44444';
+      async () => {
+        const nonExistentJobId = '999944444';
 
         await expect(scheduler.cancelJob(nonExistentJobId)).rejects.toThrow();
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should handle trigger of non-existent job',
-      skipIfNoServer(async () => {
-        const nonExistentJobId = 'non-existent-job-id-55555';
+      async () => {
+        const nonExistentJobId = '999955555';
 
         await expect(scheduler.triggerJob(nonExistentJobId)).rejects.toThrow();
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should handle history of non-existent job',
-      skipIfNoServer(async () => {
-        const nonExistentJobId = 'non-existent-job-id-66666';
+      async () => {
+        const nonExistentJobId = '999966666';
 
-        await expect(scheduler.getJobHistory(nonExistentJobId)).rejects.toThrow();
-      }),
+        await expect(
+          scheduler.getJobHistory(nonExistentJobId),
+        ).rejects.toThrow();
+      },
       TIMEOUT,
     );
   });
@@ -615,18 +596,18 @@ describe('Scheduler Integration Tests', () => {
   describe('Job with Different Owner Types', () => {
     it(
       'should create a tenant-owned job',
-      skipIfNoServer(async () => {
+      async () => {
         const jobName = generateJobName('tenant');
         const tenantId = 'test-tenant-123';
 
         const result = await createTrackedJob({
           name: jobName,
           type: JobType.ONE_SHOT,
-          runAt: Date.now() + 3600000,
+          executeAt: new Date(Date.now() + 3600000),
           payload: { action: 'tenant-task' },
           ownerType: OwnerType.TENANT,
           ownerId: tenantId,
-          tags: ['integration-test', 'tenant'],
+          labels: { suite: 'integration-test', kind: 'tenant' },
         });
 
         expect(result).toBeDefined();
@@ -635,23 +616,23 @@ describe('Scheduler Integration Tests', () => {
         const job = await scheduler.getJob(result.jobId);
         expect(job.ownerType).toBe(OwnerType.TENANT);
         expect(job.ownerId).toBe(tenantId);
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should create a delegated job',
-      skipIfNoServer(async () => {
+      async () => {
         const jobName = generateJobName('delegated');
 
         const result = await createTrackedJob({
           name: jobName,
           type: JobType.ONE_SHOT,
-          runAt: Date.now() + 3600000,
+          executeAt: new Date(Date.now() + 3600000),
           payload: { action: 'delegated-task' },
           ownerType: OwnerType.DELEGATED,
           ownerId: 'delegated-owner-456',
-          tags: ['integration-test', 'delegated'],
+          labels: { suite: 'integration-test', kind: 'delegated' },
         });
 
         expect(result).toBeDefined();
@@ -659,7 +640,7 @@ describe('Scheduler Integration Tests', () => {
 
         const job = await scheduler.getJob(result.jobId);
         expect(job.ownerType).toBe(OwnerType.DELEGATED);
-      }),
+      },
       TIMEOUT,
     );
   });
@@ -667,7 +648,7 @@ describe('Scheduler Integration Tests', () => {
   describe('Job with Complex Payload', () => {
     it(
       'should handle complex nested payload',
-      skipIfNoServer(async () => {
+      async () => {
         const jobName = generateJobName('complex-payload');
 
         const complexPayload = {
@@ -702,9 +683,9 @@ describe('Scheduler Integration Tests', () => {
         const result = await createTrackedJob({
           name: jobName,
           type: JobType.ONE_SHOT,
-          runAt: Date.now() + 3600000,
+          executeAt: new Date(Date.now() + 3600000),
           payload: complexPayload,
-          tags: ['integration-test', 'complex'],
+          labels: { suite: 'integration-test', kind: 'complex' },
         });
 
         expect(result).toBeDefined();
@@ -712,7 +693,7 @@ describe('Scheduler Integration Tests', () => {
 
         const job = await scheduler.getJob(result.jobId);
         expect(job.payload).toEqual(complexPayload);
-      }),
+      },
       TIMEOUT,
     );
   });
@@ -720,33 +701,24 @@ describe('Scheduler Integration Tests', () => {
   describe('Job Update Operations', () => {
     let updateJobId;
 
-    beforeAll(
-      skipIfNoServer(async () => {
-        if (!serverAvailable) {
-          return;
-        }
-
-        const jobName = generateJobName('update');
-        const result = await createTrackedJob({
-          name: jobName,
-          type: JobType.RECURRING,
-          schedule: '0 0 * * *',
-          description: 'Original description',
-          payload: { version: 1 },
-          metadata: { key1: 'value1' },
-          maxRetries: 3,
-          retryDelayMs: 1000,
-          timeoutMs: 30000,
-          tags: ['integration-test', 'update', 'original'],
-        });
-        updateJobId = result.jobId;
-      }),
-      TIMEOUT,
-    );
+    beforeAll(async () => {
+      const jobName = generateJobName('update');
+      const result = await createTrackedJob({
+        name: jobName,
+        type: JobType.RECURRING,
+        schedule: '0 0 * * *',
+        description: 'Original description',
+        payload: { version: 1 },
+        maxRetries: 3,
+        timeoutSeconds: 30,
+        labels: { suite: 'integration-test', kind: 'update', state: 'original' },
+      });
+      updateJobId = result.jobId;
+    }, TIMEOUT);
 
     it(
       'should update job name',
-      skipIfNoServer(async () => {
+      async () => {
         const newName = generateJobName('renamed');
         const result = await scheduler.updateJob(updateJobId, {
           name: newName,
@@ -754,26 +726,26 @@ describe('Scheduler Integration Tests', () => {
 
         expect(result).toBeDefined();
         expect(result.name).toBe(newName);
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should update job schedule',
-      skipIfNoServer(async () => {
+      async () => {
         const result = await scheduler.updateJob(updateJobId, {
           schedule: '0 */2 * * *', // Every 2 hours
         });
 
         expect(result).toBeDefined();
         expect(result.schedule).toBe('0 */2 * * *');
-      }),
+      },
       TIMEOUT,
     );
 
     it(
       'should update job payload',
-      skipIfNoServer(async () => {
+      async () => {
         const newPayload = { version: 2, updated: true };
         const result = await scheduler.updateJob(updateJobId, {
           payload: newPayload,
@@ -781,47 +753,34 @@ describe('Scheduler Integration Tests', () => {
 
         expect(result).toBeDefined();
         expect(result.payload).toEqual(newPayload);
-      }),
+      },
       TIMEOUT,
     );
 
     it(
-      'should update job metadata',
-      skipIfNoServer(async () => {
-        const newMetadata = { key1: 'updated', key2: 'new' };
-        const result = await scheduler.updateJob(updateJobId, {
-          metadata: newMetadata,
-        });
-
-        expect(result).toBeDefined();
-      }),
-      TIMEOUT,
-    );
-
-    it(
-      'should update job retry settings',
-      skipIfNoServer(async () => {
+      'should update job retry and timeout settings',
+      async () => {
         const result = await scheduler.updateJob(updateJobId, {
           maxRetries: 5,
-          retryDelayMs: 2000,
-          timeoutMs: 60000,
+          timeoutSeconds: 60,
         });
 
-        expect(result).toBeDefined();
-      }),
+        expect(result.maxRetries).toBe(5);
+        expect(result.timeoutMs).toBe(60000);
+      },
       TIMEOUT,
     );
 
     it(
-      'should update job tags',
-      skipIfNoServer(async () => {
-        const newTags = ['integration-test', 'update', 'modified'];
+      'should update job labels',
+      async () => {
+        const newLabels = { suite: 'integration-test', kind: 'update', state: 'modified' };
         const result = await scheduler.updateJob(updateJobId, {
-          tags: newTags,
+          labels: newLabels,
         });
 
-        expect(result).toBeDefined();
-      }),
+        expect(result.labels).toEqual(newLabels);
+      },
       TIMEOUT,
     );
   });

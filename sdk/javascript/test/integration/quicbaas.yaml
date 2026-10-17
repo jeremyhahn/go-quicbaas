@@ -1,0 +1,84 @@
+# QuicBaaS configuration for the JavaScript SDK integration suites.
+#
+# Mounted read-only into the `central` service of docker-compose.yml, which
+# runs `quicbaasd start` (standalone, no Raft) against it. Modelled on
+# test/integration/quicbaas-tenantbarrier.yaml: one node, REST only, every
+# subsystem the suites do not drive switched off for a lean boot.
+#
+# TLS cannot be disabled (pkg/config forces security.tls_enabled), so REST
+# serves HTTPS with the certificate the built-in CA issues at first boot into
+# <data-dir>/certs. The compose service sets hostname `central`, which lands in
+# that certificate's SANs, and the test runner trusts the CA chain from the
+# shared data volume.
+
+logging:
+  level: info
+  format: json
+
+security:
+  # The JS suites call the data plane anonymously, like the development
+  # profile (config.DevelopmentConfig): the default-deny gate is off,
+  # anonymous RBAC is allowed, and the refuse-to-start gate is acknowledged
+  # explicitly. This runs only inside the compose network. NEVER set these in
+  # production.
+  require_authz: false
+  insecure_dev_mode: true
+  authorization:
+    rbac:
+      allow_anonymous: true
+    abac:
+      enabled: false
+
+server:
+  # Bind every interface so the separate test-runner container can reach
+  # https://central:8080; the default (127.0.0.1) only accepts loopback.
+  # The 0.0.0.0 bind is for the isolated compose network only. NEVER copy it
+  # to a host-facing deployment.
+  host: 0.0.0.0
+  rest:
+    enabled: true
+    port: 8080
+  grpc:
+    enabled: false
+  mcp:
+    enabled: false
+  unix:
+    enabled: false
+
+storage:
+  backend: pebble
+
+iam:
+  # First-boot issues the platform admin certificate through the built-in CA
+  # and refuses the boot without a trust domain (ErrNoSPIFFETrustDomain).
+  spiffe_trust_domain: quicbaas.sdk-js.test
+
+# The suite under test.
+scheduler:
+  enabled: true
+  tick_interval: 1s
+  max_concurrent_jobs: 10
+
+kms:
+  enabled: false
+
+secrets:
+  enabled: false
+
+timeseries:
+  enabled: false
+
+vector:
+  enabled: false
+
+orchestration:
+  enabled: false
+
+messaging:
+  enabled: false
+
+rag:
+  enabled: false
+
+backup:
+  enabled: false

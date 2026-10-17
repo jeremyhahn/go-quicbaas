@@ -58,7 +58,21 @@ The SDK provides access to all QuicBaaS services:
 - **Certificate** - PKI operations (issue, sign CSR, revoke)
 
 ### Identity Management
-- **IAM** - Multi-tenant identity and access management
+- **IAM** - Tenants, users, roles, policies, OAuth2 apps, sessions, audit log and GDPR requests
+
+`db.iam()` calls the tenant-scoped routes under `/api/v1/tenants/{tenant_id}`
+and the audit log at `/api/v1/iam/audit`. List methods page with `limit` and
+`offset`. There are no group methods: the server serves no group routes.
+
+```javascript
+const iam = db.iam();
+await iam.createTenant('acme', 'Acme Corp');
+const user = await iam.createUser('acme', 'alice@example.com', { username: 'alice' });
+await iam.createRole('acme', 'editor', ['kv:write']);
+await iam.createApp('acme', 'portal', ['https://portal.example.com/callback']);
+const { users } = await iam.listUsers('acme', { limit: 50, offset: 0 });
+const { events } = await iam.getAuditLog('acme', { actorId: user.id });
+```
 
 ### Specialized Data
 - **Vector** - Vector embeddings and similarity search
