@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -47,7 +46,7 @@ func handleObjPutObject(ctx context.Context, svc service.QuicBaaS, req interface
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "PutObject",
 			"*objectstorage.PutObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -93,7 +92,7 @@ func handleObjGetObject(ctx context.Context, svc service.QuicBaaS, req interface
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "GetObject",
 			"*objectstorage.GetObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -131,7 +130,7 @@ func handleObjDeleteObject(ctx context.Context, svc service.QuicBaaS, req interf
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "DeleteObject",
 			"*objectstorage.DeleteObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -168,7 +167,7 @@ func handleObjHeadObject(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "HeadObject",
 			"*objectstorage.HeadObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -205,7 +204,7 @@ func handleObjListObjects(ctx context.Context, svc service.QuicBaaS, req interfa
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "ListObjects",
 			"*objectstorage.ListObjectsRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -245,7 +244,7 @@ func handleObjListByTag(ctx context.Context, svc service.QuicBaaS, req interface
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "ListByTag",
 			"*objectstorage.ListByTagRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -285,7 +284,7 @@ func handleObjListByTenant(ctx context.Context, svc service.QuicBaaS, req interf
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "ListByTenant",
 			"*objectstorage.ListByTenantRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -324,7 +323,7 @@ func handleObjCopyObject(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "CopyObject",
 			"*objectstorage.CopyObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -364,7 +363,7 @@ func handleObjReplicateObject(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "ReplicateObject",
 			"*objectstorage.ReplicateObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -404,7 +403,7 @@ func handleObjMigrateObject(ctx context.Context, svc service.QuicBaaS, req inter
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "MigrateObject",
 			"*objectstorage.MigrateObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -443,7 +442,7 @@ func handleObjArchiveObject(ctx context.Context, svc service.QuicBaaS, req inter
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "ArchiveObject",
 			"*objectstorage.ArchiveObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -482,7 +481,7 @@ func handleObjRestoreObject(ctx context.Context, svc service.QuicBaaS, req inter
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "RestoreObject",
 			"*objectstorage.RestoreObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -520,7 +519,7 @@ func handleObjVerifyObject(ctx context.Context, svc service.QuicBaaS, req interf
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "VerifyObject",
 			"*objectstorage.VerifyObjectRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -559,7 +558,7 @@ func handleObjSetObjectPolicy(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "SetObjectPolicy",
 			"*objectstorage.SetObjectPolicyRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -599,7 +598,7 @@ func handleObjGetObjectPolicy(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "GetObjectPolicy",
 			"*objectstorage.GetObjectPolicyRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -636,7 +635,7 @@ func handleObjListBackends(ctx context.Context, svc service.QuicBaaS, req interf
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "ListBackends",
 			"*objectstorage.ListBackendsRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -673,7 +672,7 @@ func handleObjGetBackendHealth(ctx context.Context, svc service.QuicBaaS, req in
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "GetBackendHealth",
 			"*objectstorage.GetBackendHealthRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -709,7 +708,7 @@ func handleObjGetTenantUsage(ctx context.Context, svc service.QuicBaaS, req inte
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "GetTenantUsage",
 			"*objectstorage.GetTenantUsageRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -745,7 +744,7 @@ func handleObjGetTenantQuotas(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "GetTenantQuotas",
 			"*objectstorage.GetTenantQuotasRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -781,7 +780,7 @@ func handleObjSetTenantQuotas(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "SetTenantQuotas",
 			"*objectstorage.SetTenantQuotasRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -820,7 +819,7 @@ func handleObjBatchPutObjects(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "BatchPutObjects",
 			"*objectstorage.BatchPutObjectsRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -874,7 +873,7 @@ func handleObjBatchGetObjects(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "BatchGetObjects",
 			"*objectstorage.BatchGetObjectsRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -912,7 +911,7 @@ func handleObjBatchDeleteObjects(ctx context.Context, svc service.QuicBaaS, req 
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ObjectStorage", "BatchDeleteObjects",
 			"*objectstorage.BatchDeleteObjectsRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 

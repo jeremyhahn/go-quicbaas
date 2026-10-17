@@ -50,7 +50,7 @@ func handleKMSGenerateKey(ctx context.Context, svc service.QuicBaaS, req interfa
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.KMS", "GenerateKey",
 			"*kms.GenerateKeyRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -138,7 +138,7 @@ func handleKMSImportKey(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	r, ok := req.(*service.ImportKeyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ImportKey", "*service.ImportKeyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ImportKey", "*service.ImportKeyRequest", typeNameOf(req))
 	}
 	return kms.ImportKey(ctx, r)
 }
@@ -161,12 +161,12 @@ func handleKMSGetKey(ctx context.Context, svc service.QuicBaaS, req interface{})
 	}
 
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKey", "*service.GetKeyRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKey", "*service.GetKeyRequest or struct{KeyID string}", typeNameOf(req))
 	}
 
 	keyIDField := reqVal.FieldByName("KeyID")
 	if !keyIDField.IsValid() {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKey", "struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKey", "struct{KeyID string}", typeNameOf(req))
 	}
 
 	return kms.GetKey(ctx, &service.GetKeyRequest{KeyID: keyIDField.String()})
@@ -190,12 +190,12 @@ func handleKMSGetPublicKey(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetPublicKey", "*service.GetPublicKeyRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetPublicKey", "*service.GetPublicKeyRequest or struct{KeyID string}", typeNameOf(req))
 	}
 
 	keyIDField := reqVal.FieldByName("KeyID")
 	if !keyIDField.IsValid() {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetPublicKey", "struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetPublicKey", "struct{KeyID string}", typeNameOf(req))
 	}
 
 	return kms.GetPublicKey(ctx, &service.GetPublicKeyRequest{KeyID: keyIDField.String()})
@@ -220,7 +220,7 @@ func handleKMSListKeys(ctx context.Context, svc service.QuicBaaS, req interface{
 	}
 
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ListKeys", "*service.ListKeysRequest or struct{}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ListKeys", "*service.ListKeysRequest or struct{}", typeNameOf(req))
 	}
 
 	return kms.ListKeys(ctx, &service.ListKeysRequest{})
@@ -244,12 +244,12 @@ func handleKMSRotateKey(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "RotateKey", "*service.RotateKeyRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "RotateKey", "*service.RotateKeyRequest or struct{KeyID string}", typeNameOf(req))
 	}
 
 	keyIDField := reqVal.FieldByName("KeyID")
 	if !keyIDField.IsValid() {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "RotateKey", "struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "RotateKey", "struct{KeyID string}", typeNameOf(req))
 	}
 
 	return kms.RotateKey(ctx, &service.RotateKeyRequest{KeyID: keyIDField.String()})
@@ -270,7 +270,7 @@ func handleKMSRevokeKey(ctx context.Context, svc service.QuicBaaS, req interface
 	// KeyID and optional Reason fields)
 	keyID, ok := kmsStringField(req, "KeyID")
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "RevokeKey", "*service.RevokeKeyRequest or struct{KeyID, Reason string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "RevokeKey", "*service.RevokeKeyRequest or struct{KeyID, Reason string}", typeNameOf(req))
 	}
 	reason, _ := kmsStringField(req, "Reason")
 	return kms.RevokeKey(ctx, &service.RevokeKeyRequest{KeyID: keyID, Reason: reason})
@@ -294,12 +294,12 @@ func handleKMSDeleteKey(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "DeleteKey", "*service.DeleteKeyRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "DeleteKey", "*service.DeleteKeyRequest or struct{KeyID string}", typeNameOf(req))
 	}
 
 	keyIDField := reqVal.FieldByName("KeyID")
 	if !keyIDField.IsValid() {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "DeleteKey", "struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "DeleteKey", "struct{KeyID string}", typeNameOf(req))
 	}
 
 	return kms.DeleteKey(ctx, &service.DeleteKeyRequest{KeyID: keyIDField.String()})
@@ -315,7 +315,7 @@ func handleKMSGetKeyMetadata(ctx context.Context, svc service.QuicBaaS, req inte
 	}
 	keyID, ok := kmsStringField(req, "KeyID")
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKeyMetadata", "*service.GetKeyMetadataRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKeyMetadata", "*service.GetKeyMetadataRequest or struct{KeyID string}", typeNameOf(req))
 	}
 	return kms.GetKeyMetadata(ctx, &service.GetKeyMetadataRequest{KeyID: keyID})
 }
@@ -330,7 +330,7 @@ func handleKMSUpdateKeyMetadata(ctx context.Context, svc service.QuicBaaS, req i
 	}
 	sdkReq, ok := req.(*kmsclient.UpdateKeyMetadataRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UpdateKeyMetadata", "*service.UpdateKeyMetadataRequest or *kms.UpdateKeyMetadataRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UpdateKeyMetadata", "*service.UpdateKeyMetadataRequest or *kms.UpdateKeyMetadataRequest", typeNameOf(req))
 	}
 	svcReq := &service.UpdateKeyMetadataRequest{
 		KeyID:      sdkReq.KeyID,
@@ -355,7 +355,7 @@ func handleKMSUpdateKeyStatus(ctx context.Context, svc service.QuicBaaS, req int
 	}
 	r, ok := req.(*service.UpdateKeyStatusRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UpdateKeyStatus", "*service.UpdateKeyStatusRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UpdateKeyStatus", "*service.UpdateKeyStatusRequest", typeNameOf(req))
 	}
 	return kms.UpdateKeyStatus(ctx, r)
 }
@@ -370,7 +370,7 @@ func handleKMSListKeyVersions(ctx context.Context, svc service.QuicBaaS, req int
 	}
 	keyID, ok := kmsStringField(req, "KeyID")
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ListKeyVersions", "*service.ListKeyVersionsRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ListKeyVersions", "*service.ListKeyVersionsRequest or struct{KeyID string}", typeNameOf(req))
 	}
 	return kms.ListKeyVersions(ctx, &service.ListKeyVersionsRequest{KeyID: keyID})
 }
@@ -385,7 +385,7 @@ func handleKMSSetKeyPolicy(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 	sdkReq, ok := req.(*kmsclient.SetKeyPolicyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetKeyPolicy", "*service.SetKeyPolicyRequest or *kms.SetKeyPolicyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetKeyPolicy", "*service.SetKeyPolicyRequest or *kms.SetKeyPolicyRequest", typeNameOf(req))
 	}
 	policy, err := sdkKeyPolicyToService(sdkReq.KeyID, sdkReq.Policy)
 	if err != nil {
@@ -407,7 +407,7 @@ func handleKMSGetKeyPolicy(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 	keyID, ok := kmsStringField(req, "KeyID")
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKeyPolicy", "*service.GetKeyPolicyRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKeyPolicy", "*service.GetKeyPolicyRequest or struct{KeyID string}", typeNameOf(req))
 	}
 	return kms.GetKeyPolicy(ctx, &service.GetKeyPolicyRequest{KeyID: keyID})
 }
@@ -443,7 +443,7 @@ func handleKMSExportKey(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	r, ok := req.(*service.ExportKeyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ExportKey", "*service.ExportKeyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ExportKey", "*service.ExportKeyRequest", typeNameOf(req))
 	}
 	return kms.ExportKey(ctx, r)
 }
@@ -455,7 +455,7 @@ func handleKMSUnwrapKey(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	r, ok := req.(*service.UnwrapKeyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UnwrapKey", "*service.UnwrapKeyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UnwrapKey", "*service.UnwrapKeyRequest", typeNameOf(req))
 	}
 	return kms.UnwrapKey(ctx, r)
 }
@@ -467,7 +467,7 @@ func handleKMSSetKeySafety(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 	r, ok := req.(*service.SetKeySafetyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetKeySafety", "*service.SetKeySafetyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetKeySafety", "*service.SetKeySafetyRequest", typeNameOf(req))
 	}
 	return kms.SetKeySafety(ctx, r)
 }
@@ -479,7 +479,7 @@ func handleKMSClearKeySafety(ctx context.Context, svc service.QuicBaaS, req inte
 	}
 	r, ok := req.(*service.ClearKeySafetyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ClearKeySafety", "*service.ClearKeySafetyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ClearKeySafety", "*service.ClearKeySafetyRequest", typeNameOf(req))
 	}
 	return kms.ClearKeySafety(ctx, r)
 }
@@ -491,7 +491,7 @@ func handleKMSSafetyCheck(ctx context.Context, svc service.QuicBaaS, req interfa
 	}
 	r, ok := req.(*service.SafetyCheckRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SafetyCheck", "*service.SafetyCheckRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SafetyCheck", "*service.SafetyCheckRequest", typeNameOf(req))
 	}
 	return kms.SafetyCheck(ctx, r)
 }
@@ -503,7 +503,7 @@ func handleKMSSafetyReport(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 	r, ok := req.(*service.SafetyReportRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SafetyReport", "*service.SafetyReportRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SafetyReport", "*service.SafetyReportRequest", typeNameOf(req))
 	}
 	return kms.SafetyReport(ctx, r)
 }
@@ -533,7 +533,7 @@ func handleKMSCreateDEK(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "CreateDEK",
 		"*service.CreateDEKRequest or *dek.CreateDEKRequest",
-		reflect.TypeOf(req).String())
+		typeNameOf(req))
 }
 
 func handleKMSGetDEK(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -550,7 +550,7 @@ func handleKMSGetDEK(ctx context.Context, svc service.QuicBaaS, req interface{})
 	}
 	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "GetDEK",
 		"*service.GetDEKRequest or *dek.getDEKRequest",
-		reflect.TypeOf(req).String())
+		typeNameOf(req))
 }
 
 func handleKMSListDEKs(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -570,7 +570,7 @@ func handleKMSListDEKs(ctx context.Context, svc service.QuicBaaS, req interface{
 	}
 	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "ListDEKs",
 		"*service.ListDEKsRequest or *dek.ListDEKsRequest",
-		reflect.TypeOf(req).String())
+		typeNameOf(req))
 }
 
 func handleKMSRotateDEK(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -589,7 +589,7 @@ func handleKMSRotateDEK(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "RotateDEK",
 		"*service.RotateDEKRequest or *dek.RotateDEKRequest",
-		reflect.TypeOf(req).String())
+		typeNameOf(req))
 }
 
 func handleKMSDeleteDEK(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -609,7 +609,7 @@ func handleKMSDeleteDEK(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "DeleteDEK",
 		"*service.DeleteDEKRequest or *dek.DeleteDEKRequest",
-		reflect.TypeOf(req).String())
+		typeNameOf(req))
 }
 
 func handleKMSGetDEKStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -625,7 +625,7 @@ func handleKMSGetDEKStatus(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 	return nil, NewInvalidRequestTypeError("quicbaas.DEK", "GetDEKStatus",
 		"*service.GetDEKStatusRequest or *dek.getDEKStatusRequest",
-		reflect.TypeOf(req).String())
+		typeNameOf(req))
 }
 
 // dekRequestPath extracts a Path string from any struct that has it via
@@ -678,7 +678,7 @@ func handleKMSSetDefaultDEK(ctx context.Context, svc service.QuicBaaS, req inter
 	}
 	r, ok := req.(*service.SetDefaultDEKRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetDefaultDEK", "*service.SetDefaultDEKRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetDefaultDEK", "*service.SetDefaultDEKRequest", typeNameOf(req))
 	}
 	return kms.SetDefaultDEK(ctx, r)
 }
@@ -690,7 +690,7 @@ func handleKMSSetDEKSafety(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 	r, ok := req.(*service.SetDEKSafetyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetDEKSafety", "*service.SetDEKSafetyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetDEKSafety", "*service.SetDEKSafetyRequest", typeNameOf(req))
 	}
 	return kms.SetDEKSafety(ctx, r)
 }
@@ -702,7 +702,7 @@ func handleKMSClearDEKSafety(ctx context.Context, svc service.QuicBaaS, req inte
 	}
 	r, ok := req.(*service.ClearDEKSafetyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ClearDEKSafety", "*service.ClearDEKSafetyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ClearDEKSafety", "*service.ClearDEKSafetyRequest", typeNameOf(req))
 	}
 	return kms.ClearDEKSafety(ctx, r)
 }
@@ -714,7 +714,7 @@ func handleKMSStartReencryption(ctx context.Context, svc service.QuicBaaS, req i
 	}
 	r, ok := req.(*service.StartReencryptionRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "StartReencryption", "*service.StartReencryptionRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "StartReencryption", "*service.StartReencryptionRequest", typeNameOf(req))
 	}
 	return kms.StartReencryption(ctx, r)
 }
@@ -726,7 +726,7 @@ func handleKMSGetReencryptionProgress(ctx context.Context, svc service.QuicBaaS,
 	}
 	r, ok := req.(*service.GetReencryptionProgressRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetReencryptionProgress", "*service.GetReencryptionProgressRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetReencryptionProgress", "*service.GetReencryptionProgressRequest", typeNameOf(req))
 	}
 	return kms.GetReencryptionProgress(ctx, r)
 }
@@ -750,7 +750,7 @@ func handleKMSSetKeyRotationPolicy(ctx context.Context, svc service.QuicBaaS, re
 	// (KeyID, AutoRotate, IntervalSeconds, RetainVersions, Enabled)
 	keyID, ok := kmsStringField(req, "KeyID")
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetKeyRotationPolicy", "*service.SetKeyRotationPolicyRequest or flat rotation-policy struct", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetKeyRotationPolicy", "*service.SetKeyRotationPolicyRequest or flat rotation-policy struct", typeNameOf(req))
 	}
 	autoRotate, _ := kmsBoolField(req, "AutoRotate")
 	enabled, _ := kmsBoolField(req, "Enabled")
@@ -777,7 +777,7 @@ func handleKMSGetKeyRotationPolicy(ctx context.Context, svc service.QuicBaaS, re
 	}
 	keyID, ok := kmsStringField(req, "KeyID")
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKeyRotationPolicy", "*service.GetKeyRotationPolicyRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "GetKeyRotationPolicy", "*service.GetKeyRotationPolicyRequest or struct{KeyID string}", typeNameOf(req))
 	}
 	return kms.GetKeyRotationPolicy(ctx, &service.GetKeyRotationPolicyRequest{KeyID: keyID})
 }
@@ -792,7 +792,7 @@ func handleKMSDeleteKeyRotationPolicy(ctx context.Context, svc service.QuicBaaS,
 	}
 	keyID, ok := kmsStringField(req, "KeyID")
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "DeleteKeyRotationPolicy", "*service.DeleteKeyRotationPolicyRequest or struct{KeyID string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "DeleteKeyRotationPolicy", "*service.DeleteKeyRotationPolicyRequest or struct{KeyID string}", typeNameOf(req))
 	}
 	return kms.DeleteKeyRotationPolicy(ctx, &service.DeleteKeyRotationPolicyRequest{KeyID: keyID})
 }

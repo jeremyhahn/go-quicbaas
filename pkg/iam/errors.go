@@ -890,6 +890,28 @@ func (e *PolicyExistsError) Error() string {
 	return "policy '" + e.Name + "' already exists in tenant '" + e.TenantID + "'"
 }
 
+// InvalidRedirectURIError is returned when an app's redirect URI is refused.
+// It describes the request, not the server, so transports answer it as the
+// caller's mistake (go-quicbaas#1463). Cause carries the parse error, if any.
+type InvalidRedirectURIError struct {
+	URI    string
+	Reason string
+	Cause  error
+}
+
+// Error implements the error interface.
+func (e *InvalidRedirectURIError) Error() string {
+	if e.URI == "" {
+		return e.Reason
+	}
+	return "invalid redirect URI " + e.URI + ": " + e.Reason
+}
+
+// Unwrap returns the underlying parse error, if any.
+func (e *InvalidRedirectURIError) Unwrap() error {
+	return e.Cause
+}
+
 // PolicyNotFoundTypeError is returned when a policy is not found.
 type PolicyNotFoundTypeError struct {
 	TenantID string

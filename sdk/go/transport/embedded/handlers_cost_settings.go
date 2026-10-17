@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -41,7 +40,7 @@ func handleOrchestratorGetCostSettings(ctx context.Context, svc service.QuicBaaS
 	r, ok := req.(*orchestratorSDK.GetCostSettingsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetCostSettings",
-			"*orchestrator.GetCostSettingsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetCostSettingsRequest", typeNameOf(req))
 	}
 	accessor, err := costSettingsAccessorOf(svc, "GetCostSettings")
 	if err != nil {
@@ -59,7 +58,7 @@ func handleOrchestratorSetCostSettings(ctx context.Context, svc service.QuicBaaS
 	r, ok := req.(*orchestratorSDK.SetCostSettingsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "SetCostSettings",
-			"*orchestrator.SetCostSettingsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.SetCostSettingsRequest", typeNameOf(req))
 	}
 	accessor, err := costSettingsAccessorOf(svc, "SetCostSettings")
 	if err != nil {

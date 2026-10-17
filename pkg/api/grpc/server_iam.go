@@ -1915,6 +1915,12 @@ func convertIAMError(err error) error {
 		return nil
 	}
 
+	// A refused redirect URI is the caller's error, not the server's (#1463).
+	var redirectErr *iam.InvalidRedirectURIError
+	if stderrors.As(err, &redirectErr) {
+		return status.Error(codes.InvalidArgument, redirectErr.Error())
+	}
+
 	var dErr *errors.QBError
 	if !stderrors.As(err, &dErr) {
 		return status.Error(codes.Internal, err.Error())

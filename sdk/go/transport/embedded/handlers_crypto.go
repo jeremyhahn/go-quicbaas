@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -31,7 +30,7 @@ func handleCryptoEncrypt(ctx context.Context, svc service.QuicBaaS, req interfac
 	}
 	r, ok := req.(*service.EncryptRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Encrypt", "*service.EncryptRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Encrypt", "*service.EncryptRequest", typeNameOf(req))
 	}
 	return crypto.Encrypt(ctx, r)
 }
@@ -43,7 +42,7 @@ func handleCryptoDecrypt(ctx context.Context, svc service.QuicBaaS, req interfac
 	}
 	r, ok := req.(*service.DecryptRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Decrypt", "*service.DecryptRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Decrypt", "*service.DecryptRequest", typeNameOf(req))
 	}
 	return crypto.Decrypt(ctx, r)
 }
@@ -55,7 +54,7 @@ func handleCryptoRewrap(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	r, ok := req.(*service.RewrapRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Rewrap", "*service.RewrapRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Rewrap", "*service.RewrapRequest", typeNameOf(req))
 	}
 	return crypto.Rewrap(ctx, r)
 }
@@ -67,7 +66,7 @@ func handleCryptoEncryptBatch(ctx context.Context, svc service.QuicBaaS, req int
 	}
 	r, ok := req.(*service.EncryptBatchRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "EncryptBatch", "*service.EncryptBatchRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "EncryptBatch", "*service.EncryptBatchRequest", typeNameOf(req))
 	}
 	return crypto.EncryptBatch(ctx, r)
 }
@@ -79,7 +78,7 @@ func handleCryptoDecryptBatch(ctx context.Context, svc service.QuicBaaS, req int
 	}
 	r, ok := req.(*service.DecryptBatchRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "DecryptBatch", "*service.DecryptBatchRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "DecryptBatch", "*service.DecryptBatchRequest", typeNameOf(req))
 	}
 	return crypto.DecryptBatch(ctx, r)
 }
@@ -91,7 +90,7 @@ func handleCryptoGenerateDataKey(ctx context.Context, svc service.QuicBaaS, req 
 	}
 	r, ok := req.(*service.GenerateDataKeyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "GenerateDataKey", "*service.GenerateDataKeyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "GenerateDataKey", "*service.GenerateDataKeyRequest", typeNameOf(req))
 	}
 	return crypto.GenerateDataKey(ctx, r)
 }
@@ -103,7 +102,7 @@ func handleCryptoGenerateWrappedDataKey(ctx context.Context, svc service.QuicBaa
 	}
 	r, ok := req.(*service.GenerateWrappedDataKeyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "GenerateWrappedDataKey", "*service.GenerateWrappedDataKeyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "GenerateWrappedDataKey", "*service.GenerateWrappedDataKeyRequest", typeNameOf(req))
 	}
 	return crypto.GenerateWrappedDataKey(ctx, r)
 }
@@ -115,7 +114,7 @@ func handleCryptoSign(ctx context.Context, svc service.QuicBaaS, req interface{}
 	}
 	r, ok := req.(*service.SignRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Sign", "*service.SignRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Sign", "*service.SignRequest", typeNameOf(req))
 	}
 	return crypto.Sign(ctx, r)
 }
@@ -127,7 +126,7 @@ func handleCryptoVerify(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	r, ok := req.(*service.VerifyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Verify", "*service.VerifyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Verify", "*service.VerifyRequest", typeNameOf(req))
 	}
 	return crypto.Verify(ctx, r)
 }
@@ -139,7 +138,7 @@ func handleCryptoGenerateHMAC(ctx context.Context, svc service.QuicBaaS, req int
 	}
 	r, ok := req.(*service.HMACRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "GenerateHMAC", "*service.HMACRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "GenerateHMAC", "*service.HMACRequest", typeNameOf(req))
 	}
 	return crypto.GenerateHMAC(ctx, r)
 }
@@ -151,7 +150,7 @@ func handleCryptoVerifyHMAC(ctx context.Context, svc service.QuicBaaS, req inter
 	}
 	r, ok := req.(*service.VerifyHMACRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "VerifyHMAC", "*service.VerifyHMACRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "VerifyHMAC", "*service.VerifyHMACRequest", typeNameOf(req))
 	}
 	return crypto.VerifyHMAC(ctx, r)
 }
@@ -163,7 +162,7 @@ func handleCryptoGenerateRandom(ctx context.Context, svc service.QuicBaaS, req i
 	}
 	r, ok := req.(*service.GenerateRandomRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "GenerateRandom", "*service.GenerateRandomRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "GenerateRandom", "*service.GenerateRandomRequest", typeNameOf(req))
 	}
 	return crypto.GenerateRandom(ctx, r)
 }
@@ -175,7 +174,7 @@ func handleCryptoHash(ctx context.Context, svc service.QuicBaaS, req interface{}
 	}
 	r, ok := req.(*service.HashRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Hash", "*service.HashRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Crypto", "Hash", "*service.HashRequest", typeNameOf(req))
 	}
 	return crypto.Hash(ctx, r)
 }

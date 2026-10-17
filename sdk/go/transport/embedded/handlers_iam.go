@@ -146,7 +146,7 @@ func handleIAMTenantCreate(ctx context.Context, svc service.QuicBaaS, req interf
 	r, ok := req.(*iamsdk.CreateTenantRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Tenant", "Create",
-			"*iam.CreateTenantRequest", reflect.TypeOf(req).String())
+			"*iam.CreateTenantRequest", typeNameOf(req))
 	}
 	// EngineQuotas is the limits-only create-time view; Quotas() widens it to
 	// the engine struct with every usage counter left at zero, which is what
@@ -172,7 +172,7 @@ func handleIAMTenantGet(ctx context.Context, svc service.QuicBaaS, req interface
 	id, ok := iamRequestField(req, "TenantID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Tenant", "Get",
-			"struct with TenantID field", reflect.TypeOf(req).String())
+			"struct with TenantID field", typeNameOf(req))
 	}
 	t, err := mgr.GetTenant(ctx, id)
 	if err != nil {
@@ -206,7 +206,7 @@ func handleIAMTenantUpdate(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 	if sdkReq == nil {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Tenant", "Update",
-			"*iam.UpdateTenantRequest", reflect.TypeOf(req).String())
+			"*iam.UpdateTenantRequest", typeNameOf(req))
 	}
 	name := sdkReq.DisplayName
 	opts := iam.UpdateTenantOptions{}
@@ -228,7 +228,7 @@ func handleIAMTenantDelete(ctx context.Context, svc service.QuicBaaS, req interf
 	id, ok := iamRequestField(req, "TenantID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Tenant", "Delete",
-			"struct with TenantID field", reflect.TypeOf(req).String())
+			"struct with TenantID field", typeNameOf(req))
 	}
 	if err := mgr.DeleteTenant(ctx, id); err != nil {
 		return nil, err
@@ -273,7 +273,7 @@ func handleIAMTenantProvision(ctx context.Context, svc service.QuicBaaS, req int
 	r, ok := req.(*iamsdk.ProvisionTenantRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Tenant", "Provision",
-			"*iam.ProvisionTenantRequest", reflect.TypeOf(req).String())
+			"*iam.ProvisionTenantRequest", typeNameOf(req))
 	}
 	res, err := p.IAM().ProvisionTenant(ctx, &service.IAMProvisionTenantRequest{
 		TenantID:          r.TenantID,
@@ -341,7 +341,7 @@ func handleIAMUserCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 	}
 	if sdkReq == nil {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.User", "Create",
-			"*iam.CreateUserRequest", reflect.TypeOf(req).String())
+			"*iam.CreateUserRequest", typeNameOf(req))
 	}
 	opts := iam.CreateUserOptions{
 		Email:       sdkReq.Email,
@@ -406,7 +406,7 @@ func handleIAMUserGet(ctx context.Context, svc service.QuicBaaS, req interface{}
 	}
 	if tenantID == "" || userID == "" {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.User", "Get",
-			"struct with TenantID + UserID/ID fields", reflect.TypeOf(req).String())
+			"struct with TenantID + UserID/ID fields", typeNameOf(req))
 	}
 	id, err := parseIAMUserID("quicbaas.IAM.User", "Get", userID)
 	if err != nil {
@@ -586,7 +586,7 @@ func handleIAMRoleCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 	}
 	if sdkReq == nil {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Role", "Create",
-			"*iam.CreateRoleRequest", reflect.TypeOf(req).String())
+			"*iam.CreateRoleRequest", typeNameOf(req))
 	}
 	r, err := store.CreateRole(ctx, tenantID, iam.CreateRoleOptions{
 		ID:          sdkReq.ID,
@@ -860,7 +860,7 @@ func handleIAMPolicyCreate(ctx context.Context, svc service.QuicBaaS, req interf
 	}
 	if sdkReq == nil {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Policy", "Create",
-			"*iam.CreatePolicyRequest", reflect.TypeOf(req).String())
+			"*iam.CreatePolicyRequest", typeNameOf(req))
 	}
 	// Structured conditions, targets and rule subjects have no
 	// translation into the engine's policy. Refuse them: storing the
@@ -1099,7 +1099,7 @@ func handleIAMAppRegister(ctx context.Context, svc service.QuicBaaS, req interfa
 	}
 	if sdkReq == nil {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.App", "Register",
-			"*iam.RegisterAppRequest", reflect.TypeOf(req).String())
+			"*iam.RegisterAppRequest", typeNameOf(req))
 	}
 	grants := make([]string, 0, len(sdkReq.GrantTypes))
 	for _, g := range sdkReq.GrantTypes {
@@ -1176,6 +1176,78 @@ func handleIAMAppDelete(ctx context.Context, svc service.QuicBaaS, req interface
 	return nil, nil
 }
 
+func handleIAMAppUpdate(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	sdkReq, ok := iamRequestStructPtr(req, "App").(*iamsdk.UpdateAppRequest)
+	if !ok || sdkReq == nil {
+		return nil, NewInvalidRequestTypeError("quicbaas.IAM.App", "Update",
+			"*iam.updateAppRequest", typeNameOf(req))
+	}
+	clientID, ok := iamRequestField(req, "ClientID")
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.IAM.App", "Update",
+			"*iam.updateAppRequest", typeNameOf(req))
+	}
+	mgr, err := appManagerFor(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	tenantID, err := appTenant(ctx, "Update", req)
+	if err != nil {
+		return nil, err
+	}
+	// Only non-zero fields are applied, so an unset field keeps its value.
+	opts := iam.UpdateAppOptions{}
+	if sdkReq.Name != "" {
+		opts.Name = &sdkReq.Name
+	}
+	if len(sdkReq.RedirectURIs) > 0 {
+		opts.RedirectURIs = &sdkReq.RedirectURIs
+	}
+	if sdkReq.ResourcePrefix != "" {
+		opts.ResourcePrefix = &sdkReq.ResourcePrefix
+	}
+	if len(sdkReq.GrantTypes) > 0 {
+		grants := make([]string, 0, len(sdkReq.GrantTypes))
+		for _, g := range sdkReq.GrantTypes {
+			grants = append(grants, grantTypeToString(g))
+		}
+		opts.GrantTypes = &grants
+	}
+	if len(sdkReq.ResponseTypes) > 0 {
+		opts.ResponseTypes = &sdkReq.ResponseTypes
+	}
+	a, err := mgr.UpdateAppInTenant(ctx, tenantID, clientID, opts)
+	if err != nil {
+		return nil, err
+	}
+	out := sdkAppFromInternal(a)
+	return &out, nil
+}
+
+func handleIAMAppRotateSecret(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	clientID, ok := iamRequestField(req, "ClientID")
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.IAM.App", "RotateSecret",
+			"*iam.rotateSecretRequest", typeNameOf(req))
+	}
+	mgr, err := appManagerFor(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	tenantID, err := appTenant(ctx, "RotateSecret", req)
+	if err != nil {
+		return nil, err
+	}
+	a, err := mgr.RotateSecretInTenant(ctx, tenantID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	return &iamsdk.RotateSecretResponse{
+		ClientID:     a.ClientID,
+		ClientSecret: a.ClientSecret,
+	}, nil
+}
+
 // =============================================================================
 // PEP handlers (quicbaas.IAM.PEP/*)
 // =============================================================================
@@ -1188,7 +1260,7 @@ func handleIAMPEPCheck(ctx context.Context, svc service.QuicBaaS, req interface{
 	_, ok := req.(*pepsdk.CheckRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.PEP", "Check",
-			"*iam.CheckRequest", reflect.TypeOf(req).String())
+			"*iam.CheckRequest", typeNameOf(req))
 	}
 	// PEP enforcement requires a fully wired policy engine; embedded path
 	// surfaces a "not configured" envelope rather than silently allowing.

@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 	"strconv"
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
@@ -98,7 +97,7 @@ func handleIAMSessionGet(ctx context.Context, svc service.QuicBaaS, req interfac
 	id, ok := iamRequestField(req, "SessionID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Session", "Get",
-			"struct with SessionID field", reflect.TypeOf(req).String())
+			"struct with SessionID field", typeNameOf(req))
 	}
 	s, err := mgr.Get(ctx, id)
 	if err != nil {
@@ -120,7 +119,7 @@ func handleIAMSessionList(ctx context.Context, svc service.QuicBaaS, req interfa
 	r, ok := iamRequestPayload[iamsdk.ListSessionsRequest](req, "Request")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Session", "List",
-			"*iam.ListSessionsRequest", reflect.TypeOf(req).String())
+			"*iam.ListSessionsRequest", typeNameOf(req))
 	}
 
 	userID, tenantID := r.UserID, r.TenantID
@@ -191,7 +190,7 @@ func handleIAMSessionRevoke(ctx context.Context, svc service.QuicBaaS, req inter
 	id, ok := iamRequestField(req, "SessionID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Session", "Revoke",
-			"struct with SessionID field", reflect.TypeOf(req).String())
+			"struct with SessionID field", typeNameOf(req))
 	}
 	// Ownership is checked before the revoke, not after: a denied caller must
 	// not be able to destroy a session it was never allowed to see.
@@ -219,7 +218,7 @@ func handleIAMSessionRevokeAll(ctx context.Context, svc service.QuicBaaS, req in
 	userID, hasUser := iamRequestField(req, "UserID")
 	if !hasTenant || !hasUser {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Session", "RevokeAll",
-			"struct with TenantID and UserID fields", reflect.TypeOf(req).String())
+			"struct with TenantID and UserID fields", typeNameOf(req))
 	}
 	if subject, bound := auth.SubjectFromContext(ctx); bound {
 		if !requestedIdentityMatches(subject, userID, tenantID) {
@@ -248,7 +247,7 @@ func handleIAMSessionRevokeOthers(ctx context.Context, svc service.QuicBaaS, req
 	keepID, ok := iamRequestField(req, "KeepSessionID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Session", "RevokeOthers",
-			"struct with KeepSessionID field", reflect.TypeOf(req).String())
+			"struct with KeepSessionID field", typeNameOf(req))
 	}
 
 	// The caller only names the session to keep, so the owning user and

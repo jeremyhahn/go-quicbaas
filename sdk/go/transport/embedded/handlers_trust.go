@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	trustclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/trust"
 
@@ -44,7 +43,7 @@ func handleTrustCrossSignedRootPool(ctx context.Context, svc service.QuicBaaS, r
 			return nil, NewInvalidRequestTypeError(
 				"quicbaas.Trust", "CrossSignedRootPool",
 				"*trust.CrossSignedRootPoolRequest",
-				reflect.TypeOf(req).String(),
+				typeNameOf(req),
 			)
 		}
 	}
@@ -67,7 +66,7 @@ func handleTrustAutoImportAIA(ctx context.Context, svc service.QuicBaaS, req int
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Trust", "AutoImportAIA",
 			"*trust.AutoImportAIARequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -91,7 +90,7 @@ func handleTrustPublishDANE(ctx context.Context, svc service.QuicBaaS, req inter
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Trust", "PublishDANE",
 			"*trust.PublishDANERequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 

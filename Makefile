@@ -3368,7 +3368,7 @@ lint: lint-pre ## Run linters (naming gate + golangci-lint)
 # 2026-10-16 (load average 70-217): vet-integration 153 s, verify-naming and
 # check-nolint about 1 s each, secure-analyzer-self-test 89 s. secure-analyzer
 # took 616 s, so it is split per tag set; see the times above its targets.
-lint-pre: vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test ## Run the lint prerequisites (vet-integration, naming, nolint, secure-analyzer)
+lint-pre: fmt-check vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test ## Run the lint prerequisites (fmt-check, vet-integration, naming, nolint, secure-analyzer)
 
 .PHONY: lint-go
 # 205 s wall on the same node right after lint-pre (load average 59-65,

@@ -1431,6 +1431,16 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 		return
 	}
 
+	// A refused redirect URI is the caller's mistake, not a server fault
+	// (go-quicbaas#1463). App registration and update both return it.
+	var redirectURIErr *iam.InvalidRedirectURIError
+	if stderrors.As(err, &redirectURIErr) {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Message: redirectURIErr.Error(),
+		})
+		return
+	}
+
 	// Check scheduler-specific error types
 	var notFoundError *scheduler.JobNotFoundError
 	if stderrors.As(err, &notFoundError) {

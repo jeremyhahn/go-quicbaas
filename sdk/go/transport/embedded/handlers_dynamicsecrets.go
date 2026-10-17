@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/credentials"
 	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
@@ -49,7 +48,7 @@ func dynamicSecretsService(svc service.QuicBaaS) (service.DynamicSecretsService,
 func newDynamicSecretsRequestTypeError(method, expected string, req interface{}) error {
 	actual := "<nil>"
 	if req != nil {
-		actual = reflect.TypeOf(req).String()
+		actual = typeNameOf(req)
 	}
 	return NewInvalidRequestTypeError("quicbaas.DynamicSecrets", method, expected, actual)
 }

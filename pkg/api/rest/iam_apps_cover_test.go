@@ -221,6 +221,78 @@ func TestRegisterApp_Validation(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestUpdateApp_RefusesRedirectURIWithFragment pins draft-ietf-oauth-v2-1
+// §2.3 on the update endpoint: a redirect URI with a fragment is answered
+// with the same status and error message as registration answers it. The
+// body's timestamp differs per response, so only the message is compared.
+func TestAppVerbs_RefusedRedirectURIIsBadRequest(t *testing.T) {
+	handler, cleanup := setupAppHandler(t)
+	defer cleanup()
+	tenantParams := map[string]string{"tenant_id": appsTenant}
+
+	w := httptest.NewRecorder()
+	handler.RegisterApp(w, appRequest(t, http.MethodPost, map[string]interface{}{
+		"name":          "My App",
+		"redirect_uris": []string{"https://app.example/callback"},
+	}, tenantParams))
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	var app map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&app))
+	clientID, _ := app["client_id"].(string)
+	require.NotEmpty(t, clientID)
+	appParams := map[string]string{"tenant_id": appsTenant, "client_id": clientID}
+
+	// A refused redirect URI is the caller's mistake: 400 naming the reason
+	// on both verbs, never a 500 (go-quicbaas#1463).
+	refusals := []struct {
+		name   string
+		uri    string
+		reason string
+	}{
+		{"fragment", "https://app.example/callback#frag", "must not contain a fragment"},
+		{"bad scheme", "ftp://app.example/callback", "URI scheme must be HTTPS"},
+		{"empty", "", "redirect URI cannot be empty"},
+	}
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			badURIs := []string{tc.uri}
+
+			w := httptest.NewRecorder()
+			handler.RegisterApp(w, appRequest(t, http.MethodPost, map[string]interface{}{
+				"name":          "Refused App",
+				"redirect_uris": badURIs,
+			}, tenantParams))
+			require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+			registerError := appErrorMessage(t, w)
+			assert.Contains(t, registerError, tc.reason)
+
+			w = httptest.NewRecorder()
+			handler.UpdateApp(w, appRequest(t, http.MethodPut,
+				map[string]interface{}{"redirect_uris": badURIs}, appParams))
+			assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+			assert.Equal(t, registerError, appErrorMessage(t, w))
+
+			w = httptest.NewRecorder()
+			handler.GetApp(w, appRequest(t, http.MethodGet, nil, appParams))
+			require.Equal(t, http.StatusOK, w.Code)
+			var stored map[string]interface{}
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&stored))
+			assert.Equal(t, []interface{}{"https://app.example/callback"}, stored["redirect_uris"])
+		})
+	}
+}
+
+// appErrorMessage decodes the "error" field of an error response body.
+func appErrorMessage(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), "body: %s", w.Body.String())
+	require.NotEmpty(t, body.Error)
+	return body.Error
+}
+
 func TestValidateClient_Validation(t *testing.T) {
 	handler, cleanup := setupAppHandler(t)
 	defer cleanup()

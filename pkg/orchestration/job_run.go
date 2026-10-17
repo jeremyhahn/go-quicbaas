@@ -624,15 +624,6 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 		Superseded:   r.superseded,
 		Prompts:      r.promptRefs,
 	}
-	r.fanoutMu.Lock()
-	status.ParentJobID = r.parentJobID
-	status.SpawnedBy = r.spawnedBy
-	status.SpawnedAt = r.spawnedAt
-	if len(r.childJobIDs) > 0 {
-		status.ChildJobIDs = append([]string(nil), r.childJobIDs...)
-	}
-	r.fanoutMu.Unlock()
-
 	status.Stages = r.stageHistory()
 	status.AgentID = r.AgentID()
 	status.WorkspacePin = r.WorkspacePin()
@@ -641,7 +632,7 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 	if r.decorate != nil {
 		r.decorate(status)
 	}
-	r.status.Store(status)
+	r.storeStatus(status)
 	if r.persistFn != nil {
 		// The hook is handed a copy. Publication is the moment the status
 		// becomes immutable — republishFanout copies the published value
@@ -655,6 +646,25 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 	return status
 }
 
+// storeStatus publishes status with the run's current sub-job lineage. It
+// holds fanoutMu from copying the lineage to the store, and AddChildJob and
+// RecordParent hold it from changing the lineage to republishing it, so the
+// two cannot interleave: a change made before the copy is in the stored
+// status, and one made after it republishes on top of the stored status. A
+// store outside the lock could overwrite a republish that landed between
+// the copy and the store and lose the child or parent it carried (#1474).
+func (r *JobRun) storeStatus(status *JobStatus) {
+	r.fanoutMu.Lock()
+	defer r.fanoutMu.Unlock()
+	status.ParentJobID = r.parentJobID
+	status.SpawnedBy = r.spawnedBy
+	status.SpawnedAt = r.spawnedAt
+	if len(r.childJobIDs) > 0 {
+		status.ChildJobIDs = append([]string(nil), r.childJobIDs...)
+	}
+	r.status.Store(status)
+}
+
 // AddChildJob records a sub-job this job fanned out to. The child reaches
 // the record at the next snapshot; a job that has already written its last
 // status keeps its lineage in the persisted record instead.
@@ -663,9 +673,9 @@ func (r *JobRun) AddChildJob(childJobID string) {
 		return
 	}
 	r.fanoutMu.Lock()
+	defer r.fanoutMu.Unlock()
 	r.childJobIDs = append(r.childJobIDs, childJobID)
 	ids := append([]string(nil), r.childJobIDs...)
-	r.fanoutMu.Unlock()
 	r.republishFanout(func(status *JobStatus) { status.ChildJobIDs = ids })
 }
 
@@ -682,10 +692,10 @@ func (r *JobRun) ChildJobIDs() []string {
 // RecordParent records the job this one was spawned from, by whom and when.
 func (r *JobRun) RecordParent(parentJobID, spawnedBy string, spawnedAt int64) {
 	r.fanoutMu.Lock()
+	defer r.fanoutMu.Unlock()
 	r.parentJobID = parentJobID
 	r.spawnedBy = spawnedBy
 	r.spawnedAt = spawnedAt
-	r.fanoutMu.Unlock()
 	r.republishFanout(func(status *JobStatus) {
 		status.ParentJobID = parentJobID
 		status.SpawnedBy = spawnedBy
@@ -703,6 +713,9 @@ func (r *JobRun) RecordParent(parentJobID, spawnedBy string, spawnedAt int64) {
 // — a snapshot that landed in between wins and is retried against, so a
 // concurrent state change can never be lost. No field the run owns is read
 // from this goroutine; only the published value is.
+//
+// The caller holds fanoutMu, which storeStatus also holds, so a snapshot's
+// store cannot land between the lineage change and this republish (#1474).
 func (r *JobRun) republishFanout(apply func(status *JobStatus)) {
 	for {
 		current, ok := r.status.Load().(*JobStatus)

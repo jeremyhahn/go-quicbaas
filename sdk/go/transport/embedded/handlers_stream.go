@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -45,7 +44,7 @@ func serviceVerdict(ctx context.Context, s *stream, errCh <-chan error) error {
 func handleListStream(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
 	r, ok := req.(*service.ListRequest)
 	if !ok {
-		return NewInvalidRequestTypeError("quicbaas.KV", "List", "*service.ListRequest", reflect.TypeOf(req).String())
+		return NewInvalidRequestTypeError("quicbaas.KV", "List", "*service.ListRequest", typeNameOf(req))
 	}
 
 	// Create a channel for the service to send responses
@@ -81,7 +80,7 @@ func handleListStream(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleWatchStream(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
 	r, ok := req.(*service.WatchRequest)
 	if !ok {
-		return NewInvalidRequestTypeError("quicbaas.KV", "Watch", "*service.WatchRequest", reflect.TypeOf(req).String())
+		return NewInvalidRequestTypeError("quicbaas.KV", "Watch", "*service.WatchRequest", typeNameOf(req))
 	}
 
 	// Create a channel for the service to send responses
@@ -121,7 +120,7 @@ func handleWatchStream(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleQueryStream(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
 	r, ok := req.(*service.QueryRequest)
 	if !ok {
-		return NewInvalidRequestTypeError("quicbaas.Query", "Query", "*service.QueryRequest", reflect.TypeOf(req).String())
+		return NewInvalidRequestTypeError("quicbaas.Query", "Query", "*service.QueryRequest", typeNameOf(req))
 	}
 
 	// Create a channel for the service to send responses
@@ -157,7 +156,7 @@ func handleQueryStream(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleScanIndexStream(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
 	r, ok := req.(*service.ScanRequest)
 	if !ok {
-		return NewInvalidRequestTypeError("quicbaas.Query", "ScanIndex", "*service.ScanRequest", reflect.TypeOf(req).String())
+		return NewInvalidRequestTypeError("quicbaas.Query", "ScanIndex", "*service.ScanRequest", typeNameOf(req))
 	}
 
 	// Create a channel for the service to send responses
@@ -193,7 +192,7 @@ func handleScanIndexStream(ctx context.Context, svc service.QuicBaaS, req interf
 func handleTimeSeriesQueryStream(ctx context.Context, svc service.QuicBaaS, req interface{}, s *stream) error {
 	r, ok := req.(*service.TimeSeriesQueryRequest)
 	if !ok {
-		return NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*service.TimeSeriesQueryRequest", reflect.TypeOf(req).String())
+		return NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*service.TimeSeriesQueryRequest", typeNameOf(req))
 	}
 
 	// Create a channel for the service to send responses
@@ -231,7 +230,7 @@ func handleOrchestratorInference(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*orchestratorSDK.InferenceRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "Inference",
-			"*orchestrator.InferenceRequest", reflect.TypeOf(req).String())
+			"*orchestrator.InferenceRequest", typeNameOf(req))
 	}
 
 	agentSvc := svc.Agent()
@@ -270,7 +269,7 @@ func handleSubscribeJobEventsStream(ctx context.Context, svc service.QuicBaaS, r
 	r, ok := req.(*orchestratorSDK.SubscribeJobEventsRequest)
 	if !ok {
 		return NewInvalidRequestTypeError("quicbaas.Orchestrator", "SubscribeJobEvents",
-			"*orchestrator.SubscribeJobEventsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.SubscribeJobEventsRequest", typeNameOf(req))
 	}
 
 	agentSvc := svc.Agent()
@@ -317,7 +316,7 @@ func handleOrchestratorInferenceStream(ctx context.Context, svc service.QuicBaaS
 	r, ok := req.(*orchestratorSDK.InferenceRequest)
 	if !ok {
 		return NewInvalidRequestTypeError("quicbaas.Orchestrator", "InferenceStream",
-			"*orchestrator.InferenceRequest", reflect.TypeOf(req).String())
+			"*orchestrator.InferenceRequest", typeNameOf(req))
 	}
 
 	agentSvc := svc.Agent()

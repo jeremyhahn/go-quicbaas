@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 	"strconv"
 	"time"
 
@@ -186,7 +185,7 @@ func handleIAMAdminCreateAssignment(ctx context.Context, svc service.QuicBaaS, r
 	r, ok := iamRequestPayload[iamsdk.CreateAdminAssignmentRequest](req, "CreateAdminAssignmentRequest")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "CreateAssignment",
-			"*iam.CreateAdminAssignmentRequest", reflect.TypeOf(req).String())
+			"*iam.CreateAdminAssignmentRequest", typeNameOf(req))
 	}
 
 	// RoleID names the predefined admin role — it is the field the CLI and
@@ -272,7 +271,7 @@ func handleIAMAdminGetAssignment(ctx context.Context, svc service.QuicBaaS, req 
 	id, ok := iamRequestField(req, "AssignmentID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "GetAssignment",
-			"struct with AssignmentID field", reflect.TypeOf(req).String())
+			"struct with AssignmentID field", typeNameOf(req))
 	}
 	assignment, err := mgr.GetAssignment(ctx, id)
 	if err != nil {
@@ -293,7 +292,7 @@ func handleIAMAdminUpdateAssignment(ctx context.Context, svc service.QuicBaaS, r
 	r, hasUpdate := iamRequestPayload[iamsdk.UpdateAdminAssignmentRequest](req, "Update")
 	if !hasID || !hasUpdate {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "UpdateAssignment",
-			"struct with AssignmentID and Update fields", reflect.TypeOf(req).String())
+			"struct with AssignmentID and Update fields", typeNameOf(req))
 	}
 
 	opts := iam.UpdateAdminAssignmentOptions{
@@ -339,7 +338,7 @@ func handleIAMAdminDeleteAssignment(ctx context.Context, svc service.QuicBaaS, r
 	id, ok := iamRequestField(req, "AssignmentID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "DeleteAssignment",
-			"struct with AssignmentID field", reflect.TypeOf(req).String())
+			"struct with AssignmentID field", typeNameOf(req))
 	}
 	if err := mgr.DeleteAssignment(ctx, id); err != nil {
 		return nil, err
@@ -358,7 +357,7 @@ func handleIAMAdminListAssignments(ctx context.Context, svc service.QuicBaaS, re
 	r, ok := iamRequestPayload[iamsdk.ListAdminAssignmentsRequest](req, "Filter")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "ListAssignments",
-			"*iam.ListAdminAssignmentsRequest", reflect.TypeOf(req).String())
+			"*iam.ListAdminAssignmentsRequest", typeNameOf(req))
 	}
 
 	// The tenant filter is caller-supplied and the store applies no tenant
@@ -436,7 +435,7 @@ func handleIAMAdminCheckPermission(ctx context.Context, svc service.QuicBaaS, re
 	r, ok := iamRequestPayload[iamsdk.AdminCheckRequest](req, "Check")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "CheckPermission",
-			"*iam.AdminCheckRequest", reflect.TypeOf(req).String())
+			"*iam.AdminCheckRequest", typeNameOf(req))
 	}
 
 	// Permission is the precise grant name; Action is the looser alias the
@@ -496,7 +495,7 @@ func handleIAMAdminStartImpersonation(ctx context.Context, svc service.QuicBaaS,
 	r, ok := iamRequestPayload[iamsdk.ImpersonationRequest](req, "Impersonation")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "StartImpersonation",
-			"*iam.ImpersonationRequest", reflect.TypeOf(req).String())
+			"*iam.ImpersonationRequest", typeNameOf(req))
 	}
 
 	// The acting admin is the AUTHENTICATED caller, resolved inside
@@ -537,7 +536,7 @@ func handleIAMAdminEndImpersonation(ctx context.Context, svc service.QuicBaaS, r
 	id, ok := iamRequestField(req, "SessionID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "EndImpersonation",
-			"struct with SessionID field", reflect.TypeOf(req).String())
+			"struct with SessionID field", typeNameOf(req))
 	}
 
 	// AdminManager validates that the session exists and is active, but not
@@ -586,7 +585,7 @@ func handleIAMAdminListActiveImpersonations(ctx context.Context, svc service.Qui
 	requested, ok := iamRequestField(req, "AdminUserID")
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Admin", "ListActiveImpersonations",
-			"struct with AdminUserID field", reflect.TypeOf(req).String())
+			"struct with AdminUserID field", typeNameOf(req))
 	}
 	var adminUserID uint64
 	if requested != "" {

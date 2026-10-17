@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -42,7 +41,7 @@ func sdlcServiceOf(svc service.QuicBaaS, method string) (*service.SDLCService, e
 func handleSDLCBind(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.BindRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Bind", "*sdlc.BindRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Bind", "*sdlc.BindRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "Bind")
 	if err != nil {
@@ -62,7 +61,7 @@ func handleSDLCBind(ctx context.Context, svc service.QuicBaaS, req interface{}) 
 func handleSDLCUnbind(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.UnbindRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Unbind", "*sdlc.UnbindRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Unbind", "*sdlc.UnbindRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "Unbind")
 	if err != nil {
@@ -77,7 +76,7 @@ func handleSDLCUnbind(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleSDLCBinding(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.GetBindingRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Binding", "*sdlc.GetBindingRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Binding", "*sdlc.GetBindingRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "Binding")
 	if err != nil {
@@ -93,7 +92,7 @@ func handleSDLCBinding(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleSDLCDelivery(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.GetDeliveryRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Delivery", "*sdlc.GetDeliveryRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Delivery", "*sdlc.GetDeliveryRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "Delivery")
 	if err != nil {
@@ -112,7 +111,7 @@ func handleSDLCDelivery(ctx context.Context, svc service.QuicBaaS, req interface
 func handleSDLCOnboard(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.OnboardRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Onboard", "*sdlc.OnboardRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Onboard", "*sdlc.OnboardRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "Onboard")
 	if err != nil {
@@ -128,7 +127,7 @@ func handleSDLCOnboard(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleSDLCOnboardRepo(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.RepoOnboardRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "OnboardRepo", "*sdlc.RepoOnboardRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "OnboardRepo", "*sdlc.RepoOnboardRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "OnboardRepo")
 	if err != nil {
@@ -148,7 +147,7 @@ func handleSDLCOnboardRepo(ctx context.Context, svc service.QuicBaaS, req interf
 func handleSDLCConformance(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.ConformanceRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Conformance", "*sdlc.ConformanceRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Conformance", "*sdlc.ConformanceRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "Conformance")
 	if err != nil {
@@ -165,7 +164,7 @@ func handleSDLCConformance(ctx context.Context, svc service.QuicBaaS, req interf
 func handleSDLCOpenWork(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.OpenWorkRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "OpenWork", "*sdlc.OpenWorkRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "OpenWork", "*sdlc.OpenWorkRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "OpenWork")
 	if err != nil {
@@ -182,7 +181,7 @@ func handleSDLCOpenWork(ctx context.Context, svc service.QuicBaaS, req interface
 func handleSDLCReviewer(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.ReviewerRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Reviewer", "*sdlc.ReviewerRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Reviewer", "*sdlc.ReviewerRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "Reviewer")
 	if err != nil {
@@ -200,7 +199,7 @@ func handleSDLCReviewer(ctx context.Context, svc service.QuicBaaS, req interface
 func handleSDLCSetReviewer(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.SetReviewerRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "SetReviewer", "*sdlc.SetReviewerRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "SetReviewer", "*sdlc.SetReviewerRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "SetReviewer")
 	if err != nil {
@@ -217,7 +216,7 @@ func handleSDLCSetReviewer(ctx context.Context, svc service.QuicBaaS, req interf
 func handleSDLCClearReviewer(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.ReviewerRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "ClearReviewer", "*sdlc.ReviewerRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "ClearReviewer", "*sdlc.ReviewerRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "ClearReviewer")
 	if err != nil {
@@ -235,7 +234,7 @@ func handleSDLCClearReviewer(ctx context.Context, svc service.QuicBaaS, req inte
 func handleSDLCFileIssue(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.FileIssueRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "FileIssue", "*sdlc.FileIssueRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "FileIssue", "*sdlc.FileIssueRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "FileIssue")
 	if err != nil {
@@ -258,7 +257,7 @@ func handleSDLCFileIssue(ctx context.Context, svc service.QuicBaaS, req interfac
 func handleSDLCCollaborators(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.CollaboratorsRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Collaborators", "*sdlc.CollaboratorsRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Collaborators", "*sdlc.CollaboratorsRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "Collaborators")
 	if err != nil {
@@ -556,7 +555,7 @@ func sdlcDeliveryFromDomain(d *pkgsdlc.Delivery) *sdlc.Delivery {
 func handleSDLCAdoptIssue(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*sdlc.AdoptIssueRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "AdoptIssue", "*sdlc.AdoptIssueRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "AdoptIssue", "*sdlc.AdoptIssueRequest", typeNameOf(req))
 	}
 	sdlcSvc, err := sdlcServiceOf(svc, "AdoptIssue")
 	if err != nil {

@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -55,7 +54,7 @@ func handleAccountCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 	r, ok := req.(*accountSDK.CreateAccountRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "Create",
-			"*account.CreateAccountRequest", reflect.TypeOf(req).String())
+			"*account.CreateAccountRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "Create")
 	if err != nil {
@@ -86,7 +85,7 @@ func handleAccountGet(ctx context.Context, svc service.QuicBaaS, req interface{}
 	r, ok := req.(*accountSDK.GetAccountRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "Get",
-			"*account.GetAccountRequest", reflect.TypeOf(req).String())
+			"*account.GetAccountRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "Get")
 	if err != nil {
@@ -106,7 +105,7 @@ func handleAccountList(ctx context.Context, svc service.QuicBaaS, req interface{
 	r, ok := req.(*accountSDK.ListAccountsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "List",
-			"*account.ListAccountsRequest", reflect.TypeOf(req).String())
+			"*account.ListAccountsRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "List")
 	if err != nil {
@@ -142,7 +141,7 @@ func handleAccountUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 	r, ok := req.(*accountSDK.UpdateAccountRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "Update",
-			"*account.UpdateAccountRequest", reflect.TypeOf(req).String())
+			"*account.UpdateAccountRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "Update")
 	if err != nil {
@@ -172,7 +171,7 @@ func handleAccountDelete(ctx context.Context, svc service.QuicBaaS, req interfac
 	r, ok := req.(*accountSDK.DeleteAccountRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "Delete",
-			"*account.DeleteAccountRequest", reflect.TypeOf(req).String())
+			"*account.DeleteAccountRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "Delete")
 	if err != nil {
@@ -192,7 +191,7 @@ func handleAccountRotateCredential(ctx context.Context, svc service.QuicBaaS, re
 	r, ok := req.(*accountSDK.RotateCredentialRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "RotateCredential",
-			"*account.RotateCredentialRequest", reflect.TypeOf(req).String())
+			"*account.RotateCredentialRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "RotateCredential")
 	if err != nil {
@@ -213,7 +212,7 @@ func handleAccountRevoke(ctx context.Context, svc service.QuicBaaS, req interfac
 	r, ok := req.(*accountSDK.RevokeAccountRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "Revoke",
-			"*account.RevokeAccountRequest", reflect.TypeOf(req).String())
+			"*account.RevokeAccountRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "Revoke")
 	if err != nil {
@@ -234,7 +233,7 @@ func handleAccountSetDefault(ctx context.Context, svc service.QuicBaaS, req inte
 	r, ok := req.(*accountSDK.SetDefaultAccountRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "SetDefault",
-			"*account.SetDefaultAccountRequest", reflect.TypeOf(req).String())
+			"*account.SetDefaultAccountRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "SetDefault")
 	if err != nil {
@@ -254,7 +253,7 @@ func handleAccountUsage(ctx context.Context, svc service.QuicBaaS, req interface
 	r, ok := req.(*accountSDK.GetAccountUsageRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "Usage",
-			"*account.GetAccountUsageRequest", reflect.TypeOf(req).String())
+			"*account.GetAccountUsageRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "Usage")
 	if err != nil {
@@ -394,7 +393,7 @@ func handleAccountMaterialize(ctx context.Context, svc service.QuicBaaS, req int
 	r, ok := req.(*accountSDK.MaterializeCredentialRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "Materialize",
-			"*account.MaterializeCredentialRequest", reflect.TypeOf(req).String())
+			"*account.MaterializeCredentialRequest", typeNameOf(req))
 	}
 	accountSvc, err := accountService(svc, "Materialize")
 	if err != nil {
@@ -452,7 +451,7 @@ func handleAccountReserveSession(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*accountSDK.ReserveSessionRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "ReserveSession",
-			"*account.ReserveSessionRequest", reflect.TypeOf(req).String())
+			"*account.ReserveSessionRequest", typeNameOf(req))
 	}
 	tenantID, err := reservationTenant(ctx, r.TenantID, "ReserveSession")
 	if err != nil {
@@ -476,7 +475,7 @@ func handleAccountReleaseSession(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*accountSDK.ReleaseSessionRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(accountServiceName, "ReleaseSession",
-			"*account.ReleaseSessionRequest", reflect.TypeOf(req).String())
+			"*account.ReleaseSessionRequest", typeNameOf(req))
 	}
 	tenantID, err := reservationTenant(ctx, r.TenantID, "ReleaseSession")
 	if err != nil {

@@ -309,6 +309,14 @@ func (m *AppManager) UpdateApp(ctx context.Context, clientID string, opts Update
 // UpdateAppInTenant updates an application, requiring it to belong to tenantID.
 // An empty tenantID falls back to the unscoped lookup.
 func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID string, opts UpdateAppOptions) (*Application, error) {
+	// Validate new redirect URIs exactly as registration does, before any
+	// field is applied, so a refused update leaves the app unchanged.
+	if opts.RedirectURIs != nil {
+		if err := validateRedirectURIs(*opts.RedirectURIs); err != nil {
+			return nil, err
+		}
+	}
+
 	// Get existing application
 	app, err := m.resolveApp(ctx, tenantID, clientID)
 	if err != nil {
@@ -320,9 +328,6 @@ func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID s
 		app.Name = *opts.Name
 	}
 	if opts.RedirectURIs != nil {
-		if len(*opts.RedirectURIs) == 0 {
-			return nil, &IAMMessageError{Message: "at least one redirect URI is required"}
-		}
 		app.RedirectURIs = *opts.RedirectURIs
 	}
 	if opts.ResourcePrefix != nil {
@@ -462,13 +467,8 @@ func (m *AppManager) validateRegisterOptions(opts RegisterAppOptions) error {
 	// non-interactive grants (client_credentials, device, JWT bearer) does
 	// not use redirect URIs at all — per RFC 6749 §4.4 they are irrelevant.
 	if appRequiresRedirectURIs(opts.GrantTypes) {
-		if len(opts.RedirectURIs) == 0 {
-			return &IAMMessageError{Message: "at least one redirect URI is required"}
-		}
-		for _, uri := range opts.RedirectURIs {
-			if err := validateRedirectURI(uri); err != nil {
-				return &IAMContextError{Message: "invalid redirect URI " + uri, Cause: err}
-			}
+		if err := validateRedirectURIs(opts.RedirectURIs); err != nil {
+			return err
 		}
 	}
 
@@ -513,36 +513,57 @@ func (e *RedirectURIFragmentError) Error() string {
 	return "redirect URI must not contain a fragment: " + e.URI
 }
 
-// validateRedirectURI validates a redirect URI according to OAuth2 requirements.
+// validateRedirectURIs checks a non-empty set of redirect URIs with
+// validateRedirectURI. Registration and update share it so both refuse the
+// same URIs with the same error.
+func validateRedirectURIs(uris []string) error {
+	if len(uris) == 0 {
+		return &InvalidRedirectURIError{Reason: "at least one redirect URI is required"}
+	}
+	for _, uri := range uris {
+		if err := validateRedirectURI(uri); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRedirectURI validates a redirect URI according to OAuth2
+// requirements. Every refusal is an *InvalidRedirectURIError.
 func validateRedirectURI(uri string) error {
 	if uri == "" {
-		return &IAMMessageError{Message: "redirect URI cannot be empty"}
+		return &InvalidRedirectURIError{Reason: "redirect URI cannot be empty"}
 	}
 
 	parsed, err := url.Parse(uri)
 	if err != nil {
-		return &IAMContextError{Message: "invalid URI format", Cause: err}
+		return &InvalidRedirectURIError{URI: uri, Reason: "invalid URI format", Cause: err}
 	}
 
-	// Must not have a fragment, not even an empty one: url.Parse leaves
-	// Fragment empty for a trailing bare '#', so check the raw string.
+	// Must not have a fragment, not even an empty one (draft-ietf-oauth-v2-1
+	// §2.3): url.Parse leaves Fragment empty for a trailing bare '#', so
+	// check the raw string.
 	if strings.Contains(uri, "#") {
-		return &RedirectURIFragmentError{URI: uri}
+		return &InvalidRedirectURIError{
+			URI:    uri,
+			Reason: "redirect URI must not contain a fragment",
+			Cause:  &RedirectURIFragmentError{URI: uri},
+		}
 	}
 
 	// Must have a scheme
 	if parsed.Scheme == "" {
-		return &IAMMessageError{Message: "URI must have a scheme"}
+		return &InvalidRedirectURIError{URI: uri, Reason: "URI must have a scheme"}
 	}
 
 	// HTTP is only allowed for localhost (development)
 	if parsed.Scheme == "http" {
 		host := parsed.Hostname()
 		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-			return &IAMMessageError{Message: "HTTP scheme is only allowed for localhost"}
+			return &InvalidRedirectURIError{URI: uri, Reason: "HTTP scheme is only allowed for localhost"}
 		}
 	} else if parsed.Scheme != "https" {
-		return &IAMMessageError{Message: "URI scheme must be HTTPS (or HTTP for localhost)"}
+		return &InvalidRedirectURIError{URI: uri, Reason: "URI scheme must be HTTPS (or HTTP for localhost)"}
 	}
 
 	return nil

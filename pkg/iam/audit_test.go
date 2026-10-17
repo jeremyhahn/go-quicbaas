@@ -1211,7 +1211,12 @@ func TestValidateRedirectURI(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateRedirectURI(tt.uri)
 			if tt.wantErr {
-				assert.Error(t, err)
+				// Every refusal is the one request-class type, so a
+				// transport can answer it as the caller's mistake.
+				var uriErr *InvalidRedirectURIError
+				require.ErrorAs(t, err, &uriErr)
+				assert.Equal(t, tt.uri, uriErr.URI)
+				assert.NotEmpty(t, uriErr.Reason)
 			} else {
 				assert.NoError(t, err)
 			}
@@ -1225,6 +1230,10 @@ func TestValidateRedirectURI_Fragment(t *testing.T) {
 	for _, uri := range []string{"https://a.example/cb#x", "https://a.example/cb#"} {
 		t.Run(uri, func(t *testing.T) {
 			err := validateRedirectURI(uri)
+			var uriErr *InvalidRedirectURIError
+			require.ErrorAs(t, err, &uriErr)
+			assert.Equal(t, uri, uriErr.URI)
+			assert.Equal(t, "redirect URI must not contain a fragment", uriErr.Reason)
 			var fragErr *RedirectURIFragmentError
 			require.ErrorAs(t, err, &fragErr)
 			assert.Equal(t, uri, fragErr.URI)
@@ -1233,6 +1242,39 @@ func TestValidateRedirectURI_Fragment(t *testing.T) {
 
 	t.Run("no fragment accepted", func(t *testing.T) {
 		assert.NoError(t, validateRedirectURI("https://a.example/cb"))
+	})
+}
+
+// TestInvalidRedirectURIError_FoundThroughWrapping pins go-quicbaas#1463: the
+// refusal keeps its type through any wrapping a caller adds, and the parse
+// failure keeps its cause.
+func TestInvalidRedirectURIError_FoundThroughWrapping(t *testing.T) {
+	t.Run("wrapped refusal", func(t *testing.T) {
+		err := validateRedirectURIs([]string{"https://ok.example/cb", "ftp://a.example/cb"})
+		wrapped := &IAMContextError{Message: "failed to update app", Cause: err}
+
+		var uriErr *InvalidRedirectURIError
+		require.ErrorAs(t, wrapped, &uriErr)
+		assert.Equal(t, "ftp://a.example/cb", uriErr.URI)
+		assert.Equal(t, "URI scheme must be HTTPS (or HTTP for localhost)", uriErr.Reason)
+		assert.Contains(t, wrapped.Error(), uriErr.Reason)
+	})
+
+	t.Run("parse failure keeps its cause", func(t *testing.T) {
+		err := validateRedirectURI("://invalid")
+		var uriErr *InvalidRedirectURIError
+		require.ErrorAs(t, err, &uriErr)
+		assert.Equal(t, "invalid URI format", uriErr.Reason)
+		require.Error(t, uriErr.Unwrap())
+	})
+
+	t.Run("empty list", func(t *testing.T) {
+		err := validateRedirectURIs(nil)
+		var uriErr *InvalidRedirectURIError
+		require.ErrorAs(t, err, &uriErr)
+		assert.Equal(t, "at least one redirect URI is required", uriErr.Reason)
+		assert.Equal(t, "at least one redirect URI is required", err.Error())
+		assert.NoError(t, uriErr.Unwrap())
 	})
 }
 
@@ -1288,6 +1330,72 @@ func TestAppManager_UpdateApp_EdgeCases(t *testing.T) {
 		assert.Equal(t, newPrefix, updated.ResourcePrefix)
 		assert.Equal(t, newGrantTypes, updated.GrantTypes)
 		assert.Equal(t, newResponseTypes, updated.ResponseTypes)
+	})
+}
+
+// TestAppManager_UpdateApp_ValidatesRedirectURIs pins draft-ietf-oauth-v2-1
+// §2.3 on the update path: a redirect URI that registration refuses is
+// refused by an update with the same error, and the app is left unchanged.
+func TestAppManager_UpdateApp_ValidatesRedirectURIs(t *testing.T) {
+	t.Parallel()
+
+	manager := createTestAppManager(t)
+	ctx := context.Background()
+
+	originalURIs := []string{"https://app.example.com/callback"}
+	registered, err := manager.RegisterApp(ctx, "tenant-1", RegisterAppOptions{
+		Name:         "Test App",
+		RedirectURIs: originalURIs,
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		uri  string
+	}{
+		{name: "fragment", uri: "https://app.example.com/callback#frag"},
+		{name: "empty fragment", uri: "https://app.example.com/callback#"},
+		{name: "bad scheme", uri: "ftp://app.example.com/callback"},
+		{name: "http on a public host", uri: "http://app.example.com/callback"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, regErr := manager.RegisterApp(ctx, "tenant-1", RegisterAppOptions{
+				Name:         "Refused App",
+				RedirectURIs: []string{tt.uri},
+			})
+			require.Error(t, regErr)
+
+			newName := "Renamed"
+			newURIs := []string{"https://app.example.com/other", tt.uri}
+			_, err := manager.UpdateApp(ctx, registered.ClientID, UpdateAppOptions{
+				Name:         &newName,
+				RedirectURIs: &newURIs,
+			})
+			require.Error(t, err)
+			assert.IsType(t, regErr, err)
+			assert.Equal(t, regErr.Error(), err.Error())
+
+			stored, getErr := manager.GetApp(ctx, registered.ClientID)
+			require.NoError(t, getErr)
+			assert.Equal(t, "Test App", stored.Name)
+			assert.Equal(t, originalURIs, stored.RedirectURIs)
+		})
+	}
+
+	t.Run("fragment error is typed", func(t *testing.T) {
+		badURIs := []string{"https://app.example.com/callback#frag"}
+		_, err := manager.UpdateApp(ctx, registered.ClientID, UpdateAppOptions{RedirectURIs: &badURIs})
+		var uriErr *InvalidRedirectURIError
+		require.ErrorAs(t, err, &uriErr)
+		assert.Equal(t, badURIs[0], uriErr.URI)
+	})
+
+	t.Run("valid redirect URIs are stored", func(t *testing.T) {
+		newURIs := []string{"https://app.example.com/new", "http://127.0.0.1:8080/cb"}
+		updated, err := manager.UpdateApp(ctx, registered.ClientID, UpdateAppOptions{RedirectURIs: &newURIs})
+		require.NoError(t, err)
+		assert.Equal(t, newURIs, updated.RedirectURIs)
 	})
 }
 

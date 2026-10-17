@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -43,7 +42,7 @@ import (
 func handleBeginLogin(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*qrdbtransport.BeginLoginRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "BeginLogin", "*transport.BeginLoginRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "BeginLogin", "*transport.BeginLoginRequest", typeNameOf(req))
 	}
 	login := svc.LoginCeremony()
 	if login == nil {
@@ -57,7 +56,7 @@ func handleBeginLogin(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleFinishLogin(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*qrdbtransport.FinishLoginRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "FinishLogin", "*transport.FinishLoginRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "FinishLogin", "*transport.FinishLoginRequest", typeNameOf(req))
 	}
 	login := svc.LoginCeremony()
 	if login == nil {

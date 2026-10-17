@@ -71,10 +71,12 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.Policy/Test":     handleIAMPolicyTest,
 
 	// App
-	"quicbaas.IAM.App/Register": handleIAMAppRegister,
-	"quicbaas.IAM.App/Get":      handleIAMAppGet,
-	"quicbaas.IAM.App/List":     handleIAMAppList,
-	"quicbaas.IAM.App/Delete":   handleIAMAppDelete,
+	"quicbaas.IAM.App/Register":     handleIAMAppRegister,
+	"quicbaas.IAM.App/Get":          handleIAMAppGet,
+	"quicbaas.IAM.App/List":         handleIAMAppList,
+	"quicbaas.IAM.App/Update":       handleIAMAppUpdate,
+	"quicbaas.IAM.App/Delete":       handleIAMAppDelete,
+	"quicbaas.IAM.App/RotateSecret": handleIAMAppRotateSecret,
 
 	// Session. RevokeOther is the spelling the gRPC transport also accepts.
 	// Touch is deliberately absent: no other transport carries it either, and

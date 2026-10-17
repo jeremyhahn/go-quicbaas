@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -31,7 +30,7 @@ import (
 func handlePut(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.PutRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KV", "Put", "*service.PutRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KV", "Put", "*service.PutRequest", typeNameOf(req))
 	}
 	return svc.Put(ctx, r)
 }
@@ -39,7 +38,7 @@ func handlePut(ctx context.Context, svc service.QuicBaaS, req interface{}) (inte
 func handleGet(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.GetRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KV", "Get", "*service.GetRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KV", "Get", "*service.GetRequest", typeNameOf(req))
 	}
 	return svc.Get(ctx, r)
 }
@@ -47,7 +46,7 @@ func handleGet(ctx context.Context, svc service.QuicBaaS, req interface{}) (inte
 func handleDelete(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.DeleteRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KV", "Delete", "*service.DeleteRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KV", "Delete", "*service.DeleteRequest", typeNameOf(req))
 	}
 	return svc.Delete(ctx, r)
 }
@@ -55,7 +54,7 @@ func handleDelete(ctx context.Context, svc service.QuicBaaS, req interface{}) (i
 func handleListEntityTypes(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.ListEntityTypesRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KV", "ListEntityTypes", "*service.ListEntityTypesRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KV", "ListEntityTypes", "*service.ListEntityTypesRequest", typeNameOf(req))
 	}
 	return svc.ListEntityTypes(ctx, r)
 }
@@ -63,7 +62,7 @@ func handleListEntityTypes(ctx context.Context, svc service.QuicBaaS, req interf
 func handleList(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.ListRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KV", "List", "*service.ListRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.KV", "List", "*service.ListRequest", typeNameOf(req))
 	}
 	stream := make(chan *service.ListResponse, 1)
 	errCh := make(chan error, 1)
@@ -94,7 +93,7 @@ func handleList(ctx context.Context, svc service.QuicBaaS, req interface{}) (int
 func handleBatchPut(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.BatchPutRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Batch", "Put", "*service.BatchPutRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Batch", "Put", "*service.BatchPutRequest", typeNameOf(req))
 	}
 	return svc.BatchPut(ctx, r)
 }
@@ -102,7 +101,7 @@ func handleBatchPut(ctx context.Context, svc service.QuicBaaS, req interface{}) 
 func handleBatchGet(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.BatchGetRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Batch", "Get", "*service.BatchGetRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Batch", "Get", "*service.BatchGetRequest", typeNameOf(req))
 	}
 	return svc.BatchGet(ctx, r)
 }
@@ -110,7 +109,7 @@ func handleBatchGet(ctx context.Context, svc service.QuicBaaS, req interface{}) 
 func handleBatchDelete(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.BatchDeleteRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Batch", "Delete", "*service.BatchDeleteRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Batch", "Delete", "*service.BatchDeleteRequest", typeNameOf(req))
 	}
 	return svc.BatchDelete(ctx, r)
 }
@@ -122,7 +121,7 @@ func handleBatchDelete(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleTransaction(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.TransactionRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Transaction", "Execute", "*service.TransactionRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Transaction", "Execute", "*service.TransactionRequest", typeNameOf(req))
 	}
 	return svc.Transaction(ctx, r)
 }
@@ -134,7 +133,7 @@ func handleTransaction(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleClusterStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.ClusterStatusRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "Status", "*service.ClusterStatusRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "Status", "*service.ClusterStatusRequest", typeNameOf(req))
 	}
 	return svc.ClusterStatus(ctx, r)
 }
@@ -142,7 +141,7 @@ func handleClusterStatus(ctx context.Context, svc service.QuicBaaS, req interfac
 func handleGetLeader(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.GetLeaderRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "GetLeader", "*service.GetLeaderRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "GetLeader", "*service.GetLeaderRequest", typeNameOf(req))
 	}
 	return svc.GetLeader(ctx, r)
 }
@@ -166,14 +165,14 @@ func handleAddNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (
 	case *service.AddNodeRequest:
 		return svc.AddNode(ctx, r)
 	default:
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "AddNode", "*cluster.AddNodeRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "AddNode", "*cluster.AddNodeRequest", typeNameOf(req))
 	}
 }
 
 func handleRemoveNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.RemoveNodeRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "RemoveNode", "*service.RemoveNodeRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "RemoveNode", "*service.RemoveNodeRequest", typeNameOf(req))
 	}
 	return svc.RemoveNode(ctx, r)
 }
@@ -181,7 +180,7 @@ func handleRemoveNode(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleCreateShard(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.CreateShardRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "CreateShard", "*service.CreateShardRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "CreateShard", "*service.CreateShardRequest", typeNameOf(req))
 	}
 	return svc.CreateShard(ctx, r)
 }
@@ -189,7 +188,7 @@ func handleCreateShard(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleRebalanceCluster(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.RebalanceClusterRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "Rebalance", "*service.RebalanceClusterRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "Rebalance", "*service.RebalanceClusterRequest", typeNameOf(req))
 	}
 	return svc.RebalanceCluster(ctx, r)
 }
@@ -197,7 +196,7 @@ func handleRebalanceCluster(ctx context.Context, svc service.QuicBaaS, req inter
 func handleGetRebalanceProgress(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.GetRebalanceProgressRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "GetRebalanceStatus", "*service.GetRebalanceProgressRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "GetRebalanceStatus", "*service.GetRebalanceProgressRequest", typeNameOf(req))
 	}
 	return svc.GetRebalanceProgress(ctx, r)
 }
@@ -209,7 +208,7 @@ func handleGetRebalanceProgress(ctx context.Context, svc service.QuicBaaS, req i
 func handleCreateBackup(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.CreateBackupRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "Create", "*service.CreateBackupRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "Create", "*service.CreateBackupRequest", typeNameOf(req))
 	}
 	return svc.CreateBackup(ctx, r)
 }
@@ -217,7 +216,7 @@ func handleCreateBackup(ctx context.Context, svc service.QuicBaaS, req interface
 func handleListBackups(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.ListBackupsRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "List", "*service.ListBackupsRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "List", "*service.ListBackupsRequest", typeNameOf(req))
 	}
 	return svc.ListBackups(ctx, r)
 }
@@ -225,7 +224,7 @@ func handleListBackups(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleRestoreBackup(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.RestoreBackupRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "Restore", "*service.RestoreBackupRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "Restore", "*service.RestoreBackupRequest", typeNameOf(req))
 	}
 	return svc.RestoreBackup(ctx, r)
 }
@@ -233,7 +232,7 @@ func handleRestoreBackup(ctx context.Context, svc service.QuicBaaS, req interfac
 func handleDeleteBackup(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.DeleteBackupRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "Delete", "*service.DeleteBackupRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "Delete", "*service.DeleteBackupRequest", typeNameOf(req))
 	}
 	return svc.DeleteBackup(ctx, r)
 }
@@ -241,7 +240,7 @@ func handleDeleteBackup(ctx context.Context, svc service.QuicBaaS, req interface
 func handleVerifyBackup(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.VerifyBackupRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "Verify", "*service.VerifyBackupRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Backup", "Verify", "*service.VerifyBackupRequest", typeNameOf(req))
 	}
 	return svc.VerifyBackup(ctx, r)
 }
@@ -253,7 +252,7 @@ func handleVerifyBackup(ctx context.Context, svc service.QuicBaaS, req interface
 func handleLogin(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.LoginRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "Login", "*service.LoginRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "Login", "*service.LoginRequest", typeNameOf(req))
 	}
 	return svc.Login(ctx, r)
 }
@@ -261,7 +260,7 @@ func handleLogin(ctx context.Context, svc service.QuicBaaS, req interface{}) (in
 func handleLogout(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.LogoutRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "Logout", "*service.LogoutRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "Logout", "*service.LogoutRequest", typeNameOf(req))
 	}
 	return svc.Logout(ctx, r)
 }
@@ -269,7 +268,7 @@ func handleLogout(ctx context.Context, svc service.QuicBaaS, req interface{}) (i
 func handleRefreshToken(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.RefreshTokenRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "RefreshToken", "*service.RefreshTokenRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "RefreshToken", "*service.RefreshTokenRequest", typeNameOf(req))
 	}
 	return svc.RefreshToken(ctx, r)
 }
@@ -277,7 +276,7 @@ func handleRefreshToken(ctx context.Context, svc service.QuicBaaS, req interface
 func handleValidateToken(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.ValidateTokenRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "ValidateToken", "*service.ValidateTokenRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "ValidateToken", "*service.ValidateTokenRequest", typeNameOf(req))
 	}
 	resp, err := svc.ValidateToken(ctx, r)
 	if err != nil {
@@ -304,7 +303,7 @@ func handleValidateToken(ctx context.Context, svc service.QuicBaaS, req interfac
 func handleIntrospectToken(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.IntrospectTokenRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "IntrospectToken", "*service.IntrospectTokenRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "IntrospectToken", "*service.IntrospectTokenRequest", typeNameOf(req))
 	}
 	return svc.IntrospectToken(ctx, r)
 }
@@ -316,7 +315,7 @@ func handleIntrospectToken(ctx context.Context, svc service.QuicBaaS, req interf
 func handleCreateAuthRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.AuthCreateRoleRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "CreateRole", "*service.AuthCreateRoleRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "CreateRole", "*service.AuthCreateRoleRequest", typeNameOf(req))
 	}
 	return svc.CreateAuthRole(ctx, r)
 }
@@ -324,7 +323,7 @@ func handleCreateAuthRole(ctx context.Context, svc service.QuicBaaS, req interfa
 func handleDeleteAuthRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.AuthDeleteRoleRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "DeleteRole", "*service.AuthDeleteRoleRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "DeleteRole", "*service.AuthDeleteRoleRequest", typeNameOf(req))
 	}
 	return svc.DeleteAuthRole(ctx, r)
 }
@@ -332,7 +331,7 @@ func handleDeleteAuthRole(ctx context.Context, svc service.QuicBaaS, req interfa
 func handleListAuthRoles(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.AuthListRolesRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "ListRoles", "*service.AuthListRolesRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "ListRoles", "*service.AuthListRolesRequest", typeNameOf(req))
 	}
 	return svc.ListAuthRoles(ctx, r)
 }
@@ -340,7 +339,7 @@ func handleListAuthRoles(ctx context.Context, svc service.QuicBaaS, req interfac
 func handleAssignRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.AuthAssignRoleRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "AssignRole", "*service.AuthAssignRoleRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "AssignRole", "*service.AuthAssignRoleRequest", typeNameOf(req))
 	}
 	return svc.AssignRole(ctx, r)
 }
@@ -348,7 +347,7 @@ func handleAssignRole(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleRevokeRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.AuthRevokeRoleRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "RevokeRole", "*service.AuthRevokeRoleRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "RevokeRole", "*service.AuthRevokeRoleRequest", typeNameOf(req))
 	}
 	return svc.RevokeRole(ctx, r)
 }
@@ -360,7 +359,7 @@ func handleRevokeRole(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleGetCacheStats(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.GetCacheStatsRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "GetStats", "*service.GetCacheStatsRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "GetStats", "*service.GetCacheStatsRequest", typeNameOf(req))
 	}
 	return svc.GetCacheStats(ctx, r)
 }
@@ -368,7 +367,7 @@ func handleGetCacheStats(ctx context.Context, svc service.QuicBaaS, req interfac
 func handleClearCache(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.ClearCacheRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "Clear", "*service.ClearCacheRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "Clear", "*service.ClearCacheRequest", typeNameOf(req))
 	}
 	return svc.ClearCache(ctx, r)
 }
@@ -376,7 +375,7 @@ func handleClearCache(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleGetCacheConfig(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.GetCacheConfigRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "GetConfig", "*service.GetCacheConfigRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "GetConfig", "*service.GetCacheConfigRequest", typeNameOf(req))
 	}
 	return svc.GetCacheConfig(ctx, r)
 }
@@ -384,7 +383,7 @@ func handleGetCacheConfig(ctx context.Context, svc service.QuicBaaS, req interfa
 func handleUpdateCacheConfig(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.UpdateCacheConfigRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "UpdateConfig", "*service.UpdateCacheConfigRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "UpdateConfig", "*service.UpdateCacheConfigRequest", typeNameOf(req))
 	}
 	return svc.UpdateCacheConfig(ctx, r)
 }
@@ -399,7 +398,7 @@ func handleUpdateCacheConfig(ctx context.Context, svc service.QuicBaaS, req inte
 func handleHealth(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.HealthRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Health", "Check", "*service.HealthRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Health", "Check", "*service.HealthRequest", typeNameOf(req))
 	}
 	return svc.Health(ctx, r)
 }
@@ -486,7 +485,7 @@ func convertReadinessToSDK(resp *service.ReadinessResponse) *healthclient.Health
 func handleAggregate(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.AggregateRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Aggregate", "*service.AggregateRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Aggregate", "*service.AggregateRequest", typeNameOf(req))
 	}
 	return svc.Aggregate(ctx, r)
 }
@@ -494,7 +493,7 @@ func handleAggregate(ctx context.Context, svc service.QuicBaaS, req interface{})
 func handleWritePoint(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.WritePointRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "WritePoint", "*service.WritePointRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "WritePoint", "*service.WritePointRequest", typeNameOf(req))
 	}
 	return svc.WritePoint(ctx, r)
 }
@@ -502,7 +501,7 @@ func handleWritePoint(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleWriteBatch(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.WriteBatchRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "WriteBatch", "*service.WriteBatchRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "WriteBatch", "*service.WriteBatchRequest", typeNameOf(req))
 	}
 	return svc.WriteBatch(ctx, r)
 }
@@ -510,7 +509,7 @@ func handleWriteBatch(ctx context.Context, svc service.QuicBaaS, req interface{}
 func handleTSQuery(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.TSQueryRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*service.TSQueryRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*service.TSQueryRequest", typeNameOf(req))
 	}
 	return svc.TSQuery(ctx, r)
 }
@@ -518,7 +517,7 @@ func handleTSQuery(ctx context.Context, svc service.QuicBaaS, req interface{}) (
 func handleDeleteSeries(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.TSDeleteRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "DeleteSeries", "*service.TSDeleteRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "DeleteSeries", "*service.TSDeleteRequest", typeNameOf(req))
 	}
 	return svc.DeleteSeries(ctx, r)
 }
@@ -526,7 +525,7 @@ func handleDeleteSeries(ctx context.Context, svc service.QuicBaaS, req interface
 func handleGetRetentionPolicy(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.TSGetRetentionPolicyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "GetRetentionPolicy", "*service.TSGetRetentionPolicyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "GetRetentionPolicy", "*service.TSGetRetentionPolicyRequest", typeNameOf(req))
 	}
 	return svc.GetRetentionPolicy(ctx, r)
 }
@@ -534,7 +533,7 @@ func handleGetRetentionPolicy(ctx context.Context, svc service.QuicBaaS, req int
 func handleSetRetentionPolicy(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.TSSetRetentionPolicyRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "SetRetentionPolicy", "*service.TSSetRetentionPolicyRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "SetRetentionPolicy", "*service.TSSetRetentionPolicyRequest", typeNameOf(req))
 	}
 	return svc.SetRetentionPolicy(ctx, r)
 }
@@ -542,7 +541,7 @@ func handleSetRetentionPolicy(ctx context.Context, svc service.QuicBaaS, req int
 func handleListMetrics(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.TSListMetricsRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "ListMetrics", "*service.TSListMetricsRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "ListMetrics", "*service.TSListMetricsRequest", typeNameOf(req))
 	}
 	return svc.ListMetrics(ctx, r)
 }
@@ -554,7 +553,7 @@ func handleListMetrics(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleMigrateData(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.MigrateDataRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "MigrateData", "*service.MigrateDataRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "MigrateData", "*service.MigrateDataRequest", typeNameOf(req))
 	}
 	return svc.MigrateData(ctx, r)
 }
@@ -562,7 +561,7 @@ func handleMigrateData(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleGetMigrationProgress(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.GetMigrationProgressRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "GetMigrationProgress", "*service.GetMigrationProgressRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "GetMigrationProgress", "*service.GetMigrationProgressRequest", typeNameOf(req))
 	}
 	return svc.GetMigrationProgress(ctx, r)
 }
@@ -570,7 +569,7 @@ func handleGetMigrationProgress(ctx context.Context, svc service.QuicBaaS, req i
 func handleReplaceNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.ReplaceNodeRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "ReplaceNode", "*service.ReplaceNodeRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "ReplaceNode", "*service.ReplaceNodeRequest", typeNameOf(req))
 	}
 	return svc.ReplaceNode(ctx, r)
 }
@@ -578,7 +577,7 @@ func handleReplaceNode(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleUpgradeNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.UpgradeNodeRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "UpgradeNode", "*service.UpgradeNodeRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "UpgradeNode", "*service.UpgradeNodeRequest", typeNameOf(req))
 	}
 	return svc.UpgradeNode(ctx, r)
 }
@@ -586,7 +585,7 @@ func handleUpgradeNode(ctx context.Context, svc service.QuicBaaS, req interface{
 func handleGetUpgradeStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.GetUpgradeStatusRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "GetUpgradeStatus", "*service.GetUpgradeStatusRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "GetUpgradeStatus", "*service.GetUpgradeStatusRequest", typeNameOf(req))
 	}
 	return svc.GetUpgradeStatus(ctx, r)
 }

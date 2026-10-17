@@ -19,6 +19,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
@@ -187,6 +188,7 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 		roleInvalid   *service.ProjectRoleInvalidError
 		forge         *sdlc.ForgeNotRegisteredError
 		strategy      *sdlc.StrategyNotRegisteredError
+		redirectURI   *iam.InvalidRedirectURIError
 	)
 	switch {
 	case stderrors.As(err, &accessDenied):
@@ -196,7 +198,8 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 	case stderrors.As(err, &alreadyExists):
 		return qberrors.ErrAlreadyExists, true
 	case stderrors.As(err, &invalid), stderrors.As(err, &roleInvalid),
-		stderrors.As(err, &forge), stderrors.As(err, &strategy):
+		stderrors.As(err, &forge), stderrors.As(err, &strategy),
+		stderrors.As(err, &redirectURI):
 		return qberrors.ErrInvalidInput, true
 	}
 	for _, class := range domainSentinelClasses {

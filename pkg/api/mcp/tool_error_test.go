@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -138,6 +139,11 @@ func TestToolErrorCode(t *testing.T) {
 		{"binding not found", sdlc.ErrNotFound, mcptransport.MCPResourceNotFound},
 		{"binding invalid", &sdlc.InvalidInputError{Field: "binding", Message: "is required"}, mcptransport.MCPInvalidInput},
 		{"adoption refused", sdlc.ErrAdoptionRefused, mcptransport.MCPPreconditionFailed},
+		// An app's refused redirect URI is the caller's error; REST answers
+		// it 400 and gRPC codes.InvalidArgument (#1463).
+		{"redirect URI refused", &iam.InvalidRedirectURIError{URI: "ftp://x", Reason: "URI scheme must be HTTPS (or HTTP for localhost)"}, mcptransport.MCPInvalidInput},
+		{"wrapped redirect URI refused", &iam.IAMContextError{Message: "register app", Cause: &iam.InvalidRedirectURIError{Reason: "redirect URI cannot be empty"}}, mcptransport.MCPInvalidInput},
+		{"other IAM context error", &iam.IAMContextError{Message: "register app", Cause: stderrors.New("storage down")}, mcptransport.JSONRPCInternalError},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	acmeclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/acme"
 
@@ -48,7 +47,7 @@ func handleACMERegisterChallenge(ctx context.Context, svc service.QuicBaaS, req 
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ACME", "RegisterChallenge",
 			"*acme.RegisterChallengeRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -72,7 +71,7 @@ func handleACMEIssue(ctx context.Context, svc service.QuicBaaS, req interface{})
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ACME", "Issue",
 			"*acme.IssueRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -102,7 +101,7 @@ func handleACMENewOrder(ctx context.Context, svc service.QuicBaaS, req interface
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ACME", "NewOrder",
 			"*acme.NewOrderRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -133,7 +132,7 @@ func handleACMEFinalizeOrder(ctx context.Context, svc service.QuicBaaS, req inte
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ACME", "FinalizeOrder",
 			"*acme.FinalizeOrderRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -162,7 +161,7 @@ func handleACMERenew(ctx context.Context, svc service.QuicBaaS, req interface{})
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.ACME", "Renew",
 			"*acme.RenewRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 

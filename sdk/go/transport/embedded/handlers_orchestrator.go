@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -34,7 +33,7 @@ func handleOrchestratorSpawnSession(ctx context.Context, svc service.QuicBaaS, r
 	r, ok := req.(*orchestratorSDK.SpawnSessionRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "SpawnSession",
-			"*orchestrator.SpawnSessionRequest", reflect.TypeOf(req).String())
+			"*orchestrator.SpawnSessionRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -84,7 +83,7 @@ func handleOrchestratorPromptSession(ctx context.Context, svc service.QuicBaaS, 
 	r, ok := req.(*orchestratorSDK.PromptSessionRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "PromptSession",
-			"*orchestrator.PromptSessionRequest", reflect.TypeOf(req).String())
+			"*orchestrator.PromptSessionRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -119,7 +118,7 @@ func handleOrchestratorSessionStatus(ctx context.Context, svc service.QuicBaaS, 
 	r, ok := req.(*orchestratorSDK.SessionStatusRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "SessionStatus",
-			"*orchestrator.SessionStatusRequest", reflect.TypeOf(req).String())
+			"*orchestrator.SessionStatusRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -147,7 +146,7 @@ func handleOrchestratorGetSessionConversation(ctx context.Context, svc service.Q
 	r, ok := req.(*orchestratorSDK.GetSessionConversationRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetSessionConversation",
-			"*orchestrator.GetSessionConversationRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetSessionConversationRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -219,7 +218,7 @@ func handleOrchestratorGetSpendReport(ctx context.Context, svc service.QuicBaaS,
 	r, ok := req.(*orchestratorSDK.GetSpendReportRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetSpendReport",
-			"*orchestrator.GetSpendReportRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetSpendReportRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -399,7 +398,7 @@ func handleOrchestratorCloseSession(ctx context.Context, svc service.QuicBaaS, r
 	r, ok := req.(*orchestratorSDK.CloseSessionRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "CloseSession",
-			"*orchestrator.CloseSessionRequest", reflect.TypeOf(req).String())
+			"*orchestrator.CloseSessionRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -425,7 +424,7 @@ func handleOrchestratorRotateSessionAccount(ctx context.Context, svc service.Qui
 	r, ok := req.(*orchestratorSDK.RotateSessionAccountRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "RotateSessionAccount",
-			"*orchestrator.RotateSessionAccountRequest", reflect.TypeOf(req).String())
+			"*orchestrator.RotateSessionAccountRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -457,7 +456,7 @@ func handleOrchestratorListSessions(ctx context.Context, svc service.QuicBaaS, r
 	r, ok := req.(*orchestratorSDK.ListSessionsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListSessions",
-			"*orchestrator.ListSessionsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ListSessionsRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -511,7 +510,7 @@ func handleOrchestratorCreateTask(ctx context.Context, svc service.QuicBaaS, req
 	r, ok := req.(*orchestratorSDK.CreateTaskRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "CreateTask",
-			"*orchestrator.CreateTaskRequest", reflect.TypeOf(req).String())
+			"*orchestrator.CreateTaskRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -546,7 +545,7 @@ func handleOrchestratorGetTask(ctx context.Context, svc service.QuicBaaS, req in
 	r, ok := req.(*orchestratorSDK.GetTaskRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetTask",
-			"*orchestrator.GetTaskRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetTaskRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -563,7 +562,7 @@ func handleOrchestratorListTasks(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*orchestratorSDK.ListTasksRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListTasks",
-			"*orchestrator.ListTasksRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ListTasksRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -608,7 +607,7 @@ func handleOrchestratorClaimTask(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*orchestratorSDK.ClaimTaskRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ClaimTask",
-			"*orchestrator.ClaimTaskRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ClaimTaskRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -628,7 +627,7 @@ func handleOrchestratorBlockTask(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*orchestratorSDK.BlockTaskRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "BlockTask",
-			"*orchestrator.BlockTaskRequest", reflect.TypeOf(req).String())
+			"*orchestrator.BlockTaskRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -648,7 +647,7 @@ func handleOrchestratorReadmitTask(ctx context.Context, svc service.QuicBaaS, re
 	r, ok := req.(*orchestratorSDK.ReadmitTaskRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ReadmitTask",
-			"*orchestrator.ReadmitTaskRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ReadmitTaskRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -688,7 +687,7 @@ func handleOrchestratorAttentionList(ctx context.Context, svc service.QuicBaaS, 
 	r, ok := req.(*orchestratorSDK.AttentionListRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "AttentionList",
-			"*orchestrator.AttentionListRequest", reflect.TypeOf(req).String())
+			"*orchestrator.AttentionListRequest", typeNameOf(req))
 	}
 	sdlcSvc := svc.SDLC()
 	if sdlcSvc == nil || sdlcSvc.Attention() == nil {
@@ -713,7 +712,7 @@ func handleOrchestratorAttentionResolve(ctx context.Context, svc service.QuicBaa
 	r, ok := req.(*orchestratorSDK.AttentionResolveRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "AttentionResolve",
-			"*orchestrator.AttentionResolveRequest", reflect.TypeOf(req).String())
+			"*orchestrator.AttentionResolveRequest", typeNameOf(req))
 	}
 	sdlcSvc := svc.SDLC()
 	if sdlcSvc == nil || sdlcSvc.Attention() == nil {
@@ -732,7 +731,7 @@ func handleOrchestratorDeleteTask(ctx context.Context, svc service.QuicBaaS, req
 	r, ok := req.(*orchestratorSDK.DeleteTaskRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "DeleteTask",
-			"*orchestrator.DeleteTaskRequest", reflect.TypeOf(req).String())
+			"*orchestrator.DeleteTaskRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -751,7 +750,7 @@ func handleOrchestratorCompleteTask(ctx context.Context, svc service.QuicBaaS, r
 	r, ok := req.(*orchestratorSDK.CompleteTaskRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "CompleteTask",
-			"*orchestrator.CompleteTaskRequest", reflect.TypeOf(req).String())
+			"*orchestrator.CompleteTaskRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -782,7 +781,7 @@ func handleOrchestratorSubmitTaskArtifacts(ctx context.Context, svc service.Quic
 	r, ok := req.(*orchestratorSDK.SubmitTaskArtifactsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "SubmitTaskArtifacts",
-			"*orchestrator.SubmitTaskArtifactsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.SubmitTaskArtifactsRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -813,7 +812,7 @@ func handleOrchestratorGetTaskArtifact(ctx context.Context, svc service.QuicBaaS
 	r, ok := req.(*orchestratorSDK.GetTaskArtifactRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetTaskArtifact",
-			"*orchestrator.GetTaskArtifactRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetTaskArtifactRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -830,7 +829,7 @@ func handleOrchestratorListTaskArtifacts(ctx context.Context, svc service.QuicBa
 	r, ok := req.(*orchestratorSDK.ListTaskArtifactsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListTaskArtifacts",
-			"*orchestrator.ListTaskArtifactsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ListTaskArtifactsRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -860,7 +859,7 @@ func handleFleetRegister(ctx context.Context, svc service.QuicBaaS, req interfac
 	r, ok := req.(*orchestratorSDK.RegisterFleetNodeRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "RegisterFleetNode",
-			"*orchestrator.RegisterFleetNodeRequest", reflect.TypeOf(req).String())
+			"*orchestrator.RegisterFleetNodeRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -888,7 +887,7 @@ func handleFleetGet(ctx context.Context, svc service.QuicBaaS, req interface{}) 
 	r, ok := req.(*orchestratorSDK.GetFleetNodeRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetFleetNode",
-			"*orchestrator.GetFleetNodeRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetFleetNodeRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -905,7 +904,7 @@ func handleFleetList(ctx context.Context, svc service.QuicBaaS, req interface{})
 	r, ok := req.(*orchestratorSDK.ListFleetNodesRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListFleetNodes",
-			"*orchestrator.ListFleetNodesRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ListFleetNodesRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -936,7 +935,7 @@ func handleFleetRemove(ctx context.Context, svc service.QuicBaaS, req interface{
 	r, ok := req.(*orchestratorSDK.RemoveFleetNodeRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "RemoveFleetNode",
-			"*orchestrator.RemoveFleetNodeRequest", reflect.TypeOf(req).String())
+			"*orchestrator.RemoveFleetNodeRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -952,7 +951,7 @@ func handleFleetHeartbeat(ctx context.Context, svc service.QuicBaaS, req interfa
 	r, ok := req.(*orchestratorSDK.FleetNodeHeartbeatRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "FleetNodeHeartbeat",
-			"*orchestrator.FleetNodeHeartbeatRequest", reflect.TypeOf(req).String())
+			"*orchestrator.FleetNodeHeartbeatRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -982,7 +981,7 @@ func handleFleetDisable(ctx context.Context, svc service.QuicBaaS, req interface
 	r, ok := req.(*orchestratorSDK.DisableFleetNodeRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "DisableFleetNode",
-			"*orchestrator.DisableFleetNodeRequest", reflect.TypeOf(req).String())
+			"*orchestrator.DisableFleetNodeRequest", typeNameOf(req))
 	}
 	adminSvc := svc.FleetAdmin()
 	if adminSvc == nil {
@@ -1007,7 +1006,7 @@ func handleFleetEnable(ctx context.Context, svc service.QuicBaaS, req interface{
 	r, ok := req.(*orchestratorSDK.EnableFleetNodeRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "EnableFleetNode",
-			"*orchestrator.EnableFleetNodeRequest", reflect.TypeOf(req).String())
+			"*orchestrator.EnableFleetNodeRequest", typeNameOf(req))
 	}
 	adminSvc := svc.FleetAdmin()
 	if adminSvc == nil {
@@ -1035,7 +1034,7 @@ func handleOrchestratorStartJob(ctx context.Context, svc service.QuicBaaS, req i
 	r, ok := req.(*orchestratorSDK.StartJobRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "StartJob",
-			"*orchestrator.StartJobRequest", reflect.TypeOf(req).String())
+			"*orchestrator.StartJobRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1069,7 +1068,7 @@ func handleOrchestratorGetJobStatus(ctx context.Context, svc service.QuicBaaS, r
 	r, ok := req.(*orchestratorSDK.GetJobStatusRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetJobStatus",
-			"*orchestrator.GetJobStatusRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetJobStatusRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1086,7 +1085,7 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 	r, ok := req.(*orchestratorSDK.ListJobsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListJobs",
-			"*orchestrator.ListJobsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ListJobsRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1134,7 +1133,7 @@ func handleOrchestratorListWorkflows(ctx context.Context, svc service.QuicBaaS, 
 	r, ok := req.(*orchestratorSDK.ListWorkflowsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListWorkflows",
-			"*orchestrator.ListWorkflowsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ListWorkflowsRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1338,7 +1337,7 @@ func handleOrchestratorCreateWorkflow(ctx context.Context, svc service.QuicBaaS,
 	r, ok := req.(*orchestratorSDK.CreateWorkflowRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "CreateWorkflow",
-			"*orchestrator.CreateWorkflowRequest", reflect.TypeOf(req).String())
+			"*orchestrator.CreateWorkflowRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1358,7 +1357,7 @@ func handleOrchestratorGetWorkflow(ctx context.Context, svc service.QuicBaaS, re
 	r, ok := req.(*orchestratorSDK.GetWorkflowRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetWorkflow",
-			"*orchestrator.GetWorkflowRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetWorkflowRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1375,7 +1374,7 @@ func handleOrchestratorUpdateWorkflow(ctx context.Context, svc service.QuicBaaS,
 	r, ok := req.(*orchestratorSDK.UpdateWorkflowRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "UpdateWorkflow",
-			"*orchestrator.UpdateWorkflowRequest", reflect.TypeOf(req).String())
+			"*orchestrator.UpdateWorkflowRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1397,7 +1396,7 @@ func handleOrchestratorDeleteWorkflow(ctx context.Context, svc service.QuicBaaS,
 	r, ok := req.(*orchestratorSDK.DeleteWorkflowRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "DeleteWorkflow",
-			"*orchestrator.DeleteWorkflowRequest", reflect.TypeOf(req).String())
+			"*orchestrator.DeleteWorkflowRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1424,7 +1423,7 @@ func handleOrchestratorCancelJob(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*orchestratorSDK.CancelJobRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "CancelJob",
-			"*orchestrator.CancelJobRequest", reflect.TypeOf(req).String())
+			"*orchestrator.CancelJobRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1471,7 +1470,7 @@ func handleOrchestratorListBackends(ctx context.Context, svc service.QuicBaaS, r
 	if !ok && req != nil {
 		if _, empty := req.(struct{}); !empty {
 			return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListBackends",
-				"*orchestrator.ListBackendsRequest", reflect.TypeOf(req).String())
+				"*orchestrator.ListBackendsRequest", typeNameOf(req))
 		}
 	}
 	agentSvc := svc.Agent()
@@ -1510,7 +1509,7 @@ func handleOrchestratorListRunners(_ context.Context, svc service.QuicBaaS, req 
 	if !ok && req != nil {
 		if _, empty := req.(struct{}); !empty {
 			return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListRunners",
-				"*orchestrator.ListRunnersRequest", reflect.TypeOf(req).String())
+				"*orchestrator.ListRunnersRequest", typeNameOf(req))
 		}
 	}
 	if svc.Agent() == nil {
@@ -1543,7 +1542,7 @@ func handleOrchestratorListBackendModels(ctx context.Context, svc service.QuicBa
 	r, ok := req.(*orchestratorSDK.ListBackendModelsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListBackendModels",
-			"*orchestrator.ListBackendModelsRequest", reflect.TypeOf(req).String())
+			"*orchestrator.ListBackendModelsRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1579,7 +1578,7 @@ func handleOrchestratorDecomposeTask(ctx context.Context, svc service.QuicBaaS, 
 	r, ok := req.(*orchestratorSDK.DecomposeTaskRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "DecomposeTask",
-			"*orchestrator.DecomposeTaskRequest", reflect.TypeOf(req).String())
+			"*orchestrator.DecomposeTaskRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1615,7 +1614,7 @@ func handleOrchestratorSpawnChildJob(ctx context.Context, svc service.QuicBaaS, 
 	r, ok := req.(*orchestratorSDK.SpawnChildJobRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "SpawnChildJob",
-			"*orchestrator.SpawnChildJobRequest", reflect.TypeOf(req).String())
+			"*orchestrator.SpawnChildJobRequest", typeNameOf(req))
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
@@ -1654,7 +1653,7 @@ func handleProjectCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 	r, ok := req.(*projectSDK.CreateProjectRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Project", "Create",
-			"*project.CreateProjectRequest", reflect.TypeOf(req).String())
+			"*project.CreateProjectRequest", typeNameOf(req))
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
@@ -1707,7 +1706,7 @@ func handleProjectGet(ctx context.Context, svc service.QuicBaaS, req interface{}
 	r, ok := req.(*projectSDK.GetProjectRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Project", "Get",
-			"*project.GetProjectRequest", reflect.TypeOf(req).String())
+			"*project.GetProjectRequest", typeNameOf(req))
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
@@ -1727,7 +1726,7 @@ func handleProjectGetByName(ctx context.Context, svc service.QuicBaaS, req inter
 	r, ok := req.(*projectSDK.GetProjectByNameRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Project", "GetByName",
-			"*project.GetProjectByNameRequest", reflect.TypeOf(req).String())
+			"*project.GetProjectByNameRequest", typeNameOf(req))
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
@@ -1747,7 +1746,7 @@ func handleProjectUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 	r, ok := req.(*projectSDK.UpdateProjectRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Project", "Update",
-			"*project.UpdateProjectRequest", reflect.TypeOf(req).String())
+			"*project.UpdateProjectRequest", typeNameOf(req))
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
@@ -1809,7 +1808,7 @@ func handleProjectDelete(ctx context.Context, svc service.QuicBaaS, req interfac
 	r, ok := req.(*projectSDK.DeleteProjectRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Project", "Delete",
-			"*project.DeleteProjectRequest", reflect.TypeOf(req).String())
+			"*project.DeleteProjectRequest", typeNameOf(req))
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
@@ -1829,7 +1828,7 @@ func handleProjectList(ctx context.Context, svc service.QuicBaaS, req interface{
 	r, ok := req.(*projectSDK.ListProjectsRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Project", "List",
-			"*project.ListProjectsRequest", reflect.TypeOf(req).String())
+			"*project.ListProjectsRequest", typeNameOf(req))
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
@@ -1863,7 +1862,7 @@ func handleProjectGrantFleetNodeRole(ctx context.Context, svc service.QuicBaaS, 
 	r, ok := req.(*projectSDK.GrantFleetNodeRoleRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Project", "GrantFleetNodeRole",
-			"*project.GrantFleetNodeRoleRequest", reflect.TypeOf(req).String())
+			"*project.GrantFleetNodeRoleRequest", typeNameOf(req))
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
@@ -1890,7 +1889,7 @@ func handleProjectRevokeFleetNodeRole(ctx context.Context, svc service.QuicBaaS,
 	r, ok := req.(*projectSDK.RevokeFleetNodeRoleRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Project", "RevokeFleetNodeRole",
-			"*project.RevokeFleetNodeRoleRequest", reflect.TypeOf(req).String())
+			"*project.RevokeFleetNodeRoleRequest", typeNameOf(req))
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
@@ -2344,7 +2343,7 @@ func handleOrchestratorGetTenantSpendPolicy(ctx context.Context, svc service.Qui
 	r, ok := req.(*orchestratorSDK.GetTenantSpendPolicyRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetTenantSpendPolicy",
-			"*orchestrator.GetTenantSpendPolicyRequest", reflect.TypeOf(req).String())
+			"*orchestrator.GetTenantSpendPolicyRequest", typeNameOf(req))
 	}
 	accessor, err := tenantSpendAccessorOf(svc, "GetTenantSpendPolicy")
 	if err != nil {
@@ -2363,7 +2362,7 @@ func handleOrchestratorSetTenantSpendPolicy(ctx context.Context, svc service.Qui
 	r, ok := req.(*orchestratorSDK.SetTenantSpendPolicyRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "SetTenantSpendPolicy",
-			"*orchestrator.SetTenantSpendPolicyRequest", reflect.TypeOf(req).String())
+			"*orchestrator.SetTenantSpendPolicyRequest", typeNameOf(req))
 	}
 	accessor, err := tenantSpendAccessorOf(svc, "SetTenantSpendPolicy")
 	if err != nil {

@@ -43,7 +43,7 @@ func handleSecretsEnsure(ctx context.Context, svc service.QuicBaaS, req interfac
 
 	sdkReq, ok := req.(*secrets.EnsureSecretRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Ensure", "*secrets.EnsureSecretRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Ensure", "*secrets.EnsureSecretRequest", typeNameOf(req))
 	}
 
 	svcReq := &service.EnsureSecretRequest{
@@ -75,7 +75,7 @@ func handleSecretsStore(ctx context.Context, svc service.QuicBaaS, req interface
 	// Accept SDK client type
 	sdkReq, ok := req.(*secrets.StoreSecretRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Store", "*secrets.StoreSecretRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Store", "*secrets.StoreSecretRequest", typeNameOf(req))
 	}
 
 	// Raw is stored verbatim; structured Data is JSON-encoded.
@@ -118,14 +118,14 @@ func handleSecretsGet(ctx context.Context, svc service.QuicBaaS, req interface{}
 	}
 
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Get", "struct{Path string, Version int}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Get", "struct{Path string, Version int}", typeNameOf(req))
 	}
 
 	pathField := reqVal.FieldByName("Path")
 	versionField := reqVal.FieldByName("Version")
 
 	if !pathField.IsValid() || !versionField.IsValid() {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Get", "struct{Path string, Version int}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Get", "struct{Path string, Version int}", typeNameOf(req))
 	}
 
 	path := pathField.String()
@@ -179,13 +179,13 @@ func handleSecretsGetData(ctx context.Context, svc service.QuicBaaS, req interfa
 		reqVal = reqVal.Elem()
 	}
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetData", "struct{Path string, Version int}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetData", "struct{Path string, Version int}", typeNameOf(req))
 	}
 	pathField := reqVal.FieldByName("Path")
 	versionField := reqVal.FieldByName("Version")
 	if !pathField.IsValid() || pathField.Kind() != reflect.String ||
 		!versionField.IsValid() || versionField.Kind() != reflect.Int {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetData", "struct{Path string, Version int}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetData", "struct{Path string, Version int}", typeNameOf(req))
 	}
 	version := versionField.Int()
 	if version < 0 {
@@ -219,12 +219,12 @@ func handleSecretsList(ctx context.Context, svc service.QuicBaaS, req interface{
 	}
 
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "List", "struct{Prefix string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "List", "struct{Prefix string}", typeNameOf(req))
 	}
 
 	prefixField := reqVal.FieldByName("Prefix")
 	if !prefixField.IsValid() {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "List", "struct{Prefix string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "List", "struct{Prefix string}", typeNameOf(req))
 	}
 
 	prefix := prefixField.String()
@@ -263,12 +263,12 @@ func handleSecretsDelete(ctx context.Context, svc service.QuicBaaS, req interfac
 	}
 
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Delete", "struct{Path string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Delete", "struct{Path string}", typeNameOf(req))
 	}
 
 	pathField := reqVal.FieldByName("Path")
 	if !pathField.IsValid() {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Delete", "struct{Path string}", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Delete", "struct{Path string}", typeNameOf(req))
 	}
 
 	path := pathField.String()

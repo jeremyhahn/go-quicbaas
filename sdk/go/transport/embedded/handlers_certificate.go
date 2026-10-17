@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	certclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 
@@ -43,7 +42,7 @@ func handleCertIssueCertificate(ctx context.Context, svc service.QuicBaaS, req i
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "IssueCertificate",
 			"*service.IssueCertificateRequest or *certificate.IssueCertificateRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -86,7 +85,7 @@ func handleCertSignCSR(ctx context.Context, svc service.QuicBaaS, req interface{
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "SignCSR",
 			"*service.SignCSRRequest or *certificate.SignCSRRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -122,7 +121,7 @@ func handleCertRevokeCertificate(ctx context.Context, svc service.QuicBaaS, req 
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "RevokeCertificate",
 			"*service.RevokeCertificateRequest or *certificate.RevokeCertificateRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -149,7 +148,7 @@ func handleCertVerifyCertificate(ctx context.Context, svc service.QuicBaaS, req 
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "VerifyCertificate",
 			"*service.VerifyCertificateRequest or *certificate.VerifyCertificateRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -178,7 +177,7 @@ func handleCertGetCACertificate(ctx context.Context, svc service.QuicBaaS, req i
 	return nil, NewInvalidRequestTypeError(
 		"quicbaas.Certificate", "GetCACertificate",
 		"*service.GetCACertificateRequest or *certificate.GetCACertificateRequest",
-		reflect.TypeOf(req).String(),
+		typeNameOf(req),
 	)
 }
 
@@ -199,7 +198,7 @@ func handleCertGetCABundle(ctx context.Context, svc service.QuicBaaS, req interf
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "GetCABundle",
 			"*service.GetCABundleRequest or *certificate.GetCABundleRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -227,7 +226,7 @@ func handleCertGetTLSConfig(ctx context.Context, svc service.QuicBaaS, req inter
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "GetTLSConfig",
 			"*service.GetTLSConfigRequest or *certificate.GetTLSConfigRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -271,7 +270,7 @@ func handleCertGenerateCRL(ctx context.Context, svc service.QuicBaaS, req interf
 	return nil, NewInvalidRequestTypeError(
 		"quicbaas.Certificate", "GenerateCRL",
 		"*service.GenerateCRLRequest or *certificate.GenerateCRLRequest",
-		reflect.TypeOf(req).String(),
+		typeNameOf(req),
 	)
 }
 
@@ -292,7 +291,7 @@ func handleCertIsRevoked(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "IsRevoked",
 			"*service.IsRevokedRequest or *certificate.IsRevokedRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -329,7 +328,7 @@ func handleCertCAInfo(ctx context.Context, svc service.QuicBaaS, req interface{}
 	return nil, NewInvalidRequestTypeError(
 		"quicbaas.Certificate", "CAInfo",
 		"*service.CAInfoRequest or *certificate.CAInfoRequest",
-		reflect.TypeOf(req).String(),
+		typeNameOf(req),
 	)
 }
 
@@ -354,7 +353,7 @@ func handleCertListCertificates(ctx context.Context, svc service.QuicBaaS, req i
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "ListCertificates",
 			"*service.ListCertificatesRequest or *certificate.ListCertificatesRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 	svcReq := &service.ListCertificatesRequest{

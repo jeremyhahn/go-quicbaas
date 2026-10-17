@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -44,7 +43,7 @@ func agentsRequest[T any](req interface{}, method string) (T, error) {
 	r, ok := req.(T)
 	if !ok {
 		var zero T
-		return zero, NewInvalidRequestTypeError(agentsService, method, reflect.TypeOf(zero).String(), reflect.TypeOf(req).String())
+		return zero, NewInvalidRequestTypeError(agentsService, method, typeNameOf(zero), typeNameOf(req))
 	}
 	return r, nil
 }

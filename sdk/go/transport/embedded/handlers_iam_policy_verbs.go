@@ -22,7 +22,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 	"strconv"
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
@@ -45,7 +44,7 @@ func handleIAMPolicyUpdate(ctx context.Context, svc service.QuicBaaS, req interf
 	sdkReq, ok := iamRequestStructPtr(req, "Request").(*iamsdk.UpdatePolicyRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(policyServiceName, "Update",
-			"*iam.UpdatePolicyRequest", reflect.TypeOf(req).String())
+			"*iam.UpdatePolicyRequest", typeNameOf(req))
 	}
 	if err := checkNoUntranslatableUpdateFields(sdkReq); err != nil {
 		return nil, err
@@ -143,7 +142,7 @@ func handleIAMPolicyValidate(ctx context.Context, svc service.QuicBaaS, req inte
 	sdkPolicy, ok := iamRequestStructPtr(req, "Policy").(*iamsdk.Policy)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(policyServiceName, "Validate",
-			"*iam.Policy", reflect.TypeOf(req).String())
+			"*iam.Policy", typeNameOf(req))
 	}
 	if len(sdkPolicy.SpecYAML) == 0 {
 		return nil, errors.NewInvalidInput("embedded."+policyServiceName+".Validate",
@@ -194,7 +193,7 @@ func handleIAMPolicyTest(ctx context.Context, svc service.QuicBaaS, req interfac
 	sdkReq, ok := iamRequestStructPtr(req, "Request").(*iamsdk.TestPolicyRequest)
 	if !ok {
 		return nil, NewInvalidRequestTypeError(policyServiceName, "Test",
-			"*iam.TestPolicyRequest", reflect.TypeOf(req).String())
+			"*iam.TestPolicyRequest", typeNameOf(req))
 	}
 	if len(sdkReq.TestCases) == 0 {
 		return nil, errors.NewInvalidInput("embedded."+policyServiceName+".Test",

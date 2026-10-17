@@ -15,7 +15,6 @@ package embedded
 
 import (
 	"context"
-	"reflect"
 
 	certclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 
@@ -47,7 +46,7 @@ func handleCertCrossSign(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "CrossSign",
 			"*service.CrossSignRequest or *certificate.CrossSignRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -74,7 +73,7 @@ func handleCertChain(ctx context.Context, svc service.QuicBaaS, req interface{})
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "Chain",
 			"*service.CertificateChainRequest or *certificate.ChainRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 
@@ -101,7 +100,7 @@ func handleCertIssueDeviceIdentity(ctx context.Context, svc service.QuicBaaS, re
 		return nil, NewInvalidRequestTypeError(
 			"quicbaas.Certificate", "IssueDeviceIdentity",
 			"*service.IssueDeviceIdentityRequest or *certificate.DeviceIdentityRequest",
-			reflect.TypeOf(req).String(),
+			typeNameOf(req),
 		)
 	}
 

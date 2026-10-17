@@ -48,7 +48,7 @@ func vectorRequest[T any](svc service.QuicBaaS, method string, req interface{}) 
 	r, ok := req.(*T)
 	if !ok || r == nil {
 		return nil, nil, NewInvalidRequestTypeError(vectorServiceName, method,
-			reflect.TypeOf((*T)(nil)).String(), reflect.TypeOf(req).String())
+			reflect.TypeOf((*T)(nil)).String(), typeNameOf(req))
 	}
 	return vectorSvc, r, nil
 }

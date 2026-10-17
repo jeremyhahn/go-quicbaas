@@ -16,7 +16,6 @@ package embedded
 import (
 	"context"
 	stderrors "errors"
-	"reflect"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/messagingwatch"
@@ -81,7 +80,7 @@ func handleMessagingCreateChannel(ctx context.Context, svc service.QuicBaaS, req
 	r, ok := req.(*messagingSDK.CreateChannelRequest)
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "CreateChannel",
-			"*messaging.CreateChannelRequest", reflect.TypeOf(req).String())
+			"*messaging.CreateChannelRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
@@ -117,7 +116,7 @@ func handleMessagingDeleteChannel(ctx context.Context, svc service.QuicBaaS, req
 	r, ok := req.(*messagingSDK.DeleteChannelRequest)
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "DeleteChannel",
-			"*messaging.DeleteChannelRequest", reflect.TypeOf(req).String())
+			"*messaging.DeleteChannelRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
@@ -133,7 +132,7 @@ func handleMessagingGetChannel(ctx context.Context, svc service.QuicBaaS, req in
 	r, ok := req.(*messagingSDK.GetChannelRequest)
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "GetChannel",
-			"*messaging.GetChannelRequest", reflect.TypeOf(req).String())
+			"*messaging.GetChannelRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
@@ -149,7 +148,7 @@ func handleMessagingGetChannel(ctx context.Context, svc service.QuicBaaS, req in
 func handleMessagingListChannels(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	if _, ok := req.(*messagingSDK.ListChannelsRequest); !ok {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "ListChannels",
-			"*messaging.ListChannelsRequest", reflect.TypeOf(req).String())
+			"*messaging.ListChannelsRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
@@ -170,7 +169,7 @@ func handleMessagingSubscribe(ctx context.Context, svc service.QuicBaaS, req int
 	r, ok := req.(*messagingSDK.SubscribeRequest)
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "Subscribe",
-			"*messaging.SubscribeRequest", reflect.TypeOf(req).String())
+			"*messaging.SubscribeRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
@@ -200,7 +199,7 @@ func handleMessagingUnsubscribe(ctx context.Context, svc service.QuicBaaS, req i
 	r, ok := req.(*messagingSDK.UnsubscribeRequest)
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "Unsubscribe",
-			"*messaging.UnsubscribeRequest", reflect.TypeOf(req).String())
+			"*messaging.UnsubscribeRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
@@ -216,7 +215,7 @@ func handleMessagingPublish(ctx context.Context, svc service.QuicBaaS, req inter
 	r, ok := req.(*messagingSDK.PublishRequest)
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "Publish",
-			"*messaging.PublishRequest", reflect.TypeOf(req).String())
+			"*messaging.PublishRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
@@ -233,7 +232,7 @@ func handleMessagingPublishDelta(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*messagingSDK.PublishDeltaRequest)
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "PublishDelta",
-			"*messaging.PublishDeltaRequest", reflect.TypeOf(req).String())
+			"*messaging.PublishDeltaRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
@@ -252,7 +251,7 @@ func handleMessagingWatchChannel(ctx context.Context, svc service.QuicBaaS, req 
 	r, ok := req.(*messagingSDK.WatchChannelRequest)
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(messagingServiceName, "WatchChannel",
-			"*messaging.WatchChannelRequest", reflect.TypeOf(req).String())
+			"*messaging.WatchChannelRequest", typeNameOf(req))
 	}
 	msgSvc, err := messagingService(svc)
 	if err != nil {
