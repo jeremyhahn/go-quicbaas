@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -454,6 +455,25 @@ func TestIsValidRedirectURI(t *testing.T) {
 
 	t.Run("scheme with path", func(t *testing.T) {
 		assert.True(t, isValidRedirectURI("myapp:/callback"))
+	})
+}
+
+// TestValidateDCRRequest_RedirectURIFragment pins draft-ietf-oauth-v2-1
+// §2.3: dynamic registration refuses a redirect URI with a fragment
+// component, even an empty one, with invalid_redirect_uri.
+func TestValidateDCRRequest_RedirectURIFragment(t *testing.T) {
+	for _, uri := range []string{"https://a.example/cb#x", "https://a.example/cb#"} {
+		t.Run(uri, func(t *testing.T) {
+			assert.False(t, isValidRedirectURI(uri))
+			err := validateDCRRequest(&DynamicClientRequest{RedirectURIs: []string{uri}})
+			require.NotNil(t, err)
+			assert.Equal(t, DCRErrorInvalidRedirectURI, err.code)
+		})
+	}
+
+	t.Run("no fragment accepted", func(t *testing.T) {
+		assert.True(t, isValidRedirectURI("https://a.example/cb"))
+		assert.Nil(t, validateDCRRequest(&DynamicClientRequest{RedirectURIs: []string{"https://a.example/cb"}}))
 	})
 }
 

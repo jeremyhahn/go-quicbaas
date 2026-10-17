@@ -1219,6 +1219,23 @@ func TestValidateRedirectURI(t *testing.T) {
 	}
 }
 
+// TestValidateRedirectURI_Fragment pins draft-ietf-oauth-v2-1 §2.3: a
+// redirect URI must not contain a fragment component, not even an empty one.
+func TestValidateRedirectURI_Fragment(t *testing.T) {
+	for _, uri := range []string{"https://a.example/cb#x", "https://a.example/cb#"} {
+		t.Run(uri, func(t *testing.T) {
+			err := validateRedirectURI(uri)
+			var fragErr *RedirectURIFragmentError
+			require.ErrorAs(t, err, &fragErr)
+			assert.Equal(t, uri, fragErr.URI)
+		})
+	}
+
+	t.Run("no fragment accepted", func(t *testing.T) {
+		assert.NoError(t, validateRedirectURI("https://a.example/cb"))
+	})
+}
+
 // =============================================================================
 // Tests for oidc_app.go - UpdateApp with edge cases
 // =============================================================================

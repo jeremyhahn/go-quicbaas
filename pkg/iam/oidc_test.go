@@ -497,7 +497,7 @@ func TestOIDCAuthorize(t *testing.T) {
 			errCode: ErrOAuthInvalidRequest,
 		},
 		{
-			name: "empty method defaults to S256",
+			name: "empty method rejected per OAuth 2.1 §4.1.1",
 			req: &AuthorizeRequest{
 				ClientID:            "test-client",
 				RedirectURI:         "https://example.com/callback",
@@ -505,9 +505,10 @@ func TestOIDCAuthorize(t *testing.T) {
 				UserID:              123,
 				TenantID:            "tenant-1",
 				CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-				CodeChallengeMethod: "", // Should default to S256
+				CodeChallengeMethod: "",
 			},
-			wantErr: false,
+			wantErr: true,
+			errCode: ErrOAuthInvalidRequest,
 		},
 	}
 
@@ -1354,6 +1355,45 @@ func TestErrPKCEPlainMethodNotAllowed(t *testing.T) {
 	errStr := ErrPKCEPlainMethodNotAllowed.Error()
 	if !strings.Contains(errStr, "invalid_request") {
 		t.Errorf("ErrPKCEPlainMethodNotAllowed.Error() should contain 'invalid_request', got: %s", errStr)
+	}
+}
+
+// TestOIDCAuthorizeRequiresCodeChallengeMethod pins draft-ietf-oauth-v2-1-16
+// §4.1.1: code_challenge_method is REQUIRED, so a request that omits it is
+// refused with ErrPKCEMethodRequired instead of defaulting to S256.
+func TestOIDCAuthorizeRequiresCodeChallengeMethod(t *testing.T) {
+	t.Parallel()
+	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
+	ctx := context.Background()
+	appStorage.CreateApp(ctx, &Application{
+		ClientID:      "test-client",
+		TenantID:      "tenant-1",
+		RedirectURIs:  []string{"https://example.com/callback"},
+		ResponseTypes: []string{ResponseTypeCode},
+		GrantTypes:    []string{GrantTypeAuthorizationCode},
+	})
+
+	req := &AuthorizeRequest{
+		ClientID:      "test-client",
+		RedirectURI:   "https://example.com/callback",
+		ResponseType:  ResponseTypeCode,
+		UserID:        123,
+		TenantID:      "tenant-1",
+		CodeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+	}
+
+	resp, err := provider.Authorize(ctx, req)
+	if !errors.Is(err, ErrPKCEMethodRequired) {
+		t.Fatalf("Authorize() error = %v, want ErrPKCEMethodRequired", err)
+	}
+	if resp != nil {
+		t.Errorf("Authorize() response = %+v, want nil", resp)
+	}
+	if req.CodeChallengeMethod != "" {
+		t.Errorf("Authorize() rewrote CodeChallengeMethod to %q", req.CodeChallengeMethod)
+	}
+	if ErrPKCEMethodRequired.ErrorCode != ErrOAuthInvalidRequest {
+		t.Errorf("ErrPKCEMethodRequired.ErrorCode = %s, want %s", ErrPKCEMethodRequired.ErrorCode, ErrOAuthInvalidRequest)
 	}
 }
 

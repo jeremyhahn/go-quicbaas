@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -502,6 +503,16 @@ func appRequiresRedirectURIs(grants []string) bool {
 	return false
 }
 
+// RedirectURIFragmentError reports a redirect URI that carries a fragment
+// component, which draft-ietf-oauth-v2-1 §2.3 forbids.
+type RedirectURIFragmentError struct {
+	URI string
+}
+
+func (e *RedirectURIFragmentError) Error() string {
+	return "redirect URI must not contain a fragment: " + e.URI
+}
+
 // validateRedirectURI validates a redirect URI according to OAuth2 requirements.
 func validateRedirectURI(uri string) error {
 	if uri == "" {
@@ -511,6 +522,12 @@ func validateRedirectURI(uri string) error {
 	parsed, err := url.Parse(uri)
 	if err != nil {
 		return &IAMContextError{Message: "invalid URI format", Cause: err}
+	}
+
+	// Must not have a fragment, not even an empty one: url.Parse leaves
+	// Fragment empty for a trailing bare '#', so check the raw string.
+	if strings.Contains(uri, "#") {
+		return &RedirectURIFragmentError{URI: uri}
 	}
 
 	// Must have a scheme

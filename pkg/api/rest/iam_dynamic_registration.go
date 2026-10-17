@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -449,6 +450,12 @@ func validateDCRRequest(req *DynamicClientRequest) *dcrValidationError {
 func isValidRedirectURI(uri string) bool {
 	// Parse the URI
 	if uri == "" {
+		return false
+	}
+
+	// A redirect URI must not contain a fragment component
+	// (draft-ietf-oauth-v2-1 §2.3), not even an empty one.
+	if strings.Contains(uri, "#") {
 		return false
 	}
 

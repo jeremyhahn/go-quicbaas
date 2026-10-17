@@ -275,6 +275,14 @@ func (p *OIDCProvider) GetOAuthASMetadata() *OAuthASMetadata {
 }
 
 // Authorize processes an OAuth2 authorization request.
+// ErrPKCEMethodRequired is returned when an authorization request omits
+// code_challenge_method. draft-ietf-oauth-v2-1-16 §4.1.1 makes it REQUIRED, so
+// a missing method is refused rather than defaulted to S256.
+var ErrPKCEMethodRequired = &OAuthError{
+	ErrorCode:        ErrOAuthInvalidRequest,
+	ErrorDescription: "code_challenge_method is required (OAuth 2.1); use S256",
+}
+
 func (p *OIDCProvider) Authorize(ctx context.Context, req *AuthorizeRequest) (*AuthorizeResponse, error) {
 	// The client and its redirect URI are validated first: until they are,
 	// errors must not be redirected (draft-ietf-oauth-v2-1-16 §4.1.2.1).
@@ -300,9 +308,9 @@ func (p *OIDCProvider) Authorize(ctx context.Context, req *AuthorizeRequest) (*A
 		return nil, NewOAuthError(ErrOAuthInvalidRequest, "code_challenge is required (OAuth 2.1 mandates PKCE)")
 	}
 
-	// OAuth 2.1 only allows S256 method
+	// OAuth 2.1 §4.1.1 makes code_challenge_method REQUIRED and allows only S256.
 	if req.CodeChallengeMethod == "" {
-		req.CodeChallengeMethod = CodeChallengeMethodS256
+		return nil, ErrPKCEMethodRequired
 	}
 	if req.CodeChallengeMethod != CodeChallengeMethodS256 {
 		return nil, NewOAuthError(ErrOAuthInvalidRequest, "code_challenge_method must be S256 (OAuth 2.1)")

@@ -1132,5 +1132,6 @@ All clients must implement PKCE with S256 (plain method is not supported):
 
 **Validation:**
 - Server rejects `code_challenge_method=plain`
+- Server rejects a request that omits `code_challenge_method` with `invalid_request` (OAuth 2.1 §4.1.1); there is no S256 default
 - Server rejects authorization requests without PKCE parameters
 - Token exchange fails if `code_verifier` doesn't match stored challenge

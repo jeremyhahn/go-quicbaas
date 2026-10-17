@@ -24,6 +24,8 @@ func TestRedirectURIMatches(t *testing.T) {
 		{"ipv4 loopback exact", "http://127.0.0.1:8080/cb", "http://127.0.0.1:8080/cb", true},
 		{"ipv6 loopback any port", "http://[::1]/cb", "http://[::1]:51004/cb", true},
 		{"ipv6 loopback registered port ignored", "http://[::1]:8080/cb", "http://[::1]/cb", true},
+		{"ipv6 loopback both ports differ", "http://[::1]:8080/cb", "http://[::1]:9/cb", true},
+		{"loopback scheme differs", "http://127.0.0.1/cb", "https://127.0.0.1:1/cb", false},
 		{"ipv4 loopback query must match", "http://127.0.0.1/cb?a=1", "http://127.0.0.1:5000/cb?a=1", true},
 		{"ipv4 loopback query differs", "http://127.0.0.1/cb?a=1", "http://127.0.0.1:5000/cb?a=2", false},
 		{"ipv4 loopback path differs", "http://127.0.0.1/cb", "http://127.0.0.1:5000/other", false},
