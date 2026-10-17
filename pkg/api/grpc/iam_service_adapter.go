@@ -550,31 +550,8 @@ func (a *IAMServiceAdapter) GetApp(ctx context.Context, tenantID, clientID strin
 }
 
 // UpdateApp updates an existing application.
-func (a *IAMServiceAdapter) UpdateApp(ctx context.Context, app *iam.Application) (*iam.Application, error) {
-	if app == nil {
-		return nil, api.NewNilInputError("iam.grpc.UpdateApp", "application")
-	}
-
-	// Only set fields that have non-zero values to avoid overwriting
-	// existing data with empty values when the caller didn't intend to change them.
-	opts := iam.UpdateAppOptions{}
-	if app.Name != "" {
-		opts.Name = &app.Name
-	}
-	if len(app.RedirectURIs) > 0 {
-		opts.RedirectURIs = &app.RedirectURIs
-	}
-	if app.ResourcePrefix != "" {
-		opts.ResourcePrefix = &app.ResourcePrefix
-	}
-	if len(app.GrantTypes) > 0 {
-		opts.GrantTypes = &app.GrantTypes
-	}
-	if len(app.ResponseTypes) > 0 {
-		opts.ResponseTypes = &app.ResponseTypes
-	}
-
-	return a.appManager.UpdateAppInTenant(ctx, app.TenantID, app.ClientID, opts)
+func (a *IAMServiceAdapter) UpdateApp(ctx context.Context, tenantID, clientID string, opts iam.UpdateAppOptions) (*iam.Application, error) {
+	return a.appManager.UpdateAppInTenant(ctx, tenantID, clientID, opts)
 }
 
 // DeleteApp deletes an application.

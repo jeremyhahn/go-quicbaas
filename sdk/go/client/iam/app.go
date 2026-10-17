@@ -392,8 +392,10 @@ type UpdateAppRequest struct {
 	// Scopes are the new allowed scopes.
 	Scopes []string `json:"scopes,omitempty"`
 
-	// TokenEndpointAuthMethod is the new client authentication method.
-	TokenEndpointAuthMethod TokenEndpointAuthMethod `json:"token_endpoint_auth_method,omitempty"`
+	// TokenEndpointAuthMethod is the new client authentication method. Nil
+	// leaves the method unchanged; a pointer to the zero value selects
+	// client_secret_basic.
+	TokenEndpointAuthMethod *TokenEndpointAuthMethod `json:"token_endpoint_auth_method,omitempty"`
 
 	// Contacts are the new contact emails.
 	Contacts []string `json:"contacts,omitempty"`
@@ -428,8 +430,9 @@ type UpdateAppRequest struct {
 	// Enabled controls whether the application is active.
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// MTLSCertThumbprint replaces the pinned SHA-256 cert thumbprint for
-	// self_signed_tls_client_auth or tls_client_auth clients (RFC 8705).
+	// MTLSCertThumbprint replaces the pinned base64url SHA-256 cert
+	// thumbprint a self_signed_tls_client_auth client authenticates with
+	// (RFC 8705 §2.2); the old certificate stops binding at once.
 	// Used by the pin-cert CLI subcommand to rotate the bound certificate.
 	MTLSCertThumbprint string `json:"mtls_cert_thumbprint,omitempty"`
 }

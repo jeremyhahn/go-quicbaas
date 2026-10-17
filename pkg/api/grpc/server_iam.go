@@ -82,7 +82,7 @@ type IAMService interface {
 	// Application operations
 	RegisterApp(ctx context.Context, app *iam.Application) (*iam.Application, error)
 	GetApp(ctx context.Context, tenantID, clientID string) (*iam.Application, error)
-	UpdateApp(ctx context.Context, app *iam.Application) (*iam.Application, error)
+	UpdateApp(ctx context.Context, tenantID, clientID string, opts iam.UpdateAppOptions) (*iam.Application, error)
 	DeleteApp(ctx context.Context, tenantID, clientID string) error
 	ListApps(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Application, int, error)
 	RotateAppSecret(ctx context.Context, tenantID, clientID string) (*iam.Application, error)
@@ -828,17 +828,7 @@ func (s *IAMServer) UpdateApp(ctx context.Context, req *iampb.UpdateAppRequest) 
 		return nil, status.Error(codes.InvalidArgument, "client_id is required")
 	}
 
-	app := &iam.Application{
-		ClientID:       req.ClientId,
-		TenantID:       req.TenantId,
-		Name:           req.Name,
-		RedirectURIs:   req.RedirectUris,
-		ResourcePrefix: req.ResourcePrefix,
-		GrantTypes:     req.GrantTypes,
-		ResponseTypes:  req.ResponseTypes,
-	}
-
-	updated, err := s.iamService.UpdateApp(ctx, app)
+	updated, err := s.iamService.UpdateApp(ctx, req.TenantId, req.ClientId, updateAppOptionsFromProto(req))
 	if err != nil {
 		return nil, convertIAMError(err)
 	}

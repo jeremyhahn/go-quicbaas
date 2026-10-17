@@ -15,6 +15,7 @@ package embedded
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strconv"
 	"time"
@@ -1033,12 +1034,19 @@ func tokenEndpointAuthMethodFromString(s string) iamsdk.TokenEndpointAuthMethod 
 }
 
 func sdkAppFromInternal(a *iam.Application) iamsdk.Application {
+	grants := make([]iamsdk.GrantType, 0, len(a.GrantTypes))
+	for _, g := range a.GrantTypes {
+		grants = append(grants, iamsdk.ParseGrantType(g))
+	}
 	return iamsdk.Application{
 		ClientID:                a.ClientID,
 		TenantID:                a.TenantID,
 		Name:                    a.Name,
 		RedirectURIs:            a.RedirectURIs,
+		ResourcePrefix:          a.ResourcePrefix,
+		GrantTypes:              grants,
 		ResponseTypes:           a.ResponseTypes,
+		Scopes:                  a.Scopes,
 		TokenEndpointAuthMethod: tokenEndpointAuthMethodFromString(a.TokenEndpointAuthMethod),
 		MTLSCertThumbprint:      a.MTLSCertThumbprint,
 		MTLSSubjectDN:           a.MTLSSubjectDN,
@@ -1195,26 +1203,9 @@ func handleIAMAppUpdate(ctx context.Context, svc service.QuicBaaS, req interface
 	if err != nil {
 		return nil, err
 	}
-	// Only non-zero fields are applied, so an unset field keeps its value.
-	opts := iam.UpdateAppOptions{}
-	if sdkReq.Name != "" {
-		opts.Name = &sdkReq.Name
-	}
-	if len(sdkReq.RedirectURIs) > 0 {
-		opts.RedirectURIs = &sdkReq.RedirectURIs
-	}
-	if sdkReq.ResourcePrefix != "" {
-		opts.ResourcePrefix = &sdkReq.ResourcePrefix
-	}
-	if len(sdkReq.GrantTypes) > 0 {
-		grants := make([]string, 0, len(sdkReq.GrantTypes))
-		for _, g := range sdkReq.GrantTypes {
-			grants = append(grants, grantTypeToString(g))
-		}
-		opts.GrantTypes = &grants
-	}
-	if len(sdkReq.ResponseTypes) > 0 {
-		opts.ResponseTypes = &sdkReq.ResponseTypes
+	opts, err := updateAppOptionsFromSDK(sdkReq)
+	if err != nil {
+		return nil, err
 	}
 	a, err := mgr.UpdateAppInTenant(ctx, tenantID, clientID, opts)
 	if err != nil {
@@ -1222,6 +1213,22 @@ func handleIAMAppUpdate(ctx context.Context, svc service.QuicBaaS, req interface
 	}
 	out := sdkAppFromInternal(a)
 	return &out, nil
+}
+
+// updateAppOptionsFromSDK maps every field of the SDK request to the IAM
+// update options through the request's wire form, the same decoding the MCP
+// transport applies, so an omitted field stays nil (unchanged) and every set
+// field reaches the app manager, which applies it or refuses it.
+func updateAppOptionsFromSDK(sdkReq *iamsdk.UpdateAppRequest) (iam.UpdateAppOptions, error) {
+	data, err := json.Marshal(sdkReq)
+	if err != nil {
+		return iam.UpdateAppOptions{}, &AppUpdateDecodeError{Cause: err}
+	}
+	var req service.UpdateAppRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return iam.UpdateAppOptions{}, &AppUpdateDecodeError{Cause: err}
+	}
+	return req.Options(), nil
 }
 
 func handleIAMAppRotateSecret(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

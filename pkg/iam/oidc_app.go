@@ -32,14 +32,22 @@ import (
 type AppManager struct {
 	storage AppStorage
 	tenants TenantManager
+	// grantor resolves the calling identity's qrdb effective permissions for
+	// the grantor gate on application updates (authorizeScopeGrant). When
+	// nil, an update that submits permission scopes is refused.
+	grantor PermissionResolver
 }
 
 // NewAppManager creates a new application manager.
-func NewAppManager(storage AppStorage, tenants TenantManager) *AppManager {
-	return &AppManager{
+func NewAppManager(storage AppStorage, tenants TenantManager, opts ...AppManagerOption) *AppManager {
+	m := &AppManager{
 		storage: storage,
 		tenants: tenants,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // RegisterApp registers a new OAuth2 application. The returned Application
@@ -277,27 +285,38 @@ func redactAppSecrets(app *Application) *Application {
 // returns the updated record. It is idempotent: an application that already
 // agrees writes nothing.
 //
-// This is deliberately its OWN verb rather than a field on UpdateAppOptions.
-// Every public application-management transport passes UpdateAppOptions
-// straight through from its caller, so a scope field there would turn "update
-// my app" into "grant my app any permission I can name". A grant is conferred
-// by a server-side path that speaks for a grantor -- agent enrollment, the
-// central's dispatch-client bootstrap -- and by nothing else.
+// GrantScopes (through applyScopeGrant) is the single writer of
+// Application.Scopes after registration. Called directly it is a server-side
+// grantor path -- agent enrollment, the central's dispatch-client bootstrap --
+// and checks no caller. Scopes submitted by a caller on UpdateAppOptions reach
+// it only through the grantor gate in UpdateAppInTenant (authorizeScopeGrant):
+// a caller may grant only permissions its own qrdb identity holds, so "update
+// my app" never becomes "grant my app any permission I can name".
 func (m *AppManager) GrantScopes(ctx context.Context, tenantID, clientID string, scopes []string) (*Application, error) {
 	app, err := m.resolveApp(ctx, tenantID, clientID)
 	if err != nil {
 		return nil, err
 	}
-	if slices.Equal(app.Scopes, scopes) {
+	if !applyScopeGrant(app, scopes) {
 		return redactAppSecrets(app), nil
 	}
 
-	app.Scopes = scopes
 	app.Updated = time.Now()
 	if err := m.storage.UpdateApp(ctx, app); err != nil {
 		return nil, &IAMContextError{Message: "failed to update application", Cause: err}
 	}
 	return redactAppSecrets(app), nil
+}
+
+// applyScopeGrant sets app's granted permission set to scopes and reports
+// whether it changed. It is the one assignment to Application.Scopes after
+// registration; GrantScopes and the gated UpdateAppInTenant both call it.
+func applyScopeGrant(app *Application, scopes []string) bool {
+	if slices.Equal(app.Scopes, scopes) {
+		return false
+	}
+	app.Scopes = scopes
+	return true
 }
 
 // UpdateApp updates an existing application. The lookup is NOT tenant scoped;
@@ -309,6 +328,11 @@ func (m *AppManager) UpdateApp(ctx context.Context, clientID string, opts Update
 // UpdateAppInTenant updates an application, requiring it to belong to tenantID.
 // An empty tenantID falls back to the unscoped lookup.
 func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID string, opts UpdateAppOptions) (*Application, error) {
+	// A field Application cannot store is refused, never dropped.
+	if fields := opts.unstoredFields(); len(fields) > 0 {
+		return nil, &AppFieldNotStoredError{Fields: fields}
+	}
+
 	// Validate new redirect URIs exactly as registration does, before any
 	// field is applied, so a refused update leaves the app unchanged.
 	if opts.RedirectURIs != nil {
@@ -323,7 +347,18 @@ func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID s
 		return nil, err
 	}
 
-	// Apply updates
+	// The grantor gate runs before any field is applied: a submitted scope
+	// the caller cannot grant refuses the whole update.
+	if opts.Scopes != nil {
+		if err := m.authorizeScopeGrant(ctx, app.TenantID, app.ClientID, *opts.Scopes); err != nil {
+			return nil, err
+		}
+	}
+
+	// Apply updates. Every field, the scope grant included, is applied to
+	// this in-memory copy and committed by the single storage write below,
+	// so an update is either refused before that write with the application
+	// unchanged, or lands whole.
 	if opts.Name != nil {
 		app.Name = *opts.Name
 	}
@@ -340,10 +375,21 @@ func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID s
 		app.DefaultAudience = *opts.DefaultAudience
 	}
 	if opts.GrantTypes != nil {
+		for _, gt := range *opts.GrantTypes {
+			if !isValidGrantType(gt) {
+				return nil, newInvalidGrantTypeError(gt)
+			}
+		}
 		app.GrantTypes = *opts.GrantTypes
 	}
 	if opts.ResponseTypes != nil {
 		app.ResponseTypes = *opts.ResponseTypes
+	}
+	if opts.Scopes != nil {
+		applyScopeGrant(app, *opts.Scopes)
+	}
+	if err := applyMTLSUpdate(app, opts); err != nil {
+		return nil, err
 	}
 
 	app.Updated = time.Now()
@@ -354,6 +400,44 @@ func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID s
 	}
 
 	return redactAppSecrets(app), nil
+}
+
+// applyMTLSUpdate applies the token endpoint auth method and certificate pin
+// an update carries. The new pin replaces the old one in the same write, so
+// the old certificate stops binding at once. A self_signed_tls_client_auth
+// client may not be left without a pin.
+func applyMTLSUpdate(app *Application, opts UpdateAppOptions) error {
+	if opts.TokenEndpointAuthMethod == nil && opts.MTLSCertThumbprint == nil {
+		return nil
+	}
+	if opts.TokenEndpointAuthMethod != nil {
+		if err := ValidateTokenEndpointAuthMethod(*opts.TokenEndpointAuthMethod); err != nil {
+			return err
+		}
+		app.TokenEndpointAuthMethod = *opts.TokenEndpointAuthMethod
+	}
+	if opts.MTLSCertThumbprint != nil {
+		if *opts.MTLSCertThumbprint != "" {
+			if err := ValidateCertThumbprint(*opts.MTLSCertThumbprint); err != nil {
+				return err
+			}
+		}
+		app.MTLSCertThumbprint = *opts.MTLSCertThumbprint
+	}
+	if app.TokenEndpointAuthMethod == AuthMethodSelfSignedTLSClientAuth && app.MTLSCertThumbprint == "" {
+		return ErrMTLSThumbprintRequired
+	}
+	return nil
+}
+
+// newInvalidGrantTypeError codes an unsupported grant type as invalid input,
+// so the transports answer InvalidArgument / 400 rather than an internal error.
+func newInvalidGrantTypeError(grantType string) error {
+	return &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.app",
+		Err:  &IAMMessageError{Message: "invalid grant type: " + grantType},
+	}
 }
 
 // DeleteApp deletes an application. The lookup is NOT tenant scoped; callers
@@ -475,7 +559,7 @@ func (m *AppManager) validateRegisterOptions(opts RegisterAppOptions) error {
 	// Validate grant types (if provided) - empty is allowed since defaults will be applied
 	for _, gt := range opts.GrantTypes {
 		if !isValidGrantType(gt) {
-			return &IAMMessageError{Message: "invalid grant type: " + gt}
+			return newInvalidGrantTypeError(gt)
 		}
 	}
 

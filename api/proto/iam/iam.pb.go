@@ -4108,8 +4108,27 @@ type UpdateAppRequest struct {
 	ResourcePrefix string                 `protobuf:"bytes,5,opt,name=resource_prefix,json=resourcePrefix,proto3" json:"resource_prefix,omitempty"`
 	GrantTypes     []string               `protobuf:"bytes,6,rep,name=grant_types,json=grantTypes,proto3" json:"grant_types,omitempty"`
 	ResponseTypes  []string               `protobuf:"bytes,7,rep,name=response_types,json=responseTypes,proto3" json:"response_types,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Fields below are carried so an update never drops a value. Those the
+	// application does not store are refused with InvalidArgument.
+	Description             *string              `protobuf:"bytes,8,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	PostLogoutRedirectUris  []string             `protobuf:"bytes,9,rep,name=post_logout_redirect_uris,json=postLogoutRedirectUris,proto3" json:"post_logout_redirect_uris,omitempty"`
+	Scopes                  []string             `protobuf:"bytes,10,rep,name=scopes,proto3" json:"scopes,omitempty"`
+	TokenEndpointAuthMethod *string              `protobuf:"bytes,11,opt,name=token_endpoint_auth_method,json=tokenEndpointAuthMethod,proto3,oneof" json:"token_endpoint_auth_method,omitempty"`
+	Contacts                []string             `protobuf:"bytes,12,rep,name=contacts,proto3" json:"contacts,omitempty"`
+	LogoUri                 *string              `protobuf:"bytes,13,opt,name=logo_uri,json=logoUri,proto3,oneof" json:"logo_uri,omitempty"`
+	PolicyUri               *string              `protobuf:"bytes,14,opt,name=policy_uri,json=policyUri,proto3,oneof" json:"policy_uri,omitempty"`
+	TosUri                  *string              `protobuf:"bytes,15,opt,name=tos_uri,json=tosUri,proto3,oneof" json:"tos_uri,omitempty"`
+	JwksUri                 *string              `protobuf:"bytes,16,opt,name=jwks_uri,json=jwksUri,proto3,oneof" json:"jwks_uri,omitempty"`
+	Jwks                    *string              `protobuf:"bytes,17,opt,name=jwks,proto3,oneof" json:"jwks,omitempty"`
+	AccessTokenTtl          *durationpb.Duration `protobuf:"bytes,18,opt,name=access_token_ttl,json=accessTokenTtl,proto3" json:"access_token_ttl,omitempty"`
+	RefreshTokenTtl         *durationpb.Duration `protobuf:"bytes,19,opt,name=refresh_token_ttl,json=refreshTokenTtl,proto3" json:"refresh_token_ttl,omitempty"`
+	IdTokenTtl              *durationpb.Duration `protobuf:"bytes,20,opt,name=id_token_ttl,json=idTokenTtl,proto3" json:"id_token_ttl,omitempty"`
+	Metadata                map[string]string    `protobuf:"bytes,21,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Enabled                 *bool                `protobuf:"varint,22,opt,name=enabled,proto3,oneof" json:"enabled,omitempty"`
+	// mtls_cert_thumbprint re-binds the pinned RFC 8705 certificate thumbprint.
+	MtlsCertThumbprint *string `protobuf:"bytes,23,opt,name=mtls_cert_thumbprint,json=mtlsCertThumbprint,proto3,oneof" json:"mtls_cert_thumbprint,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *UpdateAppRequest) Reset() {
@@ -4189,6 +4208,118 @@ func (x *UpdateAppRequest) GetResponseTypes() []string {
 		return x.ResponseTypes
 	}
 	return nil
+}
+
+func (x *UpdateAppRequest) GetDescription() string {
+	if x != nil && x.Description != nil {
+		return *x.Description
+	}
+	return ""
+}
+
+func (x *UpdateAppRequest) GetPostLogoutRedirectUris() []string {
+	if x != nil {
+		return x.PostLogoutRedirectUris
+	}
+	return nil
+}
+
+func (x *UpdateAppRequest) GetScopes() []string {
+	if x != nil {
+		return x.Scopes
+	}
+	return nil
+}
+
+func (x *UpdateAppRequest) GetTokenEndpointAuthMethod() string {
+	if x != nil && x.TokenEndpointAuthMethod != nil {
+		return *x.TokenEndpointAuthMethod
+	}
+	return ""
+}
+
+func (x *UpdateAppRequest) GetContacts() []string {
+	if x != nil {
+		return x.Contacts
+	}
+	return nil
+}
+
+func (x *UpdateAppRequest) GetLogoUri() string {
+	if x != nil && x.LogoUri != nil {
+		return *x.LogoUri
+	}
+	return ""
+}
+
+func (x *UpdateAppRequest) GetPolicyUri() string {
+	if x != nil && x.PolicyUri != nil {
+		return *x.PolicyUri
+	}
+	return ""
+}
+
+func (x *UpdateAppRequest) GetTosUri() string {
+	if x != nil && x.TosUri != nil {
+		return *x.TosUri
+	}
+	return ""
+}
+
+func (x *UpdateAppRequest) GetJwksUri() string {
+	if x != nil && x.JwksUri != nil {
+		return *x.JwksUri
+	}
+	return ""
+}
+
+func (x *UpdateAppRequest) GetJwks() string {
+	if x != nil && x.Jwks != nil {
+		return *x.Jwks
+	}
+	return ""
+}
+
+func (x *UpdateAppRequest) GetAccessTokenTtl() *durationpb.Duration {
+	if x != nil {
+		return x.AccessTokenTtl
+	}
+	return nil
+}
+
+func (x *UpdateAppRequest) GetRefreshTokenTtl() *durationpb.Duration {
+	if x != nil {
+		return x.RefreshTokenTtl
+	}
+	return nil
+}
+
+func (x *UpdateAppRequest) GetIdTokenTtl() *durationpb.Duration {
+	if x != nil {
+		return x.IdTokenTtl
+	}
+	return nil
+}
+
+func (x *UpdateAppRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *UpdateAppRequest) GetEnabled() bool {
+	if x != nil && x.Enabled != nil {
+		return *x.Enabled
+	}
+	return false
+}
+
+func (x *UpdateAppRequest) GetMtlsCertThumbprint() string {
+	if x != nil && x.MtlsCertThumbprint != nil {
+		return *x.MtlsCertThumbprint
+	}
+	return ""
 }
 
 type DeleteAppRequest struct {
@@ -13526,7 +13657,7 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x0eresponse_types\x18\x06 \x03(\tR\rresponseTypes\"I\n" +
 	"\rGetAppRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
-	"\tclient_id\x18\x02 \x01(\tR\bclientId\"\xf6\x01\n" +
+	"\tclient_id\x18\x02 \x01(\tR\bclientId\"\xa4\t\n" +
 	"\x10UpdateAppRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\x12\x12\n" +
@@ -13535,7 +13666,40 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\x0fresource_prefix\x18\x05 \x01(\tR\x0eresourcePrefix\x12\x1f\n" +
 	"\vgrant_types\x18\x06 \x03(\tR\n" +
 	"grantTypes\x12%\n" +
-	"\x0eresponse_types\x18\a \x03(\tR\rresponseTypes\"L\n" +
+	"\x0eresponse_types\x18\a \x03(\tR\rresponseTypes\x12%\n" +
+	"\vdescription\x18\b \x01(\tH\x00R\vdescription\x88\x01\x01\x129\n" +
+	"\x19post_logout_redirect_uris\x18\t \x03(\tR\x16postLogoutRedirectUris\x12\x16\n" +
+	"\x06scopes\x18\n" +
+	" \x03(\tR\x06scopes\x12@\n" +
+	"\x1atoken_endpoint_auth_method\x18\v \x01(\tH\x01R\x17tokenEndpointAuthMethod\x88\x01\x01\x12\x1a\n" +
+	"\bcontacts\x18\f \x03(\tR\bcontacts\x12\x1e\n" +
+	"\blogo_uri\x18\r \x01(\tH\x02R\alogoUri\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"policy_uri\x18\x0e \x01(\tH\x03R\tpolicyUri\x88\x01\x01\x12\x1c\n" +
+	"\atos_uri\x18\x0f \x01(\tH\x04R\x06tosUri\x88\x01\x01\x12\x1e\n" +
+	"\bjwks_uri\x18\x10 \x01(\tH\x05R\ajwksUri\x88\x01\x01\x12\x17\n" +
+	"\x04jwks\x18\x11 \x01(\tH\x06R\x04jwks\x88\x01\x01\x12C\n" +
+	"\x10access_token_ttl\x18\x12 \x01(\v2\x19.google.protobuf.DurationR\x0eaccessTokenTtl\x12E\n" +
+	"\x11refresh_token_ttl\x18\x13 \x01(\v2\x19.google.protobuf.DurationR\x0frefreshTokenTtl\x12;\n" +
+	"\fid_token_ttl\x18\x14 \x01(\v2\x19.google.protobuf.DurationR\n" +
+	"idTokenTtl\x12K\n" +
+	"\bmetadata\x18\x15 \x03(\v2/.quicbaas.iam.v1.UpdateAppRequest.MetadataEntryR\bmetadata\x12\x1d\n" +
+	"\aenabled\x18\x16 \x01(\bH\aR\aenabled\x88\x01\x01\x125\n" +
+	"\x14mtls_cert_thumbprint\x18\x17 \x01(\tH\bR\x12mtlsCertThumbprint\x88\x01\x01\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0e\n" +
+	"\f_descriptionB\x1d\n" +
+	"\x1b_token_endpoint_auth_methodB\v\n" +
+	"\t_logo_uriB\r\n" +
+	"\v_policy_uriB\n" +
+	"\n" +
+	"\b_tos_uriB\v\n" +
+	"\t_jwks_uriB\a\n" +
+	"\x05_jwksB\n" +
+	"\n" +
+	"\b_enabledB\x17\n" +
+	"\x15_mtls_cert_thumbprint\"L\n" +
 	"\x10DeleteAppRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\"-\n" +
@@ -14528,7 +14692,7 @@ func file_api_proto_iam_iam_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_iam_iam_proto_enumTypes = make([]protoimpl.EnumInfo, 9)
-var file_api_proto_iam_iam_proto_msgTypes = make([]protoimpl.MessageInfo, 204)
+var file_api_proto_iam_iam_proto_msgTypes = make([]protoimpl.MessageInfo, 205)
 var file_api_proto_iam_iam_proto_goTypes = []any{
 	(AdminRole)(0),                            // 0: quicbaas.iam.v1.AdminRole
 	(ConsentPurpose)(0),                       // 1: quicbaas.iam.v1.ConsentPurpose
@@ -14729,43 +14893,44 @@ var file_api_proto_iam_iam_proto_goTypes = []any{
 	nil,                                       // 196: quicbaas.iam.v1.CheckBatchRequest.ContextEntry
 	nil,                                       // 197: quicbaas.iam.v1.CreateUserRequest.AttributesEntry
 	nil,                                       // 198: quicbaas.iam.v1.UpdateUserRequest.AttributesEntry
-	nil,                                       // 199: quicbaas.iam.v1.CreatePolicyRequest.LabelsEntry
-	nil,                                       // 200: quicbaas.iam.v1.UpdatePolicyRequest.LabelsEntry
-	nil,                                       // 201: quicbaas.iam.v1.TestPolicyRequest.ContextEntry
-	nil,                                       // 202: quicbaas.iam.v1.AdminAssignment.MetadataEntry
-	nil,                                       // 203: quicbaas.iam.v1.CreateAdminAssignmentRequest.MetadataEntry
-	nil,                                       // 204: quicbaas.iam.v1.UpdateAdminAssignmentRequest.MetadataEntry
-	nil,                                       // 205: quicbaas.iam.v1.Consent.MetadataEntry
-	nil,                                       // 206: quicbaas.iam.v1.DataExportRequest.MetadataEntry
-	nil,                                       // 207: quicbaas.iam.v1.UserProfileExport.AttributesEntry
-	nil,                                       // 208: quicbaas.iam.v1.DataDeletionRequest.MetadataEntry
-	nil,                                       // 209: quicbaas.iam.v1.DeletionSummary.AdditionalDataEntry
-	nil,                                       // 210: quicbaas.iam.v1.AuditEvent.DetailsEntry
-	nil,                                       // 211: quicbaas.iam.v1.ClaimMappings.AttributesEntry
-	nil,                                       // 212: quicbaas.iam.v1.FederatedIdentity.ClaimsEntry
-	(*timestamppb.Timestamp)(nil),             // 213: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),               // 214: google.protobuf.Duration
+	nil,                                       // 199: quicbaas.iam.v1.UpdateAppRequest.MetadataEntry
+	nil,                                       // 200: quicbaas.iam.v1.CreatePolicyRequest.LabelsEntry
+	nil,                                       // 201: quicbaas.iam.v1.UpdatePolicyRequest.LabelsEntry
+	nil,                                       // 202: quicbaas.iam.v1.TestPolicyRequest.ContextEntry
+	nil,                                       // 203: quicbaas.iam.v1.AdminAssignment.MetadataEntry
+	nil,                                       // 204: quicbaas.iam.v1.CreateAdminAssignmentRequest.MetadataEntry
+	nil,                                       // 205: quicbaas.iam.v1.UpdateAdminAssignmentRequest.MetadataEntry
+	nil,                                       // 206: quicbaas.iam.v1.Consent.MetadataEntry
+	nil,                                       // 207: quicbaas.iam.v1.DataExportRequest.MetadataEntry
+	nil,                                       // 208: quicbaas.iam.v1.UserProfileExport.AttributesEntry
+	nil,                                       // 209: quicbaas.iam.v1.DataDeletionRequest.MetadataEntry
+	nil,                                       // 210: quicbaas.iam.v1.DeletionSummary.AdditionalDataEntry
+	nil,                                       // 211: quicbaas.iam.v1.AuditEvent.DetailsEntry
+	nil,                                       // 212: quicbaas.iam.v1.ClaimMappings.AttributesEntry
+	nil,                                       // 213: quicbaas.iam.v1.FederatedIdentity.ClaimsEntry
+	(*timestamppb.Timestamp)(nil),             // 214: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),               // 215: google.protobuf.Duration
 }
 var file_api_proto_iam_iam_proto_depIdxs = []int32{
 	10,  // 0: quicbaas.iam.v1.Tenant.settings:type_name -> quicbaas.iam.v1.TenantSettings
-	213, // 1: quicbaas.iam.v1.Tenant.created_at:type_name -> google.protobuf.Timestamp
-	213, // 2: quicbaas.iam.v1.Tenant.updated_at:type_name -> google.protobuf.Timestamp
+	214, // 1: quicbaas.iam.v1.Tenant.created_at:type_name -> google.protobuf.Timestamp
+	214, // 2: quicbaas.iam.v1.Tenant.updated_at:type_name -> google.protobuf.Timestamp
 	191, // 3: quicbaas.iam.v1.TenantSettings.named_networks:type_name -> quicbaas.iam.v1.TenantSettings.NamedNetworksEntry
 	192, // 4: quicbaas.iam.v1.User.attributes:type_name -> quicbaas.iam.v1.User.AttributesEntry
-	213, // 5: quicbaas.iam.v1.User.created_at:type_name -> google.protobuf.Timestamp
-	213, // 6: quicbaas.iam.v1.User.updated_at:type_name -> google.protobuf.Timestamp
-	213, // 7: quicbaas.iam.v1.User.last_auth:type_name -> google.protobuf.Timestamp
-	213, // 8: quicbaas.iam.v1.User.invite_expires_at:type_name -> google.protobuf.Timestamp
-	213, // 9: quicbaas.iam.v1.Role.created_at:type_name -> google.protobuf.Timestamp
-	213, // 10: quicbaas.iam.v1.Role.updated_at:type_name -> google.protobuf.Timestamp
-	213, // 11: quicbaas.iam.v1.Application.created_at:type_name -> google.protobuf.Timestamp
-	213, // 12: quicbaas.iam.v1.Application.updated_at:type_name -> google.protobuf.Timestamp
+	214, // 5: quicbaas.iam.v1.User.created_at:type_name -> google.protobuf.Timestamp
+	214, // 6: quicbaas.iam.v1.User.updated_at:type_name -> google.protobuf.Timestamp
+	214, // 7: quicbaas.iam.v1.User.last_auth:type_name -> google.protobuf.Timestamp
+	214, // 8: quicbaas.iam.v1.User.invite_expires_at:type_name -> google.protobuf.Timestamp
+	214, // 9: quicbaas.iam.v1.Role.created_at:type_name -> google.protobuf.Timestamp
+	214, // 10: quicbaas.iam.v1.Role.updated_at:type_name -> google.protobuf.Timestamp
+	214, // 11: quicbaas.iam.v1.Application.created_at:type_name -> google.protobuf.Timestamp
+	214, // 12: quicbaas.iam.v1.Application.updated_at:type_name -> google.protobuf.Timestamp
 	193, // 13: quicbaas.iam.v1.Policy.labels:type_name -> quicbaas.iam.v1.Policy.LabelsEntry
-	213, // 14: quicbaas.iam.v1.Policy.created_at:type_name -> google.protobuf.Timestamp
-	213, // 15: quicbaas.iam.v1.Policy.updated_at:type_name -> google.protobuf.Timestamp
+	214, // 14: quicbaas.iam.v1.Policy.created_at:type_name -> google.protobuf.Timestamp
+	214, // 15: quicbaas.iam.v1.Policy.updated_at:type_name -> google.protobuf.Timestamp
 	15,  // 16: quicbaas.iam.v1.Policy.load_error:type_name -> quicbaas.iam.v1.PolicyLoadError
 	194, // 17: quicbaas.iam.v1.Subject.attributes:type_name -> quicbaas.iam.v1.Subject.AttributesEntry
-	213, // 18: quicbaas.iam.v1.Subject.mfa_timestamp:type_name -> google.protobuf.Timestamp
+	214, // 18: quicbaas.iam.v1.Subject.mfa_timestamp:type_name -> google.protobuf.Timestamp
 	16,  // 19: quicbaas.iam.v1.CheckRequest.subject:type_name -> quicbaas.iam.v1.Subject
 	195, // 20: quicbaas.iam.v1.CheckRequest.context:type_name -> quicbaas.iam.v1.CheckRequest.ContextEntry
 	16,  // 21: quicbaas.iam.v1.CheckBatchRequest.subject:type_name -> quicbaas.iam.v1.Subject
@@ -14776,325 +14941,329 @@ var file_api_proto_iam_iam_proto_depIdxs = []int32{
 	25,  // 26: quicbaas.iam.v1.CreateTenantRequest.engine_entitlements:type_name -> quicbaas.iam.v1.TenantEngineEntitlements
 	10,  // 27: quicbaas.iam.v1.UpdateTenantRequest.settings:type_name -> quicbaas.iam.v1.TenantSettings
 	9,   // 28: quicbaas.iam.v1.ListTenantsResponse.tenants:type_name -> quicbaas.iam.v1.Tenant
-	213, // 29: quicbaas.iam.v1.ProvisionTenantResponse.invite_expires_at:type_name -> google.protobuf.Timestamp
-	213, // 30: quicbaas.iam.v1.ProvisionTenantResponse.timestamp:type_name -> google.protobuf.Timestamp
+	214, // 29: quicbaas.iam.v1.ProvisionTenantResponse.invite_expires_at:type_name -> google.protobuf.Timestamp
+	214, // 30: quicbaas.iam.v1.ProvisionTenantResponse.timestamp:type_name -> google.protobuf.Timestamp
 	197, // 31: quicbaas.iam.v1.CreateUserRequest.attributes:type_name -> quicbaas.iam.v1.CreateUserRequest.AttributesEntry
 	198, // 32: quicbaas.iam.v1.UpdateUserRequest.attributes:type_name -> quicbaas.iam.v1.UpdateUserRequest.AttributesEntry
 	37,  // 33: quicbaas.iam.v1.UpdateUserRequest.auth_methods:type_name -> quicbaas.iam.v1.AuthMethodsUpdate
 	11,  // 34: quicbaas.iam.v1.ListUsersResponse.users:type_name -> quicbaas.iam.v1.User
 	12,  // 35: quicbaas.iam.v1.ListRolesResponse.roles:type_name -> quicbaas.iam.v1.Role
 	54,  // 36: quicbaas.iam.v1.ReconcileRolesResponse.roles:type_name -> quicbaas.iam.v1.RoleReconcileResult
-	13,  // 37: quicbaas.iam.v1.ListAppsResponse.apps:type_name -> quicbaas.iam.v1.Application
-	199, // 38: quicbaas.iam.v1.CreatePolicyRequest.labels:type_name -> quicbaas.iam.v1.CreatePolicyRequest.LabelsEntry
-	200, // 39: quicbaas.iam.v1.UpdatePolicyRequest.labels:type_name -> quicbaas.iam.v1.UpdatePolicyRequest.LabelsEntry
-	14,  // 40: quicbaas.iam.v1.ListPoliciesResponse.policies:type_name -> quicbaas.iam.v1.Policy
-	16,  // 41: quicbaas.iam.v1.TestPolicyRequest.subject:type_name -> quicbaas.iam.v1.Subject
-	201, // 42: quicbaas.iam.v1.TestPolicyRequest.context:type_name -> quicbaas.iam.v1.TestPolicyRequest.ContextEntry
-	0,   // 43: quicbaas.iam.v1.AdminAssignment.admin_role:type_name -> quicbaas.iam.v1.AdminRole
-	75,  // 44: quicbaas.iam.v1.AdminAssignment.resource_scopes:type_name -> quicbaas.iam.v1.ResourceScope
-	213, // 45: quicbaas.iam.v1.AdminAssignment.expires_at:type_name -> google.protobuf.Timestamp
-	213, // 46: quicbaas.iam.v1.AdminAssignment.granted_at:type_name -> google.protobuf.Timestamp
-	213, // 47: quicbaas.iam.v1.AdminAssignment.last_used_at:type_name -> google.protobuf.Timestamp
-	202, // 48: quicbaas.iam.v1.AdminAssignment.metadata:type_name -> quicbaas.iam.v1.AdminAssignment.MetadataEntry
-	76,  // 49: quicbaas.iam.v1.AdminAssignmentList.assignments:type_name -> quicbaas.iam.v1.AdminAssignment
-	0,   // 50: quicbaas.iam.v1.CreateAdminAssignmentRequest.admin_role:type_name -> quicbaas.iam.v1.AdminRole
-	75,  // 51: quicbaas.iam.v1.CreateAdminAssignmentRequest.resource_scopes:type_name -> quicbaas.iam.v1.ResourceScope
-	213, // 52: quicbaas.iam.v1.CreateAdminAssignmentRequest.expires_at:type_name -> google.protobuf.Timestamp
-	203, // 53: quicbaas.iam.v1.CreateAdminAssignmentRequest.metadata:type_name -> quicbaas.iam.v1.CreateAdminAssignmentRequest.MetadataEntry
-	0,   // 54: quicbaas.iam.v1.UpdateAdminAssignmentRequest.admin_role:type_name -> quicbaas.iam.v1.AdminRole
-	75,  // 55: quicbaas.iam.v1.UpdateAdminAssignmentRequest.resource_scopes:type_name -> quicbaas.iam.v1.ResourceScope
-	213, // 56: quicbaas.iam.v1.UpdateAdminAssignmentRequest.expires_at:type_name -> google.protobuf.Timestamp
-	204, // 57: quicbaas.iam.v1.UpdateAdminAssignmentRequest.metadata:type_name -> quicbaas.iam.v1.UpdateAdminAssignmentRequest.MetadataEntry
-	0,   // 58: quicbaas.iam.v1.ListAdminAssignmentsRequest.admin_role:type_name -> quicbaas.iam.v1.AdminRole
-	0,   // 59: quicbaas.iam.v1.CheckAdminPermissionResponse.admin_role:type_name -> quicbaas.iam.v1.AdminRole
-	213, // 60: quicbaas.iam.v1.ImpersonationSession.started_at:type_name -> google.protobuf.Timestamp
-	213, // 61: quicbaas.iam.v1.ImpersonationSession.expires_at:type_name -> google.protobuf.Timestamp
-	213, // 62: quicbaas.iam.v1.ImpersonationSession.ended_at:type_name -> google.protobuf.Timestamp
-	86,  // 63: quicbaas.iam.v1.ImpersonationSessionList.sessions:type_name -> quicbaas.iam.v1.ImpersonationSession
-	214, // 64: quicbaas.iam.v1.StartImpersonationRequest.duration:type_name -> google.protobuf.Duration
-	1,   // 65: quicbaas.iam.v1.Consent.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
-	2,   // 66: quicbaas.iam.v1.Consent.status:type_name -> quicbaas.iam.v1.ConsentStatus
-	213, // 67: quicbaas.iam.v1.Consent.granted_at:type_name -> google.protobuf.Timestamp
-	213, // 68: quicbaas.iam.v1.Consent.withdrawn_at:type_name -> google.protobuf.Timestamp
-	213, // 69: quicbaas.iam.v1.Consent.expires_at:type_name -> google.protobuf.Timestamp
-	205, // 70: quicbaas.iam.v1.Consent.metadata:type_name -> quicbaas.iam.v1.Consent.MetadataEntry
-	213, // 71: quicbaas.iam.v1.Consent.created_at:type_name -> google.protobuf.Timestamp
-	213, // 72: quicbaas.iam.v1.Consent.updated_at:type_name -> google.protobuf.Timestamp
-	92,  // 73: quicbaas.iam.v1.ConsentList.consents:type_name -> quicbaas.iam.v1.Consent
-	1,   // 74: quicbaas.iam.v1.GrantConsentRequest.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
-	213, // 75: quicbaas.iam.v1.GrantConsentRequest.expires_at:type_name -> google.protobuf.Timestamp
-	1,   // 76: quicbaas.iam.v1.WithdrawConsentRequest.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
-	1,   // 77: quicbaas.iam.v1.GetConsentRequest.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
-	3,   // 78: quicbaas.iam.v1.DataExportRequest.format:type_name -> quicbaas.iam.v1.DataExportFormat
-	4,   // 79: quicbaas.iam.v1.DataExportRequest.status:type_name -> quicbaas.iam.v1.DataExportStatus
-	213, // 80: quicbaas.iam.v1.DataExportRequest.requested_at:type_name -> google.protobuf.Timestamp
-	213, // 81: quicbaas.iam.v1.DataExportRequest.started_at:type_name -> google.protobuf.Timestamp
-	213, // 82: quicbaas.iam.v1.DataExportRequest.completed_at:type_name -> google.protobuf.Timestamp
-	213, // 83: quicbaas.iam.v1.DataExportRequest.expires_at:type_name -> google.protobuf.Timestamp
-	206, // 84: quicbaas.iam.v1.DataExportRequest.metadata:type_name -> quicbaas.iam.v1.DataExportRequest.MetadataEntry
-	3,   // 85: quicbaas.iam.v1.RequestExportRequest.format:type_name -> quicbaas.iam.v1.DataExportFormat
-	104, // 86: quicbaas.iam.v1.UserDataExport.export_metadata:type_name -> quicbaas.iam.v1.ExportMetadata
-	105, // 87: quicbaas.iam.v1.UserDataExport.profile:type_name -> quicbaas.iam.v1.UserProfileExport
-	106, // 88: quicbaas.iam.v1.UserDataExport.sessions:type_name -> quicbaas.iam.v1.SessionExport
-	107, // 89: quicbaas.iam.v1.UserDataExport.consents:type_name -> quicbaas.iam.v1.ConsentExport
-	108, // 90: quicbaas.iam.v1.UserDataExport.roles:type_name -> quicbaas.iam.v1.RoleAssignmentExport
-	109, // 91: quicbaas.iam.v1.UserDataExport.audit_logs:type_name -> quicbaas.iam.v1.AuditLogExport
-	110, // 92: quicbaas.iam.v1.UserDataExport.credentials:type_name -> quicbaas.iam.v1.CredentialExport
-	111, // 93: quicbaas.iam.v1.UserDataExport.mfa_info:type_name -> quicbaas.iam.v1.MFAInfoExport
-	213, // 94: quicbaas.iam.v1.ExportMetadata.exported_at:type_name -> google.protobuf.Timestamp
-	3,   // 95: quicbaas.iam.v1.ExportMetadata.format:type_name -> quicbaas.iam.v1.DataExportFormat
-	207, // 96: quicbaas.iam.v1.UserProfileExport.attributes:type_name -> quicbaas.iam.v1.UserProfileExport.AttributesEntry
-	213, // 97: quicbaas.iam.v1.UserProfileExport.created:type_name -> google.protobuf.Timestamp
-	213, // 98: quicbaas.iam.v1.UserProfileExport.updated:type_name -> google.protobuf.Timestamp
-	213, // 99: quicbaas.iam.v1.UserProfileExport.last_auth:type_name -> google.protobuf.Timestamp
-	213, // 100: quicbaas.iam.v1.SessionExport.started_at:type_name -> google.protobuf.Timestamp
-	213, // 101: quicbaas.iam.v1.SessionExport.expires_at:type_name -> google.protobuf.Timestamp
-	213, // 102: quicbaas.iam.v1.SessionExport.last_active:type_name -> google.protobuf.Timestamp
-	213, // 103: quicbaas.iam.v1.SessionExport.ended_at:type_name -> google.protobuf.Timestamp
-	1,   // 104: quicbaas.iam.v1.ConsentExport.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
-	2,   // 105: quicbaas.iam.v1.ConsentExport.status:type_name -> quicbaas.iam.v1.ConsentStatus
-	213, // 106: quicbaas.iam.v1.ConsentExport.granted_at:type_name -> google.protobuf.Timestamp
-	213, // 107: quicbaas.iam.v1.ConsentExport.withdrawn_at:type_name -> google.protobuf.Timestamp
-	213, // 108: quicbaas.iam.v1.RoleAssignmentExport.assigned_at:type_name -> google.protobuf.Timestamp
-	213, // 109: quicbaas.iam.v1.AuditLogExport.timestamp:type_name -> google.protobuf.Timestamp
-	213, // 110: quicbaas.iam.v1.CredentialExport.created_at:type_name -> google.protobuf.Timestamp
-	213, // 111: quicbaas.iam.v1.CredentialExport.last_used_at:type_name -> google.protobuf.Timestamp
-	213, // 112: quicbaas.iam.v1.MFAInfoExport.enrolled_at:type_name -> google.protobuf.Timestamp
-	5,   // 113: quicbaas.iam.v1.DataDeletionRequest.status:type_name -> quicbaas.iam.v1.DeletionStatus
-	213, // 114: quicbaas.iam.v1.DataDeletionRequest.requested_at:type_name -> google.protobuf.Timestamp
-	213, // 115: quicbaas.iam.v1.DataDeletionRequest.grace_period_ends_at:type_name -> google.protobuf.Timestamp
-	213, // 116: quicbaas.iam.v1.DataDeletionRequest.started_at:type_name -> google.protobuf.Timestamp
-	213, // 117: quicbaas.iam.v1.DataDeletionRequest.completed_at:type_name -> google.protobuf.Timestamp
-	213, // 118: quicbaas.iam.v1.DataDeletionRequest.cancelled_at:type_name -> google.protobuf.Timestamp
-	118, // 119: quicbaas.iam.v1.DataDeletionRequest.deleted_data_summary:type_name -> quicbaas.iam.v1.DeletionSummary
-	208, // 120: quicbaas.iam.v1.DataDeletionRequest.metadata:type_name -> quicbaas.iam.v1.DataDeletionRequest.MetadataEntry
-	209, // 121: quicbaas.iam.v1.DeletionSummary.additional_data:type_name -> quicbaas.iam.v1.DeletionSummary.AdditionalDataEntry
-	6,   // 122: quicbaas.iam.v1.BeginMFAEnrollmentRequest.method:type_name -> quicbaas.iam.v1.MFAMethod
-	213, // 123: quicbaas.iam.v1.BeginMFAEnrollmentResponse.expires_at:type_name -> google.protobuf.Timestamp
-	6,   // 124: quicbaas.iam.v1.BeginMFAChallengeResponse.method:type_name -> quicbaas.iam.v1.MFAMethod
-	213, // 125: quicbaas.iam.v1.BeginMFAChallengeResponse.expires_at:type_name -> google.protobuf.Timestamp
-	213, // 126: quicbaas.iam.v1.VerifyMFAChallengeResponse.verified_at:type_name -> google.protobuf.Timestamp
-	6,   // 127: quicbaas.iam.v1.GetMFAStatusResponse.method:type_name -> quicbaas.iam.v1.MFAMethod
-	213, // 128: quicbaas.iam.v1.GetMFAStatusResponse.enrolled_at:type_name -> google.protobuf.Timestamp
-	213, // 129: quicbaas.iam.v1.GetMFAStatusResponse.last_verified:type_name -> google.protobuf.Timestamp
-	213, // 130: quicbaas.iam.v1.GetBackupCodeStatusResponse.generated_at:type_name -> google.protobuf.Timestamp
-	213, // 131: quicbaas.iam.v1.Session.created_at:type_name -> google.protobuf.Timestamp
-	213, // 132: quicbaas.iam.v1.Session.last_active:type_name -> google.protobuf.Timestamp
-	213, // 133: quicbaas.iam.v1.Session.expires_at:type_name -> google.protobuf.Timestamp
-	141, // 134: quicbaas.iam.v1.ListSessionsResponse.sessions:type_name -> quicbaas.iam.v1.Session
-	210, // 135: quicbaas.iam.v1.AuditEvent.details:type_name -> quicbaas.iam.v1.AuditEvent.DetailsEntry
-	213, // 136: quicbaas.iam.v1.AuditEvent.timestamp:type_name -> google.protobuf.Timestamp
-	213, // 137: quicbaas.iam.v1.QueryAuditEventsRequest.start_time:type_name -> google.protobuf.Timestamp
-	213, // 138: quicbaas.iam.v1.QueryAuditEventsRequest.end_time:type_name -> google.protobuf.Timestamp
-	151, // 139: quicbaas.iam.v1.QueryAuditEventsResponse.events:type_name -> quicbaas.iam.v1.AuditEvent
-	151, // 140: quicbaas.iam.v1.RecordAuditEventRequest.event:type_name -> quicbaas.iam.v1.AuditEvent
-	211, // 141: quicbaas.iam.v1.ClaimMappings.attributes:type_name -> quicbaas.iam.v1.ClaimMappings.AttributesEntry
-	7,   // 142: quicbaas.iam.v1.ExternalProvider.type:type_name -> quicbaas.iam.v1.ProviderType
-	157, // 143: quicbaas.iam.v1.ExternalProvider.claim_mappings:type_name -> quicbaas.iam.v1.ClaimMappings
-	213, // 144: quicbaas.iam.v1.ExternalProvider.created_at:type_name -> google.protobuf.Timestamp
-	213, // 145: quicbaas.iam.v1.ExternalProvider.updated_at:type_name -> google.protobuf.Timestamp
-	212, // 146: quicbaas.iam.v1.FederatedIdentity.claims:type_name -> quicbaas.iam.v1.FederatedIdentity.ClaimsEntry
-	213, // 147: quicbaas.iam.v1.FederatedIdentity.last_login:type_name -> google.protobuf.Timestamp
-	213, // 148: quicbaas.iam.v1.FederatedIdentity.created_at:type_name -> google.protobuf.Timestamp
-	213, // 149: quicbaas.iam.v1.FederatedIdentity.updated_at:type_name -> google.protobuf.Timestamp
-	7,   // 150: quicbaas.iam.v1.CreateProviderRequest.type:type_name -> quicbaas.iam.v1.ProviderType
-	157, // 151: quicbaas.iam.v1.CreateProviderRequest.claim_mappings:type_name -> quicbaas.iam.v1.ClaimMappings
-	7,   // 152: quicbaas.iam.v1.UpdateProviderRequest.type:type_name -> quicbaas.iam.v1.ProviderType
-	157, // 153: quicbaas.iam.v1.UpdateProviderRequest.claim_mappings:type_name -> quicbaas.iam.v1.ClaimMappings
-	158, // 154: quicbaas.iam.v1.ListProvidersResponse.providers:type_name -> quicbaas.iam.v1.ExternalProvider
-	213, // 155: quicbaas.iam.v1.BeginFederatedLoginResponse.expires_at:type_name -> google.protobuf.Timestamp
-	11,  // 156: quicbaas.iam.v1.HandleFederatedCallbackResponse.user:type_name -> quicbaas.iam.v1.User
-	159, // 157: quicbaas.iam.v1.HandleFederatedCallbackResponse.federated_identity:type_name -> quicbaas.iam.v1.FederatedIdentity
-	159, // 158: quicbaas.iam.v1.GetUserLinksResponse.identities:type_name -> quicbaas.iam.v1.FederatedIdentity
-	177, // 159: quicbaas.iam.v1.ListWebAuthnCredentialsResponse.credentials:type_name -> quicbaas.iam.v1.WebAuthnCredential
-	213, // 160: quicbaas.iam.v1.GetInviteResponse.expires_at:type_name -> google.protobuf.Timestamp
-	23,  // 161: quicbaas.iam.v1.IAMService.CreateTenant:input_type -> quicbaas.iam.v1.CreateTenantRequest
-	26,  // 162: quicbaas.iam.v1.IAMService.GetTenant:input_type -> quicbaas.iam.v1.GetTenantRequest
-	27,  // 163: quicbaas.iam.v1.IAMService.UpdateTenant:input_type -> quicbaas.iam.v1.UpdateTenantRequest
-	28,  // 164: quicbaas.iam.v1.IAMService.DeleteTenant:input_type -> quicbaas.iam.v1.DeleteTenantRequest
-	30,  // 165: quicbaas.iam.v1.IAMService.ListTenants:input_type -> quicbaas.iam.v1.ListTenantsRequest
-	32,  // 166: quicbaas.iam.v1.IAMService.ProvisionTenant:input_type -> quicbaas.iam.v1.ProvisionTenantRequest
-	34,  // 167: quicbaas.iam.v1.IAMService.CreateUser:input_type -> quicbaas.iam.v1.CreateUserRequest
-	35,  // 168: quicbaas.iam.v1.IAMService.GetUser:input_type -> quicbaas.iam.v1.GetUserRequest
-	36,  // 169: quicbaas.iam.v1.IAMService.UpdateUser:input_type -> quicbaas.iam.v1.UpdateUserRequest
-	38,  // 170: quicbaas.iam.v1.IAMService.DeleteUser:input_type -> quicbaas.iam.v1.DeleteUserRequest
-	40,  // 171: quicbaas.iam.v1.IAMService.ListUsers:input_type -> quicbaas.iam.v1.ListUsersRequest
-	178, // 172: quicbaas.iam.v1.IAMService.ListWebAuthnCredentials:input_type -> quicbaas.iam.v1.ListWebAuthnCredentialsRequest
-	180, // 173: quicbaas.iam.v1.IAMService.DeleteWebAuthnCredential:input_type -> quicbaas.iam.v1.DeleteWebAuthnCredentialRequest
-	182, // 174: quicbaas.iam.v1.IAMService.DeleteWebAuthnCredentials:input_type -> quicbaas.iam.v1.DeleteWebAuthnCredentialsRequest
-	184, // 175: quicbaas.iam.v1.IAMService.GetInvite:input_type -> quicbaas.iam.v1.GetInviteRequest
-	186, // 176: quicbaas.iam.v1.IAMService.ActivateFIDO2Begin:input_type -> quicbaas.iam.v1.ActivateInviteRequest
-	188, // 177: quicbaas.iam.v1.IAMService.ActivateFIDO2Finish:input_type -> quicbaas.iam.v1.ActivateFIDO2FinishRequest
-	189, // 178: quicbaas.iam.v1.IAMService.ActivatePIV:input_type -> quicbaas.iam.v1.ActivatePIVRequest
-	42,  // 179: quicbaas.iam.v1.IAMService.CreateRole:input_type -> quicbaas.iam.v1.CreateRoleRequest
-	43,  // 180: quicbaas.iam.v1.IAMService.GetRole:input_type -> quicbaas.iam.v1.GetRoleRequest
-	44,  // 181: quicbaas.iam.v1.IAMService.UpdateRole:input_type -> quicbaas.iam.v1.UpdateRoleRequest
-	45,  // 182: quicbaas.iam.v1.IAMService.DeleteRole:input_type -> quicbaas.iam.v1.DeleteRoleRequest
-	47,  // 183: quicbaas.iam.v1.IAMService.ListRoles:input_type -> quicbaas.iam.v1.ListRolesRequest
-	49,  // 184: quicbaas.iam.v1.IAMService.AssignRole:input_type -> quicbaas.iam.v1.AssignRoleRequest
-	51,  // 185: quicbaas.iam.v1.IAMService.RevokeRole:input_type -> quicbaas.iam.v1.RevokeRoleRequest
-	53,  // 186: quicbaas.iam.v1.IAMService.ReconcileRoles:input_type -> quicbaas.iam.v1.ReconcileRolesRequest
-	56,  // 187: quicbaas.iam.v1.IAMService.RegisterApp:input_type -> quicbaas.iam.v1.RegisterAppRequest
-	57,  // 188: quicbaas.iam.v1.IAMService.GetApp:input_type -> quicbaas.iam.v1.GetAppRequest
-	58,  // 189: quicbaas.iam.v1.IAMService.UpdateApp:input_type -> quicbaas.iam.v1.UpdateAppRequest
-	59,  // 190: quicbaas.iam.v1.IAMService.DeleteApp:input_type -> quicbaas.iam.v1.DeleteAppRequest
-	61,  // 191: quicbaas.iam.v1.IAMService.ListApps:input_type -> quicbaas.iam.v1.ListAppsRequest
-	63,  // 192: quicbaas.iam.v1.IAMService.RotateAppSecret:input_type -> quicbaas.iam.v1.RotateAppSecretRequest
-	64,  // 193: quicbaas.iam.v1.IAMService.CreatePolicy:input_type -> quicbaas.iam.v1.CreatePolicyRequest
-	65,  // 194: quicbaas.iam.v1.IAMService.GetPolicy:input_type -> quicbaas.iam.v1.GetPolicyRequest
-	66,  // 195: quicbaas.iam.v1.IAMService.UpdatePolicy:input_type -> quicbaas.iam.v1.UpdatePolicyRequest
-	67,  // 196: quicbaas.iam.v1.IAMService.DeletePolicy:input_type -> quicbaas.iam.v1.DeletePolicyRequest
-	69,  // 197: quicbaas.iam.v1.IAMService.ListPolicies:input_type -> quicbaas.iam.v1.ListPoliciesRequest
-	71,  // 198: quicbaas.iam.v1.IAMService.ValidatePolicy:input_type -> quicbaas.iam.v1.ValidatePolicyRequest
-	73,  // 199: quicbaas.iam.v1.IAMService.TestPolicy:input_type -> quicbaas.iam.v1.TestPolicyRequest
-	78,  // 200: quicbaas.iam.v1.IAMService.CreateAdminAssignment:input_type -> quicbaas.iam.v1.CreateAdminAssignmentRequest
-	79,  // 201: quicbaas.iam.v1.IAMService.GetAdminAssignment:input_type -> quicbaas.iam.v1.GetAdminAssignmentRequest
-	80,  // 202: quicbaas.iam.v1.IAMService.UpdateAdminAssignment:input_type -> quicbaas.iam.v1.UpdateAdminAssignmentRequest
-	81,  // 203: quicbaas.iam.v1.IAMService.DeleteAdminAssignment:input_type -> quicbaas.iam.v1.DeleteAdminAssignmentRequest
-	83,  // 204: quicbaas.iam.v1.IAMService.ListAdminAssignments:input_type -> quicbaas.iam.v1.ListAdminAssignmentsRequest
-	84,  // 205: quicbaas.iam.v1.IAMService.CheckAdminPermission:input_type -> quicbaas.iam.v1.CheckAdminPermissionRequest
-	88,  // 206: quicbaas.iam.v1.IAMService.StartImpersonation:input_type -> quicbaas.iam.v1.StartImpersonationRequest
-	89,  // 207: quicbaas.iam.v1.IAMService.EndImpersonation:input_type -> quicbaas.iam.v1.EndImpersonationRequest
-	91,  // 208: quicbaas.iam.v1.IAMService.GetActiveImpersonations:input_type -> quicbaas.iam.v1.GetActiveImpersonationsRequest
-	94,  // 209: quicbaas.iam.v1.IAMService.GrantConsent:input_type -> quicbaas.iam.v1.GrantConsentRequest
-	95,  // 210: quicbaas.iam.v1.IAMService.WithdrawConsent:input_type -> quicbaas.iam.v1.WithdrawConsentRequest
-	97,  // 211: quicbaas.iam.v1.IAMService.GetConsent:input_type -> quicbaas.iam.v1.GetConsentRequest
-	98,  // 212: quicbaas.iam.v1.IAMService.ListUserConsents:input_type -> quicbaas.iam.v1.ListUserConsentsRequest
-	100, // 213: quicbaas.iam.v1.IAMService.RequestExport:input_type -> quicbaas.iam.v1.RequestExportRequest
-	101, // 214: quicbaas.iam.v1.IAMService.GetExportStatus:input_type -> quicbaas.iam.v1.GetExportStatusRequest
-	102, // 215: quicbaas.iam.v1.IAMService.GenerateExport:input_type -> quicbaas.iam.v1.GenerateExportRequest
-	113, // 216: quicbaas.iam.v1.IAMService.RequestDeletion:input_type -> quicbaas.iam.v1.RequestDeletionRequest
-	114, // 217: quicbaas.iam.v1.IAMService.CancelDeletion:input_type -> quicbaas.iam.v1.CancelDeletionRequest
-	116, // 218: quicbaas.iam.v1.IAMService.ProcessDeletion:input_type -> quicbaas.iam.v1.ProcessDeletionRequest
-	117, // 219: quicbaas.iam.v1.IAMService.GetDeletionStatus:input_type -> quicbaas.iam.v1.GetDeletionStatusRequest
-	17,  // 220: quicbaas.iam.v1.PEPService.Check:input_type -> quicbaas.iam.v1.CheckRequest
-	19,  // 221: quicbaas.iam.v1.PEPService.CheckBatch:input_type -> quicbaas.iam.v1.CheckBatchRequest
-	21,  // 222: quicbaas.iam.v1.PEPService.Subscribe:input_type -> quicbaas.iam.v1.SubscribeRequest
-	119, // 223: quicbaas.iam.v1.MFAService.BeginEnrollment:input_type -> quicbaas.iam.v1.BeginMFAEnrollmentRequest
-	121, // 224: quicbaas.iam.v1.MFAService.CompleteEnrollment:input_type -> quicbaas.iam.v1.CompleteMFAEnrollmentRequest
-	123, // 225: quicbaas.iam.v1.MFAService.CancelEnrollment:input_type -> quicbaas.iam.v1.CancelMFAEnrollmentRequest
-	125, // 226: quicbaas.iam.v1.MFAService.BeginChallenge:input_type -> quicbaas.iam.v1.BeginMFAChallengeRequest
-	127, // 227: quicbaas.iam.v1.MFAService.VerifyChallenge:input_type -> quicbaas.iam.v1.VerifyMFAChallengeRequest
-	129, // 228: quicbaas.iam.v1.MFAService.VerifyCode:input_type -> quicbaas.iam.v1.VerifyMFACodeRequest
-	131, // 229: quicbaas.iam.v1.MFAService.GetStatus:input_type -> quicbaas.iam.v1.GetMFAStatusRequest
-	133, // 230: quicbaas.iam.v1.MFAService.Disable:input_type -> quicbaas.iam.v1.DisableMFARequest
-	135, // 231: quicbaas.iam.v1.MFAService.GenerateBackupCodes:input_type -> quicbaas.iam.v1.GenerateBackupCodesRequest
-	137, // 232: quicbaas.iam.v1.MFAService.VerifyBackupCode:input_type -> quicbaas.iam.v1.VerifyBackupCodeRequest
-	139, // 233: quicbaas.iam.v1.MFAService.GetBackupCodeStatus:input_type -> quicbaas.iam.v1.GetBackupCodeStatusRequest
-	160, // 234: quicbaas.iam.v1.FederationService.CreateProvider:input_type -> quicbaas.iam.v1.CreateProviderRequest
-	161, // 235: quicbaas.iam.v1.FederationService.GetProvider:input_type -> quicbaas.iam.v1.GetProviderRequest
-	162, // 236: quicbaas.iam.v1.FederationService.UpdateProvider:input_type -> quicbaas.iam.v1.UpdateProviderRequest
-	163, // 237: quicbaas.iam.v1.FederationService.DeleteProvider:input_type -> quicbaas.iam.v1.DeleteProviderRequest
-	165, // 238: quicbaas.iam.v1.FederationService.ListProviders:input_type -> quicbaas.iam.v1.ListProvidersRequest
-	167, // 239: quicbaas.iam.v1.FederationService.BeginFederatedLogin:input_type -> quicbaas.iam.v1.BeginFederatedLoginRequest
-	169, // 240: quicbaas.iam.v1.FederationService.HandleFederatedCallback:input_type -> quicbaas.iam.v1.HandleFederatedCallbackRequest
-	171, // 241: quicbaas.iam.v1.FederationService.LinkAccount:input_type -> quicbaas.iam.v1.LinkAccountRequest
-	173, // 242: quicbaas.iam.v1.FederationService.UnlinkAccount:input_type -> quicbaas.iam.v1.UnlinkAccountRequest
-	175, // 243: quicbaas.iam.v1.FederationService.GetUserLinks:input_type -> quicbaas.iam.v1.GetUserLinksRequest
-	142, // 244: quicbaas.iam.v1.SessionService.ListSessions:input_type -> quicbaas.iam.v1.ListSessionsRequest
-	144, // 245: quicbaas.iam.v1.SessionService.GetSession:input_type -> quicbaas.iam.v1.GetSessionRequest
-	145, // 246: quicbaas.iam.v1.SessionService.RevokeSession:input_type -> quicbaas.iam.v1.RevokeSessionRequest
-	147, // 247: quicbaas.iam.v1.SessionService.RevokeAllSessions:input_type -> quicbaas.iam.v1.RevokeAllSessionsRequest
-	149, // 248: quicbaas.iam.v1.SessionService.RevokeOtherSessions:input_type -> quicbaas.iam.v1.RevokeOtherSessionsRequest
-	152, // 249: quicbaas.iam.v1.AuditService.QueryAuditEvents:input_type -> quicbaas.iam.v1.QueryAuditEventsRequest
-	154, // 250: quicbaas.iam.v1.AuditService.GetAuditEvent:input_type -> quicbaas.iam.v1.GetAuditEventRequest
-	155, // 251: quicbaas.iam.v1.AuditService.RecordAuditEvent:input_type -> quicbaas.iam.v1.RecordAuditEventRequest
-	9,   // 252: quicbaas.iam.v1.IAMService.CreateTenant:output_type -> quicbaas.iam.v1.Tenant
-	9,   // 253: quicbaas.iam.v1.IAMService.GetTenant:output_type -> quicbaas.iam.v1.Tenant
-	9,   // 254: quicbaas.iam.v1.IAMService.UpdateTenant:output_type -> quicbaas.iam.v1.Tenant
-	29,  // 255: quicbaas.iam.v1.IAMService.DeleteTenant:output_type -> quicbaas.iam.v1.DeleteTenantResponse
-	31,  // 256: quicbaas.iam.v1.IAMService.ListTenants:output_type -> quicbaas.iam.v1.ListTenantsResponse
-	33,  // 257: quicbaas.iam.v1.IAMService.ProvisionTenant:output_type -> quicbaas.iam.v1.ProvisionTenantResponse
-	11,  // 258: quicbaas.iam.v1.IAMService.CreateUser:output_type -> quicbaas.iam.v1.User
-	11,  // 259: quicbaas.iam.v1.IAMService.GetUser:output_type -> quicbaas.iam.v1.User
-	11,  // 260: quicbaas.iam.v1.IAMService.UpdateUser:output_type -> quicbaas.iam.v1.User
-	39,  // 261: quicbaas.iam.v1.IAMService.DeleteUser:output_type -> quicbaas.iam.v1.DeleteUserResponse
-	41,  // 262: quicbaas.iam.v1.IAMService.ListUsers:output_type -> quicbaas.iam.v1.ListUsersResponse
-	179, // 263: quicbaas.iam.v1.IAMService.ListWebAuthnCredentials:output_type -> quicbaas.iam.v1.ListWebAuthnCredentialsResponse
-	181, // 264: quicbaas.iam.v1.IAMService.DeleteWebAuthnCredential:output_type -> quicbaas.iam.v1.DeleteWebAuthnCredentialResponse
-	183, // 265: quicbaas.iam.v1.IAMService.DeleteWebAuthnCredentials:output_type -> quicbaas.iam.v1.DeleteWebAuthnCredentialsResponse
-	185, // 266: quicbaas.iam.v1.IAMService.GetInvite:output_type -> quicbaas.iam.v1.GetInviteResponse
-	187, // 267: quicbaas.iam.v1.IAMService.ActivateFIDO2Begin:output_type -> quicbaas.iam.v1.ActivateFIDO2BeginResponse
-	190, // 268: quicbaas.iam.v1.IAMService.ActivateFIDO2Finish:output_type -> quicbaas.iam.v1.ActivateInviteResponse
-	190, // 269: quicbaas.iam.v1.IAMService.ActivatePIV:output_type -> quicbaas.iam.v1.ActivateInviteResponse
-	12,  // 270: quicbaas.iam.v1.IAMService.CreateRole:output_type -> quicbaas.iam.v1.Role
-	12,  // 271: quicbaas.iam.v1.IAMService.GetRole:output_type -> quicbaas.iam.v1.Role
-	12,  // 272: quicbaas.iam.v1.IAMService.UpdateRole:output_type -> quicbaas.iam.v1.Role
-	46,  // 273: quicbaas.iam.v1.IAMService.DeleteRole:output_type -> quicbaas.iam.v1.DeleteRoleResponse
-	48,  // 274: quicbaas.iam.v1.IAMService.ListRoles:output_type -> quicbaas.iam.v1.ListRolesResponse
-	50,  // 275: quicbaas.iam.v1.IAMService.AssignRole:output_type -> quicbaas.iam.v1.AssignRoleResponse
-	52,  // 276: quicbaas.iam.v1.IAMService.RevokeRole:output_type -> quicbaas.iam.v1.RevokeRoleResponse
-	55,  // 277: quicbaas.iam.v1.IAMService.ReconcileRoles:output_type -> quicbaas.iam.v1.ReconcileRolesResponse
-	13,  // 278: quicbaas.iam.v1.IAMService.RegisterApp:output_type -> quicbaas.iam.v1.Application
-	13,  // 279: quicbaas.iam.v1.IAMService.GetApp:output_type -> quicbaas.iam.v1.Application
-	13,  // 280: quicbaas.iam.v1.IAMService.UpdateApp:output_type -> quicbaas.iam.v1.Application
-	60,  // 281: quicbaas.iam.v1.IAMService.DeleteApp:output_type -> quicbaas.iam.v1.DeleteAppResponse
-	62,  // 282: quicbaas.iam.v1.IAMService.ListApps:output_type -> quicbaas.iam.v1.ListAppsResponse
-	13,  // 283: quicbaas.iam.v1.IAMService.RotateAppSecret:output_type -> quicbaas.iam.v1.Application
-	14,  // 284: quicbaas.iam.v1.IAMService.CreatePolicy:output_type -> quicbaas.iam.v1.Policy
-	14,  // 285: quicbaas.iam.v1.IAMService.GetPolicy:output_type -> quicbaas.iam.v1.Policy
-	14,  // 286: quicbaas.iam.v1.IAMService.UpdatePolicy:output_type -> quicbaas.iam.v1.Policy
-	68,  // 287: quicbaas.iam.v1.IAMService.DeletePolicy:output_type -> quicbaas.iam.v1.DeletePolicyResponse
-	70,  // 288: quicbaas.iam.v1.IAMService.ListPolicies:output_type -> quicbaas.iam.v1.ListPoliciesResponse
-	72,  // 289: quicbaas.iam.v1.IAMService.ValidatePolicy:output_type -> quicbaas.iam.v1.ValidatePolicyResponse
-	74,  // 290: quicbaas.iam.v1.IAMService.TestPolicy:output_type -> quicbaas.iam.v1.TestPolicyResponse
-	76,  // 291: quicbaas.iam.v1.IAMService.CreateAdminAssignment:output_type -> quicbaas.iam.v1.AdminAssignment
-	76,  // 292: quicbaas.iam.v1.IAMService.GetAdminAssignment:output_type -> quicbaas.iam.v1.AdminAssignment
-	76,  // 293: quicbaas.iam.v1.IAMService.UpdateAdminAssignment:output_type -> quicbaas.iam.v1.AdminAssignment
-	82,  // 294: quicbaas.iam.v1.IAMService.DeleteAdminAssignment:output_type -> quicbaas.iam.v1.DeleteAdminAssignmentResponse
-	77,  // 295: quicbaas.iam.v1.IAMService.ListAdminAssignments:output_type -> quicbaas.iam.v1.AdminAssignmentList
-	85,  // 296: quicbaas.iam.v1.IAMService.CheckAdminPermission:output_type -> quicbaas.iam.v1.CheckAdminPermissionResponse
-	86,  // 297: quicbaas.iam.v1.IAMService.StartImpersonation:output_type -> quicbaas.iam.v1.ImpersonationSession
-	90,  // 298: quicbaas.iam.v1.IAMService.EndImpersonation:output_type -> quicbaas.iam.v1.EndImpersonationResponse
-	87,  // 299: quicbaas.iam.v1.IAMService.GetActiveImpersonations:output_type -> quicbaas.iam.v1.ImpersonationSessionList
-	92,  // 300: quicbaas.iam.v1.IAMService.GrantConsent:output_type -> quicbaas.iam.v1.Consent
-	96,  // 301: quicbaas.iam.v1.IAMService.WithdrawConsent:output_type -> quicbaas.iam.v1.WithdrawConsentResponse
-	92,  // 302: quicbaas.iam.v1.IAMService.GetConsent:output_type -> quicbaas.iam.v1.Consent
-	93,  // 303: quicbaas.iam.v1.IAMService.ListUserConsents:output_type -> quicbaas.iam.v1.ConsentList
-	99,  // 304: quicbaas.iam.v1.IAMService.RequestExport:output_type -> quicbaas.iam.v1.DataExportRequest
-	99,  // 305: quicbaas.iam.v1.IAMService.GetExportStatus:output_type -> quicbaas.iam.v1.DataExportRequest
-	103, // 306: quicbaas.iam.v1.IAMService.GenerateExport:output_type -> quicbaas.iam.v1.UserDataExport
-	112, // 307: quicbaas.iam.v1.IAMService.RequestDeletion:output_type -> quicbaas.iam.v1.DataDeletionRequest
-	115, // 308: quicbaas.iam.v1.IAMService.CancelDeletion:output_type -> quicbaas.iam.v1.CancelDeletionResponse
-	118, // 309: quicbaas.iam.v1.IAMService.ProcessDeletion:output_type -> quicbaas.iam.v1.DeletionSummary
-	112, // 310: quicbaas.iam.v1.IAMService.GetDeletionStatus:output_type -> quicbaas.iam.v1.DataDeletionRequest
-	18,  // 311: quicbaas.iam.v1.PEPService.Check:output_type -> quicbaas.iam.v1.CheckResponse
-	20,  // 312: quicbaas.iam.v1.PEPService.CheckBatch:output_type -> quicbaas.iam.v1.CheckBatchResponse
-	22,  // 313: quicbaas.iam.v1.PEPService.Subscribe:output_type -> quicbaas.iam.v1.PolicyUpdate
-	120, // 314: quicbaas.iam.v1.MFAService.BeginEnrollment:output_type -> quicbaas.iam.v1.BeginMFAEnrollmentResponse
-	122, // 315: quicbaas.iam.v1.MFAService.CompleteEnrollment:output_type -> quicbaas.iam.v1.CompleteMFAEnrollmentResponse
-	124, // 316: quicbaas.iam.v1.MFAService.CancelEnrollment:output_type -> quicbaas.iam.v1.CancelMFAEnrollmentResponse
-	126, // 317: quicbaas.iam.v1.MFAService.BeginChallenge:output_type -> quicbaas.iam.v1.BeginMFAChallengeResponse
-	128, // 318: quicbaas.iam.v1.MFAService.VerifyChallenge:output_type -> quicbaas.iam.v1.VerifyMFAChallengeResponse
-	130, // 319: quicbaas.iam.v1.MFAService.VerifyCode:output_type -> quicbaas.iam.v1.VerifyMFACodeResponse
-	132, // 320: quicbaas.iam.v1.MFAService.GetStatus:output_type -> quicbaas.iam.v1.GetMFAStatusResponse
-	134, // 321: quicbaas.iam.v1.MFAService.Disable:output_type -> quicbaas.iam.v1.DisableMFAResponse
-	136, // 322: quicbaas.iam.v1.MFAService.GenerateBackupCodes:output_type -> quicbaas.iam.v1.GenerateBackupCodesResponse
-	138, // 323: quicbaas.iam.v1.MFAService.VerifyBackupCode:output_type -> quicbaas.iam.v1.VerifyBackupCodeResponse
-	140, // 324: quicbaas.iam.v1.MFAService.GetBackupCodeStatus:output_type -> quicbaas.iam.v1.GetBackupCodeStatusResponse
-	158, // 325: quicbaas.iam.v1.FederationService.CreateProvider:output_type -> quicbaas.iam.v1.ExternalProvider
-	158, // 326: quicbaas.iam.v1.FederationService.GetProvider:output_type -> quicbaas.iam.v1.ExternalProvider
-	158, // 327: quicbaas.iam.v1.FederationService.UpdateProvider:output_type -> quicbaas.iam.v1.ExternalProvider
-	164, // 328: quicbaas.iam.v1.FederationService.DeleteProvider:output_type -> quicbaas.iam.v1.DeleteProviderResponse
-	166, // 329: quicbaas.iam.v1.FederationService.ListProviders:output_type -> quicbaas.iam.v1.ListProvidersResponse
-	168, // 330: quicbaas.iam.v1.FederationService.BeginFederatedLogin:output_type -> quicbaas.iam.v1.BeginFederatedLoginResponse
-	170, // 331: quicbaas.iam.v1.FederationService.HandleFederatedCallback:output_type -> quicbaas.iam.v1.HandleFederatedCallbackResponse
-	172, // 332: quicbaas.iam.v1.FederationService.LinkAccount:output_type -> quicbaas.iam.v1.LinkAccountResponse
-	174, // 333: quicbaas.iam.v1.FederationService.UnlinkAccount:output_type -> quicbaas.iam.v1.UnlinkAccountResponse
-	176, // 334: quicbaas.iam.v1.FederationService.GetUserLinks:output_type -> quicbaas.iam.v1.GetUserLinksResponse
-	143, // 335: quicbaas.iam.v1.SessionService.ListSessions:output_type -> quicbaas.iam.v1.ListSessionsResponse
-	141, // 336: quicbaas.iam.v1.SessionService.GetSession:output_type -> quicbaas.iam.v1.Session
-	146, // 337: quicbaas.iam.v1.SessionService.RevokeSession:output_type -> quicbaas.iam.v1.RevokeSessionResponse
-	148, // 338: quicbaas.iam.v1.SessionService.RevokeAllSessions:output_type -> quicbaas.iam.v1.RevokeAllSessionsResponse
-	150, // 339: quicbaas.iam.v1.SessionService.RevokeOtherSessions:output_type -> quicbaas.iam.v1.RevokeOtherSessionsResponse
-	153, // 340: quicbaas.iam.v1.AuditService.QueryAuditEvents:output_type -> quicbaas.iam.v1.QueryAuditEventsResponse
-	151, // 341: quicbaas.iam.v1.AuditService.GetAuditEvent:output_type -> quicbaas.iam.v1.AuditEvent
-	156, // 342: quicbaas.iam.v1.AuditService.RecordAuditEvent:output_type -> quicbaas.iam.v1.RecordAuditEventResponse
-	252, // [252:343] is the sub-list for method output_type
-	161, // [161:252] is the sub-list for method input_type
-	161, // [161:161] is the sub-list for extension type_name
-	161, // [161:161] is the sub-list for extension extendee
-	0,   // [0:161] is the sub-list for field type_name
+	215, // 37: quicbaas.iam.v1.UpdateAppRequest.access_token_ttl:type_name -> google.protobuf.Duration
+	215, // 38: quicbaas.iam.v1.UpdateAppRequest.refresh_token_ttl:type_name -> google.protobuf.Duration
+	215, // 39: quicbaas.iam.v1.UpdateAppRequest.id_token_ttl:type_name -> google.protobuf.Duration
+	199, // 40: quicbaas.iam.v1.UpdateAppRequest.metadata:type_name -> quicbaas.iam.v1.UpdateAppRequest.MetadataEntry
+	13,  // 41: quicbaas.iam.v1.ListAppsResponse.apps:type_name -> quicbaas.iam.v1.Application
+	200, // 42: quicbaas.iam.v1.CreatePolicyRequest.labels:type_name -> quicbaas.iam.v1.CreatePolicyRequest.LabelsEntry
+	201, // 43: quicbaas.iam.v1.UpdatePolicyRequest.labels:type_name -> quicbaas.iam.v1.UpdatePolicyRequest.LabelsEntry
+	14,  // 44: quicbaas.iam.v1.ListPoliciesResponse.policies:type_name -> quicbaas.iam.v1.Policy
+	16,  // 45: quicbaas.iam.v1.TestPolicyRequest.subject:type_name -> quicbaas.iam.v1.Subject
+	202, // 46: quicbaas.iam.v1.TestPolicyRequest.context:type_name -> quicbaas.iam.v1.TestPolicyRequest.ContextEntry
+	0,   // 47: quicbaas.iam.v1.AdminAssignment.admin_role:type_name -> quicbaas.iam.v1.AdminRole
+	75,  // 48: quicbaas.iam.v1.AdminAssignment.resource_scopes:type_name -> quicbaas.iam.v1.ResourceScope
+	214, // 49: quicbaas.iam.v1.AdminAssignment.expires_at:type_name -> google.protobuf.Timestamp
+	214, // 50: quicbaas.iam.v1.AdminAssignment.granted_at:type_name -> google.protobuf.Timestamp
+	214, // 51: quicbaas.iam.v1.AdminAssignment.last_used_at:type_name -> google.protobuf.Timestamp
+	203, // 52: quicbaas.iam.v1.AdminAssignment.metadata:type_name -> quicbaas.iam.v1.AdminAssignment.MetadataEntry
+	76,  // 53: quicbaas.iam.v1.AdminAssignmentList.assignments:type_name -> quicbaas.iam.v1.AdminAssignment
+	0,   // 54: quicbaas.iam.v1.CreateAdminAssignmentRequest.admin_role:type_name -> quicbaas.iam.v1.AdminRole
+	75,  // 55: quicbaas.iam.v1.CreateAdminAssignmentRequest.resource_scopes:type_name -> quicbaas.iam.v1.ResourceScope
+	214, // 56: quicbaas.iam.v1.CreateAdminAssignmentRequest.expires_at:type_name -> google.protobuf.Timestamp
+	204, // 57: quicbaas.iam.v1.CreateAdminAssignmentRequest.metadata:type_name -> quicbaas.iam.v1.CreateAdminAssignmentRequest.MetadataEntry
+	0,   // 58: quicbaas.iam.v1.UpdateAdminAssignmentRequest.admin_role:type_name -> quicbaas.iam.v1.AdminRole
+	75,  // 59: quicbaas.iam.v1.UpdateAdminAssignmentRequest.resource_scopes:type_name -> quicbaas.iam.v1.ResourceScope
+	214, // 60: quicbaas.iam.v1.UpdateAdminAssignmentRequest.expires_at:type_name -> google.protobuf.Timestamp
+	205, // 61: quicbaas.iam.v1.UpdateAdminAssignmentRequest.metadata:type_name -> quicbaas.iam.v1.UpdateAdminAssignmentRequest.MetadataEntry
+	0,   // 62: quicbaas.iam.v1.ListAdminAssignmentsRequest.admin_role:type_name -> quicbaas.iam.v1.AdminRole
+	0,   // 63: quicbaas.iam.v1.CheckAdminPermissionResponse.admin_role:type_name -> quicbaas.iam.v1.AdminRole
+	214, // 64: quicbaas.iam.v1.ImpersonationSession.started_at:type_name -> google.protobuf.Timestamp
+	214, // 65: quicbaas.iam.v1.ImpersonationSession.expires_at:type_name -> google.protobuf.Timestamp
+	214, // 66: quicbaas.iam.v1.ImpersonationSession.ended_at:type_name -> google.protobuf.Timestamp
+	86,  // 67: quicbaas.iam.v1.ImpersonationSessionList.sessions:type_name -> quicbaas.iam.v1.ImpersonationSession
+	215, // 68: quicbaas.iam.v1.StartImpersonationRequest.duration:type_name -> google.protobuf.Duration
+	1,   // 69: quicbaas.iam.v1.Consent.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
+	2,   // 70: quicbaas.iam.v1.Consent.status:type_name -> quicbaas.iam.v1.ConsentStatus
+	214, // 71: quicbaas.iam.v1.Consent.granted_at:type_name -> google.protobuf.Timestamp
+	214, // 72: quicbaas.iam.v1.Consent.withdrawn_at:type_name -> google.protobuf.Timestamp
+	214, // 73: quicbaas.iam.v1.Consent.expires_at:type_name -> google.protobuf.Timestamp
+	206, // 74: quicbaas.iam.v1.Consent.metadata:type_name -> quicbaas.iam.v1.Consent.MetadataEntry
+	214, // 75: quicbaas.iam.v1.Consent.created_at:type_name -> google.protobuf.Timestamp
+	214, // 76: quicbaas.iam.v1.Consent.updated_at:type_name -> google.protobuf.Timestamp
+	92,  // 77: quicbaas.iam.v1.ConsentList.consents:type_name -> quicbaas.iam.v1.Consent
+	1,   // 78: quicbaas.iam.v1.GrantConsentRequest.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
+	214, // 79: quicbaas.iam.v1.GrantConsentRequest.expires_at:type_name -> google.protobuf.Timestamp
+	1,   // 80: quicbaas.iam.v1.WithdrawConsentRequest.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
+	1,   // 81: quicbaas.iam.v1.GetConsentRequest.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
+	3,   // 82: quicbaas.iam.v1.DataExportRequest.format:type_name -> quicbaas.iam.v1.DataExportFormat
+	4,   // 83: quicbaas.iam.v1.DataExportRequest.status:type_name -> quicbaas.iam.v1.DataExportStatus
+	214, // 84: quicbaas.iam.v1.DataExportRequest.requested_at:type_name -> google.protobuf.Timestamp
+	214, // 85: quicbaas.iam.v1.DataExportRequest.started_at:type_name -> google.protobuf.Timestamp
+	214, // 86: quicbaas.iam.v1.DataExportRequest.completed_at:type_name -> google.protobuf.Timestamp
+	214, // 87: quicbaas.iam.v1.DataExportRequest.expires_at:type_name -> google.protobuf.Timestamp
+	207, // 88: quicbaas.iam.v1.DataExportRequest.metadata:type_name -> quicbaas.iam.v1.DataExportRequest.MetadataEntry
+	3,   // 89: quicbaas.iam.v1.RequestExportRequest.format:type_name -> quicbaas.iam.v1.DataExportFormat
+	104, // 90: quicbaas.iam.v1.UserDataExport.export_metadata:type_name -> quicbaas.iam.v1.ExportMetadata
+	105, // 91: quicbaas.iam.v1.UserDataExport.profile:type_name -> quicbaas.iam.v1.UserProfileExport
+	106, // 92: quicbaas.iam.v1.UserDataExport.sessions:type_name -> quicbaas.iam.v1.SessionExport
+	107, // 93: quicbaas.iam.v1.UserDataExport.consents:type_name -> quicbaas.iam.v1.ConsentExport
+	108, // 94: quicbaas.iam.v1.UserDataExport.roles:type_name -> quicbaas.iam.v1.RoleAssignmentExport
+	109, // 95: quicbaas.iam.v1.UserDataExport.audit_logs:type_name -> quicbaas.iam.v1.AuditLogExport
+	110, // 96: quicbaas.iam.v1.UserDataExport.credentials:type_name -> quicbaas.iam.v1.CredentialExport
+	111, // 97: quicbaas.iam.v1.UserDataExport.mfa_info:type_name -> quicbaas.iam.v1.MFAInfoExport
+	214, // 98: quicbaas.iam.v1.ExportMetadata.exported_at:type_name -> google.protobuf.Timestamp
+	3,   // 99: quicbaas.iam.v1.ExportMetadata.format:type_name -> quicbaas.iam.v1.DataExportFormat
+	208, // 100: quicbaas.iam.v1.UserProfileExport.attributes:type_name -> quicbaas.iam.v1.UserProfileExport.AttributesEntry
+	214, // 101: quicbaas.iam.v1.UserProfileExport.created:type_name -> google.protobuf.Timestamp
+	214, // 102: quicbaas.iam.v1.UserProfileExport.updated:type_name -> google.protobuf.Timestamp
+	214, // 103: quicbaas.iam.v1.UserProfileExport.last_auth:type_name -> google.protobuf.Timestamp
+	214, // 104: quicbaas.iam.v1.SessionExport.started_at:type_name -> google.protobuf.Timestamp
+	214, // 105: quicbaas.iam.v1.SessionExport.expires_at:type_name -> google.protobuf.Timestamp
+	214, // 106: quicbaas.iam.v1.SessionExport.last_active:type_name -> google.protobuf.Timestamp
+	214, // 107: quicbaas.iam.v1.SessionExport.ended_at:type_name -> google.protobuf.Timestamp
+	1,   // 108: quicbaas.iam.v1.ConsentExport.purpose:type_name -> quicbaas.iam.v1.ConsentPurpose
+	2,   // 109: quicbaas.iam.v1.ConsentExport.status:type_name -> quicbaas.iam.v1.ConsentStatus
+	214, // 110: quicbaas.iam.v1.ConsentExport.granted_at:type_name -> google.protobuf.Timestamp
+	214, // 111: quicbaas.iam.v1.ConsentExport.withdrawn_at:type_name -> google.protobuf.Timestamp
+	214, // 112: quicbaas.iam.v1.RoleAssignmentExport.assigned_at:type_name -> google.protobuf.Timestamp
+	214, // 113: quicbaas.iam.v1.AuditLogExport.timestamp:type_name -> google.protobuf.Timestamp
+	214, // 114: quicbaas.iam.v1.CredentialExport.created_at:type_name -> google.protobuf.Timestamp
+	214, // 115: quicbaas.iam.v1.CredentialExport.last_used_at:type_name -> google.protobuf.Timestamp
+	214, // 116: quicbaas.iam.v1.MFAInfoExport.enrolled_at:type_name -> google.protobuf.Timestamp
+	5,   // 117: quicbaas.iam.v1.DataDeletionRequest.status:type_name -> quicbaas.iam.v1.DeletionStatus
+	214, // 118: quicbaas.iam.v1.DataDeletionRequest.requested_at:type_name -> google.protobuf.Timestamp
+	214, // 119: quicbaas.iam.v1.DataDeletionRequest.grace_period_ends_at:type_name -> google.protobuf.Timestamp
+	214, // 120: quicbaas.iam.v1.DataDeletionRequest.started_at:type_name -> google.protobuf.Timestamp
+	214, // 121: quicbaas.iam.v1.DataDeletionRequest.completed_at:type_name -> google.protobuf.Timestamp
+	214, // 122: quicbaas.iam.v1.DataDeletionRequest.cancelled_at:type_name -> google.protobuf.Timestamp
+	118, // 123: quicbaas.iam.v1.DataDeletionRequest.deleted_data_summary:type_name -> quicbaas.iam.v1.DeletionSummary
+	209, // 124: quicbaas.iam.v1.DataDeletionRequest.metadata:type_name -> quicbaas.iam.v1.DataDeletionRequest.MetadataEntry
+	210, // 125: quicbaas.iam.v1.DeletionSummary.additional_data:type_name -> quicbaas.iam.v1.DeletionSummary.AdditionalDataEntry
+	6,   // 126: quicbaas.iam.v1.BeginMFAEnrollmentRequest.method:type_name -> quicbaas.iam.v1.MFAMethod
+	214, // 127: quicbaas.iam.v1.BeginMFAEnrollmentResponse.expires_at:type_name -> google.protobuf.Timestamp
+	6,   // 128: quicbaas.iam.v1.BeginMFAChallengeResponse.method:type_name -> quicbaas.iam.v1.MFAMethod
+	214, // 129: quicbaas.iam.v1.BeginMFAChallengeResponse.expires_at:type_name -> google.protobuf.Timestamp
+	214, // 130: quicbaas.iam.v1.VerifyMFAChallengeResponse.verified_at:type_name -> google.protobuf.Timestamp
+	6,   // 131: quicbaas.iam.v1.GetMFAStatusResponse.method:type_name -> quicbaas.iam.v1.MFAMethod
+	214, // 132: quicbaas.iam.v1.GetMFAStatusResponse.enrolled_at:type_name -> google.protobuf.Timestamp
+	214, // 133: quicbaas.iam.v1.GetMFAStatusResponse.last_verified:type_name -> google.protobuf.Timestamp
+	214, // 134: quicbaas.iam.v1.GetBackupCodeStatusResponse.generated_at:type_name -> google.protobuf.Timestamp
+	214, // 135: quicbaas.iam.v1.Session.created_at:type_name -> google.protobuf.Timestamp
+	214, // 136: quicbaas.iam.v1.Session.last_active:type_name -> google.protobuf.Timestamp
+	214, // 137: quicbaas.iam.v1.Session.expires_at:type_name -> google.protobuf.Timestamp
+	141, // 138: quicbaas.iam.v1.ListSessionsResponse.sessions:type_name -> quicbaas.iam.v1.Session
+	211, // 139: quicbaas.iam.v1.AuditEvent.details:type_name -> quicbaas.iam.v1.AuditEvent.DetailsEntry
+	214, // 140: quicbaas.iam.v1.AuditEvent.timestamp:type_name -> google.protobuf.Timestamp
+	214, // 141: quicbaas.iam.v1.QueryAuditEventsRequest.start_time:type_name -> google.protobuf.Timestamp
+	214, // 142: quicbaas.iam.v1.QueryAuditEventsRequest.end_time:type_name -> google.protobuf.Timestamp
+	151, // 143: quicbaas.iam.v1.QueryAuditEventsResponse.events:type_name -> quicbaas.iam.v1.AuditEvent
+	151, // 144: quicbaas.iam.v1.RecordAuditEventRequest.event:type_name -> quicbaas.iam.v1.AuditEvent
+	212, // 145: quicbaas.iam.v1.ClaimMappings.attributes:type_name -> quicbaas.iam.v1.ClaimMappings.AttributesEntry
+	7,   // 146: quicbaas.iam.v1.ExternalProvider.type:type_name -> quicbaas.iam.v1.ProviderType
+	157, // 147: quicbaas.iam.v1.ExternalProvider.claim_mappings:type_name -> quicbaas.iam.v1.ClaimMappings
+	214, // 148: quicbaas.iam.v1.ExternalProvider.created_at:type_name -> google.protobuf.Timestamp
+	214, // 149: quicbaas.iam.v1.ExternalProvider.updated_at:type_name -> google.protobuf.Timestamp
+	213, // 150: quicbaas.iam.v1.FederatedIdentity.claims:type_name -> quicbaas.iam.v1.FederatedIdentity.ClaimsEntry
+	214, // 151: quicbaas.iam.v1.FederatedIdentity.last_login:type_name -> google.protobuf.Timestamp
+	214, // 152: quicbaas.iam.v1.FederatedIdentity.created_at:type_name -> google.protobuf.Timestamp
+	214, // 153: quicbaas.iam.v1.FederatedIdentity.updated_at:type_name -> google.protobuf.Timestamp
+	7,   // 154: quicbaas.iam.v1.CreateProviderRequest.type:type_name -> quicbaas.iam.v1.ProviderType
+	157, // 155: quicbaas.iam.v1.CreateProviderRequest.claim_mappings:type_name -> quicbaas.iam.v1.ClaimMappings
+	7,   // 156: quicbaas.iam.v1.UpdateProviderRequest.type:type_name -> quicbaas.iam.v1.ProviderType
+	157, // 157: quicbaas.iam.v1.UpdateProviderRequest.claim_mappings:type_name -> quicbaas.iam.v1.ClaimMappings
+	158, // 158: quicbaas.iam.v1.ListProvidersResponse.providers:type_name -> quicbaas.iam.v1.ExternalProvider
+	214, // 159: quicbaas.iam.v1.BeginFederatedLoginResponse.expires_at:type_name -> google.protobuf.Timestamp
+	11,  // 160: quicbaas.iam.v1.HandleFederatedCallbackResponse.user:type_name -> quicbaas.iam.v1.User
+	159, // 161: quicbaas.iam.v1.HandleFederatedCallbackResponse.federated_identity:type_name -> quicbaas.iam.v1.FederatedIdentity
+	159, // 162: quicbaas.iam.v1.GetUserLinksResponse.identities:type_name -> quicbaas.iam.v1.FederatedIdentity
+	177, // 163: quicbaas.iam.v1.ListWebAuthnCredentialsResponse.credentials:type_name -> quicbaas.iam.v1.WebAuthnCredential
+	214, // 164: quicbaas.iam.v1.GetInviteResponse.expires_at:type_name -> google.protobuf.Timestamp
+	23,  // 165: quicbaas.iam.v1.IAMService.CreateTenant:input_type -> quicbaas.iam.v1.CreateTenantRequest
+	26,  // 166: quicbaas.iam.v1.IAMService.GetTenant:input_type -> quicbaas.iam.v1.GetTenantRequest
+	27,  // 167: quicbaas.iam.v1.IAMService.UpdateTenant:input_type -> quicbaas.iam.v1.UpdateTenantRequest
+	28,  // 168: quicbaas.iam.v1.IAMService.DeleteTenant:input_type -> quicbaas.iam.v1.DeleteTenantRequest
+	30,  // 169: quicbaas.iam.v1.IAMService.ListTenants:input_type -> quicbaas.iam.v1.ListTenantsRequest
+	32,  // 170: quicbaas.iam.v1.IAMService.ProvisionTenant:input_type -> quicbaas.iam.v1.ProvisionTenantRequest
+	34,  // 171: quicbaas.iam.v1.IAMService.CreateUser:input_type -> quicbaas.iam.v1.CreateUserRequest
+	35,  // 172: quicbaas.iam.v1.IAMService.GetUser:input_type -> quicbaas.iam.v1.GetUserRequest
+	36,  // 173: quicbaas.iam.v1.IAMService.UpdateUser:input_type -> quicbaas.iam.v1.UpdateUserRequest
+	38,  // 174: quicbaas.iam.v1.IAMService.DeleteUser:input_type -> quicbaas.iam.v1.DeleteUserRequest
+	40,  // 175: quicbaas.iam.v1.IAMService.ListUsers:input_type -> quicbaas.iam.v1.ListUsersRequest
+	178, // 176: quicbaas.iam.v1.IAMService.ListWebAuthnCredentials:input_type -> quicbaas.iam.v1.ListWebAuthnCredentialsRequest
+	180, // 177: quicbaas.iam.v1.IAMService.DeleteWebAuthnCredential:input_type -> quicbaas.iam.v1.DeleteWebAuthnCredentialRequest
+	182, // 178: quicbaas.iam.v1.IAMService.DeleteWebAuthnCredentials:input_type -> quicbaas.iam.v1.DeleteWebAuthnCredentialsRequest
+	184, // 179: quicbaas.iam.v1.IAMService.GetInvite:input_type -> quicbaas.iam.v1.GetInviteRequest
+	186, // 180: quicbaas.iam.v1.IAMService.ActivateFIDO2Begin:input_type -> quicbaas.iam.v1.ActivateInviteRequest
+	188, // 181: quicbaas.iam.v1.IAMService.ActivateFIDO2Finish:input_type -> quicbaas.iam.v1.ActivateFIDO2FinishRequest
+	189, // 182: quicbaas.iam.v1.IAMService.ActivatePIV:input_type -> quicbaas.iam.v1.ActivatePIVRequest
+	42,  // 183: quicbaas.iam.v1.IAMService.CreateRole:input_type -> quicbaas.iam.v1.CreateRoleRequest
+	43,  // 184: quicbaas.iam.v1.IAMService.GetRole:input_type -> quicbaas.iam.v1.GetRoleRequest
+	44,  // 185: quicbaas.iam.v1.IAMService.UpdateRole:input_type -> quicbaas.iam.v1.UpdateRoleRequest
+	45,  // 186: quicbaas.iam.v1.IAMService.DeleteRole:input_type -> quicbaas.iam.v1.DeleteRoleRequest
+	47,  // 187: quicbaas.iam.v1.IAMService.ListRoles:input_type -> quicbaas.iam.v1.ListRolesRequest
+	49,  // 188: quicbaas.iam.v1.IAMService.AssignRole:input_type -> quicbaas.iam.v1.AssignRoleRequest
+	51,  // 189: quicbaas.iam.v1.IAMService.RevokeRole:input_type -> quicbaas.iam.v1.RevokeRoleRequest
+	53,  // 190: quicbaas.iam.v1.IAMService.ReconcileRoles:input_type -> quicbaas.iam.v1.ReconcileRolesRequest
+	56,  // 191: quicbaas.iam.v1.IAMService.RegisterApp:input_type -> quicbaas.iam.v1.RegisterAppRequest
+	57,  // 192: quicbaas.iam.v1.IAMService.GetApp:input_type -> quicbaas.iam.v1.GetAppRequest
+	58,  // 193: quicbaas.iam.v1.IAMService.UpdateApp:input_type -> quicbaas.iam.v1.UpdateAppRequest
+	59,  // 194: quicbaas.iam.v1.IAMService.DeleteApp:input_type -> quicbaas.iam.v1.DeleteAppRequest
+	61,  // 195: quicbaas.iam.v1.IAMService.ListApps:input_type -> quicbaas.iam.v1.ListAppsRequest
+	63,  // 196: quicbaas.iam.v1.IAMService.RotateAppSecret:input_type -> quicbaas.iam.v1.RotateAppSecretRequest
+	64,  // 197: quicbaas.iam.v1.IAMService.CreatePolicy:input_type -> quicbaas.iam.v1.CreatePolicyRequest
+	65,  // 198: quicbaas.iam.v1.IAMService.GetPolicy:input_type -> quicbaas.iam.v1.GetPolicyRequest
+	66,  // 199: quicbaas.iam.v1.IAMService.UpdatePolicy:input_type -> quicbaas.iam.v1.UpdatePolicyRequest
+	67,  // 200: quicbaas.iam.v1.IAMService.DeletePolicy:input_type -> quicbaas.iam.v1.DeletePolicyRequest
+	69,  // 201: quicbaas.iam.v1.IAMService.ListPolicies:input_type -> quicbaas.iam.v1.ListPoliciesRequest
+	71,  // 202: quicbaas.iam.v1.IAMService.ValidatePolicy:input_type -> quicbaas.iam.v1.ValidatePolicyRequest
+	73,  // 203: quicbaas.iam.v1.IAMService.TestPolicy:input_type -> quicbaas.iam.v1.TestPolicyRequest
+	78,  // 204: quicbaas.iam.v1.IAMService.CreateAdminAssignment:input_type -> quicbaas.iam.v1.CreateAdminAssignmentRequest
+	79,  // 205: quicbaas.iam.v1.IAMService.GetAdminAssignment:input_type -> quicbaas.iam.v1.GetAdminAssignmentRequest
+	80,  // 206: quicbaas.iam.v1.IAMService.UpdateAdminAssignment:input_type -> quicbaas.iam.v1.UpdateAdminAssignmentRequest
+	81,  // 207: quicbaas.iam.v1.IAMService.DeleteAdminAssignment:input_type -> quicbaas.iam.v1.DeleteAdminAssignmentRequest
+	83,  // 208: quicbaas.iam.v1.IAMService.ListAdminAssignments:input_type -> quicbaas.iam.v1.ListAdminAssignmentsRequest
+	84,  // 209: quicbaas.iam.v1.IAMService.CheckAdminPermission:input_type -> quicbaas.iam.v1.CheckAdminPermissionRequest
+	88,  // 210: quicbaas.iam.v1.IAMService.StartImpersonation:input_type -> quicbaas.iam.v1.StartImpersonationRequest
+	89,  // 211: quicbaas.iam.v1.IAMService.EndImpersonation:input_type -> quicbaas.iam.v1.EndImpersonationRequest
+	91,  // 212: quicbaas.iam.v1.IAMService.GetActiveImpersonations:input_type -> quicbaas.iam.v1.GetActiveImpersonationsRequest
+	94,  // 213: quicbaas.iam.v1.IAMService.GrantConsent:input_type -> quicbaas.iam.v1.GrantConsentRequest
+	95,  // 214: quicbaas.iam.v1.IAMService.WithdrawConsent:input_type -> quicbaas.iam.v1.WithdrawConsentRequest
+	97,  // 215: quicbaas.iam.v1.IAMService.GetConsent:input_type -> quicbaas.iam.v1.GetConsentRequest
+	98,  // 216: quicbaas.iam.v1.IAMService.ListUserConsents:input_type -> quicbaas.iam.v1.ListUserConsentsRequest
+	100, // 217: quicbaas.iam.v1.IAMService.RequestExport:input_type -> quicbaas.iam.v1.RequestExportRequest
+	101, // 218: quicbaas.iam.v1.IAMService.GetExportStatus:input_type -> quicbaas.iam.v1.GetExportStatusRequest
+	102, // 219: quicbaas.iam.v1.IAMService.GenerateExport:input_type -> quicbaas.iam.v1.GenerateExportRequest
+	113, // 220: quicbaas.iam.v1.IAMService.RequestDeletion:input_type -> quicbaas.iam.v1.RequestDeletionRequest
+	114, // 221: quicbaas.iam.v1.IAMService.CancelDeletion:input_type -> quicbaas.iam.v1.CancelDeletionRequest
+	116, // 222: quicbaas.iam.v1.IAMService.ProcessDeletion:input_type -> quicbaas.iam.v1.ProcessDeletionRequest
+	117, // 223: quicbaas.iam.v1.IAMService.GetDeletionStatus:input_type -> quicbaas.iam.v1.GetDeletionStatusRequest
+	17,  // 224: quicbaas.iam.v1.PEPService.Check:input_type -> quicbaas.iam.v1.CheckRequest
+	19,  // 225: quicbaas.iam.v1.PEPService.CheckBatch:input_type -> quicbaas.iam.v1.CheckBatchRequest
+	21,  // 226: quicbaas.iam.v1.PEPService.Subscribe:input_type -> quicbaas.iam.v1.SubscribeRequest
+	119, // 227: quicbaas.iam.v1.MFAService.BeginEnrollment:input_type -> quicbaas.iam.v1.BeginMFAEnrollmentRequest
+	121, // 228: quicbaas.iam.v1.MFAService.CompleteEnrollment:input_type -> quicbaas.iam.v1.CompleteMFAEnrollmentRequest
+	123, // 229: quicbaas.iam.v1.MFAService.CancelEnrollment:input_type -> quicbaas.iam.v1.CancelMFAEnrollmentRequest
+	125, // 230: quicbaas.iam.v1.MFAService.BeginChallenge:input_type -> quicbaas.iam.v1.BeginMFAChallengeRequest
+	127, // 231: quicbaas.iam.v1.MFAService.VerifyChallenge:input_type -> quicbaas.iam.v1.VerifyMFAChallengeRequest
+	129, // 232: quicbaas.iam.v1.MFAService.VerifyCode:input_type -> quicbaas.iam.v1.VerifyMFACodeRequest
+	131, // 233: quicbaas.iam.v1.MFAService.GetStatus:input_type -> quicbaas.iam.v1.GetMFAStatusRequest
+	133, // 234: quicbaas.iam.v1.MFAService.Disable:input_type -> quicbaas.iam.v1.DisableMFARequest
+	135, // 235: quicbaas.iam.v1.MFAService.GenerateBackupCodes:input_type -> quicbaas.iam.v1.GenerateBackupCodesRequest
+	137, // 236: quicbaas.iam.v1.MFAService.VerifyBackupCode:input_type -> quicbaas.iam.v1.VerifyBackupCodeRequest
+	139, // 237: quicbaas.iam.v1.MFAService.GetBackupCodeStatus:input_type -> quicbaas.iam.v1.GetBackupCodeStatusRequest
+	160, // 238: quicbaas.iam.v1.FederationService.CreateProvider:input_type -> quicbaas.iam.v1.CreateProviderRequest
+	161, // 239: quicbaas.iam.v1.FederationService.GetProvider:input_type -> quicbaas.iam.v1.GetProviderRequest
+	162, // 240: quicbaas.iam.v1.FederationService.UpdateProvider:input_type -> quicbaas.iam.v1.UpdateProviderRequest
+	163, // 241: quicbaas.iam.v1.FederationService.DeleteProvider:input_type -> quicbaas.iam.v1.DeleteProviderRequest
+	165, // 242: quicbaas.iam.v1.FederationService.ListProviders:input_type -> quicbaas.iam.v1.ListProvidersRequest
+	167, // 243: quicbaas.iam.v1.FederationService.BeginFederatedLogin:input_type -> quicbaas.iam.v1.BeginFederatedLoginRequest
+	169, // 244: quicbaas.iam.v1.FederationService.HandleFederatedCallback:input_type -> quicbaas.iam.v1.HandleFederatedCallbackRequest
+	171, // 245: quicbaas.iam.v1.FederationService.LinkAccount:input_type -> quicbaas.iam.v1.LinkAccountRequest
+	173, // 246: quicbaas.iam.v1.FederationService.UnlinkAccount:input_type -> quicbaas.iam.v1.UnlinkAccountRequest
+	175, // 247: quicbaas.iam.v1.FederationService.GetUserLinks:input_type -> quicbaas.iam.v1.GetUserLinksRequest
+	142, // 248: quicbaas.iam.v1.SessionService.ListSessions:input_type -> quicbaas.iam.v1.ListSessionsRequest
+	144, // 249: quicbaas.iam.v1.SessionService.GetSession:input_type -> quicbaas.iam.v1.GetSessionRequest
+	145, // 250: quicbaas.iam.v1.SessionService.RevokeSession:input_type -> quicbaas.iam.v1.RevokeSessionRequest
+	147, // 251: quicbaas.iam.v1.SessionService.RevokeAllSessions:input_type -> quicbaas.iam.v1.RevokeAllSessionsRequest
+	149, // 252: quicbaas.iam.v1.SessionService.RevokeOtherSessions:input_type -> quicbaas.iam.v1.RevokeOtherSessionsRequest
+	152, // 253: quicbaas.iam.v1.AuditService.QueryAuditEvents:input_type -> quicbaas.iam.v1.QueryAuditEventsRequest
+	154, // 254: quicbaas.iam.v1.AuditService.GetAuditEvent:input_type -> quicbaas.iam.v1.GetAuditEventRequest
+	155, // 255: quicbaas.iam.v1.AuditService.RecordAuditEvent:input_type -> quicbaas.iam.v1.RecordAuditEventRequest
+	9,   // 256: quicbaas.iam.v1.IAMService.CreateTenant:output_type -> quicbaas.iam.v1.Tenant
+	9,   // 257: quicbaas.iam.v1.IAMService.GetTenant:output_type -> quicbaas.iam.v1.Tenant
+	9,   // 258: quicbaas.iam.v1.IAMService.UpdateTenant:output_type -> quicbaas.iam.v1.Tenant
+	29,  // 259: quicbaas.iam.v1.IAMService.DeleteTenant:output_type -> quicbaas.iam.v1.DeleteTenantResponse
+	31,  // 260: quicbaas.iam.v1.IAMService.ListTenants:output_type -> quicbaas.iam.v1.ListTenantsResponse
+	33,  // 261: quicbaas.iam.v1.IAMService.ProvisionTenant:output_type -> quicbaas.iam.v1.ProvisionTenantResponse
+	11,  // 262: quicbaas.iam.v1.IAMService.CreateUser:output_type -> quicbaas.iam.v1.User
+	11,  // 263: quicbaas.iam.v1.IAMService.GetUser:output_type -> quicbaas.iam.v1.User
+	11,  // 264: quicbaas.iam.v1.IAMService.UpdateUser:output_type -> quicbaas.iam.v1.User
+	39,  // 265: quicbaas.iam.v1.IAMService.DeleteUser:output_type -> quicbaas.iam.v1.DeleteUserResponse
+	41,  // 266: quicbaas.iam.v1.IAMService.ListUsers:output_type -> quicbaas.iam.v1.ListUsersResponse
+	179, // 267: quicbaas.iam.v1.IAMService.ListWebAuthnCredentials:output_type -> quicbaas.iam.v1.ListWebAuthnCredentialsResponse
+	181, // 268: quicbaas.iam.v1.IAMService.DeleteWebAuthnCredential:output_type -> quicbaas.iam.v1.DeleteWebAuthnCredentialResponse
+	183, // 269: quicbaas.iam.v1.IAMService.DeleteWebAuthnCredentials:output_type -> quicbaas.iam.v1.DeleteWebAuthnCredentialsResponse
+	185, // 270: quicbaas.iam.v1.IAMService.GetInvite:output_type -> quicbaas.iam.v1.GetInviteResponse
+	187, // 271: quicbaas.iam.v1.IAMService.ActivateFIDO2Begin:output_type -> quicbaas.iam.v1.ActivateFIDO2BeginResponse
+	190, // 272: quicbaas.iam.v1.IAMService.ActivateFIDO2Finish:output_type -> quicbaas.iam.v1.ActivateInviteResponse
+	190, // 273: quicbaas.iam.v1.IAMService.ActivatePIV:output_type -> quicbaas.iam.v1.ActivateInviteResponse
+	12,  // 274: quicbaas.iam.v1.IAMService.CreateRole:output_type -> quicbaas.iam.v1.Role
+	12,  // 275: quicbaas.iam.v1.IAMService.GetRole:output_type -> quicbaas.iam.v1.Role
+	12,  // 276: quicbaas.iam.v1.IAMService.UpdateRole:output_type -> quicbaas.iam.v1.Role
+	46,  // 277: quicbaas.iam.v1.IAMService.DeleteRole:output_type -> quicbaas.iam.v1.DeleteRoleResponse
+	48,  // 278: quicbaas.iam.v1.IAMService.ListRoles:output_type -> quicbaas.iam.v1.ListRolesResponse
+	50,  // 279: quicbaas.iam.v1.IAMService.AssignRole:output_type -> quicbaas.iam.v1.AssignRoleResponse
+	52,  // 280: quicbaas.iam.v1.IAMService.RevokeRole:output_type -> quicbaas.iam.v1.RevokeRoleResponse
+	55,  // 281: quicbaas.iam.v1.IAMService.ReconcileRoles:output_type -> quicbaas.iam.v1.ReconcileRolesResponse
+	13,  // 282: quicbaas.iam.v1.IAMService.RegisterApp:output_type -> quicbaas.iam.v1.Application
+	13,  // 283: quicbaas.iam.v1.IAMService.GetApp:output_type -> quicbaas.iam.v1.Application
+	13,  // 284: quicbaas.iam.v1.IAMService.UpdateApp:output_type -> quicbaas.iam.v1.Application
+	60,  // 285: quicbaas.iam.v1.IAMService.DeleteApp:output_type -> quicbaas.iam.v1.DeleteAppResponse
+	62,  // 286: quicbaas.iam.v1.IAMService.ListApps:output_type -> quicbaas.iam.v1.ListAppsResponse
+	13,  // 287: quicbaas.iam.v1.IAMService.RotateAppSecret:output_type -> quicbaas.iam.v1.Application
+	14,  // 288: quicbaas.iam.v1.IAMService.CreatePolicy:output_type -> quicbaas.iam.v1.Policy
+	14,  // 289: quicbaas.iam.v1.IAMService.GetPolicy:output_type -> quicbaas.iam.v1.Policy
+	14,  // 290: quicbaas.iam.v1.IAMService.UpdatePolicy:output_type -> quicbaas.iam.v1.Policy
+	68,  // 291: quicbaas.iam.v1.IAMService.DeletePolicy:output_type -> quicbaas.iam.v1.DeletePolicyResponse
+	70,  // 292: quicbaas.iam.v1.IAMService.ListPolicies:output_type -> quicbaas.iam.v1.ListPoliciesResponse
+	72,  // 293: quicbaas.iam.v1.IAMService.ValidatePolicy:output_type -> quicbaas.iam.v1.ValidatePolicyResponse
+	74,  // 294: quicbaas.iam.v1.IAMService.TestPolicy:output_type -> quicbaas.iam.v1.TestPolicyResponse
+	76,  // 295: quicbaas.iam.v1.IAMService.CreateAdminAssignment:output_type -> quicbaas.iam.v1.AdminAssignment
+	76,  // 296: quicbaas.iam.v1.IAMService.GetAdminAssignment:output_type -> quicbaas.iam.v1.AdminAssignment
+	76,  // 297: quicbaas.iam.v1.IAMService.UpdateAdminAssignment:output_type -> quicbaas.iam.v1.AdminAssignment
+	82,  // 298: quicbaas.iam.v1.IAMService.DeleteAdminAssignment:output_type -> quicbaas.iam.v1.DeleteAdminAssignmentResponse
+	77,  // 299: quicbaas.iam.v1.IAMService.ListAdminAssignments:output_type -> quicbaas.iam.v1.AdminAssignmentList
+	85,  // 300: quicbaas.iam.v1.IAMService.CheckAdminPermission:output_type -> quicbaas.iam.v1.CheckAdminPermissionResponse
+	86,  // 301: quicbaas.iam.v1.IAMService.StartImpersonation:output_type -> quicbaas.iam.v1.ImpersonationSession
+	90,  // 302: quicbaas.iam.v1.IAMService.EndImpersonation:output_type -> quicbaas.iam.v1.EndImpersonationResponse
+	87,  // 303: quicbaas.iam.v1.IAMService.GetActiveImpersonations:output_type -> quicbaas.iam.v1.ImpersonationSessionList
+	92,  // 304: quicbaas.iam.v1.IAMService.GrantConsent:output_type -> quicbaas.iam.v1.Consent
+	96,  // 305: quicbaas.iam.v1.IAMService.WithdrawConsent:output_type -> quicbaas.iam.v1.WithdrawConsentResponse
+	92,  // 306: quicbaas.iam.v1.IAMService.GetConsent:output_type -> quicbaas.iam.v1.Consent
+	93,  // 307: quicbaas.iam.v1.IAMService.ListUserConsents:output_type -> quicbaas.iam.v1.ConsentList
+	99,  // 308: quicbaas.iam.v1.IAMService.RequestExport:output_type -> quicbaas.iam.v1.DataExportRequest
+	99,  // 309: quicbaas.iam.v1.IAMService.GetExportStatus:output_type -> quicbaas.iam.v1.DataExportRequest
+	103, // 310: quicbaas.iam.v1.IAMService.GenerateExport:output_type -> quicbaas.iam.v1.UserDataExport
+	112, // 311: quicbaas.iam.v1.IAMService.RequestDeletion:output_type -> quicbaas.iam.v1.DataDeletionRequest
+	115, // 312: quicbaas.iam.v1.IAMService.CancelDeletion:output_type -> quicbaas.iam.v1.CancelDeletionResponse
+	118, // 313: quicbaas.iam.v1.IAMService.ProcessDeletion:output_type -> quicbaas.iam.v1.DeletionSummary
+	112, // 314: quicbaas.iam.v1.IAMService.GetDeletionStatus:output_type -> quicbaas.iam.v1.DataDeletionRequest
+	18,  // 315: quicbaas.iam.v1.PEPService.Check:output_type -> quicbaas.iam.v1.CheckResponse
+	20,  // 316: quicbaas.iam.v1.PEPService.CheckBatch:output_type -> quicbaas.iam.v1.CheckBatchResponse
+	22,  // 317: quicbaas.iam.v1.PEPService.Subscribe:output_type -> quicbaas.iam.v1.PolicyUpdate
+	120, // 318: quicbaas.iam.v1.MFAService.BeginEnrollment:output_type -> quicbaas.iam.v1.BeginMFAEnrollmentResponse
+	122, // 319: quicbaas.iam.v1.MFAService.CompleteEnrollment:output_type -> quicbaas.iam.v1.CompleteMFAEnrollmentResponse
+	124, // 320: quicbaas.iam.v1.MFAService.CancelEnrollment:output_type -> quicbaas.iam.v1.CancelMFAEnrollmentResponse
+	126, // 321: quicbaas.iam.v1.MFAService.BeginChallenge:output_type -> quicbaas.iam.v1.BeginMFAChallengeResponse
+	128, // 322: quicbaas.iam.v1.MFAService.VerifyChallenge:output_type -> quicbaas.iam.v1.VerifyMFAChallengeResponse
+	130, // 323: quicbaas.iam.v1.MFAService.VerifyCode:output_type -> quicbaas.iam.v1.VerifyMFACodeResponse
+	132, // 324: quicbaas.iam.v1.MFAService.GetStatus:output_type -> quicbaas.iam.v1.GetMFAStatusResponse
+	134, // 325: quicbaas.iam.v1.MFAService.Disable:output_type -> quicbaas.iam.v1.DisableMFAResponse
+	136, // 326: quicbaas.iam.v1.MFAService.GenerateBackupCodes:output_type -> quicbaas.iam.v1.GenerateBackupCodesResponse
+	138, // 327: quicbaas.iam.v1.MFAService.VerifyBackupCode:output_type -> quicbaas.iam.v1.VerifyBackupCodeResponse
+	140, // 328: quicbaas.iam.v1.MFAService.GetBackupCodeStatus:output_type -> quicbaas.iam.v1.GetBackupCodeStatusResponse
+	158, // 329: quicbaas.iam.v1.FederationService.CreateProvider:output_type -> quicbaas.iam.v1.ExternalProvider
+	158, // 330: quicbaas.iam.v1.FederationService.GetProvider:output_type -> quicbaas.iam.v1.ExternalProvider
+	158, // 331: quicbaas.iam.v1.FederationService.UpdateProvider:output_type -> quicbaas.iam.v1.ExternalProvider
+	164, // 332: quicbaas.iam.v1.FederationService.DeleteProvider:output_type -> quicbaas.iam.v1.DeleteProviderResponse
+	166, // 333: quicbaas.iam.v1.FederationService.ListProviders:output_type -> quicbaas.iam.v1.ListProvidersResponse
+	168, // 334: quicbaas.iam.v1.FederationService.BeginFederatedLogin:output_type -> quicbaas.iam.v1.BeginFederatedLoginResponse
+	170, // 335: quicbaas.iam.v1.FederationService.HandleFederatedCallback:output_type -> quicbaas.iam.v1.HandleFederatedCallbackResponse
+	172, // 336: quicbaas.iam.v1.FederationService.LinkAccount:output_type -> quicbaas.iam.v1.LinkAccountResponse
+	174, // 337: quicbaas.iam.v1.FederationService.UnlinkAccount:output_type -> quicbaas.iam.v1.UnlinkAccountResponse
+	176, // 338: quicbaas.iam.v1.FederationService.GetUserLinks:output_type -> quicbaas.iam.v1.GetUserLinksResponse
+	143, // 339: quicbaas.iam.v1.SessionService.ListSessions:output_type -> quicbaas.iam.v1.ListSessionsResponse
+	141, // 340: quicbaas.iam.v1.SessionService.GetSession:output_type -> quicbaas.iam.v1.Session
+	146, // 341: quicbaas.iam.v1.SessionService.RevokeSession:output_type -> quicbaas.iam.v1.RevokeSessionResponse
+	148, // 342: quicbaas.iam.v1.SessionService.RevokeAllSessions:output_type -> quicbaas.iam.v1.RevokeAllSessionsResponse
+	150, // 343: quicbaas.iam.v1.SessionService.RevokeOtherSessions:output_type -> quicbaas.iam.v1.RevokeOtherSessionsResponse
+	153, // 344: quicbaas.iam.v1.AuditService.QueryAuditEvents:output_type -> quicbaas.iam.v1.QueryAuditEventsResponse
+	151, // 345: quicbaas.iam.v1.AuditService.GetAuditEvent:output_type -> quicbaas.iam.v1.AuditEvent
+	156, // 346: quicbaas.iam.v1.AuditService.RecordAuditEvent:output_type -> quicbaas.iam.v1.RecordAuditEventResponse
+	256, // [256:347] is the sub-list for method output_type
+	165, // [165:256] is the sub-list for method input_type
+	165, // [165:165] is the sub-list for extension type_name
+	165, // [165:165] is the sub-list for extension extendee
+	0,   // [0:165] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_iam_iam_proto_init() }
@@ -15102,13 +15271,14 @@ func file_api_proto_iam_iam_proto_init() {
 	if File_api_proto_iam_iam_proto != nil {
 		return
 	}
+	file_api_proto_iam_iam_proto_msgTypes[49].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_iam_iam_proto_rawDesc), len(file_api_proto_iam_iam_proto_rawDesc)),
 			NumEnums:      9,
-			NumMessages:   204,
+			NumMessages:   205,
 			NumExtensions: 0,
 			NumServices:   6,
 		},

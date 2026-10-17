@@ -447,14 +447,37 @@ func (h *iamHandler) handleUpdateApp(ctx context.Context, client iampb.IAMServic
 	grantTypes, _ := getStringSlice(requestData, "grant_types")
 	responseTypes, _ := getStringSlice(requestData, "response_types")
 
+	scopes, _ := getStringSlice(requestData, "scopes")
+	postLogoutRedirectURIs, _ := getStringSlice(requestData, "post_logout_redirect_uris")
+	contacts, _ := getStringSlice(requestData, "contacts")
+	metadata, _ := getStringMap(requestData, "metadata")
+
+	// Every field the SDK sends is carried; the server applies it or refuses
+	// it with InvalidArgument, so none is dropped on the way.
 	pbReq := &iampb.UpdateAppRequest{
-		TenantId:       tenantID,
-		ClientId:       clientID,
-		Name:           name,
-		RedirectUris:   redirectURIs,
-		ResourcePrefix: resourcePrefix,
-		GrantTypes:     grantTypes,
-		ResponseTypes:  responseTypes,
+		TenantId:                tenantID,
+		ClientId:                clientID,
+		Name:                    name,
+		RedirectUris:            redirectURIs,
+		ResourcePrefix:          resourcePrefix,
+		GrantTypes:              grantTypes,
+		ResponseTypes:           responseTypes,
+		Description:             optionalString(requestData, "description"),
+		PostLogoutRedirectUris:  postLogoutRedirectURIs,
+		Scopes:                  scopes,
+		TokenEndpointAuthMethod: optionalString(requestData, "token_endpoint_auth_method"),
+		Contacts:                contacts,
+		LogoUri:                 optionalString(requestData, "logo_uri"),
+		PolicyUri:               optionalString(requestData, "policy_uri"),
+		TosUri:                  optionalString(requestData, "tos_uri"),
+		JwksUri:                 optionalString(requestData, "jwks_uri"),
+		Jwks:                    optionalString(requestData, "jwks"),
+		AccessTokenTtl:          optionalDuration(requestData, "access_token_ttl"),
+		RefreshTokenTtl:         optionalDuration(requestData, "refresh_token_ttl"),
+		IdTokenTtl:              optionalDuration(requestData, "id_token_ttl"),
+		Metadata:                metadata,
+		Enabled:                 optionalBool(requestData, "enabled"),
+		MtlsCertThumbprint:      optionalString(requestData, "mtls_cert_thumbprint"),
 	}
 
 	resp, err := client.UpdateApp(ctx, pbReq)

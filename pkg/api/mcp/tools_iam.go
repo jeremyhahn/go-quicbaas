@@ -26,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
@@ -861,6 +862,42 @@ func (r *ToolRegistry) registerAppTools() {
 				"resource_prefix": map[string]interface{}{
 					"type": "string",
 				},
+				"default_audience": map[string]interface{}{"type": "string"},
+				"scopes": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Permission set granted to the application",
+				},
+				"token_endpoint_auth_method": map[string]interface{}{"type": "string"},
+				"mtls_cert_thumbprint": map[string]interface{}{
+					"type":        "string",
+					"description": "base64url SHA-256 thumbprint that re-binds the pinned RFC 8705 certificate",
+				},
+				// The application does not store the properties below; an update
+				// that sets any of them is refused as invalid input.
+				"pkce_required": map[string]interface{}{"type": "boolean"},
+				"description":   map[string]interface{}{"type": "string"},
+				"post_logout_redirect_uris": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+				"contacts": map[string]interface{}{
+					"type":  "array",
+					"items": map[string]interface{}{"type": "string"},
+				},
+				"logo_uri":          map[string]interface{}{"type": "string"},
+				"policy_uri":        map[string]interface{}{"type": "string"},
+				"tos_uri":           map[string]interface{}{"type": "string"},
+				"jwks_uri":          map[string]interface{}{"type": "string"},
+				"jwks":              map[string]interface{}{"type": "string"},
+				"access_token_ttl":  map[string]interface{}{"type": "integer", "description": "Nanoseconds"},
+				"refresh_token_ttl": map[string]interface{}{"type": "integer", "description": "Nanoseconds"},
+				"id_token_ttl":      map[string]interface{}{"type": "integer", "description": "Nanoseconds"},
+				"metadata": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+				},
+				"enabled": map[string]interface{}{"type": "boolean"},
 			},
 			"required": []string{"client_id"},
 		},
@@ -2276,51 +2313,42 @@ func (r *ToolRegistry) executeIAMAppGet(ctx context.Context, args map[string]int
 	return marshalResult(resp)
 }
 
+// AppUpdateArgsError reports quicbaas_iam_app_update arguments that do not
+// decode into an update request. It classifies as invalid input.
+type AppUpdateArgsError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *AppUpdateArgsError) Error() string {
+	return "iam.app.update: invalid arguments: " + e.Cause.Error()
+}
+
+// Unwrap returns the decode error.
+func (e *AppUpdateArgsError) Unwrap() error {
+	return e.Cause
+}
+
+// ErrorCode classifies the error as invalid input for the MCP tool result.
+func (e *AppUpdateArgsError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrInvalidInput
+}
+
 func (r *ToolRegistry) executeIAMAppUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	iamSvc, err := r.getIAMService()
 	if err != nil {
 		return nil, err
 	}
 
-	req := &service.UpdateAppRequest{
-		ClientID: getString(args, "client_id"),
+	// Every argument the request knows is carried to the app manager, which
+	// applies it or refuses it with AppFieldNotStoredError; none is dropped.
+	data, err := json.Marshal(args)
+	if err != nil {
+		return nil, &AppUpdateArgsError{Cause: err}
 	}
-
-	if name := getString(args, "name"); name != "" {
-		req.Name = &name
-	}
-	if prefix := getString(args, "resource_prefix"); prefix != "" {
-		req.ResourcePrefix = &prefix
-	}
-
-	if urisRaw, ok := args["redirect_uris"].([]interface{}); ok {
-		uris := make([]string, len(urisRaw))
-		for i, u := range urisRaw {
-			if str, ok := u.(string); ok {
-				uris[i] = str
-			}
-		}
-		req.RedirectURIs = &uris
-	}
-
-	if grantTypesRaw, ok := args["grant_types"].([]interface{}); ok {
-		grantTypes := make([]string, len(grantTypesRaw))
-		for i, g := range grantTypesRaw {
-			if str, ok := g.(string); ok {
-				grantTypes[i] = str
-			}
-		}
-		req.GrantTypes = &grantTypes
-	}
-
-	if respTypesRaw, ok := args["response_types"].([]interface{}); ok {
-		respTypes := make([]string, len(respTypesRaw))
-		for i, rt := range respTypesRaw {
-			if str, ok := rt.(string); ok {
-				respTypes[i] = str
-			}
-		}
-		req.ResponseTypes = &respTypes
+	req := &service.UpdateAppRequest{}
+	if err := json.Unmarshal(data, req); err != nil {
+		return nil, &AppUpdateArgsError{Cause: err}
 	}
 
 	resp, err := iamSvc.UpdateApp(ctx, req)

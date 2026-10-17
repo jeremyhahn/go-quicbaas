@@ -43,7 +43,8 @@ func TestIAMServiceAdapter_AppVerbsStayInTenant(t *testing.T) {
 	if _, err := adapter.GetApp(ctx, "tenant-a", victim.ClientID); !dberrors.IsNotFound(err) {
 		t.Fatalf("cross-tenant GetApp: want not-found, got %v", err)
 	}
-	if _, err := adapter.UpdateApp(ctx, &iam.Application{TenantID: "tenant-a", ClientID: victim.ClientID, Name: "Hijacked"}); !dberrors.IsNotFound(err) {
+	hijacked := "Hijacked"
+	if _, err := adapter.UpdateApp(ctx, "tenant-a", victim.ClientID, iam.UpdateAppOptions{Name: &hijacked}); !dberrors.IsNotFound(err) {
 		t.Fatalf("cross-tenant UpdateApp: want not-found, got %v", err)
 	}
 	if _, err := adapter.RotateAppSecret(ctx, "tenant-a", victim.ClientID); !dberrors.IsNotFound(err) {
@@ -63,7 +64,8 @@ func TestIAMServiceAdapter_AppVerbsStayInTenant(t *testing.T) {
 	if got.Name != "Victim" {
 		t.Fatalf("refused cross-tenant update renamed the app to %q", got.Name)
 	}
-	if _, err := adapter.UpdateApp(ctx, &iam.Application{TenantID: "tenant-b", ClientID: victim.ClientID, Name: "Renamed"}); err != nil {
+	renamed := "Renamed"
+	if _, err := adapter.UpdateApp(ctx, "tenant-b", victim.ClientID, iam.UpdateAppOptions{Name: &renamed}); err != nil {
 		t.Fatalf("owner UpdateApp: %v", err)
 	}
 	if _, err := adapter.RotateAppSecret(ctx, "tenant-b", victim.ClientID); err != nil {

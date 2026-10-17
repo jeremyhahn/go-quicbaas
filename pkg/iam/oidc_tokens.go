@@ -298,9 +298,18 @@ func (s *TokenService) resolveEffectivePermissions(ctx context.Context, claims *
 		TenantID: claims.TenantID,
 		Roles:    claims.Roles,
 	}
-	infos, err := rbac.ListPermissions(withTokenTenant(ctx, claims.TenantID), identity)
+	return listEffectivePermissions(ctx, rbac, claims.TenantID, identity)
+}
+
+// listEffectivePermissions returns the distinct qrdb permission names identity
+// holds in tenantID. The RBAC call runs on a context bound to tenantID
+// (withTokenTenant): without that binding qrdb resolves against the SYSTEM
+// tenant's stores (#529). It is shared by token issuance and the application
+// grantor gate so both read one authority.
+func listEffectivePermissions(ctx context.Context, rbac qrdbtransport.RBACClient, tenantID string, identity *qrdbtransport.Identity) ([]string, error) {
+	infos, err := rbac.ListPermissions(withTokenTenant(ctx, tenantID), identity)
 	if err != nil {
-		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.resolveEffectivePermissions", "failed to resolve effective permissions")
+		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.listEffectivePermissions", "failed to resolve effective permissions")
 	}
 	if len(infos) == 0 {
 		return nil, nil

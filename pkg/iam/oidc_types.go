@@ -677,8 +677,99 @@ type UpdateAppOptions struct {
 	// ResponseTypes is the list of allowed response types
 	ResponseTypes *[]string
 
-	// PKCERequired indicates if PKCE is mandatory
+	// Scopes replaces the permission set granted to the application. It is
+	// accepted only through the grantor gate: every permission scope it
+	// submits must be held by the calling identity, or the whole update is
+	// refused with *ScopeNotGrantableError (permission denied).
+	Scopes *[]string
+
+	// TokenEndpointAuthMethod replaces the client authentication method; it
+	// must be one of the supported methods (see AuthMethodClientSecretBasic).
+	TokenEndpointAuthMethod *string
+
+	// MTLSCertThumbprint replaces the pinned certificate thumbprint in the same
+	// write, so the old certificate stops binding at once. It must be the
+	// base64url SHA-256 digest CertThumbprintS256 produces. A pointer to the
+	// empty string clears the pin, which is refused for a
+	// self_signed_tls_client_auth client.
+	MTLSCertThumbprint *string
+
+	// The fields below are carried by the SDK's UpdateAppRequest but have no
+	// place in Application. An update that sets any of them is refused with
+	// AppFieldNotStoredError rather than silently dropping the value.
+
+	// PKCERequired indicates if PKCE is mandatory (not stored).
 	PKCERequired *bool
+
+	// Description is the application description (not stored).
+	Description *string
+
+	// PostLogoutRedirectURIs are the post-logout redirect URIs (not stored).
+	PostLogoutRedirectURIs *[]string
+
+	// Contacts are the contact emails (not stored).
+	Contacts *[]string
+
+	// LogoURI is the logo URL (not stored).
+	LogoURI *string
+
+	// PolicyURI is the privacy policy URL (not stored).
+	PolicyURI *string
+
+	// TOSURI is the terms of service URL (not stored).
+	TOSURI *string
+
+	// JWKSURI is the JWKS URL (not stored).
+	JWKSURI *string
+
+	// JWKS is the inline JWKS (not stored).
+	JWKS *string
+
+	// AccessTokenTTL is the access token lifetime (not stored).
+	AccessTokenTTL *time.Duration
+
+	// RefreshTokenTTL is the refresh token lifetime (not stored).
+	RefreshTokenTTL *time.Duration
+
+	// IDTokenTTL is the ID token lifetime (not stored).
+	IDTokenTTL *time.Duration
+
+	// Metadata is custom metadata (not stored).
+	Metadata *map[string]string
+
+	// Enabled controls whether the application is active (not stored).
+	Enabled *bool
+}
+
+// unstoredFields names every field the options set that Application has no
+// place for.
+func (o UpdateAppOptions) unstoredFields() []string {
+	set := []struct {
+		name string
+		set  bool
+	}{
+		{"pkce_required", o.PKCERequired != nil},
+		{"description", o.Description != nil},
+		{"post_logout_redirect_uris", o.PostLogoutRedirectURIs != nil},
+		{"contacts", o.Contacts != nil},
+		{"logo_uri", o.LogoURI != nil},
+		{"policy_uri", o.PolicyURI != nil},
+		{"tos_uri", o.TOSURI != nil},
+		{"jwks_uri", o.JWKSURI != nil},
+		{"jwks", o.JWKS != nil},
+		{"access_token_ttl", o.AccessTokenTTL != nil},
+		{"refresh_token_ttl", o.RefreshTokenTTL != nil},
+		{"id_token_ttl", o.IDTokenTTL != nil},
+		{"metadata", o.Metadata != nil},
+		{"enabled", o.Enabled != nil},
+	}
+	var fields []string
+	for _, f := range set {
+		if f.set {
+			fields = append(fields, f.name)
+		}
+	}
+	return fields
 }
 
 // OIDCDependencies contains dependencies for the OIDC provider.

@@ -186,8 +186,8 @@ func (m *mockIAMService) GetApp(ctx context.Context, tenantID, clientID string) 
 	return args.Get(0).(*iam.Application), args.Error(1)
 }
 
-func (m *mockIAMService) UpdateApp(ctx context.Context, app *iam.Application) (*iam.Application, error) {
-	args := m.Called(ctx, app)
+func (m *mockIAMService) UpdateApp(ctx context.Context, tenantID, clientID string, opts iam.UpdateAppOptions) (*iam.Application, error) {
+	args := m.Called(ctx, tenantID, clientID, opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -1047,7 +1047,7 @@ func TestIAMServer_GetApp_MissingFields(t *testing.T) {
 func TestIAMServer_UpdateApp_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("UpdateApp", mock.Anything, mock.AnythingOfType("*iam.Application")).
+	svc.On("UpdateApp", mock.Anything, "t1", "c1", mock.AnythingOfType("iam.UpdateAppOptions")).
 		Return(&iam.Application{ClientID: "c1", TenantID: "t1", Name: "Updated", ClientSecret: "secret"}, nil)
 
 	resp, err := srv.UpdateApp(callerContext("t1"), &iampb.UpdateAppRequest{

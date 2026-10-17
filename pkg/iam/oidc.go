@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -133,25 +134,20 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 // GetConfiguration returns the OIDC discovery configuration.
 func (p *OIDCProvider) GetConfiguration() map[string]interface{} {
 	return map[string]interface{}{
-		"issuer":                                p.config.Issuer,
-		"authorization_endpoint":                p.config.Issuer + "/oauth2/authorize",
-		"token_endpoint":                        p.config.Issuer + "/oauth2/token",
-		"userinfo_endpoint":                     p.config.Issuer + "/oauth2/userinfo",
-		"jwks_uri":                              p.config.Issuer + "/.well-known/jwks.json",
-		"registration_endpoint":                 p.config.Issuer + "/oauth2/register",
-		"revocation_endpoint":                   p.config.Issuer + "/oauth2/revoke",
-		"introspection_endpoint":                p.config.Issuer + "/oauth2/introspect",
-		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
-		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{p.config.SigningAlgorithm},
-		"scopes_supported":                      []string{"openid", "profile", "email", "offline_access", "agent:runtime:spawn", "agent:runtime:prompt", "agent:runtime:status"},
-		"token_endpoint_auth_methods_supported": []string{
-			AuthMethodClientSecretBasic,
-			AuthMethodClientSecretPost,
-			AuthMethodTLSClientAuth,
-			AuthMethodSelfSignedTLSClientAuth,
-		},
+		"issuer":                                     p.config.Issuer,
+		"authorization_endpoint":                     p.config.Issuer + "/oauth2/authorize",
+		"token_endpoint":                             p.config.Issuer + "/oauth2/token",
+		"userinfo_endpoint":                          p.config.Issuer + "/oauth2/userinfo",
+		"jwks_uri":                                   p.config.Issuer + "/.well-known/jwks.json",
+		"registration_endpoint":                      p.config.Issuer + "/oauth2/register",
+		"revocation_endpoint":                        p.config.Issuer + "/oauth2/revoke",
+		"introspection_endpoint":                     p.config.Issuer + "/oauth2/introspect",
+		"response_types_supported":                   []string{"code"},
+		"grant_types_supported":                      []string{"authorization_code", "client_credentials", "refresh_token"},
+		"subject_types_supported":                    []string{"public"},
+		"id_token_signing_alg_values_supported":      []string{p.config.SigningAlgorithm},
+		"scopes_supported":                           []string{"openid", "profile", "email", "offline_access", "agent:runtime:spawn", "agent:runtime:prompt", "agent:runtime:status"},
+		"token_endpoint_auth_methods_supported":      slices.Clone(supportedTokenEndpointAuthMethods),
 		"tls_client_certificate_bound_access_tokens": true,
 		"mtls_endpoint_aliases": map[string]string{
 			"token_endpoint": p.config.Issuer + "/oauth2/token-mtls",
@@ -247,21 +243,16 @@ type OAuthASMetadata struct {
 // provides OAuth 2.0 specific metadata for MCP clients.
 func (p *OIDCProvider) GetOAuthASMetadata() *OAuthASMetadata {
 	return &OAuthASMetadata{
-		Issuer:                 p.config.Issuer,
-		AuthorizationEndpoint:  p.config.Issuer + "/oauth2/authorize",
-		TokenEndpoint:          p.config.Issuer + "/oauth2/token",
-		JWKSURI:                p.config.Issuer + "/.well-known/jwks.json",
-		RegistrationEndpoint:   p.config.Issuer + "/oauth2/register",
-		RevocationEndpoint:     p.config.Issuer + "/oauth2/revoke",
-		IntrospectionEndpoint:  p.config.Issuer + "/oauth2/introspect",
-		ResponseTypesSupported: []string{"code"},
-		GrantTypesSupported:    []string{"authorization_code", "client_credentials", "refresh_token"},
-		TokenEndpointAuthMethodsSupported: []string{
-			AuthMethodClientSecretBasic,
-			AuthMethodClientSecretPost,
-			AuthMethodTLSClientAuth,
-			AuthMethodSelfSignedTLSClientAuth,
-		},
+		Issuer:                                p.config.Issuer,
+		AuthorizationEndpoint:                 p.config.Issuer + "/oauth2/authorize",
+		TokenEndpoint:                         p.config.Issuer + "/oauth2/token",
+		JWKSURI:                               p.config.Issuer + "/.well-known/jwks.json",
+		RegistrationEndpoint:                  p.config.Issuer + "/oauth2/register",
+		RevocationEndpoint:                    p.config.Issuer + "/oauth2/revoke",
+		IntrospectionEndpoint:                 p.config.Issuer + "/oauth2/introspect",
+		ResponseTypesSupported:                []string{"code"},
+		GrantTypesSupported:                   []string{"authorization_code", "client_credentials", "refresh_token"},
+		TokenEndpointAuthMethodsSupported:     slices.Clone(supportedTokenEndpointAuthMethods),
 		TLSClientCertificateBoundAccessTokens: true,
 		MTLSEndpointAliases: map[string]string{
 			"token_endpoint": p.config.Issuer + "/oauth2/token-mtls",

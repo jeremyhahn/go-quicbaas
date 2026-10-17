@@ -212,7 +212,7 @@ func TestIAMServer_GetApp_ServiceError(t *testing.T) {
 
 func TestIAMServer_UpdateApp_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
-	svc.On("UpdateApp", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
+	svc.On("UpdateApp", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.UpdateApp(callerContext("t-1"), &iampb.UpdateAppRequest{
 		TenantId: "t-1", ClientId: "c-1", Name: "app",

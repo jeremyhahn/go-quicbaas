@@ -497,18 +497,6 @@ func TestIAMServiceAdapter_RegisterApp_NilInput(t *testing.T) {
 	assert.Contains(t, err.Error(), "application cannot be nil")
 }
 
-func TestIAMServiceAdapter_UpdateApp_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.UpdateApp(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "application cannot be nil")
-}
-
 func TestIAMServiceAdapter_CreatePolicy_NilInput(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1621,8 +1609,8 @@ func TestAdapter91_UpdateApp_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	created.Name = "Updated App"
-	result, err := adapter.UpdateApp(ctx, created)
+	name := "Updated App"
+	result, err := adapter.UpdateApp(ctx, created.TenantID, created.ClientID, iam.UpdateAppOptions{Name: &name})
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 }
@@ -1632,7 +1620,8 @@ func TestAdapter91_UpdateApp_Error(t *testing.T) {
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.UpdateApp(ctx, &iam.Application{ClientID: "nonexistent", Name: "X"})
+	name := "X"
+	result, err := adapter.UpdateApp(ctx, "tenant-1", "nonexistent", iam.UpdateAppOptions{Name: &name})
 	assert.Error(t, err)
 	assert.Nil(t, result)
 }

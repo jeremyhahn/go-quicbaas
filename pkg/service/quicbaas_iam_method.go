@@ -665,23 +665,12 @@ func (w *iamServiceWrapper) UpdateApp(ctx context.Context, req *UpdateAppRequest
 		return nil, errors.New(errors.ErrUnavailable, "iam.UpdateApp", "app manager not available")
 	}
 
-	opts := iam.UpdateAppOptions{}
-	if req.RedirectURIs != nil {
-		opts.RedirectURIs = req.RedirectURIs
-	}
-	if req.GrantTypes != nil {
-		opts.GrantTypes = req.GrantTypes
-	}
-	if req.Name != nil {
-		opts.Name = req.Name
-	}
-
 	tenantID, err := tenantctx.Target(ctx, "iam.UpdateApp", "")
 	if err != nil {
 		return nil, err
 	}
 
-	app, err := am.UpdateAppInTenant(ctx, tenantID, req.ClientID, opts)
+	app, err := am.UpdateAppInTenant(ctx, tenantID, req.ClientID, req.Options())
 	if err != nil {
 		return nil, err
 	}

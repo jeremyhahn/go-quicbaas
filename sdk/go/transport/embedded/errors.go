@@ -91,6 +91,22 @@ func NewInvalidRequestTypeError(service, method, expected, actual string) *Inval
 	}
 }
 
+// AppUpdateDecodeError indicates an app update request that could not be
+// decoded into the IAM update options. Cause is the encoding failure.
+type AppUpdateDecodeError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *AppUpdateDecodeError) Error() string {
+	return "INVALID_INPUT: embedded: decode app update request: " + e.Cause.Error()
+}
+
+// Unwrap returns the encoding failure.
+func (e *AppUpdateDecodeError) Unwrap() error {
+	return e.Cause
+}
+
 // InvalidUserIDError indicates a request user id that is not a non-zero
 // decimal uint64, the form of the iam user id. Err is the strconv failure, or
 // nil when the value parsed to zero.

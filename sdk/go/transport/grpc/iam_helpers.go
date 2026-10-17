@@ -17,6 +17,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"time"
+
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // toMap converts an interface to a map[string]interface{} using JSON marshaling
@@ -184,6 +187,35 @@ func getStringMap(m map[string]interface{}, key string) (map[string]string, bool
 	}
 
 	return nil, false
+}
+
+// optionalString returns a pointer to the string at key, or nil when the key
+// is absent, so a proto3 optional field keeps the caller's presence.
+func optionalString(m map[string]interface{}, key string) *string {
+	s, ok := getString(m, key)
+	if !ok {
+		return nil
+	}
+	return &s
+}
+
+// optionalBool returns a pointer to the bool at key, or nil when absent.
+func optionalBool(m map[string]interface{}, key string) *bool {
+	b, ok := getBool(m, key)
+	if !ok {
+		return nil
+	}
+	return &b
+}
+
+// optionalDuration converts the nanosecond count at key (how time.Duration
+// marshals to JSON) to a proto duration, or returns nil when absent.
+func optionalDuration(m map[string]interface{}, key string) *durationpb.Duration {
+	n, ok := getInt(m, key)
+	if !ok {
+		return nil
+	}
+	return durationpb.New(time.Duration(n))
 }
 
 // getBytes extracts a byte slice from a map.

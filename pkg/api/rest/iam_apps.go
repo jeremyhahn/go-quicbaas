@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // ListApps handles GET /api/v1/tenants/{tenant_id}/apps - List OAuth applications in a tenant.
@@ -278,15 +279,9 @@ func (h *IAMHandler) UpdateApp(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Parse request
-	var req struct {
-		Name           *string   `json:"name,omitempty"`
-		RedirectURIs   *[]string `json:"redirect_uris,omitempty"`
-		ResourcePrefix *string   `json:"resource_prefix,omitempty"`
-		GrantTypes     *[]string `json:"grant_types,omitempty"`
-		ResponseTypes  *[]string `json:"response_types,omitempty"`
-		PKCERequired   *bool     `json:"pkce_required,omitempty"`
-	}
+	// Parse request: every field the SDK sends is carried to the app manager,
+	// which applies it or refuses it; none is dropped here.
+	var req service.UpdateAppRequest
 
 	if err := json.Unmarshal(body, &req); err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -316,16 +311,7 @@ func (h *IAMHandler) UpdateApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update app
-	opts := iam.UpdateAppOptions{
-		Name:           req.Name,
-		RedirectURIs:   req.RedirectURIs,
-		ResourcePrefix: req.ResourcePrefix,
-		GrantTypes:     req.GrantTypes,
-		ResponseTypes:  req.ResponseTypes,
-		PKCERequired:   req.PKCERequired,
-	}
-
-	app, err := mgr.UpdateAppInTenant(ctx, callerTenant, clientID, opts)
+	app, err := mgr.UpdateAppInTenant(ctx, callerTenant, clientID, req.Options())
 	if err != nil {
 		h.server.handleServiceError(w, r, err)
 		return

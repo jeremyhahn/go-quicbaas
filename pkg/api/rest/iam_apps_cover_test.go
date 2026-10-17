@@ -29,11 +29,15 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/rbactest"
 )
 
 const (
 	appsTenant      = "tenant-apps"
 	otherAppsTenant = "tenant-other-apps"
+	// appsKVReaderRole grants kv:read, the one permission an app-handler
+	// caller may grant through the grantor gate.
+	appsKVReaderRole = "kv-reader"
 )
 
 // appMockService exposes a real AppManager to the IAM handlers.
@@ -55,7 +59,8 @@ func setupAppHandler(t *testing.T) (*IAMHandler, func()) {
 	_, err = tenantMgr.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: otherAppsTenant, Name: "Other Apps"})
 	require.NoError(t, err)
 
-	manager := iam.NewAppManager(iam.NewBackendStorage(newIntrospectMemKV()), tenantMgr)
+	manager := iam.NewAppManager(iam.NewBackendStorage(newIntrospectMemKV()), tenantMgr,
+		iam.WithGrantorPermissions(rbactest.New(map[string][]string{appsKVReaderRole: {"kv:read"}})))
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)

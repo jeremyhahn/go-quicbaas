@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"slices"
 )
 
 // Token endpoint auth method constants (RFC 8705).
@@ -51,6 +52,35 @@ type MTLSClientAuthenticator interface {
 func CertThumbprintS256(cert *x509.Certificate) string {
 	sum := sha256.Sum256(cert.Raw)
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// supportedTokenEndpointAuthMethods lists every token endpoint auth method
+// the authorization server accepts, in discovery order.
+var supportedTokenEndpointAuthMethods = []string{
+	AuthMethodClientSecretBasic,
+	AuthMethodClientSecretPost,
+	AuthMethodTLSClientAuth,
+	AuthMethodSelfSignedTLSClientAuth,
+}
+
+// ValidateTokenEndpointAuthMethod reports ErrInvalidTokenEndpointAuthMethod
+// when method is not a supported token endpoint auth method.
+func ValidateTokenEndpointAuthMethod(method string) error {
+	if !slices.Contains(supportedTokenEndpointAuthMethods, method) {
+		return ErrInvalidTokenEndpointAuthMethod
+	}
+	return nil
+}
+
+// ValidateCertThumbprint reports ErrMTLSInvalidThumbprint when thumbprint is
+// not an unpadded base64url SHA-256 digest, the form CertThumbprintS256
+// produces.
+func ValidateCertThumbprint(thumbprint string) error {
+	sum, err := base64.RawURLEncoding.Strict().DecodeString(thumbprint)
+	if err != nil || len(sum) != sha256.Size {
+		return ErrMTLSInvalidThumbprint
+	}
+	return nil
 }
 
 // pkiClientAuth authenticates clients whose certificate chains to an operator-

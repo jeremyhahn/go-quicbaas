@@ -840,6 +840,69 @@ type UpdateAppRequest struct {
 
 	// ResourcePrefix is the resource namespace (optional)
 	ResourcePrefix *string `json:"resource_prefix,omitempty"`
+
+	// DefaultAudience is the default token audience (optional)
+	DefaultAudience *string `json:"default_audience,omitempty"`
+
+	// Scopes is the permission set granted to the application (optional).
+	// It is accepted only through the grantor gate: the caller must hold
+	// every permission scope it submits, or the update is refused (403 /
+	// PermissionDenied) and the application is unchanged.
+	Scopes *[]string `json:"scopes,omitempty"`
+
+	// TokenEndpointAuthMethod is the client authentication method (optional)
+	TokenEndpointAuthMethod *string `json:"token_endpoint_auth_method,omitempty"`
+
+	// MTLSCertThumbprint re-binds the pinned RFC 8705 certificate thumbprint (optional)
+	MTLSCertThumbprint *string `json:"mtls_cert_thumbprint,omitempty"`
+
+	// The fields below are not stored by the application; setting any of
+	// them makes the update fail with iam.AppFieldNotStoredError.
+
+	PKCERequired           *bool              `json:"pkce_required,omitempty"`
+	Description            *string            `json:"description,omitempty"`
+	PostLogoutRedirectURIs *[]string          `json:"post_logout_redirect_uris,omitempty"`
+	Contacts               *[]string          `json:"contacts,omitempty"`
+	LogoURI                *string            `json:"logo_uri,omitempty"`
+	PolicyURI              *string            `json:"policy_uri,omitempty"`
+	TOSURI                 *string            `json:"tos_uri,omitempty"`
+	JWKSURI                *string            `json:"jwks_uri,omitempty"`
+	JWKS                   *string            `json:"jwks,omitempty"`
+	AccessTokenTTL         *time.Duration     `json:"access_token_ttl,omitempty"`
+	RefreshTokenTTL        *time.Duration     `json:"refresh_token_ttl,omitempty"`
+	IDTokenTTL             *time.Duration     `json:"id_token_ttl,omitempty"`
+	Metadata               *map[string]string `json:"metadata,omitempty"`
+	Enabled                *bool              `json:"enabled,omitempty"`
+}
+
+// Options maps every field of the request to the IAM update options, so no
+// field the caller set is lost between the transport and the app manager.
+func (r *UpdateAppRequest) Options() iam.UpdateAppOptions {
+	return iam.UpdateAppOptions{
+		Name:                    r.Name,
+		RedirectURIs:            r.RedirectURIs,
+		ResourcePrefix:          r.ResourcePrefix,
+		DefaultAudience:         r.DefaultAudience,
+		GrantTypes:              r.GrantTypes,
+		ResponseTypes:           r.ResponseTypes,
+		Scopes:                  r.Scopes,
+		TokenEndpointAuthMethod: r.TokenEndpointAuthMethod,
+		MTLSCertThumbprint:      r.MTLSCertThumbprint,
+		PKCERequired:            r.PKCERequired,
+		Description:             r.Description,
+		PostLogoutRedirectURIs:  r.PostLogoutRedirectURIs,
+		Contacts:                r.Contacts,
+		LogoURI:                 r.LogoURI,
+		PolicyURI:               r.PolicyURI,
+		TOSURI:                  r.TOSURI,
+		JWKSURI:                 r.JWKSURI,
+		JWKS:                    r.JWKS,
+		AccessTokenTTL:          r.AccessTokenTTL,
+		RefreshTokenTTL:         r.RefreshTokenTTL,
+		IDTokenTTL:              r.IDTokenTTL,
+		Metadata:                r.Metadata,
+		Enabled:                 r.Enabled,
+	}
 }
 
 // UpdateAppResponse confirms application update.

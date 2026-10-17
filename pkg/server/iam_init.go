@@ -390,7 +390,10 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	}
 
 	// Create app manager
-	appManager := iam.NewAppManager(backendStorage, tenantManager)
+	// The grantor gate on application updates reads the caller's qrdb
+	// effective permissions through the same late-bound resolver token
+	// issuance uses.
+	appManager := iam.NewAppManager(backendStorage, tenantManager, iam.WithGrantorPermissions(&serverPermissionResolver{server: s}))
 
 	// Create the audit logger backed by the embedded qrdb node's audit chain
 	// (node_audit_logger.go) — the ONE audit plane every subsystem emits

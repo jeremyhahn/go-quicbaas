@@ -49,6 +49,23 @@ func (e *IAMContextError) Unwrap() error {
 	return e.Cause
 }
 
+// AppFieldNotStoredError is returned when an application update carries
+// fields that Application has no place for. The update is refused whole:
+// a field the service cannot apply is never silently dropped.
+type AppFieldNotStoredError struct {
+	Fields []string
+}
+
+// Error implements the error interface.
+func (e *AppFieldNotStoredError) Error() string {
+	return "application does not store field(s): " + strings.Join(e.Fields, ", ")
+}
+
+// Unwrap returns ErrAppFieldNotStored so callers can match the coded sentinel.
+func (e *AppFieldNotStoredError) Unwrap() error {
+	return ErrAppFieldNotStored
+}
+
 // IAM-specific error types following QuicBaaS error conventions.
 var (
 	// ErrTenantNotFound is returned when a tenant is not found.
@@ -797,6 +814,37 @@ var (
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.oauth2.mtls",
 		Err:  &IAMMessageError{Message: "invalid certificate PEM encoding"},
+	}
+
+	// ErrMTLSInvalidThumbprint is returned when a certificate thumbprint is
+	// not the base64url (unpadded) SHA-256 digest CertThumbprintS256 produces.
+	ErrMTLSInvalidThumbprint = &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.oauth2.mtls",
+		Err:  &IAMMessageError{Message: "certificate thumbprint must be a base64url SHA-256 digest"},
+	}
+
+	// ErrMTLSThumbprintRequired is returned when an update would leave a
+	// self_signed_tls_client_auth client without a pinned certificate.
+	ErrMTLSThumbprintRequired = &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.oauth2.mtls.self_signed",
+		Err:  &IAMMessageError{Message: "self_signed_tls_client_auth requires a pinned certificate thumbprint"},
+	}
+
+	// ErrAppFieldNotStored is the coded sentinel AppFieldNotStoredError unwraps to.
+	ErrAppFieldNotStored = &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.app.update",
+		Err:  &IAMMessageError{Message: "application update carries a field the application does not store"},
+	}
+
+	// ErrInvalidTokenEndpointAuthMethod is returned when a token endpoint
+	// auth method is not one of the RFC 8705 / RFC 6749 methods supported.
+	ErrInvalidTokenEndpointAuthMethod = &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.app",
+		Err:  &IAMMessageError{Message: "unsupported token endpoint auth method"},
 	}
 
 	// ErrMTLSMissingCNFClaim is returned when the access token has no cnf claim.
