@@ -146,13 +146,12 @@ func TestAgentAddressProber_TriesEveryResolvedAddress(t *testing.T) {
 // and an address with no port.
 func TestAgentAddressProber_RefusesWhatItCannotReach(t *testing.T) {
 	t.Parallel()
-	closed := loopbackListener(t)
-	closedAddr := closed.Addr().String()
-	if err := closed.Close(); err != nil {
-		t.Fatal(err)
-	}
+	// The dialer refuses the dial-step address outright: a closed loopback
+	// port can be taken by a parallel test's listener before the probe dials.
+	refusedAddr := "192.0.2.9:9091"
+	dialer := &refusingDialer{refused: map[string]bool{"192.0.2.9": true}}
 	resolver := &mapResolver{}
-	prober := NewAgentAddressProber(resolver, nil, 0)
+	prober := NewAgentAddressProber(resolver, dialer, 0)
 	ctx := context.Background()
 
 	requireUnreachable(t, prober.Probe(ctx, "agent-09.invalid:9091"), "agent-09.invalid:9091", "resolve")
@@ -161,10 +160,17 @@ func TestAgentAddressProber_RefusesWhatItCannotReach(t *testing.T) {
 		t.Fatalf("a .invalid name was looked up: %v", resolver.lookup)
 	}
 	requireUnreachable(t, prober.Probe(ctx, "agent-77.example.test:9091"), "agent-77.example.test:9091", "resolve")
-	requireUnreachable(t, prober.Probe(ctx, closedAddr), closedAddr, "dial")
+	err := prober.Probe(ctx, refusedAddr)
+	requireUnreachable(t, err, refusedAddr, "dial")
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("err = %v, want the dial cause", err)
+	}
 	requireUnreachable(t, prober.Probe(ctx, "0.0.0.0:9091"), "0.0.0.0:9091", "parse")
 	requireUnreachable(t, prober.Probe(ctx, ":9091"), ":9091", "parse")
 	requireUnreachable(t, prober.Probe(ctx, "agent-09"), "agent-09", "parse")
+	if len(dialer.dialed) != 1 || dialer.dialed[0] != refusedAddr {
+		t.Fatalf("dialed %v, want only %q: a resolve or parse refusal must not dial", dialer.dialed, refusedAddr)
+	}
 }
 
 // TestRefuseLoopbackInCluster: a loopback host passes the probe on the node
