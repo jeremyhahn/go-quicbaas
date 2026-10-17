@@ -6,9 +6,13 @@
 # factory launches from the registry. The by-hand rebuild at v0.15.0-alpha is
 # published today, before the nightly build lands. The push credential exists
 # only as this repository's Actions secrets REGISTRY_TOKEN (write:package) and
-# REGISTRY_USER (the repository's own identity), so the push runs here.
+# REGISTRY_USER, so the push runs here. Both belong to the repository's own
+# agent identity, agent-go-quicbaas: images are published under
+# <registry>/agent-go-quicbaas/<image> and pushed with that identity's token,
+# never with the owner's account or credentials (owner ruling, 2026-10-17).
 # The nightly schedule, the in-job build and the Trivy gate arrive with the
-# rest of #1381.
+# rest of #1381; the schedule stays off until Infra has verified the first
+# dispatch publish made with the agent identity's credential.
 #
 # WHAT IT DOES. It pushes an image that is already loaded on the runner's host
 # (`make build-worker-image`, then docker save | load onto the hosts) as
