@@ -1,3 +1,5 @@
+//go:build codec_json
+
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -40,28 +42,6 @@ func (r *countingResolver) Resolve(ctx context.Context, tenantID, projectID stri
 		return nil, r.err
 	}
 	return r.next.Resolve(ctx, tenantID, projectID, kind)
-}
-
-// tenantEditedResolver is a resolver over a store in which the test tenant
-// has edited the sdlc prompt name to open with marker.
-func tenantEditedResolver(t *testing.T, name, marker string) *prompts.Resolver {
-	t.Helper()
-	store, err := prompts.NewStore(newMemoryResolver())
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, known := SDLCPrompts().Spec().Prompt(name)
-	if !known {
-		t.Fatalf("%s is not in the sdlc set", name)
-	}
-	ref := prompts.Ref{TenantID: testTenant, Set: SetSDLC, Name: spec.Name}
-	if _, err := store.Save(context.Background(), ref, prompts.Change{
-		Stamp:   prompts.Stamp{Author: "alice"},
-		Content: marker + spec.Default,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return prompts.NewResolver(store)
 }
 
 func TestIssueSource_RendersContractsFromTheProjectsResolvedSet(t *testing.T) {

@@ -1,3 +1,5 @@
+//go:build codec_json
+
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -34,67 +36,6 @@ import (
 // other did not, and nothing in either runner said so. What is asserted here is
 // the seam itself — what it refuses, what it mounts, and the scope each caller
 // asks for — because that is where the divergence can no longer be written.
-
-// sshAccessProject is a project on an SSH remote, which is the shape the
-// burn-in node runs and the shape triage could not clone.
-func sshAccessProject() *orchestration.Project {
-	project := testOrchProject()
-	project.Git.RepoURL = "ssh://git@forge.test:2222/acme/api.git"
-	return project
-}
-
-// accessRig is a forgeAccess with fakes behind it.
-type accessRig struct {
-	access  forgeAccess
-	signing *fakeSigningAgent
-	tokens  *fakeTokens
-	forge   ForgeConfig
-}
-
-// testRepoGuard is the operator allowlist every test project's forge is on.
-func testRepoGuard(t *testing.T) RepoHostGuard {
-	t.Helper()
-	guard, err := NewRepoHostGuard([]string{"forge.test"}, false)
-	if err != nil {
-		t.Fatalf("NewRepoHostGuard: %v", err)
-	}
-	return guard
-}
-
-// testWorkspaceKey is the workspace key the rig's plans name.
-const testWorkspaceKey = "attempt-1"
-
-// newAccessRig builds the seam over fakes.
-func newAccessRig(t *testing.T) *accessRig {
-	t.Helper()
-	signing := &fakeSigningAgent{}
-	tokens := &fakeTokens{token: []byte("t0ken")}
-	access, err := newForgeAccess(tokens, signing, testRepoGuard(t), orchestration.WorkspaceCheckoutRoot, testSocketsRoot(t))
-	if err != nil {
-		t.Fatalf("newForgeAccess: %v", err)
-	}
-	forge := testBinding().Forge
-	forge.SSHHostKey = testSSHHostKey
-	return &accessRig{access: access, signing: signing, tokens: tokens, forge: forge}
-}
-
-// open runs the seam for one plan, defaulting the project, forge and key.
-func (r *accessRig) open(t *testing.T, project *orchestration.Project, scope SigningScope) (*orchestration.SpawnSessionRequest, *containerWorkspace, error) {
-	t.Helper()
-	req := &orchestration.SpawnSessionRequest{Backend: "claude", ProjectID: project.ID}
-	workspace, err := r.access.Open(context.Background(), req, workspacePlan{
-		TenantID: project.TenantID,
-		Project:  project,
-		Forge:    r.forge,
-		Branch:   orchestration.WorkspaceBranchPlan{Name: "main"},
-		Key:      testWorkspaceKey,
-		Scope:    scope,
-	})
-	if workspace != nil {
-		t.Cleanup(func() { workspace.Release(context.Background()) })
-	}
-	return req, workspace, err
-}
 
 // TestForgeAccess_AnSSHCheckoutIsGivenAnAgentTheContainerCanReach is the fix
 // for go-quicbaas#929 at the seam: a reader on an ssh remote gets an agent, the

@@ -516,21 +516,18 @@ func TestSDK_CertExt_Chain_HappyPath(t *testing.T) {
 // =============================================================================
 
 func TestSDK_Devices_LocalAccessorReachable(t *testing.T) {
-	c, _ := newClientWithMockTransport(t)
+	c, rt := newClientWithMockTransport(t)
 	defer c.Close()
 
-	dev := c.Security().Auth().Devices()
-	if dev == nil {
+	// Devices() is a local CTAP2 helper: reaching it must not send any
+	// transport request. List/Info/Present enumerate host USB-HID devices,
+	// so they are covered with an injected lister in devices_local_test.go
+	// and are not called here.
+	if dev := c.Security().Auth().Devices(); dev == nil {
 		t.Fatal("Devices() should return the local CTAP2 helper")
 	}
-	// List is a local USB-HID probe; in a headless CI host it returns an
-	// empty slice (not an error) and never touches the transport.
-	got, err := dev.List()
-	if err != nil {
-		t.Fatalf("Devices().List: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected non-nil device slice")
+	if n := rt.totalCalls(); n != 0 {
+		t.Fatalf("Devices() sent %d transport requests, want 0", n)
 	}
 }
 

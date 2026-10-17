@@ -1,3 +1,5 @@
+//go:build codec_json
+
 package sdlc
 
 import (

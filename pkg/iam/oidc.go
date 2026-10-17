@@ -1256,10 +1256,11 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 		return nil, NewOAuthError(ErrOAuthInvalidGrant, "invalid refresh token")
 	}
 
-	// Generate new tokens
-	scopes := req.Scope
-	if len(scopes) == 0 {
-		scopes = token.Scopes
+	// Checked before rotation so a refused request does not consume the
+	// presented credential.
+	scopes, err := refreshGrantScopes(req.Scope, token.Scopes)
+	if err != nil {
+		return nil, err
 	}
 
 	// Bind a presented DPoP proof (RFC 9449) into cnf.jkt. No proof => bearer.
@@ -1283,6 +1284,26 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	// a new session rather than as the same one, the safe direction.
 	return p.generateTokenResponseForSession(ctx, user, token.ClientID, scopes, "", "", cnf,
 		grantSession{ID: refreshedSessionID(token), Renewal: true})
+}
+
+// refreshGrantScopes returns the scope a refresh_token grant issues (OAuth 2.1
+// §4.3.1). An omitted scope is the scope originally granted. A requested scope
+// may narrow the grant but MUST NOT include any scope not originally granted;
+// such a request is refused with invalid_scope.
+func refreshGrantScopes(requested, granted []string) ([]string, error) {
+	if len(requested) == 0 {
+		return granted, nil
+	}
+	grantSet := make(map[string]struct{}, len(granted))
+	for _, scope := range granted {
+		grantSet[scope] = struct{}{}
+	}
+	for _, scope := range requested {
+		if _, ok := grantSet[scope]; !ok {
+			return nil, NewOAuthError(ErrOAuthInvalidScope, "scope "+scope+" was not originally granted")
+		}
+	}
+	return requested, nil
 }
 
 // sessionEstablishedID returns the identifier to freeze into a grant's refresh

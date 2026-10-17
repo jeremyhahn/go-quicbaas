@@ -113,7 +113,7 @@ func newInteropFixture(t *testing.T) *interopFixture {
 		ClientSecret:  hashed,
 		TenantID:      interopTenant,
 		RedirectURIs:  []string{interopRedirectURI},
-		GrantTypes:    []string{iam.GrantTypeAuthorizationCode, iam.GrantTypeClientCredentials},
+		GrantTypes:    []string{iam.GrantTypeAuthorizationCode, iam.GrantTypeRefreshToken, iam.GrantTypeClientCredentials},
 		ResponseTypes: []string{"code"},
 		Scopes:        iam.DefaultFleetRuntimeScopes(),
 	}))
@@ -367,6 +367,38 @@ func TestOIDCInterop_WrongPKCEVerifierIsRefused(t *testing.T) {
 	var retrieveErr *oauth2.RetrieveError
 	require.True(t, errors.As(err, &retrieveErr), "want a token endpoint refusal, got %v", err)
 	assert.Equal(t, "invalid_grant", retrieveErr.ErrorCode)
+}
+
+// TestOIDCInterop_RefreshWiderScopeIsRefused drives OAuth 2.1 §4.3.1 over the
+// REST token endpoint: a refresh asking for a scope the grant never carried is
+// answered 400 with the RFC error invalid_scope.
+func TestOIDCInterop_RefreshWiderScopeIsRefused(t *testing.T) {
+	f := newInteropFixture(t)
+	rp := f.relyingParty()
+
+	verifier := oauth2.GenerateVerifier()
+	token, err := rp.Exchange(f.context(), f.authorizeAsUser(t, verifier), oauth2.VerifierOption(verifier))
+	require.NoError(t, err, "x/oauth2 code exchange")
+	require.NotEmpty(t, token.RefreshToken)
+
+	form := url.Values{
+		"grant_type":    {iam.GrantTypeRefreshToken},
+		"refresh_token": {token.RefreshToken},
+		"scope":         {"openid profile"},
+	}
+	req, err := http.NewRequest(http.MethodPost, f.discovery.TokenEndpoint, strings.NewReader(form.Encode()))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(interopClientID, interopSecret)
+
+	resp, err := f.client.Do(req)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "invalid_scope", body["error"])
 }
 
 func TestOIDCInterop_ClientCredentialsAndIntrospection(t *testing.T) {

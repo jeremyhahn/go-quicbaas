@@ -151,7 +151,7 @@ commits are mapped. The ancestors the two branches share are out of scope for #7
 | 407f2d83 | fungible-move actuation | **adapt** | `Actuator` is kept, plus a destination check through `FleetAdmission.Admit`. The `Relocator` is implemented by the orchestration service as a re-spawn with strict host affinity |
 | 0bdacdb9 | mover/decider split, actuation record | **take as-is** (rule) / **adapt** (store) | The decider writes `ActuationRecord` itself and the outcome is in the id. Ledger storage moves to the injected KV |
 | d83c134a | lease names its tenant on the value (not named in the brief) | **drop** | Superseded: `SessionRecord` already carries `TenantID` |
-| 3f7eb214 | RequiredCapabilities constrains every entry | **adapt** (re-apply) | **Not on main**, contrary to the issue's note: `matchFleetNodeForTask` still filters only `"gpu"` (and `persistent_sessions` by backend). The capability union's safety rests on this fix, so it lands first, on `matchFleetNodeForTask` / `filterFleetNodesByCapability` |
+| 3f7eb214 | RequiredCapabilities constrains every entry | **adapt** (re-apply) | **Landed (P0).** `matchFleetNodeForTask` now hard-matches every entry through `filterFleetNodesByCapabilities` before backend, host-affinity and default selection, and refuses with `NoMatchingFleetNodeError` (constraint `capability`); `persistent_sessions` stays backend-scoped |
 | 9e3b13d2 | doc comment: the gate the union rests on | **adapt** | The comment moves with the inventory adapter and names `matchFleetNodeForTask` once that fix (above) is real |
 
 ## Interfaces
@@ -200,7 +200,7 @@ Each slice is one lane (≤ ~150 turns), lands green and leaves main shippable.
 
 | # | Slice | Tests and verification |
 |---|---|---|
-| P0 | Re-apply 3f7eb214: every `RequiredCapabilities` entry is a hard match in `matchFleetNodeForTask` (`persistent_sessions` stays backend-scoped) | Table test per capability. A regression test that a `docker` requirement no longer dispatches to an agent without it. `make test-orchestration` |
+| P0 | **Landed.** Re-apply 3f7eb214: every `RequiredCapabilities` entry is a hard match in `matchFleetNodeForTask` (`persistent_sessions` stays backend-scoped) | Table test per capability. A regression test that a `docker` requirement no longer dispatches to an agent without it. `make test-orchestration` |
 | P1 | `PlacementSpec`, validation, tenant-scoped store with CAS generation, `FleetInventory` grouping by host, the refusal error types | Lost-edit test (two racing declares, one `PlacementSpecStaleError`), using `pkg/testutil/qrdbnode` under the consensus-arbitration carve-out. A control test feeding the same records through a one-for-one inventory (refused) and through the adapter (reported). `make test-orchestration` |
 | P2 | Read-only `DriftReporter` over specs, the inventory and `SessionRecord`, the field-coverage check, the unnameable-work refusal | One test per finding kind. Mutation checks that an unclassified field fails construction. Duplicate-host and tenantless-session refusals. `make test-orchestration` |
 | P3a | `PlacementService` (declare/get/list/withdraw/drift), `placement:read`/`write` contributions, REST + gRPC + embedded + SDK client | Service tests with error paths. Authz table tests (denied without the permission, cross-tenant refused). `make test-service`, `test-api-rest`, `test-api-grpc` and the SDK client's package target |
@@ -234,7 +234,7 @@ For the owner or the CA. None is decided here.
    (which the derived request ids would tolerate)?
 7. **Issue note correction.** The issue says 3f7eb214 is already reflected in
    `control_loop.go`. It is not (see the mapping). Confirm that P0 goes ahead
-   as a prerequisite.
+   as a prerequisite. **Answered:** P0 went ahead first and has landed.
 
 ## See also
 

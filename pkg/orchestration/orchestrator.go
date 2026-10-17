@@ -3737,7 +3737,7 @@ func taskJobDescription(task *Task) string {
 
 // matchFleetNodeForTaskScoped picks the online fleet node a lead-driven attempt
 // at the task assigns work to, applying the same filters as the control loop
-// (backend → gpu → host_affinity) to the task's persisted routing hints.
+// (capabilities → host_affinity → backend) to the task's persisted routing hints.
 func (s *agentServiceImpl) matchFleetNodeForTaskScoped(ctx context.Context, task *Task) (string, error) {
 	if s.fleetRegistry == nil {
 		return "", &NoMatchingFleetNodeError{
@@ -3783,7 +3783,7 @@ func (s *agentServiceImpl) matchFleetNodeForTaskScoped(ctx context.Context, task
 		return "", authzErr
 	}
 
-	// Use the control loop's matching logic (backend → gpu → host_affinity).
+	// Use the control loop's matching logic (capabilities → host_affinity → backend).
 	// We instantiate a temporary loop purely for the matching helper.
 	cl := NewControlLoop(s, s.logger)
 	backends, _ := s.ListBackends(ctx)

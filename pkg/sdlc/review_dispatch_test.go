@@ -1,3 +1,5 @@
+//go:build codec_json
+
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -16,59 +18,11 @@ package sdlc
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
-
-// fakeJobStarter records the jobs a caller asked the engine to start. It is
-// the package's one job-starting double — the review dispatcher and the
-// triage scheduler both drive orchestration.JobStarter, so a second copy
-// would only be a second thing to keep in step.
-type fakeJobStarter struct {
-	mu      sync.Mutex
-	started []*orchestration.StartJobRequest
-	err     error
-	noID    bool
-	seq     int
-
-	// ctxTenants is the tenant bound to the CONTEXT of each call, which the
-	// engine guards StartJob on and which a request field cannot stand in for.
-	// Recorded because a double that discarded the context is what let
-	// go-quicbaas#918's sibling defect — a triage backstop refused `tenant ID
-	// required` on every pass — pass a green suite.
-	ctxTenants []string
-}
-
-func (f *fakeJobStarter) StartJob(ctx context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.ctxTenants = append(f.ctxTenants, orchestration.TenantFromContext(ctx))
-	if f.err != nil {
-		return nil, f.err
-	}
-	f.seq++
-	f.started = append(f.started, req)
-	if f.noID {
-		return &orchestration.StartJobResponse{}, nil
-	}
-	return &orchestration.StartJobResponse{JobID: "job-" + itoa(f.seq)}, nil
-}
-
-func (f *fakeJobStarter) requests() []*orchestration.StartJobRequest {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]*orchestration.StartJobRequest(nil), f.started...)
-}
-
-// contextTenants returns the tenant each call carried on its context.
-func (f *fakeJobStarter) contextTenants() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.ctxTenants...)
-}
 
 // dispatchRig is a dispatcher wired to a store, a job starter and a forge the
 // test controls.
@@ -126,14 +80,6 @@ func pendingRun(name, sha string) ForgeCheckRun {
 func redRun(name, sha string) ForgeCheckRun {
 	return ForgeCheckRun{ID: name, Name: name, HeadSHA: sha, Status: "completed", Conclusion: "failure",
 		Completed: time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)}
-}
-
-// deliveredTo is the binding a delivery is dispatched against. Only the
-// project id and the discovery mode are read on that path, and the zero mode
-// is DiscoveryBoth — the delivery path every binding had before the floor
-// existed.
-func deliveredTo(mode DiscoveryMode) *ProjectBinding {
-	return &ProjectBinding{ProjectID: testProject, Discovery: mode}
 }
 
 // prRequest is what a pull-request delivery resolves to.

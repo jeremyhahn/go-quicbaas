@@ -71,6 +71,14 @@ func (rt *recordingTransport) callsFor(service, method string) int {
 	return count
 }
 
+// totalCalls returns the number of Request and RequestStream invocations
+// recorded on any service.
+func (rt *recordingTransport) totalCalls() int {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return len(rt.calls)
+}
+
 // Request implements transport.Transport.Request.
 func (rt *recordingTransport) Request(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 	rt.mu.Lock()
@@ -91,6 +99,9 @@ func (rt *recordingTransport) Request(ctx context.Context, service, method strin
 // RequestStream implements transport.Transport.RequestStream. It returns
 // an error since the M10 conformance tests do not exercise streaming.
 func (rt *recordingTransport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
+	rt.mu.Lock()
+	rt.calls = append(rt.calls, recordedCall{Service: service, Method: method, Request: req})
+	rt.mu.Unlock()
 	return nil, nil
 }
 

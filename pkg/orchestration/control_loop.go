@@ -1444,12 +1444,17 @@ func (cl *ControlLoop) pollTaskCompletion(ctx context.Context) (bool, error) {
 }
 
 // matchFleetNodeForTask finds the best agent for a work item based on capabilities.
-// Filtering is applied in priority order: backend → GPU requirement → host
-// affinity → persistent sessions → best available.
+// Filtering is applied in priority order: required capabilities → host
+// affinity → backend → persistent sessions → best available.
 //
-// matchErr is non-nil only when host_affinity is strict (per-item override or
-// operator-level default) AND no online agent matches the named host. In
-// that case the caller must surface the typed error rather than substitute
+// Every RequiredCapabilities entry except "persistent_sessions" is a hard
+// match against the agent's advertised capabilities; "persistent_sessions" is
+// resolved through the backend's BackendCapabilities.
+//
+// matchErr is a NoMatchingFleetNodeError when no agent advertises every
+// required capability, when a requested backend has no candidate, or when
+// host_affinity is strict (per-item override or operator-level default) and
+// no online agent matches the named host. In each case the caller must surface the typed error rather than substitute
 // a generic NoFleetNodesAvailableError, so operators see "host X is offline"
 // instead of "no agents".
 func (cl *ControlLoop) matchFleetNodeForTask(
@@ -1463,13 +1468,12 @@ func (cl *ControlLoop) matchFleetNodeForTask(
 		backendCaps[b.Name] = b.Capabilities
 	}
 
-	// Apply GPU filter when the work item requires GPU acceleration.
-	// This narrows the candidate set before any other filtering so that
-	// subsequent selectors only consider GPU-capable agents.
-	gpuRequired := workItemRequiresGPU(item)
-	candidates := agents
-	if gpuRequired {
-		candidates = filterFleetNodesByCapability(agents, "gpu")
+	// Apply the capability hard match before any other filtering, so the
+	// backend, host-affinity and default selectors only ever choose from
+	// agents advertising every required capability.
+	candidates, capErr := filterFleetNodesByCapabilities(agents, requiredFleetNodeCapabilities(item))
+	if capErr != nil {
+		return "", "", capErr
 	}
 
 	// Apply host-affinity filter: restrict candidates to agents whose Name
@@ -1583,6 +1587,46 @@ func filterFleetNodesByCapability(agents []*FleetNode, capability string) []*Fle
 		}
 	}
 	return out
+}
+
+// filterFleetNodesByCapabilities narrows agents to those advertising every
+// capability in required. When none does, it returns a NoMatchingFleetNodeError
+// naming the capabilities no agent advertises, or all of them when each is
+// advertised somewhere but no single agent holds the set.
+func filterFleetNodesByCapabilities(agents []*FleetNode, required []string) ([]*FleetNode, error) {
+	candidates := agents
+	for _, capability := range required {
+		candidates = filterFleetNodesByCapability(candidates, capability)
+	}
+	if len(required) == 0 || len(candidates) > 0 {
+		return candidates, nil
+	}
+
+	missing := make([]string, 0, len(required))
+	for _, capability := range required {
+		if len(filterFleetNodesByCapability(agents, capability)) == 0 {
+			missing = append(missing, capability)
+		}
+	}
+	detail := "no online agent advertises " + strings.Join(missing, ", ")
+	if len(missing) == 0 {
+		detail = "no single online agent advertises all of " + strings.Join(required, ", ")
+	}
+	return nil, &NoMatchingFleetNodeError{Constraint: "capability", Detail: detail}
+}
+
+// requiredFleetNodeCapabilities returns the RequiredCapabilities entries an
+// agent must advertise itself: every entry except "persistent_sessions", which
+// is a backend property discovered through BackendCapabilities and never
+// declared by the agent.
+func requiredFleetNodeCapabilities(item *WorkItem) []string {
+	required := make([]string, 0, len(item.RequiredCapabilities))
+	for _, capability := range item.RequiredCapabilities {
+		if capability != "persistent_sessions" {
+			required = append(required, capability)
+		}
+	}
+	return required
 }
 
 // findFleetNodeByBackend finds the best agent that uses the specified backend.

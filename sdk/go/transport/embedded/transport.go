@@ -144,6 +144,8 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Vector/Compact":               handleVectorCompact,
 	"quicbaas.Vector/GetCompactionProgress": handleVectorGetCompactionProgress,
 	"quicbaas.Vector/GetStats":              handleVectorGetStats,
+	"quicbaas.Vector/Export":                handleVectorExport,
+	"quicbaas.Vector/Import":                handleVectorImport,
 
 	// KMS operations
 	"quicbaas.KMS/GenerateKey":             handleKMSGenerateKey,

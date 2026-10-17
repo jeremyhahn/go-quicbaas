@@ -34,8 +34,8 @@ import (
 // the embedded qrdb node through the go-qrdb sdk/go re-exports) and return
 // the client/vector wire types the SDK vector client type-asserts on.
 //
-// Export and Import are not served: their batch codec lives in the gRPC
-// server and VectorService has no export/import verb.
+// Export and Import use the service-layer codec (service.ExportVectors and
+// service.ImportVectors), the same wire format the gRPC server streams.
 
 const vectorServiceName = "quicbaas.Vector"
 
@@ -713,4 +713,63 @@ func handleVectorGetStats(ctx context.Context, svc service.QuicBaaS, req interfa
 		IndexSizeBytes: int64(resp.IndexSizeBytes),
 		Timestamp:      unixNanoTime(resp.Timestamp),
 	}, nil
+}
+
+func handleVectorExport(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	vs, r, err := vectorRequest[vector.ExportRequest](svc, "Export", req)
+	if err != nil {
+		return nil, err
+	}
+	var batches []*vector.ExportResponse
+	err = service.ExportVectors(ctx, vs, &service.ExportVectorsRequest{
+		Namespace:   r.Namespace,
+		Format:      r.Format,
+		Compression: r.Compression,
+		BatchSize:   int(r.BatchSize),
+	}, func(chunk *service.ExportVectorsChunk) error {
+		batches = append(batches, &vector.ExportResponse{
+			BatchData:       chunk.Data,
+			VectorsExported: chunk.VectorsExported,
+			IsFinal:         chunk.IsFinal,
+			Timestamp:       time.Now(),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return batches, nil
+}
+
+// handleVectorImport imports every batch with the gRPC stream's semantics: a
+// batch that fails is counted in VectorsFailed and the import carries on.
+func handleVectorImport(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	vs := svc.Vector()
+	if vs == nil {
+		return nil, NewServiceNotConfiguredError("Vector")
+	}
+	batches, ok := req.([]*vector.ImportRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError(vectorServiceName, "Import",
+			"[]*vector.ImportRequest", reflect.TypeOf(req).String())
+	}
+	start := time.Now()
+	resp := &vector.ImportResponse{}
+	for _, batch := range batches {
+		result, err := service.ImportVectors(ctx, vs, &service.ImportVectorsRequest{
+			Namespace:         batch.Namespace,
+			Format:            batch.Format,
+			Data:              batch.BatchData,
+			OverwriteExisting: batch.OverwriteExisting,
+		})
+		if err != nil && result.Failed == 0 {
+			return nil, err
+		}
+		resp.VectorsImported += result.Imported
+		resp.VectorsSkipped += result.Skipped
+		resp.VectorsFailed += result.Failed
+	}
+	resp.DurationMs = time.Since(start).Milliseconds()
+	resp.Timestamp = time.Now()
+	return resp, nil
 }

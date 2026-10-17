@@ -106,6 +106,39 @@ func (m *memVectorService) UpsertVector(_ context.Context, req *service.UpsertVe
 	return &service.UpsertVectorResponse{ID: req.ID, Version: version, Success: true}, nil
 }
 
+func (m *memVectorService) BatchUpsert(_ context.Context, req *service.BatchUpsertRequest) (*service.BatchUpsertResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, err := m.store(req.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range req.Vectors {
+		s[v.ID] = v
+	}
+	return &service.BatchUpsertResponse{InsertedCount: len(req.Vectors)}, nil
+}
+
+// SearchByMetadata ignores filters and pages through the namespace in ID order.
+func (m *memVectorService) SearchByMetadata(_ context.Context, req *service.SearchByMetadataRequest) (*service.SearchByMetadataResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, err := m.store(req.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]uint64, 0, len(s))
+	for id := range s {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	resp := &service.SearchByMetadataResponse{}
+	for i := req.Offset; i < len(ids) && len(resp.Results) < req.Limit; i++ {
+		resp.Results = append(resp.Results, s[ids[i]])
+	}
+	return resp, nil
+}
+
 func (m *memVectorService) GetVector(_ context.Context, req *service.GetVectorRequest) (*service.GetVectorResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -250,6 +283,61 @@ func TestEmbeddedVector_UpsertGetSearchDelete(t *testing.T) {
 	assert.Nil(t, gone.Vector)
 }
 
+func TestEmbeddedVector_ExportImportRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newVectorClient(t, newMemVectorService())
+	for _, ns := range []string{"docs", "copy"} {
+		_, err := c.CreateNamespace(ctx, &vector.CreateNamespaceRequest{
+			Config: &vector.NamespaceConfig{Namespace: ns, Dimensions: 2},
+		})
+		require.NoError(t, err)
+	}
+	for _, id := range []string{"1", "2", "3"} {
+		_, err := c.Upsert(ctx, &vector.UpsertRequest{Vector: &vector.VectorEntity{
+			ID: id, Namespace: "docs", Vector: []float32{1, 2}, Metadata: map[string]string{"id": id},
+		}})
+		require.NoError(t, err)
+	}
+
+	// Import carries no compression field, so the export stays uncompressed.
+	batches, err := c.Export(ctx, &vector.ExportRequest{Namespace: "docs", BatchSize: 2})
+	require.NoError(t, err)
+	require.Len(t, batches, 2)
+	assert.True(t, batches[1].IsFinal)
+
+	imports := make([]*vector.ImportRequest, 0, len(batches))
+	for _, b := range batches {
+		imports = append(imports, &vector.ImportRequest{Namespace: "copy", Format: "json", BatchData: b.BatchData})
+	}
+	resp, err := c.Import(ctx, imports)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), resp.VectorsImported)
+	assert.Zero(t, resp.VectorsFailed)
+
+	got, err := c.Get(ctx, &vector.GetRequest{Namespace: "copy", ID: "3", IncludeVector: true, IncludeMetadata: true})
+	require.NoError(t, err)
+	require.True(t, got.Found)
+	assert.Equal(t, []float32{1, 2}, got.Vector.Vector)
+	assert.Equal(t, map[string]string{"id": "3"}, got.Vector.Metadata)
+}
+
+func TestEmbeddedVector_ExportRefusesUnknownFormat(t *testing.T) {
+	ctx := context.Background()
+	c := newVectorClient(t, newMemVectorService())
+	_, err := c.CreateNamespace(ctx, &vector.CreateNamespaceRequest{
+		Config: &vector.NamespaceConfig{Namespace: "docs", Dimensions: 2},
+	})
+	require.NoError(t, err)
+
+	_, err = c.Export(ctx, &vector.ExportRequest{Namespace: "docs", Format: "parquet"})
+	var formatErr *service.UnsupportedExportFormatError
+	require.ErrorAs(t, err, &formatErr)
+
+	resp, err := c.Import(ctx, []*vector.ImportRequest{{Namespace: "docs", Format: "parquet", BatchData: []byte("{}")}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), resp.VectorsFailed)
+}
+
 func TestEmbeddedVector_UnknownNamespace(t *testing.T) {
 	ctx := context.Background()
 	c := newVectorClient(t, newMemVectorService())
@@ -321,6 +409,7 @@ func TestEmbeddedVector_EveryServedMethodIsRegistered(t *testing.T) {
 		"Upsert", "BatchUpsert", "Get", "Delete", "BatchDelete", "List", "UpdateMetadata",
 		"SearchSimilar", "SearchByID", "HybridSearch", "SearchByMetadata",
 		"RebuildIndex", "GetIndexProgress", "Compact", "GetCompactionProgress", "GetStats",
+		"Export", "Import",
 	}
 	for _, m := range methods {
 		_, ok := unaryHandlers["quicbaas.Vector/"+m]

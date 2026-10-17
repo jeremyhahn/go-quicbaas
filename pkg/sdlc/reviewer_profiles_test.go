@@ -1,3 +1,5 @@
+//go:build codec_json
+
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -28,30 +30,6 @@ import (
 // =============================================================================
 // Reviewer profiles: a default, named alternates, and the merge rule
 // =============================================================================
-
-const (
-	qwenProfile = "qwen"
-	qwenLogin   = "qwen-reviewer"
-)
-
-// qwenAlternate is the advisory alternate every profile test binds: the
-// owner's reference profile, on the local model.
-func qwenAlternate() ReviewerConfig {
-	return ReviewerConfig{
-		Name: qwenProfile, Agent: testQwenAgent,
-		Login: qwenLogin, TokenSecretRef: "sdlc/reviewer/api/qwen-token",
-	}
-}
-
-// profiledBinding is testBinding with a codex default and the qwen alternate.
-func profiledBinding() *ProjectBinding {
-	binding := testBinding()
-	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
-	binding.Reviewers = []ReviewerConfig{qwenAlternate()}
-	return binding
-}
-
-func boolPtr(b bool) *bool { return &b }
 
 func TestProjectBinding_ReviewerProfilesResolveNameRoleAndContext(t *testing.T) {
 	binding := profiledBinding()
@@ -595,13 +573,6 @@ func TestReviewSweeper_ARemovedProfileIsAVisibleFailure(t *testing.T) {
 	if !errors.As(err, &sweepErr) || sweepErr.Op != "SelectReviewer" {
 		t.Fatalf("want a SelectReviewer sweep failure, got %v", err)
 	}
-}
-
-// qwenJob is a review job for pull request 41 run as the qwen profile.
-func (r *reviewRunnerRig) qwenJob() *orchestration.JobRun {
-	job := r.job(41)
-	job.Config.Params = ReviewJobSubject{PullRequest: 41, Profile: qwenProfile}.Params()
-	return job
 }
 
 // bindQwenAsTheFakeForgesReviewer binds the qwen alternate under the login the

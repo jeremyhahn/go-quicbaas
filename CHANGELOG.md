@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A refresh request can no longer widen scope beyond the original grant (go-quicbaas#1436).**
+
 ## [0.15.0-alpha] - 2026-10-15
 
 ### Added

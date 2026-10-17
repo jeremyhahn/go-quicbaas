@@ -2425,69 +2425,6 @@ func TestGRPCRemaining91_Client_Conn(t *testing.T) {
 // Vector Export - Serialization Tests
 // =============================================================================
 
-func TestGRPCRemaining91_VectorExport_Serialize_JSON(t *testing.T) {
-	batch := &VectorExportBatch{
-		Namespace: "test-ns",
-		BatchNum:  1,
-		Total:     10,
-		Vectors: []VectorExportEntry{
-			{ID: "v1", Vector: []float32{1.0, 2.0, 3.0}},
-		},
-	}
-
-	data, err := serializeExportBatch(batch, "json", "none")
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-}
-
-func TestGRPCRemaining91_VectorExport_Serialize_DefaultFormat(t *testing.T) {
-	batch := &VectorExportBatch{Namespace: "ns", Vectors: []VectorExportEntry{}}
-	data, err := serializeExportBatch(batch, "unsupported-format", "")
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-}
-
-func TestGRPCRemaining91_VectorExport_Serialize_Gzip(t *testing.T) {
-	batch := &VectorExportBatch{
-		Namespace: "test-ns",
-		Vectors:   []VectorExportEntry{{ID: "v1", Vector: []float32{1.0, 2.0}}},
-	}
-
-	data, err := serializeExportBatch(batch, "json", "gzip")
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-
-	// Deserialize back
-	result, err := deserializeExportBatch(data, "json", "gzip")
-	require.NoError(t, err)
-	assert.Equal(t, "test-ns", result.Namespace)
-	assert.Len(t, result.Vectors, 1)
-}
-
-func TestGRPCRemaining91_VectorExport_Deserialize_NoCompression(t *testing.T) {
-	batch := &VectorExportBatch{
-		Namespace: "test-ns",
-		Vectors:   []VectorExportEntry{{ID: "v1", Vector: []float32{1.0}}},
-	}
-
-	data, err := serializeExportBatch(batch, "json", "none")
-	require.NoError(t, err)
-
-	result, err := deserializeExportBatch(data, "json", "")
-	require.NoError(t, err)
-	assert.Equal(t, "test-ns", result.Namespace)
-}
-
-func TestGRPCRemaining91_VectorExport_Deserialize_InvalidGzip(t *testing.T) {
-	_, err := deserializeExportBatch([]byte("not gzip data"), "json", "gzip")
-	require.Error(t, err)
-}
-
-func TestGRPCRemaining91_VectorExport_Deserialize_InvalidJSON(t *testing.T) {
-	_, err := deserializeExportBatch([]byte("not json"), "json", "none")
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Client KMS Backend Tests
 // =============================================================================

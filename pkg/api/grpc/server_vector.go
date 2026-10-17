@@ -1974,109 +1974,28 @@ func (s *Server) ExportVectors(req *pb.ExportVectorsRequest, stream pb.VectorAdm
 		return status.Error(codes.Unimplemented, "vector service not available")
 	}
 
-	// Determine batch size (default 1000)
-	batchSize := int(req.BatchSize)
-	if batchSize <= 0 {
-		batchSize = 1000
+	// A failed Send is returned as-is; service errors map to gRPC codes.
+	var sendErr error
+	err := service.ExportVectors(stream.Context(), vectorService, &service.ExportVectorsRequest{
+		Namespace:   req.Namespace,
+		Format:      req.Format,
+		Compression: req.Compression,
+		BatchSize:   int(req.BatchSize),
+		ShardID:     s.vectorShardID,
+	}, func(chunk *service.ExportVectorsChunk) error {
+		sendErr = stream.Send(&pb.ExportVectorsResponse{
+			BatchData:       chunk.Data,
+			VectorsExported: chunk.VectorsExported,
+			BatchNumber:     chunk.BatchNumber,
+			IsFinal:         chunk.IsFinal,
+			Checksum:        chunk.Checksum,
+		})
+		return sendErr
+	})
+	if sendErr != nil {
+		return sendErr
 	}
-
-	// Determine format (default json)
-	format := req.Format
-	if format == "" {
-		format = "json"
-	}
-
-	// Determine compression (default none)
-	compression := req.Compression
-	if compression == "" {
-		compression = "none"
-	}
-
-	var totalExported int64
-	var batchNumber int32
-	offset := 0
-
-	for {
-		// Search for vectors with pagination
-		searchReq := &service.SearchByMetadataRequest{
-			Namespace:       req.Namespace,
-			Filters:         make(map[string]interface{}),
-			FilterOperator:  "AND",
-			Limit:           batchSize,
-			Offset:          offset,
-			IncludeVectors:  true,
-			IncludeMetadata: true,
-			ShardID:         s.vectorShardID,
-			Consistency:     service.ConsistencyLevelLinearizable,
-		}
-
-		// Get batch of vectors
-		resp, err := vectorService.SearchByMetadata(stream.Context(), searchReq)
-		if err != nil {
-			return toProtoError(err)
-		}
-
-		// No more vectors to export
-		if len(resp.Results) == 0 {
-			// Send final empty batch if we haven't sent anything
-			if batchNumber == 0 {
-				return stream.Send(&pb.ExportVectorsResponse{
-					BatchData:       []byte{},
-					VectorsExported: 0,
-					BatchNumber:     1,
-					IsFinal:         true,
-					Checksum:        0,
-				})
-			}
-			break
-		}
-
-		batchNumber++
-
-		// Convert results to export entries
-		entries := vectorDataToExportEntries(resp.Results)
-
-		// Create export batch
-		batch := &VectorExportBatch{
-			Vectors:   entries,
-			Namespace: req.Namespace,
-			BatchNum:  batchNumber,
-			Total:     totalExported + int64(len(entries)),
-		}
-
-		// Serialize the batch
-		data, err := serializeExportBatch(batch, format, compression)
-		if err != nil {
-			return status.Errorf(codes.Internal, "failed to serialize batch: %v", err)
-		}
-
-		// Calculate checksum
-		checksum := calculateChecksum(data)
-
-		// Determine if this is the last batch
-		isFinal := len(resp.Results) < batchSize
-
-		// Send the batch
-		if err := stream.Send(&pb.ExportVectorsResponse{
-			BatchData:       data,
-			VectorsExported: int64(len(entries)),
-			BatchNumber:     batchNumber,
-			IsFinal:         isFinal,
-			Checksum:        checksum,
-		}); err != nil {
-			return err
-		}
-
-		totalExported += int64(len(entries))
-		offset += len(resp.Results)
-
-		// Exit if this was the last batch
-		if isFinal {
-			break
-		}
-	}
-
-	return nil
+	return toProtoError(err)
 }
 
 // ImportVectors imports vectors into a namespace from a backup or migration.
@@ -2093,9 +2012,7 @@ func (s *Server) ImportVectors(stream pb.VectorAdmin_ImportVectorsServer) error 
 	var namespace string
 	var format string
 	var overwriteExisting bool
-	totalImported := int64(0)
-	totalSkipped := int64(0)
-	totalFailed := int64(0)
+	var total service.ImportVectorsResult
 
 	startTime := time.Now()
 
@@ -2112,79 +2029,31 @@ func (s *Server) ImportVectors(stream pb.VectorAdmin_ImportVectorsServer) error 
 				return status.Error(codes.InvalidArgument, "namespace required in first message")
 			}
 			namespace = req.Namespace
-
-			// Set format (default json)
 			format = req.Format
-			if format == "" {
-				format = "json"
-			}
-
-			// Set overwrite behavior from request
 			overwriteExisting = req.OverwriteExisting
 		}
 
-		// Skip empty batch data
-		if len(req.BatchData) == 0 {
-			continue
-		}
-
-		// Deserialize the batch (no compression field in proto, use "none")
-		batch, err := deserializeExportBatch(req.BatchData, format, "none")
-		if err != nil {
-			totalFailed++
-			continue
-		}
-
-		// Convert to VectorData for batch upsert
-		vectors := exportEntriesToVectorData(batch.Vectors)
-
-		// Handle skip existing (when not overwriting)
-		if !overwriteExisting {
-			// Check existing vectors and filter out duplicates
-			var filteredVectors []*service.VectorData
-			for _, vec := range vectors {
-				_, err := vectorService.GetVector(stream.Context(), &service.GetVectorRequest{
-					Namespace: namespace,
-					ID:        vec.ID,
-					ShardID:   s.vectorShardID,
-				})
-				if err != nil {
-					// Vector doesn't exist, include it
-					filteredVectors = append(filteredVectors, vec)
-				} else {
-					// Vector exists, skip it
-					totalSkipped++
-				}
-			}
-			vectors = filteredVectors
-		}
-
-		// Skip if no vectors to upsert
-		if len(vectors) == 0 {
-			continue
-		}
-
-		// Batch upsert the vectors
-		upsertResp, err := vectorService.BatchUpsert(stream.Context(), &service.BatchUpsertRequest{
-			Namespace: namespace,
-			Vectors:   vectors,
-			ShardID:   s.vectorShardID,
+		// A batch that fails is counted in the result; the stream carries on.
+		result, err := service.ImportVectors(stream.Context(), vectorService, &service.ImportVectorsRequest{
+			Namespace:         namespace,
+			Format:            format,
+			Data:              req.BatchData,
+			OverwriteExisting: overwriteExisting,
+			ShardID:           s.vectorShardID,
 		})
 		if err != nil {
-			totalFailed += int64(len(vectors))
-			continue
+			s.logger.WithError(err).Warnf("Failed to import vector batch into %s", namespace)
 		}
-
-		totalImported += int64(upsertResp.InsertedCount)
+		total.Imported += result.Imported
+		total.Skipped += result.Skipped
+		total.Failed += result.Failed
 	}
 
-	duration := time.Since(startTime).Milliseconds()
-
 	return stream.SendAndClose(&pb.ImportVectorsResponse{
-		VectorsImported: totalImported,
-		VectorsSkipped:  totalSkipped,
-		VectorsFailed:   totalFailed,
-		DurationMs:      duration,
+		VectorsImported: total.Imported,
+		VectorsSkipped:  total.Skipped,
+		VectorsFailed:   total.Failed,
+		DurationMs:      time.Since(startTime).Milliseconds(),
 		Timestamp:       timestamppb.Now(),
 	})
 }
@@ -2200,18 +2069,7 @@ const (
 
 // parseVectorID converts a string ID to uint64 and stores the original in metadata.
 func parseVectorID(id string) uint64 {
-	// Try to parse as uint64
-	if parsed, err := strconv.ParseUint(id, 10, 64); err == nil {
-		return parsed
-	}
-
-	// If not a number, hash the string to uint64
-	// Simple hash function for demonstration
-	hash := uint64(0)
-	for i := 0; i < len(id); i++ {
-		hash = hash*31 + uint64(id[i])
-	}
-	return hash
+	return service.ParseVectorID(id)
 }
 
 // formatVectorID converts a uint64 ID to string, checking metadata for original ID.
