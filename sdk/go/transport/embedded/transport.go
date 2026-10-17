@@ -123,6 +123,28 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Operations/UpgradeNode":          handleUpgradeNode,
 	"quicbaas.Operations/GetUpgradeStatus":     handleGetUpgradeStatus,
 
+	// Vector operations (re-export of go-qrdb's vector service)
+	"quicbaas.Vector/CreateNamespace":       handleVectorCreateNamespace,
+	"quicbaas.Vector/DeleteNamespace":       handleVectorDeleteNamespace,
+	"quicbaas.Vector/ListNamespaces":        handleVectorListNamespaces,
+	"quicbaas.Vector/GetNamespaceInfo":      handleVectorGetNamespaceInfo,
+	"quicbaas.Vector/Upsert":                handleVectorUpsert,
+	"quicbaas.Vector/BatchUpsert":           handleVectorBatchUpsert,
+	"quicbaas.Vector/Get":                   handleVectorGet,
+	"quicbaas.Vector/Delete":                handleVectorDelete,
+	"quicbaas.Vector/BatchDelete":           handleVectorBatchDelete,
+	"quicbaas.Vector/List":                  handleVectorList,
+	"quicbaas.Vector/UpdateMetadata":        handleVectorUpdateMetadata,
+	"quicbaas.Vector/SearchSimilar":         handleVectorSearchSimilar,
+	"quicbaas.Vector/SearchByID":            handleVectorSearchByID,
+	"quicbaas.Vector/HybridSearch":          handleVectorHybridSearch,
+	"quicbaas.Vector/SearchByMetadata":      handleVectorSearchByMetadata,
+	"quicbaas.Vector/RebuildIndex":          handleVectorRebuildIndex,
+	"quicbaas.Vector/GetIndexProgress":      handleVectorGetIndexProgress,
+	"quicbaas.Vector/Compact":               handleVectorCompact,
+	"quicbaas.Vector/GetCompactionProgress": handleVectorGetCompactionProgress,
+	"quicbaas.Vector/GetStats":              handleVectorGetStats,
+
 	// KMS operations
 	"quicbaas.KMS/GenerateKey":             handleKMSGenerateKey,
 	"quicbaas.KMS/ImportKey":               handleKMSImportKey,

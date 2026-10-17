@@ -418,6 +418,13 @@ packed="$(npm pack --dry-run --json)"
 case "$packed" in *'"index.js"'*'"notes.md"'*) ;; *) echo "npm pack did not expand *.{js,md}: $packed"; exit 1;; esac
 case "$packed" in *left-out.txt*) echo "npm pack packed a file *.{js,md} excludes: $packed"; exit 1;; esac`
 
+// installProofPackage is the package fullControlProbe installs to prove a
+// worker can install one. It must be a package the image does not carry, or
+// apt installs nothing and the proof proves nothing (go-quicbaas#1431); the
+// Dockerfile's sudo proof uses the same package for the same reason. Debian's
+// hello is a leaf nothing depends on, and it has a version command.
+const installProofPackage = "hello"
+
 // fullControlProbe: the container is the boundary, so the worker has full
 // control inside it (go-quicbaas#927). A worker that cannot install a package
 // cannot finish a task whose toolchain the image does not carry. Proved as the
@@ -432,7 +439,7 @@ case "$packed" in *left-out.txt*) echo "npm pack packed a file *.{js,md} exclude
 // no NET_RAW, no MKNOD, and no device node can be created.
 const fullControlProbe = `sudo -n true
 test "$(sudo -n id -u)" = "0" || { echo "sudo did not reach root"; exit 1; }
-sudo -n apt-get update -q; sudo -n apt-get install -y -q --no-install-recommends jq; jq --version
+sudo -n apt-get update -q; sudo -n apt-get install -y -q --no-install-recommends ` + installProofPackage + `; ` + installProofPackage + ` --version
 sudo -n sh -c "echo arbitrary > /etc/quicbaas-full-control-probe"
 test -f /etc/quicbaas-full-control-probe
 eff="$(sudo -n awk '/^CapEff:/ {print $2}' /proc/self/status)"

@@ -21,27 +21,32 @@ import (
 	stderrors "errors"
 	"io"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // Legacy seal-endpoint deprecation header values. These advertise the
-// deprecation timeline per RFC 8594 (Sunset) and the IETF Deprecation
-// header draft (draft-ietf-httpapi-deprecation-header). Both are set by
-// every handler in this file so callers see the migration window in any
-// response from the legacy /api/v1/seal surface.
+// deprecation timeline per RFC 9745 (Deprecation) and RFC 8594 (Sunset).
+// Both are set by every handler in this file so callers see the migration
+// window in any response from the legacy /api/v1/seal surface.
 const (
-	// sealDeprecatedHeader marks the date the /api/v1/seal endpoints were
-	// deprecated. RFC 9745 / draft-ietf-httpapi-deprecation-header §2.
-	sealDeprecatedHeader = "Sun, 01 May 2026 00:00:00 GMT"
-
 	// sealSunsetHeader marks the date the /api/v1/seal endpoints will be
-	// removed. RFC 8594 §3.
+	// removed. RFC 8594 §3: an HTTP-date.
 	sealSunsetHeader = "Wed, 01 Jul 2026 00:00:00 GMT"
 
-	// sealDeprecationLink describes the canonical replacement surface.
+	// sealDeprecationLink names the successor surface (RFC 5829
+	// successor-version).
 	sealDeprecationLink = `</api/v1/barrier>; rel="successor-version"`
 )
+
+// sealDeprecatedAt is the instant the /api/v1/seal endpoints were deprecated.
+var sealDeprecatedAt = time.Date(2026, time.May, 1, 0, 0, 0, 0, time.UTC)
+
+// sealDeprecatedHeader is sealDeprecatedAt as RFC 9745 §2 requires: an
+// RFC 9651 Structured Field Date, "@" followed by the Unix seconds.
+var sealDeprecatedHeader = "@" + strconv.FormatInt(sealDeprecatedAt.Unix(), 10)
 
 // markSealDeprecated stamps the standard deprecation/sunset headers on
 // every response from a legacy /api/v1/seal endpoint. Calling this from

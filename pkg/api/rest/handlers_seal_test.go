@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -726,6 +728,98 @@ func TestHandleRotateRootKey(t *testing.T) {
 			server.HandleRotateRootKey(w, req)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			mockService.AssertExpectations(t)
+		})
+	}
+}
+
+// sfDatePattern matches an RFC 9651 Structured Field Date: "@" followed by
+// an sf-integer (an optional minus sign and at most 15 digits), nothing else.
+var sfDatePattern = regexp.MustCompile(`^@(-?[0-9]{1,15})$`)
+
+// TestSealDeprecatedHeaderIsStructuredFieldDate pins the Deprecation value to
+// the RFC 9745 §2 form for 2026-05-01T00:00:00Z.
+func TestSealDeprecatedHeaderIsStructuredFieldDate(t *testing.T) {
+	assert.Equal(t, "@1777593600", sealDeprecatedHeader)
+
+	match := sfDatePattern.FindStringSubmatch(sealDeprecatedHeader)
+	if !assert.NotNil(t, match, "Deprecation %q is not an RFC 9651 Date", sealDeprecatedHeader) {
+		return
+	}
+	seconds, err := strconv.ParseInt(match[1], 10, 64)
+	assert.NoError(t, err)
+	want := time.Date(2026, time.May, 1, 0, 0, 0, 0, time.UTC)
+	assert.True(t, want.Equal(time.Unix(seconds, 0)), "Deprecation is %s, want %s", time.Unix(seconds, 0).UTC(), want)
+}
+
+// TestSfDatePatternRejectsHTTPDate guards the parser above: the old
+// HTTP-date form and malformed values must not pass as a Structured Field Date.
+func TestSfDatePatternRejectsHTTPDate(t *testing.T) {
+	for _, value := range []string{
+		"Sun, 01 May 2026 00:00:00 GMT",
+		"1777593600",
+		"@",
+		"@1777593600.5",
+		"@1777593600 ",
+		"@1234567890123456",
+	} {
+		assert.Nil(t, sfDatePattern.FindStringSubmatch(value), "accepted %q", value)
+	}
+}
+
+// TestLegacySealEndpointsSetDeprecationHeaders checks that every legacy
+// /api/v1/seal handler sets the RFC 9745 Deprecation date, the RFC 8594
+// Sunset HTTP-date and the successor Link.
+func TestLegacySealEndpointsSetDeprecationHeaders(t *testing.T) {
+	serviceErr := &errors.QBError{Code: errors.ErrInternal, Op: "seal", Err: assert.AnError}
+	tests := []struct {
+		name      string
+		setupMock func(*testutil.MockQuicBaaS)
+		handle    func(*Server) http.HandlerFunc
+	}{
+		{
+			name: "status",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("Status", mock.Anything).Return(nil, serviceErr).Once()
+			},
+			handle: func(s *Server) http.HandlerFunc { return s.HandleSealStatus },
+		},
+		{name: "init", handle: func(s *Server) http.HandlerFunc { return s.HandleSealInit }},
+		{name: "unseal", handle: func(s *Server) http.HandlerFunc { return s.HandleUnseal }},
+		{
+			name: "seal",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("Seal", mock.Anything).Return(serviceErr).Once()
+			},
+			handle: func(s *Server) http.HandlerFunc { return s.HandleSeal },
+		},
+		{name: "rekey", handle: func(s *Server) http.HandlerFunc { return s.HandleRekey }},
+		{name: "generate recovery key", handle: func(s *Server) http.HandlerFunc { return s.HandleGenerateRecoveryKey }},
+		{name: "delete recovery key", handle: func(s *Server) http.HandlerFunc { return s.HandleDeleteRecoveryKey }},
+		{name: "rotate root key", handle: func(s *Server) http.HandlerFunc { return s.HandleRotateRootKey }},
+		{name: "generate root token", handle: func(s *Server) http.HandlerFunc { return s.HandleGenerateRootToken }},
+	}
+
+	wantSunset := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServer(t)
+			defer cleanup()
+			if tt.setupMock != nil {
+				tt.setupMock(mockService)
+			}
+
+			// A malformed body ends the body-reading handlers before the service.
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/seal", strings.NewReader("{"))
+			w := httptest.NewRecorder()
+			tt.handle(server)(w, req)
+
+			assert.Equal(t, "@1777593600", w.Header().Get("Deprecation"))
+			assert.Equal(t, "Wed, 01 Jul 2026 00:00:00 GMT", w.Header().Get("Sunset"))
+			sunset, err := http.ParseTime(w.Header().Get("Sunset"))
+			assert.NoError(t, err)
+			assert.True(t, wantSunset.Equal(sunset))
+			assert.Equal(t, `</api/v1/barrier>; rel="successor-version"`, w.Header().Get("Link"))
 			mockService.AssertExpectations(t)
 		})
 	}

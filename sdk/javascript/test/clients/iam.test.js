@@ -11,7 +11,7 @@ import IAMClient, {
   ExportFormat,
   AuditEventType,
 } from '../../src/clients/iam.js';
-import { ValidationError } from '../../src/errors/index.js';
+import { NotFoundError, ValidationError } from '../../src/errors/index.js';
 
 describe('IAMClient', () => {
   let client;
@@ -650,6 +650,76 @@ describe('IAMClient', () => {
 
     it('should throw ValidationError when tenantId is empty', async () => {
       await expect(client.listRoles('')).rejects.toThrow(ValidationError);
+    });
+  });
+
+  describe('assignRole', () => {
+    it('should POST the role_id to the tenant user roles route', async () => {
+      mockTransport.post.mockResolvedValueOnce(undefined);
+
+      await client.assignRole('tenant-1', 'user-1', 'role-1');
+
+      expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/tenants/tenant-1/users/user-1/roles', {
+        role_id: 'role-1',
+      });
+    });
+
+    it('should URL-encode the path segments', async () => {
+      mockTransport.post.mockResolvedValueOnce(undefined);
+
+      await client.assignRole('t/1', 'u 1', 'role-1');
+
+      expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/tenants/t%2F1/users/u%201/roles', {
+        role_id: 'role-1',
+      });
+    });
+
+    it('should surface a server error as the SDK error type', async () => {
+      mockTransport.post.mockRejectedValueOnce(new NotFoundError('user not found'));
+
+      await expect(client.assignRole('tenant-1', 'user-1', 'role-1')).rejects.toThrow(NotFoundError);
+    });
+
+    it.each([
+      ['tenantId', '', 'user-1', 'role-1'],
+      ['userId', 'tenant-1', '', 'role-1'],
+      ['roleId', 'tenant-1', 'user-1', ''],
+    ])('should throw ValidationError without a request when %s is empty', async (_name, tenantId, userId, roleId) => {
+      await expect(client.assignRole(tenantId, userId, roleId)).rejects.toThrow(ValidationError);
+      expect(mockTransport.post).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('revokeRole', () => {
+    it('should DELETE the role from the tenant user roles route', async () => {
+      mockTransport.delete.mockResolvedValueOnce(undefined);
+
+      await client.revokeRole('tenant-1', 'user-1', 'role-1');
+
+      expect(mockTransport.delete).toHaveBeenCalledWith('/api/v1/tenants/tenant-1/users/user-1/roles/role-1');
+    });
+
+    it('should URL-encode the path segments', async () => {
+      mockTransport.delete.mockResolvedValueOnce(undefined);
+
+      await client.revokeRole('t/1', 'u 1', 'r/1');
+
+      expect(mockTransport.delete).toHaveBeenCalledWith('/api/v1/tenants/t%2F1/users/u%201/roles/r%2F1');
+    });
+
+    it('should surface a server error as the SDK error type', async () => {
+      mockTransport.delete.mockRejectedValueOnce(new NotFoundError('role not assigned'));
+
+      await expect(client.revokeRole('tenant-1', 'user-1', 'role-1')).rejects.toThrow(NotFoundError);
+    });
+
+    it.each([
+      ['tenantId', '', 'user-1', 'role-1'],
+      ['userId', 'tenant-1', '', 'role-1'],
+      ['roleId', 'tenant-1', 'user-1', ''],
+    ])('should throw ValidationError without a request when %s is empty', async (_name, tenantId, userId, roleId) => {
+      await expect(client.revokeRole(tenantId, userId, roleId)).rejects.toThrow(ValidationError);
+      expect(mockTransport.delete).not.toHaveBeenCalled();
     });
   });
 

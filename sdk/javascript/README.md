@@ -165,6 +165,20 @@ const result = await txn.transaction({
 console.log(result.succeeded); // true if conditions passed
 ```
 
+### IAM Role Assignment
+
+`db.iam()` assigns and revokes a tenant user's roles. Both calls resolve to
+nothing on success and reject with the SDK's error types (for example
+`NotFoundError`) when the server refuses; authorization is enforced server-side.
+
+```javascript
+// Assign a role to a user: POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles
+await db.iam().assignRole('tenant-1', 'user-1', 'role-1');
+
+// Revoke it: DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role}
+await db.iam().revokeRole('tenant-1', 'user-1', 'role-1');
+```
+
 ## Browser Usage
 
 For direct browser usage via script tag:

@@ -241,7 +241,8 @@ FROM debian:trixie-slim
 # ruby, ruby-dev and ruby-bundler are what ruby-lsp installs against and
 # re-execs through; libicu76 is the ICU marksman's .NET runtime loads (it is
 # not built invariant-globalization), named rather than left to arrive with
-# WebKit.
+# WebKit; jq is what release scripts run in a worker need, starting with
+# go-enclave's release.sh (go-quicbaas#1431).
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
@@ -271,7 +272,8 @@ RUN set -eux; \
         ruby \
         ruby-dev \
         ruby-bundler \
-        libicu76; \
+        libicu76 \
+        jq; \
     rm -rf /var/lib/apt/lists/*
 
 # DEVCACHE-ENV, the dev caches' client (../handbook/software/conventions/
@@ -1209,16 +1211,27 @@ RUN set -eux; \
 #
 # The install is proved END TO END rather than by `command -v sudo`, because
 # "can escalate" and "can install" are different claims and the second is the
-# one a worker needs. jq is added and purged again in the same layer, with the
-# package lists it fetched, so the proof leaves the image exactly as it found it.
+# one a worker needs. Debian's `hello` is added and purged again in the same
+# layer, with the package lists it fetched, so the proof leaves the image exactly
+# as it found it. The proof package must be one the image does not carry -- an
+# install of a package already present proves nothing -- and nothing in the
+# image depends on hello (probes.go's installProofPackage names the same package
+# for the runtime probe).
 RUN set -eux; \
     sudo -n true; \
     test "$(sudo -n id -u)" = "0"; \
     sudo -n apt-get update -q; \
-    sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends jq; \
-    jq --version; \
-    sudo -n apt-get purge -y -q --autoremove jq; \
-    sudo -n rm -rf /var/lib/apt/lists/*
+    sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends hello; \
+    hello --version; \
+    sudo -n apt-get purge -y -q --autoremove hello; \
+    sudo -n rm -rf /var/lib/apt/lists/*; \
+    test ! -e /usr/bin/hello
+
+# JQ SURVIVES THE PROOF. The image carries jq (release scripts run in a worker
+# need it), so it is asserted as this uid after the proof layer: a purge that
+# ever removed more than it added fails the build instead of shipping an image
+# without it.
+RUN jq --version
 
 # A SIGNED COMMIT SUCCEEDS AS THIS UID. This is the regression that would break
 # publishing silently, so the build proves it.

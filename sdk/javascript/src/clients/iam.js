@@ -658,6 +658,47 @@ class IAMClient {
     );
   }
 
+  /**
+   * Assign a role to a user.
+   *
+   * quicbaasd serves user-role assignment under `/api/v1/tenants`, not under
+   * {@link IAMClient.API_PREFIX}.
+   * @param {string} tenantId - The tenant ID
+   * @param {string} userId - The user ID
+   * @param {string} roleId - The role ID to assign
+   * @returns {Promise<void>}
+   * @throws {ValidationError} If required parameters are missing
+   */
+  async assignRole(tenantId, userId, roleId) {
+    requiredString(tenantId, 'tenantId');
+    requiredString(userId, 'userId');
+    requiredString(roleId, 'roleId');
+    await this.#transport.post(
+      `/api/v1/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/roles`,
+      { role_id: roleId },
+    );
+  }
+
+  /**
+   * Revoke a role from a user.
+   *
+   * quicbaasd serves user-role revocation under `/api/v1/tenants`, not under
+   * {@link IAMClient.API_PREFIX}.
+   * @param {string} tenantId - The tenant ID
+   * @param {string} userId - The user ID
+   * @param {string} roleId - The role ID to revoke
+   * @returns {Promise<void>}
+   * @throws {ValidationError} If required parameters are missing
+   */
+  async revokeRole(tenantId, userId, roleId) {
+    requiredString(tenantId, 'tenantId');
+    requiredString(userId, 'userId');
+    requiredString(roleId, 'roleId');
+    await this.#transport.delete(
+      `/api/v1/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/roles/${encodeURIComponent(roleId)}`,
+    );
+  }
+
   // ==========================================================================
   // Policy Management
   // ==========================================================================

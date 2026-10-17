@@ -144,6 +144,68 @@ func parseIAMUserID(service, method, value string) (uint64, error) {
 	return id, nil
 }
 
+// InvalidVectorIDError indicates a vector id that is not a decimal uint64,
+// the form of the qrdb vector id. Err is the strconv failure.
+type InvalidVectorIDError struct {
+	Service string
+	Method  string
+	Value   string
+	Err     error
+}
+
+// Error implements the error interface.
+func (e *InvalidVectorIDError) Error() string {
+	return "INVALID_INPUT: embedded: " + e.Service + "/" + e.Method + ": vector id " +
+		strconv.Quote(e.Value) + " is not a decimal uint64: " + e.Err.Error()
+}
+
+// Unwrap returns the underlying strconv error.
+func (e *InvalidVectorIDError) Unwrap() error { return e.Err }
+
+// UnsupportedVectorFilterError indicates a metadata filter operator the
+// vector service cannot evaluate; it matches on equality only.
+type UnsupportedVectorFilterError struct {
+	Service  string
+	Method   string
+	Key      string
+	Operator string
+}
+
+// Error implements the error interface.
+func (e *UnsupportedVectorFilterError) Error() string {
+	return "INVALID_INPUT: embedded: " + e.Service + "/" + e.Method + ": metadata filter on " +
+		strconv.Quote(e.Key) + " uses unsupported operator " + strconv.Quote(e.Operator) + " (only \"eq\")"
+}
+
+// MixedVectorNamespaceError indicates a batch whose vectors span more than
+// one namespace; the vector service batches per namespace.
+type MixedVectorNamespaceError struct {
+	Service string
+	Method  string
+	First   string
+	Other   string
+}
+
+// Error implements the error interface.
+func (e *MixedVectorNamespaceError) Error() string {
+	return "INVALID_INPUT: embedded: " + e.Service + "/" + e.Method + ": batch mixes namespaces " +
+		strconv.Quote(e.First) + " and " + strconv.Quote(e.Other)
+}
+
+// InvalidPageTokenError indicates a page token that is not a non-negative
+// decimal offset.
+type InvalidPageTokenError struct {
+	Service string
+	Method  string
+	Value   string
+}
+
+// Error implements the error interface.
+func (e *InvalidPageTokenError) Error() string {
+	return "INVALID_INPUT: embedded: " + e.Service + "/" + e.Method + ": page token " +
+		strconv.Quote(e.Value) + " is not a non-negative decimal offset"
+}
+
 // ServiceNotConfiguredError indicates a sub-service is not configured.
 type ServiceNotConfiguredError struct {
 	Service string

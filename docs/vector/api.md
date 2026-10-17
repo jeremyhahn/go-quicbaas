@@ -33,34 +33,34 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.Vector` — SDK package `sdk/go/client/vector`
 
-Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 0; MCP tools registered server-side: 23.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 20 (Export and Import not served); MCP tools registered server-side: 23.
 
 MCP tools: `qrdb_vector_batch_delete`, `qrdb_vector_batch_upsert`, `qrdb_vector_create_namespace`, `qrdb_vector_delete`, `qrdb_vector_delete_namespace`, `qrdb_vector_get`, `qrdb_vector_get_namespace_info`, `qrdb_vector_list`, `qrdb_vector_list_namespaces`, `qrdb_vector_rebuild_index`, `qrdb_vector_search_by_id`, `qrdb_vector_search_similar`, `qrdb_vector_update_metadata`, `qrdb_vector_upsert`, `quicbaas_vector_admin_compact_namespace`, `quicbaas_vector_admin_export_vectors`, `quicbaas_vector_admin_get_cluster_stats`, `quicbaas_vector_admin_get_compaction_progress`, `quicbaas_vector_admin_import_vectors`, `quicbaas_vector_get_index_progress`, `quicbaas_vector_get_stats`, `quicbaas_vector_health`, `quicbaas_vector_update_namespace`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `BatchDelete` | `DELETE /api/v1/vector/namespaces/{namespace}/vectors/batch` | yes | yes | yes | MISSING | `vector:batch_delete` |
-| `BatchUpsert` | `POST /api/v1/vector/namespaces/{namespace}/vectors/batch` | yes | yes | yes | MISSING | `vector:batch_upsert` |
-| `Compact` | `POST /api/v1/vector/admin/compact` | yes | yes | yes | MISSING | `vector:compact` |
-| `CreateNamespace` | `POST /api/v1/vector/namespaces` | **no** | yes | yes | MISSING | — |
-| `Delete` | `DELETE /api/v1/vector/namespaces/{namespace}/vectors/{id}` | yes | yes | yes | MISSING | `vector:delete` |
-| `DeleteNamespace` | `DELETE /api/v1/vector/namespaces/{namespace}` | yes | yes | yes | MISSING | `vector:namespace_delete` |
+| `BatchDelete` | `DELETE /api/v1/vector/namespaces/{namespace}/vectors/batch` | yes | yes | yes | `quicbaas.Vector/BatchDelete` | `vector:batch_delete` |
+| `BatchUpsert` | `POST /api/v1/vector/namespaces/{namespace}/vectors/batch` | yes | yes | yes | `quicbaas.Vector/BatchUpsert` | `vector:batch_upsert` |
+| `Compact` | `POST /api/v1/vector/admin/compact` | yes | yes | yes | `quicbaas.Vector/Compact` | `vector:compact` |
+| `CreateNamespace` | `POST /api/v1/vector/namespaces` | **no** | yes | yes | `quicbaas.Vector/CreateNamespace` | — |
+| `Delete` | `DELETE /api/v1/vector/namespaces/{namespace}/vectors/{id}` | yes | yes | yes | `quicbaas.Vector/Delete` | `vector:delete` |
+| `DeleteNamespace` | `DELETE /api/v1/vector/namespaces/{namespace}` | yes | yes | yes | `quicbaas.Vector/DeleteNamespace` | `vector:namespace_delete` |
 | `Export` | `POST /api/v1/vector/export` *(default branch)* | **no** | yes | yes | MISSING | — |
-| `Get` | `GET /api/v1/vector/namespaces/{namespace}/vectors/{id}` | yes | yes | yes | MISSING | `vector:get` |
-| `GetCompactionProgress` | `GET /api/v1/vector/admin/compact/progress` | yes | yes | yes | MISSING | `vector:get_compaction_progress` |
-| `GetIndexProgress` | `GET /api/v1/vector/namespaces/{namespace}/index/progress` | yes | yes | yes | MISSING | `vector:get_rebuild_progress` |
-| `GetNamespaceInfo` | `GET /api/v1/vector/namespaces/{namespace}` | yes | yes | yes | MISSING | `vector:namespace_info` |
-| `GetStats` | `POST /api/v1/vector/getstats` *(default branch)* | **no** | yes | yes | MISSING | — |
-| `HybridSearch` | `POST /api/v1/vector/hybrid-search` | yes | yes | yes | MISSING | `vector:hybrid_search` |
+| `Get` | `GET /api/v1/vector/namespaces/{namespace}/vectors/{id}` | yes | yes | yes | `quicbaas.Vector/Get` | `vector:get` |
+| `GetCompactionProgress` | `GET /api/v1/vector/admin/compact/progress` | yes | yes | yes | `quicbaas.Vector/GetCompactionProgress` | `vector:get_compaction_progress` |
+| `GetIndexProgress` | `GET /api/v1/vector/namespaces/{namespace}/index/progress` | yes | yes | yes | `quicbaas.Vector/GetIndexProgress` | `vector:get_rebuild_progress` |
+| `GetNamespaceInfo` | `GET /api/v1/vector/namespaces/{namespace}` | yes | yes | yes | `quicbaas.Vector/GetNamespaceInfo` | `vector:namespace_info` |
+| `GetStats` | `POST /api/v1/vector/getstats` *(default branch)* | **no** | yes | yes | `quicbaas.Vector/GetStats` | — |
+| `HybridSearch` | `POST /api/v1/vector/hybrid-search` | yes | yes | yes | `quicbaas.Vector/HybridSearch` | `vector:hybrid_search` |
 | `Import` | `POST /api/v1/vector/import` *(default branch)* | **no** | yes | yes | MISSING | — |
-| `List` | `POST /api/v1/vector/list` *(default branch)* | **no** | yes | yes | MISSING | — |
-| `ListNamespaces` | `GET /api/v1/vector/namespaces` | **no** | yes | yes | MISSING | — |
-| `RebuildIndex` | `POST /api/v1/vector/namespaces/{namespace}/index/rebuild` | yes | yes | yes | MISSING | `vector:rebuild_index` |
-| `SearchByID` | `POST /api/v1/vector/namespaces/{namespace}/search/by-id/{id}` | yes | yes | yes | MISSING | `vector:search_by_id` |
-| `SearchByMetadata` | `POST /api/v1/vector/search-by-metadata` | yes | yes | yes | MISSING | `vector:search_by_metadata` |
-| `SearchSimilar` | `POST /api/v1/vector/namespaces/{namespace}/search/similar` | yes | yes | yes | MISSING | `vector:search_similar` |
-| `UpdateMetadata` | `PUT /api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata` | yes | yes | yes | MISSING | `vector:update_metadata` |
-| `Upsert` | `POST /api/v1/vector/namespaces/{namespace}/vectors` | **no** | yes | yes | MISSING | — |
+| `List` | `POST /api/v1/vector/list` *(default branch)* | **no** | yes | yes | `quicbaas.Vector/List` | — |
+| `ListNamespaces` | `GET /api/v1/vector/namespaces` | **no** | yes | yes | `quicbaas.Vector/ListNamespaces` | — |
+| `RebuildIndex` | `POST /api/v1/vector/namespaces/{namespace}/index/rebuild` | yes | yes | yes | `quicbaas.Vector/RebuildIndex` | `vector:rebuild_index` |
+| `SearchByID` | `POST /api/v1/vector/namespaces/{namespace}/search/by-id/{id}` | yes | yes | yes | `quicbaas.Vector/SearchByID` | `vector:search_by_id` |
+| `SearchByMetadata` | `POST /api/v1/vector/search-by-metadata` | yes | yes | yes | `quicbaas.Vector/SearchByMetadata` | `vector:search_by_metadata` |
+| `SearchSimilar` | `POST /api/v1/vector/namespaces/{namespace}/search/similar` | yes | yes | yes | `quicbaas.Vector/SearchSimilar` | `vector:search_similar` |
+| `UpdateMetadata` | `PUT /api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata` | yes | yes | yes | `quicbaas.Vector/UpdateMetadata` | `vector:update_metadata` |
+| `Upsert` | `POST /api/v1/vector/namespaces/{namespace}/vectors` | **no** | yes | yes | `quicbaas.Vector/Upsert` | — |
 
 
 

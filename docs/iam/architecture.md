@@ -846,5 +846,6 @@ The WebAuthn ceremony policy keys (`assurance`, `resident_key_requirement`,
 - [FIDO2 / WebAuthn Spec](https://www.w3.org/TR/webauthn-2/)
 - [NIST 800-63B](https://pages.nist.gov/800-63-3/sp800-63b.html) – Authenticator Assurance Level 3
 - [RFC 6749](https://tools.ietf.org/html/rfc6749) – OAuth 2.0 Authorization Framework
+- [OAuth 2.1 conformance](oauth21-conformance.md) – this server evaluated against draft-ietf-oauth-v2-1-16
 - [RFC 8705](https://tools.ietf.org/html/rfc8705) – OAuth 2.0 Mutual-TLS Client Authentication
 - [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)
