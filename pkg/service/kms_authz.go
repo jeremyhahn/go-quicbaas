@@ -233,6 +233,8 @@ var operationToKeyUsageMap = map[string]KeyUsage{
 	"sign":              KeyUsageSign,
 	"verify":            KeyUsageVerify,
 	"generate_data_key": KeyUsageWrapKey,
+	"generate_mac":      KeyUsageGenerateMAC,
+	"verify_mac":        KeyUsageVerifyMAC,
 }
 
 func operationToKeyUsage(op string) KeyUsage {

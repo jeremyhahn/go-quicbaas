@@ -355,11 +355,16 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		return nil, err
 	}
 
-	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
-	if err := t.checkKeyAuthz(ctx, scopedKeyID, "encrypt"); err != nil {
-		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
-		t.metrics.errorsByType.With("authz_error").Inc()
-		return nil, err
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2). A rewrap
+	// decrypts under the source key version and encrypts under the
+	// destination; both are versions of the one key the request names, and a
+	// per-key check names a key, not a version, so both checks run on it.
+	for _, operation := range []string{"decrypt", "encrypt"} {
+		if err := t.checkKeyAuthz(ctx, scopedKeyID, operation); err != nil {
+			t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+			t.metrics.errorsByType.With("authz_error").Inc()
+			return nil, err
+		}
 	}
 
 	// Track key usage for rewrap operation (if tracker configured)
@@ -909,7 +914,7 @@ func (t *cryptoService) GenerateHMAC(ctx context.Context, req *HMACRequest) (*HM
 	}
 
 	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
-	if err := t.checkKeyAuthz(ctx, scopedKeyID, "sign"); err != nil {
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "generate_mac"); err != nil {
 		t.metrics.hmacOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
@@ -974,7 +979,7 @@ func (t *cryptoService) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) 
 	}
 
 	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
-	if err := t.checkKeyAuthz(ctx, scopedKeyID, "verify"); err != nil {
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "verify_mac"); err != nil {
 		t.metrics.hmacOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err

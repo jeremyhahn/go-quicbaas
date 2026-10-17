@@ -34,7 +34,7 @@ type perKeyAuthzFixture struct {
 
 // newPerKeyAuthzFixture stores a policy on "authz-key" that allows only
 // user-1, so user-1 is allowed and any other principal is denied.
-func newPerKeyAuthzFixture(t *testing.T) *perKeyAuthzFixture {
+func newPerKeyAuthzFixture(t *testing.T, allowedOps ...KeyUsage) *perKeyAuthzFixture {
 	t.Helper()
 	f := &perKeyAuthzFixture{}
 
@@ -69,7 +69,11 @@ func newPerKeyAuthzFixture(t *testing.T) *perKeyAuthzFixture {
 
 	kmsSvc, kv := newAuthzEnabledKMS()
 	kmsSvc.kmsManager = kmsManager
-	data, err := json.Marshal(&KeyPolicy{KeyID: "authz-key", AllowedPrincipals: []string{"user-1"}})
+	data, err := json.Marshal(&KeyPolicy{
+		KeyID:             "authz-key",
+		AllowedPrincipals: []string{"user-1"},
+		AllowedOperations: allowedOps,
+	})
 	require.NoError(t, err)
 	require.NoError(t, kv.Put(systemTenantCtx(), kmsKeyPolicyKey("authz-key"), data))
 
@@ -137,6 +141,61 @@ func TestCryptoService_PerKeyAuthz(t *testing.T) {
 			ctx := subjectCtx(authenticatedSubject("user-2", "bob"))
 
 			err := verb.call(f.svc, ctx)
+			var qe *errors.QBError
+			require.ErrorAs(t, err, &qe)
+			assert.Equal(t, errors.ErrForbidden, qe.Code)
+			assert.Zero(t, f.calls)
+		})
+	}
+}
+
+// TestCryptoService_PerKeyAuthzOperations checks the operation each verb asks
+// the key policy for: the HMAC verbs need the MAC operations, not sign/verify,
+// and Rewrap needs both decrypt and encrypt on the key (#1488).
+func TestCryptoService_PerKeyAuthzOperations(t *testing.T) {
+	generateHMAC := func(svc *cryptoService, ctx context.Context) error {
+		_, err := svc.GenerateHMAC(ctx, &HMACRequest{KeyID: "authz-key", Message: []byte("msg")})
+		return err
+	}
+	verifyHMAC := func(svc *cryptoService, ctx context.Context) error {
+		_, err := svc.VerifyHMAC(ctx, &VerifyHMACRequest{
+			KeyID:   "authz-key",
+			Message: []byte("msg"),
+			HMAC:    []byte("mac"),
+		})
+		return err
+	}
+	rewrap := func(svc *cryptoService, ctx context.Context) error {
+		_, err := svc.Rewrap(ctx, &RewrapRequest{KeyID: "authz-key", Ciphertext: []byte("ct")})
+		return err
+	}
+
+	cases := []struct {
+		name    string
+		ops     []KeyUsage
+		call    func(svc *cryptoService, ctx context.Context) error
+		allowed bool
+	}{
+		{"GenerateHMAC/sign only", []KeyUsage{KeyUsageSign, KeyUsageVerify}, generateHMAC, false},
+		{"GenerateHMAC/generate_mac", []KeyUsage{KeyUsageGenerateMAC}, generateHMAC, true},
+		{"VerifyHMAC/verify only", []KeyUsage{KeyUsageSign, KeyUsageVerify}, verifyHMAC, false},
+		{"VerifyHMAC/verify_mac", []KeyUsage{KeyUsageVerifyMAC}, verifyHMAC, true},
+		{"Rewrap/no decrypt", []KeyUsage{KeyUsageEncrypt}, rewrap, false},
+		{"Rewrap/no encrypt", []KeyUsage{KeyUsageDecrypt}, rewrap, false},
+		{"Rewrap/decrypt and encrypt", []KeyUsage{KeyUsageDecrypt, KeyUsageEncrypt}, rewrap, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPerKeyAuthzFixture(t, tc.ops...)
+			ctx := subjectCtx(authenticatedSubject("user-1", "alice"))
+
+			err := tc.call(f.svc, ctx)
+			if tc.allowed {
+				require.NoError(t, err)
+				assert.Equal(t, 1, f.calls)
+				return
+			}
 			var qe *errors.QBError
 			require.ErrorAs(t, err, &qe)
 			assert.Equal(t, errors.ErrForbidden, qe.Code)
