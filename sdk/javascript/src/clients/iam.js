@@ -287,7 +287,7 @@ class IAMClient {
 
     return this.#transport.put(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}`,
-      body
+      body,
     );
   }
 
@@ -350,7 +350,7 @@ class IAMClient {
 
     return this.#transport.post(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users`,
-      body
+      body,
     );
   }
 
@@ -365,7 +365,7 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
     requiredString(userId, 'userId');
     return this.#transport.get(
-      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}`
+      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}`,
     );
   }
 
@@ -397,7 +397,7 @@ class IAMClient {
 
     return this.#transport.put(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}`,
-      body
+      body,
     );
   }
 
@@ -412,7 +412,7 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
     requiredString(userId, 'userId');
     await this.#transport.delete(
-      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}`
+      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}`,
     );
   }
 
@@ -433,13 +433,19 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
 
     const query = this.#buildPaginationQuery(options);
-    if (options.roleId) query.role_id = options.roleId;
-    if (options.groupId) query.group_id = options.groupId;
-    if (options.status) query.status = options.status;
+    if (options.roleId) {
+      query.role_id = options.roleId;
+    }
+    if (options.groupId) {
+      query.group_id = options.groupId;
+    }
+    if (options.status) {
+      query.status = options.status;
+    }
 
     return this.#transport.get(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users`,
-      { query }
+      { query },
     );
   }
 
@@ -473,7 +479,7 @@ class IAMClient {
 
     return this.#transport.post(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/groups`,
-      body
+      body,
     );
   }
 
@@ -488,7 +494,7 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
     requiredString(groupId, 'groupId');
     return this.#transport.get(
-      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/groups/${encodeURIComponent(groupId)}`
+      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/groups/${encodeURIComponent(groupId)}`,
     );
   }
 
@@ -520,7 +526,7 @@ class IAMClient {
 
     return this.#transport.put(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/groups/${encodeURIComponent(groupId)}`,
-      body
+      body,
     );
   }
 
@@ -535,7 +541,7 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
     requiredString(groupId, 'groupId');
     await this.#transport.delete(
-      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/groups/${encodeURIComponent(groupId)}`
+      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/groups/${encodeURIComponent(groupId)}`,
     );
   }
 
@@ -554,11 +560,13 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
 
     const query = this.#buildPaginationQuery(options);
-    if (options.userId) query.user_id = options.userId;
+    if (options.userId) {
+      query.user_id = options.userId;
+    }
 
     return this.#transport.get(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/groups`,
-      { query }
+      { query },
     );
   }
 
@@ -597,7 +605,7 @@ class IAMClient {
 
     return this.#transport.post(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/roles`,
-      body
+      body,
     );
   }
 
@@ -629,7 +637,7 @@ class IAMClient {
 
     return this.#transport.put(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/roles/${encodeURIComponent(roleId)}`,
-      body
+      body,
     );
   }
 
@@ -654,7 +662,7 @@ class IAMClient {
 
     return this.#transport.get(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/roles`,
-      { query }
+      { query },
     );
   }
 
@@ -729,7 +737,7 @@ class IAMClient {
 
     return this.#transport.post(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/policies`,
-      policy
+      policy,
     );
   }
 
@@ -745,12 +753,12 @@ class IAMClient {
 
     if (policyName) {
       return this.#transport.get(
-        `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/policies/${encodeURIComponent(policyName)}`
+        `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/policies/${encodeURIComponent(policyName)}`,
       );
     }
 
     return this.#transport.get(
-      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/policies`
+      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/policies`,
     );
   }
 
@@ -788,7 +796,7 @@ class IAMClient {
 
     return this.#transport.post(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/apps`,
-      body
+      body,
     );
   }
 
@@ -803,7 +811,7 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
     requiredString(appId, 'appId');
     return this.#transport.get(
-      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/apps/${encodeURIComponent(appId)}`
+      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/apps/${encodeURIComponent(appId)}`,
     );
   }
 
@@ -818,7 +826,7 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
     requiredString(appId, 'appId');
     await this.#transport.delete(
-      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/apps/${encodeURIComponent(appId)}`
+      `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/apps/${encodeURIComponent(appId)}`,
     );
   }
 
@@ -836,7 +844,7 @@ class IAMClient {
     const query = this.#buildPaginationQuery(options);
     return this.#transport.get(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/apps`,
-      { query }
+      { query },
     );
   }
 
@@ -868,7 +876,7 @@ class IAMClient {
 
     return this.#transport.post(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/sessions`,
-      body
+      body,
     );
   }
 
@@ -887,17 +895,23 @@ class IAMClient {
     requiredString(tenantId, 'tenantId');
 
     const query = {};
-    if (options.userId) query.user_id = options.userId;
-    if (options.includeExpired !== undefined) query.include_expired = options.includeExpired;
+    if (options.userId) {
+      query.user_id = options.userId;
+    }
+    if (options.includeExpired !== undefined) {
+      query.include_expired = options.includeExpired;
+    }
     if (options.limit !== undefined) {
       positiveInteger(options.limit, 'options.limit');
       query.limit = options.limit;
     }
-    if (options.offset !== undefined) query.offset = options.offset;
+    if (options.offset !== undefined) {
+      query.offset = options.offset;
+    }
 
     return this.#transport.get(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/sessions`,
-      { query }
+      { query },
     );
   }
 
@@ -932,22 +946,46 @@ class IAMClient {
       tenant_id: tenantId,
     };
 
-    if (options.actorId) query.actor_id = options.actorId;
-    if (options.targetId) query.target_id = options.targetId;
-    if (options.eventType) query.event_type = options.eventType;
-    if (options.action) query.action = options.action;
-    if (options.outcome) query.outcome = options.outcome;
-    if (options.startTime) query.start_time = options.startTime;
-    if (options.endTime) query.end_time = options.endTime;
-    if (options.ipAddress) query.ip_address = options.ipAddress;
-    if (options.sessionId) query.session_id = options.sessionId;
+    if (options.actorId) {
+      query.actor_id = options.actorId;
+    }
+    if (options.targetId) {
+      query.target_id = options.targetId;
+    }
+    if (options.eventType) {
+      query.event_type = options.eventType;
+    }
+    if (options.action) {
+      query.action = options.action;
+    }
+    if (options.outcome) {
+      query.outcome = options.outcome;
+    }
+    if (options.startTime) {
+      query.start_time = options.startTime;
+    }
+    if (options.endTime) {
+      query.end_time = options.endTime;
+    }
+    if (options.ipAddress) {
+      query.ip_address = options.ipAddress;
+    }
+    if (options.sessionId) {
+      query.session_id = options.sessionId;
+    }
     if (options.limit !== undefined) {
       positiveInteger(options.limit, 'options.limit');
       query.limit = options.limit;
     }
-    if (options.offset !== undefined) query.offset = options.offset;
-    if (options.orderBy) query.order_by = options.orderBy;
-    if (options.orderDesc !== undefined) query.order_desc = options.orderDesc;
+    if (options.offset !== undefined) {
+      query.offset = options.offset;
+    }
+    if (options.orderBy) {
+      query.order_by = options.orderBy;
+    }
+    if (options.orderDesc !== undefined) {
+      query.order_desc = options.orderDesc;
+    }
 
     return this.#transport.get(`${IAMClient.API_PREFIX}/audit`, { query });
   }
@@ -981,7 +1019,7 @@ class IAMClient {
 
     return this.#transport.post(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/export`,
-      body
+      body,
     );
   }
 
@@ -1012,7 +1050,7 @@ class IAMClient {
 
     return this.#transport.post(
       `${IAMClient.API_PREFIX}/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(userId)}/delete-data`,
-      body
+      body,
     );
   }
 

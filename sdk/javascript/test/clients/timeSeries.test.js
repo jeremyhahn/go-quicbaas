@@ -126,7 +126,7 @@ describe('TimeSeriesClient', () => {
       await expect(client.writePoint('cpu.usage', NaN, now)).rejects.toThrow(ValidationError);
       await expect(client.writePoint('cpu.usage', Infinity, now)).rejects.toThrow(ValidationError);
       await expect(client.writePoint('cpu.usage', 'not-a-number', now)).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -136,13 +136,13 @@ describe('TimeSeriesClient', () => {
 
     it('should throw ValidationError when timestamp is invalid Date', async () => {
       await expect(client.writePoint('cpu.usage', 75.5, new Date('invalid'))).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when timestamp is invalid string', async () => {
       await expect(client.writePoint('cpu.usage', 75.5, 'not-a-date')).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -152,25 +152,25 @@ describe('TimeSeriesClient', () => {
 
     it('should throw ValidationError when tags is not an object', async () => {
       await expect(client.writePoint('cpu.usage', 75.5, now, 'invalid')).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when tags is an array', async () => {
       await expect(client.writePoint('cpu.usage', 75.5, now, ['tag1'])).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when tag key is empty', async () => {
       await expect(client.writePoint('cpu.usage', 75.5, now, { '': 'value' })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when tag value is not a string', async () => {
       await expect(client.writePoint('cpu.usage', 75.5, now, { host: 123 })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
   });
@@ -252,19 +252,19 @@ describe('TimeSeriesClient', () => {
 
     it('should throw ValidationError when point.metric is missing', async () => {
       await expect(client.writeBatch([{ value: 75.5, timestamp: now }])).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when point.value is not a number', async () => {
       await expect(
-        client.writeBatch([{ metric: 'cpu.usage', value: 'invalid', timestamp: now }])
+        client.writeBatch([{ metric: 'cpu.usage', value: 'invalid', timestamp: now }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when point.timestamp is missing', async () => {
       await expect(client.writeBatch([{ metric: 'cpu.usage', value: 75.5 }])).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
   });
@@ -388,37 +388,37 @@ describe('TimeSeriesClient', () => {
 
     it('should throw ValidationError when start is invalid', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start: 'invalid', end })
+        client.query({ metric: 'cpu.usage', start: 'invalid', end }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when end is invalid', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start, end: 'invalid' })
+        client.query({ metric: 'cpu.usage', start, end: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when end is before start', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start: end, end: start })
+        client.query({ metric: 'cpu.usage', start: end, end: start }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when end equals start', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start, end: start })
+        client.query({ metric: 'cpu.usage', start, end: start }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid aggregation', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start, end, aggregation: 'INVALID' })
+        client.query({ metric: 'cpu.usage', start, end, aggregation: 'INVALID' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when aggregation set but interval missing', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start, end, aggregation: Aggregation.AVG })
+        client.query({ metric: 'cpu.usage', start, end, aggregation: Aggregation.AVG }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -443,25 +443,25 @@ describe('TimeSeriesClient', () => {
           end,
           aggregation: Aggregation.AVG,
           interval: 'INVALID',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when groupBy is not an array', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start, end, groupBy: 'host' })
+        client.query({ metric: 'cpu.usage', start, end, groupBy: 'host' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when groupBy contains non-strings', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start, end, groupBy: [123] })
+        client.query({ metric: 'cpu.usage', start, end, groupBy: [123] }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when groupBy contains empty strings', async () => {
       await expect(
-        client.query({ metric: 'cpu.usage', start, end, groupBy: ['host', ''] })
+        client.query({ metric: 'cpu.usage', start, end, groupBy: ['host', ''] }),
       ).rejects.toThrow(ValidationError);
     });
   });
@@ -534,13 +534,13 @@ describe('TimeSeriesClient', () => {
 
     it('should throw ValidationError when metric is missing', async () => {
       await expect(
-        client.aggregate({ start, end, aggregation: Aggregation.AVG })
+        client.aggregate({ start, end, aggregation: Aggregation.AVG }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when aggregation is missing', async () => {
       await expect(
-        client.aggregate({ metric: 'cpu.usage', start, end })
+        client.aggregate({ metric: 'cpu.usage', start, end }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -551,7 +551,7 @@ describe('TimeSeriesClient', () => {
           start,
           end,
           aggregation: Aggregation.NONE,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -562,7 +562,7 @@ describe('TimeSeriesClient', () => {
           start: end,
           end: start,
           aggregation: Aggregation.AVG,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -573,7 +573,7 @@ describe('TimeSeriesClient', () => {
           start: 'not-a-valid-date',
           end,
           aggregation: Aggregation.AVG,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
       await expect(
         client.aggregate({
@@ -581,7 +581,7 @@ describe('TimeSeriesClient', () => {
           start: 'not-a-valid-date',
           end,
           aggregation: Aggregation.AVG,
-        })
+        }),
       ).rejects.toThrow('start must be a valid Date or ISO 8601 string');
     });
 
@@ -592,7 +592,7 @@ describe('TimeSeriesClient', () => {
           start,
           end: 'not-a-valid-date',
           aggregation: Aggregation.AVG,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
       await expect(
         client.aggregate({
@@ -600,7 +600,7 @@ describe('TimeSeriesClient', () => {
           start,
           end: 'not-a-valid-date',
           aggregation: Aggregation.AVG,
-        })
+        }),
       ).rejects.toThrow('end must be a valid Date or ISO 8601 string');
     });
   });
@@ -856,7 +856,7 @@ describe('TimeSeriesClient', () => {
 
     it('should throw ValidationError when metric is empty', async () => {
       await expect(
-        client.setRetentionPolicy('', { retentionDays: 30 })
+        client.setRetentionPolicy('', { retentionDays: 30 }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -866,7 +866,7 @@ describe('TimeSeriesClient', () => {
 
     it('should throw ValidationError when policy is not an object', async () => {
       await expect(client.setRetentionPolicy('cpu.usage', 'invalid')).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -876,10 +876,10 @@ describe('TimeSeriesClient', () => {
 
     it('should throw ValidationError when retentionDays is not positive', async () => {
       await expect(
-        client.setRetentionPolicy('cpu.usage', { retentionDays: 0 })
+        client.setRetentionPolicy('cpu.usage', { retentionDays: 0 }),
       ).rejects.toThrow(ValidationError);
       await expect(
-        client.setRetentionPolicy('cpu.usage', { retentionDays: -1 })
+        client.setRetentionPolicy('cpu.usage', { retentionDays: -1 }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -889,7 +889,7 @@ describe('TimeSeriesClient', () => {
           retentionDays: 30,
           aggregation: 'INVALID',
           interval: Interval.HOUR,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -899,7 +899,7 @@ describe('TimeSeriesClient', () => {
           retentionDays: 30,
           aggregation: Aggregation.AVG,
           interval: 'INVALID',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -908,7 +908,7 @@ describe('TimeSeriesClient', () => {
         client.setRetentionPolicy('cpu.usage', {
           retentionDays: 30,
           aggregation: Aggregation.AVG,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -917,7 +917,7 @@ describe('TimeSeriesClient', () => {
         client.setRetentionPolicy('cpu.usage', {
           retentionDays: 30,
           interval: Interval.HOUR,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
   });

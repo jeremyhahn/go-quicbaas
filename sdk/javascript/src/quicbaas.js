@@ -89,7 +89,7 @@ export class QuicBaaS {
   #cryptoClient = null;
   #dynamicSecretsClient = null;
   #certificateClient = null;
-#iamClient = null;
+  #iamClient = null;
   #vectorClient = null;
   #timeSeriesClient = null;
   #backupClient = null;
@@ -559,9 +559,6 @@ export {
   CertificateUsage,
   CertKeyAlgorithm,
   TLSVersion,
-  NodeDEKSyncStatus,
-  ReencryptionState,
-  RecoveryMethod,
 
   // IAM
   TenantStatus,

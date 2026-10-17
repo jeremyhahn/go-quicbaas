@@ -7,7 +7,7 @@
  */
 
 import { ValidationError } from '../errors/index.js';
-import { required, nonNegativeInteger, positiveInteger } from '../utils/validation.js';
+import { required } from '../utils/validation.js';
 
 /**
  * @typedef {Object} CacheStatsOptions
@@ -275,7 +275,7 @@ class CacheClient {
     if (!hasEntityType && !hasAll) {
       throw new ValidationError(
         'either entityType or all flag must be specified',
-        'options'
+        'options',
       );
     }
 
@@ -314,7 +314,7 @@ class CacheClient {
     if (!hasL1Size && !hasL1TTL && !hasCleanupInterval && !hasEnabled) {
       throw new ValidationError(
         'at least one configuration field must be specified',
-        'config'
+        'config',
       );
     }
 

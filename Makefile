@@ -3076,6 +3076,14 @@ test-sdk-ts: ## Run TypeScript SDK unit tests
 	@cd sdk/typescript && npx vitest run
 	@echo "$(GREEN)TypeScript SDK tests passed$(NC)"
 
+# npm ci installs exactly sdk/javascript/package-lock.json, so a clean CI
+# runner gets the same jest and eslint as a developer checkout.
+.PHONY: test-sdk-js
+test-sdk-js: ## Run JavaScript SDK unit tests and lint
+	@echo "$(BLUE)Running JavaScript SDK tests and lint...$(NC)"
+	@cd sdk/javascript && npm ci --silent && npm test && npm run lint
+	@echo "$(GREEN)JavaScript SDK tests and lint passed$(NC)"
+
 # npm ci installs exactly cmd/quicbaas/frontend/package-lock.json and never
 # rewrites it, so a fresh checkout (a clean CI runner) can run the suite.
 .PHONY: install-frontend

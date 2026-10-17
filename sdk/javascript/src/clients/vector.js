@@ -667,14 +667,14 @@ class VectorClient {
       oneOf(
         options.distanceMetric,
         Object.values(DistanceMetric),
-        'options.distanceMetric'
+        'options.distanceMetric',
       );
     }
     if (options.indexType !== undefined) {
       oneOf(
         options.indexType,
         Object.values(IndexType),
-        'options.indexType'
+        'options.indexType',
       );
     }
     if (options.indexParams !== undefined && options.indexParams !== null) {
@@ -722,7 +722,7 @@ class VectorClient {
       if (typeof vector[i] !== 'number' || !Number.isFinite(vector[i])) {
         throw new ValidationError(
           `${name}[${i}] must be a finite number`,
-          `${name}[${i}]`
+          `${name}[${i}]`,
         );
       }
     }
@@ -755,7 +755,7 @@ class VectorClient {
       } else if (item.vector.length !== expectedDimensions) {
         throw new ValidationError(
           `vectors[${i}].vector has ${item.vector.length} dimensions, expected ${expectedDimensions}`,
-          `vectors[${i}].vector`
+          `vectors[${i}].vector`,
         );
       }
 
@@ -833,7 +833,7 @@ class VectorClient {
       oneOf(
         options.indexType,
         Object.values(IndexType),
-        'options.indexType'
+        'options.indexType',
       );
     }
     if (options.indexParams !== undefined && options.indexParams !== null) {

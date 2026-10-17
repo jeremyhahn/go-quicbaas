@@ -263,15 +263,15 @@ class BatchClient {
    *
    * @param {Object} item - Item to validate
    * @param {number} index - Item index for error messages
-   * @param {string} operationName - Operation name for error context
+   * @param {string} _operationName - Operation name for error context (unused)
    * @throws {ValidationError} When validation fails
    * @private
    */
-  _validateItemBase(item, index, operationName) {
+  _validateItemBase(item, index, _operationName) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       throw new ValidationError(
         `items[${index}] must be an object`,
-        `items[${index}]`
+        `items[${index}]`,
       );
     }
 

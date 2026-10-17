@@ -251,7 +251,7 @@ class DynamicSecretsClient {
 
     const response = await this.#transport.post(
       `${DYNAMIC_SECRETS_API_PATH}/roles`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformCreateRoleResponse(response);
@@ -273,7 +273,7 @@ class DynamicSecretsClient {
     requiredString(name, 'name');
 
     const response = await this.#transport.get(
-      `${DYNAMIC_SECRETS_API_PATH}/roles/${encodeURIComponent(name)}`
+      `${DYNAMIC_SECRETS_API_PATH}/roles/${encodeURIComponent(name)}`,
     );
 
     return this.#transformGetRoleResponse(response);
@@ -309,7 +309,7 @@ class DynamicSecretsClient {
 
     const response = await this.#transport.get(
       `${DYNAMIC_SECRETS_API_PATH}/roles`,
-      { query }
+      { query },
     );
 
     return this.#transformListRolesResponse(response);
@@ -331,7 +331,7 @@ class DynamicSecretsClient {
     requiredString(name, 'name');
 
     const response = await this.#transport.delete(
-      `${DYNAMIC_SECRETS_API_PATH}/roles/${encodeURIComponent(name)}`
+      `${DYNAMIC_SECRETS_API_PATH}/roles/${encodeURIComponent(name)}`,
     );
 
     return this.#transformDeleteRoleResponse(response);
@@ -369,7 +369,7 @@ class DynamicSecretsClient {
 
     const response = await this.#transport.post(
       `${DYNAMIC_SECRETS_API_PATH}/credentials`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformGenerateCredentialResponse(response);
@@ -407,7 +407,7 @@ class DynamicSecretsClient {
 
     const response = await this.#transport.post(
       `${DYNAMIC_SECRETS_API_PATH}/leases/${encodeURIComponent(leaseId)}/renew`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformRenewLeaseResponse(response);
@@ -432,7 +432,7 @@ class DynamicSecretsClient {
 
     const response = await this.#transport.post(
       `${DYNAMIC_SECRETS_API_PATH}/leases/${encodeURIComponent(leaseId)}/revoke`,
-      { lease_id: leaseId }
+      { lease_id: leaseId },
     );
 
     return this.#transformRevokeLeaseResponse(response);
@@ -468,7 +468,7 @@ class DynamicSecretsClient {
 
     const response = await this.#transport.get(
       `${DYNAMIC_SECRETS_API_PATH}/leases`,
-      { query }
+      { query },
     );
 
     return this.#transformListLeasesResponse(response);
@@ -491,7 +491,7 @@ class DynamicSecretsClient {
     oneOf(
       config.generatorType,
       Object.values(CredentialType),
-      'config.generatorType'
+      'config.generatorType',
     );
 
     requiredObject(config.config, 'config.config');
@@ -505,7 +505,7 @@ class DynamicSecretsClient {
     if (config.defaultTtl > config.maxTtl) {
       throw new ValidationError(
         'config.defaultTtl cannot exceed config.maxTtl',
-        'config.defaultTtl'
+        'config.defaultTtl',
       );
     }
   }
@@ -556,7 +556,7 @@ class DynamicSecretsClient {
       if (typeof options.increment !== 'number' || options.increment < 0) {
         throw new ValidationError(
           'options.increment must be a non-negative number',
-          'options.increment'
+          'options.increment',
         );
       }
     }

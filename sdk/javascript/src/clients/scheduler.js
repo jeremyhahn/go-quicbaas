@@ -328,7 +328,7 @@ export class SchedulerClient {
 
     const response = await this.#transport.post(
       `${SCHEDULER_API_PATH}/jobs`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformCreateJobResponse(response);
@@ -350,7 +350,7 @@ export class SchedulerClient {
     requiredString(jobId, 'jobId');
 
     const response = await this.#transport.get(
-      `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}`
+      `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}`,
     );
 
     return this.#transformJobInfo(response);
@@ -409,7 +409,7 @@ export class SchedulerClient {
 
     const response = await this.#transport.patch(
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformJobInfo(response);
@@ -433,7 +433,7 @@ export class SchedulerClient {
     requiredString(jobId, 'jobId');
 
     const response = await this.#transport.delete(
-      `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}`
+      `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}`,
     );
 
     return this.#transformJobActionResponse(response);
@@ -488,7 +488,7 @@ export class SchedulerClient {
 
     const response = await this.#transport.get(
       `${SCHEDULER_API_PATH}/jobs`,
-      { query }
+      { query },
     );
 
     return this.#transformListJobsResponse(response);
@@ -511,7 +511,7 @@ export class SchedulerClient {
 
     const response = await this.#transport.post(
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/trigger`,
-      {}
+      {},
     );
 
     return this.#transformTriggerJobResponse(response, jobId);
@@ -534,7 +534,7 @@ export class SchedulerClient {
 
     const response = await this.#transport.post(
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/pause`,
-      {}
+      {},
     );
 
     return this.#transformJobActionResponse(response, JobStatus.PAUSED);
@@ -557,7 +557,7 @@ export class SchedulerClient {
 
     const response = await this.#transport.post(
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/resume`,
-      {}
+      {},
     );
 
     return this.#transformJobActionResponse(response, JobStatus.PENDING);
@@ -592,7 +592,7 @@ export class SchedulerClient {
 
     const response = await this.#transport.post(
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/cancel`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformJobActionResponse(response, JobStatus.CANCELED);
@@ -644,7 +644,7 @@ export class SchedulerClient {
 
     const response = await this.#transport.get(
       `${SCHEDULER_API_PATH}/jobs/${encodeURIComponent(jobId)}/history`,
-      { query }
+      { query },
     );
 
     return this.#transformJobHistoryResponse(response, jobId);
@@ -663,7 +663,7 @@ export class SchedulerClient {
    */
   async getStatus() {
     const response = await this.#transport.get(
-      `${SCHEDULER_API_PATH}/status`
+      `${SCHEDULER_API_PATH}/status`,
     );
 
     return this.#transformSchedulerStatus(response);
@@ -841,7 +841,7 @@ export class SchedulerClient {
       if (typeof tags[i] !== 'string' || tags[i].trim() === '') {
         throw new ValidationError(
           `${fieldName}[${i}] must be a non-empty string`,
-          `${fieldName}[${i}]`
+          `${fieldName}[${i}]`,
         );
       }
     }

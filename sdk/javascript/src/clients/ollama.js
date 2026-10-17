@@ -352,13 +352,13 @@ class OllamaClient {
       if (typeof text !== 'string') {
         throw new ValidationError(
           `texts[${i}] must be a string`,
-          `texts[${i}]`
+          `texts[${i}]`,
         );
       }
       if (text.trim() === '') {
         throw new ValidationError(
           `texts[${i}] cannot be empty`,
-          `texts[${i}]`
+          `texts[${i}]`,
         );
       }
     }

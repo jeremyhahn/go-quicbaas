@@ -11,7 +11,6 @@ import {
   required,
   requiredString,
   nonEmptyArray,
-  positiveInteger,
 } from '../utils/validation.js';
 
 /**

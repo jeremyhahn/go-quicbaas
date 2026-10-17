@@ -104,7 +104,7 @@ describe('HttpTransport', () => {
     });
 
     it('should execute request interceptor and modify request config', async () => {
-      const interceptor = jest.fn(async (config, url) => {
+      const interceptor = jest.fn(async (config) => {
         return {
           ...config,
           headers: { ...config.headers, 'X-Custom-Header': 'intercepted' },
@@ -128,7 +128,7 @@ describe('HttpTransport', () => {
           headers: expect.objectContaining({
             'X-Custom-Header': 'intercepted',
           }),
-        })
+        }),
       );
     });
 
@@ -147,7 +147,7 @@ describe('HttpTransport', () => {
         text: () => Promise.resolve('{"modified": true}'),
       };
 
-      const interceptor = jest.fn(async (response) => {
+      const interceptor = jest.fn(async () => {
         return modifiedResponse;
       });
       transport.addResponseInterceptor(interceptor);
@@ -176,7 +176,7 @@ describe('HttpTransport', () => {
         'https://api.example.com/test',
         expect.objectContaining({
           method: 'GET',
-        })
+        }),
       );
     });
 
@@ -195,7 +195,7 @@ describe('HttpTransport', () => {
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ name: 'test' }),
-        })
+        }),
       );
     });
 
@@ -215,7 +215,7 @@ describe('HttpTransport', () => {
           headers: expect.objectContaining({
             Authorization: 'Bearer my-token',
           }),
-        })
+        }),
       );
     });
 
@@ -247,7 +247,7 @@ describe('HttpTransport', () => {
       await transport.get('/test', { query: { limit: 10, offset: 5 } });
       expect(global.fetch).toHaveBeenCalledWith(
         'https://api.example.com/test?limit=10&offset=5',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -262,7 +262,7 @@ describe('HttpTransport', () => {
       await transport.get('/test', { query: { ids: ['a', 'b', 'c'] } });
       expect(global.fetch).toHaveBeenCalledWith(
         'https://api.example.com/test?ids=a&ids=b&ids=c',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -470,7 +470,7 @@ describe('HttpTransport', () => {
       await transport.get('/test', { query: { valid: 'value', empty: null, missing: undefined } });
       expect(global.fetch).toHaveBeenCalledWith(
         'https://api.example.com/test?valid=value',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -620,7 +620,7 @@ describe('HttpTransport', () => {
       await transport.get('/test');
       expect(global.fetch).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ method: 'GET' })
+        expect.objectContaining({ method: 'GET' }),
       );
     });
 
@@ -628,7 +628,7 @@ describe('HttpTransport', () => {
       await transport.post('/test', { data: 'test' });
       expect(global.fetch).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ method: 'POST' })
+        expect.objectContaining({ method: 'POST' }),
       );
     });
 
@@ -636,7 +636,7 @@ describe('HttpTransport', () => {
       await transport.post('/test');
       expect(global.fetch).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ method: 'POST' })
+        expect.objectContaining({ method: 'POST' }),
       );
     });
 
@@ -644,7 +644,7 @@ describe('HttpTransport', () => {
       await transport.put('/test', { data: 'test' });
       expect(global.fetch).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ method: 'PUT' })
+        expect.objectContaining({ method: 'PUT' }),
       );
     });
 
@@ -652,7 +652,7 @@ describe('HttpTransport', () => {
       await transport.put('/test');
       expect(global.fetch).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ method: 'PUT' })
+        expect.objectContaining({ method: 'PUT' }),
       );
     });
 
@@ -660,7 +660,7 @@ describe('HttpTransport', () => {
       await transport.patch('/test', { data: 'test' });
       expect(global.fetch).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ method: 'PATCH' })
+        expect.objectContaining({ method: 'PATCH' }),
       );
     });
 
@@ -668,7 +668,7 @@ describe('HttpTransport', () => {
       await transport.patch('/test');
       expect(global.fetch).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ method: 'PATCH' })
+        expect.objectContaining({ method: 'PATCH' }),
       );
     });
 
@@ -676,7 +676,7 @@ describe('HttpTransport', () => {
       await transport.delete('/test');
       expect(global.fetch).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ method: 'DELETE' })
+        expect.objectContaining({ method: 'DELETE' }),
       );
     });
 
@@ -687,7 +687,7 @@ describe('HttpTransport', () => {
         expect.objectContaining({
           method: 'DELETE',
           headers: expect.objectContaining({ 'X-Custom': 'value' }),
-        })
+        }),
       );
     });
   });

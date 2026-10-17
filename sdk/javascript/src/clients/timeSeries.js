@@ -15,7 +15,6 @@ import {
   requiredString,
   requiredObject,
   requiredArray,
-  nonNegativeInteger,
   positiveInteger,
   oneOf,
   validateRequest,
@@ -274,7 +273,7 @@ class TimeSeriesClient {
 
     const response = await this.#transport.post(
       `${TimeSeriesClient.API_PREFIX}/write`,
-      body
+      body,
     );
 
     return {
@@ -313,7 +312,7 @@ class TimeSeriesClient {
 
     const response = await this.#transport.post(
       `${TimeSeriesClient.API_PREFIX}/write/batch`,
-      { points: formattedPoints }
+      { points: formattedPoints },
     );
 
     return {
@@ -350,7 +349,7 @@ class TimeSeriesClient {
     const body = this.#buildQueryRequestBody(request);
     const response = await this.#transport.post(
       `${TimeSeriesClient.API_PREFIX}/query`,
-      body
+      body,
     );
 
     return this.#normalizeQueryResponse(response);
@@ -390,7 +389,7 @@ class TimeSeriesClient {
 
     const response = await this.#transport.post(
       `${TimeSeriesClient.API_PREFIX}/aggregate`,
-      body
+      body,
     );
 
     return {
@@ -429,7 +428,7 @@ class TimeSeriesClient {
 
     const response = await this.#transport.delete(
       `${TimeSeriesClient.API_PREFIX}/series`,
-      { body }
+      { body },
     );
 
     return {
@@ -470,7 +469,7 @@ class TimeSeriesClient {
 
     const response = await this.#transport.get(
       `${TimeSeriesClient.API_PREFIX}/metrics`,
-      { query }
+      { query },
     );
 
     return {
@@ -495,7 +494,7 @@ class TimeSeriesClient {
     requiredString(metric, 'metric');
 
     const response = await this.#transport.get(
-      `${TimeSeriesClient.API_PREFIX}/retention/${encodeURIComponent(metric)}`
+      `${TimeSeriesClient.API_PREFIX}/retention/${encodeURIComponent(metric)}`,
     );
 
     return {
@@ -537,7 +536,7 @@ class TimeSeriesClient {
 
     const response = await this.#transport.put(
       `${TimeSeriesClient.API_PREFIX}/retention/${encodeURIComponent(metric)}`,
-      body
+      body,
     );
 
     return {
@@ -761,7 +760,7 @@ class TimeSeriesClient {
     if ((policy.aggregation && !policy.interval) || (!policy.aggregation && policy.interval)) {
       throw new ValidationError(
         'both aggregation and interval must be set together for downsampling',
-        'policy'
+        'policy',
       );
     }
   }

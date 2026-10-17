@@ -10,10 +10,9 @@
  * @license AGPL-3.0-or-later
  */
 
-import { ValidationError, QuicBaaSError } from '../errors/index.js';
+import { ValidationError } from '../errors/index.js';
 import {
   requiredString,
-  required,
   requiredObject,
   nonEmptyArray,
   positiveInteger,
@@ -187,7 +186,7 @@ export const ParameterType = Object.freeze({
  * Paths must start with / and contain only alphanumeric, hyphens, underscores, and forward slashes.
  * @constant {RegExp}
  */
-const PATH_REGEX = /^\/[a-zA-Z0-9\-_\/]+$/;
+const PATH_REGEX = /^\/[a-zA-Z0-9\-_/]+$/;
 
 /**
  * Parameter Store client for QuicBaaS.
@@ -275,7 +274,7 @@ class ParameterStoreClient {
     const encodedPath = this.#encodePath(path);
     const response = await this.#transport.get(
       `${PARAMETERS_API_PATH}/${encodedPath}`,
-      { query }
+      { query },
     );
 
     return {
@@ -347,7 +346,7 @@ class ParameterStoreClient {
 
     const response = await this.#transport.put(
       `${PARAMETERS_API_PATH}/${encodedPath}`,
-      body
+      body,
     );
 
     return {
@@ -376,7 +375,7 @@ class ParameterStoreClient {
 
     const encodedPath = this.#encodePath(path);
     const response = await this.#transport.delete(
-      `${PARAMETERS_API_PATH}/${encodedPath}`
+      `${PARAMETERS_API_PATH}/${encodedPath}`,
     );
 
     return {
@@ -422,7 +421,7 @@ class ParameterStoreClient {
     const response = await this.#transport.post(
       `${PARAMETERS_API_PATH}/batch/get`,
       { paths },
-      { query }
+      { query },
     );
 
     return {
@@ -472,7 +471,7 @@ class ParameterStoreClient {
 
     const response = await this.#transport.post(
       `${PARAMETERS_API_PATH}/batch/set`,
-      body
+      body,
     );
 
     return {
@@ -514,7 +513,7 @@ class ParameterStoreClient {
 
     const response = await this.#transport.post(
       `${PARAMETERS_API_PATH}/batch/delete`,
-      { paths }
+      { paths },
     );
 
     return {
@@ -641,7 +640,7 @@ class ParameterStoreClient {
     const response = await this.#transport.post(
       `${PARAMETERS_API_PATH}/search/tags`,
       { tags },
-      { query }
+      { query },
     );
 
     return {
@@ -666,28 +665,28 @@ class ParameterStoreClient {
     if (!path.startsWith('/')) {
       throw new ValidationError(
         `${name} must start with / (e.g., /app/config/db/host)`,
-        name
+        name,
       );
     }
 
     if (!PATH_REGEX.test(path)) {
       throw new ValidationError(
         `${name} must be a valid hierarchical path containing only alphanumeric characters, hyphens, underscores, and forward slashes`,
-        name
+        name,
       );
     }
 
     if (path.includes('//')) {
       throw new ValidationError(
         `${name} cannot contain consecutive slashes`,
-        name
+        name,
       );
     }
 
     if (path.endsWith('/') && path.length > 1) {
       throw new ValidationError(
         `${name} cannot end with a trailing slash`,
-        name
+        name,
       );
     }
   }
@@ -752,7 +751,7 @@ class ParameterStoreClient {
     if (options.type === ParameterType.SECURE_STRING && !options.kmsKeyId) {
       throw new ValidationError(
         'kmsKeyId is required when type is secureString',
-        'options.kmsKeyId'
+        'options.kmsKeyId',
       );
     }
   }
@@ -827,7 +826,7 @@ class ParameterStoreClient {
       if (!param || typeof param !== 'object') {
         throw new ValidationError(
           `parameters[${index}] must be an object`,
-          `parameters[${index}]`
+          `parameters[${index}]`,
         );
       }
 
@@ -858,7 +857,7 @@ class ParameterStoreClient {
         // Re-throw with parameter index context
         throw new ValidationError(
           error.message.replace('options.', `parameters[${index}].`),
-          error.details?.field?.replace('options.', `parameters[${index}].`)
+          error.details?.field?.replace('options.', `parameters[${index}].`),
         );
       }
     });

@@ -62,7 +62,7 @@ describe('ObjectTransferClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/transfer/shards/1/objects/obj-123',
-        { query: {} }
+        { query: {} },
       );
       expect(result.objectRef).toBe('obj-123');
       expect(result.data).toBe('SGVsbG8gV29ybGQ=');
@@ -90,7 +90,7 @@ describe('ObjectTransferClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/transfer/shards/2/objects/obj-456',
-        { query: { checksum: 'expected-checksum' } }
+        { query: { checksum: 'expected-checksum' } },
       );
       expect(result.objectRef).toBe('obj-456');
       expect(result.found).toBe(true);
@@ -105,7 +105,7 @@ describe('ObjectTransferClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/transfer/shards/3/objects/obj-789',
-        { query: { request_id: 'req-abc-123' } }
+        { query: { request_id: 'req-abc-123' } },
       );
     });
 
@@ -124,7 +124,7 @@ describe('ObjectTransferClient', () => {
             checksum: 'my-checksum',
             request_id: 'req-full-123',
           },
-        }
+        },
       );
     });
 
@@ -220,7 +220,7 @@ describe('ObjectTransferClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/transfer/shards/8/objects/path%2Fto%2Fobject%3Awith%3Acolons',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -231,7 +231,7 @@ describe('ObjectTransferClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/transfer/shards/0/objects/obj-zero',
-        { query: {} }
+        { query: {} },
       );
     });
   });
@@ -282,7 +282,7 @@ describe('ObjectTransferClient', () => {
             { objectRef: 'obj-1', checksum: null },
             { objectRef: 'obj-2', checksum: null },
           ],
-        }
+        },
       );
       expect(result).toHaveLength(2);
       expect(result[0].objectRef).toBe('obj-1');
@@ -314,7 +314,7 @@ describe('ObjectTransferClient', () => {
             { objectRef: 'obj-a', checksum: 'checksum-a' },
             { objectRef: 'obj-b', checksum: 'checksum-b' },
           ],
-        }
+        },
       );
     });
 
@@ -333,7 +333,7 @@ describe('ObjectTransferClient', () => {
         {
           items: [{ objectRef: 'obj-x', checksum: null }],
           requestId: 'batch-req-123',
-        }
+        },
       );
     });
 
@@ -445,7 +445,7 @@ describe('ObjectTransferClient', () => {
         expect.any(String),
         expect.objectContaining({
           items: [{ objectRef: 'obj', checksum: null }],
-        })
+        }),
       );
     });
 
@@ -458,7 +458,7 @@ describe('ObjectTransferClient', () => {
         expect.any(String),
         expect.objectContaining({
           items: [{ objectRef: 'obj', checksum: null }],
-        })
+        }),
       );
     });
 
@@ -512,7 +512,7 @@ describe('ObjectTransferClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/transfer/shards/0/objects/batch',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -539,7 +539,7 @@ describe('ObjectTransferClient', () => {
             { objectRef: 'obj-0', checksum: 'checksum-0' },
             { objectRef: 'obj-99', checksum: 'checksum-99' },
           ]),
-        })
+        }),
       );
     });
 

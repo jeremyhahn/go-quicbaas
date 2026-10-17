@@ -352,7 +352,7 @@ describe('QueryClient', () => {
           index: 'users_by_status',
           entityType: 'user',
           conditions: [{ field: 'status', operator: 'EQUAL', value: 'active' }],
-        }
+        },
       );
     });
 
@@ -382,7 +382,7 @@ describe('QueryClient', () => {
             { field: 'category', operator: 'EQUAL', value: 'electronics' },
             { field: 'price', operator: 'RANGE', value: 25, maxValue: 100 },
           ],
-        }
+        },
       );
     });
 
@@ -404,7 +404,7 @@ describe('QueryClient', () => {
       expect(result.nextCursor).toBe('cursor123');
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query',
-        expect.objectContaining({ limit: 10 })
+        expect.objectContaining({ limit: 10 }),
       );
     });
 
@@ -424,7 +424,7 @@ describe('QueryClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query',
-        expect.objectContaining({ offset: 50 })
+        expect.objectContaining({ offset: 50 }),
       );
     });
 
@@ -444,7 +444,7 @@ describe('QueryClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query',
-        expect.objectContaining({ cursor: 'cursor123' })
+        expect.objectContaining({ cursor: 'cursor123' }),
       );
     });
 
@@ -473,7 +473,7 @@ describe('QueryClient', () => {
           limit: 25,
           offset: 10,
           cursor: 'prev',
-        }
+        },
       );
     });
 
@@ -539,7 +539,7 @@ describe('QueryClient', () => {
         client.query({
           entityType: 'test',
           conditions: [eq('field', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -549,7 +549,7 @@ describe('QueryClient', () => {
           index: '',
           entityType: 'test',
           conditions: [eq('field', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -558,7 +558,7 @@ describe('QueryClient', () => {
         client.query({
           index: 'test_index',
           conditions: [eq('field', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -568,7 +568,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: '',
           conditions: [eq('field', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -577,7 +577,7 @@ describe('QueryClient', () => {
         client.query({
           index: 'test_index',
           entityType: 'test',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -587,7 +587,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: 'not-an-array',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -597,7 +597,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: [],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -607,7 +607,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: ['not-an-object'],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -617,7 +617,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: [{ operator: 'EQUAL', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -627,7 +627,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: [{ field: '', operator: 'EQUAL', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -637,7 +637,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: [{ field: 'test', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -647,7 +647,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: [{ field: 'test', operator: 'INVALID', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -657,7 +657,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: [{ field: 'test', operator: 'EQUAL' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -667,7 +667,7 @@ describe('QueryClient', () => {
           index: 'test_index',
           entityType: 'test',
           conditions: [{ field: 'age', operator: 'RANGE', value: 18 }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -678,7 +678,7 @@ describe('QueryClient', () => {
           entityType: 'test',
           conditions: [eq('field', 'value')],
           limit: -1,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -689,7 +689,7 @@ describe('QueryClient', () => {
           entityType: 'test',
           conditions: [eq('field', 'value')],
           limit: 1.5,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -705,7 +705,7 @@ describe('QueryClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query',
-        expect.objectContaining({ limit: 0 })
+        expect.objectContaining({ limit: 0 }),
       );
     });
 
@@ -716,7 +716,7 @@ describe('QueryClient', () => {
           entityType: 'test',
           conditions: [eq('field', 'value')],
           offset: -1,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -727,7 +727,7 @@ describe('QueryClient', () => {
           entityType: 'test',
           conditions: [eq('field', 'value')],
           offset: 1.5,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -743,7 +743,7 @@ describe('QueryClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query',
-        expect.objectContaining({ offset: 0 })
+        expect.objectContaining({ offset: 0 }),
       );
     });
 
@@ -754,7 +754,7 @@ describe('QueryClient', () => {
           entityType: 'test',
           conditions: [eq('field', 'value')],
           cursor: 123,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -768,7 +768,7 @@ describe('QueryClient', () => {
             { field: 'field2', operator: 'INVALID', value: 'value2' },
           ],
         });
-        fail('Expected ValidationError');
+        throw new Error('Expected ValidationError');
       } catch (error) {
         expect(error).toBeInstanceOf(ValidationError);
         expect(error.details.field).toContain('conditions[1]');
@@ -801,7 +801,7 @@ describe('QueryClient', () => {
       });
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query/scan',
-        { index: 'items_index' }
+        { index: 'items_index' },
       );
     });
 
@@ -820,7 +820,7 @@ describe('QueryClient', () => {
       expect(result.results).toHaveLength(1);
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query/scan',
-        { index: 'users_index', prefix: 'admin:' }
+        { index: 'users_index', prefix: 'admin:' },
       );
     });
 
@@ -838,7 +838,7 @@ describe('QueryClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query/scan',
-        { index: 'items_index', limit: 100 }
+        { index: 'items_index', limit: 100 },
       );
     });
 
@@ -856,7 +856,7 @@ describe('QueryClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query/scan',
-        { index: 'items_index', offset: 50 }
+        { index: 'items_index', offset: 50 },
       );
     });
 
@@ -874,7 +874,7 @@ describe('QueryClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query/scan',
-        { index: 'items_index', cursor: 'prev_cursor' }
+        { index: 'items_index', cursor: 'prev_cursor' },
       );
     });
 
@@ -901,7 +901,7 @@ describe('QueryClient', () => {
           limit: 50,
           offset: 10,
           cursor: 'start',
-        }
+        },
       );
     });
 
@@ -944,7 +944,7 @@ describe('QueryClient', () => {
         client.scanIndex({
           index: 'test_index',
           prefix: 123,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -959,7 +959,7 @@ describe('QueryClient', () => {
       // Empty string is falsy, so prefix should not be included
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/query/scan',
-        { index: 'test_index' }
+        { index: 'test_index' },
       );
     });
 
@@ -968,7 +968,7 @@ describe('QueryClient', () => {
         client.scanIndex({
           index: 'test_index',
           limit: -1,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -977,7 +977,7 @@ describe('QueryClient', () => {
         client.scanIndex({
           index: 'test_index',
           limit: 1.5,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -986,7 +986,7 @@ describe('QueryClient', () => {
         client.scanIndex({
           index: 'test_index',
           offset: -1,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -995,7 +995,7 @@ describe('QueryClient', () => {
         client.scanIndex({
           index: 'test_index',
           offset: 1.5,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -1004,7 +1004,7 @@ describe('QueryClient', () => {
         client.scanIndex({
           index: 'test_index',
           cursor: 123,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
   });

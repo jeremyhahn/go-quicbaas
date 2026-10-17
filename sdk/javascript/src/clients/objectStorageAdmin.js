@@ -14,7 +14,6 @@ import {
   required,
   requiredString,
   requiredObject,
-  nonNegativeInteger,
   positiveInteger,
   oneOf,
 } from '../utils/validation.js';
@@ -334,7 +333,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.post(
       `${ADMIN_API_PATH}/backends`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformCreateBackendResponse(response, request.name);
@@ -370,7 +369,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.put(
       `${ADMIN_API_PATH}/backends/${encodeURIComponent(request.name)}`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformUpdateBackendResponse(response, request.name);
@@ -410,7 +409,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.delete(
       `${ADMIN_API_PATH}/backends/${encodeURIComponent(request.name)}`,
-      { query }
+      { query },
     );
 
     return this.#transformDeleteBackendResponse(response, request.name);
@@ -445,7 +444,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.post(
       `${ADMIN_API_PATH}/backends/${encodeURIComponent(request.name)}/status`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformSetBackendStatusResponse(response, request.name, request.enabled);
@@ -484,7 +483,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.get(
       `${ADMIN_API_PATH}/stats`,
-      { query }
+      { query },
     );
 
     return this.#transformGetStorageStatsResponse(response);
@@ -532,7 +531,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.post(
       `${ADMIN_API_PATH}/gc`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformRunGarbageCollectionResponse(response);
@@ -559,7 +558,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.get(
       `${ADMIN_API_PATH}/gc/progress`,
-      { query: { operation_id: request.operationId } }
+      { query: { operation_id: request.operationId } },
     );
 
     return this.#transformGetGarbageCollectionProgressResponse(response, request.operationId);
@@ -602,7 +601,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.post(
       `${ADMIN_API_PATH}/repair`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformRepairObjectResponse(response, request.key);
@@ -638,7 +637,7 @@ export class ObjectStorageAdminClient {
 
     const response = await this.#transport.post(
       `${ADMIN_API_PATH}/backends/${encodeURIComponent(request.name)}/compact`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformCompactBackendResponse(response, request.name);
@@ -695,7 +694,7 @@ export class ObjectStorageAdminClient {
     if (request.config === undefined && request.tier === undefined) {
       throw new ValidationError(
         'at least one of request.config or request.tier must be provided',
-        'request'
+        'request',
       );
     }
 
@@ -764,7 +763,7 @@ export class ObjectStorageAdminClient {
         if (typeof request.backends[i] !== 'string' || request.backends[i].trim() === '') {
           throw new ValidationError(
             `request.backends[${i}] must be a non-empty string`,
-            `request.backends[${i}]`
+            `request.backends[${i}]`,
           );
         }
       }

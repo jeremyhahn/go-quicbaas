@@ -591,7 +591,7 @@ export class CryptoClient {
     if (typeof value !== 'string' && !(value instanceof Uint8Array)) {
       throw new ValidationError(
         `${name} must be a string or Uint8Array`,
-        name
+        name,
       );
     }
     if (typeof value === 'string' && value.length === 0) {
@@ -614,7 +614,7 @@ export class CryptoClient {
       if (typeof options.context !== 'string' && !(options.context instanceof Uint8Array)) {
         throw new ValidationError(
           'options.context must be a string or Uint8Array',
-          'options.context'
+          'options.context',
         );
       }
     }
@@ -636,7 +636,7 @@ export class CryptoClient {
       if (typeof options.context !== 'string' && !(options.context instanceof Uint8Array)) {
         throw new ValidationError(
           'options.context must be a string or Uint8Array',
-          'options.context'
+          'options.context',
         );
       }
     }
@@ -662,7 +662,7 @@ export class CryptoClient {
       oneOf(
         options.signatureAlgorithm,
         Object.values(SignatureAlgorithm),
-        'options.signatureAlgorithm'
+        'options.signatureAlgorithm',
       );
     }
 
@@ -687,7 +687,7 @@ export class CryptoClient {
       oneOf(
         options.signatureAlgorithm,
         Object.values(SignatureAlgorithm),
-        'options.signatureAlgorithm'
+        'options.signatureAlgorithm',
       );
     }
 
@@ -724,7 +724,7 @@ export class CryptoClient {
       if (typeof options.salt !== 'string' && !(options.salt instanceof Uint8Array)) {
         throw new ValidationError(
           'options.salt must be a string or Uint8Array',
-          'options.salt'
+          'options.salt',
         );
       }
     }
@@ -733,7 +733,7 @@ export class CryptoClient {
       if (typeof options.info !== 'string' && !(options.info instanceof Uint8Array)) {
         throw new ValidationError(
           'options.info must be a string or Uint8Array',
-          'options.info'
+          'options.info',
         );
       }
     }

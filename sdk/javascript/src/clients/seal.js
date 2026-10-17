@@ -416,7 +416,7 @@ export class SealClient {
     if (request.secretThreshold > request.secretShares) {
       throw new ValidationError(
         'secretThreshold cannot exceed secretShares',
-        'request.secretThreshold'
+        'request.secretThreshold',
       );
     }
 
@@ -430,14 +430,14 @@ export class SealClient {
       if (request.recoveryShares === undefined) {
         throw new ValidationError(
           'recoveryShares is required when recoveryThreshold is specified',
-          'request.recoveryShares'
+          'request.recoveryShares',
         );
       }
 
       if (request.recoveryThreshold > request.recoveryShares) {
         throw new ValidationError(
           'recoveryThreshold cannot exceed recoveryShares',
-          'request.recoveryThreshold'
+          'request.recoveryThreshold',
         );
       }
     }
@@ -467,7 +467,7 @@ export class SealClient {
     if (request.secretThreshold > request.secretShares) {
       throw new ValidationError(
         'secretThreshold cannot exceed secretShares',
-        'request.secretThreshold'
+        'request.secretThreshold',
       );
     }
 
@@ -479,7 +479,7 @@ export class SealClient {
         if (typeof request.existingKeys[i] !== 'string' || request.existingKeys[i].trim() === '') {
           throw new ValidationError(
             `existingKeys[${i}] must be a non-empty string`,
-            `request.existingKeys[${i}]`
+            `request.existingKeys[${i}]`,
           );
         }
       }
@@ -510,7 +510,7 @@ export class SealClient {
     if (request.recoveryThreshold > request.recoveryShares) {
       throw new ValidationError(
         'recoveryThreshold cannot exceed recoveryShares',
-        'request.recoveryThreshold'
+        'request.recoveryThreshold',
       );
     }
   }

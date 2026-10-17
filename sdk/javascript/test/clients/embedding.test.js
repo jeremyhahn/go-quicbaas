@@ -187,41 +187,41 @@ describe('EmbeddingClient', () => {
 
     it('should throw ValidationError for invalid provider', async () => {
       await expect(
-        client.generateEmbedding('test', { provider: 'invalid-provider' })
+        client.generateEmbedding('test', { provider: 'invalid-provider' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid inputType', async () => {
       await expect(
-        client.generateEmbedding('test', { inputType: 'invalid-type' })
+        client.generateEmbedding('test', { inputType: 'invalid-type' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when metadata is not an object', async () => {
       await expect(
-        client.generateEmbedding('test', { metadata: 'invalid' })
+        client.generateEmbedding('test', { metadata: 'invalid' }),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.generateEmbedding('test', { metadata: ['array'] })
+        client.generateEmbedding('test', { metadata: ['array'] }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when source is not a string', async () => {
       await expect(
-        client.generateEmbedding('test', { source: 123 })
+        client.generateEmbedding('test', { source: 123 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when language is not a string', async () => {
       await expect(
-        client.generateEmbedding('test', { language: true })
+        client.generateEmbedding('test', { language: true }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when cacheBypass is not a boolean', async () => {
       await expect(
-        client.generateEmbedding('test', { cacheBypass: 'yes' })
+        client.generateEmbedding('test', { cacheBypass: 'yes' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -355,7 +355,7 @@ describe('EmbeddingClient', () => {
 
       await client.batchGenerateEmbeddings(
         [{ id: 'doc1', text: 'test' }],
-        { provider: Provider.OPENAI }
+        { provider: Provider.OPENAI },
       );
 
       expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/embedding/batch', expect.objectContaining({
@@ -373,7 +373,7 @@ describe('EmbeddingClient', () => {
 
       await client.batchGenerateEmbeddings(
         [{ id: 'doc1', text: 'test' }],
-        { cacheBypass: true }
+        { cacheBypass: true },
       );
 
       expect(mockTransport.post).toHaveBeenCalledWith('/api/v1/embedding/batch', expect.objectContaining({
@@ -415,35 +415,35 @@ describe('EmbeddingClient', () => {
 
     it('should throw ValidationError when item is not an object', async () => {
       await expect(
-        client.batchGenerateEmbeddings(['invalid'])
+        client.batchGenerateEmbeddings(['invalid']),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.batchGenerateEmbeddings([null])
+        client.batchGenerateEmbeddings([null]),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.batchGenerateEmbeddings([['array']])
+        client.batchGenerateEmbeddings([['array']]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when item.id is missing', async () => {
       await expect(
-        client.batchGenerateEmbeddings([{ text: 'test' }])
+        client.batchGenerateEmbeddings([{ text: 'test' }]),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.batchGenerateEmbeddings([{ id: '', text: 'test' }])
+        client.batchGenerateEmbeddings([{ id: '', text: 'test' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when item.text is missing', async () => {
       await expect(
-        client.batchGenerateEmbeddings([{ id: 'doc1' }])
+        client.batchGenerateEmbeddings([{ id: 'doc1' }]),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.batchGenerateEmbeddings([{ id: 'doc1', text: '' }])
+        client.batchGenerateEmbeddings([{ id: 'doc1', text: '' }]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -451,7 +451,7 @@ describe('EmbeddingClient', () => {
       await expect(
         client.batchGenerateEmbeddings([
           { id: 'doc1', text: 'test', inputType: 'invalid' },
-        ])
+        ]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -459,13 +459,13 @@ describe('EmbeddingClient', () => {
       await expect(
         client.batchGenerateEmbeddings([
           { id: 'doc1', text: 'test', metadata: 'invalid' },
-        ])
+        ]),
       ).rejects.toThrow(ValidationError);
 
       await expect(
         client.batchGenerateEmbeddings([
           { id: 'doc1', text: 'test', metadata: ['array'] },
-        ])
+        ]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -473,7 +473,7 @@ describe('EmbeddingClient', () => {
       await expect(
         client.batchGenerateEmbeddings([
           { id: 'doc1', text: 'test', source: 123 },
-        ])
+        ]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -481,7 +481,7 @@ describe('EmbeddingClient', () => {
       await expect(
         client.batchGenerateEmbeddings([
           { id: 'doc1', text: 'test', language: true },
-        ])
+        ]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -489,8 +489,8 @@ describe('EmbeddingClient', () => {
       await expect(
         client.batchGenerateEmbeddings(
           [{ id: 'doc1', text: 'test' }],
-          { provider: 'invalid' }
-        )
+          { provider: 'invalid' },
+        ),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -498,8 +498,8 @@ describe('EmbeddingClient', () => {
       await expect(
         client.batchGenerateEmbeddings(
           [{ id: 'doc1', text: 'test' }],
-          { cacheBypass: 'yes' }
-        )
+          { cacheBypass: 'yes' },
+        ),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -569,7 +569,7 @@ describe('EmbeddingClient', () => {
       await client.listProviders({ includeUnavailable: true });
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/embedding/providers?includeUnavailable=true'
+        '/api/v1/embedding/providers?includeUnavailable=true',
       );
     });
 
@@ -664,7 +664,7 @@ describe('EmbeddingClient', () => {
         await client.getProviderInfo(provider);
 
         expect(mockTransport.get).toHaveBeenCalledWith(
-          `/api/v1/embedding/providers/${provider}`
+          `/api/v1/embedding/providers/${provider}`,
         );
       }
     });
@@ -888,13 +888,13 @@ describe('EmbeddingClient', () => {
 
     it('should throw ValidationError for invalid provider in options', async () => {
       await expect(
-        client.clearCache({ provider: 'invalid-provider' })
+        client.clearCache({ provider: 'invalid-provider' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when all is not a boolean', async () => {
       await expect(
-        client.clearCache({ all: 'yes' })
+        client.clearCache({ all: 'yes' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -1013,7 +1013,7 @@ describe('EmbeddingClient', () => {
       mockTransport.post.mockRejectedValueOnce(error);
 
       await expect(
-        client.batchGenerateEmbeddings([{ id: 'doc1', text: 'test' }])
+        client.batchGenerateEmbeddings([{ id: 'doc1', text: 'test' }]),
       ).rejects.toThrow('Server error');
     });
 

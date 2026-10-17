@@ -14,7 +14,6 @@ import {
   requiredString,
   required,
   requiredObject,
-  nonNegativeInteger,
   positiveInteger,
   oneOf,
 } from '../utils/validation.js';
@@ -262,7 +261,7 @@ export class SecretsClient {
 
     const response = await this.#transport.put(
       `${SECRETS_API_PATH}/${encodedPath}`,
-      body
+      body,
     );
 
     return {
@@ -288,7 +287,7 @@ export class SecretsClient {
 
     const encodedPath = this.#encodePath(path);
     const response = await this.#transport.get(
-      `${SECRETS_API_PATH}/${encodedPath}`
+      `${SECRETS_API_PATH}/${encodedPath}`,
     );
 
     return this.#transformSecret(response);
@@ -319,7 +318,7 @@ export class SecretsClient {
     const encodedPath = this.#encodePath(path);
     const response = await this.#transport.get(
       `${SECRETS_API_PATH}/${encodedPath}`,
-      { query: { version } }
+      { query: { version } },
     );
 
     return this.#transformSecret(response);
@@ -402,7 +401,7 @@ export class SecretsClient {
 
     const encodedPath = this.#encodePath(path);
     const response = await this.#transport.get(
-      `${SECRETS_API_PATH}/${encodedPath}/versions`
+      `${SECRETS_API_PATH}/${encodedPath}/versions`,
     );
 
     return {
@@ -439,7 +438,7 @@ export class SecretsClient {
     const encodedPath = this.#encodePath(path);
     const response = await this.#transport.post(
       `${SECRETS_API_PATH}/${encodedPath}/rollback`,
-      { version }
+      { version },
     );
 
     return {
@@ -482,7 +481,7 @@ export class SecretsClient {
 
     const response = await this.#transport.post(
       `${SECRETS_API_PATH}/${encodedPath}/rotate`,
-      body
+      body,
     );
 
     return {
@@ -530,7 +529,7 @@ export class SecretsClient {
 
     const response = await this.#transport.put(
       `${SECRETS_API_PATH}/${encodedPath}/rotation-policy`,
-      body
+      body,
     );
 
     return this.#transformRotationPolicy(response);
@@ -555,7 +554,7 @@ export class SecretsClient {
 
     const encodedPath = this.#encodePath(path);
     const response = await this.#transport.get(
-      `${SECRETS_API_PATH}/${encodedPath}/rotation-policy`
+      `${SECRETS_API_PATH}/${encodedPath}/rotation-policy`,
     );
 
     return this.#transformRotationPolicy(response);
@@ -587,7 +586,7 @@ export class SecretsClient {
     const encodedPath = this.#encodePath(path);
     const response = await this.#transport.patch(
       `${SECRETS_API_PATH}/${encodedPath}/status`,
-      { status }
+      { status },
     );
 
     return {
@@ -616,7 +615,7 @@ export class SecretsClient {
     requiredString(prefix, 'prefix');
 
     const response = await this.#transport.get(`${SECRETS_API_PATH}/batch`, {
-      query: { prefix }
+      query: { prefix },
     });
 
     const secrets = {};
@@ -703,7 +702,9 @@ export class SecretsClient {
       eventSource = new EventSource(url);
 
       eventSource.onmessage = (event) => {
-        if (closed) return;
+        if (closed) {
+          return;
+        }
 
         try {
           const data = JSON.parse(event.data);
@@ -721,20 +722,22 @@ export class SecretsClient {
             options.onError(new QuicBaaSError(
               'Failed to parse watch event',
               'PARSE_ERROR',
-              { cause: parseError.message }
+              { cause: parseError.message },
             ));
           }
         }
       };
 
       eventSource.onerror = (error) => {
-        if (closed) return;
+        if (closed) {
+          return;
+        }
 
         if (options.onError) {
           options.onError(new QuicBaaSError(
             'Watch connection error',
             'WATCH_ERROR',
-            { cause: error }
+            { cause: error },
           ));
         }
       };
@@ -744,7 +747,7 @@ export class SecretsClient {
       throw new QuicBaaSError(
         'Failed to create watch connection',
         'WATCH_ERROR',
-        { cause: error.message }
+        { cause: error.message },
       );
     }
   }
@@ -826,7 +829,7 @@ export class SecretsClient {
       if (policy.intervalSeconds === undefined || policy.intervalSeconds === null) {
         throw new ValidationError(
           'intervalSeconds is required when interval is custom',
-          'policy.intervalSeconds'
+          'policy.intervalSeconds',
         );
       }
       positiveInteger(policy.intervalSeconds, 'policy.intervalSeconds');

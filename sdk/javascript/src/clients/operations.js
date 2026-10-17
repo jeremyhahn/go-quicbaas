@@ -377,7 +377,7 @@ class OperationsClient {
     if (request.sourceShard === request.targetShard) {
       throw new ValidationError(
         'source and target shards must be different',
-        'targetShard'
+        'targetShard',
       );
     }
 
@@ -389,7 +389,7 @@ class OperationsClient {
         if (typeof request.entityTypes[i] !== 'string' || request.entityTypes[i].trim() === '') {
           throw new ValidationError(
             `entityTypes[${i}] must be a non-empty string`,
-            `entityTypes[${i}]`
+            `entityTypes[${i}]`,
           );
         }
       }
@@ -419,7 +419,7 @@ class OperationsClient {
     if (oldNodeId === newNodeId) {
       throw new ValidationError(
         'old and new node IDs must be different',
-        'newNodeId'
+        'newNodeId',
       );
     }
 

@@ -66,7 +66,7 @@ describe('BatchClient', () => {
               ttl: undefined,
             },
           ],
-        }
+        },
       );
     });
 
@@ -94,7 +94,7 @@ describe('BatchClient', () => {
             { type: 'PUT', entityType: 'users', key: 'user:2', value: { name: 'Bob' }, ttl: undefined },
             { type: 'PUT', entityType: 'config', key: 'setting:1', value: 'enabled', ttl: undefined },
           ],
-        }
+        },
       );
     });
 
@@ -118,7 +118,7 @@ describe('BatchClient', () => {
           operations: [
             { type: 'PUT', entityType: 'sessions', key: 'session:abc', value: { token: 'xyz' }, ttl: 3600 },
           ],
-        }
+        },
       );
     });
 
@@ -144,7 +144,7 @@ describe('BatchClient', () => {
             { type: 'PUT', entityType: 'test', key: 'array', value: [1, 2, 3], ttl: undefined },
             { type: 'PUT', entityType: 'test', key: 'object', value: { nested: { deep: true } }, ttl: undefined },
           ],
-        }
+        },
       );
     });
 
@@ -178,67 +178,67 @@ describe('BatchClient', () => {
 
     it('should throw ValidationError when entityType is missing', async () => {
       await expect(
-        client.batchPut([{ key: 'key1', value: 'value1' }])
+        client.batchPut([{ key: 'key1', value: 'value1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when entityType is empty', async () => {
       await expect(
-        client.batchPut([{ entityType: '', key: 'key1', value: 'value1' }])
+        client.batchPut([{ entityType: '', key: 'key1', value: 'value1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when entityType is not a string', async () => {
       await expect(
-        client.batchPut([{ entityType: 123, key: 'key1', value: 'value1' }])
+        client.batchPut([{ entityType: 123, key: 'key1', value: 'value1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when key is missing', async () => {
       await expect(
-        client.batchPut([{ entityType: 'users', value: 'value1' }])
+        client.batchPut([{ entityType: 'users', value: 'value1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when key is empty', async () => {
       await expect(
-        client.batchPut([{ entityType: 'users', key: '', value: 'value1' }])
+        client.batchPut([{ entityType: 'users', key: '', value: 'value1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when key is not a string', async () => {
       await expect(
-        client.batchPut([{ entityType: 'users', key: 123, value: 'value1' }])
+        client.batchPut([{ entityType: 'users', key: 123, value: 'value1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when value is missing', async () => {
       await expect(
-        client.batchPut([{ entityType: 'users', key: 'key1' }])
+        client.batchPut([{ entityType: 'users', key: 'key1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when value is null', async () => {
       await expect(
-        client.batchPut([{ entityType: 'users', key: 'key1', value: null }])
+        client.batchPut([{ entityType: 'users', key: 'key1', value: null }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when value is undefined', async () => {
       await expect(
-        client.batchPut([{ entityType: 'users', key: 'key1', value: undefined }])
+        client.batchPut([{ entityType: 'users', key: 'key1', value: undefined }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when ttl is negative', async () => {
       await expect(
-        client.batchPut([{ entityType: 'users', key: 'key1', value: 'test', ttl: -1 }])
+        client.batchPut([{ entityType: 'users', key: 'key1', value: 'test', ttl: -1 }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when ttl is not an integer', async () => {
       await expect(
-        client.batchPut([{ entityType: 'users', key: 'key1', value: 'test', ttl: 1.5 }])
+        client.batchPut([{ entityType: 'users', key: 'key1', value: 'test', ttl: 1.5 }]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -261,7 +261,7 @@ describe('BatchClient', () => {
           { entityType: 'users', key: 'key1', value: 'valid' },
           { entityType: '', key: 'key2', value: 'invalid' },
         ]);
-        fail('Expected ValidationError');
+        throw new Error('Expected ValidationError');
       } catch (error) {
         expect(error).toBeInstanceOf(ValidationError);
         expect(error.details.field).toContain('items[1]');
@@ -288,7 +288,7 @@ describe('BatchClient', () => {
           operations: [
             { type: 'GET', entityType: 'users', key: 'user:1' },
           ],
-        }
+        },
       );
     });
 
@@ -322,7 +322,7 @@ describe('BatchClient', () => {
             { type: 'GET', entityType: 'users', key: 'user:2' },
             { type: 'GET', entityType: 'users', key: 'user:999' },
           ],
-        }
+        },
       );
     });
 
@@ -347,7 +347,7 @@ describe('BatchClient', () => {
             { type: 'GET', entityType: 'users', key: 'user:1' },
             { type: 'GET', entityType: 'config', key: 'feature:flag' },
           ],
-        }
+        },
       );
     });
 
@@ -377,37 +377,37 @@ describe('BatchClient', () => {
 
     it('should throw ValidationError when entityType is missing', async () => {
       await expect(
-        client.batchGet([{ key: 'key1' }])
+        client.batchGet([{ key: 'key1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when entityType is empty', async () => {
       await expect(
-        client.batchGet([{ entityType: '', key: 'key1' }])
+        client.batchGet([{ entityType: '', key: 'key1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when entityType is whitespace only', async () => {
       await expect(
-        client.batchGet([{ entityType: '   ', key: 'key1' }])
+        client.batchGet([{ entityType: '   ', key: 'key1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when key is missing', async () => {
       await expect(
-        client.batchGet([{ entityType: 'users' }])
+        client.batchGet([{ entityType: 'users' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when key is empty', async () => {
       await expect(
-        client.batchGet([{ entityType: 'users', key: '' }])
+        client.batchGet([{ entityType: 'users', key: '' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when key is whitespace only', async () => {
       await expect(
-        client.batchGet([{ entityType: 'users', key: '   ' }])
+        client.batchGet([{ entityType: 'users', key: '   ' }]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -418,7 +418,7 @@ describe('BatchClient', () => {
           { entityType: 'users', key: 'key2' },
           { entityType: 'users', key: '' },
         ]);
-        fail('Expected ValidationError');
+        throw new Error('Expected ValidationError');
       } catch (error) {
         expect(error).toBeInstanceOf(ValidationError);
         expect(error.details.field).toContain('items[2]');
@@ -447,7 +447,7 @@ describe('BatchClient', () => {
           operations: [
             { type: 'DELETE', entityType: 'users', key: 'user:1' },
           ],
-        }
+        },
       );
     });
 
@@ -475,7 +475,7 @@ describe('BatchClient', () => {
             { type: 'DELETE', entityType: 'users', key: 'user:2' },
             { type: 'DELETE', entityType: 'config', key: 'old:setting' },
           ],
-        }
+        },
       );
     });
 
@@ -497,7 +497,7 @@ describe('BatchClient', () => {
             { type: 'DELETE', entityType: 'users', key: 'user:1' },
             { type: 'DELETE', entityType: 'sessions', key: 'session:abc' },
           ],
-        }
+        },
       );
     });
 
@@ -527,25 +527,25 @@ describe('BatchClient', () => {
 
     it('should throw ValidationError when entityType is missing', async () => {
       await expect(
-        client.batchDelete([{ key: 'key1' }])
+        client.batchDelete([{ key: 'key1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when entityType is empty', async () => {
       await expect(
-        client.batchDelete([{ entityType: '', key: 'key1' }])
+        client.batchDelete([{ entityType: '', key: 'key1' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when key is missing', async () => {
       await expect(
-        client.batchDelete([{ entityType: 'users' }])
+        client.batchDelete([{ entityType: 'users' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when key is empty', async () => {
       await expect(
-        client.batchDelete([{ entityType: 'users', key: '' }])
+        client.batchDelete([{ entityType: 'users', key: '' }]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -555,7 +555,7 @@ describe('BatchClient', () => {
           { entityType: 'users', key: 'key1' },
           { key: 'key2' },
         ]);
-        fail('Expected ValidationError');
+        throw new Error('Expected ValidationError');
       } catch (error) {
         expect(error).toBeInstanceOf(ValidationError);
         expect(error.details.field).toContain('items[1]');
@@ -575,7 +575,7 @@ describe('BatchClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/batch/put',
-        { operations }
+        { operations },
       );
     });
 
@@ -584,7 +584,7 @@ describe('BatchClient', () => {
       mockTransport.post.mockRejectedValueOnce(networkError);
 
       await expect(
-        client._executeOperation('get', [{ type: 'GET', entityType: 'test', key: 'key1' }])
+        client._executeOperation('get', [{ type: 'GET', entityType: 'test', key: 'key1' }]),
       ).rejects.toThrow('Network failure');
     });
   });

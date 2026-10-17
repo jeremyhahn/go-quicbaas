@@ -46,6 +46,14 @@ var errDriftServiceRefused = orchestration.ErrNoMatchingFleetNode
 // called as a caller of tenant t1.
 func serveRegistryOverMCP(t *testing.T, reg *ToolRegistry, tools ...string) orchestrator.Client {
 	t.Helper()
+	return orchestrator.NewClient(registryMCPTransport(t, reg, nil, tools...))
+}
+
+// registryMCPTransport serves the named registry tools over a real MCP
+// server and returns an SDK MCP transport connected to it. onCall, when not
+// nil, is told the name of every tool the server receives.
+func registryMCPTransport(t *testing.T, reg *ToolRegistry, onCall func(tool string), tools ...string) *sdkmcp.Transport {
+	t.Helper()
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	require.NoError(t, err)
@@ -53,6 +61,9 @@ func serveRegistryOverMCP(t *testing.T, reg *ToolRegistry, tools ...string) orch
 	srv := mcpserver.NewMCPServer("NameDriftServer", "1.0.0")
 	for _, name := range tools {
 		srv.AddTool(mcpgo.NewTool(name), func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			if onCall != nil {
+				onCall(req.Params.Name)
+			}
 			toolCtx := orchestration.ContextWithTenant(tenantctx.WithTenant(ctx, "t1"), "t1")
 			result, execErr := reg.ExecuteTool(toolCtx, req.Params.Name, req.GetArguments())
 			if execErr != nil {
@@ -76,7 +87,7 @@ func serveRegistryOverMCP(t *testing.T, reg *ToolRegistry, tools ...string) orch
 		require.NoError(t, tr.Close())
 		httpSrv.Close()
 	})
-	return orchestrator.NewClient(tr)
+	return tr
 }
 
 // requireTypedError asserts the SDK surfaced a coded error, not a decode or

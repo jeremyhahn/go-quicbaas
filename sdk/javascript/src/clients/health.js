@@ -7,7 +7,7 @@
  */
 
 import { ValidationError } from '../errors/index.js';
-import { required, oneOf } from '../utils/validation.js';
+import { required } from '../utils/validation.js';
 
 /**
  * Health status enumeration for service health states.
@@ -197,7 +197,7 @@ class HealthClient {
         if (typeof component !== 'string' || component.trim() === '') {
           throw new ValidationError(
             `options.components[${i}] must be a non-empty string`,
-            `options.components[${i}]`
+            `options.components[${i}]`,
           );
         }
       }

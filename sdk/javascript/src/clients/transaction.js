@@ -373,7 +373,7 @@ class TransactionClient {
     if (conditions.length === 0 && success.length === 0 && failure.length === 0) {
       throw new ValidationError(
         'transaction must have at least one condition or operation',
-        'request'
+        'request',
       );
     }
 
@@ -401,21 +401,21 @@ class TransactionClient {
     if (!condition || typeof condition !== 'object') {
       throw new ValidationError(
         `condition at index ${index} must be an object`,
-        `conditions[${index}]`
+        `conditions[${index}]`,
       );
     }
 
     if (!condition.key || typeof condition.key !== 'string' || condition.key.trim() === '') {
       throw new ValidationError(
         `condition at index ${index} requires a key`,
-        `conditions[${index}].key`
+        `conditions[${index}].key`,
       );
     }
 
     if (!condition.target) {
       throw new ValidationError(
         `condition at index ${index} requires a target`,
-        `conditions[${index}].target`
+        `conditions[${index}].target`,
       );
     }
 
@@ -424,7 +424,7 @@ class TransactionClient {
     if (!condition.result) {
       throw new ValidationError(
         `condition at index ${index} requires a result operator`,
-        `conditions[${index}].result`
+        `conditions[${index}].result`,
       );
     }
 
@@ -444,7 +444,7 @@ class TransactionClient {
       const field = index !== undefined ? `conditions[${index}].target` : 'target';
       throw new ValidationError(
         `invalid compare target: ${target}. Must be one of: ${validTargets.join(', ')}`,
-        field
+        field,
       );
     }
   }
@@ -462,7 +462,7 @@ class TransactionClient {
       const field = index !== undefined ? `conditions[${index}].result` : 'result';
       throw new ValidationError(
         `invalid compare result: ${result}. Must be one of: ${validResults.join(', ')}`,
-        field
+        field,
       );
     }
   }
@@ -479,28 +479,28 @@ class TransactionClient {
     if (!op || typeof op !== 'object') {
       throw new ValidationError(
         `${branch} operation at index ${index} must be an object`,
-        `${branch}[${index}]`
+        `${branch}[${index}]`,
       );
     }
 
     if (!op.entityType || typeof op.entityType !== 'string' || op.entityType.trim() === '') {
       throw new ValidationError(
         `${branch} operation at index ${index} requires an entityType`,
-        `${branch}[${index}].entityType`
+        `${branch}[${index}].entityType`,
       );
     }
 
     if (!op.key || typeof op.key !== 'string' || op.key.trim() === '') {
       throw new ValidationError(
         `${branch} operation at index ${index} requires a key`,
-        `${branch}[${index}].key`
+        `${branch}[${index}].key`,
       );
     }
 
     if (!op.type) {
       throw new ValidationError(
         `${branch} operation at index ${index} requires a type`,
-        `${branch}[${index}].type`
+        `${branch}[${index}].type`,
       );
     }
 
@@ -508,14 +508,14 @@ class TransactionClient {
     if (!validTypes.includes(op.type)) {
       throw new ValidationError(
         `invalid operation type at ${branch}[${index}]: ${op.type}. Must be one of: ${validTypes.join(', ')}`,
-        `${branch}[${index}].type`
+        `${branch}[${index}].type`,
       );
     }
 
     if (op.type === TxnOpType.PUT && op.value === undefined) {
       throw new ValidationError(
         `${branch} PUT operation at index ${index} requires a value`,
-        `${branch}[${index}].value`
+        `${branch}[${index}].value`,
       );
     }
   }

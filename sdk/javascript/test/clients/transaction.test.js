@@ -229,7 +229,7 @@ describe('TransactionClient', () => {
           target: CompareTarget.VALUE,
           result: CompareResult.EQUAL,
           value: 'test',
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -240,7 +240,7 @@ describe('TransactionClient', () => {
           target: CompareTarget.VALUE,
           result: CompareResult.EQUAL,
           value: 'test',
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -251,7 +251,7 @@ describe('TransactionClient', () => {
           key: 'key1',
           result: CompareResult.EQUAL,
           value: 'test',
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -262,7 +262,7 @@ describe('TransactionClient', () => {
           key: 'key1',
           target: CompareTarget.VALUE,
           value: 'test',
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -274,7 +274,7 @@ describe('TransactionClient', () => {
           target: 'INVALID_TARGET',
           result: CompareResult.EQUAL,
           value: 'test',
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -286,7 +286,7 @@ describe('TransactionClient', () => {
           target: CompareTarget.VALUE,
           result: 'INVALID_RESULT',
           value: 'test',
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -297,7 +297,7 @@ describe('TransactionClient', () => {
           key: 'key1',
           target: CompareTarget.VALUE,
           result: CompareResult.EQUAL,
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -308,7 +308,7 @@ describe('TransactionClient', () => {
           key: 'key1',
           target: CompareTarget.VERSION,
           result: CompareResult.GREATER,
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -319,7 +319,7 @@ describe('TransactionClient', () => {
           key: 'key1',
           target: CompareTarget.MOD_REVISION,
           result: CompareResult.EQUAL,
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -330,7 +330,7 @@ describe('TransactionClient', () => {
           key: 'key1',
           target: CompareTarget.CREATE_REVISION,
           result: CompareResult.EQUAL,
-        })
+        }),
       ).toThrow(ValidationError);
     });
 
@@ -342,7 +342,7 @@ describe('TransactionClient', () => {
           target: CompareTarget.VERSION,
           result: CompareResult.EQUAL,
           revision: -1,
-        })
+        }),
       ).toThrow(ValidationError);
     });
   });
@@ -497,7 +497,7 @@ describe('TransactionClient', () => {
           compare: expect.any(Array),
           success: expect.any(Array),
           failure: [],
-        })
+        }),
       );
     });
 
@@ -614,7 +614,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: 'not-an-array',
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -623,7 +623,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: [client.compare('users', 'key1', 5)],
           success: 'not-an-array',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -633,7 +633,7 @@ describe('TransactionClient', () => {
           conditions: [client.compare('users', 'key1', 5)],
           success: [],
           failure: 'not-an-array',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -647,7 +647,7 @@ describe('TransactionClient', () => {
           conditions: [],
           success: [],
           failure: [],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -656,7 +656,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: ['not-an-object'],
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -665,7 +665,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: [{ target: CompareTarget.VERSION, result: CompareResult.EQUAL, revision: 1 }],
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -674,7 +674,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: [{ key: '', target: CompareTarget.VERSION, result: CompareResult.EQUAL, revision: 1 }],
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -683,7 +683,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: [{ key: '   ', target: CompareTarget.VERSION, result: CompareResult.EQUAL, revision: 1 }],
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -692,7 +692,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: [{ key: 'key1', result: CompareResult.EQUAL, revision: 1 }],
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -701,7 +701,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: [{ key: 'key1', target: CompareTarget.VERSION, revision: 1 }],
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -710,7 +710,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: [{ key: 'key1', target: 'INVALID', result: CompareResult.EQUAL, revision: 1 }],
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -719,7 +719,7 @@ describe('TransactionClient', () => {
         client.transaction({
           conditions: [{ key: 'key1', target: CompareTarget.VERSION, result: 'INVALID', revision: 1 }],
           success: [client.putOp('users', 'key1', 'value')],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -727,7 +727,7 @@ describe('TransactionClient', () => {
       await expect(
         client.transaction({
           success: ['not-an-object'],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -735,7 +735,7 @@ describe('TransactionClient', () => {
       await expect(
         client.transaction({
           success: [{ type: TxnOpType.PUT, key: 'key1', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -743,7 +743,7 @@ describe('TransactionClient', () => {
       await expect(
         client.transaction({
           success: [{ type: TxnOpType.PUT, entityType: '', key: 'key1', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -751,7 +751,7 @@ describe('TransactionClient', () => {
       await expect(
         client.transaction({
           success: [{ type: TxnOpType.PUT, entityType: 'users', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -759,7 +759,7 @@ describe('TransactionClient', () => {
       await expect(
         client.transaction({
           success: [{ type: TxnOpType.PUT, entityType: 'users', key: '', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -767,7 +767,7 @@ describe('TransactionClient', () => {
       await expect(
         client.transaction({
           success: [{ entityType: 'users', key: 'key1', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -775,7 +775,7 @@ describe('TransactionClient', () => {
       await expect(
         client.transaction({
           success: [{ type: 'INVALID', entityType: 'users', key: 'key1', value: 'test' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -783,7 +783,7 @@ describe('TransactionClient', () => {
       await expect(
         client.transaction({
           success: [{ type: TxnOpType.PUT, entityType: 'users', key: 'key1' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -793,7 +793,7 @@ describe('TransactionClient', () => {
           conditions: [client.compare('users', 'key1', 5)],
           success: [client.putOp('users', 'key1', 'test')],
           failure: [{ type: 'INVALID', entityType: 'users', key: 'key1' }],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
   });

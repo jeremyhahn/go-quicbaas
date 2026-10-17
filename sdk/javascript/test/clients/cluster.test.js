@@ -181,7 +181,7 @@ describe('ClusterClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/cluster/shards/1/nodes',
-        { nodeId: 4, address: '192.168.1.4:5000' }
+        { nodeId: 4, address: '192.168.1.4:5000' },
       );
     });
 

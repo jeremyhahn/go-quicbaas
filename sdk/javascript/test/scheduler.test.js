@@ -122,7 +122,7 @@ describe('SchedulerClient', () => {
         client.createJob({
           type: JobType.ONE_SHOT,
           payload: { data: 'test' },
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -131,7 +131,7 @@ describe('SchedulerClient', () => {
         client.createJob({
           name: 'test-job',
           payload: { data: 'test' },
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -140,7 +140,7 @@ describe('SchedulerClient', () => {
         client.createJob({
           name: 'test-job',
           type: JobType.ONE_SHOT,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -150,7 +150,7 @@ describe('SchedulerClient', () => {
           name: 'test-job',
           type: JobType.RECURRING,
           payload: { data: 'test' },
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -160,7 +160,7 @@ describe('SchedulerClient', () => {
           name: 'test-job',
           type: JobType.DELAYED,
           payload: { data: 'test' },
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -170,7 +170,7 @@ describe('SchedulerClient', () => {
           name: 'test-job',
           type: 'invalid',
           payload: { data: 'test' },
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
   });
@@ -239,7 +239,7 @@ describe('SchedulerClient', () => {
 
     it('should throw ValidationError when jobId is missing', async () => {
       await expect(
-        client.updateJob('', { name: 'updated' })
+        client.updateJob('', { name: 'updated' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -317,13 +317,13 @@ describe('SchedulerClient', () => {
 
     it('should throw ValidationError for invalid status', async () => {
       await expect(
-        client.listJobs({ status: 'invalid-status' })
+        client.listJobs({ status: 'invalid-status' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid ownerType', async () => {
       await expect(
-        client.listJobs({ ownerType: 'invalid-owner' })
+        client.listJobs({ ownerType: 'invalid-owner' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -527,7 +527,7 @@ describe('SchedulerClient', () => {
 
     it('should throw ValidationError for negative limit', async () => {
       await expect(
-        client.getJobHistory('123', { limit: -1 })
+        client.getJobHistory('123', { limit: -1 }),
       ).rejects.toThrow(ValidationError);
     });
   });

@@ -450,7 +450,7 @@ describe('OllamaClient', () => {
       await client.getModelInfo('model/with/slashes');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/ollama/models/model%2Fwith%2Fslashes'
+        '/api/v1/ollama/models/model%2Fwith%2Fslashes',
       );
     });
 
@@ -795,7 +795,7 @@ describe('OllamaClient', () => {
       await client.getModelInfo(modelName);
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/ollama/models/model%3Alatest'
+        '/api/v1/ollama/models/model%3Alatest',
       );
     });
   });

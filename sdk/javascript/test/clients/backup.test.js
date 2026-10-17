@@ -140,25 +140,25 @@ describe('BackupClient', () => {
 
     it('should throw ValidationError when name is missing', async () => {
       await expect(
-        client.createBackup({ destination: '/backups' })
+        client.createBackup({ destination: '/backups' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when name is empty', async () => {
       await expect(
-        client.createBackup({ name: '', destination: '/backups' })
+        client.createBackup({ name: '', destination: '/backups' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when destination is missing', async () => {
       await expect(
-        client.createBackup({ name: 'backup' })
+        client.createBackup({ name: 'backup' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when destination is empty', async () => {
       await expect(
-        client.createBackup({ name: 'backup', destination: '' })
+        client.createBackup({ name: 'backup', destination: '' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -168,7 +168,7 @@ describe('BackupClient', () => {
           name: 'backup',
           destination: '/backups',
           description: 123,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -178,7 +178,7 @@ describe('BackupClient', () => {
           name: 'backup',
           destination: '/backups',
           type: 'INVALID',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -188,7 +188,7 @@ describe('BackupClient', () => {
           name: 'backup',
           destination: '/backups',
           compress: 'yes',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -198,7 +198,7 @@ describe('BackupClient', () => {
           name: 'backup',
           destination: '/backups',
           encrypt: 1,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
   });
@@ -442,19 +442,19 @@ describe('BackupClient', () => {
 
     it('should throw ValidationError when targetPath is not a string', async () => {
       await expect(
-        client.restoreBackup('backup-123', { targetPath: 123 })
+        client.restoreBackup('backup-123', { targetPath: 123 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when overwrite is not a boolean', async () => {
       await expect(
-        client.restoreBackup('backup-123', { overwrite: 'yes' })
+        client.restoreBackup('backup-123', { overwrite: 'yes' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when validateFirst is not a boolean', async () => {
       await expect(
-        client.restoreBackup('backup-123', { validateFirst: 1 })
+        client.restoreBackup('backup-123', { validateFirst: 1 }),
       ).rejects.toThrow(ValidationError);
     });
   });

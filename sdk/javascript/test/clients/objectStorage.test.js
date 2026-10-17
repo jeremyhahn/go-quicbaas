@@ -65,7 +65,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/objects/my-namespace%3Afile.txt',
-        { value: 'file content' }
+        { value: 'file content' },
       );
       expect(result.key).toBe('my-namespace:file.txt');
       expect(result.objectId).toBe(12345);
@@ -127,7 +127,7 @@ describe('ObjectStorageClient', () => {
           archivePolicy: options.archivePolicy,
           retentionPolicy: options.retentionPolicy,
           targetBackend: 's3-primary',
-        })
+        }),
       );
       expect(result.key).toBe('my-bucket:data.json');
     });
@@ -145,10 +145,10 @@ describe('ObjectStorageClient', () => {
 
     it('should throw ValidationError when tags is not an object', async () => {
       await expect(
-        client.putObject('key', 'data', { tags: 'invalid' })
+        client.putObject('key', 'data', { tags: 'invalid' }),
       ).rejects.toThrow(ValidationError);
       await expect(
-        client.putObject('key', 'data', { tags: ['array'] })
+        client.putObject('key', 'data', { tags: ['array'] }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -156,7 +156,7 @@ describe('ObjectStorageClient', () => {
       await expect(
         client.putObject('key', 'data', {
           replicationPolicy: { mode: 'invalid-mode' },
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -164,13 +164,13 @@ describe('ObjectStorageClient', () => {
       await expect(
         client.putObject('key', 'data', {
           replicationPolicy: { priority: 0 },
-        })
+        }),
       ).rejects.toThrow(ValidationError);
 
       await expect(
         client.putObject('key', 'data', {
           replicationPolicy: { priority: 11 },
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -183,7 +183,7 @@ describe('ObjectStorageClient', () => {
         expect.any(String),
         expect.objectContaining({
           checksum: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -196,7 +196,7 @@ describe('ObjectStorageClient', () => {
         expect.any(String),
         expect.objectContaining({
           checksum: 'already-base64-encoded-string',
-        })
+        }),
       );
     });
 
@@ -240,7 +240,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/my-key',
-        { query: {} }
+        { query: {} },
       );
       expect(result.key).toBe('my-key');
       expect(result.value).toEqual({ data: 'content' });
@@ -257,7 +257,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/my-key',
-        { query: { tenant_id: 'tenant-123' } }
+        { query: { tenant_id: 'tenant-123' } },
       );
     });
 
@@ -268,7 +268,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/my-key',
-        { query: { include_metadata: false } }
+        { query: { include_metadata: false } },
       );
     });
 
@@ -299,7 +299,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/bucket%3Apath%2Fto%2Ffile.txt',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
   });
@@ -322,7 +322,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
         '/api/v1/objects/my-key',
-        { query: {} }
+        { query: {} },
       );
       expect(result.key).toBe('my-key');
       expect(result.success).toBe(true);
@@ -336,7 +336,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
         '/api/v1/objects/my-key',
-        { query: { tenant_id: 'tenant-123' } }
+        { query: { tenant_id: 'tenant-123' } },
       );
     });
 
@@ -385,7 +385,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/head',
-        { query: {} }
+        { query: {} },
       );
       expect(result.key).toBe('my-key');
       expect(result.exists).toBe(true);
@@ -403,7 +403,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/head',
-        { query: { tenant_id: 'tenant-123' } }
+        { query: { tenant_id: 'tenant-123' } },
       );
     });
 
@@ -450,7 +450,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects',
-        { query: {} }
+        { query: {} },
       );
       expect(result.objects).toHaveLength(2);
       expect(result.objects[0].key).toBe('obj1');
@@ -480,7 +480,7 @@ describe('ObjectStorageClient', () => {
             cursor: 'prev-cursor',
             include_tags: true,
           },
-        }
+        },
       );
     });
 
@@ -533,7 +533,7 @@ describe('ObjectStorageClient', () => {
             tag_name: 'environment',
             tag_value: 'production',
           },
-        }
+        },
       );
       expect(result.objects).toHaveLength(1);
     });
@@ -557,7 +557,7 @@ describe('ObjectStorageClient', () => {
             limit: 25,
             cursor: 'abc',
           },
-        }
+        },
       );
     });
 
@@ -573,7 +573,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/by-tag',
-        { query: { tag_name: 'exists' } }
+        { query: { tag_name: 'exists' } },
       );
     });
 
@@ -584,7 +584,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/by-tag',
-        { query: { tag_name: 'exists' } }
+        { query: { tag_name: 'exists' } },
       );
     });
   });
@@ -607,7 +607,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/by-tenant/tenant-123',
-        { query: {} }
+        { query: {} },
       );
       expect(result.objects).toHaveLength(1);
     });
@@ -629,7 +629,7 @@ describe('ObjectStorageClient', () => {
             cursor: 'next-page',
             include_tags: true,
           },
-        }
+        },
       );
     });
 
@@ -645,7 +645,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/by-tenant/org%2Fteam%2Fuser',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
   });
@@ -671,7 +671,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/source-key/copy',
-        { destinationKey: 'dest-key' }
+        { destinationKey: 'dest-key' },
       );
       expect(result.key).toBe('dest-key');
       expect(result.objectId).toBe(54321);
@@ -693,7 +693,7 @@ describe('ObjectStorageClient', () => {
           tenantId: 'tenant-123',
           overwriteExisting: true,
           targetBackend: 'backup-store',
-        }
+        },
       );
     });
 
@@ -741,7 +741,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/replicate',
-        { targets: ['s3-backup', 'gcs-archive'] }
+        { targets: ['s3-backup', 'gcs-archive'] },
       );
       expect(result.key).toBe('my-key');
       expect(result.status).toBe('completed');
@@ -764,7 +764,7 @@ describe('ObjectStorageClient', () => {
           tenantId: 'tenant-123',
           priority: 7,
           synchronous: true,
-        }
+        },
       );
     });
 
@@ -779,10 +779,10 @@ describe('ObjectStorageClient', () => {
 
     it('should throw ValidationError for invalid priority', async () => {
       await expect(
-        client.replicateObject('key', ['target'], { priority: 0 })
+        client.replicateObject('key', ['target'], { priority: 0 }),
       ).rejects.toThrow(ValidationError);
       await expect(
-        client.replicateObject('key', ['target'], { priority: 11 })
+        client.replicateObject('key', ['target'], { priority: 11 }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -833,7 +833,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/migrate',
-        { targetBackend: 'archive' }
+        { targetBackend: 'archive' },
       );
       expect(result.key).toBe('my-key');
       expect(result.sourceBackend).toBe('primary');
@@ -855,7 +855,7 @@ describe('ObjectStorageClient', () => {
           targetBackend: 'archive',
           tenantId: 'tenant-123',
           deleteFromSource: false,
-        }
+        },
       );
     });
 
@@ -900,7 +900,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/archive',
-        { targetStore: 'glacier' }
+        { targetStore: 'glacier' },
       );
       expect(result.key).toBe('my-key');
       expect(result.archiveStore).toBe('glacier');
@@ -921,7 +921,7 @@ describe('ObjectStorageClient', () => {
           targetStore: 'glacier',
           tenantId: 'tenant-123',
           deleteFromPrimary: true,
-        }
+        },
       );
     });
 
@@ -932,7 +932,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/archive',
-        {}
+        {},
       );
       expect(result.archiveStore).toBe('default-archive');
     });
@@ -971,7 +971,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/restore',
-        {}
+        {},
       );
       expect(result.key).toBe('my-key');
       expect(result.backend).toBe('primary');
@@ -991,7 +991,7 @@ describe('ObjectStorageClient', () => {
         {
           tenantId: 'tenant-123',
           targetBackend: 'hot-storage',
-        }
+        },
       );
     });
 
@@ -1033,7 +1033,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/verify',
-        {}
+        {},
       );
       expect(result.key).toBe('my-key');
       expect(result.valid).toBe(true);
@@ -1055,7 +1055,7 @@ describe('ObjectStorageClient', () => {
           stores: ['primary', 'backup'],
           tenantId: 'tenant-123',
           repairMismatches: true,
-        }
+        },
       );
     });
 
@@ -1100,7 +1100,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/verify',
-        {}
+        {},
       );
     });
   });
@@ -1131,7 +1131,7 @@ describe('ObjectStorageClient', () => {
         {
           replicationPolicy: { enabled: true, minReplicas: 3 },
           archivePolicy: { enabled: false },
-        }
+        },
       );
       expect(result.success).toBe(true);
       expect(result.version).toBe(2);
@@ -1147,7 +1147,7 @@ describe('ObjectStorageClient', () => {
         {
           retentionPolicy: { enabled: true },
           tenantId: 'tenant-123',
-        }
+        },
       );
     });
 
@@ -1190,7 +1190,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/policy',
-        { query: {} }
+        { query: {} },
       );
       expect(result.key).toBe('my-key');
       expect(result.replicationPolicy).toEqual({ enabled: true, minReplicas: 3 });
@@ -1204,7 +1204,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/my-key/policy',
-        { query: { tenant_id: 'tenant-123' } }
+        { query: { tenant_id: 'tenant-123' } },
       );
     });
 
@@ -1261,7 +1261,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/backends',
-        { query: {} }
+        { query: {} },
       );
       expect(result.backends).toHaveLength(2);
       expect(result.backends[0].name).toBe('s3-primary');
@@ -1289,7 +1289,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/backends',
-        { query: { include_health: true } }
+        { query: { include_health: true } },
       );
       expect(result.backends[0].health.healthy).toBe(true);
     });
@@ -1301,7 +1301,7 @@ describe('ObjectStorageClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/objects/backends',
-        { query: { filter_by_type: 's3' } }
+        { query: { filter_by_type: 's3' } },
       );
     });
 
@@ -1347,7 +1347,7 @@ describe('ObjectStorageClient', () => {
       const result = await client.getBackendHealth('s3-primary');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/objects/backends/s3-primary/health'
+        '/api/v1/objects/backends/s3-primary/health',
       );
       expect(result.name).toBe('s3-primary');
       expect(result.healthy).toBe(true);
@@ -1409,7 +1409,7 @@ describe('ObjectStorageClient', () => {
       const result = await client.getTenantUsage('tenant-123');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/objects/tenants/tenant-123/usage'
+        '/api/v1/objects/tenants/tenant-123/usage',
       );
       expect(result.tenantId).toBe('tenant-123');
       expect(result.objectCount).toBe(500);
@@ -1456,7 +1456,7 @@ describe('ObjectStorageClient', () => {
       const result = await client.getTenantQuotas('tenant-123');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/objects/tenants/tenant-123/quotas'
+        '/api/v1/objects/tenants/tenant-123/quotas',
       );
       expect(result.tenantId).toBe('tenant-123');
       expect(result.maxStorageBytes).toBe(1073741824);

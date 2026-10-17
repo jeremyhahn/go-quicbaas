@@ -213,7 +213,7 @@ func TestCryptoService_Encrypt_Success(t *testing.T) {
 		Context:   []byte("additional context"),
 	}
 
-	resp, err := svc.Encrypt(context.Background(), req)
+	resp, err := svc.Encrypt(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -228,7 +228,7 @@ func TestCryptoService_Encrypt_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.Encrypt(context.Background(), nil)
+	resp, err := svc.Encrypt(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -246,7 +246,7 @@ func TestCryptoService_Encrypt_EmptyKeyID(t *testing.T) {
 		Plaintext: []byte("secret data"),
 	}
 
-	resp, err := svc.Encrypt(context.Background(), req)
+	resp, err := svc.Encrypt(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -264,7 +264,7 @@ func TestCryptoService_Encrypt_EmptyPlaintext(t *testing.T) {
 		Plaintext: []byte{},
 	}
 
-	resp, err := svc.Encrypt(context.Background(), req)
+	resp, err := svc.Encrypt(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -285,7 +285,7 @@ func TestCryptoService_Encrypt_ManagerError(t *testing.T) {
 		Plaintext: []byte("secret data"),
 	}
 
-	resp, err := svc.Encrypt(context.Background(), req)
+	resp, err := svc.Encrypt(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -311,7 +311,7 @@ func TestCryptoService_Decrypt_Success(t *testing.T) {
 		Context:    []byte("additional context"),
 	}
 
-	resp, err := svc.Decrypt(context.Background(), req)
+	resp, err := svc.Decrypt(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -326,7 +326,7 @@ func TestCryptoService_Decrypt_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.Decrypt(context.Background(), nil)
+	resp, err := svc.Decrypt(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -344,7 +344,7 @@ func TestCryptoService_Decrypt_EmptyKeyID(t *testing.T) {
 		Ciphertext: []byte("ciphertext"),
 	}
 
-	resp, err := svc.Decrypt(context.Background(), req)
+	resp, err := svc.Decrypt(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -362,7 +362,7 @@ func TestCryptoService_Decrypt_EmptyCiphertext(t *testing.T) {
 		Ciphertext: []byte{},
 	}
 
-	resp, err := svc.Decrypt(context.Background(), req)
+	resp, err := svc.Decrypt(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -383,7 +383,7 @@ func TestCryptoService_Decrypt_ManagerError(t *testing.T) {
 		Ciphertext: []byte("ciphertext"),
 	}
 
-	resp, err := svc.Decrypt(context.Background(), req)
+	resp, err := svc.Decrypt(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -408,7 +408,7 @@ func TestCryptoService_Rewrap_Success(t *testing.T) {
 		Ciphertext: []byte("old-ciphertext"),
 	}
 
-	resp, err := svc.Rewrap(context.Background(), req)
+	resp, err := svc.Rewrap(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -423,7 +423,7 @@ func TestCryptoService_Rewrap_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.Rewrap(context.Background(), nil)
+	resp, err := svc.Rewrap(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -441,7 +441,7 @@ func TestCryptoService_Rewrap_EmptyKeyID(t *testing.T) {
 		Ciphertext: []byte("ciphertext"),
 	}
 
-	resp, err := svc.Rewrap(context.Background(), req)
+	resp, err := svc.Rewrap(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -459,7 +459,7 @@ func TestCryptoService_Rewrap_EmptyCiphertext(t *testing.T) {
 		Ciphertext: []byte{},
 	}
 
-	resp, err := svc.Rewrap(context.Background(), req)
+	resp, err := svc.Rewrap(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -480,7 +480,7 @@ func TestCryptoService_Rewrap_ManagerError(t *testing.T) {
 		Ciphertext: []byte("ciphertext"),
 	}
 
-	resp, err := svc.Rewrap(context.Background(), req)
+	resp, err := svc.Rewrap(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -509,7 +509,7 @@ func TestCryptoService_EncryptBatch_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.EncryptBatch(context.Background(), req)
+	resp, err := svc.EncryptBatch(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -526,7 +526,7 @@ func TestCryptoService_EncryptBatch_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.EncryptBatch(context.Background(), nil)
+	resp, err := svc.EncryptBatch(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -544,7 +544,7 @@ func TestCryptoService_EncryptBatch_EmptyKeyID(t *testing.T) {
 		Items: []BatchEncryptItem{{Plaintext: []byte("data")}},
 	}
 
-	resp, err := svc.EncryptBatch(context.Background(), req)
+	resp, err := svc.EncryptBatch(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -562,7 +562,7 @@ func TestCryptoService_EncryptBatch_EmptyItems(t *testing.T) {
 		Items: []BatchEncryptItem{},
 	}
 
-	resp, err := svc.EncryptBatch(context.Background(), req)
+	resp, err := svc.EncryptBatch(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -583,7 +583,7 @@ func TestCryptoService_EncryptBatch_ManagerError(t *testing.T) {
 		Items: []BatchEncryptItem{{Plaintext: []byte("data")}},
 	}
 
-	resp, err := svc.EncryptBatch(context.Background(), req)
+	resp, err := svc.EncryptBatch(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -607,7 +607,7 @@ func TestCryptoService_DecryptBatch_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.DecryptBatch(context.Background(), req)
+	resp, err := svc.DecryptBatch(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -621,7 +621,7 @@ func TestCryptoService_DecryptBatch_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.DecryptBatch(context.Background(), nil)
+	resp, err := svc.DecryptBatch(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -639,7 +639,7 @@ func TestCryptoService_DecryptBatch_EmptyKeyID(t *testing.T) {
 		Items: []BatchDecryptItem{{Ciphertext: []byte("data")}},
 	}
 
-	resp, err := svc.DecryptBatch(context.Background(), req)
+	resp, err := svc.DecryptBatch(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -657,7 +657,7 @@ func TestCryptoService_DecryptBatch_EmptyItems(t *testing.T) {
 		Items: []BatchDecryptItem{},
 	}
 
-	resp, err := svc.DecryptBatch(context.Background(), req)
+	resp, err := svc.DecryptBatch(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -678,7 +678,7 @@ func TestCryptoService_DecryptBatch_ManagerError(t *testing.T) {
 		Items: []BatchDecryptItem{{Ciphertext: []byte("data")}},
 	}
 
-	resp, err := svc.DecryptBatch(context.Background(), req)
+	resp, err := svc.DecryptBatch(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -701,7 +701,7 @@ func TestCryptoService_GenerateDataKey_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateDataKey(context.Background(), req)
+	resp, err := svc.GenerateDataKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -717,7 +717,7 @@ func TestCryptoService_GenerateDataKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.GenerateDataKey(context.Background(), nil)
+	resp, err := svc.GenerateDataKey(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -737,7 +737,7 @@ func TestCryptoService_GenerateDataKey_EmptyKeyID(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateDataKey(context.Background(), req)
+	resp, err := svc.GenerateDataKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -757,7 +757,7 @@ func TestCryptoService_GenerateDataKey_DefaultKeySize(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateDataKey(context.Background(), req)
+	resp, err := svc.GenerateDataKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -780,7 +780,7 @@ func TestCryptoService_GenerateDataKey_ManagerError(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateDataKey(context.Background(), req)
+	resp, err := svc.GenerateDataKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -803,7 +803,7 @@ func TestCryptoService_GenerateWrappedDataKey_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateWrappedDataKey(context.Background(), req)
+	resp, err := svc.GenerateWrappedDataKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -818,7 +818,7 @@ func TestCryptoService_GenerateWrappedDataKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.GenerateWrappedDataKey(context.Background(), nil)
+	resp, err := svc.GenerateWrappedDataKey(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -838,7 +838,7 @@ func TestCryptoService_GenerateWrappedDataKey_EmptyKeyID(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateWrappedDataKey(context.Background(), req)
+	resp, err := svc.GenerateWrappedDataKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -861,7 +861,7 @@ func TestCryptoService_GenerateWrappedDataKey_ManagerError(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateWrappedDataKey(context.Background(), req)
+	resp, err := svc.GenerateWrappedDataKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -883,7 +883,7 @@ func TestCryptoService_Sign_Success(t *testing.T) {
 		HashAlgorithm: HashAlgSHA256,
 	}
 
-	resp, err := svc.Sign(context.Background(), req)
+	resp, err := svc.Sign(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -905,7 +905,7 @@ func TestCryptoService_Sign_DefaultHashAlgorithm(t *testing.T) {
 		// HashAlgorithm not specified, should default to SHA256
 	}
 
-	resp, err := svc.Sign(context.Background(), req)
+	resp, err := svc.Sign(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -917,7 +917,7 @@ func TestCryptoService_Sign_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.Sign(context.Background(), nil)
+	resp, err := svc.Sign(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -935,7 +935,7 @@ func TestCryptoService_Sign_EmptyKeyID(t *testing.T) {
 		Message: []byte("message"),
 	}
 
-	resp, err := svc.Sign(context.Background(), req)
+	resp, err := svc.Sign(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -953,7 +953,7 @@ func TestCryptoService_Sign_EmptyMessage(t *testing.T) {
 		Message: []byte{},
 	}
 
-	resp, err := svc.Sign(context.Background(), req)
+	resp, err := svc.Sign(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -974,7 +974,7 @@ func TestCryptoService_Sign_ManagerError(t *testing.T) {
 		Message: []byte("message"),
 	}
 
-	resp, err := svc.Sign(context.Background(), req)
+	resp, err := svc.Sign(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1000,7 +1000,7 @@ func TestCryptoService_Verify_Success(t *testing.T) {
 		HashAlgorithm: HashAlgSHA256,
 	}
 
-	resp, err := svc.Verify(context.Background(), req)
+	resp, err := svc.Verify(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1021,7 +1021,7 @@ func TestCryptoService_Verify_InvalidSignature(t *testing.T) {
 		Signature: []byte("invalid-signature"),
 	}
 
-	resp, err := svc.Verify(context.Background(), req)
+	resp, err := svc.Verify(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1034,7 +1034,7 @@ func TestCryptoService_Verify_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.Verify(context.Background(), nil)
+	resp, err := svc.Verify(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1053,7 +1053,7 @@ func TestCryptoService_Verify_EmptyKeyID(t *testing.T) {
 		Signature: []byte("signature"),
 	}
 
-	resp, err := svc.Verify(context.Background(), req)
+	resp, err := svc.Verify(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1072,7 +1072,7 @@ func TestCryptoService_Verify_EmptyMessage(t *testing.T) {
 		Signature: []byte("signature"),
 	}
 
-	resp, err := svc.Verify(context.Background(), req)
+	resp, err := svc.Verify(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1091,7 +1091,7 @@ func TestCryptoService_Verify_EmptySignature(t *testing.T) {
 		Signature: []byte{},
 	}
 
-	resp, err := svc.Verify(context.Background(), req)
+	resp, err := svc.Verify(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1113,7 +1113,7 @@ func TestCryptoService_Verify_ManagerError(t *testing.T) {
 		Signature: []byte("signature"),
 	}
 
-	resp, err := svc.Verify(context.Background(), req)
+	resp, err := svc.Verify(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1135,7 +1135,7 @@ func TestCryptoService_GenerateHMAC_Success(t *testing.T) {
 		HashAlgorithm: HashAlgSHA256,
 	}
 
-	resp, err := svc.GenerateHMAC(context.Background(), req)
+	resp, err := svc.GenerateHMAC(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1151,7 +1151,7 @@ func TestCryptoService_GenerateHMAC_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.GenerateHMAC(context.Background(), nil)
+	resp, err := svc.GenerateHMAC(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1169,7 +1169,7 @@ func TestCryptoService_GenerateHMAC_EmptyKeyID(t *testing.T) {
 		Message: []byte("message"),
 	}
 
-	resp, err := svc.GenerateHMAC(context.Background(), req)
+	resp, err := svc.GenerateHMAC(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1187,7 +1187,7 @@ func TestCryptoService_GenerateHMAC_EmptyMessage(t *testing.T) {
 		Message: []byte{},
 	}
 
-	resp, err := svc.GenerateHMAC(context.Background(), req)
+	resp, err := svc.GenerateHMAC(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1208,7 +1208,7 @@ func TestCryptoService_GenerateHMAC_ManagerError(t *testing.T) {
 		Message: []byte("message"),
 	}
 
-	resp, err := svc.GenerateHMAC(context.Background(), req)
+	resp, err := svc.GenerateHMAC(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1234,7 +1234,7 @@ func TestCryptoService_VerifyHMAC_Success(t *testing.T) {
 		HashAlgorithm: HashAlgSHA256,
 	}
 
-	resp, err := svc.VerifyHMAC(context.Background(), req)
+	resp, err := svc.VerifyHMAC(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1255,7 +1255,7 @@ func TestCryptoService_VerifyHMAC_InvalidHMAC(t *testing.T) {
 		HMAC:    []byte("invalid-hmac"),
 	}
 
-	resp, err := svc.VerifyHMAC(context.Background(), req)
+	resp, err := svc.VerifyHMAC(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1268,7 +1268,7 @@ func TestCryptoService_VerifyHMAC_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.VerifyHMAC(context.Background(), nil)
+	resp, err := svc.VerifyHMAC(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1287,7 +1287,7 @@ func TestCryptoService_VerifyHMAC_EmptyKeyID(t *testing.T) {
 		HMAC:    []byte("hmac"),
 	}
 
-	resp, err := svc.VerifyHMAC(context.Background(), req)
+	resp, err := svc.VerifyHMAC(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1306,7 +1306,7 @@ func TestCryptoService_VerifyHMAC_EmptyMessage(t *testing.T) {
 		HMAC:    []byte("hmac"),
 	}
 
-	resp, err := svc.VerifyHMAC(context.Background(), req)
+	resp, err := svc.VerifyHMAC(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1325,7 +1325,7 @@ func TestCryptoService_VerifyHMAC_EmptyHMAC(t *testing.T) {
 		HMAC:    []byte{},
 	}
 
-	resp, err := svc.VerifyHMAC(context.Background(), req)
+	resp, err := svc.VerifyHMAC(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1347,7 +1347,7 @@ func TestCryptoService_VerifyHMAC_ManagerError(t *testing.T) {
 		HMAC:    []byte("hmac"),
 	}
 
-	resp, err := svc.VerifyHMAC(context.Background(), req)
+	resp, err := svc.VerifyHMAC(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1367,7 +1367,7 @@ func TestCryptoService_GenerateRandom_Success(t *testing.T) {
 		NumBytes: 32,
 	}
 
-	resp, err := svc.GenerateRandom(context.Background(), req)
+	resp, err := svc.GenerateRandom(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1381,7 +1381,7 @@ func TestCryptoService_GenerateRandom_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.GenerateRandom(context.Background(), nil)
+	resp, err := svc.GenerateRandom(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1398,7 +1398,7 @@ func TestCryptoService_GenerateRandom_ZeroBytes(t *testing.T) {
 		NumBytes: 0,
 	}
 
-	resp, err := svc.GenerateRandom(context.Background(), req)
+	resp, err := svc.GenerateRandom(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1415,7 +1415,7 @@ func TestCryptoService_GenerateRandom_NegativeBytes(t *testing.T) {
 		NumBytes: -10,
 	}
 
-	resp, err := svc.GenerateRandom(context.Background(), req)
+	resp, err := svc.GenerateRandom(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1432,7 +1432,7 @@ func TestCryptoService_GenerateRandom_ExceedsMaximum(t *testing.T) {
 		NumBytes: 1024*1024 + 1, // 1MB + 1 byte
 	}
 
-	resp, err := svc.GenerateRandom(context.Background(), req)
+	resp, err := svc.GenerateRandom(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1452,7 +1452,7 @@ func TestCryptoService_GenerateRandom_ManagerError(t *testing.T) {
 		NumBytes: 32,
 	}
 
-	resp, err := svc.GenerateRandom(context.Background(), req)
+	resp, err := svc.GenerateRandom(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1473,7 +1473,7 @@ func TestCryptoService_Hash_Success(t *testing.T) {
 		Algorithm: HashAlgSHA256,
 	}
 
-	resp, err := svc.Hash(context.Background(), req)
+	resp, err := svc.Hash(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1488,7 +1488,7 @@ func TestCryptoService_Hash_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	resp, err := svc.Hash(context.Background(), nil)
+	resp, err := svc.Hash(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1506,7 +1506,7 @@ func TestCryptoService_Hash_EmptyData(t *testing.T) {
 		Algorithm: HashAlgSHA256,
 	}
 
-	resp, err := svc.Hash(context.Background(), req)
+	resp, err := svc.Hash(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1524,7 +1524,7 @@ func TestCryptoService_Hash_EmptyAlgorithm(t *testing.T) {
 		Algorithm: "",
 	}
 
-	resp, err := svc.Hash(context.Background(), req)
+	resp, err := svc.Hash(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1545,7 +1545,7 @@ func TestCryptoService_Hash_ManagerError(t *testing.T) {
 		Algorithm: HashAlgSHA256,
 	}
 
-	resp, err := svc.Hash(context.Background(), req)
+	resp, err := svc.Hash(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1564,7 +1564,7 @@ func TestCryptoService_Encrypt_ContextCanceled(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(systemTenantCtx())
 	cancel() // Cancel immediately
 
 	req := &EncryptRequest{
@@ -1604,7 +1604,7 @@ func TestCryptoService_Sign_ContextTimeout(t *testing.T) {
 	logger := newMockLogger()
 	svc := newCryptoService(cryptoMgr, kmsMgr, logger, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(systemTenantCtx(), 10*time.Millisecond)
 	defer cancel()
 
 	req := &SignRequest{
@@ -1661,7 +1661,7 @@ func TestCryptoService_EncryptDecrypt_RoundTrip(t *testing.T) {
 		KeyID:     "test-key-1",
 		Plaintext: originalData,
 	}
-	encResp, err := svc.Encrypt(context.Background(), encReq)
+	encResp, err := svc.Encrypt(systemTenantCtx(), encReq)
 	require.NoError(t, err)
 	assert.NotNil(t, encResp)
 
@@ -1670,7 +1670,7 @@ func TestCryptoService_EncryptDecrypt_RoundTrip(t *testing.T) {
 		KeyID:      "test-key-1",
 		Ciphertext: encResp.Ciphertext,
 	}
-	decResp, err := svc.Decrypt(context.Background(), decReq)
+	decResp, err := svc.Decrypt(systemTenantCtx(), decReq)
 	require.NoError(t, err)
 	assert.NotNil(t, decResp)
 	assert.Equal(t, originalData, decResp.Plaintext)
@@ -1689,7 +1689,7 @@ func TestCryptoService_SignVerify_RoundTrip(t *testing.T) {
 		KeyID:   "test-signing-key",
 		Message: message,
 	}
-	signResp, err := svc.Sign(context.Background(), signReq)
+	signResp, err := svc.Sign(systemTenantCtx(), signReq)
 	require.NoError(t, err)
 	assert.NotNil(t, signResp)
 
@@ -1699,7 +1699,7 @@ func TestCryptoService_SignVerify_RoundTrip(t *testing.T) {
 		Message:   message,
 		Signature: signResp.Signature,
 	}
-	verifyResp, err := svc.Verify(context.Background(), verifyReq)
+	verifyResp, err := svc.Verify(systemTenantCtx(), verifyReq)
 	require.NoError(t, err)
 	assert.NotNil(t, verifyResp)
 	assert.True(t, verifyResp.Valid)
@@ -1718,7 +1718,7 @@ func TestCryptoService_GenerateVerifyHMAC_RoundTrip(t *testing.T) {
 		KeyID:   "test-hmac-key",
 		Message: message,
 	}
-	hmacResp, err := svc.GenerateHMAC(context.Background(), hmacReq)
+	hmacResp, err := svc.GenerateHMAC(systemTenantCtx(), hmacReq)
 	require.NoError(t, err)
 	assert.NotNil(t, hmacResp)
 
@@ -1728,7 +1728,7 @@ func TestCryptoService_GenerateVerifyHMAC_RoundTrip(t *testing.T) {
 		Message: message,
 		HMAC:    hmacResp.HMAC,
 	}
-	verifyResp, err := svc.VerifyHMAC(context.Background(), verifyReq)
+	verifyResp, err := svc.VerifyHMAC(systemTenantCtx(), verifyReq)
 	require.NoError(t, err)
 	assert.NotNil(t, verifyResp)
 	assert.True(t, verifyResp.Valid)
@@ -1756,14 +1756,14 @@ func TestCryptoService_Decrypt_SafetyTracker_LimitExceeded(t *testing.T) {
 		KeyID:      "limited-decrypt-key",
 		Ciphertext: append([]byte("crypto:encrypted:"), []byte("data")...),
 	}
-	_, _ = svc.Decrypt(context.Background(), req)
+	_, _ = svc.Decrypt(systemTenantCtx(), req)
 
 	// Second should exceed the limit
 	req2 := &DecryptRequest{
 		KeyID:      "limited-decrypt-key",
 		Ciphertext: append([]byte("crypto:encrypted:"), []byte("more data exceeds")...),
 	}
-	resp, err := svc.Decrypt(context.Background(), req2)
+	resp, err := svc.Decrypt(systemTenantCtx(), req2)
 	if err != nil {
 		var qbErr *quicbaasErrors.QBError
 		if errors.As(err, &qbErr) {
@@ -1795,14 +1795,14 @@ func TestCryptoService_Rewrap_SafetyTracker_LimitExceeded(t *testing.T) {
 		KeyID:      "limited-rewrap-key",
 		Ciphertext: []byte("old-ciphertext"),
 	}
-	_, _ = svc.Rewrap(context.Background(), req)
+	_, _ = svc.Rewrap(systemTenantCtx(), req)
 
 	// Second should exceed the limit
 	req2 := &RewrapRequest{
 		KeyID:      "limited-rewrap-key",
 		Ciphertext: []byte("another-old-ciphertext-data"),
 	}
-	resp, err := svc.Rewrap(context.Background(), req2)
+	resp, err := svc.Rewrap(systemTenantCtx(), req2)
 	if err != nil {
 		var qbErr *quicbaasErrors.QBError
 		if errors.As(err, &qbErr) {
@@ -1833,13 +1833,13 @@ func TestCryptoService_GenerateDataKey_SafetyTracker_LimitExceeded(t *testing.T)
 	req := &GenerateDataKeyRequest{
 		KeyID: "limited-genkey",
 	}
-	_, _ = svc.GenerateDataKey(context.Background(), req)
+	_, _ = svc.GenerateDataKey(systemTenantCtx(), req)
 
 	// Second should exceed the limit
 	req2 := &GenerateDataKeyRequest{
 		KeyID: "limited-genkey",
 	}
-	resp, err := svc.GenerateDataKey(context.Background(), req2)
+	resp, err := svc.GenerateDataKey(systemTenantCtx(), req2)
 	if err != nil {
 		var qbErr *quicbaasErrors.QBError
 		if errors.As(err, &qbErr) {
@@ -1870,13 +1870,13 @@ func TestCryptoService_GenerateWrappedDataKey_SafetyTracker_LimitExceeded(t *tes
 	req := &GenerateWrappedDataKeyRequest{
 		KeyID: "limited-wrapped-genkey",
 	}
-	_, _ = svc.GenerateWrappedDataKey(context.Background(), req)
+	_, _ = svc.GenerateWrappedDataKey(systemTenantCtx(), req)
 
 	// Second should exceed the limit
 	req2 := &GenerateWrappedDataKeyRequest{
 		KeyID: "limited-wrapped-genkey",
 	}
-	resp, err := svc.GenerateWrappedDataKey(context.Background(), req2)
+	resp, err := svc.GenerateWrappedDataKey(systemTenantCtx(), req2)
 	if err != nil {
 		var qbErr *quicbaasErrors.QBError
 		if errors.As(err, &qbErr) {

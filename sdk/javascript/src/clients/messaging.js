@@ -509,7 +509,9 @@ class MessagingClient {
       eventSource = new EventSource(url);
 
       eventSource.onmessage = (event) => {
-        if (closed) return;
+        if (closed) {
+          return;
+        }
 
         try {
           const data = JSON.parse(event.data);
@@ -524,20 +526,22 @@ class MessagingClient {
             onError(new QuicBaaSError(
               'Failed to parse messaging event',
               'PARSE_ERROR',
-              { cause: parseError.message }
+              { cause: parseError.message },
             ));
           }
         }
       };
 
       eventSource.onerror = (error) => {
-        if (closed) return;
+        if (closed) {
+          return;
+        }
 
         if (onError) {
           onError(new QuicBaaSError(
             'Messaging subscription connection error',
             'SUBSCRIPTION_ERROR',
-            { cause: error }
+            { cause: error },
           ));
         }
       };
@@ -547,7 +551,7 @@ class MessagingClient {
       throw new QuicBaaSError(
         'Failed to create messaging subscription',
         'SUBSCRIPTION_ERROR',
-        { cause: error.message }
+        { cause: error.message },
       );
     }
   }

@@ -348,14 +348,14 @@ class KVClient {
       oneOf(
         options.writeMode,
         Object.values(WriteMode),
-        'options.writeMode'
+        'options.writeMode',
       );
     }
     if (options.consistencyLevel !== undefined) {
       oneOf(
         options.consistencyLevel,
         Object.values(ConsistencyLevel),
-        'options.consistencyLevel'
+        'options.consistencyLevel',
       );
     }
   }
@@ -374,7 +374,7 @@ class KVClient {
       oneOf(
         options.consistencyLevel,
         Object.values(ConsistencyLevel),
-        'options.consistencyLevel'
+        'options.consistencyLevel',
       );
     }
   }
@@ -393,7 +393,7 @@ class KVClient {
       oneOf(
         options.consistencyLevel,
         Object.values(ConsistencyLevel),
-        'options.consistencyLevel'
+        'options.consistencyLevel',
       );
     }
   }
@@ -476,7 +476,9 @@ class KVClient {
       eventSource = new EventSource(url);
 
       eventSource.onmessage = (event) => {
-        if (closed) return;
+        if (closed) {
+          return;
+        }
 
         try {
           const data = JSON.parse(event.data);
@@ -503,20 +505,22 @@ class KVClient {
             options.onError(new QuicBaaSError(
               'Failed to parse watch event',
               'PARSE_ERROR',
-              { cause: parseError.message }
+              { cause: parseError.message },
             ));
           }
         }
       };
 
       eventSource.onerror = (error) => {
-        if (closed) return;
+        if (closed) {
+          return;
+        }
 
         if (options.onError) {
           options.onError(new QuicBaaSError(
             'Watch connection error',
             'WATCH_ERROR',
-            { cause: error }
+            { cause: error },
           ));
         }
       };
@@ -526,7 +530,7 @@ class KVClient {
       throw new QuicBaaSError(
         'Failed to create watch connection',
         'WATCH_ERROR',
-        { cause: error.message }
+        { cause: error.message },
       );
     }
   }

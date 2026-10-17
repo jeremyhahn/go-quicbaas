@@ -56,7 +56,6 @@ The SDK provides access to all QuicBaaS services:
 - **Crypto** - Encryption, signing, hashing
 - **DynamicSecrets** - Lease-based credential generation
 - **Certificate** - PKI operations (issue, sign CSR, revoke)
-- **ClusterDEK** - Cluster data encryption key management
 
 ### Identity Management
 - **IAM** - Multi-tenant identity and access management

@@ -10,10 +10,8 @@ import { ValidationError } from '../errors/index.js';
 import {
   required,
   requiredString,
-  requiredArray,
   nonEmptyArray,
   positiveInteger,
-  nonNegativeInteger,
   oneOf,
 } from '../utils/validation.js';
 
@@ -1150,7 +1148,7 @@ class ObjectStorageClient {
       if (typeof policy.priority !== 'number' || policy.priority < 1 || policy.priority > 10) {
         throw new ValidationError(
           'replicationPolicy.priority must be between 1 and 10',
-          'replicationPolicy.priority'
+          'replicationPolicy.priority',
         );
       }
     }
@@ -1179,7 +1177,7 @@ class ObjectStorageClient {
       if (typeof options.priority !== 'number' || options.priority < 1 || options.priority > 10) {
         throw new ValidationError(
           'options.priority must be between 1 and 10',
-          'options.priority'
+          'options.priority',
         );
       }
     }

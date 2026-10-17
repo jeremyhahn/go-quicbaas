@@ -68,7 +68,7 @@ describe('CryptoClient', () => {
         expect.objectContaining({
           key_id: 'key-123',
           plaintext: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -99,7 +99,7 @@ describe('CryptoClient', () => {
           key_id: 'key-123',
           plaintext: expect.any(String),
           context: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -116,7 +116,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/encrypt',
         expect.objectContaining({
           context: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -132,7 +132,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/encrypt',
         expect.objectContaining({
           key_version: 3,
-        })
+        }),
       );
     });
 
@@ -196,7 +196,7 @@ describe('CryptoClient', () => {
         expect.objectContaining({
           key_id: 'key-123',
           ciphertext: 'YWJjZGVm',
-        })
+        }),
       );
     });
 
@@ -211,7 +211,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/decrypt',
         expect.objectContaining({
           context: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -227,7 +227,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/decrypt',
         expect.objectContaining({
           context: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -242,7 +242,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/decrypt',
         expect.objectContaining({
           key_version: 2,
-        })
+        }),
       );
     });
 
@@ -321,7 +321,7 @@ describe('CryptoClient', () => {
         expect.objectContaining({
           key_id: 'key-123',
           data: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -349,7 +349,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/sign',
         expect.objectContaining({
           hash_algorithm: 'SHA-512',
-        })
+        }),
       );
     });
 
@@ -365,7 +365,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/sign',
         expect.objectContaining({
           signature_algorithm: 'ED25519',
-        })
+        }),
       );
     });
 
@@ -381,7 +381,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/sign',
         expect.objectContaining({
           key_version: 3,
-        })
+        }),
       );
     });
 
@@ -445,7 +445,7 @@ describe('CryptoClient', () => {
           key_id: 'key-123',
           data: expect.any(String),
           signature: 'c2lnbmF0dXJl',
-        })
+        }),
       );
     });
 
@@ -471,7 +471,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/verify',
         expect.objectContaining({
           hash_algorithm: 'SHA-384',
-        })
+        }),
       );
     });
 
@@ -486,7 +486,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/verify',
         expect.objectContaining({
           signature_algorithm: 'RSA_PSS',
-        })
+        }),
       );
     });
 
@@ -501,7 +501,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/verify',
         expect.objectContaining({
           key_version: 2,
-        })
+        }),
       );
     });
 
@@ -571,7 +571,7 @@ describe('CryptoClient', () => {
         expect.objectContaining({
           algorithm: 'SHA-256',
           data: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -655,7 +655,7 @@ describe('CryptoClient', () => {
         expect.objectContaining({
           key_id: 'key-123',
           data: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -716,7 +716,7 @@ describe('CryptoClient', () => {
           key_id: 'master-key',
           context: expect.any(String),
           kdf: 'HKDF',
-        })
+        }),
       );
     });
 
@@ -736,7 +736,7 @@ describe('CryptoClient', () => {
         expect.objectContaining({
           kdf: 'PBKDF2',
           iterations: 100000,
-        })
+        }),
       );
     });
 
@@ -764,7 +764,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/derive-key',
         expect.objectContaining({
           length: 64,
-        })
+        }),
       );
     });
 
@@ -780,7 +780,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/derive-key',
         expect.objectContaining({
           hash_algorithm: 'SHA-512',
-        })
+        }),
       );
     });
 
@@ -796,7 +796,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/derive-key',
         expect.objectContaining({
           salt: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -813,7 +813,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/derive-key',
         expect.objectContaining({
           salt: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -829,7 +829,7 @@ describe('CryptoClient', () => {
         '/api/v1/crypto/derive-key',
         expect.objectContaining({
           info: expect.any(String),
-        })
+        }),
       );
     });
 
@@ -897,7 +897,7 @@ describe('CryptoClient', () => {
       expect(result.bytes).toBeInstanceOf(Uint8Array);
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/crypto/random',
-        { length: 32 }
+        { length: 32 },
       );
     });
 
@@ -910,7 +910,7 @@ describe('CryptoClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/crypto/random',
-        { length: 16 }
+        { length: 16 },
       );
     });
 

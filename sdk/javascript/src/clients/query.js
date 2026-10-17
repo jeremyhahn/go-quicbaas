@@ -403,7 +403,7 @@ export class QueryClient {
     if (!VALID_OPERATORS.includes(condition.operator)) {
       throw new ValidationError(
         `${path}.operator must be one of: ${VALID_OPERATORS.join(', ')}`,
-        `${path}.operator`
+        `${path}.operator`,
       );
     }
 

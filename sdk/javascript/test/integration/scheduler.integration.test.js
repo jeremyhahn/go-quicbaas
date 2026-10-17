@@ -10,7 +10,6 @@
  */
 
 import { QuicBaaS, JobType, JobStatus, OwnerType } from '../../src/index.js';
-import { NotFoundError } from '../../src/errors/index.js';
 
 const QUICBAAS_URL = process.env.QUICBAAS_URL || 'http://localhost:58080';
 const TIMEOUT = 30000;
@@ -48,8 +47,9 @@ describe('Scheduler Integration Tests', () => {
   beforeAll(async () => {
     serverAvailable = await checkServerAvailable();
     if (!serverAvailable) {
+      // eslint-disable-next-line no-console -- tells the operator why the suite did nothing
       console.warn(
-        `QuicBaaS server not available at ${QUICBAAS_URL}, skipping integration tests`
+        `QuicBaaS server not available at ${QUICBAAS_URL}, skipping integration tests`,
       );
       return;
     }
@@ -109,7 +109,7 @@ describe('Scheduler Integration Tests', () => {
         expect(typeof status.failedJobs).toBe('number');
         expect(typeof status.pausedJobs).toBe('number');
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 
@@ -176,7 +176,7 @@ describe('Scheduler Integration Tests', () => {
         // Verify job is deleted
         await expect(scheduler.getJob(jobId)).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -202,7 +202,7 @@ describe('Scheduler Integration Tests', () => {
         expect(job.type).toBe(JobType.RECURRING);
         expect(job.schedule).toBe('*/5 * * * *');
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -226,7 +226,7 @@ describe('Scheduler Integration Tests', () => {
 
         expect(job.type).toBe(JobType.DELAYED);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 
@@ -235,7 +235,9 @@ describe('Scheduler Integration Tests', () => {
 
     beforeAll(
       skipIfNoServer(async () => {
-        if (!serverAvailable) return;
+        if (!serverAvailable) {
+          return;
+        }
 
         const jobName = generateJobName('control');
         const result = await createTrackedJob({
@@ -247,7 +249,7 @@ describe('Scheduler Integration Tests', () => {
         });
         controlJobId = result.jobId;
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -263,7 +265,7 @@ describe('Scheduler Integration Tests', () => {
         const job = await scheduler.getJob(controlJobId);
         expect(job.status).toBe(JobStatus.PAUSED);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -282,7 +284,7 @@ describe('Scheduler Integration Tests', () => {
         const job = await scheduler.getJob(controlJobId);
         expect(job.status).toBe(JobStatus.PENDING);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -295,7 +297,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result.executionId).toBeDefined();
         expect(result.triggeredAt).toBeDefined();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -313,7 +315,7 @@ describe('Scheduler Integration Tests', () => {
 
         const result = await scheduler.cancelJob(
           createResult.jobId,
-          'Integration test cancellation'
+          'Integration test cancellation',
         );
 
         expect(result).toBeDefined();
@@ -324,7 +326,7 @@ describe('Scheduler Integration Tests', () => {
         const job = await scheduler.getJob(createResult.jobId);
         expect(job.status).toBe(JobStatus.CANCELED);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 
@@ -333,7 +335,9 @@ describe('Scheduler Integration Tests', () => {
 
     beforeAll(
       skipIfNoServer(async () => {
-        if (!serverAvailable) return;
+        if (!serverAvailable) {
+          return;
+        }
 
         // Create several jobs for listing tests
         const jobConfigs = [
@@ -364,7 +368,7 @@ describe('Scheduler Integration Tests', () => {
           await createTrackedJob(config);
         }
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -376,7 +380,7 @@ describe('Scheduler Integration Tests', () => {
         expect(Array.isArray(result.jobs)).toBe(true);
         expect(typeof result.totalCount).toBe('number');
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -390,7 +394,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result).toBeDefined();
         expect(result.jobs.length).toBeLessThanOrEqual(2);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -406,7 +410,7 @@ describe('Scheduler Integration Tests', () => {
           expect(job.status).toBe(JobStatus.PENDING);
         }
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -422,7 +426,7 @@ describe('Scheduler Integration Tests', () => {
           expect(job.type).toBe(JobType.RECURRING);
         }
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -435,7 +439,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result).toBeDefined();
         expect(Array.isArray(result.jobs)).toBe(true);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -448,7 +452,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result).toBeDefined();
         expect(Array.isArray(result.jobs)).toBe(true);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 
@@ -457,7 +461,9 @@ describe('Scheduler Integration Tests', () => {
 
     beforeAll(
       skipIfNoServer(async () => {
-        if (!serverAvailable) return;
+        if (!serverAvailable) {
+          return;
+        }
 
         const jobName = generateJobName('history');
         const result = await createTrackedJob({
@@ -476,7 +482,7 @@ describe('Scheduler Integration Tests', () => {
           // Job may already be running or completed
         }
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -489,7 +495,7 @@ describe('Scheduler Integration Tests', () => {
         expect(Array.isArray(result.executions)).toBe(true);
         expect(typeof result.totalCount).toBe('number');
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -503,7 +509,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result).toBeDefined();
         expect(result.executions.length).toBeLessThanOrEqual(5);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -518,7 +524,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result).toBeDefined();
         expect(Array.isArray(result.executions)).toBe(true);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 
@@ -530,7 +536,7 @@ describe('Scheduler Integration Tests', () => {
 
         await expect(scheduler.getJob(nonExistentJobId)).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -540,7 +546,7 @@ describe('Scheduler Integration Tests', () => {
 
         await expect(scheduler.deleteJob(nonExistentJobId)).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -549,10 +555,10 @@ describe('Scheduler Integration Tests', () => {
         const nonExistentJobId = 'non-existent-job-id-11111';
 
         await expect(
-          scheduler.updateJob(nonExistentJobId, { description: 'Updated' })
+          scheduler.updateJob(nonExistentJobId, { description: 'Updated' }),
         ).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -562,7 +568,7 @@ describe('Scheduler Integration Tests', () => {
 
         await expect(scheduler.pauseJob(nonExistentJobId)).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -572,7 +578,7 @@ describe('Scheduler Integration Tests', () => {
 
         await expect(scheduler.resumeJob(nonExistentJobId)).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -582,7 +588,7 @@ describe('Scheduler Integration Tests', () => {
 
         await expect(scheduler.cancelJob(nonExistentJobId)).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -592,7 +598,7 @@ describe('Scheduler Integration Tests', () => {
 
         await expect(scheduler.triggerJob(nonExistentJobId)).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -602,7 +608,7 @@ describe('Scheduler Integration Tests', () => {
 
         await expect(scheduler.getJobHistory(nonExistentJobId)).rejects.toThrow();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 
@@ -630,7 +636,7 @@ describe('Scheduler Integration Tests', () => {
         expect(job.ownerType).toBe(OwnerType.TENANT);
         expect(job.ownerId).toBe(tenantId);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -654,7 +660,7 @@ describe('Scheduler Integration Tests', () => {
         const job = await scheduler.getJob(result.jobId);
         expect(job.ownerType).toBe(OwnerType.DELEGATED);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 
@@ -707,7 +713,7 @@ describe('Scheduler Integration Tests', () => {
         const job = await scheduler.getJob(result.jobId);
         expect(job.payload).toEqual(complexPayload);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 
@@ -716,7 +722,9 @@ describe('Scheduler Integration Tests', () => {
 
     beforeAll(
       skipIfNoServer(async () => {
-        if (!serverAvailable) return;
+        if (!serverAvailable) {
+          return;
+        }
 
         const jobName = generateJobName('update');
         const result = await createTrackedJob({
@@ -733,7 +741,7 @@ describe('Scheduler Integration Tests', () => {
         });
         updateJobId = result.jobId;
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -747,7 +755,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result).toBeDefined();
         expect(result.name).toBe(newName);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -760,7 +768,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result).toBeDefined();
         expect(result.schedule).toBe('0 */2 * * *');
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -774,7 +782,7 @@ describe('Scheduler Integration Tests', () => {
         expect(result).toBeDefined();
         expect(result.payload).toEqual(newPayload);
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -787,7 +795,7 @@ describe('Scheduler Integration Tests', () => {
 
         expect(result).toBeDefined();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -801,7 +809,7 @@ describe('Scheduler Integration Tests', () => {
 
         expect(result).toBeDefined();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
 
     it(
@@ -814,7 +822,7 @@ describe('Scheduler Integration Tests', () => {
 
         expect(result).toBeDefined();
       }),
-      TIMEOUT
+      TIMEOUT,
     );
   });
 });

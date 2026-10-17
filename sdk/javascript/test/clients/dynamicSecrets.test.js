@@ -75,7 +75,7 @@ describe('DynamicSecretsClient', () => {
           config: { connection_string: 'postgres://localhost/db' },
           default_ttl: 3600000,
           max_ttl: 86400000,
-        }
+        },
       );
     });
 
@@ -382,7 +382,7 @@ describe('DynamicSecretsClient', () => {
       expect(result.role.name).toBe('postgres-readonly');
       expect(result.role.generatorType).toBe('database');
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/dynamic-secrets/roles/postgres-readonly'
+        '/api/v1/dynamic-secrets/roles/postgres-readonly',
       );
     });
 
@@ -408,7 +408,7 @@ describe('DynamicSecretsClient', () => {
       await client.getRole('role/with/slashes');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/dynamic-secrets/roles/role%2Fwith%2Fslashes'
+        '/api/v1/dynamic-secrets/roles/role%2Fwith%2Fslashes',
       );
     });
 
@@ -445,7 +445,7 @@ describe('DynamicSecretsClient', () => {
       expect(result.count).toBe(2);
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/roles',
-        { query: {} }
+        { query: {} },
       );
     });
 
@@ -459,7 +459,7 @@ describe('DynamicSecretsClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/roles',
-        { query: { prefix: 'postgres-' } }
+        { query: { prefix: 'postgres-' } },
       );
     });
 
@@ -473,7 +473,7 @@ describe('DynamicSecretsClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/roles',
-        { query: { limit: 5, offset: 5 } }
+        { query: { limit: 5, offset: 5 } },
       );
     });
 
@@ -513,7 +513,7 @@ describe('DynamicSecretsClient', () => {
 
       expect(result.deletedAt).toBe('2024-01-01T00:00:00Z');
       expect(mockTransport.delete).toHaveBeenCalledWith(
-        '/api/v1/dynamic-secrets/roles/old-role'
+        '/api/v1/dynamic-secrets/roles/old-role',
       );
     });
 
@@ -567,7 +567,7 @@ describe('DynamicSecretsClient', () => {
       expect(result.leaseId).toBe('lease-123');
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/credentials',
-        { role_name: 'postgres-readonly' }
+        { role_name: 'postgres-readonly' },
       );
     });
 
@@ -598,7 +598,7 @@ describe('DynamicSecretsClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/credentials',
-        { role_name: 'role', ttl: 7200000 }
+        { role_name: 'role', ttl: 7200000 },
       );
     });
 
@@ -863,7 +863,7 @@ describe('DynamicSecretsClient', () => {
       expect(result.renewedAt).toBe('2024-01-01T01:00:00Z');
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/leases/lease-123/renew',
-        { lease_id: 'lease-123' }
+        { lease_id: 'lease-123' },
       );
     });
 
@@ -886,7 +886,7 @@ describe('DynamicSecretsClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/leases/lease-123/renew',
-        { lease_id: 'lease-123', increment: 1800000 }
+        { lease_id: 'lease-123', increment: 1800000 },
       );
     });
 
@@ -900,7 +900,7 @@ describe('DynamicSecretsClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/leases/lease%2Fwith%2Fslashes/renew',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -960,7 +960,7 @@ describe('DynamicSecretsClient', () => {
       expect(result.revokedAt).toBe('2024-01-01T00:00:00Z');
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/leases/lease-123/revoke',
-        { lease_id: 'lease-123' }
+        { lease_id: 'lease-123' },
       );
     });
 
@@ -1017,7 +1017,7 @@ describe('DynamicSecretsClient', () => {
       expect(result.count).toBe(2);
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/leases',
-        { query: {} }
+        { query: {} },
       );
     });
 
@@ -1031,7 +1031,7 @@ describe('DynamicSecretsClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/leases',
-        { query: { prefix: 'postgres/' } }
+        { query: { prefix: 'postgres/' } },
       );
     });
 
@@ -1045,7 +1045,7 @@ describe('DynamicSecretsClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/dynamic-secrets/leases',
-        { query: { limit: 5, offset: 5 } }
+        { query: { limit: 5, offset: 5 } },
       );
     });
 

@@ -12,7 +12,6 @@
 import { ValidationError } from '../errors/index.js';
 import {
   requiredString,
-  required,
   requiredObject,
   nonNegativeInteger,
   positiveInteger,
@@ -348,7 +347,7 @@ export class KMSClient {
 
     const response = await this.#transport.post(
       `${KMS_API_PATH}/keys`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformGenerateKeyResponse(response);
@@ -390,7 +389,7 @@ export class KMSClient {
 
     const response = await this.#transport.post(
       `${KMS_API_PATH}/keys/import`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformImportKeyResponse(response);
@@ -412,7 +411,7 @@ export class KMSClient {
     requiredString(keyId, 'keyId');
 
     const response = await this.#transport.get(
-      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}`
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}`,
     );
 
     return this.#transformKeyInfo(response);
@@ -454,7 +453,7 @@ export class KMSClient {
 
     const response = await this.#transport.get(
       `${KMS_API_PATH}/keys`,
-      { query }
+      { query },
     );
 
     return this.#transformListKeysResponse(response);
@@ -476,7 +475,7 @@ export class KMSClient {
     requiredString(keyId, 'keyId');
 
     const response = await this.#transport.get(
-      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/metadata`
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/metadata`,
     );
 
     return this.#transformKeyMetadata(response);
@@ -500,7 +499,7 @@ export class KMSClient {
     requiredString(keyId, 'keyId');
 
     const response = await this.#transport.get(
-      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/versions`
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/versions`,
     );
 
     return this.#transformListKeyVersionsResponse(response, keyId);
@@ -530,7 +529,7 @@ export class KMSClient {
 
     const response = await this.#transport.post(
       `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotate`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformRotateKeyResponse(response, keyId);
@@ -555,7 +554,7 @@ export class KMSClient {
 
     const response = await this.#transport.post(
       `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/revoke`,
-      {}
+      {},
     );
 
     return this.#transformRevokeKeyResponse(response);
@@ -579,7 +578,7 @@ export class KMSClient {
     requiredString(keyId, 'keyId');
 
     const response = await this.#transport.delete(
-      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}`
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}`,
     );
 
     return this.#transformDeleteKeyResponse(response);
@@ -624,7 +623,7 @@ export class KMSClient {
 
     const response = await this.#transport.patch(
       `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/metadata`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformKeyMetadata(response);
@@ -660,7 +659,7 @@ export class KMSClient {
 
     const response = await this.#transport.put(
       `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/status`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformUpdateStatusResponse(response, status);
@@ -702,7 +701,7 @@ export class KMSClient {
 
     const response = await this.#transport.put(
       `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/policy`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformKeyPolicy(response, keyId);
@@ -726,7 +725,7 @@ export class KMSClient {
     requiredString(keyId, 'keyId');
 
     const response = await this.#transport.get(
-      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/policy`
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/policy`,
     );
 
     return this.#transformKeyPolicy(response, keyId);
@@ -745,7 +744,7 @@ export class KMSClient {
    */
   async getSupportedAlgorithms() {
     const response = await this.#transport.get(
-      `${KMS_API_PATH}/algorithms`
+      `${KMS_API_PATH}/algorithms`,
     );
 
     return this.#transformSupportedAlgorithmsResponse(response);
@@ -829,7 +828,7 @@ export class KMSClient {
       if (!validUsages.includes(usage[i])) {
         throw new ValidationError(
           `${fieldName}[${i}] must be one of: ${validUsages.join(', ')}`,
-          `${fieldName}[${i}]`
+          `${fieldName}[${i}]`,
         );
       }
     }
@@ -922,7 +921,7 @@ export class KMSClient {
         if (typeof stmt.principals[j] !== 'string' || stmt.principals[j].trim() === '') {
           throw new ValidationError(
             `${prefix}.principals[${j}] must be a non-empty string`,
-            `${prefix}.principals[${j}]`
+            `${prefix}.principals[${j}]`,
           );
         }
       }
@@ -931,7 +930,7 @@ export class KMSClient {
         if (typeof stmt.actions[j] !== 'string' || stmt.actions[j].trim() === '') {
           throw new ValidationError(
             `${prefix}.actions[${j}] must be a non-empty string`,
-            `${prefix}.actions[${j}]`
+            `${prefix}.actions[${j}]`,
           );
         }
       }
@@ -1209,7 +1208,7 @@ export class KMSClient {
 
     const response = await this.#transport.put(
       `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotation-policy`,
-      requestBody
+      requestBody,
     );
 
     return this.#transformRotationPolicyResponse(response, keyId);
@@ -1234,7 +1233,7 @@ export class KMSClient {
     requiredString(keyId, 'keyId');
 
     const response = await this.#transport.get(
-      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotation-policy`
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotation-policy`,
     );
 
     if (!response || !response.policy) {
@@ -1260,7 +1259,7 @@ export class KMSClient {
     requiredString(keyId, 'keyId');
 
     const response = await this.#transport.delete(
-      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotation-policy`
+      `${KMS_API_PATH}/keys/${encodeURIComponent(keyId)}/rotation-policy`,
     );
 
     return {

@@ -451,11 +451,38 @@ func (t *Transport) RecoveryShareClaimComplete(ctx context.Context, req *qrdbtra
 	return &resp, nil
 }
 
-// BarrierEnableEncryption is not supported on the MCP transport; enable
-// encryption via the REST or gRPC (unix) transports which have direct access
-// to the barrier key material.
-func (t *Transport) BarrierEnableEncryption(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
-	return nil, &qrdbtransport.NotImplementedError{Method: "BarrierEnableEncryption"}
+// BarrierEnableEncryption migrates an unencrypted barrier to a keyed strategy
+// through qrdb's qrdb_barrier_enable_encryption tool. An empty TenantID targets
+// the system barrier. The migration runs asynchronously on the node; poll
+// BarrierStatus for completion.
+func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.BarrierEnableEncryption", "request is required")
+	}
+	tool := "qrdb_barrier_enable_encryption"
+	args := map[string]interface{}{
+		"target_strategy":  req.Strategy,
+		"mechanism":        req.Mechanism,
+		"availability":     req.Availability,
+		"passphrase":       secretArg(req.Passphrase),
+		"shamir_threshold": req.ShamirThreshold,
+		"shamir_total":     req.ShamirTotal,
+	}
+	// The system tool ignores tenant_id, so a tenant request must go to the
+	// tenant tool or it would migrate the system barrier.
+	if req.TenantID != "" {
+		tool = "qrdb_tenant_barrier_enable_encryption"
+		args["tenant_id"] = req.TenantID
+	}
+	raw, err := t.callBarrier(ctx, tool, args)
+	if err != nil {
+		return nil, err
+	}
+	var resp qrdbtransport.BarrierEnableEncryptionResponse
+	if err := remarshalBarrier(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.BarrierEnableEncryption", "failed to decode response")
+	}
+	return &resp, nil
 }
 
 // ---------------------------------------------------------------------------

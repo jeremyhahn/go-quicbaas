@@ -10,7 +10,7 @@
  */
 
 import { ValidationError } from '../errors/index.js';
-import { requiredString, required } from '../utils/validation.js';
+import { requiredString } from '../utils/validation.js';
 
 /**
  * API base path for authentication endpoints.
@@ -231,7 +231,7 @@ export class AuthClient {
 
     const response = await this._transport.post(
       `${AUTH_API_PATH}/login`,
-      requestBody
+      requestBody,
     );
 
     const result = this._transformLoginResponse(response);
@@ -296,7 +296,7 @@ export class AuthClient {
 
     const response = await this._transport.post(
       `${SESSION_API_PATH}/refresh`,
-      { refresh_token: refreshToken }
+      { refresh_token: refreshToken },
     );
 
     const result = this._transformRefreshResponse(response);
@@ -309,7 +309,7 @@ export class AuthClient {
       }
       this._transport.setAuthToken(
         result.accessToken,
-        result.refreshToken || this.#refreshToken
+        result.refreshToken || this.#refreshToken,
       );
     }
 

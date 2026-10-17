@@ -194,27 +194,27 @@ export function fromResponse(response, body = null) {
   const message = body?.message || body?.error || response.statusText;
 
   switch (response.status) {
-    case 400:
-      return new ValidationError(message);
-    case 401:
-      return new AuthenticationError(message);
-    case 403:
-      return new AuthorizationError(message);
-    case 404:
-      return new NotFoundError(message);
-    case 409:
-      return new ConflictError(message);
-    case 423:
-      return new SealedError(message);
-    case 429:
-      return new RateLimitError(message, response.headers.get('Retry-After'));
-    case 408:
-    case 504:
-      return new TimeoutError(message);
-    default:
-      if (response.status >= 500) {
-        return new ServerError(message, response.status, body);
-      }
-      return new QuicBaaSError(message, 'UNKNOWN_ERROR', { statusCode: response.status });
+  case 400:
+    return new ValidationError(message);
+  case 401:
+    return new AuthenticationError(message);
+  case 403:
+    return new AuthorizationError(message);
+  case 404:
+    return new NotFoundError(message);
+  case 409:
+    return new ConflictError(message);
+  case 423:
+    return new SealedError(message);
+  case 429:
+    return new RateLimitError(message, response.headers.get('Retry-After'));
+  case 408:
+  case 504:
+    return new TimeoutError(message);
+  default:
+    if (response.status >= 500) {
+      return new ServerError(message, response.status, body);
+    }
+    return new QuicBaaSError(message, 'UNKNOWN_ERROR', { statusCode: response.status });
   }
 }

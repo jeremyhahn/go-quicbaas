@@ -89,7 +89,7 @@ describe('MessagingClient', () => {
       });
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels',
-        { name: 'events' }
+        { name: 'events' },
       );
     });
 
@@ -108,7 +108,7 @@ describe('MessagingClient', () => {
       expect(result.persistent).toBe(true);
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels',
-        { name: 'audit', persistent: true }
+        { name: 'audit', persistent: true },
       );
     });
 
@@ -127,7 +127,7 @@ describe('MessagingClient', () => {
       expect(result.bufferSize).toBe(500);
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels',
-        { name: 'buffered', buffer_size: 500 }
+        { name: 'buffered', buffer_size: 500 },
       );
     });
 
@@ -146,7 +146,7 @@ describe('MessagingClient', () => {
       expect(result.ttl).toBe(60000);
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels',
-        { name: 'ephemeral', ttl: 60000 }
+        { name: 'ephemeral', ttl: 60000 },
       );
     });
 
@@ -176,7 +176,7 @@ describe('MessagingClient', () => {
       });
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels',
-        { name: 'full', persistent: true, buffer_size: 1000, ttl: 30000 }
+        { name: 'full', persistent: true, buffer_size: 1000, ttl: 30000 },
       );
     });
 
@@ -290,7 +290,7 @@ describe('MessagingClient', () => {
       await client.deleteChannel('events');
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
-        '/api/v1/messaging/channels/events'
+        '/api/v1/messaging/channels/events',
       );
     });
 
@@ -300,7 +300,7 @@ describe('MessagingClient', () => {
       await client.deleteChannel('my channel');
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
-        '/api/v1/messaging/channels/my%20channel'
+        '/api/v1/messaging/channels/my%20channel',
       );
     });
 
@@ -310,7 +310,7 @@ describe('MessagingClient', () => {
       await client.deleteChannel('topic/subtopic');
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
-        '/api/v1/messaging/channels/topic%2Fsubtopic'
+        '/api/v1/messaging/channels/topic%2Fsubtopic',
       );
     });
 
@@ -355,7 +355,7 @@ describe('MessagingClient', () => {
         createdAt: '2025-01-17T00:00:00.000Z',
       });
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/messaging/channels/events'
+        '/api/v1/messaging/channels/events',
       );
     });
 
@@ -365,7 +365,7 @@ describe('MessagingClient', () => {
       await client.getChannel('my channel');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/messaging/channels/my%20channel'
+        '/api/v1/messaging/channels/my%20channel',
       );
     });
 
@@ -450,7 +450,7 @@ describe('MessagingClient', () => {
         { name: 'logs', persistent: false, bufferSize: 50, ttl: 60000, subscriberCount: 1, createdAt: '2025-01-17T01:00:00.000Z' },
       ]);
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/messaging/channels'
+        '/api/v1/messaging/channels',
       );
     });
 
@@ -544,7 +544,7 @@ describe('MessagingClient', () => {
       });
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/events/publish',
-        { payload: { action: 'click' } }
+        { payload: { action: 'click' } },
       );
     });
 
@@ -564,7 +564,7 @@ describe('MessagingClient', () => {
       });
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/binary-events/publish',
-        { payload: 'raw-data', codec: 'binary' }
+        { payload: 'raw-data', codec: 'binary' },
       );
     });
 
@@ -579,7 +579,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/json-events/publish',
-        { payload: { key: 'value' }, codec: 'json' }
+        { payload: { key: 'value' }, codec: 'json' },
       );
     });
 
@@ -594,7 +594,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/msgpack-events/publish',
-        { payload: [1, 2, 3], codec: 'msgpack' }
+        { payload: [1, 2, 3], codec: 'msgpack' },
       );
     });
 
@@ -610,7 +610,7 @@ describe('MessagingClient', () => {
       expect(result.id).toBe('msg-005');
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/events/publish',
-        { payload: 'data', dedup_key: 'unique-key-123' }
+        { payload: 'data', dedup_key: 'unique-key-123' },
       );
     });
 
@@ -633,7 +633,7 @@ describe('MessagingClient', () => {
       });
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/events/publish',
-        { payload: { event: 'test' }, codec: 'json', dedup_key: 'dedup-abc' }
+        { payload: { event: 'test' }, codec: 'json', dedup_key: 'dedup-abc' },
       );
     });
 
@@ -648,7 +648,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/my%20channel/publish',
-        { payload: 'data' }
+        { payload: 'data' },
       );
     });
 
@@ -687,7 +687,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/test/publish',
-        { payload: 'hello world' }
+        { payload: 'hello world' },
       );
     });
 
@@ -698,7 +698,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/test/publish',
-        { payload: 42 }
+        { payload: 42 },
       );
     });
 
@@ -709,7 +709,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/test/publish',
-        { payload: [1, 2, 3] }
+        { payload: [1, 2, 3] },
       );
     });
 
@@ -765,7 +765,7 @@ describe('MessagingClient', () => {
       });
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/state-changes/publish-delta',
-        { old_value: { count: 1 }, new_value: { count: 2 } }
+        { old_value: { count: 1 }, new_value: { count: 2 } },
       );
     });
 
@@ -781,7 +781,7 @@ describe('MessagingClient', () => {
       expect(result.id).toBe('delta-002');
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/diffs/publish-delta',
-        { old_value: 'old', new_value: 'new', codec: 'json' }
+        { old_value: 'old', new_value: 'new', codec: 'json' },
       );
     });
 
@@ -796,7 +796,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/binary-diffs/publish-delta',
-        { old_value: [0, 1], new_value: [1, 0], codec: 'binary' }
+        { old_value: [0, 1], new_value: [1, 0], codec: 'binary' },
       );
     });
 
@@ -811,7 +811,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/msgpack-diffs/publish-delta',
-        { old_value: { a: 1 }, new_value: { a: 2 }, codec: 'msgpack' }
+        { old_value: { a: 1 }, new_value: { a: 2 }, codec: 'msgpack' },
       );
     });
 
@@ -826,7 +826,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/my%20channel/publish-delta',
-        { old_value: 'a', new_value: 'b' }
+        { old_value: 'a', new_value: 'b' },
       );
     });
 
@@ -865,7 +865,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/test/publish-delta',
-        { old_value: 'before', new_value: 'after' }
+        { old_value: 'before', new_value: 'after' },
       );
     });
 
@@ -876,7 +876,7 @@ describe('MessagingClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/messaging/channels/test/publish-delta',
-        { old_value: 10, new_value: 20 }
+        { old_value: 10, new_value: 20 },
       );
     });
 
@@ -950,7 +950,7 @@ describe('MessagingClient', () => {
       expect(subscription.closed).toBe(false);
       expect(typeof subscription.close).toBe('function');
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/messaging/channels/events/subscribe'
+        'https://api.example.com/api/v1/messaging/channels/events/subscribe',
       );
     });
 
@@ -960,7 +960,7 @@ describe('MessagingClient', () => {
       await client.subscribe('my channel', { onMessage });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/messaging/channels/my%20channel/subscribe'
+        'https://api.example.com/api/v1/messaging/channels/my%20channel/subscribe',
       );
     });
 
@@ -1140,7 +1140,7 @@ describe('MessagingClient', () => {
 
     it('should throw ValidationError when onError is not a function', async () => {
       await expect(
-        client.subscribe('events', { onMessage: jest.fn(), onError: 'not-a-function' })
+        client.subscribe('events', { onMessage: jest.fn(), onError: 'not-a-function' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -1178,7 +1178,7 @@ describe('MessagingClient', () => {
       mockEventSource.onmessage({ data: '{{invalid' });
 
       expect(onError).toHaveBeenCalledWith(
-        expect.objectContaining({ code: 'PARSE_ERROR' })
+        expect.objectContaining({ code: 'PARSE_ERROR' }),
       );
     });
 
@@ -1191,7 +1191,7 @@ describe('MessagingClient', () => {
       mockEventSource.onerror(new Error('Connection reset'));
 
       expect(onError).toHaveBeenCalledWith(
-        expect.objectContaining({ code: 'SUBSCRIPTION_ERROR' })
+        expect.objectContaining({ code: 'SUBSCRIPTION_ERROR' }),
       );
     });
   });
@@ -1203,7 +1203,7 @@ describe('MessagingClient', () => {
       await client.unsubscribe('sub-abc-123');
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
-        '/api/v1/messaging/subscriptions/sub-abc-123'
+        '/api/v1/messaging/subscriptions/sub-abc-123',
       );
     });
 
@@ -1213,7 +1213,7 @@ describe('MessagingClient', () => {
       await client.unsubscribe('sub/special id');
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
-        '/api/v1/messaging/subscriptions/sub%2Fspecial%20id'
+        '/api/v1/messaging/subscriptions/sub%2Fspecial%20id',
       );
     });
 
@@ -1271,7 +1271,7 @@ describe('MessagingClient', () => {
       expect(subscription.closed).toBe(false);
       expect(typeof subscription.close).toBe('function');
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/messaging/watch/user%3A'
+        'https://api.example.com/api/v1/messaging/watch/user%3A',
       );
     });
 
@@ -1281,7 +1281,7 @@ describe('MessagingClient', () => {
       await client.watchPrefix('my prefix', { onEvent });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/messaging/watch/my%20prefix'
+        'https://api.example.com/api/v1/messaging/watch/my%20prefix',
       );
     });
 
@@ -1454,7 +1454,7 @@ describe('MessagingClient', () => {
 
     it('should throw ValidationError when onError is not a function', async () => {
       await expect(
-        client.watchPrefix('user:', { onEvent: jest.fn(), onError: 'not-a-function' })
+        client.watchPrefix('user:', { onEvent: jest.fn(), onError: 'not-a-function' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -1506,7 +1506,7 @@ describe('MessagingClient', () => {
         messagesPerSecond: 250,
       });
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/messaging/stats'
+        '/api/v1/messaging/stats',
       );
     });
 
@@ -1615,7 +1615,7 @@ describe('MessagingClient', () => {
         hitRate: 0.85,
       });
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/messaging/dedup-stats'
+        '/api/v1/messaging/dedup-stats',
       );
     });
 

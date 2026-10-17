@@ -27,7 +27,7 @@
     "test:coverage": "jest --coverage --testPathIgnorePatterns=integration",
     "test:integration": "jest --testPathPattern=integration --testTimeout=30000",
     "test:integration:scheduler": "jest --testPathPattern=integration/scheduler --testTimeout=30000",
-    "lint": "eslint src test",
+    "lint": "eslint --max-warnings 0 src test",
     "lint:fix": "eslint src test --fix",
     "format": "prettier --write 'src/**/*.js' 'test/**/*.js'",
     "docs": "jsdoc -c jsdoc.json",

@@ -139,7 +139,7 @@ describe('Validation', () => {
 
     it('should throw for large negative numbers', () => {
       expect(() => nonNegativeInteger(-1000000, 'value')).toThrow(
-        'value must be a non-negative integer'
+        'value must be a non-negative integer',
       );
     });
 
@@ -155,7 +155,7 @@ describe('Validation', () => {
     it('should throw ValidationError for non-number types', () => {
       expect(() => nonNegativeInteger('5', 'field')).toThrow('field must be a non-negative integer');
       expect(() => nonNegativeInteger(true, 'field')).toThrow(
-        'field must be a non-negative integer'
+        'field must be a non-negative integer',
       );
       expect(() => nonNegativeInteger({}, 'field')).toThrow('field must be a non-negative integer');
     });
@@ -166,10 +166,10 @@ describe('Validation', () => {
 
     it('should throw for Infinity', () => {
       expect(() => nonNegativeInteger(Infinity, 'field')).toThrow(
-        'field must be a non-negative integer'
+        'field must be a non-negative integer',
       );
       expect(() => nonNegativeInteger(-Infinity, 'field')).toThrow(
-        'field must be a non-negative integer'
+        'field must be a non-negative integer',
       );
     });
 
@@ -267,7 +267,7 @@ describe('Validation', () => {
 
     it('should throw for array-like objects', () => {
       expect(() => requiredArray({ 0: 'a', 1: 'b', length: 2 }, 'field')).toThrow(
-        'field must be an array'
+        'field must be an array',
       );
     });
 
@@ -339,13 +339,13 @@ describe('Validation', () => {
     it('should throw ValidationError for values not in allowed list', () => {
       expect(() => oneOf('delete', allowedValues, 'permission')).toThrow(ValidationError);
       expect(() => oneOf('delete', allowedValues, 'permission')).toThrow(
-        'permission must be one of: read, write, admin'
+        'permission must be one of: read, write, admin',
       );
     });
 
     it('should throw for case-sensitive mismatch', () => {
       expect(() => oneOf('READ', allowedValues, 'permission')).toThrow(
-        'permission must be one of: read, write, admin'
+        'permission must be one of: read, write, admin',
       );
     });
 
@@ -359,7 +359,7 @@ describe('Validation', () => {
       const boolAllowed = [true, false];
       expect(() => oneOf(true, boolAllowed, 'enabled')).not.toThrow();
       expect(() => oneOf('true', boolAllowed, 'enabled')).toThrow(
-        'enabled must be one of: true, false'
+        'enabled must be one of: true, false',
       );
     });
 
@@ -417,7 +417,7 @@ describe('Validation', () => {
 
     it('should throw for functions', () => {
       expect(() =>
-        requiredObject(() => {}, 'field')
+        requiredObject(() => {}, 'field'),
       ).toThrow('field must be an object');
     });
 
@@ -465,7 +465,7 @@ describe('Validation', () => {
     it('should throw for other typed arrays', () => {
       expect(() => byteArray(new Int8Array([1, 2, 3]), 'data')).toThrow('data must be a byte array');
       expect(() => byteArray(new Uint16Array([1, 2, 3]), 'data')).toThrow(
-        'data must be a byte array'
+        'data must be a byte array',
       );
     });
 

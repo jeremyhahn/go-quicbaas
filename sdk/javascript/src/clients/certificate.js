@@ -499,7 +499,7 @@ class CertificateClient {
       oneOf(
         request.usage,
         [CertificateUsage.CLIENT, CertificateUsage.SERVER, CertificateUsage.BOTH],
-        'request.usage'
+        'request.usage',
       );
     }
 
@@ -507,7 +507,7 @@ class CertificateClient {
       oneOf(
         request.keyAlgorithm,
         [KeyAlgorithm.ECDSA, KeyAlgorithm.RSA],
-        'request.keyAlgorithm'
+        'request.keyAlgorithm',
       );
     }
 
@@ -572,7 +572,7 @@ class CertificateClient {
       oneOf(
         options.usage,
         [CertificateUsage.CLIENT, CertificateUsage.SERVER, CertificateUsage.BOTH],
-        'options.usage'
+        'options.usage',
       );
     }
 

@@ -218,7 +218,7 @@ describe('SealClient', () => {
     it('should throw ValidationError when secretThreshold exceeds secretShares', async () => {
       await expect(client.initialize({ secretShares: 3, secretThreshold: 5 })).rejects.toThrow(ValidationError);
       await expect(client.initialize({ secretShares: 3, secretThreshold: 5 })).rejects.toThrow(
-        'secretThreshold cannot exceed secretShares'
+        'secretThreshold cannot exceed secretShares',
       );
     });
 
@@ -229,7 +229,7 @@ describe('SealClient', () => {
           secretThreshold: 3,
           recoveryShares: 0,
           recoveryThreshold: 2,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -240,7 +240,7 @@ describe('SealClient', () => {
           secretThreshold: 3,
           recoveryShares: 3,
           recoveryThreshold: 0,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -251,7 +251,7 @@ describe('SealClient', () => {
           secretThreshold: 3,
           recoveryShares: 2,
           recoveryThreshold: 3,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
       await expect(
         client.initialize({
@@ -259,7 +259,7 @@ describe('SealClient', () => {
           secretThreshold: 3,
           recoveryShares: 2,
           recoveryThreshold: 3,
-        })
+        }),
       ).rejects.toThrow('recoveryThreshold cannot exceed recoveryShares');
     });
 
@@ -269,14 +269,14 @@ describe('SealClient', () => {
           secretShares: 5,
           secretThreshold: 3,
           recoveryThreshold: 2,
-        })
+        }),
       ).rejects.toThrow(ValidationError);
       await expect(
         client.initialize({
           secretShares: 5,
           secretThreshold: 3,
           recoveryThreshold: 2,
-        })
+        }),
       ).rejects.toThrow('recoveryShares is required when recoveryThreshold is specified');
     });
 
@@ -493,7 +493,7 @@ describe('SealClient', () => {
     it('should throw ValidationError when secretThreshold exceeds secretShares', async () => {
       await expect(client.rekey({ secretShares: 2, secretThreshold: 5 })).rejects.toThrow(ValidationError);
       await expect(client.rekey({ secretShares: 2, secretThreshold: 5 })).rejects.toThrow(
-        'secretThreshold cannot exceed secretShares'
+        'secretThreshold cannot exceed secretShares',
       );
     });
 
@@ -503,14 +503,14 @@ describe('SealClient', () => {
           secretShares: 3,
           secretThreshold: 2,
           existingKeys: 'not-array',
-        })
+        }),
       ).rejects.toThrow(ValidationError);
       await expect(
         client.rekey({
           secretShares: 3,
           secretThreshold: 2,
           existingKeys: {},
-        })
+        }),
       ).rejects.toThrow('existingKeys must be an array');
     });
 
@@ -520,14 +520,14 @@ describe('SealClient', () => {
           secretShares: 3,
           secretThreshold: 2,
           existingKeys: ['key1', ''],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
       await expect(
         client.rekey({
           secretShares: 3,
           secretThreshold: 2,
           existingKeys: ['key1', '  '],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -537,7 +537,7 @@ describe('SealClient', () => {
           secretShares: 3,
           secretThreshold: 2,
           existingKeys: ['key1', 123],
-        })
+        }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -604,37 +604,37 @@ describe('SealClient', () => {
 
     it('should throw ValidationError for non-positive recoveryShares', async () => {
       await expect(client.generateRecoveryKey({ recoveryShares: 0, recoveryThreshold: 2 })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
       await expect(client.generateRecoveryKey({ recoveryShares: -1, recoveryThreshold: 2 })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError for non-positive recoveryThreshold', async () => {
       await expect(client.generateRecoveryKey({ recoveryShares: 3, recoveryThreshold: 0 })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError for non-integer recoveryShares', async () => {
       await expect(client.generateRecoveryKey({ recoveryShares: 3.5, recoveryThreshold: 2 })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError for non-integer recoveryThreshold', async () => {
       await expect(client.generateRecoveryKey({ recoveryShares: 3, recoveryThreshold: 2.5 })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when recoveryThreshold exceeds recoveryShares', async () => {
       await expect(client.generateRecoveryKey({ recoveryShares: 2, recoveryThreshold: 3 })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
       await expect(client.generateRecoveryKey({ recoveryShares: 2, recoveryThreshold: 3 })).rejects.toThrow(
-        'recoveryThreshold cannot exceed recoveryShares'
+        'recoveryThreshold cannot exceed recoveryShares',
       );
     });
 
@@ -642,7 +642,7 @@ describe('SealClient', () => {
       mockTransport.post.mockResolvedValueOnce(null);
 
       await expect(client.generateRecoveryKey({ recoveryShares: 3, recoveryThreshold: 2 })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -831,7 +831,7 @@ describe('SealClient', () => {
       mockTransport.post.mockResolvedValueOnce({ recovery_keys: ['k'] });
 
       await expect(
-        client.generateRecoveryKey({ recoveryShares: 2, recoveryThreshold: 2 })
+        client.generateRecoveryKey({ recoveryShares: 2, recoveryThreshold: 2 }),
       ).resolves.toBeDefined();
     });
 
@@ -849,7 +849,7 @@ describe('SealClient', () => {
           secretShares: 5,
           secretThreshold: 3,
           recoveryShares: 3,
-        })
+        }),
       ).resolves.toBeDefined();
     });
   });

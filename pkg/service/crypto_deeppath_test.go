@@ -43,7 +43,7 @@ func TestCryptoService_Encrypt_WithSafetyTracker_Success(t *testing.T) {
 		Context:   []byte("ctx"),
 	}
 
-	resp, err := svc.Encrypt(context.Background(), req)
+	resp, err := svc.Encrypt(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "tracker-key", resp.KeyID)
@@ -73,14 +73,14 @@ func TestCryptoService_Encrypt_WithSafetyTracker_LimitExceeded(t *testing.T) {
 		KeyID:     "limited-key",
 		Plaintext: []byte("data"),
 	}
-	_, _ = svc.Encrypt(context.Background(), req)
+	_, _ = svc.Encrypt(systemTenantCtx(), req)
 
 	// Second should exceed limit
 	req2 := &EncryptRequest{
 		KeyID:     "limited-key",
 		Plaintext: []byte("more data exceeds limit"),
 	}
-	resp, err := svc.Encrypt(context.Background(), req2)
+	resp, err := svc.Encrypt(systemTenantCtx(), req2)
 	// The error depends on the tracker's enforcement behavior
 	if err != nil {
 		var qbErr *quicbaasErrors.QBError
@@ -107,7 +107,7 @@ func TestCryptoService_Encrypt_CryptoManagerFailure(t *testing.T) {
 		Plaintext: []byte("data"),
 	}
 
-	resp, err := svc.Encrypt(context.Background(), req)
+	resp, err := svc.Encrypt(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	var qbErr *quicbaasErrors.QBError
@@ -135,7 +135,7 @@ func TestCryptoService_Encrypt_WithKMSVersionLookup(t *testing.T) {
 		Plaintext: []byte("secret"),
 	}
 
-	resp, err := svc.Encrypt(context.Background(), req)
+	resp, err := svc.Encrypt(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(5), resp.KeyVersion)
@@ -158,7 +158,7 @@ func TestCryptoService_Decrypt_WithSafetyTracker_Success(t *testing.T) {
 		Ciphertext: append([]byte("crypto:encrypted:"), []byte("secret")...),
 	}
 
-	resp, err := svc.Decrypt(context.Background(), req)
+	resp, err := svc.Decrypt(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "tracker-key", resp.KeyID)
@@ -181,7 +181,7 @@ func TestCryptoService_Decrypt_CryptoManagerFailure(t *testing.T) {
 		Ciphertext: []byte("corrupted-ciphertext-data"),
 	}
 
-	resp, err := svc.Decrypt(context.Background(), req)
+	resp, err := svc.Decrypt(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	var qbErr *quicbaasErrors.QBError
@@ -202,7 +202,7 @@ func TestCryptoService_Decrypt_WithExplicitKeyVersion(t *testing.T) {
 		KeyVersion: 7,
 	}
 
-	resp, err := svc.Decrypt(context.Background(), req)
+	resp, err := svc.Decrypt(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(7), resp.KeyVersion)
@@ -225,7 +225,7 @@ func TestCryptoService_Rewrap_WithSafetyTracker_Success(t *testing.T) {
 		Ciphertext: []byte("old-ciphertext-data-for-rewrap"),
 	}
 
-	resp, err := svc.Rewrap(context.Background(), req)
+	resp, err := svc.Rewrap(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "tracker-rewrap-key", resp.KeyID)
@@ -248,7 +248,7 @@ func TestCryptoService_Rewrap_CryptoManagerFailure(t *testing.T) {
 		Ciphertext: []byte("ciphertext-for-rewrap-failure"),
 	}
 
-	resp, err := svc.Rewrap(context.Background(), req)
+	resp, err := svc.Rewrap(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	var qbErr *quicbaasErrors.QBError
@@ -278,7 +278,7 @@ func TestCryptoService_EncryptBatch_WithSafetyTracker_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.EncryptBatch(context.Background(), req)
+	resp, err := svc.EncryptBatch(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "batch-tracker-key", resp.KeyID)
@@ -303,7 +303,7 @@ func TestCryptoService_EncryptBatch_CryptoManagerFailure(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.EncryptBatch(context.Background(), req)
+	resp, err := svc.EncryptBatch(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	var qbErr *quicbaasErrors.QBError
@@ -332,7 +332,7 @@ func TestCryptoService_DecryptBatch_WithSafetyTracker_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.DecryptBatch(context.Background(), req)
+	resp, err := svc.DecryptBatch(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "batch-decrypt-tracker-key", resp.KeyID)
@@ -357,7 +357,7 @@ func TestCryptoService_DecryptBatch_CryptoManagerFailure(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.DecryptBatch(context.Background(), req)
+	resp, err := svc.DecryptBatch(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	var qbErr *quicbaasErrors.QBError
@@ -382,7 +382,7 @@ func TestCryptoService_GenerateDataKey_WithSafetyTracker_Success(t *testing.T) {
 		KeyID: "kek-tracker-key",
 	}
 
-	resp, err := svc.GenerateDataKey(context.Background(), req)
+	resp, err := svc.GenerateDataKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "kek-tracker-key", resp.KeyID)
@@ -405,7 +405,7 @@ func TestCryptoService_GenerateDataKey_KMSFailure(t *testing.T) {
 		KeyID: "missing-kek",
 	}
 
-	resp, err := svc.GenerateDataKey(context.Background(), req)
+	resp, err := svc.GenerateDataKey(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	var qbErr *quicbaasErrors.QBError
@@ -430,7 +430,7 @@ func TestCryptoService_GenerateWrappedDataKey_WithSafetyTracker_Success(t *testi
 		KeyID: "wrapped-kek-key",
 	}
 
-	resp, err := svc.GenerateWrappedDataKey(context.Background(), req)
+	resp, err := svc.GenerateWrappedDataKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "wrapped-kek-key", resp.KeyID)
@@ -452,7 +452,7 @@ func TestCryptoService_GenerateWrappedDataKey_KMSFailure(t *testing.T) {
 		KeyID: "missing-wrapped-kek",
 	}
 
-	resp, err := svc.GenerateWrappedDataKey(context.Background(), req)
+	resp, err := svc.GenerateWrappedDataKey(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	var qbErr *quicbaasErrors.QBError

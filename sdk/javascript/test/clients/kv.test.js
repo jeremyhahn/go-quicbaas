@@ -81,7 +81,7 @@ describe('KVClient', () => {
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/kv/users/user%3A123',
         { value: { name: 'Alice' } },
-        { query: {} }
+        { query: {} },
       );
     });
 
@@ -94,7 +94,7 @@ describe('KVClient', () => {
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/kv/sessions/session%3Aabc',
         { value: { token: 'xyz' }, ttl: 3600 },
-        { query: {} }
+        { query: {} },
       );
     });
 
@@ -107,7 +107,7 @@ describe('KVClient', () => {
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/kv/config/setting1',
         { value: 'value1' },
-        { query: { write_mode: 'sync' } }
+        { query: { write_mode: 'sync' } },
       );
     });
 
@@ -120,7 +120,7 @@ describe('KVClient', () => {
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/kv/data/key1',
         { value: 100 },
-        { query: { consistency: 'strong' } }
+        { query: { consistency: 'strong' } },
       );
     });
 
@@ -137,7 +137,7 @@ describe('KVClient', () => {
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/kv/cache/item%3A1',
         { value: [1, 2, 3], ttl: 7200 },
-        { query: { write_mode: 'wal_durable', consistency: 'linearizable' } }
+        { query: { write_mode: 'wal_durable', consistency: 'linearizable' } },
       );
     });
 
@@ -209,7 +209,7 @@ describe('KVClient', () => {
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/kv/my%20entity/my%2Fkey',
         expect.any(Object),
-        expect.any(Object)
+        expect.any(Object),
       );
     });
   });
@@ -223,7 +223,7 @@ describe('KVClient', () => {
       expect(result).toEqual({ found: true, value: { name: 'Alice' }, revision: 42 });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/users/user%3A123',
-        { query: {} }
+        { query: {} },
       );
     });
 
@@ -235,7 +235,7 @@ describe('KVClient', () => {
       expect(result).toEqual({ found: true, value: 'old-value', revision: 10 });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/config/setting1',
-        { query: { revision: 10 } }
+        { query: { revision: 10 } },
       );
     });
 
@@ -247,7 +247,7 @@ describe('KVClient', () => {
       expect(result).toEqual({ found: true, value: 'fresh', revision: 100 });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/data/key1',
-        { query: { consistency: 'linearizable' } }
+        { query: { consistency: 'linearizable' } },
       );
     });
 
@@ -262,7 +262,7 @@ describe('KVClient', () => {
       expect(result).toEqual({ found: true, value: 'test', revision: 5 });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/cache/item%3A1',
-        { query: { revision: 5, consistency: 'strong' } }
+        { query: { revision: 5, consistency: 'strong' } },
       );
     });
 
@@ -403,7 +403,7 @@ describe('KVClient', () => {
       });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/users',
-        { query: {} }
+        { query: {} },
       );
     });
 
@@ -423,7 +423,7 @@ describe('KVClient', () => {
       });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/users',
-        { query: { prefix: 'user:' } }
+        { query: { prefix: 'user:' } },
       );
     });
 
@@ -443,7 +443,7 @@ describe('KVClient', () => {
       });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/data',
-        { query: { limit: 2 } }
+        { query: { limit: 2 } },
       );
     });
 
@@ -463,7 +463,7 @@ describe('KVClient', () => {
       });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/data',
-        { query: { cursor: 'cursor123' } }
+        { query: { cursor: 'cursor123' } },
       );
     });
 
@@ -483,7 +483,7 @@ describe('KVClient', () => {
       });
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/config',
-        { query: { consistency: 'eventual' } }
+        { query: { consistency: 'eventual' } },
       );
     });
 
@@ -515,7 +515,7 @@ describe('KVClient', () => {
             cursor: 'start-cursor',
             consistency: 'strong',
           },
-        }
+        },
       );
     });
 
@@ -574,7 +574,7 @@ describe('KVClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/kv/my%20entity',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
   });
@@ -606,7 +606,7 @@ describe('KVClient', () => {
       expect(watcher.closed).toBe(false);
       expect(typeof watcher.close).toBe('function');
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/user%3A123/watch'
+        'https://api.example.com/api/v1/kv/users/user%3A123/watch',
       );
     });
 
@@ -616,7 +616,7 @@ describe('KVClient', () => {
       await client.watch('users', 'user:123', { onEvent, startRevision: 100 });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/user%3A123/watch?start_revision=100'
+        'https://api.example.com/api/v1/kv/users/user%3A123/watch?start_revision=100',
       );
     });
 
@@ -626,7 +626,7 @@ describe('KVClient', () => {
       await client.watch('users', 'user:123', { onEvent, prevKV: true });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/user%3A123/watch?prev_kv=true'
+        'https://api.example.com/api/v1/kv/users/user%3A123/watch?prev_kv=true',
       );
     });
 
@@ -636,7 +636,7 @@ describe('KVClient', () => {
       await client.watch('users', 'user:123', { onEvent, progressNotify: true });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/user%3A123/watch?progress_notify=true'
+        'https://api.example.com/api/v1/kv/users/user%3A123/watch?progress_notify=true',
       );
     });
 
@@ -646,7 +646,7 @@ describe('KVClient', () => {
       await client.watch('users', 'user:123', { onEvent, filterPut: true });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/user%3A123/watch?filter_put=true'
+        'https://api.example.com/api/v1/kv/users/user%3A123/watch?filter_put=true',
       );
     });
 
@@ -656,7 +656,7 @@ describe('KVClient', () => {
       await client.watch('users', 'user:123', { onEvent, filterDelete: true });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/user%3A123/watch?filter_delete=true'
+        'https://api.example.com/api/v1/kv/users/user%3A123/watch?filter_delete=true',
       );
     });
 
@@ -673,7 +673,7 @@ describe('KVClient', () => {
       });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/user%3A123/watch?start_revision=50&prev_kv=true&progress_notify=true&filter_put=true&filter_delete=true'
+        'https://api.example.com/api/v1/kv/users/user%3A123/watch?start_revision=50&prev_kv=true&progress_notify=true&filter_put=true&filter_delete=true',
       );
     });
 
@@ -725,7 +725,7 @@ describe('KVClient', () => {
       mockEventSource.onmessage({ data: eventData });
 
       expect(onEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'PUT' })
+        expect.objectContaining({ type: 'PUT' }),
       );
     });
 
@@ -746,7 +746,7 @@ describe('KVClient', () => {
       expect(onEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/),
-        })
+        }),
       );
     });
 
@@ -891,19 +891,19 @@ describe('KVClient', () => {
 
     it('should throw ValidationError when onError is not a function', async () => {
       await expect(
-        client.watch('users', 'key1', { onEvent: jest.fn(), onError: 'not-a-function' })
+        client.watch('users', 'key1', { onEvent: jest.fn(), onError: 'not-a-function' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when startRevision is negative', async () => {
       await expect(
-        client.watch('users', 'key1', { onEvent: jest.fn(), startRevision: -1 })
+        client.watch('users', 'key1', { onEvent: jest.fn(), startRevision: -1 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when startRevision is not an integer', async () => {
       await expect(
-        client.watch('users', 'key1', { onEvent: jest.fn(), startRevision: 1.5 })
+        client.watch('users', 'key1', { onEvent: jest.fn(), startRevision: 1.5 }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -914,7 +914,7 @@ describe('KVClient', () => {
 
       expect(watcher).toBeDefined();
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/key1/watch?start_revision=0'
+        'https://api.example.com/api/v1/kv/users/key1/watch?start_revision=0',
       );
     });
 
@@ -955,7 +955,7 @@ describe('KVClient', () => {
       expect(watcher).toBeDefined();
       expect(watcher.closed).toBe(false);
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/watch?prefix=admin%3A'
+        'https://api.example.com/api/v1/kv/users/watch?prefix=admin%3A',
       );
     });
 
@@ -972,7 +972,7 @@ describe('KVClient', () => {
       });
 
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/kv/users/watch?prefix=admin%3A&start_revision=100&prev_kv=true&progress_notify=true'
+        'https://api.example.com/api/v1/kv/users/watch?prefix=admin%3A&start_revision=100&prev_kv=true&progress_notify=true',
       );
     });
 
@@ -995,31 +995,31 @@ describe('KVClient', () => {
         expect.objectContaining({
           key: 'admin:user1',
           value: { role: 'admin' },
-        })
+        }),
       );
     });
 
     it('should throw ValidationError when entityType is empty', async () => {
       await expect(
-        client.watchPrefix('', 'prefix:', { onEvent: jest.fn() })
+        client.watchPrefix('', 'prefix:', { onEvent: jest.fn() }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when entityType is null', async () => {
       await expect(
-        client.watchPrefix(null, 'prefix:', { onEvent: jest.fn() })
+        client.watchPrefix(null, 'prefix:', { onEvent: jest.fn() }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when prefix is empty', async () => {
       await expect(
-        client.watchPrefix('users', '', { onEvent: jest.fn() })
+        client.watchPrefix('users', '', { onEvent: jest.fn() }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when prefix is null', async () => {
       await expect(
-        client.watchPrefix('users', null, { onEvent: jest.fn() })
+        client.watchPrefix('users', null, { onEvent: jest.fn() }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -1029,7 +1029,7 @@ describe('KVClient', () => {
 
     it('should throw ValidationError when onEvent is not a function', async () => {
       await expect(
-        client.watchPrefix('users', 'prefix:', { onEvent: 'not-a-function' })
+        client.watchPrefix('users', 'prefix:', { onEvent: 'not-a-function' }),
       ).rejects.toThrow(ValidationError);
     });
   });

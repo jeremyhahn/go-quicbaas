@@ -63,7 +63,7 @@ describe('KMSClient', () => {
       expect(result.algorithm).toBe('AES-256-GCM');
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/kms/keys',
-        { name: 'my-key', algorithm: 'AES-256-GCM' }
+        { name: 'my-key', algorithm: 'AES-256-GCM' },
       );
     });
 
@@ -96,7 +96,7 @@ describe('KMSClient', () => {
           metadata: { team: 'security' },
           rotatable: true,
           rotation_period_days: 90,
-        }
+        },
       );
     });
 
@@ -218,7 +218,7 @@ describe('KMSClient', () => {
           name: 'imported-key',
           algorithm: 'AES-256-GCM',
           key_material: 'base64encodedkey==',
-        }
+        },
       );
     });
 
@@ -249,7 +249,7 @@ describe('KMSClient', () => {
           usage: ['ENCRYPT', 'DECRYPT'],
           description: 'Imported from HSM',
           metadata: { source: 'hsm' },
-        }
+        },
       );
     });
 
@@ -693,7 +693,7 @@ describe('KMSClient', () => {
           name: 'updated-name',
           description: 'Updated description',
           custom_metadata: { env: 'staging' },
-        }
+        },
       );
     });
 
@@ -722,7 +722,7 @@ describe('KMSClient', () => {
         {
           rotatable: true,
           rotation_period_days: 60,
-        }
+        },
       );
     });
 
@@ -788,7 +788,7 @@ describe('KMSClient', () => {
       expect(result.newStatus).toBe('DISABLED');
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/kms/keys/key-123/status',
-        { status: 'DISABLED' }
+        { status: 'DISABLED' },
       );
     });
 
@@ -864,7 +864,7 @@ describe('KMSClient', () => {
               conditions: undefined,
             },
           ],
-        }
+        },
       );
     });
 
@@ -896,7 +896,7 @@ describe('KMSClient', () => {
               conditions: { ip: { eq: '192.168.1.1' } },
             }),
           ]),
-        })
+        }),
       );
     });
 

@@ -116,37 +116,37 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError for invalid distanceMetric', async () => {
       await expect(
-        client.createNamespace('embeddings', 768, { distanceMetric: 'invalid' })
+        client.createNamespace('embeddings', 768, { distanceMetric: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid indexType', async () => {
       await expect(
-        client.createNamespace('embeddings', 768, { indexType: 'invalid' })
+        client.createNamespace('embeddings', 768, { indexType: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when indexParams is not an object', async () => {
       await expect(
-        client.createNamespace('embeddings', 768, { indexParams: 'invalid' })
+        client.createNamespace('embeddings', 768, { indexParams: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when indexParams is an array', async () => {
       await expect(
-        client.createNamespace('embeddings', 768, { indexParams: [1, 2, 3] })
+        client.createNamespace('embeddings', 768, { indexParams: [1, 2, 3] }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid indexParams.m', async () => {
       await expect(
-        client.createNamespace('embeddings', 768, { indexParams: { m: -1 } })
+        client.createNamespace('embeddings', 768, { indexParams: { m: -1 } }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid indexParams.efConstruction', async () => {
       await expect(
-        client.createNamespace('embeddings', 768, { indexParams: { efConstruction: 0 } })
+        client.createNamespace('embeddings', 768, { indexParams: { efConstruction: 0 } }),
       ).rejects.toThrow(ValidationError);
     });
   });
@@ -308,7 +308,7 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError when id is empty', async () => {
       await expect(client.upsertVector('embeddings', '', validVector)).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -318,22 +318,22 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError when vector is not an array', async () => {
       await expect(client.upsertVector('embeddings', 'vec-1', 'not-array')).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when vector contains non-finite numbers', async () => {
       await expect(
-        client.upsertVector('embeddings', 'vec-1', [0.1, NaN, 0.3])
+        client.upsertVector('embeddings', 'vec-1', [0.1, NaN, 0.3]),
       ).rejects.toThrow(ValidationError);
       await expect(
-        client.upsertVector('embeddings', 'vec-1', [0.1, Infinity, 0.3])
+        client.upsertVector('embeddings', 'vec-1', [0.1, Infinity, 0.3]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when vector contains non-numbers', async () => {
       await expect(
-        client.upsertVector('embeddings', 'vec-1', [0.1, 'string', 0.3])
+        client.upsertVector('embeddings', 'vec-1', [0.1, 'string', 0.3]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -517,7 +517,7 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError when vector item is not an object', async () => {
       await expect(client.batchUpsert('embeddings', ['not-object'])).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -527,7 +527,7 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError when vector id is missing', async () => {
       await expect(
-        client.batchUpsert('embeddings', [{ vector: [0.1, 0.2, 0.3] }])
+        client.batchUpsert('embeddings', [{ vector: [0.1, 0.2, 0.3] }]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -537,21 +537,21 @@ describe('VectorClient', () => {
         { id: 'vec-2', vector: [0.4, 0.5] },
       ];
       await expect(client.batchUpsert('embeddings', mismatchedVectors)).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when metadata is not an object', async () => {
       const invalidMetadata = [{ id: 'vec-1', vector: [0.1, 0.2, 0.3], metadata: 'invalid' }];
       await expect(client.batchUpsert('embeddings', invalidMetadata)).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when metadata is an array', async () => {
       const invalidMetadata = [{ id: 'vec-1', vector: [0.1, 0.2, 0.3], metadata: [1, 2] }];
       await expect(client.batchUpsert('embeddings', invalidMetadata)).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
   });
@@ -617,31 +617,31 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError when k is not positive', async () => {
       await expect(
-        client.searchSimilar('embeddings', queryVector, { k: 0 })
+        client.searchSimilar('embeddings', queryVector, { k: 0 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when efSearch is not positive', async () => {
       await expect(
-        client.searchSimilar('embeddings', queryVector, { efSearch: -1 })
+        client.searchSimilar('embeddings', queryVector, { efSearch: -1 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when nprobe is not positive', async () => {
       await expect(
-        client.searchSimilar('embeddings', queryVector, { nprobe: 0 })
+        client.searchSimilar('embeddings', queryVector, { nprobe: 0 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when filter is not an object', async () => {
       await expect(
-        client.searchSimilar('embeddings', queryVector, { filter: 'invalid' })
+        client.searchSimilar('embeddings', queryVector, { filter: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when filter is an array', async () => {
       await expect(
-        client.searchSimilar('embeddings', queryVector, { filter: [1, 2] })
+        client.searchSimilar('embeddings', queryVector, { filter: [1, 2] }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -736,7 +736,7 @@ describe('VectorClient', () => {
           limit: 100,
           offset: 0,
           includeVectors: false,
-        }
+        },
       );
       expect(result.results).toHaveLength(1);
     });
@@ -757,13 +757,13 @@ describe('VectorClient', () => {
           limit: 50,
           offset: 10,
           includeVectors: true,
-        }
+        },
       );
     });
 
     it('should throw ValidationError when namespace is empty', async () => {
       await expect(client.searchByMetadata('', { category: 'science' })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -773,19 +773,19 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError when filter is not an object', async () => {
       await expect(client.searchByMetadata('embeddings', 'invalid')).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when limit is not positive', async () => {
       await expect(
-        client.searchByMetadata('embeddings', { cat: 'A' }, { limit: 0 })
+        client.searchByMetadata('embeddings', { cat: 'A' }, { limit: 0 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when offset is negative', async () => {
       await expect(
-        client.searchByMetadata('embeddings', { cat: 'A' }, { offset: -1 })
+        client.searchByMetadata('embeddings', { cat: 'A' }, { offset: -1 }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -851,31 +851,31 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError when filter is null', async () => {
       await expect(client.hybridSearch('embeddings', queryVector, null)).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when k is not positive', async () => {
       await expect(
-        client.hybridSearch('embeddings', queryVector, filter, { k: 0 })
+        client.hybridSearch('embeddings', queryVector, filter, { k: 0 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when alpha is less than 0', async () => {
       await expect(
-        client.hybridSearch('embeddings', queryVector, filter, { alpha: -0.1 })
+        client.hybridSearch('embeddings', queryVector, filter, { alpha: -0.1 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when alpha is greater than 1', async () => {
       await expect(
-        client.hybridSearch('embeddings', queryVector, filter, { alpha: 1.5 })
+        client.hybridSearch('embeddings', queryVector, filter, { alpha: 1.5 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when alpha is not a number', async () => {
       await expect(
-        client.hybridSearch('embeddings', queryVector, filter, { alpha: 'high' })
+        client.hybridSearch('embeddings', queryVector, filter, { alpha: 'high' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -903,7 +903,7 @@ describe('VectorClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/vector/embeddings/index/rebuild',
-        { async: true }
+        { async: true },
       );
       expect(result.jobId).toBe('job-123');
       expect(result.status).toBe('pending');
@@ -924,7 +924,7 @@ describe('VectorClient', () => {
           async: false,
           indexType: 'hnsw',
           indexParams: { m: 32, efConstruction: 400 },
-        }
+        },
       );
     });
 
@@ -934,19 +934,19 @@ describe('VectorClient', () => {
 
     it('should throw ValidationError for invalid indexType', async () => {
       await expect(
-        client.rebuildIndex('embeddings', { indexType: 'invalid' })
+        client.rebuildIndex('embeddings', { indexType: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when indexParams is not an object', async () => {
       await expect(
-        client.rebuildIndex('embeddings', { indexParams: 'invalid' })
+        client.rebuildIndex('embeddings', { indexParams: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when indexParams is an array', async () => {
       await expect(
-        client.rebuildIndex('embeddings', { indexParams: [1, 2] })
+        client.rebuildIndex('embeddings', { indexParams: [1, 2] }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -992,7 +992,7 @@ describe('VectorClient', () => {
       const result = await client.getRebuildProgress('embeddings');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/vector/embeddings/index/rebuild/progress'
+        '/api/v1/vector/embeddings/index/rebuild/progress',
       );
       expect(result.status).toBe('running');
       expect(result.progress).toBe(45);

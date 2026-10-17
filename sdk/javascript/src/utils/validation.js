@@ -101,7 +101,7 @@ export function oneOf(value, allowed, name) {
   if (value !== undefined && value !== null && !allowed.includes(value)) {
     throw new ValidationError(
       `${name} must be one of: ${allowed.join(', ')}`,
-      name
+      name,
     );
   }
 }

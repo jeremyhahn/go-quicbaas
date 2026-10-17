@@ -54,7 +54,6 @@ export { default as SecretsClient, SecretStatus, RotationInterval } from './clie
 export { default as CryptoClient, HashAlgorithm, SignatureAlgorithm, KeyDerivationFunction } from './clients/crypto.js';
 export { default as DynamicSecretsClient, CredentialType } from './clients/dynamicSecrets.js';
 export { default as CertificateClient, CertificateUsage, KeyAlgorithm as CertKeyAlgorithm, TLSVersion } from './clients/certificate.js';
-export { default as ClusterDEKClient, NodeDEKSyncStatus, ReencryptionState, RecoveryMethod } from './clients/clusterDek.js';
 export { default as IAMClient, TenantStatus, UserStatus, ExportFormat, AuditEventType } from './clients/iam.js';
 export { default as VectorClient, DistanceMetric, IndexType } from './clients/vector.js';
 export { default as TimeSeriesClient, Aggregation, Interval } from './clients/timeSeries.js';

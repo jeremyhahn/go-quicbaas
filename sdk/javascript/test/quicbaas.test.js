@@ -140,12 +140,6 @@ describe('QuicBaaS', () => {
       expect(db.certificate()).toBe(cert);
     });
 
-    it('should return ClusterDEK client', () => {
-      const dek = db.clusterDEK();
-      expect(dek).toBeDefined();
-      expect(db.clusterDEK()).toBe(dek);
-    });
-
     // IAM
     it('should return IAM client', () => {
       const iam = db.iam();

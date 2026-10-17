@@ -13,9 +13,7 @@ import { ValidationError } from '../errors/index.js';
 import {
   required,
   requiredString,
-  requiredObject,
   positiveInteger,
-  nonNegativeInteger,
   nonEmptyArray,
 } from '../utils/validation.js';
 
@@ -618,7 +616,7 @@ class ClusterClient {
       if (!replica || typeof replica !== 'object') {
         throw new ValidationError(
           `replica at index ${index} must be an object`,
-          `replicas[${index}]`
+          `replicas[${index}]`,
         );
       }
 
@@ -627,7 +625,7 @@ class ClusterClient {
       if (!replica.address || typeof replica.address !== 'string' || replica.address.trim() === '') {
         throw new ValidationError(
           `replica at index ${index} requires an address`,
-          `replicas[${index}].address`
+          `replicas[${index}].address`,
         );
       }
 
@@ -636,7 +634,7 @@ class ClusterClient {
       if (seenNodeIds.has(replica.nodeId)) {
         throw new ValidationError(
           `duplicate nodeId ${replica.nodeId} in replicas`,
-          `replicas[${index}].nodeId`
+          `replicas[${index}].nodeId`,
         );
       }
       seenNodeIds.add(replica.nodeId);
@@ -644,7 +642,7 @@ class ClusterClient {
       if (seenAddresses.has(replica.address)) {
         throw new ValidationError(
           `duplicate address ${replica.address} in replicas`,
-          `replicas[${index}].address`
+          `replicas[${index}].address`,
         );
       }
       seenAddresses.add(replica.address);
@@ -663,7 +661,7 @@ class ClusterClient {
       if (!validStrategies.includes(options.strategy)) {
         throw new ValidationError(
           `strategy must be one of: ${validStrategies.join(', ')}`,
-          'options.strategy'
+          'options.strategy',
         );
       }
     }

@@ -125,7 +125,7 @@ describe('CertificateClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/certificate/issue',
-        { common_name: 'test.example.com' }
+        { common_name: 'test.example.com' },
       );
       expect(result.certificatePem).toBe(mockResponse.certificate_pem);
       expect(result.privateKeyPem).toBe(mockResponse.private_key_pem);
@@ -181,7 +181,7 @@ describe('CertificateClient', () => {
           key_algorithm: 'ecdsa',
           key_size: 256,
           metadata: { environment: 'production' },
-        })
+        }),
       );
     });
 
@@ -319,7 +319,7 @@ describe('CertificateClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/certificate/issue',
-        { common_name: 'test.example.com' }
+        { common_name: 'test.example.com' },
       );
     });
 
@@ -335,7 +335,7 @@ describe('CertificateClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/certificate/issue',
-        { common_name: 'test.example.com' }
+        { common_name: 'test.example.com' },
       );
     });
 
@@ -388,7 +388,7 @@ describe('CertificateClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/certificate/sign',
-        { csr_pem: validCSR }
+        { csr_pem: validCSR },
       );
       expect(result.certificatePem).toBe(mockResponse.certificate_pem);
       expect(result.caCertificatePem).toBe(mockResponse.ca_certificate_pem);
@@ -414,7 +414,7 @@ describe('CertificateClient', () => {
           csr_pem: validCSR,
           validity_days: 180,
           usage: 'client',
-        }
+        },
       );
     });
 
@@ -496,7 +496,7 @@ describe('CertificateClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/certificate/revoke',
-        { serial_number: validSerialNumber }
+        { serial_number: validSerialNumber },
       );
       expect(result.success).toBe(true);
     });
@@ -563,7 +563,7 @@ describe('CertificateClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/certificate/verify',
-        { certificate_pem: validCertPem }
+        { certificate_pem: validCertPem },
       );
       expect(result.valid).toBe(true);
       expect(result.errorMessage).toBeUndefined();
@@ -703,7 +703,7 @@ describe('CertificateClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/certificate/tls-config',
-        {}
+        {},
       );
       expect(result.serverName).toBe(mockResponse.server_name);
       expect(result.requireClientCert).toBe(mockResponse.require_client_cert);
@@ -730,7 +730,7 @@ describe('CertificateClient', () => {
           require_client_cert: true,
           is_server: true,
           min_version: '1.3',
-        }
+        },
       );
     });
 
@@ -741,7 +741,7 @@ describe('CertificateClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/certificate/tls-config',
-        { server_name: 'test.example.com' }
+        { server_name: 'test.example.com' },
       );
     });
 

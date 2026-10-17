@@ -256,25 +256,25 @@ describe('IAMClient', () => {
 
     it('should throw ValidationError when tenantId is empty', async () => {
       await expect(
-        client.createUser('', 'alice', { email: 'a@b.com', password: 'x' })
+        client.createUser('', 'alice', { email: 'a@b.com', password: 'x' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when username is empty', async () => {
       await expect(
-        client.createUser('tenant-1', '', { email: 'a@b.com', password: 'x' })
+        client.createUser('tenant-1', '', { email: 'a@b.com', password: 'x' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when email is missing', async () => {
       await expect(
-        client.createUser('tenant-1', 'alice', { password: 'x' })
+        client.createUser('tenant-1', 'alice', { password: 'x' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when password is missing', async () => {
       await expect(
-        client.createUser('tenant-1', 'alice', { email: 'a@b.com' })
+        client.createUser('tenant-1', 'alice', { email: 'a@b.com' }),
       ).rejects.toThrow(ValidationError);
     });
   });
@@ -329,13 +329,13 @@ describe('IAMClient', () => {
 
     it('should throw ValidationError when tenantId is empty', async () => {
       await expect(client.updateUser('', 'user-1', { email: 'x@y.com' })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when userId is empty', async () => {
       await expect(client.updateUser('tenant-1', '', { email: 'x@y.com' })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -475,25 +475,25 @@ describe('IAMClient', () => {
           description: 'Updated description',
           roles: ['new-role'],
           metadata: { updated: true },
-        }
+        },
       );
     });
 
     it('should throw ValidationError when tenantId is empty', async () => {
       await expect(client.updateGroup('', 'group-1', { name: 'x' })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when groupId is empty', async () => {
       await expect(client.updateGroup('tenant-1', '', { name: 'x' })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
     it('should throw ValidationError when updates is null', async () => {
       await expect(client.updateGroup('tenant-1', 'group-1', null)).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
   });
@@ -505,7 +505,7 @@ describe('IAMClient', () => {
       await client.deleteGroup('tenant-1', 'group-1');
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
-        '/api/v1/iam/tenants/tenant-1/groups/group-1'
+        '/api/v1/iam/tenants/tenant-1/groups/group-1',
       );
     });
 
@@ -617,7 +617,7 @@ describe('IAMClient', () => {
 
     it('should throw ValidationError when roleId is empty', async () => {
       await expect(client.updateRole('tenant-1', '', { name: 'x' })).rejects.toThrow(
-        ValidationError
+        ValidationError,
       );
     });
 
@@ -754,7 +754,7 @@ describe('IAMClient', () => {
 
     it('should throw ValidationError when tenantId is empty', async () => {
       await expect(
-        client.setPolicy('', { name: 'p', rules: [{ r: 1 }] })
+        client.setPolicy('', { name: 'p', rules: [{ r: 1 }] }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -764,19 +764,19 @@ describe('IAMClient', () => {
 
     it('should throw ValidationError when policy.name is empty', async () => {
       await expect(
-        client.setPolicy('tenant-1', { name: '', rules: [{ r: 1 }] })
+        client.setPolicy('tenant-1', { name: '', rules: [{ r: 1 }] }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when policy.rules is not an array', async () => {
       await expect(
-        client.setPolicy('tenant-1', { name: 'p', rules: 'invalid' })
+        client.setPolicy('tenant-1', { name: 'p', rules: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when policy.rules is empty', async () => {
       await expect(
-        client.setPolicy('tenant-1', { name: 'p', rules: [] })
+        client.setPolicy('tenant-1', { name: 'p', rules: [] }),
       ).rejects.toThrow(ValidationError);
     });
   });
@@ -797,7 +797,7 @@ describe('IAMClient', () => {
       const result = await client.getPolicy('tenant-1', 'access-policy');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/iam/tenants/tenant-1/policies/access-policy'
+        '/api/v1/iam/tenants/tenant-1/policies/access-policy',
       );
       expect(result.name).toBe('access-policy');
     });
@@ -808,7 +808,7 @@ describe('IAMClient', () => {
       await client.getPolicy('tenant-1', 'policy/name');
 
       expect(mockTransport.get).toHaveBeenCalledWith(
-        '/api/v1/iam/tenants/tenant-1/policies/policy%2Fname'
+        '/api/v1/iam/tenants/tenant-1/policies/policy%2Fname',
       );
     });
 
@@ -1090,7 +1090,7 @@ describe('IAMClient', () => {
           include_categories: undefined,
           exclude_categories: undefined,
           notify_email: undefined,
-        }
+        },
       );
       expect(result.requestId).toBe('export-1');
     });
@@ -1112,7 +1112,7 @@ describe('IAMClient', () => {
           include_categories: ['profile', 'activity'],
           exclude_categories: ['logs'],
           notify_email: 'user@example.com',
-        }
+        },
       );
     });
 
@@ -1142,7 +1142,7 @@ describe('IAMClient', () => {
           retain_categories: undefined,
           scheduled_for: undefined,
           notify_email: undefined,
-        }
+        },
       );
       expect(result.requestId).toBe('delete-1');
     });
@@ -1166,7 +1166,7 @@ describe('IAMClient', () => {
           retain_categories: ['legal'],
           scheduled_for: '2025-02-01T00:00:00Z',
           notify_email: 'admin@example.com',
-        }
+        },
       );
     });
 

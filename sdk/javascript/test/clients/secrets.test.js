@@ -58,7 +58,7 @@ describe('SecretsClient', () => {
       expect(result.version).toBe(1);
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/secrets/app/db/credentials',
-        { data: { username: 'admin', password: 'secret123' } }
+        { data: { username: 'admin', password: 'secret123' } },
       );
     });
 
@@ -68,7 +68,7 @@ describe('SecretsClient', () => {
       const result = await client.storeSecret(
         'app/api-key',
         { key: 'abc123' },
-        { metadata: { owner: 'team-a', env: 'prod' } }
+        { metadata: { owner: 'team-a', env: 'prod' } },
       );
 
       expect(result.version).toBe(2);
@@ -77,7 +77,7 @@ describe('SecretsClient', () => {
         {
           data: { key: 'abc123' },
           metadata: { owner: 'team-a', env: 'prod' },
-        }
+        },
       );
     });
 
@@ -88,7 +88,7 @@ describe('SecretsClient', () => {
 
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/secrets/app/special%20chars/key',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
 
@@ -189,7 +189,7 @@ describe('SecretsClient', () => {
       expect(result.version).toBe(2);
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/secrets/app/db/credentials',
-        { query: { version: 2 } }
+        { query: { version: 2 } },
       );
     });
 
@@ -359,7 +359,7 @@ describe('SecretsClient', () => {
       expect(result.version).toBe(4);
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/secrets/app/db/credentials/rollback',
-        { version: 2 }
+        { version: 2 },
       );
     });
 
@@ -401,7 +401,7 @@ describe('SecretsClient', () => {
       expect(result.rotatedAt).toBe('2024-01-05T00:00:00Z');
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/secrets/app/db/credentials/rotate',
-        {}
+        {},
       );
     });
 
@@ -418,7 +418,7 @@ describe('SecretsClient', () => {
       expect(result.version).toBe(6);
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/secrets/app/db/credentials/rotate',
-        { data: { username: 'new-admin', password: 'newpass123' } }
+        { data: { username: 'new-admin', password: 'newpass123' } },
       );
     });
 
@@ -434,7 +434,7 @@ describe('SecretsClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/secrets/app/db/credentials/rotate',
-        { metadata: { rotated_by: 'system' } }
+        { metadata: { rotated_by: 'system' } },
       );
     });
 
@@ -492,7 +492,7 @@ describe('SecretsClient', () => {
       expect(result.interval).toBe('monthly');
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/secrets/app/db/credentials/rotation-policy',
-        { enabled: true, interval: 'monthly' }
+        { enabled: true, interval: 'monthly' },
       );
     });
 
@@ -512,7 +512,7 @@ describe('SecretsClient', () => {
       expect(result.intervalSeconds).toBe(86400 * 45);
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/secrets/app/secret/rotation-policy',
-        { enabled: true, interval: 'custom', interval_seconds: 86400 * 45 }
+        { enabled: true, interval: 'custom', interval_seconds: 86400 * 45 },
       );
     });
 
@@ -594,7 +594,7 @@ describe('SecretsClient', () => {
       expect(result.status).toBe('disabled');
       expect(mockTransport.patch).toHaveBeenCalledWith(
         '/api/v1/secrets/app/secret/status',
-        { status: 'disabled' }
+        { status: 'disabled' },
       );
     });
 
@@ -715,7 +715,7 @@ describe('SecretsClient', () => {
       expect(watcher.closed).toBe(false);
       expect(typeof watcher.close).toBe('function');
       expect(global.EventSource).toHaveBeenCalledWith(
-        'https://api.example.com/api/v1/secrets/watch?prefix=app%2F'
+        'https://api.example.com/api/v1/secrets/watch?prefix=app%2F',
       );
     });
 
@@ -820,7 +820,6 @@ describe('SecretsClient', () => {
       let messageHandler;
 
       global.EventSource = jest.fn().mockImplementation(() => ({
-        onmessage: null,
         onerror: null,
         close: jest.fn(),
         set onmessage(handler) {

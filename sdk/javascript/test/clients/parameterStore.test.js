@@ -72,7 +72,7 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/parameters/app/config/db/host',
-        { query: {} }
+        { query: {} },
       );
       expect(result.parameter.path).toBe('/app/config/db/host');
       expect(result.parameter.value).toBe('localhost');
@@ -87,7 +87,7 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/parameters/secret',
-        { query: { with_decryption: true } }
+        { query: { with_decryption: true } },
       );
     });
 
@@ -98,7 +98,7 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/parameters/secret',
-        { query: { with_decryption: false } }
+        { query: { with_decryption: false } },
       );
     });
 
@@ -157,7 +157,7 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/parameters/app/my-config_v2',
-        expect.any(Object)
+        expect.any(Object),
       );
     });
   });
@@ -179,7 +179,7 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.put).toHaveBeenCalledWith(
         '/api/v1/parameters/app/config/db/host',
-        { value: 'localhost' }
+        { value: 'localhost' },
       );
       expect(result.path).toBe('/app/config/db/host');
       expect(result.created).toBe(true);
@@ -209,7 +209,7 @@ describe('ParameterStoreClient', () => {
           ttl_seconds: 3600,
           kms_key_id: 'alias/my-key',
           audit_enabled: true,
-        }
+        },
       );
     });
 
@@ -224,7 +224,7 @@ describe('ParameterStoreClient', () => {
         expect.any(String),
         expect.objectContaining({
           type: ParameterType.STRING_LIST,
-        })
+        }),
       );
     });
 
@@ -239,61 +239,61 @@ describe('ParameterStoreClient', () => {
 
     it('should throw ValidationError for invalid type', async () => {
       await expect(
-        client.setParameter('/app/config', 'value', { type: 'invalidType' })
+        client.setParameter('/app/config', 'value', { type: 'invalidType' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError when secureString lacks kmsKeyId', async () => {
       await expect(
-        client.setParameter('/app/secret', 'value', { type: ParameterType.SECURE_STRING })
+        client.setParameter('/app/secret', 'value', { type: ParameterType.SECURE_STRING }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for non-string description', async () => {
       await expect(
-        client.setParameter('/app/config', 'value', { description: 123 })
+        client.setParameter('/app/config', 'value', { description: 123 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid tags', async () => {
       await expect(
-        client.setParameter('/app/config', 'value', { tags: 'not-an-object' })
+        client.setParameter('/app/config', 'value', { tags: 'not-an-object' }),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.setParameter('/app/config', 'value', { tags: ['array'] })
+        client.setParameter('/app/config', 'value', { tags: ['array'] }),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.setParameter('/app/config', 'value', { tags: { key: 123 } })
+        client.setParameter('/app/config', 'value', { tags: { key: 123 } }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for non-boolean overwrite', async () => {
       await expect(
-        client.setParameter('/app/config', 'value', { overwrite: 'true' })
+        client.setParameter('/app/config', 'value', { overwrite: 'true' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid ttl', async () => {
       await expect(
-        client.setParameter('/app/config', 'value', { ttl: -1 })
+        client.setParameter('/app/config', 'value', { ttl: -1 }),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.setParameter('/app/config', 'value', { ttl: 'invalid' })
+        client.setParameter('/app/config', 'value', { ttl: 'invalid' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for non-string kmsKeyId', async () => {
       await expect(
-        client.setParameter('/app/config', 'value', { kmsKeyId: 123 })
+        client.setParameter('/app/config', 'value', { kmsKeyId: 123 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for non-boolean auditEnabled', async () => {
       await expect(
-        client.setParameter('/app/config', 'value', { auditEnabled: 'true' })
+        client.setParameter('/app/config', 'value', { auditEnabled: 'true' }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -314,7 +314,7 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.put).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ ttl_seconds: 0 })
+        expect.objectContaining({ ttl_seconds: 0 }),
       );
     });
   });
@@ -335,7 +335,7 @@ describe('ParameterStoreClient', () => {
       const result = await client.deleteParameter('/app/config/deprecated');
 
       expect(mockTransport.delete).toHaveBeenCalledWith(
-        '/api/v1/parameters/app/config/deprecated'
+        '/api/v1/parameters/app/config/deprecated',
       );
       expect(result.path).toBe('/app/config/deprecated');
       expect(result.deleted).toBe(true);
@@ -385,7 +385,7 @@ describe('ParameterStoreClient', () => {
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/parameters/batch/get',
         { paths: ['/app/config/db/host', '/app/config/db/port'] },
-        { query: {} }
+        { query: {} },
       );
       expect(result.parameters).toHaveLength(2);
       expect(result.errors).toEqual({});
@@ -399,7 +399,7 @@ describe('ParameterStoreClient', () => {
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/parameters/batch/get',
         { paths: ['/secret/key'] },
-        { query: { with_decryption: true } }
+        { query: { with_decryption: true } },
       );
     });
 
@@ -428,7 +428,7 @@ describe('ParameterStoreClient', () => {
 
     it('should throw ValidationError for invalid paths', async () => {
       await expect(
-        client.getParameters(['/valid/path', 'invalid-path'])
+        client.getParameters(['/valid/path', 'invalid-path']),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -470,7 +470,7 @@ describe('ParameterStoreClient', () => {
             { path: '/app/config/db/host', value: 'localhost' },
             { path: '/app/config/db/port', value: '5432' },
           ],
-        }
+        },
       );
       expect(result.results).toHaveLength(2);
       expect(result.results[0].success).toBe(true);
@@ -507,7 +507,7 @@ describe('ParameterStoreClient', () => {
               audit_enabled: true,
             },
           ],
-        }
+        },
       );
     });
 
@@ -532,7 +532,7 @@ describe('ParameterStoreClient', () => {
               overwrite: true,
             },
           ],
-        }
+        },
       );
     });
 
@@ -562,23 +562,23 @@ describe('ParameterStoreClient', () => {
 
     it('should throw ValidationError for invalid parameter object', async () => {
       await expect(
-        client.setParameters(['not-an-object'])
+        client.setParameters(['not-an-object']),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.setParameters([null])
+        client.setParameters([null]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for missing path in parameter', async () => {
       await expect(
-        client.setParameters([{ value: 'test' }])
+        client.setParameters([{ value: 'test' }]),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for missing value in parameter', async () => {
       await expect(
-        client.setParameters([{ path: '/app/config' }])
+        client.setParameters([{ path: '/app/config' }]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -586,7 +586,7 @@ describe('ParameterStoreClient', () => {
       await expect(
         client.setParameters([
           { path: '/app/config', value: 'test', type: 'invalid' },
-        ])
+        ]),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -625,7 +625,7 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/parameters/batch/delete',
-        { paths: ['/app/config/a', '/app/config/b'] }
+        { paths: ['/app/config/a', '/app/config/b'] },
       );
       expect(result.results).toHaveLength(2);
       expect(result.deletedCount).toBe(2);
@@ -659,7 +659,7 @@ describe('ParameterStoreClient', () => {
 
     it('should throw ValidationError for invalid paths', async () => {
       await expect(
-        client.deleteParameters(['/valid/path', 'invalid-path'])
+        client.deleteParameters(['/valid/path', 'invalid-path']),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -707,7 +707,7 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/parameters',
-        { query: { prefix: '/app/config/' } }
+        { query: { prefix: '/app/config/' } },
       );
       expect(result.parameters).toHaveLength(2);
       expect(result.nextCursor).toBe('cursor123');
@@ -737,7 +737,7 @@ describe('ParameterStoreClient', () => {
             limit: 50,
             cursor: 'prev-cursor',
           },
-        }
+        },
       );
     });
 
@@ -748,41 +748,41 @@ describe('ParameterStoreClient', () => {
 
       expect(mockTransport.get).toHaveBeenCalledWith(
         '/api/v1/parameters',
-        { query: {} }
+        { query: {} },
       );
     });
 
     it('should throw ValidationError for invalid recursive option', async () => {
       await expect(
-        client.listParameters('/app/', { recursive: 'true' })
+        client.listParameters('/app/', { recursive: 'true' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid withDecryption option', async () => {
       await expect(
-        client.listParameters('/app/', { withDecryption: 'true' })
+        client.listParameters('/app/', { withDecryption: 'true' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid withValues option', async () => {
       await expect(
-        client.listParameters('/app/', { withValues: 'true' })
+        client.listParameters('/app/', { withValues: 'true' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid limit', async () => {
       await expect(
-        client.listParameters('/app/', { limit: 0 })
+        client.listParameters('/app/', { limit: 0 }),
       ).rejects.toThrow(ValidationError);
 
       await expect(
-        client.listParameters('/app/', { limit: -1 })
+        client.listParameters('/app/', { limit: -1 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid cursor', async () => {
       await expect(
-        client.listParameters('/app/', { cursor: 123 })
+        client.listParameters('/app/', { cursor: 123 }),
       ).rejects.toThrow(ValidationError);
     });
 
@@ -835,7 +835,7 @@ describe('ParameterStoreClient', () => {
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/parameters/search/tags',
         { tags: { env: 'prod' } },
-        { query: {} }
+        { query: {} },
       );
       expect(result.parameters).toHaveLength(2);
     });
@@ -848,7 +848,7 @@ describe('ParameterStoreClient', () => {
       expect(mockTransport.post).toHaveBeenCalledWith(
         '/api/v1/parameters/search/tags',
         { tags: { env: 'prod', team: 'platform' } },
-        { query: {} }
+        { query: {} },
       );
     });
 
@@ -874,7 +874,7 @@ describe('ParameterStoreClient', () => {
             limit: 25,
             cursor: 'abc123',
           },
-        }
+        },
       );
     });
 
@@ -890,31 +890,31 @@ describe('ParameterStoreClient', () => {
 
     it('should throw ValidationError for invalid prefix option', async () => {
       await expect(
-        client.searchByTags({ env: 'prod' }, { prefix: 123 })
+        client.searchByTags({ env: 'prod' }, { prefix: 123 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid withValues option', async () => {
       await expect(
-        client.searchByTags({ env: 'prod' }, { withValues: 'true' })
+        client.searchByTags({ env: 'prod' }, { withValues: 'true' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid withDecryption option', async () => {
       await expect(
-        client.searchByTags({ env: 'prod' }, { withDecryption: 'true' })
+        client.searchByTags({ env: 'prod' }, { withDecryption: 'true' }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid limit', async () => {
       await expect(
-        client.searchByTags({ env: 'prod' }, { limit: 0 })
+        client.searchByTags({ env: 'prod' }, { limit: 0 }),
       ).rejects.toThrow(ValidationError);
     });
 
     it('should throw ValidationError for invalid cursor', async () => {
       await expect(
-        client.searchByTags({ env: 'prod' }, { cursor: 123 })
+        client.searchByTags({ env: 'prod' }, { cursor: 123 }),
       ).rejects.toThrow(ValidationError);
     });
 

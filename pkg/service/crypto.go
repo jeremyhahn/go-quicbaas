@@ -17,6 +17,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"time"
 
 	types "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -24,6 +25,7 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 )
@@ -82,6 +84,30 @@ func (t *cryptoService) checkKeyAuthz(ctx context.Context, keyID, operation stri
 		return nil
 	}
 	return t.kmsSvc.checkKeyAuthz(ctx, keyID, operation)
+}
+
+// scopeKeyID resolves a caller-supplied key id under the caller's tenant,
+// the same way every KMS verb does, so a crypto verb never addresses
+// another tenant's key.
+func scopeKeyID(ctx context.Context, keyID string) (string, error) {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	return tenantScopedKeyID(tenantID, keyID), nil
+}
+
+// keyOperationError wraps a failed key operation. A key absent from the
+// caller's tenant surfaces as not-found, mirroring the KMS verbs.
+func keyOperationError(code errors.ErrorCode, op, operation string, err error) error {
+	if stderrors.Is(err, kms.ErrKeyNotFound) {
+		code = errors.ErrNotFound
+	}
+	return &errors.QBError{
+		Code: code,
+		Op:   op,
+		Err:  &api.OperationFailedError{Operation: operation, Cause: err},
+	}
 }
 
 // initMetrics initializes Prometheus metrics for crypto operations.
@@ -161,8 +187,13 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
-	if err := t.checkKeyAuthz(ctx, req.KeyID, "encrypt"); err != nil {
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "encrypt"); err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
@@ -170,7 +201,7 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 
 	// Track key usage before encryption (if tracker configured)
 	if t.safetyTracker != nil {
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(len(req.Plaintext))); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Plaintext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -182,21 +213,17 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 	}
 
 	// Perform encryption
-	ciphertext, err := t.cryptoManager.Encrypt(ctx, req.KeyID, req.Plaintext, req.Context)
+	ciphertext, err := t.cryptoManager.Encrypt(ctx, scopedKeyID, req.Plaintext, req.Context)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.Encrypt",
-			Err:  &api.OperationFailedError{Operation: "encrypt data", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.Encrypt", "encrypt data", err)
 	}
 
 	// Get key version from KMS (if available)
 	var keyVersion uint64 = 1
 	if t.kmsManager != nil {
-		if keyInfo, err := t.kmsManager.GetKey(ctx, req.KeyID); err == nil {
+		if keyInfo, err := t.kmsManager.GetKey(ctx, scopedKeyID); err == nil {
 			// Type assert to extract version (implementation-specific)
 			if km, ok := keyInfo.(map[string]interface{}); ok {
 				if v, ok := km["version"].(uint64); ok {
@@ -245,8 +272,13 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
-	if err := t.checkKeyAuthz(ctx, req.KeyID, "decrypt"); err != nil {
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "decrypt"); err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
@@ -255,7 +287,7 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	// Track key usage before decryption (if tracker configured)
 	// Note: For decryption we track the ciphertext size as an approximation
 	if t.safetyTracker != nil {
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(len(req.Ciphertext))); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -267,15 +299,11 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 	}
 
 	// Perform decryption
-	plaintext, err := t.cryptoManager.Decrypt(ctx, req.KeyID, req.Ciphertext, req.Context)
+	plaintext, err := t.cryptoManager.Decrypt(ctx, scopedKeyID, req.Ciphertext, req.Context)
 	if err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("decrypt_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrDecryption,
-			Op:   "crypto.Decrypt",
-			Err:  &api.OperationFailedError{Operation: "decrypt data", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrDecryption, "crypto.Decrypt", "decrypt data", err)
 	}
 
 	// Use provided key version or default
@@ -322,9 +350,14 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Track key usage for rewrap operation (if tracker configured)
 	if t.safetyTracker != nil {
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, uint64(len(req.Ciphertext))); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -336,15 +369,11 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 	}
 
 	// Perform rewrap
-	newCiphertext, err := t.cryptoManager.Rewrap(ctx, req.KeyID, req.Ciphertext, req.Context)
+	newCiphertext, err := t.cryptoManager.Rewrap(ctx, scopedKeyID, req.Ciphertext, req.Context)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("rewrap_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.Rewrap",
-			Err:  &api.OperationFailedError{Operation: "rewrap data", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.Rewrap", "rewrap data", err)
 	}
 
 	resp := &RewrapResponse{
@@ -391,6 +420,11 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Track key usage for batch operation (if tracker configured)
 	if t.safetyTracker != nil {
 		// Calculate total bytes in the batch
@@ -400,7 +434,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		}
 
 		// Check safety limits before processing batch
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, totalBytes); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, totalBytes); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -418,15 +452,11 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 	}
 
 	// Perform batch encryption
-	ciphertexts, err := t.cryptoManager.EncryptBatch(ctx, req.KeyID, plaintexts, nil)
+	ciphertexts, err := t.cryptoManager.EncryptBatch(ctx, scopedKeyID, plaintexts, nil)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_batch_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.EncryptBatch",
-			Err:  &api.OperationFailedError{Operation: "encrypt batch", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.EncryptBatch", "encrypt batch", err)
 	}
 
 	// Build results
@@ -474,6 +504,11 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Track key usage for batch operation (if tracker configured)
 	if t.safetyTracker != nil {
 		// Calculate total bytes in the batch
@@ -483,7 +518,7 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		}
 
 		// Check safety limits before processing batch
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, totalBytes); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, totalBytes); err != nil {
 			t.metrics.decryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -501,15 +536,11 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 	}
 
 	// Perform batch decryption
-	plaintexts, err := t.cryptoManager.DecryptBatch(ctx, req.KeyID, ciphertexts, nil)
+	plaintexts, err := t.cryptoManager.DecryptBatch(ctx, scopedKeyID, ciphertexts, nil)
 	if err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("decrypt_batch_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrDecryption,
-			Op:   "crypto.DecryptBatch",
-			Err:  &api.OperationFailedError{Operation: "decrypt batch", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrDecryption, "crypto.DecryptBatch", "decrypt batch", err)
 	}
 
 	// Build results
@@ -560,8 +591,13 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
-	if err := t.checkKeyAuthz(ctx, req.KeyID, "generate_data_key"); err != nil {
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "generate_data_key"); err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
@@ -573,7 +609,7 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 	// Track key usage for DEK generation (if tracker configured)
 	// The wrapped DEK is what gets encrypted with the KEK
 	if t.safetyTracker != nil {
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -586,16 +622,12 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 
 	// Generate data key using KMS
 	// KeyAttributes.CN specifies the KEK to use for wrapping
-	kekAttrs := &types.KeyAttributes{CN: req.KeyID}
+	kekAttrs := &types.KeyAttributes{CN: scopedKeyID}
 	plaintext, wrapped, err := t.kmsManager.GenerateDataKey(ctx, kekAttrs, keyBytes)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_data_key_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.GenerateDataKey",
-			Err:  &api.OperationFailedError{Operation: "generate data key", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.GenerateDataKey", "generate data key", err)
 	}
 
 	resp := &GenerateDataKeyResponse{
@@ -635,12 +667,17 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Determine key size from KeyAttributes (default to 32 bytes for AES-256)
 	keyBytes := keySizeFromAttributes(req.KeyAttributes)
 
 	// Track key usage for wrapped DEK generation (if tracker configured)
 	if t.safetyTracker != nil {
-		if err := t.safetyTracker.RecordKeyEncrypt(ctx, req.KeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
+		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, conv.ClampIntToUint64(keyBytes)); err != nil {
 			t.metrics.encryptOperationsTotal.With(req.KeyID, "safety_limit_exceeded").Inc()
 			t.metrics.errorsByType.With("safety_limit_error").Inc()
 			return nil, &errors.QBError{
@@ -653,16 +690,12 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 
 	// Generate data key and discard plaintext
 	// KeyAttributes.CN specifies the KEK to use for wrapping
-	kekAttrs := &types.KeyAttributes{CN: req.KeyID}
+	kekAttrs := &types.KeyAttributes{CN: scopedKeyID}
 	_, wrapped, err := t.kmsManager.GenerateDataKey(ctx, kekAttrs, keyBytes)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_wrapped_data_key_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.GenerateWrappedDataKey",
-			Err:  &api.OperationFailedError{Operation: "generate wrapped data key", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.GenerateWrappedDataKey", "generate wrapped data key", err)
 	}
 
 	resp := &GenerateWrappedDataKeyResponse{
@@ -705,8 +738,13 @@ func (t *cryptoService) Sign(ctx context.Context, req *SignRequest) (*SignRespon
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
-	if err := t.checkKeyAuthz(ctx, req.KeyID, "sign"); err != nil {
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "sign"); err != nil {
 		t.metrics.signOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
@@ -719,15 +757,11 @@ func (t *cryptoService) Sign(ctx context.Context, req *SignRequest) (*SignRespon
 	}
 
 	// Perform signing (message is not pre-hashed)
-	signature, err := t.cryptoManager.Sign(ctx, req.KeyID, req.Message, hashAlg, req.PreHashed)
+	signature, err := t.cryptoManager.Sign(ctx, scopedKeyID, req.Message, hashAlg, req.PreHashed)
 	if err != nil {
 		t.metrics.signOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("sign_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.Sign",
-			Err:  &api.OperationFailedError{Operation: "sign data", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.Sign", "sign data", err)
 	}
 
 	resp := &SignResponse{
@@ -769,8 +803,13 @@ func (t *cryptoService) Verify(ctx context.Context, req *VerifyRequest) (*Verify
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
-	if err := t.checkKeyAuthz(ctx, req.KeyID, "verify"); err != nil {
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "verify"); err != nil {
 		t.metrics.verifyOperationsTotal.With(req.KeyID, "authz_denied").Inc()
 		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
@@ -783,15 +822,11 @@ func (t *cryptoService) Verify(ctx context.Context, req *VerifyRequest) (*Verify
 	}
 
 	// Perform verification
-	valid, err := t.cryptoManager.Verify(ctx, req.KeyID, req.Message, req.Signature, hashAlg)
+	valid, err := t.cryptoManager.Verify(ctx, scopedKeyID, req.Message, req.Signature, hashAlg)
 	if err != nil {
 		t.metrics.verifyOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("verify_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.Verify",
-			Err:  &api.OperationFailedError{Operation: "verify signature", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.Verify", "verify signature", err)
 	}
 
 	resp := &VerifyResponse{
@@ -840,6 +875,11 @@ func (t *cryptoService) GenerateHMAC(ctx context.Context, req *HMACRequest) (*HM
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Default to SHA-256 if not specified
 	hashAlg := string(req.HashAlgorithm)
 	if hashAlg == "" {
@@ -847,15 +887,11 @@ func (t *cryptoService) GenerateHMAC(ctx context.Context, req *HMACRequest) (*HM
 	}
 
 	// Generate HMAC
-	hmac, err := t.cryptoManager.GenerateHMAC(ctx, req.KeyID, req.Message, hashAlg)
+	hmac, err := t.cryptoManager.GenerateHMAC(ctx, scopedKeyID, req.Message, hashAlg)
 	if err != nil {
 		t.metrics.hmacOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("generate_hmac_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.GenerateHMAC",
-			Err:  &api.OperationFailedError{Operation: "generate HMAC", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.GenerateHMAC", "generate HMAC", err)
 	}
 
 	resp := &HMACResponse{
@@ -897,6 +933,11 @@ func (t *cryptoService) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) 
 		return nil, err
 	}
 
+	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Default to SHA-256 if not specified
 	hashAlg := string(req.HashAlgorithm)
 	if hashAlg == "" {
@@ -904,15 +945,11 @@ func (t *cryptoService) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) 
 	}
 
 	// Verify HMAC
-	valid, err := t.cryptoManager.VerifyHMAC(ctx, req.KeyID, req.Message, req.HMAC, hashAlg)
+	valid, err := t.cryptoManager.VerifyHMAC(ctx, scopedKeyID, req.Message, req.HMAC, hashAlg)
 	if err != nil {
 		t.metrics.hmacOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("verify_hmac_error").Inc()
-		return nil, &errors.QBError{
-			Code: errors.ErrEncryption,
-			Op:   "crypto.VerifyHMAC",
-			Err:  &api.OperationFailedError{Operation: "verify HMAC", Cause: err},
-		}
+		return nil, keyOperationError(errors.ErrEncryption, "crypto.VerifyHMAC", "verify HMAC", err)
 	}
 
 	resp := &VerifyHMACResponse{
