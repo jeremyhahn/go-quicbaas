@@ -355,6 +355,13 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		return nil, err
 	}
 
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "encrypt"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
 	// Track key usage for rewrap operation (if tracker configured)
 	if t.safetyTracker != nil {
 		if err := t.safetyTracker.RecordKeyEncrypt(ctx, scopedKeyID, uint64(len(req.Ciphertext))); err != nil {
@@ -422,6 +429,13 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 
 	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
+		return nil, err
+	}
+
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "encrypt"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
 	}
 
@@ -506,6 +520,13 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 
 	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
+		return nil, err
+	}
+
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "decrypt"); err != nil {
+		t.metrics.decryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
 	}
 
@@ -669,6 +690,13 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 
 	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
+		return nil, err
+	}
+
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "generate_data_key"); err != nil {
+		t.metrics.encryptOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
 	}
 
@@ -880,6 +908,13 @@ func (t *cryptoService) GenerateHMAC(ctx context.Context, req *HMACRequest) (*HM
 		return nil, err
 	}
 
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "sign"); err != nil {
+		t.metrics.hmacOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
+		return nil, err
+	}
+
 	// Default to SHA-256 if not specified
 	hashAlg := string(req.HashAlgorithm)
 	if hashAlg == "" {
@@ -935,6 +970,13 @@ func (t *cryptoService) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) 
 
 	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
 	if err != nil {
+		return nil, err
+	}
+
+	// Per-key authorization check (NIST 800-53 AC-3/AC-6, AU-2).
+	if err := t.checkKeyAuthz(ctx, scopedKeyID, "verify"); err != nil {
+		t.metrics.hmacOperationsTotal.With(req.KeyID, "authz_denied").Inc()
+		t.metrics.errorsByType.With("authz_error").Inc()
 		return nil, err
 	}
 
