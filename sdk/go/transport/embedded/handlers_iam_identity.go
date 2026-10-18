@@ -34,27 +34,6 @@ func init() {
 	unaryHandlers[iamIdentityServiceName+"/ListUserIdentities"] = handleIAMIdentityListUserIdentities
 }
 
-// federationManagerProvider is satisfied by the QuicBaaS service; the REST,
-// gRPC and MCP transports reach the same federation manager through it.
-type federationManagerProvider interface {
-	GetFederationManager(ctx context.Context) (iam.FederationManager, error)
-}
-
-func federationManagerFor(ctx context.Context, svc service.QuicBaaS) (iam.FederationManager, error) {
-	p, ok := svc.(federationManagerProvider)
-	if !ok {
-		return nil, NewServiceNotConfiguredError(iamIdentityServiceName)
-	}
-	mgr, err := p.GetFederationManager(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if mgr == nil {
-		return nil, NewServiceNotConfiguredError(iamIdentityServiceName)
-	}
-	return mgr, nil
-}
-
 // identityTarget applies the tenant check the gRPC federation server makes
 // (requireCallerTenant) and parses the user id the request names.
 func identityTarget(ctx context.Context, method, tenantID, userID string) (string, uint64, error) {
@@ -88,7 +67,7 @@ func handleIAMIdentityLink(ctx context.Context, svc service.QuicBaaS, req interf
 	if !ok || r == nil {
 		return nil, NewInvalidRequestTypeError(iamIdentityServiceName, "LinkIdentity", "*cli.LinkIdentityOptions", typeNameOf(req))
 	}
-	mgr, err := federationManagerFor(ctx, svc)
+	mgr, err := federationManagerFor(ctx, svc, iamIdentityServiceName)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +95,7 @@ func handleIAMIdentityUnlink(ctx context.Context, svc service.QuicBaaS, req inte
 	if err != nil {
 		return nil, err
 	}
-	mgr, err := federationManagerFor(ctx, svc)
+	mgr, err := federationManagerFor(ctx, svc, iamIdentityServiceName)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +115,7 @@ func handleIAMIdentityListUserIdentities(ctx context.Context, svc service.QuicBa
 	if err != nil {
 		return nil, err
 	}
-	mgr, err := federationManagerFor(ctx, svc)
+	mgr, err := federationManagerFor(ctx, svc, iamIdentityServiceName)
 	if err != nil {
 		return nil, err
 	}

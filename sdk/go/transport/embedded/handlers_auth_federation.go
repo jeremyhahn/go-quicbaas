@@ -39,6 +39,12 @@ import (
 
 const authServiceName = "quicbaas.Auth"
 
+// authFederationServiceName names the federation verbs in a
+// not-configured error.
+const authFederationServiceName = "Auth.Federation"
+
+// federationManagerProvider is satisfied by the QuicBaaS service; the REST,
+// gRPC and MCP transports reach the same federation manager through it.
 type federationManagerProvider interface {
 	GetFederationManager(ctx context.Context) (iam.FederationManager, error)
 }
@@ -48,18 +54,18 @@ type oidcProviderSource interface {
 }
 
 // federationManagerFor resolves the federation manager, reporting a server
-// without one as not configured.
-func federationManagerFor(ctx context.Context, svc service.QuicBaaS) (iam.FederationManager, error) {
+// without one as not configured under the calling service's name.
+func federationManagerFor(ctx context.Context, svc service.QuicBaaS, serviceName string) (iam.FederationManager, error) {
 	p, ok := svc.(federationManagerProvider)
 	if !ok {
-		return nil, NewServiceNotConfiguredError("Auth.Federation")
+		return nil, NewServiceNotConfiguredError(serviceName)
 	}
 	mgr, err := p.GetFederationManager(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if mgr == nil {
-		return nil, NewServiceNotConfiguredError("Auth.Federation")
+		return nil, NewServiceNotConfiguredError(serviceName)
 	}
 	return mgr, nil
 }
@@ -97,7 +103,7 @@ func handleBeginFederatedLogin(ctx context.Context, svc service.QuicBaaS, req in
 		return nil, NewInvalidRequestTypeError(authServiceName, "BeginFederatedLogin",
 			"*service.BeginFederatedLoginRequest", typeNameOf(req))
 	}
-	mgr, err := federationManagerFor(ctx, svc)
+	mgr, err := federationManagerFor(ctx, svc, authFederationServiceName)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +128,7 @@ func handleHandleFederatedCallback(ctx context.Context, svc service.QuicBaaS, re
 		return nil, NewInvalidRequestTypeError(authServiceName, "HandleFederatedCallback",
 			"*service.HandleFederatedCallbackRequest", typeNameOf(req))
 	}
-	mgr, err := federationManagerFor(ctx, svc)
+	mgr, err := federationManagerFor(ctx, svc, authFederationServiceName)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +161,7 @@ func handleAuthListProviders(ctx context.Context, svc service.QuicBaaS, req inte
 	if err != nil {
 		return nil, err
 	}
-	mgr, err := federationManagerFor(ctx, svc)
+	mgr, err := federationManagerFor(ctx, svc, authFederationServiceName)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +194,7 @@ func handleAuthGetProvider(ctx context.Context, svc service.QuicBaaS, req interf
 	if err != nil {
 		return nil, err
 	}
-	mgr, err := federationManagerFor(ctx, svc)
+	mgr, err := federationManagerFor(ctx, svc, authFederationServiceName)
 	if err != nil {
 		return nil, err
 	}
