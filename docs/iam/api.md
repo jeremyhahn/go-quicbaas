@@ -1061,6 +1061,8 @@ service PEPService {
 
 `CheckBatchRequest` carries one subject and action with a list of
 `resources`. `CheckBatchResponse` returns a parallel `results` list of bools.
+With `stop_on_deny` set, evaluation stops at the first denied resource and
+`results` ends with that denial.
 `PolicyUpdate.type` is one of `SNAPSHOT`, `CREATED`, `UPDATED` or `DELETED`.
 
 ### PEP REST API
@@ -1072,7 +1074,9 @@ service PEPService {
 | POST | `/api/v1/iam/batch-check` | `permissions:resolve` (alias of `check/batch`) |
 
 A request body is `{"subject": {...}, "action": "...", "resource": "..."}`,
-and a batch request carries a list of `checks`.
+and a batch request carries a list of `checks` and an optional `stop_on_deny`
+boolean. The `quicbaas_pep_check_batch` MCP tool takes the same two
+arguments.
 
 ---
 

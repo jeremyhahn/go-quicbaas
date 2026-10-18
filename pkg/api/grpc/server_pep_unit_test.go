@@ -185,7 +185,7 @@ func TestPEPServer_CheckBatch(t *testing.T) {
 
 	t.Run("success all allowed", func(t *testing.T) {
 		srv, mockSvc := createTestPEPServer(t)
-		mockSvc.checkBatchFunc = func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+		mockSvc.checkBatchFunc = func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 			return []bool{true, true, true}, 10000, nil
 		}
 
@@ -207,7 +207,7 @@ func TestPEPServer_CheckBatch(t *testing.T) {
 
 	t.Run("success mixed results", func(t *testing.T) {
 		srv, mockSvc := createTestPEPServer(t)
-		mockSvc.checkBatchFunc = func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+		mockSvc.checkBatchFunc = func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 			return []bool{true, false, true}, 8000, nil
 		}
 
@@ -267,7 +267,7 @@ func TestPEPServer_CheckBatch(t *testing.T) {
 
 	t.Run("error service failure", func(t *testing.T) {
 		srv, mockSvc := createTestPEPServer(t)
-		mockSvc.checkBatchFunc = func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+		mockSvc.checkBatchFunc = func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 			return nil, 0, errors.New("batch error")
 		}
 
@@ -450,7 +450,7 @@ func TestPEPServiceAdapter(t *testing.T) {
 // mockPEPServiceCoverage implements PEPService for testing without grpc build tag.
 type mockPEPServiceCoverage struct {
 	checkFunc      func(ctx context.Context, req *iam.CheckRequest) (*iam.CheckResponse, error)
-	checkBatchFunc func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error)
+	checkBatchFunc func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error)
 	subscribeFunc  func(ctx context.Context, serviceID string, resourcePatterns []string, updates chan<- *PolicyUpdate) error
 }
 
@@ -461,9 +461,9 @@ func (m *mockPEPServiceCoverage) Check(ctx context.Context, req *iam.CheckReques
 	return &iam.CheckResponse{Allowed: true, EvaluationTimeNs: 1000}, nil
 }
 
-func (m *mockPEPServiceCoverage) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+func (m *mockPEPServiceCoverage) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 	if m.checkBatchFunc != nil {
-		return m.checkBatchFunc(ctx, subject, action, resources, context)
+		return m.checkBatchFunc(ctx, subject, action, resources, context, stopOnDeny)
 	}
 	results := make([]bool, len(resources))
 	for i := range results {
@@ -581,7 +581,7 @@ func TestPEPServerCoverage_Check_ServiceError(t *testing.T) {
 
 func TestPEPServerCoverage_CheckBatch_Success(t *testing.T) {
 	svc := &mockPEPServiceCoverage{
-		checkBatchFunc: func(_ context.Context, _ *iam.Subject, _ string, resources []string, _ map[string]interface{}) ([]bool, int64, error) {
+		checkBatchFunc: func(_ context.Context, _ *iam.Subject, _ string, resources []string, _ map[string]interface{}, _ bool) ([]bool, int64, error) {
 			return []bool{true, false, true}, 10000, nil
 		},
 	}
@@ -636,7 +636,7 @@ func TestPEPServerCoverage_CheckBatch_EmptyResources(t *testing.T) {
 
 func TestPEPServerCoverage_CheckBatch_ServiceError(t *testing.T) {
 	svc := &mockPEPServiceCoverage{
-		checkBatchFunc: func(_ context.Context, _ *iam.Subject, _ string, _ []string, _ map[string]interface{}) ([]bool, int64, error) {
+		checkBatchFunc: func(_ context.Context, _ *iam.Subject, _ string, _ []string, _ map[string]interface{}, _ bool) ([]bool, int64, error) {
 			return nil, 0, &dberrors.QBError{Code: dberrors.ErrForbidden, Op: "test"}
 		},
 	}

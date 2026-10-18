@@ -324,6 +324,9 @@ message CheckBatchRequest {
   string action = 2;
   repeated string resources = 3;
   map<string, string> context = 4;
+  // stop_on_deny ends evaluation after the first denied resource; the
+  // response then carries results only up to and including that denial.
+  bool stop_on_deny = 5;
 }
 
 message CheckBatchResponse {

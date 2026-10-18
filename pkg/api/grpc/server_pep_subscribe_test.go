@@ -221,7 +221,7 @@ func TestPEPServiceAdapter_Check(t *testing.T) {
 
 func TestPEPServiceAdapter_CheckBatch_AllDenied(t *testing.T) {
 	svc := &mockPEPServiceCoverage{
-		checkBatchFunc: func(_ context.Context, _ *iam.Subject, _ string, resources []string, _ map[string]interface{}) ([]bool, int64, error) {
+		checkBatchFunc: func(_ context.Context, _ *iam.Subject, _ string, resources []string, _ map[string]interface{}, _ bool) ([]bool, int64, error) {
 			results := make([]bool, len(resources))
 			// All denied
 			return results, 500, nil

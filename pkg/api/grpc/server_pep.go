@@ -47,8 +47,10 @@ type PEPService interface {
 	// Check performs a single authorization check.
 	Check(ctx context.Context, req *iam.CheckRequest) (*iam.CheckResponse, error)
 
-	// CheckBatch performs batch authorization checks.
-	CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error)
+	// CheckBatch performs batch authorization checks. When stopOnDeny is
+	// set it stops after the first denied resource, so the results end
+	// with that denial.
+	CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error)
 
 	// Subscribe streams policy updates to clients.
 	Subscribe(ctx context.Context, serviceID string, resourcePatterns []string, updates chan<- *PolicyUpdate) error
@@ -161,7 +163,7 @@ func (s *PEPServer) CheckBatch(ctx context.Context, req *iampb.CheckBatchRequest
 	}
 
 	// Perform batch authorization check
-	results, evaluationTime, err := s.pepService.CheckBatch(ctx, subject, req.Action, req.Resources, reqContext)
+	results, evaluationTime, err := s.pepService.CheckBatch(ctx, subject, req.Action, req.Resources, reqContext, req.StopOnDeny)
 	if err != nil {
 		s.logger.WithError(err).Error("Batch authorization check failed")
 		return nil, convertPEPError(err)
@@ -361,11 +363,11 @@ func (a *PEPServiceAdapter) Check(ctx context.Context, req *iam.CheckRequest) (*
 }
 
 // CheckBatch performs batch authorization checks.
-func (a *PEPServiceAdapter) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
-	results := make([]bool, len(resources))
+func (a *PEPServiceAdapter) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
+	results := make([]bool, 0, len(resources))
 	var totalTime int64
 
-	for i, resource := range resources {
+	for _, resource := range resources {
 		req := &iam.CheckRequest{
 			Subject:  *subject,
 			Action:   action,
@@ -376,8 +378,11 @@ func (a *PEPServiceAdapter) CheckBatch(ctx context.Context, subject *iam.Subject
 		if err != nil {
 			return nil, 0, err
 		}
-		results[i] = resp.Allowed
+		results = append(results, resp.Allowed)
 		totalTime += resp.EvaluationTimeNs
+		if stopOnDeny && !resp.Allowed {
+			break
+		}
 	}
 
 	return results, totalTime, nil

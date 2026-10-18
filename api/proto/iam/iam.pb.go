@@ -1476,11 +1476,14 @@ func (x *CheckResponse) GetEvaluationTimeNs() int64 {
 }
 
 type CheckBatchRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Subject       *Subject               `protobuf:"bytes,1,opt,name=subject,proto3" json:"subject,omitempty"`
-	Action        string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
-	Resources     []string               `protobuf:"bytes,3,rep,name=resources,proto3" json:"resources,omitempty"`
-	Context       map[string]string      `protobuf:"bytes,4,rep,name=context,proto3" json:"context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Subject   *Subject               `protobuf:"bytes,1,opt,name=subject,proto3" json:"subject,omitempty"`
+	Action    string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	Resources []string               `protobuf:"bytes,3,rep,name=resources,proto3" json:"resources,omitempty"`
+	Context   map[string]string      `protobuf:"bytes,4,rep,name=context,proto3" json:"context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// stop_on_deny ends evaluation after the first denied resource; the
+	// response then carries results only up to and including that denial.
+	StopOnDeny    bool `protobuf:"varint,5,opt,name=stop_on_deny,json=stopOnDeny,proto3" json:"stop_on_deny,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1541,6 +1544,13 @@ func (x *CheckBatchRequest) GetContext() map[string]string {
 		return x.Context
 	}
 	return nil
+}
+
+func (x *CheckBatchRequest) GetStopOnDeny() bool {
+	if x != nil {
+		return x.StopOnDeny
+	}
+	return false
 }
 
 type CheckBatchResponse struct {
@@ -13486,12 +13496,14 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\aallowed\x18\x01 \x01(\bR\aallowed\x12%\n" +
 	"\x0ematched_policy\x18\x02 \x01(\tR\rmatchedPolicy\x12!\n" +
 	"\fmatched_rule\x18\x03 \x01(\tR\vmatchedRule\x12,\n" +
-	"\x12evaluation_time_ns\x18\x04 \x01(\x03R\x10evaluationTimeNs\"\x84\x02\n" +
+	"\x12evaluation_time_ns\x18\x04 \x01(\x03R\x10evaluationTimeNs\"\xa6\x02\n" +
 	"\x11CheckBatchRequest\x122\n" +
 	"\asubject\x18\x01 \x01(\v2\x18.quicbaas.iam.v1.SubjectR\asubject\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x12\x1c\n" +
 	"\tresources\x18\x03 \x03(\tR\tresources\x12I\n" +
-	"\acontext\x18\x04 \x03(\v2/.quicbaas.iam.v1.CheckBatchRequest.ContextEntryR\acontext\x1a:\n" +
+	"\acontext\x18\x04 \x03(\v2/.quicbaas.iam.v1.CheckBatchRequest.ContextEntryR\acontext\x12 \n" +
+	"\fstop_on_deny\x18\x05 \x01(\bR\n" +
+	"stopOnDeny\x1a:\n" +
 	"\fContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\\\n" +

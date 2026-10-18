@@ -41,7 +41,7 @@ import (
 // mockPEPService is a simple test implementation of PEPService
 type mockPEPService struct {
 	checkFn      func(ctx context.Context, req *iam.CheckRequest) (*iam.CheckResponse, error)
-	checkBatchFn func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error)
+	checkBatchFn func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error)
 	subscribeFn  func(ctx context.Context, serviceID string, resourcePatterns []string, updates chan<- *PolicyUpdate) error
 }
 
@@ -52,9 +52,9 @@ func (m *mockPEPService) Check(ctx context.Context, req *iam.CheckRequest) (*iam
 	return &iam.CheckResponse{Allowed: true}, nil
 }
 
-func (m *mockPEPService) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+func (m *mockPEPService) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 	if m.checkBatchFn != nil {
-		return m.checkBatchFn(ctx, subject, action, resources, context)
+		return m.checkBatchFn(ctx, subject, action, resources, context, stopOnDeny)
 	}
 	results := make([]bool, len(resources))
 	for i := range results {
@@ -165,7 +165,7 @@ func TestGRPCPhase2_PEP_Check_ServiceError(t *testing.T) {
 func TestGRPCPhase2_PEP_CheckBatch_Success(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	svc := &mockPEPService{
-		checkBatchFn: func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+		checkBatchFn: func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 			return []bool{true, false, true}, 150, nil
 		},
 	}
@@ -222,7 +222,7 @@ func TestGRPCPhase2_PEP_CheckBatch_Validation(t *testing.T) {
 func TestGRPCPhase2_PEP_CheckBatch_ServiceError(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	svc := &mockPEPService{
-		checkBatchFn: func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+		checkBatchFn: func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 			return nil, 0, stderrors.New("batch check failed")
 		},
 	}

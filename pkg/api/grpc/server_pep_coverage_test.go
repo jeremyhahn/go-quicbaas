@@ -32,7 +32,7 @@ import (
 // pepTestService is a mock PEPService for coverage testing.
 type pepTestService struct {
 	checkFunc      func(ctx context.Context, req *iam.CheckRequest) (*iam.CheckResponse, error)
-	checkBatchFunc func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error)
+	checkBatchFunc func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error)
 	subscribeFunc  func(ctx context.Context, serviceID string, resourcePatterns []string, updates chan<- *PolicyUpdate) error
 }
 
@@ -43,9 +43,9 @@ func (m *pepTestService) Check(ctx context.Context, req *iam.CheckRequest) (*iam
 	return &iam.CheckResponse{Allowed: true, MatchedPolicy: "default-allow"}, nil
 }
 
-func (m *pepTestService) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+func (m *pepTestService) CheckBatch(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 	if m.checkBatchFunc != nil {
-		return m.checkBatchFunc(ctx, subject, action, resources, context)
+		return m.checkBatchFunc(ctx, subject, action, resources, context, stopOnDeny)
 	}
 	results := make([]bool, len(resources))
 	for i := range results {
@@ -215,7 +215,7 @@ func TestPEPServerCoverage_CheckBatch(t *testing.T) {
 
 	t.Run("batch_check_with_service_error", func(t *testing.T) {
 		errSvc := &pepTestService{
-			checkBatchFunc: func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}) ([]bool, int64, error) {
+			checkBatchFunc: func(ctx context.Context, subject *iam.Subject, action string, resources []string, context map[string]interface{}, stopOnDeny bool) ([]bool, int64, error) {
 				return nil, 0, errors.New("batch check failed")
 			},
 		}

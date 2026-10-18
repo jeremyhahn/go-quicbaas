@@ -527,6 +527,8 @@ func (r *ToolRegistry) executePEPCheckBatch(ctx context.Context, args map[string
 		return nil, &PEPInvalidInputError{Field: "checks", Message: "checks array is required"}
 	}
 
+	stopOnDeny := getBool(args, "stop_on_deny")
+
 	results := make([]interface{}, 0, len(checksRaw))
 	for _, checkRaw := range checksRaw {
 		check, ok := checkRaw.(map[string]interface{})
@@ -563,6 +565,9 @@ func (r *ToolRegistry) executePEPCheckBatch(ctx context.Context, args map[string
 			continue
 		}
 		results = append(results, checkResp)
+		if stopOnDeny && !checkResp.Allowed {
+			break
+		}
 	}
 
 	return marshalResult(map[string]interface{}{

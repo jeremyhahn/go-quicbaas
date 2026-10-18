@@ -1242,6 +1242,10 @@ func (r *ToolRegistry) registerPEPTools() {
 						"required": []string{"tenant_id", "principal", "action", "resource"},
 					},
 				},
+				"stop_on_deny": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Stop after the first denied check; results end with that denial",
+				},
 			},
 			"required": []string{"checks"},
 		},

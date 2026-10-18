@@ -88,11 +88,16 @@ func (testPolicySimulator) Simulate(_ context.Context, policy *iam.Policy, req *
 
 func setupPolicyHandler(t *testing.T) (*IAMHandler, func()) {
 	t.Helper()
-	engine := iam.NewPolicyEngine(iam.PolicyEngineOptions{
+	return setupPolicyHandlerWithEngine(t, iam.NewPolicyEngine(iam.PolicyEngineOptions{
 		Storage:   iam.NewMemoryStorage(),
 		Simulator: testPolicySimulator{},
-	})
+	}))
+}
 
+// setupPolicyHandlerWithEngine builds an IAMHandler whose service serves the
+// given policy engine.
+func setupPolicyHandlerWithEngine(t *testing.T, engine *iam.PolicyEngine) (*IAMHandler, func()) {
+	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
 	require.NoError(t, err)
 

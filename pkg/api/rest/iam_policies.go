@@ -678,7 +678,8 @@ func (h *IAMHandler) BatchCheckAccess(w http.ResponseWriter, r *http.Request) {
 
 	// Parse batch request
 	var batchReq struct {
-		Checks []iam.CheckRequest `json:"checks"`
+		Checks     []iam.CheckRequest `json:"checks"`
+		StopOnDeny bool               `json:"stop_on_deny"`
 	}
 	if err := json.Unmarshal(body, &batchReq); err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
@@ -720,6 +721,9 @@ func (h *IAMHandler) BatchCheckAccess(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		results = append(results, checkResp)
+		if batchReq.StopOnDeny && !checkResp.Allowed {
+			break
+		}
 	}
 
 	RespondJSON(w, r, http.StatusOK, map[string]interface{}{

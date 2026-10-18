@@ -128,11 +128,14 @@ func (h *iamHandler) handlePEPCheckBatch(ctx context.Context, client iampb.PEPSe
 		contextMap, _ = getStringMap(reqMap, "context")
 	}
 
+	stopOnDeny, _ := getBool(reqMap, "stop_on_deny")
+
 	pbReq := &iampb.CheckBatchRequest{
-		Subject:   subject,
-		Action:    action,
-		Resources: resources,
-		Context:   contextMap,
+		Subject:    subject,
+		Action:     action,
+		Resources:  resources,
+		Context:    contextMap,
+		StopOnDeny: stopOnDeny,
 	}
 
 	resp, err := client.CheckBatch(ctx, pbReq)
