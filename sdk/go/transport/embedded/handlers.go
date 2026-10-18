@@ -350,42 +350,6 @@ func handleRevokeRole(ctx context.Context, svc service.QuicBaaS, req interface{}
 }
 
 // =============================================================================
-// Cache Handlers
-// =============================================================================
-
-func handleGetCacheStats(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.GetCacheStatsRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "GetStats", "*service.GetCacheStatsRequest", typeNameOf(req))
-	}
-	return svc.GetCacheStats(ctx, r)
-}
-
-func handleClearCache(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.ClearCacheRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "Clear", "*service.ClearCacheRequest", typeNameOf(req))
-	}
-	return svc.ClearCache(ctx, r)
-}
-
-func handleGetCacheConfig(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.GetCacheConfigRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "GetConfig", "*service.GetCacheConfigRequest", typeNameOf(req))
-	}
-	return svc.GetCacheConfig(ctx, r)
-}
-
-func handleUpdateCacheConfig(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.UpdateCacheConfigRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cache", "UpdateConfig", "*service.UpdateCacheConfigRequest", typeNameOf(req))
-	}
-	return svc.UpdateCacheConfig(ctx, r)
-}
-
-// =============================================================================
 // Health Handlers
 // =============================================================================
 

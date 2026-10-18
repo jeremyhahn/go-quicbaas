@@ -87,10 +87,10 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.RBAC/RevokeRole": handleRevokeRole,
 
 	// Cache operations
-	"quicbaas.Cache/GetStats":     handleGetCacheStats,
-	"quicbaas.Cache/Clear":        handleClearCache,
-	"quicbaas.Cache/GetConfig":    handleGetCacheConfig,
-	"quicbaas.Cache/UpdateConfig": handleUpdateCacheConfig,
+	"quicbaas.Cache/GetCacheStats":     handleGetCacheStats,
+	"quicbaas.Cache/ClearCache":        handleClearCache,
+	"quicbaas.Cache/GetCacheConfig":    handleGetCacheConfig,
+	"quicbaas.Cache/UpdateCacheConfig": handleUpdateCacheConfig,
 
 	// Health operations
 	"quicbaas.Health/Check":     handleHealth,

@@ -2033,13 +2033,13 @@ func TestTransport_AllCacheOperations(t *testing.T) {
 
 	t.Run("GetStats", func(t *testing.T) {
 		req := &service.GetCacheStatsRequest{}
-		resp, err := transport.Request(ctx, "quicbaas.Cache", "GetStats", req)
+		resp, err := transport.Request(ctx, "quicbaas.Cache", "GetCacheStats", req)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
 	})
 
 	t.Run("GetStats with wrong type", func(t *testing.T) {
-		_, err := transport.Request(ctx, "quicbaas.Cache", "GetStats", "invalid")
+		_, err := transport.Request(ctx, "quicbaas.Cache", "GetCacheStats", "invalid")
 		require.Error(t, err)
 		var invalidReqErr *InvalidRequestTypeError
 		assert.True(t, errors.As(err, &invalidReqErr))
@@ -2047,13 +2047,13 @@ func TestTransport_AllCacheOperations(t *testing.T) {
 
 	t.Run("Clear", func(t *testing.T) {
 		req := &service.ClearCacheRequest{}
-		resp, err := transport.Request(ctx, "quicbaas.Cache", "Clear", req)
+		resp, err := transport.Request(ctx, "quicbaas.Cache", "ClearCache", req)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
 	})
 
 	t.Run("Clear with wrong type", func(t *testing.T) {
-		_, err := transport.Request(ctx, "quicbaas.Cache", "Clear", "invalid")
+		_, err := transport.Request(ctx, "quicbaas.Cache", "ClearCache", "invalid")
 		require.Error(t, err)
 		var invalidReqErr *InvalidRequestTypeError
 		assert.True(t, errors.As(err, &invalidReqErr))
@@ -2061,13 +2061,13 @@ func TestTransport_AllCacheOperations(t *testing.T) {
 
 	t.Run("GetConfig", func(t *testing.T) {
 		req := &service.GetCacheConfigRequest{}
-		resp, err := transport.Request(ctx, "quicbaas.Cache", "GetConfig", req)
+		resp, err := transport.Request(ctx, "quicbaas.Cache", "GetCacheConfig", req)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
 	})
 
 	t.Run("GetConfig with wrong type", func(t *testing.T) {
-		_, err := transport.Request(ctx, "quicbaas.Cache", "GetConfig", "invalid")
+		_, err := transport.Request(ctx, "quicbaas.Cache", "GetCacheConfig", "invalid")
 		require.Error(t, err)
 		var invalidReqErr *InvalidRequestTypeError
 		assert.True(t, errors.As(err, &invalidReqErr))
@@ -2075,13 +2075,13 @@ func TestTransport_AllCacheOperations(t *testing.T) {
 
 	t.Run("UpdateConfig", func(t *testing.T) {
 		req := &service.UpdateCacheConfigRequest{}
-		resp, err := transport.Request(ctx, "quicbaas.Cache", "UpdateConfig", req)
+		resp, err := transport.Request(ctx, "quicbaas.Cache", "UpdateCacheConfig", req)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
 	})
 
 	t.Run("UpdateConfig with wrong type", func(t *testing.T) {
-		_, err := transport.Request(ctx, "quicbaas.Cache", "UpdateConfig", "invalid")
+		_, err := transport.Request(ctx, "quicbaas.Cache", "UpdateCacheConfig", "invalid")
 		require.Error(t, err)
 		var invalidReqErr *InvalidRequestTypeError
 		assert.True(t, errors.As(err, &invalidReqErr))
