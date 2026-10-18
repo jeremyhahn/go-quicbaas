@@ -66,6 +66,24 @@ func (e *AppFieldNotStoredError) Unwrap() error {
 	return ErrAppFieldNotStored
 }
 
+// AppMetadataError marks an application register or update refused for its
+// metadata (redirect URIs, grant types, auth method, audience, fields), as
+// opposed to a failure of the store or the platform. Transports map it to a
+// client error; every other register or update error is a server error.
+type AppMetadataError struct {
+	Cause error
+}
+
+// Error implements the error interface with the refusal's own message.
+func (e *AppMetadataError) Error() string {
+	return e.Cause.Error()
+}
+
+// Unwrap returns the refusal so callers can still match its type or sentinel.
+func (e *AppMetadataError) Unwrap() error {
+	return e.Cause
+}
+
 // IAM-specific error types following QuicBaaS error conventions.
 var (
 	// ErrTenantNotFound is returned when a tenant is not found.

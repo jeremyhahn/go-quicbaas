@@ -164,7 +164,7 @@ func (m *AppManager) registerApp(ctx context.Context, tenantID string, opts Regi
 func (m *AppManager) registerAppWithClientID(ctx context.Context, tenantID, clientID string, opts RegisterAppOptions, withRegistrationToken bool) (*Application, string, error) {
 	// Validate inputs
 	if err := m.validateRegisterOptions(opts); err != nil {
-		return nil, "", err
+		return nil, "", &AppMetadataError{Cause: err}
 	}
 
 	// Check tenant quota
@@ -334,14 +334,14 @@ func (m *AppManager) UpdateApp(ctx context.Context, clientID string, opts Update
 func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID string, opts UpdateAppOptions) (*Application, error) {
 	// A field Application cannot store is refused, never dropped.
 	if fields := opts.unstoredFields(); len(fields) > 0 {
-		return nil, &AppFieldNotStoredError{Fields: fields}
+		return nil, &AppMetadataError{Cause: &AppFieldNotStoredError{Fields: fields}}
 	}
 
 	// Validate new redirect URIs exactly as registration does, before any
 	// field is applied, so a refused update leaves the app unchanged.
 	if opts.RedirectURIs != nil {
 		if err := validateRedirectURIs(*opts.RedirectURIs); err != nil {
-			return nil, err
+			return nil, &AppMetadataError{Cause: err}
 		}
 	}
 
@@ -374,14 +374,14 @@ func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID s
 	}
 	if opts.DefaultAudience != nil {
 		if err := ValidateDefaultAudience(*opts.DefaultAudience); err != nil {
-			return nil, &IAMContextError{Message: "invalid default audience", Cause: err}
+			return nil, &AppMetadataError{Cause: &IAMContextError{Message: "invalid default audience", Cause: err}}
 		}
 		app.DefaultAudience = *opts.DefaultAudience
 	}
 	if opts.GrantTypes != nil {
 		for _, gt := range *opts.GrantTypes {
 			if !isValidGrantType(gt) {
-				return nil, newInvalidGrantTypeError(gt)
+				return nil, &AppMetadataError{Cause: newInvalidGrantTypeError(gt)}
 			}
 		}
 		app.GrantTypes = *opts.GrantTypes
@@ -393,7 +393,7 @@ func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID s
 		applyScopeGrant(app, *opts.Scopes)
 	}
 	if err := applyMTLSUpdate(app, opts); err != nil {
-		return nil, err
+		return nil, &AppMetadataError{Cause: err}
 	}
 
 	app.Updated = time.Now()

@@ -1917,14 +1917,28 @@ func convertIAMError(err error) error {
 		return status.Error(codes.InvalidArgument, redirectErr.Error())
 	}
 
+	// So is an application register or update refused for its metadata,
+	// whatever the refusal's own type (#1511).
+	var metadataErr *iam.AppMetadataError
+	if stderrors.As(err, &metadataErr) {
+		return status.Error(codes.InvalidArgument, metadataErr.Error())
+	}
+
+	// An error of no known class, or of a class that describes the server,
+	// keeps its code but not its text: a store's path or I/O error never
+	// reaches the caller (#1511).
 	var dErr *errors.QBError
 	if !stderrors.As(err, &dErr) {
-		return status.Error(codes.Internal, err.Error())
+		return status.Error(codes.Internal, errMsgServerFailure)
+	}
+	message := dErr.Error()
+	if !requestErrorCodes[dErr.Code] {
+		message = errMsgServerFailure
 	}
 
 	// These services report conflict as a failed precondition, not AlreadyExists.
 	if dErr.Code == errors.ErrConflict {
-		return status.Error(codes.FailedPrecondition, dErr.Error())
+		return status.Error(codes.FailedPrecondition, message)
 	}
-	return status.Error(errorCodeToGRPCCode(dErr.Code), dErr.Error())
+	return status.Error(errorCodeToGRPCCode(dErr.Code), message)
 }

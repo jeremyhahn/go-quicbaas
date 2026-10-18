@@ -85,10 +85,15 @@ func ToolErrorResult(log *logger.Logger, tool string, err error) *mcpgo.CallTool
 }
 
 // toolErrorMessage returns the text a failed tool call carries, by the
-// classification REST applies (qberrors.DescribesRequest).
+// classification REST applies (qberrors.DescribesRequest). An error with no
+// class answers internal error, so it is sanitized like any server failure.
 func toolErrorMessage(log *logger.Logger, tool string, err error) string {
 	var qbErr *qberrors.QBError
-	if !qberrors.As(err, &qbErr) || qberrors.DescribesRequest(qbErr.Code) {
+	if qberrors.As(err, &qbErr) {
+		if qberrors.DescribesRequest(qbErr.Code) {
+			return err.Error()
+		}
+	} else if toolErrorCode(err) != mcptransport.JSONRPCInternalError {
 		return err.Error()
 	}
 	if log != nil {
@@ -184,11 +189,13 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 		notFound      *service.ProjectNotFoundError
 		unresolved    *service.ProjectUnresolvedError
 		alreadyExists *service.ProjectAlreadyExistsError
+		bound         *service.ProjectBoundError
 		invalid       *service.ProjectInvalidError
 		roleInvalid   *service.ProjectRoleInvalidError
 		forge         *sdlc.ForgeNotRegisteredError
 		strategy      *sdlc.StrategyNotRegisteredError
 		redirectURI   *iam.InvalidRedirectURIError
+		appMetadata   *iam.AppMetadataError
 	)
 	switch {
 	case stderrors.As(err, &accessDenied):
@@ -197,9 +204,13 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 		return qberrors.ErrNotFound, true
 	case stderrors.As(err, &alreadyExists):
 		return qberrors.ErrAlreadyExists, true
+	case stderrors.As(err, &bound):
+		// The project still has an SDLC binding: the message names the
+		// unbind remedy, so it must reach the caller. REST answers 409.
+		return qberrors.ErrConflict, true
 	case stderrors.As(err, &invalid), stderrors.As(err, &roleInvalid),
 		stderrors.As(err, &forge), stderrors.As(err, &strategy),
-		stderrors.As(err, &redirectURI):
+		stderrors.As(err, &redirectURI), stderrors.As(err, &appMetadata):
 		return qberrors.ErrInvalidInput, true
 	}
 	for _, class := range domainSentinelClasses {

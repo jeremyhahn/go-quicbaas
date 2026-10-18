@@ -18,6 +18,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -232,8 +233,7 @@ func (h *IAMHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Reques
 	// token. The token is the sole credential for the management endpoints.
 	app, registrationToken, err := appManager.RegisterDCRApp(ctx, tenantID, opts)
 	if err != nil {
-		// Map IAM errors to DCR errors
-		respondDCRError(w, http.StatusBadRequest, DCRErrorInvalidClientMetadata, err.Error())
+		respondDCRAppError(w, err)
 		return
 	}
 
@@ -431,9 +431,9 @@ func validateDCRRequest(req *DynamicClientRequest) *dcrValidationError {
 		}
 	}
 
-	// token_endpoint_auth_method is not checked here: register owns the one
-	// list of supported methods, and its refusal is mapped to
-	// invalid_client_metadata by the caller.
+	// token_endpoint_auth_method is not checked here: the AppManager's
+	// register and update share the one list of supported methods, and their
+	// refusal is mapped to invalid_client_metadata by the caller.
 
 	return nil
 }
@@ -521,6 +521,19 @@ func respondDCRError(w http.ResponseWriter, statusCode int, errorCode, descripti
 		Error:            errorCode,
 		ErrorDescription: description,
 	})
+}
+
+// respondDCRAppError maps an AppManager register or update error to its RFC
+// 7591 answer. A metadata refusal is the client's: 400 invalid_client_metadata
+// with the refusal's message. Anything else is the server's: 500 server_error
+// with a generic description, so no storage or platform detail leaks.
+func respondDCRAppError(w http.ResponseWriter, err error) {
+	var metadataErr *iam.AppMetadataError
+	if errors.As(err, &metadataErr) {
+		respondDCRError(w, http.StatusBadRequest, DCRErrorInvalidClientMetadata, metadataErr.Error())
+		return
+	}
+	respondDCRError(w, http.StatusInternalServerError, ErrServerError, "client registration failed")
 }
 
 // authorizeRegistrationAccess is the single gate on the RFC 7592 client
@@ -649,11 +662,15 @@ func (h *IAMHandler) UpdateDynamicClient(w http.ResponseWriter, r *http.Request)
 	if len(req.ResponseTypes) > 0 {
 		opts.ResponseTypes = &req.ResponseTypes
 	}
+	// The update validates the method against the same list register uses.
+	if req.TokenEndpointAuthMethod != "" {
+		opts.TokenEndpointAuthMethod = &req.TokenEndpointAuthMethod
+	}
 
 	// Update the application, scoped to the tenant that owns it.
 	app, err := appManager.UpdateAppInTenant(ctx, current.TenantID, clientID, opts)
 	if err != nil {
-		respondDCRError(w, http.StatusBadRequest, DCRErrorInvalidClientMetadata, err.Error())
+		respondDCRAppError(w, err)
 		return
 	}
 

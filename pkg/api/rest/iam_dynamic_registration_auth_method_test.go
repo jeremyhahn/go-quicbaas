@@ -113,3 +113,117 @@ func TestRegisterDynamicClient_RefusesUnsupportedAuthMethod(t *testing.T) {
 		})
 	}
 }
+
+// dcrUpdateWithMethod sends an RFC 7592 update of a client_credentials client
+// asking for method and returns the recorded response.
+func dcrUpdateWithMethod(t *testing.T, handler *IAMHandler, clientID, token, method string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := []byte(`{"grant_types":["client_credentials"],"client_name":"DCR Method","token_endpoint_auth_method":"` + method + `"}`)
+	w := httptest.NewRecorder()
+	handler.UpdateDynamicClient(w, dcrManagementRequest(http.MethodPut, clientID, token, body))
+	return w
+}
+
+// dcrRegisterDefault registers a client_credentials client with the default
+// method and returns its registration response.
+func dcrRegisterDefault(t *testing.T, handler *IAMHandler) DynamicClientResponse {
+	t.Helper()
+	w := dcrRegisterWithMethod(t, handler, "")
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	var registered DynamicClientResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&registered))
+	return registered
+}
+
+// TestUpdateDynamicClient_StoresAuthMethod proves an RFC 7592 update applies
+// the requested token_endpoint_auth_method: the response reports it and a
+// later read returns it.
+func TestUpdateDynamicClient_StoresAuthMethod(t *testing.T) {
+	methods := []string{
+		iam.AuthMethodClientSecretPost,
+		iam.AuthMethodTLSClientAuth,
+	}
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			handler, cleanup := setupDCRLifecycleHandler(t)
+			defer cleanup()
+			registered := dcrRegisterDefault(t, handler)
+
+			w := dcrUpdateWithMethod(t, handler, registered.ClientID, registered.RegistrationAccessToken, method)
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			var updated DynamicClientResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&updated))
+			assert.Equal(t, method, updated.TokenEndpointAuthMethod)
+
+			apps := dcrStoredApps(t, handler)
+			require.Len(t, apps, 1)
+			assert.Equal(t, method, apps[0].TokenEndpointAuthMethod)
+		})
+	}
+}
+
+// TestUpdateDynamicClient_RefusesUnsupportedAuthMethod proves an update with a
+// method the register validator refuses answers invalid_client_metadata (400)
+// and leaves the stored method unchanged.
+func TestUpdateDynamicClient_RefusesUnsupportedAuthMethod(t *testing.T) {
+	methods := []string{
+		"invalid_method",
+		"private_key_jwt",
+		iam.AuthMethodSelfSignedTLSClientAuth,
+	}
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			handler, cleanup := setupDCRLifecycleHandler(t)
+			defer cleanup()
+			registered := dcrRegisterDefault(t, handler)
+
+			w := dcrUpdateWithMethod(t, handler, registered.ClientID, registered.RegistrationAccessToken, method)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			var dcrErr DCRError
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&dcrErr))
+			assert.Equal(t, DCRErrorInvalidClientMetadata, dcrErr.Error)
+
+			apps := dcrStoredApps(t, handler)
+			require.Len(t, apps, 1)
+			assert.Equal(t, iam.AuthMethodClientSecretBasic, apps[0].TokenEndpointAuthMethod)
+		})
+	}
+}
+
+// dcrStorageFailureDetail is internal detail a failing store reports; it must
+// never reach a DCR client.
+const dcrStorageFailureDetail = "backend shard 7 unreachable"
+
+// failingCreateAppStorage refuses every application create.
+type failingCreateAppStorage struct {
+	iam.AppStorage
+}
+
+func (s *failingCreateAppStorage) CreateApp(context.Context, *iam.Application) error {
+	return &iam.IAMMessageError{Message: dcrStorageFailureDetail}
+}
+
+// TestRegisterDynamicClient_StorageFailureIsServerError proves a register
+// whose store fails answers RFC 6749 server_error (500) with a generic body,
+// while a metadata refusal on the same handler still answers 400.
+func TestRegisterDynamicClient_StorageFailureIsServerError(t *testing.T) {
+	handler, cleanup := setupDCRLifecycleHandler(t)
+	defer cleanup()
+	svc, ok := handler.server.service.(*appMockService)
+	require.True(t, ok)
+	svc.manager = iam.NewAppManager(&failingCreateAppStorage{
+		AppStorage: iam.NewBackendStorage(newIntrospectMemKV()),
+	}, nil)
+
+	w := dcrRegisterWithMethod(t, handler, iam.AuthMethodClientSecretPost)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), dcrStorageFailureDetail)
+	var dcrErr DCRError
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&dcrErr))
+	assert.Equal(t, ErrServerError, dcrErr.Error)
+
+	w = dcrRegisterWithMethod(t, handler, "invalid_method")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&dcrErr))
+	assert.Equal(t, DCRErrorInvalidClientMetadata, dcrErr.Error)
+}

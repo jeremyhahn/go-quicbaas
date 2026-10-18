@@ -136,6 +136,10 @@ func TestToolErrorCode(t *testing.T) {
 		{"project not found", &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}, mcptransport.MCPResourceNotFound},
 		{"project already exists", &service.ProjectAlreadyExistsError{TenantID: "t", Name: "p"}, mcptransport.MCPAlreadyExists},
 		{"project access denied", &service.ProjectAccessDeniedError{}, mcptransport.MCPPermissionDenied},
+		// A delete refused while the project is bound; REST answers 409.
+		{"project bound", &service.ProjectBoundError{TenantID: "t", ProjectID: "p"}, mcptransport.MCPResourceConflict},
+		// An unreadable binding store is a server failure, not a refusal.
+		{"project binding check failed", &service.ProjectBindingCheckError{TenantID: "t", ProjectID: "p", Cause: stderrors.New("store down")}, mcptransport.JSONRPCInternalError},
 		{"binding not found", sdlc.ErrNotFound, mcptransport.MCPResourceNotFound},
 		{"binding invalid", &sdlc.InvalidInputError{Field: "binding", Message: "is required"}, mcptransport.MCPInvalidInput},
 		{"adoption refused", sdlc.ErrAdoptionRefused, mcptransport.MCPPreconditionFailed},
@@ -150,6 +154,36 @@ func TestToolErrorCode(t *testing.T) {
 			require.Equal(t, tc.want, toolErrorCode(tc.err))
 		})
 	}
+}
+
+// TestToolErrorResult_ProjectBindingCheckFailureIsSanitized pins that a
+// delete whose binding store could not be read answers the server-failure
+// message: its cause describes the store, not the request.
+func TestToolErrorResult_ProjectBindingCheckFailureIsSanitized(t *testing.T) {
+	err := &service.ProjectBindingCheckError{TenantID: "t1", ProjectID: "p1", Cause: stderrors.New("open /var/lib/sdlc/bindings: permission denied")}
+
+	result := ToolErrorResult(nil, "project_delete", err)
+
+	require.True(t, result.IsError)
+	require.Equal(t, mcptransport.ToolError{Code: mcptransport.JSONRPCInternalError}, result.StructuredContent)
+	text, ok := mcpgo.AsTextContent(result.Content[0])
+	require.True(t, ok)
+	require.Equal(t, qberrors.ServerFailureMessage, text.Text)
+	require.NotContains(t, text.Text, "bindings")
+}
+
+// TestToolErrorResult_ProjectBoundKeepsUnbindRemedy pins that a delete
+// refused while the project is bound answers conflict with its remedy.
+func TestToolErrorResult_ProjectBoundKeepsUnbindRemedy(t *testing.T) {
+	err := &service.ProjectBoundError{TenantID: "t1", ProjectID: "p1"}
+
+	result := ToolErrorResult(nil, "project_delete", err)
+
+	require.True(t, result.IsError)
+	require.Equal(t, mcptransport.ToolError{Code: mcptransport.MCPResourceConflict}, result.StructuredContent)
+	text, ok := mcpgo.AsTextContent(result.Content[0])
+	require.True(t, ok)
+	require.Contains(t, text.Text, "unbind")
 }
 
 func TestDomainErrorClass_ClassesProjectAndSDLCErrors(t *testing.T) {

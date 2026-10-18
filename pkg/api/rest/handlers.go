@@ -1441,6 +1441,16 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 		return
 	}
 
+	// An application register or update refused for its metadata is the
+	// caller's mistake, whatever the refusal's own type (go-quicbaas#1511).
+	var appMetadataErr *iam.AppMetadataError
+	if stderrors.As(err, &appMetadataErr) {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Message: appMetadataErr.Error(),
+		})
+		return
+	}
+
 	// Check scheduler-specific error types
 	var notFoundError *scheduler.JobNotFoundError
 	if stderrors.As(err, &notFoundError) {
@@ -1522,7 +1532,14 @@ func (s *Server) handleServiceError(w http.ResponseWriter, r *http.Request, err 
 		return
 	}
 
-	RespondError(w, r, http.StatusInternalServerError, err)
+	// An error of no known class describes the server, not the request: the
+	// caller gets the stable sentence and the operator gets the cause, so a
+	// store's text (a path, an I/O error) never reaches the caller
+	// (go-quicbaas#1511).
+	s.logServiceFailure(r, err)
+	RespondError(w, r, http.StatusInternalServerError, &InternalServerError{
+		Message: ErrMsgServerFailure,
+	})
 }
 
 // Custom error types
