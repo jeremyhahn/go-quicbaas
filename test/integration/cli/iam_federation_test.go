@@ -42,8 +42,7 @@ func TestIAMProviderLifecycle(t *testing.T) {
 		providerID := UniqueKey("fed-lifecycle-p")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Federation Lifecycle Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create custom OIDC provider
 		createProvider := IAMProviderCreateCustomCommand(
@@ -89,8 +88,7 @@ func TestIAMProviderCreateCustom(t *testing.T) {
 		providerID := UniqueKey("fed-custom-p")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Custom Provider Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create custom OIDC provider with all flags
 		createProvider := CommandDef{
@@ -137,8 +135,7 @@ func TestIAMProviderCreateWithAutoProvision(t *testing.T) {
 		providerID := UniqueKey("fed-autoprov-p")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Auto Provision Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create provider with auto-provision and allow-linking
 		createProvider := CommandDef{
@@ -185,8 +182,7 @@ func TestIAMProviderGet(t *testing.T) {
 		providerID := UniqueKey("fed-get-p")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Get Provider Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create provider
 		createProvider := IAMProviderCreateCustomCommand(
@@ -219,8 +215,7 @@ func TestIAMProviderGetJSON(t *testing.T) {
 		providerID := UniqueKey("fed-getjson-p")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Get JSON Provider Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create provider
 		createProvider := IAMProviderCreateCustomCommand(
@@ -264,8 +259,7 @@ func TestIAMProviderUpdate(t *testing.T) {
 		providerID := UniqueKey("fed-update-p")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Update Provider Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create provider
 		createProvider := IAMProviderCreateCustomCommand(
@@ -303,8 +297,7 @@ func TestIAMProviderUpdateEnabled(t *testing.T) {
 		providerID := UniqueKey("fed-enabled-p")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Enabled Toggle Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create provider (enabled by default)
 		createProvider := IAMProviderCreateCustomCommand(
@@ -364,8 +357,7 @@ func TestIAMProviderDelete(t *testing.T) {
 		providerID := UniqueKey("fed-del-p")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Delete Provider Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create provider
 		createProvider := IAMProviderCreateCustomCommand(
@@ -415,8 +407,7 @@ func TestIAMProviderList(t *testing.T) {
 		providerID2 := UniqueKey("fed-list-p2")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "List Providers Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create two providers
 		createProvider1 := IAMProviderCreateCustomCommand(
@@ -457,8 +448,7 @@ func TestIAMProviderListJSON(t *testing.T) {
 		providerID2 := UniqueKey("fed-listjson-p2")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "List JSON Providers Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Create two providers
 		createProvider1 := IAMProviderCreateCustomCommand(
@@ -509,8 +499,7 @@ func TestIAMProviderGetNonExistent(t *testing.T) {
 		tenantID := UniqueKey("fed-noexist-t")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "NonExistent Provider Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Attempt to get a nonexistent provider
 		getNonExistent := CommandDef{
@@ -548,8 +537,7 @@ func TestIAMProviderDeleteNonExistent(t *testing.T) {
 		tenantID := UniqueKey("fed-delnoexist-t")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Delete NonExistent Provider Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Attempt to delete a nonexistent provider
 		deleteNonExistent := CommandDef{
@@ -592,8 +580,7 @@ func TestIAMIdentityListEmpty(t *testing.T) {
 		userID := UniqueKey("fed-idlist-u")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Identity List Empty Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// List identities for a user with none linked
 		listIdentities := IAMIdentityListCommand(tenantID, userID)
@@ -621,8 +608,7 @@ func TestIAMIdentityListJSON(t *testing.T) {
 		userID := UniqueKey("fed-idjson-u")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Identity List JSON Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// List identities with JSON output
 		listJSON := CommandDef{
@@ -661,8 +647,7 @@ func TestIAMIdentityUnlinkNonExistent(t *testing.T) {
 		userID := UniqueKey("fed-unlinkne-u")
 
 		// Create tenant
-		createTenant := IAMTenantCreateCommand(tenantID, "Unlink NonExistent Tenant")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 
 		// Attempt to unlink a nonexistent provider from a user
 		unlinkNonExistent := CommandDef{

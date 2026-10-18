@@ -33,100 +33,123 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/certfixture"
 )
 
-// tenantAdminAuthCache memoises (baseURL, tenantID) → bearer so each test
-// tenant only pays the enrollment + login round-trip once per test run.
-var tenantAdminAuthCache = struct {
-	sync.Mutex
-	tokens map[string]pivCachedToken
-}{tokens: make(map[string]pivCachedToken)}
+// tenantSetupTimeout bounds provisioning a tenant and deleting it, so a hung
+// server fails the test instead of stalling it.
+const tenantSetupTimeout = 30 * time.Second
 
-// AuthTenantAdmin obtains (and caches) a bearer token for a tenant-admin
-// identity scoped to tenantID. It is the integration-harness counterpart of
-// AuthPIV for tenant-scoped identities.
+// provisionedTenants memoises (baseURL, tenantID) → the admin session of the
+// tenant provisioned for it, so a second call for the same tenant reuses its
+// admin instead of provisioning the tenant twice. An entry lives until the
+// test that provisioned the tenant ends and deletes it.
+var provisionedTenants = struct {
+	sync.Mutex
+	sessions map[string]*TenantAdminSession
+}{sessions: make(map[string]*TenantAdminSession)}
+
+// AuthTenantAdmin returns a bearer for the admin of tenantID, acting as a
+// production caller does: the system admin only provisions the tenant
+// (ProvisionTenant, control plane), and every tenant-scoped call is then made
+// by the tenant's own admin, whose bearer is bound to the tenant. The system
+// bearer is never used inside the tenant: the users route refuses it, because
+// its tenant is "system".
 //
-// Mechanism:
-//  1. An ephemeral client certificate is ISSUED BY THE FIXTURE CA through the
-//     product's own CA adapter (helpers.FixtureAuthority ->
-//     pkg/server.NewCAService). The CA stamps the tenant-scoped SPIFFE URI SAN
-//     spiffe://quicbaas.integration/tenant/<tenantID>/user/<cn> itself, which is
-//     what the broker's PIV-login deriveLoginTenant resolves the tenant from.
-//     Nothing here signs a certificate: before go-quicbaas#943 this helper read
-//     the CA's private key off the mounted volume and called
-//     x509.CreateCertificate, so the suite logged in with material the product
-//     had never issued.
-//  2. A new user is created under tenantID via the system-admin REST API
-//     (POST /api/v1/tenants/{id}/users). The response body includes the
-//     one-time invite_token (cleared at activation time).
-//  3. The user is activated via POST /api/v1/iam/invites/{token}/activate/piv
-//     with the PEM of the freshly minted cert in the request body. The
-//     broker verifies the cert chain, computes the SHA-256 SPKI thumbprint,
-//     and stores it on the user record so the PIV-login index can later
-//     resolve the user.
-//  4. A tenant_admin admin-assignment scoped to tenantID is created via
-//     POST /api/v1/admin/assignments.
-//  5. POST /api/v1/auth/login/piv is called with the ephemeral cert as the
-//     mTLS client certificate. The broker reads the SPIFFE SAN to derive the
-//     tenant, looks up the user by cert thumbprint, and issues a
-//     tenant-scoped bearer.
+// The first call for a tenant provisions it (see TenantAdmin), so callers do
+// not create the tenant first. A later call returns the admin's bearer,
+// renewed with its certificate when the last one nears expiry, so calling
+// AuthTenantAdmin before each step keeps a long test authenticated.
 //
 // AuthTenantAdmin calls t.Fatal on any unrecoverable error so callers never
-// receive an empty token. For the context-aware form with explicit error
-// returns use AuthTenantAdminContext.
+// receive an empty token.
 func AuthTenantAdmin(t *testing.T, baseURL, tenantID string) string {
 	t.Helper()
-	adminBearer := AuthPIV(t, baseURL)
-	bearer, err := authTenantAdmin(context.Background(), baseURL, tenantID, adminBearer)
+	bearer, err := TenantAdmin(t, baseURL, tenantID).Bearer(context.Background())
 	if err != nil {
 		t.Fatalf("AuthTenantAdmin(%q): %v", tenantID, err)
 	}
 	return bearer
 }
 
-// AuthTenantAdminContext is the context-aware variant of AuthTenantAdmin.
-// adminBearer must be a valid system-admin bearer (e.g. from AuthPIVContext).
-// Empty baseURL falls back to the standard integration node URL.
-func AuthTenantAdminContext(ctx context.Context, baseURL, tenantID, adminBearer string) (string, error) {
-	return authTenantAdmin(ctx, baseURL, tenantID, adminBearer)
+// TenantAdmin returns the admin session of tenantID. The first call for a
+// tenant has the system admin provision it and registers a t.Cleanup that
+// deletes it when t ends, so no fixture tenant outlives its test.
+//
+// TenantAdmin calls t.Fatal if the tenant cannot be provisioned.
+func TenantAdmin(t *testing.T, baseURL, tenantID string) *TenantAdminSession {
+	t.Helper()
+	baseURL = strings.TrimRight(baseURL, "/")
+	cacheKey := baseURL + "|" + tenantID
+
+	provisionedTenants.Lock()
+	defer provisionedTenants.Unlock()
+
+	if session, ok := provisionedTenants.sessions[cacheKey]; ok {
+		return session
+	}
+
+	tenant, err := provisionTestTenant(t, baseURL, tenantID)
+	if err != nil {
+		t.Fatalf("TenantAdmin(%q): %v", tenantID, err)
+	}
+	session := NewTenantAdminSession(baseURL, tenant)
+	provisionedTenants.sessions[cacheKey] = session
+	t.Cleanup(func() {
+		provisionedTenants.Lock()
+		delete(provisionedTenants.sessions, cacheKey)
+		provisionedTenants.Unlock()
+	})
+	return session
 }
 
-func authTenantAdmin(ctx context.Context, baseURL, tenantID, adminBearer string) (string, error) {
-	baseURL = strings.TrimRight(baseURL, "/")
-	cacheKey := baseURL + "|tenant-admin|" + tenantID
-
-	tenantAdminAuthCache.Lock()
-	if cached, ok := tenantAdminAuthCache.tokens[cacheKey]; ok && time.Now().Before(cached.ExpiresAt) {
-		tenantAdminAuthCache.Unlock()
-		return cached.Bearer, nil
-	}
-	tenantAdminAuthCache.Unlock()
-
-	// Steps 1-3: issue a tenant-scoped cert and enroll a PIV user bound to it.
-	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, adminBearer)
+// ProvisionTestTenant has the system admin provision tenantID and registers a
+// t.Cleanup that deletes it, again as the system admin, when t ends.
+//
+// ProvisionTestTenant calls t.Fatal if the tenant cannot be provisioned.
+func ProvisionTestTenant(t *testing.T, baseURL, tenantID string) *ProvisionedTenant {
+	t.Helper()
+	tenant, err := provisionTestTenant(t, baseURL, tenantID)
 	if err != nil {
-		return "", fmt.Errorf("authTenantAdmin: %w", err)
+		t.Fatalf("ProvisionTestTenant(%q): %v", tenantID, err)
 	}
+	return tenant
+}
 
-	// Step 4: grant tenant_admin role scoped to tenantID.
-	if err := assignTenantAdmin(ctx, baseURL, userID, tenantID, adminBearer); err != nil {
-		return "", fmt.Errorf("authTenantAdmin: assign tenant_admin for user %q in tenant %q: %w", userID, tenantID, err)
-	}
+func provisionTestTenant(t *testing.T, baseURL, tenantID string) (*ProvisionedTenant, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), tenantSetupTimeout)
+	defer cancel()
 
-	// Step 5: login with the ephemeral cert to obtain a tenant-scoped bearer.
-	bearer, expiresIn, err := postLoginWithCert(ctx, baseURL, certPEM, keyPEM, pivCAFile())
+	systemBearer, err := AuthSystemAdminContext(ctx, baseURL)
 	if err != nil {
-		return "", fmt.Errorf("authTenantAdmin: PIV login for tenant %q: %w", tenantID, err)
+		return nil, &TenantProvisionError{Step: "system admin login", TenantID: tenantID, Cause: err}
 	}
+	tenant, err := ProvisionTenant(ctx, baseURL, tenantID, systemBearer)
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() { deleteTestTenant(t, baseURL, tenantID) })
+	return tenant, nil
+}
 
-	tenantAdminAuthCache.Lock()
-	tenantAdminAuthCache.tokens[cacheKey] = pivCachedToken{Bearer: bearer, ExpiresAt: bearerExpiry(expiresIn)}
-	tenantAdminAuthCache.Unlock()
+// deleteTestTenant deletes tenantID as the system admin, logging in afresh
+// because the test may have outlived any earlier system bearer. A failure is
+// a test error: a tenant left behind accumulates across a soak.
+func deleteTestTenant(t *testing.T, baseURL, tenantID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), tenantSetupTimeout)
+	defer cancel()
 
-	return bearer, nil
+	systemBearer, err := AuthSystemAdminContext(ctx, baseURL)
+	if err == nil {
+		err = DeleteTenant(ctx, baseURL, tenantID, systemBearer)
+	}
+	if err != nil {
+		t.Errorf("delete fixture tenant %q: %v", tenantID, err)
+	}
 }
 
 // enrollTenantPIVUser has the fixture CA issue an ephemeral tenant-scoped
-// client cert, creates a PIV user in tenantID (as the system admin) and
-// activates it through the invite flow, binding the cert. The user holds no
+// client cert, creates a PIV user in tenantID and activates it through the
+// invite flow, binding the cert. adminBearer must be bound to tenantID (the
+// tenant's admin, see ProvisionTenant): the users route refuses a bearer of
+// any other tenant, the system tenant included. The user holds no
 // role: the caller grants whatever the principal is for.
 func enrollTenantPIVUser(ctx context.Context, baseURL, tenantID, adminBearer string) (userID string, certPEM, keyPEM []byte, err error) {
 	certPEM, keyPEM, err = IssueTenantClientCert(ctx, tenantID)
@@ -138,11 +161,11 @@ func enrollTenantPIVUser(ctx context.Context, baseURL, tenantID, adminBearer str
 	email := fmt.Sprintf("tenant-admin-%s@integration.test", sanitizeTenantID(tenantID))
 	userID, inviteToken, err := createTenantAdminUser(ctx, baseURL, tenantID, email, adminBearer)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("create user for %q: %w", tenantID, err)
+		return "", nil, nil, &TenantProvisionError{Step: "create user", TenantID: tenantID, Cause: err}
 	}
 
 	if err := ActivateInvitePIV(ctx, baseURL, tenantID, inviteToken, certPEM); err != nil {
-		return "", nil, nil, fmt.Errorf("activate user %q in tenant %q: %w", userID, tenantID, err)
+		return "", nil, nil, &TenantProvisionError{Step: "activate user " + userID, TenantID: tenantID, Cause: err}
 	}
 	return userID, certPEM, keyPEM, nil
 }
@@ -163,6 +186,19 @@ func (e *TenantAdminCertError) Error() string {
 
 func (e *TenantAdminCertError) Unwrap() error { return e.Cause }
 
+// MissingResponseFieldError reports a 2xx response that lacks a field the
+// caller needs.
+type MissingResponseFieldError struct {
+	// URL is the endpoint that answered.
+	URL string
+
+	// Field is the JSON field that was missing or empty.
+	Field string
+
+	// Body is the raw response.
+	Body string
+}
+
 // IssueTenantClientCert asks the fixture CA for a tenant-admin client
 // credential scoped to tenantID, and returns the certificate and private key as
 // PEM.
@@ -175,6 +211,10 @@ func (e *TenantAdminCertError) Unwrap() error { return e.Cause }
 //
 // The tenant segment is the sanitized tenant id, matching the email local part
 // built for the same identity, so the SAN and the user record agree.
+func (e *MissingResponseFieldError) Error() string {
+	return e.URL + ": response missing " + e.Field + ": " + e.Body
+}
+
 func IssueTenantClientCert(ctx context.Context, tenantID string) (certPEM, keyPEM []byte, err error) {
 	// Verify the fixture trust anchor is loadable before continuing, so a
 	// missing container mount fails here rather than at TLS handshake time.
@@ -201,7 +241,7 @@ func IssueTenantClientCert(ctx context.Context, tenantID string) (certPEM, keyPE
 }
 
 // createTenantAdminUser creates a pending user under tenantID using the
-// system-admin bearer and returns the user ID and the one-time invite token.
+// tenant admin's bearer and returns the user ID and the one-time invite token.
 // The user is provisioned with auth_methods=["piv"] so the PIV activation
 // path is expected.
 func createTenantAdminUser(ctx context.Context, baseURL, tenantID, email, adminBearer string) (userID, inviteToken string, err error) {
@@ -213,7 +253,8 @@ func createTenantAdminUser(ctx context.Context, baseURL, tenantID, email, adminB
 		"auth_methods": []string{"piv"},
 	}
 
-	body, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users", adminBearer, reqBody)
+	endpoint := baseURL + "/api/v1/tenants/" + tenantID + "/users"
+	body, err := postJSON(ctx, endpoint, adminBearer, reqBody)
 	if err != nil {
 		return "", "", err
 	}
@@ -223,13 +264,13 @@ func createTenantAdminUser(ctx context.Context, baseURL, tenantID, email, adminB
 		InviteToken string `json:"invite_token"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", "", fmt.Errorf("decode create-user response: %w; raw=%s", err, body)
+		return "", "", &AuthError{Op: "decode create-user response", URL: endpoint, Cause: err}
 	}
 	if resp.ID == "" {
-		return "", "", fmt.Errorf("create-user response missing id; raw=%s", body)
+		return "", "", &MissingResponseFieldError{URL: endpoint, Field: "id", Body: string(body)}
 	}
 	if resp.InviteToken == "" {
-		return "", "", fmt.Errorf("create-user response missing invite_token; raw=%s", body)
+		return "", "", &MissingResponseFieldError{URL: endpoint, Field: "invite_token", Body: string(body)}
 	}
 
 	return resp.ID, resp.InviteToken, nil
@@ -254,21 +295,19 @@ func ActivateInvitePIV(ctx context.Context, baseURL, tenantID, inviteToken strin
 // and key, trusting the PIV CA the suite's other logins trust, and returns
 // the issued bearer token.
 func LoginWithCert(ctx context.Context, baseURL string, certPEM, keyPEM []byte) (string, error) {
-	bearer, _, err := postLoginWithCert(ctx, strings.TrimRight(baseURL, "/"), certPEM, keyPEM, pivCAFile())
+	bearer, _, err := LoginWithCertSession(ctx, baseURL, certPEM, keyPEM)
 	return bearer, err
 }
 
-// assignTenantAdmin creates a tenant_admin admin-assignment scoped to the
-// given tenantID for userID, using the system-admin bearer.
-func assignTenantAdmin(ctx context.Context, baseURL, userID, tenantID, adminBearer string) error {
-	reqBody := map[string]interface{}{
-		"user_id":    userID,
-		"admin_role": "tenant_admin",
-		"tenant_ids": []string{tenantID},
-		"granted_by": "integration-test",
+// LoginWithCertSession is LoginWithCert that also reports when the bearer
+// expires, for callers that persist it as a CLI session (with the same
+// one-minute safety margin the data-plane principal's cached bearer uses).
+func LoginWithCertSession(ctx context.Context, baseURL string, certPEM, keyPEM []byte) (string, time.Time, error) {
+	bearer, expiresIn, err := postLoginWithCert(ctx, strings.TrimRight(baseURL, "/"), certPEM, keyPEM, pivCAFile())
+	if err != nil {
+		return "", time.Time{}, err
 	}
-	_, err := postJSON(ctx, baseURL+"/api/v1/admin/assignments", adminBearer, reqBody)
-	return err
+	return bearer, bearerExpiry(expiresIn), nil
 }
 
 // postLoginWithCert performs the mTLS PIV login flow against baseURL and
@@ -340,14 +379,14 @@ func postLoginWithCert(ctx context.Context, baseURL string, certPEM, keyPEM []by
 func postJSON(ctx context.Context, rawURL, bearer string, body interface{}) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("postJSON: marshal: %w", err)
+		return nil, &AuthError{Op: "marshal request", URL: rawURL, Cause: err}
 	}
 
 	client := NewHTTPClient(30 * time.Second)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("postJSON: build request %s: %w", rawURL, err)
+		return nil, &AuthError{Op: "build request", URL: rawURL, Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if bearer != "" {
@@ -356,13 +395,13 @@ func postJSON(ctx context.Context, rawURL, bearer string, body interface{}) ([]b
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("postJSON: POST %s: %w", rawURL, err)
+		return nil, &AuthError{Op: "POST", URL: rawURL, Cause: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("postJSON: read response %s: %w", rawURL, err)
+		return nil, &AuthError{Op: "read response", URL: rawURL, Cause: err}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {

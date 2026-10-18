@@ -31,15 +31,13 @@ import (
 // PEP Test Helpers
 // =============================================================================
 
-// pepSetupTenant creates a tenant for PEP tests and registers a deferred cleanup.
+// pepSetupTenant provisions a tenant for PEP tests, makes the runner act as
+// its admin, and registers a deferred cleanup.
 // Returns the tenant ID.
 func pepSetupTenant(t *testing.T, runner *TestRunner, prefix string) string {
 	t.Helper()
 	tenantID := UniqueKey(prefix)
-	cmd := IAMTenantCreateCommand(tenantID, prefix+" PEP Test")
-	stdout, stderr, err := runner.Run(cmd)
-	require.NoError(t, err, "failed to create PEP test tenant %s: stdout=%s stderr=%s",
-		tenantID, stdout, stderr)
+	runner.ActAsTenantAdmin(tenantID)
 	t.Cleanup(func() {
 		deleteCmd := IAMTenantDeleteCommand(tenantID)
 		runner.Run(deleteCmd)

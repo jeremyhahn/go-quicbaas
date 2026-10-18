@@ -82,9 +82,7 @@ const systemDenialSentinel = "system-tenant callers may not perform per-tenant b
 // requirement and does not allocate a per-tenant storage volume, so it
 // succeeds regardless of whether the daemon has a volume pool configured.
 func TestTenantBarrier_None(t *testing.T) {
-	admin := adminBearer(t)
 	tenantID := fmt.Sprintf("tb-none-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier None Test", admin)
 	bearer := tenantAdminBearer(t, tenantID)
 	ctx := context.Background()
 
@@ -156,12 +154,10 @@ func TestTenantBarrier_None(t *testing.T) {
 // test NEVER exits early; it always runs all sub-cases and either validates
 // the cryptographic path or the expected pool-absent error path.
 func TestTenantBarrier_Passphrase(t *testing.T) {
-	admin := adminBearer(t)
-	poolAvailable := volumePoolAvailable(t, admin)
+	poolAvailable := volumePoolAvailable(t)
 	t.Logf("volume pool available: %v", poolAvailable)
 
 	tenantID := fmt.Sprintf("tb-pass-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier Passphrase Test", admin)
 	bearer := tenantAdminBearer(t, tenantID)
 	ctx := context.Background()
 	const passphrase = "integration-test-passphrase-2026"
@@ -278,12 +274,10 @@ func TestTenantBarrier_Passphrase(t *testing.T) {
 //   - status after the threshold share reports unsealed
 //   - seal → unseal-share cycle works a second time
 func TestTenantBarrier_Shamir(t *testing.T) {
-	admin := adminBearer(t)
-	poolAvailable := volumePoolAvailable(t, admin)
+	poolAvailable := volumePoolAvailable(t)
 	t.Logf("volume pool available: %v", poolAvailable)
 
 	tenantID := fmt.Sprintf("tb-shamir-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier Shamir Test", admin)
 	bearer := tenantAdminBearer(t, tenantID)
 	ctx := context.Background()
 
@@ -451,11 +445,9 @@ func TestTenantBarrier_CrossTenantDenied(t *testing.T) {
 
 	tenantA := "tb-xa-" + ts
 	tenantB := "tb-xb-" + ts
-	createTenant(t, tenantA, "Barrier Cross-Tenant A", adminToken)
-	createTenant(t, tenantB, "Barrier Cross-Tenant B", adminToken)
-
-	// Obtain a tenant-A-scoped bearer via the PIV invite + SPIFFE cert fixture.
+	// The system admin provisions both tenants; only tenant A's admin acts.
 	tenantABearer := tenantAdminBearer(t, tenantA)
+	tenantAdminBearer(t, tenantB)
 
 	// --- system-admin can read both tenants (control-plane observability) ---
 	t.Run("system_admin_can_read_both_tenant_statuses", func(t *testing.T) {
@@ -600,8 +592,7 @@ func TestTenantBarrier_SystemTenantPosture(t *testing.T) {
 // tenant-scoped). If the pool IS configured this test is a no-op (logs and
 // passes). Per project rules (no t.Skip), the test always runs.
 func TestTenantBarrier_VolumePoolAbsent(t *testing.T) {
-	admin := adminBearer(t)
-	poolAvailable := volumePoolAvailable(t, admin)
+	poolAvailable := volumePoolAvailable(t)
 
 	if poolAvailable {
 		t.Logf("volume pool is configured — VolumePoolAbsent sentinel test is a no-op in this cluster")
@@ -609,7 +600,6 @@ func TestTenantBarrier_VolumePoolAbsent(t *testing.T) {
 	}
 
 	tenantID := fmt.Sprintf("tb-nopool-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier No-Pool Test", admin)
 	bearer := tenantAdminBearer(t, tenantID)
 	ctx := context.Background()
 
@@ -667,7 +657,6 @@ func TestTenantBarrier_VolumePoolAbsent(t *testing.T) {
 func TestTenantBarrier_SystemAdminWritePosture_REST(t *testing.T) {
 	adminToken := adminBearer(t)
 	tenantID := fmt.Sprintf("tb-sysneg-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier SysAdmin Negative", adminToken)
 
 	// The tenant admin initializes its own barrier (none) so the negative
 	// matrix runs against a real, initialized barrier — denials must come from
@@ -743,7 +732,8 @@ func TestTenantBarrier_SystemAdminWritePosture_REST(t *testing.T) {
 func TestTenantBarrier_SystemAdminWritePosture_GRPC(t *testing.T) {
 	adminToken := adminBearer(t)
 	tenantID := fmt.Sprintf("tb-sysneg-grpc-%d", time.Now().UnixNano())
-	createTenant(t, tenantID, "Barrier SysAdmin Negative gRPC", adminToken)
+	// The system admin provisions the tenant; its admin does not act here.
+	tenantAdminBearer(t, tenantID)
 
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), restTimeout)
 	defer dialCancel()

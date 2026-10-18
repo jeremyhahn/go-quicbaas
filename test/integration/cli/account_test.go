@@ -204,6 +204,9 @@ func AccountDeleteCommand(accountID string) CommandDef {
 // "not supported by SDK".
 func TestAgentAccountLifecycle(t *testing.T) {
 	RunForAllTransports(t, "AgentAccountLifecycle", func(t *testing.T, runner *TestRunner) {
+		// Accounts are tenant data: act as the tenant admin, as a production
+		// caller does, not as the system admin.
+		runner.ActAsTenantAdmin(UniqueKey("acct"))
 		credentialPath := writeAccountCredential(t, "SECRET-ACCESS-TOKEN")
 
 		create := AccountCreateCommand(credentialPath)
@@ -255,6 +258,9 @@ func TestAgentAccountLifecycle(t *testing.T) {
 // rather than an unmapped-transport error.
 func TestAgentAccountUsage(t *testing.T) {
 	RunForAllTransports(t, "AgentAccountUsage", func(t *testing.T, runner *TestRunner) {
+		// Accounts are tenant data: act as the tenant admin, as a production
+		// caller does, not as the system admin.
+		runner.ActAsTenantAdmin(UniqueKey("acct"))
 		credentialPath := writeAccountCredential(t, "SECRET-ACCESS-TOKEN")
 
 		create := AccountCreateCommand(credentialPath)
@@ -291,6 +297,9 @@ func TestAgentAccountUsage(t *testing.T) {
 // reaches the server, identically on every transport.
 func TestAgentAccountInvalidInput(t *testing.T) {
 	RunForAllTransports(t, "AgentAccountInvalidInput", func(t *testing.T, runner *TestRunner) {
+		// Accounts are tenant data: act as the tenant admin, as a production
+		// caller does, not as the system admin.
+		runner.ActAsTenantAdmin(UniqueKey("acct"))
 		credentialPath := writeAccountCredential(t, "SECRET-ACCESS-TOKEN")
 
 		cases := []CommandDef{

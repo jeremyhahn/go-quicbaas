@@ -26,7 +26,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -156,51 +155,19 @@ func obtainTokenViaREST(ctx context.Context, httpEndpoint string, creds *ClientC
 	}, nil
 }
 
-// testOAuthCreds caches credentials across subtests so the app is created once.
-var testOAuthCreds atomic.Pointer[ClientCredentials]
-
 // createTestOAuthApp creates an OAuth2 application for testing via REST API.
 // Returns the client credentials or nil if the operation fails.
 // Uses a unique app name per test run to avoid conflicts.
-func createTestOAuthApp(ctx context.Context, httpEndpoint, tenantID, appName string) (*ClientCredentials, error) {
-	// Return cached creds if already created in this test run
-	if cached := testOAuthCreds.Load(); cached != nil {
-		return cached, nil
-	}
-
+func createTestOAuthApp(ctx context.Context, httpEndpoint, tenantID, bearer, appName string) (*ClientCredentials, error) {
 	// Use a unique app name per test run to avoid conflicts
 	uniqueAppName := fmt.Sprintf("%s-%d", appName, time.Now().UnixNano())
 
-	// Register application with client_credentials grant
-	appReq := map[string]interface{}{
-		"name":          uniqueAppName,
-		"redirect_uris": []string{"https://app.example.com/callback"},
-		"grant_types":   []string{"client_credentials"},
-	}
-
-	body, err := json.Marshal(appReq)
+	status, respBody, err := postRegisterApp(ctx, httpEndpoint, tenantID, bearer, uniqueAppName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal app request: %w", err)
+		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("%s/api/v1/tenants/%s/apps", httpEndpoint, tenantID),
-		bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create app request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := helpers.NewHTTPClient(30 * time.Second)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to register app: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to register app: status=%d, body=%s", resp.StatusCode, string(respBody))
+	if status != http.StatusOK && status != http.StatusCreated {
+		return nil, fmt.Errorf("failed to register app: status=%d, body=%s", status, string(respBody))
 	}
 
 	var appResp struct {
@@ -208,7 +175,7 @@ func createTestOAuthApp(ctx context.Context, httpEndpoint, tenantID, appName str
 		ClientSecret string `json:"client_secret"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&appResp); err != nil {
+	if err := json.Unmarshal(respBody, &appResp); err != nil {
 		return nil, fmt.Errorf("failed to decode app response: %w", err)
 	}
 
@@ -218,35 +185,77 @@ func createTestOAuthApp(ctx context.Context, httpEndpoint, tenantID, appName str
 		TenantID:     tenantID,
 	}
 
-	// Cache for subsequent subtests
-	testOAuthCreds.Store(creds)
-
 	return creds, nil
 }
 
-// getOrCreateTestCredentials retrieves test credentials from environment or creates a test app.
-func getOrCreateTestCredentials(ctx context.Context, httpEndpoint string) (*ClientCredentials, error) {
-	clientID := os.Getenv("QUICBAAS_TEST_CLIENT_ID")
-	clientSecret := os.Getenv("QUICBAAS_TEST_CLIENT_SECRET")
-	tenantID := os.Getenv("QUICBAAS_TEST_TENANT_ID")
-	if tenantID == "" {
-		tenantID = "default"
+// postRegisterApp POSTs a client_credentials app registration to
+// /api/v1/tenants/{tenantID}/apps and returns the status and body. An empty
+// bearer sends the request with no credential.
+func postRegisterApp(ctx context.Context, httpEndpoint, tenantID, bearer, appName string) (int, []byte, error) {
+	appReq := map[string]interface{}{
+		"name":          appName,
+		"redirect_uris": []string{"https://app.example.com/callback"},
+		"grant_types":   []string{"client_credentials"},
 	}
 
+	body, err := json.Marshal(appReq)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to marshal app request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/api/v1/tenants/%s/apps", httpEndpoint, tenantID),
+		bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to create app request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+
+	client := helpers.NewHTTPClient(30 * time.Second)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to register app: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to read app response: %w", err)
+	}
+	return resp.StatusCode, respBody, nil
+}
+
+// getOrCreateTestCredentials retrieves test credentials from environment or creates a test app.
+func getOrCreateTestCredentials(t *testing.T, ctx context.Context, httpEndpoint string) (*ClientCredentials, error) {
+	clientID := os.Getenv("QUICBAAS_TEST_CLIENT_ID")
+	clientSecret := os.Getenv("QUICBAAS_TEST_CLIENT_SECRET")
 	if clientID != "" && clientSecret != "" {
 		return &ClientCredentials{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
-			TenantID:     tenantID,
+			TenantID:     os.Getenv("QUICBAAS_TEST_TENANT_ID"),
 		}, nil
 	}
 
-	// Try to create a test OAuth app via the REST API
-	creds, err := createTestOAuthApp(ctx, httpEndpoint, tenantID, "auth-integration-test-app")
+	// Register the app the way a production caller does: as the admin of a
+	// tenant the system admin provisioned, whose bearer binds that tenant.
+	tenant := provisionAuthTestTenant(t, httpEndpoint)
+	creds, err := createTestOAuthApp(ctx, httpEndpoint, tenant.TenantID, tenant.AdminBearer, "auth-integration-test-app")
 	if err != nil {
 		return nil, fmt.Errorf("test credentials not configured and auto-creation failed: %w (set QUICBAAS_TEST_CLIENT_ID and QUICBAAS_TEST_CLIENT_SECRET)", err)
 	}
 	return creds, nil
+}
+
+// provisionAuthTestTenant provisions a tenant for the test's OAuth app, as the
+// fixture system admin, and deletes it when t ends.
+func provisionAuthTestTenant(t *testing.T, httpEndpoint string) *helpers.ProvisionedTenant {
+	t.Helper()
+	tenantID := fmt.Sprintf("auth-it-%d", time.Now().UnixNano())
+	return helpers.ProvisionTestTenant(t, httpEndpoint, tenantID)
 }
 
 // =============================================================================
@@ -285,6 +294,45 @@ func TestAuthMultiProtocol(t *testing.T) {
 	// listener in favor of go-qrdb's unified multi-protocol server; the
 	// unified server's MCP surface has no finalized docker endpoint
 	// convention yet, so this suite does not exercise it (deferred).
+}
+
+// TestRegisterAppRequiresBoundTenant proves the fixtures bind a tenant
+// without weakening the check (#164): registering an app needs a caller
+// bound to the tenant the path names. A request with no credential, and the
+// system admin's bearer, which is bound to the system tenant, are refused.
+func TestRegisterAppRequiresBoundTenant(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	endpoints := helpers.GetRESTEndpoints()
+	require.NotEmpty(t, endpoints, "REST endpoints")
+	httpEndpoint := endpoints[0]
+
+	tenant := provisionAuthTestTenant(t, httpEndpoint)
+	systemBearer, err := helpers.AuthSystemAdminContext(ctx, httpEndpoint)
+	require.NoError(t, err, "system admin login")
+
+	cases := []struct {
+		name   string
+		bearer string
+	}{
+		{name: "no credential", bearer: ""},
+		{name: "system admin of another tenant", bearer: systemBearer},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			appName := fmt.Sprintf("unbound-app-%d", time.Now().UnixNano())
+			status, body, err := postRegisterApp(ctx, httpEndpoint, tenant.TenantID, tc.bearer, appName)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusForbidden, status, "body=%s", body)
+		})
+	}
+
+	// The tenant's own admin is bound to it and may register an app.
+	appName := fmt.Sprintf("bound-app-%d", time.Now().UnixNano())
+	status, body, err := postRegisterApp(ctx, httpEndpoint, tenant.TenantID, tenant.AdminBearer, appName)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, status, "body=%s", body)
 }
 
 // testAuthProtocol runs the authorization test suite against a protocol.
@@ -353,7 +401,7 @@ func testOIDCTokenFlow(t *testing.T, ctx context.Context, protocol authProtocol)
 	require.NotEmpty(t, httpEndpoint, "%s: HTTP endpoint must be available for OIDC token flow", protocol.Name())
 
 	// Get or create test credentials
-	creds, err := getOrCreateTestCredentials(ctx, httpEndpoint)
+	creds, err := getOrCreateTestCredentials(t, ctx, httpEndpoint)
 	require.NoError(t, err, "%s: test credentials must be obtainable", protocol.Name())
 
 	// Obtain token using OIDC client credentials flow
@@ -380,7 +428,7 @@ func testValidTokenAllowsAccess(t *testing.T, ctx context.Context, protocol auth
 	require.NotEmpty(t, httpEndpoint, "%s: HTTP endpoint must be available for token acquisition", protocol.Name())
 
 	// Get test credentials
-	creds, err := getOrCreateTestCredentials(ctx, httpEndpoint)
+	creds, err := getOrCreateTestCredentials(t, ctx, httpEndpoint)
 	require.NoError(t, err, "%s: test credentials must be obtainable", protocol.Name())
 
 	// Obtain token

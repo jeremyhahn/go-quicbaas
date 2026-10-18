@@ -68,9 +68,21 @@ func skipIfNoBinary(t *testing.T) string {
 // that need a different transport (e.g. the IAM suite over REST) keep
 // passing --transport explicitly and are left untouched.
 func runCommand(ctx context.Context, binary string, args ...string) (string, error) {
+	return runCommandAs(ctx, nil, binary, args...)
+}
+
+// runCommandAs is runCommand under the tenant admin's session when admin is
+// not nil: the command presents the tenant admin's certificate and bearer.
+func runCommandAs(ctx context.Context, admin *tenantAdminSession, binary string, args ...string) (string, error) {
 	fullArgs := append([]string{"--tls-ca", integrationCAPath}, args...)
 	fullArgs = defaultGRPCTransport(fullArgs)
+	if admin != nil {
+		fullArgs = append(fullArgs, admin.args()...)
+	}
 	cmd := exec.CommandContext(ctx, binary, fullArgs...)
+	if admin != nil {
+		cmd.Env = admin.env()
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -1016,25 +1028,14 @@ func TestCLIIAMUserOperations(t *testing.T) {
 	_, _ = runCommand(ctx, binary, "iam", "tenant", "delete", tenantID,
 		"--yes", "--address", serverAddr, "--transport", "rest")
 
-	// Create tenant first - required for user operations
-	output, err := runCommand(ctx, binary, "iam", "tenant", "create", tenantID,
-		"--name", "CLI User Test Tenant",
-		"--address", serverAddr,
-		"--transport", "rest")
-	require.NoError(t, err, "IAM tenant create should succeed: %s", output)
-	t.Logf("IAM tenant create output: %s", output)
-
-	// Cleanup tenant at the end
-	defer func() {
-		_, _ = runCommand(ctx, binary, "iam", "tenant", "delete", tenantID,
-			"--yes",
-			"--address", serverAddr,
-			"--transport", "rest")
-	}()
+	// Provision the tenant first - required for user operations - and act as
+	// its admin for the tenant-scoped verbs, as a production caller does.
+	// The tenant is deleted when the test ends.
+	admin := startTenantAdminSession(t, tenantID)
 
 	// Create user - email is a positional argument, not a flag
 	// CLI: quicbaas iam user create <email> --tenant <tenant> --name <name>
-	output, err = runCommand(ctx, binary, "iam", "user", "create", email,
+	output, err := runCommandAs(ctx, admin, binary, "iam", "user", "create", email,
 		"--tenant", tenantID,
 		"--name", "Test User",
 		"--address", serverAddr,
@@ -1048,7 +1049,7 @@ func TestCLIIAMUserOperations(t *testing.T) {
 	t.Logf("Parsed user ID: %s", userID)
 
 	// Get user info - user-id is a positional argument (not email)
-	output, err = runCommand(ctx, binary, "iam", "user", "get", userID,
+	output, err = runCommandAs(ctx, admin, binary, "iam", "user", "get", userID,
 		"--tenant", tenantID,
 		"--address", serverAddr,
 		"--output", "json",
@@ -1057,7 +1058,7 @@ func TestCLIIAMUserOperations(t *testing.T) {
 	t.Logf("IAM user get output: %s", output)
 
 	// List users
-	output, err = runCommand(ctx, binary, "iam", "user", "list",
+	output, err = runCommandAs(ctx, admin, binary, "iam", "user", "list",
 		"--tenant", tenantID,
 		"--address", serverAddr,
 		"--transport", "rest")
@@ -1065,7 +1066,7 @@ func TestCLIIAMUserOperations(t *testing.T) {
 	t.Logf("IAM user list output: %s", output)
 
 	// Delete user - user-id is a positional argument (not email)
-	output, err = runCommand(ctx, binary, "iam", "user", "delete", userID,
+	output, err = runCommandAs(ctx, admin, binary, "iam", "user", "delete", userID,
 		"--tenant", tenantID,
 		"--yes",
 		"--address", serverAddr,
@@ -1111,26 +1112,15 @@ func TestCLIIAMRoleOperations(t *testing.T) {
 	_, _ = runCommand(ctx, binary, "iam", "tenant", "delete", tenantID,
 		"--yes", "--address", serverAddr, "--transport", "rest")
 
-	// Create tenant first - required for role operations
-	output, err := runCommand(ctx, binary, "iam", "tenant", "create", tenantID,
-		"--name", "CLI Role Test Tenant",
-		"--address", serverAddr,
-		"--transport", "rest")
-	require.NoError(t, err, "IAM tenant create should succeed: %s", output)
-	t.Logf("IAM tenant create output: %s", output)
-
-	// Cleanup tenant at the end
-	defer func() {
-		_, _ = runCommand(ctx, binary, "iam", "tenant", "delete", tenantID,
-			"--yes",
-			"--address", serverAddr,
-			"--transport", "rest")
-	}()
+	// Provision the tenant first - required for role operations - and act as
+	// its admin for the tenant-scoped verbs, as a production caller does.
+	// The tenant is deleted when the test ends.
+	admin := startTenantAdminSession(t, tenantID)
 
 	// Create role - name is a positional argument
 	// CLI: quicbaas iam role create <name> --tenant <tenant> --name <display_name>
 	// Note: The server generates the actual role ID
-	output, err = runCommand(ctx, binary, "iam", "role", "create", roleName,
+	output, err := runCommandAs(ctx, admin, binary, "iam", "role", "create", roleName,
 		"--tenant", tenantID,
 		"--name", "Test Role",
 		"--description", "Test role for integration tests",
@@ -1145,7 +1135,7 @@ func TestCLIIAMRoleOperations(t *testing.T) {
 	t.Logf("Parsed role ID: %s", roleID)
 
 	// Get role info - uses the server-generated ID
-	output, err = runCommand(ctx, binary, "iam", "role", "get", roleID,
+	output, err = runCommandAs(ctx, admin, binary, "iam", "role", "get", roleID,
 		"--tenant", tenantID,
 		"--address", serverAddr,
 		"--output", "json",
@@ -1154,7 +1144,7 @@ func TestCLIIAMRoleOperations(t *testing.T) {
 	t.Logf("IAM role get output: %s", output)
 
 	// List roles
-	output, err = runCommand(ctx, binary, "iam", "role", "list",
+	output, err = runCommandAs(ctx, admin, binary, "iam", "role", "list",
 		"--tenant", tenantID,
 		"--address", serverAddr,
 		"--transport", "rest")
@@ -1162,7 +1152,7 @@ func TestCLIIAMRoleOperations(t *testing.T) {
 	t.Logf("IAM role list output: %s", output)
 
 	// Delete role - uses the server-generated ID
-	output, err = runCommand(ctx, binary, "iam", "role", "delete", roleID,
+	output, err = runCommandAs(ctx, admin, binary, "iam", "role", "delete", roleID,
 		"--tenant", tenantID,
 		"--yes",
 		"--address", serverAddr,

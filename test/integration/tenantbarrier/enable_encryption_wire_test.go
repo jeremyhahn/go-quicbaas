@@ -78,9 +78,6 @@ func TestTenantBarrier_WireEnableEncryptionScope(t *testing.T) {
 
 	own := "tb-ee-own-" + ts
 	other := "tb-ee-other-" + ts
-	createTenant(t, own, "Wire Enable-Encryption Own", adminToken)
-	createTenant(t, other, "Wire Enable-Encryption Other", adminToken)
-
 	ownBearer := tenantAdminBearer(t, own)
 	otherBearer := tenantAdminBearer(t, other)
 	initNoneBarrier(t, own, ownBearer)

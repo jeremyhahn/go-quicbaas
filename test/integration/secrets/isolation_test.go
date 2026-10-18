@@ -59,20 +59,15 @@ type tenantSecretsClient struct {
 // in as a tenant admin of it.
 func newTenantSecretsClient(t *testing.T, endpoint, tenantID string) *tenantSecretsClient {
 	t.Helper()
-	admin := &tenantSecretsClient{
-		endpoint: endpoint,
-		bearer:   helpers.AuthPIV(t, endpoint),
-		client:   helpers.NewHTTPClient(10 * time.Second),
-	}
-	status, body := admin.do(t, http.MethodPost, "/api/v1/tenants",
-		map[string]interface{}{"id": tenantID, "name": tenantID})
-	if status != http.StatusOK && status != http.StatusCreated && status != http.StatusConflict {
-		t.Fatalf("create tenant %s: status %d body=%s", tenantID, status, body)
-	}
-
+	// The system admin only provisions the tenant; the secrets calls are made
+	// by the tenant's own admin, as a production caller makes them.
 	bearer := helpers.AuthTenantAdmin(t, endpoint, tenantID)
 	require.NotEmpty(t, bearer, "tenant-admin bearer for %s", tenantID)
-	return &tenantSecretsClient{endpoint: endpoint, bearer: bearer, client: admin.client}
+	return &tenantSecretsClient{
+		endpoint: endpoint,
+		bearer:   bearer,
+		client:   helpers.NewHTTPClient(10 * time.Second),
+	}
 }
 
 // do sends one request and returns its status and body.

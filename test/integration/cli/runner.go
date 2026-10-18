@@ -110,6 +110,10 @@ type TestRunner struct {
 	transport     Transport
 	baseArgs      []string
 	authenticated bool
+
+	// tenantAdmin, once ActAsTenantAdmin has run, carries the tenant admin's
+	// credentials every tenant-scoped command runs under.
+	tenantAdmin *tenantAdminSession
 }
 
 // NewTestRunner creates a new test runner.
@@ -227,6 +231,12 @@ func writeMCPSessionToken(bearer string, expiresAt time.Time) error {
 		}
 		path = filepath.Join(home, ".quicbaas", "token")
 	}
+	return writeSessionToken(path, bearer, expiresAt)
+}
+
+// writeSessionToken writes bearer at path in the session-envelope format the
+// CLI's token manager reads.
+func writeSessionToken(path, bearer string, expiresAt time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -277,6 +287,13 @@ func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err erro
 		}
 	}
 
+	actsAsTenantAdmin := r.tenantAdmin != nil && !isSystemAdminCommand(cmd.Args)
+	if r.tenantAdmin != nil {
+		if err := r.tenantAdmin.prepare(r.t); err != nil {
+			r.t.Fatalf("[%s] %v", r.transport, err)
+		}
+	}
+
 	// Resolve the command's intended deadline.
 	timeout := cmd.Timeout
 	if timeout == 0 {
@@ -293,6 +310,9 @@ func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err erro
 	// backing array is never mutated across table-driven invocations.
 	args := append([]string{}, r.baseArgs...)
 	args = append(args, "--timeout", timeout.String())
+	if actsAsTenantAdmin {
+		args = append(args, r.tenantAdmin.args()...)
+	}
 	args = append(args, cmd.Args...)
 
 	// The runner's process-kill deadline is slightly longer than the CLI's own
@@ -303,6 +323,9 @@ func (r *TestRunner) Run(cmd CommandDef) (stdout string, stderr string, err erro
 
 	// Run the command
 	execCmd := exec.CommandContext(ctx, r.binary, args...)
+	if actsAsTenantAdmin {
+		execCmd.Env = r.tenantAdmin.env()
+	}
 
 	var outBuf, errBuf bytes.Buffer
 	execCmd.Stdout = &outBuf

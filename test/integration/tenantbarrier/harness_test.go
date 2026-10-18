@@ -101,10 +101,6 @@ import (
 // restTimeout bounds a single REST request to the integration cluster.
 const restTimeout = 30 * time.Second
 
-// tenantCreateTimeout bounds the tenant-creation IAM call, which may touch
-// the Raft leader and incur an election wait on the first call.
-const tenantCreateTimeout = 20 * time.Second
-
 // =============================================================================
 // REST client helpers
 // =============================================================================
@@ -129,10 +125,11 @@ func adminBearer(t *testing.T) string {
 	return token
 }
 
-// tenantAdminBearer mints (and memoises, via helpers) a tenant-admin bearer
-// scoped to tenantID. Per the owner decision, ALL tenant-barrier mutations in
-// this suite run under a tenant-admin identity; the system-admin bearer is
-// used only for tenant provisioning and status reads.
+// tenantAdminBearer has the system admin provision tenantID (on the first call
+// for it) and returns the bearer of the tenant's own admin. Per the owner
+// decision, ALL tenant-barrier mutations in this suite run under a
+// tenant-admin identity; the system-admin bearer is used only for tenant
+// provisioning and the system-admin posture checks.
 func tenantAdminBearer(t *testing.T, tenantID string) string {
 	t.Helper()
 	token := helpers.AuthTenantAdmin(t, restBaseURL(), tenantID)
@@ -307,30 +304,6 @@ func statusTenantBarrier(ctx context.Context, tenantID, bearer string) (int, *te
 // Tenant provisioning helpers
 // =============================================================================
 
-// createTenant creates a new tenant via the IAM REST API using the admin
-// bearer. tenantID must be globally unique within the test run; callers
-// should use t.Name()-derived IDs or a per-test UUID prefix.
-// A t.Cleanup hook is NOT registered here — tenants in the integration cluster
-// persist for the run lifetime and their state is the feature under test.
-func createTenant(t *testing.T, tenantID, displayName, bearer string) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), tenantCreateTimeout)
-	defer cancel()
-
-	reqBody := map[string]interface{}{
-		"id":   tenantID,
-		"name": displayName,
-	}
-	status, body, err := doREST(ctx, http.MethodPost,
-		"/api/v1/tenants", bearer, reqBody)
-	require.NoErrorf(t, err, "createTenant %s: network error", tenantID)
-	// 200 or 201 → created; 409 → already exists (idempotent for parallel
-	// test runs that share the cluster).
-	if status != http.StatusOK && status != http.StatusCreated && status != http.StatusConflict {
-		t.Fatalf("createTenant %s: unexpected status %d body=%s", tenantID, status, body)
-	}
-}
-
 // =============================================================================
 // Volume-pool probe
 // =============================================================================
@@ -341,19 +314,18 @@ func createTenant(t *testing.T, tenantID, displayName, bearer string) {
 // If the error body contains "volume pool not configured", the pool is absent.
 // If the call succeeds (204), the pool is present.
 //
-// The probe tenant is not torn down (integration cluster tenants are
-// long-lived). A unique ID derived from the calling test avoids collision
-// across parallel test runs.
+// The probe tenant is deleted when the calling test ends (helpers.TenantAdmin
+// registers the cleanup). A unique ID avoids collision across parallel test
+// runs.
 //
 // Returns true when a volume pool is configured.
 //
 // The probe init runs under a tenant-admin bearer for the probe tenant:
 // barrier init is a tenant-barrier mutation and system-tenant callers are
 // denied (403) before the volume-pool check would ever be reached.
-func volumePoolAvailable(t *testing.T, bearer string) bool {
+func volumePoolAvailable(t *testing.T) bool {
 	t.Helper()
 	probeTenantID := fmt.Sprintf("tb-probe-%d", time.Now().UnixNano())
-	createTenant(t, probeTenantID, "TenantBarrier Volume-Pool Probe", bearer)
 	probeBearer := tenantAdminBearer(t, probeTenantID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), restTimeout)

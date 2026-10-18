@@ -38,7 +38,7 @@ func TestIAMAuditQuery(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-query")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Query Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -59,7 +59,7 @@ func TestIAMAuditQueryJSON(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-json")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit JSON Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -92,7 +92,7 @@ func TestIAMAuditQueryWithCategory(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-cat")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Category Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -113,7 +113,7 @@ func TestIAMAuditQueryWithOutcome(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-outcome")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Outcome Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -141,7 +141,7 @@ func TestIAMAuditQueryWithLimit(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-limit")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Limit Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -168,7 +168,7 @@ func TestIAMAuditQueryWithTimeRange(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-time")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Time Range Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -203,7 +203,7 @@ func TestIAMAuditQueryCombinedFilters(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-combined")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Combined Filters Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -252,7 +252,7 @@ func TestIAMAuditGetNonExistent(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-get-missing")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Get NonExistent Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -283,7 +283,7 @@ func TestIAMAuditQueryInvalidOutcome(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-bad-outcome")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Invalid Outcome Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -316,7 +316,7 @@ func TestIAMAuditQueryAfterOperations(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("audit-ops")
-		runner.RunAndAssert(IAMTenantCreateCommand(tenantID, "Audit Operations Test"))
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()

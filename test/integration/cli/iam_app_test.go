@@ -29,15 +29,13 @@ import (
 // Helper Functions
 // =============================================================================
 
-// createTestTenant creates a tenant for use in IAM app tests and returns the tenant ID.
+// createTestTenant provisions a tenant for use in IAM app tests, makes the
+// runner act as its admin, and returns the tenant ID.
 // The caller is responsible for cleaning up the tenant after the test.
 func createTestTenant(t *testing.T, runner *TestRunner, prefix string) string {
 	t.Helper()
 	tenantID := UniqueKey(prefix)
-	tenantName := prefix + " Test Tenant"
-	cmd := IAMTenantCreateCommand(tenantID, tenantName)
-	stdout, stderr, err := runner.Run(cmd)
-	require.NoError(t, err, "failed to create test tenant %s: stdout=%s stderr=%s", tenantID, stdout, stderr)
+	runner.ActAsTenantAdmin(tenantID)
 	return tenantID
 }
 

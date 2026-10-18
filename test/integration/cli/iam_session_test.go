@@ -39,8 +39,7 @@ func TestIAMSessionList(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("sess-list")
-		createTenant := IAMTenantCreateCommand(tenantID, "Session List Test")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -63,8 +62,7 @@ func TestIAMSessionListJSON(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("sess-json")
-		createTenant := IAMTenantCreateCommand(tenantID, "Session JSON Test")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -100,8 +98,7 @@ func TestIAMSessionListWithLimit(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("sess-limit")
-		createTenant := IAMTenantCreateCommand(tenantID, "Session Limit Test")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -134,8 +131,7 @@ func TestIAMSessionGetNonExistent(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("sess-get-ne")
-		createTenant := IAMTenantCreateCommand(tenantID, "Session Get NonExistent Test")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -176,8 +172,7 @@ func TestIAMSessionRevokeNonExistent(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("sess-rev-ne")
-		createTenant := IAMTenantCreateCommand(tenantID, "Session Revoke NonExistent Test")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -215,8 +210,7 @@ func TestIAMSessionRevokeAll(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("sess-revall")
-		createTenant := IAMTenantCreateCommand(tenantID, "Session RevokeAll Test")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -243,8 +237,7 @@ func TestIAMSessionRevokeAllKeepCurrent(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("sess-keep")
-		createTenant := IAMTenantCreateCommand(tenantID, "Session KeepCurrent Test")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()
@@ -297,8 +290,7 @@ func TestIAMSessionLifecycle(t *testing.T) {
 		}
 
 		tenantID := UniqueKey("sess-lifecycle")
-		createTenant := IAMTenantCreateCommand(tenantID, "Session Lifecycle Test")
-		runner.RunAndAssert(createTenant)
+		runner.ActAsTenantAdmin(tenantID)
 		defer func() {
 			runner.Run(IAMTenantDeleteCommand(tenantID))
 		}()

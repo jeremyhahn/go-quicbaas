@@ -145,20 +145,22 @@ func dataPlaneBearer(ctx context.Context, baseURL string) (string, error) {
 	return bearer, nil
 }
 
-// enrollDataPlanePrincipal provisions, as the system admin, a tenant for this
-// suite process, a role in it holding exactly dataplane.Permissions, and a PIV
-// user bound to that role. The tenant is unique per process so suite packages
+// enrollDataPlanePrincipal has the system admin provision a tenant for this
+// suite process (ProvisionTenant); that tenant's admin then creates a role in
+// it holding exactly dataplane.Permissions and a PIV user bound to that role. The tenant is unique per process so suite packages
 // running against one cluster never share or collide on a principal.
 func enrollDataPlanePrincipal(ctx context.Context, baseURL string) (*dataPlanePrincipal, error) {
-	adminBearer, _, err := authPIV(ctx, baseURL, pivCertPath(), pivKeyPath(), pivCAFile())
+	systemBearer, _, err := authPIV(ctx, baseURL, pivCertPath(), pivKeyPath(), pivCAFile())
 	if err != nil {
 		return nil, &DataPlaneAuthError{Step: "system admin login", Cause: err}
 	}
 
+	// The system admin only provisions the tenant. Everything inside it is
+	// done by the tenant's own admin, whose bearer is bound to the tenant.
 	tenantID := dataplane.TenantPrefix + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	tenant := map[string]interface{}{"id": tenantID, "name": tenantID}
-	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants", adminBearer, tenant); err != nil {
-		return nil, &DataPlaneAuthError{Step: "create tenant", TenantID: tenantID, Cause: err}
+	tenant, err := ProvisionTenant(ctx, baseURL, tenantID, systemBearer)
+	if err != nil {
+		return nil, &DataPlaneAuthError{Step: "provision tenant", TenantID: tenantID, Cause: err}
 	}
 
 	role := map[string]interface{}{
@@ -166,17 +168,17 @@ func enrollDataPlanePrincipal(ctx context.Context, baseURL string) (*dataPlanePr
 		"name":        dataplane.RoleID,
 		"permissions": dataplane.Permissions,
 	}
-	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/roles", adminBearer, role); err != nil {
+	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/roles", tenant.AdminBearer, role); err != nil {
 		return nil, &DataPlaneAuthError{Step: "create role", TenantID: tenantID, Cause: err}
 	}
 
-	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, adminBearer)
+	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, tenant.AdminBearer)
 	if err != nil {
 		return nil, &DataPlaneAuthError{Step: "enroll PIV user", TenantID: tenantID, Cause: err}
 	}
 
 	binding := map[string]interface{}{"role_id": dataplane.RoleID}
-	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles", adminBearer, binding); err != nil {
+	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles", tenant.AdminBearer, binding); err != nil {
 		return nil, &DataPlaneAuthError{Step: "bind role to user " + userID, TenantID: tenantID, Cause: err}
 	}
 

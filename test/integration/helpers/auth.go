@@ -103,6 +103,14 @@ func AuthPIV(t *testing.T, baseURL string) string {
 	return bearer
 }
 
+// AuthSystemAdminContext is AuthPIV with an explicit context and error: it
+// logs in with the fixture system-admin certificate and returns its bearer,
+// which is bound to the system tenant.
+func AuthSystemAdminContext(ctx context.Context, baseURL string) (string, error) {
+	bearer, _, err := authPIV(ctx, baseURL, pivCertPath(), pivKeyPath(), pivCAFile())
+	return bearer, err
+}
+
 // AuthPIVContext is the context-aware variant of AuthPIV. It returns the
 // bearer and the error rather than calling t.Fatal so callers can implement
 // custom retry / error policies. Empty certPath / keyPath / caPath fall back

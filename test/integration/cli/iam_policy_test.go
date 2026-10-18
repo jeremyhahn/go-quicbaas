@@ -106,17 +106,17 @@ spec:
 	return tmpFile.Name()
 }
 
-// createPolicyTestTenant creates a tenant for policy tests and registers cleanup.
+// createPolicyTestTenant provisions a tenant for policy tests, makes the runner
+// act as its admin, and registers cleanup.
 // Returns the tenant ID.
 func createPolicyTestTenant(t *testing.T, runner *TestRunner) string {
 	t.Helper()
 	tenantID := UniqueKey("pol-tenant")
 	cmd := IAMTenantCreateCommand(tenantID, tenantID+"-name")
-	stdout, stderr, err := runner.Run(cmd)
 	if runner.IsSkipped(cmd) {
 		return ""
 	}
-	require.NoError(t, err, "tenant create should succeed: stdout=%s stderr=%s", stdout, stderr)
+	runner.ActAsTenantAdmin(tenantID)
 	t.Cleanup(func() {
 		delCmd := IAMTenantDeleteCommand(tenantID)
 		requireCleanupRun(t, runner, delCmd)
