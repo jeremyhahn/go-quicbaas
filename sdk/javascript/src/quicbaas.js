@@ -592,7 +592,6 @@ export {
   TransactionClient,
   QueryClient,
   AuthClient,
-  SealClient,
   ClusterClient,
   HealthClient,
   OperationsClient,
