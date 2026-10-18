@@ -5,6 +5,7 @@ package kv
 
 import (
 	"context"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1032,5 +1033,56 @@ func TestWatchRequest_Fields(t *testing.T) {
 	}
 	if !req.FilterDelete {
 		t.Error("FilterDelete not set correctly")
+	}
+}
+
+func TestClient_Watch_StartRevisionOverflow(t *testing.T) {
+	mockT := &mockTransport{
+		requestStreamFn: func(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
+			t.Fatal("a watch with an unrepresentable start revision must not reach the transport")
+			return nil, nil
+		},
+	}
+	client := NewClient(mockT)
+
+	_, err := client.Watch(context.Background(), "test-key", WithStartRevision(math.MaxUint64))
+	if !errors.IsInvalidInput(err) {
+		t.Fatalf("expected InvalidInput error, got %v", err)
+	}
+}
+
+func TestWatchEvents_ServiceResponse(t *testing.T) {
+	resp := &service.WatchResponse{
+		WatchID: 1,
+		Events: []*service.WatchEvent{
+			{Type: service.WatchEventTypePut, Key: []byte("a"), Value: []byte("1"), Revision: 7, Timestamp: 42},
+			nil,
+			{Type: service.WatchEventTypeUnspecified, Key: []byte("skipped")},
+			{Type: service.WatchEventTypeDelete, Key: []byte("b"), PrevValue: []byte("2"), Revision: -1},
+		},
+	}
+
+	events := watchEvents(resp)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 mapped events, got %d", len(events))
+	}
+	put, del := events[0], events[1]
+	if put.Type != EventPut || put.Key != "a" || string(put.Value) != "1" || put.Revision != 7 {
+		t.Errorf("unexpected put event: %+v", put)
+	}
+	if !put.Timestamp.Equal(time.Unix(0, 42)) {
+		t.Errorf("unexpected put timestamp: %v", put.Timestamp)
+	}
+	if del.Type != EventDelete || del.Key != "b" || string(del.PrevValue) != "2" || del.Revision != 0 {
+		t.Errorf("unexpected delete event: %+v", del)
+	}
+}
+
+func TestWatchEvents_NoEvents(t *testing.T) {
+	if got := watchEvents(&service.WatchResponse{WatchID: 1, Created: true}); len(got) != 0 {
+		t.Errorf("creation confirmation must carry no events, got %d", len(got))
+	}
+	if got := watchEvents("not a watch message"); got != nil {
+		t.Errorf("unknown message must carry no events, got %v", got)
 	}
 }
