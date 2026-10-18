@@ -937,6 +937,9 @@ func (c *client) ImportKey(ctx context.Context, req *ImportKeyRequest) (*ImportK
 	case *ImportKeyResponse:
 		return r, nil
 	case *service.ImportKeyResponse:
+		if r.Metadata == nil {
+			return nil, errors.NewInternal("kms.ImportKey", "response carries no key metadata")
+		}
 		importResp := &ImportKeyResponse{
 			KeyID: r.Metadata.KeyID,
 		}

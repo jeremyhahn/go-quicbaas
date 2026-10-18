@@ -139,11 +139,22 @@ func handleKMSImportKey(ctx context.Context, svc service.QuicBaaS, req interface
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.ImportKeyRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ImportKey", "*service.ImportKeyRequest", typeNameOf(req))
+	if r, ok := req.(*service.ImportKeyRequest); ok {
+		return kms.ImportKey(ctx, r)
 	}
-	return kms.ImportKey(ctx, r)
+	sdkReq, ok := req.(*kmsclient.ImportKeyRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ImportKey", "*service.ImportKeyRequest or *kms.ImportKeyRequest", typeNameOf(req))
+	}
+	return kms.ImportKey(ctx, &service.ImportKeyRequest{
+		KeyMaterial:   sdkReq.KeyMaterial,
+		WrappingKeyID: sdkReq.WrappingKeyID,
+		KeyAttributes: sdkAlgToKeyAttributes(sdkReq.Algorithm),
+		Name:          sdkReq.Name,
+		Description:   sdkReq.Description,
+		Usage:         convertSDKUsagesToService(sdkReq.Usage),
+		Tags:          sdkReq.Tags,
+	})
 }
 
 func handleKMSGetKey(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -469,11 +480,31 @@ func handleKMSExportKey(ctx context.Context, svc service.QuicBaaS, req interface
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.ExportKeyRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ExportKey", "*service.ExportKeyRequest", typeNameOf(req))
+	if r, ok := req.(*service.ExportKeyRequest); ok {
+		return kms.ExportKey(ctx, r)
 	}
-	return kms.ExportKey(ctx, r)
+	sdkReq, ok := req.(*kmsclient.ExportKeyRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ExportKey", "*service.ExportKeyRequest or *kms.ExportKeyRequest", typeNameOf(req))
+	}
+	wrappingAlg, known := kmsWrappingAlgToService[sdkReq.WrappingAlgorithm]
+	if !known {
+		return nil, errors.NewInvalidInput("embedded.kms.ExportKey", "unknown wrapping algorithm")
+	}
+	format, known := kmsExportFormatToService[sdkReq.Format]
+	if !known {
+		return nil, errors.NewInvalidInput("embedded.kms.ExportKey", "unknown export format: "+sdkReq.Format.String())
+	}
+	if sdkReq.Version < 0 {
+		return nil, errors.NewInvalidInput("embedded.kms.ExportKey", "key version must not be negative")
+	}
+	return kms.ExportKey(ctx, &service.ExportKeyRequest{
+		KeyID:             sdkReq.KeyID,
+		Version:           uint64(sdkReq.Version),
+		WrappingKeyID:     sdkReq.WrappingKeyID,
+		WrappingAlgorithm: wrappingAlg,
+		Format:            format,
+	})
 }
 
 func handleKMSUnwrapKey(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -481,11 +512,49 @@ func handleKMSUnwrapKey(ctx context.Context, svc service.QuicBaaS, req interface
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.UnwrapKeyRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UnwrapKey", "*service.UnwrapKeyRequest", typeNameOf(req))
+	if r, ok := req.(*service.UnwrapKeyRequest); ok {
+		return kms.UnwrapKey(ctx, r)
 	}
-	return kms.UnwrapKey(ctx, r)
+	sdkReq, ok := req.(*kmsclient.UnwrapKeyRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UnwrapKey", "*service.UnwrapKeyRequest or *kms.UnwrapKeyRequest", typeNameOf(req))
+	}
+	wrappingAlg, known := kmsWrappingAlgToService[sdkReq.WrappingAlgorithm]
+	if !known {
+		return nil, errors.NewInvalidInput("embedded.kms.UnwrapKey", "unknown wrapping algorithm")
+	}
+	if sdkReq.SourceVersion < 0 {
+		return nil, errors.NewInvalidInput("embedded.kms.UnwrapKey", "source key version must not be negative")
+	}
+	return kms.UnwrapKey(ctx, &service.UnwrapKeyRequest{
+		KeyID:             sdkReq.KeyID,
+		WrappedKey:        sdkReq.WrappedMaterial,
+		WrappingKeyID:     sdkReq.WrappingKeyID,
+		WrappingAlgorithm: wrappingAlg,
+		Algorithm:         sdkReq.Algorithm.String(),
+		SourceKeyID:       sdkReq.SourceKeyID,
+		SourceVersion:     uint64(sdkReq.SourceVersion),
+		Name:              sdkReq.Name,
+	})
+}
+
+// kmsWrappingAlgToService maps each SDK wrapping algorithm to the name the
+// KMS service validates.
+var kmsWrappingAlgToService = map[kmsclient.WrappingAlgorithm]string{
+	kmsclient.WrapAlgAESKW:         "AES-KW",
+	kmsclient.WrapAlgAESKWP:        "AES-KWP",
+	kmsclient.WrapAlgAESGCM:        "AES-GCM",
+	kmsclient.WrapAlgRSAOAEPSHA256: "RSA-OAEP-SHA256",
+	kmsclient.WrapAlgRSAOAEPSHA384: "RSA-OAEP-SHA384",
+	kmsclient.WrapAlgRSAOAEPSHA512: "RSA-OAEP-SHA512",
+	kmsclient.WrapAlgECDHESA256KW:  "ECDH-ES+A256KW",
+}
+
+// kmsExportFormatToService maps each SDK export format to the service's name.
+var kmsExportFormatToService = map[kmsclient.ExportFormat]string{
+	kmsclient.ExportFormatRaw: "raw",
+	kmsclient.ExportFormatJWK: "jwk",
+	kmsclient.ExportFormatPEM: "pem",
 }
 
 func handleKMSSetKeySafety(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
