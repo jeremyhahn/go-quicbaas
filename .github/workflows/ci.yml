@@ -29,9 +29,10 @@
 # skip or failure.
 # test/buildgates asserts the tags and the `if:` agree.
 #
-# v1.15 adopted 2026-10-05 (#1156; automatethethings#209): every job starts at
-# once -- test, race, security, snapshot and docker no longer wait on lint +
-# build, so a run takes as long as its slowest job (v1.14). Jobs that read
+# v1.15 adopted 2026-10-05 (#1156; automatethethings#209): test, security and
+# snapshot start at once and no longer wait on lint + build (v1.14). race,
+# docker, test-full and web wait on lint and test (#1517), so a lint or test
+# failure skips them. Jobs that read
 # needs.merge.outputs.base_sha still need `merge`. CI Gate still needs every
 # job and fails closed on each. push and pull_request run on main only:
 # automerge v7's merge trains are PRs into main and get CI from pull_request,
@@ -368,7 +369,7 @@ jobs:
     name: Unit Tests (${{ matrix.leg }})
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: [merge]
+    needs: [merge, lint, test]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     strategy:
       fail-fast: false
@@ -508,11 +509,11 @@ jobs:
     name: Race Detector
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    # No lint/build in `needs` (v1.14): starts with them, not after them.
-    # `merge` stays so the job can read needs.merge.outputs.base_sha (#436).
-    needs: [merge]
+    # Waits on lint and test (#1517): a red head spends no runner on the race
+    # pass. `merge` stays so the job can read needs.merge.outputs.base_sha (#436).
+    needs: [merge, lint, test]
     # Full tier (header; sdlc §5a). The implicit success() still skips this job
-    # when `merge` fails.
+    # when `merge`, `lint` or `test` fails.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     steps:
       - name: Checkout code
@@ -746,7 +747,7 @@ jobs:
     # first. TypeScript branches conflict the same way Go branches do -- two
     # that are each green can together delete a store one of them still
     # subscribes to, with no conflicting hunk anywhere.
-    needs: [merge]
+    needs: [merge, lint, test]
     # FAST TIER by cost (seconds of npm ci, ~40 s of vitest), but DELIBERATELY
     # NOT A GATE ON THE EXPENSIVE TIER the way lint and build are. #349 records
     # a frontend test that flakes; putting this job in the Go tier's `needs:`
@@ -755,7 +756,7 @@ jobs:
     # below -- which is what #551 asked for -- and gates nothing else.
     #
     # Full tier (header; sdlc §5a). The implicit success() still skips this job
-    # when `merge` fails.
+    # when `merge`, `lint` or `test` fails.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     timeout-minutes: 30
     steps:
@@ -886,9 +887,11 @@ jobs:
   docker:
     name: Docker Build & Security Scan
     runs-on: ubuntu-latest
-    # No `needs` (v1.14): it consumes no artefact of another job (it checks
-    # out and builds the image itself), so it starts at once. Full tier
-    # (header; sdlc §5a).
+    # It consumes no artefact of another job (it checks out and builds the
+    # image itself), but it waits on lint and test (#1517): a lint or test
+    # failure skips it, so a red head spends no runner on the image. It does
+    # not wait on merge. Full tier (header; sdlc §5a).
+    needs: [lint, test]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     permissions:
       contents: read
@@ -1118,7 +1121,8 @@ jobs:
           # web gates nothing downstream, so it never causes another job to
           # skip (#551).
           check web       "${{ needs.web.result }}" full
-          # docker has no `needs` (v1.14), so on a full-tier event it runs even
-          # when merge fails; a skip there is never legitimate.
+          # docker waits on lint and test (#1517), so a lint or test failure
+          # skips it; it does not wait on merge, so on a full-tier event it
+          # runs even when merge fails. A full-tier skip still fails the gate.
           check docker    "${{ needs.docker.result }}" full
           exit $BAD
