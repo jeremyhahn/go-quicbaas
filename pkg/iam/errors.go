@@ -865,6 +865,15 @@ var (
 		Err:  &IAMMessageError{Message: "unsupported token endpoint auth method"},
 	}
 
+	// ErrInvalidResponseType is returned when an application's response types
+	// are not all in response_types_supported, or name a response type whose
+	// grant type the application does not hold (RFC 7591 §2.1).
+	ErrInvalidResponseType = &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.app",
+		Err:  &IAMMessageError{Message: "response_types unsupported or inconsistent with grant_types"},
+	}
+
 	// ErrMTLSMissingCNFClaim is returned when the access token has no cnf claim.
 	ErrMTLSMissingCNFClaim = &dberrors.QBError{
 		Code: dberrors.ErrForbidden,

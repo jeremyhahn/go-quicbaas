@@ -187,15 +187,14 @@ func TestRegisterDynamicClient(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "dynamic registration not available")
 	})
 
-	t.Run("all valid response types", func(t *testing.T) {
+	t.Run("response types outside response_types_supported", func(t *testing.T) {
 		handler, cleanup := setupOpenDCRHandler(t)
 		defer cleanup()
 
 		w := httptest.NewRecorder()
 		handler.RegisterDynamicClient(w, dcrRegisterRequest(`{"grant_types":["client_credentials"],"response_types":["code","token","id_token"]}`))
 
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "dynamic registration not available")
+		assertInvalidClientMetadata(t, w)
 	})
 
 	t.Run("all valid token auth methods", func(t *testing.T) {
@@ -494,29 +493,6 @@ func TestIsValidDCRGrantType(t *testing.T) {
 
 	t.Run("password grant not supported", func(t *testing.T) {
 		assert.False(t, isValidDCRGrantType("password"))
-	})
-}
-
-// TestIsValidDCRResponseType tests the isValidDCRResponseType helper function.
-func TestIsValidDCRResponseType(t *testing.T) {
-	t.Run("code", func(t *testing.T) {
-		assert.True(t, isValidDCRResponseType("code"))
-	})
-
-	t.Run("token", func(t *testing.T) {
-		assert.True(t, isValidDCRResponseType("token"))
-	})
-
-	t.Run("id_token", func(t *testing.T) {
-		assert.True(t, isValidDCRResponseType("id_token"))
-	})
-
-	t.Run("invalid response type", func(t *testing.T) {
-		assert.False(t, isValidDCRResponseType("invalid"))
-	})
-
-	t.Run("code token not supported as single value", func(t *testing.T) {
-		assert.False(t, isValidDCRResponseType("code token"))
 	})
 }
 

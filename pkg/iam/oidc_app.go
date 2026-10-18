@@ -216,9 +216,7 @@ func (m *AppManager) registerAppWithClientID(ctx context.Context, tenantID, clie
 	}
 
 	// Set defaults
-	if len(app.GrantTypes) == 0 {
-		app.GrantTypes = []string{GrantTypeAuthorizationCode, GrantTypeRefreshToken}
-	}
+	app.GrantTypes = effectiveGrantTypes(app.GrantTypes)
 	if len(app.ResponseTypes) == 0 {
 		app.ResponseTypes = []string{ResponseTypeCode}
 	}
@@ -387,6 +385,10 @@ func (m *AppManager) UpdateAppInTenant(ctx context.Context, tenantID, clientID s
 		app.GrantTypes = *opts.GrantTypes
 	}
 	if opts.ResponseTypes != nil {
+		// app.GrantTypes already holds any grant types this update sets.
+		if err := validateResponseTypes(*opts.ResponseTypes, app.GrantTypes); err != nil {
+			return nil, &AppMetadataError{Cause: err}
+		}
 		app.ResponseTypes = *opts.ResponseTypes
 	}
 	if opts.Scopes != nil {
@@ -567,6 +569,12 @@ func (m *AppManager) validateRegisterOptions(opts RegisterAppOptions) error {
 		}
 	}
 
+	// Submitted response types are checked against the grant types the app
+	// will hold, the defaults included; empty takes the default "code".
+	if err := validateResponseTypes(opts.ResponseTypes, effectiveGrantTypes(opts.GrantTypes)); err != nil {
+		return err
+	}
+
 	// Validate the per-app default service audience (empty = no default).
 	if err := ValidateDefaultAudience(opts.DefaultAudience); err != nil {
 		return &IAMContextError{Message: "invalid default audience", Cause: err}
@@ -679,6 +687,41 @@ func isValidGrantType(grantType string) bool {
 		"urn:ietf:params:oauth:grant-type:device_code": true,
 	}
 	return validGrantTypes[grantType]
+}
+
+// supportedResponseTypes is the one list of response types the authorization
+// endpoint serves. Discovery advertises it as response_types_supported and
+// registration and update accept nothing outside it.
+// effectiveGrantTypes returns the grant types a registration stores:
+// grantTypes, or the authorization_code + refresh_token default when empty.
+func effectiveGrantTypes(grantTypes []string) []string {
+	if len(grantTypes) == 0 {
+		return []string{GrantTypeAuthorizationCode, GrantTypeRefreshToken}
+	}
+	return grantTypes
+}
+
+var supportedResponseTypes = []string{ResponseTypeCode}
+
+// SupportedResponseTypes returns a copy of the response types this
+// authorization server supports, the value discovery advertises.
+func SupportedResponseTypes() []string {
+	return slices.Clone(supportedResponseTypes)
+}
+
+// validateResponseTypes reports ErrInvalidResponseType when a response type
+// is not in supportedResponseTypes, or when "code" is requested without the
+// authorization_code grant (RFC 7591 §2.1).
+func validateResponseTypes(responseTypes, grantTypes []string) error {
+	for _, rt := range responseTypes {
+		if !slices.Contains(supportedResponseTypes, rt) {
+			return ErrInvalidResponseType
+		}
+	}
+	if slices.Contains(responseTypes, ResponseTypeCode) && !slices.Contains(grantTypes, GrantTypeAuthorizationCode) {
+		return ErrInvalidResponseType
+	}
+	return nil
 }
 
 // Helper functions

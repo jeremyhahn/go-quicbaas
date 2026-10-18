@@ -105,3 +105,31 @@ func TestUpdateAppInTenant_AuthMethodRefusalIsAppMetadataError(t *testing.T) {
 		t.Errorf("UpdateAppInTenant(store fails) error = %v, want no *AppMetadataError", err)
 	}
 }
+
+// TestResponseTypeRefusalIsAppMetadataError proves a response type outside
+// response_types_supported is a metadata refusal on register and on update,
+// so every transport answers it as the client's error, not a server error
+// (#1512).
+func TestResponseTypeRefusalIsAppMetadataError(t *testing.T) {
+	ctx := context.Background()
+	storage := newMockAppStorage()
+	m := NewAppManager(storage, nil)
+
+	opts := metadataTestOptions("")
+	opts.ResponseTypes = []string{"id_token"}
+	_, err := m.RegisterApp(ctx, "t1", opts)
+	var metadataErr *AppMetadataError
+	if !errors.As(err, &metadataErr) || !errors.Is(err, ErrInvalidResponseType) {
+		t.Errorf("RegisterApp(id_token) error = %v, want *AppMetadataError wrapping ErrInvalidResponseType", err)
+	}
+
+	app, err := m.RegisterApp(ctx, "t1", metadataTestOptions(""))
+	if err != nil {
+		t.Fatalf("RegisterApp() error = %v", err)
+	}
+	unsupported := []string{"code", "id_token"}
+	_, err = m.UpdateAppInTenant(ctx, "t1", app.ClientID, UpdateAppOptions{ResponseTypes: &unsupported})
+	if !errors.As(err, &metadataErr) || !errors.Is(err, ErrInvalidResponseType) {
+		t.Errorf("UpdateAppInTenant(id_token) error = %v, want *AppMetadataError wrapping ErrInvalidResponseType", err)
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -421,9 +422,10 @@ func validateDCRRequest(req *DynamicClientRequest) *dcrValidationError {
 		}
 	}
 
-	// Validate response types
+	// Validate response types against the list discovery advertises
+	supportedResponseTypes := iam.SupportedResponseTypes()
 	for _, rt := range req.ResponseTypes {
-		if !isValidDCRResponseType(rt) {
+		if !slices.Contains(supportedResponseTypes, rt) {
 			return &dcrValidationError{
 				code:        DCRErrorInvalidClientMetadata,
 				description: "unsupported response_type: " + rt,
@@ -499,16 +501,6 @@ func isValidDCRGrantType(grantType string) bool {
 		"urn:ietf:params:oauth:grant-type:device_code": true,
 	}
 	return validGrantTypes[grantType]
-}
-
-// isValidDCRResponseType checks if a response type is valid for DCR.
-func isValidDCRResponseType(responseType string) bool {
-	validResponseTypes := map[string]bool{
-		"code":     true,
-		"token":    true,
-		"id_token": true,
-	}
-	return validResponseTypes[responseType]
 }
 
 // respondDCRError writes a DCR error response.

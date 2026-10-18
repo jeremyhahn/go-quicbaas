@@ -148,17 +148,24 @@ func TestIAMServiceWrapper_RegisterApp_PassesResponseTypesAndResourcePrefix(t *t
 	w := &iamServiceWrapper{provider: provider}
 	const tenantID = "tenant-register-fields"
 	ctx := tenantctx.WithTenant(context.Background(), tenantID)
-	// Not the manager's default ([code]), so a dropped field shows.
-	responseTypes := []string{iam.ResponseTypeCode, "none"}
+	request := func(responseTypes []string) *RegisterAppRequest {
+		return &RegisterAppRequest{
+			TenantID:       tenantID,
+			Name:           "reports",
+			RedirectURIs:   []string{"https://app.example.com/callback"},
+			GrantTypes:     []string{iam.GrantTypeAuthorizationCode},
+			ResponseTypes:  responseTypes,
+			ResourcePrefix: "reports/",
+		}
+	}
 
-	resp, err := w.RegisterApp(ctx, &RegisterAppRequest{
-		TenantID:       tenantID,
-		Name:           "reports",
-		RedirectURIs:   []string{"https://app.example.com/callback"},
-		GrantTypes:     []string{iam.GrantTypeAuthorizationCode},
-		ResponseTypes:  responseTypes,
-		ResourcePrefix: "reports/",
-	})
+	// "code" is also the manager's default, so a dropped field shows only
+	// through the refusal of an unsupported value reaching the caller.
+	_, err := w.RegisterApp(ctx, request([]string{iam.ResponseTypeCode, "none"}))
+	require.ErrorIs(t, err, iam.ErrInvalidResponseType)
+
+	responseTypes := []string{iam.ResponseTypeCode}
+	resp, err := w.RegisterApp(ctx, request(responseTypes))
 	require.NoError(t, err)
 	require.NotNil(t, resp.App)
 

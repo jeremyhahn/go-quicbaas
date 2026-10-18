@@ -128,8 +128,8 @@ func TestHandleIAMAppUpdate_StoredFieldRoundTrips(t *testing.T) {
 		{"grant_types", iamsdk.UpdateAppRequest{GrantTypes: []iamsdk.GrantType{iamsdk.GrantTypeClientCredentials}}, func(a *iamsdk.Application) bool {
 			return slices.Equal(a.GrantTypes, []iamsdk.GrantType{iamsdk.GrantTypeClientCredentials})
 		}},
-		{"response_types", iamsdk.UpdateAppRequest{ResponseTypes: []string{"code", "id_token"}}, func(a *iamsdk.Application) bool {
-			return slices.Equal(a.ResponseTypes, []string{"code", "id_token"})
+		{"response_types", iamsdk.UpdateAppRequest{ResponseTypes: []string{"code"}}, func(a *iamsdk.Application) bool {
+			return slices.Equal(a.ResponseTypes, []string{"code"})
 		}},
 		{"scopes", iamsdk.UpdateAppRequest{Scopes: []string{"kv:read"}}, func(a *iamsdk.Application) bool { return slices.Equal(a.Scopes, []string{"kv:read"}) }},
 		{"token_endpoint_auth_method", iamsdk.UpdateAppRequest{TokenEndpointAuthMethod: &post}, func(a *iamsdk.Application) bool { return a.TokenEndpointAuthMethod == post }},

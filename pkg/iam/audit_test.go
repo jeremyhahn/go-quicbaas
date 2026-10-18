@@ -1314,7 +1314,7 @@ func TestAppManager_UpdateApp_EdgeCases(t *testing.T) {
 		newName := "Updated App"
 		newURIs := []string{"https://new.example.com/callback"}
 		newPrefix := "newapp://"
-		newGrantTypes := []string{GrantTypeClientCredentials}
+		newGrantTypes := []string{GrantTypeAuthorizationCode, GrantTypeClientCredentials}
 		newResponseTypes := []string{ResponseTypeCode}
 
 		updated, err := manager.UpdateApp(ctx, registered.ClientID, UpdateAppOptions{

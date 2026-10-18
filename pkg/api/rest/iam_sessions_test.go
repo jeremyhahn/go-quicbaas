@@ -2420,13 +2420,6 @@ func TestIAM91_IsValidDCRGrantType(t *testing.T) {
 	assert.False(t, isValidDCRGrantType("bad"))
 }
 
-func TestIAM91_IsValidDCRResponseType(t *testing.T) {
-	assert.True(t, isValidDCRResponseType("code"))
-	assert.True(t, isValidDCRResponseType("token"))
-	assert.True(t, isValidDCRResponseType("id_token"))
-	assert.False(t, isValidDCRResponseType("bad"))
-}
-
 func TestIAM91_RespondDCRError(t *testing.T) {
 	w := httptest.NewRecorder()
 	respondDCRError(w, http.StatusBadRequest, "invalid_client_metadata", "test error")

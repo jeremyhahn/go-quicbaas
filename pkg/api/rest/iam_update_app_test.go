@@ -74,8 +74,8 @@ func TestUpdateApp_StoredFieldReachesApp(t *testing.T) {
 		{"grant_types", map[string]interface{}{"grant_types": []string{"client_credentials"}}, func(t *testing.T, a *iam.Application) {
 			assert.Equal(t, []string{"client_credentials"}, a.GrantTypes)
 		}},
-		{"response_types", map[string]interface{}{"response_types": []string{"code", "id_token"}}, func(t *testing.T, a *iam.Application) {
-			assert.Equal(t, []string{"code", "id_token"}, a.ResponseTypes)
+		{"response_types", map[string]interface{}{"response_types": []string{"code"}}, func(t *testing.T, a *iam.Application) {
+			assert.Equal(t, []string{"code"}, a.ResponseTypes)
 		}},
 		{"token_endpoint_auth_method", map[string]interface{}{"token_endpoint_auth_method": "client_secret_post"}, func(t *testing.T, a *iam.Application) {
 			assert.Equal(t, "client_secret_post", a.TokenEndpointAuthMethod)
@@ -141,6 +141,25 @@ func TestUpdateApp_UnsupportedGrantIsBadRequest(t *testing.T) {
 	app, err := mgr.GetAppInTenant(context.Background(), appsTenant, clientID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"authorization_code"}, app.GrantTypes)
+}
+
+// TestUpdateApp_UnsupportedResponseTypeIsBadRequest: a response type outside
+// response_types_supported is refused with 400 and the app keeps its own.
+func TestUpdateApp_UnsupportedResponseTypeIsBadRequest(t *testing.T) {
+	handler, cleanup := setupAppHandler(t)
+	defer cleanup()
+	clientID := registerUpdateTarget(t, handler)
+
+	w := httptest.NewRecorder()
+	handler.UpdateApp(w, appRequest(t, http.MethodPut, map[string]interface{}{
+		"response_types": []string{"code", "id_token"},
+	}, map[string]string{"tenant_id": appsTenant, "client_id": clientID}))
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+
+	mgr := handler.server.service.(*appMockService).manager
+	app, err := mgr.GetAppInTenant(context.Background(), appsTenant, clientID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"code"}, app.ResponseTypes)
 }
 
 // TestUpdateApp_AuthMethodBackToClientSecretBasic proves an app moved to
