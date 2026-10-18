@@ -15,6 +15,8 @@ package embedded
 
 import (
 	"context"
+	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -22,8 +24,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -120,12 +122,79 @@ func handleBatchDelete(ctx context.Context, svc service.QuicBaaS, req interface{
 // Cluster Handlers
 // =============================================================================
 
+// handleClusterStatus reports cluster status. It takes the SDK cluster
+// client's request, which is what Cluster().Status sends, as well as the
+// service request an embedder calling the transport directly passes.
 func handleClusterStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.ClusterStatusRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "Status", "*service.ClusterStatusRequest", typeNameOf(req))
+	if r, ok := req.(*service.ClusterStatusRequest); ok {
+		return svc.ClusterStatus(ctx, r)
 	}
-	return svc.ClusterStatus(ctx, r)
+	if !isClusterStatusRequest(req) {
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "Status", "*cluster.statusRequest", typeNameOf(req))
+	}
+	// The gRPC transport asks for details too.
+	resp, err := svc.ClusterStatus(ctx, &service.ClusterStatusRequest{IncludeDetails: true})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("embedded.ClusterStatus", "nil response from service")
+	}
+	return convertClusterStatusToSDK(resp), nil
+}
+
+// clusterStatusRequestType is the cluster client's unexported Status request.
+// It is matched by package and name because it cannot be named here.
+var clusterStatusRequestType = struct{ pkgPath, name string }{
+	pkgPath: reflect.TypeOf(cluster.ClusterStatus{}).PkgPath(),
+	name:    "statusRequest",
+}
+
+// isClusterStatusRequest reports whether req is the cluster client's Status
+// request.
+func isClusterStatusRequest(req interface{}) bool {
+	t := reflect.TypeOf(req)
+	if t == nil || t.Kind() != reflect.Ptr {
+		return false
+	}
+	t = t.Elem()
+	return t.PkgPath() == clusterStatusRequestType.pkgPath && t.Name() == clusterStatusRequestType.name
+}
+
+// convertClusterStatusToSDK converts a service ClusterStatusResponse to the
+// SDK cluster client's ClusterStatus, as the gRPC transport does. The cluster
+// is healthy when it has members and every member is healthy.
+func convertClusterStatusToSDK(resp *service.ClusterStatusResponse) *cluster.ClusterStatus {
+	status := &cluster.ClusterStatus{
+		ClusterID: resp.ClusterID,
+		Members:   make([]cluster.ClusterMember, 0, len(resp.Nodes)),
+		Healthy:   len(resp.Nodes) > 0,
+		Shards:    make([]cluster.ClusterShard, 0, len(resp.Shards)),
+	}
+	for _, node := range resp.Nodes {
+		member := cluster.ClusterMember{
+			ID:       strconv.FormatUint(node.NodeID, 10),
+			Name:     node.Address,
+			Address:  node.Address,
+			IsLeader: node.IsLeader,
+			Healthy:  node.HealthStatus == service.HealthStatusHealthy,
+		}
+		status.Members = append(status.Members, member)
+		if member.IsLeader {
+			status.LeaderID = member.ID
+		}
+		if !member.Healthy {
+			status.Healthy = false
+		}
+	}
+	for _, shard := range resp.Shards {
+		status.Shards = append(status.Shards, cluster.ClusterShard{
+			ShardID:  shard.ShardID,
+			LeaderID: shard.LeaderID,
+			Replicas: shard.Replicas,
+		})
+	}
+	return status
 }
 
 func handleGetLeader(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -199,12 +268,37 @@ func handleAddNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (
 	}
 }
 
+// handleRemoveNode removes a replica. It takes the SDK cluster client's
+// request, which is what Cluster().RemoveNode sends, as well as the service
+// request an embedder calling the transport directly passes.
 func handleRemoveNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.RemoveNodeRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "RemoveNode", "*service.RemoveNodeRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *cluster.RemoveNodeRequest:
+		nodeID, err := strconv.ParseUint(r.NodeID, 10, 64)
+		if err != nil {
+			return nil, errors.NewInvalidInput("embedded.RemoveNode", "invalid node ID format: "+r.NodeID)
+		}
+		// The SDK request names no shard, so ShardID stays zero exactly as
+		// the gRPC transport sends it.
+		resp, err := svc.RemoveNode(ctx, &service.RemoveNodeRequest{NodeID: nodeID})
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil || !resp.Success {
+			message := "remove node failed"
+			if resp != nil {
+				message = resp.Message
+			}
+			return nil, errors.NewInternal("embedded.RemoveNode", message)
+		}
+		// The SDK client takes a nil response as success, exactly as the
+		// gRPC transport returns it.
+		return nil, nil
+	case *service.RemoveNodeRequest:
+		return svc.RemoveNode(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "RemoveNode", "*cluster.RemoveNodeRequest", typeNameOf(req))
 	}
-	return svc.RemoveNode(ctx, r)
 }
 
 func handleCreateShard(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -215,20 +309,81 @@ func handleCreateShard(ctx context.Context, svc service.QuicBaaS, req interface{
 	return svc.CreateShard(ctx, r)
 }
 
+// handleRebalanceCluster starts a rebalance. It takes the SDK cluster
+// client's request, which is what Cluster().RebalanceCluster sends, as well as
+// the service request an embedder calling the transport directly passes.
 func handleRebalanceCluster(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.RebalanceClusterRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "Rebalance", "*service.RebalanceClusterRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *cluster.RebalanceClusterRequest:
+		resp, err := svc.RebalanceCluster(ctx, &service.RebalanceClusterRequest{Strategy: r.Strategy})
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil {
+			return nil, errors.NewInternal("embedded.RebalanceCluster", "nil response from service")
+		}
+		// The same field mapping as the gRPC server's RebalanceCluster.
+		return &cluster.RebalanceClusterResponse{
+			OperationID: resp.JobID,
+			Started:     resp.EstimatedCompletion,
+		}, nil
+	case *service.RebalanceClusterRequest:
+		return svc.RebalanceCluster(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "Rebalance", "*cluster.RebalanceClusterRequest", typeNameOf(req))
 	}
-	return svc.RebalanceCluster(ctx, r)
 }
 
+// handleGetRebalanceProgress reports rebalance progress. It takes the SDK
+// cluster client's request, which is what Cluster().GetRebalanceProgress
+// sends, as well as the service request an embedder calling the transport
+// directly passes.
 func handleGetRebalanceProgress(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.GetRebalanceProgressRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "GetRebalanceStatus", "*service.GetRebalanceProgressRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *cluster.GetRebalanceProgressRequest:
+		resp, err := svc.GetRebalanceProgress(ctx, &service.GetRebalanceProgressRequest{OperationID: r.OperationID})
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil {
+			return nil, errors.NewInternal("embedded.GetRebalanceProgress", "nil response from service")
+		}
+		return convertRebalanceProgressToSDK(resp)
+	case *service.GetRebalanceProgressRequest:
+		return svc.GetRebalanceProgress(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "GetRebalanceStatus", "*cluster.GetRebalanceProgressRequest", typeNameOf(req))
 	}
-	return svc.GetRebalanceProgress(ctx, r)
+}
+
+// convertRebalanceProgressToSDK converts a service GetRebalanceProgressResponse
+// to the SDK cluster client's response, with the gRPC server's field mapping.
+// A shard count outside the SDK's int32 range is an error, not a wrapped value.
+func convertRebalanceProgressToSDK(resp *service.GetRebalanceProgressResponse) (*cluster.GetRebalanceProgressResponse, error) {
+	shardsMoved, err := shardCountInt32("shards_moved", resp.ShardsMoved)
+	if err != nil {
+		return nil, err
+	}
+	totalShards, err := shardCountInt32("total_shards", resp.TotalShards)
+	if err != nil {
+		return nil, err
+	}
+	return &cluster.GetRebalanceProgressResponse{
+		OperationID:     resp.OperationID,
+		Status:          resp.Status,
+		PercentComplete: resp.Progress,
+		ShardsMoved:     shardsMoved,
+		TotalShards:     totalShards,
+		ElapsedTime:     int64(resp.ElapsedSeconds),
+	}, nil
+}
+
+// shardCountInt32 narrows a service shard count to the SDK's int32 field.
+func shardCountInt32(field string, v int) (int32, error) {
+	if v < math.MinInt32 || v > math.MaxInt32 {
+		return 0, errors.NewInternal("embedded.GetRebalanceProgress", field+" is out of int32 range: "+strconv.Itoa(v))
+	}
+	return int32(v), nil
 }
 
 // =============================================================================

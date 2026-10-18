@@ -106,6 +106,9 @@ type mockQuicBaaS struct {
 	clusterStatusFunc     func(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error)
 	writePointFunc        func(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error)
 	tsQueryFunc           func(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error)
+	removeNodeFunc        func(ctx context.Context, req *service.RemoveNodeRequest) (*service.RemoveNodeResponse, error)
+	rebalanceFunc         func(ctx context.Context, req *service.RebalanceClusterRequest) (*service.RebalanceClusterResponse, error)
+	rebalanceProgressFunc func(ctx context.Context, req *service.GetRebalanceProgressRequest) (*service.GetRebalanceProgressResponse, error)
 	putFunc               func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	getFunc               func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
 	deleteFunc            func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
@@ -257,6 +260,9 @@ func (m *mockQuicBaaS) AddNode(ctx context.Context, req *service.AddNodeRequest)
 }
 
 func (m *mockQuicBaaS) RemoveNode(ctx context.Context, req *service.RemoveNodeRequest) (*service.RemoveNodeResponse, error) {
+	if m.removeNodeFunc != nil {
+		return m.removeNodeFunc(ctx, req)
+	}
 	return &service.RemoveNodeResponse{Success: true}, nil
 }
 
@@ -265,10 +271,16 @@ func (m *mockQuicBaaS) CreateShard(ctx context.Context, req *service.CreateShard
 }
 
 func (m *mockQuicBaaS) RebalanceCluster(ctx context.Context, req *service.RebalanceClusterRequest) (*service.RebalanceClusterResponse, error) {
+	if m.rebalanceFunc != nil {
+		return m.rebalanceFunc(ctx, req)
+	}
 	return &service.RebalanceClusterResponse{JobID: "job1"}, nil
 }
 
 func (m *mockQuicBaaS) GetRebalanceProgress(ctx context.Context, req *service.GetRebalanceProgressRequest) (*service.GetRebalanceProgressResponse, error) {
+	if m.rebalanceProgressFunc != nil {
+		return m.rebalanceProgressFunc(ctx, req)
+	}
 	return &service.GetRebalanceProgressResponse{Status: "completed"}, nil
 }
 
