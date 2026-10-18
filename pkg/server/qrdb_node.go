@@ -717,20 +717,13 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
 		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
 		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
-		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv,
-		// and it cannot verify a smartcard attestation: its options carry only
-		// Enabled and TrustedIssuers, and a TrustedIssuers entry is a Subject
-		// DN string comparison, which any certificate can simply assert.
-		//
-		// Mounting it alongside the hardened quicbaas handler at
-		// /api/v1/iam/login/piv would make the attestation requirement
-		// bypassable by choosing the other URL — the control would be a
-		// suggestion. So it is mounted ONLY where the operator has explicitly
-		// accepted unattested PIV login. See pivLoginModuleEnabled.
-		xkmssdk.WithServiceModulePIVLogin(&xkmssdk.ServiceModulePIVLoginOptions{
-			Enabled:        s.pivLoginModuleEnabled(),
-			TrustedIssuers: s.config.IAM.PIVLogin.TrustedIssuers,
-		}),
+		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv.
+		// Since go-xkms v0.49.0-alpha it checks the slot attestation itself,
+		// so it has to be told that the operator accepted unattested login.
+		// It stays mounted ONLY under allow_unattested, so a deployment that
+		// requires hardware has exactly one PIV path, the quicbaas handler at
+		// /api/v1/iam/login/piv. See pivLoginModuleOptions.
+		xkmssdk.WithServiceModulePIVLogin(s.pivLoginModuleOptions()),
 	)
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "new xkms module", Cause: err}
@@ -1361,13 +1354,27 @@ func (s *Server) standaloneRegistryNotice() string {
 		"it needs the raft lease and watch planes, so registry calls return RegistryRequiresRaftError"
 }
 
+// pivLoginModuleOptions builds the options of the xkms module's own PIV login.
+//
+// The module checks the slot attestation itself (go-xkms v0.49.0-alpha), so
+// AllowUnattested carries the operator's choice through; without it the module
+// refuses every software certificate the operator allowed (#1592).
+func (s *Server) pivLoginModuleOptions() *xkmssdk.ServiceModulePIVLoginOptions {
+	return &xkmssdk.ServiceModulePIVLoginOptions{
+		Enabled:         s.pivLoginModuleEnabled(),
+		TrustedIssuers:  s.config.IAM.PIVLogin.TrustedIssuers,
+		AllowUnattested: s.config.IAM.PIVLogin.AllowUnattested,
+	}
+}
+
 // pivLoginModuleEnabled reports whether the xkms module's own PIV login surface
 // (/api/v1/auth/login/piv) should be mounted.
 //
 // It requires BOTH that PIV login is enabled and that the operator explicitly
-// accepted unattested PIV login. The module verifies no attestation, so on a
-// deployment that requires hardware it would be a second, weaker door to the
-// same credential — and an attacker chooses the door.
+// accepted unattested PIV login. The module checks attestation, but it is
+// given no attestation roots, so on a deployment that requires hardware it
+// would only be a second door to the same credential — and an attacker
+// chooses the door.
 //
 // A deployment that wants attested PIV login gets exactly one PIV path, the
 // hardened handler at /api/v1/iam/login/piv. One that has set
@@ -1380,9 +1387,9 @@ func (s *Server) pivLoginModuleEnabled() bool {
 	}
 	if !cfg.AllowUnattested {
 		s.logger.Warn("iam.piv_login: the xkms module PIV login surface " +
-			"(/api/v1/auth/login/piv) is NOT mounted because it cannot verify a smartcard " +
-			"attestation; PIV login is served only by the attested handler at " +
-			"/api/v1/iam/login/piv. Set iam.piv_login.allow_unattested: true to mount it anyway.")
+			"(/api/v1/auth/login/piv) is NOT mounted, so that a deployment requiring " +
+			"hardware has one PIV path: the attested handler at " +
+			"/api/v1/iam/login/piv. Set iam.piv_login.allow_unattested: true to mount it.")
 		return false
 	}
 	return true

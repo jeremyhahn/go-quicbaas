@@ -145,7 +145,7 @@ func TestAuthFactorProxy_NilFactorIsDelegated(t *testing.T) {
 // TestPIVLoginModuleEnabled is the "one PIV path, not two" guard.
 //
 // go-xkms's composed module serves its own PIV login at
-// /api/v1/auth/login/piv and cannot verify a smartcard attestation. Mounting it
+// /api/v1/auth/login/piv and is given no attestation roots. Mounting it
 // beside the hardened handler at /api/v1/iam/login/piv would make the
 // attestation requirement bypassable by choosing the other URL — an attacker
 // picks the door. So it is mounted only where the operator has explicitly
@@ -173,6 +173,45 @@ func TestPIVLoginModuleEnabled(t *testing.T) {
 
 			if got := s.pivLoginModuleEnabled(); got != tc.want {
 				t.Errorf("pivLoginModuleEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPIVLoginModuleOptions guards #1592: since go-xkms v0.49.0-alpha the
+// module checks attestation itself, so the operator's allow_unattested must
+// reach it, or every software-certificate login is refused with 401.
+func TestPIVLoginModuleOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		enabled             bool
+		allowUnattested     bool
+		wantEnabled         bool
+		wantAllowUnattested bool
+	}{
+		{"unattested deployment passes allow_unattested", true, true, true, true},
+		{"attested deployment neither mounts nor allows", true, false, false, false},
+		{"piv login disabled is not mounted", false, true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+			if err != nil {
+				t.Fatalf("logger: %v", err)
+			}
+			s := &Server{config: &config.Config{}, logger: log}
+			s.config.IAM.PIVLogin.Enabled = tc.enabled
+			s.config.IAM.PIVLogin.AllowUnattested = tc.allowUnattested
+			s.config.IAM.PIVLogin.TrustedIssuers = []string{"CN=Test Issuer"}
+
+			opts := s.pivLoginModuleOptions()
+			if opts.Enabled != tc.wantEnabled {
+				t.Errorf("Enabled = %v, want %v", opts.Enabled, tc.wantEnabled)
+			}
+			if opts.AllowUnattested != tc.wantAllowUnattested {
+				t.Errorf("AllowUnattested = %v, want %v", opts.AllowUnattested, tc.wantAllowUnattested)
+			}
+			if len(opts.TrustedIssuers) != 1 || opts.TrustedIssuers[0] != "CN=Test Issuer" {
+				t.Errorf("TrustedIssuers = %v, want [CN=Test Issuer]", opts.TrustedIssuers)
 			}
 		})
 	}
