@@ -3368,7 +3368,7 @@ func TestList_ContextCancelDuringStream(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
-	// Use unbuffered channel so List blocks when trying to send the second batch
+	// Use an unbuffered channel nobody reads, so List blocks sending its page
 	stream := make(chan *ListResponse)
 
 	var wg sync.WaitGroup
@@ -3379,11 +3379,7 @@ func TestList_ContextCancelDuringStream(t *testing.T) {
 		listErr = svc.kvService.List(ctx, &ListRequest{EntityType: "users", PageSize: 5}, stream)
 	}()
 
-	// Read first batch (5 entities out of 20)
-	firstBatch := <-stream
-	assert.NotNil(t, firstBatch)
-
-	// Cancel context while List is blocked trying to send second batch
+	// Cancel context while List is blocked trying to send the page
 	cancel()
 
 	wg.Wait()

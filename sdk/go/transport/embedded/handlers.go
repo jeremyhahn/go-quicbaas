@@ -69,13 +69,10 @@ func handleList(ctx context.Context, svc service.QuicBaaS, req interface{}) (int
 	go func() {
 		errCh <- svc.List(ctx, r, stream)
 	}()
+	// The service sends at most one page; the caller follows NextPageToken.
 	var result *service.ListResponse
 	for resp := range stream {
-		if result == nil {
-			result = resp
-		} else {
-			result.Entities = append(result.Entities, resp.Entities...)
-		}
+		result = resp
 	}
 	if err := <-errCh; err != nil {
 		return nil, err

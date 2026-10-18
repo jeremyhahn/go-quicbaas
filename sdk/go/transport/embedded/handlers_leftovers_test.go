@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,21 +51,59 @@ func TestHandleList_Unary(t *testing.T) {
 		assert.Len(t, listResp.Entities, 1)
 	})
 
-	t.Run("multiple responses accumulate", func(t *testing.T) {
+	t.Run("pages follow NextPageToken", func(t *testing.T) {
+		// The mock keeps the service contract: one page of 5 over IDs 1..20
+		// per call, resuming after the ID named in PageToken.
 		mock := &mockQuicBaaS{
-			listFunc: func(_ context.Context, _ *service.ListRequest, stream chan<- *service.ListResponse) error {
-				stream <- &service.ListResponse{Entities: []*service.Entity{{ID: 1}}}
-				stream <- &service.ListResponse{Entities: []*service.Entity{{ID: 2}}}
-				close(stream)
+			listFunc: func(_ context.Context, req *service.ListRequest, stream chan<- *service.ListResponse) error {
+				defer close(stream)
+				start := uint64(1)
+				if req.PageToken != "" {
+					last, err := strconv.ParseUint(req.PageToken, 10, 64)
+					if err != nil {
+						return &service.InvalidPageTokenError{Token: req.PageToken}
+					}
+					start = last + 1
+				}
+				page := &service.ListResponse{TotalCount: 20}
+				for id := start; id < start+req.PageSize && id <= 20; id++ {
+					page.Entities = append(page.Entities, &service.Entity{ID: id})
+				}
+				if last := start + req.PageSize - 1; last < 20 {
+					page.NextPageToken = strconv.FormatUint(last, 10)
+				}
+				stream <- page
 				return nil
 			},
 		}
 		tr, err := New(mock)
 		require.NoError(t, err)
-		resp, err := tr.Request(ctx, "quicbaas.KV", "List", &service.ListRequest{})
-		require.NoError(t, err)
-		listResp := resp.(*service.ListResponse)
-		assert.Len(t, listResp.Entities, 2)
+
+		var ids []uint64
+		token := ""
+		for page := 1; page <= 4; page++ {
+			resp, err := tr.Request(ctx, "quicbaas.KV", "List", &service.ListRequest{PageSize: 5, PageToken: token})
+			require.NoError(t, err)
+			listResp := resp.(*service.ListResponse)
+			require.Len(t, listResp.Entities, 5, "page %d", page)
+			assert.Equal(t, uint64(20), listResp.TotalCount)
+			for _, e := range listResp.Entities {
+				ids = append(ids, e.ID)
+			}
+			token = listResp.NextPageToken
+			if page < 4 {
+				require.NotEmpty(t, token, "page %d", page)
+			}
+		}
+		assert.Empty(t, token, "last page carries no token")
+		require.Len(t, ids, 20)
+		assert.Equal(t, uint64(1), ids[0])
+		assert.Equal(t, uint64(20), ids[19])
+
+		resp, err := tr.Request(ctx, "quicbaas.KV", "List", &service.ListRequest{PageSize: 5, PageToken: "bogus"})
+		var tokenErr *service.InvalidPageTokenError
+		require.ErrorAs(t, err, &tokenErr)
+		assert.Nil(t, resp)
 	})
 
 	t.Run("empty stream yields zero-value response", func(t *testing.T) {

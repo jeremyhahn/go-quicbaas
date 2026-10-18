@@ -1743,12 +1743,16 @@ func (r *ToolRegistry) executeList(ctx context.Context, args map[string]interfac
 		errCh <- r.service.List(ctx, req, stream)
 	}()
 
-	// Collect all results
+	// The service sends at most one page; the caller follows nextPageToken.
 	var entities []interface{}
+	var nextPageToken string
+	var totalCount uint64
 	for resp := range stream {
 		for _, entity := range resp.Entities {
 			entities = append(entities, entity)
 		}
+		nextPageToken = resp.NextPageToken
+		totalCount = resp.TotalCount
 	}
 
 	// Check for errors
@@ -1757,8 +1761,10 @@ func (r *ToolRegistry) executeList(ctx context.Context, args map[string]interfac
 	}
 
 	return map[string]interface{}{
-		"entities": entities,
-		"count":    len(entities),
+		"entities":      entities,
+		"count":         len(entities),
+		"nextPageToken": nextPageToken,
+		"totalCount":    totalCount,
 	}, nil
 }
 

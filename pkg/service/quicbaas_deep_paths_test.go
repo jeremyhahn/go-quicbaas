@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -564,8 +565,13 @@ func TestList_NilResult(t *testing.T) {
 	}, stream)
 	require.NoError(t, err)
 
-	// Stream should be closed with no responses
-	_, ok := <-stream
+	// One empty page, then the stream closes
+	page, ok := <-stream
+	require.True(t, ok)
+	assert.Empty(t, page.Entities)
+	assert.Zero(t, page.TotalCount)
+	assert.Empty(t, page.NextPageToken)
+	_, ok = <-stream
 	assert.False(t, ok)
 }
 
@@ -588,33 +594,69 @@ func TestList_CustomShardID(t *testing.T) {
 }
 
 func TestList_WithPagination(t *testing.T) {
-	// Return multiple key-value pairs via QRDB scan mock
-	scanData := map[string][]byte{
-		"users:1": []byte(`{"name":"alice"}`),
-		"users:2": []byte(`{"name":"bob"}`),
-		"users:3": []byte(`{"name":"charlie"}`),
-		"users:4": []byte(`{"name":"dave"}`),
+	scanData := make(map[string][]byte, 20)
+	for i := 1; i <= 20; i++ {
+		scanData[fmt.Sprintf("users:%d", i)] = []byte(`{}`)
 	}
-	qrdbProvider := newSvcBoostMockQRDBProvider(scanData, nil)
+	svc := createTestService(t, withQRDBClientProvider(newSvcBoostMockQRDBProvider(scanData, nil)))
+	ctx := tenantctx.WithSystem(context.Background())
 
-	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
-	stream := make(chan *ListResponse, 10)
-	err := svc.List(tenantctx.WithSystem(context.Background()), &ListRequest{
-		EntityType: "users",
-		PageSize:   2, // 2 entities per page
-	}, stream)
-	require.NoError(t, err)
+	var gotIDs []uint64
+	token := ""
+	for page := 1; page <= 4; page++ {
+		resp := listOnePage(t, svc, ctx, &ListRequest{EntityType: "users", PageSize: 5, PageToken: token})
+		require.Len(t, resp.Entities, 5, "page %d", page)
+		assert.Equal(t, uint64(20), resp.TotalCount)
+		for _, e := range resp.Entities {
+			gotIDs = append(gotIDs, e.ID)
+		}
+		if page < 4 {
+			require.NotEmpty(t, resp.NextPageToken, "page %d", page)
+		} else {
+			assert.Empty(t, resp.NextPageToken, "last page")
+		}
+		token = resp.NextPageToken
+	}
 
-	var responses []*ListResponse
+	want := make([]uint64, 0, 20)
+	for i := uint64(1); i <= 20; i++ {
+		want = append(want, i)
+	}
+	assert.Equal(t, want, gotIDs, "pages cover every entity once, in ID order")
+}
+
+func TestList_InvalidPageToken(t *testing.T) {
+	scanData := map[string][]byte{"users:1": []byte(`{}`), "users:2": []byte(`{}`)}
+	svc := createTestService(t, withQRDBClientProvider(newSvcBoostMockQRDBProvider(scanData, nil)))
+	ctx := tenantctx.WithSystem(context.Background())
+
+	for name, token := range map[string]string{
+		"unparsable":   "not-a-cursor",
+		"out of range": "2",
+	} {
+		t.Run(name, func(t *testing.T) {
+			stream := make(chan *ListResponse, 1)
+			err := svc.List(ctx, &ListRequest{EntityType: "users", PageSize: 1, PageToken: token}, stream)
+			require.Error(t, err)
+			assert.True(t, errors.IsInvalidInput(err))
+			var tokenErr *InvalidPageTokenError
+			assert.ErrorAs(t, err, &tokenErr)
+			assert.Empty(t, stream, "no page is sent for an invalid token")
+		})
+	}
+}
+
+// listOnePage runs List and requires that it sends exactly one page.
+func listOnePage(t *testing.T, svc QuicBaaS, ctx context.Context, req *ListRequest) *ListResponse {
+	t.Helper()
+	stream := make(chan *ListResponse, 2)
+	require.NoError(t, svc.List(ctx, req, stream))
+	var pages []*ListResponse
 	for resp := range stream {
-		responses = append(responses, resp)
+		pages = append(pages, resp)
 	}
-
-	require.True(t, len(responses) >= 1)
-	// First page should have next page token
-	if len(responses) > 1 {
-		assert.NotEmpty(t, responses[0].NextPageToken)
-	}
+	require.Len(t, pages, 1, "List sends exactly one page")
+	return pages[0]
 }
 
 // =============================================================================

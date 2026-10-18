@@ -17,12 +17,14 @@ package service
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1239,38 +1241,37 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 		})
 	}
 
-	// Apply pagination
+	// Sort by ID so that page boundaries are stable across calls.
+	slices.SortFunc(entities, func(a, b *Entity) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+
+	offset, err := listPageOffset(entities, req.PageToken)
+	if err != nil {
+		if k.svc.metrics != nil {
+			k.svc.metrics.requestsTotal.With("List", "invalid").Inc()
+		}
+		return err
+	}
+
 	pageSize := req.PageSize
 	if pageSize == 0 {
 		pageSize = 100
 	}
+	end := offset + min(conv.ClampUint64ToInt(pageSize), len(entities)-offset)
 
-	totalCount := uint64(len(entities))
-	pageLen := conv.ClampUint64ToInt(pageSize)
-	offset := 0
+	resp := &ListResponse{
+		Entities:   entities[offset:end],
+		TotalCount: uint64(len(entities)),
+	}
+	if end < len(entities) {
+		resp.NextPageToken = encodeListPageToken(entities[end-1].ID)
+	}
 
-	for offset < len(entities) {
-		end := offset + min(pageLen, len(entities)-offset)
-
-		batch := entities[offset:end]
-		nextPageToken := ""
-		if end < len(entities) {
-			nextPageToken = fmt.Sprintf("%d", end)
-		}
-
-		resp := &ListResponse{
-			Entities:      batch,
-			NextPageToken: nextPageToken,
-			TotalCount:    totalCount,
-		}
-
-		select {
-		case stream <- resp:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-
-		offset = end
+	select {
+	case stream <- resp:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 
 	if k.svc.metrics != nil {
@@ -5487,6 +5488,46 @@ func (k *kvService) validateListRequest(req *ListRequest) error {
 		}
 	}
 	return nil
+}
+
+// InvalidPageTokenError reports a List page token that does not decode, or
+// that points past the last entity of the listing.
+type InvalidPageTokenError struct {
+	Token string
+}
+
+func (e *InvalidPageTokenError) Error() string {
+	return fmt.Sprintf("invalid page token %q", e.Token)
+}
+
+// encodeListPageToken returns the opaque cursor that resumes a listing after
+// the entity with the given ID.
+func encodeListPageToken(lastID uint64) string {
+	return strconv.FormatUint(lastID, 10)
+}
+
+// listPageOffset returns the index of the first entity after the cursor in
+// token. entities must be sorted by ID. An empty token starts at index 0.
+func listPageOffset(entities []*Entity, token string) (int, error) {
+	if token == "" {
+		return 0, nil
+	}
+	invalid := &errors.QBError{
+		Code: errors.ErrInvalidInput,
+		Op:   "service.List",
+		Err:  &InvalidPageTokenError{Token: token},
+	}
+	lastID, err := strconv.ParseUint(token, 10, 64)
+	if err != nil {
+		return 0, invalid
+	}
+	offset := sort.Search(len(entities), func(i int) bool {
+		return entities[i].ID > lastID
+	})
+	if offset == len(entities) {
+		return 0, invalid
+	}
+	return offset, nil
 }
 
 // ConsistencyLevel.String() implementation.
