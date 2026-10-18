@@ -22,6 +22,7 @@ import { resolveToken } from './rest.js';
 const mcpProtocolVersion = '2025-03-26';
 const sessionHeader = 'Mcp-Session-Id';
 export class McpSession {
+    /** endpoint is the MCP URL; callers check its scheme before sending secrets. */
     endpoint;
     config;
     sessionId = '';

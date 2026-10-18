@@ -121,11 +121,6 @@ describe('BarrierView strategy-aware rendering', () => {
     vi.clearAllMocks();
     spy = makeFetchSpy({
       '/api/v1/barrier/status': () => makeStatus(),
-      '/api/v1/barrier/shamir/shares': () => ({
-        count: 0,
-        threshold: 2,
-        total: 3,
-      }),
     });
     vi.stubGlobal('fetch', spy.mock);
   });
@@ -258,11 +253,6 @@ describe('BarrierView strategy-aware rendering', () => {
         threshold: 3,
         total_shares: 5,
         shares_provided: 1,
-      }),
-      '/api/v1/barrier/shamir/shares': () => ({
-        count: 1,
-        threshold: 3,
-        total: 5,
       }),
     });
     vi.stubGlobal('fetch', spy.mock);

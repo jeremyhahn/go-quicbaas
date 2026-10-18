@@ -9,7 +9,7 @@
 // arguments it sends and how it maps the reply.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { McpClient, McpNotImplementedError } from '../src/mcp';
+import { McpClient } from '../src/mcp';
 import { McpError, SOPINRequiresTLSError } from '../src/errors';
 import { jsonReply, scriptServer, toolCalls, toolText } from './mcp_server';
 
@@ -207,17 +207,6 @@ describe('McpBarrierClient tools', () => {
     await expect(new McpClient(endpoint).barrier.status()).rejects.toBeInstanceOf(McpError);
   });
 
-  // These verbs have no MCP tool on the server and no Go MCP counterpart.
-  // Shrinking this list means wiring a tool, not deleting a line.
-  it.each([
-    ['shamirListShares', (c: McpClient) => c.barrier.shamirListShares()],
-    ['shamirDeleteShare', (c: McpClient) => c.barrier.shamirDeleteShare({ index: 0 })],
-    ['shamirDeleteAllShares', (c: McpClient) => c.barrier.shamirDeleteAllShares()],
-    ['shamirVerify', (c: McpClient) => c.barrier.shamirVerify()],
-  ] as const)('%s throws McpNotImplementedError without a request', async (_name, call) => {
-    await expect(call(new McpClient(endpoint))).rejects.toBeInstanceOf(McpNotImplementedError);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
 });
 
 describe('McpCeremonyClient tools', () => {
@@ -280,6 +269,24 @@ describe('McpCeremonyClient tools', () => {
       want: { cert_pem: 'CERT', ca_cert_pem: 'CA' },
     },
     {
+      name: 'claimShareBegin',
+      call: (c) => c.ceremony.claimShareBegin({ username: 'officer-1' }),
+      tool: 'qrdb_ceremony_begin_claim_share',
+      args: { username: 'officer-1' },
+      reply: { nonce_hex: 'cafe', expires_at: '2026-10-18T00:05:00Z' },
+      want: { nonce_hex: 'cafe', expires_at: '2026-10-18T00:05:00Z' },
+    },
+    {
+      // The signature travels as the caller's base64; the tool's base64 share
+      // is decoded back into the share JSON.
+      name: 'claimShareComplete',
+      call: (c) => c.ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'cafe', signature: 'c2ln' }),
+      tool: 'qrdb_ceremony_complete_claim_share',
+      args: { username: 'officer-1', nonce_hex: 'cafe', signature: 'c2ln' },
+      reply: { share_index: 3, share: btoa('{"index":3}') },
+      want: { share_index: 3, share_json: '{"index":3}' },
+    },
+    {
       name: 'signCSR',
       call: (c) => c.ceremony.signCSR({ username: 'svc-1', so_pin: 'so-pin-1234', csr_pem: 'CSR', role: 'admin' }),
       tool: 'qrdb_ceremony_sign_csr',
@@ -322,20 +329,32 @@ describe('McpCeremonyClient tools', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  // The server serves a share only through the begin/complete claim pair,
-  // whose completion needs a signature CeremonyClaimShareRequest cannot carry.
-  it('claimShare throws McpNotImplementedError without a request', async () => {
-    await expect(new McpClient(endpoint).ceremony.claimShare({ username: 'officer-1' })).rejects.toBeInstanceOf(
-      McpNotImplementedError,
-    );
-    expect(fetchMock).not.toHaveBeenCalled();
+  it('claimShareComplete refuses a share that is not base64 as McpError', async () => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { share_index: 1, share: '%%%' })));
+
+    const err = await new McpClient(endpoint)
+      .ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(McpError);
+  });
+
+  it('claimShareComplete surfaces a tool error reply as McpError', async () => {
+    toolError();
+
+    await expect(
+      new McpClient(endpoint).ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' }),
+    ).rejects.toBeInstanceOf(McpError);
   });
 });
 
-describe('McpBootstrapClient', () => {
-  // No transport serves bootstrap: Go reaches it through the go-xkms library.
-  it.each(['auto', 'dane', 'noise', 'spki'] as const)('%s throws McpNotImplementedError', async (verb) => {
-    await expect(new McpClient(endpoint).bootstrap[verb]()).rejects.toBeInstanceOf(McpNotImplementedError);
-    expect(fetchMock).not.toHaveBeenCalled();
+describe('McpClient bootstrap', () => {
+  // Trust bootstrap is served over REST only, so the MCP client has no
+  // bootstrap member and the compiler refuses the call.
+  it('has no bootstrap member', () => {
+    const client = new McpClient(endpoint);
+    // @ts-expect-error bootstrap is a RestClient-only member
+    expect(client.bootstrap).toBeUndefined();
+    expect('bootstrap' in client).toBe(false);
   });
 });

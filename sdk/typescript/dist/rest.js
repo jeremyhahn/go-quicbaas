@@ -13,6 +13,7 @@
 import { parseJSONPreservingLargeIntegers } from './json.js';
 import { adoptPage, appendCSVParam, appendListParam, appendPageParams, } from './page.js';
 import { APIError, ConnectionError, NotConnectedError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
+import { requireTLSForSOPIN } from './so_pin.js';
 // API base path for all orchestrator endpoints.
 const API_PREFIX = '/api/v1/orchestrator';
 // FLEET_PREFIX is the fleet registry's own REST surface, outside the
@@ -2028,9 +2029,10 @@ export class RestSdlcClient {
         }
         return resp.forges ?? [];
     }
-    // bind maps to PUT /api/v1/sdlc/projects/:projectId/binding?tenant_id=...
-    async bind(tenantId, projectId, binding) {
-        return this.fetchJSON(this.bindingPath(tenantId, projectId), {
+    // bind maps to PUT /api/v1/sdlc/projects/:projectId/binding?tenant_id=...[&paused=true]
+    async bind(tenantId, projectId, binding, paused) {
+        const path = this.bindingPath(tenantId, projectId) + (paused ? '&paused=true' : '');
+        return this.fetchJSON(path, {
             method: 'PUT',
             body: JSON.stringify({ ...binding, project_id: binding.project_id || projectId }),
         });
@@ -3199,8 +3201,10 @@ export class RestDynamicSecretsClient {
 // RestBarrierClient implements BarrierClient by routing to the QuicBaaS
 // barrier REST endpoints. The shape mirrors go-qrdb's BarrierClient surface.
 export class RestBarrierClient {
+    baseUrl;
     http;
     constructor(baseUrl, config = {}) {
+        this.baseUrl = baseUrl;
         this.http = newFetchHelper(baseUrl, config);
     }
     async status() {
@@ -3218,8 +3222,12 @@ export class RestBarrierClient {
             body: JSON.stringify({ secret: bytesToBase64(req.secret) }),
         });
     }
-    async seal() {
-        await this.http.fetchVoid('/api/v1/barrier/seal', { method: 'POST' });
+    async seal(req) {
+        requireTLSForSOPIN('rest', this.baseUrl, req?.so_pin);
+        await this.http.fetchVoid('/api/v1/barrier/seal', {
+            method: 'POST',
+            body: JSON.stringify({ so_pin: req?.so_pin }),
+        });
     }
     async initializeShamir(req) {
         return this.http.fetchJSON('/api/v1/barrier/shamir/initialize', {
@@ -3238,20 +3246,6 @@ export class RestBarrierClient {
             method: 'POST',
             body: JSON.stringify(req),
         });
-    }
-    async shamirListShares() {
-        return this.http.fetchJSON('/api/v1/barrier/shamir/shares');
-    }
-    async shamirDeleteShare(req) {
-        await this.http.fetchVoid(`/api/v1/barrier/shamir/shares/${encodeURIComponent(String(req.index))}`, {
-            method: 'DELETE',
-        });
-    }
-    async shamirDeleteAllShares() {
-        await this.http.fetchVoid('/api/v1/barrier/shamir/shares', { method: 'DELETE' });
-    }
-    async shamirVerify() {
-        await this.http.fetchVoid('/api/v1/barrier/shamir/verify', { method: 'POST' });
     }
     async rekey(req) {
         return this.http.fetchJSON('/api/v1/barrier/rekey', {
@@ -3281,6 +3275,18 @@ export class RestBarrierClient {
         return this.http.fetchJSON('/api/v1/barrier/root-token', {
             method: 'POST',
             body: JSON.stringify(req),
+        });
+    }
+    // enableEncryption posts to the go-qrdb wire mount, whose body is the
+    // canonical transport.BarrierEnableEncryptionRequest: tenant_id there
+    // selects the tenant barrier, and the reply acknowledges the started
+    // migration.
+    async enableEncryption(req) {
+        const { passphrase, ...rest } = req;
+        const body = passphrase === undefined ? rest : { ...rest, passphrase: bytesToBase64(passphrase) };
+        return this.http.fetchJSON('/v1/barrier/enable-encryption', {
+            method: 'POST',
+            body: JSON.stringify(body),
         });
     }
 }
@@ -3360,8 +3366,14 @@ export class RestCeremonyClient {
             body: JSON.stringify(req),
         });
     }
-    async claimShare(req) {
-        return this.http.fetchJSON('/api/v1/init/claim-share', {
+    async claimShareBegin(req) {
+        return this.http.fetchJSON('/api/v1/init/officer-share/begin', {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    async claimShareComplete(req) {
+        return this.http.fetchJSON('/api/v1/init/officer-share/complete', {
             method: 'POST',
             body: JSON.stringify(req),
         });

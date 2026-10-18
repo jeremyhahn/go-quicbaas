@@ -21,7 +21,7 @@ export { SandboxMode } from './types.js';
 export { SPEND_UNATTRIBUTED } from './types.js';
 export { adoptPage, adoptFacets, appendPageParams, appendListParam, appendCSVParam, wholeSetPage, MalformedPageError, } from './page.js';
 // Typed errors.
-export { QuicBaaSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, TransportNotSupportedError, McpError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
+export { QuicBaaSError, SOPINRequiresTLSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, TransportNotSupportedError, McpError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 // SSH REST client classes — exported so callers can construct them directly
 // or use the top-level RestClient.ssh namespace.
 export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } from './rest.js';

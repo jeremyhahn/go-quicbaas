@@ -30,7 +30,6 @@ export declare class WailsClient implements Client {
     readonly barrier: any;
     readonly tenantBarrier: any;
     readonly ceremony: any;
-    readonly bootstrap: any;
     readonly cluster: any;
     readonly seal: any;
     /**

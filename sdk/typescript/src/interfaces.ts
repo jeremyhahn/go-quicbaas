@@ -149,8 +149,6 @@ import type {
   BarrierUnsealShareRequest,
   BarrierUnsealShareResponse,
   BarrierUnsealSharesRequest,
-  BarrierShamirSharesResponse,
-  BarrierShamirDeleteShareRequest,
   BarrierRekeyRequest,
   BarrierRekeyResponse,
   BarrierGenerateRecoveryKeysRequest,
@@ -172,8 +170,10 @@ import type {
   CeremonyClaimCertBeginResponse,
   CeremonyClaimCertCompleteRequest,
   CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareRequest,
-  CeremonyClaimShareResponse,
+  CeremonyClaimShareBeginRequest,
+  CeremonyClaimShareBeginResponse,
+  CeremonyClaimShareCompleteRequest,
+  CeremonyClaimShareCompleteResponse,
   CeremonySignCSRRequest,
   CeremonySignCSRResponse,
   CeremonyEnrollExternalOfficerRequest,
@@ -1044,21 +1044,6 @@ export interface BarrierClient {
   // Maps to POST /api/v1/barrier/shamir/unseal-shares.
   unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void>;
 
-  // shamirListShares returns metadata about persisted Shamir shares.
-  // Maps to GET /api/v1/barrier/shamir/shares.
-  shamirListShares(): Promise<BarrierShamirSharesResponse>;
-
-  // shamirDeleteShare removes a single Shamir share by index.
-  // Maps to DELETE /api/v1/barrier/shamir/shares/{index}.
-  shamirDeleteShare(req: BarrierShamirDeleteShareRequest): Promise<void>;
-
-  // shamirDeleteAllShares removes all persisted Shamir shares.
-  // Maps to DELETE /api/v1/barrier/shamir/shares.
-  shamirDeleteAllShares(): Promise<void>;
-
-  // shamirVerify validates the consistency of persisted shares.
-  // Maps to POST /api/v1/barrier/shamir/verify.
-  shamirVerify(): Promise<void>;
 
   // rekey generates new Shamir shares for the existing root key.
   // Maps to POST /api/v1/barrier/rekey.
@@ -1176,10 +1161,15 @@ export interface CeremonyClient {
   // signed nonce. Maps to POST /api/v1/init/claim-cert/complete.
   claimCertComplete(req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse>;
 
-  // claimShare retrieves the Shamir share for an enrolled officer who has
-  // already claimed their certificate.
-  // Maps to POST /api/v1/init/claim-share.
-  claimShare(req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse>;
+  // claimShareBegin starts the Shamir share claim for an enrolled officer
+  // and returns the nonce the officer must sign. The server binds the
+  // caller's mTLS certificate thumbprint to the nonce.
+  // Maps to POST /api/v1/init/officer-share/begin.
+  claimShareBegin(req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse>;
+  // claimShareComplete verifies the officer's signature over the begin nonce,
+  // from the same certificate, and returns the officer's Shamir share.
+  // Maps to POST /api/v1/init/officer-share/complete.
+  claimShareComplete(req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse>;
 
   // signCSR signs a CSR during or after the ceremony.
   // Maps to POST /api/v1/init/sign-csr.
@@ -1410,11 +1400,6 @@ export interface Client {
    * enrollment, certificate claims, share distribution, CSR signing).
    */
   readonly ceremony: CeremonyClient;
-  /**
-   * bootstrap retrieves the CA certificate bundle through one of the
-   * supported trust bootstrap methods (auto, dane, noise, spki).
-   */
-  readonly bootstrap: BootstrapClient;
   /**
    * cluster exposes the Raft cluster control plane (status today; membership
    * and rebalance writes when a caller needs them). Path: /api/v1/cluster.

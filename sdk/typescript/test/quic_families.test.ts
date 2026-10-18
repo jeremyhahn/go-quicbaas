@@ -103,7 +103,6 @@ const familyCases: Array<{
   { family: 'auth', pick: (c) => c.auth, reason: 'frame protocol' },
   { family: 'barrier', pick: (c) => c.barrier, reason: 'frame protocol' },
   { family: 'ceremony', pick: (c) => c.ceremony, reason: 'frame protocol' },
-  { family: 'bootstrap', pick: (c) => c.bootstrap, reason: 'frame protocol' },
   {
     family: 'connection',
     pick: (c) => c.connection,

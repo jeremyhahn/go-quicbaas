@@ -290,8 +290,6 @@ export class UnixClient implements Client {
   readonly tenantBarrier: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly ceremony: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly bootstrap: any = null;
   // cluster status/management is exposed over the REST transport; not wired here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly cluster: any = null;

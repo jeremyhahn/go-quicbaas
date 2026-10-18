@@ -157,12 +157,10 @@ export async function createCeremonyClient(
   return client.ceremony;
 }
 
-// createBootstrapClient returns the BootstrapClient sub-surface for the
-// requested transport. See createBarrierClient for the support matrix.
-export async function createBootstrapClient(
-  transport?: Transport,
-  config?: ClientConfig,
-): Promise<BootstrapClient> {
-  const client = await createClient(resolveSubClientConfig(transport, config));
-  return client.bootstrap;
+// createBootstrapClient returns the REST BootstrapClient. Trust bootstrap is a
+// client-side pre-trust fetch served over REST only (POST
+// /api/v1/bootstrap/{auto,dane,noise,spki}), so it takes no transport.
+export async function createBootstrapClient(config: ClientConfig = {}): Promise<BootstrapClient> {
+  const { RestBootstrapClient } = await import('./rest.js');
+  return new RestBootstrapClient(resolveBaseURL(config), config);
 }

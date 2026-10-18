@@ -27,11 +27,10 @@ import (
 
 // TestTable_EveryVerbPresent asserts every canonical verb has a Table entry
 // and the verb count is go-qrdb's canonical 27-verb table (v0.25) plus
-// quicbaas's three documented divergences: shamir-verify and the ceremony
-// officer list (quicbaas extras) and the strictly excluded external officer
-// enrollment.
+// quicbaas's two documented divergences: the ceremony officer list (a
+// quicbaas extra) and the strictly excluded external officer enrollment.
 func TestTable_EveryVerbPresent(t *testing.T) {
-	require.Len(t, Verbs, 30, "verb set must be qrdb's 27-verb table plus quicbaas's three documented divergences")
+	require.Len(t, Verbs, 29, "verb set must be qrdb's 27-verb table plus quicbaas's two documented divergences")
 	seen := make(map[Verb]struct{}, len(Verbs))
 	for _, v := range Verbs {
 		_, dup := seen[v]
@@ -115,9 +114,8 @@ func TestRESTAllowlist_Deduplicated(t *testing.T) {
 
 // TestGRPCAllowlist_NoDriftFromQRDB asserts every method tail in qrdb's
 // canonical gRPC sealed-window allowlist is present in the quicbaas
-// derivation, and the quicbaas extras are exactly the two documented
-// quicbaas-only mirror surfaces (BarrierShamirVerify on quicbaas.barrier.v1
-// and CeremonyListOfficers on quicbaas.ceremony.v1).
+// derivation, and the quicbaas extra is exactly the one documented
+// quicbaas-only mirror surface (CeremonyListOfficers on quicbaas.ceremony.v1).
 //
 // qrdb's re-exported allowlist is service-qualified
 // ("/qrdb.v1.QRDBService/BarrierUnseal"); the tail is the unit both canonical
@@ -150,7 +148,6 @@ func TestGRPCAllowlist_NoDriftFromQRDB(t *testing.T) {
 	}
 
 	extras := map[string]struct{}{
-		"BarrierShamirVerify":  {},
 		"CeremonyListOfficers": {},
 	}
 	for m := range ours {
@@ -199,7 +196,6 @@ func TestGRPCFullMethodAllowlist_ServicePinned(t *testing.T) {
 	for _, m := range []string{
 		"/quicbaas.barrier.v1.Barrier/BarrierUnseal",
 		"/quicbaas.barrier.v1.Barrier/BarrierStatus",
-		"/quicbaas.barrier.v1.Barrier/BarrierShamirVerify",
 		"/quicbaas.ceremony.v1.Ceremony/CeremonyListOfficers",
 		"/quicbaas.v1.QuicBaaS/Health",
 	} {
@@ -350,7 +346,6 @@ func TestAllowlists_DeliberateExclusions(t *testing.T) {
 	// gRPC tails.
 	grpcDenied := []string{
 		"BarrierSeal", "BarrierShamirSealVote", "BarrierEnableEncryption",
-		"BarrierShamirListShares", "BarrierShamirDeleteShare", "BarrierShamirDeleteAllShares",
 		"CredentialSubmit", "CredentialRetrieve", "CredentialRotate",
 	}
 	grpcAllow := make(map[string]struct{})
@@ -438,7 +433,6 @@ func TestRESTAllowlist_ExactSet(t *testing.T) {
 		"/api/v1/barrier/shamir/unseal-share",
 		"/v1/barrier/shamir/unseal-shares",
 		"/api/v1/barrier/shamir/unseal-shares",
-		"/v1/barrier/shamir/verify",
 		"/v1/barrier/recovery/recover",
 		"/api/v1/barrier/recovery/recover",
 		"/v1/barrier/root-token",

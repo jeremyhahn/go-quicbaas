@@ -2648,17 +2648,6 @@ export interface BarrierUnsealSharesRequest {
   shares: string[];
 }
 
-// BarrierShamirSharesResponse describes persisted Shamir share metadata.
-// Mirrors transport.BarrierShamirSharesResponse.
-export interface BarrierShamirSharesResponse {
-  /** Number of shares currently in storage. */
-  count: number;
-  /** Minimum shares required for reconstruction. */
-  threshold: number;
-  /** Total shares generated. */
-  total: number;
-}
-
 // BarrierRekeyRequest holds parameters for rekeying the Shamir shares.
 // Mirrors transport.BarrierRekeyRequest.
 export interface BarrierRekeyRequest {
@@ -2811,13 +2800,6 @@ export interface BarrierRootTokenResponse {
   created_at: string;
 }
 
-// BarrierShamirDeleteShareRequest identifies a share by index.
-// Mirrors transport.BarrierShamirDeleteShareRequest.
-export interface BarrierShamirDeleteShareRequest {
-  /** Zero-based share index. */
-  index: number;
-}
-
 /**
  * BarrierEnableEncryptionRequest migrates a previously unencrypted barrier to a
  * keyed strategy. Mirrors go-qrdb transport.BarrierEnableEncryptionRequest.
@@ -2944,18 +2926,41 @@ export interface CeremonyClaimCertCompleteResponse {
   ca_cert_pem: string;
 }
 
-// CeremonyClaimShareRequest requests the Shamir share for an officer.
-// Mirrors transport.ClaimShareRequest.
-export interface CeremonyClaimShareRequest {
+// CeremonyClaimShareBeginRequest starts the Shamir share claim handshake.
+// Mirrors transport.BeginClaimShareRequest. The caller's certificate
+// thumbprint is bound server-side from the mTLS peer; it never travels here.
+export interface CeremonyClaimShareBeginRequest {
   /** Officer username. */
   username: string;
 }
 
-// CeremonyClaimShareResponse returns the officer's Shamir share.
-// Mirrors transport.ClaimShareResponse.
-export interface CeremonyClaimShareResponse {
-  /** Base64-encoded Shamir share material. */
-  share: string;
+// CeremonyClaimShareBeginResponse carries the nonce the officer must sign.
+// Mirrors transport.BeginClaimShareResponse.
+export interface CeremonyClaimShareBeginResponse {
+  /** Hex-encoded random nonce the officer must sign. */
+  nonce_hex: string;
+  /** RFC3339 expiration timestamp for the nonce. */
+  expires_at: string;
+}
+
+// CeremonyClaimShareCompleteRequest proves the officer's key over the nonce.
+// Mirrors transport.CompleteClaimShareRequest.
+export interface CeremonyClaimShareCompleteRequest {
+  /** Officer username. */
+  username: string;
+  /** Hex-encoded nonce from claimShareBegin. */
+  nonce_hex: string;
+  /** Base64-encoded signature over the nonce. */
+  signature: string;
+}
+
+// CeremonyClaimShareCompleteResponse returns the officer's Shamir share.
+// Mirrors transport.CompleteClaimShareResponse.
+export interface CeremonyClaimShareCompleteResponse {
+  /** Index of the officer's share in the M-of-N split. */
+  share_index: number;
+  /** The officer's Shamir share, JSON-encoded. */
+  share_json: string;
 }
 
 // CeremonySignCSRRequest submits a CSR for signing during the ceremony.

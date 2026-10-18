@@ -71,27 +71,6 @@ service Barrier {
       option (qrdb.v1.permission) = "barrier:unseal-share";
   }
 
-  // BarrierShamirListShares returns metadata about persisted Shamir share
-  // state (count, threshold, total).
-  rpc BarrierShamirListShares(google.protobuf.Empty) returns (BarrierShamirSharesResponse) {
-      option (qrdb.v1.permission) = "seal:status";
-  }
-
-  // BarrierShamirDeleteShare removes a single persisted share by index.
-  rpc BarrierShamirDeleteShare(BarrierShamirDeleteShareRequest) returns (google.protobuf.Empty) {
-      option (qrdb.v1.permission) = "seal:rekey";
-  }
-
-  // BarrierShamirDeleteAllShares removes every persisted Shamir share.
-  rpc BarrierShamirDeleteAllShares(google.protobuf.Empty) returns (google.protobuf.Empty) {
-      option (qrdb.v1.permission) = "seal:rekey";
-  }
-
-  // BarrierShamirVerify validates the consistency of every persisted share.
-  rpc BarrierShamirVerify(google.protobuf.Empty) returns (google.protobuf.Empty) {
-      option (qrdb.v1.permission) = "seal:status";
-  }
-
   // BarrierRekey generates new Shamir shares for the existing root key
   // with the supplied threshold and total parameters.
   rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitializeResponse) {
@@ -196,18 +175,6 @@ message BarrierShamirUnsealShareResponse {
 // BarrierShamirUnsealSharesRequest submits multiple Shamir shares.
 message BarrierShamirUnsealSharesRequest {
   repeated string shares = 1;
-}
-
-// BarrierShamirSharesResponse describes stored Shamir share metadata.
-message BarrierShamirSharesResponse {
-  int32 count = 1;
-  int32 threshold = 2;
-  int32 total = 3;
-}
-
-// BarrierShamirDeleteShareRequest deletes a single share by index.
-message BarrierShamirDeleteShareRequest {
-  int32 index = 1;
 }
 
 // BarrierRekeyRequest generates new Shamir shares.

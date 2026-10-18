@@ -15,5 +15,5 @@ export declare function createClient(config?: ClientConfig): Promise<Client>;
 export declare function getClient(config?: ClientConfig): Promise<Client>;
 export declare function createBarrierClient(transport?: Transport, config?: ClientConfig): Promise<BarrierClient>;
 export declare function createCeremonyClient(transport?: Transport, config?: ClientConfig): Promise<CeremonyClient>;
-export declare function createBootstrapClient(transport?: Transport, config?: ClientConfig): Promise<BootstrapClient>;
+export declare function createBootstrapClient(config?: ClientConfig): Promise<BootstrapClient>;
 //# sourceMappingURL=factory.d.ts.map

@@ -94,7 +94,6 @@ const (
 	VerbShamirInitialize   Verb = "shamir-initialize"
 	VerbShamirUnsealShare  Verb = "shamir-unseal-share"
 	VerbShamirUnsealShares Verb = "shamir-unseal-shares"
-	VerbShamirVerify       Verb = "shamir-verify"
 
 	// Rekey and the recovery-key generate / delete / status verbs left the
 	// sealed window with go-qrdb v0.25: they are not justified as anonymous,
@@ -227,7 +226,6 @@ var Verbs = []Verb{
 	VerbShamirInitialize,
 	VerbShamirUnsealShare,
 	VerbShamirUnsealShares,
-	VerbShamirVerify,
 	VerbRecoveryRecover,
 	VerbRootToken,
 	VerbOfficerRegister,
@@ -359,13 +357,6 @@ var Table = map[Verb]Names{
 		QRDBQUIC: []string{"barrier.ShamirUnsealShares"},
 		MCP:      []string{"qrdb_barrier_shamir_unseal_shares"},
 	},
-	// shamir-verify has no qrdb gRPC RPC or MCP tool; quicbaas additionally
-	// exposes it on its own quicbaas.barrier.v1 mirror (BarrierShamirVerify).
-	VerbShamirVerify: {
-		REST: []string{"/v1/barrier/shamir/verify"},
-		GRPC: []string{"BarrierShamirVerify"},
-	},
-
 	VerbRecoveryRecover: {
 		REST:     []string{"/v1/barrier/recovery/recover", "/api/v1/barrier/recovery/recover"},
 		GRPC:     []string{"BarrierRecoveryRecover"},

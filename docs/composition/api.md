@@ -364,7 +364,7 @@ Phase 8e Barrier and Ceremony tools and Phase 8e CA admin tools:
 `quicbaas.barrier.status`, `quicbaas.barrier.init`, `quicbaas.barrier.initShamir`, `quicbaas.barrier.unseal`, `quicbaas.barrier.unsealShare`, `quicbaas.barrier.unsealShares`, `quicbaas.barrier.seal`, `quicbaas.barrier.rekey`
 
 **Ceremony:**
-`quicbaas.ceremony.status`, `quicbaas.ceremony.initialize`, `quicbaas.ceremony.claimCertBegin`, `quicbaas.ceremony.claimCertComplete`, `quicbaas.ceremony.claimShare`, `quicbaas.ceremony.signCSR`, `quicbaas.ceremony.enrollExternalOfficer`
+`quicbaas.ceremony.status`, `quicbaas.ceremony.initialize`, `quicbaas.ceremony.claimCertBegin`, `quicbaas.ceremony.claimCertComplete`, `quicbaas.ceremony.claimShareBegin`, `quicbaas.ceremony.claimShareComplete`, `quicbaas.ceremony.signCSR`, `quicbaas.ceremony.enrollExternalOfficer`
 
 **Credentials:**
 `quicbaas.credentials.submit`, `quicbaas.credentials.list`, `quicbaas.credentials.rotate`, `quicbaas.credentials.retrieveVersion`, `quicbaas.credentials.listVersions`, `quicbaas.credentials.delete`, `quicbaas.credentials.gcExpired`

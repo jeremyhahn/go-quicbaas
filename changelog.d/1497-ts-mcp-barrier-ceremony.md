@@ -9,8 +9,5 @@
   tool error reply surfaces as `McpError`. The MCP tools return no share or
   recovery-key material, so `initializeShamir`, `rekey` and
   `generateRecoveryKeys` return empty `shares` / `keys` over MCP.
-- These verbs still throw `McpNotImplementedError`, because the server has no
-  MCP tool for them: `barrier.shamirListShares`, `shamirDeleteShare`,
-  `shamirDeleteAllShares` and `shamirVerify`; `ceremony.claimShare`, whose
-  tools need an officer signature that its request cannot carry; and the four
-  `bootstrap` verbs, which Go reaches through go-xkms, not a transport.
+- `ceremony.claimShare` still throws `McpNotImplementedError`: its tools need
+  an officer signature that its request cannot carry.

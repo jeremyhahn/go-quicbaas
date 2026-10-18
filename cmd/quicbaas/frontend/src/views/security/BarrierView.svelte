@@ -106,30 +106,17 @@
     const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
     const sdk = await createBarrierClient(resolveTransport(), { baseURL });
 
-    // adaptStatus folds the SDK BarrierStatusResponse plus a freshly fetched
-    // shamir-shares snapshot into the strategy-aware BarrierStatus shape the
+    // adaptStatus folds the SDK BarrierStatusResponse into the
+    // strategy-aware BarrierStatus shape the
     // components consume. Optional fields (initialized, threshold, etc.) are
     // best-effort: the SDK BarrierStatusResponse is intentionally minimal
     // because the daemon's response shape varies per strategy.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adaptStatus = async (raw: BarrierStatusResponse | any): Promise<BarrierStatus> => {
       const strategy = classifyStrategy(raw.strategy ?? raw.mode);
-      // Best-effort enrichment for shamir: fold in the persisted-share count
-      // so the progress meter has something to render. Failure here is not
-      // fatal — we fall back to whatever the status payload provided.
-      let threshold = Number(raw.threshold ?? 0);
-      let totalShares = Number(raw.total_shares ?? 0);
-      let sharesProvided = Number(raw.shares_provided ?? 0);
-      if (strategy === 'shamir') {
-        try {
-          const shares = await sdk.shamirListShares();
-          threshold = threshold || Number(shares.threshold ?? 0);
-          totalShares = totalShares || Number(shares.total ?? 0);
-          sharesProvided = sharesProvided || Number(shares.count ?? 0);
-        } catch {
-          // shamir-shares endpoint may not be available pre-init; ignore.
-        }
-      }
+      const threshold = Number(raw.threshold ?? 0);
+      const totalShares = Number(raw.total_shares ?? 0);
+      const sharesProvided = Number(raw.shares_provided ?? 0);
       return {
         strategy,
         sealed: Boolean(raw.sealed),

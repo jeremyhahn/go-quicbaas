@@ -1,8 +1,8 @@
-import type { AuthClient, BarrierClient, BootstrapClient, CeremonyClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
+import type { AuthClient, BarrierClient, CeremonyClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
 import type { AccountsClient } from './accounts.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
-import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenRequest, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoverWithKeysRequest, BarrierRecoveryKeysResponse, BarrierRekeyRequest, BarrierRekeyResponse, BarrierRootTokenResponse, BarrierShamirDeleteShareRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierShamirSharesResponse, BarrierStatusResponse, BarrierUnsealRequest, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BootstrapBundleRequest, BootstrapBundleResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
+import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoverWithKeysRequest, BarrierRecoveryKeysResponse, BarrierRekeyRequest, BarrierRekeyResponse, BarrierRootTokenResponse, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierStatusResponse, BarrierUnsealRequest, BarrierSealRequest, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
 import { QuicBaaSError } from './errors.js';
 export declare class GrpcWebNotImplementedError extends QuicBaaSError {
     constructor(method: string);
@@ -11,35 +11,27 @@ export declare class GrpcWebBarrierClient implements BarrierClient {
     status(): Promise<BarrierStatusResponse>;
     initialize(_req: BarrierInitRequest): Promise<void>;
     unseal(_req: BarrierUnsealRequest): Promise<void>;
-    seal(): Promise<void>;
+    seal(_req?: BarrierSealRequest): Promise<void>;
     initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse>;
     unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse>;
     unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void>;
-    shamirListShares(): Promise<BarrierShamirSharesResponse>;
-    shamirDeleteShare(_req: BarrierShamirDeleteShareRequest): Promise<void>;
-    shamirDeleteAllShares(): Promise<void>;
-    shamirVerify(): Promise<void>;
     rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse>;
     generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse>;
     recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void>;
     deleteRecoveryKeys(): Promise<void>;
     recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse>;
     generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse>;
+    enableEncryption(_req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse>;
 }
 export declare class GrpcWebCeremonyClient implements CeremonyClient {
     initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse>;
     status(): Promise<CeremonyStatusResponse>;
     claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse>;
     claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse>;
-    claimShare(_req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse>;
+    claimShareBegin(_req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse>;
+    claimShareComplete(_req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse>;
     signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse>;
     enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse>;
-}
-export declare class GrpcWebBootstrapClient implements BootstrapClient {
-    auto(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
-    dane(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
-    noise(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
-    spki(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
 }
 export declare class GrpcWebClient implements Client {
     readonly connection: ConnectionClient;
@@ -68,7 +60,6 @@ export declare class GrpcWebClient implements Client {
     readonly barrier: BarrierClient;
     readonly tenantBarrier: any;
     readonly ceremony: CeremonyClient;
-    readonly bootstrap: BootstrapClient;
     readonly cluster: any;
     readonly seal: any;
     readonly sshKeys: any;

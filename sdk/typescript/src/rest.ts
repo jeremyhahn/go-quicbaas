@@ -318,8 +318,6 @@ import type {
   BarrierUnsealShareRequest,
   BarrierUnsealShareResponse,
   BarrierUnsealSharesRequest,
-  BarrierShamirSharesResponse,
-  BarrierShamirDeleteShareRequest,
   BarrierRekeyRequest,
   BarrierRekeyResponse,
   BarrierGenerateRecoveryKeysRequest,
@@ -341,8 +339,10 @@ import type {
   CeremonyClaimCertBeginResponse,
   CeremonyClaimCertCompleteRequest,
   CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareRequest,
-  CeremonyClaimShareResponse,
+  CeremonyClaimShareBeginRequest,
+  CeremonyClaimShareBeginResponse,
+  CeremonyClaimShareCompleteRequest,
+  CeremonyClaimShareCompleteResponse,
   CeremonySignCSRRequest,
   CeremonySignCSRResponse,
   CeremonyEnrollExternalOfficerRequest,
@@ -4540,23 +4540,6 @@ export class RestBarrierClient implements BarrierClient {
     });
   }
 
-  async shamirListShares(): Promise<BarrierShamirSharesResponse> {
-    return this.http.fetchJSON<BarrierShamirSharesResponse>('/api/v1/barrier/shamir/shares');
-  }
-
-  async shamirDeleteShare(req: BarrierShamirDeleteShareRequest): Promise<void> {
-    await this.http.fetchVoid(`/api/v1/barrier/shamir/shares/${encodeURIComponent(String(req.index))}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async shamirDeleteAllShares(): Promise<void> {
-    await this.http.fetchVoid('/api/v1/barrier/shamir/shares', { method: 'DELETE' });
-  }
-
-  async shamirVerify(): Promise<void> {
-    await this.http.fetchVoid('/api/v1/barrier/shamir/verify', { method: 'POST' });
-  }
 
   async rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> {
     return this.http.fetchJSON<BarrierRekeyResponse>('/api/v1/barrier/rekey', {
@@ -4728,11 +4711,28 @@ export class RestCeremonyClient implements CeremonyClient {
     );
   }
 
-  async claimShare(req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse> {
-    return this.http.fetchJSON<CeremonyClaimShareResponse>('/api/v1/init/claim-share', {
-      method: 'POST',
-      body: JSON.stringify(req),
-    });
+  async claimShareBegin(
+    req: CeremonyClaimShareBeginRequest,
+  ): Promise<CeremonyClaimShareBeginResponse> {
+    return this.http.fetchJSON<CeremonyClaimShareBeginResponse>(
+      '/api/v1/init/officer-share/begin',
+      {
+        method: 'POST',
+        body: JSON.stringify(req),
+      },
+    );
+  }
+
+  async claimShareComplete(
+    req: CeremonyClaimShareCompleteRequest,
+  ): Promise<CeremonyClaimShareCompleteResponse> {
+    return this.http.fetchJSON<CeremonyClaimShareCompleteResponse>(
+      '/api/v1/init/officer-share/complete',
+      {
+        method: 'POST',
+        body: JSON.stringify(req),
+      },
+    );
   }
 
   async signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> {

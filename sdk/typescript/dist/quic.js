@@ -169,20 +169,17 @@ export class QuicBarrierClient {
     async status() { return frameOnly('barrier', 'status'); }
     async initialize(_req) { return frameOnly('barrier', 'initialize'); }
     async unseal(_req) { return frameOnly('barrier', 'unseal'); }
-    async seal() { return frameOnly('barrier', 'seal'); }
+    async seal(_req) { return frameOnly('barrier', 'seal'); }
     async initializeShamir(_req) { return frameOnly('barrier', 'initializeShamir'); }
     async unsealWithShare(_req) { return frameOnly('barrier', 'unsealWithShare'); }
     async unsealWithShares(_req) { return frameOnly('barrier', 'unsealWithShares'); }
-    async shamirListShares() { return frameOnly('barrier', 'shamirListShares'); }
-    async shamirDeleteShare(_req) { return frameOnly('barrier', 'shamirDeleteShare'); }
-    async shamirDeleteAllShares() { return frameOnly('barrier', 'shamirDeleteAllShares'); }
-    async shamirVerify() { return frameOnly('barrier', 'shamirVerify'); }
     async rekey(_req) { return frameOnly('barrier', 'rekey'); }
     async generateRecoveryKeys(_req) { return frameOnly('barrier', 'generateRecoveryKeys'); }
     async recoverWithKeys(_req) { return frameOnly('barrier', 'recoverWithKeys'); }
     async deleteRecoveryKeys() { return frameOnly('barrier', 'deleteRecoveryKeys'); }
     async recoveryStatus() { return frameOnly('barrier', 'recoveryStatus'); }
     async generateRootToken(_req) { return frameOnly('barrier', 'generateRootToken'); }
+    async enableEncryption(_req) { return frameOnly('barrier', 'enableEncryption'); }
 }
 // QuicCeremonyClient refuses every verb: go-qrdb serves ceremony.* on the QUIC
 // listener's frame protocol, which this SDK does not speak.
@@ -191,16 +188,10 @@ export class QuicCeremonyClient {
     async status() { return frameOnly('ceremony', 'status'); }
     async claimCertBegin(_req) { return frameOnly('ceremony', 'claimCertBegin'); }
     async claimCertComplete(_req) { return frameOnly('ceremony', 'claimCertComplete'); }
-    async claimShare(_req) { return frameOnly('ceremony', 'claimShare'); }
+    async claimShareBegin(_req) { return frameOnly('ceremony', 'claimShareBegin'); }
+    async claimShareComplete(_req) { return frameOnly('ceremony', 'claimShareComplete'); }
     async signCSR(_req) { return frameOnly('ceremony', 'signCSR'); }
     async enrollExternalOfficer(_req) { return frameOnly('ceremony', 'enrollExternalOfficer'); }
-}
-// QuicBootstrapClient refuses every verb with QuicNotImplementedError.
-export class QuicBootstrapClient {
-    async auto(_req) { return frameOnly('bootstrap', 'auto'); }
-    async dane(_req) { return frameOnly('bootstrap', 'dane'); }
-    async noise(_req) { return frameOnly('bootstrap', 'noise'); }
-    async spki(_req) { return frameOnly('bootstrap', 'spki'); }
 }
 // QuicClient is the entry point for the QUIC transport. It sends nothing: every
 // verb refuses with a typed reason (see quicUnsupported).
@@ -250,7 +241,6 @@ export class QuicClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tenantBarrier = null;
     ceremony;
-    bootstrap;
     // cluster status/management is exposed over the REST transport; not wired here.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cluster = null;
@@ -266,7 +256,6 @@ export class QuicClient {
         this.auth = new QuicAuthClient();
         this.barrier = new QuicBarrierClient();
         this.ceremony = new QuicCeremonyClient();
-        this.bootstrap = new QuicBootstrapClient();
     }
     async logout(_token) {
         // Non-REST transports don't manage bearer tokens via the REST logout verb.

@@ -98,7 +98,7 @@ describe('CeremonyView', () => {
     spy = makeFetchSpy({
       '/api/v1/init/officers': () => ({ officers: mockOfficers }),
       '/api/v1/init/claim-cert/complete': () => ({ cert_pem: 'PEM', ca_cert_pem: 'CA' }),
-      '/api/v1/init/claim-share': () => ({ share: 'base64share' }),
+      '/api/v1/init/officer-share/complete': () => ({ share_index: 1, share_json: '{"index":1}' }),
       '/api/v1/init/enroll-external-officer': () => ({ sealed_share: '' }),
     });
     vi.stubGlobal('fetch', spy.mock);
@@ -185,21 +185,23 @@ describe('CeremonyView', () => {
     expect(screen.getByRole('button', { name: /Submit Share/i })).toBeInTheDocument();
   });
 
-  it('claim-share submission posts to /api/v1/init/claim-share', async () => {
+  it('claim-share submission posts to /api/v1/init/officer-share/complete', async () => {
     render(CeremonyView);
     await waitFor(() => {
       expect(screen.getByTestId('ceremony-claim-share')).toBeInTheDocument();
     });
     const form = screen.getByTestId('ceremony-claim-share');
-    const usernameInput = within(form).getByLabelText(/Username/i);
-    const shareInput = within(form).getByLabelText(/Share/i);
+    const usernameInput = within(form).getByLabelText(/^Username$/i);
+    const challengeInput = within(form).getByLabelText(/^Challenge$/i);
+    const signatureInput = within(form).getByLabelText(/Signature \(base64\)/i);
 
     await fireEvent.input(usernameInput, { target: { value: 'alice' } });
-    await fireEvent.input(shareInput, { target: { value: 'base64share' } });
+    await fireEvent.input(challengeInput, { target: { value: 'deadbeef' } });
+    await fireEvent.input(signatureInput, { target: { value: 'c2lnbg==' } });
     await fireEvent.click(within(form).getByRole('button', { name: /Submit Share/i }));
 
     await waitFor(() => {
-      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/init/claim-share'));
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/init/officer-share/complete'));
       expect(hits.length).toBeGreaterThan(0);
       expect(hits[0].method).toBe('POST');
     });

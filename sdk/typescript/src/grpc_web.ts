@@ -29,7 +29,6 @@
 import type {
   AuthClient,
   BarrierClient,
-  BootstrapClient,
   CeremonyClient,
   Client,
   ConnectionClient,
@@ -53,24 +52,22 @@ import type {
   BarrierRekeyRequest,
   BarrierRekeyResponse,
   BarrierRootTokenResponse,
-  BarrierShamirDeleteShareRequest,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
-  BarrierShamirSharesResponse,
   BarrierStatusResponse,
   BarrierUnsealRequest,
   BarrierSealRequest,
   BarrierUnsealShareRequest,
   BarrierUnsealShareResponse,
   BarrierUnsealSharesRequest,
-  BootstrapBundleRequest,
-  BootstrapBundleResponse,
   CeremonyClaimCertBeginRequest,
   CeremonyClaimCertBeginResponse,
   CeremonyClaimCertCompleteRequest,
   CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareRequest,
-  CeremonyClaimShareResponse,
+  CeremonyClaimShareBeginRequest,
+  CeremonyClaimShareBeginResponse,
+  CeremonyClaimShareCompleteRequest,
+  CeremonyClaimShareCompleteResponse,
   CeremonyEnrollExternalOfficerRequest,
   CeremonyEnrollExternalOfficerResponse,
   CeremonyInitializeRequest,
@@ -316,10 +313,6 @@ export class GrpcWebBarrierClient implements BarrierClient {
   async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return notImpl('barrier.initializeShamir'); }
   async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return notImpl('barrier.unsealWithShare'); }
   async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return notImpl('barrier.unsealWithShares'); }
-  async shamirListShares(): Promise<BarrierShamirSharesResponse> { return notImpl('barrier.shamirListShares'); }
-  async shamirDeleteShare(_req: BarrierShamirDeleteShareRequest): Promise<void> { return notImpl('barrier.shamirDeleteShare'); }
-  async shamirDeleteAllShares(): Promise<void> { return notImpl('barrier.shamirDeleteAllShares'); }
-  async shamirVerify(): Promise<void> { return notImpl('barrier.shamirVerify'); }
   async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return notImpl('barrier.rekey'); }
   async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return notImpl('barrier.generateRecoveryKeys'); }
   async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return notImpl('barrier.recoverWithKeys'); }
@@ -336,18 +329,10 @@ export class GrpcWebCeremonyClient implements CeremonyClient {
   async status(): Promise<CeremonyStatusResponse> { return notImpl('ceremony.status'); }
   async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return notImpl('ceremony.claimCertBegin'); }
   async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return notImpl('ceremony.claimCertComplete'); }
-  async claimShare(_req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse> { return notImpl('ceremony.claimShare'); }
+  async claimShareBegin(_req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse> { return notImpl('ceremony.claimShareBegin'); }
+  async claimShareComplete(_req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse> { return notImpl('ceremony.claimShareComplete'); }
   async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return notImpl('ceremony.signCSR'); }
   async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return notImpl('ceremony.enrollExternalOfficer'); }
-}
-
-// GrpcWebBootstrapClient is a stub BootstrapClient that throws
-// GrpcWebNotImplementedError on every call. Bootstrap is REST-only today.
-export class GrpcWebBootstrapClient implements BootstrapClient {
-  async auto(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.auto'); }
-  async dane(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.dane'); }
-  async noise(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.noise'); }
-  async spki(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.spki'); }
 }
 
 // GrpcWebClient is the stub entry point for the gRPC-Web transport.
@@ -401,7 +386,6 @@ export class GrpcWebClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly tenantBarrier: any = null;
   readonly ceremony: CeremonyClient;
-  readonly bootstrap: BootstrapClient;
   // cluster status/management is exposed over the REST transport; not wired here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly cluster: any = null;
@@ -418,7 +402,6 @@ export class GrpcWebClient implements Client {
     this.auth = new GrpcWebAuthClient();
     this.barrier = new GrpcWebBarrierClient();
     this.ceremony = new GrpcWebCeremonyClient();
-    this.bootstrap = new GrpcWebBootstrapClient();
   }
   async logout(_token?: string): Promise<void> {
     // Non-REST transports don't manage bearer tokens via the REST logout verb.

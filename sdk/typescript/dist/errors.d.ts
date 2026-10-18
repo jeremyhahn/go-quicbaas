@@ -22,6 +22,16 @@ export declare class TransportNotSupportedError extends QuicBaaSError {
     readonly method?: string;
     constructor(transport: string, family: string, reason: string, method?: string);
 }
+/**
+ * SOPINRequiresTLSError is thrown before any request is sent when a call
+ * carries a Security Officer PIN and the endpoint is not https://. It
+ * mirrors the Go SDK's SOPINRequiresTLSError: the PIN never travels in
+ * plaintext, loopback included.
+ */
+export declare class SOPINRequiresTLSError extends QuicBaaSError {
+    readonly transport: string;
+    constructor(transport: string);
+}
 export declare class McpError extends QuicBaaSError {
     readonly tool: string;
     readonly code?: number;

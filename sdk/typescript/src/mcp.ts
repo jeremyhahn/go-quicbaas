@@ -25,7 +25,6 @@
 import type {
   AuthClient,
   BarrierClient,
-  BootstrapClient,
   CeremonyClient,
   Client,
   ConnectionClient,
@@ -45,24 +44,22 @@ import type {
   BarrierRekeyRequest,
   BarrierRekeyResponse,
   BarrierRootTokenResponse,
-  BarrierShamirDeleteShareRequest,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
-  BarrierShamirSharesResponse,
   BarrierStatusResponse,
   BarrierUnsealRequest,
   BarrierSealRequest,
   BarrierUnsealShareRequest,
   BarrierUnsealShareResponse,
   BarrierUnsealSharesRequest,
-  BootstrapBundleRequest,
-  BootstrapBundleResponse,
   CeremonyClaimCertBeginRequest,
   CeremonyClaimCertBeginResponse,
   CeremonyClaimCertCompleteRequest,
   CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareRequest,
-  CeremonyClaimShareResponse,
+  CeremonyClaimShareBeginRequest,
+  CeremonyClaimShareBeginResponse,
+  CeremonyClaimShareCompleteRequest,
+  CeremonyClaimShareCompleteResponse,
   CeremonyEnrollExternalOfficerRequest,
   CeremonyEnrollExternalOfficerResponse,
   CeremonyInitializeRequest,
@@ -858,10 +855,7 @@ function secretArg(secret: Uint8Array): string {
 }
 
 // McpBarrierClient calls the qrdb_barrier_* MCP tools, with the tool names
-// and argument keys of the Go SDK's MCP transport. Four verbs still throw
-// McpNotImplementedError, because the server registers no MCP tool for them
-// (pkg/api/mcp/tools_barrier.go) and the Go MCP transport has no counterpart:
-// shamirListShares, shamirDeleteShare, shamirDeleteAllShares and shamirVerify.
+// and argument keys of the Go SDK's MCP transport.
 export class McpBarrierClient implements BarrierClient {
   constructor(private readonly session: McpSession) {}
 
@@ -900,11 +894,6 @@ export class McpBarrierClient implements BarrierClient {
   async unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void> {
     await this.session.callTool<Record<string, unknown>>('qrdb_barrier_shamir_unseal_shares', { shares: req.shares });
   }
-
-  async shamirListShares(): Promise<BarrierShamirSharesResponse> { return notImpl('barrier.shamirListShares'); }
-  async shamirDeleteShare(_req: BarrierShamirDeleteShareRequest): Promise<void> { return notImpl('barrier.shamirDeleteShare'); }
-  async shamirDeleteAllShares(): Promise<void> { return notImpl('barrier.shamirDeleteAllShares'); }
-  async shamirVerify(): Promise<void> { return notImpl('barrier.shamirVerify'); }
 
   // Like initializeShamir, the rekey tool reports the new quorum but no shares.
   async rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> {
@@ -967,13 +956,24 @@ export class McpBarrierClient implements BarrierClient {
   }
 }
 
+// decodeBase64Text decodes a base64 tool field into UTF-8 text, refusing
+// malformed base64 as an McpError naming the tool.
+function decodeBase64Text(tool: string, b64: string): string {
+  let binary: string;
+  try {
+    binary = atob(b64);
+  } catch {
+    throw new McpError(tool, 'share is not valid base64');
+  }
+  return new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
+}
+
 // McpCeremonyClient calls the qrdb_ceremony_* MCP tools, with the tool names
-// and argument keys of the Go SDK's MCP transport. claimShare still throws
-// McpNotImplementedError: the server serves a share only through the
-// qrdb_ceremony_begin_claim_share / qrdb_ceremony_complete_claim_share pair,
-// whose completion needs the officer's signature over the begin nonce
-// (pkg/api/mcp/tools_ceremony.go), and CeremonyClaimShareRequest carries only
-// a username, so no single call can prove the officer's key.
+// and argument keys of the Go SDK's MCP transport. claimShareBegin and
+// claimShareComplete call the qrdb_ceremony_begin_claim_share /
+// qrdb_ceremony_complete_claim_share pair (pkg/api/mcp/tools_ceremony.go): the
+// officer signs the begin nonce, and the server binds both calls to the
+// session's mTLS certificate thumbprint, which never travels in the arguments.
 export class McpCeremonyClient implements CeremonyClient {
   constructor(private readonly session: McpSession) {}
 
@@ -1009,7 +1009,25 @@ export class McpCeremonyClient implements CeremonyClient {
     });
   }
 
-  async claimShare(_req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse> { return notImpl('ceremony.claimShare'); }
+  async claimShareBegin(req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse> {
+    const reply = await this.session.callTool<Partial<CeremonyClaimShareBeginResponse>>(
+      'qrdb_ceremony_begin_claim_share',
+      { username: req.username },
+    );
+    return { nonce_hex: reply.nonce_hex ?? '', expires_at: reply.expires_at ?? '' };
+  }
+
+  // claimShareComplete sends the base64 signature as the tool's signature
+  // argument and decodes the tool's base64 share back into share_json.
+  async claimShareComplete(req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse> {
+    const tool = 'qrdb_ceremony_complete_claim_share';
+    const reply = await this.session.callTool<{ share_index?: number; share?: string }>(tool, {
+      username: req.username,
+      nonce_hex: req.nonce_hex,
+      signature: req.signature,
+    });
+    return { share_index: reply.share_index ?? 0, share_json: decodeBase64Text(tool, reply.share ?? '') };
+  }
 
   async signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> {
     requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
@@ -1034,17 +1052,6 @@ export class McpCeremonyClient implements CeremonyClient {
     if (req.share_bytes) args.share_bytes = req.share_bytes;
     return this.session.callTool<CeremonyEnrollExternalOfficerResponse>('qrdb_ceremony_enroll_external_officer', args);
   }
-}
-
-// McpBootstrapClient throws McpNotImplementedError on every verb: the server
-// registers no bootstrap MCP tool (pkg/api/mcp) and the Go MCP transport has
-// none (sdk/go/transport/mcp). Go reaches bootstrap through the go-xkms
-// library, not through a transport.
-export class McpBootstrapClient implements BootstrapClient {
-  async auto(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.auto'); }
-  async dane(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.dane'); }
-  async noise(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.noise'); }
-  async spki(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return notImpl('bootstrap.spki'); }
 }
 
 // McpAccountsClient carries the accounts family over the quicbaas_agent_account_*
@@ -1341,7 +1348,6 @@ export class McpClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly tenantBarrier: any = null;
   readonly ceremony: CeremonyClient;
-  readonly bootstrap: BootstrapClient;
   // cluster status/management is exposed over the REST transport; not wired here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly cluster: any = null;
@@ -1362,7 +1368,6 @@ export class McpClient implements Client {
     this.auth = new McpAuthClient();
     this.barrier = new McpBarrierClient(session);
     this.ceremony = new McpCeremonyClient(session);
-    this.bootstrap = new McpBootstrapClient();
   }
   async logout(_token?: string): Promise<void> {
     // Non-REST transports don't manage bearer tokens via the REST logout verb.

@@ -151,10 +151,11 @@ export interface ClaimCertificateRequest {
   signature_b64: string;
 }
 
-/** ClaimShareRequest delivers an officer's share contribution. */
+/** ClaimShareRequest signs the share-claim challenge with the officer's private key. */
 export interface ClaimShareRequest {
   username: string;
-  share: string;
+  challenge: string;
+  signature_b64: string;
 }
 
 /** ClaimResponse reports the outcome of a claim flow. */

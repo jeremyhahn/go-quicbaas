@@ -221,7 +221,7 @@ describe('stub transport errors', () => {
   it('mcp methods throw McpNotImplementedError', async () => {
     const { createClient } = await import('../src/factory.js');
     const client = await createClient({ transport: 'mcp', mcp: { endpoint: '' } });
-    await expect(client.barrier.shamirVerify()).rejects.toThrow('mcp transport');
+    await expect(client.auth.loginPIV()).rejects.toThrow('mcp transport');
   });
 
   it('quic methods throw QuicNotImplementedError', async () => {
@@ -233,10 +233,11 @@ describe('stub transport errors', () => {
 
 // ---------------------------------------------------------------------------
 // Convenience sub-client factories — createBarrierClient / createCeremonyClient
-// / createBootstrapClient. Each delegates to createClient and returns the
-// matching sub-client. The REST path returns a working implementation; the
-// stub transports return clients whose methods throw the corresponding
-// transport-not-implemented error.
+// / createBootstrapClient. The barrier and ceremony factories delegate to
+// createClient and return the matching sub-client: the REST path returns a
+// working implementation, and the stub transports return clients whose
+// methods throw the corresponding transport-not-implemented error. Bootstrap
+// is served over REST only, so createBootstrapClient takes no transport.
 // ---------------------------------------------------------------------------
 
 describe('createBarrierClient', () => {
@@ -279,8 +280,9 @@ describe('createBarrierClient', () => {
 
   it('returns the MCP barrier client for transport=mcp', async () => {
     const { createBarrierClient } = await import('../src/factory.js');
+    const { McpBarrierClient } = await import('../src/mcp.js');
     const barrier = await createBarrierClient('mcp', { mcp: { endpoint: '' } });
-    await expect(barrier.shamirListShares()).rejects.toThrow('mcp transport');
+    expect(barrier).toBeInstanceOf(McpBarrierClient);
   });
 
   it('defaults to the auto-detected transport when none is supplied', async () => {
@@ -334,7 +336,7 @@ describe('createCeremonyClient', () => {
   it('returns the MCP ceremony client for transport=mcp', async () => {
     const { createCeremonyClient } = await import('../src/factory.js');
     const ceremony = await createCeremonyClient('mcp', { mcp: { endpoint: '' } });
-    await expect(ceremony.claimShare({ username: 'officer-1' })).rejects.toThrow('mcp transport');
+    expect(ceremony.constructor.name).toBe('McpCeremonyClient');
   });
 });
 
@@ -344,7 +346,7 @@ describe('createBootstrapClient', () => {
     vi.resetModules();
   });
 
-  it('returns a working REST bootstrap client for transport=rest', async () => {
+  it('returns a working REST bootstrap client', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -359,7 +361,7 @@ describe('createBootstrapClient', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     try {
       const { createBootstrapClient } = await import('../src/factory.js');
-      const bootstrap = await createBootstrapClient('rest', { baseURL: 'http://localhost' });
+      const bootstrap = await createBootstrapClient({ baseURL: 'http://localhost' });
       const result = await bootstrap.auto();
       expect(result.method).toBe('auto');
       expect(fetchMock.mock.calls[0][0]).toBe('http://localhost/api/v1/bootstrap/auto');
@@ -368,20 +370,10 @@ describe('createBootstrapClient', () => {
     }
   });
 
-  it.each(['grpc-web', 'quic', 'mcp'] as const)(
-    'returns a stub bootstrap client whose methods throw for transport=%s',
-    async (transport) => {
-      const { createBootstrapClient } = await import('../src/factory.js');
-      const bootstrap = await createBootstrapClient(transport, {
-        baseURL: '',
-        quic: { endpoint: '' },
-        mcp: { endpoint: '' },
-      });
-      // Each strategy must surface the transport-specific error.
-      await expect(bootstrap.auto()).rejects.toThrow(`${transport} transport`);
-      await expect(bootstrap.dane()).rejects.toThrow(`${transport} transport`);
-      await expect(bootstrap.noise()).rejects.toThrow(`${transport} transport`);
-      await expect(bootstrap.spki()).rejects.toThrow(`${transport} transport`);
-    },
-  );
+  it('builds the REST client even when the configured transport is not REST', async () => {
+    const { createBootstrapClient } = await import('../src/factory.js');
+    const { RestBootstrapClient } = await import('../src/rest.js');
+    const bootstrap = await createBootstrapClient({ transport: 'mcp', baseURL: 'http://localhost', mcp: { endpoint: '' } });
+    expect(bootstrap).toBeInstanceOf(RestBootstrapClient);
+  });
 });

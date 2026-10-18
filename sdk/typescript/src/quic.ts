@@ -27,7 +27,6 @@
 import type {
   AuthClient,
   BarrierClient,
-  BootstrapClient,
   CeremonyClient,
   Client,
   ConnectionClient,
@@ -51,24 +50,22 @@ import type {
   BarrierRekeyRequest,
   BarrierRekeyResponse,
   BarrierRootTokenResponse,
-  BarrierShamirDeleteShareRequest,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
-  BarrierShamirSharesResponse,
   BarrierStatusResponse,
   BarrierUnsealRequest,
   BarrierSealRequest,
   BarrierUnsealShareRequest,
   BarrierUnsealShareResponse,
   BarrierUnsealSharesRequest,
-  BootstrapBundleRequest,
-  BootstrapBundleResponse,
   CeremonyClaimCertBeginRequest,
   CeremonyClaimCertBeginResponse,
   CeremonyClaimCertCompleteRequest,
   CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareRequest,
-  CeremonyClaimShareResponse,
+  CeremonyClaimShareBeginRequest,
+  CeremonyClaimShareBeginResponse,
+  CeremonyClaimShareCompleteRequest,
+  CeremonyClaimShareCompleteResponse,
   CeremonyEnrollExternalOfficerRequest,
   CeremonyEnrollExternalOfficerResponse,
   CeremonyInitializeRequest,
@@ -324,10 +321,6 @@ export class QuicBarrierClient implements BarrierClient {
   async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return frameOnly('barrier', 'initializeShamir'); }
   async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return frameOnly('barrier', 'unsealWithShare'); }
   async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return frameOnly('barrier', 'unsealWithShares'); }
-  async shamirListShares(): Promise<BarrierShamirSharesResponse> { return frameOnly('barrier', 'shamirListShares'); }
-  async shamirDeleteShare(_req: BarrierShamirDeleteShareRequest): Promise<void> { return frameOnly('barrier', 'shamirDeleteShare'); }
-  async shamirDeleteAllShares(): Promise<void> { return frameOnly('barrier', 'shamirDeleteAllShares'); }
-  async shamirVerify(): Promise<void> { return frameOnly('barrier', 'shamirVerify'); }
   async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return frameOnly('barrier', 'rekey'); }
   async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return frameOnly('barrier', 'generateRecoveryKeys'); }
   async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return frameOnly('barrier', 'recoverWithKeys'); }
@@ -344,17 +337,10 @@ export class QuicCeremonyClient implements CeremonyClient {
   async status(): Promise<CeremonyStatusResponse> { return frameOnly('ceremony', 'status'); }
   async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return frameOnly('ceremony', 'claimCertBegin'); }
   async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return frameOnly('ceremony', 'claimCertComplete'); }
-  async claimShare(_req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse> { return frameOnly('ceremony', 'claimShare'); }
+  async claimShareBegin(_req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse> { return frameOnly('ceremony', 'claimShareBegin'); }
+  async claimShareComplete(_req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse> { return frameOnly('ceremony', 'claimShareComplete'); }
   async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return frameOnly('ceremony', 'signCSR'); }
   async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return frameOnly('ceremony', 'enrollExternalOfficer'); }
-}
-
-// QuicBootstrapClient refuses every verb with QuicNotImplementedError.
-export class QuicBootstrapClient implements BootstrapClient {
-  async auto(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return frameOnly('bootstrap', 'auto'); }
-  async dane(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return frameOnly('bootstrap', 'dane'); }
-  async noise(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return frameOnly('bootstrap', 'noise'); }
-  async spki(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse> { return frameOnly('bootstrap', 'spki'); }
 }
 
 // QuicClient is the entry point for the QUIC transport. It sends nothing: every
@@ -405,7 +391,6 @@ export class QuicClient implements Client {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly tenantBarrier: any = null;
   readonly ceremony: CeremonyClient;
-  readonly bootstrap: BootstrapClient;
   // cluster status/management is exposed over the REST transport; not wired here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly cluster: any = null;
@@ -422,7 +407,6 @@ export class QuicClient implements Client {
     this.auth = new QuicAuthClient();
     this.barrier = new QuicBarrierClient();
     this.ceremony = new QuicCeremonyClient();
-    this.bootstrap = new QuicBootstrapClient();
   }
   async logout(_token?: string): Promise<void> {
     // Non-REST transports don't manage bearer tokens via the REST logout verb.

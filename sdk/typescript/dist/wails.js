@@ -782,8 +782,6 @@ export class WailsClient {
     tenantBarrier = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ceremony = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    bootstrap = null;
     // cluster status/management resolves through the REST transport in desktop
     // mode (the embedded server runs in-process); no Wails Go binding yet.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

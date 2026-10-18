@@ -1,6 +1,7 @@
 import type { ClientConfig } from './types.js';
 export declare class McpSession {
-    private readonly endpoint;
+    /** endpoint is the MCP URL; callers check its scheme before sending secrets. */
+    readonly endpoint: string;
     private readonly config;
     private sessionId;
     private ready;

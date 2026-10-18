@@ -160,20 +160,17 @@ export class GrpcWebBarrierClient {
     async status() { return notImpl('barrier.status'); }
     async initialize(_req) { return notImpl('barrier.initialize'); }
     async unseal(_req) { return notImpl('barrier.unseal'); }
-    async seal() { return notImpl('barrier.seal'); }
+    async seal(_req) { return notImpl('barrier.seal'); }
     async initializeShamir(_req) { return notImpl('barrier.initializeShamir'); }
     async unsealWithShare(_req) { return notImpl('barrier.unsealWithShare'); }
     async unsealWithShares(_req) { return notImpl('barrier.unsealWithShares'); }
-    async shamirListShares() { return notImpl('barrier.shamirListShares'); }
-    async shamirDeleteShare(_req) { return notImpl('barrier.shamirDeleteShare'); }
-    async shamirDeleteAllShares() { return notImpl('barrier.shamirDeleteAllShares'); }
-    async shamirVerify() { return notImpl('barrier.shamirVerify'); }
     async rekey(_req) { return notImpl('barrier.rekey'); }
     async generateRecoveryKeys(_req) { return notImpl('barrier.generateRecoveryKeys'); }
     async recoverWithKeys(_req) { return notImpl('barrier.recoverWithKeys'); }
     async deleteRecoveryKeys() { return notImpl('barrier.deleteRecoveryKeys'); }
     async recoveryStatus() { return notImpl('barrier.recoveryStatus'); }
     async generateRootToken(_req) { return notImpl('barrier.generateRootToken'); }
+    async enableEncryption(_req) { return notImpl('barrier.enableEncryption'); }
 }
 // GrpcWebCeremonyClient is a stub CeremonyClient that throws
 // GrpcWebNotImplementedError on every call.
@@ -182,17 +179,10 @@ export class GrpcWebCeremonyClient {
     async status() { return notImpl('ceremony.status'); }
     async claimCertBegin(_req) { return notImpl('ceremony.claimCertBegin'); }
     async claimCertComplete(_req) { return notImpl('ceremony.claimCertComplete'); }
-    async claimShare(_req) { return notImpl('ceremony.claimShare'); }
+    async claimShareBegin(_req) { return notImpl('ceremony.claimShareBegin'); }
+    async claimShareComplete(_req) { return notImpl('ceremony.claimShareComplete'); }
     async signCSR(_req) { return notImpl('ceremony.signCSR'); }
     async enrollExternalOfficer(_req) { return notImpl('ceremony.enrollExternalOfficer'); }
-}
-// GrpcWebBootstrapClient is a stub BootstrapClient that throws
-// GrpcWebNotImplementedError on every call. Bootstrap is REST-only today.
-export class GrpcWebBootstrapClient {
-    async auto(_req) { return notImpl('bootstrap.auto'); }
-    async dane(_req) { return notImpl('bootstrap.dane'); }
-    async noise(_req) { return notImpl('bootstrap.noise'); }
-    async spki(_req) { return notImpl('bootstrap.spki'); }
 }
 // GrpcWebClient is the stub entry point for the gRPC-Web transport.
 // Replace the stub implementations above with real gRPC-Web calls once the
@@ -245,7 +235,6 @@ export class GrpcWebClient {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tenantBarrier = null;
     ceremony;
-    bootstrap;
     // cluster status/management is exposed over the REST transport; not wired here.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cluster = null;
@@ -261,7 +250,6 @@ export class GrpcWebClient {
         this.auth = new GrpcWebAuthClient();
         this.barrier = new GrpcWebBarrierClient();
         this.ceremony = new GrpcWebCeremonyClient();
-        this.bootstrap = new GrpcWebBootstrapClient();
     }
     async logout(_token) {
         // Non-REST transports don't manage bearer tokens via the REST logout verb.

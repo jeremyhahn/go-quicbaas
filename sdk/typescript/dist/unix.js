@@ -192,8 +192,6 @@ export class UnixClient {
     tenantBarrier = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ceremony = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    bootstrap = null;
     // cluster status/management is exposed over the REST transport; not wired here.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cluster = null;

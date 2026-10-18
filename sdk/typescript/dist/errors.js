@@ -76,6 +76,20 @@ export class TransportNotSupportedError extends QuicBaaSError {
         this.method = method;
     }
 }
+/**
+ * SOPINRequiresTLSError is thrown before any request is sent when a call
+ * carries a Security Officer PIN and the endpoint is not https://. It
+ * mirrors the Go SDK's SOPINRequiresTLSError: the PIN never travels in
+ * plaintext, loopback included.
+ */
+export class SOPINRequiresTLSError extends QuicBaaSError {
+    transport;
+    constructor(transport) {
+        super(`${transport} transport refuses to send the SO PIN over a non-TLS endpoint; use https://`);
+        this.name = 'SOPINRequiresTLSError';
+        this.transport = transport;
+    }
+}
 // McpError is an MCP server's refusal: a JSON-RPC error (`code` set) or a
 // tool result flagged isError (`code` undefined). `tool` names the tool the
 // call was for, or the JSON-RPC method when the failure is the handshake.

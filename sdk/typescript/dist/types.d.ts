@@ -1580,6 +1580,10 @@ export interface BarrierUnsealRequest {
     /** Passphrase used to unseal the barrier. The REST client base64-encodes it. */
     secret: Uint8Array;
 }
+export interface BarrierSealRequest {
+    /** Security Officer PIN. Required when the server has a PIN backend with an SO PIN set. */
+    so_pin?: string;
+}
 export interface BarrierShamirInitRequest {
     /** Optional passphrase used to derive the master key. The REST client base64-encodes it. */
     secret: Uint8Array;
@@ -1611,14 +1615,6 @@ export interface BarrierUnsealShareResponse {
 export interface BarrierUnsealSharesRequest {
     /** Complete set of Shamir shares. */
     shares: string[];
-}
-export interface BarrierShamirSharesResponse {
-    /** Number of shares currently in storage. */
-    count: number;
-    /** Minimum shares required for reconstruction. */
-    threshold: number;
-    /** Total shares generated. */
-    total: number;
 }
 export interface BarrierRekeyRequest {
     /** New threshold value. */
@@ -1718,9 +1714,36 @@ export interface BarrierRootTokenResponse {
     /** RFC3339 timestamp when the token was generated. */
     created_at: string;
 }
-export interface BarrierShamirDeleteShareRequest {
-    /** Zero-based share index. */
-    index: number;
+/**
+ * BarrierEnableEncryptionRequest migrates a previously unencrypted barrier to a
+ * keyed strategy. Mirrors go-qrdb transport.BarrierEnableEncryptionRequest.
+ */
+export interface BarrierEnableEncryptionRequest {
+    /** Tenant whose dedicated barrier to migrate. Omit for the system barrier. */
+    tenant_id?: string;
+    /** Keyed strategy to migrate to ("passphrase" or "shamir"). Required. */
+    strategy: string;
+    /** Re-encryption approach ("swap" or "inplace"). The server defaults to "swap". */
+    mechanism?: string;
+    /** Write availability during migration ("online" or "quiesced"). The server defaults to "online". */
+    availability?: string;
+    /** New passphrase for a passphrase target. The REST client base64-encodes it. */
+    passphrase?: Uint8Array;
+    /** Shamir threshold (M) for a Shamir target. */
+    shamir_threshold?: number;
+    /** Shamir share count (N) for a Shamir target. */
+    shamir_total?: number;
+}
+/**
+ * BarrierEnableEncryptionResponse acknowledges that the migration has started.
+ * Poll status() to observe completion. Mirrors go-qrdb
+ * transport.BarrierEnableEncryptionResponse.
+ */
+export interface BarrierEnableEncryptionResponse {
+    /** Migration state; "migration_started" when accepted. */
+    status: string;
+    /** Barrier the migration runs on: "system" or "tenant". */
+    scope: string;
 }
 export interface CeremonyOfficer {
     /** Unique username for the officer. */
@@ -1786,13 +1809,29 @@ export interface CeremonyClaimCertCompleteResponse {
     /** PEM-encoded CA certificate for trust chain verification. */
     ca_cert_pem: string;
 }
-export interface CeremonyClaimShareRequest {
+export interface CeremonyClaimShareBeginRequest {
     /** Officer username. */
     username: string;
 }
-export interface CeremonyClaimShareResponse {
-    /** Base64-encoded Shamir share material. */
-    share: string;
+export interface CeremonyClaimShareBeginResponse {
+    /** Hex-encoded random nonce the officer must sign. */
+    nonce_hex: string;
+    /** RFC3339 expiration timestamp for the nonce. */
+    expires_at: string;
+}
+export interface CeremonyClaimShareCompleteRequest {
+    /** Officer username. */
+    username: string;
+    /** Hex-encoded nonce from claimShareBegin. */
+    nonce_hex: string;
+    /** Base64-encoded signature over the nonce. */
+    signature: string;
+}
+export interface CeremonyClaimShareCompleteResponse {
+    /** Index of the officer's share in the M-of-N split. */
+    share_index: number;
+    /** The officer's Shamir share, JSON-encoded. */
+    share_json: string;
 }
 export interface CeremonySignCSRRequest {
     /** Subject username for the issued certificate. */

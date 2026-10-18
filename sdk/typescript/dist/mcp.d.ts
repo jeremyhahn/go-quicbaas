@@ -1,5 +1,5 @@
-import type { AuthClient, BarrierClient, BootstrapClient, CeremonyClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
-import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenRequest, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoverWithKeysRequest, BarrierRecoveryKeysResponse, BarrierRekeyRequest, BarrierRekeyResponse, BarrierRootTokenResponse, BarrierShamirDeleteShareRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierShamirSharesResponse, BarrierStatusResponse, BarrierUnsealRequest, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BootstrapBundleRequest, BootstrapBundleResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
+import type { AuthClient, BarrierClient, CeremonyClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
+import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoverWithKeysRequest, BarrierRecoveryKeysResponse, BarrierRekeyRequest, BarrierRekeyResponse, BarrierRootTokenResponse, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierStatusResponse, BarrierUnsealRequest, BarrierSealRequest, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
 import type { Account, AccountsClient, CreateAccountRequest, CreateAccountResponse, DeleteAccountResponse, GetAccountResponse, GetAccountUsageResponse, ListAccountsRequest, ListAccountsResponse, RevokeAccountRequest, RevokeAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, SetDefaultAccountResponse, UpdateAccountRequest, UpdateAccountResponse } from './accounts.js';
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectResponse, GetProjectResponse, GrantFleetNodeRoleRequest, GrantFleetNodeRoleResponse, ListProjectsResponse, Project, ProjectsClient, RevokeFleetNodeRoleRequest, RevokeFleetNodeRoleResponse, UpdateProjectRequest, UpdateProjectResponse } from './projects.js';
 import type { SdlcClient, ProjectBinding, Delivery, OnboardingReport, ConformanceReport, OpenWork, ReviewerSelection, FileIssueRequest, ForgeIssue, CollaboratorsResponse, AdoptIssueRequest, Adoption } from './sdlc.js';
@@ -10,38 +10,34 @@ export declare class McpNotImplementedError extends QuicBaaSError {
     constructor(method: string);
 }
 export declare class McpBarrierClient implements BarrierClient {
+    private readonly session;
+    constructor(session: McpSession);
     status(): Promise<BarrierStatusResponse>;
-    initialize(_req: BarrierInitRequest): Promise<void>;
-    unseal(_req: BarrierUnsealRequest): Promise<void>;
-    seal(): Promise<void>;
-    initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse>;
-    unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse>;
-    unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void>;
-    shamirListShares(): Promise<BarrierShamirSharesResponse>;
-    shamirDeleteShare(_req: BarrierShamirDeleteShareRequest): Promise<void>;
-    shamirDeleteAllShares(): Promise<void>;
-    shamirVerify(): Promise<void>;
-    rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse>;
-    generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse>;
-    recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void>;
+    initialize(req: BarrierInitRequest): Promise<void>;
+    unseal(req: BarrierUnsealRequest): Promise<void>;
+    seal(req?: BarrierSealRequest): Promise<void>;
+    initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse>;
+    unsealWithShare(req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse>;
+    unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void>;
+    rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse>;
+    generateRecoveryKeys(req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse>;
+    recoverWithKeys(req: BarrierRecoverWithKeysRequest): Promise<void>;
     deleteRecoveryKeys(): Promise<void>;
     recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse>;
-    generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse>;
+    generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse>;
+    enableEncryption(req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse>;
 }
 export declare class McpCeremonyClient implements CeremonyClient {
-    initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse>;
+    private readonly session;
+    constructor(session: McpSession);
+    initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse>;
     status(): Promise<CeremonyStatusResponse>;
-    claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse>;
-    claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse>;
-    claimShare(_req: CeremonyClaimShareRequest): Promise<CeremonyClaimShareResponse>;
-    signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse>;
-    enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse>;
-}
-export declare class McpBootstrapClient implements BootstrapClient {
-    auto(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
-    dane(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
-    noise(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
-    spki(_req?: BootstrapBundleRequest): Promise<BootstrapBundleResponse>;
+    claimCertBegin(req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse>;
+    claimCertComplete(req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse>;
+    claimShareBegin(req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse>;
+    claimShareComplete(req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse>;
+    signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse>;
+    enrollExternalOfficer(req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse>;
 }
 export declare class McpProjectsClient implements ProjectsClient {
     private readonly session;
@@ -59,7 +55,7 @@ export declare class McpSdlcClient implements SdlcClient {
     private readonly session;
     constructor(session: McpSession);
     forges(): Promise<string[]>;
-    bind(tenantId: string, projectId: string, binding: ProjectBinding): Promise<ProjectBinding>;
+    bind(tenantId: string, projectId: string, binding: ProjectBinding, paused?: boolean): Promise<ProjectBinding>;
     unbind(tenantId: string, projectId: string): Promise<void>;
     binding(tenantId: string, projectId: string): Promise<ProjectBinding>;
     delivery(tenantId: string, taskId: string): Promise<Delivery>;
@@ -116,7 +112,6 @@ export declare class McpClient implements Client {
     readonly barrier: BarrierClient;
     readonly tenantBarrier: any;
     readonly ceremony: CeremonyClient;
-    readonly bootstrap: BootstrapClient;
     readonly cluster: any;
     readonly seal: any;
     readonly sshKeys: any;

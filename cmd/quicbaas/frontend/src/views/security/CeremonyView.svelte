@@ -48,7 +48,8 @@
   // The svelte-security components consume a structurally-typed CeremonyClient
   // (listOfficers / claimCertificate / claimShare / enrollOfficer). The SDK
   // CeremonyClient surface is shaped around the canonical /api/v1/init routes
-  // (claimCertBegin / claimCertComplete / claimShare / enrollExternalOfficer).
+  // (claimCertBegin / claimCertComplete / claimShareBegin / claimShareComplete /
+  // enrollExternalOfficer).
   // We adapt one to the other so:
   //
   //   * URL routing flows through the SDK (drift-proof).
@@ -133,14 +134,17 @@
         };
       },
       async claimShare(req) {
-        // The SDK claimShare retrieves the officer's sealed share material;
-        // it requires only the username. The view's UI exposes a free-form
-        // "share" field for symmetry with offline workflows but the SDK
-        // surface ignores it (the daemon delivers the share by username).
-        await sdk.claimShare({ username: req.username });
+        // The structural claimShare ships the daemon-issued challenge plus a
+        // base64 signature over it. The SDK exposes this as claimShareComplete
+        // which maps to POST /api/v1/init/officer-share/complete.
+        const resp = await sdk.claimShareComplete({
+          username: req.username,
+          nonce_hex: req.challenge,
+          signature: req.signature_b64,
+        });
         return {
           username: req.username,
-          status: 'claimed',
+          status: resp.share_json ? 'claimed' : 'enrolled',
         };
       },
       async enrollOfficer(req) {
@@ -207,14 +211,15 @@
   // ---------------------------------------------------------------------------
 
   let shareUsername = $state('');
-  let shareValue = $state('');
+  let shareChallenge = $state('');
+  let shareSignatureB64 = $state('');
   let shareSubmitting = $state(false);
   let shareError: string | null = $state(null);
 
   async function submitClaimShare(): Promise<void> {
     shareError = null;
-    if (!shareUsername.trim() || !shareValue.trim()) {
-      shareError = 'username and share are required';
+    if (!shareUsername.trim() || !shareChallenge.trim() || !shareSignatureB64.trim()) {
+      shareError = 'username, challenge, and signature are required';
       return;
     }
     if (client === null) {
@@ -225,11 +230,13 @@
     try {
       const resp = await client.claimShare({
         username: shareUsername.trim(),
-        share: shareValue.trim(),
+        challenge: shareChallenge.trim(),
+        signature_b64: shareSignatureB64.trim(),
       });
       showToast({ message: `Share claimed for ${resp.username}`, type: 'success' });
       shareUsername = '';
-      shareValue = '';
+      shareChallenge = '';
+      shareSignatureB64 = '';
       void reload();
     } catch (e) {
       shareError = e instanceof Error ? e.message : 'Claim share failed';
@@ -389,13 +396,23 @@
           />
         </div>
         <div class="form-control">
-          <label class="label label-text" for="ceremony-share-value">Share</label>
+          <label class="label label-text" for="ceremony-share-challenge">Challenge</label>
           <textarea
-            id="ceremony-share-value"
+            id="ceremony-share-challenge"
             class="textarea textarea-bordered font-mono text-xs"
             rows="2"
-            placeholder="Paste base64 Shamir share..."
-            bind:value={shareValue}
+            placeholder="Paste daemon-issued challenge..."
+            bind:value={shareChallenge}
+          ></textarea>
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="ceremony-share-signature">Signature (base64)</label>
+          <textarea
+            id="ceremony-share-signature"
+            class="textarea textarea-bordered font-mono text-xs"
+            rows="2"
+            placeholder="Paste base64 signature..."
+            bind:value={shareSignatureB64}
           ></textarea>
         </div>
         <button

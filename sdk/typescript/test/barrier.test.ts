@@ -360,59 +360,6 @@ describe('RestBarrierClient Shamir strategy', () => {
     expect(url).toBe('http://localhost/api/v1/barrier/shamir/unseal-shares');
     expect(JSON.parse(init.body as string)).toEqual({ shares: ['a', 'b', 'c'] });
   });
-
-  it('lists persisted Shamir share metadata', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        count: 3,
-        threshold: 2,
-        total: 3,
-      }),
-    );
-
-    const client = new RestClient('http://localhost');
-    const info = await client.barrier.shamirListShares();
-
-    expect(info.count).toBe(3);
-    expect(info.threshold).toBe(2);
-    expect(info.total).toBe(3);
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/shamir/shares');
-  });
-
-  it('deletes a single share by index', async () => {
-    fetchMock.mockResolvedValue(noContentResponse());
-
-    const client = new RestClient('http://localhost');
-    await client.barrier.shamirDeleteShare({ index: 2 });
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/shamir/shares/2');
-    expect(init.method).toBe('DELETE');
-  });
-
-  it('deletes all shares', async () => {
-    fetchMock.mockResolvedValue(noContentResponse());
-
-    const client = new RestClient('http://localhost');
-    await client.barrier.shamirDeleteAllShares();
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/shamir/shares');
-    expect(init.method).toBe('DELETE');
-  });
-
-  it('verifies share consistency', async () => {
-    fetchMock.mockResolvedValue(noContentResponse());
-
-    const client = new RestClient('http://localhost');
-    await client.barrier.shamirVerify();
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/shamir/verify');
-    expect(init.method).toBe('POST');
-  });
 });
 
 // =============================================================================

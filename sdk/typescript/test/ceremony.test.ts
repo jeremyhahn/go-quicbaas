@@ -176,17 +176,46 @@ describe('RestCeremonyClient certificate claim flow', () => {
   });
 });
 
-describe('RestCeremonyClient.claimShare', () => {
-  it("retrieves an officer's Shamir share", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ share: 'base64share' }));
+describe('RestCeremonyClient.claimShareBegin/claimShareComplete', () => {
+  it('begins the share claim with the officer username only', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ nonce_hex: 'cafe', expires_at: '2026-10-18T13:00:00Z' }));
 
     const client = new RestClient('http://localhost');
-    const result = await client.ceremony.claimShare({ username: 'alice' });
+    const challenge = await client.ceremony.claimShareBegin({ username: 'alice' });
 
-    expect(result.share).toBe('base64share');
+    expect(challenge).toEqual({ nonce_hex: 'cafe', expires_at: '2026-10-18T13:00:00Z' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/init/officer-share/begin');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ username: 'alice' });
+  });
 
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/init/claim-share');
+  it('completes the share claim with the signed nonce', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ share_index: 2, share_json: '{"x":1}' }));
+
+    const client = new RestClient('http://localhost');
+    const result = await client.ceremony.claimShareComplete({
+      username: 'alice',
+      nonce_hex: 'cafe',
+      signature: 'c2ln',
+    });
+
+    expect(result).toEqual({ share_index: 2, share_json: '{"x":1}' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/init/officer-share/complete');
+    expect(JSON.parse(init.body as string)).toEqual({ username: 'alice', nonce_hex: 'cafe', signature: 'c2ln' });
+  });
+
+  it('surfaces a server refusal of the completion as APIError', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: 'signature does not verify' }, 401));
+
+    const client = new RestClient('http://localhost');
+    const err = await client.ceremony
+      .claimShareComplete({ username: 'alice', nonce_hex: 'cafe', signature: 'c2ln' })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(APIError);
+    expect((err as APIError).status).toBe(401);
   });
 });
 
